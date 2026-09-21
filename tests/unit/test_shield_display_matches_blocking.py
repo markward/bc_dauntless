@@ -137,13 +137,17 @@ def test_the_panel_agrees_with_the_blocking_predicate():
             % (ship.GetName(), blocks, drawn))
 
 
-# ── the third reader: the tractor beam's grip gate ──────────────────────────
-# Reported live alongside the display bug: with "Disable NPC Shields" on,
-# weapons went through but the tractor still refused to engage. _target_tractorable
-# re-derived a SUBSET of shields_block (IsDisabled/IsOn only), so it missed the
-# cheat, a destroyed generator, and the cloak window.
+# ── the third reader: the tractor beam's grip ────────────────────────────────
+# _target_tractorable used to refuse a target whose shields were up, and this
+# file pinned that (a live report: with "Disable NPC Shields" on, weapons went
+# through but the tractor still refused). The original exe does not gate on
+# shields at all — stbc-oracle bible §7.5 R1, `tractor_engage_r20_noshields`
+# vs `tractor_engage_r20`: locked within one sample either way. So the grip
+# is unconditional and the cheat, a destroyed generator and healthy shields
+# all read the same.
 
-def test_the_tractor_can_grip_when_shields_do_not_block(monkeypatch):
+@pytest.mark.parametrize("state", ["healthy", "destroyed", "cheat_off"])
+def test_the_tractor_grips_regardless_of_shield_state(monkeypatch, state):
     import App
     from engine import dev_mode, dev_combat_cheats as cheats
     from engine.appc.weapon_subsystems import _target_tractorable
@@ -154,37 +158,19 @@ def test_the_tractor_can_grip_when_shields_do_not_block(monkeypatch):
     App._set_current_game(game)
     game.SetPlayer(player)
     try:
-        assert not _target_tractorable(npc), (
-            "precondition: healthy shields deflect the beam")
-
-        cheats.set_disable_npc_shields(True)
-
-        assert _target_tractorable(npc), (
-            "with NPC shields cheated off the beam must grip -- this is the "
-            "half of the report that is functional, not cosmetic")
+        if state == "destroyed":
+            npc.GetShieldSubsystem().SetDestroyed(1)
+        elif state == "cheat_off":
+            cheats.set_disable_npc_shields(True)
+        assert _target_tractorable(npc)
     finally:
         cheats.reset()
         App._set_current_game(None)
 
 
-def test_the_tractor_can_grip_a_destroyed_generator():
-    """Not a cheat case -- a real one. A shot-out shield generator stops
-    blocking, so it cannot deflect a tractor beam either."""
+def test_the_tractor_does_not_grip_nothing():
     from engine.appc.weapon_subsystems import _target_tractorable
-
-    ship = _ship("NPC")
-    assert not _target_tractorable(ship)
-
-    ship.GetShieldSubsystem().SetDestroyed(1)
-
-    assert _target_tractorable(ship)
-
-
-def test_healthy_shields_still_deflect_the_tractor():
-    """The gate must not be blown open -- charged shields still refuse."""
-    from engine.appc.weapon_subsystems import _target_tractorable
-
-    assert not _target_tractorable(_ship("NPC"))
+    assert not _target_tractorable(None)
 
 
 # ── the second HUD readout ──────────────────────────────────────────────────

@@ -17,6 +17,7 @@ PulseWeaponSystem, so:
 
 Mirrors tests/integration/test_pulse_singlefire_modes.py.
 """
+import pytest
 from unittest.mock import patch
 
 import App  # noqa: F401  (installs the SDK import finder via conftest)
@@ -194,32 +195,30 @@ def _shielded_target(charged: bool):
     return t
 
 
-def test_active_shields_block_engagement():
+# The target's shields are NOT an engagement gate. Measured on the original
+# exe (stbc-oracle bible §7.5 R1): `tractor_engage_r20` (shields up) and
+# `tractor_engage_r20_noshields` both lock within one sample of StartFiring.
+# Three tests here used to pin the opposite ("active shields deflect the
+# tractor"), which was a design story with no capture behind it.
+
+@pytest.mark.parametrize("charged", [True, False])
+def test_shield_state_does_not_gate_engagement(charged):
     ship, parent = _build()
-    target = _shielded_target(charged=True)
+    target = _shielded_target(charged=charged)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, "hit")
-    assert _num_firing(parent) == 0, "active shields must deflect the tractor"
+    assert _num_firing(parent) == 1
 
 
-def test_depleted_shields_allow_engagement():
+def test_shields_raised_mid_grip_keep_the_beam():
+    from engine.appc.subsystems import ShieldSubsystem
     ship, parent = _build()
     target = _shielded_target(charged=False)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, "hit")
-    assert _num_firing(parent) == 1, "down shields must let the tractor grip"
-
-
-def test_shields_raised_mid_grip_drops_beam():
-    from engine.appc.subsystems import ShieldSubsystem
-    ship, parent = _build()
-    target = _shielded_target(charged=False)   # starts grippable
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        parent.StartFiring(target, "hit")
         assert _num_firing(parent) == 1
-        # Shields come back up -> next retry drops the beam (stays engaged).
         sh = target.GetShieldSubsystem()
         for f in range(ShieldSubsystem.NUM_SHIELDS):
             sh.SetCurrentShields(f, 100.0)
         parent.update_weapons(0.34)
-        assert _num_firing(parent) == 0
+        assert _num_firing(parent) == 1

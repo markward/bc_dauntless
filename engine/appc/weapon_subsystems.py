@@ -1850,49 +1850,22 @@ PHASER_MAX_RANGE_GU = 700.0
 TRACTOR_MAX_RANGE_GU = 120.0
 
 
-# A tractor grips only when the target's shields hold less than this fraction
-# of their aggregate maximum (i.e. effectively down).  Active shields deflect.
-TRACTOR_SHIELD_DOWN_FRACTION = 0.05
 
 
 def _target_tractorable(target) -> bool:
-    """True iff a tractor beam can grip `target`: its shields are NOT actively
-    protecting it — not equipped, offline (lowered), disabled (damaged), or
-    depleted.  Active, charged shields deflect the beam (BC behaviour).
+    """True iff a tractor beam can grip `target`: anything that exists.
 
-    Legacy fixtures with no shield API are gripple (returns True).
+    The target's shields do NOT matter. Measured on the original exe
+    (stbc-oracle bible §7.5 R1, `tractor_engage_r20_noshields` against
+    `tractor_engage_r20`): a Galaxy's projector locks a shielded target
+    within one sample of StartFiring exactly as it does an unshielded one;
+    the only engagement gate is the projector's MaxDamageDistance.
+
+    This used to refuse any target whose shields were up ("active shields
+    deflect the beam"), which was a story with no capture behind it — and
+    it hid the real behaviour behind a rule that was never BC's.
     """
-    if target is None:
-        return False
-    getter = getattr(target, "GetShieldSubsystem", None)
-    if getter is None:
-        return True  # no shield API at all (non-ship targets / test stubs)
-    shields = getter()
-    if shields is None:
-        return True  # not equipped
-    # If the shields do not BLOCK, they cannot deflect a tractor beam either.
-    # This delegates to the one predicate the damage path, the beam stop, the
-    # shield bubble and both HUD readouts already share, instead of
-    # re-deriving a subset of it here.
-    #
-    # It used to test only `IsDisabled` and `IsOn`, which silently missed a
-    # DESTROYED generator, the cloak-transition window, and the dev
-    # disable-NPC-shields cheat — so "Disable NPC Shields" let weapons through
-    # but still refused to let the tractor grip, which reads as the cheat
-    # being broken. Reported live.
-    from engine.appc.combat import shields_block
-    if not shields_block(target):
-        return True
-    # Online + undamaged: blocked only while the shields still hold charge.
-    n = getattr(shields, "NUM_SHIELDS", 6)
-    try:
-        total_max = sum(shields.GetMaxShields(f) for f in range(n))
-        if total_max <= 0.0:
-            return True  # equipped subsystem but no shield facings
-        total_cur = sum(shields.GetCurrentShields(f) for f in range(n))
-        return (total_cur / total_max) < TRACTOR_SHIELD_DOWN_FRACTION
-    except Exception:
-        return False  # can't read charge — assume up (deflects)
+    return target is not None
 
 
 def _target_within_range_gu(ship, target, max_range_gu: float) -> bool:
@@ -2565,12 +2538,15 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         discharge-to-zero auto-stop.
 
         A tractor holds CONTINUOUSLY while engaged (you can pin a ship
-        indefinitely), so a firing tractor must not deplete to 0 and stop the
-        way a phaser bank does.  While firing we drain slowly toward — but
-        never below — MinFiringCharge (so charge stays ``> 0`` and the
-        mixin's CanFire sustain branch keeps returning true), gated by
-        parent power: if the line goes down the beam drops.  When idle we
-        fall back to the mixin's normal condition-scaled recharge.
+        indefinitely) and its charge does not move while it does: measured
+        on the original exe, a Galaxy projector holding a target reads 5.00
+        for the whole run (stbc-oracle bible §7.5 R1, `tractor_*`), so the
+        hardpoint's NormalDischargeRate is not a hold cost. The beam is
+        gated by parent power only — if the line goes down it drops. When
+        idle we fall back to the mixin's normal condition-scaled recharge.
+
+        This used to drain toward MinFiringCharge while holding; that was a
+        design choice with no capture behind it.
         """
         if self._firing:
             parent = self.GetParentSubsystem()
@@ -2588,19 +2564,12 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                     and parent.GetNormalPowerWanted() > 0.0):
                 self.StopFiring()
                 return
-            floor = self._min_firing_charge
-            if self._charge_level > floor:
-                self._charge_level = max(
-                    floor, self._charge_level - self._normal_discharge_rate * dt
-                )
-            # Charge stays > 0 while sustaining — no depletion auto-stop.
+            # No discharge while holding — charge is untouched.
             return
         # Idle fall-through note: an idle TractorBeamSystem doesn't want power
         # (_wants_power False -> factor zeroed by the pump), so the mixin's
-        # factor-scaled recharge is 0 while idle. Harmless by design: the firing
-        # sustain path never drains below _min_firing_charge, so CanFire's
-        # start-branch (>= MinFiringCharge) passes at the floor — charge above
-        # the floor has no gameplay effect for tractors.
+        # factor-scaled recharge is 0 while idle. Harmless: holding never
+        # drains, so there is nothing to recharge.
         super().UpdateCharge(dt)
 
 

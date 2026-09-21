@@ -232,16 +232,12 @@ def test_r1_engagement_gate_is_max_damage_distance(oracle, range_gu, engages):
     assert _engaged(s) is engages
 
 
-@bible_xfail("R1", "target shields up or down make no difference to engagement (`tractor_engage_r20_noshields`)",
-             "refuses to grip a shielded target (_target_tractorable)")
 def test_r1_engages_through_shields(oracle):
     s = _tractor(oracle, "hold", range_gu=20.0, shields_up=True)
     s.run(0.5)
     assert _engaged(s)
 
 
-@bible_xfail("R1", "the projector's charge never drops from 5.00 while holding — no discharge",
-             "charge drains and the beam drops after ~22 s")
 def test_r1_no_charge_drain_while_holding(oracle):
     s = _tractor(oracle, "hold", range_gu=15.0)
     s.run(25.0)
