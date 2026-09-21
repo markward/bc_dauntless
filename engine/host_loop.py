@@ -4839,8 +4839,8 @@ def _cache_ship_hull_pieces(ship, handle, r_) -> None:
     ONE helper for BOTH realize sites (realize_set_objects and
     _MissionLoader._realize_session). Live 2026-09-21 the second site had
     never called this: every ship realized through the mission controller
-    collided as a 2x-inflated whole-body sphere (pieces=a:0/b:0 on the
-    collision log), so collision scuffs were zero-energy sphere kisses.
+    collided as a 2x-inflated whole-body sphere (hull_piece_count == 0),
+    so collision scuffs were zero-energy sphere kisses.
 
     Called DIRECTLY, not through a getattr guard. model_bounds is in
     engine.renderer's _REQUIRED_BINDINGS, so validate_bindings() already fails
