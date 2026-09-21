@@ -191,13 +191,15 @@ Height field `h(u, w)` — two analytic terms, gradient in closed form:
 | dish (impact) | `h = −D·R·(1 − r²)²` → `dh/dρ = 4·D·r·(1 − r²)` radially | the overall concave dent: rim normals lean inward, so one side faces the light and the other away |
 | creases (impact, albedo) | thin Worley `F2 − F1` band | bare metal where two facets meet |
 
-**Two looks, selected per decal by `dent` (`u_decal_c[i].z`)** — added after the
-second live pass (a photo of a rear-ended car: impact damage is facets and
-creases in a dish, not scratches). The **impact** path tags its scuff
-`dent = 1` (facets + dish + creases, with `kScuffDentScratch` = 10 % of the
-scratch term); the **grind** path tags `dent = 0` (buckle sine + scratches). A
-grind merging into an earlier impact keeps the max, so a dent never scrapes
-back into a scratch patch. Threaded `collisions → apply_hit(decal_dent=) →
+**The crumple is always on; `dent` (`u_decal_c[i].z`) only scales the
+scratching.** Added after the second live pass (a photo of a rear-ended car:
+impact damage is facets and creases in a dish) and corrected after the third
+(a slow grind pressed into a Warbird's wing buckles exactly the same way —
+the crumple is a property of the contact, not of the solver branch). The
+**impact** path tags `dent = 1` (facets + dish, `kScuffDentScratch` = 10 % of
+the scratch term); the **grind** path tags `dent = 0` (facets + dish + the
+full scratch field dragged across the buckled panels). A grind merging into
+an earlier impact keeps the max. Threaded `collisions → apply_hit(decal_dent=) →
 dispatch(decal_dent=) → host_io.damage_decal_add(dent=) → binding → ring`.
 
 `φ` is hashed from the decal's `point` so adjacent scuffs don't phase-lock.
@@ -319,12 +321,17 @@ lit quad, directional light, no material normal map:
   (probe code path / render with zero diffuse and assert black inside the
   patch), glow map pixels unchanged.
 - `ScuffIsBandLimitedAtDistance`: the same scuff rendered with the camera far
-  enough that the scratch wavelength is < 2 px shows variance below a
-  threshold (guards the `fwidth` fade).
+  enough that the scratch wavelength is < 2 px shows mean |second difference|
+  (curvature — the dish is a legitimate smooth gradient at range and must not
+  count) under 8; 3.7 measured with the fade, 64.5 without.
 - `ScuffDoesNotMirrorToTheFarFace`: a scuff seeded on +Z leaves the −Z face
   byte-identical (the `wn` guard).
-- `DentDishShadesOneSideOfTheRimDarkerThanTheOther`: under a grazing light a
-  `dent = 1` scuff's rim is asymmetric (dish), a `dent = 0` scuff's is not.
+- `DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts`: under a
+  grazing light the rim is asymmetric (dish) at both dent weights.
+- `RotatedInstanceIsTheIdentityImageRotated`: rotating ship + body tangent +
+  light by +90° yields the identity image rotated +90° in screen space (to a
+  ~100-texel tolerance from the rasteriser's edge tie rule; a transposed
+  `u_ship_world_rot` differs on ~16,800 — measured).
 - `DentIsPiecewiseFlatFacetsNotScratches`: mean |neighbour Δ| / stddev of a
   dent is under half a scrape's (few large jumps at creases vs. change every
   couple of pixels).

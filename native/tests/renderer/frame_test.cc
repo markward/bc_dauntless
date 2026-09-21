@@ -1740,28 +1740,25 @@ TEST_F(ScuffTest, TwoOverlappingScuffsDoNotStack) {
 
 // The dish tilts the rim inward, so under a light from +X the +X side of the
 // patch (whose normals lean toward -X, away from the light) is DARKER than the
-// -X side. A scrape has no dish and no such asymmetry.
-TEST_F(ScuffTest, DentDishShadesOneSideOfTheRimDarkerThanTheOther) {
+// -X side. The crumple (facets + dish) is a property of the CONTACT, not of
+// the solver branch -- a slow grind pressed into a hull buckles just like an
+// impact (live 2026-09-21) -- so both dent weights must show the dish.
+TEST_F(ScuffTest, DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts) {
     using namespace scuff_probe;
     auto quad = build_quad();
-    // Grazing light from +X so the rim tilt reads strongly.
     renderer::Lighting side = tangent_probe::dir_light(glm::vec3(0.8f, 0.0f, 0.6f));
-    // Rim bands at r ~0.6..0.75 of a 60-unit radius: 36..45 units = 53..67 px.
     auto rim_pair = [&]() {
         const double lit_side  = block_mean(128 - 67, 118, 14, 20);   // -X side
         const double dark_side = block_mean(128 + 53, 118, 14, 20);   // +X side
         return std::make_pair(lit_side, dark_side);
     };
-    Seed scrape; scrape.active = true; scrape.dent = 0.0f;
-    render(*quad, *p, side, scrape);
-    auto [s_lit, s_dark] = rim_pair();
-    Seed dent = scrape; dent.dent = 1.0f;
-    render(*quad, *p, side, dent);
-    ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    auto [d_lit, d_dark] = rim_pair();
-    // The scrape's rim is symmetric to within noise; the dent's is not.
-    EXPECT_LT(std::abs(s_lit - s_dark), 12.0) << "scrape rim is asymmetric: " << s_lit << " vs " << s_dark;
-    EXPECT_GT(d_lit - d_dark, 25.0) << "dent rim shows no dish: " << d_lit << " vs " << d_dark;
+    for (float dentw : {0.0f, 1.0f}) {
+        Seed s; s.active = true; s.dent = dentw;
+        render(*quad, *p, side, s);
+        ASSERT_EQ(glGetError(), GL_NO_ERROR);
+        auto [lit, dark] = rim_pair();
+        EXPECT_GT(lit - dark, 25.0) << "dent=" << dentw << " rim shows no dish: " << lit << " vs " << dark;
+    }
 }
 
 // Facets are piecewise-FLAT: inside a cell the shading is constant and it
@@ -1846,19 +1843,46 @@ TEST_F(ScuffTest, DentFacetsFollowTheMeshTriangles) {
 // radius 200 the whole quad (half-diagonal ~141 units) stays under r=0.71,
 // below the rim's 0.75 onset, so the rim never engages and the measurement
 // isolates the relief/scratch band-limiting under test.
+// Mean |second difference| of the channel sum over a block, both axes.
+// Aliasing (speckle) has large curvature at every pixel; a legitimate smooth
+// feature such as the dent's dish -- a near-linear gradient when it spans the
+// whole far quad -- has almost none. Plain neighbour deltas cannot tell the
+// two apart (the dish alone measured ~5 levels/px at range).
+double block_curvature(int x0, int y0, int w, int h) {
+    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    auto sum = [&](int x, int y) {
+        const int i = (y * w + x) * 4;
+        return double(buf[i] + buf[i+1] + buf[i+2]);
+    };
+    double acc = 0.0; int n = 0;
+    for (int y = 1; y + 1 < h; ++y)
+        for (int x = 1; x + 1 < w; ++x) {
+            acc += std::abs(sum(x - 1, y) - 2.0 * sum(x, y) + sum(x + 1, y));
+            acc += std::abs(sum(x, y - 1) - 2.0 * sum(x, y) + sum(x, y + 1));
+            n += 2;
+        }
+    return n ? acc / n : 0.0;
+}
+
 TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
     using namespace scuff_probe;
     auto quad = build_quad();
     Seed s; s.active = true; s.radius = 200.0f;   // the whole quad is scuffed
     render(*quad, *p, oblique(), s, /*eye_z=*/150.0f);
-    const double near_sd = block_stddev(108, 108, 40, 40);
-    ASSERT_GT(near_sd, 6.0) << "rig sanity: relief must be visible up close";
+    const double near_d = block_curvature(108, 108, 40, 40);
+    ASSERT_GT(near_d, 4.0) << "rig sanity: relief must be visible up close";
 
+    // eye_z 2400: ~0.09 px per unit, so the 3-unit scratches and the
+    // 10-unit facets are far below a pixel and must have faded out; the
+    // dish (radius 200 units ~ 18 px) is a smooth gradient and may remain.
     render(*quad, *p, oblique(), s, /*eye_z=*/2400.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const double far_sd = block_stddev(122, 122, 12, 12);
-    EXPECT_LT(far_sd, 3.0) << "scuff sparkles at range (stddev " << far_sd
-                           << ", near " << near_sd << ")";
+    // Measured: 3.7 with the fade (the dish's own curvature + 8-bit
+    // quantisation), 64.5 with scuff_bandlimit forced to 1.0.
+    const double far_d = block_curvature(122, 122, 12, 12);
+    EXPECT_LT(far_d, 8.0) << "scuff sparkles at range (curvature " << far_d
+                          << ", near " << near_d << ")";
 }
 
 // u_ship_world_rot is uploaded as glm::mat3(world) (frame.cc) and used to
@@ -1875,40 +1899,61 @@ TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
 // (0,-1,0) at +90deg, flipping the sign of T_ws and changing the image --
 // 180deg would NOT catch that (a transpose of a 180 rotation is itself,
 // up to sign, indistinguishable here), which is why this uses 90deg.
-TEST_F(ScuffTest, RotatedInstanceMatchesEquivalentBodyTangent) {
+TEST_F(ScuffTest, RotatedInstanceIsTheIdentityImageRotated) {
     using namespace scuff_probe;
     // build_quad_fan, not build_quad: see its comment -- a 2-triangle
-    // diagonal-split quad is not 4-fold symmetric under +90deg about +Z, so
-    // it interpolates the reconstructed body position from a genuinely
-    // different vertex triple between the two renders and picks up a few
-    // scattered 1-LSB floating-point artifacts unrelated to u_ship_world_rot.
+    // diagonal-split quad is not 4-fold symmetric under +90deg about +Z.
     auto quad = build_quad_fan();
 
     // Built by hand rather than glm::rotate(..., half_pi, ...): sinf/cosf of
-    // half_pi<float>() are not bit-exact 1/0 (cos comes out ~-4.37e-8), and
-    // that epsilon is enough to flip an 8-bit-quantized texel here and there
-    // once it propagates through the noise derivatives -- an artifact of
-    // float trig, not of u_ship_world_rot. An exact +90deg-about-+Z matrix
-    // (columns (0,1,0), (-1,0,0), (0,0,1)) keeps the comparison bit-exact.
+    // half_pi<float>() are not bit-exact 1/0, and that epsilon is enough to
+    // flip an 8-bit texel once it propagates through the noise derivatives.
+    // Exact +90deg about +Z: columns (0,1,0), (-1,0,0), (0,0,1).
     const glm::mat4 rot90z(glm::vec4(0.0f, 1.0f, 0.0f, 0.0f),
                             glm::vec4(-1.0f, 0.0f, 0.0f, 0.0f),
                             glm::vec4(0.0f, 0.0f, 1.0f, 0.0f),
                             glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 
-    Seed rotated; rotated.active = true; rotated.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
-    render(*quad, *p, oblique(), rotated, /*eye_z=*/150.0f, rot90z);
+    // Rotate the WHOLE scene by +90deg about +Z -- ship, body tangent (the
+    // tangent is body-frame, so the same body vector), and the light -- and
+    // the image must be the identity image rotated by +90deg in screen space.
+    // The crumple facets are per mesh TRIANGLE, so they turn with the ship;
+    // comparing against an unrotated instance with a swapped tangent (the
+    // first form of this test) stopped being valid once facets were always
+    // on. A transposed u_ship_world_rot flips T_ws for the rotated instance
+    // only (the identity is its own transpose) and breaks the equality.
+    const glm::vec3 L(0.5f, 0.3f, 0.8f);
+    const glm::vec3 L_rot(-L.y, L.x, L.z);             // Rz(+90) . L
+    Seed seed; seed.active = true; seed.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+
+    render(*quad, *p, tangent_probe::dir_light(L_rot), seed, /*eye_z=*/150.0f, rot90z);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const auto rotated_frame = read_frame();
 
-    Seed identity; identity.active = true; identity.tangent = glm::vec3(0.0f, 1.0f, 0.0f);
-    render(*quad, *p, oblique(), identity, /*eye_z=*/150.0f, glm::mat4(1.0f));
+    render(*quad, *p, tangent_probe::dir_light(L), seed, /*eye_z=*/150.0f, glm::mat4(1.0f));
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const auto identity_frame = read_frame();
 
-    EXPECT_EQ(differing_texels(rotated_frame, identity_frame), 0u)
-        << "a +90deg world rotation with body tangent (1,0,0) must match an "
-        << "unrotated instance with body tangent (0,1,0) byte-for-byte -- "
-        << "u_ship_world_rot is likely transposed";
+    // Screen +90deg about the viewport centre: pixel (i, j) -> (255 - j, i),
+    // exact because the 256-grid is symmetric about 127.5 (camera on +Z, up +Y).
+    std::vector<unsigned char> expected(256 * 256 * 4);
+    for (int j = 0; j < 256; ++j)
+        for (int i = 0; i < 256; ++i) {
+            const int di = 255 - j, dj = i;
+            for (int c = 0; c < 4; ++c)
+                expected[(static_cast<size_t>(dj) * 256 + di) * 4 + c] =
+                    identity_frame[(static_cast<size_t>(j) * 256 + i) * 4 + c];
+        }
+    // Not byte-exact: the crumple facets are per TRIANGLE, and a pixel whose
+    // centre lies on one of the fan's two diagonal edges is owned by a
+    // different triangle after rotation (the rasteriser's tie rule is not
+    // rotation-symmetric), so it takes the neighbouring panel's tilt. That is
+    // ~100 texels (measured: 100, max 44 levels). A transposed
+    // u_ship_world_rot differs on ~16,800 (measured), so the bound below
+    // sits two orders of magnitude under the defect it guards.
+    EXPECT_LT(differing_texels(rotated_frame, expected), 1000u)
+        << "rotating ship + tangent + light by +90deg must rotate the image "
+        << "by +90deg -- u_ship_world_rot is likely transposed";
 }
 
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,

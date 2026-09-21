@@ -135,9 +135,11 @@ const float kScuffEdgeNoise   = 0.35;                 // fraction the edge is pu
                                                        // noise; breaks the disc outline. Only ever
                                                        // shrinks, so the r >= 1 cull stays exact.
 const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per model unit
-// Impact dents (u_decal_c.z == 1): crumpled sheet metal is flat FACETS meeting
-// at sharp creases inside an overall concave DISH (reference: a rear-ended
-// car, live pass 2026-09-21). Grinds (dent 0) keep the scratch model above.
+// Crumple (always on): sheet metal pressed into another hull is flat FACETS
+// meeting at sharp creases inside an overall concave DISH (reference: a
+// rear-ended car, live pass 2026-09-21). u_decal_c.z is the decal's "dent"
+// weight, which only scales the scratch model above DOWN: 0 = grind (full
+// scratches over the crumple), 1 = impact (kScuffDentScratch of them).
 const float kScuffFacetSize   = 10.0;                 // model units per crumple facet (Worley cell)
 const float kScuffFacetTilt   = 0.30;                 // max facet slope, dh per unit (~17 deg)
 const float kScuffMeshFacets  = 1.0;                  // 1: one facet per mesh TRIANGLE (creases =
@@ -675,10 +677,16 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f
                      * (1.0 - kScuffMeshFacets);
 
-        // Blend the two height models by the decal's dent weight.
-        float g_u = mix(gu, g_dent.x + gu * kScuffDentScratch, dent);
-        float g_w = mix(gw, g_dent.y + gw * kScuffDentScratch, dent);
-        scratch_mask = max(scratch_mask, mix(ridge, max(crease, ridge * kScuffDentScratch), dent));
+        // The crumple (facets + dish) is a property of the CONTACT and is
+        // always on -- a slow grind pressed into a hull buckles just like an
+        // impact (live 2026-09-21, third pass). The dent weight only decides
+        // how much SCRATCHING is layered on top: a grind (0) drags its full
+        // scratch field across the buckled panels, an impact (1) keeps
+        // kScuffDentScratch of it.
+        float scratchiness = mix(1.0, kScuffDentScratch, dent);
+        float g_u = g_dent.x + gu * scratchiness;
+        float g_w = g_dent.y + gw * scratchiness;
+        scratch_mask = max(scratch_mask, max(crease, ridge * scratchiness));
 
         vec3 T_ws = normalize(u_ship_world_rot * T);
         vec3 B_ws = normalize(u_ship_world_rot * B);
