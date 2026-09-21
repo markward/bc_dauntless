@@ -187,7 +187,7 @@ Height field `h(u, w)` — two analytic terms, gradient in closed form:
 |---|---|---|
 | buckle (grind) | `A_b · sin(k_b·u + φ) · win` | compression waves with crests **perpendicular** to the slip — the "waves in the metal" |
 | scratches (grind) | `A_s · noise1(w · k_s) · win` | grooves running **along** the slip; varies across `w`, near-constant along `u` |
-| panels | one random constant tilt per cell of a rectangular grid on the surface, pitch `kScuffPanelPitch` model units, **oriented by the mesh**: each triangle's longest edge and its in-plane perpendicular, read from a per-mesh buffer texture of edge directions (`renderer/scuff_panels.h`, `gl_PrimitiveID`, unit 7) — on a saucer wedge that is radial + concentric, like the plating (sixth live pass, from a mockup). Shared origin, so same-orientation neighbours continue one grid and the seam falls on the mesh edge | piecewise-**flat** panels whose normals jump at the grid lines — the crease lines of crumpled sheet metal; the same panel bends the same way under every scuff. Tried and removed: Worley cells in the decal frame (an irregular mosaic); one facet per mesh triangle (a wireframe — ships are NOT tessellated, but the rim/superstructure geometry is fine); a grid in UV space (the saucer's plating is painted radially on a planar 256² map — no UV grid follows it) |
+| panels | one random constant tilt per cell of a rectangular grid on the surface, pitch `kScuffPanelPitch` model units, **oriented by the mesh**: each triangle's **shortest** edge and its in-plane perpendicular (BC hulls are quads split along a diagonal; the diagonal is the longest edge of both halves and invisible — 73% of Galaxy.nif's triangles, measured 2026-09-21 — so a longest-edge grid sat 45° off every visible seam, the seventh live pass), read from a per-mesh buffer texture of edge directions (`renderer/scuff_panels.h`, `gl_PrimitiveID`, unit 7) — on a saucer wedge that is radial + concentric, like the plating (sixth live pass, from a mockup). Shared origin, so same-orientation neighbours continue one grid and the seam falls on the mesh edge | piecewise-**flat** panels whose normals jump at the grid lines — the crease lines of crumpled sheet metal; the same panel bends the same way under every scuff. Tried and removed: Worley cells in the decal frame (an irregular mosaic); one facet per mesh triangle (a wireframe — ships are NOT tessellated, but the rim/superstructure geometry is fine); a grid in UV space (the saucer's plating is painted radially on a planar 256² map — no UV grid follows it) |
 | dish (impact) | `h = −D·R·(1 − r²)²` → `dh/dρ = 4·D·r·(1 − r²)` radially | the overall concave dent: rim normals lean inward, so one side faces the light and the other away |
 | creases (albedo) | thin band along the panel grid lines | bare metal where two panels meet |
 
@@ -336,10 +336,10 @@ lit quad, directional light, no material normal map:
 - `DentIsPiecewiseFlatFacetsNotScratches`: mean |neighbour Δ| / stddev of a
   dent is under half a scrape's (few large jumps at creases vs. change every
   couple of pixels).
-- `DentPanelGridIsAlignedToTheTrianglesLongestEdge`: on the diagonal-split
-  quad (longest edge = the diagonal) a bare-metal crease runs along `x = y`
-  under ambient-only light and not along a parallel line 8 px off it; fails
-  with the grid axis forced to body X (measured).
+- `DentPanelGridFollowsTheQuadSidesNotItsDiagonal`: on the diagonal-split
+  quad a bare-metal crease runs along the model x axis (a quad side) under
+  ambient-only light and NOT along the `x = y` diagonal; measured 58 levels
+  along the diagonal and 1.5 along the side with the longest-edge picker.
 - `DentPanelsDoNotTurnWithTheSlipDirection`: under head-on light the column
   profile of shading jumps is the same for two scuffs whose slip tangents
   differ by 45° (correlation 0.999 measured; Worley cells in the decal frame

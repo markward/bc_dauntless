@@ -106,7 +106,7 @@ uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
-uniform samplerBuffer u_tri_dirs;            // unit 7: per-triangle longest-edge direction,
+uniform samplerBuffer u_tri_dirs;            // unit 7: per-triangle shortest-edge direction,
                                              // body frame (renderer/scuff_panels.h)
 uniform int   u_tri_dirs_ok;                 // 0 = no CPU data for this mesh: body-X fallback
 uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
@@ -145,7 +145,8 @@ const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per m
 // scratches over the crumple), 1 = impact (kScuffDentScratch of them).
 const float kScuffPanelPitch  = 8.0;                  // model units between crumple-panel creases.
                                                        // The panel grid is ORIENTED by the mesh: each
-                                                       // triangle's longest edge and its in-plane
+                                                       // triangle's shortest edge (a quad SIDE, never
+                                                       // the split diagonal) and its in-plane
                                                        // perpendicular (u_tri_dirs), so on a saucer
                                                        // wedge the panels run radial + concentric like
                                                        // the plating (sixth live pass, from a mockup).
@@ -598,7 +599,7 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
     vec3 Nf = cross(dFdx(p_body), dFdy(p_body));
     Nf = (dot(Nf, Nf) > 1e-20) ? normalize(Nf) : n_body;
     if (dot(Nf, n_body) < 0.0) Nf = -Nf;
-    // Grid axis 1: this triangle's longest edge, projected into its plane.
+    // Grid axis 1: this triangle's shortest edge, projected into its plane.
     vec3 e = (u_tri_dirs_ok != 0) ? texelFetch(u_tri_dirs, gl_PrimitiveID).xyz
                                   : vec3(1.0, 0.0, 0.0);
     e -= Nf * dot(e, Nf);

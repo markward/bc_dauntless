@@ -1,6 +1,7 @@
 // native/src/renderer/scuff_panels.cc
 #include "renderer/scuff_panels.h"
 
+#include <algorithm>
 #include <cmath>
 #include <unordered_map>
 #include <vector>
@@ -40,22 +41,39 @@ std::vector<glm::mat4> node_model_matrices(const assets::Model& model) {
     return out;
 }
 
-/// Unit longest-edge direction with a canonical sign: the largest-magnitude
-/// component positive, so two parallel edges never come out as e and -e
-/// (which would mirror the panel grid across a mesh edge).
-glm::vec3 longest_edge_dir(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+/// Unit direction of the triangle's SHORTEST usable edge, with a canonical
+/// sign: the largest-magnitude component positive, so two parallel edges never
+/// come out as e and -e (which would mirror the panel grid across a mesh edge).
+///
+/// Shortest, not longest: BC hulls are authored as quads that the NIF splits
+/// along a diagonal, and that diagonal is the longest edge of both halves --
+/// on Galaxy.nif 73% of triangles are quad halves (measured 2026-09-21). The
+/// diagonal is invisible on the hull; the seams a viewer reads are the quad's
+/// sides, and the shortest edge of a quad half is always a side. The grid is
+/// symmetric under a quarter turn, so either side yields the same lines.
+/// A needle triangle's shortest edge is direction noise, so an edge under
+/// kMinEdgeFraction of the longest is skipped for the next shortest.
+constexpr float kMinEdgeFraction = 0.05f;
+
+glm::vec3 panel_edge_dir(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
     const glm::vec3 edges[3] = {b - a, c - b, a - c};
-    glm::vec3 best = edges[0];
-    float best_len = glm::dot(best, best);
-    for (int k = 1; k < 3; ++k) {
-        const float l = glm::dot(edges[k], edges[k]);
-        if (l > best_len) { best = edges[k]; best_len = l; }
+    float len2[3];
+    float longest2 = 0.0f;
+    for (int k = 0; k < 3; ++k) {
+        len2[k] = glm::dot(edges[k], edges[k]);
+        longest2 = std::max(longest2, len2[k]);
     }
-    if (best_len <= 1e-20f) return glm::vec3(1.0f, 0.0f, 0.0f);
-    best /= std::sqrt(best_len);
-    const glm::vec3 m = glm::abs(best);
-    const float pivot = (m.x >= m.y && m.x >= m.z) ? best.x : (m.y >= m.z ? best.y : best.z);
-    return pivot < 0.0f ? -best : best;
+    if (longest2 <= 1e-20f) return glm::vec3(1.0f, 0.0f, 0.0f);
+    const float floor2 = longest2 * kMinEdgeFraction * kMinEdgeFraction;
+    int best = -1;
+    for (int k = 0; k < 3; ++k) {
+        if (len2[k] < floor2) continue;
+        if (best < 0 || len2[k] < len2[best]) best = k;
+    }
+    glm::vec3 dir = edges[best] / std::sqrt(len2[best]);
+    const glm::vec3 m = glm::abs(dir);
+    const float pivot = (m.x >= m.y && m.x >= m.z) ? dir.x : (m.y >= m.z ? dir.y : dir.z);
+    return pivot < 0.0f ? -dir : dir;
 }
 
 }  // namespace
@@ -84,7 +102,7 @@ std::uint32_t scuff_tri_dir_texture(const assets::Model& model,
         const glm::vec3 a(nm * glm::vec4(verts[idx[k]].position, 1.0f));
         const glm::vec3 b(nm * glm::vec4(verts[idx[k + 1]].position, 1.0f));
         const glm::vec3 d(nm * glm::vec4(verts[idx[k + 2]].position, 1.0f));
-        dirs.push_back(longest_edge_dir(a, b, d));
+        dirs.push_back(panel_edge_dir(a, b, d));
     }
     if (dirs.empty()) return 0;
 

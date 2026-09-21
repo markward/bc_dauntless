@@ -740,7 +740,7 @@ void draw_model(const assets::Model& model,
                 dauntless_normal_map::flip_green() ? 1 : 0);
 
             // Collision-scuff panel orientation: this mesh's per-triangle
-            // longest-edge directions (renderer/scuff_panels.h), read by
+            // edge directions (renderer/scuff_panels.h), read by
             // gl_PrimitiveID inside a scuff on unit 7 (assigned once in
             // Pipeline's constructor). Built lazily, bound only when a decal
             // is active so the undamaged path stays byte-identical.

@@ -1878,10 +1878,14 @@ TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
 // bare-metal crease must run along that diagonal, and a parallel line 8 px
 // off it (0.7 cells at pitch 8) must be plain hull. An axis-aligned grid
 // crosses both lines equally often and shows no such difference.
-TEST_F(ScuffTest, DentPanelGridIsAlignedToTheTrianglesLongestEdge) {
+TEST_F(ScuffTest, DentPanelGridFollowsTheQuadSidesNotItsDiagonal) {
     using namespace scuff_probe;
-    // Dark base so the bare-metal crease reads; the scratch ridges are 10%
-    // at dent=1 and both sample lines see the same ridge statistics.
+    // build_quad is BC's authoring pattern in miniature: one quad split into
+    // two triangles along the diagonal. The diagonal is the LONGEST edge of
+    // both triangles but is invisible on the hull -- the edges a viewer reads
+    // are the quad's sides. On Galaxy.nif 73% of triangles are such quad
+    // halves (measured 2026-09-21), so a grid keyed to the longest edge sits
+    // 45 degrees off every visible seam. Dark base so the crease reads.
     auto quad = build_quad(/*grey=*/80);
     renderer::Lighting amb;
     amb.ambient = glm::vec3(1.0f);
@@ -1895,14 +1899,24 @@ TEST_F(ScuffTest, DentPanelGridIsAlignedToTheTrianglesLongestEdge) {
         const size_t i = (static_cast<size_t>(y) * 256 + x) * 4;
         return double(buf[i] + buf[i+1] + buf[i+2]);
     };
-    double on = 0, off = 0; int n = 0;
-    for (int i = 110; i < 146; ++i) {          // along x == y through the centre
-        on  += sum(i, i);
-        off += sum(i + 4, i - 4);               // the parallel line x - y == 8 px
+    // A grid line passes through the origin whichever axis it takes, so the
+    // model x axis (screen row 128, y == 0) carries a crease when the grid
+    // follows the quad's sides. Rows 4 px either side are cell interior: the
+    // pitch is 8 model units, ~12 px at this camera.
+    double side_on = 0, side_off = 0, diag_on = 0, diag_off = 0; int n = 0;
+    for (int i = 110; i < 146; ++i) {
+        side_on  += 0.5 * (sum(i, 127) + sum(i, 128));
+        side_off += 0.5 * (sum(i, 123) + sum(i, 132));
+        diag_on  += sum(i, i);                    // along x == y through the centre
+        diag_off += sum(i + 4, i - 4);            // the parallel line x - y == 8 px
         ++n;
     }
-    on /= n; off /= n;
-    EXPECT_GT(on - off, 4.0) << "no crease along the longest-edge diagonal (on " << on << ", off " << off << ")";
+    side_on /= n; side_off /= n; diag_on /= n; diag_off /= n;
+    EXPECT_GT(side_on - side_off, 4.0)
+        << "no crease along the quad's side (on " << side_on << ", off " << side_off << ")";
+    EXPECT_LT(diag_on - diag_off, 2.0)
+        << "crease along the split diagonal, which is not a visible edge (on "
+        << diag_on << ", off " << diag_off << ")";
 }
 
 TEST_F(ScuffTest, DentPanelsDoNotTurnWithTheSlipDirection) {

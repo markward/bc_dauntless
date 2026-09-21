@@ -9,7 +9,9 @@ namespace assets { struct Model; }
 namespace renderer {
 
 /// Per-mesh buffer texture of one unit vector per TRIANGLE: the triangle's
-/// longest-edge direction in the model (body) frame, node transforms
+/// SHORTEST-edge direction in the model (body) frame (the longest edge of a
+/// BC quad half is the invisible split diagonal -- see scuff_panels.cc),
+/// node transforms
 /// composed, sign canonicalised so parallel edges on neighbouring triangles
 /// agree. The collision-scuff pass (opaque.frag: apply_scuffs) reads it by
 /// gl_PrimitiveID to orient the crumple-panel grid along the hull's own
