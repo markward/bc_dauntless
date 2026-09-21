@@ -390,9 +390,6 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                                    if tangent is not None else None),
                     dent=float(decal_dent),
                 )
-                _dev_log_decal(ship, wclass, vis_r * damage_decals.decal_radius_scale(wclass),
-                               damage_decals.decal_intensity(absorbed_hull),
-                               float(decal_dent), point)
 
     # 5. Hull carve (breach): deposit field strength; eligible ships only;
     # throttled. Same hull-absorbing, mesh-normal, renderer-present, committed-hit
@@ -441,25 +438,6 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     )
                     from engine.appc import hull_breakup
                     hull_breakup.after_carve(ship, iid, ship_instances)
-
-
-def _dev_log_decal(ship, wclass: int, radius: float, intensity: float,
-                   dent: float, point) -> None:
-    """Under --developer, one stderr line per decal emit: who, which class,
-    how big, how strong, and the WORLD point it anchors at. Live 2026-09-21:
-    "I can't see any decals" had no trail at all. print() to stderr, not
-    logging: the embedded host installs no handler below WARNING (dev_mode)."""
-    from engine import dev_mode
-    if not dev_mode.is_enabled():
-        return
-    import sys
-    try:
-        name = ship.GetName()
-    except Exception:  # noqa: BLE001 - diagnostics only
-        name = type(ship).__name__
-    print(f"[decal] {name!r} class={wclass} r={radius:.3f}GU i={intensity:.2f} "
-          f"dent={dent:.1f} at=({point.x:.1f},{point.y:.1f},{point.z:.1f})",
-          file=sys.stderr)
 
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:
