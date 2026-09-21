@@ -1,7 +1,7 @@
 """Developer-only "Collision Sim" mission.
 
 Spawns the player Galaxy parked directly ABOVE a static Romulan Warbird with
-0.2 GU of clearance, so a slow roll or pitch swings the saucer rim down into
+0.4 GU of clearance, so a slow roll or pitch swings the saucer rim down into
 the Warbird's wings: a reproducible low-speed hull contact for judging the
 collision scuff decals live (spec
 docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §5)
@@ -29,7 +29,8 @@ import loadspacehelper
 
 GALAXY_LOWEST_GU = 1.07      # below the Galaxy's centre (engineering hull)
 WARBIRD_HIGHEST_GU = 1.53    # above the Warbird's centre (dorsal spine)
-CLEARANCE_GU = 0.2           # gap between the two at rest
+CLEARANCE_GU = 0.4           # gap at rest; piece spheres carry ~0.1-0.4 GU of
+                             # slack round the plates, so 0.2 could touch at spawn
 
 
 def PreLoadAssets(pMission):
