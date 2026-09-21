@@ -101,10 +101,6 @@ def test_n2_cast_is_present_with_full_hull(scene, module):
         assert not s.IsDead(), s.GetName()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "bible N2: every non-player object spawns at RED alert unless the mission "
-    "scripts otherwise (E1M1's dock scene is green by its GreenAlert AI); "
-    "Dauntless spawns them green — only ships whose script sets an alert are red"))
 @pytest.mark.parametrize("module", ["Maelstrom.Episode2.E2M0.E2M0",
                                     "Maelstrom.Episode4.E4M4.E4M4"])
 def test_n2_non_player_ships_spawn_at_red_alert(scene, module):
