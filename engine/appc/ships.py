@@ -916,10 +916,11 @@ class ShipClass(DamageableObject):
         level powers them off.  Tractor stays under manual control (mirrors
         BC: tractor is toggled by its own UI, not by alert).
 
-        Shields raise at YELLOW or RED and drop at GREEN.  Raising snaps
-        every face to its max; dropping drains every face to zero.  This
-        collapses BC's gradual charge-up/down into an instant transition
-        — good enough for Phase 1 gameplay.
+        Shields raise at YELLOW or RED and drop at GREEN.  Neither
+        transition touches the stored face charge: TurnOff preserves it (the
+        percentage queries read 0 while off) and it keeps regenerating at
+        green — stbc-oracle bible §5.3 S5 measured the same 9.2–9.5/s at
+        red, yellow and green.
 
         In stock BC these side-effects flow through the XO menu after
         BridgeHandlers.SetAlertLevel; we collapse that layer until the

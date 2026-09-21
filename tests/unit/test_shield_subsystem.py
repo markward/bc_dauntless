@@ -131,10 +131,12 @@ def test_update_skips_unshielded_face():
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
 
 
-def test_update_powered_down_skips_regen():
-    """Generator explicitly powered down (TurnOff / alert GREEN / power
-    slider at 0%) → no regen. Shields default ON since the default-on fix,
-    so this drives TurnOff() rather than leaning on the constructor."""
+def test_update_powered_down_still_regenerates():
+    """A powered-down generator (TurnOff / alert GREEN) preserves its charge
+    AND keeps regenerating it: measured on the original exe, a face preset to
+    50 % climbs at the same 9.2–9.5/s at green as at red (stbc-oracle bible
+    §5.3 S5, `regen_green_face50`). Only the disabled/destroyed generator
+    stops regen (S6)."""
     s = ShieldSubsystem("Shield Generator")
     s.TurnOff()
     assert s.IsOn() == 0
@@ -142,7 +144,7 @@ def test_update_powered_down_skips_regen():
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
     s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 10.0)
     s.Update(1.0)
-    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 50.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 60.0
 
 
 def test_update_independent_per_face():

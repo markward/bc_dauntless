@@ -65,7 +65,7 @@ def test_s3_hull_share_of_a_volley_by_face_preset(oracle, preset, share):
 # ── §5.3 regeneration ────────────────────────────────────────────────────────────
 
 @bible_xfail("S4", "each face regains 6.15 points every 0.656 s (≈ 9.4/s) at full generator power",
-             "11.4/s (hardpoint 11/s × power) on a 0.5 s cadence")
+             "11/s (the hardpoint ShieldChargePerSecond as-is) on a 0.5 s cadence — the 0.85 factor between the authored 11 and the measured 9.4 has no known mechanism")
 def test_s4_face_regen_rate(oracle):
     """S4 — every capture after firing stops: −6.1/−6.2 steps every 0.656 s."""
     s = oracle(attacker="KessokHeavy", range_gu=57)
@@ -75,11 +75,16 @@ def test_s4_face_regen_rate(oracle):
     assert (s.face(FRONT) - before) / 6.0 == pytest.approx(9.4, rel=0.05)
 
 
-@bible_xfail("S5", "regen rate identical at red, yellow and green alert (9.2–9.5/s)",
-             "green alert drops the faces to 0 and suppresses regen")
 @pytest.mark.parametrize("alert", ["green", "yellow"])
 def test_s5_regen_identical_across_alert_levels(oracle, alert):
-    """S5 — `regen_{red,yellow,green}_face50`."""
+    """S5 — `regen_{red,yellow,green}_face50`: a face preset to 50 % climbs
+    at 9.2–9.5/s at all three.  Asserted against this build's own red-alert
+    rate (S4 owns the absolute) so a rate fix and a gate fix stay separate."""
+    red = oracle(attacker="KessokHeavy", range_gu=57)
+    red.preset_face(FRONT, 0.5)
+    b = red.face(FRONT); red.run(6.0)
+    r_red = (red.face(FRONT) - b) / 6.0
+    assert r_red > 0.0
     s = oracle(attacker="KessokHeavy", range_gu=57)
     App = s.App
     level = {"green": App.ShipClass.GREEN_ALERT, "yellow": App.ShipClass.YELLOW_ALERT}[alert]
@@ -87,11 +92,9 @@ def test_s5_regen_identical_across_alert_levels(oracle, alert):
     s.preset_face(FRONT, 0.5)
     before = s.face(FRONT)
     s.run(6.0)
-    assert (s.face(FRONT) - before) / 6.0 == pytest.approx(9.4, rel=0.05)
+    assert (s.face(FRONT) - before) / 6.0 == pytest.approx(r_red, rel=0.05)
 
 
-@bible_xfail("S5", "regen unchanged at 50 % generator power wanted",
-             "regen scales with GetNormalPowerPercentage()")
 def test_s5_regen_independent_of_generator_power_wanted(oracle):
     """S5 — `regen_power50_face50`."""
     full = oracle(attacker="KessokHeavy", range_gu=57)
@@ -119,8 +122,6 @@ def test_s6_disabled_generator_no_regen(oracle, condition):
     assert s.face(FRONT) <= before
 
 
-@bible_xfail("S6", "generator below DisabledPercentage ⇒ every face drops to 0 immediately",
-             "the faces keep their charge; only regen stops")
 @pytest.mark.parametrize("condition", [0.5, 0.2])
 def test_s6_disabled_generator_drops_every_face(oracle, condition):
     """S6 — `regen_gen{50,20}_face50`: all six faces read 0 with the

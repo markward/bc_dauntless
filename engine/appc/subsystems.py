@@ -1767,11 +1767,15 @@ class ShieldSubsystem(PoweredSubsystem):
         skip the whole loop. _charge_per_second values are NOT mutated;
         repair restores regen at the original rates on the next call.
 
-        Powered-down gate: when the generator is not IsOn (alert level
-        is GREEN, or nothing has raised shields yet), regen is suppressed.
-        ShipClass.SetAlertLevel drains the face values to zero on the same
-        transition; this gate just prevents Update from leaking charge
-        back in.
+        Neither the alert level nor the generator's power setting gates or
+        scales regen. Measured on the original exe (stbc-oracle bible §5.3,
+        S5): a face preset to 50 % climbs at 9.2–9.5/s at red, yellow AND
+        green alert (`regen_{red,yellow,green}_face50`), and at 50 %
+        generator power wanted (`regen_power50_face50`). So a powered-down
+        (green) generator keeps regenerating the charge it is preserving,
+        and the power factor does not enter the rate. What a reactor that
+        cannot supply NormalPowerPerSecond does is bible §10 open — not
+        modelled here either way.
         """
         # ── BC's 0.5 s charge cadence ────────────────────────────────────
         # ShieldClass's tick (0x0056A230, vtable slot 25) accumulates elapsed
@@ -1798,27 +1802,31 @@ class ShieldSubsystem(PoweredSubsystem):
         self._charge_accum = 0.0
 
         if _is_offline(self):
+            # A disabled (or destroyed) generator does not merely stop
+            # regenerating — every face drops to zero and stays there.
+            # Measured on the original exe (stbc-oracle bible §5.3 S6,
+            # `regen_gen{50,20}_face50`): with the generator's condition
+            # below its DisabledPercentage, all six faces read 0 at once and
+            # nothing comes back until it is repaired; then regen refills
+            # them from zero. The generator is binary: healthy ⇒ shields,
+            # disabled ⇒ none.
+            if any(self._current_shields):
+                for f in range(self.NUM_SHIELDS):
+                    self._current_shields[f] = 0.0
+                for f in range(self.NUM_SHIELDS):
+                    self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
+                self._shield_watchers[self.NUM_SHIELDS]._update(
+                    self.GetShieldPercentage())
             return
-        # Cloak-regen branch: while the ship is trying to cloak (CLOAKING or
-        # CLOAKED) its shields are "down" (hidden), but they RECHARGE anyway so
-        # the ship rebuilds them while hiding and comes back protected on decloak
-        # (2026-07-08 live-play fix). This deliberately bypasses the normal IsOn
-        # (raised) gate — "recharge during cloak even if they aren't up". A
-        # disabled/destroyed generator still can't regen (handled by _is_offline
-        # above). When NOT cloaking, the usual IsOn gate applies.
-        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
-        cloak = (ship.GetCloakingSubsystem()
-                 if (ship is not None and hasattr(ship, "GetCloakingSubsystem"))
-                 else None)
-        trying_cloak = bool(cloak is not None and cloak.IsTryingToCloak())
-        if not trying_cloak and not self.IsOn():
-            return
+        # No IsOn gate: a lowered (green-alert) or cloaked ship's hidden
+        # charge keeps regenerating — the cloak case was a 2026-07-08 live
+        # fix, the green case is the S5 capture above; they are the same rule.
         dt = float(dt)
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
             if mx == 0.0:
                 continue
-            new = self._current_shields[f] + self._charge_per_second[f] * self.GetNormalPowerPercentage() * dt
+            new = self._current_shields[f] + self._charge_per_second[f] * dt
             if new > mx:
                 new = mx
             self._current_shields[f] = new

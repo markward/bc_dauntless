@@ -163,8 +163,10 @@ def test_shields_recharge_while_cloaked_even_if_not_up():
         assert shields.GetCurrentShields(f) == 300.0     # recharged despite IsOn False
 
 
-def test_shields_do_not_recharge_when_generator_offline():
-    # A disabled/destroyed shield generator still can't recharge, even cloaked.
+def test_shields_drop_and_do_not_recharge_when_generator_offline():
+    # A disabled/destroyed shield generator can't recharge, even cloaked —
+    # and its faces drop to zero (stbc-oracle bible §5.3 S6: every face reads
+    # 0 with the generator below DisabledPercentage).
     ship, shields = _shielded_cloak_ship()
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         shields.SetCurrentShields(f, 200.0)
@@ -172,7 +174,7 @@ def test_shields_do_not_recharge_when_generator_offline():
     ship.GetCloakingSubsystem().InstantCloak()
     shields.Update(1.0)
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        assert shields.GetCurrentShields(f) == 200.0     # no regen while offline
+        assert shields.GetCurrentShields(f) == 0.0       # dropped, and no regen while offline
 
 
 # ── Sensor / targeting invisibility ───────────────────────────────────────────
