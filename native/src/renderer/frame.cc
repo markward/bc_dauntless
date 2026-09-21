@@ -10,7 +10,7 @@
 #include "renderer/aabb.h"
 #include <renderer/asset_path.h>
 #include <renderer/model_draw_helpers.h>
-#include <renderer/scuff_panels.h>
+#include <renderer/scuff_texture.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -739,19 +739,15 @@ void draw_model(const assets::Model& model,
             prog.set_int  ("u_normal_flip_g",
                 dauntless_normal_map::flip_green() ? 1 : 0);
 
-            // Collision-scuff panel orientation: this mesh's per-triangle
-            // edge directions (renderer/scuff_panels.h), read by
-            // gl_PrimitiveID inside a scuff on unit 7 (assigned once in
-            // Pipeline's constructor). Built lazily, bound only when a decal
-            // is active so the undamaged path stays byte-identical.
-            GLuint tri_dirs = 0;
-            if (decals_present) {
-                tri_dirs = scuff_tri_dir_texture(model, i, mesh_idx);
-            }
+            // Collision-scuff normal map (renderer/scuff_texture.h) on unit 7
+            // (assigned once in Pipeline's constructor). Loaded lazily, bound
+            // only when a decal is active so the undamaged path stays
+            // byte-identical; 0 => the shader draws scuffs without relief.
+            GLuint scuff_map = decals_present ? ensure_scuff_normal_texture() : 0;
             glActiveTexture(GL_TEXTURE7);
-            glBindTexture(GL_TEXTURE_BUFFER, tri_dirs);
+            glBindTexture(GL_TEXTURE_2D, scuff_map);
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
-            prog.set_int("u_tri_dirs_ok", tri_dirs != 0 ? 1 : 0);
+            prog.set_int("u_scuff_map_ok", scuff_map != 0 ? 1 : 0);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);

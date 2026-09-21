@@ -2,7 +2,8 @@
 #include <gtest/gtest.h>
 
 #include <renderer/frame.h>
-#include <renderer/scuff_panels.h>
+#include <renderer/scuff_texture.h>
+#include <renderer/asset_path.h>
 #include <renderer/dynamic_lights.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
@@ -1559,24 +1560,6 @@ double block_stddev(int x0, int y0, int w, int h) {
     return std::sqrt(var / (w * h));
 }
 
-// Mean |channel-sum difference| between neighbouring pixels, both axes.
-double block_neighbour_delta_px(int x0, int y0, int w, int h) {
-    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
-    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-    auto sum = [&](int x, int y) {
-        const int i = (y * w + x) * 4;
-        return double(buf[i] + buf[i+1] + buf[i+2]);
-    };
-    double acc = 0.0; int n = 0;
-    for (int y = 0; y + 1 < h; ++y)
-        for (int x = 0; x + 1 < w; ++x) {
-            acc += std::abs(sum(x, y) - sum(x + 1, y));
-            acc += std::abs(sum(x, y) - sum(x, y + 1));
-            n += 2;
-        }
-    return n ? acc / n : 0.0;
-}
-
 // Mean |second difference| of the channel sum over a block, both axes.
 // Aliasing (speckle) has large curvature at every pixel; a legitimate smooth
 // feature such as the dent's dish -- a near-linear gradient when it spans the
@@ -1604,10 +1587,33 @@ renderer::Lighting oblique() { return tangent_probe::dir_light(glm::vec3(0.5f, 0
 
 }  // namespace scuff_probe
 
+// Synthetic scuff normal map: a corrugation across U (the slip direction),
+// nx = A sin(2 pi x / period), ny = 0. 256 texels; with kScuffTexSpan 0.25 a
+// radius-60 scuff maps 480 model units onto the 256 texels, so `period` 8
+// texels is a 15-unit (~22 px) wave and the 40 px probe block sees ~2 cycles.
+assets::Image corrugated_normal_map(float amplitude = 0.5f, unsigned side = 256,
+                                    unsigned period = 8) {
+    assets::Image img;
+    img.width = side; img.height = side;
+    img.format = assets::Image::Format::RGB8;
+    img.pixels.assign(static_cast<size_t>(side) * side * 3, 0);
+    for (unsigned y = 0; y < side; ++y)
+        for (unsigned x = 0; x < side; ++x) {
+            const float nx = amplitude * std::sin(6.2831853f * float(x) / float(period));
+            const float nz = std::sqrt(std::max(0.0f, 1.0f - nx * nx));
+            const size_t i = (static_cast<size_t>(y) * side + x) * 3;
+            img.pixels[i + 0] = static_cast<unsigned char>(std::lround((nx * 0.5f + 0.5f) * 255.0f));
+            img.pixels[i + 1] = 128;
+            img.pixels[i + 2] = static_cast<unsigned char>(std::lround((nz * 0.5f + 0.5f) * 255.0f));
+        }
+    return img;
+}
+
 class ScuffTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window>   w;
     std::unique_ptr<renderer::Pipeline> p;
+    assets::Texture                     map;   // the synthetic scuff map
     void SetUp() override {
         try {
             w = std::make_unique<renderer::Window>(256, 256, "scuff", false);
@@ -1615,15 +1621,20 @@ protected:
             GTEST_SKIP() << "no GL context: " << e.what();
         }
         p = std::make_unique<renderer::Pipeline>();
-        // Fresh context per test: the per-mesh edge-direction buffer
-        // textures (scuff_panels) are keyed by Mesh address and hold GL ids
-        // from the previous context -- binding a stale name is
-        // GL_INVALID_OPERATION in core profile, and it showed up as
-        // order-dependent 1282s here.
-        renderer::reset_scuff_tri_dir_cache();
+        use_map(corrugated_normal_map());
+    }
+    // Serve `img` as the scuff normal map for the rest of the test.
+    void use_map(const assets::Image& img) {
+        renderer::set_scuff_normal_texture_override(0);
+        map = assets::upload_image(img, /*generate_mipmaps=*/true);
+        renderer::set_scuff_normal_texture_override(map.id());
     }
     void TearDown() override {
-        if (w) renderer::reset_scuff_tri_dir_cache();   // release in THIS context
+        renderer::set_scuff_normal_texture_override(0);
+        if (w) {
+            map = assets::Texture{};                    // release in THIS context
+            renderer::reset_scuff_normal_texture();
+        }
     }
 };
 
@@ -1785,158 +1796,77 @@ TEST_F(ScuffTest, TwoOverlappingScuffsDoNotStack) {
         << "relief doubled in the overlap (stddev " << sd_ab << " vs single " << sd_a << ")";
 }
 
-// ── Impact dents: crumpled facets in a dish, not scratches ────────────────
-// Live pass 2026-09-21 (photo of a rear-ended car): impact damage is flat
-// facets meeting at sharp creases inside an overall concave dish. The scuff's
-// `dent` weight selects that height model (1) over the grind's scratches (0).
+// ── The splatted map ───────────────────────────────────────────────────────
 
-// The dish tilts the rim inward, so under a light from +X the +X side of the
-// patch (whose normals lean toward -X, away from the light) is DARKER than the
-// -X side. The crumple (facets + dish) is a property of the CONTACT, not of
-// the solver branch -- a slow grind pressed into a hull buckles just like an
-// impact (live 2026-09-21) -- so both dent weights must show the dish.
-TEST_F(ScuffTest, DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts) {
+// With a flat map (every texel straight up) there is nothing to tilt: under
+// oblique light the scuff's core must be as flat as the undamaged quad, bar
+// the smooth grime fill. Proves the relief seen elsewhere comes from the map.
+TEST_F(ScuffTest, FlatMapGivesNoRelief) {
     using namespace scuff_probe;
     auto quad = build_quad();
-    renderer::Lighting side = tangent_probe::dir_light(glm::vec3(0.8f, 0.0f, 0.6f));
-    // Whole half-annuli (r ~ 0.35..0.9, 50 px wide x 60 px tall each side):
-    // the random facet tilts (24-unit cells at this radius) average out over
-    // ~10 cells per side, leaving the dish's systematic lean.
-    auto rim_pair = [&]() {
-        const double lit_side  = block_mean(128 - 80, 98, 50, 60);   // -X side
-        const double dark_side = block_mean(128 + 30, 98, 50, 60);   // +X side
-        return std::make_pair(lit_side, dark_side);
-    };
-    for (float dentw : {0.0f, 1.0f}) {
-        Seed s; s.active = true; s.dent = dentw;
-        render(*quad, *p, side, s);
-        ASSERT_EQ(glGetError(), GL_NO_ERROR);
-        auto [lit, dark] = rim_pair();
-        EXPECT_GT(lit - dark, 10.0) << "dent=" << dentw << " rim shows no dish: " << lit << " vs " << dark;
-    }
-}
-
-// Facets are piecewise-FLAT: inside a cell the shading is constant and it
-// jumps only at the creases, so relative to the patch's overall spread the
-// typical neighbour-to-neighbour step is SMALL. Scratches change every couple
-// of pixels, so their neighbour step is a large fraction of the spread.
-// Measured as mean |channel-sum difference between neighbours| / stddev.
-TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
-    using namespace scuff_probe;
-    auto quad = build_quad();
-    auto roughness = [&]() {
-        const int x0 = 108, y0 = 108, w = 40, h = 40;
-        std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
-        glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-        auto sum = [&](int x, int y) {
-            const int i = (y * w + x) * 4;
-            return double(buf[i] + buf[i+1] + buf[i+2]);
-        };
-        // Both directions: scratches run ALONG the tangent (+x here), so
-        // horizontal neighbours alone would never see them.
-        double acc = 0.0; int n = 0;
-        for (int y = 0; y + 1 < h; ++y)
-            for (int x = 0; x + 1 < w; ++x) {
-                acc += std::abs(sum(x, y) - sum(x + 1, y));
-                acc += std::abs(sum(x, y) - sum(x, y + 1));
-                n += 2;
-            }
-        const double sd = block_stddev(x0, y0, w, h);
-        return sd > 0.0 ? (acc / n) / sd : 0.0;
-    };
-    Seed scrape; scrape.active = true; scrape.dent = 0.0f;
-    render(*quad, *p, oblique(), scrape);
-    const double r_scrape = roughness();
-    Seed dent = scrape; dent.dent = 1.0f;
-    render(*quad, *p, oblique(), dent);
+    Seed s; s.active = true;
+    render(*quad, *p, oblique(), s);
+    const double corrugated = block_stddev(108, 108, 40, 40);
+    ASSERT_GT(corrugated, 6.0) << "rig sanity: the corrugated map must show relief";
+    use_map(tangent_probe::uniform_rgba(128, 128, 255));
+    render(*quad, *p, oblique(), s);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const double r_dent  = roughness();
-    const double sd_dent = block_stddev(108, 108, 40, 40);
-    EXPECT_GT(sd_dent, 6.0) << "dent shows no relief at all";
-    // Measured 0.27 vs 0.41 with 9 px plating panels (the crumple alone has
-    // a border every ~9 px; the scratches change every couple of pixels).
-    EXPECT_LT(r_dent, r_scrape * 0.8)
-        << "dent is as rough pixel-to-pixel as scratches (" << r_dent << " vs " << r_scrape << ")";
+    EXPECT_LT(block_stddev(108, 108, 40, 40), 1.5) << "relief with a flat map";
 }
 
-// Live pass 2026-09-21 (fifth, from a mockup): the crumple panels are the
-// hull's own PLATING -- a regular rectangular grid aligned with the texture,
-// fixed pitch, independent of the dent's size or slip direction. So the
-// facet cells come from the hull UVs, and their layout must NOT turn when the
-// decal's slip tangent does. Under head-on light (direction-blind) the
-// shading jumps only at panel borders; the column profile of horizontal
-// jumps therefore matches between two renders whose tangents differ by 45deg
-// (Worley cells in the decal frame turned with the tangent -- correlation
-// ~0). The near-diagonal scratch residual is 10% at dent=1 and averages out
-// along columns.
-// Live pass 2026-09-21 (sixth): the panel grid takes its ORIENTATION from
-// the mesh -- each triangle's longest edge and its in-plane perpendicular --
-// so on a saucer wedge the panels run radial + concentric like the plating.
-// build_quad is split along the diagonal V0->V2, the longest edge of both
-// triangles, so the grid's second axis is (-1, 1)/sqrt2 and the line x == y
-// is a grid line by construction: under ambient-only light (no relief) the
-// bare-metal crease must run along that diagonal, and a parallel line 8 px
-// off it (0.7 cells at pitch 8) must be plain hull. An axis-aligned grid
-// crosses both lines equally often and shows no such difference.
-TEST_F(ScuffTest, DentPanelGridFollowsTheQuadSidesNotItsDiagonal) {
+// The map is sampled in the scuff's SLIP frame: the corrugation runs across
+// U, so with the tangent along body X the bare-metal ridges are vertical
+// stripes, and with the tangent along body Y they are horizontal ones.
+// Ambient-only light, so only the albedo (crease) term is measured.
+TEST_F(ScuffTest, MapTurnsWithTheSlipDirection) {
     using namespace scuff_probe;
-    // build_quad is BC's authoring pattern in miniature: one quad split into
-    // two triangles along the diagonal. The diagonal is the LONGEST edge of
-    // both triangles but is invisible on the hull -- the edges a viewer reads
-    // are the quad's sides. On Galaxy.nif 73% of triangles are such quad
-    // halves (measured 2026-09-21), so a grid keyed to the longest edge sits
-    // 45 degrees off every visible seam. Dark base so the crease reads.
     auto quad = build_quad(/*grey=*/80);
     renderer::Lighting amb;
     amb.ambient = glm::vec3(1.0f);
     amb.directional_count = 0;
-    Seed s; s.active = true; s.dent = 1.0f; s.radius = 120.0f;
+    auto profile_sd = [&](bool columns) {
+        std::vector<unsigned char> buf(40 * 40 * 4);
+        glReadPixels(108, 108, 40, 40, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        std::vector<double> prof(40, 0.0);
+        for (int y = 0; y < 40; ++y)
+            for (int x = 0; x < 40; ++x) {
+                const int i = (y * 40 + x) * 4;
+                prof[columns ? x : y] += buf[i] + buf[i+1] + buf[i+2];
+            }
+        double m = 0; for (double v : prof) m += v; m /= 40.0;
+        double var = 0; for (double v : prof) var += (v - m) * (v - m);
+        return std::sqrt(var / 40.0) / 40.0;
+    };
+    Seed s; s.active = true; s.tangent = glm::vec3(1, 0, 0);
+    render(*quad, *p, amb, s);
+    const double col_x = profile_sd(true), row_x = profile_sd(false);
+    s.tangent = glm::vec3(0, 1, 0);
     render(*quad, *p, amb, s);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    std::vector<unsigned char> buf(256 * 256 * 4);
-    glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-    auto sum = [&](int x, int y) {
-        const size_t i = (static_cast<size_t>(y) * 256 + x) * 4;
-        return double(buf[i] + buf[i+1] + buf[i+2]);
-    };
-    // A grid line passes through the origin whichever axis it takes, so the
-    // model x axis (screen row 128, y == 0) carries a crease when the grid
-    // follows the quad's sides. Rows 3 px either side are cell centres: the
-    // pitch is 4 model units, ~6 px at this camera.
-    double side_on = 0, side_off = 0, diag_on = 0, diag_off = 0; int n = 0;
-    for (int i = 110; i < 146; ++i) {
-        side_on  += 0.5 * (sum(i, 127) + sum(i, 128));
-        side_off += 0.5 * (sum(i, 124) + sum(i, 131));
-        diag_on  += sum(i, i);                    // along x == y through the centre
-        diag_off += sum(i + 4, i - 4);            // the parallel line x - y == 8 px
-        ++n;
-    }
-    side_on /= n; side_off /= n; diag_on /= n; diag_off /= n;
-    EXPECT_GT(side_on - side_off, 4.0)
-        << "no crease along the quad's side (on " << side_on << ", off " << side_off << ")";
-    EXPECT_LT(diag_on - diag_off, 2.0)
-        << "crease along the split diagonal, which is not a visible edge (on "
-        << diag_on << ", off " << diag_off << ")";
+    const double col_y = profile_sd(true), row_y = profile_sd(false);
+    EXPECT_GT(col_x, 3.0 * row_x) << "tangent X: stripes are not vertical (" << col_x << " vs " << row_x << ")";
+    EXPECT_GT(row_y, 3.0 * col_y) << "tangent Y: stripes are not horizontal (" << row_y << " vs " << col_y << ")";
 }
 
-TEST_F(ScuffTest, DentPanelsDoNotTurnWithTheSlipDirection) {
+// Two scuffs must not be the same stamp: each samples the map at its own
+// offset, so the same slip frame at two points gives a different phase. The
+// seeds sit 30 units apart along the stripes (Y), so the shared centre block
+// would see IDENTICAL columns were the offset the same.
+TEST_F(ScuffTest, TwoScuffsSampleDifferentPatchesOfTheMap) {
     using namespace scuff_probe;
-    auto quad = build_quad();
-    renderer::Lighting head_on = tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f));
+    auto quad = build_quad(/*grey=*/80);
+    renderer::Lighting amb;
+    amb.ambient = glm::vec3(1.0f);
+    amb.directional_count = 0;
     auto column_profile = [&]() {
-        const int x0 = 108, y0 = 108, w = 40, h = 40;
-        std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
-        glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-        auto sum = [&](int x, int y) {
-            const int i = (y * w + x) * 4;
-            return double(buf[i] + buf[i+1] + buf[i+2]);
-        };
-        // Count only real JUMPS (> 6 levels): the dish is a smooth radial
-        // gradient common to both renders and must not carry the correlation.
-        std::vector<double> prof(w - 1, 0.0);
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x + 1 < w; ++x)
-                if (std::abs(sum(x + 1, y) - sum(x, y)) > 6.0) prof[x] += 1.0;
+        std::vector<unsigned char> buf(40 * 16 * 4);
+        glReadPixels(108, 120, 40, 16, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        std::vector<double> prof(40, 0.0);
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 40; ++x) {
+                const int i = (y * 40 + x) * 4;
+                prof[x] += buf[i] + buf[i+1] + buf[i+2];
+            }
         return prof;
     };
     auto correlation = [](const std::vector<double>& a, const std::vector<double>& b) {
@@ -1949,33 +1879,49 @@ TEST_F(ScuffTest, DentPanelsDoNotTurnWithTheSlipDirection) {
         }
         return (saa > 0 && sbb > 0) ? sab / std::sqrt(saa * sbb) : 0.0;
     };
-    Seed a; a.active = true; a.dent = 1.0f; a.radius = 40.0f; a.tangent = glm::vec3(1, 0, 0);
-    render(*quad, *p, head_on, a);
+    Seed a; a.active = true; a.point = glm::vec3(0.0f, -15.0f, 0.0f);
+    render(*quad, *p, amb, a);
     const auto pa = column_profile();
-    Seed b = a; b.tangent = glm::vec3(0.7071f, 0.7071f, 0.0f);
-    render(*quad, *p, head_on, b);
+    Seed b = a; b.point = glm::vec3(0.0f, +15.0f, 0.0f);
+    render(*quad, *p, amb, b);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const auto pb = column_profile();
-    double total = 0; for (double v : pa) total += v;
-    ASSERT_GT(total, 40.0) << "rig sanity: no panel borders in the block";
-    // Measured: 0.999 with texture-grid panels, 0.06 with Worley cells.
-    EXPECT_GT(correlation(pa, pb), 0.9)
-        << "panel borders moved when the slip tangent turned: the cells are not texture-aligned";
+    // Control: the same seed twice is perfectly correlated.
+    render(*quad, *p, amb, a);
+    ASSERT_GT(correlation(pa, column_profile()), 0.99) << "rig sanity: a re-render must match";
+    EXPECT_LT(correlation(pa, pb), 0.8)
+        << "two scuffs show the same patch of the map (correlation " << correlation(pa, pb) << ")";
 }
 
-// At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength
-// is 0.28 px (pure aliasing if not faded) and the 24-unit buckle is 2.2 px
-// (inside the fade band). The quad is ~18 px wide; sample its central 12x12.
-//
-// Seed radius 200 (not the 100-unit quad half-extent): the sampled 12x12
-// block's corners reach ~92 model units from the centre, which at radius
-// 100 falls inside the grime rim's transition band (r in [0.75, 0.95] =
-// 75-95 units) — and the rim is deliberately NOT band-limited (it is a
-// low-frequency darkening, not procedural relief/albedo), so that band's
-// own sharp edge reads as sparkle unrelated to what this test checks. At
-// radius 200 the whole quad (half-diagonal ~141 units) stays under r=0.71,
-// below the rim's 0.75 onset, so the rim never engages and the measurement
-// isolates the relief/scratch band-limiting under test.
+// No map on disk (a checkout without the texture, or a bad file): the scuff
+// still draws its albedo terms rather than vanishing -- the same frame as a
+// flat map, not the undamaged quad. Proved with the project asset root
+// pointed at a directory that does not exist.
+TEST_F(ScuffTest, MissingMapStillDrawsTheAlbedoTerms) {
+    using namespace scuff_probe;
+    auto quad = build_quad(/*grey=*/80);
+    renderer::Lighting amb;
+    amb.ambient = glm::vec3(1.0f);
+    amb.directional_count = 0;
+    Seed s; s.active = true;
+    use_map(tangent_probe::uniform_rgba(128, 128, 255));
+    render(*quad, *p, amb, s);
+    const auto flat = read_frame();
+    const std::string saved_root = renderer::project_asset_root();
+    renderer::set_scuff_normal_texture_override(0);
+    renderer::reset_scuff_normal_texture();
+    renderer::set_project_asset_root("/nonexistent/dauntless-scuff-test");
+    render(*quad, *p, amb, s);
+    const GLenum err = glGetError();
+    const auto missing = read_frame();
+    renderer::set_project_asset_root(saved_root);
+    ASSERT_EQ(err, GL_NO_ERROR);
+    Seed none;
+    render(*quad, *p, amb, none);
+    ASSERT_GT(differing_texels(flat, read_frame()), 1000u) << "rig sanity: the scuff must be visible";
+    EXPECT_EQ(differing_texels(flat, missing), 0u) << "a missing map changed the albedo-only frame";
+}
+
 TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
     using namespace scuff_probe;
     auto quad = build_quad();
@@ -1985,16 +1931,19 @@ TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
     ASSERT_GT(near_d, 4.0) << "rig sanity: relief must be visible up close";
 
     // Aliasing is SENSITIVITY TO SUB-PIXEL PHASE: at eye_z 2400 (~0.09 px per
-    // unit) the 3-unit scratches and 24-unit facets are below a pixel, so if
-    // they are properly faded, nudging the seed by half a unit (0.045 px)
+    // unit) the map's 15-unit corrugation and the edge noise are below a
+    // pixel, so if they are properly faded (mipmaps via textureGrad, the
+    // band-limited edge), nudging the INSTANCE by half a unit (0.045 px)
     // must leave the image essentially unchanged; unfaded, the speckle they
-    // alias into re-rolls wholesale. A single-frame variance/curvature cannot
+    // alias into re-rolls wholesale. The instance, not the seed: the seed's
+    // body-frame point also keys the scuff's patch of the map, so moving it
+    // is a different patch by design, not aliasing. A single-frame variance/curvature cannot
     // tell a legitimately 5 px dent from speckle -- this can.
     render(*quad, *p, oblique(), s, /*eye_z=*/2400.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const auto a = read_frame();
-    Seed t = s; t.point = glm::vec3(0.5f, 0.3f, 0.0f);
-    render(*quad, *p, oblique(), t, /*eye_z=*/2400.0f);
+    render(*quad, *p, oblique(), s, /*eye_z=*/2400.0f,
+           glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, 0.3f, 0.0f)));
     const auto b = read_frame();
     double acc = 0.0; int n = 0;
     for (int y = 120; y < 136; ++y)

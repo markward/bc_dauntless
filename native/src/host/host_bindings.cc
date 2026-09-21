@@ -26,7 +26,7 @@
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
-#include <renderer/scuff_panels.h>
+#include <renderer/scuff_texture.h>
 #include <renderer/frame_timer.h>
 #include <renderer/lighting.h>
 #include <renderer/dynamic_lights.h>
@@ -702,10 +702,8 @@ void shutdown() {
     // collides with a 3D texture id there (GL_INVALID_OPERATION). See
     // renderer::reset_damage_decal_texture().
     renderer::reset_damage_decal_texture();
-    // Same hazard for the collision-scuff per-mesh edge-direction buffer
-    // textures (renderer/scuff_panels.h): GL objects keyed by Mesh address,
-    // released here while the context is current and before the meshes go.
-    renderer::reset_scuff_tri_dir_cache();
+    // Same hazard for the collision-scuff normal map (renderer/scuff_texture.h).
+    renderer::reset_scuff_normal_texture();
     g_loaded_models.clear();
     // Handle-recycling hazard: see the matching call in init(). Pure CPU
     // state (no GL), safe regardless of context currency.
@@ -1732,6 +1730,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Absolute path to the BC game install. Every relative asset path "
           "the renderer resolves is joined onto this. Default is the literal "
           "\"game\" (cwd-relative). Callable more than once.");
+
+    m.def("set_project_asset_root",
+          [](const std::string& root) { renderer::set_project_asset_root(root); },
+          py::arg("root"),
+          "Absolute path to the checkout's native/assets: project-authored "
+          "renderer textures (the collision-scuff normal map) resolve against "
+          "this, never the BC install. Pushed at boot beside set_game_root.");
 
     m.def("set_asset_overrides",
           [](const std::map<std::string, std::string>& overrides) {

@@ -41,6 +41,16 @@ inline bool is_absolute_asset_path(const std::string& path) {
 void set_game_root(const std::string& root);
 const std::string& game_root();
 
+/// Where PROJECT-authored renderer assets live (<checkout>/native/assets):
+/// the collision-scuff normal map, the CEF UI. Not BC content, so never under
+/// game_root(); mods do not override it. Defaults to the cwd-relative
+/// checkout layout; host_loop pushes the absolute path at boot beside
+/// set_game_root.
+void set_project_asset_root(const std::string& root);
+const std::string& project_asset_root();
+/// project_asset_root() + "/" + rel. No override lookup, no "game/" repair.
+std::string project_asset_path(const std::string& rel);
+
 /// Files supplied by installed mods, keyed by the case-folded relative path
 /// (lowercase, forward slashes) that engine/mods.py builds. A mod's file
 /// lives outside the game root, so no prefix can reach it -- this map is the

@@ -7614,6 +7614,10 @@ def run(mission_name: Optional[str] = None,
     # AttributeError here -- and before any pass constructs: their texture
     # constants are relative now.
     r.set_game_root(str(_paths.game_root()))
+    # Project-authored renderer assets (native/assets/): the collision-scuff
+    # normal map resolves against this, not the BC install. Bare, like the
+    # two pushes around it.
+    r.set_project_asset_root(str(_paths.project_asset_root()))
     # Where the native HullVolumeCache bakes/reads .dhv files for per-instance
     # hull damage fields. Pushed here, right alongside set_game_root, for the
     # same reason: it must land before the first hull volume lookup, and

@@ -175,54 +175,60 @@ T    = t;  B = cross(dn, t)          // right-handed local frame on the hull
 d    = p_body - point
 u    = dot(d, T);  w = dot(d, B)     // model units
 r    = length(d) / radius            // 0 centre .. 1 edge
-edge = fbm((u, w) · k_e) · bl_e            // noise-broken edge; inward-only, band-limited
+edge = fbm((u, w) · k_e) · bl_e · r²       // noise-broken edge; inward-only, band-limited, fades in with r
 r_n  = r · (1 + kScuffEdgeNoise · edge)     // r_n >= r, so the r >= 1 cull stays exact
-win  = (1 - smoothstep(0.35, 1.0, r_n)) * intensity * wn
+win  = (1 - smoothstep(0.25, 1.0, r_n)) * intensity * wn
 wn   = smoothstep(NORMAL_MIN, 1.0, dot(n_body, dn))   // same far-face guard as the other classes
 ```
 
-Height field `h(u, w)` — two analytic terms, gradient in closed form:
+**The relief is a splatted normal map, not a procedural height field.**
+(Eighth live pass, 2026-09-21: every procedural version — scratches +
+buckle waves, then a crumple of dished facets on a mesh-oriented panel grid —
+read as a stencil or a grid, however it was aligned. Mark supplied a 2048²
+crumpled-sheet-metal normal map instead; use it as is.) The map is a project
+asset, `native/assets/textures/scuff_normal.png` (or `.tga`; OpenGL +Y
+green, `kScuffFlipGreen` if not), loaded once per GL session by
+`renderer/scuff_texture.{h,cc}` (`ensure_scuff_normal_texture`, mipmapped,
+`GL_REPEAT`) against a new **project asset root** — `renderer::
+set_project_asset_root`, pushed at boot beside `set_game_root` from
+`engine.paths.project_asset_root()` (`<checkout>/native/assets`), because the
+binary only knew BC's install. Bound on unit 7 (assigned once in `Pipeline`'s
+constructor) only while a decal is present; absent or undecodable ⇒ logged
+once, `u_scuff_map_ok = 0`, and the scuff draws its albedo terms with no
+relief rather than vanishing.
 
-| term | shape | what it sells |
-|---|---|---|
-| buckle (grind) | `A_b · sin(k_b·u + φ) · win` | compression waves with crests **perpendicular** to the slip — the "waves in the metal" |
-| scratches (grind) | `A_s · noise1(w · k_s) · win` | grooves running **along** the slip; varies across `w`, near-constant along `u` |
-| panels | one random constant tilt per cell of a rectangular grid on the surface, pitch `kScuffPanelPitch` model units, **oriented by the mesh**: each triangle's **shortest** edge and its in-plane perpendicular (BC hulls are quads split along a diagonal; the diagonal is the longest edge of both halves and invisible — 73% of Galaxy.nif's triangles, measured 2026-09-21 — so a longest-edge grid sat 45° off every visible seam, the seventh live pass), read from a per-mesh buffer texture of edge directions (`renderer/scuff_panels.h`, `gl_PrimitiveID`, unit 7) — on a saucer wedge that is radial + concentric, like the plating (sixth live pass, from a mockup). Shared origin, so same-orientation neighbours continue one grid and the seam falls on the mesh edge | piecewise-**flat** panels whose normals jump at the grid lines — the crease lines of crumpled sheet metal; the same panel bends the same way under every scuff. Tried and removed: Worley cells in the decal frame (an irregular mosaic); one facet per mesh triangle (a wireframe — ships are NOT tessellated, but the rim/superstructure geometry is fine); a grid in UV space (the saucer's plating is painted radially on a planar 256² map — no UV grid follows it) |
-| dish (impact) | `h = −D·R·(1 − r²)²` → `dh/dρ = 4·D·r·(1 − r²)` radially | the overall concave dent: rim normals lean inward, so one side faces the light and the other away |
-| creases (albedo) | thin band along the panel grid lines | bare metal where two panels meet |
+Per scuff, in the slip frame:
 
-**The crumple is always on; `dent` (`u_decal_c[i].z`) only scales the
-scratching.** Added after the second live pass (a photo of a rear-ended car:
-impact damage is facets and creases in a dish) and corrected after the third
-(a slow grind pressed into a Warbird's wing buckles exactly the same way —
-the crumple is a property of the contact, not of the solver branch). The
-**impact** path tags `dent = 1` (facets + dish, `kScuffDentScratch` = 10 % of
-the scratch term); the **grind** path tags `dent = 0` (facets + dish + the
-full scratch field dragged across the buckled panels). A grind merging into
-an earlier impact keeps the max. Threaded `collisions → apply_hit(decal_dent=) →
-dispatch(decal_dent=) → host_io.damage_decal_add(dent=) → binding → ring`.
+```
+scale = kScuffTexSpan / (2 · radius)                 // uv per model unit
+off   = (hash(point.xy + point.z), hash(point.yz + point.x))   // a different patch per scuff
+uv    = (u, w) · scale + off
+s     = textureGrad(u_scuff_map, uv, duv/dx, duv/dy) · 2 − 1   // explicit gradients: the loop
+                                                                // `continue`s per decal, so implicit
+                                                                // LOD is undefined; dp/dx, dp/dy
+                                                                // are taken once before the loop
+s.z   = max(s.z, 0.05)
+gain  = kScuffRelief · mix(kScuffGrindRelief, 1, dent)
+g     = (s.xy / s.z) · gain · win                     // slope: n' ∝ n + (x/z)·T + (y/z)·B
+crease = smoothstep(0.1, kScuffMetalTilt, |s.xy|) · win
+```
 
-`φ` is hashed from the decal's `point` so adjacent scuffs don't phase-lock.
-`noise1` is a cheap 1-D value noise (reuse the existing `fbm`/hash helpers in
-the shader). Gradient is analytic: `∂h/∂u = A_b·k_b·cos(k_b·u+φ)·win`,
-`∂h/∂w = A_s·noise1'(w·k_s)·k_s·win` (finite-difference the noise once, two
-taps — it is 1-D). The `win` derivative is dropped deliberately: the windowed
-edge is soft and a slope discontinuity there is invisible.
-
-**Band-limiting is mandatory** for procedural relief. Each term's amplitude is
-multiplied by `1 − smoothstep(0.25, 0.5, fw_x · k / (2π))` for its own
-axis `x ∈ {u, w}` and frequency `k`, so a term fades out before its wavelength
-falls under ~2–4 pixels. `fw_x` is the per-pixel footprint of that axis,
-estimated as `dot(abs(T), fwidth(p_body))` — `fwidth(p_body)` is taken ONCE
-before the loop, in uniform control flow; a `fwidth` inside a loop that
-`continue`s per decal is undefined in GLSL. This is the procedural stand-in for the Toksvig
-`sigma` the texture path has; without it scratches sparkle at range.
+Each scuff is therefore a differently placed patch of the same sheet,
+rotated by its own slip direction — no two are the same stamp. `dent`
+(`u_decal_c[i].z`; impact 1 / grind 0, merges keep the max, threaded
+`collisions → apply_hit(decal_dent=) → dispatch(decal_dent=) →
+host_io.damage_decal_add(dent=) → binding → ring`) now only scales the relief
+gain. Mipmaps are the band limit at range; the edge noise is still
+band-limited by `scuff_bandlimit(fwidth(p_body) …)`, taken once before the
+loop in uniform control flow, and fades in with `r²` so the plateau stays a
+plateau (multiplicative noise alone mottled the grime in the core).
 
 Accumulation and perturbation (once per fragment, after the loop):
 
 ```
 over  = 1 - cov                            // "over" compositing: what this scuff may still add
-dn_ws -= (g_u·T_ws + g_w·B_ws) · over      // T_ws = normalize(R · T), B_ws = normalize(R · B), R = u_ship_world_rot
+dn_ws += (g.x·T_ws + g.y·B_ws) · over      // T_ws = normalize(R · T), B_ws = normalize(R · B), R = u_ship_world_rot
+metal_mask += crease · over                // NOT max: two patches' max is brighter than either
 cov   += win · over                        // union coverage of every scuff so far
 n_shade = normalize(n_shade + dn_ws)       // once, after the loop
 ```
@@ -236,12 +242,10 @@ looks like one scuff.
 A `u_ship_world_rot` (`mat3`) uniform is set beside `u_ship_world_inv` when
 `u_decal_count > 0`; the inverse is not recomputed in the shader.
 
-**Albedo** (same pass, before lighting):
+**Albedo** (same pass, before lighting), once after the loop when `cov > 0`:
 
 ```
-scratch_mask = max over scuffs of smoothstep(0.55, 0.8, noise1(w·k_s) * 0.5 + 0.5) * win
-// once, after the loop, when cov > 0:
-base.rgb = mix(base.rgb, kScuffMetal, scratch_mask * kScuffAlbedoGain)
+base.rgb = mix(base.rgb, kScuffMetal, metal_mask * kScuffAlbedoGain)   // bare metal on the creases
 base.rgb *= 1.0 - kScuffGrime * cov
 ```
 
@@ -249,25 +253,24 @@ base.rgb *= 1.0 - kScuffGrime * cov
 darkest where coverage is full and fading out through the noisy edge. The
 first pass drew grime as a rim *ring* (`r` 0.75–0.95), which put a circle
 round every scuff and made a streak read as crossing rings — do not bring
-the ring back. Both are tuning constants.
+the ring back.
 
 Contract (identical to the material normal map's): the scuff pass writes
 **only `n_shade` and `base`**. It never touches the shadow-bias normal, the
 Fresnel rim, `n_body`, the carve loop, `decal_emissive`, or `glow_flicker`.
 
 Tuning constants are `kScuff*` `const`s at the top of `opaque.frag` (rebuild to
-tune), the same convention as `kHullCarve*`. Initial values (model units,
-Galaxy hull ≈ ±178): `A_b = 0.35`, `k_b = 2π/24` (24-unit wavelength),
-`A_s = 0.12`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.4`, `kScuffGrime = 0.25`,
-`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; crumple: `kScuffPanelPitch = 4`,
-`kScuffFacetTilt = 0.60`, `kScuffDishDepth = 0.15`, `kScuffCreaseWidth = 0.12`,
-`kScuffDentScratch = 0.1`.
-These are starting points for the live pass, not measured values.
+tune), the same convention as `kHullCarve*`: `kScuffTexSpan = 0.25` (fraction
+of the map one scuff's diameter spans), `kScuffRelief = 1.0`,
+`kScuffGrindRelief = 0.6`, `kScuffFlipGreen = 0`, `kScuffMetalTilt = 0.35`,
+`kScuffAlbedoGain = 0.4`, `kScuffGrime = 0.25`, `kScuffEdgeNoise = 0.6`,
+`kScuffEdgeFreq = 1/6`. Starting points for the live pass, not measured values.
 
 Cost: zero when `u_decal_count == 0` (undamaged hull — the production path
 stays byte-identical, enforced by the existing empty-ring baseline test). With
 decals present it adds one loop over ≤ 24 records with an early `continue` on
-class; a Scuff record costs two `sin`/`cos`, two noise taps and two `fwidth`.
+class; a Scuff record costs one `textureGrad`, three noise taps for the edge
+and the frame maths.
 
 ### 5. Live-tuning vehicle
 
@@ -320,37 +323,37 @@ lit quad, directional light, no material normal map:
 - `ScuffHasNoEmberAndLeavesGlowUntouched`: `decal_emissive` contribution zero
   (probe code path / render with zero diffuse and assert black inside the
   patch), glow map pixels unchanged.
-- `ScuffIsBandLimitedAtDistance`: aliasing measured as sensitivity to a
-  sub-pixel (0.045 px) shift of the seed at range — a band-limited scuff
-  changes by < 2 levels/px, an unfaded one re-rolls its speckle (8.6 measured
-  with the fade forced off). Variance/curvature could not tell a legitimately
-  5 px dent from speckle.
+- `IsBandLimitedSoItDoesNotSparkleAtRange`: aliasing measured as sensitivity
+  to a sub-pixel (0.045 px) shift of the **instance** at range — a
+  band-limited scuff changes by < 2 levels/px. The instance, not the seed:
+  the seed's body point keys the scuff's patch of the map, so moving it is
+  a different patch by design (3.6 measured that way), not aliasing.
 - `ScuffDoesNotMirrorToTheFarFace`: a scuff seeded on +Z leaves the −Z face
   byte-identical (the `wn` guard).
-- `DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts`: under a
-  grazing light the rim is asymmetric (dish) at both dent weights.
 - `RotatedInstanceIsTheIdentityImageRotated`: rotating ship + body tangent +
   light by +90° yields the identity image rotated +90° in screen space (to a
   ~100-texel tolerance from the rasteriser's edge tie rule; a transposed
   `u_ship_world_rot` differs on ~16,800 — measured).
-- `DentIsPiecewiseFlatFacetsNotScratches`: mean |neighbour Δ| / stddev of a
-  dent is under half a scrape's (few large jumps at creases vs. change every
-  couple of pixels).
-- `DentPanelGridFollowsTheQuadSidesNotItsDiagonal`: on the diagonal-split
-  quad a bare-metal crease runs along the model x axis (a quad side) under
-  ambient-only light and NOT along the `x = y` diagonal; measured 58 levels
-  along the diagonal and 1.5 along the side with the longest-edge picker.
-- `DentPanelsDoNotTurnWithTheSlipDirection`: under head-on light the column
-  profile of shading jumps is the same for two scuffs whose slip tangents
-  differ by 45° (correlation 0.999 measured; Worley cells in the decal frame
-  gave 0.06).
+- The map tests run against a **synthetic** map served through
+  `set_scuff_normal_texture_override` (a 256² corrugation across U,
+  amplitude 0.5, 8-texel period), never the shipped file:
+  - `FlatMapGivesNoRelief`: a straight-up map leaves the core as flat as the
+    undamaged quad (stddev < 1.5; the corrugated map > 6).
+  - `MapTurnsWithTheSlipDirection`: tangent X ⇒ vertical bare-metal stripes,
+    tangent Y ⇒ horizontal (column vs row profile deviation, ×3).
+  - `TwoScuffsSampleDifferentPatchesOfTheMap`: two seeds in the same slip
+    frame give column profiles with correlation < 0.8 (a re-render > 0.99).
+  - `MissingMapStillDrawsTheAlbedoTerms`: with the project asset root pointed
+    at a directory that does not exist, the frame equals the flat-map frame
+    byte for byte, not the undamaged quad.
 
-⚠️ The `samplerBuffer` unit is assigned once in `Pipeline`'s constructor, not
-per draw: every other path that draws with the opaque program (the carve
+⚠️ The unit-7 sampler is assigned once in `Pipeline`'s constructor, not per
+draw: every other path that draws with the opaque program (the carve
 stencil, the hull-clip and cloak-parity rigs) would otherwise leave it on
-unit 0 with the base `sampler2D` — `GL_INVALID_OPERATION` at draw, 24 tests
-red. The per-mesh buffer textures are GL objects keyed by `Mesh` address and
-must be released per context (`reset_scuff_tri_dir_cache`, called from the
+unit 0 with the base `sampler2D`. Harmless for two `sampler2D`s, but its
+predecessor was a `samplerBuffer` and two sampler TYPES on one unit is
+`GL_INVALID_OPERATION` at draw (24 tests red) — keep the habit. The texture
+is a GL object released per context (`reset_scuff_normal_texture`, from the
 host's shutdown and the test fixture) or a stale name is bound in the next
 context — order-dependent 1282s.
 - Existing `UndamagedInstanceGlowMatchesEmptyRingBaseline` keeps passing —
@@ -396,8 +399,11 @@ visibly evicts scorch marks, split it out then.
 |---|---|
 | `native/src/scenegraph/include/scenegraph/damage_decals.h`, `src/damage_decals.cc` | `WeaponClass::Scuff`, `tangent_body`, merge + eviction rules |
 | `native/src/host/host_bindings.cc` | `world_tangent` arg, class guard `> 2u` |
-| `native/src/renderer/frame.cc` | `u_decal_d` upload, `u_ship_world_rot` |
-| `native/src/renderer/shaders/opaque.frag` | `apply_scuffs` pre-lighting pass, Scuff `continue` in the post-lighting loop, `kScuff*` consts, `p_body` reorder |
+| `native/src/renderer/frame.cc` | `u_decal_d` upload, `u_ship_world_rot`, unit-7 bind of the scuff map |
+| `native/src/renderer/scuff_texture.{h,cc}`, `asset_path.{h,cc}` | lazy scuff-map load, test override, project asset root |
+| `native/assets/textures/scuff_normal.png` | the map (Mark's crumpled-sheet sample, 2048²) — NOT in `game/` |
+| `engine/paths.py`, `engine/renderer.py`, `engine/host_loop.py` | `project_asset_root()`, `set_project_asset_root` façade, boot push |
+| `native/src/renderer/shaders/opaque.frag` | `apply_scuffs` pre-lighting pass (splatted map), Scuff `continue` in the post-lighting loop, `kScuff*` consts, `p_body` reorder |
 | `engine/host_io.py` | `damage_decal_add(..., world_tangent=None)` wrapper |
 | `engine/appc/visible_damage.py` | `queue_body_scuff` (deferred, realises like authored volumes) — the seeding primitive for §5 |
 | `engine/appc/damage_decals.py` | `WEAPON_CLASS_SCUFF`, `weapon_class_for("collision")`, radius scale 1.0 |

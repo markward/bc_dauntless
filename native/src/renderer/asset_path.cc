@@ -17,6 +17,13 @@ std::string& mutable_game_root() {
     return root;
 }
 
+// Project-authored renderer assets (native/assets/). Default is the
+// cwd-relative checkout layout; host_loop pushes the absolute path at boot.
+std::string& mutable_project_asset_root() {
+    static std::string root = "native/assets";
+    return root;
+}
+
 // Mod-supplied asset overrides, keyed by the case-folded relative path
 // engine/mods.py builds. Empty by default so a modless run never consults it.
 std::map<std::string, std::string>& mutable_overrides() {
@@ -81,6 +88,17 @@ void set_game_root(const std::string& root) {
 }
 
 const std::string& game_root() { return mutable_game_root(); }
+
+void set_project_asset_root(const std::string& root) {
+    mutable_project_asset_root() = root.empty() ? "native/assets" : root;
+}
+
+const std::string& project_asset_root() { return mutable_project_asset_root(); }
+
+std::string project_asset_path(const std::string& rel) {
+    if (rel.empty()) return rel;
+    return project_asset_root() + "/" + rel;
+}
 
 std::string resolve_asset_path(const std::string& path) {
     if (path.empty()) return path;

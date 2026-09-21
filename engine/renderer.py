@@ -65,6 +65,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
+    "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
@@ -209,6 +210,13 @@ def set_emissive_scale(iid: InstanceId, scale: float) -> None:
 def set_game_root(root: str) -> None:
     """Point the renderer's relative asset paths at a BC install."""
     _h.set_game_root(root)
+
+
+def set_project_asset_root(root: str) -> None:
+    """Point the renderer's project-authored asset loads (native/assets/) at
+    the checkout. Pushed once at boot beside set_game_root; no hasattr guard
+    (see hull_volume_set_cache_root)."""
+    _h.set_project_asset_root(str(root))
 
 
 def set_asset_overrides(overrides: dict) -> None:
