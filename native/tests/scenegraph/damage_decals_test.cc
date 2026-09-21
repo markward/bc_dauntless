@@ -249,3 +249,34 @@ TEST(DamageDecalRing, TickNeverReclaimsAScuff) {
     ring.tick(1e6f);
     EXPECT_EQ(ring.count(), 1u);
 }
+
+// ── Dent weight: impacts crumple (1), grinds scrape (0) ─────────────────────
+
+TEST(DamageDecalRing, ScuffStoresItsDentWeight) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.5f, WeaponClass::Scuff, 0.0f,
+             /*tangent=*/{1, 0, 0}, /*dent=*/1.0f);
+    const DamageDecal* d = first_active(ring);
+    ASSERT_NE(d, nullptr);
+    EXPECT_FLOAT_EQ(d->dent, 1.0f);
+}
+
+TEST(DamageDecalRing, DentWeightDefaultsToScrape) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.5f, WeaponClass::Scuff, 0.0f, {1, 0, 0});
+    EXPECT_FLOAT_EQ(first_active(ring)->dent, 0.0f);
+}
+
+TEST(DamageDecalRing, MergingAGrindIntoAnImpactKeepsTheDent) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 0.0f, {1, 0, 0}, 1.0f);
+    ring.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0}, 0.0f);
+    ASSERT_EQ(ring.count(), 1u);
+    EXPECT_FLOAT_EQ(first_active(ring)->dent, 1.0f);
+    // ...and an impact landing on a scrape upgrades it.
+    ring.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 2.0f, {1, 0, 0}, 0.0f);
+    DamageDecalRing ring2;
+    ring2.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 0.0f, {1, 0, 0}, 0.0f);
+    ring2.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0}, 1.0f);
+    EXPECT_FLOAT_EQ(first_active(ring2)->dent, 1.0f);
+}

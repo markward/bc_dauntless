@@ -231,3 +231,18 @@ def test_a_missed_grind_trace_also_anchors_at_the_contact(monkeypatch):
     assert points, "fixture did not grind"
     assert points[id(a)].x == pytest.approx(0.8)
     assert points[id(b)].x == pytest.approx(0.7)
+
+
+# ── dent weight: impacts crumple, grinds scrape ─────────────────────────────
+
+def test_impacts_are_dents_and_grinds_are_scrapes(hits):
+    a = _ship(0.0, vx=2.0)
+    b = _ship(1.5)
+    _respond(a, b)                              # closing -> impact
+    assert {kw["decal_dent"] for _s, _d, kw in hits} == {1.0}
+    hits.clear()
+    a = _ship(0.0, vy=1.0)
+    b = _ship(1.5)
+    _respond(a, b)                              # resting overlap, sliding -> grind
+    assert hits, "fixture did not grind"
+    assert {kw["decal_dent"] for _s, _d, kw in hits} == {0.0}

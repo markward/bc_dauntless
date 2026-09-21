@@ -355,13 +355,13 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
         pt_a, n_a = _trace_own_hull(ship_instances, a, contact, n_ab, reach)
         apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
-                  hit_tangent=tan_a, decal_radius=scuff_radius,
+                  hit_tangent=tan_a, decal_radius=scuff_radius, decal_dent=0.0,
                   bypass_shields=True)
     if b.is_movable:
         pt_b, n_b = _trace_own_hull(ship_instances, b, boundary_b, n_ba, reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
-                  hit_tangent=tan_b, decal_radius=scuff_radius,
+                  hit_tangent=tan_b, decal_radius=scuff_radius, decal_dent=0.0,
                   bypass_shields=True)
 
 
@@ -515,13 +515,13 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         pt_a, n_a = _trace_own_hull(ship_instances, a, boundary_a, n_ab, trace_reach)
         apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
-                  hit_tangent=tan_a, decal_radius=scuff_r,
+                  hit_tangent=tan_a, decal_radius=scuff_r, decal_dent=1.0,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
     if b.is_movable:
         pt_b, n_b = _trace_own_hull(ship_instances, b, boundary_b, n_ba, trace_reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
-                  hit_tangent=tan_b, decal_radius=scuff_r,
+                  hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
 
     # No SDK event when either party is a detached hull chunk. The impulse

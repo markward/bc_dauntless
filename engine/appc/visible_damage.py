@@ -82,10 +82,11 @@ def queue_world_capsule(ship, p0_world, p1_world, radius_gu) -> None:
 
 
 def queue_body_scuff(ship, x, y, z, radius_gu, tangent_body=(1.0, 0.0, 0.0),
-                     intensity=1.0) -> None:
+                     intensity=1.0, dent=0.0) -> None:
     """Queue a collision-scuff DECAL (no carve) at a body-frame point. Used by
     the developer Damage Preview mission to seed known scuffs for live tuning.
-    `tangent_body` is the slip direction in the body frame; realised through
+    `tangent_body` is the slip direction in the body frame; `dent` is the
+    impact weight (1 crumples, 0 scrapes); realised through
     host_io.damage_decal_add once the ship's render instance exists."""
     if ship is None:
         return
@@ -94,6 +95,7 @@ def queue_body_scuff(ship, x, y, z, radius_gu, tangent_body=(1.0, 0.0, 0.0),
         "pt": (float(x), float(y), float(z)),
         "radius": float(radius_gu), "intensity": float(intensity),
         "tangent": tuple(float(c) for c in tangent_body), "age": 0.0,
+        "dent": float(dent),
     })
 
 
@@ -172,6 +174,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
             damage_decals.WEAPON_CLASS_SCUFF,
             damage_decals.current_game_time(),
             world_tangent=(tangent.x, tangent.y, tangent.z),
+            dent=entry.get("dent", 0.0),
         )
         return False
 

@@ -185,8 +185,20 @@ Height field `h(u, w)` — two analytic terms, gradient in closed form:
 
 | term | shape | what it sells |
 |---|---|---|
-| buckle | `A_b · sin(k_b·u + φ) · win` | compression waves with crests **perpendicular** to the slip — the "waves in the metal" |
-| scratches | `A_s · noise1(w · k_s) · win` | grooves running **along** the slip; varies across `w`, near-constant along `u` |
+| buckle (grind) | `A_b · sin(k_b·u + φ) · win` | compression waves with crests **perpendicular** to the slip — the "waves in the metal" |
+| scratches (grind) | `A_s · noise1(w · k_s) · win` | grooves running **along** the slip; varies across `w`, near-constant along `u` |
+| facets (impact) | one random constant tilt per Worley cell over `(u, w)` | piecewise-**flat** panels whose normals jump at the cell borders — the crease lines of crumpled sheet metal |
+| dish (impact) | `h = −D·R·(1 − r²)²` → `dh/dρ = 4·D·r·(1 − r²)` radially | the overall concave dent: rim normals lean inward, so one side faces the light and the other away |
+| creases (impact, albedo) | thin Worley `F2 − F1` band | bare metal where two facets meet |
+
+**Two looks, selected per decal by `dent` (`u_decal_c[i].z`)** — added after the
+second live pass (a photo of a rear-ended car: impact damage is facets and
+creases in a dish, not scratches). The **impact** path tags its scuff
+`dent = 1` (facets + dish + creases, with `kScuffDentScratch` = 10 % of the
+scratch term); the **grind** path tags `dent = 0` (buckle sine + scratches). A
+grind merging into an earlier impact keeps the max, so a dent never scrapes
+back into a scratch patch. Threaded `collisions → apply_hit(decal_dent=) →
+dispatch(decal_dent=) → host_io.damage_decal_add(dent=) → binding → ring`.
 
 `φ` is hashed from the decal's `point` so adjacent scuffs don't phase-lock.
 `noise1` is a cheap 1-D value noise (reuse the existing `fbm`/hash helpers in
@@ -245,7 +257,9 @@ Tuning constants are `kScuff*` `const`s at the top of `opaque.frag` (rebuild to
 tune), the same convention as `kHullCarve*`. Initial values (model units,
 Galaxy hull ≈ ±178): `A_b = 0.35`, `k_b = 2π/24` (24-unit wavelength),
 `A_s = 0.25`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.6`, `kScuffGrime = 0.25`,
-`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`.
+`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; dents: `kScuffFacetSize = 10`,
+`kScuffFacetTilt = 0.45`, `kScuffDishDepth = 0.15`, `kScuffCreaseWidth = 0.12`,
+`kScuffDentScratch = 0.1`.
 These are starting points for the live pass, not measured values.
 
 Cost: zero when `u_decal_count == 0` (undamaged hull — the production path
@@ -257,7 +271,8 @@ class; a Scuff record costs two `sin`/`cos`, two noise taps and two `fwidth`.
 
 `engine/dev_missions/damage_preview.py` seeds three Scuff decals on the Akira
 wreck after its authored damage: small (0.15 GU), medium (0.3 GU), large
-(0.5 GU) radii — the band's floor, middle and ceiling — three different tangents, the large one straddling the
+(0.5 GU) radii — the band's floor, middle and ceiling; the small one a grind
+(`dent = 0`), the other two impacts (`dent = 1`) — three different tangents, the large one straddling the
 saucer/hull curve so the far-face guard and the frame construction on a curved
 surface get eyeballed. Seeded via `host_io.damage_decal_add` directly (world
 point from `ship.GetWorldLocation()` + a body offset rotated through
@@ -294,6 +309,11 @@ lit quad, directional light, no material normal map:
   threshold (guards the `fwidth` fade).
 - `ScuffDoesNotMirrorToTheFarFace`: a scuff seeded on +Z leaves the −Z face
   byte-identical (the `wn` guard).
+- `DentDishShadesOneSideOfTheRimDarkerThanTheOther`: under a grazing light a
+  `dent = 1` scuff's rim is asymmetric (dish), a `dent = 0` scuff's is not.
+- `DentIsPiecewiseFlatFacetsNotScratches`: mean |neighbour Δ| / stddev of a
+  dent is under half a scrape's (few large jumps at creases vs. change every
+  couple of pixels).
 - Existing `UndamagedInstanceGlowMatchesEmptyRingBaseline` keeps passing —
   the production path with no decals is byte-identical.
 

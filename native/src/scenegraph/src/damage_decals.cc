@@ -34,8 +34,10 @@ glm::vec3 tangent_on_surface(const glm::vec3& normal, const glm::vec3& hint) {
 
 void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_body,
                           float radius, float intensity, WeaponClass weapon_class,
-                          float now, const glm::vec3& tangent_body) {
+                          float now, const glm::vec3& tangent_body, float dent) {
     const float clamped_in = std::clamp(intensity, 0.0f, 1.0f);
+    const float clamped_dent = (weapon_class == WeaponClass::Scuff)
+        ? std::clamp(dent, 0.0f, 1.0f) : 0.0f;
     const glm::vec3 tangent = (weapon_class == WeaponClass::Scuff)
         ? tangent_on_surface(normal_body, tangent_body)
         : glm::vec3(0.0f);
@@ -56,6 +58,7 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
                 d.birth_time = now;          // re-ignite ember
                 d.normal_body = normal_body; // freshest surface normal
                 d.tangent_body = tangent;    // freshest slip direction (Scuff)
+                d.dent = std::max(d.dent, clamped_dent);  // a dent never scrapes back
                 d.seq = next_seq_++;         // refresh FIFO age (reinforced scar
                                              // survives eviction over older ones)
                 return;
@@ -89,6 +92,7 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
         now, weapon_class, /*active=*/true, next_seq_++,
     };
     target->tangent_body = tangent;
+    target->dent = clamped_dent;
 }
 
 void DamageDecalRing::tick(float now) {

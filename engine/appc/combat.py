@@ -619,7 +619,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
               damage_hull: bool = True,
               bypass_shields: bool = False,
               shield_point=None,
-              hit_tangent=None, decal_radius: float | None = None) -> None:
+              hit_tangent=None, decal_radius: float | None = None,
+              decal_dent: float = 0.0) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -688,6 +689,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
         decal_radius         — visual decal radius in GU; overrides `r_hit`
                               for the decal ONLY, never for the subsystem
                               catchment / carve / WeaponHitEvent.
+        decal_dent           — collision scuff impact weight: 1 crumples
+                              (facets + dish), 0 scrapes (scratches).
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -868,6 +871,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             allow_hull_carve=damage_hull,
             shield_point=shield_point,
             tangent=hit_tangent, decal_radius=decal_radius,
+            decal_dent=decal_dent,
         )
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)

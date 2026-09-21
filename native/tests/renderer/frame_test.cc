@@ -1493,6 +1493,7 @@ struct Seed {
     glm::vec3 tangent{1.0f, 0.0f, 0.0f};
     float radius = 60.0f;      // model units
     float intensity = 1.0f;
+    float dent = 0.0f;         // 1 = impact crumple, 0 = grind scratches
     scenegraph::WeaponClass cls = scenegraph::WeaponClass::Scuff;
 };
 
@@ -1507,7 +1508,8 @@ void render_seeds(const assets::Model& model, renderer::Pipeline& pipeline,
     for (const Seed& seed : seeds) {
         if (!seed.active) continue;
         world.get(iid)->decals.add(seed.point, seed.normal, seed.radius,
-                                   seed.intensity, seed.cls, 0.0f, seed.tangent);
+                                   seed.intensity, seed.cls, 0.0f, seed.tangent,
+                                   seed.dent);
     }
     scenegraph::Camera cam;
     cam.eye    = glm::vec3(0.0f, 0.0f, eye_z);
@@ -1729,6 +1731,78 @@ TEST_F(ScuffTest, TwoOverlappingScuffsDoNotStack) {
     const double sd_ab = block_stddev(108, 108, 40, 40);
     EXPECT_LE(sd_ab, sd_a * 1.5)
         << "relief doubled in the overlap (stddev " << sd_ab << " vs single " << sd_a << ")";
+}
+
+// ── Impact dents: crumpled facets in a dish, not scratches ────────────────
+// Live pass 2026-09-21 (photo of a rear-ended car): impact damage is flat
+// facets meeting at sharp creases inside an overall concave dish. The scuff's
+// `dent` weight selects that height model (1) over the grind's scratches (0).
+
+// The dish tilts the rim inward, so under a light from +X the +X side of the
+// patch (whose normals lean toward -X, away from the light) is DARKER than the
+// -X side. A scrape has no dish and no such asymmetry.
+TEST_F(ScuffTest, DentDishShadesOneSideOfTheRimDarkerThanTheOther) {
+    using namespace scuff_probe;
+    auto quad = build_quad();
+    // Grazing light from +X so the rim tilt reads strongly.
+    renderer::Lighting side = tangent_probe::dir_light(glm::vec3(0.8f, 0.0f, 0.6f));
+    // Rim bands at r ~0.6..0.75 of a 60-unit radius: 36..45 units = 53..67 px.
+    auto rim_pair = [&]() {
+        const double lit_side  = block_mean(128 - 67, 118, 14, 20);   // -X side
+        const double dark_side = block_mean(128 + 53, 118, 14, 20);   // +X side
+        return std::make_pair(lit_side, dark_side);
+    };
+    Seed scrape; scrape.active = true; scrape.dent = 0.0f;
+    render(*quad, *p, side, scrape);
+    auto [s_lit, s_dark] = rim_pair();
+    Seed dent = scrape; dent.dent = 1.0f;
+    render(*quad, *p, side, dent);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    auto [d_lit, d_dark] = rim_pair();
+    // The scrape's rim is symmetric to within noise; the dent's is not.
+    EXPECT_LT(std::abs(s_lit - s_dark), 12.0) << "scrape rim is asymmetric: " << s_lit << " vs " << s_dark;
+    EXPECT_GT(d_lit - d_dark, 25.0) << "dent rim shows no dish: " << d_lit << " vs " << d_dark;
+}
+
+// Facets are piecewise-FLAT: inside a cell the shading is constant and it
+// jumps only at the creases, so relative to the patch's overall spread the
+// typical neighbour-to-neighbour step is SMALL. Scratches change every couple
+// of pixels, so their neighbour step is a large fraction of the spread.
+// Measured as mean |channel-sum difference between neighbours| / stddev.
+TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
+    using namespace scuff_probe;
+    auto quad = build_quad();
+    auto roughness = [&]() {
+        const int x0 = 108, y0 = 108, w = 40, h = 40;
+        std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+        glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        auto sum = [&](int x, int y) {
+            const int i = (y * w + x) * 4;
+            return double(buf[i] + buf[i+1] + buf[i+2]);
+        };
+        // Both directions: scratches run ALONG the tangent (+x here), so
+        // horizontal neighbours alone would never see them.
+        double acc = 0.0; int n = 0;
+        for (int y = 0; y + 1 < h; ++y)
+            for (int x = 0; x + 1 < w; ++x) {
+                acc += std::abs(sum(x, y) - sum(x + 1, y));
+                acc += std::abs(sum(x, y) - sum(x, y + 1));
+                n += 2;
+            }
+        const double sd = block_stddev(x0, y0, w, h);
+        return sd > 0.0 ? (acc / n) / sd : 0.0;
+    };
+    Seed scrape; scrape.active = true; scrape.dent = 0.0f;
+    render(*quad, *p, oblique(), scrape);
+    const double r_scrape = roughness();
+    Seed dent = scrape; dent.dent = 1.0f;
+    render(*quad, *p, oblique(), dent);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double r_dent  = roughness();
+    const double sd_dent = block_stddev(108, 108, 40, 40);
+    EXPECT_GT(sd_dent, 6.0) << "dent shows no relief at all";
+    EXPECT_LT(r_dent, r_scrape * 0.5)
+        << "dent is as rough pixel-to-pixel as scratches (" << r_dent << " vs " << r_scrape << ")";
 }
 
 // At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength

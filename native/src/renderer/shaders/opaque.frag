@@ -135,6 +135,14 @@ const float kScuffEdgeNoise   = 0.35;                 // fraction the edge is pu
                                                        // noise; breaks the disc outline. Only ever
                                                        // shrinks, so the r >= 1 cull stays exact.
 const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per model unit
+// Impact dents (u_decal_c.z == 1): crumpled sheet metal is flat FACETS meeting
+// at sharp creases inside an overall concave DISH (reference: a rear-ended
+// car, live pass 2026-09-21). Grinds (dent 0) keep the scratch model above.
+const float kScuffFacetSize   = 10.0;                 // model units per crumple facet (Worley cell)
+const float kScuffFacetTilt   = 0.45;                 // max facet slope, dh per unit (~24 deg)
+const float kScuffDishDepth   = 0.15;                 // dish depth as a fraction of the radius
+const float kScuffCreaseWidth = 0.12;                 // F2-F1 band (cell units) exposed as bare metal
+const float kScuffDentScratch = 0.1;                  // how much of the scratch term a dent keeps
 
 // ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
 // Discard hull fragments inside any active carve sphere. The breach pass
@@ -544,6 +552,21 @@ float fbm(vec2 v) {
 // 1-D value noise in [-1, 1] (a fixed row of the 2-D noise).
 float snoise1(float x) { return vnoise(vec2(x, 17.3)) * 2.0 - 1.0; }
 
+// 2-D Worley (cellular) noise: nearest and second-nearest feature distances
+// in cell units, and the winning cell's integer id (for a per-facet hash).
+void worley2(vec2 p, out float f1, out float f2, out vec2 id) {
+    vec2 i = floor(p), f = fract(p);
+    f1 = 8.0; f2 = 8.0; id = i;
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) {
+        vec2 g = vec2(float(x), float(y));
+        vec2 o = vec2(dhash(i + g), dhash(i + g + 17.0));   // feature point in that cell
+        float d = length(g + o - f);
+        if (d < f1) { f2 = f1; f1 = d; id = i + g; }
+        else if (d < f2) { f2 = d; }
+    }
+}
+
 // Band-limit a procedural term: 1 when its wavelength spans >= 4 px, 0 at
 // <= 2 px. `fw` is the axis footprint in model units per pixel, `k` rad/unit.
 float scuff_bandlimit(float fw, float k) {
@@ -618,12 +641,37 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         // Bare-metal ridge mask where the scratch field peaks; max across
         // scuffs (a ridge is a ridge, two scuffs do not make it brighter).
         // Ridges are the same frequency as the grooves and alias the same way.
-        scratch_mask = max(scratch_mask,
-                           smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win * bl_w);
+        float ridge = smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win * bl_w;
+
+        // ── Impact dent: facets + creases + dish ──────────────────────────
+        float dent = clamp(u_decal_c[i].z, 0.0, 1.0);
+        float fw_max = max(dot(abs(T), fw_p), dot(abs(B), fw_p));
+        // Facets: one constant random tilt per Worley cell, so the normal is
+        // piecewise-flat and jumps at the cell borders — the crease lines.
+        float f1, f2; vec2 cell;
+        worley2(vec2(u, w) / kScuffFacetSize + phase, f1, f2, cell);
+        vec2 tilt = (vec2(dhash(cell + 3.1), dhash(cell + 9.7)) * 2.0 - 1.0)
+                  * kScuffFacetTilt;
+        float bl_f = scuff_bandlimit(fw_max, 6.2831853 / kScuffFacetSize);
+        // Dish: h = -D R (1 - r^2)^2 -> dh/drho = 4 D r (1 - r^2) along the
+        // radial direction; the rim's normals lean inward, so one side of the
+        // dent faces the light and the other faces away.
+        float rho = max(length(vec2(u, w)), 1e-4);
+        vec2  radial = vec2(u, w) / rho;
+        float slope = 4.0 * kScuffDishDepth * r_n * (1.0 - r_n * r_n);
+        float bl_d = scuff_bandlimit(fw_max, 3.1415926 / radius);
+        vec2 g_dent = (tilt * bl_f + radial * slope * bl_d) * win;
+        // Creases show bare metal where two facets meet (thin F2-F1 band).
+        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f;
+
+        // Blend the two height models by the decal's dent weight.
+        float g_u = mix(gu, g_dent.x + gu * kScuffDentScratch, dent);
+        float g_w = mix(gw, g_dent.y + gw * kScuffDentScratch, dent);
+        scratch_mask = max(scratch_mask, mix(ridge, max(crease, ridge * kScuffDentScratch), dent));
 
         vec3 T_ws = normalize(u_ship_world_rot * T);
         vec3 B_ws = normalize(u_ship_world_rot * B);
-        dn_ws -= (gu * T_ws + gw * B_ws) * over;
+        dn_ws -= (g_u * T_ws + g_w * B_ws) * over;
         cov   += win * over;
     }
     if (cov > 0.0) {

@@ -273,9 +273,9 @@ class _DecalSpy:
         self.decals = []
 
     def __call__(self, iid, point, normal, radius, intensity, weapon_class, time,
-                 world_tangent=None):
+                 world_tangent=None, dent=0.0):
         self.decals.append((iid, point, normal, radius, intensity, weapon_class,
-                            time, world_tangent))
+                            time, world_tangent, dent))
 
 
 @pytest.fixture
@@ -294,7 +294,7 @@ def test_body_scuff_emits_a_scuff_decal_in_world_space(decal_host, host):
     visible_damage.advance(0.0, {ship: 1})
 
     assert host.carves == [], "a scuff must not carve"
-    (iid, point, normal, radius, intensity, cls, _t, tangent), = decal_host.decals
+    (iid, point, normal, radius, intensity, cls, _t, tangent, _dent), = decal_host.decals
     assert iid == 1
     assert point == pytest.approx((10.0, -4.0, 2.0))
     assert normal == pytest.approx((0.0, 1.0, 0.0))     # outward radial (no mesh)
@@ -337,3 +337,11 @@ def test_body_scuff_anchors_at_the_mesh_surface_not_the_authored_point(
         "scuff decal stayed at the authored (interior) point instead of the "
         "ray-traced hull surface")
     assert normal == pytest.approx(hit_normal)
+
+
+def test_body_scuff_carries_its_dent_weight(decal_host):
+    ship = _Ship()
+    visible_damage.queue_body_scuff(ship, 1.0, 0.0, 0.0, radius_gu=1.0, dent=1.0)
+    visible_damage.queue_body_scuff(ship, -1.0, 0.0, 0.0, radius_gu=1.0)
+    visible_damage.advance(0.0, {ship: 1})
+    assert [d[8] for d in decal_host.decals] == [1.0, 0.0]

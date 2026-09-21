@@ -110,7 +110,7 @@ class _CarveDecalSpy:
 
     def damage_decal_add(self, instance_id, world_point, world_normal,
                          radius, intensity, weapon_class, time,
-                         world_tangent=None):
+                         world_tangent=None, dent=0.0):
         self.decal_calls.append(instance_id)
 
     def hull_carve_add(self, iid, point, normal, influ, strength, time,

@@ -197,6 +197,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              persist_decal: bool = True,
              allow_hull_carve: bool = True,
              tangent=None, decal_radius: float | None = None,
+             decal_dent: float = 0.0,
              shield_point=None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
@@ -226,7 +227,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     and CRITICAL fire regardless of weapon_type.
 
     `tangent` is the world-space slip direction (TGPoint3) for a collision
-    scuff, or None. `decal_radius` overrides `radius` for the DECAL ONLY —
+    scuff, or None. `decal_dent` is the scuff's impact weight (1 = crumple,
+    0 = scrape). `decal_radius` overrides `radius` for the DECAL ONLY —
     the carve and everything else keep `radius` (spec §3: `r_hit` also sets
     the subsystem catchment, so it must not carry the scuff size).
     """
@@ -386,6 +388,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     now,
                     world_tangent=((tangent.x, tangent.y, tangent.z)
                                    if tangent is not None else None),
+                    dent=float(decal_dent),
                 )
 
     # 5. Hull carve (breach): deposit field strength; eligible ships only;

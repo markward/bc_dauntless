@@ -35,6 +35,10 @@ struct DamageDecal {
     /// Unit slip direction in the body frame, orthogonal to normal_body.
     /// Scuff only; zero for the other classes.
     glm::vec3     tangent_body{0.0f};
+    /// Scuff only: 1 = an impact (crumpled facets + dish), 0 = a grind
+    /// (scratches). Merges keep the max, so a grind over an impact stays a
+    /// dent and an impact on a scrape upgrades it. Shader reads u_decal_c.z.
+    float         dent = 0.0f;
 };
 
 /// Transform a world-space point into a ship's body frame.
@@ -68,9 +72,10 @@ public:
     /// point, so only exactly-coincident same-class hits would merge.
     /// `tangent_body` is the slip direction hint (Scuff); it is orthogonalised
     /// against `normal_body` via `tangent_on_surface`. Ignored for the other classes.
+    /// `dent` (Scuff only) is the impact weight, clamped to [0, 1]; see DamageDecal::dent.
     void add(const glm::vec3& point_body, const glm::vec3& normal_body,
              float radius, float intensity, WeaponClass weapon_class, float now,
-             const glm::vec3& tangent_body = glm::vec3(0.0f));
+             const glm::vec3& tangent_body = glm::vec3(0.0f), float dent = 0.0f);
 
     /// Reclaim cold HeatGlow decals (age beyond kHeatGlowLifetime).
     void tick(float now);

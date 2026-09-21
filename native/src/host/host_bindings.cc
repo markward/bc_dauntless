@@ -4115,7 +4115,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> world_normal,
              float radius, float intensity,
              std::uint32_t weapon_class, float time,
-             std::tuple<float, float, float> world_tangent) {
+             std::tuple<float, float, float> world_tangent, float dent) {
               if (weapon_class > 2u) return;  // unknown weapon class — drop silently
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
@@ -4141,16 +4141,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float radius_model = (s > 0.0f) ? radius / s : radius;
               inst->decals.add(pb, nb, radius_model, intensity,
                                static_cast<scenegraph::WeaponClass>(weapon_class),
-                               time, tb);
+                               time, tb, dent);
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("intensity"),
           py::arg("weapon_class"), py::arg("time"),
           py::arg("world_tangent") = std::make_tuple(0.0f, 0.0f, 0.0f),
+          py::arg("dent") = 0.0f,
           "Record an object-space damage decal on a ship instance. World-space "
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor), 2=Scuff (collision; "
-          "world_tangent = slip direction, zero = no preferred direction).");
+          "world_tangent = slip direction, zero = no preferred direction; "
+          "dent 1 = impact crumple, 0 = grind scratches).");
 
     m.def("hull_carve_add",
           [](scenegraph::InstanceId id,

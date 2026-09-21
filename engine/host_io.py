@@ -297,15 +297,19 @@ def damage_decal_add(
     weapon_class: int,
     time: float,
     world_tangent: Optional[Tuple[float, float, float]] = None,
+    dent: float = 0.0,
 ) -> None:
     """`world_tangent` is the slip direction for a Scuff decal (world space);
-    None means no preferred direction (the ring derives a perpendicular)."""
+    None means no preferred direction (the ring derives a perpendicular).
+    `dent` (Scuff only) is the impact weight: 1 = crumpled facets + dish
+    (an impact), 0 = scratches (a grind)."""
     if _h is None:
         return
     _h.damage_decal_add(instance_id, world_point, world_normal, radius,
                         intensity, weapon_class, time,
                         world_tangent if world_tangent is not None
-                        else (0.0, 0.0, 0.0))
+                        else (0.0, 0.0, 0.0),
+                        float(dent))
 
 
 def hull_carve_add(

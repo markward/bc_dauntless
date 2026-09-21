@@ -405,7 +405,8 @@ void draw_model(const assets::Model& model,
                 b[n] = glm::vec4(dec.normal_body, dec.radius);  // already model units
                 c[n] = glm::vec4(dec.birth_time,
                                  static_cast<float>(static_cast<std::uint32_t>(dec.weapon_class)),
-                                 0.0f, 0.0f);
+                                 dec.dent,     // Scuff: 1 impact crumple, 0 grind scratches
+                                 0.0f);
                 d[n] = glm::vec4(dec.tangent_body, 0.0f);
                 ++n;
             }
