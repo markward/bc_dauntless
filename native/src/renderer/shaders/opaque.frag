@@ -106,6 +106,9 @@ uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
+uniform samplerBuffer u_tri_dirs;            // unit 7: per-triangle longest-edge direction,
+                                             // body frame (renderer/scuff_panels.h)
+uniform int   u_tri_dirs_ok;                 // 0 = no CPU data for this mesh: body-X fallback
 uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
 
 // ── Collision scuffs (class 2): procedural relief, pre-lighting ───────────
@@ -140,16 +143,18 @@ const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per m
 // rear-ended car, live pass 2026-09-21). u_decal_c.z is the decal's "dent"
 // weight, which only scales the scratch model above DOWN: 0 = grind (full
 // scratches over the crumple), 1 = impact (kScuffDentScratch of them).
-const float kScuffPanelsPerUV = 32.0;                 // crumple panels = the hull's own PLATING: a
-                                                       // rectangular grid in the hull's texture (UV)
-                                                       // space, this many cells across the texture.
-                                                       // Fixed pitch, independent of the dent's size
-                                                       // or slip direction (fifth live pass, from a
-                                                       // mockup). Worley cells (decal frame) read as
-                                                       // an irregular mosaic; facets keyed on the
-                                                       // mesh triangles (gl_PrimitiveID) read as a
-                                                       // wireframe -- the hulls are tessellated to
-                                                       // 3-16 units. Both tried and removed.
+const float kScuffPanelPitch  = 8.0;                  // model units between crumple-panel creases.
+                                                       // The panel grid is ORIENTED by the mesh: each
+                                                       // triangle's longest edge and its in-plane
+                                                       // perpendicular (u_tri_dirs), so on a saucer
+                                                       // wedge the panels run radial + concentric like
+                                                       // the plating (sixth live pass, from a mockup).
+                                                       // Tried and removed: Worley cells in the decal
+                                                       // frame (an irregular mosaic), one facet per
+                                                       // mesh triangle (a wireframe), a grid in UV
+                                                       // space (the saucer's plating is painted
+                                                       // radially on a planar map -- no UV grid
+                                                       // follows it).
 const float kScuffFacetTilt   = 0.30;                 // max panel slope, dh per unit (~17 deg)
 const float kScuffDishDepth   = 0.15;                 // dish depth as a fraction of the radius
 const float kScuffCreaseWidth = 0.12;                 // border band (cell units) exposed as bare metal
@@ -574,7 +579,7 @@ float scuff_bandlimit(float fw, float k) {
 // shading normal (relief) and the base albedo (Task 3) inside each Scuff
 // decal. Writes ONLY n_shade and base_rgb: never the shadow-bias normal, the
 // Fresnel rim, n_body, the carve loop, decal_emissive or glow_flicker.
-void apply_scuffs(vec3 p_body, vec3 n_body, vec2 uv, inout vec3 n_shade, inout vec3 base_rgb) {
+void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
     vec3 dn_ws = vec3(0.0);
     // Scuffs composite as a UNION, not a sum: `cov` is the "over" coverage of
     // every scuff seen so far, each new one only contributes into (1 - cov),
@@ -587,17 +592,34 @@ void apply_scuffs(vec3 p_body, vec3 n_body, vec2 uv, inout vec3 n_shade, inout v
     // Per-pixel footprint, model units. Uniform control flow: the loop below
     // `continue`s per decal, and GLSL derivatives are undefined inside that.
     vec3 fw_p = fwidth(p_body);
-    // Hull plating grid in texture space (uniform control flow, see above).
-    vec2  panel_uv  = uv * kScuffPanelsPerUV;
-    vec2  panel_id  = floor(panel_uv);
-    vec2  panel_f   = fract(panel_uv);
-    float panel_fw  = max(fwidth(panel_uv.x), fwidth(panel_uv.y));   // cells per px
-    // Constant random lean per panel; the same panel bends the same way
-    // under every scuff, so overlapping scuffs agree.
-    vec2  panel_tilt = (vec2(dhash(panel_id + 3.1), dhash(panel_id + 9.7)) * 2.0 - 1.0)
+    // Crumple-panel grid, oriented by the mesh (uniform control flow, see
+    // above -- derivatives and the flat texelFetch stay outside the loop).
+    // Face normal from derivatives, flipped to agree with the vertex normal.
+    vec3 Nf = cross(dFdx(p_body), dFdy(p_body));
+    Nf = (dot(Nf, Nf) > 1e-20) ? normalize(Nf) : n_body;
+    if (dot(Nf, n_body) < 0.0) Nf = -Nf;
+    // Grid axis 1: this triangle's longest edge, projected into its plane.
+    vec3 e = (u_tri_dirs_ok != 0) ? texelFetch(u_tri_dirs, gl_PrimitiveID).xyz
+                                  : vec3(1.0, 0.0, 0.0);
+    e -= Nf * dot(e, Nf);
+    if (dot(e, e) < 1e-6) e = vec3(0.0, 1.0, 0.0) - Nf * Nf.y;
+    e = normalize(e);
+    vec3 pe = cross(Nf, e);                       // grid axis 2, in-plane
+    // A shared origin (the body origin), so neighbouring triangles with the
+    // same orientation continue one grid; where the orientation changes the
+    // seam falls on the mesh edge -- a crease.
+    vec2  panel_g   = vec2(dot(p_body, e), dot(p_body, pe)) / kScuffPanelPitch;
+    vec2  panel_id  = floor(panel_g);
+    vec2  panel_f   = fract(panel_g);
+    float panel_fw  = max(fwidth(panel_g.x), fwidth(panel_g.y));   // cells per px
+    // Constant random lean per panel, keyed on the cell AND its orientation
+    // (cells on differently-oriented triangles are different panels). The
+    // same panel bends the same way under every scuff, so overlaps agree.
+    vec2  panel_key  = panel_id + floor(e.xy * 7.0 + e.z * 3.0);
+    vec2  panel_tilt = (vec2(dhash(panel_key + 3.1), dhash(panel_key + 9.7)) * 2.0 - 1.0)
                      * kScuffFacetTilt;
-    // Crease: bare metal along the panel borders (distance to the nearest
-    // grid line, in cell units).
+    // Crease: bare metal along the grid lines (distance to the nearest line,
+    // in cell units).
     float panel_edge = min(min(panel_f.x, 1.0 - panel_f.x), min(panel_f.y, 1.0 - panel_f.y));
     float bl_panel   = scuff_bandlimit(panel_fw, 6.2831853);       // one cycle per cell
     for (int i = 0; i < u_decal_count; ++i) {
@@ -911,7 +933,7 @@ void main() {
     // Must run before the Toksvig spec_ft line below and before any lighting
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
     if (u_decal_count > 0) {
-        apply_scuffs(p_body, n_body, v_uv, n_shade, base.rgb);
+        apply_scuffs(p_body, n_body, n_shade, base.rgb);
     }
 
     // Toksvig specular anti-aliasing. ft folds the normal spread under this

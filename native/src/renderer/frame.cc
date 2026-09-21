@@ -10,6 +10,7 @@
 #include "renderer/aabb.h"
 #include <renderer/asset_path.h>
 #include <renderer/model_draw_helpers.h>
+#include <renderer/scuff_panels.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -387,6 +388,9 @@ void draw_model(const assets::Model& model,
                             static_cast<int>(bone_palette.size()));
     }
 
+    // Whether any decal is active on this draw: the scuff pass then needs
+    // each mesh's per-triangle edge directions (unit 7).
+    bool decals_present = false;
     // ── Per-instance damage decals (Phase 2) ───────────────────────────────
     // Pack the active ring into vec4 arrays. point_body and radius are both in
     // NIF/model units (damage_decal_add converts radius GU->model before
@@ -412,6 +416,7 @@ void draw_model(const assets::Model& model,
             }
         }
         prog.set_int("u_decal_count", n);
+        decals_present = n > 0;
         if (n > 0) {
             prog.set_vec4_array("u_decal_a", a, n);
             prog.set_vec4_array("u_decal_b", b, n);
@@ -733,6 +738,20 @@ void draw_model(const assets::Model& model,
             prog.set_float("u_normal_strength", dauntless_normal_map::strength());
             prog.set_int  ("u_normal_flip_g",
                 dauntless_normal_map::flip_green() ? 1 : 0);
+
+            // Collision-scuff panel orientation: this mesh's per-triangle
+            // longest-edge directions (renderer/scuff_panels.h), read by
+            // gl_PrimitiveID inside a scuff on unit 7 (assigned once in
+            // Pipeline's constructor). Built lazily, bound only when a decal
+            // is active so the undamaged path stays byte-identical.
+            GLuint tri_dirs = 0;
+            if (decals_present) {
+                tri_dirs = scuff_tri_dir_texture(model, i, mesh_idx);
+            }
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_BUFFER, tri_dirs);
+            glActiveTexture(GL_TEXTURE0);  // restore default active unit
+            prog.set_int("u_tri_dirs_ok", tri_dirs != 0 ? 1 : 0);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);

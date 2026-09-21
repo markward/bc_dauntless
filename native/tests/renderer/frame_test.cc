@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <renderer/frame.h>
+#include <renderer/scuff_panels.h>
 #include <renderer/dynamic_lights.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
@@ -1614,6 +1615,15 @@ protected:
             GTEST_SKIP() << "no GL context: " << e.what();
         }
         p = std::make_unique<renderer::Pipeline>();
+        // Fresh context per test: the per-mesh edge-direction buffer
+        // textures (scuff_panels) are keyed by Mesh address and hold GL ids
+        // from the previous context -- binding a stale name is
+        // GL_INVALID_OPERATION in core profile, and it showed up as
+        // order-dependent 1282s here.
+        renderer::reset_scuff_tri_dir_cache();
+    }
+    void TearDown() override {
+        if (w) renderer::reset_scuff_tri_dir_cache();   // release in THIS context
     }
 };
 
@@ -1859,7 +1869,43 @@ TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
 // (Worley cells in the decal frame turned with the tangent -- correlation
 // ~0). The near-diagonal scratch residual is 10% at dent=1 and averages out
 // along columns.
-TEST_F(ScuffTest, DentPanelsFollowTheTextureGridNotTheSlipDirection) {
+// Live pass 2026-09-21 (sixth): the panel grid takes its ORIENTATION from
+// the mesh -- each triangle's longest edge and its in-plane perpendicular --
+// so on a saucer wedge the panels run radial + concentric like the plating.
+// build_quad is split along the diagonal V0->V2, the longest edge of both
+// triangles, so the grid's second axis is (-1, 1)/sqrt2 and the line x == y
+// is a grid line by construction: under ambient-only light (no relief) the
+// bare-metal crease must run along that diagonal, and a parallel line 8 px
+// off it (0.7 cells at pitch 8) must be plain hull. An axis-aligned grid
+// crosses both lines equally often and shows no such difference.
+TEST_F(ScuffTest, DentPanelGridIsAlignedToTheTrianglesLongestEdge) {
+    using namespace scuff_probe;
+    // Dark base so the bare-metal crease reads; the scratch ridges are 10%
+    // at dent=1 and both sample lines see the same ridge statistics.
+    auto quad = build_quad(/*grey=*/80);
+    renderer::Lighting amb;
+    amb.ambient = glm::vec3(1.0f);
+    amb.directional_count = 0;
+    Seed s; s.active = true; s.dent = 1.0f; s.radius = 120.0f;
+    render(*quad, *p, amb, s);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    std::vector<unsigned char> buf(256 * 256 * 4);
+    glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    auto sum = [&](int x, int y) {
+        const size_t i = (static_cast<size_t>(y) * 256 + x) * 4;
+        return double(buf[i] + buf[i+1] + buf[i+2]);
+    };
+    double on = 0, off = 0; int n = 0;
+    for (int i = 110; i < 146; ++i) {          // along x == y through the centre
+        on  += sum(i, i);
+        off += sum(i + 4, i - 4);               // the parallel line x - y == 8 px
+        ++n;
+    }
+    on /= n; off /= n;
+    EXPECT_GT(on - off, 4.0) << "no crease along the longest-edge diagonal (on " << on << ", off " << off << ")";
+}
+
+TEST_F(ScuffTest, DentPanelsDoNotTurnWithTheSlipDirection) {
     using namespace scuff_probe;
     auto quad = build_quad();
     renderer::Lighting head_on = tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f));
