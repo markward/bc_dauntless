@@ -139,7 +139,10 @@ const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per m
 // at sharp creases inside an overall concave DISH (reference: a rear-ended
 // car, live pass 2026-09-21). Grinds (dent 0) keep the scratch model above.
 const float kScuffFacetSize   = 10.0;                 // model units per crumple facet (Worley cell)
-const float kScuffFacetTilt   = 0.45;                 // max facet slope, dh per unit (~24 deg)
+const float kScuffFacetTilt   = 0.30;                 // max facet slope, dh per unit (~17 deg)
+const float kScuffMeshFacets  = 1.0;                  // 1: one facet per mesh TRIANGLE (creases =
+                                                       // mesh edges, gl_PrimitiveID-hashed tilt);
+                                                       // 0: Worley cells of kScuffFacetSize
 const float kScuffDishDepth   = 0.15;                 // dish depth as a fraction of the radius
 const float kScuffCreaseWidth = 0.12;                 // F2-F1 band (cell units) exposed as bare metal
 const float kScuffDentScratch = 0.1;                  // how much of the scratch term a dent keeps
@@ -650,8 +653,13 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         // piecewise-flat and jumps at the cell borders — the crease lines.
         float f1, f2; vec2 cell;
         worley2(vec2(u, w) / kScuffFacetSize + phase, f1, f2, cell);
-        vec2 tilt = (vec2(dhash(cell + 3.1), dhash(cell + 9.7)) * 2.0 - 1.0)
-                  * kScuffFacetTilt;
+        vec2 tilt_cell = vec2(dhash(cell + 3.1), dhash(cell + 9.7)) * 2.0 - 1.0;
+        // Mesh-aligned: the hull's own triangles are its panels, so bend each
+        // one as a unit. Keyed on the triangle alone (not the decal) so two
+        // impacts on one panel bend it the same way instead of fighting.
+        vec2 tri = vec2(float(gl_PrimitiveID), 0.0);
+        vec2 tilt_tri = vec2(dhash(tri + 3.1), dhash(tri + 9.7)) * 2.0 - 1.0;
+        vec2 tilt = mix(tilt_cell, tilt_tri, kScuffMeshFacets) * kScuffFacetTilt;
         float bl_f = scuff_bandlimit(fw_max, 6.2831853 / kScuffFacetSize);
         // Dish: h = -D R (1 - r^2)^2 -> dh/drho = 4 D r (1 - r^2) along the
         // radial direction; the rim's normals lean inward, so one side of the
@@ -661,8 +669,11 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float slope = 4.0 * kScuffDishDepth * r_n * (1.0 - r_n * r_n);
         float bl_d = scuff_bandlimit(fw_max, 3.1415926 / radius);
         vec2 g_dent = (tilt * bl_f + radial * slope * bl_d) * win;
-        // Creases show bare metal where two facets meet (thin F2-F1 band).
-        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f;
+        // Creases show bare metal where two Worley facets meet (thin F2-F1
+        // band). Mesh facets have no edge distance without barycentrics, so
+        // their creases read through the shading jump alone.
+        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f
+                     * (1.0 - kScuffMeshFacets);
 
         // Blend the two height models by the decal's dent weight.
         float g_u = mix(gu, g_dent.x + gu * kScuffDentScratch, dent);

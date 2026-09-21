@@ -1805,6 +1805,34 @@ TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
         << "dent is as rough pixel-to-pixel as scratches (" << r_dent << " vs " << r_scrape << ")";
 }
 
+// Live pass 2026-09-21: "align the panel edges with the nearby edges of the
+// mesh". One facet per mesh TRIANGLE (gl_PrimitiveID-hashed tilt): inside a
+// triangle the tilt is constant, so under a head-on light (N.L = cos(tilt),
+// direction-blind, and the dish is radially symmetric) two blocks in the SAME
+// triangle at the same radius shade identically, while a block in the
+// neighbouring triangle at that radius shades differently. Worley cells
+// (~15 px here) would split the 28 px between the two same-triangle blocks.
+TEST_F(ScuffTest, DentFacetsFollowTheMeshTriangles) {
+    using namespace scuff_probe;
+    auto quad = build_quad_fan();          // 4 wedges meeting at the centre
+    renderer::Lighting head_on = tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f));
+    // Radius 300 units (~444 px): the probes below sit at r ~ 0.05, where the
+    // dish slope (4 D r (1 - r^2) ~ 0.03) is negligible next to the facet
+    // tilt, so within one triangle the shading is the facet's alone.
+    Seed dent; dent.active = true; dent.dent = 1.0f; dent.radius = 300.0f;
+    render(*quad, *p, head_on, dent);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    // Top wedge (|x| < y): two blocks 20 px apart (Worley cells are ~15 px).
+    const double top_l = block_mean(128 - 10 - 4, 128 + 20 - 4, 8, 8);
+    const double top_r = block_mean(128 + 10 - 4, 128 + 20 - 4, 8, 8);
+    // Right wedge (x > |y|), same radius.
+    const double right = block_mean(128 + 20 - 4, 128 + 10 - 4, 8, 8);
+    EXPECT_LT(std::abs(top_l - top_r), 3.0)
+        << "same triangle, different shading: " << top_l << " vs " << top_r;
+    EXPECT_GT(std::abs(top_l - right), 6.0)
+        << "neighbouring triangle shades the same: " << top_l << " vs " << right;
+}
+
 // At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength
 // is 0.28 px (pure aliasing if not faded) and the 24-unit buckle is 2.2 px
 // (inside the fade band). The quad is ~18 px wide; sample its central 12x12.
