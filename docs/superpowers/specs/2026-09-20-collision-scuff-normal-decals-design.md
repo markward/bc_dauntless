@@ -259,8 +259,8 @@ Tuning constants are `kScuff*` `const`s at the top of `opaque.frag` (rebuild to
 tune), the same convention as `kHullCarve*`. Initial values (model units,
 Galaxy hull ≈ ±178): `A_b = 0.35`, `k_b = 2π/24` (24-unit wavelength),
 `A_s = 0.12`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.4`, `kScuffGrime = 0.25`,
-`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; crumple: `kScuffPanelPitch = 8`,
-`kScuffFacetTilt = 0.30`, `kScuffDishDepth = 0.15`, `kScuffCreaseWidth = 0.12`,
+`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; crumple: `kScuffPanelPitch = 4`,
+`kScuffFacetTilt = 0.60`, `kScuffDishDepth = 0.15`, `kScuffCreaseWidth = 0.12`,
 `kScuffDentScratch = 0.1`.
 These are starting points for the live pass, not measured values.
 

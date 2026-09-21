@@ -1901,12 +1901,12 @@ TEST_F(ScuffTest, DentPanelGridFollowsTheQuadSidesNotItsDiagonal) {
     };
     // A grid line passes through the origin whichever axis it takes, so the
     // model x axis (screen row 128, y == 0) carries a crease when the grid
-    // follows the quad's sides. Rows 4 px either side are cell interior: the
-    // pitch is 8 model units, ~12 px at this camera.
+    // follows the quad's sides. Rows 3 px either side are cell centres: the
+    // pitch is 4 model units, ~6 px at this camera.
     double side_on = 0, side_off = 0, diag_on = 0, diag_off = 0; int n = 0;
     for (int i = 110; i < 146; ++i) {
         side_on  += 0.5 * (sum(i, 127) + sum(i, 128));
-        side_off += 0.5 * (sum(i, 123) + sum(i, 132));
+        side_off += 0.5 * (sum(i, 124) + sum(i, 131));
         diag_on  += sum(i, i);                    // along x == y through the centre
         diag_off += sum(i + 4, i - 4);            // the parallel line x - y == 8 px
         ++n;

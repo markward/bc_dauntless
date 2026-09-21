@@ -143,7 +143,7 @@ const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per m
 // rear-ended car, live pass 2026-09-21). u_decal_c.z is the decal's "dent"
 // weight, which only scales the scratch model above DOWN: 0 = grind (full
 // scratches over the crumple), 1 = impact (kScuffDentScratch of them).
-const float kScuffPanelPitch  = 8.0;                  // model units between crumple-panel creases.
+const float kScuffPanelPitch  = 4.0;                  // model units between crumple-panel creases.
                                                        // The panel grid is ORIENTED by the mesh: each
                                                        // triangle's shortest edge (a quad SIDE, never
                                                        // the split diagonal) and its in-plane
@@ -156,7 +156,7 @@ const float kScuffPanelPitch  = 8.0;                  // model units between cru
                                                        // space (the saucer's plating is painted
                                                        // radially on a planar map -- no UV grid
                                                        // follows it).
-const float kScuffFacetTilt   = 0.30;                 // max panel slope, dh per unit (~17 deg)
+const float kScuffFacetTilt   = 0.60;                 // max panel slope, dh per unit (~31 deg)
 const float kScuffDishDepth   = 0.15;                 // dish depth as a fraction of the radius
 const float kScuffCreaseWidth = 0.12;                 // border band (cell units) exposed as bare metal
 const float kScuffDentScratch = 0.1;                  // how much of the scratch term a dent keeps
