@@ -25,8 +25,6 @@ def _front_rate(scene, seconds=2.0):
     return (before - scene.face(FRONT)) / seconds
 
 
-@bible_xfail("B1", "4 × 400 beams at HIGH deliver 5 400 ± 5 % over one 7 s charge",
-             "delivers ~11 100 — no intensity scale (MaxDamage·dt, not ×0.5)")
 def test_b1_full_volley_total(oracle):
     """B1 — `phaser_high_front_57`: 5 469 measured; the 7 s charge at 1.0/s
     ends the volley, so the total is what lands on face + hull by 8 s."""
@@ -49,8 +47,6 @@ def test_b2_med_equals_high(oracle):
     assert r_med == pytest.approx(r_high, rel=0.05)
 
 
-@bible_xfail("B3", "LOW rate is half of HIGH (0.25 vs 0.5)",
-             "LOW equals HIGH — no intensity scale")
 def test_b3_low_rate_is_half_of_high(oracle):
     """B3 — `phaser_low_front_57`: 408/s vs 825/s."""
     high = oracle(attacker="KessokHeavy", range_gu=57)
@@ -113,7 +109,7 @@ def test_b6_windup_before_first_quantum(oracle):
 
 
 @bible_xfail("B7", "each beam deposits a quantum of MaxDamage × 0.5 × 0.53125 = 106.25 every 0.53 s",
-             "damage is continuous per tick (26.7 per tick for four beams)")
+             "damage is continuous per tick (13.3 per tick for four beams at HIGH)")
 def test_b7_damage_arrives_as_quanta(oracle):
     """B7 — `phaser_high_front_57`: after the windup, the face steps down in
     discrete quanta of 106.25 (±2 %) with ~0.35 s of nothing between volleys;

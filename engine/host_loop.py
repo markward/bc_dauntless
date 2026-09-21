@@ -780,6 +780,15 @@ def _advance_weapons(ships, dt: float) -> None:
                     emitter.UpdateCharge(dt)
 
 
+# Beam damage per second is MaxDamage × this, by the phaser system's power
+# level (PP_LOW, PP_MEDIUM, PP_HIGH). Measured on the original exe: a Kessok
+# Heavy's four MaxDamage-400 beams deliver 825/s at HIGH, 849/s at MED and
+# 408/s at LOW (stbc-oracle bible §2.1, `phaser_{high,med,low}_front_57`) —
+# MED and HIGH share the scale; only LOW halves it. Without this the engine
+# dealt MaxDamage per second flat: 2× BC at HIGH/MED, 4× at LOW.
+PHASER_INTENSITY_SCALE = (0.25, 0.5, 0.5)
+
+
 def _phaser_damage_for_tick(max_damage: float,
                              max_damage_distance: float,
                              dist: float,
@@ -1005,12 +1014,14 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 if not _emitter_in_arc(bank, ship, arc_aim):
                     bank.StopFiring()
                     continue
+                level = (sys_.GetPowerLevel()
+                         if hasattr(sys_, "GetPowerLevel") else sys_.PP_HIGH)
                 damage = _phaser_damage_for_tick(
                     max_damage=bank.GetMaxDamage(),
                     max_damage_distance=bank.GetMaxDamageDistance(),
                     dist=dist,
                     dt=dt,
-                )
+                ) * PHASER_INTENSITY_SCALE[level]
                 if damage > 0:
                     impact_point, impact_normal = combat._resolve_hit_point(
                         ship_instances=ship_instances, ship=target,
