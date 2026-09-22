@@ -629,3 +629,81 @@ def test_director_set_fov_propagates_fov_scale_to_both_cameras():
     d.set_fov(math.radians(35.0))
     assert d.chase.fov_scale    == pytest.approx(1.0)
     assert d.tracking.fov_scale == pytest.approx(1.0)
+
+
+# ── BC's Chase dynamics, measured on the exe (stbc-oracle bible §12.1, V2) ──
+
+def _yaw_rot(angle):
+    from engine.appc.math import TGMatrix3, TGPoint3
+    c, s = math.cos(angle), math.sin(angle)
+    r = TGMatrix3()
+    r.SetCol(0, TGPoint3( c, s, 0.0))     # right
+    r.SetCol(1, TGPoint3(-s, c, 0.0))     # forward
+    r.SetCol(2, TGPoint3(0.0, 0.0, 1.0))  # up
+    return r
+
+
+def test_chase_swings_to_the_outside_of_a_turn_by_one_second_of_yaw():
+    """`cam_galaxy_chase_yaw`: at a steady 0.28 rad/s the camera sits 16.7°
+    (= 0.29 rad ≈ ω × 1.0 s) behind the heading — 5.45 GU to the outside at
+    18.16 astern — building over ~4 s. The rotation lag's time constant is
+    1.0 s."""
+    from engine.cameras.chase import _ChaseCamera
+    from engine.appc.math import TGPoint3
+    cc = _ChaseCamera()
+    cc.set_ship_radius(4.366)
+    loc = TGPoint3(0.0, 0.0, 0.0)
+    omega, dt = 0.28, 1.0 / 60
+    angle = 0.0
+    cc.compute_camera(loc, _yaw_rot(0.0), dt=dt)
+    for _ in range(int(10.0 / dt)):
+        angle += omega * dt
+        eye, _, _ = cc.compute_camera(loc, _yaw_rot(angle), dt=dt)
+    # Bearing of the eye vs dead astern of the live heading.
+    astern = (-(-math.sin(angle)), -math.cos(angle))          # −forward
+    eye_dir = (eye[0], eye[1])
+    n = math.hypot(*eye_dir)
+    cos_lag = (eye_dir[0] * astern[0] + eye_dir[1] * astern[1]) / n
+    lag_deg = math.degrees(math.acos(max(-1.0, min(1.0, cos_lag))))
+    assert lag_deg == pytest.approx(16.7, abs=1.5)
+
+
+def test_chase_trails_a_moving_ship_by_a_quarter_second_of_speed():
+    """`cam_galaxy_chase_impulse`: the camera trails farther the faster the
+    ship goes — 17.47 GU at 0.47 GU/s, 19.18 at 6.30 — an extra 0.26–0.29 s
+    × speed, settled within ~0.5 s of the speed settling; height unchanged."""
+    from engine.cameras.chase import _ChaseCamera
+    from engine.appc.math import TGPoint3
+    cc = _ChaseCamera()
+    cc.set_ship_radius(4.366)
+    cc.distance = 4.0 * 4.366                 # BC's authored 4.0 R
+    rot = _yaw_rot(0.0)
+    dt, v = 1.0 / 60, 6.30
+    y = 0.0
+    eye, _, _ = cc.compute_camera(TGPoint3(0.0, y, 0.0), rot, dt=dt)
+    rest_astern = 0.0 - eye[1]
+    for _ in range(int(6.0 / dt)):
+        y += v * dt
+        eye, _, _ = cc.compute_camera(TGPoint3(0.0, y, 0.0), rot, dt=dt)
+    moving_astern = y - eye[1]
+    assert rest_astern == pytest.approx(17.38, abs=0.1)
+    assert moving_astern - rest_astern == pytest.approx(0.28 * v, abs=0.2)   # ≈ 1.80 GU
+    assert eye[2] == pytest.approx(1.74, abs=0.1)                            # 0.1 R up
+
+
+def test_chase_speed_lag_is_capped_at_max_lag_dist():
+    """CameraModes.Chase: MaxLagDist 2.0 (× r = 8.7 GU on a Galaxy) caps the
+    speed lag; 1.80 at 6.3 GU/s is well inside it, a 75 GU/s in-system warp
+    is not."""
+    from engine.cameras.chase import _ChaseCamera
+    from engine.appc.math import TGPoint3
+    cc = _ChaseCamera()
+    cc.set_ship_radius(4.366)
+    rot = _yaw_rot(0.0)
+    dt, v, y = 1.0 / 60, 75.0, 0.0
+    eye, _, _ = cc.compute_camera(TGPoint3(0.0, y, 0.0), rot, dt=dt)
+    rest_astern = 0.0 - eye[1]
+    for _ in range(int(6.0 / dt)):
+        y += v * dt
+        eye, _, _ = cc.compute_camera(TGPoint3(0.0, y, 0.0), rot, dt=dt)
+    assert (y - eye[1]) - rest_astern == pytest.approx(2.0 * 4.366, abs=0.1)
