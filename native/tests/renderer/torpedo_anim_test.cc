@@ -18,7 +18,12 @@ constexpr float kPi = 3.14159265358979323846f;
 // §5.5). If a future RE Q&A re-pins the table, update map_torpedo_params AND
 // this test together.
 // ─────────────────────────────────────────────────────────────────────────
-TEST(TorpedoAnimMapping, PhotonDescriptorLocksProvisionalFieldAssignment) {
+// Args 13/14 pinned on the exe by changing one at a time and filming
+// (stbc-oracle bible §14.2): 13 is the flare LENGTH (0.7 -> 2.5 took the
+// streaks from 291 to 514 px), 14 the flare LIFESPAN (0.4 -> 100 s made
+// them persist and pile up). The earlier provisional mapping had them the
+// other way round, and drew the streaks at a quarter of their length.
+TEST(TorpedoAnimMapping, PhotonDescriptorMatchesTheVerifiedArgumentRoles) {
     renderer::TorpedoDescriptor d;
     d.core_size_a   = 0.2f;
     d.core_size_b   = 1.2f;
@@ -36,8 +41,14 @@ TEST(TorpedoAnimMapping, PhotonDescriptorLocksProvisionalFieldAssignment) {
     EXPECT_FLOAT_EQ(p.scale_lo, 0.3f);
     EXPECT_FLOAT_EQ(p.scale_hi, 0.6f);
     EXPECT_FLOAT_EQ(p.clone_scale, 0.6f);
-    EXPECT_FLOAT_EQ(p.flare_period, 0.7f);
-    EXPECT_FLOAT_EQ(p.flare_half_size, 0.16f);  // 0.4 * 0.4
+    EXPECT_FLOAT_EQ(p.flare_period, 0.4f);      // arg 14: lifespan, seconds
+    EXPECT_FLOAT_EQ(p.flare_half_size, 0.7f);   // arg 13: length, GU
+}
+
+TEST(TorpedoAnimMapping, FlareStreakIsTwoToOneAlongItsAxis) {
+    // TorpedoFlares.tga is a 32 x 64 vertical streak; the quad keeps that
+    // aspect: full length along the streak, half as wide across it.
+    EXPECT_FLOAT_EQ(renderer::torpedo_anim_detail::kFlareAspect, 0.5f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

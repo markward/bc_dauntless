@@ -54,10 +54,13 @@ inline TorpedoAnimParams map_torpedo_params(const TorpedoDescriptor& d) {
     p.scale_lo        = d.glow_size_b;    // photon 0.3
     p.scale_hi        = d.glow_size_c;    // photon 0.6
     p.clone_scale     = d.glow_size_c;    // second glow quad's fixed scale = hi
-    p.flare_period    = d.flares_size_a;  // photon 0.7 s
-    // 0.4 = byte-verified flare quad half-size constant at 0x0088C5AC;
-    // flares_size_b (=0.4 in all 9 SDK modules) treated as a scale on it.
-    p.flare_half_size = 0.4f * d.flares_size_b;
+    // Args 13/14, verified on the exe one argument at a time (stbc-oracle
+    // bible §14.2): 13 is the flare LENGTH (0.7 -> 2.5 took the streaks
+    // from 291 to 514 px and GetRadius from 0.77 to 2.56), 14 the flare
+    // LIFESPAN (0.4 -> 100 s made them persist and pile up). The provisional
+    // mapping had these swapped and drew the streaks at ~0.16 half-size.
+    p.flare_period    = d.flares_size_b;  // photon 0.4 s
+    p.flare_half_size = d.flares_size_a;  // photon 0.7 GU along the streak
     return p;
 }
 
@@ -209,6 +212,10 @@ namespace torpedo_anim_detail {
 // length from the tail at which the bolt is widest (the SWIG call's third
 // optional default, 0.8, is the one authored number in that range);
 // kBoltTailPower shapes the tail's swell (1 = cone, <1 = fuller).
+// A flare quad's half-width across the streak, as a fraction of its
+// half-length along it: TorpedoFlares.tga is a 32 x 64 vertical streak.
+inline constexpr float kFlareAspect = 0.5f;
+
 inline constexpr int   kBoltRings     = 11;   // u = i/10: a ring sits exactly at kBoltWidestAt
 inline constexpr float kBoltWidestAt  = 0.8f;
 inline constexpr float kBoltTailPower = 0.6f;

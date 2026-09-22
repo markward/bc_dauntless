@@ -251,8 +251,12 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
             }
             if (alpha <= 0.0f) continue;
 
+            // The streak texture is 2:1 (32 x 64): full half-length along the
+            // quad's y axis, kFlareAspect of it across.
             draw_layer(t.flares_texture, t.flares_color, p.flare_half_size,
-                       t.world_pos, quad_basis[0], quad_basis[1], alpha);
+                       t.world_pos,
+                       quad_basis[0] * torpedo_anim_detail::kFlareAspect,
+                       quad_basis[1], alpha);
         }
 
         // Core sprite, drawn last -- order is cosmetic under additive blend
