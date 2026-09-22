@@ -1,0 +1,26 @@
+{
+  "system": "Multi6",
+  "bodies": [
+    {
+      "name": "Multi6",
+      "display_name": "Multi6",
+      "radius_gu": 9000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    }
+  ],
+  "regions": [],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

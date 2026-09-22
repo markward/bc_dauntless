@@ -1,0 +1,139 @@
+{
+  "system": "Yiles",
+  "bodies": [
+    {
+      "name": "Yiles",
+      "display_name": "Yiles",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Yiles 1",
+      "display_name": "Yiles 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        0.0,
+        38000.0,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif"
+      },
+      "owner_region": "Yiles1"
+    },
+    {
+      "name": "Yiles 2",
+      "display_name": "Yiles 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        43231.37883273753,
+        -47191.608197012465,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/gasgiant.nif"
+      },
+      "owner_region": "Yiles2"
+    },
+    {
+      "name": "Yiles 3",
+      "display_name": "Yiles 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -89655.3936778345,
+        7868.315224526389,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif"
+      },
+      "owner_region": "Yiles3"
+    },
+    {
+      "name": "Yiles 4",
+      "display_name": "Yiles 4",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        92057.68714983673,
+        70578.90787354806,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif"
+      },
+      "owner_region": "Yiles4"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Yiles1",
+      "anchor_gu": [
+        -3743.72681,
+        35403.88824,
+        0.0
+      ],
+      "radius_gu": 7855.79704314438,
+      "body_names": [
+        "Yiles 1"
+      ]
+    },
+    {
+      "set_name": "Yiles2",
+      "anchor_gu": [
+        39487.65202273753,
+        -49787.719957012465,
+        0.0
+      ],
+      "radius_gu": 7855.79704314438,
+      "body_names": [
+        "Yiles 2"
+      ]
+    },
+    {
+      "set_name": "Yiles3",
+      "anchor_gu": [
+        -93399.1204878345,
+        5272.203464526388,
+        0.0
+      ],
+      "radius_gu": 7855.797043144386,
+      "body_names": [
+        "Yiles 3"
+      ]
+    },
+    {
+      "set_name": "Yiles4",
+      "anchor_gu": [
+        88313.96033983672,
+        67982.79611354806,
+        0.0
+      ],
+      "radius_gu": 7855.7970431443855,
+      "body_names": [
+        "Yiles 4"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

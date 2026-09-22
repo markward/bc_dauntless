@@ -1,0 +1,167 @@
+{
+  "system": "Ascella",
+  "bodies": [
+    {
+      "name": "Ascella",
+      "display_name": "Ascella",
+      "radius_gu": 12000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Ascella 1",
+      "display_name": "Ascella 1",
+      "radius_gu": 1200.0,
+      "position_gu": [
+        0.0,
+        42000.0,
+        0.0
+      ],
+      "orbits": "Ascella",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif"
+      },
+      "owner_region": "Ascella1"
+    },
+    {
+      "name": "Ascella 2",
+      "display_name": "Ascella 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        45933.34000978362,
+        -50141.08370932574,
+        0.0
+      ],
+      "orbits": "Ascella",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif"
+      },
+      "owner_region": "Ascella2"
+    },
+    {
+      "name": "Ascella 3",
+      "display_name": "Ascella 3",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        -93640.07784129381,
+        8218.018123394228,
+        0.0
+      ],
+      "orbits": "Ascella",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GrayPlanet.nif"
+      },
+      "owner_region": "Ascella3"
+    },
+    {
+      "name": "Ascella 4",
+      "display_name": "Ascella 4",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        95232.09015500352,
+        73012.6633174635,
+        0.0
+      ],
+      "orbits": "Ascella",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SnowPlanet.nif"
+      },
+      "owner_region": "Ascella4"
+    },
+    {
+      "name": "Ascella 5",
+      "display_name": "Ascella 5",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        -25430.5647553795,
+        -143768.1688560526,
+        0.0
+      ],
+      "orbits": "Ascella",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif"
+      },
+      "owner_region": "Ascella5"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Ascella1",
+      "anchor_gu": [
+        1408.8631799999998,
+        38994.98535,
+        0.0
+      ],
+      "radius_gu": 6018.886636610886,
+      "body_names": [
+        "Ascella 1"
+      ]
+    },
+    {
+      "set_name": "Ascella2",
+      "anchor_gu": [
+        46342.20318978362,
+        -60146.09835932574,
+        0.0
+      ],
+      "radius_gu": 13313.365430596961,
+      "body_names": [
+        "Ascella 2"
+      ]
+    },
+    {
+      "set_name": "Ascella3",
+      "anchor_gu": [
+        -93640.07784129381,
+        -4860.779176605773,
+        -10.94367
+      ],
+      "radius_gu": 16978.80187855143,
+      "body_names": [
+        "Ascella 3"
+      ]
+    },
+    {
+      "set_name": "Ascella4",
+      "anchor_gu": [
+        95640.95333500352,
+        69007.64866746351,
+        999.9999999999999
+      ],
+      "radius_gu": 7248.1696501799815,
+      "body_names": [
+        "Ascella 4"
+      ]
+    },
+    {
+      "set_name": "Ascella5",
+      "anchor_gu": [
+        -25064.4139753795,
+        -148765.8994460526,
+        -500.95429
+      ],
+      "radius_gu": 8136.102922358287,
+      "body_names": [
+        "Ascella 5"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

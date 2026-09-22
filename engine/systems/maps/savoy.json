@@ -1,0 +1,116 @@
+{
+  "system": "Savoy",
+  "bodies": [
+    {
+      "name": "Savoy",
+      "display_name": "Savoy",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Savoy 1",
+      "display_name": "Savoy 1",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        0.0,
+        38000.0,
+        0.0
+      ],
+      "orbits": "Savoy",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SnowPlanet.nif"
+      },
+      "owner_region": "Savoy1"
+    },
+    {
+      "name": "Savoy 2",
+      "display_name": "Savoy 2",
+      "radius_gu": 3200.0,
+      "position_gu": [
+        43231.37883273753,
+        -47191.608197012465,
+        0.0
+      ],
+      "orbits": "Savoy",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/iceplanet.nif"
+      },
+      "owner_region": "Savoy2"
+    },
+    {
+      "name": "Savoy 3",
+      "display_name": "Savoy 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -89655.3936778345,
+        7868.315224526389,
+        0.0
+      ],
+      "orbits": "Savoy",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif"
+      },
+      "owner_region": "Savoy3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Savoy1",
+      "anchor_gu": [
+        1835.9527859166924,
+        61799.49714230436,
+        2492.631770103868
+      ],
+      "radius_gu": 27499.999999999996,
+      "body_names": [
+        "Savoy 1"
+      ]
+    },
+    {
+      "set_name": "Savoy2",
+      "anchor_gu": [
+        38876.60160745862,
+        -45438.775457693344,
+        1001.7448308642298
+      ],
+      "radius_gu": 9500.000000000004,
+      "body_names": [
+        "Savoy 2"
+      ]
+    },
+    {
+      "set_name": "Savoy3",
+      "anchor_gu": [
+        -92555.5902078345,
+        2105.73954452639,
+        0.0
+      ],
+      "radius_gu": 9751.233864955719,
+      "body_names": [
+        "Savoy 3"
+      ]
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "Savoy1": "Standoff clamped to the MAX cap (12.0 radii). Anchor position and region radius look reasonable at this system's scale (no absurd value) -- left as generated, no override applied.",
+      "Savoy2": "Standoff clamped to the MIN floor (1.5 radii). Anchor position and region radius look reasonable at this system's scale (no absurd value) -- left as generated, no override applied."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

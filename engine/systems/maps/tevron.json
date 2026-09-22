@@ -1,0 +1,134 @@
+{
+  "system": "Tevron",
+  "bodies": [
+    {
+      "name": "Tevron",
+      "display_name": "Tevron",
+      "radius_gu": 6000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Tevron 1",
+      "display_name": "Tevron 1",
+      "radius_gu": 3800.0,
+      "position_gu": [
+        0.0,
+        36000.0,
+        0.0
+      ],
+      "orbits": "Tevron",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanGasPlanet.nif"
+      },
+      "owner_region": "Tevron1"
+    },
+    {
+      "name": "Tevron 1 Moon 1",
+      "display_name": "Tevron 1 Moon 1",
+      "radius_gu": 1400.0,
+      "position_gu": [
+        3124.3655263407877,
+        45086.7048811321,
+        -11777.526669934707
+      ],
+      "orbits": "Tevron 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif"
+      },
+      "owner_region": "Tevron1"
+    },
+    {
+      "name": "Tevron 1 Moon 2",
+      "display_name": "Tevron 1 Moon 2",
+      "radius_gu": 2100.0,
+      "position_gu": [
+        -11862.120444555709,
+        51240.76995313628,
+        -7988.681355169435
+      ],
+      "orbits": "Tevron 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanPlanet.nif"
+      },
+      "owner_region": "Tevron1"
+    },
+    {
+      "name": "Tevron 2",
+      "display_name": "Tevron 2",
+      "radius_gu": 4000.0,
+      "position_gu": [
+        41880.39824421448,
+        -45716.870440855826,
+        0.0
+      ],
+      "orbits": "Tevron",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif"
+      },
+      "owner_region": "Tevron2"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 2200.0,
+      "position_gu": [
+        41017.48350148058,
+        -61532.01048239189,
+        2266.434118472247
+      ],
+      "orbits": "Tevron 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif"
+      },
+      "owner_region": "Tevron2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Tevron1",
+      "anchor_gu": [
+        -8002.422312738307,
+        48142.51490808946,
+        -8876.374558368047
+      ],
+      "radius_gu": 22337.29604324085,
+      "body_names": [
+        "Tevron 1",
+        "Tevron 1 Moon 1",
+        "Tevron 1 Moon 2"
+      ]
+    },
+    {
+      "set_name": "Tevron2",
+      "anchor_gu": [
+        36999.20240284753,
+        -65671.19248162386,
+        3270.5572492361234
+      ],
+      "radius_gu": 26301.384224829606,
+      "body_names": [
+        "Tevron 2",
+        "Moon 1"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

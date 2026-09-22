@@ -1,0 +1,128 @@
+{
+  "system": "Albirea",
+  "bodies": [
+    {
+      "name": "Albirea",
+      "display_name": "Albirea",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Albirea 1",
+      "display_name": "Albirea 1",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        0.0,
+        38000.0,
+        0.0
+      ],
+      "orbits": "Albirea",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif"
+      },
+      "owner_region": "Albirea1"
+    },
+    {
+      "name": "Albirea 2",
+      "display_name": "Albirea 2",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        43231.37883273753,
+        -47191.608197012465,
+        0.0
+      ],
+      "orbits": "Albirea",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RootBeerPlanet.nif"
+      },
+      "owner_region": "Albirea2"
+    },
+    {
+      "name": "Albirea 2 Moon",
+      "display_name": "Albirea 2 Moon",
+      "radius_gu": 600.0,
+      "position_gu": [
+        43231.37883273753,
+        -50258.566353637136,
+        9096.9097865986
+      ],
+      "orbits": "Albirea 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/Moon.nif"
+      },
+      "owner_region": "Albirea2"
+    },
+    {
+      "name": "Albirea 3",
+      "display_name": "Albirea 3",
+      "radius_gu": 3000.0,
+      "position_gu": [
+        -89655.3936778345,
+        7868.315224526389,
+        0.0
+      ],
+      "orbits": "Albirea",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif"
+      },
+      "owner_region": "Albirea3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Albirea1",
+      "anchor_gu": [
+        -2004.9098200000003,
+        33997.13068,
+        3007.4942
+      ],
+      "radius_gu": 8493.296537588427,
+      "body_names": [
+        "Albirea 1"
+      ]
+    },
+    {
+      "set_name": "Albirea2",
+      "anchor_gu": [
+        43254.62517273753,
+        -49909.893645324795,
+        8557.6817732993
+      ],
+      "radius_gu": 12879.060836406501,
+      "body_names": [
+        "Albirea 2",
+        "Albirea 2 Moon"
+      ]
+    },
+    {
+      "set_name": "Albirea3",
+      "anchor_gu": [
+        -91660.3034978345,
+        3865.4459045263893,
+        1007.4942000000001
+      ],
+      "radius_gu": 9088.863774657442,
+      "body_names": [
+        "Albirea 3"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

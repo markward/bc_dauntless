@@ -1,0 +1,111 @@
+{
+  "system": "Artrus",
+  "bodies": [
+    {
+      "name": "Artrus",
+      "display_name": "Artrus",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Artrus 1",
+      "display_name": "Artrus 1",
+      "radius_gu": 1440.0,
+      "position_gu": [
+        0.0,
+        40000.0,
+        0.0
+      ],
+      "orbits": "Artrus",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif"
+      },
+      "owner_region": "Artrus1"
+    },
+    {
+      "name": "Artrus 2",
+      "display_name": "Artrus 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        44582.359421260575,
+        -48666.345953169104,
+        0.0
+      ],
+      "orbits": "Artrus",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RockyPlanet.nif"
+      },
+      "owner_region": "Artrus2"
+    },
+    {
+      "name": "Artrus 3",
+      "display_name": "Artrus 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -91647.73575956415,
+        8043.166673960309,
+        0.0
+      ],
+      "orbits": "Artrus",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif"
+      },
+      "owner_region": "Artrus3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Artrus1",
+      "anchor_gu": [
+        439.60209,
+        35524.11163,
+        515.7594300000001
+      ],
+      "radius_gu": 7466.901201469672,
+      "body_names": [
+        "Artrus 1"
+      ]
+    },
+    {
+      "set_name": "Artrus2",
+      "anchor_gu": [
+        39827.08385126058,
+        -53613.427863169105,
+        522.28016
+      ],
+      "radius_gu": 10181.790590857709,
+      "body_names": [
+        "Artrus 2"
+      ]
+    },
+    {
+      "set_name": "Artrus3",
+      "anchor_gu": [
+        -86858.64731956414,
+        3452.1473839603086,
+        -1058.4101900000003
+      ],
+      "radius_gu": 10018.114195039383,
+      "body_names": [
+        "Artrus 3"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

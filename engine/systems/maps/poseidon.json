@@ -1,0 +1,83 @@
+{
+  "system": "Poseidon",
+  "bodies": [
+    {
+      "name": "Poseidon",
+      "display_name": "Poseidon",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Poseidon 1",
+      "display_name": "Poseidon 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        0.0,
+        40000.0,
+        0.0
+      ],
+      "orbits": "Poseidon",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif"
+      },
+      "owner_region": "Poseidon1"
+    },
+    {
+      "name": "Poseidon 2",
+      "display_name": "Poseidon 2",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        44582.359421260575,
+        -48666.345953169104,
+        0.0
+      ],
+      "orbits": "Poseidon",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/dryplanet.nif"
+      },
+      "owner_region": "Poseidon2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Poseidon1",
+      "anchor_gu": [
+        -1250.9203500000003,
+        33693.11446,
+        -500.00000000000006
+      ],
+      "radius_gu": 9749.155521206265,
+      "body_names": [
+        "Poseidon 1"
+      ]
+    },
+    {
+      "set_name": "Poseidon2",
+      "anchor_gu": [
+        38365.87383126057,
+        -37701.01880316911,
+        -27.960100000000004
+      ],
+      "radius_gu": 17704.91469088136,
+      "body_names": [
+        "Poseidon 2"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

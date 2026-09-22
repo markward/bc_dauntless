@@ -1,0 +1,100 @@
+{
+  "system": "Tezle",
+  "bodies": [
+    {
+      "name": "Tezle",
+      "display_name": "Tezle",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Tezle 1",
+      "display_name": "Tezle 1",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        0.0,
+        40000.0,
+        0.0
+      ],
+      "orbits": "Tezle",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif"
+      },
+      "owner_region": "Tezle1"
+    },
+    {
+      "name": "Tezle 2",
+      "display_name": "Tezle 2",
+      "radius_gu": 2500.0,
+      "position_gu": [
+        44582.359421260575,
+        -48666.345953169104,
+        0.0
+      ],
+      "orbits": "Tezle",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RootBeerPlanet.nif"
+      },
+      "owner_region": "Tezle2"
+    },
+    {
+      "name": "Moon",
+      "display_name": "Moon",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        48040.12693129292,
+        -54584.2003104603,
+        -7281.6786287541045
+      ],
+      "orbits": "Tezle 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanPlanet.nif"
+      },
+      "owner_region": "Tezle2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Tezle1",
+      "anchor_gu": [
+        -97.58724999999998,
+        44486.9986,
+        -20.817279999999997
+      ],
+      "radius_gu": 7988.107960701382,
+      "body_names": [
+        "Tezle 1"
+      ]
+    },
+    {
+      "set_name": "Tezle2",
+      "anchor_gu": [
+        55363.304866276754,
+        -46614.0493818147,
+        -1491.4472243770524
+      ],
+      "radius_gu": 15375.138313235359,
+      "body_names": [
+        "Tezle 2",
+        "Moon"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

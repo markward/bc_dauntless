@@ -1,0 +1,205 @@
+{
+  "system": "Prendel",
+  "bodies": [
+    {
+      "name": "Prendel",
+      "display_name": "Prendel",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Prendel 1",
+      "display_name": "Prendel 1",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        0.0,
+        38000.0,
+        0.0
+      ],
+      "orbits": "Prendel",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif"
+      },
+      "owner_region": "Prendel1"
+    },
+    {
+      "name": "Prendel 2",
+      "display_name": "Prendel 2",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        43231.37883273753,
+        -47191.608197012465,
+        0.0
+      ],
+      "orbits": "Prendel",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif"
+      },
+      "owner_region": "Prendel2"
+    },
+    {
+      "name": "Prendel 3",
+      "display_name": "Prendel 3",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        -89655.3936778345,
+        7868.315224526389,
+        0.0
+      ],
+      "orbits": "Prendel",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif"
+      },
+      "owner_region": "Prendel3"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -116621.67399182297,
+        -2244.03989321929,
+        0.0
+      ],
+      "orbits": "Prendel 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/Moon.nif"
+      },
+      "owner_region": "Prendel3"
+    },
+    {
+      "name": "Moon 2",
+      "display_name": "Moon 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -74948.32289421199,
+        44635.99218358266,
+        0.0
+      ],
+      "orbits": "Prendel 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GrayPlanet.nif"
+      },
+      "owner_region": "Prendel3"
+    },
+    {
+      "name": "Prendel 4",
+      "display_name": "Prendel 4",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        92057.68714983673,
+        70578.90787354806,
+        0.0
+      ],
+      "orbits": "Prendel",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif"
+      },
+      "owner_region": "Prendel4"
+    },
+    {
+      "name": "Prendel 5",
+      "display_name": "Prendel 5",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        -24733.836953862254,
+        -139829.31491479088,
+        0.0
+      ],
+      "orbits": "Prendel",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanGasPlanet.nif"
+      },
+      "owner_region": "Prendel5"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Prendel1",
+      "anchor_gu": [
+        11003.205329999999,
+        28307.61717,
+        0.0
+      ],
+      "radius_gu": 19763.31519327806,
+      "body_names": [
+        "Prendel 1"
+      ]
+    },
+    {
+      "set_name": "Prendel2",
+      "anchor_gu": [
+        54234.58416273753,
+        -56883.99102701247,
+        0.0
+      ],
+      "radius_gu": 19763.31519327806,
+      "body_names": [
+        "Prendel 2"
+      ]
+    },
+    {
+      "set_name": "Prendel3",
+      "anchor_gu": [
+        -83738.59152462315,
+        2061.0396749632564,
+        0.0
+      ],
+      "radius_gu": 46772.92725025528,
+      "body_names": [
+        "Prendel 3",
+        "Moon 1",
+        "Moon 2"
+      ]
+    },
+    {
+      "set_name": "Prendel4",
+      "anchor_gu": [
+        103060.89247983672,
+        60886.525043548056,
+        0.0
+      ],
+      "radius_gu": 19763.31519327806,
+      "body_names": [
+        "Prendel 4"
+      ]
+    },
+    {
+      "set_name": "Prendel5",
+      "anchor_gu": [
+        -13730.631623862255,
+        -149521.69774479087,
+        0.0
+      ],
+      "radius_gu": 19763.315193278053,
+      "body_names": [
+        "Prendel 5"
+      ]
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "Prendel3/Moon 2": "E5M2 and E6M4 stage a base and three Galors at 6100-6368 GU, just past Moon 2's authored set-local position (400, 5000, 0) -- per the design doc this body should be a PIN so the layout can never move it away from that staged content. NOT declared as an active overrides.pins entry here: verified empirically (--check, both with the offset temporarily zeroed AND restored to the authored (400, 5000, 0)) that engine/systems/validate.py's pin-respected rule reports a problem EITHER way -- restored, it reports the body sitting at set-local (8790.27, 42574.95, 0) relative to the region anchor, ~38500 GU from the authored offset, not a rounding gap. Root cause: tools/systems/layout.py places every region's companion bodies at `primary_radius * (moon_first_orbit_factor + moon_orbit_step_factor * j)` from the primary -- direction preserved, absolute distance intentionally discarded (see the module docstring and _standoff_factor) -- and layout() never reads overrides.pins at all (only gen_system_maps.pins_from() does, and only to hand validate() a value to check post-hoc). So no data-only override can make this pin hold; it needs layout() to special-case a pinned body by placing it at anchor + pin_offset after the regular placement pass, which is a tools/ code change outside this data-only task's scope. Left unpinned rather than shipping a pin declaration the validator itself proves false -- see the Task 7 report for the full derivation and a concrete fix sketch."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

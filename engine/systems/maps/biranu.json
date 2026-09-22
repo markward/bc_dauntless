@@ -1,0 +1,117 @@
+{
+  "system": "Biranu",
+  "bodies": [
+    {
+      "name": "Biranu",
+      "display_name": "Biranu",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Biranu 1",
+      "display_name": "Biranu 1",
+      "radius_gu": 3400.0,
+      "position_gu": [
+        0.0,
+        38000.0,
+        0.0
+      ],
+      "orbits": "Biranu",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPurplePlanet.nif"
+      },
+      "owner_region": "Biranu1"
+    },
+    {
+      "name": "Biranu 1 Moon",
+      "display_name": "Biranu 1 Moon",
+      "radius_gu": 2200.0,
+      "position_gu": [
+        -10100.105705061229,
+        38630.38288851102,
+        -9085.729588781634
+      ],
+      "orbits": "Biranu 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SlimeGreenPlanet.nif"
+      },
+      "owner_region": "Biranu1"
+    },
+    {
+      "name": "Osa",
+      "display_name": "Osa",
+      "radius_gu": 3200.0,
+      "position_gu": [
+        43231.37883273753,
+        -47191.608197012465,
+        0.0
+      ],
+      "orbits": "Biranu",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif"
+      },
+      "owner_region": "Biranu2"
+    },
+    {
+      "name": "Moon",
+      "display_name": "Moon",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        40686.08584161211,
+        -34857.03593041171,
+        -2284.6904799843946
+      ],
+      "orbits": "Osa",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif"
+      },
+      "owner_region": "Biranu2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Biranu1",
+      "anchor_gu": [
+        -8940.260302530614,
+        34154.74286425552,
+        -8418.186454390818
+      ],
+      "radius_gu": 17767.79390174896,
+      "body_names": [
+        "Biranu 1",
+        "Biranu 1 Moon"
+      ]
+    },
+    {
+      "set_name": "Biranu2",
+      "anchor_gu": [
+        46959.68058717482,
+        -40519.811883712086,
+        -1179.7231999921974
+      ],
+      "radius_gu": 12433.359350690265,
+      "body_names": [
+        "Osa",
+        "Moon"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

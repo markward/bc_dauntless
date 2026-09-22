@@ -1,0 +1,121 @@
+{
+  "system": "Belaruz",
+  "bodies": [
+    {
+      "name": "Belaruz",
+      "display_name": "Belaruz",
+      "radius_gu": 9000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Belaruz 2",
+      "display_name": "Belaruz 2",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        43906.86912699905,
+        -47928.977075090785,
+        0.0
+      ],
+      "orbits": "Belaruz",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif"
+      },
+      "owner_region": "Belaruz2"
+    },
+    {
+      "name": "Belaruz 3",
+      "display_name": "Belaruz 3",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        -90651.56471869933,
+        7955.740949243349,
+        0.0
+      ],
+      "orbits": "Belaruz",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif"
+      },
+      "owner_region": "Belaruz3"
+    },
+    {
+      "name": "Belaruz 4",
+      "display_name": "Belaruz 4",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        92851.28790112842,
+        71187.34673452692,
+        0.0
+      ],
+      "orbits": "Belaruz",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/AquaPlanet.nif"
+      },
+      "owner_region": "Belaruz4"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Belaruz1",
+      "anchor_gu": [
+        0.0,
+        39000.0,
+        0.0
+      ],
+      "radius_gu": 2229.5978859987417,
+      "body_names": []
+    },
+    {
+      "set_name": "Belaruz2",
+      "anchor_gu": [
+        36332.486266999054,
+        -59082.332945090784,
+        -9754.553220000002
+      ],
+      "radius_gu": 20540.91137511818,
+      "body_names": [
+        "Belaruz 2"
+      ]
+    },
+    {
+      "set_name": "Belaruz3",
+      "anchor_gu": [
+        -98225.94757869933,
+        -3197.6149207566523,
+        -9754.553220000002
+      ],
+      "radius_gu": 25340.91137511818,
+      "body_names": [
+        "Belaruz 3"
+      ]
+    },
+    {
+      "set_name": "Belaruz4",
+      "anchor_gu": [
+        92483.65895112843,
+        79834.33632452691,
+        -992.32652
+      ],
+      "radius_gu": 13811.503425743558,
+      "body_names": [
+        "Belaruz 4"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

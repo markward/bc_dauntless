@@ -1,0 +1,26 @@
+{
+  "system": "Multi5",
+  "bodies": [
+    {
+      "name": "Multi5",
+      "display_name": "Multi5",
+      "radius_gu": 9000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    }
+  ],
+  "regions": [],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}

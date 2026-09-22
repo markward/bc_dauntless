@@ -1,0 +1,159 @@
+{
+  "system": "Vesuvi",
+  "bodies": [
+    {
+      "name": "Vesuvi",
+      "display_name": "Vesuvi",
+      "radius_gu": 9000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Geki",
+      "display_name": "Geki",
+      "radius_gu": 2200.0,
+      "position_gu": [
+        -90651.56471869933,
+        7955.740949243349,
+        0.0
+      ],
+      "orbits": "Vesuvi",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPlanet.nif"
+      },
+      "owner_region": "Vesuvi5"
+    },
+    {
+      "name": "Inyo",
+      "display_name": "Inyo",
+      "radius_gu": 1700.0,
+      "position_gu": [
+        -94564.65905056076,
+        10418.478458857331,
+        -7487.497359511674
+      ],
+      "orbits": "Geki",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RootBeerPlanet.nif"
+      },
+      "owner_region": "Vesuvi5"
+    },
+    {
+      "name": "Mori",
+      "display_name": "Mori",
+      "radius_gu": 1000.0,
+      "position_gu": [
+        -96295.69380305972,
+        328.8359951915936,
+        -7508.936522633406
+      ],
+      "orbits": "Geki",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif"
+      },
+      "owner_region": "Vesuvi5"
+    },
+    {
+      "name": "Haven",
+      "display_name": "Haven",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        92851.28790112842,
+        71187.34673452692,
+        0.0
+      ],
+      "orbits": "Vesuvi",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPurplePlanet.nif"
+      },
+      "owner_region": "Vesuvi6"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        89117.83004511014,
+        77080.65117368857,
+        -1780.5210542683626
+      ],
+      "orbits": "Haven",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RockyPlanet.nif"
+      },
+      "owner_region": "Vesuvi6"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Vesuvi1",
+      "anchor_gu": [
+        0.0,
+        39000.0,
+        0.0
+      ],
+      "radius_gu": 3345.4686597791206,
+      "body_names": []
+    },
+    {
+      "set_name": "Vesuvi4",
+      "anchor_gu": [
+        43906.86912699905,
+        -47928.977075090785,
+        0.0
+      ],
+      "radius_gu": 3566.8173329554875,
+      "body_names": []
+    },
+    {
+      "set_name": "Vesuvi5",
+      "anchor_gu": [
+        -87183.60193743995,
+        3534.729991097425,
+        -7073.611484048361
+      ],
+      "radius_gu": 13301.351325067664,
+      "body_names": [
+        "Geki",
+        "Inyo",
+        "Mori"
+      ]
+    },
+    {
+      "set_name": "Vesuvi6",
+      "anchor_gu": [
+        89838.41166311927,
+        69921.48820410775,
+        -890.2605271341813
+      ],
+      "radius_gu": 10350.201107514411,
+      "body_names": [
+        "Haven",
+        "Moon 1"
+      ]
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "Vesuvi5/Inyo": "'Inyo' (1700 GU) demoted to a moon of 'Geki' (2200 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Inyo' is much smaller than 'Geki' and keeping it in 'Geki''s region preserves BC's original single-map grouping, per the brief's reasonable default.",
+      "Vesuvi5/Mori": "'Mori' (1000 GU) demoted to a moon of 'Geki' (2200 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Mori' is much smaller than 'Geki' and keeping it in 'Geki''s region preserves BC's original single-map grouping, per the brief's reasonable default."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}
