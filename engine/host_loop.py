@@ -1030,10 +1030,47 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                         bank.StopFiring()
                     else:
                         flush_dwell = bank.accumulate_dwell(dt)
-                if flush_dwell <= 0.0:
-                    continue
                 level = (sys_.GetPowerLevel()
                          if hasattr(sys_, "GetPowerLevel") else sys_.PP_HIGH)
+                # Where the beam is touching, resolved EVERY contact frame —
+                # the per-frame impact feedback below needs it as much as the
+                # pulse does (and this is what the pre-pulse code did anyway).
+                impact_point, impact_normal = combat._resolve_hit_point(
+                    ship_instances=ship_instances, ship=target,
+                    ray_origin=emitter_pos,
+                    ray_direction=(aim_unit if dist > 1e-6 else None),
+                    max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
+                    fallback_point=target_pos,
+                )
+                # Where the beam crossed the bubble — the same point
+                # _beam_endpoint stops the DRAWN beam at, so the flash lands on
+                # the beam's own tip instead of 236 NIF units behind it. None
+                # when no facing is up, which falls the flash back to the hull
+                # point inside dispatch.
+                bubble_entry = (
+                    combat.shield_bubble_entry(target, emitter_pos, aim_unit,
+                                               dist * 1.5)
+                    if (aim_unit is not None and combat.shields_block(target))
+                    else None)
+                if flush_dwell <= 0.0:
+                    # Not a damage pulse: the beam is still resting on the
+                    # target, so it still glows and throws sparks there. The
+                    # spark threshold reads this frame's slice of the beam, so
+                    # the burst behaves as it did when damage was per-tick.
+                    hit_feedback.beam_contact(
+                        ship=target, source=ship,
+                        point=impact_point, normal=impact_normal,
+                        shield_point=bubble_entry,
+                        tick_damage=_phaser_damage_for_tick(
+                            max_damage=bank.GetMaxDamage(),
+                            max_damage_distance=bank.GetMaxDamageDistance(),
+                            dist=dist, dt=dt,
+                        ) * PHASER_INTENSITY_SCALE[level],
+                        ship_instances=ship_instances,
+                        weapon_type="phaser",
+                        radius=combat.weapon_splash_radius(bank, None),
+                    )
+                    continue
                 # One pulse: MaxDamage × intensity × distance factor × dwell
                 # (clean-room 0x00572A50; measured stbc-oracle bible §2.2).
                 damage = _phaser_damage_for_tick(
@@ -1043,23 +1080,6 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                     dt=flush_dwell,
                 ) * PHASER_INTENSITY_SCALE[level]
                 if damage > 0:
-                    impact_point, impact_normal = combat._resolve_hit_point(
-                        ship_instances=ship_instances, ship=target,
-                        ray_origin=emitter_pos,
-                        ray_direction=(aim_unit if dist > 1e-6 else None),
-                        max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
-                        fallback_point=target_pos,
-                    )
-                    # Where the beam crossed the bubble — the same point
-                    # _beam_endpoint stops the DRAWN beam at, so the flash lands on
-                    # the beam's own tip instead of 236 NIF units behind it. None
-                    # when no facing is up, which falls the flash back to the hull
-                    # point inside dispatch.
-                    bubble_entry = (
-                        combat.shield_bubble_entry(target, emitter_pos, aim_unit,
-                                                   dist * 1.5)
-                        if (aim_unit is not None and combat.shields_block(target))
-                        else None)
                     # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
                     # damage routes to subsystems only, the hull takes no condition
                     # damage and is not voxel-carved (verified by dev-console probe).

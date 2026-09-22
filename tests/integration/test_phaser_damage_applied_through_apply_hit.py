@@ -157,6 +157,7 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
     sentinel = object()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
          patch.object(host_io, "set_phaser_beams", _capture_beams), \
+         patch.object(host_io, "shield_hit", lambda *a, **k: None), \
          patch.object(host_io, "ray_trace_mesh", _fake_trace):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
@@ -171,3 +172,60 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
         assert end[0] == pytest.approx(SURFACE_POINT[0])
         assert end[1] == pytest.approx(SURFACE_POINT[1])
         assert end[2] == pytest.approx(SURFACE_POINT[2])
+
+
+# ── Continuous impact feedback while a beam rests on a target ───────────────
+# The DAMAGE is pulsed (one flush per 0.53 s of dwell — bible §2.2), but the
+# impact is not: BC draws its beam glow at the contact point every frame
+# (PhaserLights.tga, §14.1). Ours spawns the flash and the spark burst from
+# hit_feedback, which used to run per tick because the damage did. When the
+# damage moved to pulses the flash and sparks went with it — a hit every
+# 0.53 s per bank instead of every frame, which live read as the glowing
+# hull impact and the ejected debris disappearing.
+
+def _count_impacts(ship, target, ticks, dt=1.0 / 60):
+    from engine.appc import hit_vfx
+    from engine import host_io
+    spawns, splashes = [], []
+    with patch.object(hit_vfx, "spawn", lambda *a, **k: spawns.append(1)), \
+         patch.object(host_io, "shield_hit", lambda *a, **k: splashes.append(1)), \
+         patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        for _ in range(ticks):
+            _advance_combat([ship, target], dt=dt, ship_instances={target: 1})
+    return len(spawns), len(splashes)
+
+
+def test_a_beam_resting_on_a_bare_hull_flashes_every_frame(galaxy_red):
+    ship = galaxy_red
+    sys_ = ship.GetPhaserSystem()
+    for i in range(sys_.GetNumWeapons()):
+        sys_.GetWeapon(i)._charge_level = sys_.GetWeapon(i)._max_charge
+    target = _target_with_shields(shields_strength=0.0)   # bare hull
+    p = ship.GetWorldLocation()
+    target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
+    ship.SetTarget(target)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.StartFiring(target)
+        prime_lit_banks(sys_)
+    spawns, _ = _count_impacts(ship, target, ticks=60)
+    assert spawns >= 55, (
+        "the hull flash and its sparks must fire every frame the beam is in "
+        "contact, not once per damage pulse — got %d in 60 ticks" % spawns)
+
+
+def test_a_beam_resting_on_a_raised_shield_splashes_every_frame(galaxy_red):
+    ship = galaxy_red
+    sys_ = ship.GetPhaserSystem()
+    for i in range(sys_.GetNumWeapons()):
+        sys_.GetWeapon(i)._charge_level = sys_.GetWeapon(i)._max_charge
+    target = _target_with_shields()                       # shields up
+    p = ship.GetWorldLocation()
+    target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
+    ship.SetTarget(target)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.StartFiring(target)
+        prime_lit_banks(sys_)
+    _, splashes = _count_impacts(ship, target, ticks=60)
+    assert splashes >= 55, (
+        "the shield splash must fire every frame the beam is in contact — "
+        "got %d in 60 ticks" % splashes)

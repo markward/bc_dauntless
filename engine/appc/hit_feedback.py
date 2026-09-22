@@ -293,44 +293,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # 1b. Hull / critical impact — fires whenever damage got PAST the shields.
     # Independent of 1a: a partially-absorbed shot shows both.
     if severity != Severity.SHIELD:
-        # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
-        # Spark policy + hull anchor (sparks are independent of decals).
-        spark_count, weapon_kind = spark_params(
-            weapon_type=weapon_type, severity=severity,
-            absorbed_hull=absorbed_hull)
-        body_point = body_normal = None
-        instance_id = None
-        # Resolve the hull anchor for EVERY hit that can have one, not just
-        # spark-bearing ones. The flash billboard needs it too: hit_vfx_pass
-        # drew the flash at a frozen world_pos while the sparks beside it
-        # tracked inst->world, so over the flash's 0.7 s life it slid ~4.4 GU at
-        # combat speed — further than a Galaxy is long. Gating the conversion on
-        # `spark_count > 0` meant a flash-only hit (every phaser tick) had no
-        # anchor available at all.
-        #
-        # Unavailable when: no instance map, no surface normal (sphere-entry
-        # fallback), no instance for this ship, or the conversion fails (native
-        # absent / stale id). The flash then falls back to its world position,
-        # which is the old behaviour.
-        if ship_instances is not None and normal is not None:
-            instance_id = ship_instances.get(ship)
-            if instance_id is not None:
-                conv = host_io.world_to_body(
-                    instance_id,
-                    (point.x, point.y, point.z),
-                    (normal.x, normal.y, normal.z))
-                if conv is not None:
-                    body_point, body_normal = conv
-                else:
-                    instance_id = None  # stale id; no anchor, no sparks
-        # body_point is None unless the world->body conversion succeeded;
-        # force spark_count=0 in every no-anchor path so the renderer never
-        # anchors a burst at the default (0,0,0) body origin.
-        hit_vfx.spawn(
-            point, normal=normal, severity=severity,
-            instance_id=instance_id, body_point=body_point,
-            body_normal=body_normal, weapon_kind=weapon_kind,
-            spark_count=(spark_count if body_point is not None else 0))
+        _hull_impact_visual(
+            ship=ship, point=point, normal=normal, severity=severity,
+            weapon_type=weapon_type, absorbed_hull=absorbed_hull,
+            ship_instances=ship_instances)
         # Stock-faithful hull-impact smoke (Effects.py TorpedoHullHit/
         # PhaserHullHit): a probabilistic, detail-gated puff at the impact
         # point. Deferred import mirrors the hit_vfx/camera_shake pattern above.
@@ -490,3 +456,96 @@ def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> No
     if snd is None:
         return
     snd.Play(position=(point.x, point.y, point.z))
+
+
+def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
+                        absorbed_hull, ship_instances) -> None:
+    """The flash-and-sparks burst for a hit that reached the hull.
+
+    Split out of dispatch so the per-frame beam feedback (`beam_contact`)
+    can fire the same visual without the once-per-HIT parts: audio, the
+    smoke puff, the scorch decal and the camera shake.
+    """
+    from engine.appc import hit_vfx
+    # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
+    # Spark policy + hull anchor (sparks are independent of decals).
+    spark_count, weapon_kind = spark_params(
+        weapon_type=weapon_type, severity=severity,
+        absorbed_hull=absorbed_hull)
+    body_point = body_normal = None
+    instance_id = None
+    # Resolve the hull anchor for EVERY hit that can have one, not just
+    # spark-bearing ones. The flash billboard needs it too: hit_vfx_pass
+    # drew the flash at a frozen world_pos while the sparks beside it
+    # tracked inst->world, so over the flash's 0.7 s life it slid ~4.4 GU at
+    # combat speed — further than a Galaxy is long. Gating the conversion on
+    # `spark_count > 0` meant a flash-only hit (every phaser tick) had no
+    # anchor available at all.
+    #
+    # Unavailable when: no instance map, no surface normal (sphere-entry
+    # fallback), no instance for this ship, or the conversion fails (native
+    # absent / stale id). The flash then falls back to its world position,
+    # which is the old behaviour.
+    if ship_instances is not None and normal is not None:
+        instance_id = ship_instances.get(ship)
+        if instance_id is not None:
+            conv = host_io.world_to_body(
+                instance_id,
+                (point.x, point.y, point.z),
+                (normal.x, normal.y, normal.z))
+            if conv is not None:
+                body_point, body_normal = conv
+            else:
+                instance_id = None  # stale id; no anchor, no sparks
+    # body_point is None unless the world->body conversion succeeded;
+    # force spark_count=0 in every no-anchor path so the renderer never
+    # anchors a burst at the default (0,0,0) body origin.
+    hit_vfx.spawn(
+        point, normal=normal, severity=severity,
+        instance_id=instance_id, body_point=body_point,
+        body_normal=body_normal, weapon_kind=weapon_kind,
+        spark_count=(spark_count if body_point is not None else 0))
+
+
+def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
+                 ship_instances, weapon_type="phaser", radius=0.0) -> None:
+    """Cosmetic feedback for a beam RESTING on a target this frame.
+
+    A beam's DAMAGE arrives in pulses (one flush per 0.53 s of dwell, see
+    weapon_subsystems.BEAM_DWELL_FLUSH_S) but its impact does not: BC draws
+    the beam's glow at the contact point every frame (the engine's
+    PhaserLights.tga sprite, bible 14.1). Ours is the flash and its spark
+    burst, and when the damage moved to pulses they went with it — two
+    impacts a second instead of sixty, which live read as the glowing hull
+    hit and the ejected debris disappearing.
+
+    So this runs on every contact frame that is NOT a flush frame and does
+    only the continuous half: the shield splash, or the hull flash and
+    sparks. Everything belonging to a HIT — damage, audio, smoke, the
+    scorch decal, the hull carve, camera shake — stays on the pulse, in
+    apply_hit -> dispatch.
+
+    `tick_damage` is what this frame's slice of the beam would deposit. It
+    feeds the spark threshold, so the burst behaves exactly as it did when
+    damage was applied every tick.
+    """
+    from engine.appc.combat import shields_block
+    if shields_block(ship):
+        if ship_instances is None:
+            return
+        iid = ship_instances.get(ship)
+        if iid is None:
+            return
+        anchor = shield_point if shield_point is not None else point
+        host_io.shield_hit(
+            iid,
+            (anchor.x, anchor.y, anchor.z),
+            (0.0, 0.0, 0.0, 0.0),
+            shield_impact_intensity(weapon_type),
+            float(radius),
+        )
+        return
+    _hull_impact_visual(
+        ship=ship, point=point, normal=normal, severity=Severity.HULL,
+        weapon_type=weapon_type, absorbed_hull=float(tick_damage),
+        ship_instances=ship_instances)
