@@ -1573,6 +1573,23 @@ def test_overrides_survive_regeneration():
     assert fresh.overrides == {"note": "hand tuned"}
 
 
+def test_a_malformed_existing_map_is_never_overwritten(tmp_path, monkeypatch):
+    """The overrides block is the only place hand art-direction lives, and the
+    generator writes straight back over the file it read. So an unreadable map
+    must stop the write, not be treated as "no prior map" -- otherwise one bad
+    character silently replaces a human's work with a fresh layout."""
+    import engine.systems.map as smap
+    from tools.gen_system_maps import main
+    maps = tmp_path / "maps"
+    maps.mkdir()
+    bad = maps / "ona.json"
+    bad.write_text("{ this is not json", encoding="utf-8")
+    monkeypatch.setattr(smap, "map_dir", lambda: maps)
+    rc = main(["--system", "Ona"])
+    assert rc != 0
+    assert bad.read_text(encoding="utf-8") == "{ this is not json"
+
+
 def test_pins_from_reads_the_overrides_block():
     """Pins are hand-declared in overrides -- there are only two across all 89
     regions, and one of them is keyed to a waypoint no body occupies."""
@@ -1660,14 +1677,17 @@ def pins_from(m):
 
 
 def generate(system: str):
+    """Survey, lay out, and carry the existing map's overrides forward.
+
+    Deliberately does NOT swallow a read failure. The overrides block is the
+    only place hand art-direction lives, and main() writes the result straight
+    back over the file -- so treating an unreadable map as "no prior map"
+    would silently replace a human's work with a fresh layout. Let it raise;
+    main() reports it and refuses to save that system.
+    """
     surveyed = survey_system(system)
     fresh = layout(surveyed)
-    old = None
-    if system.lower() in available():
-        try:
-            old = load(system)
-        except Exception:
-            old = None
+    old = load(system) if system.lower() in available() else None
     _merge_overrides(fresh, old)
     return fresh, ambiguities(surveyed)
 
@@ -1685,7 +1705,15 @@ def main(argv=None) -> int:
     names = args.system or system_names()
     failed = 0
     for name in names:
-        m, notes = generate(name)
+        try:
+            m, notes = generate(name)
+        except Exception as exc:
+            # Refuse to overwrite a map we could not read. Losing a hand-authored
+            # overrides block is worse than any stale layout.
+            print(f"{name}: CANNOT READ THE EXISTING MAP -- refusing to "
+                  f"overwrite it ({type(exc).__name__}: {exc})")
+            failed += 1
+            continue
         surveyed = survey_system(name)
         problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions],
                             pins=pins_from(m))
@@ -1715,7 +1743,7 @@ with no ambiguity notes (Ona's regions are all numbered and hold one planet each
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/unit/test_system_maps_valid.py -v`
-Expected: PASS (9 tests, one parametrised over `ona`)
+Expected: PASS (10 tests, one parametrised over `ona`)
 
 - [ ] **Step 6: Run the full gate**
 
