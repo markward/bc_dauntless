@@ -63,6 +63,23 @@ def test_overrides_survive_regeneration():
     assert fresh.overrides == {"note": "hand tuned"}
 
 
+def test_a_malformed_existing_map_is_never_overwritten(tmp_path, monkeypatch):
+    """The overrides block is the only place hand art-direction lives, and the
+    generator writes straight back over the file it read. So an unreadable map
+    must stop the write, not be treated as "no prior map" -- otherwise one bad
+    character silently replaces a human's work with a fresh layout."""
+    import engine.systems.map as smap
+    from tools.gen_system_maps import main
+    maps = tmp_path / "maps"
+    maps.mkdir()
+    bad = maps / "ona.json"
+    bad.write_text("{ this is not json", encoding="utf-8")
+    monkeypatch.setattr(smap, "map_dir", lambda: maps)
+    rc = main(["--system", "Ona"])
+    assert rc != 0
+    assert bad.read_text(encoding="utf-8") == "{ this is not json"
+
+
 def test_pins_from_reads_the_overrides_block():
     """Pins are hand-declared in overrides -- there are only two across all 89
     regions, and one of them is keyed to a waypoint no body occupies."""

@@ -50,14 +50,17 @@ def pins_from(m):
 
 
 def generate(system: str):
+    """Survey, lay out, and carry the existing map's overrides forward.
+
+    Deliberately does NOT swallow a read failure. The overrides block is the
+    only place hand art-direction lives, and main() writes the result straight
+    back over the file -- so treating an unreadable map as "no prior map"
+    would silently replace a human's work with a fresh layout. Let it raise;
+    main() reports it and refuses to save that system.
+    """
     surveyed = survey_system(system)
     fresh = layout(surveyed)
-    old = None
-    if system.lower() in available():
-        try:
-            old = load(system)
-        except Exception:
-            old = None
+    old = load(system) if system.lower() in available() else None
     _merge_overrides(fresh, old)
     return fresh, ambiguities(surveyed)
 
@@ -75,7 +78,15 @@ def main(argv=None) -> int:
     names = args.system or system_names()
     failed = 0
     for name in names:
-        m, notes = generate(name)
+        try:
+            m, notes = generate(name)
+        except Exception as exc:
+            # Refuse to overwrite a map we could not read. Losing a hand-authored
+            # overrides block is worse than any stale layout.
+            print(f"{name}: CANNOT READ THE EXISTING MAP -- refusing to "
+                  f"overwrite it ({type(exc).__name__}: {exc})")
+            failed += 1
+            continue
         surveyed = survey_system(name)
         problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions],
                             pins=pins_from(m))
