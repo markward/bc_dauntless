@@ -7,9 +7,9 @@ camera position.
 
 Default framing and the zoom step are BC's Chase mode (see the constants
 in engine/cameras/__init__.py): unit(0, -1, 0.1) × 4·r, zoom ×0.875 /
-×1.125 clamped to [2, 40]·r. The orbit, the pitch limit and the rotation
-spring are ours — BC's Chase snaps to a lagged pose instead (lag 0.229·r
-s, MaxLagDist atan cap), which is not ported.
+×1.125 clamped to [2, 40]·r. The heading lag (ω × 1 s) and the speed lag
+(v × 0.28 s, capped at MaxLagDist 2 r) are BC's as measured on the exe —
+see SPRING_TAU_S / POS_LAG_TAU_S. The orbit and the pitch limit are ours.
 
 Conventions:
     orbit_yaw_rad   — rotation around ship-Z. 0 = directly behind,
@@ -43,10 +43,24 @@ class _ChaseCamera:
     DEFAULT_PITCH_RAD      = _math.atan2(
         CHASE_DEFAULT_POSITION[2],
         _math.hypot(CHASE_DEFAULT_POSITION[0], CHASE_DEFAULT_POSITION[1]))
-    SPRING_TAU_S           = 0.75                               # ~95% catch-up in 2.25s
+    # BC's Chase dynamics, measured on the exe (stbc-oracle bible §12.1, V2):
+    #   * the camera lags the HEADING by ω × 1.0 s — 16.7° (0.29 rad) to the
+    #     outside of a steady 0.28 rad/s turn (`cam_galaxy_chase_yaw`);
+    #   * the eye trails the ship by an extra 0.26–0.29 s × SPEED, settling
+    #     within ~0.5 s of the speed settling (17.47 GU astern at rest → 19.18
+    #     at 6.30 GU/s, `cam_galaxy_chase_impulse`), capped by the mode's
+    #     MaxLagDist 2.0 (× r = 8.7 GU on a Galaxy).
+    # A first-order filter on the basis and one on the eye position reproduce
+    # both: each lags a ramp by rate × τ, and in a turn they COMPOUND (the
+    # eye also trails the ideal point's circular motion), so the measured
+    # 1.0 s of heading lag is SPRING_TAU_S + POS_LAG_TAU_S = 0.75 + 0.28.
+    SPRING_TAU_S           = 0.75                               # heading lag (with the eye lag: ω × 1 s)
+    POS_LAG_TAU_S          = 0.28                               # speed lag: v × 0.28 s
+    MAX_LAG_RADII          = 2.0                                # CameraModes.Chase MaxLagDist
     MOUSE_SENSITIVITY      = 0.005                              # radians per pixel
 
     def __init__(self):
+        self._smoothed_eye      = None
         self.orbit_yaw_rad      = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad    = self.DEFAULT_PITCH_RAD
         self.reverse_active     = False
@@ -61,6 +75,7 @@ class _ChaseCamera:
         self.distance if it was sitting at the prior default; preserves any
         user zoom that has occurred since the last reset."""
         radius = max(radius, 1e-6)
+        self.ship_radius = radius
         prev_default = getattr(self, "default_distance", None)
         self.default_distance    = CHASE_DISTANCE_RADII * radius
         self.distance_min        = CHASE_MIN_RADII * radius
@@ -80,6 +95,7 @@ class _ChaseCamera:
         reverse-active flag. Use on hard cuts (mission swap, teleport,
         warp exit)."""
         self._smoothed_rot  = None
+        self._smoothed_eye  = None
         self.distance       = self.default_distance
         self.reverse_active = False
 
@@ -171,9 +187,31 @@ class _ChaseCamera:
             ship_loc.y + ox * rgt.y + oy * fwd.y + oz * up.y,
             ship_loc.z + ox * rgt.z + oy * fwd.z + oz * up.z,
         )
+        if dt is not None:
+            eye = self._advance_eye_lag(eye, dt)
         target = (ship_loc.x, ship_loc.y, ship_loc.z)
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
+
+    def _advance_eye_lag(self, ideal, dt: float):
+        """Trail the ideal eye with time constant POS_LAG_TAU_S, never more
+        than MAX_LAG_RADII × ship radius behind it. Seeds on the ideal."""
+        if self._smoothed_eye is None or dt <= 0.0:
+            self._smoothed_eye = ideal
+            return ideal
+        alpha = 1.0 - _math.exp(-dt / self.POS_LAG_TAU_S)
+        sx, sy, sz = self._smoothed_eye
+        ex = sx + alpha * (ideal[0] - sx)
+        ey = sy + alpha * (ideal[1] - sy)
+        ez = sz + alpha * (ideal[2] - sz)
+        dx, dy, dz = ex - ideal[0], ey - ideal[1], ez - ideal[2]
+        d = _math.sqrt(dx * dx + dy * dy + dz * dz)
+        cap = self.MAX_LAG_RADII * getattr(self, "ship_radius", 1.0)
+        if d > cap:
+            k = cap / d
+            ex, ey, ez = ideal[0] + dx * k, ideal[1] + dy * k, ideal[2] + dz * k
+        self._smoothed_eye = (ex, ey, ez)
+        return self._smoothed_eye
 
     def _advance_smoothing(self, ship_rot, dt: float):
         """Blend self._smoothed_rot toward ship_rot, renormalize, and return

@@ -99,20 +99,45 @@ def test_toggle_in_chase_with_no_target_stays_in_chase():
     assert d.mode is CameraMode.CHASE
 
 
-def test_target_lost_mid_tracking_falls_back_to_chase_on_compute():
+def test_target_lost_mid_tracking_keeps_target_mode_on_the_last_position():
+    """BC's Target camera survives its target's destruction: at removal the
+    player's target clears, and the camera STAYS in Target mode aimed at
+    the wreck's last position, indefinitely (stbc-oracle bible §12.2a V7,
+    `camera_kill/*`: ≥ 34 s observed, the aim still 4.7° off the wreck's
+    bearing after the player yawed 96° away).  It used to fall back to
+    Chase on the same frame."""
     from engine.cameras.director import _CameraDirector, CameraMode
     d = _CameraDirector()
     d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
 
-    p_with    = _FakeShipWithTarget(target=_make_target_at())
+    p_with    = _FakeShipWithTarget(target=_make_target_at(0.0, 20.0, 0.0))
     p_without = _FakeShipWithTarget(target=None)
 
     d.toggle_mode(player=p_with)
     assert d.mode is CameraMode.TRACKING
+    eye_live, look_live, _ = d.compute(player=p_with, dt=1.0/60)
 
-    # Player loses target.
-    eye, look_at, up = d.compute(player=p_without, dt=1.0/60)
-    assert d.mode is CameraMode.CHASE   # durable switch (spec §5)
+    # Player loses target: still Tracking, framed on where the target was.
+    for _ in range(60 * 34):
+        eye, look_at, up = d.compute(player=p_without, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+    assert eye == pytest.approx(eye_live, abs=1e-3)
+    assert look_at == pytest.approx(look_live, abs=1e-3)
+
+
+def test_ghost_target_is_released_by_the_c_key():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p_with    = _FakeShipWithTarget(target=_make_target_at())
+    p_without = _FakeShipWithTarget(target=None)
+    d.toggle_mode(player=p_with)
+    d.compute(player=p_without, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+    d.toggle_mode(player=p_without)
+    assert d.mode is CameraMode.CHASE
+    d.compute(player=p_without, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE          # no ghost to re-engage on
 
 
 def test_snap_propagates_to_both_cameras():
@@ -155,9 +180,9 @@ def test_auto_engage_tracking_when_target_appears_in_chase():
     assert d.mode is CameraMode.TRACKING
 
 
-def test_auto_engage_on_target_change_after_durable_fallback():
-    """After target loss drops us to Chase, acquiring a new target
-    auto-engages Tracking again."""
+def test_new_target_after_a_loss_takes_over_from_the_ghost():
+    """After a target loss the camera holds on the ghost; acquiring a new
+    target re-frames on the live one."""
     from engine.cameras.director import _CameraDirector, CameraMode
     d = _CameraDirector()
     d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
@@ -168,9 +193,9 @@ def test_auto_engage_on_target_change_after_durable_fallback():
     d.compute(player=p_a, dt=1.0/60)
     assert d.mode is CameraMode.TRACKING
 
-    # Target lost.
+    # Target lost: Target mode holds on the ghost (V7).
     d.compute(player=p_no, dt=1.0/60)
-    assert d.mode is CameraMode.CHASE
+    assert d.mode is CameraMode.TRACKING
 
     # New target acquired.
     p_b = _FakeShipWithTarget(target=_make_target_at(x=5.0))
@@ -337,9 +362,8 @@ def test_director_zoom_out_in_tracking_delegates():
 # ── Task 5: ZoomTarget cleanup on Tracking → Chase transitions ───────────────
 
 
-def test_target_lost_in_tracking_with_zoom_target_active_clears_both():
-    """Durable target-loss fallback must clear ZoomTarget sub-mode
-    in addition to flipping mode to CHASE."""
+def test_target_lost_in_tracking_with_zoom_target_active_clears_zoom():
+    """Target loss releases the ZoomTarget sub-mode; the mode itself holds."""
     from engine.cameras.director import _CameraDirector, CameraMode
     d = _CameraDirector()
     d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
@@ -352,9 +376,9 @@ def test_target_lost_in_tracking_with_zoom_target_active_clears_both():
     d.start_zoom_target(player=p_with)
     assert d.tracking.zoom_target_active is True
 
-    # Target lost.
+    # Target lost: Target mode holds (V7) but ZoomTarget is released.
     d.compute(player=p_without, dt=1.0/60)
-    assert d.mode is CameraMode.CHASE
+    assert d.mode is CameraMode.TRACKING
     assert d.tracking.zoom_target_active is False
 
 
@@ -552,3 +576,40 @@ def test_director_compute_passes_pose_of_to_tracking():
     eye1, look1, up1 = d.compute(player=p, dt=None, pose_of=pose_of)
     for a, b, v in zip(eye1, eye0, V):
         assert a == pytest.approx(b + v, abs=1e-6)
+
+
+def test_zoom_target_survives_frames_with_a_live_target():
+    """THE BUG (live: 'pressing Z while target locked doesn't zoom'): the V7
+    ghost is refreshed every framed frame, and treating its mere presence as
+    'we were on a ghost' made compute() release it and snap() the tracking
+    camera EVERY frame — and snap() clears zoom_target_active and re-seeds
+    the zoom distances. Z armed the sub-mode and the next frame threw it
+    away."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p = _FakeShipWithTarget(target=_make_target_at())
+
+    d.toggle_mode(player=p)
+    d.compute(player=p, dt=1.0/60)
+    d.start_zoom_target(player=p)
+    assert d.tracking.zoom_target_active is True
+
+    for _ in range(120):
+        d.compute(player=p, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+    assert d.tracking.zoom_target_active is True, (
+        "Z must stay armed while the target is alive")
+
+
+def test_a_live_target_does_not_re_snap_the_tracking_springs_every_frame():
+    """The same bug seen from the springs: a per-frame snap() drops the
+    smoothed eye, so the camera can never settle."""
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.toggle_mode(player=p)
+    for _ in range(10):
+        d.compute(player=p, dt=1.0/60)
+    assert d.tracking._smoothed_eye is not None

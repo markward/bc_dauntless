@@ -36,9 +36,21 @@ def test_update_charge_caps_at_max():
     assert bank.GetChargeLevel() == 5.0
 
 
+def test_update_charge_does_not_drain_during_the_beam_on_delay():
+    """A bank that has just lit holds its charge for the 0.66 s beam-on
+    delay (the Galaxy's bank 5 reads 5.0 → 4.34 only at IsFiring + 1.16 s,
+    stbc-oracle `phaser_galaxy_front_57`)."""
+    bank = _bank(on=True, charge=5.0, discharge=1.0)
+    bank.Fire(target=None, offset=None)
+    bank.UpdateCharge(dt=0.5)
+    assert bank.GetChargeLevel() == 5.0
+    assert bank.IsFiring() == 1
+
+
 def test_update_charge_drains_when_firing():
     bank = _bank(on=True, charge=5.0, discharge=1.0)
     bank.Fire(target=None, offset=None)
+    bank._beam_on_countdown = 0.0     # past the beam-on delay
     bank.UpdateCharge(dt=0.5)
     assert bank.GetChargeLevel() == 4.5
 
@@ -46,6 +58,7 @@ def test_update_charge_drains_when_firing():
 def test_update_charge_auto_stops_when_drained():
     bank = _bank(on=True, charge=1.0, discharge=2.0, min_firing_charge=0.5)
     bank.Fire(target=None, offset=None)
+    bank._beam_on_countdown = 0.0     # past the beam-on delay
     bank.UpdateCharge(dt=1.0)
     assert bank.GetChargeLevel() == 0.0
     assert bank.IsFiring() == 0

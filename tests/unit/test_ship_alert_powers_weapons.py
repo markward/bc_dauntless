@@ -25,6 +25,7 @@ def _galaxy_loadout():
 
 def test_red_alert_turns_phasers_on():
     ship = _galaxy_loadout()
+    ship.SetAlertLevel(ShipClass.GREEN_ALERT)     # ships spawn RED (bible §13 N2)
     assert ship.GetPhaserSystem().IsOn() == 0
     ship.SetAlertLevel(ShipClass.RED_ALERT)
     assert ship.GetPhaserSystem().IsOn() == 1

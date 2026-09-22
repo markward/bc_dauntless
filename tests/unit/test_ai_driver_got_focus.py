@@ -89,7 +89,7 @@ def test_got_focus_side_effects_visible_to_contained_ai():
             return PreprocessingAI.PS_NORMAL
 
     ship = ShipClass()
-    assert ship._alert_level == ShipClass.GREEN_ALERT
+    ship._alert_level = ShipClass.GREEN_ALERT    # ships spawn RED (bible §13 N2)
     inst = AlertLevelLike(ship)
     pp = PreprocessingAI(ship, "PP")
     pp.SetPreprocessingMethod(inst, "Update")

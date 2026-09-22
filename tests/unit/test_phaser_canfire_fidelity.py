@@ -66,10 +66,12 @@ def recorded_events():
 
 # ── CanFire start/sustain asymmetry (the hysteresis) ────────────────────────
 
-def test_start_needs_min_firing_charge_but_sustain_only_needs_nonzero():
+def test_start_and_sustain_both_need_only_nonzero_charge():
+    """MinFiringCharge does not gate a start: a Kessok bank preset to 3
+    (MinFiringCharge 4) fires at the full rate on the original exe
+    (stbc-oracle B8, `phaser_high_front_57_charge3`)."""
     bank = make_charged_bank(min_firing=2.0, charge=1.0)
-    assert bank.CanFire() == 0            # below start threshold
-    bank._charge_level = 2.0
+    assert bank.CanFire() == 1            # below MinFiringCharge — still starts
     bank.Fire(target=make_target())
     bank._charge_level = 0.5              # drained mid-beam
     assert bank.CanFire() == 1            # sustain: > 0 suffices
@@ -77,14 +79,22 @@ def test_start_needs_min_firing_charge_but_sustain_only_needs_nonzero():
     assert bank.CanFire() == 0
 
 
-def test_restart_after_depletion_needs_min_firing_charge_no_headroom():
+def test_restart_after_depletion_needs_min_firing_charge():
+    """A bank that ran dry latches until MinFiringCharge (the Galaxy's
+    drained bank 5 did not relight at 0.45 of 5 while the trigger was held —
+    stbc-oracle `phaser_galaxy_front_57`); a bank that never ran dry starts
+    on any charge (test above)."""
     bank = make_charged_bank(min_firing=2.0, charge=2.0, max_charge=10.0)
+    bank._beam_on_countdown = 0.0          # past the beam-on delay
     bank.Fire(target=make_target())
+    bank._beam_on_countdown = 0.0
     bank._charge_level = 0.0
     bank.UpdateCharge(0.016)              # depletion auto-stop
     assert bank.IsFiring() == 0
+    bank._charge_level = 1.9              # below MinFiringCharge — latched
+    assert bank.CanFire() == 0
     bank._charge_level = 2.0              # exactly MinFiringCharge — enough
-    assert bank.CanFire() == 1            # (old code demanded 2.0 + 20% of 10)
+    assert bank.CanFire() == 1
 
 
 # ── Ship-alive + disabled-product gates ─────────────────────────────────────

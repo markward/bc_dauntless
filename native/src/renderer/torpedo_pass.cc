@@ -16,7 +16,8 @@
 //   for the open RE questions (Q4/Q7) this implementation stands in for.
 //
 //   DISRUPTOR (is_disruptor == true): no controller, no texture, no light --
-//   a procedural tapered-tube mesh (renderer::build_bolt_mesh) whose ONLY
+//   a procedural teardrop mesh (renderer::build_bolt_mesh; pointed tail,
+//   widest near the nose, rounded nose; full width == `width`) whose ONLY
 //   animation is imperative per-frame re-orientation of the tube's +Y axis
 //   onto the current velocity vector (renderer::bolt_align_rotation). Two
 //   concentric uniform-color sub-draws (shell then a smaller, shorter core)
@@ -250,8 +251,12 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
             }
             if (alpha <= 0.0f) continue;
 
+            // The streak texture is 2:1 (32 x 64): full half-length along the
+            // quad's y axis, kFlareAspect of it across.
             draw_layer(t.flares_texture, t.flares_color, p.flare_half_size,
-                       t.world_pos, quad_basis[0], quad_basis[1], alpha);
+                       t.world_pos,
+                       quad_basis[0] * torpedo_anim_detail::kFlareAspect,
+                       quad_basis[1], alpha);
         }
 
         // Core sprite, drawn last -- order is cosmetic under additive blend

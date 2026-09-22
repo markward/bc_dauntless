@@ -1583,6 +1583,11 @@ class ShieldSubsystem(PoweredSubsystem):
         self._max_shields:       list[float] = [0.0] * self.NUM_SHIELDS
         self._current_shields:   list[float] = [0.0] * self.NUM_SHIELDS
         self._charge_per_second: list[float] = [0.0] * self.NUM_SHIELDS
+        # The face fraction the absorption ramp reads. BC refreshes it on
+        # the charge tick, not on every hit or store (ShieldFacingDamage.md
+        # §7.2; visible in the captures as the hull share stepping once per
+        # ~0.53 s rather than per pulse). None = no tick yet: read live.
+        self._ramp_fraction: list = [None] * self.NUM_SHIELDS
         # FloatRangeWatchers handed to SDK consumers. Indices 0..5 are the
         # per-face watchers (Conditions/ConditionSingleShieldBelow.py:110,
         # GetShieldWatcher(side)), each watching its face FRACTION
@@ -1767,11 +1772,15 @@ class ShieldSubsystem(PoweredSubsystem):
         skip the whole loop. _charge_per_second values are NOT mutated;
         repair restores regen at the original rates on the next call.
 
-        Powered-down gate: when the generator is not IsOn (alert level
-        is GREEN, or nothing has raised shields yet), regen is suppressed.
-        ShipClass.SetAlertLevel drains the face values to zero on the same
-        transition; this gate just prevents Update from leaking charge
-        back in.
+        Neither the alert level nor the generator's power setting gates or
+        scales regen. Measured on the original exe (stbc-oracle bible §5.3,
+        S5): a face preset to 50 % climbs at 9.2–9.5/s at red, yellow AND
+        green alert (`regen_{red,yellow,green}_face50`), and at 50 %
+        generator power wanted (`regen_power50_face50`). So a powered-down
+        (green) generator keeps regenerating the charge it is preserving,
+        and the power factor does not enter the rate. What a reactor that
+        cannot supply NormalPowerPerSecond does is bible §10 open — not
+        modelled here either way.
         """
         # ── BC's 0.5 s charge cadence ────────────────────────────────────
         # ShieldClass's tick (0x0056A230, vtable slot 25) accumulates elapsed
@@ -1796,29 +1805,37 @@ class ShieldSubsystem(PoweredSubsystem):
             return
         dt = self._charge_accum
         self._charge_accum = 0.0
+        # The charge tick is where the ramp's fraction is refreshed.
+        for f in range(self.NUM_SHIELDS):
+            mx = self._max_shields[f]
+            self._ramp_fraction[f] = (self._current_shields[f] / mx) if mx > 0.0 else 0.0
 
         if _is_offline(self):
+            # A disabled (or destroyed) generator does not merely stop
+            # regenerating — every face drops to zero and stays there.
+            # Measured on the original exe (stbc-oracle bible §5.3 S6,
+            # `regen_gen{50,20}_face50`): with the generator's condition
+            # below its DisabledPercentage, all six faces read 0 at once and
+            # nothing comes back until it is repaired; then regen refills
+            # them from zero. The generator is binary: healthy ⇒ shields,
+            # disabled ⇒ none.
+            if any(self._current_shields):
+                for f in range(self.NUM_SHIELDS):
+                    self._current_shields[f] = 0.0
+                for f in range(self.NUM_SHIELDS):
+                    self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
+                self._shield_watchers[self.NUM_SHIELDS]._update(
+                    self.GetShieldPercentage())
             return
-        # Cloak-regen branch: while the ship is trying to cloak (CLOAKING or
-        # CLOAKED) its shields are "down" (hidden), but they RECHARGE anyway so
-        # the ship rebuilds them while hiding and comes back protected on decloak
-        # (2026-07-08 live-play fix). This deliberately bypasses the normal IsOn
-        # (raised) gate — "recharge during cloak even if they aren't up". A
-        # disabled/destroyed generator still can't regen (handled by _is_offline
-        # above). When NOT cloaking, the usual IsOn gate applies.
-        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
-        cloak = (ship.GetCloakingSubsystem()
-                 if (ship is not None and hasattr(ship, "GetCloakingSubsystem"))
-                 else None)
-        trying_cloak = bool(cloak is not None and cloak.IsTryingToCloak())
-        if not trying_cloak and not self.IsOn():
-            return
+        # No IsOn gate: a lowered (green-alert) or cloaked ship's hidden
+        # charge keeps regenerating — the cloak case was a 2026-07-08 live
+        # fix, the green case is the S5 capture above; they are the same rule.
         dt = float(dt)
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
             if mx == 0.0:
                 continue
-            new = self._current_shields[f] + self._charge_per_second[f] * self.GetNormalPowerPercentage() * dt
+            new = self._current_shields[f] + self._charge_per_second[f] * dt
             if new > mx:
                 new = mx
             self._current_shields[f] = new
@@ -1833,19 +1850,54 @@ class ShieldSubsystem(PoweredSubsystem):
             self.GetShieldPercentage())
 
     def ApplyDamage(self, face: int, amount: float) -> float:
-        """Drain current shields on the face; return damage overflow.
+        """Absorb a hit on the face; return what reaches the hull.
 
-        Caller routes the returned overflow to hull. Does not trigger
-        regen, fire events, or mutate any other face.
+        Not a strict cascade. BC's shield branch (clean-room
+        ShieldFacingDamage.md §3.3, `ShipClass::ApplyWeaponHit`) computes a
+        pass-through fraction `b` from the face's fraction `f` BEFORE the hit:
+
+            f ≥ 0.6        b = 0
+            0.1 < f < 0.6  b = 0.6 · (1 − 2·(f − 0.1))   (linear, 0 → 0.6)
+            f ≤ 0.1        the face is bypassed: everything reaches the hull
+
+        the face absorbs the complement `(1 − b)·D`, and if that drives it
+        below zero the overdraw is added to the bleed. Measured on the
+        original exe (stbc-oracle bible §5.2, 350 hits pooled): hull share
+        0 at f ≥ 0.6, 0.20 at 0.40–0.45, 0.49 at 0.15–0.20, and 1.00 below
+        0.1. A front face
+        preset to 50 % passes 39 % of a Kessok volley; at 25 %, 75 % (S3).
+
+        Two things the capture shows that the spec text does not: below
+        f = 0.1 the face is BYPASSED — `phaser_high_front_57_face25` holds
+        the face at 641 of 8000 (f = 0.08) while every pulse goes whole to
+        the hull, so the spec's `b = 0.6 at f ≤ 0.1` is not what the exe
+        does; and the fraction is the one refreshed on the charge tick
+        (`_ramp_fraction`), which is why the hull share steps once per
+        ~0.53 s and not per pulse.
+
+        Does not trigger regen, fire events, or mutate any other face.
         """
         f = int(face)
         amt = float(amount)
         cur = self._current_shields[f]
-        if amt <= cur:
-            self._current_shields[f] = cur - amt
-            return 0.0
+        mx = self._max_shields[f]
+        if mx <= 0.0 or cur <= 0.0:
+            return amt
+        frac = self._ramp_fraction[f]
+        if frac is None:
+            frac = cur / mx
+        if frac <= 0.1:
+            return amt                              # bypassed entirely
+        if frac >= 0.6:
+            b = 0.0
+        else:
+            b = 0.6 * (1.0 - 2.0 * (frac - 0.1))
+        new = cur - (1.0 - b) * amt
+        if new >= 0.0:
+            self._current_shields[f] = new
+            return b * amt
         self._current_shields[f] = 0.0
-        return amt - cur
+        return b * amt - new
 
 
 class PowerSubsystem(ShipSubsystem):

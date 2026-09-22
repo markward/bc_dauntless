@@ -18,7 +18,12 @@ constexpr float kPi = 3.14159265358979323846f;
 // §5.5). If a future RE Q&A re-pins the table, update map_torpedo_params AND
 // this test together.
 // ─────────────────────────────────────────────────────────────────────────
-TEST(TorpedoAnimMapping, PhotonDescriptorLocksProvisionalFieldAssignment) {
+// Args 13/14 pinned on the exe by changing one at a time and filming
+// (stbc-oracle bible §14.2): 13 is the flare LENGTH (0.7 -> 2.5 took the
+// streaks from 291 to 514 px), 14 the flare LIFESPAN (0.4 -> 100 s made
+// them persist and pile up). The earlier provisional mapping had them the
+// other way round, and drew the streaks at a quarter of their length.
+TEST(TorpedoAnimMapping, PhotonDescriptorMatchesTheVerifiedArgumentRoles) {
     renderer::TorpedoDescriptor d;
     d.core_size_a   = 0.2f;
     d.core_size_b   = 1.2f;
@@ -36,8 +41,14 @@ TEST(TorpedoAnimMapping, PhotonDescriptorLocksProvisionalFieldAssignment) {
     EXPECT_FLOAT_EQ(p.scale_lo, 0.3f);
     EXPECT_FLOAT_EQ(p.scale_hi, 0.6f);
     EXPECT_FLOAT_EQ(p.clone_scale, 0.6f);
-    EXPECT_FLOAT_EQ(p.flare_period, 0.7f);
-    EXPECT_FLOAT_EQ(p.flare_half_size, 0.16f);  // 0.4 * 0.4
+    EXPECT_FLOAT_EQ(p.flare_period, 0.4f);      // arg 14: lifespan, seconds
+    EXPECT_FLOAT_EQ(p.flare_half_size, 0.7f);   // arg 13: length, GU
+}
+
+TEST(TorpedoAnimMapping, FlareStreakIsTwoToOneAlongItsAxis) {
+    // TorpedoFlares.tga is a 32 x 64 vertical streak; the quad keeps that
+    // aspect: full length along the streak, half as wide across it.
+    EXPECT_FLOAT_EQ(renderer::torpedo_anim_detail::kFlareAspect, 0.5f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -210,6 +221,23 @@ TEST(TorpedoAnimFlareRotation, IsAValidRotationMatrix) {
     EXPECT_TRUE(is_rotation_matrix(r, 1e-3f));
 }
 
+// A flare is a streak radiating from the core IN THE SCREEN PLANE. The
+// rotation must therefore be about the root's view axis (local z) only:
+// a rotation about any other axis tilts the quad out of the billboard plane
+// and it sweeps through edge-on as the root spins -- seen live as the star
+// flickering light-to-dark while it twists.
+TEST(TorpedoAnimFlareRotation, KeepsTheStreakInTheBillboardPlane) {
+    for (uint32_t id = 1; id < 40; ++id) {
+        for (uint32_t i = 0; i < 8; ++i) {
+            const glm::mat3 r = renderer::flare_rotation(id, i);
+            const glm::vec3 z = r * glm::vec3(0.0f, 0.0f, 1.0f);
+            EXPECT_NEAR(z.x, 0.0f, 1e-5f) << "id=" << id << " i=" << i;
+            EXPECT_NEAR(z.y, 0.0f, 1e-5f) << "id=" << id << " i=" << i;
+            EXPECT_NEAR(z.z, 1.0f, 1e-5f) << "id=" << id << " i=" << i;
+        }
+    }
+}
+
 TEST(TorpedoAnimFlareRotation, DiffersAcrossFlareIndices) {
     const glm::mat3 a = renderer::flare_rotation(11u, 0u);
     const glm::mat3 b = renderer::flare_rotation(11u, 1u);
@@ -377,52 +405,85 @@ TEST(TorpedoAnimBoltAlign, DegenerateMinusYMapsToMinusYAndIsValidRotation) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// build_bolt_mesh
+// build_bolt_mesh — a closed teardrop, not a tube
+//
+// BC's disruptor bolt is a teardrop: pointed tail, widest near the nose,
+// rounded nose (Mark, live; the oracle's stock frames). Its full width is the
+// CreateDisruptorModel `width` argument — the stock 1.8 × 0.15 bolt measures
+// 12.4:1 (stbc-oracle bible §14.3, 87 × 7 px) — so the unit mesh's maximum
+// RADIUS is 0.5. The profile constants (widest-at, tail power) are a
+// calibration surface: re-pin them from the frames, not from taste.
 // ─────────────────────────────────────────────────────────────────────────
-TEST(TorpedoAnimBoltMesh, DefaultVertexCountIs48) {
+TEST(TorpedoAnimBoltProfile, PointedAtBothEnds) {
+    EXPECT_NEAR(renderer::bolt_teardrop_radius(0.0f), 0.0f, 1e-6f);
+    EXPECT_NEAR(renderer::bolt_teardrop_radius(1.0f), 0.0f, 1e-6f);
+}
+
+TEST(TorpedoAnimBoltProfile, WidestIsHalfAUnitNearTheNose) {
+    const float u_w = renderer::torpedo_anim_detail::kBoltWidestAt;
+    EXPECT_GT(u_w, 0.5f);                                   // nose end is +y
+    EXPECT_NEAR(renderer::bolt_teardrop_radius(u_w), 0.5f, 1e-6f);
+    // Monotone up to the widest point, monotone down after it.
+    float prev = -1.0f;
+    for (int i = 0; i <= 100; ++i) {
+        const float u = u_w * static_cast<float>(i) / 100.0f;
+        const float r = renderer::bolt_teardrop_radius(u);
+        EXPECT_GE(r, prev - 1e-6f) << "u=" << u;
+        EXPECT_LE(r, 0.5f + 1e-6f);
+        prev = r;
+    }
+    for (int i = 0; i <= 100; ++i) {
+        const float u = u_w + (1.0f - u_w) * static_cast<float>(i) / 100.0f;
+        const float r = renderer::bolt_teardrop_radius(u);
+        EXPECT_LE(r, prev + 1e-6f) << "u=" << u;
+        prev = r;
+    }
+}
+
+TEST(TorpedoAnimBoltMesh, DefaultVertexCountIsRingsTimesSegments) {
     const renderer::BoltMesh mesh = renderer::build_bolt_mesh();
-    EXPECT_EQ(mesh.vertices.size(), 48u);  // 12 segments * 4 rings
+    EXPECT_EQ(mesh.vertices.size(),
+              static_cast<size_t>(renderer::torpedo_anim_detail::kBoltRings) * 12u);
 }
 
-TEST(TorpedoAnimBoltMesh, RingYValuesMatchSpec) {
+TEST(TorpedoAnimBoltMesh, SpansMinusHalfToPlusHalfAlongY) {
     const int segments = 12;
     const renderer::BoltMesh mesh = renderer::build_bolt_mesh(segments);
-    const float expected_y[4] = {-0.5f, -1.0f / 6.0f, 1.0f / 6.0f, 0.5f};
-    for (int ring = 0; ring < 4; ++ring) {
-        for (int s = 0; s < segments; ++s) {
-            const glm::vec3& v = mesh.vertices[ring * segments + s];
-            EXPECT_NEAR(v.y, expected_y[ring], 1e-4f) << "ring=" << ring << " s=" << s;
-        }
+    float y_min = 1.0f, y_max = -1.0f;
+    for (const auto& v : mesh.vertices) { y_min = std::min(y_min, v.y); y_max = std::max(y_max, v.y); }
+    EXPECT_NEAR(y_min, -0.5f, 1e-4f);
+    EXPECT_NEAR(y_max, 0.5f, 1e-4f);
+}
+
+TEST(TorpedoAnimBoltMesh, WidestRingIsForwardOfCentreAndHalfWide) {
+    const int segments = 12;
+    const renderer::BoltMesh mesh = renderer::build_bolt_mesh(segments);
+    float best_r = 0.0f, best_y = 0.0f;
+    for (const auto& v : mesh.vertices) {
+        const float r = std::sqrt(v.x * v.x + v.z * v.z);
+        if (r > best_r) { best_r = r; best_y = v.y; }
+    }
+    EXPECT_NEAR(best_r, 0.5f, 1e-3f);   // full width == the `width` argument
+    EXPECT_GT(best_y, 0.0f);            // the fat end leads (+y = velocity)
+}
+
+TEST(TorpedoAnimBoltMesh, TailAndNoseRingsCollapseToPoints) {
+    const int segments = 12;
+    const renderer::BoltMesh mesh = renderer::build_bolt_mesh(segments);
+    const int rings = renderer::torpedo_anim_detail::kBoltRings;
+    for (int s = 0; s < segments; ++s) {
+        const glm::vec3& tail = mesh.vertices[s];
+        const glm::vec3& nose = mesh.vertices[(rings - 1) * segments + s];
+        EXPECT_NEAR(std::sqrt(tail.x * tail.x + tail.z * tail.z), 0.0f, 1e-5f);
+        EXPECT_NEAR(std::sqrt(nose.x * nose.x + nose.z * nose.z), 0.0f, 1e-5f);
     }
 }
 
-TEST(TorpedoAnimBoltMesh, RingRadiiMatchAuditedProfile) {
+TEST(TorpedoAnimBoltMesh, IndexCountMatchesBandsTimesSegmentsTimesSix) {
     const int segments = 12;
     const renderer::BoltMesh mesh = renderer::build_bolt_mesh(segments);
-    const float expected_radius[4] = {0.9927f, 0.9727f, 0.9273f, 0.7273f};
-    for (int ring = 0; ring < 4; ++ring) {
-        float max_xz = 0.0f;
-        for (int s = 0; s < segments; ++s) {
-            const glm::vec3& v = mesh.vertices[ring * segments + s];
-            max_xz = std::max(max_xz, std::sqrt(v.x * v.x + v.z * v.z));
-        }
-        EXPECT_NEAR(max_xz, expected_radius[ring], 1e-3f) << "ring=" << ring;
-    }
-}
-
-TEST(TorpedoAnimBoltMesh, NarrowRingIsAtForwardPlusY) {
-    const int segments = 12;
-    const renderer::BoltMesh mesh = renderer::build_bolt_mesh(segments);
-    // Ring 3 is y = +0.5, radius 0.7273 (narrow end forward).
-    const glm::vec3& v = mesh.vertices[3 * segments + 0];
-    EXPECT_NEAR(v.y, 0.5f, 1e-4f);
-    EXPECT_NEAR(std::sqrt(v.x * v.x + v.z * v.z), 0.7273f, 1e-3f);
-}
-
-TEST(TorpedoAnimBoltMesh, IndexCountMatchesThreeBandsTimesSegmentsTimesSix) {
-    const int segments = 12;
-    const renderer::BoltMesh mesh = renderer::build_bolt_mesh(segments);
-    EXPECT_EQ(mesh.indices.size(), static_cast<size_t>(3 * segments * 6));
+    const int bands = renderer::torpedo_anim_detail::kBoltRings - 1;
+    EXPECT_EQ(mesh.indices.size(), static_cast<size_t>(bands * segments * 6));
 }
 
 TEST(TorpedoAnimBoltMesh, AllIndicesInBounds) {

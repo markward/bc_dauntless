@@ -27,7 +27,14 @@ class MetaNebula(Nebula):
     def GetNebulaSpheres(self):
         return list(self._spheres)
 
-    def SetupDamage(self, hull, shields):
+    def SetupDamage(self, hull, shields=None):
+        """SetupDamage(hull, shields) arms the nebula's creation hit (see
+        nebula_runtime).  The one-argument form (Multi6's `SetupDamage(1.0)`)
+        does nothing measurable on the original exe (stbc-oracle bible §15)
+        and arms nothing here."""
+        if shields is None:
+            self._damage = (0.0, 0.0)
+            return
         self._damage = (float(hull), float(shields))
 
     def IsObjectInNebula(self, obj):

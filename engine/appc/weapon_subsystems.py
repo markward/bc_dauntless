@@ -14,7 +14,6 @@ bottom of subsystems.py guarantees the normal load order).
 """
 
 import math as _math
-import random
 
 from engine.core import ids
 from engine.appc.math import TGPoint3, TGMatrix3
@@ -261,6 +260,38 @@ PHASER_DISCHARGE_BY_POWER_LEVEL = (0.35, 1.0, 1.0)      # PP_LOW, PP_MEDIUM, PP_
 # (EnergyWeapon field — a different field from PhaserSystem.PowerLevel;
 # collapsing the two is the next bug of this shape).
 PULSE_COST_SCALE_BY_POWER_SETTING = (0.5, 1.0, 2.0)     # LOW, MED, HIGH
+# PulseWeapon::GetDamageScale (0x00575270): a pure function of the same
+# power setting — a bolt lands as the projectile script's GetDamage() × this.
+# Read from the exe and measured on seven hulls (clean-room
+# PulseWeaponDamage.md C1–C7; stbc-oracle `pulse_warbird_front_40_{low,meta,
+# high}`): Warbird RomulanCannon 400 → 80 / 200 / 400; the setting is 1 on
+# every stock emitter, so every stock bolt lands at HALF its script value —
+# the Bird of Prey's apparent 220 is two 110-bolts in one sample. Damage and
+# cost move together, which is why a full charge buys the same burst total
+# at any setting. Nothing in any hardpoint, ship or projectile script sets
+# the power setting; only the scripted SetPowerSetting (and save-load) can.
+PULSE_DAMAGE_SCALE_BY_POWER_SETTING = (0.2, 0.5, 1.0)   # LOW, MED, HIGH
+
+# Beam timing, measured on the original exe (stbc-oracle bible §2.2 and the
+# per-bank rows of `phaser_high_front_57` / `phaser_galaxy_front_57`):
+#
+#   * A bank that has just lit (IsFiring true) neither drains nor damages for
+#     BEAM_ON_DELAY_S — two fire-timer thresholds (40 ticks). Its charge then
+#     drains at the discharge rate and its dwell accumulates.
+#   * Damage is not continuous: it is flushed as one pulse each time the
+#     dwell exceeds BEAM_DWELL_FLUSH_S (the clean-room `0x00572440` step 6
+#     threshold at `0x008E53E0`), the pulse being MaxDamage × intensity ×
+#     distance factor × dwell. Measured: the first quantum lands 1.156 s
+#     after IsFiring (= 0.656 + 0.5), then every 0.53 s; a Kessok beam's
+#     quantum is 106.25 = 400 × 0.5 × 0.53125; a Galaxy bank's 66.4.
+#   * The total a full charge delivers is the drain window minus the delay:
+#     four Kessok beams, 7 charge at 1.0/s → 800/s × (7.5 − 0.66) s ≈ 5 470.
+#
+# The threshold is tested against the dwell banked BEFORE this frame, and the
+# flush includes this frame's dt, so a pulse carries 32 ticks of dwell
+# (0.533 at 60 Hz, quantum 106.7) — what the rows show — not 31.
+BEAM_ON_DELAY_S = 2 * 0.33
+BEAM_DWELL_FLUSH_S = 0.5
 
 # Default PowerSetting.  ASSUMED, not RE'd: the SDK never calls
 # EnergyWeapon.SetPowerSetting (zero call sites) and the constructor value
@@ -284,6 +315,13 @@ def _init_energy_weapon_state(self):
     self._power_setting: int = _DEFAULT_POWER_SETTING
     # Looped SFX handle started by Fire(), stopped by StopFiring().
     self._loop_handle = None
+    # Beam-on countdown and damage dwell — see BEAM_ON_DELAY_S and
+    # BEAM_DWELL_FLUSH_S. Both game-time. Pulse cannons never use them.
+    self._beam_on_countdown: float = 0.0
+    self._dwell: float = 0.0
+    # Set when a beam runs dry; a depleted bank does not restart until its
+    # charge is back to MinFiringCharge (see _charge_gate).
+    self._depleted: bool = False
 
 
 def _resolve_fire_sound(prop) -> str:
@@ -645,15 +683,21 @@ class _EnergyWeaponFireMixin:
         return _emitter_in_arc(self, ship, aim_world)
 
     def CanFire(self) -> int:
-        """Audited §1.6, three gates (the invented refire-hysteresis is
-        gone — this asymmetry between the two charge branches below IS
-        BC's hysteresis, no separate latch needed):
+        """Three gates:
 
           * ship alive — a dead ship's weapons never fire.
-          * charge — ``> 0`` to SUSTAIN an already-firing beam, but
-            ``>= MinFiringCharge`` to START one.  A depleted bank that
-            auto-stopped must climb back to MinFiringCharge (no extra
-            headroom) before it can restart.
+          * charge — ``> 0`` to start or sustain, EXCEPT that a bank which
+            has run dry does not restart until it is back to
+            MinFiringCharge.  Measured on the original exe: a Kessok beam
+            preset to charge 3 with MinFiringCharge 4 fires at the full rate
+            (stbc-oracle bible B8, `phaser_high_front_57_charge3`), so
+            MinFiringCharge does not gate a fresh start; but the Galaxy's
+            bank 5, drained to 0 at 6.6 s, had not relit at 0.45 by 12.5 s
+            while the trigger stayed held (`phaser_galaxy_front_57`), so a
+            depleted bank does latch.  The restart threshold itself is only
+            bounded (> 0.45 on a 5-charge bank); MinFiringCharge is the one
+            authored value in range.  Pulse cannons use affordability
+            instead (PulseWeapon._charge_gate).
           * disabled-product — the bank's own condition times the parent
             system's condition must clear the authored DisabledPercentage
             threshold (``GetOverallConditionPercentage`` in the audit); a
@@ -669,11 +713,7 @@ class _EnergyWeaponFireMixin:
         ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
         if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
             return 0
-        if self._firing:
-            charged = self._charge_level > 0.0
-        else:
-            charged = self._charge_level >= self._min_firing_charge
-        if not charged:
+        if not self._charge_gate():
             return 0
         # `parent` is guaranteed non-None here (the IsOn gate above already
         # returned 0 otherwise); GetDisabledPercentage() lives on self
@@ -683,6 +723,16 @@ class _EnergyWeaponFireMixin:
         if self.GetDisabledPercentage() >= combined:
             return 0
         return 1
+
+    def _charge_gate(self) -> bool:
+        """Beams: any charge at all — unless the bank ran dry, in which case
+        it must climb back to MinFiringCharge first (see CanFire).
+        PulseWeapon overrides with 'can afford the next shot'."""
+        if self._depleted:
+            if self._charge_level < self._min_firing_charge:
+                return False
+            self._depleted = False
+        return self._charge_level > 0.0
 
     def Fire(self, target=None, offset=None) -> bool:
         """Returns True when the beam is firing after this call — the tick's
@@ -702,18 +752,45 @@ class _EnergyWeaponFireMixin:
         self._target = target
         self._target_offset = offset
         if not was_firing:
+            self._beam_on_countdown = BEAM_ON_DELAY_S
+            self._dwell = 0.0
             self._play_fire_sfx()
         return True
 
     def StopFiring(self) -> None:
         was_firing = self._firing
         self._firing = False
+        self._beam_on_countdown = 0.0
         if was_firing and self._loop_handle is not None:
             self._loop_handle.Stop()
             self._loop_handle = None
 
     def IsFiring(self) -> int:
         return 1 if self._firing else 0
+
+    def IsBeamOn(self) -> bool:
+        """True once a lit bank's beam-on delay has elapsed: it is now
+        draining charge and accumulating damage dwell."""
+        return self._firing and self._beam_on_countdown <= 0.0
+
+    def accumulate_dwell(self, dt: float) -> float:
+        """Advance the damage dwell by one frame; return the dwell to flush
+        (> 0 only on a flush frame), having reset it.  The threshold is
+        checked before this frame's dt is added — see BEAM_DWELL_FLUSH_S."""
+        if not self.IsBeamOn():
+            return 0.0
+        if self._dwell > BEAM_DWELL_FLUSH_S:
+            flushed, self._dwell = self._dwell + dt, 0.0   # the flush frame counts
+            return flushed
+        self._dwell += dt
+        return 0.0
+
+    def take_dwell(self) -> float:
+        """Hand back whatever dwell has accumulated (a beam swept off its
+        target or stopped delivers a final partial pulse — clean-room §12.4)
+        and reset it."""
+        flushed, self._dwell = self._dwell, 0.0
+        return flushed
 
     # EnergyWeapon.{Get,Set}PowerSetting (SWIG surface; zero SDK call sites).
     # The EMITTER's own power field — consumed by PulseWeapon's per-shot
@@ -732,18 +809,20 @@ class _EnergyWeaponFireMixin:
 
     def UpdateCharge(self, dt: float) -> None:
         if self._firing:
+            if self._beam_on_countdown > 0.0:
+                # Lit but not yet on: no drain until the beam-on delay is up.
+                self._beam_on_countdown -= dt
+                return
             self._charge_level = max(
                 0.0, self._charge_level - self._discharge_rate_per_second() * dt
             )
             if self._charge_level <= 0.0:
                 # Depletion auto-stop. BC's banks discharge all the way
                 # to 0 while firing (visible on the WeaponsDisplay as the
-                # full black → red → yellow → green sweep during recharge)
-                # — MinFiringCharge gates fire-start only, not the
-                # continuous discharge.  Restart requires climbing back to
-                # MinFiringCharge (CanFire's start/sustain asymmetry —
-                # audited §1.6, no headroom on top of it).
+                # full black → red → yellow → green sweep during recharge).
+                # Latch: a restart needs MinFiringCharge (see CanFire).
                 # Route via StopFiring so the looped SFX handle is silenced.
+                self._depleted = True
                 self.StopFiring()
         else:
             # HEADROOM FIRST. A fully-charged idle bank has nothing to do, and
@@ -1307,10 +1386,16 @@ class WeaponSystem(PoweredSubsystem):
         # Re-seed reads the PRE-EXISTING state: a continuously-firing weapon
         # zeroes; everything else draws fresh. BC's draw distribution is
         # unverified in the corpus — uniform(0, 0.33) is our choice.
-        if weapon.IsFiring():
-            weapon._fire_timer = 0.0
-        else:
-            weapon._fire_timer = random.uniform(0.0, self.FIRE_TIMER_THRESHOLD)
+        # Re-seed to ZERO after every attempt, firing or not. The dispatch
+        # spec left BC's re-seed distribution unverified and chose
+        # uniform(0, 0.33); the original exe's captures settle it
+        # (stbc-oracle bible §3/§4): torpedo tubes launch a deterministic
+        # 0.656 s (40 ticks, ± 1) apart — the 0.5 s system gate plus one
+        # further 0.33 s attempt, i.e. two whole thresholds — and a Warbird
+        # cannon's second bolt follows its first by 0.34 s, one threshold.
+        # A random draw put the next attempt anywhere in a 0.33 s window and
+        # made our spacing 0.50–0.83 s.
+        weapon._fire_timer = 0.0
         if not weapon.CanFire():
             weapon.StopFiring()      # what makes a beam vanish on charge-out
             return False
@@ -1328,6 +1413,20 @@ class WeaponSystem(PoweredSubsystem):
             if self._weapon_did_fire(weapon, result, before):
                 return True
         return False
+
+    def _firing_weapon(self):
+        """The child weapon currently IsFiring (a held beam), else None."""
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and w.IsFiring():
+                return w
+        return None
+
+    def _reseed_all_fire_timers(self) -> None:
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None:
+                w._fire_timer = 0.0
 
     @staticmethod
     def _fired_counter(weapon):
@@ -1355,7 +1454,23 @@ class WeaponSystem(PoweredSubsystem):
         return bool(weapon.IsFiring())
 
     def update_weapons(self, dt) -> bool:
-        """UpdateWeapons (0x00584930), §3.2. Returns did_fire."""
+        """UpdateWeapons (0x00584930), §3.2. Returns did_fire.
+
+        Single-fire systems (SetSingleFire(1): every Federation phaser
+        array, the Warbird's cannons) behave as measured on the original exe:
+
+          * a weapon that is FIRING (a beam) is the only one tried, so a
+            second bank cannot start while one is up — the Galaxy fires
+            bank 5 for 5.5 s, then bank 6, then bank 1, never two at once
+            (stbc-oracle bible F1, `phaser_galaxy_front_57`);
+          * a successful shot re-seeds EVERY weapon's fire timer, so the
+            next weapon in the rotation fires one threshold (0.33 s) later,
+            not one tick later — the Warbird's four cannons fire at 1.22 /
+            1.53 / 1.88 / 2.19 (`pulse_warbird_front_40_meta`).
+
+        Multi-fire systems keep per-weapon timers: the BoP's two cannons
+        fire together every 0.33 s (`pulse_bop_front_40`).
+        """
         did_fire = False
         ship = self.GetParentShip()
         if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
@@ -1374,6 +1489,13 @@ class WeaponSystem(PoweredSubsystem):
         # inside the delta loop double-counted the just-fired slot instead
         # of advancing to the next group member.
         base_idx = self._last_weapon_idx
+        if self._single_fire:
+            lit = self._firing_weapon()
+            if lit is not None:
+                # Sustain the lit beam; nothing else starts until it stops.
+                self.try_fire_weapon(lit, dt, target, offset)
+                self._force_update = False
+                return bool(lit.IsFiring())
         while True:
             self.SetGroupFireMode(working)
             n = self.GetNumWeapons()
@@ -1388,6 +1510,7 @@ class WeaponSystem(PoweredSubsystem):
                     self._last_weapon_idx = idx
                     self._last_group_fired = working
                     if self._single_fire:
+                        self._reseed_all_fire_timers()
                         break
                 else:
                     weapon._target = None      # ClearTarget, NOT a timer reset
@@ -1696,7 +1819,27 @@ class TorpedoSystem(WeaponSystem):
         # ShipScriptActions.py:400, MissionLib.py:611, E2M0.py:720
         # (App.AT_TWO = 1).  Second arg is always 0 in the SDK (reload
         # time/flag) — accepted, ignored.
+        #
+        # Switching to a DIFFERENT type unloads every tube: measured on the
+        # original exe (stbc-oracle bible §4 T4, `torpedo_sovereign_quantum_57`)
+        # the Sovereign's first quantum salvo after SetAmmoType(1) needs ~45 s
+        # — its ReloadDelay is 40 s — and BC's decompiled switch path calls the
+        # tube's unload (TorpedoTube.UnloadTorpedo, FUN_0057D9A0). Re-selecting
+        # the type already loaded is left alone: every starbase dock ends with
+        # SetAmmoType(GetAmmoTypeNumber(), 0), and emptying the tubes on that
+        # is not something the capture shows.
+        before = self.GetCurrentAmmoSlot()
         self.SetCurrentAmmoSlot(int(ammo_index))
+        if self.GetCurrentAmmoSlot() != before:
+            for i in range(self.GetNumWeapons()):
+                tube = self.GetWeapon(i)
+                unload = getattr(tube, "UnloadTorpedo", None)
+                if not callable(unload):
+                    continue
+                ready = getattr(tube, "GetNumReady", None)
+                n = int(ready()) if callable(ready) else 0
+                for _ in range(n):
+                    unload()
 
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
@@ -1850,49 +1993,22 @@ PHASER_MAX_RANGE_GU = 700.0
 TRACTOR_MAX_RANGE_GU = 120.0
 
 
-# A tractor grips only when the target's shields hold less than this fraction
-# of their aggregate maximum (i.e. effectively down).  Active shields deflect.
-TRACTOR_SHIELD_DOWN_FRACTION = 0.05
 
 
 def _target_tractorable(target) -> bool:
-    """True iff a tractor beam can grip `target`: its shields are NOT actively
-    protecting it — not equipped, offline (lowered), disabled (damaged), or
-    depleted.  Active, charged shields deflect the beam (BC behaviour).
+    """True iff a tractor beam can grip `target`: anything that exists.
 
-    Legacy fixtures with no shield API are gripple (returns True).
+    The target's shields do NOT matter. Measured on the original exe
+    (stbc-oracle bible §7.5 R1, `tractor_engage_r20_noshields` against
+    `tractor_engage_r20`): a Galaxy's projector locks a shielded target
+    within one sample of StartFiring exactly as it does an unshielded one;
+    the only engagement gate is the projector's MaxDamageDistance.
+
+    This used to refuse any target whose shields were up ("active shields
+    deflect the beam"), which was a story with no capture behind it — and
+    it hid the real behaviour behind a rule that was never BC's.
     """
-    if target is None:
-        return False
-    getter = getattr(target, "GetShieldSubsystem", None)
-    if getter is None:
-        return True  # no shield API at all (non-ship targets / test stubs)
-    shields = getter()
-    if shields is None:
-        return True  # not equipped
-    # If the shields do not BLOCK, they cannot deflect a tractor beam either.
-    # This delegates to the one predicate the damage path, the beam stop, the
-    # shield bubble and both HUD readouts already share, instead of
-    # re-deriving a subset of it here.
-    #
-    # It used to test only `IsDisabled` and `IsOn`, which silently missed a
-    # DESTROYED generator, the cloak-transition window, and the dev
-    # disable-NPC-shields cheat — so "Disable NPC Shields" let weapons through
-    # but still refused to let the tractor grip, which reads as the cheat
-    # being broken. Reported live.
-    from engine.appc.combat import shields_block
-    if not shields_block(target):
-        return True
-    # Online + undamaged: blocked only while the shields still hold charge.
-    n = getattr(shields, "NUM_SHIELDS", 6)
-    try:
-        total_max = sum(shields.GetMaxShields(f) for f in range(n))
-        if total_max <= 0.0:
-            return True  # equipped subsystem but no shield facings
-        total_cur = sum(shields.GetCurrentShields(f) for f in range(n))
-        return (total_cur / total_max) < TRACTOR_SHIELD_DOWN_FRACTION
-    except Exception:
-        return False  # can't read charge — assume up (deflects)
+    return target is not None
 
 
 def _target_within_range_gu(ship, target, max_range_gu: float) -> bool:
@@ -2452,6 +2568,28 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # audited §1.6) — the per-shot cooldown (SetCooldownTime, BoP 0.2s) is
     # the anti-flutter mechanism, not charge hysteresis.
 
+    def GetDamageScale(self) -> float:
+        """PulseWeapon_GetDamageScale (0x00619400 → 0x00575270): the bolt
+        damage multiplier for this emitter's power setting — 0.2 / 0.5 / 1.0."""
+        return PULSE_DAMAGE_SCALE_BY_POWER_SETTING[self._power_setting]
+
+    def _shot_cost(self) -> float:
+        """Charge one bolt costs: NormalDischargeRate × the power-setting
+        scale (BC's GetPowerScaled) — 0.5 / 1.0 / 2.0 on a stock cannon."""
+        return (self._normal_discharge_rate
+                * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
+
+    def _charge_gate(self) -> bool:
+        """A cannon fires whenever it can AFFORD the next bolt; nothing else
+        about its charge matters.  Measured on the original exe per cannon
+        per tick (stbc-oracle `pulse_warbird_front_40_{meta,low,high}`,
+        `pulse_bop_front_40`): a Warbird cannon (MinFiringCharge 1.2) fires
+        at 1.15 and again at 1.01 at MED (cost 1.0), at 0.59 at LOW (cost
+        0.5) and stops at 0.12; a BoP cannon (MinFiringCharge 3.6) fires
+        four bolts straight down 3.8 → 0.33 and again the moment it climbs
+        back over 1.0."""
+        return self._charge_level >= self._shot_cost() - 1e-9
+
     def CanFire(self) -> int:
         if self._cooldown_remaining > 0.0:
             return 0
@@ -2498,15 +2636,17 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             self._target = None
             self._target_offset = None
             world_dir = _emitter_forward_world(self, ship)
-        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
-                          world_dir=world_dir)
+        torp = _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
+                                 world_dir=world_dir)
+        if torp is not None:
+            # The bolt carries script GetDamage() × GetDamageScale() —
+            # 0x00576080 scales it at spawn (PulseWeaponDamage.md C1).
+            torp._damage = float(torp._damage) * self.GetDamageScale()
         # Discrete drain: a flat per-shot cost of NormalDischargeRate × the
         # power-setting scale (BC's GetPowerScaled), then the cooldown.  Not
         # a dump-to-zero — that made a stock BoP wait ~9 s between bolts
         # where BC waits ~2 s.  No held beam.
-        cost = (self._normal_discharge_rate
-                * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
-        self._charge_level = max(0.0, self._charge_level - cost)
+        self._charge_level = max(0.0, self._charge_level - self._shot_cost())
         self._cooldown_remaining = self.GetCooldownTime()
         return True
 
@@ -2565,12 +2705,15 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         discharge-to-zero auto-stop.
 
         A tractor holds CONTINUOUSLY while engaged (you can pin a ship
-        indefinitely), so a firing tractor must not deplete to 0 and stop the
-        way a phaser bank does.  While firing we drain slowly toward — but
-        never below — MinFiringCharge (so charge stays ``> 0`` and the
-        mixin's CanFire sustain branch keeps returning true), gated by
-        parent power: if the line goes down the beam drops.  When idle we
-        fall back to the mixin's normal condition-scaled recharge.
+        indefinitely) and its charge does not move while it does: measured
+        on the original exe, a Galaxy projector holding a target reads 5.00
+        for the whole run (stbc-oracle bible §7.5 R1, `tractor_*`), so the
+        hardpoint's NormalDischargeRate is not a hold cost. The beam is
+        gated by parent power only — if the line goes down it drops. When
+        idle we fall back to the mixin's normal condition-scaled recharge.
+
+        This used to drain toward MinFiringCharge while holding; that was a
+        design choice with no capture behind it.
         """
         if self._firing:
             parent = self.GetParentSubsystem()
@@ -2588,19 +2731,12 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                     and parent.GetNormalPowerWanted() > 0.0):
                 self.StopFiring()
                 return
-            floor = self._min_firing_charge
-            if self._charge_level > floor:
-                self._charge_level = max(
-                    floor, self._charge_level - self._normal_discharge_rate * dt
-                )
-            # Charge stays > 0 while sustaining — no depletion auto-stop.
+            # No discharge while holding — charge is untouched.
             return
         # Idle fall-through note: an idle TractorBeamSystem doesn't want power
         # (_wants_power False -> factor zeroed by the pump), so the mixin's
-        # factor-scaled recharge is 0 while idle. Harmless by design: the firing
-        # sustain path never drains below _min_firing_charge, so CanFire's
-        # start-branch (>= MinFiringCharge) passes at the floor — charge above
-        # the floor has no gameplay effect for tractors.
+        # factor-scaled recharge is 0 while idle. Harmless: holding never
+        # drains, so there is nothing to recharge.
         super().UpdateCharge(dt)
 
 
@@ -3244,12 +3380,10 @@ class TorpedoTube(Weapon):
         """Remove one ready round; its slot goes back into cooldown.
 
         Mirrors BC's decompiled FUN_0057D9A0 (combat-and-damage.md:833-838),
-        which stock BC calls on an ammo-type switch. SDK-facing surface only:
-        our TorpedoSystem.SetAmmoType (weapon_subsystems.py — see its
-        docstring) SELECTS a slot and explicitly ignores its second arg; it
-        never calls UnloadTorpedo. As of this writing UnloadTorpedo has zero
-        callers anywhere in this engine, the tests, or the SDK — do not infer
-        that SetAmmoType wires it in."""
+        which stock BC calls on an ammo-type switch. TorpedoSystem.SetAmmoType
+        calls it for every ready round of every tube when the selected slot
+        actually CHANGES — stbc-oracle bible §4 T4 measured the switch
+        unloading the Sovereign's tubes for one full ReloadDelay."""
         if self._num_ready <= 0:
             return
         self._num_ready -= 1

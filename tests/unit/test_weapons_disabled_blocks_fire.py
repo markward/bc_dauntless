@@ -223,6 +223,8 @@ def test_advance_combat_fires_when_sensors_healthy():
     sys_.StartFiring(target=target)
     assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
 
+    from tests.helpers.beams import prime_lit_banks
+    prime_lit_banks(sys_)
     calls = _run_advance_combat(ship, target)
     assert calls != []  # damage applied
 

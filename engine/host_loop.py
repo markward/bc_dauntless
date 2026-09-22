@@ -780,6 +780,15 @@ def _advance_weapons(ships, dt: float) -> None:
                     emitter.UpdateCharge(dt)
 
 
+# Beam damage per second is MaxDamage × this, by the phaser system's power
+# level (PP_LOW, PP_MEDIUM, PP_HIGH). Measured on the original exe: a Kessok
+# Heavy's four MaxDamage-400 beams deliver 825/s at HIGH, 849/s at MED and
+# 408/s at LOW (stbc-oracle bible §2.1, `phaser_{high,med,low}_front_57`) —
+# MED and HIGH share the scale; only LOW halves it. Without this the engine
+# dealt MaxDamage per second flat: 2× BC at HIGH/MED, 4× at LOW.
+PHASER_INTENSITY_SCALE = (0.25, 0.5, 0.5)
+
+
 def _phaser_damage_for_tick(max_damage: float,
                              max_damage_distance: float,
                              dist: float,
@@ -970,12 +979,24 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 continue
             for i in range(sys_.GetNumWeapons()):
                 bank = sys_.GetWeapon(i)
-                if bank is None or not bank.IsFiring():
+                if bank is None:
                     continue
                 target = bank._target
-                if target is None or (hasattr(target, "IsDead") and target.IsDead()):
-                    bank.StopFiring()
-                    continue
+                if not bank.IsFiring():
+                    # A bank that stopped (charge out) with dwell still
+                    # banked delivers it as a final partial pulse — the rows
+                    # show a 7.8 after the last 66-point quantum when the
+                    # Galaxy's bank ran dry (`phaser_galaxy_front_57`).
+                    dwell = bank.take_dwell() if hasattr(bank, "take_dwell") else 0.0
+                    if dwell <= 0.0 or target is None or (
+                            hasattr(target, "IsDead") and target.IsDead()):
+                        continue
+                    flush_dwell = dwell
+                else:
+                    if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+                        bank.StopFiring()
+                        continue
+                    flush_dwell = None      # decided below, once the aim is known
                 # Sensor gate (authoritative): this is the per-tick chokepoint where
                 # continuous phaser damage is actually applied. A bank can be left
                 # IsFiring by an AI that stopped updating (e.g. the firing ship's
@@ -984,7 +1005,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 # FireScript.TargetVisible isn't enough — stranded banks would keep
                 # dealing damage here. A ship that can't detect its target can't
                 # keep firing at it. See engine/appc/sensor_detection.can_detect.
-                if not can_detect(ship, target):
+                if flush_dwell is None and not can_detect(ship, target):
                     bank.StopFiring()
                     continue
                 target_pos, target_sub = _phaser_aim_point(ship, target)
@@ -1002,33 +1023,63 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 # on the next tick because its emit point sat past the
                 # target on the strip. See research doc § Bug F.
                 arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
-                if not _emitter_in_arc(bank, ship, arc_aim):
-                    bank.StopFiring()
+                if flush_dwell is None:
+                    if not _emitter_in_arc(bank, ship, arc_aim):
+                        # Swept off: deliver the partial pulse, then stop.
+                        flush_dwell = bank.take_dwell()
+                        bank.StopFiring()
+                    else:
+                        flush_dwell = bank.accumulate_dwell(dt)
+                level = (sys_.GetPowerLevel()
+                         if hasattr(sys_, "GetPowerLevel") else sys_.PP_HIGH)
+                # Where the beam is touching, resolved EVERY contact frame —
+                # the per-frame impact feedback below needs it as much as the
+                # pulse does (and this is what the pre-pulse code did anyway).
+                impact_point, impact_normal = combat._resolve_hit_point(
+                    ship_instances=ship_instances, ship=target,
+                    ray_origin=emitter_pos,
+                    ray_direction=(aim_unit if dist > 1e-6 else None),
+                    max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
+                    fallback_point=target_pos,
+                )
+                # Where the beam crossed the bubble — the same point
+                # _beam_endpoint stops the DRAWN beam at, so the flash lands on
+                # the beam's own tip instead of 236 NIF units behind it. None
+                # when no facing is up, which falls the flash back to the hull
+                # point inside dispatch.
+                bubble_entry = (
+                    combat.shield_bubble_entry(target, emitter_pos, aim_unit,
+                                               dist * 1.5)
+                    if (aim_unit is not None and combat.shields_block(target))
+                    else None)
+                if flush_dwell <= 0.0:
+                    # Not a damage pulse: the beam is still resting on the
+                    # target, so it still glows and throws sparks there. The
+                    # spark threshold reads this frame's slice of the beam, so
+                    # the burst behaves as it did when damage was per-tick.
+                    hit_feedback.beam_contact(
+                        ship=target, source=ship,
+                        point=impact_point, normal=impact_normal,
+                        shield_point=bubble_entry,
+                        tick_damage=_phaser_damage_for_tick(
+                            max_damage=bank.GetMaxDamage(),
+                            max_damage_distance=bank.GetMaxDamageDistance(),
+                            dist=dist, dt=dt,
+                        ) * PHASER_INTENSITY_SCALE[level],
+                        ship_instances=ship_instances,
+                        weapon_type="phaser",
+                        radius=combat.weapon_splash_radius(bank, None),
+                    )
                     continue
+                # One pulse: MaxDamage × intensity × distance factor × dwell
+                # (clean-room 0x00572A50; measured stbc-oracle bible §2.2).
                 damage = _phaser_damage_for_tick(
                     max_damage=bank.GetMaxDamage(),
                     max_damage_distance=bank.GetMaxDamageDistance(),
                     dist=dist,
-                    dt=dt,
-                )
+                    dt=flush_dwell,
+                ) * PHASER_INTENSITY_SCALE[level]
                 if damage > 0:
-                    impact_point, impact_normal = combat._resolve_hit_point(
-                        ship_instances=ship_instances, ship=target,
-                        ray_origin=emitter_pos,
-                        ray_direction=(aim_unit if dist > 1e-6 else None),
-                        max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
-                        fallback_point=target_pos,
-                    )
-                    # Where the beam crossed the bubble — the same point
-                    # _beam_endpoint stops the DRAWN beam at, so the flash lands on
-                    # the beam's own tip instead of 236 NIF units behind it. None
-                    # when no facing is up, which falls the flash back to the hull
-                    # point inside dispatch.
-                    bubble_entry = (
-                        combat.shield_bubble_entry(target, emitter_pos, aim_unit,
-                                                   dist * 1.5)
-                        if (aim_unit is not None and combat.shields_block(target))
-                        else None)
                     # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
                     # damage routes to subsystems only, the hull takes no condition
                     # damage and is not voxel-carved (verified by dev-console probe).

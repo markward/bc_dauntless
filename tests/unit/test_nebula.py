@@ -1,3 +1,4 @@
+import pytest
 import App
 from engine.appc.sets import SetClass_Create
 
@@ -209,26 +210,104 @@ class _DamageableShip(_FakeShip):
         self._handlers.setdefault(event_type, []).append(qualified_name)
 
 
-def test_environmental_damage_drains_hull_and_shields():
-    import App
-    s, n = _set_with_nebula()      # SetupDamage(150, 20)
+# ── Environmental damage, as measured on the original exe ────────────────────
+# stbc-oracle bible §15 (E1): one hit, to a ship present when the nebula is
+# created — shields/16 to every face if the shields are up (discarded when
+# ≤ 100 per face), else hull/16 to the hull — then nothing, however long it
+# stays; a ship entering later takes nothing; not at easy difficulty. These
+# replaced tests of a continuous per-second drain that BC does not have.
+
+@pytest.fixture(autouse=True)
+def _medium_difficulty():
+    from engine.core import game
+    before = game.Game_GetDifficulty()
+    game.Game_SetDifficulty(1)
+    yield
+    game.Game_SetDifficulty(before)
+
+
+def test_creation_hit_lands_on_every_face_once_when_shields_are_up():
+    s, n = _set_with_nebula()
+    n.SetupDamage(5000.0, 5000.0)
     ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=1000.0, shield=500.0)
     tracker = NebulaTracker()
-    tracker.update(s, [ship], 2.0)             # 2 s tick
-    assert ship.GetHull().GetCondition() == 1000.0 - 150.0 * 2.0
-    # 20/s * 2 s = 40 total, spread across 6 faces.
-    assert abs(ship.GetShieldSubsystem().GetCurrentShields(0)
-               - (500.0 - 40.0 / 6.0)) < 1e-6
+    tracker.update(s, [ship], 1.0 / 60.0)          # first sighting: the hit
+    for face in range(6):
+        assert ship.GetShieldSubsystem().GetCurrentShields(face) == pytest.approx(500.0 - 312.5)
+    assert ship.GetHull().GetCondition() == 1000.0
+    for _ in range(600):
+        tracker.update(s, [ship], 1.0 / 60.0)      # 10 s more inside: nothing
+    assert ship.GetShieldSubsystem().GetCurrentShields(0) == pytest.approx(500.0 - 312.5)
+    assert ship.GetHull().GetCondition() == 1000.0
 
 
-def test_environmental_damage_floors_at_zero():
-    import App
+def test_creation_hit_lands_on_the_hull_when_shields_are_down():
     s, n = _set_with_nebula()
-    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=100.0, shield=1.0)
+    n.SetupDamage(5000.0, 5000.0)
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=1000.0, shield=0.0)
     tracker = NebulaTracker()
-    tracker.update(s, [ship], 10.0)            # huge tick
-    assert ship.GetHull().GetCondition() == 0.0
-    assert ship.GetShieldSubsystem().GetCurrentShields(0) == 0.0
+    tracker.update(s, [ship], 1.0 / 60.0)
+    assert ship.GetHull().GetCondition() == pytest.approx(1000.0 - 312.5)
+    tracker.update(s, [ship], 1.0 / 60.0)
+    assert ship.GetHull().GetCondition() == pytest.approx(1000.0 - 312.5)
+
+
+def test_shield_hit_at_or_below_100_per_face_is_discarded_and_hull_untouched():
+    s, n = _set_with_nebula()
+    n.SetupDamage(5000.0, 1600.0)                   # 1600 / 16 = 100.0: discarded
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=1000.0, shield=500.0)
+    NebulaTracker().update(s, [ship], 1.0 / 60.0)
+    assert ship.GetShieldSubsystem().GetCurrentShields(0) == 500.0
+    assert ship.GetHull().GetCondition() == 1000.0
+
+
+def test_ship_entering_an_existing_nebula_takes_nothing():
+    s, n = _set_with_nebula()
+    n.SetupDamage(5000.0, 5000.0)
+    ship = _DamageableShip("P", 0.0, 5000.0, 0.0, hull=1000.0, shield=0.0)   # outside
+    tracker = NebulaTracker()
+    tracker.update(s, [ship], 1.0 / 60.0)
+    ship.move_to(0.0, 1500.0, 0.0)                  # now inside
+    for _ in range(120):
+        tracker.update(s, [ship], 1.0 / 60.0)
+    assert ship.GetHull().GetCondition() == 1000.0
+
+
+def test_no_creation_hit_at_easy_difficulty():
+    from engine.core import game
+    game.Game_SetDifficulty(0)
+    s, n = _set_with_nebula()
+    n.SetupDamage(5000.0, 5000.0)
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=1000.0, shield=0.0)
+    NebulaTracker().update(s, [ship], 1.0 / 60.0)
+    assert ship.GetHull().GetCondition() == 1000.0
+
+
+def test_environment_damage_event_at_16_hz_while_inside():
+    import App
+    s, n = _set_with_nebula()                       # SetupDamage(150, 20): armed
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=1000.0, shield=500.0)
+    fired = []
+    orig = App.g_kEventManager.AddEvent
+    def spy(evt):
+        if evt.GetEventType() == App.ET_ENVIRONMENT_DAMAGE:
+            fired.append(evt.GetDestination())
+        return orig(evt)
+    App.g_kEventManager.AddEvent = spy
+    try:
+        tracker = NebulaTracker()
+        for _ in range(60):
+            tracker.update(s, [ship], 1.0 / 60.0)   # one second inside
+    finally:
+        App.g_kEventManager.AddEvent = orig
+    assert len(fired) == 16
+    assert all(d is ship for d in fired)
+
+
+def test_one_argument_setup_damage_arms_nothing():
+    s, n = _set_with_nebula()
+    n.SetupDamage(1.0)                              # the Multi6 form
+    assert n.GetDamage() == (0.0, 0.0)
 
 
 def test_ignore_event_opt_out_takes_no_damage():

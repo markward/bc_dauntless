@@ -31,7 +31,7 @@ def test_default_alert_leaves_shields_up():
     ship absorb nothing until the player hit Shift+3. See
     tests/unit/test_shields_default_on.py."""
     ship = _ship_with_shields()
-    assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
+    assert ship.GetAlertLevel() == ShipClass.RED_ALERT   # spawn default, bible §13 N2
     assert ship.GetShields().IsOn() == 1
 
 

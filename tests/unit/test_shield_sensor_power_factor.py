@@ -1,8 +1,12 @@
-"""Shield regen and sensor range scale by GetNormalPowerPercentage (power factor)."""
+"""Sensor range scales by GetNormalPowerPercentage (power factor); shield regen does not."""
 from engine.appc.subsystems import ShieldSubsystem, SensorSubsystem
 
 
-def test_shield_regen_scales_with_power_factor():
+def test_shield_regen_ignores_power_factor():
+    """Regen does NOT scale with the generator's power factor: measured on
+    the original exe, a face at 50 % climbs at the same 9.2–9.5/s with the
+    generator at 50 % power wanted (stbc-oracle bible §5.3 S5,
+    `regen_power50_face50`). Sensor range still scales (below)."""
     ss = ShieldSubsystem("Shield Generator")
     ss.TurnOn()
     ss.SetMaxShields(ss.FRONT_SHIELDS, 100.0)
@@ -10,11 +14,10 @@ def test_shield_regen_scales_with_power_factor():
     ss.SetShieldChargePerSecond(ss.FRONT_SHIELDS, 10.0)
     ss._power_factor = 0.5
     ss.Update(1.0)
-    assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 5.0) < 1e-9
+    assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 10.0) < 1e-9
     ss._power_factor = 1.25
     ss.Update(1.0)
-    # After first Update: 5.0; after second: 5.0 + 10.0 * 1.25 * 1.0 = 17.5
-    assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 17.5) < 1e-9
+    assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 20.0) < 1e-9
 
 
 def test_sensor_range_scales_with_power_factor():

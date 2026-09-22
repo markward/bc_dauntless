@@ -112,6 +112,7 @@ def test_digit_without_shift_does_not_change_alert():
 
 def test_shift_held_alone_does_not_change_alert():
     ship = _FakeShip()
+    ship.SetAlertLevel(ShipClass.GREEN_ALERT)
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_LEFT_SHIFT)
     _apply_alert_keys(reader, ship)

@@ -107,12 +107,17 @@ class ShipClass(DamageableObject):
         # ship's GetShipStats() defines it). None = not authored; the
         # renderer-side default applies (see host_loop rim registration).
         self._specular_ks = None
-        # Alert level — GREEN at spawn matches MissionLib.py:605, which
-        # explicitly resets the player to GREEN_ALERT on mission start.
-        # BC's BridgeHandlers.SetAlertLevel forwards the event to the
-        # XO menu (see sdk/.../BridgeHandlers.py:194); shield/weapon
-        # side-effects happen downstream of XO, not here.
-        self._alert_level: int = ShipClass.GREEN_ALERT
+        # Alert level — RED at spawn. Measured on the original exe across
+        # eleven campaign missions (stbc-oracle bible §13 N2): every
+        # non-player ship, station and asteroid reads alert 2 from the first
+        # snapshot, and the player is the only object at green — because
+        # MissionLib.CreatePlayerShip (MissionLib.py:605) explicitly sets the
+        # player GREEN, an instruction that only makes sense against a red
+        # default. (This used to be GREEN, reasoning from that same line the
+        # other way round.) SetupProperties applies the alert → power policy
+        # once the subsystems exist, so a spawned NPC has its weapons hot and
+        # its shields up, as the scene captures show.
+        self._alert_level: int = ShipClass.RED_ALERT
         # Setpoints are AI-written; _current_* are integrator-owned and
         # ramp toward those setpoints each tick.
         # Setpoints default to None (no AI input yet) — explicitly stored
@@ -916,10 +921,11 @@ class ShipClass(DamageableObject):
         level powers them off.  Tractor stays under manual control (mirrors
         BC: tractor is toggled by its own UI, not by alert).
 
-        Shields raise at YELLOW or RED and drop at GREEN.  Raising snaps
-        every face to its max; dropping drains every face to zero.  This
-        collapses BC's gradual charge-up/down into an instant transition
-        — good enough for Phase 1 gameplay.
+        Shields raise at YELLOW or RED and drop at GREEN.  Neither
+        transition touches the stored face charge: TurnOff preserves it (the
+        percentage queries read 0 while off) and it keeps regenerating at
+        green — stbc-oracle bible §5.3 S5 measured the same 9.2–9.5/s at
+        red, yellow and green.
 
         In stock BC these side-effects flow through the XO menu after
         BridgeHandlers.SetAlertLevel; we collapse that layer until the
@@ -943,10 +949,10 @@ class ShipClass(DamageableObject):
             shields_on = (self._alert_level in
                           (ShipClass.YELLOW_ALERT, ShipClass.RED_ALERT))
             if shields_on:
-                shields.TurnOn()          # TurnOn override snaps faces to max
+                shields.TurnOn()          # charge as stored; regen refills it
                 shields.SetPowerPercentageWanted(1.0)
             else:
-                shields.TurnOff()         # TurnOff override drains faces to 0
+                shields.TurnOff()         # charge preserved; queries read 0
                 shields.SetPowerPercentageWanted(0.0)
 
     # ── Subsystem accessors ──────────────────────────────────────────────────
@@ -1513,6 +1519,12 @@ class ShipClass(DamageableObject):
             emitter.SetParentShip(self)
             self._object_emitters.append(emitter)
             _existing_emitters.add(prop.GetName() or "")
+
+        # The alert level a ship spawns with (RED unless a script changed it
+        # before setup) must reach the subsystems that now exist: weapons
+        # powered, shields raised — the state every non-player object shows
+        # at t = 0 in the mission-scene captures (bible §13 N2).
+        self.SetAlertLevel(self._alert_level)
 
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:

@@ -10,6 +10,7 @@ player's own loadout.
 import json
 
 import pytest
+from engine.appc.ships import ShipClass
 
 import App
 import loadspacehelper
@@ -288,11 +289,12 @@ def test_in_firing_arc_independent_of_charge_and_firing_state():
 # ── Power state + charge colouring ──────────────────────────────────────
 
 def test_descriptor_offline_when_parent_system_off():
-    """Default Galaxy build leaves the PhaserSystem powered off (BC's
-    SDK only turns weapons on at red alert). Every phaser descriptor
-    should report online=False and charge_ratio=0 so the panel
-    renders at the offline grey."""
+    """The player at green alert (MissionLib.CreatePlayerShip sets it —
+    ships spawn RED, bible §13 N2) has the PhaserSystem powered off.
+    Every phaser descriptor should report online=False and charge_ratio=0
+    so the panel renders at the offline grey."""
     ship = _build_galaxy_as_player()
+    ship.SetAlertLevel(ShipClass.GREEN_ALERT)
     descriptors = _resolve_icon_descriptors(ship)
     phaser_icons = [d for d in descriptors if 330 <= d["icon_num"] <= 366]
     assert phaser_icons

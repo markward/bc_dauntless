@@ -54,9 +54,11 @@ def test_powered_subsystem_base_still_defaults_off():
 
 def test_freshly_spawned_ship_absorbs_its_first_volley():
     """The reported bug: a ship that has never been sent to alert still
-    absorbs the opening shot on its shields, not its hull."""
+    absorbs the opening shot on its shields, not its hull. (Ships now spawn
+    at RED — bible §13 N2 — which makes this doubly true; the generator's
+    own default-on is what this file guards.)"""
     ship = _spawned_ship(hull_max=2000.0, face_max=1000.0)
-    assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
+    assert ship.GetAlertLevel() == ShipClass.RED_ALERT
 
     apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
 

@@ -132,7 +132,10 @@ def test_torpedo_shield_flash_is_anchored_on_the_bubble(monkeypatch):
 
 def test_partial_absorption_fires_both_the_flash_and_the_hull_impact(monkeypatch):
     src, tgt = _shooter(), _target()
-    # Facing worn down to less than the torpedo's 500: absorbs 200, leaks 300.
+    # Facing worn down to 200 of 1000 (f = 0.2, above the 0.1 bypass): the
+    # ramp says absorb 52 % = 260 of the torpedo's 500, but the face only
+    # holds 200, so it absorbs 200 and the overdraw joins the bleed: 300 leaks.
+    tgt.GetShields().SetMaxShields(ShieldSubsystem.FRONT_SHIELDS, 1000.0)
     tgt.GetShields().SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 200.0)
     t = _torpedo_inbound(src)
     dt = 1.0 / 60.0

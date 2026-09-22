@@ -100,7 +100,7 @@ def test_fire_spawns_one_bolt_with_module_payload():
         cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     assert len(_active) == 1
     bolt = _active[-1]
-    assert bolt._damage == 220.0
+    assert bolt._damage == 110.0      # script 220 × GetDamageScale 0.5 at the default setting
     assert bolt._guidance_lifetime == 0.0
     assert bolt._ttl == 8.0
     _active.clear()

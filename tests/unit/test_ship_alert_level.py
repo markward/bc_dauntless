@@ -11,9 +11,12 @@ from engine.appc.ships import ShipClass
 from engine.host_loop import _format_alert_level
 
 
-def test_default_alert_level_is_green():
+def test_default_alert_level_is_red():
+    """Every non-player object in the mission-scene captures reads alert 2
+    at t = 0 (stbc-oracle bible §13 N2); the player is green only because
+    MissionLib.CreatePlayerShip sets it so."""
     s = ShipClass()
-    assert s.GetAlertLevel() == ShipClass.GREEN_ALERT
+    assert s.GetAlertLevel() == ShipClass.RED_ALERT
 
 
 def test_set_alert_level_persists():
