@@ -102,22 +102,20 @@ inline float hash01(uint32_t id, uint32_t index, uint32_t salt) {
     return static_cast<float>(h >> 8) * (1.0f / 16777216.0f);
 }
 
-/// A random 3D rotation, fixed per (id, flare_index): a uniform-ish random
-/// unit axis (from two hash01 draws, spherical) plus a random angle in
-/// [0, 2pi) (a third hash01 draw), built via Rodrigues rotation. Deterministic
-/// across frames/platforms because hash01 is. Column-vector convention.
+/// A random IN-PLANE rotation, fixed per (id, flare_index): an angle in
+/// [0, 2pi) from a hash01 draw, about the root's local z -- the view axis of
+/// the camera-facing root frame. A flare is a streak radiating from the core
+/// in the screen plane (the oracle's rotation test histograms their 2D
+/// directions, bible 14.2 arg 4), so it must stay in the billboard plane.
+/// This used to be a rotation about a random 3D axis: every streak then
+/// tilted out of the plane and swept through edge-on as the root spun --
+/// seen live as the star flickering light-to-dark while it twisted.
+/// Deterministic across frames/platforms because hash01 is. Column-vector
+/// convention.
 inline glm::mat3 flare_rotation(uint32_t id, uint32_t flare_index) {
-    const float h_theta = hash01(id, flare_index, 0x1u);
-    const float h_z     = hash01(id, flare_index, 0x2u);
     const float h_angle = hash01(id, flare_index, 0x3u);
-
-    const float theta = h_theta * torpedo_anim_detail::kTwoPi;
-    const float z = h_z * 2.0f - 1.0f;
-    const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
-    const glm::vec3 axis(r * std::cos(theta), r * std::sin(theta), z);
     const float angle = h_angle * torpedo_anim_detail::kTwoPi;
-
-    return glm::mat3(glm::rotate(glm::mat4(1.0f), angle, axis));
+    return glm::mat3(glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 0.0f, 1.0f)));
 }
 
 /// Camera-facing billboard-root frame for a torpedo (the basis TorpedoPass

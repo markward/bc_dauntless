@@ -221,6 +221,23 @@ TEST(TorpedoAnimFlareRotation, IsAValidRotationMatrix) {
     EXPECT_TRUE(is_rotation_matrix(r, 1e-3f));
 }
 
+// A flare is a streak radiating from the core IN THE SCREEN PLANE. The
+// rotation must therefore be about the root's view axis (local z) only:
+// a rotation about any other axis tilts the quad out of the billboard plane
+// and it sweeps through edge-on as the root spins -- seen live as the star
+// flickering light-to-dark while it twists.
+TEST(TorpedoAnimFlareRotation, KeepsTheStreakInTheBillboardPlane) {
+    for (uint32_t id = 1; id < 40; ++id) {
+        for (uint32_t i = 0; i < 8; ++i) {
+            const glm::mat3 r = renderer::flare_rotation(id, i);
+            const glm::vec3 z = r * glm::vec3(0.0f, 0.0f, 1.0f);
+            EXPECT_NEAR(z.x, 0.0f, 1e-5f) << "id=" << id << " i=" << i;
+            EXPECT_NEAR(z.y, 0.0f, 1e-5f) << "id=" << id << " i=" << i;
+            EXPECT_NEAR(z.z, 1.0f, 1e-5f) << "id=" << id << " i=" << i;
+        }
+    }
+}
+
 TEST(TorpedoAnimFlareRotation, DiffersAcrossFlareIndices) {
     const glm::mat3 a = renderer::flare_rotation(11u, 0u);
     const glm::mat3 b = renderer::flare_rotation(11u, 1u);
