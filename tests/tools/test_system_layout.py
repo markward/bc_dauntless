@@ -143,6 +143,36 @@ def test_ambiguities_flags_a_companion_that_is_not_named_moon():
     assert any("Inyo" in n for n in notes)
 
 
+def test_moon_spacing_is_tunable_not_hardcoded():
+    s = SurveyedSystem(name="Beol", regions=[SurveyedRegion(
+        set_name="Beol1", ordinal=1,
+        bodies=[
+            SurveyedBody("Beol 1", 200.0, "p.nif", (0.0, 500.0, 0.0), False),
+            SurveyedBody("Beol 1 Moon 1", 100.0, "m.nif", (0.0, 900.0, 0.0), False),
+        ],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    near = layout(s, LayoutTuning(moon_first_orbit_factor=2.0))
+    far = layout(s, LayoutTuning(moon_first_orbit_factor=8.0))
+    d_near = math.dist(near.body("Beol 1 Moon 1").position_gu,
+                       near.body("Beol 1").position_gu)
+    d_far = math.dist(far.body("Beol 1 Moon 1").position_gu,
+                      far.body("Beol 1").position_gu)
+    assert d_far == pytest.approx(4.0 * d_near)
+
+
+def test_ambiguities_flags_a_body_sitting_on_player_start():
+    """A body coincident with Player Start has no viewing direction, so the
+    anchor would silently default to +Y. Measured against the real SDK on
+    2026-09-22 this happens in 0 of 90 regions -- so if it ever fires, the
+    survey failed to resolve a waypoint and must say so, not guess."""
+    s = SurveyedSystem(name="Broken", regions=[SurveyedRegion(
+        set_name="Broken1", ordinal=1,
+        bodies=[SurveyedBody("Ghost", 90.0, "g.nif", (0.0, 0.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    notes = ambiguities(s)
+    assert any("Ghost" in n and "Player Start" in n for n in notes)
+
+
 def test_ambiguities_flags_an_unnumbered_region():
     s = SurveyedSystem(name="Starbase12", regions=[SurveyedRegion(
         set_name="Starbase12", ordinal=None, bodies=[],

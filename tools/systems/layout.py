@@ -40,6 +40,8 @@ class LayoutTuning:
     orbit_step_gu: float = 26000.0
     anchor_standoff_factor: float = 2.2
     region_margin_gu: float = 1500.0
+    moon_first_orbit_factor: float = 4.0
+    moon_orbit_step_factor: float = 1.5
 
 
 def _norm(v) -> float:
@@ -90,6 +92,17 @@ def _split(region):
 def ambiguities(s) -> list:
     notes = []
     for region in s.regions:
+        primary_check, _ = _split(region)
+        if (primary_check is not None
+                and _norm(_sub(primary_check.offset_gu, region.player_start_gu)) <= 0.0):
+            # _unit() falls back to +Y for a zero-length vector, which would
+            # silently frame the region northward. Measured 2026-09-22: this
+            # fires on 0 of the 90 real regions, so reaching it means the survey
+            # failed to resolve a waypoint -- say so rather than guess.
+            notes.append(
+                f"{region.set_name}: {primary_check.name!r} sits exactly on "
+                f"Player Start, so there is no original viewing direction -- "
+                f"the anchor defaults to +Y and is probably wrong")
         if region.ordinal is None:
             notes.append(
                 f"{region.set_name}: no trailing number, so its orbit order is a "
@@ -140,7 +153,8 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
             # Keep each moon's original bearing from the primary, at a distance
             # scaled to the new primary radius.
             direction = _unit(_sub(c.offset_gu, primary.offset_gu))
-            distance = primary_radius * (4.0 + 1.5 * j)
+            distance = primary_radius * (t.moon_first_orbit_factor
+                                         + t.moon_orbit_step_factor * j)
             m.bodies.append(Body(
                 name=c.name, display_name=c.name, radius_gu=radius,
                 position_gu=_add(centre, _scale(direction, distance)),
