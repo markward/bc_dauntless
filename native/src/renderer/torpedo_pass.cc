@@ -16,7 +16,8 @@
 //   for the open RE questions (Q4/Q7) this implementation stands in for.
 //
 //   DISRUPTOR (is_disruptor == true): no controller, no texture, no light --
-//   a procedural tapered-tube mesh (renderer::build_bolt_mesh) whose ONLY
+//   a procedural teardrop mesh (renderer::build_bolt_mesh; pointed tail,
+//   widest near the nose, rounded nose; full width == `width`) whose ONLY
 //   animation is imperative per-frame re-orientation of the tube's +Y axis
 //   onto the current velocity vector (renderer::bolt_align_rotation). Two
 //   concentric uniform-color sub-draws (shell then a smaller, shorter core)

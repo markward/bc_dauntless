@@ -195,43 +195,65 @@ struct BoltMesh {
 };
 
 namespace torpedo_anim_detail {
-// 4 rings evenly spaced along y in [-0.5, +0.5].
-inline constexpr float kBoltRingY[4] = {-0.5f, -1.0f / 6.0f, 1.0f / 6.0f, 0.5f};
-
-// Audited cross-section taper profile (4 ring radii). PROVISIONAL
-// INTERPRETATION: which end is "forward" was not pinned by the audit — this
-// ordering puts the narrow end (0.7273) at +y (direction of travel). One
-// profile-reverse (index the array as kBoltTaperProfile[3 - ring]) flips it.
-inline constexpr float kBoltTaperProfile[4] = {0.9927f, 0.9727f, 0.9273f, 0.7273f};
+// Teardrop profile. BC's disruptor bolt is a teardrop — pointed tail, widest
+// near the nose, rounded nose — not a tube (the earlier 4-ring taper profile
+// {0.9927, 0.9727, 0.9273, 0.7273} was an audit reading of ring radii whose
+// meaning was never pinned, and drew as a near-cylinder). The full width of
+// the bolt is CreateDisruptorModel's `width`: the stock 1.8 × 0.15 bolt
+// measures 12.4:1 on the exe (stbc-oracle bible §14.3, 87 × 7 px), so the
+// unit mesh's maximum RADIUS is 0.5, not 1.0.
+//
+// CALIBRATION SURFACE, not a reconstruction: these two constants shape the
+// silhouette and are to be re-pinned from the oracle's stock frames
+// (docs/results/vfx/pb_stock*.png) — kBoltWidestAt is the fraction of the
+// length from the tail at which the bolt is widest (the SWIG call's third
+// optional default, 0.8, is the one authored number in that range);
+// kBoltTailPower shapes the tail's swell (1 = cone, <1 = fuller).
+inline constexpr int   kBoltRings     = 11;   // u = i/10: a ring sits exactly at kBoltWidestAt
+inline constexpr float kBoltWidestAt  = 0.8f;
+inline constexpr float kBoltTailPower = 0.6f;
+inline constexpr float kBoltMaxRadius = 0.5f;
 }  // namespace torpedo_anim_detail
 
-/// Unit tube along +Y (y in [-0.5, +0.5]), 4 rings x `segments` points swept
-/// around 2pi, ring radii = the audited taper profile (narrow end forward,
-/// see kBoltTaperProfile). Open tube — NO end caps (interpretation; BC's
-/// original geometry was not traced for cap presence). Triangulated as
-/// `segments` quads per band across 3 bands, 2 triangles per quad, indices
-/// wound CCW as viewed from outside the tube. `segments` default is 12, the
-/// SWIG default that is never overridden in the SDK.
+/// Teardrop radius at `u` in [0, 1] along the bolt, 0 = tail, 1 = nose (+y,
+/// the direction of travel): a power-law swell from a point at the tail to
+/// kBoltMaxRadius at kBoltWidestAt, then a quarter-ellipse cap to a point at
+/// the nose. Continuous, 0 at both ends, maximum exactly at kBoltWidestAt.
+inline float bolt_teardrop_radius(float u) {
+    using namespace torpedo_anim_detail;
+    u = std::clamp(u, 0.0f, 1.0f);
+    if (u <= kBoltWidestAt) {
+        return kBoltMaxRadius * std::pow(u / kBoltWidestAt, kBoltTailPower);
+    }
+    const float t = (u - kBoltWidestAt) / (1.0f - kBoltWidestAt);   // 0 at widest, 1 at nose
+    return kBoltMaxRadius * std::sqrt(std::max(0.0f, 1.0f - t * t));
+}
+
+/// Unit teardrop along +Y (y in [-0.5, +0.5]), kBoltRings rings x `segments`
+/// points swept around 2pi, ring radii from bolt_teardrop_radius. Closed at
+/// both ends (the end rings collapse to points). Triangulated as `segments`
+/// quads per band, 2 triangles per quad, indices wound CCW as viewed from
+/// outside. `segments` default is 12, the SWIG default that is never
+/// overridden in the SDK.
 inline BoltMesh build_bolt_mesh(int segments = 12) {
-    using torpedo_anim_detail::kBoltRingY;
-    using torpedo_anim_detail::kBoltTaperProfile;
+    using torpedo_anim_detail::kBoltRings;
     using torpedo_anim_detail::kTwoPi;
 
     BoltMesh mesh;
-    constexpr int kRings = 4;
-    mesh.vertices.reserve(static_cast<size_t>(kRings) * static_cast<size_t>(segments));
-    for (int ring = 0; ring < kRings; ++ring) {
-        const float y = kBoltRingY[ring];
-        const float radius = kBoltTaperProfile[ring];
+    mesh.vertices.reserve(static_cast<size_t>(kBoltRings) * static_cast<size_t>(segments));
+    for (int ring = 0; ring < kBoltRings; ++ring) {
+        const float u = static_cast<float>(ring) / static_cast<float>(kBoltRings - 1);
+        const float y = u - 0.5f;
+        const float radius = bolt_teardrop_radius(u);
         for (int s = 0; s < segments; ++s) {
             const float theta = kTwoPi * static_cast<float>(s) / static_cast<float>(segments);
             mesh.vertices.emplace_back(radius * std::cos(theta), y, radius * std::sin(theta));
         }
     }
 
-    constexpr int kBands = kRings - 1;
-    mesh.indices.reserve(static_cast<size_t>(kBands) * static_cast<size_t>(segments) * 6u);
-    for (int band = 0; band < kBands; ++band) {
+    const int bands = kBoltRings - 1;
+    mesh.indices.reserve(static_cast<size_t>(bands) * static_cast<size_t>(segments) * 6u);
+    for (int band = 0; band < bands; ++band) {
         for (int s = 0; s < segments; ++s) {
             const uint32_t s_next = static_cast<uint32_t>((s + 1) % segments);
             const uint32_t a = static_cast<uint32_t>(band * segments + s);
