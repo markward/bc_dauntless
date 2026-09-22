@@ -109,3 +109,24 @@ def test_problems_carry_a_readable_detail():
     m.body("Ona 1").orbits = "Nowhere"
     problem = [p for p in validate(m) if p.rule == "orbit-target"][0]
     assert "Ona 1" in problem.detail and "Nowhere" in problem.detail
+
+
+def test_body_overlap_flags_two_bodies_whose_surfaces_intersect():
+    m = _valid()
+    m.body("Ona 2").position_gu = (0.0, 24000.0, 0.0)   # 2000 GU from Ona 1
+    assert "body-overlap" in _slugs(validate(m))
+
+
+def test_body_overlap_accepts_bodies_that_merely_come_close():
+    m = _valid()
+    # Ona 1 r=1800 at y=22000; put Ona 2 r=1800 at y=25601 -> 3601 GU apart.
+    m.body("Ona 2").position_gu = (0.0, 25601.0, 0.0)
+    assert "body-overlap" not in _slugs(validate(m))
+
+
+def test_anchor_inside_body_flags_an_anchor_swallowed_by_the_sun():
+    """body-engulfs-anchor only checks a region's OWN bodies, so an anchor
+    inside the sun would otherwise pass every rule."""
+    m = _valid()
+    m.regions[0].anchor_gu = (0.0, 100.0, 0.0)          # inside the r=5000 sun
+    assert "anchor-inside-body" in _slugs(validate(m))

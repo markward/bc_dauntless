@@ -33,13 +33,20 @@ _GOLDEN_ANGLE = 2.399963229728653
 
 @dataclass
 class LayoutTuning:
-    planet_radius_gu: float = 1800.0
-    moon_radius_gu: float = 600.0
-    sun_radius_gu: float = 9000.0
-    first_orbit_gu: float = 30000.0
+    planet_radius_scale: float = 20.0
+    moon_radius_scale: float = 20.0
+    sun_radius_scale: float = 2.0
+    framing_scale: float = 2.0
+    min_standoff_factor: float = 1.5
+    max_standoff_factor: float = 12.0
+    default_sun_radius_gu: float = 9000.0
+    first_orbit_clearance_gu: float = 30000.0
     orbit_step_gu: float = 26000.0
-    anchor_standoff_factor: float = 2.2
     region_margin_gu: float = 1500.0
+    # Fallback only: used when a region's BC geometry is degenerate (the
+    # primary sits exactly on Player Start, so there is no distance/radius
+    # ratio to derive a standoff from). See _standoff_factor.
+    anchor_standoff_factor: float = 2.2
     moon_first_orbit_factor: float = 4.0
     moon_orbit_step_factor: float = 1.5
 
@@ -67,10 +74,35 @@ def _scale(v, k):
     return tuple(c * k for c in v)
 
 
-def _orbit_position(index: int, t: LayoutTuning):
-    r = t.first_orbit_gu + t.orbit_step_gu * index
+def _orbit_position(index: int, first_orbit: float, t: LayoutTuning):
+    r = first_orbit + t.orbit_step_gu * index
     a = _GOLDEN_ANGLE * index
     return (r * math.sin(a), r * math.cos(a), 0.0)
+
+
+def _standoff_factor(primary, region, t) -> float:
+    """How many NEW planet-radii the anchor sits back from the planet's centre.
+
+    Derived from BC's own framing. The artist placed each planet at a distance
+    that gave it a particular apparent size, and that varied per map -- Ona 2
+    read close, Ona 1 distant. A single constant flattened all of it.
+
+    Because the standoff is measured in radii, the planet's SIZE cancels out of
+    the apparent angle: `planet_radius_scale` and `framing_scale` are
+    independent knobs. At framing_scale 1.0 the result equals BC's apparent
+    size exactly.
+
+    Clamped at both ends. The floor keeps the anchor outside the planet; the
+    cap exists because BC's most distant framing (Savoy 1: a 100 GU planet
+    5041 GU away, 50:1) would otherwise throw the anchor far enough to pass the
+    sun. Both clamps are reported by ambiguities() -- they override BC's intent.
+    """
+    r_bc = primary.radius_gu
+    d_bc = _norm(_sub(primary.offset_gu, region.player_start_gu))
+    if r_bc <= 0.0 or d_bc <= 0.0:
+        return t.anchor_standoff_factor
+    raw = (d_bc / r_bc) / t.framing_scale
+    return min(max(raw, t.min_standoff_factor), t.max_standoff_factor)
 
 
 def _ordered(s):
@@ -89,10 +121,26 @@ def _split(region):
     return primary, [b for b in planets if b is not primary]
 
 
-def ambiguities(s) -> list:
+def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
+    t = tuning or LayoutTuning()
     notes = []
     for region in s.regions:
         primary_check, _ = _split(region)
+        if primary_check is not None:
+            r_bc = primary_check.radius_gu
+            d_bc = _norm(_sub(primary_check.offset_gu, region.player_start_gu))
+            if r_bc > 0.0 and d_bc > 0.0:
+                raw = (d_bc / r_bc) / t.framing_scale
+                if raw < t.min_standoff_factor:
+                    notes.append(
+                        f"{region.set_name}: {primary_check.name!r} standoff "
+                        f"clamped to the MIN floor ({t.min_standoff_factor} "
+                        f"radii) -- BC framed it closer than the floor allows")
+                elif raw > t.max_standoff_factor:
+                    notes.append(
+                        f"{region.set_name}: {primary_check.name!r} standoff "
+                        f"clamped to the MAX cap ({t.max_standoff_factor} "
+                        f"radii) -- BC framed it farther than the cap allows")
         if (primary_check is not None
                 and _norm(_sub(primary_check.offset_gu, region.player_start_gu)) <= 0.0):
             # _unit() falls back to +Y for a zero-length vector, which would
@@ -121,13 +169,21 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
     t = tuning or LayoutTuning()
     m = SystemMap(system=s.name, generated={"tool": "gen_system_maps"})
 
+    # Two systems (Belaruz, Vesuvi) build a MetaNebula and author no Sun_Create
+    # at all -- sun_bc is 0.0 there, and default_sun_radius_gu is the fallback.
+    sun_bc = max(
+        (b.radius_gu for region in s.regions for b in region.bodies if b.is_sun),
+        default=0.0)
+    sun_radius = (sun_bc * t.sun_radius_scale) if sun_bc > 0.0 else t.default_sun_radius_gu
+    first_orbit = sun_radius + t.first_orbit_clearance_gu
+
     m.bodies.append(Body(
-        name=s.name, display_name=s.name, radius_gu=t.sun_radius_gu,
+        name=s.name, display_name=s.name, radius_gu=sun_radius,
         position_gu=(0.0, 0.0, 0.0), orbits=None,
         appearance=Appearance(kind="nif", model=""), owner_region=None))
 
     for index, region in enumerate(_ordered(s)):
-        centre = _orbit_position(index, t)
+        centre = _orbit_position(index, first_orbit, t)
         primary, companions = _split(region)
 
         if primary is None:
@@ -136,32 +192,35 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
                                     body_names=[]))
             continue
 
-        biggest = max(b.radius_gu for b in [primary] + companions) or 1.0
         placed = []
+        members = []
 
-        primary_radius = t.planet_radius_gu
-        m.bodies.append(Body(
+        primary_radius = primary.radius_gu * t.planet_radius_scale
+        primary_body = Body(
             name=primary.name, display_name=primary.name,
             radius_gu=primary_radius, position_gu=centre, orbits=s.name,
             appearance=Appearance(kind="nif", model=primary.model),
-            owner_region=region.set_name))
+            owner_region=region.set_name)
+        m.bodies.append(primary_body)
         placed.append(primary.name)
+        members.append(primary_body)
 
         for j, c in enumerate(companions):
-            share = max(c.radius_gu / biggest, 0.25)
-            radius = t.moon_radius_gu * share
+            radius = c.radius_gu * t.moon_radius_scale
             # Keep each moon's original bearing from the primary, at a distance
             # scaled to the new primary radius.
             direction = _unit(_sub(c.offset_gu, primary.offset_gu))
             distance = primary_radius * (t.moon_first_orbit_factor
                                          + t.moon_orbit_step_factor * j)
-            m.bodies.append(Body(
+            companion_body = Body(
                 name=c.name, display_name=c.name, radius_gu=radius,
                 position_gu=_add(centre, _scale(direction, distance)),
                 orbits=primary.name,
                 appearance=Appearance(kind="nif", model=c.model),
-                owner_region=region.set_name))
+                owner_region=region.set_name)
+            m.bodies.append(companion_body)
             placed.append(c.name)
+            members.append(companion_body)
 
         # The anchor: the group's centroid, displaced back along the ORIGINAL
         # viewing direction by a standoff scaled to the new primary radius.
@@ -169,11 +228,16 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
         # from the anchor is exactly the bearing BC gave it. With companions the
         # centroid shifts and the bearing is approximate -- which is the point:
         # "anchor between the two" frames the group, not just the planet.
+        #
+        # `members` holds the Body objects just created above directly, NOT a
+        # by-name lookup through m.body() -- moon names collide across regions
+        # (e.g. "Moon 1" appears in both Geble3 and Geble4), and m.body()
+        # returns the first match in the whole map, which silently pulled in
+        # a companion from a DIFFERENT region's group and blew up the anchor.
         view = _unit(_sub(primary.offset_gu, region.player_start_gu))
-        members = [m.body(n) for n in placed]
         centroid = tuple(
             sum(b.position_gu[axis] for b in members) / len(members) for axis in range(3))
-        standoff = t.anchor_standoff_factor * primary_radius
+        standoff = _standoff_factor(primary, region, t) * primary_radius
         anchor = _sub(centroid, _scale(view, standoff))
 
         reach = max(

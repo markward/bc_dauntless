@@ -63,16 +63,19 @@ def test_per_set_suns_are_discarded_not_carried_over():
 def test_orbits_increase_with_the_region_ordinal():
     t = LayoutTuning()
     m = layout(_sys_one_planet_per_region(), t)
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    first_orbit = sun.radius_gu + t.first_orbit_clearance_gu
     d = [math.dist(m.body(f"Ona {i}").position_gu, (0.0, 0.0, 0.0)) for i in (1, 2, 3)]
-    assert d[0] == pytest.approx(t.first_orbit_gu)
-    assert d[1] == pytest.approx(t.first_orbit_gu + t.orbit_step_gu)
-    assert d[2] == pytest.approx(t.first_orbit_gu + 2 * t.orbit_step_gu)
+    assert d[0] == pytest.approx(first_orbit)
+    assert d[1] == pytest.approx(first_orbit + t.orbit_step_gu)
+    assert d[2] == pytest.approx(first_orbit + 2 * t.orbit_step_gu)
 
 
 def test_planets_are_resized_to_the_tuning():
     t = LayoutTuning()
     m = layout(_sys_one_planet_per_region(), t)
-    assert m.body("Ona 1").radius_gu == pytest.approx(t.planet_radius_gu)
+    # Ona 1's authored BC radius is 90.0 GU (see _sys_one_planet_per_region).
+    assert m.body("Ona 1").radius_gu == pytest.approx(90.0 * t.planet_radius_scale)
 
 
 def test_anchor_reproduces_the_original_viewing_direction():
@@ -88,10 +91,15 @@ def test_anchor_reproduces_the_original_viewing_direction():
 
 
 def test_anchor_standoff_scales_with_the_new_planet_radius():
-    t = LayoutTuning(anchor_standoff_factor=3.0)
-    m = layout(_sys_one_planet_per_region(), t)
-    d = math.dist(m.body("Ona 1").position_gu, m.region("Ona1").anchor_gu)
-    assert d == pytest.approx(3.0 * t.planet_radius_gu)
+    """The standoff factor is measured in planet radii, so doubling
+    planet_radius_scale doubles the standoff distance even though the factor
+    itself is unchanged."""
+    s = _sys_one_planet_per_region()
+    m1 = layout(s, LayoutTuning(planet_radius_scale=20.0))
+    m2 = layout(s, LayoutTuning(planet_radius_scale=40.0))
+    d1 = math.dist(m1.body("Ona 1").position_gu, m1.region("Ona1").anchor_gu)
+    d2 = math.dist(m2.body("Ona 1").position_gu, m2.region("Ona1").anchor_gu)
+    assert d2 == pytest.approx(2.0 * d1)
 
 
 def test_region_radius_covers_its_bodies_and_its_content():
@@ -100,7 +108,8 @@ def test_region_radius_covers_its_bodies_and_its_content():
     s.regions[2].content_extent_gu = 322.0
     m = layout(s, t)
     r = m.region("Ona3")
-    surface = math.dist(m.body("Ona 3").position_gu, r.anchor_gu) + t.planet_radius_gu
+    body = m.body("Ona 3")
+    surface = math.dist(body.position_gu, r.anchor_gu) + body.radius_gu
     assert r.radius_gu >= surface + t.region_margin_gu - 1e-6
     assert r.radius_gu >= 322.0
 
@@ -194,3 +203,117 @@ def test_the_generated_map_validates():
     from engine.systems.validate import validate
     m = layout(_sys_one_planet_per_region())
     assert validate(m, sdk_set_names=["Ona1", "Ona2", "Ona3"]) == []
+
+
+def test_framing_scale_one_reproduces_bc_apparent_size_exactly():
+    """The radii cancel: standoff is measured in planet radii, so at
+    framing_scale 1.0 the new angular size EQUALS BC's, not approximates it."""
+    s = _sys_one_planet_per_region()
+    m = layout(s, LayoutTuning(framing_scale=1.0))
+    for region in s.regions:
+        bc = region.bodies[0]
+        d_bc = math.dist(bc.offset_gu, region.player_start_gu)
+        want = 2.0 * math.atan(bc.radius_gu / d_bc)
+        body = m.body(bc.name)
+        d_new = math.dist(body.position_gu, m.region(region.set_name).anchor_gu)
+        got = 2.0 * math.atan(body.radius_gu / d_new)
+        assert got == pytest.approx(want, rel=1e-9), region.set_name
+
+
+def test_apparent_size_is_independent_of_the_size_scale():
+    """planet_radius_scale and framing_scale must not interact."""
+    s = _sys_one_planet_per_region()
+    angles = []
+    for scale in (10.0, 20.0, 40.0):
+        m = layout(s, LayoutTuning(planet_radius_scale=scale))
+        body = m.body("Ona 1")
+        d = math.dist(body.position_gu, m.region("Ona1").anchor_gu)
+        angles.append(2.0 * math.atan(body.radius_gu / d))
+    assert angles[1] == pytest.approx(angles[0], rel=1e-12)
+    assert angles[2] == pytest.approx(angles[0], rel=1e-12)
+
+
+def test_planets_keep_bcs_relative_sizes():
+    """BC authored a 15x spread across 87 primaries. A flat radius threw it away."""
+    s = SurveyedSystem(name="Alioth", regions=[
+        SurveyedRegion(set_name="Alioth1", ordinal=1, bodies=[
+            SurveyedBody("Alioth 1", 90.0, "a.nif", (0.0, 1000.0, 0.0), False)],
+            content_extent_gu=0.0, player_start_gu=(0.0, -500.0, 0.0)),
+        SurveyedRegion(set_name="Alioth6", ordinal=6, bodies=[
+            SurveyedBody("Alioth 6", 360.0, "b.nif", (0.0, 1000.0, 0.0), False)],
+            content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
+    ])
+    m = layout(s, LayoutTuning(planet_radius_scale=20.0))
+    assert m.body("Alioth 1").radius_gu == pytest.approx(1800.0)
+    assert m.body("Alioth 6").radius_gu == pytest.approx(7200.0)
+
+
+def test_moons_keep_bcs_relative_sizes():
+    s = SurveyedSystem(name="Serris", regions=[SurveyedRegion(
+        set_name="Serris3", ordinal=3,
+        bodies=[
+            SurveyedBody("Serris 3", 100.0, "p.nif", (0.0, 500.0, 0.0), False),
+            SurveyedBody("Serris 3 Moon 1", 7.0, "m.nif", (0.0, 600.0, 0.0), False),
+            SurveyedBody("Serris 3 Moon 2", 20.0, "m.nif", (0.0, 700.0, 0.0), False),
+        ],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    m = layout(s, LayoutTuning(moon_radius_scale=20.0))
+    assert m.body("Serris 3 Moon 1").radius_gu == pytest.approx(140.0)
+    assert m.body("Serris 3 Moon 2").radius_gu == pytest.approx(400.0)
+
+
+def test_the_sun_scales_from_bcs_authored_radius():
+    s = _sys_one_planet_per_region()          # its suns are authored at 5000 GU
+    m = layout(s, LayoutTuning(sun_radius_scale=2.0))
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    assert sun.radius_gu == pytest.approx(10000.0)
+
+
+def test_a_system_with_no_authored_sun_still_gets_one():
+    """Belaruz and Vesuvi build a MetaNebula and no Sun_Create at all."""
+    s = SurveyedSystem(name="Vesuvi", regions=[SurveyedRegion(
+        set_name="Vesuvi5", ordinal=5,
+        bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    m = layout(s, LayoutTuning(default_sun_radius_gu=9000.0))
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    assert sun.radius_gu == pytest.approx(9000.0)
+
+
+def test_the_first_orbit_clears_the_suns_surface():
+    """first_orbit_clearance_gu is measured from the SUN'S SURFACE, so a bigger
+    sun pushes every orbit out rather than swallowing the innermost planet."""
+    s = _sys_one_planet_per_region()
+    m = layout(s, LayoutTuning(sun_radius_scale=2.0,
+                               first_orbit_clearance_gu=30000.0))
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    innermost = math.dist(m.body("Ona 1").position_gu, (0.0, 0.0, 0.0))
+    assert innermost == pytest.approx(sun.radius_gu + 30000.0)
+
+
+def test_the_standoff_is_clamped_at_both_ends():
+    """Savoy 1 is why the cap exists: BC put a 100 GU planet 5041 GU away, a
+    50:1 ratio, which uncapped throws the anchor far enough to pass the sun."""
+    def one(radius, distance, tuning):
+        s = SurveyedSystem(name="X", regions=[SurveyedRegion(
+            set_name="X1", ordinal=1,
+            bodies=[SurveyedBody("P", radius, "p.nif", (0.0, distance, 0.0), False)],
+            content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+        m = layout(s, tuning)
+        return (math.dist(m.body("P").position_gu, m.region("X1").anchor_gu)
+                / m.body("P").radius_gu)
+
+    t = LayoutTuning(min_standoff_factor=1.5, max_standoff_factor=12.0,
+                     framing_scale=2.0)
+    assert one(100.0, 5041.0, t) == pytest.approx(12.0)     # Savoy 1, capped
+    assert one(200.0, 400.0, t) == pytest.approx(1.5)       # very close, floored
+    assert one(90.0, 600.4, t) == pytest.approx(600.4 / 90.0 / 2.0)  # untouched
+
+
+def test_ambiguities_reports_every_clamped_region():
+    """A clamp overrides BC's intent, so the art-direction pass must see it."""
+    s = SurveyedSystem(name="Savoy", regions=[SurveyedRegion(
+        set_name="Savoy1", ordinal=1,
+        bodies=[SurveyedBody("Savoy 1", 100.0, "p.nif", (0.0, 5041.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    assert any("Savoy 1" in n and "clamp" in n.lower() for n in ambiguities(s))

@@ -26,9 +26,30 @@ def _dist(a, b) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
+def _resolve(by_name: dict, name: str, owner: str | None = None):
+    """Look up a body by name, preferring the candidate owned by `owner`.
+
+    BC's own display names are not unique across a system -- e.g. Geble3 and
+    Geble4 both name a companion "Moon 1". A plain name->body dict silently
+    keeps whichever body happened to be added last, which then reports a
+    spurious body-owner mismatch for every OTHER region that also has a body
+    of that name. Group by name and disambiguate by owner_region instead.
+    """
+    candidates = by_name.get(name, [])
+    if not candidates:
+        return None
+    if owner is not None:
+        for b in candidates:
+            if b.owner_region == owner:
+                return b
+    return candidates[0]
+
+
 def validate(m, *, sdk_set_names=None, pins=None) -> list:
     problems = []
-    by_name = {b.name: b for b in m.bodies}
+    by_name: dict = {}
+    for b in m.bodies:
+        by_name.setdefault(b.name, []).append(b)
 
     if sdk_set_names is not None:
         have = {r.set_name for r in m.regions}
@@ -50,7 +71,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
 
     for r in m.regions:
         for name in r.body_names:
-            body = by_name.get(name)
+            body = _resolve(by_name, name, owner=r.set_name)
             if body is None:
                 problems.append(Problem(
                     "body-owner",
@@ -73,10 +94,41 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"body {name!r} (radius {body.radius_gu:.0f} GU) reaches the "
                     f"anchor of region {r.set_name!r}"))
 
+    for i, a in enumerate(m.bodies):
+        for b in m.bodies[i + 1:]:
+            if _dist(a.position_gu, b.position_gu) <= a.radius_gu + b.radius_gu:
+                problems.append(Problem(
+                    "body-overlap",
+                    f"body {a.name!r} (radius {a.radius_gu:.0f} GU) and body "
+                    f"{b.name!r} (radius {b.radius_gu:.0f} GU) have intersecting "
+                    f"surfaces"))
+
+    for r in m.regions:
+        # Bodies the region itself owns are already covered by
+        # body-engulfs-anchor above; this rule exists for everything ELSE
+        # (most importantly the sun, which no region owns) so it is scoped to
+        # bodies outside r's own listing to avoid double-reporting the same
+        # fault under two slugs. Excluded by IDENTITY of the resolved body
+        # (not by name) so a name collision elsewhere in the map (two
+        # regions both with a companion called "Moon 1") can't exclude the
+        # WRONG region's body from this check.
+        own_bodies = {id(_resolve(by_name, name, owner=r.set_name))
+                      for name in r.body_names}
+        for b in m.bodies:
+            if id(b) in own_bodies:
+                continue
+            if b.radius_gu >= _dist(b.position_gu, r.anchor_gu):
+                problems.append(Problem(
+                    "anchor-inside-body",
+                    f"anchor of region {r.set_name!r} falls inside body "
+                    f"{b.name!r} (radius {b.radius_gu:.0f} GU), which does not "
+                    f"belong to that region -- body-engulfs-anchor only checks "
+                    f"a region's own bodies"))
+
     if pins is not None:
         anchors = {r.set_name: r.anchor_gu for r in m.regions}
         for name, want_offset in pins.items():
-            body = by_name.get(name)
+            body = _resolve(by_name, name)
             if body is None or body.owner_region not in anchors:
                 problems.append(Problem(
                     "pin-respected",
