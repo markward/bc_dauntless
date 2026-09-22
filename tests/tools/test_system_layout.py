@@ -360,3 +360,64 @@ def test_two_regions_may_share_a_bare_companion_name():
         anchor = m.region(set_name).anchor_gu
         limit = t.max_standoff_factor * planet.radius_gu * 1.5
         assert math.dist(anchor, planet.position_gu) < limit, set_name
+
+
+def test_a_pinned_body_lands_at_its_authored_offset_from_the_anchor():
+    """A pin exists so a mission's staged ships stay beside the body they were
+    authored beside. E5M2 parks a base and three Galors just past Prendel 3's
+    Moon 2, so that moon must keep its set-local position exactly."""
+    s = SurveyedSystem(name="Prendel", regions=[SurveyedRegion(
+        set_name="Prendel3", ordinal=3,
+        bodies=[
+            SurveyedBody("Prendel 3", 360.0, "p.nif", (-1000.0, 1500.0, 0.0), False),
+            SurveyedBody("Moon 1", 90.0, "m.nif", (-5000.0, 0.0, 0.0), False),
+            SurveyedBody("Moon 2", 90.0, "m.nif", (400.0, 5000.0, 0.0), False),
+        ],
+        content_extent_gu=6368.0, player_start_gu=(0.0, 0.0, 0.0))])
+    pins = {"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}
+    m = layout(s, pins=pins)
+    anchor = m.region("Prendel3").anchor_gu
+    moon = m.body("Moon 2")
+    have = tuple(p - a for p, a in zip(moon.position_gu, anchor))
+    assert have == pytest.approx((400.0, 5000.0, 0.0), abs=1e-6)
+
+
+def test_an_unpinned_body_in_the_same_region_is_not_moved():
+    """Pinning one companion must not disturb its siblings."""
+    s = SurveyedSystem(name="Prendel", regions=[SurveyedRegion(
+        set_name="Prendel3", ordinal=3,
+        bodies=[
+            SurveyedBody("Prendel 3", 360.0, "p.nif", (-1000.0, 1500.0, 0.0), False),
+            SurveyedBody("Moon 1", 90.0, "m.nif", (-5000.0, 0.0, 0.0), False),
+            SurveyedBody("Moon 2", 90.0, "m.nif", (400.0, 5000.0, 0.0), False),
+        ],
+        content_extent_gu=6368.0, player_start_gu=(0.0, 0.0, 0.0))])
+    free = layout(s).body("Moon 1").position_gu
+    pinned = layout(s, pins={"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}).body("Moon 1")
+    assert pinned.position_gu == pytest.approx(free)
+
+
+def test_layout_ignores_a_pin_naming_something_that_does_not_exist():
+    """validate() reports those; layout() must not also decide, or the two can
+    disagree about the same map."""
+    s = _sys_one_planet_per_region()
+    m = layout(s, pins={"Nowhere/Ghost": (0.0, 0.0, 0.0),
+                        "Ona1/Ghost": (0.0, 0.0, 0.0),
+                        "malformed key": (0.0, 0.0, 0.0)})
+    assert m.region("Ona1") is not None
+    assert m.body("Ona 1") is not None
+
+
+def test_a_pinned_map_passes_the_pin_rule_end_to_end():
+    """The whole point: declare a pin, lay out, and validate() must be happy."""
+    from engine.systems.validate import validate
+    s = SurveyedSystem(name="Prendel", regions=[SurveyedRegion(
+        set_name="Prendel3", ordinal=3,
+        bodies=[
+            SurveyedBody("Prendel 3", 360.0, "p.nif", (-1000.0, 1500.0, 0.0), False),
+            SurveyedBody("Moon 2", 90.0, "m.nif", (400.0, 5000.0, 0.0), False),
+        ],
+        content_extent_gu=6368.0, player_start_gu=(0.0, 0.0, 0.0))])
+    pins = {"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}
+    m = layout(s, pins=pins)
+    assert validate(m, pins=pins) == []

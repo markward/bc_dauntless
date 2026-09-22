@@ -104,3 +104,25 @@ def test_the_cli_enforces_declared_pins():
     m.overrides = {"pins": {key: [1.0, 2.0, 3.0]}}
     problems = validate(m, pins=pins_from(m))
     assert any(p.rule == "pin-respected" for p in problems)
+
+
+def test_no_committed_map_declares_a_pin_and_here_is_why():
+    """`layout()` honours pins and `validate()` enforces them, but no map
+    declares one -- and that is deliberate, not an oversight.
+
+    A pin preserves a body's ORIGINAL absolute offset from its region anchor,
+    while every body is scaled to 20x. The two collide for any body the
+    original placed within ~20x of its planet. The only candidate, Prendel 3's
+    "Moon 2", is exactly that case: the planet becomes 7200 GU and the moon
+    1800 GU, needing 9000 GU between centres, but the original put the moon
+    5016 GU from the region origin -- so honouring the pin lands the moon
+    inside its own planet and `body-overlap` correctly rejects it.
+
+    Prendel's overrides carry the full derivation. If a future map ever does
+    declare a pin, this test will fail and should be replaced by one asserting
+    that pin holds.
+    """
+    from tools.gen_system_maps import pins_from
+    declared = {name: pins_from(load(name)) for name in available()}
+    assert all(p is None for p in declared.values()), \
+        f"a map now declares a pin: { {k: v for k, v in declared.items() if v} }"

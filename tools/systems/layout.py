@@ -165,8 +165,9 @@ def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
     return notes
 
 
-def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
+def layout(s, tuning: LayoutTuning | None = None, pins=None) -> SystemMap:
     t = tuning or LayoutTuning()
+    pins = pins or {}
     m = SystemMap(system=s.name, generated={"tool": "gen_system_maps"})
 
     # Two systems (Belaruz, Vesuvi) build a MetaNebula and author no Sun_Create
@@ -239,6 +240,27 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
             sum(b.position_gu[axis] for b in members) / len(members) for axis in range(3))
         standoff = _standoff_factor(primary, region, t) * primary_radius
         anchor = _sub(centroid, _scale(view, standoff))
+
+        # Pins: reposition a body to anchor + offset AFTER the anchor above is
+        # computed from the pre-pin centroid, and do not recompute the anchor
+        # afterwards. Moving a pinned body shifts the centroid, which would
+        # shift the anchor, which would move the body again -- a fixed-point
+        # problem. One pass is stable and sufficient: the centroid shift only
+        # nudges this region's framing, while the pin itself ends up exact,
+        # which is what validate()'s pin-respected rule checks. A pin naming a
+        # region or body that does not exist here is ignored, silently --
+        # validate() already reports all four malformed-pin cases, and
+        # diagnosing in two places invites them to disagree about one map.
+        for key, offset in pins.items():
+            if not isinstance(key, str) or "/" not in key:
+                continue
+            pin_region, pin_body = key.split("/", 1)
+            if pin_region != region.set_name:
+                continue
+            for b in members:
+                if b.name == pin_body:
+                    b.position_gu = _add(anchor, tuple(offset))
+                    break
 
         reach = max(
             _norm(_sub(b.position_gu, anchor)) + b.radius_gu for b in members)

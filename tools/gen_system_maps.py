@@ -59,8 +59,8 @@ def generate(system: str):
     main() reports it and refuses to save that system.
     """
     surveyed = survey_system(system)
-    fresh = layout(surveyed)
     old = load(system) if system.lower() in available() else None
+    fresh = layout(surveyed, pins=pins_from(old) if old is not None else None)
     _merge_overrides(fresh, old)
     return fresh, ambiguities(surveyed)
 
