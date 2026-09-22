@@ -76,6 +76,16 @@ def test_body_engulfs_anchor_flags_a_planet_swallowing_its_own_spawn():
     assert "body-engulfs-anchor" in _slugs(validate(m))
 
 
+def test_a_bad_back_reference_does_not_mask_an_engulfed_anchor():
+    """Two independent faults on one body must both be reported. A bookkeeping
+    error about which region owns a body must never hide "you would spawn
+    inside this planet" -- that is the hazard the validator exists for."""
+    m = _valid()
+    m.body("Ona 1").owner_region = "Ona2"      # back-reference mismatch
+    m.body("Ona 1").radius_gu = 5000.0          # engulfs Ona1's anchor
+    assert _slugs(validate(m)) == ["body-engulfs-anchor", "body-owner"]
+
+
 def test_pin_respected_accepts_the_authored_offset():
     m = _valid()
     pins = {"Ona 1": (0.0, 4000.0, 0.0)}   # matches 22000 - 18000

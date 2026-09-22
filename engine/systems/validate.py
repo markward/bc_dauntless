@@ -61,7 +61,12 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     "body-owner",
                     f"body {name!r} is listed by region {r.set_name!r} but its "
                     f"owner_region is {body.owner_region!r}"))
-                continue
+            # NO `continue` here. A bad back-reference is a bookkeeping
+            # error; engulfing the anchor is "you would spawn inside a
+            # planet". They are independent, and the geometry is measured
+            # against the LISTING region's anchor either way, so a body can
+            # and must report both. Only the dangling-name branch above
+            # continues -- there, there is no body left to measure.
             if body.radius_gu >= _dist(body.position_gu, r.anchor_gu):
                 problems.append(Problem(
                     "body-engulfs-anchor",
