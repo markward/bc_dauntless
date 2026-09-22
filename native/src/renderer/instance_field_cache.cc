@@ -283,9 +283,11 @@ HullCarveDepositResult hull_carve_deposit(
         float floor_radius_model,
         float radius_modifier,
         float inv_scale,
-        const voxel::VoxelVolume* fill) {
+        const voxel::VoxelVolume* fill,
+        float birth_time) {
     scenegraph::HullCarve& c =
-        carve.add(center_body, influ_radius_model, strength, normal_body);
+        carve.add(center_body, influ_radius_model, strength, normal_body,
+                  birth_time);
     const float prev_radius = c.radius;
     // Strength -> an ABSOLUTE carve radius (GU): a weapon carves the same
     // hole whatever it hits, so no scaling by hull size. radius_modifier is

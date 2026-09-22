@@ -762,6 +762,11 @@ const int MAX_CARVES = 24;
 uniform int  u_carve_count;                    // 0 = no clip
 uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
 uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
+// Game-clock seconds each carve was last deposited (HullCarve::birth_time,
+// refreshed on a merge). Drives the glow flicker settling to dark. A separate
+// float array rather than a w-component on the normals: widening that to vec4
+// would silently misalign every existing vec3 upload it has.
+uniform float u_carve_birth[MAX_CARVES];
 
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
@@ -840,7 +845,23 @@ const float kFieldSdfOffset  = 1.25;
 // back to normal glow by kGlowKillReach * the carve radius. 1.5 is tight on
 // purpose: enough to clear the lit windows off the tear without darkening a
 // visible patch of surrounding hull.
-const float kGlowKillReach = 1.5;
+// Kill radius, as a multiple of the carve radius. The reach varies per
+// AZIMUTH between these two, so the dead zone is lobed rather than a clean
+// disc -- a perfect circle of dark windows reads as a stencil stamped on the
+// hull, the same failure the procedural scuff relief hit repeatedly. Same
+// tool the hole's own rim uses: an azimuthal vnoise3 seeded from the carve
+// centre, so it is stable across frames and cannot crawl.
+const float kGlowKillReachMin = 1.5;
+const float kGlowKillReachMax = 3.0;
+const float kGlowLobeFreq     = 2.5;   // lobes around the breach (rim uses 4.0)
+
+// Back-face cutoff for the glow suppression. Deliberately its OWN constant
+// rather than a reference to NORMAL_MIN: that one is declared above
+// apply_scuffs, which runs long before this block, so it cannot be moved in
+// here -- and the two are separate visual decisions anyway (how far a scorch
+// decal wraps a curve vs how far a dead compartment reaches around one). The
+// value matches today because the same curvature tolerance suits both.
+const float kGlowNormalMin = 0.15;
 
 const float kFieldRimNoise = 0.06;
 const float kFieldRimFreq  = 0.35;   // cycles per model unit
@@ -869,13 +890,18 @@ float vnoise3(vec3 p){
 // one shape.
 //
 // Returns true = cut away here. The CALLER decides what to do with that.
+// `n_body` is used ONLY by the glow term, never by the cut decision -- a
+// fragment is cut or not according to where it is, not which way it faces.
+//
 // `glow_kill` (out): 0 = glow untouched, 1 = fully suppressed. Returned from
 // HERE rather than computed in a second loop of its own, because this loop is
 // hot -- it runs for every fragment of every damaged hull, up to 24 times --
 // and the per-carve distance it needs has already been computed. Consumers
 // that do not want it pass a dummy; the compiler drops the term.
-bool hull_cut_at(vec3 p_body, out float glow_kill) {
+bool hull_cut_at(vec3 p_body, vec3 n_body,
+                 out float glow_kill, out float glow_birth) {
     glow_kill = 0.0;
+    glow_birth = 0.0;
     bool field_suppressed = false;
     // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
     // out of the carve loop below, where it was recomputed for every one of up
@@ -894,12 +920,38 @@ bool hull_cut_at(vec3 p_body, out float glow_kill) {
             vec3 lateral = v - along * n;
             float ld     = length(lateral);
 
-            // Glow suppression: radial, from the carve CENTRE in 3D, so a
-            // breach does not reach through a thin section and dim windows on
-            // the far face at the same lateral offset -- distance along the
-            // normal counts against it just as lateral distance does.
-            glow_kill = max(glow_kill,
-                            1.0 - smoothstep(r, r * kGlowKillReach, length(v)));
+            // Glow suppression around this breach.
+            //
+            // The normal gate is what keeps the dark patch on the struck FACE.
+            // 3D distance alone does not: it only limits the bleed to sections
+            // thinner than the kill radius, which on a saucer is most of them,
+            // and the dark spot showed through to an undamaged underside. This
+            // is the same shape of weight apply_damage_decals uses, for
+            // exactly the same reason -- see kGlowNormalMin.
+            //
+            // The cheap distance test comes FIRST and guards the vnoise3: this
+            // loop runs for every fragment of every damaged hull, up to 24
+            // times, and the noise is eight sins. Almost every fragment is far
+            // from any given carve, so the short-circuit is what keeps this
+            // affordable -- the same reasoning as the field clip's own
+            // margin-before-noise ordering below.
+            float gd = length(v);
+            if (gd < r * kGlowKillReachMax) {
+                float gwn = smoothstep(kGlowNormalMin, 1.0, dot(n_body, n));
+                if (gwn > 0.0) {
+                    vec3 gaz = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
+                    float reach = mix(kGlowKillReachMin, kGlowKillReachMax,
+                                      vnoise3(gaz * kGlowLobeFreq + c * kPhase));
+                    float k = gwn * (1.0 - smoothstep(r, r * reach, gd));
+                    // Track WHICH carve won, not just how much: the flicker
+                    // settles on that carve's own age, and a fresh hit beside
+                    // an old one must restart it.
+                    if (k > glow_kill) {
+                        glow_kill  = k;
+                        glow_birth = u_carve_birth[i];
+                    }
+                }
+            }
 
             // Region the FIELD BRUSH dilated this carve to (field_brush.cc).
             // The field is deliberately generous -- a carve is rounded up to
@@ -1055,6 +1107,30 @@ bool hull_cut_at(vec3 p_body, out float glow_kill) {
 }
 // === HULL_CUT_DECISION END ===
 
+// ── Failing-power flicker around a breach ─────────────────────────────────
+// A breached compartment's lights fail; they do not switch cleanly off. This
+// stutters them for kGlowFlickerSecs after the carve lands, then leaves them
+// dark for good -- the feed is gone, not intermittent.
+//
+// Hashed per COARSE BODY-SPACE PATCH, not per pixel: a per-fragment hash
+// sparkles like noise, whereas real windows fail in groups. Each patch gets
+// its own phase so they do not blink in unison. Body frame, so the pattern is
+// welded to the hull rather than swimming as the camera moves.
+//
+// Evaluated ONCE per fragment from the accumulated kill, never inside the
+// carve loop -- see that loop's own note on what adding noise there costs.
+const float kGlowFlickerSecs     = 60.0;      // fresh -> settled, seconds
+const float kGlowFlickerCellFreq = 1.0 / 8.0; // patch size, body units
+const float kGlowFlickerRate     = 3.7;       // stutter speed
+const float kGlowFlickerDuty     = 0.45;      // below this the patch is dark
+
+float glow_flicker_on(vec3 p_body, float t) {
+    vec3 cell = floor(p_body * kGlowFlickerCellFreq);
+    float phase = vh3(cell);
+    float n = vnoise3(vec3(cell.xy * 0.19, t * kGlowFlickerRate + phase * 23.0));
+    return step(kGlowFlickerDuty, n);
+}
+
 void main() {
     vec3 n = normalize(v_normal_ws);
     vec3 V = normalize(u_camera_pos_ws - v_position_ws);
@@ -1101,8 +1177,9 @@ void main() {
     // field block below can defer to this block wherever it applies. See that
     // block's comment for why.
     float glow_kill = 0.0;
+    float glow_birth = 0.0;
     bool marked = false;
-    if (hull_cut_at(p_body, glow_kill)) {
+    if (hull_cut_at(p_body, n_body, glow_kill, glow_birth)) {
         if (u_carve_invert != 0) marked = true;
         else                     discard;
     }
@@ -1323,7 +1400,18 @@ void main() {
     // glow_alive: windows go dark around a breach (hull_cut_at's out param).
     // It multiplies the GLOW-MAP term only -- the material emissive is a
     // property of the surface, not of a lit compartment behind it.
-    float glow_alive = 1.0 - clamp(glow_kill, 0.0, 1.0);
+    // Fresh breach: the kill zone stutters. Settled (kGlowFlickerSecs on from
+    // that carve's own birth): simply dark. `settle` interpolates the
+    // flicker's authority away rather than cutting it, so a compartment fades
+    // into failure instead of stopping mid-blink.
+    float glow_alive = 1.0;
+    if (glow_kill > 0.0) {
+        float gk     = clamp(glow_kill, 0.0, 1.0);
+        float age    = max(0.0, u_decal_time - glow_birth);
+        float settle = clamp(age / kGlowFlickerSecs, 0.0, 1.0);
+        float on     = glow_flicker_on(p_body, u_decal_time);
+        glow_alive   = 1.0 - gk + gk * on * (1.0 - settle);
+    }
     vec3 self_illum = u_emissive_scale *
         (u_emissive_color * base.rgb
          + glow_rgb * glow.a * gf * nac * region_gain * glow_alive);

@@ -27,6 +27,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -491,4 +495,176 @@ TEST_F(HullClipTest, GlowIsUntouchedWellBeyondTheBreach) {
     EXPECT_EQ(px[0] + px[1] + px[2], baseline)
         << "A breach 4 radii away changed the glow here — the suppression is "
            "not local to the hole";
+}
+
+// A breach must not dim windows on the FAR side of a thin section.
+//
+// Live report: "the darkened spot is showing through to the opposite side of
+// the saucer when there is no visible damage there." The suppression keyed on
+// 3D distance from the carve centre alone, which only limits the bleed to
+// sections thinner than the kill radius -- on a saucer, most of them.
+//
+// Same fix the damage decals already use: weight by dot(n_body, carve_normal),
+// so a fragment on a face pointing the other way drops out entirely. Here the
+// carve faces +Z and the fragment's normal is -Z (the underside), at a
+// separation well inside the kill radius.
+//
+// Discrimination: without a normal gate this fragment is 2 units from a
+// radius-2 carve, i.e. fully suppressed, and reads ~0.
+TEST_F(HullClipTest, GlowSurvivesOnTheFaceOppositeABreach) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    set_glow_only(prog, white_tex_);
+
+    // This fragment is on the hull's UNDERSIDE: its normal points away from
+    // the carve's own outward normal.
+    glBindVertexArray(vao_);
+    glVertexAttrib3f(1, 0.0f, 0.0f, -1.0f);
+    glBindVertexArray(0);
+
+    prog.set_int("u_carve_enabled", 1);
+    const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);   // 2 units away, r = 2
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);         // breach on the TOP face
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+    draw();
+
+    // Restore the fixture's default facing for any later test in this file.
+    glBindVertexArray(vao_);
+    glVertexAttrib3f(1, 0.0f, 0.0f, 1.0f);
+    glBindVertexArray(0);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 600)
+        << "Windows on the face OPPOSITE a breach are dimmed to "
+        << (px[0] + px[1] + px[2]) << " — the dark patch bleeds through the "
+           "hull to a side with no damage on it";
+}
+
+// ── Lobed edge, not a clean disc ──────────────────────────────────────────
+//
+// A perfect circle of dead windows reads as a stencil stamped on the hull --
+// the same failure the procedural scuff relief hit repeatedly. The hole's own
+// rim already breaks up with an azimuthal vnoise3 keyed on the carve centre
+// (stable across frames, so it does not crawl); the kill radius now uses the
+// same tool, varying between kGlowKillReachMin and kGlowKillReachMax.
+//
+// Two carves at the SAME distance from this fragment, on different azimuths.
+// With a constant reach the suppression is a function of distance alone, so
+// both render identically. A lobed reach makes them differ.
+TEST_F(HullClipTest, TheGlowKillEdgeIsLobedNotACleanCircle) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    auto render_at = [&](glm::vec3 center) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(center, 2.0f);
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        const float birth = 0.0f;
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        prog.set_float_array("u_carve_birth", &birth, 1);
+        prog.set_float("u_decal_time", 1000.0f);   // long settled: steady state
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        return px[0] + px[1] + px[2];
+    };
+
+    // Eight azimuths at a FIXED distance of 3.5 from this fragment, in the
+    // plane perpendicular to the carve normal. Distance is constant, so under
+    // a constant reach every one of these renders the same. 3.5 sits where the
+    // lobe range bites hardest: at reach 1.5 the fragment is clear of the kill
+    // entirely, at reach 3.0 it is well inside it.
+    //
+    // Sampling the whole circle rather than two points on purpose -- two can
+    // both land in low-noise lobes and agree by luck, which is exactly what a
+    // first version of this test did.
+    std::vector<int> seen;
+    for (int i = 0; i < 8; ++i) {
+        const float a = 6.2831853f * static_cast<float>(i) / 8.0f;
+        seen.push_back(render_at(glm::vec3(3.5f * std::cos(a),
+                                           3.5f * std::sin(a), 0.0f)));
+    }
+
+    const int lo = *std::min_element(seen.begin(), seen.end());
+    const int hi = *std::max_element(seen.begin(), seen.end());
+
+    EXPECT_LT(lo, 700)
+        << "No azimuth around the breach is suppressed at all (dimmest " << lo
+        << ") — the kill zone does not reach this fragment on any lobe, so the "
+           "comparison below would be vacuous";
+    EXPECT_NE(lo, hi)
+        << "Every azimuth at the same distance suppresses identically (" << lo
+        << ") — the kill radius is a constant multiple of the carve radius, so "
+           "the dead zone is a perfect disc";
+}
+
+// ── Flicker, settling to dark ─────────────────────────────────────────────
+//
+// A breached compartment's lights fail rather than switching cleanly off.
+// They stutter for kGlowFlickerSecs (60 s from the carve's birth) and then
+// stay dark -- the power feed is gone, not intermittent.
+//
+// Sampled across the first 60 s at a fragment deep in the kill zone: at least
+// one moment must be LIT, or there is no flicker at all.
+TEST_F(HullClipTest, GlowFlickersWhileABreachIsFresh) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    int brightest = 0;
+    for (int i = 0; i < 24; ++i) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);   // fragment in the core
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        const float birth = 0.0f;
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        prog.set_float_array("u_carve_birth", &birth, 1);
+        prog.set_float("u_decal_time", 0.4f * static_cast<float>(i));  // 0 - 9.2 s
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        brightest = std::max(brightest, px[0] + px[1] + px[2]);
+    }
+
+    EXPECT_GT(brightest, 300)
+        << "Across 24 moments in the first seconds of a breach the windows in "
+           "the kill zone were never once lit (brightest " << brightest
+        << ") — they are switching off, not failing";
+}
+
+// ...and once settled they stay dark, for good.
+TEST_F(HullClipTest, GlowStopsFlickeringAndStaysDarkAfterSixtySeconds) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    int brightest = 0;
+    for (int i = 0; i < 24; ++i) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        const float birth = 0.0f;
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        prog.set_float_array("u_carve_birth", &birth, 1);
+        prog.set_float("u_decal_time", 61.0f + 0.4f * static_cast<float>(i));
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        brightest = std::max(brightest, px[0] + px[1] + px[2]);
+    }
+
+    EXPECT_LT(brightest, 32)
+        << "Windows in the kill zone still light up past 60 s (brightest "
+        << brightest << ") — the flicker never settles, so a damaged ship "
+           "twitches forever";
 }

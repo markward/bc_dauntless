@@ -517,6 +517,7 @@ void draw_model(const assets::Model& model,
                 static_cast<int>(scenegraph::HullCarveField::kMaxCarves);
             glm::vec4 spheres[kMaxCarves];
             glm::vec3 normals[kMaxCarves];
+            float     births[kMaxCarves];
             int ns = 0;
             for (const auto& s : carve.slots()) {
                 if (!s.active) continue;
@@ -529,6 +530,7 @@ void draw_model(const assets::Model& model,
                     continue;
                 spheres[ns] = glm::vec4(s.center_body, s.radius);
                 normals[ns] = s.surface_normal;
+                births[ns]  = s.birth_time;
                 ++ns;
             }
             // A hull with no baked field has no interior: breach_pass.cc
@@ -544,6 +546,7 @@ void draw_model(const assets::Model& model,
                 prog.set_mat4("u_ship_world_inv", glm::inverse(world));
                 prog.set_vec4_array("u_carve_spheres", spheres, ns);
                 prog.set_vec3_array("u_carve_normals", normals, ns);
+                prog.set_float_array("u_carve_birth",   births,  ns);
             }
         } else {
             prog.set_int("u_carve_enabled", 0);

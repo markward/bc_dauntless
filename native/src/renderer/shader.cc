@@ -136,6 +136,16 @@ void Shader::set_vec3_array(const std::string& name,
     }
 }
 
+void Shader::set_float_array(const std::string& name,
+                             const float* data,
+                             int count) const {
+    if (count <= 0) return;
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) {
+        glUniform1fv(loc, count, data);
+    }
+}
+
 void Shader::set_vec4_array(const std::string& name,
                             const glm::vec4* data,
                             int count) const {

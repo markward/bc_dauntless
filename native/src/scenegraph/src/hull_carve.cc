@@ -5,7 +5,8 @@
 namespace scenegraph {
 
 HullCarve& HullCarveField::add(const glm::vec3& center_body, float influ_radius,
-                               float strength, const glm::vec3& surface_normal) {
+                               float strength, const glm::vec3& surface_normal,
+                               float birth_time) {
     const float merge_dist = kMergeFactor * influ_radius;
     for (auto& c : slots_) {
         if (!c.active) continue;
@@ -19,6 +20,9 @@ HullCarve& HullCarveField::add(const glm::vec3& center_body, float influ_radius,
             // the slot's surface_normal + visible radius (the caller re-derives
             // radius from the grown strength, monotonically).
             c.seq = next_seq_++;                             // refresh age
+            // A re-hit is a fresh wound at the same place, so the glow
+            // flicker restarts with it -- same reasoning as `seq`.
+            c.birth_time = birth_time;
             return c;
         }
     }
@@ -36,8 +40,8 @@ HullCarve& HullCarveField::add(const glm::vec3& center_body, float influ_radius,
         target = victim;
     }
     *target = HullCarve{center_body, influ_radius, strength,
-                        /*radius=*/0.0f, surface_normal, next_seq_++,
-                        /*active=*/true};
+                        /*radius=*/0.0f, surface_normal, birth_time,
+                        next_seq_++, /*active=*/true};
     return *target;
 }
 

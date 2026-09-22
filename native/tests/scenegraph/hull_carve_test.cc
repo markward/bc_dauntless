@@ -55,3 +55,45 @@ TEST(Instance, HasCarveField) {
     inst.carve.add({1, 2, 3}, 4.0f, 10.0f, {0, 0, 1});
     EXPECT_EQ(inst.carve.count(), 1u);
 }
+
+// ── birth_time: when the glow flicker around this breach started ──────────
+//
+// opaque.frag fades the flicker out over kGlowFlickerSecs from this value, so
+// it has to be the carve's own clock, not the ring's.
+TEST(HullCarveBirthTime, ADepositRecordsTheClockItArrivedOn) {
+    scenegraph::HullCarveField f;
+    const scenegraph::HullCarve& c =
+        f.add(glm::vec3(0.0f), /*influ_radius=*/10.0f, /*strength=*/200.0f,
+              glm::vec3(0, 0, 1), /*birth_time=*/42.5f);
+    EXPECT_FLOAT_EQ(c.birth_time, 42.5f);
+}
+
+// A re-hit at the same place is a FRESH wound, so the flicker restarts with
+// it -- the same reasoning `seq` is refreshed on a merge for. Without this a
+// compartment breached once would stop flickering 60 s later and stay dark
+// however many more times it was hit.
+TEST(HullCarveBirthTime, AMergedReHitRefreshesIt) {
+    scenegraph::HullCarveField f;
+    f.add(glm::vec3(0.0f), 10.0f, 200.0f, glm::vec3(0, 0, 1), /*birth=*/5.0f);
+
+    // Inside kMergeFactor * influ_radius, so this accumulates in place rather
+    // than taking a new slot.
+    const scenegraph::HullCarve& c =
+        f.add(glm::vec3(1.0f, 0.0f, 0.0f), 10.0f, 200.0f, glm::vec3(0, 0, 1),
+              /*birth=*/90.0f);
+
+    ASSERT_EQ(f.count(), 1u) << "the second hit should have merged, not allocated";
+    EXPECT_FLOAT_EQ(c.birth_time, 90.0f)
+        << "a re-hit left the original birth time, so the flicker stays "
+           "settled through fresh damage";
+}
+
+// Default 0: every existing caller and test that has no clock to offer keeps
+// its current behaviour, because a birth of 0 against any positive decal time
+// reads as long-settled.
+TEST(HullCarveBirthTime, DefaultsToZeroForCallersWithNoClock) {
+    scenegraph::HullCarveField f;
+    const scenegraph::HullCarve& c =
+        f.add(glm::vec3(0.0f), 10.0f, 200.0f, glm::vec3(0, 0, 1));
+    EXPECT_FLOAT_EQ(c.birth_time, 0.0f);
+}
