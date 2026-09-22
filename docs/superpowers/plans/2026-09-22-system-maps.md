@@ -356,7 +356,7 @@ git commit -m "feat(systems): the system-map format, with appearance split from 
 | `region-overlap` | No region's sphere (anchor, radius) contains another region's anchor. |
 | `body-owner` | Every `Region.body_names` entry names a real body whose `owner_region` points back at that region. |
 | `body-engulfs-anchor` | No body's radius reaches its own region's anchor — you must not spawn inside a planet. |
-| `pin-respected` | For each pinned body, `position_gu - anchor_gu` equals the pin's original set-local offset within 1 GU. Skipped when `pins` is None. |
+| `pin-respected` | For each pinned body, `position_gu - anchor_gu` equals the pin's original set-local offset within 1 GU. Keys are `"Region/Body"` — see Task 6. Skipped when `pins` is None. |
 | `orbit-target` | Every non-None `orbits` names a body in this map. |
 
 - [ ] **Step 1: Write the failing test**
@@ -1499,9 +1499,16 @@ The overrides shape is:
 
 ```json
 "overrides": {
-  "pins": { "Prendel 3 Moon 2": [400.0, 5000.0, 0.0] }
+  "pins": { "Prendel3/Moon 2": [400.0, 5000.0, 0.0] }
 }
 ```
+
+The key is `"<region>/<body>"`, not a bare body name. **BC reuses bare
+companion names across regions of one system** — `Geble3` and `Geble4` both
+contain a body called `"Moon 1"`, and `Itari3`, `Itari5` and `Itari8` each
+contain one — so a bare name cannot identify a body. (Prendel's own moon is
+named just `"Moon 2"`; only Prendel 3 has moons, so it happens not to collide,
+but the mechanism must not depend on that luck.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2145,13 +2152,16 @@ region actually needs"):
   that still contains the staged content, not by a pin entry. Record that
   decision in the overrides block with its reason.
 
-Add the Prendel entry to `engine/systems/maps/prendel.json`:
+Add the Prendel entry to `engine/systems/maps/prendel.json` (the body is `"Moon 2"`, keyed by its region):
 
 ```json
 "overrides": {
-  "pins": { "Prendel 3 Moon 2": [400.0, 5000.0, 0.0] }
+  "pins": { "Prendel3/Moon 2": [400.0, 5000.0, 0.0] }
 }
 ```
+
+Note the body is called just `"Moon 2"` — BC does not prefix companion names
+with their planet — which is exactly why pin keys carry the region.
 
 Then confirm the pin rule actually fires when violated — temporarily change that
 offset to `[0.0, 0.0, 0.0]`, run `--check`, see `pin-respected` reported, and put
