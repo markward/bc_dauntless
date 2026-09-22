@@ -330,6 +330,36 @@ assets::Model make_surface_patch_model(glm::vec3 center, glm::vec3 normal, float
     return m;
 }
 
+// Two parallel sheets of hull, the minimum geometry that can express "you are
+// looking THROUGH a hole in the near plating at the far plating" -- which
+// make_surface_patch_model's single quad structurally cannot, because its only
+// back face is CO-PLANAR with its own front face.
+//
+// `near_center` faces +normal (toward the camera: a front face under this
+// pass's glFrontFace(GL_CCW) + cull BACK, the sheet the carve cut through).
+// `far_center` faces -normal (AWAY from the camera), so from the camera's side
+// it is a BACK face -- culled by the opaque pass and by the scoop, and drawn
+// ONLY by the interior shell. That asymmetry is the whole point: a real BC
+// hull is a single-sided shell, so once the near sheet is discarded there is
+// nothing left in front of the skybox unless something draws that back face.
+assets::Model make_two_plate_model(glm::vec3 near_center, glm::vec3 far_center,
+                                   glm::vec3 normal, float half_size) {
+    normal = glm::normalize(normal);
+    assets::Model near_m = make_surface_patch_model(near_center,  normal, half_size);
+    assets::Model far_m  = make_surface_patch_model(far_center,  -normal, half_size);
+
+    assets::Model m;
+    m.meshes.push_back(std::move(near_m.meshes[0]));
+    m.meshes.push_back(std::move(far_m.meshes[0]));
+    assets::Node node;
+    node.parent_index    = -1;
+    node.local_transform = glm::mat4(1.0f);
+    node.meshes          = {0, 1};
+    m.nodes.push_back(node);
+    m.root_node = 0;
+    return m;
+}
+
 class BreachPassGLTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window>   w;
@@ -726,6 +756,119 @@ TEST_F(BreachPassGLTest, EmptyFillDiscardsInterior) {
         << "Centre pixel is bright (R=" << (int)px[0]
         << " G=" << (int)px[1] << " B=" << (int)px[2]
         << ") — empty fill: every fragment's backing check should discard (see-through)";
+}
+
+// ── Interior shell: a hole is never a window to the skybox ────────────────
+//
+// THE BUG THIS EXISTS TO CATCH. BC's authored hull volumes are only a handful
+// of nodes deep through a ship's vertical axis (measured: Galaxy 9, Vorcha 7,
+// BirdOfPrey 6, Sovereign 5, Akira 5, Galor 3 -- see carve_cavity_test.cc), so
+// a carve routinely marches straight out of the fill and the scoop's backing
+// gate discards ("a hole is a hole"). The hull is a single-sided shell drawn
+// cull BACK, so the far plating's inside face is culled too and the pixel
+// resolves to the skybox: a hole you can see space through from the struck
+// side, while the same ship from the far side shows intact hull. That
+// asymmetry is what this shell removes.
+//
+// empty_fill() is the exact production condition (no backing anywhere, so the
+// scoop discards every fragment -- EmptyFillDiscardsInterior above asserts
+// precisely that on a single sheet). The difference here is purely geometric:
+// there IS a far sheet, and it must be drawn.
+//
+// Discrimination: with the shell removed this reads background (0,0,0) --
+// which is the shipped behaviour today, not a hypothetical.
+TEST_F(BreachPassGLTest, HoleWithNoBackingShowsFarPlatingNotBackground) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = empty_fill();   // no backing: the scoop discards everywhere
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+
+    // Near sheet sits mid-carve (z=7.5, inside the field's carved band
+    // [0,15]); far sheet at z=-20 is below the field box entirely, so it
+    // samples the clamped idx-0 slice (-100, intact) and is NOT carved.
+    const glm::vec3 far_center(0.0f, 0.0f, -20.0f);
+    const assets::Model plates =
+        make_two_plate_model(kCavitySurfaceCenter, far_center, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/70, fill, entry, plates,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in interior-shell draw";
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is background (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — you are looking through the hull at the "
+           "skybox. The far plating's inside face must be drawn.";
+}
+
+// The shell must NOT plug the hole with the very sheet the carve cut through.
+// A closed mesh's near sheet has a back face CO-PLANAR with the front face
+// that was just discarded; drawing it would fill every breach with its own
+// plating at zero depth -- the "breach reads as a crust rather than a hole"
+// failure carve_cavity_test.cc's header describes. The shell therefore runs
+// the SAME field test the opaque pass does, inverted: it survives only where
+// the hull was NOT carved.
+//
+// Single sheet, so the ONLY thing the shell could draw is that co-planar back
+// face. Must stay background.
+TEST_F(BreachPassGLTest, ShellDoesNotPlugTheHoleWithItsOwnCarvedSheet) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = empty_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/71, fill, entry, patch,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in shell self-plug draw";
+    auto px = read_center();
+    EXPECT_LT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is lit (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — the shell painted the carved sheet's own "
+           "back face, plugging the hole it was cut from";
+}
+
+// One shell draw per INSTANCE, like the scoop -- not one per carve. A field
+// carrying 30 independent damage sites (beyond HullCarveField's 24-slot ring
+// by construction) still submits exactly one.
+TEST_F(BreachPassGLTest, OneShellDrawIssuedRegardlessOfDamageSiteCount) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = wide_solid_fill();
+    const voxel::DistanceField field = make_multi_site_field(30);
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+    const glm::vec3 center(0.f, 0.f, multi_site_z(29));
+    const assets::Model patch = make_surface_patch_model(center, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(center, glm::vec3(0, 0, 1), 100.f);
+
+    pass.draw_instance(/*instance_key=*/72, fill, entry, patch,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(pass.shell_draw_calls(), 1u)
+        << "draw_instance() issued " << pass.shell_draw_calls()
+        << " interior-shell submissions for one instance -- expected exactly one";
 }
 
 // GL: an entry with no uploaded atlas (tex2d==0 — the same state an instance

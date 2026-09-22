@@ -182,7 +182,8 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
                                  float breach_age,
                                  const glm::vec3& breach_center,
                                  float breach_radius,
-                                 unsigned int damage_tex) {
+                                 unsigned int damage_tex,
+                                 bool interior_shell) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
     // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass. NOT uploaded to
@@ -250,6 +251,11 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     shader.set_vec3("u_breach_center",  breach_center);
     shader.set_float("u_breach_radius", breach_radius);
 
+    // Scoop vs interior shell. Set on EVERY draw through this function, both
+    // values explicitly: the two submissions share one program, so leaving it
+    // unset would carry the previous draw's mode over.
+    shader.set_int("u_interior_shell", interior_shell ? 1 : 0);
+
     // Per-instance damage-field atlas — unit 2 (0=u_fill sampler3D,
     // 1=u_damage_tex). MUST be set on EVERY draw through this function: an
     // unset sampler uniform defaults to unit 0 in GLSL and would collide
@@ -286,7 +292,31 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     // for why that is an asset property, not a regression toward one draw
     // per carve.
     draw_model_positions_only(model, world_xf, shader);
-    ++draw_calls_;
+    if (interior_shell) ++shell_draw_calls_; else ++draw_calls_;
+}
+
+void BreachPass::draw_interior_shell(const assets::Model& model,
+                                     const InstanceFieldCache::Entry& field,
+                                     unsigned int fill_tex,
+                                     const glm::vec3& fill_origin,
+                                     const glm::vec3& fill_cell,
+                                     const glm::ivec3& fill_dims,
+                                     const glm::mat4& world_xf,
+                                     const scenegraph::Camera& camera,
+                                     Pipeline& pipeline,
+                                     float breach_age,
+                                     const glm::vec3& breach_center,
+                                     float breach_radius,
+                                     unsigned int damage_tex) {
+    // The ONLY difference from the scoop's own submission is the winding and
+    // the mode flag: same mesh, same stencil, same program, same uniforms.
+    // Front-culled, so what draws is the hull's BACK faces -- the inside of
+    // the plating on the far side of the hole.
+    glCullFace(GL_FRONT);
+    draw_hull_proxy(model, field, fill_tex, fill_origin, fill_cell, fill_dims,
+                    world_xf, camera, pipeline, breach_age, breach_center,
+                    breach_radius, damage_tex, /*interior_shell=*/true);
+    glCullFace(GL_BACK);
 }
 
 void BreachPass::draw_instance(std::uintptr_t instance_key,
@@ -313,6 +343,9 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     if (fe.tex3d == 0) return;
 
     begin_scoop_state();
+    draw_interior_shell(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
+                        world_xf, camera, pipeline, breach_age,
+                        breach_center, breach_radius, damage_frames_[0]);
     draw_hull_proxy(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                     world_xf, camera, pipeline, breach_age,
                     breach_center, breach_radius, damage_frames_[0]);
@@ -402,6 +435,12 @@ void BreachPass::render(const scenegraph::World& world,
                 }
             }
 
+            // Shell first, scoop second. Both write depth; the scoop's is the
+            // nearer hull surface, so it wins wherever it finds a real cavity
+            // wall and the shell shows through only where the scoop gave up.
+            draw_interior_shell(*model, *field, ce->tex3d, ce->origin, ce->cell,
+                                ce->dims, inst.world, camera, pipeline, breach_age,
+                                breach_center, breach_radius, frame_tex);
             draw_hull_proxy(*model, *field, ce->tex3d, ce->origin, ce->cell, ce->dims,
                             inst.world, camera, pipeline, breach_age,
                             breach_center, breach_radius, frame_tex);

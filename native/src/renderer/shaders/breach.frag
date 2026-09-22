@@ -45,6 +45,31 @@
 // derivation). No box, no per-vertex normal computed here: hit_normal (below)
 // comes from the field's own gradient, not from mesh geometry.
 in vec3 v_body_pos;
+in vec3 v_body_normal;   // interior shell only (see u_interior_shell)
+
+// ── Interior shell ────────────────────────────────────────────────────────
+// 0 = the scoop (everything this file did before): a FRONT face on the struck
+// side, raymarching inward for the cavity wall.
+// 1 = the interior shell: the hull's own BACK faces, drawn front-culled under
+// the same carve stencil. The fragment IS the interior wall, so there is
+// nothing to march to -- hit_point is v_body_pos and the normal is the mesh's
+// own (flipped inward).
+//
+// WHY THIS EXISTS. A BC hull is a single-sided shell drawn cull BACK, and BC's
+// authored fill volumes are only a handful of nodes thick (Galaxy 9, Sovereign
+// 5, Galor 3 -- docs/engine/damagetool-and-hull-damage-gaps.md). So a carve
+// routinely marches out of the fill, the backing gate below discards ("a hole
+// is a hole"), the far plating's inside face is culled, and the pixel resolves
+// to the SKYBOX: a hole you see space through from the struck side while the
+// far side shows intact hull. The shell draws that far plating so a hole shows
+// the ship's interior instead of the stars.
+//
+// ONE shader, not two, and deliberately so: the shell and the scoop meet at
+// the rim of every breach, so any divergence in their material or lighting is
+// a visible seam. Sharing main()'s entire shading tail makes them identical by
+// construction rather than by keeping two files in step -- the failure mode
+// this file already carries drift-guard markers for.
+uniform int u_interior_shell;
 
 // Original (uncarved) hull fill — static per hull, never rebuilt.
 // GL_R8: byte b samples as b/255.0; occ 0..127 → [0, ~0.498].
@@ -434,10 +459,49 @@ void main() {
     if (rd_len < 1e-6) discard;   // camera exactly on the hull surface: degenerate ray, nothing to march
     rd /= rd_len;
 
+    vec3 hit_point, hit_normal;
+    // Fill value AT the shaded point. The scoop reads it from the original
+    // uncarved fill volume (below) and reuses it for the molten-rim band; the
+    // shell has no march and no backing gate, so it takes the solid-material
+    // value, putting it deep in the "not rim" end of the band. A hole's molten
+    // rim belongs to the cut edge on the struck sheet, not to the floor you
+    // see through it.
+    float fillv = 1.0;
+
+    if (u_interior_shell != 0) {
+        // ── Interior shell ─────────────────────────────────────────────────
+        // This fragment is a BACK face of the hull -- the inside of the far
+        // plating, seen through a hole in the near plating. It IS the wall, so
+        // there is no march and no backing gate (the gate exists to reject a
+        // hit floating in open space; a real mesh vertex cannot be).
+        //
+        // The one thing it MUST reject is its own sheet. In a closed mesh the
+        // struck sheet's back face is CO-PLANAR with the front face the carve
+        // just discarded, so drawing it would plug every breach with the very
+        // plating that was cut away -- a breach reading as a crust rather than
+        // a hole (the failure carve_cavity_test.cc's header describes). The
+        // same field test the opaque pass cuts with, inverted, rejects exactly
+        // that: keep the shell only where the hull was NOT carved.
+        //
+        // Consequence, stated rather than left implicit: where a carve cuts
+        // through BOTH sheets, both are rejected and you see space -- from
+        // either side, symmetrically. That is a genuinely perforated hull, and
+        // a two-way hole is the correct picture of one.
+        if (sample_hull_field(v_body_pos) > kHullFieldIsoMargin) discard;
+
+        hit_point  = v_body_pos;
+        // Face the normal back along the view ray. The mesh normal points out
+        // of the hull, and this is the surface's INSIDE, so the inward-facing
+        // direction is the one the shading tail wants -- the same role the
+        // field gradient plays for the scoop (out of the wall, into the open
+        // cavity).
+        hit_normal = normalize(v_body_normal);
+        if (dot(hit_normal, rd) > 0.0) hit_normal = -hit_normal;
+    } else {
+
     // ── March to the far wall of the cavity ─────────────────────────────────
     // No entry search: ro already sits inside carved material (see above),
     // exactly the precondition raymarch_breach_cavity's own header documents.
-    vec3 hit_point, hit_normal;
     if (!raymarch_breach_cavity(ro, rd, hit_point, hit_normal)) discard;
 
     // ── Fill mask (Task 3 obligation #1) ────────────────────────────────────
@@ -454,8 +518,10 @@ void main() {
     // fragments keeps the scoop finite, same as before.
     vec3 tc = (hit_point - u_fill_origin) / (u_fill_cell * vec3(u_fill_dims));
     if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) discard;
-    float fillv = texture(u_fill, tc).r;
+    fillv = texture(u_fill, tc).r;
     if (fillv < u_fill_backing) discard;
+
+    }   // end scoop branch (u_interior_shell == 0)
 
     // ── Triplanar blend ────────────────────────────────────────────────────
     // hit_normal is the field's own gradient at hit_point (raymarch_breach_
