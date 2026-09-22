@@ -317,3 +317,46 @@ def test_ambiguities_reports_every_clamped_region():
         bodies=[SurveyedBody("Savoy 1", 100.0, "p.nif", (0.0, 5041.0, 0.0), False)],
         content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
     assert any("Savoy 1" in n and "clamp" in n.lower() for n in ambiguities(s))
+
+
+def test_two_regions_may_share_a_bare_companion_name():
+    """BC reuses bare companion names across regions of one system: Geble3 has
+    'Moon 1' and 'Moon 2', Geble4 also has a 'Moon 1'. A by-name lookup then
+    resolves to whichever body was built first, corrupting the other region's
+    anchor centroid."""
+    s = SurveyedSystem(name="Geble", regions=[
+        SurveyedRegion(set_name="Geble3", ordinal=3, bodies=[
+            SurveyedBody("Geble 3", 180.0, "p.nif", (484.0, 457.0, 570.0), False),
+            SurveyedBody("Moon 1", 100.0, "m.nif", (-150.0, 97.0, -83.0), False),
+        ], content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
+        SurveyedRegion(set_name="Geble4", ordinal=4, bodies=[
+            SurveyedBody("Geble 4", 120.0, "p.nif", (250.0, -4000.0, 0.0), False),
+            SurveyedBody("Moon 1", 50.0, "m.nif", (450.0, -4000.0, 0.0), False),
+        ], content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
+    ])
+    m = layout(s)
+    moons = [b for b in m.bodies if b.name == "Moon 1"]
+    assert len(moons) == 2, "both regions' moons must exist as distinct bodies"
+    by_owner = {b.owner_region: b for b in moons}
+    assert set(by_owner) == {"Geble3", "Geble4"}
+    # Each moon must sit near ITS OWN region's planet, not the other's.
+    for set_name in ("Geble3", "Geble4"):
+        planet = [b for b in m.bodies
+                  if b.owner_region == set_name and b.orbits == "Geble"][0]
+        moon = by_owner[set_name]
+        assert math.dist(moon.position_gu, planet.position_gu) < 20000.0, set_name
+    # And each region's anchor must be near its own group, not the other's.
+    # Geble4's own offsets (250, -4000, 0) genuinely hit the MAX standoff
+    # clamp here -- the same clamp the real Geble4 hits in gen_system_maps.py
+    # --check -- so the legitimate anchor can sit up to
+    # max_standoff_factor * primary_radius_gu out (~28800 GU for this test's
+    # 120 GU BC radius). The bug this guards against put the anchor ~75000 GU
+    # away by borrowing the OTHER region's centroid, so a generous multiple
+    # of the clamp still separates "correct but far" from "wrong region".
+    t = LayoutTuning()
+    for set_name in ("Geble3", "Geble4"):
+        planet = [b for b in m.bodies
+                  if b.owner_region == set_name and b.orbits == "Geble"][0]
+        anchor = m.region(set_name).anchor_gu
+        limit = t.max_standoff_factor * planet.radius_gu * 1.5
+        assert math.dist(anchor, planet.position_gu) < limit, set_name

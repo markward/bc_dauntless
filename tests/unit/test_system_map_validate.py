@@ -88,13 +88,47 @@ def test_a_bad_back_reference_does_not_mask_an_engulfed_anchor():
 
 def test_pin_respected_accepts_the_authored_offset():
     m = _valid()
-    pins = {"Ona 1": (0.0, 4000.0, 0.0)}   # matches 22000 - 18000
+    pins = {"Ona1/Ona 1": (0.0, 4000.0, 0.0)}   # matches 22000 - 18000
     assert validate(m, pins=pins) == []
 
 
 def test_pin_respected_flags_a_moved_body():
     m = _valid()
-    pins = {"Ona 1": (0.0, 500.0, 0.0)}
+    pins = {"Ona1/Ona 1": (0.0, 500.0, 0.0)}
+    assert "pin-respected" in _slugs(validate(m, pins=pins))
+
+
+def test_pin_respected_flags_a_malformed_key_instead_of_ignoring_it():
+    """A pin key with no '/' cannot name a region+body pair. A pin that
+    quietly does nothing is worse than no pin -- it looks like protection."""
+    m = _valid()
+    pins = {"Ona 1": (0.0, 4000.0, 0.0)}   # bare name, no region prefix
+    assert "pin-respected" in _slugs(validate(m, pins=pins))
+
+
+def test_pin_respected_is_judged_against_its_own_regions_body():
+    """Two regions may each own a body called 'Moon 1' (Geble3/Geble4 do).
+    A pin on one of them must be judged against ITS OWN region's body, even
+    when the OTHER region's same-named body would satisfy the pin.
+
+    Ona2's copy is appended FIRST so a naive by-name lookup that ignores
+    `owner` (a regression to the old candidates[0] fallback) would resolve
+    the pin to Ona2's copy -- which happens to sit exactly on the declared
+    offset -- and wrongly report no problem. Ona1's own copy, 4000 GU
+    further out, is what the pin must actually be judged against."""
+    m = _valid()
+    m.bodies.append(Body(name="Moon 1", display_name="Moon 1", radius_gu=100.0,
+                         position_gu=(0.0, 56500.0, 0.0), orbits="Ona",
+                         appearance=Appearance(), owner_region="Ona2"))
+    m.region("Ona2").body_names.append("Moon 1")
+    m.bodies.append(Body(name="Moon 1", display_name="Moon 1", radius_gu=100.0,
+                         position_gu=(0.0, 22500.0, 0.0), orbits="Ona",
+                         appearance=Appearance(), owner_region="Ona1"))
+    m.region("Ona1").body_names.append("Moon 1")
+
+    # The pin is declared on Ona1's copy, which sits 4500 GU from Ona1's
+    # anchor (18000) -- not the declared 500 GU offset.
+    pins = {"Ona1/Moon 1": (0.0, 500.0, 0.0)}
     assert "pin-respected" in _slugs(validate(m, pins=pins))
 
 
@@ -130,3 +164,26 @@ def test_anchor_inside_body_flags_an_anchor_swallowed_by_the_sun():
     m = _valid()
     m.regions[0].anchor_gu = (0.0, 100.0, 0.0)          # inside the r=5000 sun
     assert "anchor-inside-body" in _slugs(validate(m))
+
+
+def test_duplicate_body_names_are_resolved_by_owning_region():
+    """Two regions may each own a body called 'Moon 1' (Geble3/Geble4 do). A
+    by-name dict silently keeps only the last, so the other region's body
+    vanishes from every rule that looks bodies up by name."""
+    m = _valid()
+    # 4000 GU out from each planet -- clear of its 1800 GU radius (a closer
+    # offset collides with the new body-overlap rule, which is not what this
+    # test is checking).
+    for owner, pos in (("Ona1", (0.0, 26000.0, 0.0)), ("Ona2", (0.0, 64000.0, 0.0))):
+        m.bodies.append(Body(name="Moon 1", display_name="Moon 1", radius_gu=100.0,
+                             position_gu=pos, orbits="Ona",
+                             appearance=Appearance(), owner_region=owner))
+        m.region(owner).body_names.append("Moon 1")
+    assert validate(m) == []
+    # Break only Ona2's copy; Ona1's must stay clean and the report must name
+    # the right one.
+    for b in m.bodies:
+        if b.name == "Moon 1" and b.owner_region == "Ona2":
+            b.owner_region = "Ona1"          # now mis-declared
+    problems = validate(m)
+    assert [p.rule for p in problems] == ["body-owner"]

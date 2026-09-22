@@ -127,19 +127,40 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
 
     if pins is not None:
         anchors = {r.set_name: r.anchor_gu for r in m.regions}
-        for name, want_offset in pins.items():
-            body = _resolve(by_name, name)
-            if body is None or body.owner_region not in anchors:
+        for key, want_offset in pins.items():
+            # Pin keys are "<region>/<body>", not a bare body name. BC reuses
+            # bare companion names across regions of one system (Geble3 and
+            # Geble4 both name a "Moon 1"; Itari3/5/8 each do), so a bare name
+            # cannot identify which body a pin protects -- and silently
+            # picking whichever candidate turns up first is worse than no
+            # pin at all, because it *looks* like protection. Body names
+            # themselves may contain spaces but never a slash, so splitting
+            # on the FIRST '/' is unambiguous.
+            if "/" not in key:
                 problems.append(Problem(
                     "pin-respected",
-                    f"pinned body {name!r} is missing or has no region"))
+                    f"pin key {key!r} is not \"Region/Body\" -- missing a '/'"))
                 continue
-            anchor = anchors[body.owner_region]
+            region_name, body_name = key.split("/", 1)
+            if region_name not in anchors:
+                problems.append(Problem(
+                    "pin-respected",
+                    f"pin {key!r} names region {region_name!r}, which does "
+                    f"not exist in this map"))
+                continue
+            body = _resolve(by_name, body_name, owner=region_name)
+            if body is None or body.owner_region != region_name:
+                problems.append(Problem(
+                    "pin-respected",
+                    f"pin {key!r} names body {body_name!r}, but no body of "
+                    f"that name is owned by region {region_name!r}"))
+                continue
+            anchor = anchors[region_name]
             have = tuple(p - a for p, a in zip(body.position_gu, anchor))
             if _dist(have, want_offset) > 1.0:
                 problems.append(Problem(
                     "pin-respected",
-                    f"pinned body {name!r} sits at set-local {have} but the "
+                    f"pinned body {key!r} sits at set-local {have} but the "
                     f"mission stages content at {tuple(want_offset)}"))
 
     for b in m.bodies:

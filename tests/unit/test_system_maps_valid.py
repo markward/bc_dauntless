@@ -88,8 +88,8 @@ def test_pins_from_reads_the_overrides_block():
     assert pins_from(SystemMap(system="Ona")) is None
     assert pins_from(SystemMap(system="Ona", overrides={"pins": {}})) is None
     m = SystemMap(system="Prendel",
-                  overrides={"pins": {"Prendel 3 Moon 2": [400.0, 5000.0, 0.0]}})
-    assert pins_from(m) == {"Prendel 3 Moon 2": (400.0, 5000.0, 0.0)}
+                  overrides={"pins": {"Prendel3/Moon 2": [400.0, 5000.0, 0.0]}})
+    assert pins_from(m) == {"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}
 
 
 def test_the_cli_enforces_declared_pins():
@@ -99,6 +99,8 @@ def test_the_cli_enforces_declared_pins():
     from engine.systems.validate import validate
     from tools.gen_system_maps import pins_from
     m = load("ona")
-    m.overrides = {"pins": {m.regions[0].body_names[0]: [1.0, 2.0, 3.0]}}
+    region = m.regions[0]
+    key = f"{region.set_name}/{region.body_names[0]}"
+    m.overrides = {"pins": {key: [1.0, 2.0, 3.0]}}
     problems = validate(m, pins=pins_from(m))
     assert any(p.rule == "pin-respected" for p in problems)
