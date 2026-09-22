@@ -18,7 +18,7 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 """
 import math
 
-from engine.appc.math import TGPoint3
+from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.objects import ObjectClass
 
 
@@ -611,6 +611,32 @@ def _target_visible(torpedo, target) -> bool:
         return True
 
 
+def _steer_point(torpedo, target):
+    """The world point the torpedo is steering AT.
+
+    The hull centre, unless the shot carries a target-local aim offset — the
+    aimed subsystem's local position, stamped on the torpedo at launch
+    (`Torpedo.SetTargetOffset`, App.py:5931; MissionLib.py:3245 passes
+    `pSubsystem.GetPosition()`). An offset carried by a guided projectile is
+    a steering target: the firing tube's own copy is only a fire-cone gate,
+    so this is where it has to be read while the shot is in flight.
+
+    Same transform the tube's gate uses (weapon_subsystems.
+    _resolve_torpedo_aim_point): scale the local offset by the target's
+    scale, rotate it by the target's world rotation, add it to the centre.
+    """
+    pos = target.GetWorldLocation()
+    offset = getattr(torpedo, "_target_offset", None)
+    if not isinstance(offset, TGPoint3):
+        return TGPoint3(pos.x, pos.y, pos.z)
+    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
+    o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
+    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
+    if isinstance(rot, TGMatrix3):
+        o.MultMatrixLeft(rot)
+    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+
+
 def _guide(torpedo, dt: float) -> None:
     """Torpedo::Guide (0x00578CB0), audited §5.5.
     Order: dead-target ballistic → cloak cache → second-order lead →
@@ -627,7 +653,7 @@ def _guide(torpedo, dt: float) -> None:
     # up to twice per call: `to_t` in the visible branch, `to_aim` always).
     torp_pos = torpedo.GetTranslate()
     if _target_visible(torpedo, target):
-        pos = target.GetWorldLocation()
+        pos = _steer_point(torpedo, target)
         torpedo._last_seen_target_pos = TGPoint3(pos.x, pos.y, pos.z)
         vel = (target.GetVelocityTG()
                if hasattr(target, "GetVelocityTG") else TGPoint3(0, 0, 0))
