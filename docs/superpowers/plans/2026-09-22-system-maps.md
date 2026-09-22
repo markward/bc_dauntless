@@ -1005,7 +1005,9 @@ git commit -m "feat(systems): survey BC's Systems tree — bodies, extents, ordi
     `planet_radius_gu = 1800.0`, `moon_radius_gu = 600.0`, `sun_radius_gu = 9000.0`,
     `first_orbit_gu = 30000.0`, `orbit_step_gu = 26000.0`,
     `anchor_standoff_factor = 2.2` (standoff = factor × primary radius),
-    `region_margin_gu = 1500.0`
+    `region_margin_gu = 1500.0`,
+    `moon_first_orbit_factor = 4.0`, `moon_orbit_step_factor = 1.5`
+    (a moon sits at `primary_radius × (first + step × index)`)
   - `layout(s: SurveyedSystem, tuning: LayoutTuning | None = None) -> SystemMap`
   - `ambiguities(s: SurveyedSystem) -> list[str]` — human-readable notes about
     guesses made (unnumbered regions, companion bodies assumed to be moons).
@@ -1183,6 +1185,36 @@ def test_ambiguities_flags_a_companion_that_is_not_named_moon():
     assert any("Inyo" in n for n in notes)
 
 
+def test_moon_spacing_is_tunable_not_hardcoded():
+    s = SurveyedSystem(name="Beol", regions=[SurveyedRegion(
+        set_name="Beol1", ordinal=1,
+        bodies=[
+            SurveyedBody("Beol 1", 200.0, "p.nif", (0.0, 500.0, 0.0), False),
+            SurveyedBody("Beol 1 Moon 1", 100.0, "m.nif", (0.0, 900.0, 0.0), False),
+        ],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    near = layout(s, LayoutTuning(moon_first_orbit_factor=2.0))
+    far = layout(s, LayoutTuning(moon_first_orbit_factor=8.0))
+    d_near = math.dist(near.body("Beol 1 Moon 1").position_gu,
+                       near.body("Beol 1").position_gu)
+    d_far = math.dist(far.body("Beol 1 Moon 1").position_gu,
+                      far.body("Beol 1").position_gu)
+    assert d_far == pytest.approx(4.0 * d_near)
+
+
+def test_ambiguities_flags_a_body_sitting_on_player_start():
+    """A body coincident with Player Start has no viewing direction, so the
+    anchor would silently default to +Y. Measured against the real SDK on
+    2026-09-22 this happens in 0 of 90 regions -- so if it ever fires, the
+    survey failed to resolve a waypoint and must say so, not guess."""
+    s = SurveyedSystem(name="Broken", regions=[SurveyedRegion(
+        set_name="Broken1", ordinal=1,
+        bodies=[SurveyedBody("Ghost", 90.0, "g.nif", (0.0, 0.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    notes = ambiguities(s)
+    assert any("Ghost" in n and "Player Start" in n for n in notes)
+
+
 def test_ambiguities_flags_an_unnumbered_region():
     s = SurveyedSystem(name="Starbase12", regions=[SurveyedRegion(
         set_name="Starbase12", ordinal=None, bodies=[],
@@ -1258,6 +1290,8 @@ class LayoutTuning:
     orbit_step_gu: float = 26000.0
     anchor_standoff_factor: float = 2.2
     region_margin_gu: float = 1500.0
+    moon_first_orbit_factor: float = 4.0
+    moon_orbit_step_factor: float = 1.5
 
 
 def _norm(v) -> float:
@@ -1308,6 +1342,17 @@ def _split(region):
 def ambiguities(s) -> list:
     notes = []
     for region in s.regions:
+        primary_check, _ = _split(region)
+        if (primary_check is not None
+                and _norm(_sub(primary_check.offset_gu, region.player_start_gu)) <= 0.0):
+            # _unit() falls back to +Y for a zero-length vector, which would
+            # silently frame the region northward. Measured 2026-09-22: this
+            # fires on 0 of the 90 real regions, so reaching it means the survey
+            # failed to resolve a waypoint -- say so rather than guess.
+            notes.append(
+                f"{region.set_name}: {primary_check.name!r} sits exactly on "
+                f"Player Start, so there is no original viewing direction -- "
+                f"the anchor defaults to +Y and is probably wrong")
         if region.ordinal is None:
             notes.append(
                 f"{region.set_name}: no trailing number, so its orbit order is a "
@@ -1358,7 +1403,8 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
             # Keep each moon's original bearing from the primary, at a distance
             # scaled to the new primary radius.
             direction = _unit(_sub(c.offset_gu, primary.offset_gu))
-            distance = primary_radius * (4.0 + 1.5 * j)
+            distance = primary_radius * (t.moon_first_orbit_factor
+                                         + t.moon_orbit_step_factor * j)
             m.bodies.append(Body(
                 name=c.name, display_name=c.name, radius_gu=radius,
                 position_gu=_add(centre, _scale(direction, distance)),
@@ -1393,7 +1439,7 @@ def layout(s, tuning: LayoutTuning | None = None) -> SystemMap:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/tools/test_system_layout.py -v`
-Expected: PASS (14 tests)
+Expected: PASS (16 tests)
 
 Note what `test_anchor_reproduces_the_original_viewing_direction` does and does
 not pin. The anchor is always `centroid − view × standoff`. With one body the
