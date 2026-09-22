@@ -1772,10 +1772,343 @@ Then hand back for a human decision on the tuning constants before Task 6.
 
 ---
 
-### Task 6: The remaining 24 systems
+### Task 6: BC-proportional sizes and per-region framing
 
-**Prerequisite:** the Task 5 checkpoint is signed off and `LayoutTuning` defaults
-are settled. Do not start this task before that.
+**Why.** The Task 5 checkpoint showed the layout flattening *two* kinds of
+authored variety:
+
+- Every planet came out at a flat `planet_radius_gu = 1800`, discarding BC's
+  **15x spread** (30-450 GU across 87 primaries, 23 distinct radii, with real
+  within-system variation: Alioth 90-360, Itari 220-450, Chambana 120-360).
+- Every planet subtended an identical **48.89 deg**, because the standoff was a
+  single constant times a single radius. BC's own framings varied (Ona 1/2/3 at
+  17.1 / 25.0 / 19.8 deg) because the artist chose each distance.
+
+Both are fixed by deriving from BC instead of fixing a constant. Bodies scale by
+a multiplier; the standoff becomes BC's own distance-to-radius **ratio**,
+divided by a framing constant.
+
+**The property that makes this work:** the standoff is measured in *planet
+radii*, so the size multiplier cancels out of the apparent size.
+`planet_radius_scale` controls how big a body physically is (orbit times, region
+size, km on the readout) and `framing_scale` controls how much sky it fills,
+with **no crosstalk**. Verified: at x10, x20 and x40 the Ona angular sizes are
+identical to 2 d.p.
+
+At `framing_scale = 1.0` the new apparent size equals BC's **exactly** (not
+approximately -- the radii cancel), which Step 1 asserts as an invariant.
+
+**Files:**
+- Modify: `tools/systems/layout.py`
+- Modify: `engine/systems/validate.py` (two new rules)
+- Modify: `engine/systems/maps/ona.json` (regenerated)
+- Test: `tests/tools/test_system_layout.py`, `tests/unit/test_system_map_validate.py`
+
+**Interfaces:**
+- Consumes: everything from Tasks 1-4, unchanged.
+- Produces — `LayoutTuning` gains and loses fields:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `planet_radius_scale` | `20.0` | planet radius = BC radius x this |
+| `moon_radius_scale` | `20.0` | moon radius = BC radius x this |
+| `sun_radius_scale` | `2.0` | sun radius = BC sun radius x this |
+| `framing_scale` | `2.0` | apparent size vs BC; `1.0` reproduces BC exactly |
+| `min_standoff_factor` | `1.5` | closest allowed, in planet radii (67.4 deg) |
+| `max_standoff_factor` | `12.0` | furthest allowed, in planet radii (9.5 deg) |
+| `default_sun_radius_gu` | `9000.0` | sun radius for a system that authors none (Belaruz, Vesuvi) |
+| `first_orbit_clearance_gu` | `30000.0` | innermost orbit sits this far from the **sun's surface** |
+| `orbit_step_gu` | `26000.0` | unchanged |
+| `region_margin_gu` | `1500.0` | unchanged |
+| `anchor_standoff_factor` | `2.2` | **now only the fallback** for a region whose BC geometry is degenerate |
+
+  **REMOVED:** `planet_radius_gu`, `moon_radius_gu`, `sun_radius_gu`,
+  `first_orbit_gu`. Every one encoded a flat size the new rules derive.
+  (`sun_radius_gu`'s old value, 9000.0, survives as `default_sun_radius_gu`,
+  which is now only reached by the two sunless systems.)
+
+- Two new `validate()` rules:
+
+| slug | rule |
+|---|---|
+| `body-overlap` | No two bodies' surfaces intersect: `dist(a, b) > a.radius_gu + b.radius_gu`. |
+| `anchor-inside-body` | No region's anchor falls inside ANY body. (`body-engulfs-anchor` only checks a region's *own* bodies, so an anchor inside the **sun** slips through it entirely.) |
+
+**Measured against all 25 real systems before writing this task** — these are the
+numbers the implementation must reproduce:
+
+- **Zero** body overlaps of any kind.
+- Apparent sizes span **9.5 deg to 67.4 deg**, clustered 20-50 deg.
+- The `min` floor clamps **3** regions (Alioth6, Beol1, Savoy2 -> 67.4 deg).
+- The `max` cap clamps **4** regions (Geble4 16.7, OmegaDraconis1 17.1,
+  Savoy1 24.1, XiEntrades4 16.1 -> all 9.5 deg). Savoy 1 is why the cap exists:
+  BC placed it 5041 GU from a 100 GU planet, a 50:1 ratio, which without a cap
+  puts the anchor 48,142 GU away -- far enough to land past the sun.
+- Ona: 33.4 / 47.8 / 38.5 deg, orbits at 40,000 / 66,000 / 92,000 GU
+  (sun r=10,000 + 30,000 clearance).
+- Largest system: Itari, outermost orbit 226,000 GU (39,550 km).
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/tools/test_system_layout.py` (keep every existing test; three of
+them need the edits in Step 3):
+
+```python
+def test_framing_scale_one_reproduces_bc_apparent_size_exactly():
+    """The radii cancel: standoff is measured in planet radii, so at
+    framing_scale 1.0 the new angular size EQUALS BC's, not approximates it."""
+    s = _sys_one_planet_per_region()
+    m = layout(s, LayoutTuning(framing_scale=1.0))
+    for region in s.regions:
+        bc = region.bodies[0]
+        d_bc = math.dist(bc.offset_gu, region.player_start_gu)
+        want = 2.0 * math.atan(bc.radius_gu / d_bc)
+        body = m.body(bc.name)
+        d_new = math.dist(body.position_gu, m.region(region.set_name).anchor_gu)
+        got = 2.0 * math.atan(body.radius_gu / d_new)
+        assert got == pytest.approx(want, rel=1e-9), region.set_name
+
+
+def test_apparent_size_is_independent_of_the_size_scale():
+    """planet_radius_scale and framing_scale must not interact."""
+    s = _sys_one_planet_per_region()
+    angles = []
+    for scale in (10.0, 20.0, 40.0):
+        m = layout(s, LayoutTuning(planet_radius_scale=scale))
+        body = m.body("Ona 1")
+        d = math.dist(body.position_gu, m.region("Ona1").anchor_gu)
+        angles.append(2.0 * math.atan(body.radius_gu / d))
+    assert angles[1] == pytest.approx(angles[0], rel=1e-12)
+    assert angles[2] == pytest.approx(angles[0], rel=1e-12)
+
+
+def test_planets_keep_bcs_relative_sizes():
+    """BC authored a 15x spread across 87 primaries. A flat radius threw it away."""
+    s = SurveyedSystem(name="Alioth", regions=[
+        SurveyedRegion(set_name="Alioth1", ordinal=1, bodies=[
+            SurveyedBody("Alioth 1", 90.0, "a.nif", (0.0, 1000.0, 0.0), False)],
+            content_extent_gu=0.0, player_start_gu=(0.0, -500.0, 0.0)),
+        SurveyedRegion(set_name="Alioth6", ordinal=6, bodies=[
+            SurveyedBody("Alioth 6", 360.0, "b.nif", (0.0, 1000.0, 0.0), False)],
+            content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
+    ])
+    m = layout(s, LayoutTuning(planet_radius_scale=20.0))
+    assert m.body("Alioth 1").radius_gu == pytest.approx(1800.0)
+    assert m.body("Alioth 6").radius_gu == pytest.approx(7200.0)
+
+
+def test_moons_keep_bcs_relative_sizes():
+    s = SurveyedSystem(name="Serris", regions=[SurveyedRegion(
+        set_name="Serris3", ordinal=3,
+        bodies=[
+            SurveyedBody("Serris 3", 100.0, "p.nif", (0.0, 500.0, 0.0), False),
+            SurveyedBody("Serris 3 Moon 1", 7.0, "m.nif", (0.0, 600.0, 0.0), False),
+            SurveyedBody("Serris 3 Moon 2", 20.0, "m.nif", (0.0, 700.0, 0.0), False),
+        ],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    m = layout(s, LayoutTuning(moon_radius_scale=20.0))
+    assert m.body("Serris 3 Moon 1").radius_gu == pytest.approx(140.0)
+    assert m.body("Serris 3 Moon 2").radius_gu == pytest.approx(400.0)
+
+
+def test_the_sun_scales_from_bcs_authored_radius():
+    s = _sys_one_planet_per_region()          # its suns are authored at 5000 GU
+    m = layout(s, LayoutTuning(sun_radius_scale=2.0))
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    assert sun.radius_gu == pytest.approx(10000.0)
+
+
+def test_a_system_with_no_authored_sun_still_gets_one():
+    """Belaruz and Vesuvi build a MetaNebula and no Sun_Create at all."""
+    s = SurveyedSystem(name="Vesuvi", regions=[SurveyedRegion(
+        set_name="Vesuvi5", ordinal=5,
+        bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    m = layout(s, LayoutTuning(default_sun_radius_gu=9000.0))
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    assert sun.radius_gu == pytest.approx(9000.0)
+
+
+def test_the_first_orbit_clears_the_suns_surface():
+    """first_orbit_clearance_gu is measured from the SUN'S SURFACE, so a bigger
+    sun pushes every orbit out rather than swallowing the innermost planet."""
+    s = _sys_one_planet_per_region()
+    m = layout(s, LayoutTuning(sun_radius_scale=2.0,
+                               first_orbit_clearance_gu=30000.0))
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    innermost = math.dist(m.body("Ona 1").position_gu, (0.0, 0.0, 0.0))
+    assert innermost == pytest.approx(sun.radius_gu + 30000.0)
+
+
+def test_the_standoff_is_clamped_at_both_ends():
+    """Savoy 1 is why the cap exists: BC put a 100 GU planet 5041 GU away, a
+    50:1 ratio, which uncapped throws the anchor far enough to pass the sun."""
+    def one(radius, distance, tuning):
+        s = SurveyedSystem(name="X", regions=[SurveyedRegion(
+            set_name="X1", ordinal=1,
+            bodies=[SurveyedBody("P", radius, "p.nif", (0.0, distance, 0.0), False)],
+            content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+        m = layout(s, tuning)
+        return (math.dist(m.body("P").position_gu, m.region("X1").anchor_gu)
+                / m.body("P").radius_gu)
+
+    t = LayoutTuning(min_standoff_factor=1.5, max_standoff_factor=12.0,
+                     framing_scale=2.0)
+    assert one(100.0, 5041.0, t) == pytest.approx(12.0)     # Savoy 1, capped
+    assert one(200.0, 400.0, t) == pytest.approx(1.5)       # very close, floored
+    assert one(90.0, 600.4, t) == pytest.approx(600.4 / 90.0 / 2.0)  # untouched
+
+
+def test_ambiguities_reports_every_clamped_region():
+    """A clamp overrides BC's intent, so the art-direction pass must see it."""
+    s = SurveyedSystem(name="Savoy", regions=[SurveyedRegion(
+        set_name="Savoy1", ordinal=1,
+        bodies=[SurveyedBody("Savoy 1", 100.0, "p.nif", (0.0, 5041.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    assert any("Savoy 1" in n and "clamp" in n.lower() for n in ambiguities(s))
+```
+
+Add to `tests/unit/test_system_map_validate.py`:
+
+```python
+def test_body_overlap_flags_two_bodies_whose_surfaces_intersect():
+    m = _valid()
+    m.body("Ona 2").position_gu = (0.0, 24000.0, 0.0)   # 2000 GU from Ona 1
+    assert "body-overlap" in _slugs(validate(m))
+
+
+def test_body_overlap_accepts_bodies_that_merely_come_close():
+    m = _valid()
+    # Ona 1 r=1800 at y=22000; put Ona 2 r=1800 at y=25601 -> 3601 GU apart.
+    m.body("Ona 2").position_gu = (0.0, 25601.0, 0.0)
+    assert "body-overlap" not in _slugs(validate(m))
+
+
+def test_anchor_inside_body_flags_an_anchor_swallowed_by_the_sun():
+    """body-engulfs-anchor only checks a region's OWN bodies, so an anchor
+    inside the sun would otherwise pass every rule."""
+    m = _valid()
+    m.regions[0].anchor_gu = (0.0, 100.0, 0.0)          # inside the r=5000 sun
+    assert "anchor-inside-body" in _slugs(validate(m))
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/tools/test_system_layout.py tests/unit/test_system_map_validate.py -v`
+Expected: the eight new layout tests fail (`TypeError: unexpected keyword
+argument 'planet_radius_scale'` and friends), and the three new validator tests
+fail on the missing rules. Existing tests still pass at this point.
+
+- [ ] **Step 3: Implement**
+
+In `tools/systems/layout.py`:
+
+1. Replace the four removed fields in `LayoutTuning` with the new ones from the
+   Interfaces table. Keep `anchor_standoff_factor` and document it as the
+   degenerate-case fallback only.
+
+2. Add the standoff helper:
+
+```python
+def _standoff_factor(primary, region, t) -> float:
+    """How many NEW planet-radii the anchor sits back from the planet's centre.
+
+    Derived from BC's own framing. The artist placed each planet at a distance
+    that gave it a particular apparent size, and that varied per map -- Ona 2
+    read close, Ona 1 distant. A single constant flattened all of it.
+
+    Because the standoff is measured in radii, the planet's SIZE cancels out of
+    the apparent angle: `planet_radius_scale` and `framing_scale` are
+    independent knobs. At framing_scale 1.0 the result equals BC's apparent
+    size exactly.
+
+    Clamped at both ends. The floor keeps the anchor outside the planet; the
+    cap exists because BC's most distant framing (Savoy 1: a 100 GU planet
+    5041 GU away, 50:1) would otherwise throw the anchor far enough to pass the
+    sun. Both clamps are reported by ambiguities() -- they override BC's intent.
+    """
+    r_bc = primary.radius_gu
+    d_bc = _norm(_sub(primary.offset_gu, region.player_start_gu))
+    if r_bc <= 0.0 or d_bc <= 0.0:
+        return t.anchor_standoff_factor
+    raw = (d_bc / r_bc) / t.framing_scale
+    return min(max(raw, t.min_standoff_factor), t.max_standoff_factor)
+```
+
+3. In `layout()`:
+   - sun radius becomes `sun_bc * t.sun_radius_scale`, where `sun_bc` is the
+     largest `is_sun` body radius found anywhere in the survey. **Two systems
+     — Belaruz and Vesuvi — author no sun object at all**, so `sun_bc` is 0.0
+     there; use `t.default_sun_radius_gu` in that case.
+   - `first_orbit = sun_radius + t.first_orbit_clearance_gu`, replacing the
+     `first_orbit_gu` term in `_orbit_position`. Pass it in rather than reading
+     a constant.
+   - primary radius becomes `primary.radius_gu * t.planet_radius_scale`.
+   - companion radius becomes `c.radius_gu * t.moon_radius_scale` — the
+     `share` / `biggest` / 25%-floor logic is DELETED, since scaling BC's own
+     radius preserves relative size directly.
+   - `standoff = _standoff_factor(primary, region, t) * primary_radius`.
+
+4. In `ambiguities()`, report each clamped region, naming the body and which
+   clamp fired, so the art-direction pass sees every place BC's intent was
+   overridden.
+
+5. Update these three existing tests, whose expectations the new rules change:
+   `test_planets_are_resized_to_the_tuning` (now asserts BC radius x scale),
+   `test_orbits_increase_with_the_region_ordinal` (orbits now start at
+   `sun_radius + clearance`), and `test_anchor_standoff_scales_with_the_new_planet_radius`
+   (rewrite to assert that doubling `planet_radius_scale` doubles the standoff
+   distance, which stays true because the factor is in radii).
+
+In `engine/systems/validate.py`, add the two rules from the Interfaces table.
+`anchor-inside-body` must test a region's anchor against EVERY body in the map,
+not just the region's own.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `uv run pytest tests/tools/test_system_layout.py tests/unit/test_system_map_validate.py -v`
+Expected: PASS — 25 layout tests, 15 validator tests.
+
+- [ ] **Step 5: Regenerate Ona and check it against the measured values**
+
+Run: `uv run python tools/gen_system_maps.py --system Ona --list-ambiguities`
+Expected: `Ona: 3 regions, 4 bodies -- ok <path>`, no ambiguity notes (none of
+Ona's regions is clamped), and the regenerated file must show:
+- sun radius **10,000 GU** (BC 5000 x 2)
+- orbits at **40,000 / 66,000 / 92,000 GU**
+- planets all **1800 GU** (BC 90 x 20)
+- apparent sizes **33.4 / 47.8 / 38.5 degrees**
+
+If any of those differ, the implementation is wrong — do not adjust the
+expectation. Report the mismatch.
+
+- [ ] **Step 6: Check every system lays out cleanly**
+
+Run: `uv run python tools/gen_system_maps.py --check --list-ambiguities`
+Expected: 25 lines, every one `ok`, exit code 0, and the ambiguity notes must
+include exactly these seven clamped regions: Alioth6, Beol1, Savoy2 (floored)
+and Geble4, OmegaDraconis1, Savoy1, XiEntrades4 (capped). No map is written by
+`--check`.
+
+- [ ] **Step 7: Run the gate**
+
+Run: `scripts/check_tests.sh`
+Expected: `OK — no new failures. 1 known failure(s) still baselined.`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tools/systems/layout.py engine/systems/validate.py \
+        engine/systems/maps/ona.json \
+        tests/tools/test_system_layout.py tests/unit/test_system_map_validate.py
+git commit -m "feat(systems): sizes and framing derived from BC, not flattened"
+```
+
+---
+
+### Task 7: The remaining 24 systems
+
+**Prerequisite:** Task 6 is complete and the `LayoutTuning` defaults are settled.
 
 **Files:**
 - Create: `engine/systems/maps/*.json` (24 more)
@@ -1863,8 +2196,10 @@ git commit -m "feat(systems): maps for the remaining 24 star systems"
 | Unnumbered regions flagged | 4 |
 | Moon-or-planet guess flagged | 4 |
 | Validator in the gate | 2, 5 |
-| Ona first, reviewed before the rest | 5 (checkpoint), 6 |
+| Ona first, reviewed before the rest | 5 (checkpoint), 7 |
 | Project-local, no hardcoded BC path | 1, 3 |
+| Bodies keep BC's relative sizes | 6 |
+| Anchors reproduce BC's per-region framing | 6 |
 
 **Placeholders:** none. Every code step carries the code; every test step carries
 the assertions; every run step carries the command and the expected result.
