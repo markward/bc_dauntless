@@ -442,6 +442,16 @@ def test_body_engulfs_anchor_flags_a_planet_swallowing_its_own_spawn():
     assert "body-engulfs-anchor" in _slugs(validate(m))
 
 
+def test_a_bad_back_reference_does_not_mask_an_engulfed_anchor():
+    """Two independent faults on one body must both be reported. A bookkeeping
+    error about which region owns a body must never hide "you would spawn
+    inside this planet" -- that is the hazard the validator exists for."""
+    m = _valid()
+    m.body("Ona 1").owner_region = "Ona2"      # back-reference mismatch
+    m.body("Ona 1").radius_gu = 5000.0          # engulfs Ona1's anchor
+    assert _slugs(validate(m)) == ["body-engulfs-anchor", "body-owner"]
+
+
 def test_pin_respected_accepts_the_authored_offset():
     m = _valid()
     pins = {"Ona 1": (0.0, 4000.0, 0.0)}   # matches 22000 - 18000
@@ -540,7 +550,12 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     "body-owner",
                     f"body {name!r} is listed by region {r.set_name!r} but its "
                     f"owner_region is {body.owner_region!r}"))
-                continue
+                # NO `continue` here. A bad back-reference is a bookkeeping
+                # error; engulfing the anchor is "you would spawn inside a
+                # planet". They are independent, and the geometry is measured
+                # against the LISTING region's anchor either way, so a body can
+                # and must report both. Only the dangling-name branch above
+                # continues -- there, there is no body left to measure.
             if body.radius_gu >= _dist(body.position_gu, r.anchor_gu):
                 problems.append(Problem(
                     "body-engulfs-anchor",
@@ -576,7 +591,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/unit/test_system_map_validate.py -v`
-Expected: PASS (11 tests)
+Expected: PASS (12 tests)
 
 - [ ] **Step 5: Commit**
 
