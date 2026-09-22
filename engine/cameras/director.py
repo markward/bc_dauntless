@@ -51,10 +51,16 @@ class _CameraDirector:
         self.chase             = _ChaseCamera()
         self.tracking          = _TrackingCamera()
         self._opted_out_target = None  # target the user manually toggled OUT of Tracking
-        # Ghost of the last target (V7): set on target loss in Tracking,
-        # released by a new target, the C key, or a hard snap.
+        # Ghost of the last target (V7): the last pose framed, refreshed
+        # every framed frame and used once the target goes away.
         self._ghost            = None
         self._ghost_aim        = None
+        # True only while we are COMPUTING FROM the ghost. The ghost itself
+        # is present almost always, so it cannot stand in for this: treating
+        # its presence as "we were on a ghost" re-snapped the tracking camera
+        # every frame, and snap() clears zoom_target_active — live, pressing
+        # Z with a target locked did nothing.
+        self._on_ghost         = False
         # Vertical FOV used for r.set_camera and Tracking's projection math.
         # Seeded from EXTERIOR_FOV_Y_RAD; runtime changes via set_fov().
         self.fov_y_rad         = EXTERIOR_FOV_Y_RAD
@@ -122,6 +128,7 @@ class _CameraDirector:
     def _release_ghost(self) -> None:
         self._ghost = None
         self._ghost_aim = None
+        self._on_ghost = False
 
     # ── zoom controls ────────────────────────────────────────────────
 
@@ -183,13 +190,14 @@ class _CameraDirector:
                 if self._ghost is None:
                     self.mode = CameraMode.CHASE
                 else:
+                    self._on_ghost = True
                     return self.tracking.compute(
                         player=player, target=self._ghost, dt=dt,
                         aim_point=self._ghost_aim,
                         pose_of=self._pose_of_with_ghost(pose_of))
             else:
-                if self._ghost is not None:
-                    # A new target takes over from the ghost.
+                if self._on_ghost:
+                    # A live target takes over from the ghost we were framing.
                     self._release_ghost()
                     self.tracking.snap()
                 aim = target_aim_point(player, pose_of=pose_of)

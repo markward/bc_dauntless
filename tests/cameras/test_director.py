@@ -576,3 +576,40 @@ def test_director_compute_passes_pose_of_to_tracking():
     eye1, look1, up1 = d.compute(player=p, dt=None, pose_of=pose_of)
     for a, b, v in zip(eye1, eye0, V):
         assert a == pytest.approx(b + v, abs=1e-6)
+
+
+def test_zoom_target_survives_frames_with_a_live_target():
+    """THE BUG (live: 'pressing Z while target locked doesn't zoom'): the V7
+    ghost is refreshed every framed frame, and treating its mere presence as
+    'we were on a ghost' made compute() release it and snap() the tracking
+    camera EVERY frame — and snap() clears zoom_target_active and re-seeds
+    the zoom distances. Z armed the sub-mode and the next frame threw it
+    away."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p = _FakeShipWithTarget(target=_make_target_at())
+
+    d.toggle_mode(player=p)
+    d.compute(player=p, dt=1.0/60)
+    d.start_zoom_target(player=p)
+    assert d.tracking.zoom_target_active is True
+
+    for _ in range(120):
+        d.compute(player=p, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+    assert d.tracking.zoom_target_active is True, (
+        "Z must stay armed while the target is alive")
+
+
+def test_a_live_target_does_not_re_snap_the_tracking_springs_every_frame():
+    """The same bug seen from the springs: a per-frame snap() drops the
+    smoothed eye, so the camera can never settle."""
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.toggle_mode(player=p)
+    for _ in range(10):
+        d.compute(player=p, dt=1.0/60)
+    assert d.tracking._smoothed_eye is not None
