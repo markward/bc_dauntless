@@ -560,6 +560,14 @@ const float kFieldSdfOffset  = 1.25;
 // 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
 // after the /255 normalisation. Because scale is proportional to cell, this
 // is the same half cell on every ship without needing a uniform.
+// Glow suppression around a breach. A breached compartment is open to space,
+// so its windows should not still be lit right up to the torn edge -- that
+// reads as a decal pasted over a working deck. Fully dark at the hole rim,
+// back to normal glow by kGlowKillReach * the carve radius. 1.5 is tight on
+// purpose: enough to clear the lit windows off the tear without darkening a
+// visible patch of surrounding hull.
+const float kGlowKillReach = 1.5;
+
 const float kFieldRimNoise = 0.06;
 const float kFieldRimFreq  = 0.35;   // cycles per model unit
 
@@ -587,7 +595,13 @@ float vnoise3(vec3 p){
 // one shape.
 //
 // Returns true = cut away here. The CALLER decides what to do with that.
-bool hull_cut_at(vec3 p_body) {
+// `glow_kill` (out): 0 = glow untouched, 1 = fully suppressed. Returned from
+// HERE rather than computed in a second loop of its own, because this loop is
+// hot -- it runs for every fragment of every damaged hull, up to 24 times --
+// and the per-carve distance it needs has already been computed. Consumers
+// that do not want it pass a dummy; the compiler drops the term.
+bool hull_cut_at(vec3 p_body, out float glow_kill) {
+    glow_kill = 0.0;
     bool field_suppressed = false;
     // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
     // out of the carve loop below, where it was recomputed for every one of up
@@ -605,6 +619,14 @@ bool hull_cut_at(vec3 p_body) {
             float along  = dot(v, n);
             vec3 lateral = v - along * n;
             float ld     = length(lateral);
+
+            // Glow suppression: radial, from the carve CENTRE in 3D, so a
+            // breach does not reach through a thin section and dim windows on
+            // the far face at the same lateral offset -- distance along the
+            // normal counts against it just as lateral distance does.
+            glow_kill = max(glow_kill,
+                            1.0 - smoothstep(r, r * kGlowKillReach, length(v)));
+
             // Region the FIELD BRUSH dilated this carve to (field_brush.cc).
             // The field is deliberately generous -- a carve is rounded up to
             // what the lattice can hold -- so suppressing the field only
@@ -823,7 +845,11 @@ void main() {
         // through BOTH sheets, both are rejected and you see space -- from
         // either side, symmetrically. That is a genuinely perforated hull, and
         // a two-way hole is the correct picture of one.
-        if (hull_cut_at(v_body_pos)) discard;
+        // The shell has no glow map, so the suppression term is discarded --
+        // see hull_cut_at's own note on why it is an out param rather than a
+        // second loop.
+        float unused_glow_kill;
+        if (hull_cut_at(v_body_pos, unused_glow_kill)) discard;
 
         hit_point  = v_body_pos;
         // Face the normal back along the view ray. The mesh normal points out

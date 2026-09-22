@@ -397,3 +397,98 @@ TEST_F(HullClipTest, DegenerateNormalWithGradientOnStaysFinite) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+
+// ── Glow suppression around a breach ──────────────────────────────────────
+//
+// Live report: "it looks weird having illuminated windows jagging out into the
+// hole." A breached section still showing lit windows right up to the torn
+// edge reads wrong -- that compartment is open to space.
+//
+// So the glow map fades out around each carve: fully dead at the hole rim,
+// back to normal by kGlowKillReach * the carve radius.
+//
+// Isolating glow: no ambient, no directionals, no material emissive, white
+// glow map. `lit` is then 0 and refl_mask kills the (already zero) diffuse and
+// specular, so the centre pixel is the glow term and nothing else.
+//
+// The carve is placed so the centre fragment is NOT cut -- offset along the
+// NORMAL, where the oblate is shallow (|along| = 2 exceeds
+// kDepthFactor*r*(1+kShapeAmp) = 1.125) while the lateral test passes. So this
+// measures suppression on surviving hull, not the hole itself.
+namespace {
+void set_glow_only(renderer::Shader& s, GLuint glow_tex) {
+    s.set_vec3("u_ambient_light",  glm::vec3(0.0f));
+    s.set_int ("u_dir_light_count", 0);
+    s.set_vec3("u_emissive_color", glm::vec3(0.0f));
+    s.set_float("u_emissive_scale", 1.0f);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, glow_tex);
+    s.set_int("u_glow_map", 1);
+    glActiveTexture(GL_TEXTURE0);
+}
+}  // namespace
+
+TEST_F(HullClipTest, GlowIsSuppressedOnHullBesideABreach) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    auto render_with_carve = [&](glm::vec3 center, float radius) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(center, radius);
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        return px[0] + px[1] + px[2];
+    };
+
+    // Far away: the fragment is well outside the kill radius, full glow.
+    const int far_glow = render_with_carve(glm::vec3(0.0f, 0.0f, 20.0f), 2.0f);
+    ASSERT_GT(far_glow, 600)
+        << "glow-only setup is not producing a bright pixel (" << far_glow
+        << ") — the comparison below would be vacuous";
+
+    // Beside the breach: |along| = 2 == the carve radius, so this fragment
+    // survives the cut but sits at the very rim of the hole.
+    const int near_glow = render_with_carve(glm::vec3(0.0f, 0.0f, 2.0f), 2.0f);
+
+    EXPECT_LT(near_glow, far_glow / 4)
+        << "Hull right beside a breach is still glowing at " << near_glow
+        << " against " << far_glow << " far away — lit windows run into the "
+           "torn edge instead of going dark with the compartment";
+}
+
+// The suppression must be LOCAL. A carve must not dim windows across the whole
+// hull, which a missing or mis-scaled falloff would do.
+TEST_F(HullClipTest, GlowIsUntouchedWellBeyondTheBreach) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    set_uniforms(prog);
+    set_glow_only(prog, white_tex_);
+    prog.set_int("u_carve_enabled", 0);
+    draw();
+    const auto base_px = read_center();
+    const int baseline = base_px[0] + base_px[1] + base_px[2];
+    ASSERT_GT(baseline, 600) << "glow-only baseline is not bright";
+
+    set_uniforms(prog);
+    set_glow_only(prog, white_tex_);
+    prog.set_int("u_carve_enabled", 1);
+    // r = 2, so the kill reaches 3 units. Centre is 8 away: untouched.
+    const glm::vec4 sphere(0.0f, 0.0f, 8.0f, 2.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+    draw();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    const auto px = read_center();
+
+    EXPECT_EQ(px[0] + px[1] + px[2], baseline)
+        << "A breach 4 radii away changed the glow here — the suppression is "
+           "not local to the hole";
+}
