@@ -1,10 +1,20 @@
 """Camera mode dispatch.
 
-The director owns the mode flag, the C-key toggle, and the
-target-loss fallback. compute() forwards to the active camera. Mode
+The director owns the mode flag, the C-key toggle, and what happens when
+the target goes away. compute() forwards to the active camera. Mode
 transitions snap the receiving camera so the first frame in the new
 mode lands directly on the solver pose without springing in from
 stale state.
+
+Target loss does NOT drop the camera to Chase. On the original exe the
+Target camera survives its target's destruction: at removal the player's
+target clears and the reticule vanishes, but the camera stays in Target
+mode aimed at the wreck's last position indefinitely (stbc-oracle bible
+§12.2a V7, `camera_kill/*`: ≥ 34 s observed, the aim still 4.7° off the
+wreck's bearing after the player yawed 96° away — the same as for a live
+target that does not move, since the mode places the camera on the
+target→ship line). We keep a ghost of the last target pose and go on
+framing it until a new target is selected or the C key is pressed.
 """
 from enum import Enum
 
@@ -21,12 +31,30 @@ class CameraMode(Enum):
     TRACKING = "tracking"
 
 
+class _GhostTarget:
+    """The last pose of a target that has gone: what Target mode keeps
+    framing after a destruction (V7). Quacks like a ship for the solver."""
+    def __init__(self, loc, rot, radius):
+        from engine.appc.math import TGPoint3
+        self._loc = TGPoint3(loc.x, loc.y, loc.z)
+        self._rot = rot
+        self._radius = radius
+
+    def GetWorldLocation(self): return self._loc
+    def GetWorldRotation(self): return self._rot
+    def GetRadius(self):        return self._radius
+
+
 class _CameraDirector:
     def __init__(self):
         self.mode              = CameraMode.CHASE
         self.chase             = _ChaseCamera()
         self.tracking          = _TrackingCamera()
         self._opted_out_target = None  # target the user manually toggled OUT of Tracking
+        # Ghost of the last target (V7): set on target loss in Tracking,
+        # released by a new target, the C key, or a hard snap.
+        self._ghost            = None
+        self._ghost_aim        = None
         # Vertical FOV used for r.set_camera and Tracking's projection math.
         # Seeded from EXTERIOR_FOV_Y_RAD; runtime changes via set_fov().
         self.fov_y_rad         = EXTERIOR_FOV_Y_RAD
@@ -73,6 +101,7 @@ class _CameraDirector:
             self.tracking.snap()
             self._opted_out_target = None
             self.chase.exit_reverse()
+            self._remember(tgt, target_aim_point(player), None)
         else:
             # Leaving Tracking manually: record the current target so
             # auto-engage doesn't immediately re-fire next frame.
@@ -80,6 +109,7 @@ class _CameraDirector:
             self._opted_out_target = tgt  # None if no target (defensive)
             self.mode = CameraMode.CHASE
             self.tracking.exit_zoom_target()
+            self._release_ghost()
 
     def snap(self) -> None:
         """Propagate snap() to both cameras. Use on mission swap /
@@ -87,6 +117,11 @@ class _CameraDirector:
         self.chase.snap()
         self.tracking.snap()
         self._opted_out_target = None
+        self._release_ghost()
+
+    def _release_ghost(self) -> None:
+        self._ghost = None
+        self._ghost_aim = None
 
     # ── zoom controls ────────────────────────────────────────────────
 
@@ -139,17 +174,28 @@ class _CameraDirector:
         if self.mode is CameraMode.TRACKING:
             tgt = self._valid_target(player)
             if tgt is None:
-                # Target lost → durable fallback to Chase; clear opt-out so
-                # re-acquiring any target (including the old one) auto-engages.
-                # Also clear the ZoomTarget sub-mode so a future Tracking
-                # entry doesn't inherit a stale flag.
-                self.mode = CameraMode.CHASE
-                self._opted_out_target = None
+                # Target lost (destroyed, or cleared): Target mode holds on
+                # the ghost of its last pose (V7). ZoomTarget is released —
+                # the capture did not exercise it. If there is no ghost yet
+                # (nothing was ever framed), there is nothing to hold on.
                 self.tracking.exit_zoom_target()
+                self._opted_out_target = None
+                if self._ghost is None:
+                    self.mode = CameraMode.CHASE
+                else:
+                    return self.tracking.compute(
+                        player=player, target=self._ghost, dt=dt,
+                        aim_point=self._ghost_aim,
+                        pose_of=self._pose_of_with_ghost(pose_of))
             else:
+                if self._ghost is not None:
+                    # A new target takes over from the ghost.
+                    self._release_ghost()
+                    self.tracking.snap()
+                aim = target_aim_point(player, pose_of=pose_of)
+                self._remember(tgt, aim, pose_of)
                 return self.tracking.compute(player=player, target=tgt, dt=dt,
-                                             aim_point=target_aim_point(player, pose_of=pose_of),
-                                             pose_of=pose_of)
+                                             aim_point=aim, pose_of=pose_of)
         else:
             # CHASE: auto-engage Tracking if a target is present and the user
             # hasn't manually opted out of Tracking for this specific target.
@@ -163,12 +209,34 @@ class _CameraDirector:
                 self.tracking.snap()
                 self._opted_out_target = None
                 self.chase.exit_reverse()
+                aim = target_aim_point(player, pose_of=pose_of)
+                self._remember(tgt, aim, pose_of)
                 return self.tracking.compute(player=player, target=tgt, dt=dt,
-                                             aim_point=target_aim_point(player, pose_of=pose_of),
-                                             pose_of=pose_of)
+                                             aim_point=aim, pose_of=pose_of)
         return self.chase.compute_camera(loc, rot, dt=dt)
 
     # ── helpers ──────────────────────────────────────────────────────
+
+    def _remember(self, tgt, aim, pose_of) -> None:
+        """Keep the target's current pose so a loss can hold on it."""
+        from engine.appc.camera_modes import _target_radius
+        if pose_of is not None:
+            loc, rot = pose_of(tgt)
+        else:
+            loc, rot = tgt.GetWorldLocation(), tgt.GetWorldRotation()
+        self._ghost = _GhostTarget(loc, rot, _target_radius(tgt))
+        self._ghost_aim = aim
+
+    def _pose_of_with_ghost(self, pose_of):
+        """The interpolated-pose reader, taught to answer for the ghost."""
+        if pose_of is None:
+            return None
+        ghost = self._ghost
+        def _pose(obj):
+            if obj is ghost:
+                return ghost.GetWorldLocation(), ghost.GetWorldRotation()
+            return pose_of(obj)
+        return _pose
 
     @staticmethod
     def _valid_target(player):
