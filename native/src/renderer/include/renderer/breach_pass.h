@@ -185,6 +185,15 @@ public:
     /// number every existing scoop test asserts on.
     std::size_t shell_draw_calls() const { return shell_draw_calls_; }
 
+    /// Developer diagnostic: paint the interior SHELL flat magenta, leaving the
+    /// raymarched scoop alone. An unlit interior and a hole through the hull
+    /// both render as black against a starfield, so "is the shell drawing
+    /// here?" cannot be answered by eye -- which is why the one-way hole took
+    /// three rounds to find. Process-wide (there is one breach pass), off by
+    /// default, and never set outside --developer.
+    static void set_shell_debug(bool on);
+    static bool shell_debug();
+
 private:
     // Lazily load the 4-frame animated interior texture (game/data/Damage1..4.tga).
     void ensure_damage_frames();

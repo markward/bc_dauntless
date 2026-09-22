@@ -3658,6 +3658,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "star_map.py owns those enums and the palette, so every colour and "
           "pixel size arrives as a value.");
 
+    m.def("breach_set_shell_debug",
+          [](bool on) { renderer::BreachPass::set_shell_debug(on); },
+          py::arg("on"),
+          "Developer diagnostic: paint the hull-breach INTERIOR SHELL flat "
+          "magenta, leaving the raymarched scoop untouched. Exists because an "
+          "unlit interior and a hole straight through the hull both render as "
+          "black against a starfield, so 'is the shell drawing here?' cannot "
+          "be answered by eye. Off by default; only bound under --developer.");
+
+    m.def("breach_shell_debug",
+          []() { return renderer::BreachPass::shell_debug(); },
+          "Current state of the interior-shell debug view.");
+
     m.def("dust_set_enabled",
           [](bool enabled) {
               if (g_dust_pass) g_dust_pass->set_enabled(enabled);

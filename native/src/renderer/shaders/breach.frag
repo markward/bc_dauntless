@@ -71,6 +71,12 @@ in vec3 v_body_normal;   // interior shell only (see u_interior_shell)
 // this file already carries drift-guard markers for.
 uniform int u_interior_shell;
 
+// Developer diagnostic (BreachPass::set_shell_debug). Paints the shell flat
+// magenta so "is the shell drawing here, or am I seeing space?" is answerable
+// by eye -- it is not otherwise, since an unlit interior and a hole through
+// the hull are both black against a starfield. Never set outside --developer.
+uniform int u_shell_debug;
+
 // Original (uncarved) hull fill — static per hull, never rebuilt.
 // GL_R8: byte b samples as b/255.0; occ 0..127 → [0, ~0.498].
 // u_fill_iso = 64/255.0 (matches the hull clip isovalue).
@@ -983,6 +989,13 @@ void main() {
         const float kRimBand = 0.12;
         float rim_w = 1.0 - smoothstep(u_fill_iso, u_fill_iso + kRimBand, fillv);
         c += blackbody(heat) * rim_w * 3.0;  // gain: brighter molten glow (eyeball-tunable)
+    }
+
+    // Diagnostic override, LAST so nothing above can mask it -- not even a
+    // discard-free path that happened to shade black.
+    if (u_shell_debug != 0) {
+        frag_color = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
     }
 
     frag_color = vec4(c, 1.0);

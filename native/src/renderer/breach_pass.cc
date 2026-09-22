@@ -86,6 +86,17 @@ assets::Texture load_damage_tga(const char* path) {
 
 }  // namespace
 
+namespace {
+// Developer diagnostic, process-wide: there is one breach pass, and the flag
+// has to be reachable from the Python binding without threading it through
+// every draw. Off by default; host_bindings only exposes the setter under
+// --developer.
+bool g_shell_debug = false;
+}  // namespace
+
+void BreachPass::set_shell_debug(bool on) { g_shell_debug = on; }
+bool BreachPass::shell_debug() { return g_shell_debug; }
+
 BreachPass::BreachPass() = default;
 
 BreachPass::~BreachPass() {
@@ -259,6 +270,11 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     // values explicitly: the two submissions share one program, so leaving it
     // unset would carry the previous draw's mode over.
     shader.set_int("u_interior_shell", interior_shell ? 1 : 0);
+    // Only the SHELL is ever flagged: colouring the scoop too would light up a
+    // breach whose interior the raymarch found, which is exactly the case the
+    // diagnostic exists to tell apart.
+    shader.set_int("u_shell_debug",
+                   (interior_shell && g_shell_debug) ? 1 : 0);
 
     // ── Inputs to the shared hull_cut_at() ────────────────────────────────
     // The interior shell asks the HULL'S OWN cut decision (breach.frag's

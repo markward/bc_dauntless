@@ -106,6 +106,31 @@ def register_for_frame(_h, session, player) -> None:
         "Drop all shields to zero (dev) — [",
     )
 
+    # 'I' (interior): paint the hull-breach INTERIOR SHELL flat magenta.
+    #
+    # Key choice was not free-form. F9/F6 are forwarded to BC's own scripts as
+    # WC_F9 / WC_F6 (cinematic mode, crew menu); '-' is camera_zoom_out. Both
+    # were caught by tests/unit/test_dev_key_collisions.py, which checks all
+    # four namespaces a key can be claimed in. 'I' is clear in every one.
+    #
+    # An unlit interior and a hole straight through the hull both render as
+    # black against a starfield, so looking at a breach cannot tell you which
+    # one you have. That ambiguity is what made the one-way hole take three
+    # rounds to diagnose. Magenta answers it in one glance: if the hole fills,
+    # the shell is drawing and the problem is lighting; if you still see stars,
+    # the shell is being discarded and the problem is geometry.
+    #
+    # The scoop is deliberately NOT coloured -- see breach.frag's u_shell_debug.
+    def _toggle_shell_debug() -> None:
+        if not hasattr(_h, "breach_set_shell_debug"):
+            return
+        _h.breach_set_shell_debug(not _h.breach_shell_debug())
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_I, _toggle_shell_debug,
+        "Breach interior-shell debug view (dev) — I",
+    )
+
     # ] : destroy the player's current target via the REAL death path
     # (DestroySystem on the hull -> critical-flag trigger -> throes ->
     # explosion -> dark hulk -> target-list drop -> removal). Testing aid

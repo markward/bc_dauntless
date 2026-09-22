@@ -1607,3 +1607,64 @@ TEST_F(BreachPassGLTest, ShellKeepsFarPlatingTheHullItselfDidNotCut) {
            "carve oblate). That is the one-way hole: stars from above, intact "
            "hull from below.";
 }
+
+// ── Interior-shell debug view ─────────────────────────────────────────────
+//
+// "Is the shell drawing here, or am I looking at space?" is not answerable by
+// eye: an unlit interior and a hole through the hull both render as black
+// against a starfield. That ambiguity is why the one-way hole took three
+// rounds to pin down. This paints the shell -- and ONLY the shell -- flat
+// magenta, so one look settles it.
+//
+// Scoped to the shell on purpose: if it coloured the scoop too, a breach whose
+// interior comes from the raymarch would light up and the question would go
+// unanswered again.
+TEST_F(BreachPassGLTest, ShellDebugPaintsTheShellMagentaAndLeavesTheScoopAlone) {
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+
+    // Shell case: no backing, so the scoop discards and only the shell can
+    // paint this pixel (the same setup as the far-plating test above).
+    auto render = [&](bool debug, const assets::Model& model,
+                      const voxel::VoxelVolume& f, std::uintptr_t key) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        mark_hull_cut();
+        renderer::BreachPass::set_shell_debug(debug);
+        renderer::BreachPass pass;
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        scenegraph::Camera cam =
+            cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+        pass.draw_instance(key, f, entry, model, glm::mat4(1.0f), cam, *pipeline,
+                           /*breach_age=*/scenegraph::kRimLife + 1.f,
+                           /*breach_center=*/glm::vec3(0.0f),
+                           /*breach_radius=*/0.0f, test_lighting());
+        glFinish();
+        renderer::BreachPass::set_shell_debug(false);
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_center();
+    };
+
+    const glm::vec3 far_center(0.0f, 0.0f, -20.0f);
+    const assets::Model plates =
+        make_two_plate_model(kCavitySurfaceCenter, far_center, glm::vec3(0, 0, 1), 50.f);
+    const voxel::VoxelVolume no_backing = empty_fill();
+
+    auto shell = render(true, plates, no_backing, 120);
+    EXPECT_GT(shell[0], 200) << "shell debug: red channel should be saturated";
+    EXPECT_LT(shell[1], 64)  << "shell debug: green channel should be near zero";
+    EXPECT_GT(shell[2], 200) << "shell debug: blue channel should be saturated";
+
+    // Scoop case: solid backing on a single sheet, so what paints is the
+    // raymarched scoop. It must be UNAFFECTED by the toggle.
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    auto scoop_off = render(false, patch, fill, 121);
+    auto scoop_on  = render(true,  patch, fill, 122);
+    ASSERT_GT(scoop_off[0] + scoop_off[1] + scoop_off[2], 16)
+        << "scoop drew nothing — the comparison would be vacuous";
+    EXPECT_EQ(scoop_on[0], scoop_off[0]) << "shell debug must not touch the scoop";
+    EXPECT_EQ(scoop_on[1], scoop_off[1]) << "shell debug must not touch the scoop";
+    EXPECT_EQ(scoop_on[2], scoop_off[2]) << "shell debug must not touch the scoop";
+}
