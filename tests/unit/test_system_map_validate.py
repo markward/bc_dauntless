@@ -187,3 +187,23 @@ def test_duplicate_body_names_are_resolved_by_owning_region():
             b.owner_region = "Ona1"          # now mis-declared
     problems = validate(m)
     assert [p.rule for p in problems] == ["body-owner"]
+
+
+def test_pin_respected_rejects_a_non_string_key():
+    """A pin key that is not a string (e.g. an int) should be reported as a
+    problem under the pin-respected rule, not allowed to raise TypeError."""
+    m = _valid()
+    pins = {123: (0.0, 4000.0, 0.0)}  # int key instead of string
+    problems = validate(m, pins=pins)
+    assert "pin-respected" in _slugs(problems)
+
+
+def test_pin_respected_rejects_a_two_element_offset():
+    """A pin offset that is only 2 elements (truncated to x and y) should be
+    reported as a problem, not silently pass because zip truncates the
+    comparison to two axes. Ona 1's true set-local offset is (0.0, 4000.0, 0.0).
+    A malformed 2-element pin of (0.0, 4000.0) would pass if truncated."""
+    m = _valid()
+    pins = {"Ona1/Ona 1": (0.0, 4000.0)}  # 2 elements, not 3
+    problems = validate(m, pins=pins)
+    assert "pin-respected" in _slugs(problems)

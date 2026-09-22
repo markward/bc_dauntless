@@ -136,6 +136,20 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
             # pin at all, because it *looks* like protection. Body names
             # themselves may contain spaces but never a slash, so splitting
             # on the FIRST '/' is unambiguous.
+            if not isinstance(key, str):
+                problems.append(Problem(
+                    "pin-respected",
+                    f"pin key {key!r} is not a string"))
+                continue
+            try:
+                if len(want_offset) != 3 or not all(isinstance(x, (int, float)) for x in want_offset):
+                    raise ValueError()
+            except (TypeError, ValueError):
+                problems.append(Problem(
+                    "pin-respected",
+                    f"pin offset for key {key!r} must be a sequence of 3 numbers, "
+                    f"got {want_offset!r}"))
+                continue
             if "/" not in key:
                 problems.append(Problem(
                     "pin-respected",
