@@ -260,6 +260,17 @@ PHASER_DISCHARGE_BY_POWER_LEVEL = (0.35, 1.0, 1.0)      # PP_LOW, PP_MEDIUM, PP_
 # (EnergyWeapon field — a different field from PhaserSystem.PowerLevel;
 # collapsing the two is the next bug of this shape).
 PULSE_COST_SCALE_BY_POWER_SETTING = (0.5, 1.0, 2.0)     # LOW, MED, HIGH
+# PulseWeapon::GetDamageScale (0x00575270): a pure function of the same
+# power setting — a bolt lands as the projectile script's GetDamage() × this.
+# Read from the exe and measured on seven hulls (clean-room
+# PulseWeaponDamage.md C1–C7; stbc-oracle `pulse_warbird_front_40_{low,meta,
+# high}`): Warbird RomulanCannon 400 → 80 / 200 / 400; the setting is 1 on
+# every stock emitter, so every stock bolt lands at HALF its script value —
+# the Bird of Prey's apparent 220 is two 110-bolts in one sample. Damage and
+# cost move together, which is why a full charge buys the same burst total
+# at any setting. Nothing in any hardpoint, ship or projectile script sets
+# the power setting; only the scripted SetPowerSetting (and save-load) can.
+PULSE_DAMAGE_SCALE_BY_POWER_SETTING = (0.2, 0.5, 1.0)   # LOW, MED, HIGH
 
 # Beam timing, measured on the original exe (stbc-oracle bible §2.2 and the
 # per-bank rows of `phaser_high_front_57` / `phaser_galaxy_front_57`):
@@ -2557,6 +2568,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # audited §1.6) — the per-shot cooldown (SetCooldownTime, BoP 0.2s) is
     # the anti-flutter mechanism, not charge hysteresis.
 
+    def GetDamageScale(self) -> float:
+        """PulseWeapon_GetDamageScale (0x00619400 → 0x00575270): the bolt
+        damage multiplier for this emitter's power setting — 0.2 / 0.5 / 1.0."""
+        return PULSE_DAMAGE_SCALE_BY_POWER_SETTING[self._power_setting]
+
     def _shot_cost(self) -> float:
         """Charge one bolt costs: NormalDischargeRate × the power-setting
         scale (BC's GetPowerScaled) — 0.5 / 1.0 / 2.0 on a stock cannon."""
@@ -2620,8 +2636,12 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             self._target = None
             self._target_offset = None
             world_dir = _emitter_forward_world(self, ship)
-        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
-                          world_dir=world_dir)
+        torp = _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
+                                 world_dir=world_dir)
+        if torp is not None:
+            # The bolt carries script GetDamage() × GetDamageScale() —
+            # 0x00576080 scales it at spawn (PulseWeaponDamage.md C1).
+            torp._damage = float(torp._damage) * self.GetDamageScale()
         # Discrete drain: a flat per-shot cost of NormalDischargeRate × the
         # power-setting scale (BC's GetPowerScaled), then the cooldown.  Not
         # a dump-to-zero — that made a stock BoP wait ~9 s between bolts

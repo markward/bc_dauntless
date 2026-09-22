@@ -37,15 +37,15 @@ def _launches(scene, seconds):
 
 # ── §3 pulse ─────────────────────────────────────────────────────────────────
 
-@bible_xfail("P1", "Warbird RomulanCannon bolt lands as 200 (script 400 × DamageScale 0.5)",
-             "lands as 400 — no DamageScale factor")
 def test_p1_warbird_bolt_damage(oracle):
-    """P1 — `pulse_warbird_front_40`: every bolt 200, exact."""
+    """P1 — `pulse_warbird_front_40`: every bolt 200 = script 400 × 0.5, the
+    emitter's GetDamageScale at the default power setting (clean-room
+    PulseWeaponDamage.md C1–C5, measured on 7 hulls)."""
     s = oracle(attacker="Warbird", range_gu=40)
     s.fire("pulse")
     hits = _hits(s, 4.0)
     assert hits, "no bolts landed"
-    assert all(d == pytest.approx(200.0, abs=1.0) for _, d in hits), hits
+    assert all(d == pytest.approx(200.0, abs=6.0) for _, d in hits), hits   # ± a regen step
 
 
 def test_p1_warbird_single_fire_rotation(oracle):
@@ -71,16 +71,17 @@ def test_p1_warbird_single_fire_rotation(oracle):
 
 
 def test_p2_bird_of_prey_bolt_damage(oracle):
-    """P2 — `pulse_bop_front_40`: PulseDisruptor 220 lands whole."""
+    """P2 — `pulse_bop_front_40`: 220 per sample — which is TWO 110-bolts
+    (script 220 × 0.5) landing together, the cannons firing as a pair
+    (SingleFire 0).  PulseWeaponDamage.md §6: one cannon disabled shows 110."""
     s = oracle(attacker="BirdOfPrey", range_gu=40)
+    cannons = s.emitters("pulse")
+    cannons[1].SetCondition(0.0)            # one cannon: one bolt per sample
     s.fire("pulse")
     hits = _hits(s, 4.0)
     assert hits, "no bolts landed"
-    # Two bolts can land on the same tick; each is a multiple of 220, and a
-    # regen step (5.5) can share the tick.
     for _, d in hits:
-        n = round(d / 220.0)
-        assert n >= 1 and d == pytest.approx(n * 220.0, abs=6.0)
+        assert d == pytest.approx(110.0, abs=6.0), d   # ± a regen step
 
 
 def test_p2_bird_of_prey_burst_then_affordability(oracle):
@@ -106,23 +107,22 @@ def test_p2_bird_of_prey_burst_then_affordability(oracle):
     assert all(g == pytest.approx(2.35, abs=0.36) for g in steady), volleys
 
 
-@pytest.mark.parametrize("setting, bolt", [(0, 88.0), (1, 220.0), (2, 440.0)])
+@pytest.mark.parametrize("setting, bolt", [(0, 44.0), (1, 110.0), (2, 220.0)])
 def test_p4_bolt_damage_scales_with_power_setting(oracle, setting, bolt):
-    """P4, from the rows the prose mis-summarised: Warbird bolts land as
-    80 / 200 / 400 at LOW / MED / HIGH (`pulse_warbird_front_40_{low,meta,
-    high}`), i.e. base × {0.4, 1.0, 2.0} alongside the cost × {0.5, 1, 2} —
-    which is WHY the burst total is setting-independent (P3).  Asserted on
-    the BoP (base 220, DamageScale 1.0) because the Warbird's per-weapon
-    DamageScale 0.5 is not yet derivable (P1 damage)."""
+    """P4 / PulseWeaponDamage.md C2, C7: a bolt is script GetDamage() ×
+    {0.2, 0.5, 1.0}[power setting] — Warbird 80 / 200 / 400
+    (`pulse_warbird_front_40_{low,meta,high}`), alongside the cost × {0.5,
+    1, 2}, which is why the burst total is setting-independent (P3).
+    Asserted on ONE BoP cannon (script 220) so a pair cannot mask it."""
     s = oracle(attacker="BirdOfPrey", range_gu=40)
-    for c in s.emitters("pulse"):
-        c.SetPowerSetting(setting)
+    cannons = s.emitters("pulse")
+    cannons[1].SetCondition(0.0)
+    cannons[0].SetPowerSetting(setting)
     s.fire("pulse")
     hits = _hits(s, 3.0)
     assert hits, "no bolts landed"
     for _, d in hits:
-        n = round(d / bolt)
-        assert n >= 1 and d == pytest.approx(n * bolt, abs=1.0), (d, bolt)
+        assert d == pytest.approx(bolt, abs=6.0), (d, bolt)
 
 
 def test_p3_bolt_damage_independent_of_range(oracle):
