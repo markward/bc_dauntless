@@ -92,8 +92,6 @@ def test_b5_rate_inside_max_damage_distance_is_flat(oracle):
     assert r_mid == pytest.approx(r_near, rel=0.03)
 
 
-@bible_xfail("B6", "first damage lands 1.156 s (70 ticks) after IsFiring goes true",
-             "damage lands on the first tick — no windup")
 def test_b6_windup_before_first_quantum(oracle):
     """B6 — identical in all 20 beam runs regardless of ship, intensity, range
     or face; a game-time constant (holds at time scale 0.5, F2)."""
@@ -108,8 +106,6 @@ def test_b6_windup_before_first_quantum(oracle):
     assert first == pytest.approx(1.156, abs=0.05)
 
 
-@bible_xfail("B7", "each beam deposits a quantum of MaxDamage × 0.5 × 0.53125 = 106.25 every 0.53 s",
-             "damage is continuous per tick (13.3 per tick for four beams at HIGH)")
 def test_b7_damage_arrives_as_quanta(oracle):
     """B7 — `phaser_high_front_57`: after the windup, the face steps down in
     discrete quanta of 106.25 (±2 %) with ~0.35 s of nothing between volleys;
@@ -163,20 +159,24 @@ def test_b8_rate_independent_of_power_wanted(oracle):
 
 @pytest.mark.parametrize("intensity, drain_per_s", [(HIGH, 1.0), (MED, 1.0), (LOW, 0.35)])
 def test_b9_discharge_rate_by_intensity(oracle, intensity, drain_per_s):
-    """B9 — HIGH/MED 1.0 charge/s (7 → 0 in 7.0 s), LOW 0.35/s."""
+    """B9 — HIGH/MED 1.0 charge/s, LOW 0.35/s, measured inside the drain
+    window (the bank's charge does not move for the first ~0.66 s after it
+    lights: the Galaxy's bank 5 reads 5.0 → 4.34 at IsFiring + 1.16 s)."""
     s = oracle(attacker="KessokHeavy", range_gu=57)
     s.fire("phaser", intensity=intensity)
     fwd = [b for b in s.emitters("phaser") if b.GetMaxDamage() == MAX_DAMAGE]
+    s.run(1.0)
     before = fwd[0].GetChargeLevel()
     s.run(3.0)
     assert (before - fwd[0].GetChargeLevel()) / 3.0 == pytest.approx(drain_per_s, rel=0.03)
 
 
 def test_b9_bank_stops_at_zero_charge(oracle):
-    """B9 — a bank stops the instant charge reaches 0; nothing lands after."""
+    """B9 — a bank stops the instant charge reaches 0 (7 charge at 1.0/s,
+    after the 0.66 s beam-on delay: ~7.7 s); nothing lands after."""
     s = oracle(attacker="KessokHeavy", range_gu=57)
     s.fire("phaser", intensity=HIGH)
-    s.run(7.5)
+    s.run(8.0)
     fwd = [b for b in s.emitters("phaser") if b.GetMaxDamage() == MAX_DAMAGE]
     assert all(not b.IsFiring() for b in fwd)
     assert all(b.GetChargeLevel() < 0.2 for b in fwd)

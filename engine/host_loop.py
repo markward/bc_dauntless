@@ -979,12 +979,24 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 continue
             for i in range(sys_.GetNumWeapons()):
                 bank = sys_.GetWeapon(i)
-                if bank is None or not bank.IsFiring():
+                if bank is None:
                     continue
                 target = bank._target
-                if target is None or (hasattr(target, "IsDead") and target.IsDead()):
-                    bank.StopFiring()
-                    continue
+                if not bank.IsFiring():
+                    # A bank that stopped (charge out) with dwell still
+                    # banked delivers it as a final partial pulse — the rows
+                    # show a 7.8 after the last 66-point quantum when the
+                    # Galaxy's bank ran dry (`phaser_galaxy_front_57`).
+                    dwell = bank.take_dwell() if hasattr(bank, "take_dwell") else 0.0
+                    if dwell <= 0.0 or target is None or (
+                            hasattr(target, "IsDead") and target.IsDead()):
+                        continue
+                    flush_dwell = dwell
+                else:
+                    if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+                        bank.StopFiring()
+                        continue
+                    flush_dwell = None      # decided below, once the aim is known
                 # Sensor gate (authoritative): this is the per-tick chokepoint where
                 # continuous phaser damage is actually applied. A bank can be left
                 # IsFiring by an AI that stopped updating (e.g. the firing ship's
@@ -993,7 +1005,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 # FireScript.TargetVisible isn't enough — stranded banks would keep
                 # dealing damage here. A ship that can't detect its target can't
                 # keep firing at it. See engine/appc/sensor_detection.can_detect.
-                if not can_detect(ship, target):
+                if flush_dwell is None and not can_detect(ship, target):
                     bank.StopFiring()
                     continue
                 target_pos, target_sub = _phaser_aim_point(ship, target)
@@ -1011,16 +1023,24 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 # on the next tick because its emit point sat past the
                 # target on the strip. See research doc § Bug F.
                 arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
-                if not _emitter_in_arc(bank, ship, arc_aim):
-                    bank.StopFiring()
+                if flush_dwell is None:
+                    if not _emitter_in_arc(bank, ship, arc_aim):
+                        # Swept off: deliver the partial pulse, then stop.
+                        flush_dwell = bank.take_dwell()
+                        bank.StopFiring()
+                    else:
+                        flush_dwell = bank.accumulate_dwell(dt)
+                if flush_dwell <= 0.0:
                     continue
                 level = (sys_.GetPowerLevel()
                          if hasattr(sys_, "GetPowerLevel") else sys_.PP_HIGH)
+                # One pulse: MaxDamage × intensity × distance factor × dwell
+                # (clean-room 0x00572A50; measured stbc-oracle bible §2.2).
                 damage = _phaser_damage_for_tick(
                     max_damage=bank.GetMaxDamage(),
                     max_damage_distance=bank.GetMaxDamageDistance(),
                     dist=dist,
-                    dt=dt,
+                    dt=flush_dwell,
                 ) * PHASER_INTENSITY_SCALE[level]
                 if damage > 0:
                     impact_point, impact_normal = combat._resolve_hit_point(

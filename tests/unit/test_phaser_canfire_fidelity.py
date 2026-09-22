@@ -79,14 +79,21 @@ def test_start_and_sustain_both_need_only_nonzero_charge():
     assert bank.CanFire() == 0
 
 
-def test_restart_after_depletion_needs_any_charge_at_all():
+def test_restart_after_depletion_needs_min_firing_charge():
+    """A bank that ran dry latches until MinFiringCharge (the Galaxy's
+    drained bank 5 did not relight at 0.45 of 5 while the trigger was held —
+    stbc-oracle `phaser_galaxy_front_57`); a bank that never ran dry starts
+    on any charge (test above)."""
     bank = make_charged_bank(min_firing=2.0, charge=2.0, max_charge=10.0)
+    bank._beam_on_countdown = 0.0          # past the beam-on delay
     bank.Fire(target=make_target())
+    bank._beam_on_countdown = 0.0
     bank._charge_level = 0.0
     bank.UpdateCharge(0.016)              # depletion auto-stop
     assert bank.IsFiring() == 0
-    assert bank.CanFire() == 0            # empty
-    bank._charge_level = 0.1              # any charge — restarts
+    bank._charge_level = 1.9              # below MinFiringCharge — latched
+    assert bank.CanFire() == 0
+    bank._charge_level = 2.0              # exactly MinFiringCharge — enough
     assert bank.CanFire() == 1
 
 

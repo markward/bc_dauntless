@@ -261,6 +261,27 @@ PHASER_DISCHARGE_BY_POWER_LEVEL = (0.35, 1.0, 1.0)      # PP_LOW, PP_MEDIUM, PP_
 # collapsing the two is the next bug of this shape).
 PULSE_COST_SCALE_BY_POWER_SETTING = (0.5, 1.0, 2.0)     # LOW, MED, HIGH
 
+# Beam timing, measured on the original exe (stbc-oracle bible §2.2 and the
+# per-bank rows of `phaser_high_front_57` / `phaser_galaxy_front_57`):
+#
+#   * A bank that has just lit (IsFiring true) neither drains nor damages for
+#     BEAM_ON_DELAY_S — two fire-timer thresholds (40 ticks). Its charge then
+#     drains at the discharge rate and its dwell accumulates.
+#   * Damage is not continuous: it is flushed as one pulse each time the
+#     dwell exceeds BEAM_DWELL_FLUSH_S (the clean-room `0x00572440` step 6
+#     threshold at `0x008E53E0`), the pulse being MaxDamage × intensity ×
+#     distance factor × dwell. Measured: the first quantum lands 1.156 s
+#     after IsFiring (= 0.656 + 0.5), then every 0.53 s; a Kessok beam's
+#     quantum is 106.25 = 400 × 0.5 × 0.53125; a Galaxy bank's 66.4.
+#   * The total a full charge delivers is the drain window minus the delay:
+#     four Kessok beams, 7 charge at 1.0/s → 800/s × (7.5 − 0.66) s ≈ 5 470.
+#
+# The threshold is tested against the dwell banked BEFORE this frame, and the
+# flush includes this frame's dt, so a pulse carries 32 ticks of dwell
+# (0.533 at 60 Hz, quantum 106.7) — what the rows show — not 31.
+BEAM_ON_DELAY_S = 2 * 0.33
+BEAM_DWELL_FLUSH_S = 0.5
+
 # Default PowerSetting.  ASSUMED, not RE'd: the SDK never calls
 # EnergyWeapon.SetPowerSetting (zero call sites) and the constructor value
 # was not read from the image.  MED (×1.0) is the neutral choice — change it
@@ -283,6 +304,13 @@ def _init_energy_weapon_state(self):
     self._power_setting: int = _DEFAULT_POWER_SETTING
     # Looped SFX handle started by Fire(), stopped by StopFiring().
     self._loop_handle = None
+    # Beam-on countdown and damage dwell — see BEAM_ON_DELAY_S and
+    # BEAM_DWELL_FLUSH_S. Both game-time. Pulse cannons never use them.
+    self._beam_on_countdown: float = 0.0
+    self._dwell: float = 0.0
+    # Set when a beam runs dry; a depleted bank does not restart until its
+    # charge is back to MinFiringCharge (see _charge_gate).
+    self._depleted: bool = False
 
 
 def _resolve_fire_sound(prop) -> str:
@@ -647,14 +675,18 @@ class _EnergyWeaponFireMixin:
         """Three gates:
 
           * ship alive — a dead ship's weapons never fire.
-          * charge — ``> 0``, to start AND to sustain.  MinFiringCharge is
-            NOT a fire gate: measured on the original exe, a Kessok beam
-            preset to charge 3 with MinFiringCharge 4 fires at the full
-            rate (stbc-oracle bible B8, `phaser_high_front_57_charge3`),
-            and pulse cannons fire on below it too (see PulseWeapon.CanFire).
-            The "≥ MinFiringCharge to START" rule this replaced was read off
-            an audit, not a capture; MinFiringCharge's only observed reader
-            is the AI's ConditionPulseReady "ready" threshold.
+          * charge — ``> 0`` to start or sustain, EXCEPT that a bank which
+            has run dry does not restart until it is back to
+            MinFiringCharge.  Measured on the original exe: a Kessok beam
+            preset to charge 3 with MinFiringCharge 4 fires at the full rate
+            (stbc-oracle bible B8, `phaser_high_front_57_charge3`), so
+            MinFiringCharge does not gate a fresh start; but the Galaxy's
+            bank 5, drained to 0 at 6.6 s, had not relit at 0.45 by 12.5 s
+            while the trigger stayed held (`phaser_galaxy_front_57`), so a
+            depleted bank does latch.  The restart threshold itself is only
+            bounded (> 0.45 on a 5-charge bank); MinFiringCharge is the one
+            authored value in range.  Pulse cannons use affordability
+            instead (PulseWeapon._charge_gate).
           * disabled-product — the bank's own condition times the parent
             system's condition must clear the authored DisabledPercentage
             threshold (``GetOverallConditionPercentage`` in the audit); a
@@ -682,8 +714,13 @@ class _EnergyWeaponFireMixin:
         return 1
 
     def _charge_gate(self) -> bool:
-        """Beams: any charge at all.  PulseWeapon overrides with 'can afford
-        the next shot'."""
+        """Beams: any charge at all — unless the bank ran dry, in which case
+        it must climb back to MinFiringCharge first (see CanFire).
+        PulseWeapon overrides with 'can afford the next shot'."""
+        if self._depleted:
+            if self._charge_level < self._min_firing_charge:
+                return False
+            self._depleted = False
         return self._charge_level > 0.0
 
     def Fire(self, target=None, offset=None) -> bool:
@@ -704,18 +741,45 @@ class _EnergyWeaponFireMixin:
         self._target = target
         self._target_offset = offset
         if not was_firing:
+            self._beam_on_countdown = BEAM_ON_DELAY_S
+            self._dwell = 0.0
             self._play_fire_sfx()
         return True
 
     def StopFiring(self) -> None:
         was_firing = self._firing
         self._firing = False
+        self._beam_on_countdown = 0.0
         if was_firing and self._loop_handle is not None:
             self._loop_handle.Stop()
             self._loop_handle = None
 
     def IsFiring(self) -> int:
         return 1 if self._firing else 0
+
+    def IsBeamOn(self) -> bool:
+        """True once a lit bank's beam-on delay has elapsed: it is now
+        draining charge and accumulating damage dwell."""
+        return self._firing and self._beam_on_countdown <= 0.0
+
+    def accumulate_dwell(self, dt: float) -> float:
+        """Advance the damage dwell by one frame; return the dwell to flush
+        (> 0 only on a flush frame), having reset it.  The threshold is
+        checked before this frame's dt is added — see BEAM_DWELL_FLUSH_S."""
+        if not self.IsBeamOn():
+            return 0.0
+        if self._dwell > BEAM_DWELL_FLUSH_S:
+            flushed, self._dwell = self._dwell + dt, 0.0   # the flush frame counts
+            return flushed
+        self._dwell += dt
+        return 0.0
+
+    def take_dwell(self) -> float:
+        """Hand back whatever dwell has accumulated (a beam swept off its
+        target or stopped delivers a final partial pulse — clean-room §12.4)
+        and reset it."""
+        flushed, self._dwell = self._dwell, 0.0
+        return flushed
 
     # EnergyWeapon.{Get,Set}PowerSetting (SWIG surface; zero SDK call sites).
     # The EMITTER's own power field — consumed by PulseWeapon's per-shot
@@ -734,6 +798,10 @@ class _EnergyWeaponFireMixin:
 
     def UpdateCharge(self, dt: float) -> None:
         if self._firing:
+            if self._beam_on_countdown > 0.0:
+                # Lit but not yet on: no drain until the beam-on delay is up.
+                self._beam_on_countdown -= dt
+                return
             self._charge_level = max(
                 0.0, self._charge_level - self._discharge_rate_per_second() * dt
             )
@@ -741,9 +809,9 @@ class _EnergyWeaponFireMixin:
                 # Depletion auto-stop. BC's banks discharge all the way
                 # to 0 while firing (visible on the WeaponsDisplay as the
                 # full black → red → yellow → green sweep during recharge).
-                # A restart needs only some charge — MinFiringCharge is not
-                # a fire gate (see CanFire).
+                # Latch: a restart needs MinFiringCharge (see CanFire).
                 # Route via StopFiring so the looped SFX handle is silenced.
+                self._depleted = True
                 self.StopFiring()
         else:
             # HEADROOM FIRST. A fully-charged idle bank has nothing to do, and

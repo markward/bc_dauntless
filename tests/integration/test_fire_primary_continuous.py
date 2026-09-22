@@ -110,12 +110,12 @@ def test_release_left_button_stops_phaser(galaxy_in_red_alert):
     ship.SetTarget(_target_ahead_of(ship))
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         App.g_kInputManager.OnKeyDown(App.WC_LBUTTON)
-        for _ in range(5):
+        for _ in range(10):               # 1.0 s: past the 0.66 s beam-on delay
             _advance_weapons([ship], dt=0.1)
         mid = [phasers.GetWeapon(i).GetChargeLevel() for i in range(phasers.GetNumWeapons())]
         firing_idxs = [i for i in range(phasers.GetNumWeapons()) if mid[i] < 5.0]
         assert len(firing_idxs) == 1, (
-            f"SingleFire expected 1 bank draining after 5 held ticks, got: {firing_idxs}"
+            f"SingleFire expected 1 bank draining after 10 held ticks, got: {firing_idxs}"
         )
         active = firing_idxs[0]
         assert phasers.GetWeapon(active)._firing is True

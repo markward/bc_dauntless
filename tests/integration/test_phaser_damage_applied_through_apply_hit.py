@@ -6,6 +6,7 @@ import pytest
 
 from engine.appc.math import TGPoint3
 from engine.host_loop import _advance_combat
+from tests.helpers.beams import prime_lit_banks
 
 
 def _target_with_shields(at_y=50.0, hull_max=10000.0, shields_strength=5000.0):
@@ -44,6 +45,7 @@ def test_held_fire_decreases_target_shield(galaxy_red):
     front_before = target.GetShields().GetCurrentShields(0)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
+        prime_lit_banks(sys_)
         _advance_combat([ship, target], dt=0.1, ship_instances=None)
     front_after = target.GetShields().GetCurrentShields(0)
     assert front_after < front_before, (
@@ -113,6 +115,7 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch
     with patch.object(combat, "apply_hit", spy), \
          patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
+        prime_lit_banks(sys_)
         _advance_combat([ship, target], dt=0.1,
                         ship_instances={target: sentinel})
 

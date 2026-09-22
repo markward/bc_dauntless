@@ -60,6 +60,7 @@ def test_phaser_drain_is_the_power_table_not_the_authored_rate(
         level, expected_after_half_second):
     bank = _cgsov_bank(level)
     assert bank.Fire(target=None, offset=None)
+    bank._beam_on_countdown = 0.0     # past the 0.66 s beam-on delay (oracle B6)
     bank.UpdateCharge(dt=0.5)
     assert bank.GetChargeLevel() == pytest.approx(expected_after_half_second)
     assert bank.IsFiring() == 1
@@ -76,6 +77,7 @@ def test_phaser_still_stops_on_the_update_that_empties_it():
     """Q-D7: exhaustion stops the beam on the same update, no interval."""
     bank = _cgsov_bank(PhaserSystem.PP_HIGH)
     assert bank.Fire(target=None, offset=None)
+    bank._beam_on_countdown = 0.0     # past the beam-on delay
     bank.UpdateCharge(dt=1.0)
     assert bank.GetChargeLevel() == 0.0
     assert bank.IsFiring() == 0

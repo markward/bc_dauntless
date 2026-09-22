@@ -199,6 +199,8 @@ def test_advance_combat_routes_phaser_damage_at_the_manual_offset(monkeypatch):
     ship.set_manual_target_offset(TGPoint3(0.0, 0.0, 5.0))
     sys_.StartFiring(target=target, offset=ship.GetTargetOffsetTG())
     assert b.IsFiring() == 1
+    from tests.helpers.beams import prime_lit_banks
+    prime_lit_banks(sys_)
 
     seen = []
     real = combat_mod._resolve_hit_point
