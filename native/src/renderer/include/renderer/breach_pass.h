@@ -13,6 +13,7 @@
 #include <scenegraph/breach_events.h>
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
 
+#include <renderer/frame.h>                 // Lighting
 #include <renderer/instance_field_cache.h>  // InstanceFieldCache::Entry
 #include <voxel/volume.h>
 
@@ -99,7 +100,8 @@ public:
                 const ModelLookup& lookup,
                 CarveFieldCache& carve_cache,
                 InstanceFieldCache* field_cache,
-                float now = 0.f);
+                float now = 0.f,
+                const Lighting& lighting = Lighting{});
 
     /// Draw the breach interior for ONE instance given its ORIGINAL fill,
     /// its already-built per-instance damage-field entry, its hull `model`,
@@ -153,7 +155,8 @@ public:
                        Pipeline& pipeline,
                        float breach_age = scenegraph::kRimLife + 1.f,
                        const glm::vec3& breach_center = glm::vec3(0.0f),
-                       float breach_radius = 0.0f);
+                       float breach_radius = 0.0f,
+                       const Lighting& lighting = Lighting{});
 
     /// Number of PROXY SUBMISSIONS this pass instance has issued so far —
     /// one per `render()`/`draw_instance()` call that actually draws
@@ -201,6 +204,7 @@ private:
                          const glm::vec3& breach_center,  // that event's own centre, body frame
                          float breach_radius,          // that event's own visible radius
                          unsigned int damage_tex,   // current animation frame texture
+                         const Lighting& lighting,  // scene sun + ambient (world space)
                          bool interior_shell = false);  // true = back-face interior shell
 
     // Draw the hull's BACK faces under the same stencil: the inside of the
@@ -222,7 +226,8 @@ private:
                              float breach_age,
                              const glm::vec3& breach_center,
                              float breach_radius,
-                             unsigned int damage_tex);
+                             unsigned int damage_tex,
+                             const Lighting& lighting);
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.

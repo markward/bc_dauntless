@@ -807,11 +807,19 @@ namespace {
 // than trading one bound for another. This guard is back to validating the
 // ONE loop that has ever been genuinely necessary.
 //
-// Matches EXACTLY ONE for-loop (asserted below) and additionally requires
-// it to appear textually after `bool raymarch_breach_cavity(` -- today
-// there is only one for-loop in the whole file, so the first check alone
-// would already catch a second, earlier loop appearing (e.g. a future
-// change reintroducing a search); the anchor is a second, independent
+// Round 4 (scene-lit interior) added a SECOND loop to this file, in main():
+// the directional-light accumulation. It is not a march and has nothing to do
+// with this guard's subject, so the search is now scoped to
+// raymarch_breach_cavity's own BODY rather than to the whole file -- the
+// function's text from its signature to the first line-initial `}`, which is
+// its closing brace (every brace inside it is indented). The light loop is
+// covered by its own assertion below instead: it must be bounded by the named
+// array-size constant, never by the raw uniform, for the same reason this
+// function's own bound must be a compile-time constant.
+//
+// Matches EXACTLY ONE for-loop within that body (asserted below) and
+// additionally requires it to appear textually after
+// `bool raymarch_breach_cavity(` -- the anchor is a second, independent
 // reason the SAME match couldn't silently be validating the wrong loop.
 TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const std::string src = read_file(shader_path("breach.frag"));
@@ -819,17 +827,34 @@ TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const std::size_t fn_pos = src.find("bool raymarch_breach_cavity(");
     ASSERT_NE(fn_pos, std::string::npos) << "breach.frag: raymarch_breach_cavity not found";
 
+    // raymarch_breach_cavity's body: signature to its own closing brace, which
+    // is the first `}` at the start of a line after fn_pos (inner braces are
+    // all indented).
+    const std::size_t body_end = src.find("\n}", fn_pos);
+    ASSERT_NE(body_end, std::string::npos)
+        << "breach.frag: raymarch_breach_cavity's closing brace not found";
+    const std::string body = src.substr(fn_pos, body_end - fn_pos);
+
     static const std::regex loop_re(R"(for\s*\(\s*int\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*(\w+)\s*;)");
-    const auto matches_begin = std::sregex_iterator(src.begin(), src.end(), loop_re);
+    const auto matches_begin = std::sregex_iterator(body.begin(), body.end(), loop_re);
     const auto matches_end   = std::sregex_iterator();
     const std::vector<std::smatch> matches(matches_begin, matches_end);
     ASSERT_EQ(matches.size(), 1u)
-        << "breach.frag: expected exactly one bounded for-loop matching "
-           "'for (int i = 0; i < N; ...)', found " << matches.size()
-        << " -- this guard validates a SPECIFIC loop's bound and must be updated (not "
-           "silently pass) if a loop count changes anywhere in this file";
+        << "breach.frag: expected exactly one bounded for-loop inside "
+           "raymarch_breach_cavity's body, found " << matches.size()
+        << " -- this guard validates THAT loop's bound and must be updated (not "
+           "silently pass) if the march gains or loses a loop";
+
+    // The other loop in this file (main()'s directional-light accumulation)
+    // must be bounded by the named array-size constant, never by the raw
+    // uniform: the uniform is set by the CPU and an over-long value is both a
+    // hang and an out-of-bounds read of u_dir_light_dir_ws.
+    EXPECT_NE(src.find("int dir_count = min(u_dir_light_count, MAX_DIR_LIGHTS);"),
+              std::string::npos)
+        << "breach.frag: the directional-light loop must clamp its bound to "
+           "MAX_DIR_LIGHTS rather than trusting u_dir_light_count directly";
     const std::smatch& m = matches.front();
-    ASSERT_GT(static_cast<std::size_t>(m.position(0)), fn_pos)
+    ASSERT_GT(static_cast<std::size_t>(m.position(0)) + fn_pos, fn_pos)
         << "breach.frag: the matched for-loop appears before raymarch_breach_cavity's own "
            "signature -- this guard is meant to validate THAT function's loop bound";
     const std::string bound_name = m[1].str();

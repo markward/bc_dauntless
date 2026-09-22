@@ -95,15 +95,43 @@ uniform float     u_tex_scale;     // body-units -> texture-period scale
 // per draw, not per fragment) -- the ray origin every fragment marches from,
 // and also the eye point the interior wall is shaded against.
 //
-// This stage deliberately holds NO world-space uniform. Everything it reads --
-// the damage field, the fill volume, hit_point, the field gradient,
-// u_breach_center -- is body frame, so a world-space vector here has nothing
-// legal to combine with. Rounds 1-3 carried a ship world matrix and a
-// world-space camera position for the lighting term alone; both are gone, and
-// breach_pass.cc no longer uploads them. The vertex stage still needs
-// u_ship_world_inv (see breach.vert) to get from its NODE-LOCAL attribute
-// into this frame in the first place.
+// Everything this stage reads about GEOMETRY -- the damage field, the fill
+// volume, hit_point, the field gradient, u_breach_center -- is body frame, and
+// stays that way: a world-space vector has nothing legal to combine with any
+// of it. The ONE exception is light, which genuinely lives in world space and
+// arrives through u_ship_world below; see that uniform's comment for the
+// cross-frame bug rounds 1-3 shipped by being loose about this. The vertex
+// stage still needs u_ship_world_inv (see breach.vert) to get its NODE-LOCAL
+// attribute into this frame in the first place.
 uniform vec3  u_camera_pos_body;
+
+// ── Scene lighting ────────────────────────────────────────────────────────
+// This stage used to hold NO world-space uniform at all, and the comment above
+// u_camera_pos_body still explains why that was right for everything it reads:
+// the damage field, the fill volume, hit_point and the field gradient are all
+// body frame.
+//
+// Light is the one thing that genuinely lives in world space. Before these,
+// the interior was lit by a key light glued to the camera
+// ("0.35 + 0.55 * dot(nf, view_dir)"), so a breach could never face away from
+// its own light and never sat in shadow -- it was brightest exactly where you
+// looked at it, while the hull around it was sun-lit and shadow-mapped. That
+// mismatch is what made damage read as a raw crust pasted onto a lit ship.
+//
+// The trap this must not fall back into: rounds 1-3 carried a ship world
+// matrix AND a world-space camera position, then dotted a BODY-frame normal
+// against the world-space camera -- a dot product across two frames, correct
+// only while the instance carried no rotation. The rule is that a vector is
+// converted EXPLICITLY, at the point of use, and the dot product happens
+// between two vectors that are provably in the same frame. u_ship_world below
+// is the only conversion, and main() uses it for exactly that.
+uniform mat4 u_ship_world;        // instance body -> world (no node chain)
+
+const int MAX_DIR_LIGHTS = 4;
+uniform vec3 u_ambient_light;
+uniform int  u_dir_light_count;
+uniform vec3 u_dir_light_dir_ws[MAX_DIR_LIGHTS];   // direction TOWARD the light
+uniform vec3 u_dir_light_color[MAX_DIR_LIGHTS];    // colour x dimmer
 
 // Molten-rim emissive (hull-breach-2c).
 // u_breach_age: age of the matching breach event (large value → cold when no match).
@@ -431,6 +459,71 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
 
 out vec4 frag_color;
 
+// ── Soot cloud ────────────────────────────────────────────────────────────
+// Body-frame value noise, two octaves. This exists so the interior reads as
+// BURNT material rather than as a flat fill: without it, a fragment with no
+// Damage*.tga bound resolves to exactly kBase -- one grey, identical at every
+// point on the wall -- and even with the texture the result is uniform enough
+// to read as a pale crust pasted on the hull. Body frame (not screen, not
+// world) so the pattern is welded to the ship and does not crawl as the hull
+// turns or the camera moves.
+float bh3(vec3 p) {
+    return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+}
+
+float bnoise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);          // smoothstep: C1, no lattice creases
+    return mix(mix(mix(bh3(i + vec3(0,0,0)), bh3(i + vec3(1,0,0)), f.x),
+                   mix(bh3(i + vec3(0,1,0)), bh3(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix(bh3(i + vec3(0,0,1)), bh3(i + vec3(1,0,1)), f.x),
+                   mix(bh3(i + vec3(0,1,1)), bh3(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+// Two octaves is deliberate, not a budget cut: one reads as regular blobs, and
+// past two the detail is finer than the triplanar texture already supplies.
+// Frequencies are in body units -- kSootLowFreq is roughly a carve's own width
+// (a real carve is 3-30 model units), so the large shapes are breach-sized and
+// the second octave breaks up their edges.
+const float kSootLowFreq  = 1.0 / 26.0;
+const float kSootHighFreq = 1.0 / 9.0;
+
+float soot_cloud(vec3 p_body) {
+    float n = bnoise3(p_body * kSootLowFreq) * 0.68
+            + bnoise3(p_body * kSootHighFreq) * 0.32;
+    return clamp(n, 0.0, 1.0);
+}
+
+// ── Cavity occlusion ──────────────────────────────────────────────────────
+// A hole is a recess, and little ambient light reaches the bottom of one. The
+// depth is already known for free -- the raymarch's own distance from the hull
+// surface to the wall it hit -- so this needs no screen-space pass, no sample
+// kernel and no depth buffer: it is analytic, exact for the ray actually being
+// shaded, and costs one length() that the march has already implied.
+//
+// (This is why the interior does NOT want SSAO: the term a screen-space pass
+// would approximate here is one this shader can simply compute, and an SSAO
+// multiply would additionally have to be masked off every emissive in the
+// frame -- the molten rim below, glow maps, window lights.)
+//
+// kAoDepthScale is in body units, sized against a real carve's along-normal
+// extent (2.7-27 model units: kCarveDepthFactor 0.45 of a 3-30 unit radius,
+// centred on the surface). kAoFloor keeps the deepest wall readable rather
+// than crushing it to black -- an interior you cannot make out at all reads as
+// a hole to space again, which is the bug this whole change exists to remove.
+const float kAoDepthScale = 22.0;
+const float kAoFloor      = 0.30;
+
+// The shell (the far plating seen through a hole) has no march to measure, and
+// needs none: it IS the deepest surface the hole can show, so it takes the
+// fully-occluded end of the ramp directly.
+const float kShellAoDepth = kAoDepthScale;
+
+float cavity_occlusion(float depth) {
+    return mix(1.0, kAoFloor, clamp(depth / kAoDepthScale, 0.0, 1.0));
+}
+
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
 // Copied from opaque.frag for consistent cooling colour across all damage VFX.
 vec3 blackbody(float heat) {
@@ -467,6 +560,9 @@ void main() {
     // rim belongs to the cut edge on the struck sheet, not to the floor you
     // see through it.
     float fillv = 1.0;
+    // Distance from the hull's outer surface to the point being shaded: how
+    // far down the shaft this fragment is. See cavity_occlusion().
+    float cavity_depth = 0.0;
 
     if (u_interior_shell != 0) {
         // ── Interior shell ─────────────────────────────────────────────────
@@ -497,6 +593,7 @@ void main() {
         // cavity).
         hit_normal = normalize(v_body_normal);
         if (dot(hit_normal, rd) > 0.0) hit_normal = -hit_normal;
+        cavity_depth = kShellAoDepth;
     } else {
 
     // ── March to the far wall of the cavity ─────────────────────────────────
@@ -521,6 +618,9 @@ void main() {
     fillv = texture(u_fill, tc).r;
     if (fillv < u_fill_backing) discard;
 
+    // The march's own length: ro is the hull surface, hit_point the wall.
+    cavity_depth = length(hit_point - ro);
+
     }   // end scoop branch (u_interior_shell == 0)
 
     // ── Triplanar blend ────────────────────────────────────────────────────
@@ -538,14 +638,28 @@ void main() {
     vec3 cz  = texture(u_damage_tex, uvw.xy).rgb;   // project along +Z
     vec3 tex = cx * w.x + cy * w.y + cz * w.z;
 
-    // Neutral metallic base so the cross-section always reads as structural
-    // hull interior; Damage.tga modulates it. With no texture bound (mod ship /
-    // missing asset) the sample is ~0, leaving just the muted grey base —
-    // graceful degradation, never a black hole to the stars. The texture now
-    // DOMINATES (kBase is only a dark floor at the texture's darkest spots) so
-    // the scorch detail reads clearly instead of being washed out by the base.
-    const vec3 kBase = vec3(0.16, 0.17, 0.19);
-    tex = kBase + tex * 1.1;
+    // Charred structural interior. Damage.tga modulates a dark, slightly warm
+    // soot base; with no texture bound (mod ship / missing asset) the sample is
+    // ~0 and the soot cloud below still carries the material, so it degrades to
+    // burnt metal rather than to a flat grey slab -- and never to a black hole
+    // to the stars.
+    //
+    // kBase and kTexGain were 0.16/0.17/0.19 and 1.1: a pale neutral base at
+    // near-unity gain, which combined with a 0.35 ambient FLOOR in the old
+    // lighting term to make every breach brighter than the shadowed hull around
+    // it. That is the "applied raw / uncharred" look. The base is now genuinely
+    // dark and the texture gain sits below unity, so the sunlit case still
+    // reads as scorched rather than as bare plating.
+    const vec3  kBase    = vec3(0.100, 0.090, 0.083);
+    const float kTexGain = 0.75;
+    tex = kBase + tex * kTexGain;
+
+    // Soot cloud: large, soft, breach-sized patches of heavier charring, in
+    // body frame so they stay welded to the hull. Multiplicative, so it darkens
+    // and mottles the material without ever adding light.
+    const float kSootMin = 0.50;   // deepest char
+    const float kSootMax = 1.25;   // scoured-back metal between the char
+    tex *= mix(kSootMin, kSootMax, soot_cloud(hit_point));
 
     // ── Double-sided lighting ──────────────────────────────────────────────
     // The wall this shades is a point INSIDE the hull found by the raymarch,
@@ -573,20 +687,40 @@ void main() {
     // construction.
     vec3 view_dir = normalize(u_camera_pos_body - hit_point);
     // n (hit_normal) already points out of the wall into the open cavity;
-    // faceforward flips it toward the camera for the lighting dot product,
-    // same role v_body_normal played for the old sphere.
+    // faceforward flips it toward the camera, so the wall you are looking at
+    // is the face that gets lit.
     vec3 nf = faceforward(n, -view_dir, n);
 
-    // Fixed key light from camera-ish direction: interior reads as shadowed
-    // structural guts rather than a bright splat.
-    float ndl   = max(dot(nf, view_dir), 0.0);
-    float light = 0.35 + 0.55 * ndl;
+    // ── Scene lighting ─────────────────────────────────────────────────────
+    // Body -> world, explicitly, right here, so the dot products below are
+    // between two vectors provably in the SAME frame (see u_ship_world's own
+    // comment for the cross-frame bug this shape exists to prevent). BC hulls
+    // carry uniform scale only, so mat3 is the correct normal transform and
+    // normalize() absorbs the scale factor.
+    vec3 n_ws = normalize(mat3(u_ship_world) * nf);
+
+    vec3 light = u_ambient_light;
+    // Clamped to the array's own size, not trusted from the uniform: an
+    // unbounded (or over-long) loop in a fragment shader is a hang and an
+    // out-of-bounds read, not a slow frame. Same reason kBreachMaxSteps caps
+    // the raymarch with a named compile-time constant.
+    int dir_count = min(u_dir_light_count, MAX_DIR_LIGHTS);
+    for (int i = 0; i < dir_count; ++i) {
+        vec3 L = normalize(u_dir_light_dir_ws[i]);
+        light += max(dot(n_ws, L), 0.0) * u_dir_light_color[i];
+    }
 
     // Mute: desaturate slightly, keep brightness moderate. Keep more of the
     // texture's own colour (0.75) so the scorch detail reads.
     float luma = dot(tex, vec3(0.299, 0.587, 0.114));
     vec3 muted  = mix(vec3(luma), tex, 0.75);
-    vec3 c      = muted * light;
+    // Occlusion multiplies the LIGHT, not the material: a recess receives less
+    // of both the sun and the ambient, which is exactly what makes a hole read
+    // as something you are looking into. The emissive terms below are added
+    // AFTER this and are deliberately untouched -- a molten rim is a source,
+    // not a surface, and occluding it would dim the one thing that should still
+    // glow out of a dark hole.
+    vec3 c      = muted * light * cavity_occlusion(cavity_depth);
 
     // ── Molten rim emissive ──────────────────────────────────────────────────
     // heat: 1 at birth (age=0) → 0 at kRimLife, ADDITIONALLY gated by

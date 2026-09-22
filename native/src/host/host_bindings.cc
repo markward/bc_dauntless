@@ -966,7 +966,7 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.breach");
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_instance_field_cache.get(),
-                                  g_decal_game_time);
+                                  g_decal_game_time, g_lighting);
         }
         if (g_shield_pass) {
             DAUNTLESS_FRAME_SCOPE("space.shield");
