@@ -482,8 +482,11 @@ TEST_F(HullClipTest, GlowIsUntouchedWellBeyondTheBreach) {
     set_uniforms(prog);
     set_glow_only(prog, white_tex_);
     prog.set_int("u_carve_enabled", 1);
-    // r = 2, so the kill reaches 3 units. Centre is 8 away: untouched.
-    const glm::vec4 sphere(0.0f, 0.0f, 8.0f, 2.0f);
+    // Must sit beyond kGlowKillReachMax (6) * r, or this stops testing
+    // locality and starts testing the falloff curve. r = 2 puts the outermost
+    // lobe at 12; the centre is 30 away, comfortably clear of it. If that
+    // constant is raised again, MOVE THIS -- do not relax the assertion.
+    const glm::vec4 sphere(0.0f, 0.0f, 30.0f, 2.0f);
     const glm::vec3 normal(0.0f, 0.0f, 1.0f);
     prog.set_int("u_carve_count", 1);
     prog.set_vec4_array("u_carve_spheres", &sphere, 1);
@@ -493,7 +496,7 @@ TEST_F(HullClipTest, GlowIsUntouchedWellBeyondTheBreach) {
     const auto px = read_center();
 
     EXPECT_EQ(px[0] + px[1] + px[2], baseline)
-        << "A breach 4 radii away changed the glow here — the suppression is "
+        << "A breach 15 radii away changed the glow here — the suppression is "
            "not local to the hole";
 }
 

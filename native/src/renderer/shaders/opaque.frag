@@ -846,8 +846,18 @@ const float kFieldSdfOffset  = 1.25;
 // hull, the same failure the procedural scuff relief hit repeatedly. Same
 // tool the hole's own rim uses: an azimuthal vnoise3 seeded from the carve
 // centre, so it is stable across frames and cannot crawl.
-const float kGlowKillReachMin = 1.5;
-const float kGlowKillReachMax = 3.0;
+// Raised from 1.5/3.0 after a live look -- the dead zone read as too tight
+// around the tear. The 2:1 ratio between them is kept deliberately: widening
+// only the max would stretch the lobes until the edge read as blotchy rather
+// than torn.
+//
+// NOTE these are multiples of the CARVE radius, so a big breach gets a
+// proportionally big dark section. That is the intent (a heavy hit takes out
+// more of the deck), but it has only been eyeballed on small-to-mid carves --
+// if a large breach over-darkens, the fix is an absolute cap in model units,
+// not a smaller multiplier, which would under-do the common case.
+const float kGlowKillReachMin = 3.0;
+const float kGlowKillReachMax = 6.0;
 const float kGlowLobeFreq     = 2.5;   // lobes around the breach (rim uses 4.0)
 
 // Back-face cutoff for the glow suppression. Deliberately its OWN constant
