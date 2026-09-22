@@ -109,7 +109,7 @@ for. Every hook that fires on a set transition, classified:
   the fifth refused attempt.
 - **`LinkMenuToPlacement` — 9 sites**, arrival geometry only.
 
-**Conclusion: no mission needs editing**, provided four engine rules hold (below).
+**Conclusion: no mission needs editing**, provided five engine rules hold (below).
 The residual is arrival *geometry*, a live-check list.
 
 ### Our engine
@@ -128,7 +128,11 @@ The residual is arrival *geometry*, a live-check list.
   control bound to it.
 - **The tunnel exists and is load-bearing** — `engine/appc/warp.py` clears
   targets, silences weapons, stands down player AI, plays VFX, routes through the
-  `"warp"` set, and arrives at **exactly zero velocity** (settled 2026-08-10).
+  `"warp"` set, and arrives at **exactly zero velocity** (settled 2026-08-10). Critically, it
+  also **deletes the source set** (`_WarpDepartAction`: render teardown hook,
+  then `g_kSetManager.DeleteSet`), so a set you leave today is destroyed and
+  re-created from its module on return. The two calls are already separate,
+  which is what makes §3 possible.
 - **Followers already handle a vanished player** —
   `AI/PlainAI/FollowThroughWarp.py` warps to whatever set the followed object is
   in, arriving 40 GU behind it, re-checked on a ~10 s cadence. 34 call sites across
@@ -230,9 +234,31 @@ Beol 3 cases — and each is a deliberate entry in the overrides block.
 with the system map. It has a region module so it is a valid NPC warp
 destination.
 
-**Regions** are the existing sets, loaded once and **never unloaded**. Nothing
-sleeps. A mission's ships parked at a region are still there whenever the player
-arrives, by any route.
+**Set lifetime changes, and this is the one real change to existing behaviour.**
+Today, warping away from a set **destroys it**: `warp.py:_WarpDepartAction`
+calls the render teardown hook and then `g_kSetManager.DeleteSet(name)`. A
+region you leave is gone, and arriving re-creates it from its module — so
+mission ships staged there do *not* persist.
+
+Within one system that must stop. Regions are created once when the system is
+entered and **are not deleted until the player leaves the system entirely**.
+Crossing to another *system* tears the old one down exactly as today. This is
+what makes "the ambush is still sitting where the mission put it, however you
+arrive" true rather than aspirational.
+
+**Set lifetime and render realization are separate concerns**, and the warp path
+already treats them as two calls. Only the second changes:
+
+| | Today | Within a system |
+|---|---|---|
+| Render teardown (`teardown_set_objects`) | on departure | driven by the streamer, per region, by distance |
+| `DeleteSet` | on departure | only on leaving the system |
+
+So distant regions keep simulating (their ships exist, their AI runs, their
+mission state advances) but hold no renderer instances. Bodies are the exception
+— they are realized **system-wide** regardless, because the celestial layer draws
+them from everywhere. That bounds the render cost to roughly the system's body
+count (~15 for the largest systems), not to every region's ships.
 
 **The hand-off** — one new operation on the set layer: *move this ship from set A
 to set B, place it here, keep its heading and velocity*. No tunnel, no stop, no
@@ -253,9 +279,12 @@ supplies the celestial layer's draw list and runs the dash.
   into and out of the space set (rule B2 — the space set must be a valid warp
   destination). Ships without a follow order stay in their region.
 
-**Deliberately not built: sleeping distant regions.** Every region in every
-system keeps simulating exactly as today. If 8-region systems prove too costly,
-sleeping is a later optimisation *with a measurement behind it*.
+**Deliberately not built: sleeping distant regions' simulation.** Render
+realization is scoped by distance (above), but AI, motion and combat keep
+iterating every set exactly as today — that is what lets a mission's off-screen
+duel run, and it is load-bearing for E2M6-style scripting. If the extra resident
+regions prove too costly once 8-region systems are live, sleeping *simulation* is
+a later optimisation **with a measurement behind it**, not a guess.
 
 ### 4. The celestial layer
 
@@ -270,10 +299,14 @@ renderer already applies to suns and lens flares (`sun_pass.cc:119`,
 `lens_flare_pass.cc:93`): drawn at a scaled distance preserving apparent size, so
 the far plane need not stretch to 100,000 GU and depth precision is unaffected.
 
+This requires bodies to be render-realized system-wide, which is the exception
+carved out in §3. Ships stay scoped to nearby regions.
+
 **Cost is a new unknown.** An 8-region system draws up to ~15 bodies where today
-it draws one or two. They are simple objects at distance and this is expected to
-be cheap, but that is an expectation, not a measurement — the frame profiler,
-against a combat scene, is the check.
+it draws one or two, and holds several regions' sets resident where today it
+holds one. They are simple objects at distance and this is expected to be cheap,
+but that is an expectation, not a measurement — the frame profiler, against a
+combat scene, is the check.
 
 ### 5. The dash — in-system warp
 
@@ -343,7 +376,7 @@ planet that large; the environmental-damage band (authored separately, does not
 scale itself); and whether a body that size looks right lit by a real sun at real
 distance rather than the 70,000-GU stand-in it was authored against.
 
-## The four engine rules the audit depends on
+## The five engine rules the audit depends on
 
 These are the load-bearing invariants. Each gets a guard test.
 
@@ -353,6 +386,7 @@ These are the load-bearing invariants. Each gets a guard test.
 | **B2** | The space set is a valid NPC warp destination (has a region module), so `FollowThroughWarp` works unchanged. |
 | **C** | System-to-system Set Course keeps BC's tunnel sequence. Without it, E6M1 crashes. |
 | **D** | Dash engage and region exit both run the warp-button gate, so mission refusals hold. |
+| **E** | Within a system, leaving a region never calls `DeleteSet`. Only leaving the *system* does. Render teardown is driven by distance instead. |
 
 ## Testing
 
