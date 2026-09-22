@@ -468,6 +468,291 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
 // removes both failure modes at once, rather than trading one for the
 // other.
 
+
+// === HULL_CUT_DECISION BEGIN === KEEP IN SYNC with breach.frag's copy between its own matching markers -- enforced by native/tests/renderer/hull_cut_decision_sync_test.cc
+// ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
+// Discard hull fragments inside any active carve sphere. The breach pass
+// renders the exposed interior (scoop) within the same spheres, so hole and
+// interior align by construction. u_carve_count == 0 (or disabled) = stock path.
+//
+// u_carve_enabled == 0 is the stock path (zero per-fragment cost).
+uniform int  u_carve_enabled;
+
+const int MAX_CARVES = 24;
+uniform int  u_carve_count;                    // 0 = no clip
+uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
+uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
+
+// ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
+// Projects Damage.tga's alpha channel onto the hull in an annular band around
+// each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
+// u_frame_enabled == 0 (no GL context / no texture / no carves) = stock path.
+uniform sampler2D u_damage_decal;   // Damage.tga: RGB=scar colour, A=lattice stencil
+uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
+
+// Framework lattice constants (eyeball-tunable). The stencil applies INSIDE the
+// breach: hull struts remain where Damage.tga's alpha is opaque, gaps reveal the
+// interior behind. The surrounding hull is never touched.
+const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
+const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this.
+                                  // A WEAK lever: Damage.tga's alpha is close to
+                                  // binary, so 42.1% of the stencil is opaque at
+                                  // 0.5 and still 38.4% at 0.9. Raising it barely
+                                  // opens the breach; kOpenCore is the real knob.
+const float kOpenCore     = 0.75; // inner fraction of the breach RADIUS always fully
+                                  // open (no struts). Area goes as the square, so
+                                  // this is 56% of the breach open by area, with the
+                                  // struts confined to a torn outer rim.
+                                  //
+                                  // Was 0.35 -- only 12% of the area, leaving ~37% of
+                                  // every breach bridged by a lattice spread across
+                                  // the whole opening. That reads as a crust on the
+                                  // hull rather than a hole through it: you perceive
+                                  // the grille, not the gap.
+
+// breach shape — KEEP IN SYNC with breach.vert.
+// OBLATE spheroid centred on the hull surface: FULL lateral radius (original
+// hole width), compressed to kDepthFactor along the normal (shallow). Noise
+// perturbs the lateral radius by azimuth (jagged rim).
+const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
+const float kShapeAmp    = 0.25;
+const float kShapeFreq   = 4.0;
+const float kPhase       = 0.13;
+
+// Field-brush dilation, in CELLS. GLSL const has no linkage across the
+// C++/GLSL boundary, so these are this shader's own copies of
+// voxel::kCarveDepthFloorCells and voxel::kCarveFieldOffsetCells --
+// NOT independently chosen values. HullFieldClip.GlslBrushConstantsMatchCxx
+// fails if they drift. See field_brush.h for the derivation and the measured
+// coverage they buy.
+const float kFieldDepthFloor = 1.25;
+const float kFieldSdfOffset  = 1.25;
+
+// Body-space erosion of the FIELD's hole edge, so a hole cut beyond the
+// 24-carve ring gets a broken rim instead of the brush's smooth ellipsoid.
+// Tracked carves do not use this -- they have a real per-carve azimuth and
+// their own noise (kShapeAmp above); beyond the ring there is no per-carve
+// frame to build an azimuth from, which is the whole point of being out
+// there, so the perturbation has to come from a body-space field instead.
+//
+// ONE-SIDED BY CONSTRUCTION: vnoise3 returns [0,1] and the term is ADDED to
+// the iso margin, so it can only ever RAISE the threshold and SHRINK the
+// hole. A signed version (the *2-1 remap the sphere block's own rim noise
+// uses) would grow the hole past the region field_brush.cc guarantees
+// damage in, putting un-backed hull at the rim -- the see-through defect
+// this plan removes. HullFieldClip.FieldRimNoiseOnlyShrinksTheHole guards
+// the source text; FieldRimNoiseNeverCutsBelowThePlainMargin guards the
+// behaviour. breach.frag gets this term too, and must: it runs THIS function,
+// verbatim, so that its interior shell keeps exactly what the hull did not
+// cut. It used to be deliberately excluded here, on the reasoning that a
+// LOWER threshold in breach.frag kept hole (subset of) interior -- true of the
+// scoop's raymarch ENTRY, but backwards for the shell, which DISCARDS above
+// the threshold and so threw away more hull than the hull itself cut. That
+// asymmetry was the one-way hole.
+//
+// 0.06 in sample_hull_field's return units is about half a cell: scale is
+// 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
+// after the /255 normalisation. Because scale is proportional to cell, this
+// is the same half cell on every ship without needing a uniform.
+const float kFieldRimNoise = 0.06;
+const float kFieldRimFreq  = 0.35;   // cycles per model unit
+
+float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
+float vnoise3(vec3 p){
+    vec3 i = floor(p), f = fract(p);
+    vec3 u = f*f*(3.0-2.0*f);
+    float n000=vh3(i), n100=vh3(i+vec3(1,0,0)), n010=vh3(i+vec3(0,1,0)), n110=vh3(i+vec3(1,1,0));
+    float n001=vh3(i+vec3(0,0,1)), n101=vh3(i+vec3(1,0,1)), n011=vh3(i+vec3(0,1,1)), n111=vh3(i+vec3(1,1,1));
+    float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x), nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
+    return mix(mix(nx00,nx10,u.y), mix(nx01,nx11,u.y), u.z);
+}
+
+// Was the hull cut away at this body-frame point?
+//
+// THE one place that answers it. It used to live inline in this file's main(),
+// which meant anything else needing the same answer had to approximate it --
+// and the breach pass's interior shell did exactly that, testing the RAW field
+// where this tests the field only outside a tracked carve's dilated region and
+// at a threshold raised by rim noise. The shell therefore threw away plating
+// the hull itself keeps, and you saw stars through a hole whose far side
+// showed intact hull: a ONE-WAY hole, live-reported on the Galaxy's forward
+// saucer. "The cut and the interior are two different shapes" is the same root
+// cause as the original see-through bug; this function exists so there is only
+// one shape.
+//
+// Returns true = cut away here. The CALLER decides what to do with that.
+bool hull_cut_at(vec3 p_body) {
+    bool field_suppressed = false;
+    // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
+    // out of the carve loop below, where it was recomputed for every one of up
+    // to 24 active carves on every fragment.
+    float cellmin = min(u_hull_field_cell.x,
+                        min(u_hull_field_cell.y, u_hull_field_cell.z));
+    if (u_carve_enabled != 0 && u_carve_count > 0) {
+        for (int i = 0; i < u_carve_count; i++) {
+            vec3 c  = u_carve_spheres[i].xyz;
+            float r = u_carve_spheres[i].w;
+            vec3 n  = u_carve_normals[i];
+            // Oblate breach centred on the hull surface: full lateral radius,
+            // shallow along the normal.
+            vec3 v       = p_body - c;
+            float along  = dot(v, n);
+            vec3 lateral = v - along * n;
+            float ld     = length(lateral);
+            // Region the FIELD BRUSH dilated this carve to (field_brush.cc).
+            // The field is deliberately generous -- a carve is rounded up to
+            // what the lattice can hold -- so suppressing the field only
+            // inside the nominal oblate would let it cut a smooth ring
+            // around every tracked hole, erasing the noise rim and the
+            // struts. This bound is a strict superset of the `e < 1.0` hole
+            // test below (its lateral extent is r*(1+kShapeAmp) >= r_eff),
+            // which is why no union with the unperturbed test is needed.
+            // Computed OUTSIDE the guard below on purpose: the dilated
+            // region reaches past that guard's box whenever the cell is
+            // coarse relative to the carve.
+            // `cellmin` is loop-INVARIANT -- hoisted above the loop, where it
+            // is computed once per fragment instead of once per active carve.
+            //
+            // Compared SQUARED: `unit < dil` with both sides non-negative is
+            // exactly `unit^2 < dil^2`, so this drops a sqrt from every
+            // fragment-carve pair (up to 24 per fragment) with no change of
+            // result whatsoever.
+            float lat = r * (1.0 + kShapeAmp);
+            float dep = max(kDepthFactor * r, kFieldDepthFloor * cellmin);
+            float dil = 1.0 + (kFieldSdfOffset * cellmin) / min(lat, dep);
+            float unit2 = (ld * ld) / (lat * lat) + (along * along) / (dep * dep);
+            if (unit2 < dil * dil) field_suppressed = true;
+            if (ld < r * (1.0 + kShapeAmp) && abs(along) < kDepthFactor * r * (1.0 + kShapeAmp)) {
+                // Azimuthal noise on the lateral radius (jagged rim); same
+                // azimuth term the scoop uses, so the hole edge aligns.
+                vec3 az = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
+                float r_eff = r * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + c * kPhase) * 2.0 - 1.0));
+                float dz = along / (kDepthFactor * r);
+                float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
+                // No suppression bookkeeping here: `field_suppressed` was set
+                // above from the dilated bound, which contains BOTH this
+                // perturbed test and the unperturbed oblate the brush carves.
+                // The band r_eff < ld < r (where the noise dips the rim
+                // inward) is inside what the field cut but outside `e < 1.0`;
+                // before the dilated bound existed that band had to be unioned
+                // in by hand, or the field cut a smooth-edged ring there with
+                // no scoop behind it (breach.vert builds the scoop from r_eff
+                // too) -- a see-through gap around roughly half of every
+                // tracked breach's rim.
+                if (e < 1.0) {
+                    // ── Skeletal framework lattice (INSIDE the breach) ──────────
+                    // Don't cut a clean hole: leave torn HULL STRUTS bridging the
+                    // breach where Damage.tga's stencil is opaque; the gaps between
+                    // struts reveal the recessed interior behind. Struts cluster
+                    // toward the rim (open core) so it still reads as a hole. The
+                    // surrounding hull (outside the oblate) is left untouched.
+                    bool cut = true;
+                    if (u_frame_enabled != 0) {
+                        // tangent-plane UV around the breach axis (basis from n)
+                        vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                        vec3 t  = normalize(cross(up, n));
+                        vec3 b  = cross(n, t);
+                        // Per-carve stencil ORIENTATION. Without this, `t`/`b`
+                        // depend only on the breach normal, so every breach on
+                        // a similarly-facing surface -- the whole top of a
+                        // saucer -- gets Damage.tga stamped with the same basis
+                        // AND the same centred crop. Adjacent hits then read as
+                        // one stamp repeated rather than as separate damage.
+                        //
+                        // Seeded from the carve centre: stable across frames
+                        // (so the lattice does not crawl), different per carve,
+                        // and identical in the u_carve_invert marking pass
+                        // because that derives it from the same `c`. If the two
+                        // ever disagreed the stencil would stop matching the
+                        // hole it is cut from.
+                        float ang = vh3(c * 0.37) * 6.28318530718;
+                        float cs  = cos(ang), sn = sin(ang);
+                        vec2  luv = vec2(dot(lateral, t), dot(lateral, b));
+                        luv = vec2(cs * luv.x - sn * luv.y,
+                                   sn * luv.x + cs * luv.y);
+                        vec2 uv = luv / (r * kFrameUvScale) * 0.5 + 0.5;
+                        float a    = texture(u_damage_decal, uv).a;
+                        float frac = sqrt(e);                   // 0 center .. 1 rim
+                        // Keep a hull strut where the stencil is opaque (the lattice)
+                        // AND we're outside the open core; everything else is cut.
+                        if (a > kStrutAlpha && frac > kOpenCore) cut = false;
+                    }
+                    // The CALLER decides what a cut means (the opaque pass
+                    // discards, or stamps the stencil in its marking draw; the
+                    // breach pass's interior shell keeps only what was NOT
+                    // cut). This function only answers the question.
+                    if (cut) return true;
+                }
+            }
+        }
+    }
+
+    // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
+    // Evaluated AFTER the sphere block, and only where `!field_suppressed`:
+    // a TRACKED carve's shape, jagged noise rim, and framework-lattice strut
+    // decision above are computed from real geometry (the sphere, its
+    // normal, Damage.tga's stencil); the field has none of that -- it only
+    // knows "carved or not" at a point. If the field discarded unconditionally
+    // it would OVERRIDE the sphere block's own decision inside every tracked
+    // oblate: every strut the lattice just decided to keep would still be cut
+    // (field_carve_oblate carved that exact region unconditionally), and the
+    // jagged noise rim would be replaced by the field's smooth, un-perturbed
+    // edge.
+    //
+    // The gate is the region the brush DILATED a tracked carve to, not the
+    // nominal oblate: field_brush.cc rounds every carve up to the smallest
+    // shape the lattice can hold (kCarveDepthFloorCells,
+    // kCarveFieldOffsetCells), so a ring outside the nominal oblate is still
+    // damaged in the field. Suppressing only inside the nominal oblate would
+    // let the field cut that ring with a smooth edge, visibly enlarging every
+    // tracked hole and erasing the rim.
+    //
+    // Gating on `!field_suppressed` means the field can only ever ADD a
+    // discard where the sphere block does not already govern -- i.e. damage
+    // beyond the 24-sphere ceiling, which is the plan's actual win. Inside a
+    // tracked carve's dilated region, the sphere block's decision (struts,
+    // noise rim, hole shape) is authoritative and untouched.
+    if (u_hull_field_enabled != 0 && !field_suppressed) {
+        // kHullFieldIsoMargin, not 0.0: see its derivation above this
+        // function. An UNDAMAGED fragment here reads -127 ("no damage"),
+        // nowhere near zero, so the margin is not guarding it -- it guards
+        // fragments right at a carve's own rim, where field_carve_oblate's
+        // brush actually crosses zero and quantisation rounding could
+        // otherwise decide the sign in a dithered speckle pattern instead
+        // of real geometry.
+        //
+        // The threshold is raised (never lowered) by body-space noise, so
+        // the field's own hole edge breaks up instead of reading as the
+        // brush's smooth ellipsoid. See kFieldRimNoise for why the term is
+        // strictly one-sided.
+        // SHORT-CIRCUIT, and it is load-bearing for frame rate, not tidiness.
+        // vnoise3 is EIGHT sin-based hashes, and this block runs on every
+        // fragment of every damaged hull that no tracked carve suppresses --
+        // i.e. essentially the whole visible surface of every ship that has
+        // ever been hit. Evaluating the noise there unconditionally cost
+        // eight transcendentals per fragment across the entire fleet.
+        //
+        // kFieldRimNoise * vnoise3(...) is >= 0 by construction (vnoise3
+        // returns [0,1] and the term is added, never subtracted -- see the
+        // constant's comment and FieldRimNoiseNeverCutsBelowThePlainMargin).
+        // So `fv > kHullFieldIsoMargin` is a NECESSARY condition for a cut,
+        // and testing it first is EXACTLY equivalent, not an approximation:
+        // any fragment it rejects would have been rejected by the full test
+        // too, whatever the noise happened to be. Undamaged fragments -- the
+        // overwhelming majority -- now pay two texture fetches instead of
+        // two fetches plus eight sins.
+        float fv = sample_hull_field(p_body);
+        bool field_cut = false;
+        if (fv > kHullFieldIsoMargin) {
+            field_cut = fv
+                      > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
+        }
+        if (field_cut) return true;
+    }
+    return false;
+}
+// === HULL_CUT_DECISION END ===
+
 out vec4 frag_color;
 
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
@@ -517,15 +802,22 @@ void main() {
         // struck sheet's back face is CO-PLANAR with the front face the carve
         // just discarded, so drawing it would plug every breach with the very
         // plating that was cut away -- a breach reading as a crust rather than
-        // a hole (the failure carve_cavity_test.cc's header describes). The
-        // same field test the opaque pass cuts with, inverted, rejects exactly
-        // that: keep the shell only where the hull was NOT carved.
+        // a hole (the failure carve_cavity_test.cc's header describes).
+        //
+        // It asks the HULL'S OWN decision, not a lookalike. An earlier version
+        // tested the raw field here, which is NOT what opaque.frag cuts on:
+        // that file suppresses the field inside a tracked carve's dilated
+        // region and raises its threshold with rim noise. Where the brush
+        // reached plating the oblate did not cut -- routine, because the
+        // dilation is driven by the FIELD CELL, not the carve radius -- the
+        // shell threw away plating the hull keeps, and the result was stars
+        // from one side and intact hull from the other. A ONE-WAY hole.
         //
         // Consequence, stated rather than left implicit: where a carve cuts
         // through BOTH sheets, both are rejected and you see space -- from
         // either side, symmetrically. That is a genuinely perforated hull, and
         // a two-way hole is the correct picture of one.
-        if (sample_hull_field(v_body_pos) > kHullFieldIsoMargin) discard;
+        if (hull_cut_at(v_body_pos)) discard;
 
         hit_point  = v_body_pos;
         // Face the normal back along the view ray. The mesh normal points out

@@ -11,6 +11,7 @@
 
 #include <assets/texture.h>
 #include <scenegraph/breach_events.h>
+#include <scenegraph/hull_carve.h>   // HullCarveField
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
 
 #include <renderer/frame.h>                 // Lighting
@@ -158,7 +159,8 @@ public:
                        const glm::vec3& breach_center = glm::vec3(0.0f),
                        float breach_radius = 0.0f,
                        const Lighting& lighting = Lighting{},
-                       float ambient_scale = 1.0f);
+                       float ambient_scale = 1.0f,
+                       const scenegraph::HullCarveField* carve = nullptr);
 
     /// Number of PROXY SUBMISSIONS this pass instance has issued so far —
     /// one per `render()`/`draw_instance()` call that actually draws
@@ -208,6 +210,7 @@ private:
                          unsigned int damage_tex,   // current animation frame texture
                          const Lighting& lighting,  // scene sun + ambient (world space)
                          float ambient_scale,       // frame's ambient dimmer (filmic)
+                         const scenegraph::HullCarveField* carve,  // tracked carve ring, or null
                          bool interior_shell = false);  // true = back-face interior shell
 
     // Draw the hull's BACK faces under the same stencil: the inside of the
@@ -231,7 +234,8 @@ private:
                              float breach_radius,
                              unsigned int damage_tex,
                              const Lighting& lighting,
-                             float ambient_scale);
+                             float ambient_scale,
+                             const scenegraph::HullCarveField* carve);
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.

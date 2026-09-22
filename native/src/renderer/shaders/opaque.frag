@@ -140,19 +140,6 @@ const float kScuffEdgeNoise   = 0.6;                  // fraction the edge is pu
                                                        // shrinks, so the r >= 1 cull stays exact.
 const float kScuffEdgeFreq    = 1.0 / 6.0;            // edge-noise cycles per model unit
 
-// ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
-// Discard hull fragments inside any active carve sphere. The breach pass
-// renders the exposed interior (scoop) within the same spheres, so hole and
-// interior align by construction. u_carve_count == 0 (or disabled) = stock path.
-//
-// u_carve_enabled == 0 is the stock path (zero per-fragment cost).
-uniform int  u_carve_enabled;
-
-const int MAX_CARVES = 24;
-uniform int  u_carve_count;                    // 0 = no clip
-uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
-uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
-
 // Stencil-marking pass. The breach scoop must draw only where hull was CUT
 // AWAY, never in open space — `discard` writes no depth, so from the scoop's
 // side a hole in the hull and empty space are indistinguishable, and BC's fill
@@ -312,85 +299,6 @@ float sample_hull_field(vec3 p_body) {
 // regression of the damage-field fix.
 const float kHullFieldIsoMargin = 0.5 / 255.0;
 
-// ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
-// Projects Damage.tga's alpha channel onto the hull in an annular band around
-// each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
-// u_frame_enabled == 0 (no GL context / no texture / no carves) = stock path.
-uniform sampler2D u_damage_decal;   // Damage.tga: RGB=scar colour, A=lattice stencil
-uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
-
-// Framework lattice constants (eyeball-tunable). The stencil applies INSIDE the
-// breach: hull struts remain where Damage.tga's alpha is opaque, gaps reveal the
-// interior behind. The surrounding hull is never touched.
-const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
-const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this.
-                                  // A WEAK lever: Damage.tga's alpha is close to
-                                  // binary, so 42.1% of the stencil is opaque at
-                                  // 0.5 and still 38.4% at 0.9. Raising it barely
-                                  // opens the breach; kOpenCore is the real knob.
-const float kOpenCore     = 0.75; // inner fraction of the breach RADIUS always fully
-                                  // open (no struts). Area goes as the square, so
-                                  // this is 56% of the breach open by area, with the
-                                  // struts confined to a torn outer rim.
-                                  //
-                                  // Was 0.35 -- only 12% of the area, leaving ~37% of
-                                  // every breach bridged by a lattice spread across
-                                  // the whole opening. That reads as a crust on the
-                                  // hull rather than a hole through it: you perceive
-                                  // the grille, not the gap.
-
-// breach shape — KEEP IN SYNC with breach.vert.
-// OBLATE spheroid centred on the hull surface: FULL lateral radius (original
-// hole width), compressed to kDepthFactor along the normal (shallow). Noise
-// perturbs the lateral radius by azimuth (jagged rim).
-const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
-const float kShapeAmp    = 0.25;
-const float kShapeFreq   = 4.0;
-const float kPhase       = 0.13;
-
-// Field-brush dilation, in CELLS. GLSL const has no linkage across the
-// C++/GLSL boundary, so these are this shader's own copies of
-// voxel::kCarveDepthFloorCells and voxel::kCarveFieldOffsetCells --
-// NOT independently chosen values. HullFieldClip.GlslBrushConstantsMatchCxx
-// fails if they drift. See field_brush.h for the derivation and the measured
-// coverage they buy.
-const float kFieldDepthFloor = 1.25;
-const float kFieldSdfOffset  = 1.25;
-
-// Body-space erosion of the FIELD's hole edge, so a hole cut beyond the
-// 24-carve ring gets a broken rim instead of the brush's smooth ellipsoid.
-// Tracked carves do not use this -- they have a real per-carve azimuth and
-// their own noise (kShapeAmp above); beyond the ring there is no per-carve
-// frame to build an azimuth from, which is the whole point of being out
-// there, so the perturbation has to come from a body-space field instead.
-//
-// ONE-SIDED BY CONSTRUCTION: vnoise3 returns [0,1] and the term is ADDED to
-// the iso margin, so it can only ever RAISE the threshold and SHRINK the
-// hole. A signed version (the *2-1 remap the sphere block's own rim noise
-// uses) would grow the hole past the region field_brush.cc guarantees
-// damage in, putting un-backed hull at the rim -- the see-through defect
-// this plan removes. HullFieldClip.FieldRimNoiseOnlyShrinksTheHole guards
-// the source text; FieldRimNoiseNeverCutsBelowThePlainMargin guards the
-// behaviour. breach.frag is deliberately NOT given this term: its plain
-// margin stays a LOWER threshold than the hull's, which keeps
-// hole (subset of) interior by construction.
-//
-// 0.06 in sample_hull_field's return units is about half a cell: scale is
-// 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
-// after the /255 normalisation. Because scale is proportional to cell, this
-// is the same half cell on every ship without needing a uniform.
-const float kFieldRimNoise = 0.06;
-const float kFieldRimFreq  = 0.35;   // cycles per model unit
-
-float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
-float vnoise3(vec3 p){
-    vec3 i = floor(p), f = fract(p);
-    vec3 u = f*f*(3.0-2.0*f);
-    float n000=vh3(i), n100=vh3(i+vec3(1,0,0)), n010=vh3(i+vec3(0,1,0)), n110=vh3(i+vec3(1,1,0));
-    float n001=vh3(i+vec3(0,0,1)), n101=vh3(i+vec3(1,0,1)), n011=vh3(i+vec3(0,1,1)), n111=vh3(i+vec3(1,1,1));
-    float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x), nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
-    return mix(mix(nx00,nx10,u.y), mix(nx01,nx11,u.y), u.z);
-}
 
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
 const int MAX_GLOW_REGIONS = 12;
@@ -841,52 +749,119 @@ vec3 perturb_normal(vec3 N, vec3 p, vec2 uv, out float sigma) {
     return n * inversesqrt(len2);
 }
 
-void main() {
-    vec3 n = normalize(v_normal_ws);
-    vec3 V = normalize(u_camera_pos_ws - v_position_ws);
+// === HULL_CUT_DECISION BEGIN === KEEP IN SYNC with breach.frag's copy between its own matching markers -- enforced by native/tests/renderer/hull_cut_decision_sync_test.cc
+// ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
+// Discard hull fragments inside any active carve sphere. The breach pass
+// renders the exposed interior (scoop) within the same spheres, so hole and
+// interior align by construction. u_carve_count == 0 (or disabled) = stock path.
+//
+// u_carve_enabled == 0 is the stock path (zero per-fragment cost).
+uniform int  u_carve_enabled;
 
-    // n stays GEOMETRIC: the shadow bias must offset along real geometry, and
-    // the Fresnel rim is a silhouette effect that crawls and sparkles across
-    // greeble detail if it tracks a perturbed normal. n_shade carries the
-    // normal-map perturbation for the lighting terms.
-    float n_sigma = 1.0;
-    vec3 n_shade = (u_normal_enabled != 0)
-        ? perturb_normal(n, v_position_ws, v_uv, n_sigma)
-        : n;
+const int MAX_CARVES = 24;
+uniform int  u_carve_count;                    // 0 = no clip
+uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
+uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
 
-    // Body-frame fragment position (object-space carve + decals).
-    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
-    // Body-frame normal for object-space decals.
-    vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
-    vec4 base = texture(u_base_color, v_uv);
+// ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
+// Projects Damage.tga's alpha channel onto the hull in an annular band around
+// each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
+// u_frame_enabled == 0 (no GL context / no texture / no carves) = stock path.
+uniform sampler2D u_damage_decal;   // Damage.tga: RGB=scar colour, A=lattice stencil
+uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
 
-    // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
-    // Must run before the Toksvig spec_ft line below and before any lighting
-    // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
-    if (u_decal_count > 0) {
-        apply_scuffs(p_body, n_body, n_shade, base.rgb);
-    }
+// Framework lattice constants (eyeball-tunable). The stencil applies INSIDE the
+// breach: hull struts remain where Damage.tga's alpha is opaque, gaps reveal the
+// interior behind. The surrounding hull is never touched.
+const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
+const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this.
+                                  // A WEAK lever: Damage.tga's alpha is close to
+                                  // binary, so 42.1% of the stencil is opaque at
+                                  // 0.5 and still 38.4% at 0.9. Raising it barely
+                                  // opens the breach; kOpenCore is the real knob.
+const float kOpenCore     = 0.75; // inner fraction of the breach RADIUS always fully
+                                  // open (no struts). Area goes as the square, so
+                                  // this is 56% of the breach open by area, with the
+                                  // struts confined to a torn outer rim.
+                                  //
+                                  // Was 0.35 -- only 12% of the area, leaving ~37% of
+                                  // every breach bridged by a lattice spread across
+                                  // the whole opening. That reads as a crust on the
+                                  // hull rather than a hole through it: you perceive
+                                  // the grille, not the gap.
 
-    // Toksvig specular anti-aliasing. ft folds the normal spread under this
-    // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
-    // energy constant so a broadened highlight dims instead of blooming. At
-    // n_sigma == 1 (no map, or up close) ft == 1 and both are the identity, so
-    // the un-mapped path is byte-identical.
-    float spec_ft = n_sigma / (n_sigma + u_specular_power * (1.0 - n_sigma));
-    float spec_power = u_specular_power * spec_ft;
-    float spec_norm  = (1.0 + spec_power) / (1.0 + u_specular_power);
+// breach shape — KEEP IN SYNC with breach.vert.
+// OBLATE spheroid centred on the hull surface: FULL lateral radius (original
+// hole width), compressed to kDepthFactor along the normal (shallow). Noise
+// perturbs the lateral radius by azimuth (jagged rim).
+const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
+const float kShapeAmp    = 0.25;
+const float kShapeFreq   = 4.0;
+const float kPhase       = 0.13;
 
-    // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
-    // Discard hull fragments inside any active carve sphere. The breach pass
-    // renders the exposed interior (scoop) within the same spheres, so hole and
-    // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
-    //
-    // UNCHANGED from before the hull-field clip existed, with one addition:
-    // `field_suppressed` records whether this fragment fell inside the region
-    // the FIELD BRUSH dilated any TRACKED carve to (field_brush.cc), so the
-    // field block below can defer to this block wherever it applies. See that
-    // block's comment for why.
-    bool marked = false;
+// Field-brush dilation, in CELLS. GLSL const has no linkage across the
+// C++/GLSL boundary, so these are this shader's own copies of
+// voxel::kCarveDepthFloorCells and voxel::kCarveFieldOffsetCells --
+// NOT independently chosen values. HullFieldClip.GlslBrushConstantsMatchCxx
+// fails if they drift. See field_brush.h for the derivation and the measured
+// coverage they buy.
+const float kFieldDepthFloor = 1.25;
+const float kFieldSdfOffset  = 1.25;
+
+// Body-space erosion of the FIELD's hole edge, so a hole cut beyond the
+// 24-carve ring gets a broken rim instead of the brush's smooth ellipsoid.
+// Tracked carves do not use this -- they have a real per-carve azimuth and
+// their own noise (kShapeAmp above); beyond the ring there is no per-carve
+// frame to build an azimuth from, which is the whole point of being out
+// there, so the perturbation has to come from a body-space field instead.
+//
+// ONE-SIDED BY CONSTRUCTION: vnoise3 returns [0,1] and the term is ADDED to
+// the iso margin, so it can only ever RAISE the threshold and SHRINK the
+// hole. A signed version (the *2-1 remap the sphere block's own rim noise
+// uses) would grow the hole past the region field_brush.cc guarantees
+// damage in, putting un-backed hull at the rim -- the see-through defect
+// this plan removes. HullFieldClip.FieldRimNoiseOnlyShrinksTheHole guards
+// the source text; FieldRimNoiseNeverCutsBelowThePlainMargin guards the
+// behaviour. breach.frag gets this term too, and must: it runs THIS function,
+// verbatim, so that its interior shell keeps exactly what the hull did not
+// cut. It used to be deliberately excluded here, on the reasoning that a
+// LOWER threshold in breach.frag kept hole (subset of) interior -- true of the
+// scoop's raymarch ENTRY, but backwards for the shell, which DISCARDS above
+// the threshold and so threw away more hull than the hull itself cut. That
+// asymmetry was the one-way hole.
+//
+// 0.06 in sample_hull_field's return units is about half a cell: scale is
+// 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
+// after the /255 normalisation. Because scale is proportional to cell, this
+// is the same half cell on every ship without needing a uniform.
+const float kFieldRimNoise = 0.06;
+const float kFieldRimFreq  = 0.35;   // cycles per model unit
+
+float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
+float vnoise3(vec3 p){
+    vec3 i = floor(p), f = fract(p);
+    vec3 u = f*f*(3.0-2.0*f);
+    float n000=vh3(i), n100=vh3(i+vec3(1,0,0)), n010=vh3(i+vec3(0,1,0)), n110=vh3(i+vec3(1,1,0));
+    float n001=vh3(i+vec3(0,0,1)), n101=vh3(i+vec3(1,0,1)), n011=vh3(i+vec3(0,1,1)), n111=vh3(i+vec3(1,1,1));
+    float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x), nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
+    return mix(mix(nx00,nx10,u.y), mix(nx01,nx11,u.y), u.z);
+}
+
+// Was the hull cut away at this body-frame point?
+//
+// THE one place that answers it. It used to live inline in this file's main(),
+// which meant anything else needing the same answer had to approximate it --
+// and the breach pass's interior shell did exactly that, testing the RAW field
+// where this tests the field only outside a tracked carve's dilated region and
+// at a threshold raised by rim noise. The shell therefore threw away plating
+// the hull itself keeps, and you saw stars through a hole whose far side
+// showed intact hull: a ONE-WAY hole, live-reported on the Galaxy's forward
+// saucer. "The cut and the interior are two different shapes" is the same root
+// cause as the original see-through bug; this function exists so there is only
+// one shape.
+//
+// Returns true = cut away here. The CALLER decides what to do with that.
+bool hull_cut_at(vec3 p_body) {
     bool field_suppressed = false;
     // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
     // out of the carve loop below, where it was recomputed for every one of up
@@ -982,14 +957,11 @@ void main() {
                         // AND we're outside the open core; everything else is cut.
                         if (a > kStrutAlpha && frac > kOpenCore) cut = false;
                     }
-                    if (u_carve_invert != 0) {
-                        // Marking pass: this fragment is inside the cut, which
-                        // is precisely what we want to stamp. Keep it and stop
-                        // looking — the caller masks colour and depth.
-                        if (cut) { marked = true; break; }
-                    } else if (cut) {
-                        discard;
-                    }
+                    // The CALLER decides what a cut means (the opaque pass
+                    // discards, or stamps the stencil in its marking draw; the
+                    // breach pass's interior shell keeps only what was NOT
+                    // cut). This function only answers the question.
+                    if (cut) return true;
                 }
             }
         }
@@ -1055,11 +1027,61 @@ void main() {
             field_cut = fv
                       > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
         }
-        if (u_carve_invert != 0) {
-            if (field_cut) marked = true;
-        } else if (field_cut) {
-            discard;
-        }
+        if (field_cut) return true;
+    }
+    return false;
+}
+// === HULL_CUT_DECISION END ===
+
+void main() {
+    vec3 n = normalize(v_normal_ws);
+    vec3 V = normalize(u_camera_pos_ws - v_position_ws);
+
+    // n stays GEOMETRIC: the shadow bias must offset along real geometry, and
+    // the Fresnel rim is a silhouette effect that crawls and sparkles across
+    // greeble detail if it tracks a perturbed normal. n_shade carries the
+    // normal-map perturbation for the lighting terms.
+    float n_sigma = 1.0;
+    vec3 n_shade = (u_normal_enabled != 0)
+        ? perturb_normal(n, v_position_ws, v_uv, n_sigma)
+        : n;
+
+    // Body-frame fragment position (object-space carve + decals).
+    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
+    // Body-frame normal for object-space decals.
+    vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
+    vec4 base = texture(u_base_color, v_uv);
+
+    // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
+    // Must run before the Toksvig spec_ft line below and before any lighting
+    // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
+    if (u_decal_count > 0) {
+        apply_scuffs(p_body, n_body, n_shade, base.rgb);
+    }
+
+    // Toksvig specular anti-aliasing. ft folds the normal spread under this
+    // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
+    // energy constant so a broadened highlight dims instead of blooming. At
+    // n_sigma == 1 (no map, or up close) ft == 1 and both are the identity, so
+    // the un-mapped path is byte-identical.
+    float spec_ft = n_sigma / (n_sigma + u_specular_power * (1.0 - n_sigma));
+    float spec_power = u_specular_power * spec_ft;
+    float spec_norm  = (1.0 + spec_power) / (1.0 + u_specular_power);
+
+    // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
+    // Discard hull fragments inside any active carve sphere. The breach pass
+    // renders the exposed interior (scoop) within the same spheres, so hole and
+    // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
+    //
+    // UNCHANGED from before the hull-field clip existed, with one addition:
+    // `field_suppressed` records whether this fragment fell inside the region
+    // the FIELD BRUSH dilated any TRACKED carve to (field_brush.cc), so the
+    // field block below can defer to this block wherever it applies. See that
+    // block's comment for why.
+    bool marked = false;
+    if (hull_cut_at(p_body)) {
+        if (u_carve_invert != 0) marked = true;
+        else                     discard;
     }
 
     // Marking pass: anything NOT marked by EITHER mechanism (field or sphere)

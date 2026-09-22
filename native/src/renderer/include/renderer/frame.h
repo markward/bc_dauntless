@@ -310,6 +310,14 @@ void draw_model(const assets::Model& model,
 /// (0x502), surfacing later at the next check_gl (e.g. in upload_mesh).
 void reset_damage_decal_texture();
 
+/// The framework-lattice stencil (game/data/Textures/Effects/Damage.tga), lazily
+/// loaded once per GL session; 0 when game/ is not installed. Exported so the
+/// breach pass binds the SAME texture the opaque pass cuts the lattice with --
+/// both now run the one shared hull_cut_at(), and that function reads this
+/// texture, so a second independently-loaded copy would be a way for the cut
+/// and the interior to disagree again.
+unsigned int damage_decal_texture();
+
 /// Clear the lazy per-ModelHandle bounding-radius cache used by dynamic-light
 /// selection. MUST be called wherever the host clears g_loaded_models (both
 /// init() and shutdown() in host_bindings.cc): handle values are recycled —

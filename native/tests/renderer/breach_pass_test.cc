@@ -1530,3 +1530,80 @@ TEST_F(BreachPassGLTest, InteriorAmbientHonoursTheFramesAmbientScale) {
         << ") — the interior's ambient is not the frame's, so it sits brighter "
            "than the hull under filmic";
 }
+
+// ── The shell must use the HULL'S cut decision, not a lookalike ───────────
+//
+// THE ONE-WAY HOLE, reproduced. Reported live: a breach on the Galaxy's
+// forward port saucer read as a hole to space from ABOVE, while the underside
+// at that spot showed no damage at all.
+//
+// opaque.frag does not cut on the raw field. It cuts on:
+//   sphere block  -> the tracked carve's own oblate (tight), OR
+//   field block   -> but ONLY where !field_suppressed, and at a threshold
+//                    RAISED by rim noise.
+// `field_suppressed` covers the region the brush DILATED the carve to, and
+// that dilation is driven by the FIELD CELL when the cell is coarse relative
+// to the carve: dep = max(kDepthFactor*r, kFieldDepthFloor*cellmin). BC's
+// authored cell is 3-7.5 model units and a combat carve floors at 3, so the
+// dilated region routinely reaches much further along the normal than the
+// oblate does.
+//
+// That is exactly the far plating's situation here: inside the dilated region
+// (so the hull KEEPS it -- no damage from below) but outside the oblate (so it
+// is not cut). A shell testing the raw field throws it away anyway, and you
+// see stars through a hull the opaque pass just decided to keep.
+//
+// Geometry below is built to sit in that gap deliberately:
+//   cell 5, carve r=5 at the origin, normal +Z, far plate at z=-5.
+//   oblate along-extent = kDepthFactor*r*(1+kShapeAmp) = 0.45*5*1.25 = 2.81
+//       -> |along| = 5 is OUTSIDE: the hull is NOT cut there.
+//   dilated dep     = max(0.45*5, 1.25*5) = 6.25  (the CELL drives it)
+//       -> |along| = 5 is INSIDE: field_suppressed, so the field never runs.
+// and the field marks that whole span carved, as the real brush does.
+TEST_F(BreachPassGLTest, ShellKeepsFarPlatingTheHullItselfDidNotCut) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    // Field: cell 5, carved (100) across z-indices covering both plates, so the
+    // RAW field reads "carved" at the far plate -- the brush reached it.
+    const std::vector<std::int8_t> z_values = {100, 100, 100, 100, 100};
+    const voxel::DistanceField field =
+        make_z_slab_field(glm::ivec3(4, 4, 5), glm::vec3(-10.0f, -10.0f, -12.5f),
+                          glm::vec3(5.0f), z_values);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+
+    const glm::vec3 near_center(0.0f, 0.0f, 0.0f);
+    const glm::vec3 far_center (0.0f, 0.0f, -5.0f);
+    const assets::Model plates =
+        make_two_plate_model(near_center, far_center, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(near_center, glm::vec3(0, 0, 1), 100.f);
+
+    // The tracked carve the hull actually cut with.
+    scenegraph::HullCarveField carve;
+    scenegraph::HullCarve& c =
+        carve.add(near_center, /*influ_radius=*/5.0f, /*strength=*/1000.0f,
+                  glm::vec3(0.0f, 0.0f, 1.0f));
+    c.radius = 5.0f;
+
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/110, fill, entry, plates, glm::mat4(1.0f),
+                       cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting(),
+                       /*ambient_scale=*/1.0f, &carve);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in far-plating draw";
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is background (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — the shell threw away far plating that the "
+           "hull itself KEEPS (inside the brush's dilated region, outside the "
+           "carve oblate). That is the one-way hole: stars from above, intact "
+           "hull from below.";
+}

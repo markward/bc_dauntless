@@ -6,6 +6,7 @@
 #include <renderer/instance_field_cache.h>
 #include <renderer/model_draw_helpers.h>
 #include <renderer/asset_path.h>
+#include <renderer/frame.h>   // Lighting, damage_decal_texture
 
 #include <scenegraph/breach_events.h>
 #include <scenegraph/camera.h>
@@ -185,6 +186,7 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
                                  unsigned int damage_tex,
                                  const Lighting& lighting,
                                  float ambient_scale,
+                                 const scenegraph::HullCarveField* carve,
                                  bool interior_shell) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
@@ -257,6 +259,47 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     // values explicitly: the two submissions share one program, so leaving it
     // unset would carry the previous draw's mode over.
     shader.set_int("u_interior_shell", interior_shell ? 1 : 0);
+
+    // ── Inputs to the shared hull_cut_at() ────────────────────────────────
+    // The interior shell asks the HULL'S OWN cut decision (breach.frag's
+    // drift-guarded copy of opaque.frag's function), so it has to be handed
+    // the same inputs frame.cc hands the opaque pass: the instance's tracked
+    // carve ring and the framework-lattice stencil. Without them the shell
+    // would be answering the question with different data, which is the same
+    // class of bug as answering it with different CODE.
+    const int carve_count =
+        carve != nullptr ? static_cast<int>(carve->count()) : 0;
+    shader.set_int("u_carve_enabled", carve_count > 0 ? 1 : 0);
+    shader.set_int("u_carve_count",   carve_count);
+    if (carve_count > 0) {
+        std::vector<glm::vec4> spheres;
+        std::vector<glm::vec3> normals;
+        spheres.reserve(static_cast<std::size_t>(carve_count));
+        normals.reserve(static_cast<std::size_t>(carve_count));
+        for (const auto& c : carve->slots()) {
+            if (!c.active) continue;
+            spheres.emplace_back(c.center_body, c.radius);
+            normals.push_back(c.surface_normal);
+        }
+        if (!spheres.empty()) {
+            shader.set_vec4_array("u_carve_spheres", spheres.data(),
+                                  static_cast<int>(spheres.size()));
+            shader.set_vec3_array("u_carve_normals", normals.data(),
+                                  static_cast<int>(normals.size()));
+        }
+        shader.set_int("u_carve_count", static_cast<int>(spheres.size()));
+    }
+
+    // Lattice stencil on unit 3 -- the SAME unit and the SAME texture
+    // opaque.frag uses, so hull_cut_at()'s strut decision is identical in both
+    // programs. Bound (and u_frame_enabled set) on EVERY draw: an unset
+    // sampler defaults to unit 0 and would collide with u_fill's sampler3D.
+    const unsigned int lattice = damage_decal_texture();
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, lattice);
+    shader.set_int("u_damage_decal",  3);
+    shader.set_int("u_frame_enabled", (lattice != 0 && carve_count > 0) ? 1 : 0);
+    glActiveTexture(GL_TEXTURE0);
 
     // Scene lighting. u_ship_world is the ONLY body->world conversion this
     // stage gets, and breach.frag uses it for exactly one thing: putting the
@@ -333,7 +376,8 @@ void BreachPass::draw_interior_shell(const assets::Model& model,
                                      float breach_radius,
                                      unsigned int damage_tex,
                                      const Lighting& lighting,
-                                     float ambient_scale) {
+                                     float ambient_scale,
+                                     const scenegraph::HullCarveField* carve) {
     // The ONLY difference from the scoop's own submission is the winding and
     // the mode flag: same mesh, same stencil, same program, same uniforms.
     // Front-culled, so what draws is the hull's BACK faces -- the inside of
@@ -341,7 +385,7 @@ void BreachPass::draw_interior_shell(const assets::Model& model,
     glCullFace(GL_FRONT);
     draw_hull_proxy(model, field, fill_tex, fill_origin, fill_cell, fill_dims,
                     world_xf, camera, pipeline, breach_age, breach_center,
-                    breach_radius, damage_tex, lighting, ambient_scale,
+                    breach_radius, damage_tex, lighting, ambient_scale, carve,
                     /*interior_shell=*/true);
     glCullFace(GL_BACK);
 }
@@ -357,7 +401,8 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                const glm::vec3& breach_center,
                                float breach_radius,
                                const Lighting& lighting,
-                               float ambient_scale) {
+                               float ambient_scale,
+                               const scenegraph::HullCarveField* carve) {
     if (field.tex2d == 0) return;   // no damage field: nothing to raymarch
 
     ensure_damage_frames();
@@ -375,11 +420,11 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     draw_interior_shell(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                         world_xf, camera, pipeline, breach_age,
                         breach_center, breach_radius, damage_frames_[0], lighting,
-                        ambient_scale);
+                        ambient_scale, carve);
     draw_hull_proxy(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                     world_xf, camera, pipeline, breach_age,
                     breach_center, breach_radius, damage_frames_[0], lighting,
-                        ambient_scale);
+                        ambient_scale, carve);
     end_scoop_state();
 
     // Restore texture bindings.
@@ -473,10 +518,12 @@ void BreachPass::render(const scenegraph::World& world,
             // wall and the shell shows through only where the scoop gave up.
             draw_interior_shell(*model, *field, ce->tex3d, ce->origin, ce->cell,
                                 ce->dims, inst.world, camera, pipeline, breach_age,
-                                breach_center, breach_radius, frame_tex, lighting, ambient_scale);
+                                breach_center, breach_radius, frame_tex, lighting, ambient_scale,
+                                &inst.carve);
             draw_hull_proxy(*model, *field, ce->tex3d, ce->origin, ce->cell, ce->dims,
                             inst.world, camera, pipeline, breach_age,
-                            breach_center, breach_radius, frame_tex, lighting, ambient_scale);
+                            breach_center, breach_radius, frame_tex, lighting, ambient_scale,
+                                &inst.carve);
         });
 
     if (any_state_changed) {
