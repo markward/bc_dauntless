@@ -438,26 +438,6 @@ protected:
         return best;
     }
 
-    // Dimmest NON-BACKGROUND pixel over the inner half. Paired with
-    // read_inner_max() this measures how much the interior varies across the
-    // wall: a flat slab of one colour gives max == min. Background (alpha 0 /
-    // pure black) is excluded so an unlit border does not masquerade as
-    // variation.
-    int read_inner_min_lit() const {
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        std::vector<unsigned char> buf(kW * kH * 4);
-        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-        int best = 1 << 30;
-        for (int y = kH / 4; y < 3 * kH / 4; ++y) {
-            for (int x = kW / 4; x < 3 * kW / 4; ++x) {
-                int i = (y * kW + x) * 4;
-                int v = buf[i] + buf[i + 1] + buf[i + 2];
-                if (v > 0 && v < best) best = v;
-            }
-        }
-        return best == (1 << 30) ? 0 : best;
-    }
-
     long long read_frame_sum() const {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
         std::vector<unsigned char> buf(kW * kH * 4);
@@ -1451,112 +1431,102 @@ TEST_F(BreachPassGLTest, InteriorIsLitByTheSceneSunNotTheCamera) {
 }
 
 
-// ── Cavity-depth occlusion ────────────────────────────────────────────────
+
+
+// ── Ambient must be the SAME quantity the hull around it uses ─────────────
 //
-// A hole in a hull is a recess, and the deeper the shaft the less light
-// reaches its floor. The shader already knows the depth for free: the
-// raymarch's own distance from the hull surface to the wall it hit. Without
-// that term an interior is shaded purely by its normal, so a breach reads as a
-// bright flat patch pasted on the hull -- the "uncharred crust" look -- rather
-// than as something you are looking INTO.
+// The interior sits inside a hole in the hull. If the two disagree about what
+// ambient is, the disagreement shows as a seam at every breach rim. These two
+// tests pin the interior to opaque.frag's own ambient formula:
+//   amb = u_ambient_light * (1 + u_ambient_gradient * dot(n, u_ambient_dir_ws))
+// with u_ambient_light already scaled by the frame's ambient_scale, exactly as
+// FrameSubmitter::set_ambient_uniforms does it.
 //
-// Same field, same fill, same sun, same wall: only the VIEW ANGLE changes. A
-// grazing ray travels further through the carved band to reach the far wall
-// than a head-on one, so it is looking down a longer shaft and must come back
-// darker. The wall normal is the field gradient either way and both eyes are
-// on the +Z side, so faceforward picks the same normal and the direct lighting
-// term is unchanged between the two -- depth is the only thing that moved.
-//
-// Discrimination: with no depth term the two renders differ only by texture
-// parallax, which is nil here (no damage texture loads in a headless test), so
-// this reads as "not darker" and fails.
-TEST_F(BreachPassGLTest, AGrazingViewIntoACavityIsDarkerThanHeadOn) {
+// No directional lights at all in either test, so ambient is the ONLY term and
+// nothing else can account for the difference.
+
+// Directional ambient: the gradient axis is flipped rather than the wall,
+// which is equivalent (only their dot product matters) and leaves the geometry
+// untouched between the two renders.
+TEST_F(BreachPassGLTest, InteriorAmbientFollowsTheDirectionalAmbientGradient) {
     voxel::VoxelVolume fill = solid_fill();
     const voxel::DistanceField field = make_single_cavity_field();
     const assets::Model patch =
         make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
-    renderer::Lighting lighting;
-    lighting.ambient               = glm::vec3(0.05f);
-    lighting.directional_count     = 1;
-    lighting.directional_dir_ws[0] = glm::vec3(0.0f, 0.0f, 1.0f);
-    lighting.directional_color[0]  = glm::vec3(1.0f);
-
-    auto render_from = [&](glm::vec3 dir, std::uintptr_t key) {
+    auto render_with_axis = [&](glm::vec3 axis, std::uintptr_t key) {
         clear_framebuffer();
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         mark_hull_cut();
+
+        renderer::Lighting lighting;
+        lighting.ambient           = glm::vec3(0.45f);
+        lighting.directional_count = 0;      // ambient is the only term
+        lighting.ambient_dir_ws    = axis;
+        lighting.ambient_gradient  = 0.8f;
+
         renderer::BreachPass pass;
         const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-        scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, dir, 100.f);
         pass.draw_instance(key, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
                            /*breach_age=*/scenegraph::kRimLife + 1.f,
                            /*breach_center=*/glm::vec3(0.0f),
                            /*breach_radius=*/0.0f, lighting);
         glFinish();
         EXPECT_EQ(glGetError(), GL_NO_ERROR);
-        auto px = read_center();
-        return px[0] + px[1] + px[2];
+        return read_frame_sum();
     };
 
-    const int head_on = render_from(glm::vec3(0.0f, 0.0f, 1.0f), 90);
-    // ~55 degrees off the surface normal: the ray to the same wall is ~1.7x
-    // longer through the carved band.
-    const int grazing = render_from(glm::normalize(glm::vec3(1.4f, 0.0f, 1.0f)), 91);
+    // The cavity wall faces +Z, so an ambient axis of +Z is aligned with it.
+    const long long aligned = render_with_axis(glm::vec3(0, 0,  1), 100);
+    const long long against = render_with_axis(glm::vec3(0, 0, -1), 101);
 
-    ASSERT_GT(head_on, 0) << "head-on view drew nothing — the comparison would be vacuous";
-    EXPECT_LT(grazing, head_on)
-        << "Looking down a longer shaft (" << grazing << ") is no darker than "
-           "looking straight in (" << head_on << ") — the interior carries no "
-           "cavity-depth occlusion, so a breach reads as a flat bright patch";
+    ASSERT_GT(aligned, 0) << "nothing drew — the comparison would be vacuous";
+    EXPECT_GT(aligned, against)
+        << "Ambient is identical with the gradient axis along the wall's normal ("
+        << aligned << ") and against it (" << against
+        << ") — the interior ignores the directional ambient the hull around it "
+           "is shaded by";
 }
 
-// ── Charred, cloudy interior ──────────────────────────────────────────────
-//
-// With no damage texture bound the interior used to resolve to exactly kBase
-// -- one flat grey, identical at every point on the wall. That is the
-// degenerate case of the thing Mark reported: damage applied raw, reading as a
-// uniform pale crust rather than something burnt. A procedural cloud break-up
-// gives the material its own variation, so it still reads as scorched material
-// when BC's Damage*.tga is missing (a mod ship, or any headless run -- this
-// test's own conditions).
-//
-// Discrimination: a flat base colour makes every lit pixel identical, so
-// max == min and the difference is 0.
-TEST_F(BreachPassGLTest, InteriorIsCloudyWithNoDamageTextureBound) {
-    clear_framebuffer();
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    mark_hull_cut();
-
-    renderer::Lighting lighting;
-    lighting.ambient               = glm::vec3(0.2f);
-    lighting.directional_count     = 1;
-    lighting.directional_dir_ws[0] = glm::vec3(0.0f, 0.0f, 1.0f);
-    lighting.directional_color[0]  = glm::vec3(1.0f);
-
-    renderer::BreachPass pass;
+// ambient_scale is the frame's own ambient dimmer (x0.8 under filmic). An
+// interior lit 1.25x brighter than the hull it is set into is the same class of
+// mismatch as the camera-glued light this pass used to carry.
+TEST_F(BreachPassGLTest, InteriorAmbientHonoursTheFramesAmbientScale) {
     voxel::VoxelVolume fill = solid_fill();
     const voxel::DistanceField field = make_single_cavity_field();
-    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
     const assets::Model patch =
         make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
     scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
-    pass.draw_instance(/*instance_key=*/92, fill, entry, patch, glm::mat4(1.0f),
-                       cam, *pipeline,
-                       /*breach_age=*/scenegraph::kRimLife + 1.f,
-                       /*breach_center=*/glm::vec3(0.0f),
-                       /*breach_radius=*/0.0f, lighting);
-    glFinish();
+    auto render_scaled = [&](float ambient_scale, std::uintptr_t key) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        mark_hull_cut();
 
-    EXPECT_EQ(glGetError(), GL_NO_ERROR);
-    const int hi = read_inner_max();
-    const int lo = read_inner_min_lit();
-    ASSERT_GT(hi, 0) << "interior drew nothing — the comparison would be vacuous";
-    EXPECT_GT(hi - lo, 12)
-        << "Interior is a flat slab of one colour (max=" << hi << " min=" << lo
-        << ") — with no damage texture it falls back to a uniform base grey "
-           "instead of reading as charred material";
+        renderer::Lighting lighting;
+        lighting.ambient           = glm::vec3(0.6f);
+        lighting.directional_count = 0;      // ambient is the only term
+
+        renderer::BreachPass pass;
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(key, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                           /*breach_age=*/scenegraph::kRimLife + 1.f,
+                           /*breach_center=*/glm::vec3(0.0f),
+                           /*breach_radius=*/0.0f, lighting, ambient_scale);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_frame_sum();
+    };
+
+    const long long full   = render_scaled(1.0f, 102);
+    const long long dimmed = render_scaled(0.5f, 103);
+
+    ASSERT_GT(full, 0) << "nothing drew — the comparison would be vacuous";
+    EXPECT_LT(dimmed, full)
+        << "ambient_scale had no effect (full=" << full << " dimmed=" << dimmed
+        << ") — the interior's ambient is not the frame's, so it sits brighter "
+           "than the hull under filmic";
 }

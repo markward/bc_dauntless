@@ -184,6 +184,7 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
                                  float breach_radius,
                                  unsigned int damage_tex,
                                  const Lighting& lighting,
+                                 float ambient_scale,
                                  bool interior_shell) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
@@ -261,9 +262,15 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     // stage gets, and breach.frag uses it for exactly one thing: putting the
     // shaded normal in the same frame as the light directions before it dots
     // them. Everything else in that shader stays body frame.
-    shader.set_mat4("u_ship_world",      world_xf);
-    shader.set_vec3("u_ambient_light",   lighting.ambient);
-    shader.set_int ("u_dir_light_count", lighting.directional_count);
+    shader.set_mat4("u_ship_world",       world_xf);
+    // ambient_scale and the directional-ambient pair are applied EXACTLY as
+    // FrameSubmitter::set_ambient_uniforms applies them to the hull. The
+    // interior sits inside a hole in that hull; if the two disagree about what
+    // ambient is, the seam at every breach rim shows it.
+    shader.set_vec3 ("u_ambient_light",    lighting.ambient * ambient_scale);
+    shader.set_vec3 ("u_ambient_dir_ws",   lighting.ambient_dir_ws);
+    shader.set_float("u_ambient_gradient", lighting.ambient_gradient);
+    shader.set_int  ("u_dir_light_count",  lighting.directional_count);
     if (lighting.directional_count > 0) {
         shader.set_vec3_array("u_dir_light_dir_ws",
                               lighting.directional_dir_ws,
@@ -325,7 +332,8 @@ void BreachPass::draw_interior_shell(const assets::Model& model,
                                      const glm::vec3& breach_center,
                                      float breach_radius,
                                      unsigned int damage_tex,
-                                     const Lighting& lighting) {
+                                     const Lighting& lighting,
+                                     float ambient_scale) {
     // The ONLY difference from the scoop's own submission is the winding and
     // the mode flag: same mesh, same stencil, same program, same uniforms.
     // Front-culled, so what draws is the hull's BACK faces -- the inside of
@@ -333,7 +341,8 @@ void BreachPass::draw_interior_shell(const assets::Model& model,
     glCullFace(GL_FRONT);
     draw_hull_proxy(model, field, fill_tex, fill_origin, fill_cell, fill_dims,
                     world_xf, camera, pipeline, breach_age, breach_center,
-                    breach_radius, damage_tex, lighting, /*interior_shell=*/true);
+                    breach_radius, damage_tex, lighting, ambient_scale,
+                    /*interior_shell=*/true);
     glCullFace(GL_BACK);
 }
 
@@ -347,7 +356,8 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                float breach_age,
                                const glm::vec3& breach_center,
                                float breach_radius,
-                               const Lighting& lighting) {
+                               const Lighting& lighting,
+                               float ambient_scale) {
     if (field.tex2d == 0) return;   // no damage field: nothing to raymarch
 
     ensure_damage_frames();
@@ -364,10 +374,12 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     begin_scoop_state();
     draw_interior_shell(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                         world_xf, camera, pipeline, breach_age,
-                        breach_center, breach_radius, damage_frames_[0], lighting);
+                        breach_center, breach_radius, damage_frames_[0], lighting,
+                        ambient_scale);
     draw_hull_proxy(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                     world_xf, camera, pipeline, breach_age,
-                    breach_center, breach_radius, damage_frames_[0], lighting);
+                    breach_center, breach_radius, damage_frames_[0], lighting,
+                        ambient_scale);
     end_scoop_state();
 
     // Restore texture bindings.
@@ -386,7 +398,8 @@ void BreachPass::render(const scenegraph::World& world,
                         CarveFieldCache& carve_cache,
                         InstanceFieldCache* field_cache,
                         float now,
-                        const Lighting& lighting) {
+                        const Lighting& lighting,
+                        float ambient_scale) {
     if (!dauntless_hull_damage::enabled()) return;
     if (field_cache == nullptr) return;   // feature unavailable: nothing to draw
 
@@ -460,10 +473,10 @@ void BreachPass::render(const scenegraph::World& world,
             // wall and the shell shows through only where the scoop gave up.
             draw_interior_shell(*model, *field, ce->tex3d, ce->origin, ce->cell,
                                 ce->dims, inst.world, camera, pipeline, breach_age,
-                                breach_center, breach_radius, frame_tex, lighting);
+                                breach_center, breach_radius, frame_tex, lighting, ambient_scale);
             draw_hull_proxy(*model, *field, ce->tex3d, ce->origin, ce->cell, ce->dims,
                             inst.world, camera, pipeline, breach_age,
-                            breach_center, breach_radius, frame_tex, lighting);
+                            breach_center, breach_radius, frame_tex, lighting, ambient_scale);
         });
 
     if (any_state_changed) {
