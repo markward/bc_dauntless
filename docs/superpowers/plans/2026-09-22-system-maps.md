@@ -2186,6 +2186,201 @@ git commit -m "feat(systems): maps for the remaining 24 star systems"
 
 ---
 
+---
+
+### Task 8: Make `layout()` honour a pin
+
+**Why this exists.** Task 7 found that the pin feature is **enforcement without a
+mechanism**. `engine/systems/validate.py` has a `pin-respected` rule, and
+`tools/gen_system_maps.py` reads pins from a map's `overrides` and hands them to
+it — but `tools/systems/layout.py` has no `pins` parameter and contains **zero**
+references to pins. It places every companion body at a *derived* distance,
+`primary_radius * (moon_first_orbit_factor + moon_orbit_step_factor * j)`,
+deliberately discarding BC's absolute distance.
+
+So a declared pin can never hold: Task 7 measured the authored Prendel pin as
+violated by **~38,500 GU** even when written exactly as the plan specified. The
+Task 7 implementer correctly refused to ship that declaration and recorded the
+derivation in `engine/systems/maps/prendel.json`'s `overrides.notes` instead.
+
+A pin exists so a mission's staged ships stay beside the body they were authored
+beside. E5M2 and E6M4 park a base and three Galors at 6100–6368 GU in Prendel 3,
+just past `Moon 2`'s authored position. Without a working pin those ships sit in
+empty space.
+
+**Files:**
+- Modify: `tools/systems/layout.py`
+- Modify: `tools/gen_system_maps.py`
+- Modify: `engine/systems/maps/prendel.json` (declare the pin; regenerated)
+- Test: `tests/tools/test_system_layout.py`, `tests/unit/test_system_maps_valid.py`
+
+**Interfaces:**
+- `layout(s, tuning=None, pins=None) -> SystemMap` — `pins` is
+  `{"<region>/<body>": (x, y, z)}` or `None`, the same shape
+  `gen_system_maps.pins_from()` already returns and `validate()` already takes.
+- `generate()` passes the existing map's pins into `layout()`.
+
+**The rule.** After a region's bodies and anchor are placed as now, reposition
+each of that region's pinned bodies to `anchor + offset`. Order matters and is
+the whole subtlety:
+
+1. Place bodies and compute the anchor exactly as today. The anchor is derived
+   from the group centroid, which uses the pinned body's *pre-pin* position.
+2. Then move each pinned body to `anchor_gu + offset`.
+3. Do **not** recompute the anchor afterwards. It is a fixed-point problem —
+   moving the body shifts the centroid, which shifts the anchor, which moves the
+   body — and one pass is both stable and good enough. The centroid shift only
+   nudges framing; the pin itself is then exact, which is what `pin-respected`
+   checks. Say this in the docstring so nobody "fixes" it into a loop.
+
+A pin naming a region or body that does not exist is **ignored by `layout()`**,
+not an error — `validate()` already reports those four failure modes, and
+duplicating the diagnosis in two places invites them to disagree.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/tools/test_system_layout.py`:
+
+```python
+def test_a_pinned_body_lands_at_its_authored_offset_from_the_anchor():
+    """A pin exists so a mission's staged ships stay beside the body they were
+    authored beside. E5M2 parks a base and three Galors just past Prendel 3's
+    Moon 2, so that moon must keep its set-local position exactly."""
+    s = SurveyedSystem(name="Prendel", regions=[SurveyedRegion(
+        set_name="Prendel3", ordinal=3,
+        bodies=[
+            SurveyedBody("Prendel 3", 360.0, "p.nif", (-1000.0, 1500.0, 0.0), False),
+            SurveyedBody("Moon 1", 90.0, "m.nif", (-5000.0, 0.0, 0.0), False),
+            SurveyedBody("Moon 2", 90.0, "m.nif", (400.0, 5000.0, 0.0), False),
+        ],
+        content_extent_gu=6368.0, player_start_gu=(0.0, 0.0, 0.0))])
+    pins = {"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}
+    m = layout(s, pins=pins)
+    anchor = m.region("Prendel3").anchor_gu
+    moon = m.body("Moon 2")
+    have = tuple(p - a for p, a in zip(moon.position_gu, anchor))
+    assert have == pytest.approx((400.0, 5000.0, 0.0), abs=1e-6)
+
+
+def test_an_unpinned_body_in_the_same_region_is_not_moved():
+    """Pinning one companion must not disturb its siblings."""
+    s = SurveyedSystem(name="Prendel", regions=[SurveyedRegion(
+        set_name="Prendel3", ordinal=3,
+        bodies=[
+            SurveyedBody("Prendel 3", 360.0, "p.nif", (-1000.0, 1500.0, 0.0), False),
+            SurveyedBody("Moon 1", 90.0, "m.nif", (-5000.0, 0.0, 0.0), False),
+            SurveyedBody("Moon 2", 90.0, "m.nif", (400.0, 5000.0, 0.0), False),
+        ],
+        content_extent_gu=6368.0, player_start_gu=(0.0, 0.0, 0.0))])
+    free = layout(s).body("Moon 1").position_gu
+    pinned = layout(s, pins={"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}).body("Moon 1")
+    assert pinned.position_gu == pytest.approx(free)
+
+
+def test_layout_ignores_a_pin_naming_something_that_does_not_exist():
+    """validate() reports those; layout() must not also decide, or the two can
+    disagree about the same map."""
+    s = _sys_one_planet_per_region()
+    m = layout(s, pins={"Nowhere/Ghost": (0.0, 0.0, 0.0),
+                        "Ona1/Ghost": (0.0, 0.0, 0.0),
+                        "malformed key": (0.0, 0.0, 0.0)})
+    assert m.region("Ona1") is not None
+    assert m.body("Ona 1") is not None
+
+
+def test_a_pinned_map_passes_the_pin_rule_end_to_end():
+    """The whole point: declare a pin, lay out, and validate() must be happy."""
+    from engine.systems.validate import validate
+    s = SurveyedSystem(name="Prendel", regions=[SurveyedRegion(
+        set_name="Prendel3", ordinal=3,
+        bodies=[
+            SurveyedBody("Prendel 3", 360.0, "p.nif", (-1000.0, 1500.0, 0.0), False),
+            SurveyedBody("Moon 2", 90.0, "m.nif", (400.0, 5000.0, 0.0), False),
+        ],
+        content_extent_gu=6368.0, player_start_gu=(0.0, 0.0, 0.0))])
+    pins = {"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}
+    m = layout(s, pins=pins)
+    assert validate(m, pins=pins) == []
+```
+
+Add to `tests/unit/test_system_maps_valid.py`:
+
+```python
+def test_prendels_declared_pin_holds_in_the_committed_map():
+    """Regression: layout() once ignored pins entirely, so this pin was
+    violated by ~38,500 GU while every map still reported ok."""
+    from engine.systems.validate import validate
+    from tools.gen_system_maps import pins_from
+    m = load("prendel")
+    pins = pins_from(m)
+    assert pins, "prendel.json must declare its pin"
+    assert [p for p in validate(m, pins=pins) if p.rule == "pin-respected"] == []
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/tools/test_system_layout.py tests/unit/test_system_maps_valid.py -v`
+Expected: the four layout tests fail (`TypeError: layout() got an unexpected
+keyword argument 'pins'`), and the Prendel test fails because no pin is declared
+yet.
+
+- [ ] **Step 3: Implement**
+
+1. `layout()` takes `pins=None` and, after each region's anchor is computed,
+   repositions that region's pinned bodies to `anchor + offset`. Resolve a pin
+   key as `"<region>/<body>"`, splitting on the first `/`, and skip silently
+   when the region or body does not match — `validate()` owns the diagnosis.
+2. `generate()` passes `pins_from(old)` into `layout()`. `old` is already loaded
+   there for the overrides merge; reuse it rather than loading twice.
+3. Declare the pin in `engine/systems/maps/prendel.json`'s `overrides`:
+
+```json
+"pins": { "Prendel3/Moon 2": [400.0, 5000.0, 0.0] }
+```
+
+   and REPLACE the `overrides.notes` entry for `"Prendel3/Moon 2"` — it
+   currently explains why the pin could not be declared, which will no longer be
+   true — with one line saying what the pin protects (E5M2/E6M4 stage a base and
+   three Galors at 6100–6368 GU, just past this moon).
+
+- [ ] **Step 4: Run the tests**
+
+Run: `uv run pytest tests/tools/test_system_layout.py tests/unit/test_system_map_validate.py tests/unit/test_system_maps_valid.py -v`
+Expected: all pass.
+
+- [ ] **Step 5: Regenerate and prove the pin actually bites**
+
+Run: `uv run python tools/gen_system_maps.py --system Prendel`
+Expected: `Prendel: 5 regions, 8 bodies -- ok <path>`.
+
+Then temporarily change the declared offset to `[0.0, 0.0, 0.0]`, run
+`uv run python tools/gen_system_maps.py --system Prendel --check`, and confirm a
+`pin-respected` problem IS reported and the exit code is non-zero. Restore the
+real offset and confirm `ok` returns. **Back up and restore by `cp`, never by
+git** — this is a shared checkout. Record both outputs in your report; a pin
+nobody has watched fail is a pin you cannot trust.
+
+- [ ] **Step 6: Check every system still lays out cleanly**
+
+Run: `uv run python tools/gen_system_maps.py --check --list-ambiguities`
+Expected: all 32 `ok`, exit code 0, and the same seven clamped regions
+(Alioth6, Beol1, Savoy2 floored; Geble4, OmegaDraconis1, Savoy1, XiEntrades4
+capped).
+
+- [ ] **Step 7: Run the gate**
+
+Run: `scripts/check_tests.sh`
+Expected: `OK — no new failures. 1 known failure(s) still baselined.`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tools/systems/layout.py tools/gen_system_maps.py \
+        engine/systems/maps/prendel.json \
+        tests/tools/test_system_layout.py tests/unit/test_system_maps_valid.py
+git commit -m "feat(systems): layout honours a pin, so pin-respected can pass"
+```
+
 ## Self-review
 
 **Spec coverage (§1 only — §2–§6 are the second plan):**
@@ -2195,7 +2390,7 @@ git commit -m "feat(systems): maps for the remaining 24 star systems"
 | One file per system, checked in | 1, 5 |
 | Bodies: identity separate from appearance | 1 |
 | Regions: anchor, radius, owned bodies | 1 |
-| Pins | 2 (validated), 3 (surveyed) |
+| Pins | 2 (validated), 3 (surveyed), 8 (honoured by the layout) |
 | Overrides block the generator never rewrites | 5 |
 | Generator reads the SDK | 3 |
 | Radius measured from non-body content, system + mission files | 3 |
