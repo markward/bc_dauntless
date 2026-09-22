@@ -78,28 +78,31 @@ def test_hulk_persists_indefinitely():
     assert s.removed == []
 
 
-def test_hulk_drops_out_of_the_target_list():
-    """A selectable corpse is worse than no wreck at all. The wreck stays
-    selectable through the linger, then stops."""
+def test_hulk_drops_out_of_the_target_list_when_the_throes_end():
+    """A ship is selectable while it is DYING and not a moment longer: on the
+    original exe the player's target clears and the reticule vanishes on the
+    same sample the dying phase ends (stbc-oracle bible §12.2a V7). A
+    selectable corpse is worse than no wreck at all; the hulk that stays is
+    scenery."""
     ship = FakeShip()
     ship_death.begin(ship)
+    ship_death.advance(death_cascade.THROES_MIN / 2.0)
+    assert ship_death.is_targetable_wreck(ship) is True    # dying: selectable
     ship_death.advance(ship_death.MAX_THROES_DURATION)
-    assert ship_death.is_targetable_wreck(ship) is True    # linger: selectable
-    ship_death.advance(ship_death.WRECK_LINGER_DURATION)
     assert ship_death.is_targetable_wreck(ship) is False   # hulk: not
 
 
-def test_locks_release_when_the_wreck_stops_being_targetable(monkeypatch):
-    """Locks must clear at the linger->hulk transition, or the player stays
-    locked onto a corpse forever."""
+def test_locks_release_the_moment_the_throes_end(monkeypatch):
+    """Locks clear on the throes->hulk transition (V7: same sample as the
+    removal), not five seconds later."""
     cleared = []
     monkeypatch.setattr(ship_death, "_clear_target_locks",
                         lambda s: cleared.append(s))
     ship = FakeShip()
     ship_death.begin(ship)
-    ship_death.advance(ship_death.MAX_THROES_DURATION)
+    ship_death.advance(death_cascade.THROES_MIN / 2.0)
     assert cleared == []
-    ship_death.advance(ship_death.WRECK_LINGER_DURATION)
+    ship_death.advance(ship_death.MAX_THROES_DURATION)
     assert cleared == [ship]
 
 

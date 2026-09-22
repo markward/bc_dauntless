@@ -104,14 +104,14 @@ def test_critical_death_splashes_neighbour_breach_is_vfx_only(monkeypatch):
 
 
 def test_neighbour_breach_does_not_rearm_lingering_wreck(monkeypatch):
-    """A dead wreck in the 10-s linger window must not be re-armed or
-    re-detonated when a neighbouring ship's warp core breaches nearby.
+    """A dead hulk must not be re-armed or re-detonated when a neighbouring
+    ship's warp core breaches nearby.
 
     Safety invariants under test:
     - The wreck remains in _breached exactly once (single-fire guard).
     - arm(wreck) after detonation is a no-op (_breached guard).
-    - ship_death.is_targetable_wreck(wreck) is True before AND after the
-      neighbour breach (begin() is idempotent on dying/dead ships).
+    - the wreck keeps its single hulk entry before AND after the neighbour
+      breach (begin() is idempotent on dying/dead ships).
     - The neighbour detonation terminates (no infinite loop / hang).
     """
 
@@ -162,12 +162,15 @@ def test_neighbour_breach_does_not_rearm_lingering_wreck(monkeypatch):
     try:
         # --- Step 1: put the wreck through ship_death into the linger phase ---
         ship_death.begin(wreck)
-        # Advance past the full throes window so the wreck transitions to linger.
+        # Advance past the full throes window so the wreck becomes a hulk.
         ship_death.advance(ship_death.MAX_THROES_DURATION)
 
-        # Precondition: wreck is now a dead, targetable linger-phase wreck.
-        assert ship_death.is_targetable_wreck(wreck), (
-            "wreck should be in the linger phase after the throes"
+        def _hulk_entries():
+            return [e for e in ship_death._active if e["ship"] is wreck]
+
+        # Precondition: wreck is now a dead hulk with exactly one registry entry.
+        assert [e["phase"] for e in _hulk_entries()] == ["hulk"], (
+            "wreck should be a hulk after the throes"
         )
         assert wreck._dead, "wreck._dead should be True after throes expire"
 
@@ -200,10 +203,10 @@ def test_neighbour_breach_does_not_rearm_lingering_wreck(monkeypatch):
             "arm(wreck) after detonation must not enqueue it again"
         )
 
-        # The wreck must still be a targetable linger-phase wreck after the
-        # neighbour breach — ship_death.begin() must not have restarted its sequence.
-        assert ship_death.is_targetable_wreck(wreck), (
-            "wreck must remain in the targetable linger window after neighbour breach"
+        # The wreck must still be the same single hulk after the neighbour
+        # breach — ship_death.begin() must not have restarted its sequence.
+        assert [e["phase"] for e in _hulk_entries()] == ["hulk"], (
+            "wreck must remain a single hulk entry after neighbour breach"
         )
 
         # What must NOT have happened is a second arm/detonate cycle on the wreck.

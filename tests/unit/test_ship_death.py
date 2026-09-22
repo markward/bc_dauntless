@@ -77,15 +77,16 @@ def test_advance_marks_dead_at_throes_but_keeps_wreck_in_set():
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
     ship_death.advance(ship_death.MAX_THROES_DURATION)   # throes expire
-    # Death-marker fired, but the wreck lingers — NOT removed yet.
+    # Death-marker fired; the hull stays in its set as a hulk, but it is no
+    # longer a target (V7: the lock clears on the same sample).
     assert ship.IsDead() == 1
     assert s.removed == []
-    assert ship_death.is_targetable_wreck(ship) is True
+    assert ship_death.is_targetable_wreck(ship) is False
 
 
-def test_wreck_becomes_a_persistent_hulk_after_the_linger():
-    """The linger ends selectability, NOT the hull. It stays in its set as a
-    hulk so it keeps drawing and colliding — see test_ship_death_hulks.py."""
+def test_wreck_becomes_a_persistent_hulk_when_the_throes_end():
+    """The throes ending ends selectability, NOT the hull. It stays in its set
+    as a hulk so it keeps drawing and colliding — see test_ship_death_hulks.py."""
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
@@ -130,16 +131,17 @@ def test_is_targetable_wreck_false_for_untracked_ship():
     assert ship_death.is_targetable_wreck(ship) is False
 
 
-def test_locks_clear_only_at_final_removal(monkeypatch):
+def test_locks_clear_when_the_throes_end(monkeypatch):
+    """V7: the lock (and reticule) clear on the sample the dying phase ends."""
     cleared = []
     monkeypatch.setattr(ship_death, "_clear_target_locks",
                         lambda s: cleared.append(s))
     ship = FakeShip()
     ship_death.begin(ship)
+    ship_death.advance(death_cascade.THROES_MIN / 2.0)
+    assert cleared == []                 # mid-throes: still locked
     ship_death.advance(ship_death.MAX_THROES_DURATION)
-    assert cleared == []                 # not cleared at throes end
-    ship_death.advance(ship_death.WRECK_LINGER_DURATION)
-    assert cleared == [ship]             # cleared only at linger end
+    assert cleared == [ship]             # cleared at throes end
 
 
 def test_destroyed_event_fires_at_throes_not_linger():
@@ -753,9 +755,9 @@ def test_descriptor_anchors_at_last_world_location_when_unresolved():
 
 # --- Target-lock release at end of death sequence ----------------------------
 def test_locks_held_through_throes_and_released_at_finish():
-    """Locks on the dying ship persist through the throes window AND the linger
-    window (the player keeps watching the selectable wreck) and release only at
-    the END of the full sequence (throes + linger) — both the target and the
+    """Locks on the dying ship persist through the throes window and release
+    the moment it ends (stbc-oracle bible §12.2a V7: target and reticule
+    clear on the same sample as the removal) — both the target and the
     targeted-subsystem lock (which BC stores on the FIRING ship). Unrelated
     locks survive throughout."""
     import App
@@ -782,14 +784,9 @@ def test_locks_held_through_throes_and_released_at_finish():
         assert attacker.GetTargetSubsystem() is not None
 
         ship_death.advance(ship_death.MAX_THROES_DURATION)
-        # Throes elapsed: ship is dead and marked, but still lingering as a
-        # selectable wreck — locks persist, wreck not removed yet.
+        # Throes elapsed: the ship is dead and a hulk; locks on it released
+        # (V7: same sample), unrelated kept.
         assert victim.IsDead() == 1
-        assert attacker.GetTarget() is victim
-        assert attacker.GetTargetSubsystem() is not None
-
-        ship_death.advance(ship_death.WRECK_LINGER_DURATION)
-        # Full sequence complete: locks on the wreck released; unrelated kept.
         assert attacker.GetTarget() is None
         assert attacker.GetTargetSubsystem() is None
         assert bystander.GetTarget() is other
