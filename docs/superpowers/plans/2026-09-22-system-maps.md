@@ -698,13 +698,15 @@ def test_system_names_covers_the_campaign_and_excludes_utils():
     assert names == sorted(names)
 
 
-def test_a_region_with_no_static_file_surveys_as_bodiless():
-    # Vesuvi1 has no _S file at all; it must survey without raising.
+def test_regions_without_bodies_survey_cleanly():
+    """Two shapes must not raise: Vesuvi1 has no _S file at all, and Vesuvi4's
+    _S file builds a MetaNebula and no Planet or Sun."""
     vesuvi = survey_system("Vesuvi")
     names = {r.set_name for r in vesuvi.regions}
-    assert "Vesuvi4" in names           # nebula-only region, no planet
-    nebula_region = [r for r in vesuvi.regions if r.set_name == "Vesuvi4"][0]
-    assert [b for b in nebula_region.bodies if not b.is_sun] == []
+    assert {"Vesuvi1", "Vesuvi4"} <= names
+    for set_name in ("Vesuvi1", "Vesuvi4"):
+        region = [r for r in vesuvi.regions if r.set_name == set_name][0]
+        assert region.bodies == [], set_name
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
