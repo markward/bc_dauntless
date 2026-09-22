@@ -133,9 +133,6 @@ def test_b7_damage_arrives_as_quanta(oracle):
         assert n >= 1 and d == pytest.approx(n * quantum, rel=0.02)
 
 
-@bible_xfail("B8", "a bank preset to charge 3 (MinFiringCharge 4) fires at the full 805/s",
-             "refuses to start below MinFiringCharge — rate 0 (the 'audited §1.6' "
-             "start gate in PhaserBank.UpdateCharge is contradicted by the capture)")
 def test_b8_rate_independent_of_remaining_charge(oracle):
     """B8 — `phaser_high_front_57_charge3`: a bank preset to charge 3 fires at
     the same 805/s.  The Kessok forward beams author MinFiringCharge 4.0, so
@@ -185,8 +182,6 @@ def test_b9_bank_stops_at_zero_charge(oracle):
     assert all(b.GetChargeLevel() < 0.2 for b in fwd)
 
 
-@bible_xfail("F1", "Galaxy (SetSingleFire 1) fires ONE bank at a time, round-robin on exhaustion",
-             "lights one bank on the first tick, then four at once")
 def test_f1_federation_phasers_single_fire(oracle):
     """F1 — `phaser_galaxy_front_57`: bank 5 for 5.5 s, then bank 6, then
     bank 1 — never two at once."""

@@ -644,15 +644,17 @@ class _EnergyWeaponFireMixin:
         return _emitter_in_arc(self, ship, aim_world)
 
     def CanFire(self) -> int:
-        """Audited §1.6, three gates (the invented refire-hysteresis is
-        gone — this asymmetry between the two charge branches below IS
-        BC's hysteresis, no separate latch needed):
+        """Three gates:
 
           * ship alive — a dead ship's weapons never fire.
-          * charge — ``> 0`` to SUSTAIN an already-firing beam, but
-            ``>= MinFiringCharge`` to START one.  A depleted bank that
-            auto-stopped must climb back to MinFiringCharge (no extra
-            headroom) before it can restart.
+          * charge — ``> 0``, to start AND to sustain.  MinFiringCharge is
+            NOT a fire gate: measured on the original exe, a Kessok beam
+            preset to charge 3 with MinFiringCharge 4 fires at the full
+            rate (stbc-oracle bible B8, `phaser_high_front_57_charge3`),
+            and pulse cannons fire on below it too (see PulseWeapon.CanFire).
+            The "≥ MinFiringCharge to START" rule this replaced was read off
+            an audit, not a capture; MinFiringCharge's only observed reader
+            is the AI's ConditionPulseReady "ready" threshold.
           * disabled-product — the bank's own condition times the parent
             system's condition must clear the authored DisabledPercentage
             threshold (``GetOverallConditionPercentage`` in the audit); a
@@ -668,11 +670,7 @@ class _EnergyWeaponFireMixin:
         ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
         if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
             return 0
-        if self._firing:
-            charged = self._charge_level > 0.0
-        else:
-            charged = self._charge_level >= self._min_firing_charge
-        if not charged:
+        if not self._charge_gate():
             return 0
         # `parent` is guaranteed non-None here (the IsOn gate above already
         # returned 0 otherwise); GetDisabledPercentage() lives on self
@@ -682,6 +680,11 @@ class _EnergyWeaponFireMixin:
         if self.GetDisabledPercentage() >= combined:
             return 0
         return 1
+
+    def _charge_gate(self) -> bool:
+        """Beams: any charge at all.  PulseWeapon overrides with 'can afford
+        the next shot'."""
+        return self._charge_level > 0.0
 
     def Fire(self, target=None, offset=None) -> bool:
         """Returns True when the beam is firing after this call — the tick's
@@ -737,11 +740,9 @@ class _EnergyWeaponFireMixin:
             if self._charge_level <= 0.0:
                 # Depletion auto-stop. BC's banks discharge all the way
                 # to 0 while firing (visible on the WeaponsDisplay as the
-                # full black → red → yellow → green sweep during recharge)
-                # — MinFiringCharge gates fire-start only, not the
-                # continuous discharge.  Restart requires climbing back to
-                # MinFiringCharge (CanFire's start/sustain asymmetry —
-                # audited §1.6, no headroom on top of it).
+                # full black → red → yellow → green sweep during recharge).
+                # A restart needs only some charge — MinFiringCharge is not
+                # a fire gate (see CanFire).
                 # Route via StopFiring so the looped SFX handle is silenced.
                 self.StopFiring()
         else:
@@ -1334,6 +1335,20 @@ class WeaponSystem(PoweredSubsystem):
                 return True
         return False
 
+    def _firing_weapon(self):
+        """The child weapon currently IsFiring (a held beam), else None."""
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and w.IsFiring():
+                return w
+        return None
+
+    def _reseed_all_fire_timers(self) -> None:
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None:
+                w._fire_timer = 0.0
+
     @staticmethod
     def _fired_counter(weapon):
         """Stub-safe read of the test-fake `fired` shot counter.
@@ -1360,7 +1375,23 @@ class WeaponSystem(PoweredSubsystem):
         return bool(weapon.IsFiring())
 
     def update_weapons(self, dt) -> bool:
-        """UpdateWeapons (0x00584930), §3.2. Returns did_fire."""
+        """UpdateWeapons (0x00584930), §3.2. Returns did_fire.
+
+        Single-fire systems (SetSingleFire(1): every Federation phaser
+        array, the Warbird's cannons) behave as measured on the original exe:
+
+          * a weapon that is FIRING (a beam) is the only one tried, so a
+            second bank cannot start while one is up — the Galaxy fires
+            bank 5 for 5.5 s, then bank 6, then bank 1, never two at once
+            (stbc-oracle bible F1, `phaser_galaxy_front_57`);
+          * a successful shot re-seeds EVERY weapon's fire timer, so the
+            next weapon in the rotation fires one threshold (0.33 s) later,
+            not one tick later — the Warbird's four cannons fire at 1.22 /
+            1.53 / 1.88 / 2.19 (`pulse_warbird_front_40_meta`).
+
+        Multi-fire systems keep per-weapon timers: the BoP's two cannons
+        fire together every 0.33 s (`pulse_bop_front_40`).
+        """
         did_fire = False
         ship = self.GetParentShip()
         if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
@@ -1379,6 +1410,13 @@ class WeaponSystem(PoweredSubsystem):
         # inside the delta loop double-counted the just-fired slot instead
         # of advancing to the next group member.
         base_idx = self._last_weapon_idx
+        if self._single_fire:
+            lit = self._firing_weapon()
+            if lit is not None:
+                # Sustain the lit beam; nothing else starts until it stops.
+                self.try_fire_weapon(lit, dt, target, offset)
+                self._force_update = False
+                return bool(lit.IsFiring())
         while True:
             self.SetGroupFireMode(working)
             n = self.GetNumWeapons()
@@ -1393,6 +1431,7 @@ class WeaponSystem(PoweredSubsystem):
                     self._last_weapon_idx = idx
                     self._last_group_fired = working
                     if self._single_fire:
+                        self._reseed_all_fire_timers()
                         break
                 else:
                     weapon._target = None      # ClearTarget, NOT a timer reset
@@ -2450,6 +2489,23 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # audited §1.6) — the per-shot cooldown (SetCooldownTime, BoP 0.2s) is
     # the anti-flutter mechanism, not charge hysteresis.
 
+    def _shot_cost(self) -> float:
+        """Charge one bolt costs: NormalDischargeRate × the power-setting
+        scale (BC's GetPowerScaled) — 0.5 / 1.0 / 2.0 on a stock cannon."""
+        return (self._normal_discharge_rate
+                * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
+
+    def _charge_gate(self) -> bool:
+        """A cannon fires whenever it can AFFORD the next bolt; nothing else
+        about its charge matters.  Measured on the original exe per cannon
+        per tick (stbc-oracle `pulse_warbird_front_40_{meta,low,high}`,
+        `pulse_bop_front_40`): a Warbird cannon (MinFiringCharge 1.2) fires
+        at 1.15 and again at 1.01 at MED (cost 1.0), at 0.59 at LOW (cost
+        0.5) and stops at 0.12; a BoP cannon (MinFiringCharge 3.6) fires
+        four bolts straight down 3.8 → 0.33 and again the moment it climbs
+        back over 1.0."""
+        return self._charge_level >= self._shot_cost() - 1e-9
+
     def CanFire(self) -> int:
         if self._cooldown_remaining > 0.0:
             return 0
@@ -2502,9 +2558,7 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # power-setting scale (BC's GetPowerScaled), then the cooldown.  Not
         # a dump-to-zero — that made a stock BoP wait ~9 s between bolts
         # where BC waits ~2 s.  No held beam.
-        cost = (self._normal_discharge_rate
-                * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
-        self._charge_level = max(0.0, self._charge_level - cost)
+        self._charge_level = max(0.0, self._charge_level - self._shot_cost())
         self._cooldown_remaining = self.GetCooldownTime()
         return True
 

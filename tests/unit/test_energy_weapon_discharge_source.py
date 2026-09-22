@@ -153,15 +153,29 @@ def test_pulse_shot_costs_authored_rate_times_power_scale(
 
 
 def test_pulse_shot_cost_floors_at_zero():
+    """A bolt that costs exactly the stored charge fires and leaves 0."""
     cannon = _bop_cannon()
-    cannon._normal_discharge_rate = 50.0
+    cannon._normal_discharge_rate = 3.8
     assert _fire(cannon)
     assert cannon.GetChargeLevel() == 0.0
 
 
+def test_pulse_cannot_fire_a_bolt_it_cannot_afford():
+    """The fire gate is affordability — charge ≥ the per-shot cost — not
+    MinFiringCharge (stbc-oracle `pulse_warbird_front_40_*`, `pulse_bop_
+    front_40`: cannons fire well below MinFiringCharge and stop exactly when
+    the next bolt's cost exceeds the charge)."""
+    cannon = _bop_cannon()
+    cannon._normal_discharge_rate = 50.0
+    assert cannon.CanFire() == 0
+    assert not _fire(cannon)
+    assert cannon.GetChargeLevel() == pytest.approx(3.8)
+
+
 def test_pulse_refire_cadence_is_seconds_not_a_full_refill():
-    """The gameplay consequence: after one bolt at MED the BoP needs
-    (3.6 - 2.8) / 0.4 = 2.0 s to re-arm, not 3.6 / 0.4 = 9.0 s."""
+    """The gameplay consequence: after one bolt at MED (cost 1.0) the BoP
+    can afford the next as soon as it has 1.0 again — it never needs a full
+    refill (3.6 / 0.4 = 9.0 s); measured, it fires four in a row."""
     cannon = _bop_cannon()
     assert _fire(cannon)
     for _ in range(20):          # 2.0 s at 0.1 s steps (cooldown 0.2 s expires)

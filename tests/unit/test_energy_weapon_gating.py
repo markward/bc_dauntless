@@ -25,9 +25,14 @@ def test_can_fire_true_when_charged_and_on():
     assert bank.CanFire() == 1
 
 
-def test_can_fire_false_when_undercharged():
+def test_can_fire_false_only_when_empty():
+    """A beam fires on any charge at all; MinFiringCharge is not a fire gate
+    (stbc-oracle B8: a Kessok bank preset to 3 with MinFiringCharge 4 fires
+    at the full rate)."""
     bank = _charged_bank()
-    bank._charge_level = 2.0  # below min_firing_charge
+    bank._charge_level = 2.0  # below min_firing_charge — still fires
+    assert bank.CanFire() == 1
+    bank._charge_level = 0.0
     assert bank.CanFire() == 0
 
 
@@ -59,9 +64,9 @@ def test_fire_with_none_target_succeeds():
     assert bank._target is None
 
 
-def test_fire_no_ops_when_undercharged():
+def test_fire_no_ops_when_empty():
     bank = _charged_bank()
-    bank._charge_level = 1.0
+    bank._charge_level = 0.0
     bank.Fire(target=None, offset=None)
     assert bank.IsFiring() == 0
 
@@ -149,16 +154,19 @@ def test_pulse_weapon_shares_canfire_gating():
     Unlike phasers, PulseWeapon.Fire spawns a discrete projectile bolt rather
     than holding a beam (does NOT flip _firing) — that contract is covered in
     tests/unit/test_pulse_weapon_fire.py.  Here we only assert the shared
-    CanFire gate (parent IsOn AND charge >= MinFiringCharge)."""
+    CanFire gate: parent IsOn AND the charge can afford one bolt (its
+    NormalDischargeRate × the power-setting scale) — MinFiringCharge is not
+    consulted (stbc-oracle `pulse_*_front_40`)."""
     pulse = PulseWeapon("Forward Pulse")
     parent = PhaserSystem("PulseSystem")
     parent.TurnOn()
     parent.AddChildSubsystem(pulse)
     pulse._max_charge = 2.0
     pulse._min_firing_charge = 1.0
+    pulse._normal_discharge_rate = 1.0        # cost 1.0 at MED
     pulse._charge_level = 2.0
     assert pulse.CanFire() == 1
-    # Below the firing threshold gates CanFire off.
+    # Below the per-shot cost gates CanFire off.
     pulse._charge_level = 0.5
     assert pulse.CanFire() == 0
 
