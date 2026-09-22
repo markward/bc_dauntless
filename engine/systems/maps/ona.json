@@ -1,0 +1,111 @@
+{
+  "system": "Ona",
+  "bodies": [
+    {
+      "name": "Ona",
+      "display_name": "Ona",
+      "radius_gu": 9000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": ""
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Ona 1",
+      "display_name": "Ona 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        0.0,
+        30000.0,
+        0.0
+      ],
+      "orbits": "Ona",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif"
+      },
+      "owner_region": "Ona1"
+    },
+    {
+      "name": "Ona 2",
+      "display_name": "Ona 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        37827.456478645334,
+        -41292.65717238591,
+        0.0
+      ],
+      "orbits": "Ona",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanGasPlanet.nif"
+      },
+      "owner_region": "Ona2"
+    },
+    {
+      "name": "Ona 3",
+      "display_name": "Ona 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -81686.02535091588,
+        7168.90942679071,
+        0.0
+      ],
+      "orbits": "Ona",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif"
+      },
+      "owner_region": "Ona3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Ona1",
+      "anchor_gu": [
+        641.754150034477,
+        26092.655233752314,
+        49.076354696976054
+      ],
+      "radius_gu": 7260.0,
+      "body_names": [
+        "Ona 1"
+      ]
+    },
+    {
+      "set_name": "Ona2",
+      "anchor_gu": [
+        36278.70552483064,
+        -44897.69616839064,
+        -535.4104223334484
+      ],
+      "radius_gu": 7260.000000000001,
+      "body_names": [
+        "Ona 2"
+      ]
+    },
+    {
+      "set_name": "Ona3",
+      "anchor_gu": [
+        -81731.77878844683,
+        3274.617576370646,
+        716.9362640472108
+      ],
+      "radius_gu": 7260.0,
+      "body_names": [
+        "Ona 3"
+      ]
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  }
+}
