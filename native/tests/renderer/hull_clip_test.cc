@@ -27,6 +27,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -397,3 +401,238 @@ TEST_F(HullClipTest, DegenerateNormalWithGradientOnStaysFinite) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+
+// ── Glow suppression around a breach ──────────────────────────────────────
+//
+// Live report: "it looks weird having illuminated windows jagging out into the
+// hole." A breached section still showing lit windows right up to the torn
+// edge reads wrong -- that compartment is open to space.
+//
+// So the glow map fades out around each carve: fully dead at the hole rim,
+// back to normal by kGlowKillReach * the carve radius.
+//
+// Isolating glow: no ambient, no directionals, no material emissive, white
+// glow map. `lit` is then 0 and refl_mask kills the (already zero) diffuse and
+// specular, so the centre pixel is the glow term and nothing else.
+//
+// The carve is placed so the centre fragment is NOT cut -- offset along the
+// NORMAL, where the oblate is shallow (|along| = 2 exceeds
+// kDepthFactor*r*(1+kShapeAmp) = 1.125) while the lateral test passes. So this
+// measures suppression on surviving hull, not the hole itself.
+namespace {
+void set_glow_only(renderer::Shader& s, GLuint glow_tex) {
+    s.set_vec3("u_ambient_light",  glm::vec3(0.0f));
+    s.set_int ("u_dir_light_count", 0);
+    s.set_vec3("u_emissive_color", glm::vec3(0.0f));
+    s.set_float("u_emissive_scale", 1.0f);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, glow_tex);
+    s.set_int("u_glow_map", 1);
+    glActiveTexture(GL_TEXTURE0);
+}
+}  // namespace
+
+TEST_F(HullClipTest, GlowIsSuppressedOnHullBesideABreach) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    auto render_with_carve = [&](glm::vec3 center, float radius) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(center, radius);
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        return px[0] + px[1] + px[2];
+    };
+
+    // Far away: the fragment is well outside the kill radius, full glow.
+    const int far_glow = render_with_carve(glm::vec3(0.0f, 0.0f, 20.0f), 2.0f);
+    ASSERT_GT(far_glow, 600)
+        << "glow-only setup is not producing a bright pixel (" << far_glow
+        << ") — the comparison below would be vacuous";
+
+    // Beside the breach: |along| = 2 == the carve radius, so this fragment
+    // survives the cut but sits at the very rim of the hole.
+    const int near_glow = render_with_carve(glm::vec3(0.0f, 0.0f, 2.0f), 2.0f);
+
+    EXPECT_LT(near_glow, far_glow / 4)
+        << "Hull right beside a breach is still glowing at " << near_glow
+        << " against " << far_glow << " far away — lit windows run into the "
+           "torn edge instead of going dark with the compartment";
+}
+
+// The suppression must be LOCAL. A carve must not dim windows across the whole
+// hull, which a missing or mis-scaled falloff would do.
+TEST_F(HullClipTest, GlowIsUntouchedWellBeyondTheBreach) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    set_uniforms(prog);
+    set_glow_only(prog, white_tex_);
+    prog.set_int("u_carve_enabled", 0);
+    draw();
+    const auto base_px = read_center();
+    const int baseline = base_px[0] + base_px[1] + base_px[2];
+    ASSERT_GT(baseline, 600) << "glow-only baseline is not bright";
+
+    set_uniforms(prog);
+    set_glow_only(prog, white_tex_);
+    prog.set_int("u_carve_enabled", 1);
+    // Must sit beyond kGlowKillReachMax (6) * r, or this stops testing
+    // locality and starts testing the falloff curve. r = 2 puts the outermost
+    // lobe at 12; the centre is 30 away, comfortably clear of it. If that
+    // constant is raised again, MOVE THIS -- do not relax the assertion.
+    const glm::vec4 sphere(0.0f, 0.0f, 30.0f, 2.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+    draw();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    const auto px = read_center();
+
+    EXPECT_EQ(px[0] + px[1] + px[2], baseline)
+        << "A breach 15 radii away changed the glow here — the suppression is "
+           "not local to the hole";
+}
+
+// A breach must not dim windows on the FAR side of a thin section.
+//
+// Live report: "the darkened spot is showing through to the opposite side of
+// the saucer when there is no visible damage there." The suppression keyed on
+// 3D distance from the carve centre alone, which only limits the bleed to
+// sections thinner than the kill radius -- on a saucer, most of them.
+//
+// Same fix the damage decals already use: weight by dot(n_body, carve_normal),
+// so a fragment on a face pointing the other way drops out entirely. Here the
+// carve faces +Z and the fragment's normal is -Z (the underside), at a
+// separation well inside the kill radius.
+//
+// Discrimination: without a normal gate this fragment is 2 units from a
+// radius-2 carve, i.e. fully suppressed, and reads ~0.
+TEST_F(HullClipTest, GlowSurvivesOnTheFaceOppositeABreach) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    set_glow_only(prog, white_tex_);
+
+    // This fragment is on the hull's UNDERSIDE: its normal points away from
+    // the carve's own outward normal.
+    glBindVertexArray(vao_);
+    glVertexAttrib3f(1, 0.0f, 0.0f, -1.0f);
+    glBindVertexArray(0);
+
+    prog.set_int("u_carve_enabled", 1);
+    const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);   // 2 units away, r = 2
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);         // breach on the TOP face
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+    draw();
+
+    // Restore the fixture's default facing for any later test in this file.
+    glBindVertexArray(vao_);
+    glVertexAttrib3f(1, 0.0f, 0.0f, 1.0f);
+    glBindVertexArray(0);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 600)
+        << "Windows on the face OPPOSITE a breach are dimmed to "
+        << (px[0] + px[1] + px[2]) << " — the dark patch bleeds through the "
+           "hull to a side with no damage on it";
+}
+
+// ── Lobed edge, not a clean disc ──────────────────────────────────────────
+//
+// A perfect circle of dead windows reads as a stencil stamped on the hull --
+// the same failure the procedural scuff relief hit repeatedly. The hole's own
+// rim already breaks up with an azimuthal vnoise3 keyed on the carve centre
+// (stable across frames, so it does not crawl); the kill radius now uses the
+// same tool, varying between kGlowKillReachMin and kGlowKillReachMax.
+//
+// Two carves at the SAME distance from this fragment, on different azimuths.
+// With a constant reach the suppression is a function of distance alone, so
+// both render identically. A lobed reach makes them differ.
+TEST_F(HullClipTest, TheGlowKillEdgeIsLobedNotACleanCircle) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    auto render_at = [&](glm::vec3 center) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(center, 2.0f);
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        prog.set_float("u_decal_time", 1000.0f);   // long settled: steady state
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        return px[0] + px[1] + px[2];
+    };
+
+    // Eight azimuths at a FIXED distance of 3.5 from this fragment, in the
+    // plane perpendicular to the carve normal. Distance is constant, so under
+    // a constant reach every one of these renders the same. 3.5 sits where the
+    // lobe range bites hardest: at reach 1.5 the fragment is clear of the kill
+    // entirely, at reach 3.0 it is well inside it.
+    //
+    // Sampling the whole circle rather than two points on purpose -- two can
+    // both land in low-noise lobes and agree by luck, which is exactly what a
+    // first version of this test did.
+    std::vector<int> seen;
+    for (int i = 0; i < 8; ++i) {
+        const float a = 6.2831853f * static_cast<float>(i) / 8.0f;
+        seen.push_back(render_at(glm::vec3(3.5f * std::cos(a),
+                                           3.5f * std::sin(a), 0.0f)));
+    }
+
+    const int lo = *std::min_element(seen.begin(), seen.end());
+    const int hi = *std::max_element(seen.begin(), seen.end());
+
+    EXPECT_LT(lo, 700)
+        << "No azimuth around the breach is suppressed at all (dimmest " << lo
+        << ") — the kill zone does not reach this fragment on any lobe, so the "
+           "comparison below would be vacuous";
+    EXPECT_NE(lo, hi)
+        << "Every azimuth at the same distance suppresses identically (" << lo
+        << ") — the kill radius is a constant multiple of the carve radius, so "
+           "the dead zone is a perfect disc";
+}
+
+// Glow in the kill zone is STEADY. A failing-power flicker was built here and
+// removed after a live look -- it read as wrong rather than as damage. This
+// pins the steadiness so it cannot creep back in unnoticed.
+TEST_F(HullClipTest, GlowInTheKillZoneDoesNotChangeOverTime) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    auto render_at_time = [&](float t) {
+        set_uniforms(prog);
+        set_glow_only(prog, white_tex_);
+        prog.set_int("u_carve_enabled", 1);
+        const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);   // fragment in the core
+        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        prog.set_int("u_carve_count", 1);
+        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+        prog.set_vec3_array("u_carve_normals", &normal, 1);
+        prog.set_float("u_decal_time", t);
+        draw();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        auto px = read_center();
+        return px[0] + px[1] + px[2];
+    };
+
+    const int first = render_at_time(0.0f);
+    for (int i = 1; i < 16; ++i) {
+        const int later = render_at_time(0.37f * static_cast<float>(i));
+        ASSERT_EQ(later, first)
+            << "Glow beside a breach changed between t=0 and t="
+            << (0.37f * static_cast<float>(i))
+            << " — the dead zone is animating when it should be steady";
+    }
+}

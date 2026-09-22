@@ -332,6 +332,8 @@ int select_instance_dynamic_lights(
 
 }  // namespace
 
+unsigned int damage_decal_texture() { return ensure_damage_decal_texture(); }
+
 void reset_damage_decal_texture() {
     g_decal_owner = assets::Texture{};  // glDeleteTextures in the current context
     g_decal_id    = 0;

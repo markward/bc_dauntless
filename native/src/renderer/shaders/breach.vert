@@ -31,6 +31,14 @@
 // there is nothing left in it to clean up.)
 
 layout(location = 0) in vec3 a_pos;     // hull mesh vertex position, NODE-LOCAL space
+// The mesh's own normal. Free to read: draw_model_positions_only binds the
+// mesh's FULL VAO (renderer/model_draw_helpers.cc) and only declines to set
+// MATERIAL uniforms -- every attribute the opaque pass uses is still bound
+// here, so this costs no extra buffer, upload or draw. Used ONLY by the
+// interior-shell path (u_interior_shell != 0 in breach.frag), where the
+// fragment IS the interior wall and there is no raymarch to take a field
+// gradient from; the scoop path ignores it entirely.
+layout(location = 1) in vec3 a_normal;  // hull mesh vertex normal, NODE-LOCAL space
 
 uniform mat4 u_model;   // this mesh's own node-composed world matrix: instance_world * node_chain
                         // (set PER MESH by draw_model_positions_only)
@@ -40,6 +48,7 @@ uniform mat4 u_view;
 uniform mat4 u_proj;
 
 out vec3 v_body_pos;    // BODY-frame position of the actual hull surface point
+out vec3 v_body_normal; // BODY-frame surface normal (interior shell only; see above)
 
 void main() {
     // BODY frame, not node-local. `a_pos` is this mesh's NODE-LOCAL vertex
@@ -69,5 +78,12 @@ void main() {
     // along-normal extent is 2.7-27 model units, so every breach fragment
     // would sample untouched field and discard.
     v_body_pos  = (u_ship_world_inv * u_model * vec4(a_pos, 1.0)).xyz;
+    // Same composition as v_body_pos, as a direction: the node chain alone
+    // (u_ship_world_inv * u_model), with the translation dropped by taking
+    // mat3. BC hulls carry uniform scale only, so the inverse-transpose a
+    // general normal matrix would need collapses to this; normalising is left
+    // to the fragment stage, which has to re-normalise after interpolation
+    // anyway.
+    v_body_normal = mat3(u_ship_world_inv * u_model) * a_normal;
     gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1.0);
 }

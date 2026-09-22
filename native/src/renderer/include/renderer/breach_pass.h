@@ -11,8 +11,10 @@
 
 #include <assets/texture.h>
 #include <scenegraph/breach_events.h>
+#include <scenegraph/hull_carve.h>   // HullCarveField
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
 
+#include <renderer/frame.h>                 // Lighting
 #include <renderer/instance_field_cache.h>  // InstanceFieldCache::Entry
 #include <voxel/volume.h>
 
@@ -99,7 +101,9 @@ public:
                 const ModelLookup& lookup,
                 CarveFieldCache& carve_cache,
                 InstanceFieldCache* field_cache,
-                float now = 0.f);
+                float now = 0.f,
+                const Lighting& lighting = Lighting{},
+                float ambient_scale = 1.0f);
 
     /// Draw the breach interior for ONE instance given its ORIGINAL fill,
     /// its already-built per-instance damage-field entry, its hull `model`,
@@ -153,7 +157,10 @@ public:
                        Pipeline& pipeline,
                        float breach_age = scenegraph::kRimLife + 1.f,
                        const glm::vec3& breach_center = glm::vec3(0.0f),
-                       float breach_radius = 0.0f);
+                       float breach_radius = 0.0f,
+                       const Lighting& lighting = Lighting{},
+                       float ambient_scale = 1.0f,
+                       const scenegraph::HullCarveField* carve = nullptr);
 
     /// Number of PROXY SUBMISSIONS this pass instance has issued so far —
     /// one per `render()`/`draw_instance()` call that actually draws
@@ -169,6 +176,23 @@ public:
     /// DAMAGED INSTANCES drawn, never to the number of carves or damage
     /// sites any of them carries.
     std::size_t draw_calls() const { return draw_calls_; }
+
+    /// Number of INTERIOR-SHELL submissions issued so far. Counted separately
+    /// from `draw_calls()` because the two answer different questions: that
+    /// one guards "never loop over carves", this one guards "the shell is
+    /// drawn at all, and exactly once per damaged instance". Keeping them
+    /// apart also means the shell's arrival does not silently change the
+    /// number every existing scoop test asserts on.
+    std::size_t shell_draw_calls() const { return shell_draw_calls_; }
+
+    /// Developer diagnostic: paint the interior SHELL flat magenta, leaving the
+    /// raymarched scoop alone. An unlit interior and a hole through the hull
+    /// both render as black against a starfield, so "is the shell drawing
+    /// here?" cannot be answered by eye -- which is why the one-way hole took
+    /// three rounds to find. Process-wide (there is one breach pass), off by
+    /// default, and never set outside --developer.
+    static void set_shell_debug(bool on);
+    static bool shell_debug();
 
 private:
     // Lazily load the 4-frame animated interior texture (game/data/Damage1..4.tga).
@@ -192,7 +216,35 @@ private:
                          float breach_age,             // age of matching event; large = cold
                          const glm::vec3& breach_center,  // that event's own centre, body frame
                          float breach_radius,          // that event's own visible radius
-                         unsigned int damage_tex);  // current animation frame texture
+                         unsigned int damage_tex,   // current animation frame texture
+                         const Lighting& lighting,  // scene sun + ambient (world space)
+                         float ambient_scale,       // frame's ambient dimmer (filmic)
+                         const scenegraph::HullCarveField* carve,  // tracked carve ring, or null
+                         bool interior_shell = false);  // true = back-face interior shell
+
+    // Draw the hull's BACK faces under the same stencil: the inside of the
+    // plating on the far side of a hole. Without it a breach whose carve
+    // leaves the authored fill volume (routine -- BC's volumes are 3-9 nodes
+    // thick) resolves to the SKYBOX, because the hull is a single-sided shell
+    // and the far plating's inside face is culled. Submitted BEFORE the scoop
+    // so the scoop, which writes depth at the nearer hull surface, still wins
+    // wherever it finds a real cavity wall.
+    void draw_interior_shell(const assets::Model& model,
+                             const InstanceFieldCache::Entry& field,
+                             unsigned int fill_tex,
+                             const glm::vec3& fill_origin,
+                             const glm::vec3& fill_cell,
+                             const glm::ivec3& fill_dims,
+                             const glm::mat4& world_xf,
+                             const scenegraph::Camera& camera,
+                             Pipeline& pipeline,
+                             float breach_age,
+                             const glm::vec3& breach_center,
+                             float breach_radius,
+                             unsigned int damage_tex,
+                             const Lighting& lighting,
+                             float ambient_scale,
+                             const scenegraph::HullCarveField* carve);
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.
@@ -218,6 +270,9 @@ private:
     // glDrawElements inside it) — the ONE place either render() or
     // draw_instance() actually submits an instance's geometry.
     std::size_t draw_calls_ = 0;
+
+    // See shell_draw_calls(). Incremented once per draw_interior_shell() CALL.
+    std::size_t shell_draw_calls_ = 0;
 };
 
 }  // namespace renderer

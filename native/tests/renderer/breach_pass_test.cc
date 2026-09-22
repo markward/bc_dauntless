@@ -330,6 +330,36 @@ assets::Model make_surface_patch_model(glm::vec3 center, glm::vec3 normal, float
     return m;
 }
 
+// Two parallel sheets of hull, the minimum geometry that can express "you are
+// looking THROUGH a hole in the near plating at the far plating" -- which
+// make_surface_patch_model's single quad structurally cannot, because its only
+// back face is CO-PLANAR with its own front face.
+//
+// `near_center` faces +normal (toward the camera: a front face under this
+// pass's glFrontFace(GL_CCW) + cull BACK, the sheet the carve cut through).
+// `far_center` faces -normal (AWAY from the camera), so from the camera's side
+// it is a BACK face -- culled by the opaque pass and by the scoop, and drawn
+// ONLY by the interior shell. That asymmetry is the whole point: a real BC
+// hull is a single-sided shell, so once the near sheet is discarded there is
+// nothing left in front of the skybox unless something draws that back face.
+assets::Model make_two_plate_model(glm::vec3 near_center, glm::vec3 far_center,
+                                   glm::vec3 normal, float half_size) {
+    normal = glm::normalize(normal);
+    assets::Model near_m = make_surface_patch_model(near_center,  normal, half_size);
+    assets::Model far_m  = make_surface_patch_model(far_center,  -normal, half_size);
+
+    assets::Model m;
+    m.meshes.push_back(std::move(near_m.meshes[0]));
+    m.meshes.push_back(std::move(far_m.meshes[0]));
+    assets::Node node;
+    node.parent_index    = -1;
+    node.local_transform = glm::mat4(1.0f);
+    node.meshes          = {0, 1};
+    m.nodes.push_back(node);
+    m.root_node = 0;
+    return m;
+}
+
 class BreachPassGLTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window>   w;
@@ -366,6 +396,21 @@ protected:
         e.dims   = f.dims;
         e.scale  = f.scale;
         return e;
+    }
+
+    // A sun the interior can actually be lit BY. Before the interior was
+    // scene-lit it carried its own fixed key light glued to the camera, so a
+    // test could assert on brightness without ever supplying a light; now that
+    // the shader no longer invents one, a test that wants a lit interior has to
+    // provide it, exactly as the frame does in production. Aimed down +Z, the
+    // direction the cavity walls in this file all face.
+    static renderer::Lighting test_lighting() {
+        renderer::Lighting l;
+        l.ambient               = glm::vec3(0.18f);
+        l.directional_count     = 1;
+        l.directional_dir_ws[0] = glm::vec3(0.0f, 0.0f, 1.0f);
+        l.directional_color[0]  = glm::vec3(1.0f);
+        return l;
     }
 
     std::array<unsigned char, 4> read_center() const {
@@ -474,7 +519,10 @@ TEST_F(BreachPassGLTest, SolidFillDrawsInterior) {
 
     mark_hull_cut();   // the interior draws only where hull was cut away
     pass.draw_instance(/*instance_key=*/1, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in solid-fill interior draw";
@@ -549,7 +597,10 @@ TEST_F(BreachPassGLTest, NonIdentityNodeTransformRendersIdenticallyToIdentity) {
     glDepthMask(GL_TRUE);
     mark_hull_cut();
     pass.draw_instance(/*instance_key=*/1, fill, entry, flat,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
     ASSERT_EQ(glGetError(), GL_NO_ERROR) << "GL error in identity-node baseline draw";
     const long long flat_sum = read_frame_sum();
@@ -566,7 +617,10 @@ TEST_F(BreachPassGLTest, NonIdentityNodeTransformRendersIdenticallyToIdentity) {
     glDepthMask(GL_TRUE);
     mark_hull_cut();
     pass.draw_instance(/*instance_key=*/1, fill, entry, chained,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in node-chained draw";
     EXPECT_EQ(pass.draw_calls(), 2u) << "two draw_instance() calls, two submissions";
@@ -628,13 +682,30 @@ TEST_F(BreachPassGLTest, RotatedInstanceWorldShadesIdenticallyToUnrotated) {
     const scenegraph::Camera cam =
         cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
+    // The scene sun is a WORLD-space direction, so it has to be turned with
+    // everything else below or the comparison stops being about frames and
+    // starts being about the sun striking a different face -- which is correct
+    // physics, not a bug, now that the interior is genuinely scene-lit. Turning
+    // ship, camera AND light by one R leaves the whole configuration rigidly
+    // identical, so the picture must be too. That keeps this test's real job
+    // intact: if anything in the pass combines a BODY-frame vector with a
+    // WORLD-space one, rotating all three does NOT reproduce the picture.
+    // test_lighting()'s sun faces the cavity wall, so the baseline below is
+    // brightly lit and the comparison has real signal to work with. A grazing
+    // sun would leave both renders near black, where quantisation alone could
+    // make them agree.
+    const renderer::Lighting lighting = test_lighting();
+
     // Baseline: identity instance world (what every other test here uses).
     clear_framebuffer();
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     mark_hull_cut();
     pass.draw_instance(/*instance_key=*/1, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, lighting);
     glFinish();
     ASSERT_EQ(glGetError(), GL_NO_ERROR) << "GL error in unrotated baseline draw";
     const long long flat_sum = read_frame_sum();
@@ -652,11 +723,18 @@ TEST_F(BreachPassGLTest, RotatedInstanceWorldShadesIdenticallyToUnrotated) {
     rot_cam.target = glm::vec3(R * glm::vec4(cam.target, 1.0f));
     rot_cam.up     = glm::vec3(R * glm::vec4(cam.up, 0.0f));
 
+    renderer::Lighting rot_lighting = lighting;
+    rot_lighting.directional_dir_ws[0] =
+        glm::vec3(R * glm::vec4(lighting.directional_dir_ws[0], 0.0f));
+
     clear_framebuffer();
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     mark_hull_cut();
-    pass.draw_instance(/*instance_key=*/1, fill, entry, patch, R, rot_cam, *pipeline);
+    pass.draw_instance(/*instance_key=*/1, fill, entry, patch, R, rot_cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, rot_lighting);
     glFinish();
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in rotated-world draw";
     EXPECT_EQ(pass.draw_calls(), 2u) << "two draw_instance() calls, two submissions";
@@ -667,10 +745,12 @@ TEST_F(BreachPassGLTest, RotatedInstanceWorldShadesIdenticallyToUnrotated) {
            "orientation-invariant in body frame";
     EXPECT_NEAR(static_cast<double>(rot_sum), static_cast<double>(flat_sum),
                 0.01 * static_cast<double>(flat_sum))
-        << "The same ship, same damage, same view, shaded differently purely "
-           "because the hull is turned. Something in this pass is combining a "
-           "BODY-frame vector with a WORLD-space one — the field gradient `n` "
-           "with a world-space view direction is how this went wrong before. "
+        << "Ship, camera and sun were all turned by the same rotation — a "
+           "rigidly identical configuration — and the picture changed anyway. "
+           "Something in this pass is combining a BODY-frame vector with a "
+           "WORLD-space one: the field gradient `n` against a world-space view "
+           "direction is how this went wrong before, and the scene-light dot "
+           "product is the new place it could. "
            "flat=" << flat_sum << " rotated=" << rot_sum;
 }
 
@@ -690,7 +770,10 @@ TEST_F(BreachPassGLTest, StencilZeroBlocksInteriorSoItCannotFloatInOpenSpace) {
     scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
     pass.draw_instance(/*instance_key=*/2, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in stencil-blocked draw";
@@ -717,7 +800,10 @@ TEST_F(BreachPassGLTest, EmptyFillDiscardsInterior) {
 
     mark_hull_cut();
     pass.draw_instance(/*instance_key=*/3, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in empty-fill interior draw";
@@ -726,6 +812,128 @@ TEST_F(BreachPassGLTest, EmptyFillDiscardsInterior) {
         << "Centre pixel is bright (R=" << (int)px[0]
         << " G=" << (int)px[1] << " B=" << (int)px[2]
         << ") — empty fill: every fragment's backing check should discard (see-through)";
+}
+
+// ── Interior shell: a hole is never a window to the skybox ────────────────
+//
+// THE BUG THIS EXISTS TO CATCH. BC's authored hull volumes are only a handful
+// of nodes deep through a ship's vertical axis (measured: Galaxy 9, Vorcha 7,
+// BirdOfPrey 6, Sovereign 5, Akira 5, Galor 3 -- see carve_cavity_test.cc), so
+// a carve routinely marches straight out of the fill and the scoop's backing
+// gate discards ("a hole is a hole"). The hull is a single-sided shell drawn
+// cull BACK, so the far plating's inside face is culled too and the pixel
+// resolves to the skybox: a hole you can see space through from the struck
+// side, while the same ship from the far side shows intact hull. That
+// asymmetry is what this shell removes.
+//
+// empty_fill() is the exact production condition (no backing anywhere, so the
+// scoop discards every fragment -- EmptyFillDiscardsInterior above asserts
+// precisely that on a single sheet). The difference here is purely geometric:
+// there IS a far sheet, and it must be drawn.
+//
+// Discrimination: with the shell removed this reads background (0,0,0) --
+// which is the shipped behaviour today, not a hypothetical.
+TEST_F(BreachPassGLTest, HoleWithNoBackingShowsFarPlatingNotBackground) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = empty_fill();   // no backing: the scoop discards everywhere
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+
+    // Near sheet sits mid-carve (z=7.5, inside the field's carved band
+    // [0,15]); far sheet at z=-20 is below the field box entirely, so it
+    // samples the clamped idx-0 slice (-100, intact) and is NOT carved.
+    const glm::vec3 far_center(0.0f, 0.0f, -20.0f);
+    const assets::Model plates =
+        make_two_plate_model(kCavitySurfaceCenter, far_center, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/70, fill, entry, plates,
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in interior-shell draw";
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is background (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — you are looking through the hull at the "
+           "skybox. The far plating's inside face must be drawn.";
+}
+
+// The shell must NOT plug the hole with the very sheet the carve cut through.
+// A closed mesh's near sheet has a back face CO-PLANAR with the front face
+// that was just discarded; drawing it would fill every breach with its own
+// plating at zero depth -- the "breach reads as a crust rather than a hole"
+// failure carve_cavity_test.cc's header describes. The shell therefore runs
+// the SAME field test the opaque pass does, inverted: it survives only where
+// the hull was NOT carved.
+//
+// Single sheet, so the ONLY thing the shell could draw is that co-planar back
+// face. Must stay background.
+TEST_F(BreachPassGLTest, ShellDoesNotPlugTheHoleWithItsOwnCarvedSheet) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = empty_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/71, fill, entry, patch,
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in shell self-plug draw";
+    auto px = read_center();
+    EXPECT_LT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is lit (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — the shell painted the carved sheet's own "
+           "back face, plugging the hole it was cut from";
+}
+
+// One shell draw per INSTANCE, like the scoop -- not one per carve. A field
+// carrying 30 independent damage sites (beyond HullCarveField's 24-slot ring
+// by construction) still submits exactly one.
+TEST_F(BreachPassGLTest, OneShellDrawIssuedRegardlessOfDamageSiteCount) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = wide_solid_fill();
+    const voxel::DistanceField field = make_multi_site_field(30);
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+    const glm::vec3 center(0.f, 0.f, multi_site_z(29));
+    const assets::Model patch = make_surface_patch_model(center, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(center, glm::vec3(0, 0, 1), 100.f);
+
+    pass.draw_instance(/*instance_key=*/72, fill, entry, patch,
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(pass.shell_draw_calls(), 1u)
+        << "draw_instance() issued " << pass.shell_draw_calls()
+        << " interior-shell submissions for one instance -- expected exactly one";
 }
 
 // GL: an entry with no uploaded atlas (tex2d==0 — the same state an instance
@@ -747,7 +955,10 @@ TEST_F(BreachPassGLTest, NoFieldEntryDrawsNothing) {
     scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
     pass.draw_instance(/*instance_key=*/4, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in empty-field draw";
@@ -910,7 +1121,10 @@ TEST_F(BreachPassGLTest, HitWithNoBackingMaterialDoesNotPaint) {
     scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
     pass.draw_instance(/*instance_key=*/20, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in floating-hit draw";
@@ -941,7 +1155,10 @@ TEST_F(BreachPassGLTest, HitWithRealBackingMaterialPaints) {
     scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
     pass.draw_instance(/*instance_key=*/21, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in backed-hit draw";
@@ -970,7 +1187,10 @@ TEST_F(BreachPassGLTest, NarrowRealisticCarveCavityStillRenders) {
     scenegraph::Camera cam = cam_facing(kNarrowCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
 
     pass.draw_instance(/*instance_key=*/22, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in narrow-carve draw";
@@ -999,7 +1219,10 @@ TEST_F(BreachPassGLTest, OneDrawIssuedRegardlessOfDamageSiteCount) {
     scenegraph::Camera cam = cam_facing(center, glm::vec3(0, 0, 1), 100.f);
 
     pass.draw_instance(/*instance_key=*/30, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in multi-site draw";
@@ -1033,7 +1256,10 @@ TEST_F(BreachPassGLTest, InteriorRendersForACarveBeyondTheTwentyFourSlotRing) {
         scenegraph::Camera cam = cam_facing(center, glm::vec3(0, 0, 1), 100.f);
 
         pass.draw_instance(/*instance_key=*/31, fill, entry, patch,
-                           glm::mat4(1.0f), cam, *pipeline);
+                           glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
         glFinish();
         EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error targeting site 29";
         EXPECT_GT(read_inner_max(), 24)
@@ -1062,7 +1288,10 @@ TEST_F(BreachPassGLTest, InteriorRendersForACarveBeyondTheTwentyFourSlotRing) {
         scenegraph::Camera cam = cam_facing(center, glm::vec3(0, 0, 1), 100.f);
 
         pass.draw_instance(/*instance_key=*/32, fill, entry, patch,
-                           glm::mat4(1.0f), cam, *pipeline);
+                           glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
         glFinish();
         EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error targeting site 29's own gap";
         auto px = read_center();
@@ -1122,7 +1351,10 @@ TEST_F(BreachPassGLTest, StencilAndCullStateRestoredAfterDrawInstance) {
     scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
 
     pass.draw_instance(/*instance_key=*/40, fill, entry, patch,
-                       glm::mat4(1.0f), cam, *pipeline);
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting());
     glFinish();
 
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
@@ -1143,4 +1375,296 @@ TEST_F(BreachPassGLTest, StencilAndCullStateRestoredAfterDrawInstance) {
     glGetIntegerv(GL_CULL_FACE_MODE, &cull_mode);
     EXPECT_EQ(cull_mode, GL_BACK)
         << "glCullFace must be restored to GL_BACK after the draw";
+}
+
+// ── Scene lighting ────────────────────────────────────────────────────────
+//
+// The interior used to be lit by a fixed key light glued to the CAMERA
+// ("light = 0.35 + 0.55 * dot(nf, view_dir)"), so a breach could never face
+// away from its own light and never sat in shadow: it was brightest exactly
+// where you were looking at it, while the hull around it was sun-lit and
+// shadow-mapped. That mismatch is what made damage read as a bright raw crust
+// pasted onto a lit ship.
+//
+// Discrimination: with a camera-glued light BOTH renders below are identical
+// and the frame sums match exactly, because the camera never moved.
+TEST_F(BreachPassGLTest, InteriorIsLitByTheSceneSunNotTheCamera) {
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    auto render_with_sun = [&](glm::vec3 toward_light, std::uintptr_t key) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        mark_hull_cut();
+
+        renderer::Lighting lighting;
+        lighting.ambient             = glm::vec3(0.05f);
+        lighting.directional_count   = 1;
+        lighting.directional_dir_ws[0] = glm::normalize(toward_light);
+        lighting.directional_color[0]  = glm::vec3(1.0f);
+
+        renderer::BreachPass pass;
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(key, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                           /*breach_age=*/scenegraph::kRimLife + 1.f,
+                           /*breach_center=*/glm::vec3(0.0f),
+                           /*breach_radius=*/0.0f, lighting);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_frame_sum();
+    };
+
+    // The cavity wall's outward direction is +Z (the field's gradient points
+    // back toward the camera, out of the intact material below it), so a sun
+    // at +Z faces it and a sun at -Z is behind it.
+    const long long lit   = render_with_sun(glm::vec3(0, 0,  1), 80);
+    const long long unlit = render_with_sun(glm::vec3(0, 0, -1), 81);
+
+    EXPECT_GT(lit, unlit)
+        << "Interior brightness is identical with the sun in front of the wall ("
+        << lit << ") and behind it (" << unlit
+        << ") — the interior is not lit by the scene at all";
+}
+
+
+
+
+// ── Ambient must be the SAME quantity the hull around it uses ─────────────
+//
+// The interior sits inside a hole in the hull. If the two disagree about what
+// ambient is, the disagreement shows as a seam at every breach rim. These two
+// tests pin the interior to opaque.frag's own ambient formula:
+//   amb = u_ambient_light * (1 + u_ambient_gradient * dot(n, u_ambient_dir_ws))
+// with u_ambient_light already scaled by the frame's ambient_scale, exactly as
+// FrameSubmitter::set_ambient_uniforms does it.
+//
+// No directional lights at all in either test, so ambient is the ONLY term and
+// nothing else can account for the difference.
+
+// Directional ambient: the gradient axis is flipped rather than the wall,
+// which is equivalent (only their dot product matters) and leaves the geometry
+// untouched between the two renders.
+TEST_F(BreachPassGLTest, InteriorAmbientFollowsTheDirectionalAmbientGradient) {
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    auto render_with_axis = [&](glm::vec3 axis, std::uintptr_t key) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        mark_hull_cut();
+
+        renderer::Lighting lighting;
+        lighting.ambient           = glm::vec3(0.45f);
+        lighting.directional_count = 0;      // ambient is the only term
+        lighting.ambient_dir_ws    = axis;
+        lighting.ambient_gradient  = 0.8f;
+
+        renderer::BreachPass pass;
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(key, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                           /*breach_age=*/scenegraph::kRimLife + 1.f,
+                           /*breach_center=*/glm::vec3(0.0f),
+                           /*breach_radius=*/0.0f, lighting);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_frame_sum();
+    };
+
+    // The cavity wall faces +Z, so an ambient axis of +Z is aligned with it.
+    const long long aligned = render_with_axis(glm::vec3(0, 0,  1), 100);
+    const long long against = render_with_axis(glm::vec3(0, 0, -1), 101);
+
+    ASSERT_GT(aligned, 0) << "nothing drew — the comparison would be vacuous";
+    EXPECT_GT(aligned, against)
+        << "Ambient is identical with the gradient axis along the wall's normal ("
+        << aligned << ") and against it (" << against
+        << ") — the interior ignores the directional ambient the hull around it "
+           "is shaded by";
+}
+
+// ambient_scale is the frame's own ambient dimmer (x0.8 under filmic). An
+// interior lit 1.25x brighter than the hull it is set into is the same class of
+// mismatch as the camera-glued light this pass used to carry.
+TEST_F(BreachPassGLTest, InteriorAmbientHonoursTheFramesAmbientScale) {
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    auto render_scaled = [&](float ambient_scale, std::uintptr_t key) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        mark_hull_cut();
+
+        renderer::Lighting lighting;
+        lighting.ambient           = glm::vec3(0.6f);
+        lighting.directional_count = 0;      // ambient is the only term
+
+        renderer::BreachPass pass;
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(key, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                           /*breach_age=*/scenegraph::kRimLife + 1.f,
+                           /*breach_center=*/glm::vec3(0.0f),
+                           /*breach_radius=*/0.0f, lighting, ambient_scale);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_frame_sum();
+    };
+
+    const long long full   = render_scaled(1.0f, 102);
+    const long long dimmed = render_scaled(0.5f, 103);
+
+    ASSERT_GT(full, 0) << "nothing drew — the comparison would be vacuous";
+    EXPECT_LT(dimmed, full)
+        << "ambient_scale had no effect (full=" << full << " dimmed=" << dimmed
+        << ") — the interior's ambient is not the frame's, so it sits brighter "
+           "than the hull under filmic";
+}
+
+// ── The shell must use the HULL'S cut decision, not a lookalike ───────────
+//
+// THE ONE-WAY HOLE, reproduced. Reported live: a breach on the Galaxy's
+// forward port saucer read as a hole to space from ABOVE, while the underside
+// at that spot showed no damage at all.
+//
+// opaque.frag does not cut on the raw field. It cuts on:
+//   sphere block  -> the tracked carve's own oblate (tight), OR
+//   field block   -> but ONLY where !field_suppressed, and at a threshold
+//                    RAISED by rim noise.
+// `field_suppressed` covers the region the brush DILATED the carve to, and
+// that dilation is driven by the FIELD CELL when the cell is coarse relative
+// to the carve: dep = max(kDepthFactor*r, kFieldDepthFloor*cellmin). BC's
+// authored cell is 3-7.5 model units and a combat carve floors at 3, so the
+// dilated region routinely reaches much further along the normal than the
+// oblate does.
+//
+// That is exactly the far plating's situation here: inside the dilated region
+// (so the hull KEEPS it -- no damage from below) but outside the oblate (so it
+// is not cut). A shell testing the raw field throws it away anyway, and you
+// see stars through a hull the opaque pass just decided to keep.
+//
+// Geometry below is built to sit in that gap deliberately:
+//   cell 5, carve r=5 at the origin, normal +Z, far plate at z=-5.
+//   oblate along-extent = kDepthFactor*r*(1+kShapeAmp) = 0.45*5*1.25 = 2.81
+//       -> |along| = 5 is OUTSIDE: the hull is NOT cut there.
+//   dilated dep     = max(0.45*5, 1.25*5) = 6.25  (the CELL drives it)
+//       -> |along| = 5 is INSIDE: field_suppressed, so the field never runs.
+// and the field marks that whole span carved, as the real brush does.
+TEST_F(BreachPassGLTest, ShellKeepsFarPlatingTheHullItselfDidNotCut) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    // Field: cell 5, carved (100) across z-indices covering both plates, so the
+    // RAW field reads "carved" at the far plate -- the brush reached it.
+    const std::vector<std::int8_t> z_values = {100, 100, 100, 100, 100};
+    const voxel::DistanceField field =
+        make_z_slab_field(glm::ivec3(4, 4, 5), glm::vec3(-10.0f, -10.0f, -12.5f),
+                          glm::vec3(5.0f), z_values);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+
+    const glm::vec3 near_center(0.0f, 0.0f, 0.0f);
+    const glm::vec3 far_center (0.0f, 0.0f, -5.0f);
+    const assets::Model plates =
+        make_two_plate_model(near_center, far_center, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(near_center, glm::vec3(0, 0, 1), 100.f);
+
+    // The tracked carve the hull actually cut with.
+    scenegraph::HullCarveField carve;
+    scenegraph::HullCarve& c =
+        carve.add(near_center, /*influ_radius=*/5.0f, /*strength=*/1000.0f,
+                  glm::vec3(0.0f, 0.0f, 1.0f));
+    c.radius = 5.0f;
+
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/110, fill, entry, plates, glm::mat4(1.0f),
+                       cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting(),
+                       /*ambient_scale=*/1.0f, &carve);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in far-plating draw";
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is background (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — the shell threw away far plating that the "
+           "hull itself KEEPS (inside the brush's dilated region, outside the "
+           "carve oblate). That is the one-way hole: stars from above, intact "
+           "hull from below.";
+}
+
+// ── Interior-shell debug view ─────────────────────────────────────────────
+//
+// "Is the shell drawing here, or am I looking at space?" is not answerable by
+// eye: an unlit interior and a hole through the hull both render as black
+// against a starfield. That ambiguity is why the one-way hole took three
+// rounds to pin down. This paints the shell -- and ONLY the shell -- flat
+// magenta, so one look settles it.
+//
+// Scoped to the shell on purpose: if it coloured the scoop too, a breach whose
+// interior comes from the raymarch would light up and the question would go
+// unanswered again.
+TEST_F(BreachPassGLTest, ShellDebugPaintsTheShellMagentaAndLeavesTheScoopAlone) {
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+
+    // Shell case: no backing, so the scoop discards and only the shell can
+    // paint this pixel (the same setup as the far-plating test above).
+    auto render = [&](bool debug, const assets::Model& model,
+                      const voxel::VoxelVolume& f, std::uintptr_t key) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        mark_hull_cut();
+        renderer::BreachPass::set_shell_debug(debug);
+        renderer::BreachPass pass;
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        scenegraph::Camera cam =
+            cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+        pass.draw_instance(key, f, entry, model, glm::mat4(1.0f), cam, *pipeline,
+                           /*breach_age=*/scenegraph::kRimLife + 1.f,
+                           /*breach_center=*/glm::vec3(0.0f),
+                           /*breach_radius=*/0.0f, test_lighting());
+        glFinish();
+        renderer::BreachPass::set_shell_debug(false);
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_center();
+    };
+
+    const glm::vec3 far_center(0.0f, 0.0f, -20.0f);
+    const assets::Model plates =
+        make_two_plate_model(kCavitySurfaceCenter, far_center, glm::vec3(0, 0, 1), 50.f);
+    const voxel::VoxelVolume no_backing = empty_fill();
+
+    auto shell = render(true, plates, no_backing, 120);
+    EXPECT_GT(shell[0], 200) << "shell debug: red channel should be saturated";
+    EXPECT_LT(shell[1], 64)  << "shell debug: green channel should be near zero";
+    EXPECT_GT(shell[2], 200) << "shell debug: blue channel should be saturated";
+
+    // Scoop case: solid backing on a single sheet, so what paints is the
+    // raymarched scoop. It must be UNAFFECTED by the toggle.
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    auto scoop_off = render(false, patch, fill, 121);
+    auto scoop_on  = render(true,  patch, fill, 122);
+    ASSERT_GT(scoop_off[0] + scoop_off[1] + scoop_off[2], 16)
+        << "scoop drew nothing — the comparison would be vacuous";
+    EXPECT_EQ(scoop_on[0], scoop_off[0]) << "shell debug must not touch the scoop";
+    EXPECT_EQ(scoop_on[1], scoop_off[1]) << "shell debug must not touch the scoop";
+    EXPECT_EQ(scoop_on[2], scoop_off[2]) << "shell debug must not touch the scoop";
 }
