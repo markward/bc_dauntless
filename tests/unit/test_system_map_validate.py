@@ -207,3 +207,53 @@ def test_pin_respected_rejects_a_two_element_offset():
     pins = {"Ona1/Ona 1": (0.0, 4000.0)}  # 2 elements, not 3
     problems = validate(m, pins=pins)
     assert "pin-respected" in _slugs(problems)
+
+
+def test_malformed_geometry_flags_a_two_element_position_gu():
+    """A body whose position_gu is only 2 elements must be REPORTED, not
+    silently accepted because `_dist`'s zip truncates every geometric
+    comparison against it to 2D -- which would report a genuinely broken map
+    as clean."""
+    m = _valid()
+    m.body("Ona 1").position_gu = (0.0, 22000.0)  # 2 elements, not 3
+    problems = validate(m)
+    assert "malformed-geometry" in _slugs(problems)
+    assert validate(m) != []  # never silently clean
+
+
+def test_malformed_geometry_flags_a_two_element_anchor_gu():
+    """Same hazard, on a region's anchor_gu instead of a body's position_gu."""
+    m = _valid()
+    m.regions[0].anchor_gu = (0.0, 18000.0)  # 2 elements, not 3
+    problems = validate(m)
+    assert "malformed-geometry" in _slugs(problems)
+
+
+def test_malformed_geometry_flags_non_numeric_coordinates():
+    """A body with non-numeric coordinates must be reported, not raise
+    TypeError out of a subtraction deep inside a geometric rule."""
+    m = _valid()
+    m.body("Ona 1").position_gu = ("a", "b", "c")
+    problems = validate(m)  # must not raise
+    assert "malformed-geometry" in _slugs(problems)
+
+
+def test_malformed_geometry_does_not_raise_and_skips_the_bad_body():
+    """validate()'s contract is absolute: it never raises. A malformed body
+    must be excluded from the geometric rules that would otherwise crash on
+    it (body-overlap, body-engulfs-anchor, anchor-inside-body, pin-respected)
+    rather than merely reported and then still touched."""
+    m = _valid()
+    m.body("Ona 1").position_gu = ("a", "b", "c")
+    pins = {"Ona1/Ona 1": (0.0, 4000.0, 0.0)}
+    problems = validate(m, sdk_set_names=["Ona1", "Ona2"], pins=pins)  # must not raise
+    assert "malformed-geometry" in _slugs(problems)
+
+
+def test_pins_as_a_list_is_reported_not_raised():
+    """`pins` itself may arrive malformed (a list instead of a dict). That
+    must be one reported Problem, not an AttributeError out of `.items()`."""
+    m = _valid()
+    pins = [("Ona1/Ona 1", (0.0, 4000.0, 0.0))]  # list, not dict
+    problems = validate(m, pins=pins)  # must not raise
+    assert "pin-respected" in _slugs(problems)

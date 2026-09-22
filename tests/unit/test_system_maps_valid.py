@@ -45,13 +45,22 @@ def test_ona_planets_are_large():
     assert all(b.radius_gu >= 1000.0 for b in planets)
 
 
-def test_regenerating_ona_is_idempotent():
+@pytest.mark.parametrize("name", available() or ["__none__"])
+def test_regenerating_any_map_is_idempotent(name):
     """Running the generator again must reproduce the committed file byte for
-    byte, so a regeneration diff shows only real changes."""
+    byte, so a regeneration diff shows only real changes.
+
+    Parametrised over every committed map, not just Ona: a bug in a layout
+    rule that only bites when player_start_gu is non-zero would pass under
+    Ona alone, since all three of its Player Starts sit at the origin. 51 of
+    the 90 real regions do not."""
+    if name == "__none__":
+        pytest.skip("no system maps checked in yet")
     from engine.systems.map import to_json
     from tools.gen_system_maps import generate
-    fresh, _notes = generate("Ona")
-    assert to_json(fresh) == to_json(load("ona"))
+    committed = load(name)
+    fresh, _notes = generate(committed.system)
+    assert to_json(fresh) == to_json(committed)
 
 
 def test_overrides_survive_regeneration():
@@ -110,17 +119,23 @@ def test_no_committed_map_declares_a_pin_and_here_is_why():
     """`layout()` honours pins and `validate()` enforces them, but no map
     declares one -- and that is deliberate, not an oversight.
 
-    A pin preserves a body's ORIGINAL absolute offset from its region anchor,
-    while every body is scaled to 20x. The two collide for any body the
-    original placed within ~20x of its planet. The only candidate, Prendel 3's
-    "Moon 2", is exactly that case: the planet becomes 7200 GU and the moon
-    1800 GU, needing 9000 GU between centres, but the original put the moon
-    5016 GU from the region origin -- so honouring the pin lands the moon
-    inside its own planet and `body-overlap` correctly rejects it.
+    The design spec names two pin candidates. Xi Entrades 5 turns out not to
+    be one at all: E7M3 stages its Akira/Kessok fight around a waypoint,
+    "Moon1" at (400, 5000, 0), that no body ever occupies -- there is nothing
+    to pin, so the region's radius covers the staged content instead.
 
-    Prendel's overrides carry the full derivation. If a future map ever does
-    declare a pin, this test will fail and should be replaced by one asserting
-    that pin holds.
+    Prendel 3's "Moon 2" is the only actual candidate -- a body a mission
+    really does stage against -- but it is the case where a pin COLLIDES with
+    20x body scaling. A pin preserves a body's ORIGINAL absolute offset from
+    its region anchor; the planet becomes 7200 GU and the moon 1800 GU,
+    needing 9000 GU between centres, but the original put the moon 5016 GU
+    from the region origin -- so honouring the pin lands the moon inside its
+    own planet and `body-overlap` correctly rejects it. So it is the only
+    *pinnable* one, not "the only candidate" -- and even it does not hold.
+
+    Prendel's and Xi Entrades's overrides carry the full derivation. If a
+    future map ever does declare a pin, this test will fail and should be
+    replaced by one asserting that pin holds.
     """
     from tools.gen_system_maps import pins_from
     declared = {name: pins_from(load(name)) for name in available()}

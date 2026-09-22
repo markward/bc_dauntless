@@ -26,6 +26,21 @@ def _dist(a, b) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
+def _is_point3(v) -> bool:
+    """True if v is a sequence of exactly 3 numbers -- a well-formed GU point.
+
+    `_dist` above uses `zip`, which silently truncates to the shorter side: a
+    2-element vector paired against a 3-element one compares only x and y and
+    reports the map clean. Catching that here, before any geometric rule runs,
+    is the difference between a malformed map raising deep inside a distance
+    calculation and it being reported by name.
+    """
+    try:
+        return len(v) == 3 and all(isinstance(c, (int, float)) for c in v)
+    except TypeError:
+        return False
+
+
 def _resolve(by_name: dict, name: str, owner: str | None = None):
     """Look up a body by name, preferring the candidate owned by `owner`.
 
@@ -51,6 +66,32 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
     for b in m.bodies:
         by_name.setdefault(b.name, []).append(b)
 
+    # malformed-geometry runs FIRST. Every rule below does arithmetic on
+    # position_gu / anchor_gu (subtraction, zip, distance) with no guard of
+    # its own -- a non-numeric coordinate raises deep inside a geometric rule
+    # instead of being reported by name, and a 2-element vector doesn't raise
+    # at all: `zip` truncates it, silently flattening every geometric check
+    # to 2D and reporting a broken map as clean. Bodies and regions flagged
+    # here are excluded (by identity / by set_name) from every rule after
+    # this one that touches their geometry, so nothing downstream crashes or
+    # gets misjudged on bad input.
+    bad_bodies: set = set()
+    bad_regions: set = set()
+    for b in m.bodies:
+        if not _is_point3(b.position_gu):
+            bad_bodies.add(id(b))
+            problems.append(Problem(
+                "malformed-geometry",
+                f"body {b.name!r} has a malformed position_gu {b.position_gu!r} "
+                f"-- must be a sequence of exactly 3 numbers"))
+    for r in m.regions:
+        if not _is_point3(r.anchor_gu):
+            bad_regions.add(r.set_name)
+            problems.append(Problem(
+                "malformed-geometry",
+                f"region {r.set_name!r} has a malformed anchor_gu {r.anchor_gu!r} "
+                f"-- must be a sequence of exactly 3 numbers"))
+
     if sdk_set_names is not None:
         have = {r.set_name for r in m.regions}
         for name in sdk_set_names:
@@ -60,8 +101,12 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"BC set {name!r} has no region in system {m.system!r}"))
 
     for r in m.regions:
+        if r.set_name in bad_regions:
+            continue
         for other in m.regions:
             if other is r:
+                continue
+            if other.set_name in bad_regions:
                 continue
             if _dist(r.anchor_gu, other.anchor_gu) < r.radius_gu:
                 problems.append(Problem(
@@ -87,15 +132,23 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
             # planet". They are independent, and the geometry is measured
             # against the LISTING region's anchor either way, so a body can
             # and must report both. Only the dangling-name branch above
-            # continues -- there, there is no body left to measure.
-            if body.radius_gu >= _dist(body.position_gu, r.anchor_gu):
+            # continues -- there, there is no body left to measure. (Bad
+            # geometry is its own third, independent branch: malformed-
+            # geometry already reported it, so the geometric check here is
+            # simply skipped rather than crashing on it.)
+            if (id(body) not in bad_bodies and r.set_name not in bad_regions
+                    and body.radius_gu >= _dist(body.position_gu, r.anchor_gu)):
                 problems.append(Problem(
                     "body-engulfs-anchor",
                     f"body {name!r} (radius {body.radius_gu:.0f} GU) reaches the "
                     f"anchor of region {r.set_name!r}"))
 
     for i, a in enumerate(m.bodies):
+        if id(a) in bad_bodies:
+            continue
         for b in m.bodies[i + 1:]:
+            if id(b) in bad_bodies:
+                continue
             if _dist(a.position_gu, b.position_gu) <= a.radius_gu + b.radius_gu:
                 problems.append(Problem(
                     "body-overlap",
@@ -104,6 +157,8 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"surfaces"))
 
     for r in m.regions:
+        if r.set_name in bad_regions:
+            continue
         # Bodies the region itself owns are already covered by
         # body-engulfs-anchor above; this rule exists for everything ELSE
         # (most importantly the sun, which no region owns) so it is scoped to
@@ -115,7 +170,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
         own_bodies = {id(_resolve(by_name, name, owner=r.set_name))
                       for name in r.body_names}
         for b in m.bodies:
-            if id(b) in own_bodies:
+            if id(b) in own_bodies or id(b) in bad_bodies:
                 continue
             if b.radius_gu >= _dist(b.position_gu, r.anchor_gu):
                 problems.append(Problem(
@@ -125,7 +180,12 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"belong to that region -- body-engulfs-anchor only checks "
                     f"a region's own bodies"))
 
-    if pins is not None:
+    if pins is not None and not hasattr(pins, "items"):
+        problems.append(Problem(
+            "pin-respected",
+            f"pins must be a mapping of \"Region/Body\" to offset, got "
+            f"{type(pins).__name__}"))
+    elif pins is not None:
         anchors = {r.set_name: r.anchor_gu for r in m.regions}
         for key, want_offset in pins.items():
             # Pin keys are "<region>/<body>", not a bare body name. BC reuses
@@ -168,6 +228,12 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     "pin-respected",
                     f"pin {key!r} names body {body_name!r}, but no body of "
                     f"that name is owned by region {region_name!r}"))
+                continue
+            if region_name in bad_regions or id(body) in bad_bodies:
+                # malformed-geometry already reported this region's anchor
+                # or this body's position; computing a set-local offset from
+                # either would just repeat the same crash or truncation this
+                # rule exists to avoid.
                 continue
             anchor = anchors[region_name]
             have = tuple(p - a for p, a in zip(body.position_gu, anchor))
