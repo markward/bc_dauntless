@@ -488,11 +488,6 @@ const int MAX_CARVES = 24;
 uniform int  u_carve_count;                    // 0 = no clip
 uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
 uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
-// Game-clock seconds each carve was last deposited (HullCarve::birth_time,
-// refreshed on a merge). Drives the glow flicker settling to dark. A separate
-// float array rather than a w-component on the normals: widening that to vec4
-// would silently misalign every existing vec3 upload it has.
-uniform float u_carve_birth[MAX_CARVES];
 
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
@@ -624,10 +619,8 @@ float vnoise3(vec3 p){
 // hot -- it runs for every fragment of every damaged hull, up to 24 times --
 // and the per-carve distance it needs has already been computed. Consumers
 // that do not want it pass a dummy; the compiler drops the term.
-bool hull_cut_at(vec3 p_body, vec3 n_body,
-                 out float glow_kill, out float glow_birth) {
+bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
     glow_kill = 0.0;
-    glow_birth = 0.0;
     bool field_suppressed = false;
     // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
     // out of the carve loop below, where it was recomputed for every one of up
@@ -668,14 +661,8 @@ bool hull_cut_at(vec3 p_body, vec3 n_body,
                     vec3 gaz = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
                     float reach = mix(kGlowKillReachMin, kGlowKillReachMax,
                                       vnoise3(gaz * kGlowLobeFreq + c * kPhase));
-                    float k = gwn * (1.0 - smoothstep(r, r * reach, gd));
-                    // Track WHICH carve won, not just how much: the flicker
-                    // settles on that carve's own age, and a fresh hit beside
-                    // an old one must restart it.
-                    if (k > glow_kill) {
-                        glow_kill  = k;
-                        glow_birth = u_carve_birth[i];
-                    }
+                    glow_kill = max(glow_kill,
+                                    gwn * (1.0 - smoothstep(r, r * reach, gd)));
                 }
             }
 
@@ -901,9 +888,8 @@ void main() {
         // see hull_cut_at's own note on why it is an out param rather than a
         // second loop.
         float unused_glow_kill;
-        float unused_glow_birth;
         if (hull_cut_at(v_body_pos, normalize(v_body_normal),
-                        unused_glow_kill, unused_glow_birth)) discard;
+                        unused_glow_kill)) discard;
 
         hit_point  = v_body_pos;
         // Face the normal back along the view ray. The mesh normal points out

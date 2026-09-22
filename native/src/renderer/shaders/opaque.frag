@@ -762,11 +762,6 @@ const int MAX_CARVES = 24;
 uniform int  u_carve_count;                    // 0 = no clip
 uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
 uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
-// Game-clock seconds each carve was last deposited (HullCarve::birth_time,
-// refreshed on a merge). Drives the glow flicker settling to dark. A separate
-// float array rather than a w-component on the normals: widening that to vec4
-// would silently misalign every existing vec3 upload it has.
-uniform float u_carve_birth[MAX_CARVES];
 
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
@@ -898,10 +893,8 @@ float vnoise3(vec3 p){
 // hot -- it runs for every fragment of every damaged hull, up to 24 times --
 // and the per-carve distance it needs has already been computed. Consumers
 // that do not want it pass a dummy; the compiler drops the term.
-bool hull_cut_at(vec3 p_body, vec3 n_body,
-                 out float glow_kill, out float glow_birth) {
+bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
     glow_kill = 0.0;
-    glow_birth = 0.0;
     bool field_suppressed = false;
     // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
     // out of the carve loop below, where it was recomputed for every one of up
@@ -942,14 +935,8 @@ bool hull_cut_at(vec3 p_body, vec3 n_body,
                     vec3 gaz = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
                     float reach = mix(kGlowKillReachMin, kGlowKillReachMax,
                                       vnoise3(gaz * kGlowLobeFreq + c * kPhase));
-                    float k = gwn * (1.0 - smoothstep(r, r * reach, gd));
-                    // Track WHICH carve won, not just how much: the flicker
-                    // settles on that carve's own age, and a fresh hit beside
-                    // an old one must restart it.
-                    if (k > glow_kill) {
-                        glow_kill  = k;
-                        glow_birth = u_carve_birth[i];
-                    }
+                    glow_kill = max(glow_kill,
+                                    gwn * (1.0 - smoothstep(r, r * reach, gd)));
                 }
             }
 
@@ -1107,29 +1094,6 @@ bool hull_cut_at(vec3 p_body, vec3 n_body,
 }
 // === HULL_CUT_DECISION END ===
 
-// ── Failing-power flicker around a breach ─────────────────────────────────
-// A breached compartment's lights fail; they do not switch cleanly off. This
-// stutters them for kGlowFlickerSecs after the carve lands, then leaves them
-// dark for good -- the feed is gone, not intermittent.
-//
-// Hashed per COARSE BODY-SPACE PATCH, not per pixel: a per-fragment hash
-// sparkles like noise, whereas real windows fail in groups. Each patch gets
-// its own phase so they do not blink in unison. Body frame, so the pattern is
-// welded to the hull rather than swimming as the camera moves.
-//
-// Evaluated ONCE per fragment from the accumulated kill, never inside the
-// carve loop -- see that loop's own note on what adding noise there costs.
-const float kGlowFlickerSecs     = 60.0;      // fresh -> settled, seconds
-const float kGlowFlickerCellFreq = 1.0 / 8.0; // patch size, body units
-const float kGlowFlickerRate     = 3.7;       // stutter speed
-const float kGlowFlickerDuty     = 0.45;      // below this the patch is dark
-
-float glow_flicker_on(vec3 p_body, float t) {
-    vec3 cell = floor(p_body * kGlowFlickerCellFreq);
-    float phase = vh3(cell);
-    float n = vnoise3(vec3(cell.xy * 0.19, t * kGlowFlickerRate + phase * 23.0));
-    return step(kGlowFlickerDuty, n);
-}
 
 void main() {
     vec3 n = normalize(v_normal_ws);
@@ -1177,9 +1141,8 @@ void main() {
     // field block below can defer to this block wherever it applies. See that
     // block's comment for why.
     float glow_kill = 0.0;
-    float glow_birth = 0.0;
     bool marked = false;
-    if (hull_cut_at(p_body, n_body, glow_kill, glow_birth)) {
+    if (hull_cut_at(p_body, n_body, glow_kill)) {
         if (u_carve_invert != 0) marked = true;
         else                     discard;
     }
@@ -1400,18 +1363,12 @@ void main() {
     // glow_alive: windows go dark around a breach (hull_cut_at's out param).
     // It multiplies the GLOW-MAP term only -- the material emissive is a
     // property of the surface, not of a lit compartment behind it.
-    // Fresh breach: the kill zone stutters. Settled (kGlowFlickerSecs on from
-    // that carve's own birth): simply dark. `settle` interpolates the
-    // flicker's authority away rather than cutting it, so a compartment fades
-    // into failure instead of stopping mid-blink.
-    float glow_alive = 1.0;
-    if (glow_kill > 0.0) {
-        float gk     = clamp(glow_kill, 0.0, 1.0);
-        float age    = max(0.0, u_decal_time - glow_birth);
-        float settle = clamp(age / kGlowFlickerSecs, 0.0, 1.0);
-        float on     = glow_flicker_on(p_body, u_decal_time);
-        glow_alive   = 1.0 - gk + gk * on * (1.0 - settle);
-    }
+    // Steady. A failing-power FLICKER was built here (stutter for 60 s from
+    // the carve's birth, then settle dark) and REMOVED after a live look: it
+    // read as wrong rather than as damage. Deliberately gone rather than
+    // switched off, so no dead knob is left implying it is still an option --
+    // git history carries it if it is ever wanted back.
+    float glow_alive = 1.0 - clamp(glow_kill, 0.0, 1.0);
     vec3 self_illum = u_emissive_scale *
         (u_emissive_color * base.rgb
          + glow_rgb * glow.a * gf * nac * region_gain * glow_alive);

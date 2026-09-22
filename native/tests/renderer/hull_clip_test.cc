@@ -563,11 +563,9 @@ TEST_F(HullClipTest, TheGlowKillEdgeIsLobedNotACleanCircle) {
         prog.set_int("u_carve_enabled", 1);
         const glm::vec4 sphere(center, 2.0f);
         const glm::vec3 normal(0.0f, 0.0f, 1.0f);
-        const float birth = 0.0f;
         prog.set_int("u_carve_count", 1);
         prog.set_vec4_array("u_carve_spheres", &sphere, 1);
         prog.set_vec3_array("u_carve_normals", &normal, 1);
-        prog.set_float_array("u_carve_birth", &birth, 1);
         prog.set_float("u_decal_time", 1000.0f);   // long settled: steady state
         draw();
         EXPECT_EQ(glGetError(), GL_NO_ERROR);
@@ -604,67 +602,34 @@ TEST_F(HullClipTest, TheGlowKillEdgeIsLobedNotACleanCircle) {
            "the dead zone is a perfect disc";
 }
 
-// ── Flicker, settling to dark ─────────────────────────────────────────────
-//
-// A breached compartment's lights fail rather than switching cleanly off.
-// They stutter for kGlowFlickerSecs (60 s from the carve's birth) and then
-// stay dark -- the power feed is gone, not intermittent.
-//
-// Sampled across the first 60 s at a fragment deep in the kill zone: at least
-// one moment must be LIT, or there is no flicker at all.
-TEST_F(HullClipTest, GlowFlickersWhileABreachIsFresh) {
+// Glow in the kill zone is STEADY. A failing-power flicker was built here and
+// removed after a live look -- it read as wrong rather than as damage. This
+// pins the steadiness so it cannot creep back in unnoticed.
+TEST_F(HullClipTest, GlowInTheKillZoneDoesNotChangeOverTime) {
     renderer::Shader& prog = pipeline->opaque_shader();
 
-    int brightest = 0;
-    for (int i = 0; i < 24; ++i) {
+    auto render_at_time = [&](float t) {
         set_uniforms(prog);
         set_glow_only(prog, white_tex_);
         prog.set_int("u_carve_enabled", 1);
         const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);   // fragment in the core
         const glm::vec3 normal(0.0f, 0.0f, 1.0f);
-        const float birth = 0.0f;
         prog.set_int("u_carve_count", 1);
         prog.set_vec4_array("u_carve_spheres", &sphere, 1);
         prog.set_vec3_array("u_carve_normals", &normal, 1);
-        prog.set_float_array("u_carve_birth", &birth, 1);
-        prog.set_float("u_decal_time", 0.4f * static_cast<float>(i));  // 0 - 9.2 s
+        prog.set_float("u_decal_time", t);
         draw();
         EXPECT_EQ(glGetError(), GL_NO_ERROR);
         auto px = read_center();
-        brightest = std::max(brightest, px[0] + px[1] + px[2]);
+        return px[0] + px[1] + px[2];
+    };
+
+    const int first = render_at_time(0.0f);
+    for (int i = 1; i < 16; ++i) {
+        const int later = render_at_time(0.37f * static_cast<float>(i));
+        ASSERT_EQ(later, first)
+            << "Glow beside a breach changed between t=0 and t="
+            << (0.37f * static_cast<float>(i))
+            << " — the dead zone is animating when it should be steady";
     }
-
-    EXPECT_GT(brightest, 300)
-        << "Across 24 moments in the first seconds of a breach the windows in "
-           "the kill zone were never once lit (brightest " << brightest
-        << ") — they are switching off, not failing";
-}
-
-// ...and once settled they stay dark, for good.
-TEST_F(HullClipTest, GlowStopsFlickeringAndStaysDarkAfterSixtySeconds) {
-    renderer::Shader& prog = pipeline->opaque_shader();
-
-    int brightest = 0;
-    for (int i = 0; i < 24; ++i) {
-        set_uniforms(prog);
-        set_glow_only(prog, white_tex_);
-        prog.set_int("u_carve_enabled", 1);
-        const glm::vec4 sphere(0.0f, 0.0f, 2.0f, 2.0f);
-        const glm::vec3 normal(0.0f, 0.0f, 1.0f);
-        const float birth = 0.0f;
-        prog.set_int("u_carve_count", 1);
-        prog.set_vec4_array("u_carve_spheres", &sphere, 1);
-        prog.set_vec3_array("u_carve_normals", &normal, 1);
-        prog.set_float_array("u_carve_birth", &birth, 1);
-        prog.set_float("u_decal_time", 61.0f + 0.4f * static_cast<float>(i));
-        draw();
-        EXPECT_EQ(glGetError(), GL_NO_ERROR);
-        auto px = read_center();
-        brightest = std::max(brightest, px[0] + px[1] + px[2]);
-    }
-
-    EXPECT_LT(brightest, 32)
-        << "Windows in the kill zone still light up past 60 s (brightest "
-        << brightest << ") — the flicker never settles, so a damaged ship "
-           "twitches forever";
 }

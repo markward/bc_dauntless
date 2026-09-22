@@ -318,12 +318,6 @@ HullCarveDepositResult hull_carve_deposit(
     float floor_radius_model,
     float radius_modifier,
     float inv_scale,
-    const voxel::VoxelVolume* fill = nullptr,
-    // Game-clock seconds, stamped on the receiving slot. Drives the glow
-    // flicker around a breach settling to dark (opaque.frag's
-    // kGlowFlickerSecs). Defaults to 0 so existing callers and tests, which
-    // have no clock to offer, keep their current behaviour: a birth of 0
-    // against any positive decal time reads as long-settled.
-    float birth_time = 0.0f);
+    const voxel::VoxelVolume* fill = nullptr);
 
 }  // namespace renderer

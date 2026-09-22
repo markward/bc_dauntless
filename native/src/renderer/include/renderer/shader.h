@@ -39,11 +39,6 @@ public:
                         const glm::vec4* data,
                         int count) const;
 
-    /// Same contract as the vector array setters: `data` must reference at
-    /// least `count` floats, and the name carries no `[0]` suffix.
-    void set_float_array(const std::string& name,
-                         const float* data,
-                         int count) const;
 
     void set_mat4_array(const std::string& name,
                         const glm::mat4* data,

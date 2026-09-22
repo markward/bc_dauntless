@@ -4181,7 +4181,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
-             float influ_radius, float strength, float now,
+             float influ_radius, float strength, float /*time*/,
              float floor_radius, float radius_modifier) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
@@ -4274,8 +4274,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   renderer::hull_carve_deposit(
                       inst->carve, g_instance_field_cache.get(), id, source,
                       authored_res, pb, nb, influ_model, strength,
-                      floor_model, radius_modifier, inv_s, fill_for_gate,
-                      /*birth_time=*/now);
+                      floor_model, radius_modifier, inv_s, fill_for_gate);
 
               // Breach event (transient VFX: debris, venting, rim) only when the
               // carve newly appears or visibly grows — sub-iso accumulation is

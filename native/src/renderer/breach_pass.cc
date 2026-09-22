@@ -290,22 +290,18 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     if (carve_count > 0) {
         std::vector<glm::vec4> spheres;
         std::vector<glm::vec3> normals;
-        std::vector<float>     births;
         spheres.reserve(static_cast<std::size_t>(carve_count));
         normals.reserve(static_cast<std::size_t>(carve_count));
         for (const auto& c : carve->slots()) {
             if (!c.active) continue;
             spheres.emplace_back(c.center_body, c.radius);
             normals.push_back(c.surface_normal);
-            births.push_back(c.birth_time);
         }
         if (!spheres.empty()) {
             shader.set_vec4_array("u_carve_spheres", spheres.data(),
                                   static_cast<int>(spheres.size()));
             shader.set_vec3_array("u_carve_normals", normals.data(),
                                   static_cast<int>(normals.size()));
-            shader.set_float_array("u_carve_birth", births.data(),
-                                   static_cast<int>(births.size()));
         }
         shader.set_int("u_carve_count", static_cast<int>(spheres.size()));
     }

@@ -43,12 +43,6 @@ struct HullCarve {
     float         radius = 0.0f;        // visible carve radius (model units); 0 below iso.
                                         // Caller-set from strength + a floor; monotonic.
     glm::vec3     surface_normal{0.0f, 0.0f, 1.0f};  // body-frame outward normal
-    // Game-clock seconds when this carve was last DEPOSITED (refreshed on a
-    // merge, like `seq`, because a re-hit is a fresh wound at the same place).
-    // Drives the glow flicker around a breach settling to dark -- see
-    // opaque.frag's kGlowFlickerSecs. hull_carve_add already received this
-    // value from Python and discarded it.
-    float         birth_time = 0.0f;
     std::uint64_t seq = 0;     // insertion order (0 = never used)
     bool          active = false;
 };
@@ -67,8 +61,7 @@ public:
     /// derive + set the visible `radius` — the caller owns the instance scale
     /// and the strength→radius curve, and keeps `radius` monotonic.
     HullCarve& add(const glm::vec3& center_body, float influ_radius,
-                   float strength, const glm::vec3& surface_normal,
-                   float birth_time = 0.0f);
+                   float strength, const glm::vec3& surface_normal);
 
     std::size_t count() const;
     const std::array<HullCarve, kMaxCarves>& slots() const { return slots_; }
