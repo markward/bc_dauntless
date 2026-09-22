@@ -36,29 +36,66 @@ def _ignores_env_damage(ship):
     return "MissionLib.IgnoreEvent" in handlers.get(App.ET_ENVIRONMENT_DAMAGE, [])
 
 
-def _apply_env_damage(ship, hull_per_s, shield_per_s, dt):
-    """Apply hull and shield damage if ship doesn't ignore ET_ENVIRONMENT_DAMAGE."""
-    if hull_per_s <= 0.0 and shield_per_s <= 0.0:
+# ── Environmental damage, as the original exe applies it ─────────────────────
+# Measured on stbc.exe (stbc-oracle bible §15, E1, `docs/results/nebula/*`):
+# a SetupDamage(hull, shields) nebula raises ET_ENVIRONMENT_DAMAGE on every
+# contained ship 16 times a second for as long as it is inside — but the only
+# DAMAGE is ONE hit, to a ship that is already inside when the nebula is
+# created: `shields / 16` to every face if the shields are up (discarded when
+# ≤ 100 per face), else `hull / 16` to the hull (no threshold). A ship that
+# flies into an existing nebula takes nothing while the events keep coming.
+# Nothing lands at easy difficulty. The 1/16 is the event rate: the stock
+# nebula was authored as damage-per-second and the engine applies one tick's
+# worth, once. So the E3M2 dust cloud never damages the player, who warps in
+# after Vesuvi 4 is built; Brex's "raise shields" line is the SDK's
+# CoreDamage reacting to the events.
+#
+# This replaced a continuous `per-second × dt` drain to everyone inside,
+# which had the player in E3M2 losing 150 hull a second.
+ENV_DAMAGE_EVENT_HZ = 16.0
+ENV_DAMAGE_FRACTION = 1.0 / 16.0
+ENV_SHIELD_HIT_THRESHOLD = 100.0
+
+
+def _shields_up(ship):
+    """The face-hit branch applies when the shields are raised."""
+    getter = getattr(ship, "GetShieldSubsystem", None)
+    shields = getter() if getter is not None else None
+    if shields is None:
+        return None
+    is_on = getattr(shields, "IsOn", None)
+    if callable(is_on):
+        return shields if is_on() else None
+    total = 0.0
+    for face in range(shields.NUM_SHIELDS):
+        total += shields.GetCurrentShields(face)
+    return shields if total > 0.0 else None
+
+
+def _apply_creation_hit(ship, hull_arg, shield_arg):
+    """The one hit a ship present at the nebula's creation takes."""
+    if hull_arg <= 0.0 and shield_arg <= 0.0:
         return
-    # Only apply damage if ship has the necessary subsystems.
     if not hasattr(ship, "GetHull"):
         return
     if _ignores_env_damage(ship):
         return
-    if hull_per_s > 0.0:
-        hull = ship.GetHull()
-        if hull is not None:
-            new = hull.GetCondition() - hull_per_s * dt
-            hull.SetCondition(new if new > 0.0 else 0.0)
-    if shield_per_s > 0.0:
-        shields = getattr(ship, "GetShieldSubsystem", None)
-        if shields is not None:
-            shields = shields()
-            if shields is not None:
-                per_face = (shield_per_s * dt) / shields.NUM_SHIELDS
-                for face in range(shields.NUM_SHIELDS):
-                    cur = shields.GetCurrentShields(face) - per_face
-                    shields.SetCurrentShields(face, cur if cur > 0.0 else 0.0)
+    from engine.core.game import Game_GetDifficulty
+    if Game_GetDifficulty() <= 0:
+        return                                   # easy: nothing lands
+    shields = _shields_up(ship)
+    if shields is not None:
+        per_face = shield_arg * ENV_DAMAGE_FRACTION
+        if per_face <= ENV_SHIELD_HIT_THRESHOLD:
+            return                               # discarded, hull untouched
+        for face in range(shields.NUM_SHIELDS):
+            cur = shields.GetCurrentShields(face) - per_face
+            shields.SetCurrentShields(face, cur if cur > 0.0 else 0.0)
+        return
+    hull = ship.GetHull()
+    if hull is not None and hull_arg > 0.0:
+        new = hull.GetCondition() - hull_arg * ENV_DAMAGE_FRACTION
+        hull.SetCondition(new if new > 0.0 else 0.0)
 
 
 def _clamp01(v):
@@ -76,10 +113,13 @@ class NebulaTracker:
         self._inside = {}
         # {id(ship): base_range} — saved sensor ranges while scaled.
         self._sensor_saved = {}
+        # {id(nebula): seconds banked toward the next ET_ENVIRONMENT_DAMAGE}.
+        self._env_accum = {}
 
     def reset(self):
         self._inside.clear()
         self._sensor_saved.clear()
+        self._env_accum.clear()
 
     def _scale_sensor(self, ship, density):
         """Scale ship's sensor range by clamp(density, 0, 1). Save base on first scale."""
@@ -124,10 +164,18 @@ class NebulaTracker:
 
         for nebula in nebulae:
             key = id(nebula)
+            first_sighting = key not in self._inside
             prev = self._inside.get(key, set())
             now = set()
             hull_dmg, shield_dmg = nebula.GetDamage()
             density = nebula.GetSensorDensity()
+            # ET_ENVIRONMENT_DAMAGE at 16 Hz to every occupant, damage or not.
+            armed = hull_dmg > 0.0 or shield_dmg > 0.0
+            accum = self._env_accum.get(key, 0.0) + dt
+            fire_env = armed and accum >= 1.0 / ENV_DAMAGE_EVENT_HZ
+            if fire_env:
+                accum -= 1.0 / ENV_DAMAGE_EVENT_HZ
+            self._env_accum[key] = accum
             for ship in ships:
                 if nebula.IsObjectInNebula(ship):
                     sid = id(ship)
@@ -135,7 +183,11 @@ class NebulaTracker:
                     if sid not in prev:
                         _fire(App.ET_ENTERED_NEBULA, nebula, ship)
                         self._scale_sensor(ship, density)
-                    _apply_env_damage(ship, hull_dmg, shield_dmg, dt)
+                        if first_sighting:
+                            # Present when the nebula was created: the one hit.
+                            _apply_creation_hit(ship, hull_dmg, shield_dmg)
+                    if fire_env:
+                        _fire(App.ET_ENVIRONMENT_DAMAGE, nebula, ship)
             # Exits: ships that were inside last tick but are not now.
             exited_ids = prev - now
             if exited_ids:

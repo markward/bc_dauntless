@@ -67,6 +67,8 @@ class OracleScene:
         self.tgt = target
         self._ships = list(iter_ships())
         self.t = 0.0
+        self.pset = target.GetContainingSet()
+        self._nebula_tracker = None
 
     # -- world stepping -----------------------------------------------------
     def step(self, ticks: int = 1) -> None:
@@ -80,6 +82,9 @@ class OracleScene:
             host_loop._advance_weapons(self._ships, TICK_DELTA)
             host_loop._advance_combat(self._ships, TICK_DELTA)
             collisions.tick_collisions(TICK_DELTA)
+            if self._nebula_tracker is not None:
+                self._nebula_tracker.update(
+                    self.pset, self.pset.GetClassObjectList(self.App.CT_SHIP), TICK_DELTA)
             self.t += TICK_DELTA
 
     def run(self, seconds: float) -> None:
@@ -195,6 +200,27 @@ class OracleScene:
         ai = mod.CreateAI(self.atk, self.mission.GetEnemyGroup(),
                           Difficulty=difficulty)
         self.atk.SetAI(ai, 0, 0)
+
+    def build_nebula(self, radius=1500.0, hull=0.0, shields=None, centre=None):
+        """The oracle's `nebula` input: a MetaNebula built around the target
+        at act time — one fuzzy sphere, optional SetupDamage(hull, shields)
+        (a one-argument SetupDamage is the Multi6 form).  Pumps the same
+        NebulaTracker host_loop runs from then on."""
+        App = self.App
+        n = App.MetaNebula_Create(0.6, 0.35, 0.72, 145.0, 10.5,
+                                  "data/Backgrounds/nebulaoverlay.tga",
+                                  "data/Backgrounds/nebulaexternal.tga")
+        c = centre or (0.0, 0.0, 0.0)
+        n.AddNebulaSphere(c[0], c[1], c[2], radius)
+        if shields is None:
+            if hull:
+                n.SetupDamage(hull)
+        else:
+            n.SetupDamage(hull, shields)
+        self.pset.AddObjectToSet(n, "Nebula")
+        from engine.appc.nebula_runtime import NebulaTracker
+        self._nebula_tracker = NebulaTracker()
+        return n
 
     # -- sampling helpers ----------------------------------------------------------------
     def sample_until(self, seconds: float, every_ticks: int = 1):
