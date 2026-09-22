@@ -1429,8 +1429,33 @@ git commit -m "feat(systems): layout — orbits, resized bodies, anchors on the 
   - `generate(system: str) -> tuple[SystemMap, list[str]]` — `(map, ambiguity notes)`.
     Merges any existing file's `overrides` block into the fresh map before
     returning, so regeneration never discards hand edits.
+  - `pins_from(m: SystemMap) -> dict | None` — reads `m.overrides["pins"]`,
+    returning `{body_name: (x, y, z)}` or `None` when the map declares none.
   - `main(argv=None) -> int` — CLI. `--system NAME` (repeatable, default: all),
     `--check` (validate only, write nothing), `--list-ambiguities`.
+
+**Pins are hand-declared, not auto-detected.** The spec names pins as one of the
+three things a map holds, and Task 2 built the `pin-respected` rule — but nothing
+populates them, so without this the rule never fires on a real map. Three reasons
+they belong in the overrides block rather than in the survey:
+
+1. There are only two across all 89 regions (Prendel 3, Xi Entrades 5).
+2. Xi Entrades 5's is keyed to a **phantom** waypoint — `Moon1` at
+   `(400, 5000, 0)`, which no body ever occupies — so any body-keyed heuristic
+   misses it entirely.
+3. Deciding "this mission stages content *beside that body*" is a judgement
+   call, which is exactly what the overrides block is for.
+
+`SurveyedSystem.pins` (Task 3) stays unpopulated and is reserved for a future
+auto-detection pass. Authoring the two known pins is a Task 6 step.
+
+The overrides shape is:
+
+```json
+"overrides": {
+  "pins": { "Prendel 3 Moon 2": [400.0, 5000.0, 0.0] }
+}
+```
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1456,7 +1481,9 @@ def test_checked_in_map_validates(name):
         pytest.skip("no system maps checked in yet")
     m = load(name)
     sdk = survey_system(m.system)
-    problems = validate(m, sdk_set_names=[r.set_name for r in sdk.regions])
+    from tools.gen_system_maps import pins_from
+    problems = validate(m, sdk_set_names=[r.set_name for r in sdk.regions],
+                        pins=pins_from(m))
     assert problems == [], "\n".join(f"{p.rule}: {p.detail}" for p in problems)
 
 
@@ -1498,6 +1525,30 @@ def test_overrides_survive_regeneration():
     fresh = SystemMap(system="Ona")
     _merge_overrides(fresh, old)
     assert fresh.overrides == {"note": "hand tuned"}
+
+
+def test_pins_from_reads_the_overrides_block():
+    """Pins are hand-declared in overrides -- there are only two across all 89
+    regions, and one of them is keyed to a waypoint no body occupies."""
+    from engine.systems.map import SystemMap
+    from tools.gen_system_maps import pins_from
+    assert pins_from(SystemMap(system="Ona")) is None
+    assert pins_from(SystemMap(system="Ona", overrides={"pins": {}})) is None
+    m = SystemMap(system="Prendel",
+                  overrides={"pins": {"Prendel 3 Moon 2": [400.0, 5000.0, 0.0]}})
+    assert pins_from(m) == {"Prendel 3 Moon 2": (400.0, 5000.0, 0.0)}
+
+
+def test_the_cli_enforces_declared_pins():
+    """A declared pin that the layout has moved must be reported, not ignored.
+    Without this wiring the pin-respected rule never fires on a real map."""
+    from engine.systems.map import SystemMap
+    from engine.systems.validate import validate
+    from tools.gen_system_maps import pins_from
+    m = load("ona")
+    m.overrides = {"pins": {m.regions[0].body_names[0]: [1.0, 2.0, 3.0]}}
+    problems = validate(m, pins=pins_from(m))
+    assert any(p.rule == "pin-respected" for p in problems)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1547,6 +1598,21 @@ def _merge_overrides(fresh, old) -> None:
         fresh.overrides = dict(old.overrides)
 
 
+def pins_from(m):
+    """Declared pins as {body_name: (x, y, z)}, or None when there are none.
+
+    A pin is a body a mission stages ships beside, so the layout must not move
+    it away from that content. They are hand-declared rather than detected:
+    there are two across all 89 regions, and Xi Entrades 5's is keyed to a
+    PHANTOM waypoint (`Moon1` at (400, 5000, 0)) that no body occupies, which
+    any body-keyed heuristic would miss.
+    """
+    raw = (getattr(m, "overrides", None) or {}).get("pins") or {}
+    if not raw:
+        return None
+    return {name: tuple(float(c) for c in offset) for name, offset in raw.items()}
+
+
 def generate(system: str):
     surveyed = survey_system(system)
     fresh = layout(surveyed)
@@ -1575,7 +1641,8 @@ def main(argv=None) -> int:
     for name in names:
         m, notes = generate(name)
         surveyed = survey_system(name)
-        problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions])
+        problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions],
+                            pins=pins_from(m))
         status = "ok" if not problems else f"{len(problems)} PROBLEM(S)"
         where = "(not written)" if args.check else save(m)
         print(f"{name}: {len(m.regions)} regions, {len(m.bodies)} bodies -- "
@@ -1602,7 +1669,7 @@ with no ambiguity notes (Ona's regions are all numbered and hold one planet each
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/unit/test_system_maps_valid.py -v`
-Expected: PASS (7 tests, one parametrised over `ona`)
+Expected: PASS (9 tests, one parametrised over `ona`)
 
 - [ ] **Step 6: Run the full gate**
 
@@ -1655,6 +1722,33 @@ Legare).
 For every note, decide and record it. There is no correct mechanical answer;
 this is the art-direction pass. Leave a one-line reason in the overrides block
 next to each decision.
+
+- [ ] **Step 2a: Declare the two known pins**
+
+A pin is a body a mission stages ships beside; the layout must not move it away
+from that content. Two exist across all 89 regions, both found by measuring
+mission placements against body positions (see the spec's "How much space a
+region actually needs"):
+
+- **Prendel 3** — E5M2 and E6M4 stage a base and three Galors at 6100–6368 GU,
+  just past `Moon 2` at `(400, 5000, 0)`.
+- **Xi Entrades 5** — E7M3 stages the Akira/Kessok fight at 5494–5615 GU around
+  a waypoint named `Moon1` at `(400, 5000, 0)` that **no body ever occupies**.
+  There is nothing to pin, so this one is resolved by giving the region a radius
+  that still contains the staged content, not by a pin entry. Record that
+  decision in the overrides block with its reason.
+
+Add the Prendel entry to `engine/systems/maps/prendel.json`:
+
+```json
+"overrides": {
+  "pins": { "Prendel 3 Moon 2": [400.0, 5000.0, 0.0] }
+}
+```
+
+Then confirm the pin rule actually fires when violated — temporarily change that
+offset to `[0.0, 0.0, 0.0]`, run `--check`, see `pin-respected` reported, and put
+it back. A pin nobody has watched fail is a pin you cannot trust.
 
 - [ ] **Step 3: Re-run and confirm clean**
 
