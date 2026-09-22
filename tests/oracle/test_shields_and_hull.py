@@ -36,30 +36,48 @@ def test_s1_s7_facing_index_map(oracle, bearing, offset, face):
 
 # ── §5.2 absorption ramp ────────────────────────────────────────────────────────
 
-@bible_xfail("S2", "a face at ≥ 0.6 passes nothing; below 0.6 the hull share ramps linearly to 0.6 at f = 0.1",
-             "strict cascade: nothing reaches the hull until the face is empty")
 def test_s2_weakened_face_lets_damage_through(oracle):
     """S2 — pooled §5.2: at face fraction 0.40–0.45 the hull takes a median
     20 % of each hit while the face still holds most of it."""
     s = oracle(attacker="KessokHeavy", range_gu=57)
     s.preset_face(FRONT, 0.45)
     s.fire("phaser", intensity=HIGH)
-    s.run(0.6)                      # 0.45 → ~0.40 on BC's rate
+    s.run(1.8)                      # past the 1.16 s windup: ~2 pulses
     assert s.face(FRONT) > 0.30 * s.face_max(FRONT), "face emptied"
     assert s.hull_damage() > 0.0
+    share = s.hull_damage() / (s.hull_damage() + s.face_max(FRONT) * 0.45 - s.face(FRONT))
+    assert share == pytest.approx(0.20, abs=0.06)
 
 
 @pytest.mark.parametrize("preset, share", [(0.5, 0.39), (0.25, 0.75)])
-@bible_xfail("S3", "front face at 50 % passes 39 % of a volley to the hull; at 25 %, 75 %",
-             "strict cascade — the share is whatever is left once the face is empty")
 def test_s3_hull_share_of_a_volley_by_face_preset(oracle, preset, share):
-    """S3 — `phaser_high_front_57_face{50,25}`: 2015 of 5206 / 4102 of 5485."""
+    """S3 — `phaser_high_front_57_face{50,25}`: 2015 of 5206 / 4102 of 5485.
+
+    Headless, every hit lands on the aim point and so overlaps the shield
+    generator, which BC's front-on hit never reached; once it is disabled
+    the S6 rule zeroes the faces and the share is meaningless.  The
+    generator is made invincible (the SDK's MakeSubsystemsInvincible)."""
     s = oracle(attacker="KessokHeavy", range_gu=57)
+    s.shields.SetInvincible(1)
     s.preset_face(FRONT, preset)
     s.fire("phaser", intensity=HIGH)
     s.run(8.0)
     total = s.hull_damage() + (s.face_max(FRONT) * preset - s.face(FRONT))
     assert s.hull_damage() / total == pytest.approx(share, abs=0.05)
+
+
+def test_s2_face_below_one_tenth_is_bypassed(oracle):
+    """S2 — `phaser_high_front_57_face25` from t = 5.69: the face sits at
+    641 of 8000 (f = 0.08), only regen moves it, and every pulse goes whole
+    to the hull.  The bible's hard gate; not the spec's b = 0.6."""
+    s = oracle(attacker="KessokHeavy", range_gu=57)
+    s.preset_face(FRONT, 0.08)
+    s.run(0.6)                      # a charge tick refreshes the ramp fraction
+    face_before = s.face(FRONT)
+    s.fire("phaser", intensity=HIGH)
+    s.run(2.5)
+    assert s.face(FRONT) >= face_before - 1.0, (face_before, s.face(FRONT))
+    assert s.hull_damage() > 400.0
 
 
 # ── §5.3 regeneration ────────────────────────────────────────────────────────────

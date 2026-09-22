@@ -3,6 +3,8 @@ regenerates nothing, without mutating _charge_per_second. Repair restores
 regen at the original rates, refilling from zero. Measured on the original
 exe (stbc-oracle bible §5.3 S6, `regen_gen{50,20}_face50`): below the
 generator's DisabledPercentage all six faces read 0 immediately."""
+import pytest
+
 from engine.appc.subsystems import ShieldSubsystem
 
 
@@ -70,6 +72,6 @@ def test_disabled_generator_still_takes_damage():
     charge is stored (Update has not run here, so the face still holds)."""
     s = _generator()
     s.SetCondition(10.0)
-    overflow = s.ApplyDamage(s.FRONT_SHIELDS, 200.0)
-    assert overflow == 0.0
-    assert s.GetCurrentShields(s.FRONT_SHIELDS) == 300.0
+    overflow = s.ApplyDamage(s.FRONT_SHIELDS, 200.0)   # face at 0.5: leaks 12 %
+    assert overflow == pytest.approx(24.0)
+    assert s.GetCurrentShields(s.FRONT_SHIELDS) == pytest.approx(324.0)

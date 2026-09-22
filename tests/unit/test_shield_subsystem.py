@@ -1,3 +1,4 @@
+import pytest
 """ShieldSubsystem: six-face shield slots with seed-on-max behavior."""
 from engine.appc.subsystems import ShieldSubsystem, PoweredSubsystem
 from engine.appc.properties import ShieldProperty
@@ -170,21 +171,47 @@ def test_apply_damage_partial():
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 70.0
 
 
-def test_apply_damage_exact():
+def test_apply_damage_full_face_absorbs_everything():
+    """f ≥ 0.6: the face takes the whole hit (bible §5.2 — zero hull share
+    over 152 pooled hits above 0.6)."""
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 50.0)
+    assert overflow == 0.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 50.0
+
+
+def test_apply_damage_weakened_face_leaks_on_the_ramp():
+    """0.1 < f < 0.6: the hull share is 0.6·(1 − 2(f − 0.1)); at f = 0.5
+    that is 0.12, and the face absorbs the complement."""
     s = ShieldSubsystem("Shield Generator")
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
     overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 50.0)
-    assert overflow == 0.0
-    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
+    assert overflow == pytest.approx(6.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == pytest.approx(6.0)
 
 
-def test_apply_damage_overflow():
+def test_apply_damage_face_below_a_tenth_is_bypassed():
+    """f ≤ 0.1: the face is not touched and everything reaches the hull
+    (`phaser_high_front_57_face25` from t = 5.69)."""
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 8.0)
+    overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 50.0)
+    assert overflow == 50.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 8.0
+
+
+def test_apply_damage_overdraw_adds_to_the_bleed():
+    """f = 0.2: b = 0.48, the face should absorb 26 of 50 but holds only
+    20 — the 6 overdraw is added to the 24 bleed (clean-room §3.3 step 5)."""
     s = ShieldSubsystem("Shield Generator")
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 20.0)
     overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 50.0)
-    assert overflow == 30.0
+    assert overflow == pytest.approx(30.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
 
 
