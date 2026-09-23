@@ -60,7 +60,12 @@ class Part(NamedTuple):
     """One articulated part node on a ship.
 
     node:      NIF node name, matched exactly (BC node names are case-stable).
-    pivot:     hinge point, parent/model space, raw NIF units.
+    pivot:     hinge point, parent/model space, SHIP units (model NIF units
+               / 100). Shares units with PART_BOXES and subsystem mounts on
+               purpose: Task 1 of the hardpoint-parenting plan unified them
+               after a MODEL-vs-SHIP mix-up made part attribution silently
+               never fire. Converted to model units at the ONE C++ call site
+               (host_loop._sync_ship_articulation).
     axis:      hinge axis, parent/model space; normalised on use.
     angle_deg: rotation applied at deflection 1.0. Sign is per-part and
                explicit — the two wings mirror, so they carry opposite signs
@@ -76,6 +81,9 @@ class Part(NamedTuple):
 # Seconds for a full 0<->1 travel. A BoP wing transition reads as a couple of
 # seconds on screen; faster looks like a glitch, slower reads as broken.
 TRAVEL_SECONDS = 2.0
+
+# Ship units -> model (NIF) units, for the C++ boundary only. = BC_MODEL_SCALE.
+MODEL_TO_SHIP = 0.01
 
 
 # Keyed by HARDPOINT LEAF (the `HardpointFile` value in the ship's
@@ -98,9 +106,9 @@ _RIGS: dict[str, tuple[Part, ...]] = {
         # (-X) wing and SINKS the starboard one. Verified by
         # tests/unit/test_articulation.py, which rotates the real tip
         # coordinate and asserts it rises.
-        Part(node="left wing",   pivot=(-16.0, 0.0, 5.0),
+        Part(node="left wing",   pivot=(-0.16, 0.0, 0.05),
              axis=(0.0, 1.0, 0.0), angle_deg=45.0),
-        Part(node="left wing01", pivot=(16.0, 0.0, 5.0),
+        Part(node="left wing01", pivot=(0.16, 0.0, 0.05),
              axis=(0.0, 1.0, 0.0), angle_deg=-45.0),
     ),
 }

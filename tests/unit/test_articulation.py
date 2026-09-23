@@ -123,6 +123,27 @@ def test_degenerate_axis_does_not_produce_nan():
     assert math.isfinite(theta)
 
 
+def test_pivot_is_in_ship_units():
+    """The pivot must share units with PART_BOXES and subsystem mounts, which
+    are SHIP units (a BoP wingtip is x = 1.008, not 100.8). It used to be in
+    MODEL units, which is the same confusion that made part attribution
+    silently never fire — see part_severance.MODEL_TO_SHIP."""
+    port, starboard = articulation.rig_for("birdofprey")
+    assert starboard.pivot[0] == pytest.approx(0.16)
+    assert port.pivot[0] == pytest.approx(-0.16)
+    assert starboard.pivot[2] == pytest.approx(0.05)
+    # Inside the authored wing box, which is also ship units.
+    box = articulation.part_boxes_for("birdofprey")["left wing01"]
+    assert box[0][0] <= starboard.pivot[0] <= box[1][0]
+
+
+def test_rotation_for_returns_ship_units():
+    part = articulation.rig_for("birdofprey")[1]
+    pivot, _axis, _theta = articulation.rotation_for(part, 1.0)
+    assert pivot == part.pivot
+    assert abs(pivot[0]) < 1.0, "a ship-units pivot is ~0.16, not ~16"
+
+
 # ── The geometry claim behind the pivots ─────────────────────────────────────
 
 def test_pivot_sits_inboard_of_the_wing_and_outboard_of_nothing():
@@ -137,19 +158,21 @@ def test_pivot_sits_inboard_of_the_wing_and_outboard_of_nothing():
     it is wrong too (the wing would pivot about a point along its own span).
     |X| between the wing's inner edge and the body's half-width is the band
     that can be physically right. This test is the reason a future tuning pass
-    cannot silently wander outside it."""
-    wing_inner_x = 12.36
-    body_half_width = 31.37
+    cannot silently wander outside it. Bounds are in SHIP units (model / 100),
+    matching `Part.pivot` since Task 1 of the hardpoint-parenting plan."""
+    wing_inner_x = 12.36 * articulation.MODEL_TO_SHIP
+    body_half_width = 31.37 * articulation.MODEL_TO_SHIP
     for part in articulation.rig_for("birdofprey"):
         assert wing_inner_x <= abs(part.pivot[0]) <= body_half_width, part.node
 
 
-@pytest.mark.parametrize("node,tip_x", [("left wing", -102.58),
-                                        ("left wing01", 102.58)])
+@pytest.mark.parametrize("node,tip_x", [("left wing", -1.0258),
+                                        ("left wing01", 1.0258)])
 def test_full_deflection_lifts_the_wing_tip_towards_horizontal(node, tip_x):
-    """~45 deg about the fore-aft axis should bring a tip at (|X|=102.6,
-    Z=-71.25) up to roughly the pivot's own height — the 'flatter and wider'
-    silhouette.
+    """~45 deg about the fore-aft axis should bring a tip at (|X|=1.0258,
+    Z=-0.7125) up to roughly the pivot's own height — the 'flatter and wider'
+    silhouette. Tip coordinates are SHIP units, matching the now-ship-unit
+    pivot.
 
     This caught a real sign error on the first pass: rotating right-handed
     about +Y, a POSITIVE angle lifts the PORT wing and SINKS the starboard
@@ -160,7 +183,7 @@ def test_full_deflection_lifts_the_wing_tip_towards_horizontal(node, tip_x):
     """
     part = next(p for p in articulation.rig_for("birdofprey") if p.node == node)
     px, _py, pz = part.pivot
-    tip_z = -71.25
+    tip_z = -0.7125
     _p, _axis, theta = articulation.rotation_for(part, 1.0)
 
     # Rotate the tip about the +Y axis through the pivot. Right-handed about

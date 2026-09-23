@@ -7044,7 +7044,12 @@ def _sync_ship_articulation(session, ship, iid) -> None:
         return
     for part in parts:
         pivot, axis, theta = articulation.rotation_for(part, deflection)
-        host_io.set_instance_node_rotation(iid, part.node, pivot, axis, theta)
+        # The rig is authored in SHIP units (shared with PART_BOXES and
+        # subsystem mounts); the binding works in MODEL units. This is the
+        # ONLY place the two meet.
+        pivot_model = tuple(c / articulation.MODEL_TO_SHIP for c in pivot)
+        host_io.set_instance_node_rotation(iid, part.node, pivot_model,
+                                           axis, theta)
     session.ship_articulation[iid] = deflection
 
 
