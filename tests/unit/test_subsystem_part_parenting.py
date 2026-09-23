@@ -14,6 +14,7 @@ import math
 
 import pytest
 
+from engine.appc.articulation import part_transform_point
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.subsystems import subsystem_world_position
 
@@ -85,3 +86,34 @@ def test_a_ship_without_articulation_support_still_works():
 
     w = subsystem_world_position(_Sub(STAR_CANNON), _Bare())
     assert (w.x, w.y, w.z) == pytest.approx(STAR_CANNON)
+
+
+def test_ship_rotation_is_applied_after_the_part_transform():
+    """The order matters: articulate in body frame, THEN rotate into world.
+
+    Every test above uses an identity ship rotation, so R . v == v for any v
+    -- they cannot tell "articulate then rotate" apart from "rotate then
+    articulate". Articulation is itself a body-frame motion (a rotation about
+    the part's own hinge), so it must compose INSIDE the ship's world
+    rotation R, not outside it. This test uses a non-identity rotation about
+    +X -- an axis unrelated to the wing's own hinge axis (+Y) -- so the two
+    orderings provably diverge, and hand-computes the expected point in the
+    same two explicit steps the implementation must take.
+    """
+    angle = math.radians(30.0)
+    rot = TGMatrix3().MakeXRotation(angle)
+
+    class _RotatedShip(_Ship):
+        def GetWorldRotation(self):
+            return rot
+
+    ship = _RotatedShip(1.0)
+
+    # Step 1: articulate the mount in BODY frame (wings up, deflection 1.0).
+    ax, ay, az = part_transform_point(ship, STAR_CANNON)
+    # Step 2: THEN rotate the articulated point into world space.
+    expected = TGPoint3(ax, ay, az)
+    expected.MultMatrixLeft(rot)
+
+    w = subsystem_world_position(_Sub(STAR_CANNON), ship)
+    assert (w.x, w.y, w.z) == pytest.approx((expected.x, expected.y, expected.z))
