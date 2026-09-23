@@ -211,3 +211,55 @@ def test_the_conversion_constant_matches_BC_MODEL_SCALE():
     test_part_severance.py::test_the_conversion_constant_matches_BC_MODEL_SCALE."""
     from engine import host_loop
     assert articulation.MODEL_TO_SHIP == pytest.approx(host_loop.BC_MODEL_SCALE)
+
+
+# ── part_transform_point ─────────────────────────────────────────────────────
+
+class _PosedShip:
+    """Minimal stand-in: a leaf and a deflection is all the transform needs."""
+
+    def __init__(self, deflection, leaf="birdofprey"):
+        self._articulation_leaf = leaf
+        self._d = deflection
+
+    def GetArticulationDeflection(self):
+        return self._d
+
+
+def test_transform_is_identity_at_rest():
+    """Deflection 0 is the model's authored pose. Every consumer of this must
+    be byte-identical to not calling it at all."""
+    p = (0.8, 0.0, -0.4)
+    assert articulation.part_transform_point(_PosedShip(0.0), p) == p
+
+
+def test_a_wing_point_rises_with_the_wing():
+    """The starboard wingtip is the Star Cannon's mount. At full deflection it
+    must follow the wing, not stay at the rest position — that gap is the live
+    bug this plan fixes (~60 m on a BoP)."""
+    rest = (1.008, 0.450, -0.670)
+    moved = articulation.part_transform_point(_PosedShip(1.0), rest)
+    assert moved[2] > rest[2], "the mount must rise with the wing"
+    assert moved[1] == pytest.approx(rest[1]), "Y is the hinge axis: unchanged"
+    # It moves a long way — this is why the un-parented mount was so visibly wrong.
+    dist = sum((moved[i] - rest[i]) ** 2 for i in range(3)) ** 0.5
+    assert dist > 0.5
+
+
+def test_a_body_point_never_moves():
+    """The body is not an articulated part. A warp-core mount must be
+    untouched at any deflection."""
+    p = (0.0, -0.33, 0.0)
+    assert articulation.part_transform_point(_PosedShip(1.0), p) == p
+
+
+def test_an_unrigged_ship_is_untouched():
+    p = (0.8, 0.0, -0.4)
+    assert articulation.part_transform_point(_PosedShip(1.0, "galaxy"), p) == p
+
+
+def test_the_two_wings_mirror():
+    port = articulation.part_transform_point(_PosedShip(1.0), (-1.008, 0.45, -0.67))
+    star = articulation.part_transform_point(_PosedShip(1.0), (1.008, 0.45, -0.67))
+    assert port[0] == pytest.approx(-star[0])
+    assert port[2] == pytest.approx(star[2])

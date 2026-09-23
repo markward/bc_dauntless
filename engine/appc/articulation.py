@@ -307,3 +307,60 @@ def detachable_for(leaf):
     if not leaf:
         return {}
     return DETACHABLE.get(str(leaf).lower(), {})
+
+
+def part_transform_point(ship, point):
+    """Where a body-frame point ends up once its part has articulated.
+
+    In and out are BODY frame, SHIP units (what subsystem mounts and
+    PART_BOXES use). Identity for a ship with no rig, for a point on no
+    articulated part, and at deflection 0 -- so an unarticulated hull is
+    byte-identical to not calling this.
+
+    This is what makes a hardpoint FOLLOW its part. A BoP's wingtip cannon
+    sits at (1.008, 0.450, -0.670); with the wings up that mount is ~0.9 ship
+    units (~150 m) from where the gun is drawn, and the beam fires from the
+    stale point.
+    """
+    parts = rig_for(leaf_for(ship))
+    if not parts:
+        return point
+    try:
+        deflection = float(ship.GetArticulationDeflection())
+    except Exception:  # noqa: BLE001 - not a ShipClass (prop / test double)
+        return point
+    if deflection == 0.0:
+        return point
+
+    from engine.appc.part_severance import part_for_point
+    name = part_for_point(leaf_for(ship), point)
+    if name is None:
+        return point
+    part = next((p for p in parts if p.node == name), None)
+    if part is None:
+        return point
+
+    pivot, axis, theta = rotation_for(part, deflection)
+    return _rotate_about(point, pivot, axis, theta)
+
+
+def _rotate_about(point, pivot, axis, theta):
+    """Rodrigues rotation of `point` about the line (pivot, unit axis) by
+    `theta` radians. Right-handed, matching the renderer's column-vector
+    convention (CLAUDE.md) and glm::rotate in set_instance_node_rotation, so
+    the mount and the drawn mesh agree by construction."""
+    if theta == 0.0:
+        return point
+    vx = point[0] - pivot[0]
+    vy = point[1] - pivot[1]
+    vz = point[2] - pivot[2]
+    ax, ay, az = axis
+    c = math.cos(theta)
+    s = math.sin(theta)
+    dot = ax * vx + ay * vy + az * vz
+    cx = ay * vz - az * vy
+    cy = az * vx - ax * vz
+    cz = ax * vy - ay * vx
+    return (pivot[0] + vx * c + cx * s + ax * dot * (1.0 - c),
+            pivot[1] + vy * c + cy * s + ay * dot * (1.0 - c),
+            pivot[2] + vz * c + cz * s + az * dot * (1.0 - c))
