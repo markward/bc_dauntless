@@ -436,10 +436,23 @@ def test_host_loop_runs_manual_aim_update_in_the_sim_block():
 
 def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
     src = _host_loop_src()
-    anchor = "r.set_camera(eye=eye, target=target, up=up_vec,\n                             fov_y_rad=director.effective_fov_y_rad,\n                             near=1.0, far=5000.0)"
+    anchor = ("r.set_camera(eye=eye, target=target, up=up_vec,\n"
+              "                             fov_y_rad=director.effective_fov_y_rad,\n"
+              "                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)")
     i_cam = src.index(anchor)
-    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad, 1.0, 5000.0)")
+    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
     assert i_cam < i_note < i_cam + 600
+
+
+def test_host_loop_notes_the_camera_with_the_same_frustum_it_set():
+    """note_camera's near/far MUST be the pair handed to set_camera. Spelled as
+    the shared constants, not literals, so raising the far plane cannot move
+    one without the other -- a mismatch silently drifts the cursor
+    unprojection off the hull instead of failing loudly."""
+    src = _host_loop_src()
+    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
+    call = src[i_note: src.index(")", i_note) + 1]
+    assert "SCENE_NEAR_GU" in call and "SCENE_FAR_GU" in call
 
 
 def test_host_loop_resets_manual_aim_on_tcw_reset():

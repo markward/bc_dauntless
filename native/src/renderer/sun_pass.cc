@@ -88,6 +88,30 @@ void SunPass::ensure_flare_quad() {
     glBindVertexArray(0);
 }
 
+VirtualPlacement solve_virtual_placement(const glm::vec3& world_pos,
+                                         const glm::vec3& camera_eye,
+                                         float camera_far) {
+    VirtualPlacement out;
+    const glm::vec3 cam_to_obj = world_pos - camera_eye;
+    const float true_distance = glm::length(cam_to_obj);
+    if (true_distance < 1e-3f) return out;   // valid = false
+
+    out.valid = true;
+    // Inside the frustum the body is real geometry: draw it where it is, at
+    // the size it is, so it occludes and is occluded correctly.
+    if (true_distance <= camera_far) {
+        out.position = world_pos;
+        out.scale    = 1.0f;
+        return out;
+    }
+    // Beyond it, remap along the same ray to just inside the far plane and
+    // shrink by the same factor, which preserves the angular size.
+    const float virtual_distance = camera_far * 0.95f;
+    out.scale    = virtual_distance / true_distance;
+    out.position = camera_eye + (cam_to_obj / true_distance) * virtual_distance;
+    return out;
+}
+
 void SunPass::render(const std::vector<SunDescriptor>& suns,
                      const scenegraph::Camera& camera,
                      Pipeline& pipeline,
@@ -111,13 +135,10 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     }
     glBindVertexArray(sphere->vao());
 
-    // Suns in BC sit tens of km from the origin (e.g. 63km), but BC's
-    // captured frustum has far=5000. Match that by remapping each sun
-    // along its camera-direction to sit just inside the far plane,
-    // shrinking the radius by the same factor so the angular size is
-    // preserved.
-    const float virtual_distance = camera.far * 0.95f;
-    // The aggregator passes corona_radius = body_radius * 1.1, so the
+    // Suns in BC sit tens of km from the origin (e.g. 63km). A sun beyond
+    // the far plane is remapped along its camera-direction to sit just
+    // inside it (see solve_virtual_placement); one inside is drawn where it
+    // actually is. The aggregator passes corona_radius = body_radius * 1.1, so the
     // sphere shell sits as a thin halo just outside the body. The flare
     // particle system (drawn below) provides the wispy arcing-plasma
     // detail that BC's SunEffect node renders.
@@ -131,12 +152,11 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
         assets::Texture* tex = ensure_texture(s.base_texture_path);
         if (!tex) continue;
 
-        const glm::vec3 cam_to_sun = s.position - camera.eye;
-        const float true_distance = glm::length(cam_to_sun);
-        if (true_distance < 1e-3f) continue;
-        const float scale_factor = virtual_distance / true_distance;
-        const glm::vec3 virtual_pos =
-            camera.eye + (cam_to_sun / true_distance) * virtual_distance;
+        const VirtualPlacement placement =
+            solve_virtual_placement(s.position, camera.eye, camera.far);
+        if (!placement.valid) continue;
+        const float     scale_factor = placement.scale;
+        const glm::vec3 virtual_pos  = placement.position;
         const float virtual_radius = s.radius        * scale_factor;
         const float virtual_corona = s.corona_radius * scale_factor;
 
