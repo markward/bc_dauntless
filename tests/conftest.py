@@ -933,6 +933,21 @@ def _reset_leakable_engine_globals():
         _hl._note_static_backdrops([])
     except Exception:
         pass
+    # Hit-feedback emission throttles. All three are keyed by id(ship) and
+    # id() is a RECYCLED address, so a dead ship's entry is inherited by a
+    # LATER test's ship that happens to land there. Every decal test pins the
+    # clock to the same instant, so an inherited entry makes `now - last == 0`
+    # and the decal is throttled away -- the test fails, alone it passes, and
+    # the culprit is whichever earlier test allocated. Diagnosed 2026-09-25
+    # from test_decal_emission.py::test_dent_weight_reaches_the_decal, which
+    # flaked only in full-suite runs.
+    try:
+        from engine.appc import hit_feedback as _hf
+        _hf._last_decal_emit.clear()
+        _hf._last_carve_time.clear()
+        _hf._pending_carve_strength.clear()
+    except Exception:
+        pass
     # Camera shake: the Modern VFX row flips a module global, so a test that
     # turns it off would silently kill every later test's shake.
     try:

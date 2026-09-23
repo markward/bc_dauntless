@@ -5397,8 +5397,14 @@ class HostController:
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
+        # All three emission throttles are keyed by id(ship), and id() is a
+        # RECYCLED address: a dead ship's entry is inherited by whatever lands
+        # at that address next, which silently suppresses the new ship's first
+        # decal or carve. Clearing the carve pair and not the decal one was an
+        # omission, not a distinction.
         hit_feedback._last_carve_time.clear()
         hit_feedback._pending_carve_strength.clear()
+        hit_feedback._last_decal_emit.clear()
         from engine.appc import hull_hit_smoke
         hull_hit_smoke.reset()
         from engine.appc import damage_geometry
