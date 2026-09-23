@@ -239,21 +239,23 @@ computed against its **part**. Two symptoms, one cause:
    `part_severance._destroy_subsystems_on_part` were broken because they test a
    "static body-frame mount". They are correct: `PART_BOXES` are authored in the
    REST pose, the voxel side never sees `node_overrides`, and the `.dhv` SDF is
-   baked from the NIF. **The whole SIM is rest-pose-consistent; only the
-   RENDERER articulates.** Transforming the mount there would mismatch frames
+   baked from the NIF. **The structures these two functions compare against
+   stay rest-pose.** Transforming the mount there would mismatch frames
    and misattribute. Pinned by
    `test_subsystem_kill_uses_the_REST_mount_even_mid_travel`.
 
-   WARNING: this changes if the sim ever articulates — per-part hull volumes and
-   picking (§4.3) would move the voxel and trace geometry into the live pose,
-   and both functions would then need the transform.
+   **Evaluated 2026-09-23 — did not arrive.** §4.3's collision pieces do
+   articulate now, but neither of these two functions reads them: they
+   compare against `PART_BOXES` and the damage field, both of which the
+   design keeps rest-pose by transforming the QUERY, never the baked
+   structure. See §4.3.1 for the full argument.
 
 **One fix, one symptom.** Parenting hardpoints to parts fixes the firing origin
 (symptom 1): the cannon now follows the wing. The sever-kill path needed no
 fix — it already reuses the same part-assignment rule (`part_for_point`), just
 applied to the authored REST mount rather than the articulated one, which is
-exactly right for a sim that stays rest-pose-consistent throughout. No new
-destruction machinery is needed — see §7.
+exactly right because those two comparisons stay rest-pose-consistent
+throughout (§4.3.1). No new destruction machinery is needed — see §7.
 
 ### 4.2 Hardpoint → part assignment
 
@@ -855,9 +857,24 @@ wings through the fade, and a severed wing stays gone through it — the two
 cases where the rest-pose snap was most visible, since the BoP is BC's only
 cloaking ship.
 
-**Still NOT built: picking, collision pieces, the hull volume, glow regions
-and carve entries** — plans 2 and 3. Those transform the QUERY rather than
-threading overrides, and plan 3 reverses Ruling 1 (see §4.3.1).
+**Picking IS built and live-verified** (successor to
+`docs/superpowers/plans/2026-09-23-node-overrides-render-passes.md` — the
+ray-trace work; commit message "an override moves a part's CHILDREN too — the
+mesh is a child"). Confirmed live by the project owner.
+
+**Collision pieces and carve entries are built by THIS plan**
+(`docs/superpowers/plans/2026-09-23-part-aware-sim-geometry.md`): pieces carry
+a part tag, a severed part's pieces stop colliding, pieces follow a part
+mid-travel, and a carve struck on a moved part is pulled back into that part's
+rest frame by `renderer::rest_from_posed_at`. **Not yet live-verified.**
+
+**The hull volume needed no separate work** — there is no sim-side point
+query against the `.dhv`; it is baked in Python and sampled on the GPU in
+model space. Its only writer is a carve, covered above.
+
+**Glow regions were not transformed** — emitters on a detached part are
+silenced instead (`part_severance._silence_emitters_on`). These last two match
+the corrected §4.3 table rows above.
 
 Threading `node_overrides` is the right answer for the four RENDER paths, and
 mirrors §3.3. It is NOT the answer for picking, collision pieces, the hull
@@ -868,6 +885,6 @@ the QUERY into part-local space instead, leaving every bake untouched — which
 also removes the per-part-volume resolution risk an earlier draft of §4.3
 carried.
 
-⚠️ Building this REVERSES Ruling 1: the sim stops being rest-pose-consistent,
-and the two characterisation tests pinning the authored mount must be inverted
-with it. See §4.3.1, which says why and names both tests.
+**Ruling 1 STANDS** — see the corrected §4.3.1: the bounds a subsystem kill
+compares against never moved into the live pose, so neither
+characterisation test needed inverting.
