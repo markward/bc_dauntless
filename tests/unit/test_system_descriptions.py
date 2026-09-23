@@ -10,6 +10,7 @@ import json
 
 from engine.appc import sector_model as sm
 from engine.systems import descriptions as sysdesc
+from engine.systems.descriptions import for_system
 
 
 def _ids() -> set:
@@ -51,7 +52,7 @@ def test_the_fiction_we_established_is_actually_in_the_text():
     """These three systems carry the plot -- BC's own, not invented. If a
     rewrite drops it, the nav UI stops being where the story lives."""
     vesuvi = sysdesc.for_system("vesuvi")["detail"].lower()
-    assert "vesuvi iv" in vesuvi or "survey station" in vesuvi
+    assert "geki" in vesuvi
     assert "debris" in vesuvi or "dust" in vesuvi
 
     belaruz = sysdesc.for_system("belaruz")["detail"].lower()
@@ -61,6 +62,14 @@ def test_the_fiction_we_established_is_actually_in_the_text():
     omega = sysdesc.for_system("omegadraconis")["detail"].lower()
     assert "solarformer" in omega
     assert "kessok" in omega
+
+
+def test_vesuvi_does_not_claim_a_station_it_does_not_have():
+    """Vesuvi 4 holds a nebula and twelve asteroids. The outposts are at Geki
+    (Vesuvi 5, authored at 20% hull) and Vesuvi 6."""
+    detail = for_system("vesuvi")["detail"]
+    assert "Vesuvi IV" not in detail
+    assert "Geki" in detail
 
 
 def test_summaries_stay_short_enough_for_a_one_line_readout():

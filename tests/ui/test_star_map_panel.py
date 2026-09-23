@@ -79,7 +79,7 @@ def test_selecting_a_system_sends_its_description():
     p.open(set_name="Vesuvi6")
     p.dispatch_event("select-system:vesuvi")
     data = _payload(p.render_payload())
-    assert "Vesuvi" in data["description"]
+    assert "Geki" in data["description"]
     assert len(data["description"]) > 80, "should be the detail, not the summary"
 
 
