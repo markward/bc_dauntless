@@ -14,29 +14,32 @@ to a breach instead of being hard-gated out per hit. Constants here are
 eye-calibration knobs (tunable without a native rebuild).
 """
 
-# Field strength deposited per unit of absorbed hull damage. Geometry damage
-# builds up GRADUALLY over sustained fire instead of a single moderate hit
-# one-shotting a full breach (which read as all-or-nothing). Heavy hits still
-# deposit proportionally more. The C++ curve (kHullCarve* in
-# native/.../hull_carve.h) maps accumulated strength -> visible radius, emerging
-# small at the iso and growing. Raise this to make geometry damage appear
-# readier per hit.
+# Field strength deposited per unit of absorbed hull damage. 1:1 — strength is
+# just accumulated absorbed-hull, so geometry damage builds up GRADUALLY over
+# sustained fire instead of a single moderate hit one-shotting a full breach
+# (which read as all-or-nothing). Heavy hits still deposit proportionally more.
+# The C++ curve (kHullCarve* in native/.../hull_carve.h) maps accumulated
+# strength -> visible radius, emerging small at the iso and growing. Raise this
+# to make geometry damage appear readier per hit.
 #
-# Tuned 2026-09-23 from 1.0 (live: hulls "carved like butter"). At 1:1 the iso
-# sat at 150 absorbed hull and the radius clamp at 600 -- so a GALAXY reached
-# the maximum-size crater having lost 4% of its 15000 hull, and opened its
-# first hole at 1%. At 0.25 those become 16% and 4%. Fractions of hull for the
-# stock fleet at this value:
+# ⚠️ DO NOT LOWER THIS TO MAKE HOLES SMALLER. It controls READINESS, not SIZE.
+# Cut to 0.25 on 2026-09-23 in response to hulls "carving like butter"; craters
+# then stopped appearing AT ALL across three live battles, and it was reverted
+# the same day.
 #
-#            first hole (600 dmg)   max radius (1400 dmg)
-#   Galaxy         4%                      9%
-#   Sovereign      5%                     12%
-#   BirdOfPrey    15%                     35%
-#   Shuttle      37.5%                    87%   (dies first -- intended)
+# Why it fails: strength accumulates PER CARVE SITE, not per ship
+# (hull_carve.cc `c.strength += strength`, merged only within ~0.09 GU). The
+# C++ iso is 150, and one full-strength weapon hit is ~200-250 absorbed hull
+# (BoP PortCannon SetMaxDamage(200); Galaxy VentralPhaser3 250) — so at 1:1 a
+# single clean hit just crosses it. At 0.25 it takes four hits landing within
+# ~15 m of each other, which on a manoeuvring target essentially never happens.
 #
-# The shuttle line is why there is no small-ship special case: a hull that
-# small is destroyed long before it can be meaningfully carved.
-STRENGTH_PER_HULL = 0.25
+# The denominator that matters is damage AT ONE POINT, never the ship's total
+# hull HP. To make holes SMALLER, change kHullCarveRadiusMaxGu in
+# native/src/scenegraph/include/scenegraph/hull_carve.h instead.
+# Guarded by tests/unit/test_hull_carve_mapping.py::
+# test_one_full_strength_hit_can_open_a_hole.
+STRENGTH_PER_HULL = 1.0
 
 # Merge-influence radius (GU): how close two hits must land to deepen the SAME
 # carve (in place) rather than start a new one. Kept SMALL so a swept beam lays

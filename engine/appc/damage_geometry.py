@@ -47,8 +47,12 @@ __all__ = [
 # figure carried no technical rationale -- the comment here recorded it only as a
 # taste call -- and it excluded every small warship, the Bird of Prey included.
 # Deriving the floor from the carve curve instead admits the entire stock fleet
-# EXCEPT the Shuttle (0.141 GU), whose whole hull is a 5x6x4 voxel grid: far too
-# few cells for connectivity to yield a component worth spawning.
+# EXCEPT the Shuttle (0.141 GU). The Shuttle is excluded on the VOXEL GRID
+# argument, which stands on its own: its whole hull is 5x6x4 cells, far too few
+# for connectivity to yield a component worth spawning. (An earlier version of
+# this comment also argued the Shuttle "dies before it can be carved" -- that
+# rested on a STRENGTH_PER_HULL of 0.25 which was reverted the same day as a
+# regression. Do not reinstate that reasoning.)
 #
 # Re-derive this if kHullCarveRadiusMaxGu moves.
 #

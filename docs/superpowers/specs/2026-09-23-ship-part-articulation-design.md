@@ -3,6 +3,11 @@
 **Status:** phase 1 BUILT and live-verified 2026-09-23 (commit `1759bc9d`, branch
 `spike-bop-wing-animation`); phase 2 designed here, not built.
 
+**§5 was revised after a live session** — node-parts now own *appendage*
+severance, with voxel connectivity keeping the hull. An earlier draft rejected
+node-parts as a severance unit entirely; §2.6 records the measurement that
+overturned it.
+
 **Related specs:**
 - `docs/superpowers/specs/2026-09-11-breakable-hull-components-design.md` —
   voxel-connectivity chunks. This spec does **not** replace it; see §7.
@@ -104,6 +109,32 @@ Z = 5) — so ~45° brings the wings flat. **The angle was derived, not chosen.*
 
 Against a wing X extent of 12.36…102.58 and a Z floor of −71.25, both pulse
 cannons sit just inboard of the wingtips. **This is why phase 2 exists.**
+
+### 2.6 A wing is attached through a NECK, and it is nearly invisible
+
+Narrowest cross-section of each wing, stepping along X (model-space vertex
+cloud, 14 slabs):
+
+| X band | Y-span | Z-span |
+|---|---|---|
+| 12.4 … 18.8 | 66.0 | 5.6 |
+| **18.8 … 25.3** | **13.8** | **7.1** ← the neck |
+| 25.3 … 31.7 | 39.1 | 31.8 |
+| 31.7 … 38.1 | 56.3 | 31.1 |
+| 96.1 … 102.6 | 61.9 | 18.4 |
+
+The neck centroid is **(±22.5, −56.3, −3.8)** model units = **(±0.225, −0.563,
+−0.038)** in ship/hardpoint units: **aft, tucked beside the hull at mid-height.**
+At the default bake quality of 2 (`kDefaultQuality`, cell = authored 10 / 2 = 5
+model units) that neck is ~1.4 cells thick — thin but representable, so a carve
+of roughly one cell radius (~0.05 GU, ~180 absorbed hull) severs it.
+
+⚠️ **Sampling caveat:** 8 of the 14 slabs held too few vertices to measure and
+were skipped, so bands other than the neck are indicative only. A second narrow
+band may exist around X ≈ 38–45; that number is NOT trustworthy and nothing
+should be built on it without a finer measurement.
+
+**This measurement is why §5 changed.** See below.
 
 ---
 
@@ -270,20 +301,57 @@ design but need not be one change.
 
 ---
 
-## 5. What this does NOT change
+## 5. Severance: which mechanism owns what
 
-**The voxel breakup system stays exactly as it is.** Chunks continue to be
-derived from voxel connectivity after a carve
-(`2026-09-11-breakable-hull-components-design.md`).
+**Revised 2026-09-23 after a live session.** An earlier draft of this section
+rejected node-parts as a severance unit outright, on the grounds that voxel
+connectivity yields *emergent* damage shapes an authored split cannot. That
+reasoning holds **for the hull**. It does not hold for appendages, and §2.6 is
+why.
 
-Making node-parts the chunk unit was considered and **rejected**: voxel
-connectivity produces *emergent* damage shapes from wherever the damage actually
-landed, and an authored 4-part split cannot. Replacing it would trade a general
-system for a coarse one. The two decompositions are complementary — parts are
-*authored, named, articulated* structure; voxel components are *emergent* damage.
+**The evidence.** A Bird of Prey's wing attaches through a 14 × 7-unit neck at
+(±0.225, −0.563, −0.038) — aft, against the hull, at mid-height. Under voxel
+connectivity that neck is the ONLY place a wing can be severed. Shooting the
+wing itself — its visible span, its tip, the cannon mounted on it — can only
+punch holes *in* it. Confirmed live: repeated fire at the wing span never
+detached anything, because nothing there is load-bearing.
 
-Chunks also remain what that spec decided they are: visual debris that collides —
-not targetable, no hull HP, no subsystems of their own.
+That makes the mechanic unusable in practice. The weak point is the least
+visible part of the ship, nothing about the hull signals it, and a player has to
+know the mesh topology to exploit it. **A mechanic that requires reading the
+model is not a mechanic.**
+
+### The split
+
+| | mechanism | governs | why |
+|---|---|---|---|
+| **hull** | voxel connectivity (shipped, unchanged) | emergent chunks from wherever damage landed | arbitrary shapes; no authoring |
+| **appendages** | **node-parts** | a part accumulates damage and shears at its **authored break point** | the break point is visible, expected, and already authored |
+
+Shoot a wing anywhere → it detaches at the hinge → the cannon on it dies with it
+(§4.1's existing `_destroy_subsystems_inside` path, once hardpoints are
+parented).
+
+### Why this is nearly free
+
+**The articulation pivot IS the break point.** Phase 1 already authors
+`(±16, 0, 5)` as the BoP's wing hinge — the point the wing rotates about is
+exactly the point it should shear at. No new authored data.
+
+**Damage attribution comes from §4.2.** The proximity-with-margin rule that
+assigns hardpoints to parts assigns *hits* to parts by the same measure, so
+"damage to the left wing" is a quantity phase 2 computes anyway.
+
+So what appendage severance adds over phase 2 is a per-part damage accumulator
+and a threshold — not a new decomposition.
+
+### What does NOT change
+
+Voxel connectivity keeps the hull, exactly as
+`2026-09-11-breakable-hull-components-design.md` specifies. Chunks remain what
+that spec decided they are: visual debris that collides — not targetable, no
+hull HP, no subsystems of their own. A severed node-part becomes the same kind
+of chunk, so nothing downstream learns a new object type.
 
 ---
 
@@ -318,13 +386,21 @@ maximum combat carve (`kHullCarveRadiusMaxGu`). Five ships became breakable:
 BirdOfPrey, Freighter, CardFreighter, Marauder, Galor. Only the Shuttle
 (0.141 GU, a 5×6×4 voxel grid) stays out.
 
-Done alongside a **carve retune**, which is what makes the lower floor safe.
-Holes were opening on a Galaxy at 1% hull loss and maxing at 4%:
-`STRENGTH_PER_HULL` 1.0 → **0.25** (Python, no rebuild) and
-`kHullCarveRadiusMaxGu` 0.3 → **0.15 GU** (26.25 m, ~4% of a Galaxy's length).
-A Shuttle now needs 37% of its hull for a first hole, so it dies long before it
-can be meaningfully carved — the degenerate case disappears without a special
-case. ⚠️ **Not yet live-verified.**
+Done alongside a **carve size reduction**: `kHullCarveRadiusMaxGu` 0.3 →
+**0.15 GU** (26.25 m, ~4% of a Galaxy's length, where 0.3 was ~8% and exceeded
+an entire shuttle). The Shuttle is excluded on the voxel-grid argument alone
+(5×6×4 cells).
+
+⚠️ **A second change was attempted and REVERTED the same day:**
+`STRENGTH_PER_HULL` 1.0 → 0.25, intended to make hulls carve less readily.
+Craters then stopped appearing entirely across three live battles. The error was
+a category mistake — it was calibrated against a ship's TOTAL hull HP, but carve
+strength accumulates **per site** (merged within ~0.09 GU), so the only
+denominator that matters is damage delivered at ONE POINT. One full hit is
+~200–250 absorbed hull against a C++ iso of 150; at 0.25 it takes four hits
+within ~15 m of each other. **Hole SIZE is `kHullCarveRadiusMaxGu`; hole
+READINESS is `STRENGTH_PER_HULL`, and readiness must stay within reach of a
+single hit.** Guarded by `test_one_full_strength_hit_can_open_a_hole`.
 
 **OQ-2 — Seam hits mid-travel.** How a hit landing between wing and hull resolves
 when the wing is part-way through its travel is unknown. Expected to need
@@ -342,3 +418,24 @@ phase 2 — a detached wing still receiving a pose is a visible bug.
 **OQ-5 — Should `Port Warp`/`Star Warp` be wing-parented by hand?** The margin
 rule conservatively assigns them to the body. Physically they are on the wings.
 Deferred to SPV authoring.
+
+**OQ-6 — What is an appendage's damage threshold?** §5 gives node-parts
+appendage severance, but not how much damage shears one. Options span a flat
+per-part HP, a fraction of the parent hull's HP, and a share scaled by the
+part's volume. None is measured; BC has no equivalent to recover it from. Wants
+live eyes: the failure modes are "wings fall off in a skirmish" and "wings never
+come off", and only one of them is visible from a test.
+
+**OQ-7 — Carve radius vs bake quality.** `kDefaultQuality = 2` was chosen
+because *"a maximum-size carve is 0.3 GU = 30 model units, which at a Galaxy's
+authored cell of 10 is a 3-CELL radius — too coarse to read as a torn hole. At
+2x it is 6."* Halving the max carve to 0.15 GU (OQ-1) puts it **back to a 3-cell
+radius**, i.e. exactly the coarseness that comment rejects. Craters may now read
+blocky. Untested. If they do, raising `kDefaultQuality` to 4 restores the 6-cell
+ratio at ~8× bake cost and ~58 MB fleet-resident (from 7.2 MB) — both one-off
+and affordable, but not free.
+
+**OQ-8 — Is there a second narrow band on the wing?** §2.6's slab probe hints at
+one around X ≈ 38–45, which would mean a mid-wing shot could shed the outboard
+section (and the cannon with it). The sampling was too coarse to trust — 8 of 14
+slabs were skipped. Needs a finer measurement before anything relies on it.
