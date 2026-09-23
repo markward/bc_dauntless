@@ -112,22 +112,40 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
     are both baked from the NIF in rest pose. So a ship reporting non-zero
     deflection must attribute exactly as it would at rest.
 
+    This has to actually DISCRIMINATE the two behaviours, not just carry a
+    deflection value nothing reads. The `_Ship` double is given a resolvable
+    rig (`_articulation_leaf = "birdofprey"`, mirroring
+    test_part_severance.py) so `articulation.part_transform_point` would be
+    live -- not the identity no-op it is for a ship with no leaf -- if a
+    regression routed the mount through it.
+
+    The Star Cannon's authored REST mount, (1.008, 0.450, -0.670), rotates
+    under `left wing01`'s full-deflection (1.0) hinge to
+    ~(1.269, 0.450, 0.141) -- computed once via
+    `articulation.rotation_for` / `_rotate_about` and pinned here as a
+    literal, not re-derived by the test. `bounds` below contains the REST
+    point but excludes the rotated one on X alone (1.1 < 1.269):
+
+        correct (raw REST mount)   -> inside bounds  -> destroyed
+        regressed (transformed)    -> outside bounds -> untouched
+
     Companion to test_part_severance.py's
     test_subsystem_kill_uses_the_REST_mount_even_mid_travel -- see spec
     §4.1 symptom 2 (withdrawn).
     """
     from engine.appc import hull_breakup
-    inside = _Sub(TGPoint3(1.0, 0.0, 0.0), "Port Nacelle")
-    outside = _Sub(TGPoint3(-1.0, 0.0, 0.0), "Bridge")
-    ship = _Ship(radius=3.5, subs=[inside, outside])
+    cannon = _Sub(TGPoint3(1.008, 0.450, -0.670), "Star Cannon")
+    ship = _Ship(radius=3.5, subs=[cannon])
+    ship._articulation_leaf = "birdofprey"   # pre-cached: resolvable rig
     ship._articulation_deflection = 1.0      # full travel
+    lo, hi = (0.9, 0.4, -0.8), (1.1, 0.5, -0.5)
     monkeypatch.setattr(host_io, "hull_split_detached",
-                        lambda iid, m: [_component(9, 500, (1, 0, 0), (0.5, -.5, -.5), (1.5, .5, .5))])
+                        lambda iid, m: [_component(9, 500, (1, 0, 0), lo, hi)])
     hull_breakup.after_carve(ship, 11)
-    assert inside.IsDestroyed(), (
-        "the nacelle authored inside the REST bounds must die, "
-        "regardless of where the part is currently drawn")
-    assert not outside.IsDestroyed()
+    assert cannon.IsDestroyed(), (
+        "the cannon authored inside these REST bounds must die; routing the "
+        "mount through part_transform_point would move it to ~x=1.269, "
+        "outside hi.x=1.1, and this assertion would start failing")
 
 
 def test_nothing_severed_is_a_noop(monkeypatch):
