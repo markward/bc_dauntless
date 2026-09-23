@@ -3,6 +3,8 @@
 #include "renderer/frame.h"      // renderer::Lighting
 #include "renderer/pipeline.h"
 
+#include <renderer/node_anim.h>
+
 #include <assets/flip_frame.h>
 #include <assets/material.h>
 #include <assets/mesh.h>
@@ -144,21 +146,15 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
 
         shader.set_float("u_frac", s.frac);
 
-        // Walk nodes exactly as the opaque/hologram pass does: each node
-        // composes parent * local; parents precede children, so one linear pass
-        // suffices. inst->world is the host's right-handed ship transform.
+        // Honour the instance's node overrides, so a cloaking ship fades with
+        // the wings it actually has. The BoP is BC's one cloaking ship, so
+        // this is exactly the hull where a rest-pose snap shows.
         const glm::mat4& world_xf = inst->world;
-        std::vector<glm::mat4> world_per_node(model->nodes.size(), glm::mat4(1.0f));
-        if (!model->nodes.empty()) {
-            world_per_node[model->root_node] =
-                world_xf * model->nodes[model->root_node].local_transform;
-        }
+        const std::vector<glm::mat4> world_per_node =
+            renderer::compose_node_worlds(*model, world_xf,
+                                          inst->node_overrides);
         for (std::size_t i = 0; i < model->nodes.size(); ++i) {
             const auto& node = model->nodes[i];
-            if (node.parent_index >= 0) {
-                world_per_node[i] =
-                    world_per_node[node.parent_index] * node.local_transform;
-            }
             for (int mesh_idx : node.meshes) {
                 const auto& mesh = model->meshes[mesh_idx];
                 const assets::Material& mat = (mesh.material_index() >= 0
