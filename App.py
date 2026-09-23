@@ -312,6 +312,9 @@ from engine.appc.properties import (
     CloakingSubsystemProperty_Create,
     ObjectEmitterProperty_Create, ObjectEmitterProperty_Cast,
 )
+from engine.appc.articulated_part import (
+    ArticulatedPartProperty, ArticulatedPartProperty_Create,
+)
 from engine.appc.particles import (
     AnimTSParticleController_Create,
     SparkParticleController_Create,

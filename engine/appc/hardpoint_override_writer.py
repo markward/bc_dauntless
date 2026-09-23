@@ -22,11 +22,19 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
+import types
 
 # Setters whose first argument is a region index (so an edit targets one index).
 _INDEXED_PREFIX = "SetGlowRegion"
 _EMITTER_PREFIX = "SetLightEmitter"
 _INDEXED_PREFIXES = (_INDEXED_PREFIX, _EMITTER_PREFIX)
+
+# Key under which a ship's articulated parts live in its model dict, alongside
+# (never inside) its subsystem blocks -- see set_part / _emit_part.
+_PARTS_KEY = "__parts__"
+
+_NOT_SET = object()   # sentinel: distinguishes "no prior sys.modules['App']" from None
 
 
 class _Recorder:
@@ -50,14 +58,59 @@ def _make_find(per_sub):
     return find
 
 
+class _RecordingApp:
+    """Fake `App` module the generated `import App` binds to while recording.
+
+    A part block has no `find` call to hook -- it calls
+    `App.ArticulatedPartProperty_Create(name)` directly -- so the recorder
+    needs its own hook onto `App` itself. This stands in for the real App
+    shim during read_models exactly as `_Recorder` stands in for a live
+    property, so recovering a ship's parts never depends on the real App
+    module (or its side effects on a real g_kModelPropertyManager)."""
+
+    class _Mgr:
+        def RegisterLocalTemplate(self, part):
+            pass
+
+    def __init__(self, parts):
+        self._parts = parts
+        self.g_kModelPropertyManager = self._Mgr()
+
+    def ArticulatedPartProperty_Create(self, name):
+        return _Recorder(self._parts.setdefault(name, []))
+
+
 def read_models(module) -> dict:
-    """{leaf: {subsystem: [(setter, args), ...]}} by executing each override fn."""
+    """{leaf: {subsystem: [(setter, args), ...]}} by executing each override fn.
+
+    A leaf with articulated parts also gets a "__parts__" entry:
+    {leaf: {..., "__parts__": {part_name: [(setter, args), ...]}}}.
+    """
     models: dict = {}
     for leaf, fn in module.OVERRIDES.items():
         per_sub: dict = {}
-        fn(_make_find(per_sub))
+        parts: dict = {}
+        prev_app = sys.modules.get("App", _NOT_SET)
+        sys.modules["App"] = _RecordingApp(parts)
+        try:
+            fn(_make_find(per_sub))
+        finally:
+            if prev_app is _NOT_SET:
+                del sys.modules["App"]
+            else:
+                sys.modules["App"] = prev_app
+        if parts:
+            per_sub[_PARTS_KEY] = parts
         models[leaf] = per_sub
     return models
+
+
+def read_models_from_source(text) -> dict:
+    """read_models, but from emitted source text rather than an already
+    imported module -- what a round-trip (save, then re-read) actually has."""
+    module = types.ModuleType("_hardpoint_overrides_roundtrip")
+    exec(compile(text, "<hardpoint_overrides>", "exec"), module.__dict__)  # noqa: S102
+    return read_models(module)
 
 
 def _replace_key(setter, args):
@@ -75,6 +128,16 @@ def set_setter(models, leaf, subsystem, setter, args) -> None:
             calls[i] = (setter, tuple(args))
             return
     calls.append((setter, tuple(args)))
+
+
+def set_part(models, leaf, name, calls) -> None:
+    """Replace one articulated part's whole call list -- find-or-CREATE, full
+    replace like set_region full-replaces one glow-region index. `calls` is
+    ordered [(setter, args), ...] (SetPivot, SetAxis, SetStateAngle,
+    SetDetachFraction, in any combination)."""
+    per_sub = models.setdefault(leaf, {})
+    parts = per_sub.setdefault(_PARTS_KEY, {})
+    parts[name] = [(s, tuple(a)) for (s, a) in calls]
 
 
 def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) -> None:
@@ -125,18 +188,64 @@ def _lit(v) -> str:
     return str(v)
 
 
+def _fmt_args(args) -> str:
+    """Render a setter's positional args as the text between its parens."""
+    return ", ".join(_lit(a) for a in args)
+
+
+def _ident_for(name) -> str:
+    """A valid Python identifier for `name`, to hold one part's property
+    instance in its emitted block. BC part names are already distinct within
+    one ship's hardpoint file, so this only needs to be a legal identifier,
+    not independently unique."""
+    ident = "".join(c if (c.isalnum() or c == "_") else "_" for c in name)
+    if not ident or ident[0].isdigit():
+        ident = "_" + ident
+    return ident.lower()
+
+
+def _emit_part(lines, name, calls) -> None:
+    """Append a find-or-CREATE block for one articulated part to `lines`.
+
+    The App-level hasattr guard (not the usual per-instance one) is required
+    because stock BC has never heard of this property type: there is no
+    instance to guard on until Create succeeds, so the guard sits on App
+    itself. It is Python-1.5-safe -- hasattr is a two-argument builtin -- and
+    so is everything inside it: no True/False literals, no f-strings.
+
+    hardpoint_overrides.py does not strictly need the guard (stbc.exe never
+    loads it), but emitting the identical block in both homes means the SPV
+    has exactly one part emitter to maintain, and the text can be lifted
+    straight into a mod's own hardpoint file. See spec section 2.3.
+    """
+    var = _ident_for(name)
+    lines.append('    if hasattr(App, "ArticulatedPartProperty_Create"):')
+    lines.append('        %s = App.ArticulatedPartProperty_Create(%s)'
+                 % (var, _lit(name)))
+    for setter, args in calls:
+        lines.append('        %s.%s(%s)' % (var, setter, _fmt_args(args)))
+    lines.append('        App.g_kModelPropertyManager.RegisterLocalTemplate(%s)' % var)
+
+
 def _emit_function(leaf, per_sub) -> str:
     out = ["def _%s(find):" % leaf, '    """%s."""' % leaf]
-    non_empty = [(s, c) for s, c in per_sub.items() if c]
-    if not non_empty:
+    non_empty = [(s, c) for s, c in per_sub.items() if s != _PARTS_KEY and c]
+    parts = dict((n, c) for n, c in per_sub.get(_PARTS_KEY, {}).items() if c)
+    if not non_empty and not parts:
         out.append("    return")
-    else:
-        for subsystem, calls in non_empty:
-            out.append("    p = find(%s)" % _lit(subsystem))
-            out.append("    if p is not None:")
-            for setter, args in calls:
-                out.append("        p.%s(%s)"
-                           % (setter, ", ".join(_lit(a) for a in args)))
+        return "\n".join(out)
+    if parts:
+        # One local import covers every part block below; `import App` here
+        # (not at module scope) keeps a part-free ship's function -- and
+        # read_models reading it -- free of any dependency on App at all.
+        out.append("    import App")
+    for subsystem, calls in non_empty:
+        out.append("    p = find(%s)" % _lit(subsystem))
+        out.append("    if p is not None:")
+        for setter, args in calls:
+            out.append("        p.%s(%s)" % (setter, _fmt_args(args)))
+    for name, calls in parts.items():
+        _emit_part(out, name, calls)
     return "\n".join(out)
 
 
