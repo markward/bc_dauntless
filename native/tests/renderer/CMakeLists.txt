@@ -18,6 +18,7 @@ add_executable(renderer_tests
     letterbox_pass_test.cc
     aabb_test.cc
     part_frame_test.cc
+    model_parts_test.cc
     bone_palette_test.cc
     pose_sampler_test.cc
     node_anim_test.cc

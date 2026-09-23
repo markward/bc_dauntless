@@ -47,6 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
+    "model_nodes",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh",
     "transform_alloc", "transform_free", "transform_get_position",
@@ -328,6 +329,16 @@ def hull_carve_add(
         return
     _h.hull_carve_add(instance_id, world_point, world_normal, influ_radius,
                      strength, time, floor_radius, radius_modifier)
+
+
+def model_nodes(instance_id: int) -> List[dict]:
+    """Every named node of this instance's model with geometry somewhere in
+    its subtree, for the SPV's part list: [{name, parent, candidate,
+    bounds_min, bounds_max}, ...], bounds in SHIP units. `candidate` marks
+    the nodes a human would call a part. [] when headless or on a stale id."""
+    if _h is None:
+        return []
+    return _h.model_nodes(instance_id)
 
 
 def hull_split_detached(instance_id: int, min_cells: int) -> list:

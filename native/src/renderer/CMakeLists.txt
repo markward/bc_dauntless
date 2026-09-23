@@ -160,6 +160,7 @@ add_library(renderer STATIC
     shockwave_pass.cc
     aabb.cc
     part_frame.cc
+    model_parts.cc
     glow_region.cc
     dynamic_lights.cc
     ray_trace.cc

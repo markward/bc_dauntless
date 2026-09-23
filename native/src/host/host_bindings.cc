@@ -81,6 +81,7 @@
 #include <renderer/glow_region.h>
 #include <renderer/node_anim.h>
 #include <renderer/bridge_node_anim_store.h>
+#include <renderer/model_parts.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
@@ -2206,6 +2207,39 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Return the named node's world transform as 16 floats (row-major), "
           "or None if the instance/node is absent. animated=True applies the "
           "current node overrides; False composes the static locals (rest).");
+
+    m.def("model_nodes",
+          [](scenegraph::InstanceId id) {
+              // SHIP units out: the SPV, PART_BOXES and hardpoint mounts all
+              // work in ship units, and this is the only place the model-unit
+              // geometry meets them. MODEL_TO_SHIP == BC_MODEL_SCALE == 0.01.
+              constexpr float kModelToShip = 0.01f;
+              py::list out;
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return out;          // stale id -> empty
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr) return out;
+              for (const auto& p : renderer::model_parts(*model)) {
+                  if (!p.has_bounds) continue;          // no geometry, no part
+                  py::dict d;
+                  d["name"] = p.name;
+                  d["parent"] = p.parent;
+                  d["candidate"] = p.candidate;
+                  d["bounds_min"] = py::make_tuple(p.bounds_min.x * kModelToShip,
+                                                   p.bounds_min.y * kModelToShip,
+                                                   p.bounds_min.z * kModelToShip);
+                  d["bounds_max"] = py::make_tuple(p.bounds_max.x * kModelToShip,
+                                                   p.bounds_max.y * kModelToShip,
+                                                   p.bounds_max.z * kModelToShip);
+                  out.append(std::move(d));
+              }
+              return out;
+          },
+          py::arg("instance_id"),
+          "Return [{name, parent, candidate, bounds_min, bounds_max}, ...] for "
+          "every named node in this instance's model that has geometry "
+          "somewhere in its subtree, bounds in SHIP units. `candidate` marks "
+          "the nodes a human would call a part (renderer::model_parts).");
 
     // ── Part articulation (BoP wings) ────────────────────────────────────
     // Python owns the POSE (engine/appc/articulation.py, eased on the sim
