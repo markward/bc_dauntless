@@ -47,6 +47,7 @@ class _Keys:
     KEY_SEMICOLON = 59
     KEY_APOSTROPHE = 39
     KEY_I = 73              # breach interior-shell debug view
+    KEY_K = 75              # cycle BoP wing deflection (part articulation)
 
 
 class _FakeHost:

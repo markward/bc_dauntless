@@ -118,6 +118,16 @@ class ShipClass(DamageableObject):
         # once the subsystems exist, so a spawned NPC has its weapons hot and
         # its shields up, as the scene captures show.
         self._alert_level: int = ShipClass.RED_ALERT
+        # Part-articulation deflection (engine/appc/articulation.py): 0 = the
+        # model's authored rest pose, 1 = fully deflected. Spawning RED means
+        # 0 here, so a fresh ship emits an EMPTY node-override map and renders
+        # byte-identically to an unarticulated hull. Only hulls with a rig
+        # (currently the Bird of Prey alone) ever leave 0.
+        self._articulation_deflection: float = 0.0
+        # Hardpoint leaf, resolved lazily once per ship and cached: the lookup
+        # imports the ship's script module, which is far too costly per tick.
+        # None = not yet resolved; "" = resolved and has no rig.
+        self._articulation_leaf: "str | None" = None
         # Setpoints are AI-written; _current_* are integrator-owned and
         # ramp toward those setpoints each tick.
         # Setpoints default to None (no AI input yet) — explicitly stored
@@ -913,6 +923,17 @@ class ShipClass(DamageableObject):
     # SDK callers: MissionLib.py:605 (reset to GREEN at mission start),
     # BridgeHandlers.py:1442 (bridge crew behavior keys off this).
     def GetAlertLevel(self) -> int:                     return self._alert_level
+
+    # ── Part articulation (engine/appc/articulation.py) ──────────────────────
+    # Sim-owned, deliberately: the renderer READS this each frame rather than
+    # animating on its own clock. Keeping the pose authoritative here is what
+    # lets the later physical integration (collision hull, ray-trace picking,
+    # damage carve) consume the same value instead of re-deriving it.
+    def GetArticulationDeflection(self) -> float:
+        return self._articulation_deflection
+
+    def SetArticulationDeflection(self, v: float) -> None:
+        self._articulation_deflection = max(0.0, min(1.0, float(v)))
 
     def SetAlertLevel(self, v) -> None:
         """Apply the alert-level → power policy for weapons and shields.

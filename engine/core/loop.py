@@ -1,5 +1,6 @@
 import App
 
+from engine.appc import articulation
 from engine.appc.ship_iter import iter_ships
 from engine.core import frame_profiler as _prof
 
@@ -110,6 +111,11 @@ def _update_ship_subsystems() -> None:
         rs = ship.GetRepairSubsystem()
         if rs is not None:
             rs.Update(TICK_DELTA)
+        # Part articulation (BoP wings). Sim-side deliberately: the renderer
+        # reads the eased pose, it does not animate on its own clock, so the
+        # later collision/damage integration consumes the same value. Ships
+        # without a rig return on a cached attribute read.
+        articulation.tick_ship(ship, TICK_DELTA)
 
 
 def _pump_bridge_character_queues() -> None:

@@ -282,3 +282,29 @@ def register_for_frame(_h, session, player) -> None:
                                        +_EXPL_RADIUS_STEP),
         "Explosion light reach +%.1f (')" % _EXPL_RADIUS_STEP
     )
+
+    # 'K': freeze the BoP wing articulation at a fixed deflection, so the
+    # authored hinge pivots can be judged at rest instead of only in passing.
+    # Cycles follow-alert -> 0 (down/armed) -> 0.5 -> 1 (up/cold) -> follow.
+    #
+    # The 0.5 stop is the one that matters: a pivot placed wrong is most
+    # visible MID-TRAVEL, where a wing that should hinge at its root instead
+    # swings through the hull. At either end a bad pivot can still look
+    # plausible.
+    #
+    # 'K' is free in all four namespaces (see the note above): not in
+    # input_map ACTIONS, not among the dev bindings, not a throttle digit or
+    # F12, and not an SDK WC_ key (F6/F9).
+    def _cycle_wing_deflection() -> None:
+        from engine.appc import articulation
+        order = (None, 0.0, 0.5, 1.0)
+        cur = articulation.dev_override()
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else None
+        articulation.set_dev_override(nxt)
+        print("[articulation] wing deflection override: %s"
+              % ("follow alert" if nxt is None else "%.2f" % nxt))
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_K, _cycle_wing_deflection,
+        "Cycle BoP wing deflection: alert / 0 / 0.5 / 1 (dev) — K",
+    )

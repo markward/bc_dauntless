@@ -54,6 +54,7 @@ _REQUIRED_BINDINGS = frozenset({
     "transform_get_rotation_col", "transform_get_positions",
     "transform_live_count", "transform_capacity",
     "set_instance_transform_slot",
+    "set_instance_node_rotation", "clear_instance_node_overrides",
     # Not a function: the InstanceId type itself. set_instance_transform_slot
     # isinstance-checks against it to tell a real render instance from a test
     # double's plain int, so a build without it is just as broken as one
@@ -616,3 +617,34 @@ def set_instance_transform_slot(iid, index: int, generation: int,
     _h.set_instance_transform_slot(iid, int(index), int(generation),
                                    float(scale))
     return True
+
+
+def set_instance_node_rotation(iid, node_name: str,
+                               pivot, axis, theta: float) -> bool:
+    """Rotate `node_name` on instance `iid` about (pivot, axis) by `theta` rad.
+
+    Pivot and axis are in the node's PARENT space (model space for every BC
+    ship NIF). `theta == 0` clears the override, so a ship at rest deflection
+    leaves an EMPTY override map and renders through the static node walk.
+
+    False on headless, on a test double's plain-int iid, or when the model has
+    no node by that name — all "nothing to articulate", never "binding missing":
+    a stale build that dropped it trips validate_bindings() at boot.
+    """
+    if _h is None:
+        return False
+    if not isinstance(iid, _h.InstanceId):
+        return False
+    return bool(_h.set_instance_node_rotation(
+        iid, str(node_name),
+        float(pivot[0]), float(pivot[1]), float(pivot[2]),
+        float(axis[0]), float(axis[1]), float(axis[2]), float(theta)))
+
+
+def clear_instance_node_overrides(iid) -> bool:
+    """Return instance `iid` to its static node pose."""
+    if _h is None:
+        return False
+    if not isinstance(iid, _h.InstanceId):
+        return False
+    return bool(_h.clear_instance_node_overrides(iid))

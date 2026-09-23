@@ -10,6 +10,7 @@
 #include "renderer/aabb.h"
 #include <renderer/asset_path.h>
 #include <renderer/model_draw_helpers.h>
+#include <renderer/node_anim.h>
 #include <renderer/scuff_texture.h>
 
 #include <cstdint>
@@ -377,7 +378,8 @@ void draw_model(const assets::Model& model,
                 int dyn_light_count,
                 const voxel::VoxelVolume* carve_fill,
                 bool carve_invert,
-                const InstanceFieldCache::Entry* hull_field) {
+                const InstanceFieldCache::Entry* hull_field,
+                const std::unordered_map<int, glm::mat4>* node_overrides) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -640,15 +642,30 @@ void draw_model(const assets::Model& model,
     // node's local_transform is composed with parent transforms here. The
     // asset pipeline already orders nodes such that parents precede children,
     // so a single linear pass suffices.
-    std::vector<glm::mat4> world_per_node(model.nodes.size(), glm::mat4(1.0f));
-    if (!model.nodes.empty()) {
-        world_per_node[model.root_node] = world * model.nodes[model.root_node].local_transform;
+    // An articulated instance (BoP wings) supplies replacement node locals;
+    // compose_node_worlds runs the identical parent chain with those swapped
+    // in, and reproduces the loop below exactly when the map is empty. The
+    // empty case still takes the inline walk so the overwhelmingly common
+    // path allocates nothing extra.
+    std::vector<glm::mat4> world_per_node;
+    if (node_overrides != nullptr && !node_overrides->empty()) {
+        world_per_node = compose_node_worlds(model, world, *node_overrides);
+    } else {
+        world_per_node.assign(model.nodes.size(), glm::mat4(1.0f));
+        if (!model.nodes.empty()) {
+            world_per_node[model.root_node] =
+                world * model.nodes[model.root_node].local_transform;
+        }
+        for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+            const auto& node = model.nodes[i];
+            if (node.parent_index >= 0) {
+                world_per_node[i] =
+                    world_per_node[node.parent_index] * node.local_transform;
+            }
+        }
     }
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const auto& node = model.nodes[i];
-        if (node.parent_index >= 0) {
-            world_per_node[i] = world_per_node[node.parent_index] * node.local_transform;
-        }
         for (int mesh_idx : node.meshes) {
             const auto& mesh = model.meshes[mesh_idx];
             // SP2: skinned models carry bind-model verts posed entirely by the
@@ -876,7 +893,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                           inst.emissive_scale, palette, inst.carve,
                           lights, light_count,
                           carve_fill_entry(carve_cache, m, inst.carve),
-                          /*carve_invert=*/false, field_entry);
+                          /*carve_invert=*/false, field_entry,
+                          &inst.node_overrides);
     });
 }
 
@@ -943,7 +961,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           inst.emissive_scale, palette, inst.carve,
                           lights, light_count,
                           carve_fill_entry(carve_cache, m, inst.carve),
-                          /*carve_invert=*/false, field_entry);
+                          /*carve_invert=*/false, field_entry,
+                          &inst.node_overrides);
     });
 }
 
@@ -1006,7 +1025,8 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
                    inst->emissive_scale, palette, inst->carve,
                    lights, /*dyn_light_count=*/0,
                    carve_fill_entry(carve_cache, m, inst->carve),
-                   /*carve_invert=*/true, field_entry);
+                   /*carve_invert=*/true, field_entry,
+                   &inst->node_overrides);
     }
 
     // Back to the GL default (0xFF), NOT 0x00: glClear(GL_STENCIL_BUFFER_BIT)
@@ -1085,7 +1105,8 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
                inst->emissive_scale, palette, inst->carve,
                lights, light_count,
                carve_fill_entry(carve_cache, m, inst->carve),
-               /*carve_invert=*/false, field_entry);
+               /*carve_invert=*/false, field_entry,
+               &inst->node_overrides);
 }
 
 // ── Shadow depth pre-pass ──────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -298,7 +299,13 @@ void draw_model(const assets::Model& model,
                 // for every call site below until a resolved Entry is
                 // threaded in -- either way u_hull_field_enabled stays 0 and
                 // opaque.frag takes its documented zero-cost stock path.
-                const InstanceFieldCache::Entry* hull_field = nullptr);
+                const InstanceFieldCache::Entry* hull_field = nullptr,
+                // Per-instance ARTICULATED node locals (BoP wings): node index
+                // -> replacement local transform, exactly the map the bridge
+                // pass already consumes. nullptr or an empty map takes the
+                // static node walk, which compose_node_worlds reproduces
+                // byte-for-byte -- so an unarticulated hull is unchanged.
+                const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.

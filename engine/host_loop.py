@@ -67,6 +67,7 @@ from engine.ui import crew_menu_hotkeys
 from engine.ui import bridge_officer_picking
 from engine.core.game import Game_GetCurrentGame
 from engine.appc import (
+    articulation,
     projectiles,
     hit_vfx,
     particles,
@@ -4845,6 +4846,11 @@ class MissionSession:
     # re-bind guard — the binding itself lives on the native instance — so the
     # per-frame path can skip the boundary crossing when nothing changed.
     slot_bindings: dict[Any, tuple] = field(default_factory=dict)
+    # Last articulation deflection PUSHED per render instance id — a re-push
+    # guard only, exactly like slot_bindings. The authoritative pose lives on
+    # the ship (ShipClass._articulation_deflection); this just stops a settled
+    # hull from re-crossing into C++ every frame.
+    ship_articulation: dict[Any, float] = field(default_factory=dict)
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
@@ -4855,6 +4861,7 @@ class MissionSession:
         self.ship_instances.clear()
         self.ship_glow_controllers.clear()
         self.ship_emitters.clear()
+        self.ship_articulation.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
         # The bindings themselves died with the instances above; drop the
@@ -5049,6 +5056,10 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             renderer.destroy_instance(iid)
             # ship_glow_controllers is keyed by instance id.
             session.ship_glow_controllers.pop(iid, None)
+            # Same for the articulation re-push guard: a recycled iid must not
+            # look already-posed, or a re-realized BoP would render its wings
+            # at the static pose until its deflection next CHANGED.
+            session.ship_articulation.pop(iid, None)
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
@@ -7008,6 +7019,35 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
     return pose_of
 
 
+def _sync_ship_articulation(session, ship, iid) -> None:
+    """Push `ship`'s articulated part poses (BoP wings) to its render instance.
+
+    READ-ONLY on game state: the deflection is eased on the sim tick by
+    engine.appc.articulation.tick_ship. Nothing here mutates the ship — a
+    game-state mutation in the render path is exactly the class of bug that
+    gave the player's phasers a half-second of aiming at a destroyed subsystem.
+
+    Guarded on CHANGE: the pose is re-pushed only when it actually moved, so a
+    settled ship (which is nearly all of them, nearly always) costs one dict
+    lookup and a float compare rather than a boundary crossing per node per
+    frame.
+    """
+    parts = articulation.parts_for_ship(ship)
+    if not parts:
+        return
+    try:
+        deflection = float(ship.GetArticulationDeflection())
+    except Exception:  # noqa: BLE001 - a prop / test double is not articulated
+        return
+    last = session.ship_articulation.get(iid)
+    if last is not None and last == deflection:
+        return
+    for part in parts:
+        pivot, axis, theta = articulation.rotation_for(part, deflection)
+        host_io.set_instance_node_rotation(iid, part.node, pivot, axis, theta)
+    session.ship_articulation[iid] = deflection
+
+
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None,
                               player_interp_pose=None,
@@ -7081,6 +7121,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # volumes and cast light spool up and burst together.
     _player_warp_glow = _warp_glow_envelope(player)
     for ship, iid in session.ship_instances.items():
+        _sync_ship_articulation(session, ship, iid)
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
             _wg.update(game_time,

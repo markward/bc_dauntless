@@ -889,6 +889,13 @@ def _reset_leakable_engine_globals():
         _reset_projectile_module_cache()
     except Exception:
         pass
+    # Part-articulation dev override: a forced wing deflection set by one test
+    # would otherwise outrank the alert-driven target for every later one.
+    try:
+        from engine.appc import articulation as _articulation
+        _articulation.reset()
+    except Exception:
+        pass
     try:
         import App
     except Exception:
