@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from tools.systems.layout import LayoutTuning, _first_orbit_push, ambiguities, layout
+from tools.systems.layout import LayoutTuning, _first_orbit_push, _norm, ambiguities, layout
 from tools.systems.survey import SurveyedBody, SurveyedRegion, SurveyedSystem
 
 
@@ -500,7 +500,10 @@ def test_a_regions_nebula_is_carried_into_the_map():
         set_name="Vesuvi4", ordinal=4, bodies=[],
         content_extent_gu=1870.0, player_start_gu=(0.0, 0.0, 0.0),
         nebula={"color": (0.608, 0.353, 0.725),
-                "spheres": [(0.0, 1500.0, 0.0, 1500.0)]})])
+                "spheres": [(0.0, 1500.0, 0.0, 1500.0)],
+                "visibility_gu": 145.0, "sensor_density": 10.5,
+                "damage_hull_per_s": 150.0, "damage_shield_per_s": 20.0,
+                "extra_nebulae": 0})])
     region = layout(s).region("Vesuvi4")
     assert region.nebula["color"] == pytest.approx((0.608, 0.353, 0.725))
     assert region.nebula["spheres"][0][3] == pytest.approx(1500.0)
@@ -571,3 +574,131 @@ def test_a_bigger_overridden_star_pushes_its_first_orbit_out():
 def test_no_override_leaves_todays_behaviour_untouched():
     star = [b for b in layout(_sunless()).bodies if b.orbits is None][0]
     assert star.appearance.star_class == "brown_dwarf"
+
+
+def _nebula_region(set_name="Vesuvi4", hull=150.0, shield=20.0,
+                   vis=145.0, dens=10.5, spheres=((0.0, 1500.0, 0.0, 1500.0),)):
+    return SurveyedRegion(
+        set_name=set_name, ordinal=4, bodies=[], content_extent_gu=2067.0,
+        player_start_gu=(0.0, 0.0, 0.0),
+        nebula={"color": (0.61, 0.35, 0.73), "spheres": list(spheres),
+                "visibility_gu": vis, "sensor_density": dens,
+                "damage_hull_per_s": hull, "damage_shield_per_s": shield,
+                "extra_nebulae": 0})
+
+
+def test_no_nebula_anywhere_means_no_cloud():
+    m = layout(SurveyedSystem(name="Ona", regions=[SurveyedRegion(
+        set_name="Ona1", ordinal=1,
+        bodies=[SurveyedBody("Ona 1", 120.0, "p.nif", (0.0, 500.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))]))
+    assert m.clouds == []
+
+
+def test_the_pocket_volume_sits_at_anchor_plus_bcs_offset():
+    """The pinned volume. Its centre is the region's anchor plus BC's own
+    set-local sphere -- that transform is the entire reason a system-scale
+    cloud can exist without a second source of truth."""
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region()])
+    m = layout(s, cloud={"name": "V", "display_name": "V", "kind": "debris_shell"})
+    anchor = m.region("Vesuvi4").anchor_gu
+    pocket = [v for v in m.clouds[0].volumes if v.origin_region == "Vesuvi4"][0]
+    assert pocket.geometry["center_gu"] == pytest.approx(
+        (anchor[0] + 0.0, anchor[1] + 1500.0, anchor[2] + 0.0))
+    assert pocket.geometry["radius_gu"] == pytest.approx(1500.0)
+
+
+def test_the_profile_comes_from_bcs_damage_not_from_the_override():
+    s_hot = SurveyedSystem(name="Vesuvi", regions=[_nebula_region(hull=150.0)])
+    s_cold = SurveyedSystem(name="Belaruz", regions=[
+        _nebula_region(set_name="Belaruz1", hull=0.0, shield=0.0,
+                       vis=200.0, dens=6.5)])
+    hot = layout(s_hot, cloud={"name": "V", "display_name": "V",
+                               "kind": "debris_shell"})
+    cold = layout(s_cold, cloud={"name": "B", "display_name": "B",
+                                 "kind": "nebula_field",
+                                 "geometry": {"near_gu": 1.0, "far_gu": 2.0,
+                                              "radius_gu": 3.0}})
+    assert [v.profile for v in hot.clouds[0].volumes
+            if v.origin_region][0] == "debris"
+    assert [v.profile for v in cold.clouds[0].volumes
+            if v.origin_region][0] == "nebula"
+
+
+def test_the_shell_radius_is_derived_from_its_member_regions():
+    """Not declared. The shell reaches exactly as far as the debris does."""
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region()])
+    m = layout(s, cloud={"name": "V", "display_name": "V", "kind": "debris_shell"})
+    region = m.region("Vesuvi4")
+    expected = _norm(region.anchor_gu) + region.radius_gu
+    shell = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
+    assert shell.shape == "sphere"
+    assert shell.geometry["radius_gu"] == pytest.approx(expected)
+    assert shell.geometry["center_gu"] == pytest.approx((0.0, 0.0, 0.0))
+
+
+def test_the_large_volume_is_inert_until_mist_is_tuned():
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region()])
+    m = layout(s, cloud={"name": "V", "display_name": "V", "kind": "debris_shell"})
+    shell = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
+    assert shell.profile == "mist"
+    assert all(value == 0.0 for value in shell.params.values())
+
+
+def test_the_lobe_axis_points_at_bcs_pocket():
+    s = SurveyedSystem(name="Belaruz", regions=[
+        _nebula_region(set_name="Belaruz1", hull=0.0, shield=0.0)])
+    m = layout(s, cloud={"name": "B", "display_name": "B", "kind": "nebula_field",
+                         "geometry": {"near_gu": 20000.0, "far_gu": 220000.0,
+                                      "radius_gu": 160000.0}})
+    lobe = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
+    pocket = [v for v in m.clouds[0].volumes if v.origin_region][0]
+    assert lobe.shape == "lobe"
+    assert lobe.geometry["far_gu"] == pytest.approx(220000.0)
+    centre = pocket.geometry["center_gu"]
+    expected_axis = [c / _norm(centre) for c in centre]
+    assert lobe.geometry["axis"] == pytest.approx(expected_axis)
+
+
+def test_a_cloud_without_an_override_keeps_its_pockets():
+    """Losing BC's authored data because nobody declared a kind would be the
+    worst possible failure mode here."""
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region()])
+    m = layout(s)
+    assert len(m.clouds) == 1
+    assert [v.origin_region for v in m.clouds[0].volumes] == ["Vesuvi4"]
+    assert all(v.origin_region for v in m.clouds[0].volumes)
+
+
+def test_a_set_with_several_nebulae_is_reported_as_ambiguous():
+    s = SurveyedSystem(name="Multi5", regions=[_nebula_region()])
+    s.regions[0].nebula["extra_nebulae"] = 3
+    assert any("nebula" in a.lower() for a in ambiguities(s))
+
+
+def test_the_shell_radius_reflects_the_pushed_anchor_not_the_pre_push_one():
+    """_first_orbit_push() calls _place() twice when a push is needed -- once
+    to discover the corrective push amount, once more (with pins applied) at
+    the pushed first orbit. The cloud built by the FIRST call must not be the
+    one that survives: its region anchors are the pre-push ones, so a shell
+    radius derived from them would be too small once the push moves every
+    region's anchor outward."""
+    s = SurveyedSystem(name="Tight", regions=[
+        SurveyedRegion(set_name="Tight1", ordinal=1, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0),
+           nebula={"color": (0.61, 0.35, 0.73),
+                   "spheres": [(0.0, 1500.0, 0.0, 1500.0)],
+                   "visibility_gu": 145.0, "sensor_density": 10.5,
+                   "damage_hull_per_s": 150.0, "damage_shield_per_s": 20.0,
+                   "extra_nebulae": 0}),
+    ])
+    t = LayoutTuning()
+    push, _probe_m = _first_orbit_push(s, t, {})
+    assert push > 0.0, "fixture must genuinely require a push, or this test cannot fail"
+    m = layout(s, t, cloud={"name": "T", "display_name": "T", "kind": "debris_shell"})
+    region = m.region("Tight1")
+    shell = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
+    expected = _norm(region.anchor_gu) + region.radius_gu
+    assert shell.geometry["radius_gu"] == pytest.approx(expected)
