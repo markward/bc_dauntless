@@ -418,6 +418,19 @@ def part_transform_point(ship, point):
     if part is None:
         return point
 
+    return point_at_deflection(part, point, deflection)
+
+
+def point_at_deflection(part, point, deflection):
+    """Where `point` (body frame, SHIP units) ends up when `part` alone sits
+    at `deflection`.
+
+    The ship-free half of `part_transform_point`: no attribution, no
+    severance check, and — the reason it exists separately — no read of any
+    ship's LIVE deflection. `hull_bounds.bound_radius` needs the reach at
+    deflection 1.0 while the ship is at rest, which the ship-driven call
+    cannot give it.
+    """
     pivot, axis, theta = rotation_for(part, deflection)
     return _rotate_about(point, pivot, axis, theta)
 

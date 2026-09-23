@@ -35,6 +35,8 @@ BC_MODEL_SCALE, the same flat factor `_ship_world_matrix` applies), matching how
 `_cache_shield_hull_box` stores the hull AABB. The ship's live position,
 rotation and scale are applied on read.
 """
+import math
+
 from engine.appc.math import TGPoint3
 
 # Attribute name for the cache. Read via __dict__ everywhere below: a plain
@@ -225,6 +227,83 @@ def point_is_inside_hull(ship, point) -> bool:
     return False
 
 
+def _rig_parts_by_name(ship, cached) -> dict:
+    """{part name: articulation.Part} for `ship`, or {} when no cached piece
+    carries a tag.
+
+    The empty-dict early out is what keeps every unrigged hull — and every
+    rigged one whose pieces all landed on the body — off the import and the
+    rig lookup entirely, on the one call that fills the memo.
+    """
+    if not any(part is not None for _c, _r, part in cached):
+        return {}
+    from engine.appc import articulation
+    return {p.node: p for p in articulation.rig_for(articulation.leaf_for(ship))}
+
+
+def _travel_reach(part, centre) -> float:
+    """Largest |centre| the piece reaches at ANY deflection in [0, 1], with
+    `centre` the piece's REST centre in body frame, ship units.
+
+    The hinge sweeps the centre along a circular arc: a fixed circle centre
+    `A` (the pivot plus whatever part of the offset lies ALONG the axis,
+    which never moves) plus a rotating radius `w` (the part perpendicular to
+    the axis, whose length is constant). So
+
+        |p(theta)|^2 = |A|^2 + |w|^2 + 2 * (A_perp . w(theta))
+
+    which is sinusoidal in theta. Its peak — `w` swung into line with
+    `A_perp` — is the largest value on the FULL circle, but it is only
+    reachable if it falls inside the arc the part actually travels. Hence:
+    both endpoints always, plus the aligned peak when `phi`, the signed
+    angle from `w` to `A_perp` about the axis, lies between 0 and the full
+    travel angle.
+
+    Right-handed about the axis, matching the rest of the engine: `phi` uses
+    atan2(axis . (w x A_perp), w . A_perp), so rotating `w` by +phi about the
+    axis is what lines it up.
+    """
+    pivot, axis, theta = _part_rotation(part)
+    best = max(_norm(centre), _norm(_point_at(part, centre)))
+    if theta == 0.0:
+        return best
+    ax, ay, az = axis
+    vx, vy, vz = centre[0] - pivot[0], centre[1] - pivot[1], centre[2] - pivot[2]
+    along = ax * vx + ay * vy + az * vz
+    wx, wy, wz = vx - ax * along, vy - ay * along, vz - az * along
+    cx = pivot[0] + ax * along
+    cy = pivot[1] + ay * along
+    cz = pivot[2] + az * along
+    a_along = ax * cx + ay * cy + az * cz
+    px, py, pz = cx - ax * a_along, cy - ay * a_along, cz - az * a_along
+    dot = wx * px + wy * py + wz * pz
+    kx, ky, kz = wy * pz - wz * py, wz * px - wx * pz, wx * py - wy * px
+    phi = math.atan2(ax * kx + ay * ky + az * kz, dot)
+    inside = (0.0 <= phi <= theta) if theta > 0.0 else (theta <= phi <= 0.0)
+    if inside:
+        w = (wx * wx + wy * wy + wz * wz) ** 0.5
+        p = (px * px + py * py + pz * pz) ** 0.5
+        peak = (cx * cx + cy * cy + cz * cz) + w * w + 2.0 * p * w
+        best = max(best, peak ** 0.5)
+    return best
+
+
+def _norm(p) -> float:
+    return (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) ** 0.5
+
+
+def _part_rotation(part):
+    """(pivot, unit axis, theta) for `part` at FULL deflection."""
+    from engine.appc import articulation
+    return articulation.rotation_for(part, 1.0)
+
+
+def _point_at(part, centre):
+    """`centre` at FULL deflection of `part` — ship state never consulted."""
+    from engine.appc import articulation
+    return articulation.point_at_deflection(part, centre, 1.0)
+
+
 def bound_radius(ship) -> float:
     """Radius about ``ship``'s origin that CONTAINS every cached hull piece,
     at the ship's current scale. 0.0 when it has no pieces.
@@ -238,14 +317,36 @@ def bound_radius(ship) -> float:
     protruding nacelle outside an under-sized authored radius would be gated
     away, and the ship would fly through it.
 
-    max(|centre| + r) over the pieces, which is exact rather than approximate.
+    max(|centre| + r) over the pieces. For an UNTAGGED piece — every piece on
+    an unrigged hull, and the overwhelming majority on a rigged one — that is
+    exactly the old arithmetic, to the float.
+
+    A TAGGED piece MOVES, so its rest centre is not its furthest reach. The
+    radius therefore encloses such a piece AT EVERY POINT IN ITS TRAVEL:
+    `_travel_reach` maximises |centre| over the whole 0->1 arc the part's
+    hinge sweeps it through, analytically, not just at the two ends (the far
+    point of an arc can fall mid-travel — see
+    tests/unit/test_hull_bounds_parts.py::WING_MID_TRAVEL_PT, where the
+    endpoints understate by 1.3%).
+
+    That replaces this docstring's older "over-stating is safe, under-stating
+    is not" reasoning, which was written before pieces articulated and was
+    being used to justify a rest-pose-only maximum. The asymmetry is still
+    true — but a rest-only maximum UNDER-states a deflected wing, which is
+    the unsafe direction: a Bird of Prey with its wings down pokes outside
+    its own gate, and `collision_avoidance` can drop a pair whose wings
+    really do reach.
+
+    STILL ONE MEMO, computed once. Deliberately NOT a function of the ship's
+    live deflection: making it so would defeat the memo and put trigonometry
+    in the narrow phase, for a gate that only has to enclose.
+
     Memoised unscaled on the instance (pieces never change after caching) and
     multiplied by the live GetScale() per call, so a rescaled ship stays right.
 
-    Counts a SEVERED part's pieces too. This is a gate that must enclose
-    whatever it gates, so over-stating it is safe and under-stating it is
-    not; shrinking it on severance would also mean invalidating this memo on
-    every detach. Pinned by tests/unit/test_hull_bounds_parts.py::
+    Counts a SEVERED part's pieces too — shrinking it on severance would mean
+    invalidating this memo on every detach, and a gate is allowed to be
+    generous. Pinned by tests/unit/test_hull_bounds_parts.py::
     test_bound_radius_still_counts_a_severed_part.
     """
     cached = ship.__dict__.get(_ATTR)
@@ -253,9 +354,14 @@ def bound_radius(ship) -> float:
         return 0.0
     r_unscaled = ship.__dict__.get(_BOUND_R_ATTR)
     if r_unscaled is None:
+        parts = _rig_parts_by_name(ship, cached)
         r_unscaled = 0.0
-        for (cx, cy, cz), r, _part in cached:
-            reach = (cx * cx + cy * cy + cz * cz) ** 0.5 + r
+        for (cx, cy, cz), r, part in cached:
+            p = parts.get(part)
+            if p is None:
+                reach = (cx * cx + cy * cy + cz * cz) ** 0.5 + r
+            else:
+                reach = _travel_reach(p, (cx, cy, cz)) + r
             if reach > r_unscaled:
                 r_unscaled = reach
         ship.__dict__[_BOUND_R_ATTR] = r_unscaled

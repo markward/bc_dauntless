@@ -233,3 +233,76 @@ def test_hull_spheres_near_ACCEPTS_a_piece_at_its_MOVED_position():
     rest_only = hb.hull_spheres_near(ship, TGPoint3(*WING_PT), 0.01)
     assert rest_only == [], (
         "the piece's REST position must be empty once the wing has moved")
+
+
+# ── bound_radius must enclose a piece across its whole TRAVEL ───────────────
+#
+# A point deep inside the "left wing" box (and no other) chosen so that the
+# largest |centre| over the wing's 0->1 travel occurs in the MIDDLE of the
+# arc, not at either end: reach 0.6878 at rest, 0.6876 fully deflected, but
+# 0.6969 at deflection ~0.497. Derived, not guessed -- the hinge is
+# (-0.16, 0, 0.05) about +Y, so the piece sweeps a circle whose far point is
+# where its offset from the hinge lines up with the hinge's own offset from
+# the ship origin; this point is placed ~22 degrees of the 45-degree travel
+# short of that alignment. It exists to falsify a "max of the two endpoints"
+# bound, which understates it by 1.3%.
+WING_MID_TRAVEL_PT = (-0.65810, -0.20, 0.00642)
+
+# Radius used by the travel tests. Stated once: the assertions compare a
+# derived reach against bound_radius, and both carry this term.
+_PIECE_R = 0.05
+
+
+def _reach(centre, r=_PIECE_R):
+    """|centre| + r -- the same quantity bound_radius maximises."""
+    return (centre[0] ** 2 + centre[1] ** 2 + centre[2] ** 2) ** 0.5 + r
+
+
+def test_the_mid_travel_fixture_point_attributes_as_this_file_assumes():
+    """Same role as the guard at the top of this file. If PART_BOXES moves,
+    WING_MID_TRAVEL_PT stops being on the wing and the two tests below would
+    pass vacuously against an untagged piece."""
+    assert ps.part_for_point("birdofprey", WING_MID_TRAVEL_PT) == "left wing"
+
+
+def test_bound_radius_encloses_a_wing_piece_at_FULL_deflection():
+    """THE REGRESSION. bound_radius memoises max(|centre| + r) over REST
+    centres, but a tagged piece MOVES -- so once the wings deflect, a piece
+    can reach outside the very radius that gates it, and a pair whose wings
+    really do touch is gated out of collision entirely."""
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, _PIECE_R)]))
+    ship._articulation_deflection = 1.0
+    (moved, r) = hb.hull_spheres_world(ship)[0]
+    moved_reach = _reach((moved.x, moved.y, moved.z), r)
+    assert hb.bound_radius(ship) >= moved_reach - 1e-9, (
+        "the gate must still enclose the wing once it has deflected")
+
+
+def test_bound_radius_encloses_a_wing_piece_at_EVERY_point_of_its_travel():
+    """Endpoints are not enough. A piece sweeps an arc, and the far point of
+    that arc can fall in the MIDDLE of the travel -- see
+    WING_MID_TRAVEL_PT's derivation. The oracle here is a fine sweep of the
+    real transform, deliberately not a second copy of the formula under
+    test."""
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_MID_TRAVEL_PT, _PIECE_R)]))
+    gate = hb.bound_radius(ship)
+    worst = 0.0
+    for step in range(201):
+        ship._articulation_deflection = step / 200.0
+        (c, r) = hb.hull_spheres_world(ship)[0]
+        worst = max(worst, _reach((c.x, c.y, c.z), r))
+    assert worst > _reach(WING_MID_TRAVEL_PT) + 1e-4, (
+        "fixture check: this point's arc must peak mid-travel, above rest")
+    assert gate >= worst - 1e-9, (
+        "the gate must enclose the piece everywhere in its travel, not just "
+        "at the two ends")
+
+
+def test_bound_radius_for_an_UNTAGGED_piece_is_the_old_arithmetic():
+    """The overwhelming majority of pieces, and every piece on an unrigged
+    hull. Travel awareness must not perturb them by so much as a float."""
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, _PIECE_R)]))
+    assert hb.bound_radius(ship) == _reach(BODY_PT)
