@@ -2272,9 +2272,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // Used by appendage severance to take a wing off the ship and to show ONLY
     // that wing on its debris chunk -- both are the same model, so one binding
     // serves both ends. Reuses the articulation override map rather than adding
-    // a second per-node channel, which means a hidden node and an articulated
-    // node cannot fight: hiding wins, because it is written last and a detached
-    // part stops being posed (part_severance marks it detached first).
+    // a second per-node channel: hide and rotate write the SAME
+    // node_overrides[idx] slot, so whichever one is called LAST wins outright
+    // -- there is no ordering or priority enforced here in C++.
+    //
+    // That means a re-posed rotation call on an already-hidden node WOULD
+    // overwrite the hide (and, at theta == 0, ERASE it permanently). This
+    // binding cannot see severance state to refuse that call, so the
+    // guarantee that it never happens lives entirely on the Python side:
+    // host_loop._sync_ship_articulation skips any part
+    // part_severance.is_detached() reports as gone before it ever reaches
+    // set_instance_node_rotation, and articulation.part_transform_point
+    // applies the same guard to mount points. See
+    // tests/unit/test_part_severance.py's render-sync regression test for the
+    // failure this once was.
     m.def("set_instance_node_hidden",
           [](scenegraph::InstanceId id, const std::string& node_name,
              bool hidden) -> bool {

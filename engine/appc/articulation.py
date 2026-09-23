@@ -332,9 +332,15 @@ def part_transform_point(ship, point):
     if deflection == 0.0:
         return point
 
-    from engine.appc.part_severance import part_for_point
+    from engine.appc.part_severance import part_for_point, is_detached
     name = part_for_point(leaf_for(ship), point)
     if name is None:
+        return point
+    if is_detached(ship, name):
+        # A severed part has no hinge left to follow -- rotating a mount
+        # about a phantom wing would drag it along with a wing that is no
+        # longer there. See host_loop._sync_ship_articulation for the
+        # render-side twin of this guard.
         return point
     part = next((p for p in parts if p.node == name), None)
     if part is None:

@@ -3,6 +3,8 @@
 The behaviour these pin is the one that could not be achieved at all under
 voxel connectivity — see part_severance's module docstring for the measurement.
 """
+import types
+
 import pytest
 
 from engine.appc import articulation, part_severance as ps
@@ -256,6 +258,38 @@ def test_the_conversion_constant_matches_BC_MODEL_SCALE():
     names the copy that has to move with it."""
     from engine import host_loop
     assert ps.MODEL_TO_SHIP == pytest.approx(host_loop.BC_MODEL_SCALE)
+
+
+# ── Render sync: a severed part must not be re-posed (finding C1) ──────────────
+
+def test_a_detached_part_is_not_repose_by_the_render_sync(monkeypatch):
+    """REGRESSION. `_sync_ship_articulation` used to push a pose for EVERY
+    rigged part whenever deflection changed, with no regard for severance.
+    `set_instance_node_rotation` and `set_instance_node_hidden` write into the
+    SAME node_overrides slot, so re-posing a severed wing overwrote the zero
+    matrix that was hiding it -- the wing snapped back onto the hull and
+    animated with the good one, while its cannon stayed dead and its debris
+    chunk flew off on its own. theta == 0 at the end of travel then ERASED the
+    hide permanently.
+
+    Fixed by skipping any part `part_severance.is_detached` reports as gone,
+    mirroring the `part_transform_point` guard above."""
+    from engine import host_loop
+
+    calls = []
+    monkeypatch.setattr(
+        host_loop.host_io, "set_instance_node_rotation",
+        lambda iid, node, pivot, axis, theta: calls.append(node) or True)
+
+    ship = _Ship()
+    ship._articulation_deflection = 0.5  # a deflection CHANGE: the guard is live
+    ps.detached_parts(ship).add("left wing01")
+    session = types.SimpleNamespace(ship_articulation={})
+
+    host_loop._sync_ship_articulation(session, ship, iid=1)
+
+    assert calls == ["left wing"], (
+        "the severed wing must not receive a node-rotation push")
 
 
 # ── The authored data ────────────────────────────────────────────────────────

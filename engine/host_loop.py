@@ -7042,7 +7042,16 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     last = session.ship_articulation.get(iid)
     if last is not None and last == deflection:
         return
+    from engine.appc import part_severance
     for part in parts:
+        if part_severance.is_detached(ship, part.node):
+            # A severed part is hidden via the SAME node_overrides slot this
+            # rotation would write (set_instance_node_hidden / _rotation share
+            # one map). Re-posing it here would overwrite the hide with a live
+            # matrix -- the wing would snap back onto the hull and animate
+            # with the rest, and a subsequent theta==0 push would erase the
+            # hide for good. See part_severance.sever / part_detach_render.
+            continue
         pivot, axis, theta = articulation.rotation_for(part, deflection)
         # The rig is authored in SHIP units (shared with PART_BOXES and
         # subsystem mounts); the binding works in MODEL units. This is the

@@ -263,3 +263,17 @@ def test_the_two_wings_mirror():
     star = articulation.part_transform_point(_PosedShip(1.0), (1.008, 0.45, -0.67))
     assert port[0] == pytest.approx(-star[0])
     assert port[2] == pytest.approx(star[2])
+
+
+def test_a_detached_part_does_not_transform_its_point():
+    """REGRESSION (finding C1b). A severed wing has no mount to follow — its
+    mount point must stay put rather than rotate about a hinge the wing no
+    longer has. Mirrors the C1a fix in host_loop._sync_ship_articulation:
+    both consult part_severance.is_detached, so a mount and the mesh it once
+    sat on never disagree about whether the wing is still there."""
+    from engine.appc import part_severance as ps
+
+    ship = _PosedShip(1.0)
+    rest = (1.008, 0.450, -0.670)
+    ps.detached_parts(ship).add("left wing01")
+    assert articulation.part_transform_point(ship, rest) == rest
