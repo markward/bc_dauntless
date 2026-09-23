@@ -540,6 +540,28 @@ in play. **A BC-facing method that is PRESENT BUT WRONG is caught by neither
 the constant surface nor the stub heatmap**, which both guard against surface
 that is MISSING. Fixed in `df897e19`.
 
+**2026-09-23, third session — plan 2 (picking).**
+
+| checked | result |
+|---|---|
+| A raised wing is hit where it is DRAWN | ✅ confirmed (after one fix) |
+| Manual aim (H) picks the live wing pose | ✅ confirmed |
+
+⚠️ **Failed live on the first attempt**, and the cause is worth keeping. An
+override NAMES a part node, but the MESH hangs off that node's CHILD —
+`model_build`'s `find_parent_node_index` attaches geometry to its immediate
+`NiNode` parent, and BC ships interpose a `__NDL_MultiMtl_Node` between a part
+and its shapes (§2.1 of this very document). So a wing's triangles carry the
+MultiMtl node's index and a filter keyed on the triangle's own node never
+matched. The renderer was always right because `compose_node_worlds`
+propagates an override down the chain.
+
+**The unit tests passed while the game was broken** because the synthetic
+model put the mesh DIRECTLY on the overridden node — two levels where a real
+BC ship has three. Rebuilding the fixture to mirror the real hierarchy turned
+three tests red at once, including "a severed part cannot be hit", so severed
+wings had been hittable in play as well.
+
 **Three failures were found live that no test caught**, which is why this log
 exists rather than a bare "verified":
 
