@@ -2812,6 +2812,185 @@ git add tools/systems/survey.py tools/systems/layout.py engine/systems/map.py \
 git commit -m "feat(systems): recover BC's star colours and nebulae"
 ```
 
+---
+
+### Task 11: Belaruz has a living star; Vesuvi has a remnant
+
+**Why.** Both systems currently get `brown_dwarf`, a generic fallback for
+"authors no `Sun_Create`". The nav-map descriptions shipped in `21ed51cc` say
+something else, and they are right:
+
+- **Vesuvi** — the star's core was destabilised by a Kessok Solarformer (BC's
+  own opening: *"the star… its core is destabilising!"*). What remains is a
+  **hot remnant**: small, luminous, blue-white. BC's own lighting agrees —
+  Vesuvi 5's authored directional is `(0.6, 0.6, 0.8)`, and across the 18
+  systems that author a star texture the light matches the star in 17.
+- **Belaruz** — not a casualty. A living system crossing a dust cloud, the star
+  brighter for the material falling into it. Belaruz 1 carries the **brightest
+  directional in the game**, pure white at full strength, which a dead star
+  cannot produce.
+
+Player-facing text currently contradicts the data. That is the drift this whole
+branch has been guarding against, so it gets closed rather than noted.
+
+**Files:**
+- Modify: `tools/systems/layout.py`, `tools/gen_system_maps.py`
+- Modify: `engine/systems/maps/belaruz.json`, `engine/systems/maps/vesuvi.json`
+- Test: `tests/tools/test_system_layout.py`, `tests/unit/test_system_maps_valid.py`
+
+**Interfaces:**
+
+- `_STAR_CLASS_TABLE` gains `remnant_hot: (0.78, 0.86, 1.0)`. It is not keyed by
+  a texture — no BC texture produces it — so key the table by class name and
+  look textures up through a separate texture→class map, or add it alongside
+  with a comment saying why it has no texture. Either shape is fine; say which.
+- **A per-system star override**, read from the map's `overrides.star`:
+
+```json
+"overrides": {
+  "star": {
+    "star_class": "white",
+    "color": [1.0, 0.97, 0.93],
+    "radius_gu": 8000.0,
+    "why": "Belaruz is not a casualty ..."
+  }
+}
+```
+
+  Every field optional except `star_class`. An absent `color` falls back to the
+  class table; an absent `radius_gu` leaves the derived radius alone. `why` is
+  documentation and is never read by code.
+
+- `layout(s, tuning=None, pins=None, star=None)` — `star` is that dict or None.
+  When given it wins over everything derived from BC. When absent, behaviour is
+  exactly as today, including `brown_dwarf` for the seven `Multi*` systems.
+- `gen_system_maps.star_from(m)` — reads `m.overrides["star"]`, returning the
+  dict or `None`. `generate()` passes it into `layout()` the same way it already
+  passes `pins_from(old)`.
+
+**Ruling to implement, not to revisit:** Belaruz's class is `white` with an
+explicit near-pure colour and a radius of **8000 GU** — an ordinary star made
+bright by infall, rather than a new class invented for one system. The accretion
+is fiction the description carries and the renderer may express later; it is not
+a star class. Vesuvi keeps radius **2000 GU** so its geometry does not move.
+
+**Belaruz's orbits WILL move** (star 2000 → 8000 GU, and the first orbit is
+`sun_radius + clearance`). That is correct. `region-reaches-star` guards it.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/tools/test_system_layout.py`:
+
+```python
+def _sunless(name="Vesuvi", set_name="Vesuvi5"):
+    return SurveyedSystem(name=name, regions=[SurveyedRegion(
+        set_name=set_name, ordinal=5,
+        bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+
+
+def test_a_star_override_wins_over_the_derived_class():
+    m = layout(_sunless(), star={"star_class": "remnant_hot"})
+    star = [b for b in m.bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "remnant_hot"
+    assert star.appearance.color == pytest.approx((0.78, 0.86, 1.0))
+
+
+def test_a_star_override_may_set_an_explicit_colour_and_radius():
+    m = layout(_sunless(), star={"star_class": "white",
+                                 "color": [1.0, 0.97, 0.93],
+                                 "radius_gu": 8000.0})
+    star = [b for b in m.bodies if b.orbits is None][0]
+    assert star.appearance.color == pytest.approx((1.0, 0.97, 0.93))
+    assert star.radius_gu == pytest.approx(8000.0)
+
+
+def test_a_bigger_overridden_star_pushes_its_first_orbit_out():
+    """first_orbit is measured from the star's SURFACE, so a larger star must
+    carry every orbit outward rather than swallowing the innermost planet."""
+    t = LayoutTuning()
+    small = layout(_sunless())
+    big = layout(_sunless(), star={"star_class": "white", "radius_gu": 8000.0})
+    d_small = math.dist(small.body("Geki").position_gu, (0.0, 0.0, 0.0))
+    d_big = math.dist(big.body("Geki").position_gu, (0.0, 0.0, 0.0))
+    assert d_small == pytest.approx(t.brown_dwarf_radius_gu
+                                    + t.first_orbit_clearance_gu)
+    assert d_big == pytest.approx(8000.0 + t.first_orbit_clearance_gu)
+
+
+def test_no_override_leaves_todays_behaviour_untouched():
+    star = [b for b in layout(_sunless()).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "brown_dwarf"
+```
+
+`tests/unit/test_system_maps_valid.py`:
+
+```python
+def test_belaruz_and_vesuvi_carry_the_stars_their_descriptions_claim():
+    """The nav-map text says Belaruz's star is alive and Vesuvi's is a remnant.
+    Data and prose disagreeing is exactly the drift this branch exists to stop."""
+    belaruz = load("belaruz")
+    star = [b for b in belaruz.bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "white"
+    assert star.radius_gu == pytest.approx(8000.0)
+
+    vesuvi = load("vesuvi")
+    star = [b for b in vesuvi.bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "remnant_hot"
+
+    assert not any(b.appearance.star_class == "brown_dwarf"
+                   for name in ("belaruz", "vesuvi")
+                   for b in load(name).bodies)
+```
+
+- [ ] **Step 2: Run them and confirm they fail** —
+`uv run pytest tests/tools/test_system_layout.py tests/unit/test_system_maps_valid.py -v`
+
+- [ ] **Step 3: Implement**, per the Interfaces block.
+
+- [ ] **Step 4: Author the two overrides**, each with a `why` line: Belaruz as
+specified above; Vesuvi `{"star_class": "remnant_hot", "radius_gu": 2000.0}`.
+Add them beside the existing `notes` — do not disturb those.
+
+- [ ] **Step 5: Regenerate and verify**
+
+Run: `uv run python tools/gen_system_maps.py --system Belaruz --system Vesuvi --list-ambiguities`
+
+Then:
+
+```bash
+uv run python -c "
+import json
+for n in ('belaruz', 'vesuvi'):
+    d = json.load(open(f'engine/systems/maps/{n}.json'))
+    s = next(b for b in d['bodies'] if b['orbits'] is None)
+    print(n, s['appearance']['star_class'], s['radius_gu'], s['appearance']['color'])
+"
+```
+
+Expected: `belaruz white 8000.0 [1.0, 0.97, 0.93]` and `vesuvi remnant_hot 2000.0
+[0.78, 0.86, 1.0]`. Report Belaruz's new first-orbit distance.
+
+- [ ] **Step 6: Confirm nothing else moved**
+
+`uv run python tools/gen_system_maps.py --check --list-ambiguities` — all 32
+`ok`, exit 0; the same seven clamped regions (Alioth6, Beol1, Savoy2 min;
+Geble4, OmegaDraconis1, Savoy1, XiEntrades4 max); no region reaches its star;
+and `git status --porcelain engine/systems/maps` shows **only** belaruz.json and
+vesuvi.json.
+
+- [ ] **Step 7: Gate** — `scripts/check_tests.sh`, expect
+`OK — no new failures. 1 known failure(s) still baselined.`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tools/systems/layout.py tools/gen_system_maps.py \
+        engine/systems/maps/belaruz.json engine/systems/maps/vesuvi.json \
+        tests/tools/test_system_layout.py tests/unit/test_system_maps_valid.py
+git commit -m "fix(systems): Belaruz's star is alive, Vesuvi's is a remnant"
+```
+
 ## Self-review
 
 **Spec coverage (§1 only — §2–§6 are the second plan):**
