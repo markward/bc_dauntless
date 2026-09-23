@@ -2381,6 +2381,197 @@ git add tools/systems/layout.py tools/gen_system_maps.py \
 git commit -m "feat(systems): layout honours a pin, so pin-respected can pass"
 ```
 
+---
+
+### Task 9: Push the first orbit out until no region reaches its star
+
+**Why.** The final review found, and the atlas made visible, that **7 regions'
+spheres intersect the star they orbit** — `Alioth1`, `Cebalrai1`, `Chambana1`,
+`Itari1`, `Serris1`, `Voltair1`, `XiEntrades1`. `Voltair1` is worst: its radius
+is 24,291 GU but its anchor sits only 20,202 GU from the star, so the sphere
+**contains the star's centre**. Inert today (nothing reads these files) but under
+spec §3 a region boundary would pass through a sun.
+
+`anchor-inside-body` does not catch it because no *anchor* is inside a star — the
+sphere overlaps while its centre stays outside.
+
+**The fix, and why it is exact rather than iterative.** All 7 are the INNERMOST
+region of their system, and every orbit is `first_orbit + orbit_step_gu * i`, so
+raising the first orbit moves every region outward by the same amount — it can
+fix the inner ones and can never create a new clip further out.
+
+A region's radius is `max(reach, content_extent) + margin`, where `reach` is
+measured **from its own anchor**. Moving the whole system outward changes neither
+term. So the radius is invariant under this adjustment, one corrective pass
+suffices, and a second pass is only a cheap guard against floating-point drift.
+
+**Files:**
+- Modify: `tools/systems/layout.py`
+- Modify: `engine/systems/validate.py` (one new rule)
+- Modify: `engine/systems/maps/*.json` (regenerate all 32)
+- Test: `tests/tools/test_system_layout.py`, `tests/unit/test_system_map_validate.py`
+
+**Interfaces:**
+- `LayoutTuning.first_orbit_clearance_gu` (30000.0) becomes a **minimum**: the
+  innermost orbit sits at least that far from the star's surface, and further
+  when a region would otherwise reach the star. Its docstring must say so.
+- `LayoutTuning` gains `star_clearance_gu: float = 500.0` — the margin left
+  between a region's sphere and the star's surface after the push, so the two are
+  clear rather than exactly tangent.
+- New `validate()` rule `region-reaches-star`: no region's sphere may intersect
+  the system's star, i.e. `dist(anchor, star.position_gu) > region.radius_gu +
+  star.radius_gu`. The star is the body with `orbits is None`; skip the rule when
+  a map has none.
+- `ambiguities()` reports any system whose first orbit was pushed, naming the
+  distance — this changes numbers a human chose, so it must not happen silently.
+
+**Implementation shape.** Extract the current body-and-region placement from
+`layout()` into a helper that takes the first-orbit distance as a parameter and
+returns a `SystemMap`. `layout()` then:
+
+1. calls it with `sun_radius + t.first_orbit_clearance_gu`;
+2. computes the largest intrusion across regions —
+   `max(0, region.radius_gu + sun_radius + t.star_clearance_gu - dist(anchor, star))`;
+3. if that is positive, calls the helper again with the first orbit raised by it,
+   and keeps the second result;
+4. records the push so `ambiguities()` can report it.
+
+Do NOT loop more than twice. If a second pass still intrudes, that means the
+invariant above is false and something else is wrong — report it rather than
+iterating blindly.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/unit/test_system_map_validate.py`:
+
+```python
+def test_region_reaches_star_flags_a_sphere_overlapping_the_sun():
+    """anchor-inside-body misses this: the anchor stays outside the star while
+    the region's SPHERE overlaps it. Under streaming, a region boundary would
+    pass through a sun."""
+    m = _valid()
+    # The star is r=5000 at the origin; Ona1's radius is 3000.
+    m.region("Ona1").anchor_gu = (0.0, 7000.0, 0.0)   # 7000 < 3000 + 5000
+    assert "region-reaches-star" in _slugs(validate(m))
+
+
+def test_region_reaches_star_accepts_a_region_that_merely_comes_close():
+    m = _valid()
+    m.region("Ona1").anchor_gu = (0.0, 8100.0, 0.0)   # 8100 > 3000 + 5000
+    assert "region-reaches-star" not in _slugs(validate(m))
+
+
+def test_region_reaches_star_is_skipped_when_a_map_has_no_star():
+    m = _valid()
+    m.bodies = [b for b in m.bodies if b.orbits is not None]
+    assert "region-reaches-star" not in _slugs(validate(m))
+```
+
+Add to `tests/tools/test_system_layout.py`:
+
+```python
+def test_the_first_orbit_is_pushed_out_until_no_region_reaches_the_star():
+    """Voltair 1's sphere contained its star's centre. The innermost orbit must
+    move out far enough to clear it -- and every other orbit moves with it."""
+    s = SurveyedSystem(name="Tight", regions=[
+        SurveyedRegion(set_name="Tight1", ordinal=1, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=20000.0, player_start_gu=(0.0, 0.0, 0.0)),
+        SurveyedRegion(set_name="Tight2", ordinal=2, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 2", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
+    ])
+    m = layout(s)
+    star = [b for b in m.bodies if b.orbits is None][0]
+    for r in m.regions:
+        gap = math.dist(r.anchor_gu, star.position_gu) - r.radius_gu - star.radius_gu
+        assert gap > 0.0, f"{r.set_name} reaches the star by {-gap:.0f} GU"
+
+
+def test_a_system_that_already_clears_its_star_is_not_moved():
+    """The push must be corrective, not a blanket increase -- most systems are
+    already clear and their numbers must not drift."""
+    s = _sys_one_planet_per_region()
+    t = LayoutTuning()
+    m = layout(s, t)
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    innermost = min(math.dist(b.position_gu, (0.0, 0.0, 0.0))
+                    for b in m.bodies if b.orbits is not None)
+    assert innermost == pytest.approx(sun.radius_gu + t.first_orbit_clearance_gu)
+
+
+def test_ambiguities_reports_a_pushed_first_orbit():
+    s = SurveyedSystem(name="Tight", regions=[SurveyedRegion(
+        set_name="Tight1", ordinal=1, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=20000.0, player_start_gu=(0.0, 0.0, 0.0))])
+    assert any("first orbit" in n.lower() for n in ambiguities(s))
+```
+
+- [ ] **Step 2: Run them and confirm they fail**
+
+Run: `uv run pytest tests/tools/test_system_layout.py tests/unit/test_system_map_validate.py -v`
+Expected: the validator tests fail on the missing rule; the layout tests fail
+because the orbit is not pushed and `ambiguities()` says nothing about it.
+
+- [ ] **Step 3: Implement**, per the shape above.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `uv run pytest tests/tools/ tests/unit/test_system_map.py tests/unit/test_system_map_validate.py tests/unit/test_system_maps_valid.py -v`
+Expected: all pass.
+
+- [ ] **Step 5: Regenerate every map and confirm the finding is gone**
+
+Run: `uv run python tools/gen_system_maps.py --list-ambiguities`
+
+Then verify with this exact check — **zero** regions may reach their star:
+
+```bash
+uv run python -c "
+import json, math, glob
+bad = []
+for f in sorted(glob.glob('engine/systems/maps/*.json')):
+    d = json.load(open(f))
+    star = next((b for b in d['bodies'] if b['orbits'] is None), None)
+    if not star: continue
+    for r in d['regions']:
+        gap = math.dist(r['anchor_gu'], star['position_gu']) - r['radius_gu'] - star['radius_gu']
+        if gap <= 0: bad.append((f, r['set_name'], round(gap)))
+print('regions reaching their star:', len(bad)); [print(' ', *b) for b in bad]
+"
+```
+
+Expected: `regions reaching their star: 0`.
+
+Report which systems were pushed and by how much, from the ambiguity notes. The
+seven known offenders live in Alioth, Cebalrai, Chambana, Itari, Serris, Voltair
+and XiEntrades — expect those systems, and ideally only those, to move.
+
+- [ ] **Step 6: Confirm nothing else changed**
+
+Run: `uv run python tools/gen_system_maps.py --check --list-ambiguities`
+Expected: all 32 `ok`, exit code 0, and the same seven clamped regions —
+Alioth6, Beol1, Savoy2 (MIN floor); Geble4, OmegaDraconis1, Savoy1, XiEntrades4
+(MAX cap). Clamps are about standoff, not orbit, so pushing an orbit must not
+change them.
+
+- [ ] **Step 7: Run the gate**
+
+Run: `scripts/check_tests.sh`
+Expected: `OK — no new failures. 1 known failure(s) still baselined.`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tools/systems/layout.py engine/systems/validate.py engine/systems/maps \
+        tests/tools/test_system_layout.py tests/unit/test_system_map_validate.py
+git commit -m "fix(systems): no region sphere may reach its own star"
+```
+
 ## Self-review
 
 **Spec coverage (§1 only — §2–§6 are the second plan):**
