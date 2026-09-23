@@ -216,15 +216,27 @@ Gate clean (`scripts/check_tests.sh`: ctest 0 failures, pytest 1 — the baselin
 A hardpoint's world position is computed against the **body**. It should be
 computed against its **part**. Two symptoms, one cause:
 
-1. **Live bug.** At full deflection a wingtip travels ~88 NIF units (~60 m, over
-   half the ship's length). The cannon hardpoint does not move. Normally hidden
-   because wings-up ⟺ weapons cold — but on entering red alert, weapons power on
-   *instantly* while the wings take 2 s to come down, so the cannons fire from
-   progressively wrong positions for those two seconds. That is precisely the
-   moment combat starts.
-2. **Latent bug.** `hull_breakup._destroy_subsystems_inside` tests a *static
-   body-frame mount* against a severed component's bounds. For an articulated
-   part that is the un-rotated position, so it would kill the wrong subsystems.
+1. **RESOLVED 2026-09-23.** At full deflection a wingtip travelled ~0.85 ship
+   units (~150 m) while the cannon hardpoint did not move. Normally hidden
+   (wings-up <-> weapons cold), but entering red alert powers weapons instantly
+   while the wings take 2 s to come down, so the cannons fired from
+   progressively wrong positions for those two seconds — exactly when combat
+   starts. Fixed by routing mounts through `articulation.part_transform_point`
+   inside `subsystem_world_position`, the single choke point that firing
+   origins, the SPV pins, `phaser_overlay` and `target_reticle` all share.
+2. **WITHDRAWN 2026-09-23 — this was never a defect.** An earlier draft claimed
+   `hull_breakup._destroy_subsystems_inside` and
+   `part_severance._destroy_subsystems_on_part` were broken because they test a
+   "static body-frame mount". They are correct: `PART_BOXES` are authored in the
+   REST pose, the voxel side never sees `node_overrides`, and the `.dhv` SDF is
+   baked from the NIF. **The whole SIM is rest-pose-consistent; only the
+   RENDERER articulates.** Transforming the mount there would mismatch frames
+   and misattribute. Pinned by
+   `test_subsystem_kill_uses_the_REST_mount_even_mid_travel`.
+
+   WARNING: this changes if the sim ever articulates — per-part hull volumes and
+   picking (§4.3) would move the voxel and trace geometry into the live pose,
+   and both functions would then need the transform.
 
 **One fix serves both.** Parent hardpoints to parts and the cannon follows the
 wing *and* the existing sever-kill starts testing the right point. No new

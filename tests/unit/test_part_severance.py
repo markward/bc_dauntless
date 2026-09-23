@@ -44,9 +44,11 @@ class _Ship:
         self._hull = _Hull(hull)
         self._subs = list(subs)
         self._articulation_leaf = LEAF      # pre-cached: no SDK import in tests
+        self._articulation_deflection = 0.0
 
     def GetHull(self): return self._hull
     def _iter_subsystems(self): return list(self._subs)
+    def GetArticulationDeflection(self): return self._articulation_deflection
 
 
 # ── Attribution ──────────────────────────────────────────────────────────────
@@ -177,6 +179,35 @@ def test_a_severed_wing_destroys_the_cannon_mounted_on_it():
     assert star.condition == 0.0, "the cannon on the severed wing must die"
     assert port.condition == 100.0, "the other wing's cannon is untouched"
     assert body.condition == 100.0, "body subsystems are untouched"
+
+
+def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
+    """Attribution here is a REST-pose question, and must stay one.
+
+    PART_BOXES are authored in the model's rest pose, and the sim never
+    articulates: the voxel field and the .dhv SDF are both built from the NIF
+    and never see node_overrides. Only the RENDERER moves parts. So the
+    authored mount is the right thing to test, at any deflection.
+
+    This test exists because the implementation plan originally specified the
+    opposite -- routing this through part_transform_point, so an ARTICULATED
+    mount would be tested against REST boxes. That mismatches frames and
+    misattributes. Caught in pre-flight; pinned here so it is not re-attempted.
+
+    Contrast subsystem_world_position, which feeds what is DRAWN (beam
+    origins, SPV pins) and therefore MUST articulate.
+    """
+    star = _Sub("Star Cannon", (1.008, 0.450, -0.670))
+    body = _Sub("Warp Core", (0.0, -0.33, 0.0))
+    ship = _Ship(subs=(star, body))
+    ship._articulation_deflection = 0.5      # mid-travel: worst case
+
+    ps.sever(ship, None, "left wing01")
+
+    assert star.condition == 0.0, (
+        "the cannon authored on the starboard wing must die with it, "
+        "regardless of where the wing is currently drawn")
+    assert body.condition == 100.0
 
 
 def test_reset_clears_damage_and_detachments():
