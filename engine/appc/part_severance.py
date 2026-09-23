@@ -208,6 +208,34 @@ def damage_on(ship, part_name) -> float:
     return float(_totals(ship).get(part_name, 0.0))
 
 
+def _silence_emitters_on(killed) -> None:
+    """Stop every particle controller emitting from one of `killed`.
+
+    Identity, never name: two ships in one battle carry identically named
+    subsystems, and `_emit_from` holds the object itself. Pinned by
+    tests/unit/test_part_severance_emitters.py::
+    test_silencing_matches_by_IDENTITY_not_by_name.
+
+    Best-effort: a VFX failure must never abort a severance that has already
+    happened to the hull.
+    """
+    if not killed:
+        return
+    try:
+        from engine.appc import particles
+        live = particles.active()
+    except Exception as _e:  # noqa: BLE001
+        dev_mode.log_swallowed("severed part emitter silence", _e)
+        return
+    dead = {id(s) for s in killed}
+    for c in list(live or []):
+        try:
+            if id(getattr(c, "_emit_from", None)) in dead:
+                c.stop_emitting()
+        except Exception as _e:  # noqa: BLE001
+            dev_mode.log_swallowed("severed part emitter silence", _e)
+
+
 def sever(ship, iid, part_name):
     """Detach `part_name` from `ship`. Returns the part name, or None if it
     was already gone.
@@ -216,16 +244,19 @@ def sever(ship, iid, part_name):
       1. mark detached FIRST, so anything re-entrant (a subsystem destruction
          event that lands another hit) cannot sever the same part twice;
       2. destroy its subsystems -- the cannon on a wing dies with the wing;
-      3. hand off to the renderer, which hides the part and spawns the chunk.
+      3. silence any particle controller still emitting from one of those
+         subsystems -- cast light already died with the destroyed condition,
+         but particles have no such gate of their own;
+      4. hand off to the renderer, which hides the part and spawns the chunk.
 
-    Step 3 is best-effort: a headless run has no renderer, and a part that is
+    Step 4 is best-effort: a headless run has no renderer, and a part that is
     gone from the sim but still drawn is a far better failure than an exception
     unwinding through combat.
     """
     if is_detached(ship, part_name):
         return None
     detached_parts(ship).add(part_name)
-    _destroy_subsystems_on_part(ship, part_name)
+    _silence_emitters_on(_destroy_subsystems_on_part(ship, part_name))
     try:
         from engine.appc import part_detach_render
         part_detach_render.detach(ship, iid, part_name)
@@ -234,12 +265,18 @@ def sever(ship, iid, part_name):
     return part_name
 
 
-def _destroy_subsystems_on_part(ship, part_name) -> None:
-    """Destroy every subsystem whose mount lies on `part_name`.
+def _destroy_subsystems_on_part(ship, part_name) -> list:
+    """Destroy every subsystem whose mount lies on `part_name`, and return
+    them.
 
     Mirrors `hull_breakup._destroy_subsystems_inside`: condition straight to
     zero through the normal subsystem-damage path, so the usual events fire. A
     disruptor cannon that has physically left the ship cannot keep firing.
+
+    The returned list is what `sever` uses to silence particle emitters
+    attached to those subsystems. Cast LIGHT needs no such step — emitter
+    intensity is gated on the parent's glow state, which the zero condition
+    already flips to DESTROYED.
     """
     leaf = articulation.leaf_for(ship)
     it = getattr(ship, "_iter_subsystems", None)
@@ -247,10 +284,11 @@ def _destroy_subsystems_on_part(ship, part_name) -> None:
         try:
             from engine.appc.combat import _iter_subsystems as it_fn
         except Exception:  # noqa: BLE001
-            return
+            return []
         subs = it_fn(ship)
     else:
         subs = it()
+    killed = []
     for sub in list(subs or []):
         try:
             pos = sub.GetPosition()
@@ -261,8 +299,10 @@ def _destroy_subsystems_on_part(ship, part_name) -> None:
             continue
         try:
             sub.SetCondition(0.0)
+            killed.append(sub)
         except Exception as _e:  # noqa: BLE001
             dev_mode.log_swallowed("severed part subsystem destroy", _e)
+    return killed
 
 
 def reset_ship(ship) -> None:

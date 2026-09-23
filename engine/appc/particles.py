@@ -131,6 +131,22 @@ class AnimTSParticleController:
     def stop_emitting(self):
         self._stop_age = self._effect_age
 
+    def is_emitting(self):
+        """Whether `stop_emitting` has been called on this controller.
+
+        There is no boolean flag: `_stop_age` is None while emitting and
+        holds the age at which emission ceased afterwards (line 67,
+        "None => still emitting"). Do NOT add a second flag, and do NOT
+        route this through `_effective_stop_age`, which also caps by
+        `_effect_life_time` / `_duration` and so answers a different
+        question — whether the effect has run out, not whether it was
+        stopped.
+
+        Exists so a caller can ASSERT the emitting state; `stop_emitting`
+        had no reader at all, which meant nothing could tell a stopped
+        controller from a running one."""
+        return self._stop_age is None
+
     def has_live_particles(self):
         max_life = self._emit_life + max(0.0, self._emit_life_variance)
         return self._effective_stop_age() + max_life > self._effect_age
@@ -170,6 +186,14 @@ def reset():
 
 def active_count():
     return len(_active)
+
+
+def active() -> list:
+    """The live controller registry, as a list.
+
+    `active_count` already reads `_active`; exposing the list itself lets a
+    caller act on the controllers rather than only count them."""
+    return list(_active)
 
 
 def register_tickable(obj):
