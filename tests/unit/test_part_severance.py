@@ -186,10 +186,13 @@ def test_a_severed_wing_destroys_the_cannon_mounted_on_it():
 def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     """Attribution here is a REST-pose question, and must stay one.
 
-    PART_BOXES are authored in the model's rest pose, and the sim never
-    articulates: the voxel field and the .dhv SDF are both built from the NIF
-    and never see node_overrides. Only the RENDERER moves parts. So the
-    authored mount is the right thing to test, at any deflection.
+    the structures this compares against are never articulated: PART_BOXES are
+    authored rest-pose, and the voxel field and .dhv SDF stay baked from the
+    NIF in rest pose (a carve struck on a moved part is pulled back to rest
+    before deposit -- renderer::rest_from_posed_at). Collision spheres DO
+    articulate as of the part-aware sim-geometry plan, but nothing in this
+    path reads them. See spec 4.3.1. So the authored mount is the right thing
+    to test, at any deflection.
 
     This test exists because the implementation plan originally specified the
     opposite -- routing this through part_transform_point, so an ARTICULATED

@@ -314,8 +314,8 @@ exactly as today. Only the QUERY moves into part-local space.**
 | **render passes** — `cloak_pass`, `hologram_pass`, `model_draw_helpers` (shadow pre-pass, breach) | static node walk | thread `node_overrides`, identical to what `draw_model` already does |
 | **picking** (`ray_trace.cc`) | ✅ BUILT — each `TraceTri` carries its node index; the BVH walk SKIPS overridden nodes and one linear sweep re-tests them with the **RAY** transformed into each part's rest frame. NO partitioning, no sub-BVH: the BVH build reorders `tris`, so a node's triangles are not a contiguous range, and the sweep runs only for a rigged hull away from rest. ⚠️ The coarse bounding-sphere reject had to be SKIPPED when overrides are present — its AABB is measured at rest, so it rejected rays aimed at a moved part before any triangle was tested. |
 | **collision pieces** (`aabb.cc` → `hull_bounds.py`) | pieces in model space | tag each piece with its part at build; transform per instance at query, where `hull_bounds.py` already applies position + rotation + scale |
-| **hull volume** (`.dhv`) | whole-hull rest-pose SDF | **the bake is UNCHANGED** — inverse-transform the query POINT into part-local space before sampling |
-| **glow regions** (`glow_region.cc`) | authored model-space positions | same inverse transform |
+| **hull volume** (`.dhv`) | whole-hull rest-pose SDF | **NO SEPARATE WORK.** There is no sim-side point query against the .dhv — it is baked by `hull_volume.py` and sampled on the GPU in model space. The only thing that WRITES into it is a carve, and a carve arriving from a moved part is pulled back to rest by `renderer::rest_from_posed_at` before deposit (see the damage-carve row). Keeping the field rest-pose preserves model-level sharing AND keeps §4.3.1's rest-pose comparisons valid. |
+| **glow regions** (`glow_region.cc`) | authored model-space positions | **Not transformed — silenced instead.** Anything emitting from a DETACHED part stops: cast light already did (emitter intensity is gated on the parent subsystem's glow state, which severance zeroes), and particle controllers now do too (`part_severance._silence_emitters_on`). Transforming glow capsules into the live pose buys nothing today — no rigged hull has one — and is re-openable if one ever does. |
 | **damage carve** | entries in body space | entries **bound to a part**, stored part-local so a scar rides the wing |
 
 **Why this is strictly better than per-part bakes.** No re-bake, no extra
@@ -339,29 +339,40 @@ handful of matrix inverses.
 **Rejected:** baking two whole-hull volumes (armed/cold) and switching between
 them. Cannot represent mid-travel, doubles memory, and hits the same ceiling.
 
-### ⚠️ 4.3.1 This REVERSES Ruling 1, deliberately
+### ✅ 4.3.1 Ruling 1 STANDS — this section's earlier prediction was wrong
 
-§5 and both characterisation tests from the hardpoint-parenting plan rest on a
-claim that is TRUE TODAY and will STOP being true when §4.3 lands:
+**Superseded 2026-09-23, before implementation.** This section previously
+predicted that §4.3 would reverse Ruling 1 and require inverting
+`test_subsystem_kill_uses_the_REST_mount_even_mid_travel` in both
+`tests/unit/test_part_severance.py` and `tests/unit/test_hull_breakup.py`.
 
-> The whole SIM is rest-pose-consistent; only the RENDERER articulates.
+**It does not, and they must not be touched.** The prediction assumed the
+sim's BOUNDS would move into the live pose. Under "transform the query, never
+the structure" they do not:
 
-Once collision pieces, the hull-volume query and carve entries resolve through
-part-local space, the sim articulates too. At that point
-`hull_breakup._destroy_subsystems_inside` and
-`part_severance._destroy_subsystems_on_part` **do** need the mount transform
-that Ruling 1 correctly refused to add — because the bounds they test against
-will have moved into the live pose.
+- `part_severance._destroy_subsystems_on_part` tests a rest mount against
+  `PART_BOXES`, authored rest-pose and unchanged. Which part a subsystem sits
+  on is a STATIC property of the hull, not a function of where the part
+  currently happens to be.
+- `hull_breakup._destroy_subsystems_inside` tests a rest mount against a
+  carved component from `hull_split_detached` — the damage field, which stays
+  baked rest-pose. A carve struck on a moved part is pulled BACK into rest
+  space before deposit (`renderer::rest_from_posed_at`), precisely so this
+  stays true.
 
-So `test_subsystem_kill_uses_the_REST_mount_even_mid_travel` (both copies, in
-`tests/unit/test_part_severance.py` and `tests/unit/test_hull_breakup.py`) must
-be **inverted as part of this work**, not deleted and not quietly edited. Each
-carries a docstring explaining why rest-pose was right; that docstring becomes
-the record of why it stopped being right.
+Collision pieces (`hull_bounds.py`) genuinely do articulate, but no subsystem
+kill reads them: `hull_spheres_world` / `hull_spheres_near` /
+`point_is_inside_hull` have exactly two consumers, `collisions.py:248` and
+`collision_avoidance.py:600`, neither of which touches subsystems.
 
-This is the condition those tests' own WARNING notes anticipated. It is planned,
-not a surprise — and it is the reason Ruling 1 recorded "cost if wrong" as one
-function's rework rather than something structural.
+So both tests remain correct as written, and their docstrings stay as the
+record of why. The one claim inside them that is now too broad is "the sim
+never articulates" — narrow it in place to "the structures these compare
+against are never articulated", and leave everything else alone.
+
+**The general lesson, worth more than the ruling:** a design that moves
+queries instead of structures keeps every rest-pose comparison in the codebase
+valid for free. That is the property to preserve when this is extended.
 
 ### 4.4 Ordering
 

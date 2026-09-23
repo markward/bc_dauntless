@@ -108,8 +108,12 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
     `_destroy_subsystems_inside` compares each subsystem's body-frame
     `GetPosition()` against a carved component's REST-pose bounds. It never
     calls `GetArticulationDeflection` at all -- there is nothing to correct
-    for, because the sim never articulates: the voxel field and the .dhv SDF
-    are both baked from the NIF in rest pose. So a ship reporting non-zero
+    for, because the structures this compares against are never articulated:
+    PART_BOXES are authored rest-pose, and the voxel field and .dhv SDF stay
+    baked from the NIF in rest pose (a carve struck on a moved part is pulled
+    back to rest before deposit -- renderer::rest_from_posed_at). Collision
+    spheres DO articulate as of the part-aware sim-geometry plan, but nothing
+    in this path reads them. See spec 4.3.1. So a ship reporting non-zero
     deflection must attribute exactly as it would at rest.
 
     This has to actually DISCRIMINATE the two behaviours, not just carry a
