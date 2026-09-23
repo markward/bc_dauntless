@@ -385,6 +385,34 @@ def test_a_malformed_cloud_is_reported_never_raised(wreck):
                for p in problems)
 
 
+@pytest.mark.parametrize("field", ["bodies", "regions", "clouds"])
+@pytest.mark.parametrize("junk", [None, 7, "bodies"])
+def test_a_map_whose_list_field_is_not_a_list_is_reported_never_raised(field, junk):
+    """The last remaining way to make validate() raise.
+
+    `m.clouds = None` reached `for cl in m.clouds` and raised TypeError; so
+    did `m.bodies` and `m.regions`, which have carried the same unguarded
+    pattern since the file was written. A string is included because it IS
+    iterable -- `for b in m.bodies` over "bodies" yields characters and then
+    raises AttributeError on `.name`, which is a different crash from the
+    same fault and must also be reported."""
+    m = _cloud_map()
+    setattr(m, field, junk)
+    problems = validate(m)          # must not raise
+    assert any(p.rule == "malformed-geometry" and field in p.detail
+               for p in problems), _rules(problems)
+
+
+@pytest.mark.parametrize("field", ["bodies", "regions", "clouds"])
+def test_a_list_field_may_be_a_tuple(field):
+    """A tuple is a perfectly good sequence of bodies/regions/clouds and is
+    not itself a problem worth reporting -- same reasoning as
+    _sphere_entries accepting a tuple of spheres."""
+    m = _cloud_map()
+    setattr(m, field, tuple(getattr(m, field)))
+    assert validate(m) == []
+
+
 def test_the_real_maps_validate_clean():
     for name in available():
         assert validate(load(name)) == [], name

@@ -278,10 +278,39 @@ def _pocket_inside_large(v, large, origin) -> bool:
     return True   # unknown shape -- geometry_ok already excludes this
 
 
+def _sequence_field(m, name: str, problems: list) -> list:
+    """`m.<name>` as a list, reporting rather than raising on anything else.
+
+    The three list fields are the outermost thing validate() touches, and
+    every loop over them was unguarded: `m.clouds = None` raised TypeError
+    out of `for cl in m.clouds` before a single rule ran, and `m.bodies` /
+    `m.regions` carried the identical pattern. "validate() never raises" is
+    a named hard constraint of this file, so the entry points to it need the
+    same guard-before-use treatment `_is_point3` gives a coordinate.
+
+    A str is rejected even though it is iterable: iterating it yields
+    characters, which then raise AttributeError on `.name` -- a different
+    crash from the same fault. A tuple is accepted; it is a perfectly good
+    sequence and not a fault worth reporting (same reasoning as
+    `_sphere_entries` accepting a tuple of spheres).
+    """
+    value = getattr(m, name, None)
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    problems.append(Problem(
+        "malformed-geometry",
+        f"map field {name!r} is {value!r} -- must be a list"))
+    return []
+
+
 def validate(m, *, sdk_set_names=None, pins=None) -> list:
     problems = []
+    bodies = _sequence_field(m, "bodies", problems)
+    regions = _sequence_field(m, "regions", problems)
+    clouds = _sequence_field(m, "clouds", problems)
+
     by_name: dict = {}
-    for b in m.bodies:
+    for b in bodies:
         by_name.setdefault(b.name, []).append(b)
 
     # malformed-geometry runs FIRST. Every rule below does arithmetic on
@@ -295,14 +324,14 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
     # gets misjudged on bad input.
     bad_bodies: set = set()
     bad_regions: set = set()
-    for b in m.bodies:
+    for b in bodies:
         if not _is_point3(b.position_gu):
             bad_bodies.add(id(b))
             problems.append(Problem(
                 "malformed-geometry",
                 f"body {b.name!r} has a malformed position_gu {b.position_gu!r} "
                 f"-- must be a sequence of exactly 3 numbers"))
-    for r in m.regions:
+    for r in regions:
         if not _is_point3(r.anchor_gu):
             bad_regions.add(r.set_name)
             problems.append(Problem(
@@ -311,17 +340,17 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                 f"-- must be a sequence of exactly 3 numbers"))
 
     if sdk_set_names is not None:
-        have = {r.set_name for r in m.regions}
+        have = {r.set_name for r in regions}
         for name in sdk_set_names:
             if name not in have:
                 problems.append(Problem(
                     "region-coverage",
                     f"BC set {name!r} has no region in system {m.system!r}"))
 
-    for r in m.regions:
+    for r in regions:
         if r.set_name in bad_regions:
             continue
-        for other in m.regions:
+        for other in regions:
             if other is r:
                 continue
             if other.set_name in bad_regions:
@@ -332,7 +361,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"region {r.set_name!r} (radius {r.radius_gu:.0f} GU) "
                     f"contains the anchor of {other.set_name!r}"))
 
-    for r in m.regions:
+    for r in regions:
         for name in r.body_names:
             body = _resolve(by_name, name, owner=r.set_name)
             if body is None:
@@ -361,10 +390,10 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"body {name!r} (radius {body.radius_gu:.0f} GU) reaches the "
                     f"anchor of region {r.set_name!r}"))
 
-    for i, a in enumerate(m.bodies):
+    for i, a in enumerate(bodies):
         if id(a) in bad_bodies:
             continue
-        for b in m.bodies[i + 1:]:
+        for b in bodies[i + 1:]:
             if id(b) in bad_bodies:
                 continue
             if _dist(a.position_gu, b.position_gu) <= a.radius_gu + b.radius_gu:
@@ -374,7 +403,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"{b.name!r} (radius {b.radius_gu:.0f} GU) have intersecting "
                     f"surfaces"))
 
-    for r in m.regions:
+    for r in regions:
         if r.set_name in bad_regions:
             continue
         # Bodies the region itself owns are already covered by
@@ -387,7 +416,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
         # WRONG region's body from this check.
         own_bodies = {id(_resolve(by_name, name, owner=r.set_name))
                       for name in r.body_names}
-        for b in m.bodies:
+        for b in bodies:
             if id(b) in own_bodies or id(b) in bad_bodies:
                 continue
             if b.radius_gu >= _dist(b.position_gu, r.anchor_gu):
@@ -404,9 +433,9 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
     # region's boundary would pass through the sun. The star is identified by
     # `orbits is None`, never by name; skip the rule entirely when a map has
     # none (two systems build a MetaNebula and author no star at all).
-    star = next((b for b in m.bodies if b.orbits is None), None)
+    star = next((b for b in bodies if b.orbits is None), None)
     if star is not None and id(star) not in bad_bodies:
-        for r in m.regions:
+        for r in regions:
             if r.set_name in bad_regions:
                 continue
             if _dist(r.anchor_gu, star.position_gu) <= r.radius_gu + star.radius_gu:
@@ -421,7 +450,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
             f"pins must be a mapping of \"Region/Body\" to offset, got "
             f"{type(pins).__name__}"))
     elif pins is not None:
-        anchors = {r.set_name: r.anchor_gu for r in m.regions}
+        anchors = {r.set_name: r.anchor_gu for r in regions}
         for key, want_offset in pins.items():
             # Pin keys are "<region>/<body>", not a bare body name. BC reuses
             # bare companion names across regions of one system (Geble3 and
@@ -478,7 +507,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"pinned body {key!r} sits at set-local {have} but the "
                     f"mission stages content at {tuple(want_offset)}"))
 
-    for b in m.bodies:
+    for b in bodies:
         if b.orbits is not None and b.orbits not in by_name:
             problems.append(Problem(
                 "orbit-target",
@@ -504,11 +533,11 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
     if star is not None and id(star) not in bad_bodies and _is_point3(star.position_gu):
         star_origin = star.position_gu
 
-    regions_by_name = {r.set_name: r for r in m.regions}
+    regions_by_name = {r.set_name: r for r in regions}
     region_cloud_count: dict = {}
     pockets_by_region: dict = {}   # region set_name -> [pocket Volume, ...]
 
-    for cl in m.clouds:
+    for cl in clouds:
         cloud_name = getattr(cl, "name", "?")
 
         regions_list = getattr(cl, "regions", None)
@@ -639,7 +668,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                         f"{v.origin_region!r} is not inside the cloud's "
                         f"large volume"))
 
-    for r in m.regions:
+    for r in regions:
         if r.nebula is not None:
             count = region_cloud_count.get(r.set_name, 0)
             if count != 1:

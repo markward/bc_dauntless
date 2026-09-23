@@ -227,7 +227,18 @@ def test_the_two_cloud_systems_carry_their_clouds():
     assert pocket.params["damage_hull_per_s"] == pytest.approx(150.0)
     shell = [v for v in cloud.volumes if v.origin_region is None][0]
     assert shell.shape == "sphere"
-    assert shell.geometry["radius_gu"] == pytest.approx(61567.4, rel=1e-3)
+    # The shell radius is DERIVED, not authored: the greatest
+    # |anchor| + radius_gu across the cloud's member regions, so the shell
+    # reaches exactly as far as the wreckage does
+    # (tools/systems/layout.py:_build_cloud_large_volume). Assert that
+    # relationship, computed from this map. The literal that stood here,
+    # 61567.4 at rel=1e-3, matched neither the derived value
+    # (61566.8173...) nor the design note's 61567.0 -- a magic number
+    # loose enough to pass while agreeing with nothing.
+    import math
+    assert shell.geometry["radius_gu"] == pytest.approx(
+        max(math.dist(vesuvi.region(n).anchor_gu, (0.0, 0.0, 0.0))
+            + vesuvi.region(n).radius_gu for n in cloud.regions))
 
     belaruz = load("belaruz")
     cloud = belaruz.clouds[0]
