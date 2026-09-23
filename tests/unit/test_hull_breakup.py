@@ -18,6 +18,7 @@ class _Ship:
     def __init__(self, radius=3.5, subs=()):
         self._r = radius; self._subs = list(subs)
         self._loc = TGPoint3(0, 0, 0); self._rot = TGMatrix3()
+        self._articulation_deflection = 0.0
     def GetRadius(self): return self._r
     def GetWorldLocation(self): return self._loc
     def GetWorldRotation(self): return self._rot
@@ -26,6 +27,7 @@ class _Ship:
     def GetScale(self): return 1.0
     def GetHull(self): return None
     def _iter_subsystems(self): return iter(self._subs)
+    def GetArticulationDeflection(self): return self._articulation_deflection
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +99,34 @@ def test_subsystem_inside_the_component_is_destroyed_outside_untouched(monkeypat
                         lambda iid, m: [_component(9, 500, (1, 0, 0), (0.5, -.5, -.5), (1.5, .5, .5))])
     hull_breakup.after_carve(ship, 11)
     assert inside.IsDestroyed()
+    assert not outside.IsDestroyed()
+
+
+def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
+    """Mirrors part_severance's REST-mount pin for the other destroy path.
+
+    `_destroy_subsystems_inside` compares each subsystem's body-frame
+    `GetPosition()` against a carved component's REST-pose bounds. It never
+    calls `GetArticulationDeflection` at all -- there is nothing to correct
+    for, because the sim never articulates: the voxel field and the .dhv SDF
+    are both baked from the NIF in rest pose. So a ship reporting non-zero
+    deflection must attribute exactly as it would at rest.
+
+    Companion to test_part_severance.py's
+    test_subsystem_kill_uses_the_REST_mount_even_mid_travel -- see spec
+    §4.1 symptom 2 (withdrawn).
+    """
+    from engine.appc import hull_breakup
+    inside = _Sub(TGPoint3(1.0, 0.0, 0.0), "Port Nacelle")
+    outside = _Sub(TGPoint3(-1.0, 0.0, 0.0), "Bridge")
+    ship = _Ship(radius=3.5, subs=[inside, outside])
+    ship._articulation_deflection = 1.0      # full travel
+    monkeypatch.setattr(host_io, "hull_split_detached",
+                        lambda iid, m: [_component(9, 500, (1, 0, 0), (0.5, -.5, -.5), (1.5, .5, .5))])
+    hull_breakup.after_carve(ship, 11)
+    assert inside.IsDestroyed(), (
+        "the nacelle authored inside the REST bounds must die, "
+        "regardless of where the part is currently drawn")
     assert not outside.IsDestroyed()
 
 

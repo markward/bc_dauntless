@@ -238,8 +238,11 @@ computed against its **part**. Two symptoms, one cause:
    picking (§4.3) would move the voxel and trace geometry into the live pose,
    and both functions would then need the transform.
 
-**One fix serves both.** Parent hardpoints to parts and the cannon follows the
-wing *and* the existing sever-kill starts testing the right point. No new
+**One fix, one symptom.** Parenting hardpoints to parts fixes the firing origin
+(symptom 1): the cannon now follows the wing. The sever-kill path needed no
+fix — it already reuses the same part-assignment rule (`part_for_point`), just
+applied to the authored REST mount rather than the articulated one, which is
+exactly right for a sim that stays rest-pose-consistent throughout. No new
 destruction machinery is needed — see §7.
 
 ### 4.2 Hardpoint → part assignment

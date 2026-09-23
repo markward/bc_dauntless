@@ -200,7 +200,9 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     star = _Sub("Star Cannon", (1.008, 0.450, -0.670))
     body = _Sub("Warp Core", (0.0, -0.33, 0.0))
     ship = _Ship(subs=(star, body))
-    ship._articulation_deflection = 0.5      # mid-travel: worst case
+    ship._articulation_deflection = 0.5      # mid-travel: guards against a
+                                              # fix that special-cases only
+                                              # the endpoints
 
     ps.sever(ship, None, "left wing01")
 
