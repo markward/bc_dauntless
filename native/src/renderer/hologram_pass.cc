@@ -4,6 +4,7 @@
 
 #include <assets/mesh.h>
 #include <assets/model.h>
+#include <renderer/node_anim.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/instance.h>
 #include <scenegraph/world.h>
@@ -47,24 +48,14 @@ void HologramPass::render(const HologramShip& ship,
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
 
-    // Walk nodes exactly as the opaque pass does (frame.cc draw_model): each
-    // node composes parent transform * local_transform, and references meshes
-    // by index. Parents precede children, so a single linear pass suffices.
-    // inst->world is the host's right-handed ship transform (no reflection
-    // post 2026-06-18 un-mirror); we re-use it verbatim so the hologram
-    // overlays the opaque ship exactly.
+    // Honour node overrides so the hologram matches the hull: the SPV draws
+    // its subsystem pins against THIS pose, so a mismatch here puts every pin
+    // on an articulated part in the wrong place.
     const glm::mat4& world_xf = inst->world;
-    std::vector<glm::mat4> world_per_node(model->nodes.size(), glm::mat4(1.0f));
-    if (!model->nodes.empty()) {
-        world_per_node[model->root_node] =
-            world_xf * model->nodes[model->root_node].local_transform;
-    }
+    const std::vector<glm::mat4> world_per_node =
+        renderer::compose_node_worlds(*model, world_xf, inst->node_overrides);
     for (std::size_t i = 0; i < model->nodes.size(); ++i) {
         const auto& node = model->nodes[i];
-        if (node.parent_index >= 0) {
-            world_per_node[i] =
-                world_per_node[node.parent_index] * node.local_transform;
-        }
         for (int mesh_idx : node.meshes) {
             const auto& mesh = model->meshes[mesh_idx];
             shader.set_mat4("u_model", world_per_node[i]);
