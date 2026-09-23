@@ -176,3 +176,60 @@ def test_an_unrigged_ship_tags_nothing():
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
     (_c, _r, part), = ship.__dict__["_hull_bound_spheres"]
     assert part is None
+
+
+# ── Mid-travel ───────────────────────────────────────────────────────────────
+
+def test_a_wing_piece_moves_with_its_part_at_full_deflection():
+    """The piece must sit where the wing is DRAWN. `part_transform_point` is
+    the same Rodrigues hinge the renderer's node override uses, so the
+    collision sphere and the drawn mesh agree by construction."""
+    from engine.appc import articulation
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
+
+    ship._articulation_deflection = 0.0
+    (rest, _r) = hb.hull_spheres_world(ship)[0]
+
+    ship._articulation_deflection = 1.0
+    (moved, _r2) = hb.hull_spheres_world(ship)[0]
+
+    expected = articulation.part_transform_point(ship, WING_PT)
+    assert (moved.x, moved.y, moved.z) != (rest.x, rest.y, rest.z)
+    assert moved.x == pytest.approx(expected[0], abs=1e-6)
+    assert moved.y == pytest.approx(expected[1], abs=1e-6)
+    assert moved.z == pytest.approx(expected[2], abs=1e-6)
+
+
+def test_an_untagged_piece_never_moves():
+    """The common case, and the one that must stay byte-identical: a piece on
+    no part is unaffected at any deflection."""
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, 0.05)]))
+    ship._articulation_deflection = 0.0
+    (rest, _r) = hb.hull_spheres_world(ship)[0]
+    ship._articulation_deflection = 1.0
+    (same, _r2) = hb.hull_spheres_world(ship)[0]
+    assert (same.x, same.y, same.z) == (rest.x, rest.y, rest.z)
+
+
+def test_hull_spheres_near_ACCEPTS_a_piece_at_its_MOVED_position():
+    """The half a weak test would miss. hull_spheres_near rejects in the
+    ship's BODY frame before transforming out, so if the part transform were
+    applied only to survivors, a moved piece would be rejected against its
+    REST position and never returned at all."""
+    from engine.appc import articulation
+    from engine.appc.math import TGPoint3
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
+    ship._articulation_deflection = 1.0
+    mx, my, mz = articulation.part_transform_point(ship, WING_PT)
+
+    # A tight query centred on where the wing IS, too small to reach its rest
+    # position. At identity world transform, body frame == world frame.
+    got = hb.hull_spheres_near(ship, TGPoint3(mx, my, mz), 0.01)
+    assert len(got) == 1, "a moved piece must be found where it is drawn"
+
+    rest_only = hb.hull_spheres_near(ship, TGPoint3(*WING_PT), 0.01)
+    assert rest_only == [], (
+        "the piece's REST position must be empty once the wing has moved")

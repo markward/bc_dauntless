@@ -133,10 +133,15 @@ def hull_spheres_world(ship) -> list:
     R = ship.GetWorldRotation()
     scale = float(ship.GetScale())
     from engine.appc.part_severance import is_detached
+    from engine.appc import articulation
     out = []
     for (cx, cy, cz), r, part in cached:
         if part is not None and is_detached(ship, part):
             continue                           # severed: no longer collides
+        if part is not None:
+            # Body frame, ship units, in and out. Identity at rest and for an
+            # unrigged hull, so an untagged piece costs one None compare.
+            cx, cy, cz = articulation.part_transform_point(ship, (cx, cy, cz))
         v = TGPoint3(cx * scale, cy * scale, cz * scale)
         v.MultMatrixLeft(R)                    # body -> world
         out.append((TGPoint3(loc.x + v.x, loc.y + v.y, loc.z + v.z), r * scale))
@@ -161,6 +166,12 @@ def hull_spheres_near(ship, center, radius) -> list:
     rotation is orthonormal (`AlignToVectors` builds an orthonormal basis).
     Being a rigid transform it also preserves distance, so the body-frame
     compare and the world-frame one accept exactly the same pieces.
+
+    A piece tagged with an articulated part is moved into that part's live
+    pose FIRST, before the reject — see tests/unit/test_hull_bounds_parts.py::
+    test_hull_spheres_near_ACCEPTS_a_piece_at_its_MOVED_position. Untagged
+    pieces, which are the overwhelming majority on every hull and all of them
+    on an unrigged one, take exactly the path they took before.
     """
     cached = ship.__dict__.get(_ATTR)
     if not cached:
@@ -176,10 +187,16 @@ def hull_spheres_near(ship, center, radius) -> list:
     qz = R.m02 * dx + R.m12 * dy + R.m22 * dz
 
     from engine.appc.part_severance import is_detached
+    from engine.appc import articulation
     out = []
     for (cx, cy, cz), r, part in cached:
         if part is not None and is_detached(ship, part):
             continue                           # severed: no longer collides
+        if part is not None:
+            # BEFORE the reject below, not after: the compare happens in the
+            # ship's body frame, so a moved piece tested at its REST centre
+            # would be rejected and never returned.
+            cx, cy, cz = articulation.part_transform_point(ship, (cx, cy, cz))
         # Body-frame piece centre at the ship's live scale.
         sx, sy, sz = cx * scale, cy * scale, cz * scale
         ex, ey, ez = sx - qx, sy - qy, sz - qz
