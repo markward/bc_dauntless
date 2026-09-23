@@ -312,7 +312,7 @@ exactly as today. Only the QUERY moves into part-local space.**
 |---|---|---|
 | **hardpoint mounts** | `body · local` | ✅ BUILT — `part_world · local` via `articulation.part_transform_point` |
 | **render passes** — `cloak_pass`, `hologram_pass`, `model_draw_helpers` (shadow pre-pass, breach) | static node walk | thread `node_overrides`, identical to what `draw_model` already does |
-| **picking** (`ray_trace.cc`) | one model BVH, rest-pose triangles | PARTITION its triangles **by part** at build time (still on the `Model`, still shared); per part, inverse-transform the **RAY** and trace that partition; keep the nearest hit |
+| **picking** (`ray_trace.cc`) | ✅ BUILT — each `TraceTri` carries its node index; the BVH walk SKIPS overridden nodes and one linear sweep re-tests them with the **RAY** transformed into each part's rest frame. NO partitioning, no sub-BVH: the BVH build reorders `tris`, so a node's triangles are not a contiguous range, and the sweep runs only for a rigged hull away from rest. ⚠️ The coarse bounding-sphere reject had to be SKIPPED when overrides are present — its AABB is measured at rest, so it rejected rays aimed at a moved part before any triangle was tested. |
 | **collision pieces** (`aabb.cc` → `hull_bounds.py`) | pieces in model space | tag each piece with its part at build; transform per instance at query, where `hull_bounds.py` already applies position + rotation + scale |
 | **hull volume** (`.dhv`) | whole-hull rest-pose SDF | **the bake is UNCHANGED** — inverse-transform the query POINT into part-local space before sampling |
 | **glow regions** (`glow_region.cc`) | authored model-space positions | same inverse transform |
