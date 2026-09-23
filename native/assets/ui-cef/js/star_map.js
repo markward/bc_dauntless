@@ -113,6 +113,15 @@ function setStarMapPanel(state) {
     const titleEl = document.getElementById('star-map-targets-title');
     if (titleEl) titleEl.textContent = String(state.targets_title || '');
 
+    // The system's written description. textContent, not innerHTML: this is
+    // authored prose and must never be able to inject markup into the panel.
+    const descEl = document.getElementById('star-map-desc');
+    if (descEl) {
+        const text = String(state.description || '');
+        descEl.textContent = text;
+        descEl.style.display = text ? 'block' : 'none';
+    }
+
     const warpEl = document.getElementById('star-map-warps');
     if (warpEl) {
         const note = state.warp_note

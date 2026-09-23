@@ -14,6 +14,7 @@ from typing import Optional
 
 from engine import dev_mode
 from engine.appc import sector_model as sm
+from engine.systems import descriptions as sysdesc
 from engine.ui import star_map
 from engine.ui.panel import Panel
 
@@ -424,6 +425,12 @@ class StarMapPanel(Panel):
             return sm.system_module(sid)
         return None
 
+    # --- description ----------------------------------------------------
+    def _description(self) -> str:
+        """The selected system's written description, or "" if it has none."""
+        entry = sysdesc.for_system(self._selected_system)
+        return entry["detail"] if entry else ""
+
     # --- Panel ----------------------------------------------------------
     def render_payload(self) -> Optional[str]:
         warp_points, warp_note = self._warp_rows()
@@ -443,6 +450,12 @@ class StarMapPanel(Panel):
             "warp_label": self._warp_label(),
             "targets_title": (sm.display_label(self._selected_system)
                               if self._targets_open() else ""),
+            # What this system IS, for a player deciding where to go. Read-only
+            # and cached by the loader, so this stays a cheap lookup on the
+            # render path. Empty for a system with no entry — the UI simply
+            # omits the block rather than reserving space for nothing.
+            "description": (self._description()
+                            if self._targets_open() else ""),
             # Unlisted systems keep their dot but lose their name, so the map
             # reads as "where this mission will take you" at a glance. The
             # toggle restores the rest; it is offered only when something is
