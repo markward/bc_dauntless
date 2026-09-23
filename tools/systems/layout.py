@@ -198,6 +198,9 @@ def _first_orbit_push(s, t: LayoutTuning, pins) -> tuple[float, SystemMap]:
         direction = _sub(probe_anchor, worst.anchor_gu)  # exact anchor shift per 1 GU of first_orbit
 
         target = worst.radius_gu + star.radius_gu + t.star_clearance_gu
+        # worst.anchor_gu is used directly as the vector FROM THE STAR below
+        # (a_dot_u, a_sq) -- valid only because _place() always puts the star
+        # at the origin (see the Body appended at the top of _place()).
         a_dot_u = sum(a * u for a, u in zip(worst.anchor_gu, direction))
         u_sq = sum(u * u for u in direction)
         a_sq = sum(a * a for a in worst.anchor_gu)

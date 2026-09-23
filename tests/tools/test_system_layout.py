@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from tools.systems.layout import LayoutTuning, ambiguities, layout
+from tools.systems.layout import LayoutTuning, _first_orbit_push, ambiguities, layout
 from tools.systems.survey import SurveyedBody, SurveyedRegion, SurveyedSystem
 
 
@@ -426,17 +426,28 @@ def test_a_pinned_map_passes_the_pin_rule_end_to_end():
 def test_the_first_orbit_is_pushed_out_until_no_region_reaches_the_star():
     """Voltair 1's sphere contained its star's centre. The innermost orbit must
     move out far enough to clear it -- and every other orbit moves with it."""
+    # content_extent_gu=30000.0, not a smaller value: with the region's own
+    # reach only 7500 GU, a content_extent of 20000.0 yields a region radius
+    # of 21500 GU, which clears the star (sun_radius 8000, clearance 500) at
+    # the baseline first orbit with 3500 GU to spare -- _first_orbit_push()
+    # returns push=0.0 for that input, so the test would pass even with the
+    # push mechanism disabled. 30000.0 yields radius 31500, which genuinely
+    # intrudes (by 6500 GU) and so genuinely exercises the code path this
+    # test names. Same arithmetic as test_ambiguities_reports_a_pushed_first_orbit.
     s = SurveyedSystem(name="Tight", regions=[
         SurveyedRegion(set_name="Tight1", ordinal=1, bodies=[
             SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
             SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
-        ], content_extent_gu=20000.0, player_start_gu=(0.0, 0.0, 0.0)),
+        ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0)),
         SurveyedRegion(set_name="Tight2", ordinal=2, bodies=[
             SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
             SurveyedBody("Tight 2", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
         ], content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
     ])
-    m = layout(s)
+    t = LayoutTuning()
+    push, _probe_m = _first_orbit_push(s, t, {})
+    assert push > 0.0, "fixture must genuinely require a push, or this test cannot fail"
+    m = layout(s, t)
     star = [b for b in m.bodies if b.orbits is None][0]
     for r in m.regions:
         gap = math.dist(r.anchor_gu, star.position_gu) - r.radius_gu - star.radius_gu
