@@ -334,9 +334,22 @@ Document it once, on `draw_instance` in the header:
     /// a raised wing is rendered against where that wing sits at REST.
 ```
 
-- [ ] **Step 3: Pass the real map at the external call site**
+- [ ] **Step 3: Pass the real map at the PRODUCTION call site**
 
-At the `BreachPass::draw_instance` call in `frame.cc`, pass the instance's overrides. If the instance is not in scope there, STOP and report — do not reach for a global.
+⚠️ **CORRECTED after execution.** An earlier version of this step said to edit a
+`BreachPass::draw_instance` call in `frame.cc`. **There is no such call.**
+`frame.cc` contains zero references to `BreachPass`, and `draw_instance` is
+TEST-ONLY — all 29 of its call sites are in `breach_pass_test.cc`. Following
+that instruction literally would have edited dead code and left the bug
+unfixed, while the task looked done.
+
+The sole production caller is `host_bindings.cc` → `BreachPass::render()`, whose
+lambda already binds the real `const scenegraph::Instance& inst`. Wire
+`&inst.node_overrides` there, inside `breach_pass.cc`'s `render()`.
+
+**`render()` has TWO internal call paths — the interior shell and the hull
+proxy. Wire BOTH.** Wiring one fixes half the effect, which is harder to
+notice than fixing none.
 
 - [ ] **Step 4: Build and run the C++ suite**
 
