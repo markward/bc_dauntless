@@ -20,7 +20,6 @@ add_executable(renderer_tests
     bone_palette_test.cc
     pose_sampler_test.cc
     node_anim_test.cc
-    model_draw_helpers_test.cc
     bridge_node_anim_store_test.cc
     animation_update_test.cc
     channel_binder_test.cc

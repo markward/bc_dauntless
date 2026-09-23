@@ -44,6 +44,21 @@ TEST(ComposeNodeWorlds, OverrideReplacesOnlyThatNodeLocal) {
     EXPECT_NEAR(col0.y, 1.0f, 1e-4f);
 }
 
+TEST(ComposeNodeWorlds, ZeroMatrixOverrideCollapsesTheSubtree) {
+    // set_instance_node_hidden writes mat4(0) as a node's local. That is how a
+    // severed wing disappears -- every vertex in its subtree lands on the
+    // origin, so its triangles have zero area. A pass honouring overrides
+    // therefore needs NO separate visibility test. Folded in from the
+    // now-deleted model_draw_helpers_test.cc (M4): that file tested this
+    // function, not model_draw_helpers.h, and duplicated this suite's other
+    // two cases almost line for line.
+    auto m = two_node();
+    std::unordered_map<int, glm::mat4> ov;
+    ov[1] = glm::mat4(0.0f);
+    auto w = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    EXPECT_EQ(w[1], glm::mat4(0.0f));
+}
+
 TEST(ComposeNodeWorlds, InstanceWorldPremultiplies) {
     auto m = two_node();
     std::unordered_map<int, glm::mat4> empty;
