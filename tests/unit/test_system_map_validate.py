@@ -7,7 +7,8 @@ against (see the design doc's "pins"), or a spawn point inside a planet.
 """
 import pytest
 
-from engine.systems.map import Appearance, Body, Region, SystemMap
+from engine.systems import clouds as cloud_profiles
+from engine.systems.map import Appearance, Body, Cloud, Region, SystemMap, Volume, available, load
 from engine.systems.validate import validate
 
 
@@ -35,6 +36,51 @@ def _valid() -> SystemMap:
 
 def _slugs(problems):
     return sorted(p.rule for p in problems)
+
+
+def _rules(problems):
+    return [p.rule for p in problems]
+
+
+def _cloud_map() -> SystemMap:
+    """A valid map with ONE cloud: a pocket volume owned by region "Ona1"
+    (mirroring BC's own authored nebula sphere, anchor + offset) plus a
+    system-scale sphere "large" volume centred on the star, exactly the
+    shape tools/systems/layout.py:_build_clouds produces for a
+    "debris_shell" override.
+    """
+    m = _valid()
+    m.region("Ona1").nebula = {
+        "color": (0.5, 0.5, 0.5),
+        "spheres": [(0.0, 1000.0, 0.0, 800.0)],
+        "visibility_gu": 145.0,
+        "sensor_density": 10.5,
+        "damage_hull_per_s": 150.0,
+        "damage_shield_per_s": 20.0,
+        "extra_nebulae": 0,
+    }
+    pocket = Volume(
+        shape="sphere",
+        geometry={"center_gu": (0.0, 19000.0, 0.0), "radius_gu": 800.0},
+        profile="debris",
+        params=cloud_profiles.params_for("debris"),
+        origin_region="Ona1",
+    )
+    large = Volume(
+        shape="sphere",
+        geometry={"center_gu": (0.0, 0.0, 0.0), "radius_gu": 25000.0},
+        profile="mist",
+        params=cloud_profiles.params_for("mist"),
+        origin_region=None,
+    )
+    m.clouds = [Cloud(
+        name="Ona Debris", display_name="Ona Debris", kind="debris_shell",
+        color=(0.5, 0.5, 0.5), volumes=[pocket, large], regions=["Ona1"])]
+    return m
+
+
+def test_a_cloud_map_is_itself_valid():
+    assert validate(_cloud_map()) == []
 
 
 def test_a_valid_map_has_no_problems():
@@ -279,3 +325,66 @@ def test_region_reaches_star_is_skipped_when_a_map_has_no_star():
     m = _valid()
     m.bodies = [b for b in m.bodies if b.orbits is not None]
     assert "region-reaches-star" not in _slugs(validate(m))
+
+
+def test_a_pocket_that_drifted_from_its_region_is_caught():
+    m = _cloud_map()
+    m.clouds[0].volumes[0].geometry["center_gu"] = (1.0, 2.0, 3.0)
+    assert "cloud-volume-agrees-with-region" in _rules(validate(m))
+
+
+def test_a_cloud_naming_a_region_that_does_not_exist_is_caught():
+    m = _cloud_map()
+    m.clouds[0].regions = ["Nowhere1"]
+    assert "cloud-region-membership" in _rules(validate(m))
+
+
+def test_a_region_with_a_nebula_and_no_cloud_is_caught():
+    """The failure this rule exists for: a cloud silently dropped during
+    regeneration, leaving BC's nebula stranded on the region."""
+    m = _cloud_map()
+    m.clouds = []
+    assert "cloud-region-membership" in _rules(validate(m))
+
+
+def test_a_pocket_outside_its_own_shell_is_caught():
+    m = _cloud_map()
+    shell = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
+    shell.geometry["radius_gu"] = 1.0
+    assert "cloud-pocket-inside-cloud" in _rules(validate(m))
+
+
+def test_tuned_bc_params_are_caught():
+    """BC's numbers are not ours to change."""
+    m = _cloud_map()
+    pocket = [v for v in m.clouds[0].volumes if v.origin_region][0]
+    pocket.params["damage_hull_per_s"] = 5.0
+    assert "cloud-profile-matches-params" in _rules(validate(m))
+
+
+def test_an_unknown_profile_is_a_problem_not_a_crash():
+    m = _cloud_map()
+    m.clouds[0].volumes[0].profile = "fog"
+    assert "cloud-profile-matches-params" in _rules(validate(m))
+
+
+@pytest.mark.parametrize("wreck", [
+    lambda c: setattr(c.volumes[0], "geometry", None),
+    lambda c: c.volumes[0].geometry.__setitem__("center_gu", (1.0, 2.0)),
+    lambda c: c.volumes[0].geometry.__setitem__("radius_gu", "big"),
+    lambda c: setattr(c, "volumes", [None]),
+    lambda c: setattr(c, "regions", None),
+])
+def test_a_malformed_cloud_is_reported_never_raised(wreck):
+    """validate()'s contract. Callers are a CLI printing every problem and a
+    test naming every problem; a traceback serves neither."""
+    m = _cloud_map()
+    wreck(m.clouds[0])
+    problems = validate(m)          # must not raise
+    assert any(p.rule.startswith("cloud-") or p.rule == "malformed-geometry"
+               for p in problems)
+
+
+def test_the_real_maps_validate_clean():
+    for name in available():
+        assert validate(load(name)) == [], name
