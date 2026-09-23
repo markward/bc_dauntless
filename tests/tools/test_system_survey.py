@@ -7,6 +7,7 @@ not a snapshot of it.
 """
 import pytest
 
+from tools.systems import survey
 from tools.systems.survey import survey_system, system_names
 
 
@@ -112,3 +113,90 @@ def test_nebulae_are_surveyed_with_colour_and_spheres():
 def test_a_region_with_no_nebula_surveys_as_none():
     ona = survey_system("Ona")
     assert all(r.nebula is None for r in ona.regions)
+
+
+def test_nebula_captures_bcs_four_authored_numbers():
+    """visibility and sensor density are MetaNebula_Create args 4 and 5;
+    damage comes from the separate SetupDamage call."""
+    text = (
+        'pNebula = App.MetaNebula_Create(155.0 / 255.0, 90.0 / 255.0, '
+        '185.0 / 255.0, 145.0, 10.5, "a.tga", "b.tga")\n'
+        'pNebula.SetupDamage(150.0, 20.0)\n'
+        'pNebula.AddNebulaSphere(0.0, 1500.0, 0.0, 1500.0)\n'
+    )
+    neb = survey._nebula(text)
+    assert neb["visibility_gu"] == pytest.approx(145.0)
+    assert neb["sensor_density"] == pytest.approx(10.5)
+    assert neb["damage_hull_per_s"] == pytest.approx(150.0)
+    assert neb["damage_shield_per_s"] == pytest.approx(20.0)
+
+
+def test_absent_setup_damage_is_a_real_zero():
+    """Belaruz 1 never calls SetupDamage. That is BC saying 'this cloud does no
+    damage', not BC leaving a value unspecified."""
+    text = ('pNebula = App.MetaNebula_Create(100.0 / 255.0, 99.0 / 255.0, '
+            '146.0 / 255.0, 200.0, 6.5, "a.tga", "b.tga")\n'
+            'pNebula.AddNebulaSphere(-17.1, 844.7, -30.3, 900.0)\n')
+    neb = survey._nebula(text)
+    assert neb["damage_hull_per_s"] == 0.0
+    assert neb["damage_shield_per_s"] == 0.0
+
+
+def test_single_argument_setup_damage_leaves_the_shield_rate_unknown():
+    """Multi6 calls SetupDamage(1.0). One argument means BC did not author a
+    shield rate -- which is NOT the same as authoring zero."""
+    text = ('pNebula = App.MetaNebula_Create(0.125, 0.125, 0.75, 75.0, 0.5, '
+            '"a.tga", "b.tga")\n'
+            'pNebula.SetupDamage(1.0)\n'
+            'pNebula.AddNebulaSphere(50.0, 150.0, 150.0, 250.0)\n')
+    neb = survey._nebula(text)
+    assert neb["damage_hull_per_s"] == pytest.approx(1.0)
+    assert neb["damage_shield_per_s"] is None
+
+
+def test_spheres_belong_to_their_own_nebula():
+    """THE BUG THIS TASK EXISTS FOR. Multi5 builds four MetaNebulae in one
+    file. Collecting every AddNebulaSphere in the file gives the first nebula
+    all thirteen spheres and a radius spanning the whole set."""
+    text = (
+        'pNebula = App.MetaNebula_Create(0.125, 0.75, 0.125, 143.0, 0.5, "a", "b")\n'
+        'pNebula.AddNebulaSphere(200.0, 0.0, 0.0, 200.0)\n'
+        'pNebula = App.MetaNebula_Create(0.75, 0.75, 0.125, 143.0, 0.5, "a", "b")\n'
+        'pNebula.AddNebulaSphere(310.0, -125.0, -125.0, 150.0)\n'
+        'pNebula.AddNebulaSphere(230.0, 125.0, 125.0, 150.0)\n'
+    )
+    neb = survey._nebula(text)
+    assert len(neb["spheres"]) == 1
+    assert neb["spheres"][0] == pytest.approx((200.0, 0.0, 0.0, 200.0))
+    assert neb["extra_nebulae"] == 1
+
+
+def test_damage_of_a_later_nebula_does_not_leak_onto_the_first():
+    """Same scoping rule, applied to SetupDamage rather than spheres."""
+    text = (
+        'pNebula = App.MetaNebula_Create(0.1, 0.2, 0.3, 100.0, 1.0, "a", "b")\n'
+        'pNebula.AddNebulaSphere(0.0, 0.0, 0.0, 50.0)\n'
+        'pNebula = App.MetaNebula_Create(0.4, 0.5, 0.6, 100.0, 1.0, "a", "b")\n'
+        'pNebula.SetupDamage(999.0, 999.0)\n'
+    )
+    neb = survey._nebula(text)
+    assert neb["damage_hull_per_s"] == 0.0
+
+
+def test_the_real_vesuvi_and_belaruz_scripts_parse_as_expected():
+    """Guards the parser against the actual game files, not a hand-written
+    approximation of them."""
+    vesuvi4 = [r for r in survey_system("Vesuvi").regions
+               if r.set_name == "Vesuvi4"][0]
+    assert vesuvi4.nebula["damage_hull_per_s"] == pytest.approx(150.0)
+    assert vesuvi4.nebula["damage_shield_per_s"] == pytest.approx(20.0)
+    assert vesuvi4.nebula["visibility_gu"] == pytest.approx(145.0)
+    assert vesuvi4.nebula["sensor_density"] == pytest.approx(10.5)
+    assert vesuvi4.nebula["extra_nebulae"] == 0
+
+    belaruz1 = [r for r in survey_system("Belaruz").regions
+                if r.set_name == "Belaruz1"][0]
+    assert belaruz1.nebula["damage_hull_per_s"] == 0.0
+    assert belaruz1.nebula["damage_shield_per_s"] == 0.0
+    assert belaruz1.nebula["sensor_density"] == pytest.approx(6.5)
+    assert belaruz1.nebula["visibility_gu"] == pytest.approx(200.0)

@@ -54,9 +54,15 @@ class SurveyedRegion:
     bodies: list = field(default_factory=list)
     content_extent_gu: float = 0.0
     player_start_gu: tuple = (0.0, 0.0, 0.0)
-    # {"color": (r, g, b), "spheres": [(x, y, z, radius_gu), ...]} when this
-    # region's static file builds a MetaNebula, else None. Colours are BC's
-    # own 0-1 floats; sphere positions are set-local GU, read verbatim.
+    # {"color": (r, g, b), "spheres": [(x, y, z, radius_gu), ...],
+    #  "visibility_gu": float, "sensor_density": float,
+    #  "damage_hull_per_s": float, "damage_shield_per_s": float | None,
+    #  "extra_nebulae": int} when this region's static file builds a
+    # MetaNebula, else None. Colours are BC's own 0-1 floats; sphere
+    # positions are set-local GU, read verbatim. damage_shield_per_s is
+    # None when BC called SetupDamage with a single argument (shield rate
+    # unauthored, not zero). extra_nebulae counts MetaNebula_Create calls
+    # beyond the first -- only Multi5 (not a region) has any.
     nebula: dict | None = None
 
 
@@ -139,23 +145,63 @@ def _eval_num(expr: str) -> float:
     return float(eval(expr, {"__builtins__": {}}, {}))
 
 
+_SETUP_DAMAGE = re.compile(r'SetupDamage\((.*?)\)', re.DOTALL)
+
+
 def _nebula(text: str):
-    """This region's MetaNebula, if its static file builds one: explicit RGB
-    plus every AddNebulaSphere call in the file, in set-local GU exactly as
-    BC wrote them. None if the file builds no nebula at all."""
+    """This region's MetaNebula, if its static file builds one.
+
+    BC's own parameter order, from the comment block the artists left in
+    Vesuvi4_S.py: r, g, b, visibility distance, sensor density, internal
+    texture, external texture. Damage is separate, via SetupDamage.
+
+    A file may build SEVERAL MetaNebulae -- Multi5 builds four. Each owns only
+    the AddNebulaSphere and SetupDamage calls that follow it, so the text is
+    sliced at the create calls before anything is collected. Collecting across
+    the whole file instead gave the first nebula every sphere in the set.
+    Only the first is returned; `extra_nebulae` counts the rest so the caller
+    can report them rather than silently drop them.
+    """
     joined = "\n".join(_uncommented(text))
-    m = _META_NEBULA_CALL.search(joined)
-    if not m:
+    creates = list(_META_NEBULA_CALL.finditer(joined))
+    if not creates:
         return None
-    args = _split_top_level(m.group(1))
+
+    first = creates[0]
+    # Everything from the first create up to the next one (or end of file).
+    end = creates[1].start() if len(creates) > 1 else len(joined)
+    scope = joined[first.end():end]
+
+    args = _split_top_level(first.group(1))
     color = tuple(_eval_num(a) for a in args[:3])
+    visibility = _eval_num(args[3]) if len(args) > 3 else 0.0
+    sensor_density = _eval_num(args[4]) if len(args) > 4 else 0.0
+
+    hull, shield = 0.0, 0.0
+    dm = _SETUP_DAMAGE.search(scope)
+    if dm:
+        parts = _split_top_level(dm.group(1))
+        hull = _eval_num(parts[0]) if parts and parts[0] else 0.0
+        # One argument means BC authored no shield rate. That is unknown, not
+        # zero -- absent SetupDamage is the case that means zero.
+        shield = _eval_num(parts[1]) if len(parts) > 1 else None
+
     spheres = []
-    for sm in _ADD_NEBULA_SPHERE.finditer(joined):
+    for sm in _ADD_NEBULA_SPHERE.finditer(scope):
         parts = _split_top_level(sm.group(1))
         if len(parts) != 4:
             continue
         spheres.append(tuple(_eval_num(p) for p in parts))
-    return {"color": color, "spheres": spheres}
+
+    return {
+        "color": color,
+        "spheres": spheres,
+        "visibility_gu": visibility,
+        "sensor_density": sensor_density,
+        "damage_hull_per_s": hull,
+        "damage_shield_per_s": shield,
+        "extra_nebulae": len(creates) - 1,
+    }
 
 
 def _bodies(static_text: str, placements: dict) -> tuple:
