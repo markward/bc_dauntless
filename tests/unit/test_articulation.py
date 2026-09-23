@@ -236,7 +236,7 @@ def test_transform_is_identity_at_rest():
 def test_a_wing_point_rises_with_the_wing():
     """The starboard wingtip is the Star Cannon's mount. At full deflection it
     must follow the wing, not stay at the rest position — that gap is the live
-    bug this plan fixes (~60 m on a BoP)."""
+    bug this plan fixes (~150 m on a BoP)."""
     rest = (1.008, 0.450, -0.670)
     moved = articulation.part_transform_point(_PosedShip(1.0), rest)
     assert moved[2] > rest[2], "the mount must rise with the wing"

@@ -86,7 +86,10 @@ class Part(NamedTuple):
 # seconds on screen; faster looks like a glitch, slower reads as broken.
 TRAVEL_SECONDS = 2.0
 
-# Ship units -> model (NIF) units, for the C++ boundary only. = BC_MODEL_SCALE.
+# Multiply a MODEL (raw NIF) unit by this to reach a SHIP (hardpoint-authored)
+# unit -- = BC_MODEL_SCALE. The one call site that needs the OPPOSITE
+# direction, host_loop._sync_ship_articulation, therefore DIVIDES a ship-units
+# pivot by this constant to reach model units for the C++ node-rotation call.
 MODEL_TO_SHIP = 0.01
 
 
@@ -196,7 +199,10 @@ def dev_override() -> "float | None":
 
 
 def reset() -> None:
-    """Drop dev state. Called on mission swap and from the test fixture."""
+    """Drop dev state. Currently called only from the test fixture
+    (tests/conftest.py) -- there is no mission-swap call site yet, so a dev
+    override left set by a --developer session would otherwise survive a
+    mission swap in a live run."""
     global _dev_override
     _dev_override = None
 

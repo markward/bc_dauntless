@@ -180,9 +180,19 @@ does the identical chain with locals swapped in.
 `hardpoint_overrides.apply(leaf)`):
 
 ```python
-Part(node="left wing",   pivot=(-16.0, 0.0, 5.0), axis=(0.0, 1.0, 0.0), angle_deg=45.0),
-Part(node="left wing01", pivot=( 16.0, 0.0, 5.0), axis=(0.0, 1.0, 0.0), angle_deg=-45.0),
+Part(node="left wing",   pivot=(-0.16, 0.0, 0.05), axis=(0.0, 1.0, 0.0), angle_deg=45.0),
+Part(node="left wing01", pivot=( 0.16, 0.0, 0.05), axis=(0.0, 1.0, 0.0), angle_deg=-45.0),
 ```
+
+⚠️ **These are SHIP units** (the code's actual values since `fd6d0c60`), the same
+frame `PART_BOXES` and subsystem mounts use — a wingtip hardpoint is authored at
+`x = 1.008`, not `100.8`. The rig is converted to MODEL (raw NIF) units, a factor
+of 100 larger, **only** at the one C++ call site,
+`host_loop._sync_ship_articulation`, via `MODEL_TO_SHIP`. This section is the
+TUNING reference: an earlier draft printed the model-units figures (`±16, 0, 5`)
+here, which is a 100x error if copied into a live edit — exactly the mix-up that
+made part attribution silently never fire once (see `part_severance`'s module
+docstring). Tune from the ship-units numbers above.
 
 Angle **signs are load-bearing** and shipped wrong on the first pass: rotating
 right-handed about +Y, a positive angle lifts the port wing and *sinks* the
@@ -350,8 +360,8 @@ parented).
 ### Why this is nearly free
 
 **The articulation pivot IS the break point.** Phase 1 already authors
-`(±16, 0, 5)` as the BoP's wing hinge — the point the wing rotates about is
-exactly the point it should shear at. No new authored data.
+`(±0.16, 0, 0.05)` (ship units) as the BoP's wing hinge — the point the wing
+rotates about is exactly the point it should shear at. No new authored data.
 
 **Damage attribution comes from §4.2.** The proximity-with-margin rule that
 assigns hardpoints to parts assigns *hits* to parts by the same measure, so
@@ -578,10 +588,17 @@ handling; cannot be predicted from reading.
 so per-part bakes *should* sit further from the ~96³ collapse threshold. That is
 reasoning, not a measurement.
 
-**OQ-4 — Articulation vs severance interaction.** A severed articulated part must
-stop being driven by the pose. **Now reachable** (OQ-1 resolved: a BoP is
-breakable), so this is live work rather than theoretical, and must be handled in
-phase 2 — a detached wing still receiving a pose is a visible bug.
+**OQ-4 — RESOLVED 2026-09-23 (final review, finding C1).** A severed articulated
+part was still being driven by the pose: `host_loop._sync_ship_articulation`
+pushed a rotation for every rigged part on every deflection change with no
+regard for severance, overwriting the same `node_overrides` slot
+`set_instance_node_hidden` used to hide it — a shot-off wing snapped back onto
+the hull and re-animated with the good one, and a subsequent `theta == 0` push
+erased the hide permanently. Fixed by consulting `part_severance.is_detached`
+in both `_sync_ship_articulation` (skip the part entirely) and
+`articulation.part_transform_point` (leave a detached part's mount point
+unmoved). See `tests/unit/test_part_severance.py`'s render-sync regression
+test.
 
 **OQ-5 — Should `Port Warp`/`Star Warp` be wing-parented by hand?** The margin
 rule conservatively assigns them to the body. Physically they are on the wings.
@@ -620,3 +637,37 @@ and affordable, but not free.
 one around X ≈ 38–45, which would mean a mid-wing shot could shed the outboard
 section (and the cannon with it). The sampling was too coarse to trust — 8 of 14
 slabs were skipped. Needs a finer measurement before anything relies on it.
+
+**OQ-11 — Added 2026-09-23 (final review, finding G1). NPC ships never
+articulate.** `ShipClass.__init__` defaults `_alert_level` to `RED_ALERT` and
+nothing ever calls `SetAlertLevel` on an NPC — only the player's alert-level
+keybind and `engine.dev_missions.combat_stress` do. Since
+`articulation.deflection_target` returns 0.0 (wings down / armed) forever for
+any hull that never leaves RED, the whole feature is reachable **only on a
+player-flown Bird of Prey**. An AI-flown BoP would sit with its wings down for
+its entire life — plausible in combat, but never actually driven by an alert
+transition the way the mechanic is designed around. Unresolved: whether NPC
+alert level should ever change (a broader gap than articulation alone), or
+whether a BoP-specific AI hook should drive its wings independently of
+`_alert_level`.
+
+**OQ-12 — Added 2026-09-23 (final review, finding G2). Node overrides are
+honoured in exactly one draw path.** `Instance::node_overrides` (articulation's
+rotations and severance's hides) is read by `draw_model` only. Eight other
+places walk `nodes[i].local_transform` statically and never see an override,
+notably:
+
+- `cloak_pass.cc` — the Bird of Prey is BC's one cloaking ship, so cloaking with
+  wings up snaps them back to the rest (down) pose for the whole cloak fade, and
+  a severed wing grows back for it.
+- the shadow depth pre-pass — a severed or deflected wing casts its REST-pose
+  shadow.
+- `breach_pass.cc` — a hull breach on an articulated/severed ship is drawn
+  against the wrong wing pose.
+- `ray_trace.cc` — weapon impact points resolve against rest-pose geometry, so
+  a shot at a deflected or severed wing can trace against where the wing
+  *would* be at rest rather than where it is drawn.
+
+None of these were touched by this fix wave. Fixing them generally means
+threading the same `node_overrides` pointer `draw_model` already takes into
+each of these paths, mirroring §3.3's Phase 1 approach.

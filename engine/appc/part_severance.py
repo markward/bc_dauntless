@@ -51,7 +51,9 @@ ATTRIBUTION_MARGIN = 5.0
 # on the way in. Anything else calling part_for_point must already hold ship
 # units -- `_destroy_subsystems_on_part` does, which is exactly why the
 # subsystem half worked while the damage half never did.
-MODEL_TO_SHIP = 0.01          # = BC_MODEL_SCALE (host_loop)
+MODEL_TO_SHIP = 0.01          # = BC_MODEL_SCALE (host_loop). Multiply a
+                               # MODEL-units value by this to reach SHIP units
+                               # -- record_hit does exactly that, below.
 
 
 def _distance_to_box(point, box) -> float:

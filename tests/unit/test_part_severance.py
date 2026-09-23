@@ -245,8 +245,10 @@ def test_record_hit_takes_MODEL_units_not_ship_units():
     ps.record_hit(ship, None, (80.0, 0.0, -40.0), 100.0)     # MODEL units
     assert ps.damage_on(ship, "left wing01") == pytest.approx(100.0)
 
-    # The SAME numbers read as ship units are deep inside the hull, where the
-    # boxes overlap -- ambiguous, so they must attribute to nothing.
+    # The SAME numbers read as ship units, converted a second time by
+    # MODEL_TO_SHIP, land deep inside the hull -- inside the BODY box only
+    # (not ambiguous), which is not in DETACHABLE, so they must attribute
+    # to nothing.
     other = _Ship()
     ps.record_hit(other, None, (0.8, 0.0, -0.4), 100.0)
     assert ps.damage_on(other, "left wing01") == 0.0, (

@@ -10,8 +10,8 @@ restore damage state around a cutscene.
 
 Policy: in Dauntless damage is always on, so all three default enabled, but the
 setters are honoured so a mission can still suppress damage for a cutscene.
-Breakable components additionally require a hull larger than a Cardassian
-the maximum combat carve radius.
+Breakable components additionally require a hull larger than the maximum
+combat carve radius.
 """
 import pytest
 
