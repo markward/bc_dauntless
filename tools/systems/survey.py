@@ -64,6 +64,17 @@ class SurveyedRegion:
     # unauthored, not zero). extra_nebulae counts MetaNebula_Create calls
     # beyond the first -- only Multi5 (not a region) has any.
     nebula: dict | None = None
+    # Unit forward of the BRIGHTEST directional light this region authors --
+    # "where the light shines", so it points FROM the star TOWARD the region.
+    # The layout places the region along it, which is what makes BC's own
+    # lighting agree with where we put the star. None when a region authors no
+    # directional at all. Fills are ignored: only the key light says where the
+    # artists thought the star was.
+    key_light_dir: tuple | None = None
+    # True when the system's CreateSystemMenu names this set -- i.e. it is a
+    # place BC actually lets the player go. False for orphans still in the
+    # tree: Vesuvi1 is the only one across all 32 systems.
+    menu_listed: bool = True
 
 
 @dataclass
@@ -204,6 +215,67 @@ def _nebula(text: str):
     }
 
 
+_DIR_LIGHT = re.compile(
+    r'kForward\s*=\s*App\.TGPoint3\(\)\s*\n\s*kForward\.SetXYZ\(([^)]*)\)'
+    r'[\s\S]{0,400}?ConfigDirectionalLight\(([^)]*)\)')
+_MENU_CALL = re.compile(r'CreateSystemMenu\((.*?)\)', re.DOTALL)
+
+
+def _key_light(text: str):
+    """Unit forward of the brightest ConfigDirectionalLight in a region script.
+
+    BC builds a light by aiming a LightPlacement (kForward / AlignToVectors)
+    and then calling ConfigDirectionalLight(r, g, b, dimmer) on it, so the
+    forward that belongs to a light is the one immediately preceding its
+    Config call. A region may author several -- Vesuvi 5 has a key at 0.7 and
+    a fill at 0.3 -- and only the brightest is evidence about the star.
+
+    None when the region authors no directional at all.
+    """
+    best = None
+    for m in _DIR_LIGHT.finditer("\n".join(_uncommented(text))):
+        parts = _split_top_level(m.group(1))
+        if len(parts) != 3:
+            continue
+        try:
+            fwd = tuple(_eval_num(p) for p in parts)
+            dimmer = _eval_num(_split_top_level(m.group(2))[3])
+        except (ValueError, IndexError, SyntaxError, NameError, ZeroDivisionError):
+            continue
+        if best is None or dimmer > best[0]:
+            best = (dimmer, fwd)
+    if best is None:
+        return None
+    length = math.sqrt(sum(c * c for c in best[1]))
+    if length <= 0.0:
+        return None
+    return tuple(c / length for c in best[1])
+
+
+def _menu_sets(system: str) -> set:
+    """The set names this system's CreateSystemMenu actually offers.
+
+    The call is CreateSystemMenu(display_name, default, *places). A system with
+    several places lists them after the default; a SINGLE-place system passes
+    only the default and no list at all -- Riha is the one instance -- so
+    reading the tail arguments alone would mark its only place unlisted.
+
+    Empty when the head script cannot be read, which the caller must treat as
+    "no opinion" rather than "nothing is listed".
+    """
+    head = _systems_dir() / system / f"{system}.py"
+    if not head.is_file():
+        return set()
+    m = _MENU_CALL.search(_read(head))
+    if not m:
+        return set()
+    args = [a.strip().strip('"').strip("'") for a in m.group(1).split(",")]
+    if len(args) < 2:
+        return set()
+    tail = {a.split(".")[-1] for a in args[2:] if a}
+    return tail or {args[1].split(".")[-1]}
+
+
 def _bodies(static_text: str, placements: dict) -> tuple:
     """(bodies, waypoint names consumed by bodies)."""
     bodies, used = [], set()
@@ -301,6 +373,7 @@ def system_names() -> list:
 def survey_system(system: str) -> SurveyedSystem:
     d = _systems_dir() / system
     result = SurveyedSystem(name=system)
+    listed = _menu_sets(system)
     for path in sorted(d.glob("*.py")):
         stem = path.stem
         if stem in ("__init__", system) or stem.endswith("_S"):
@@ -329,6 +402,10 @@ def survey_system(system: str) -> SurveyedSystem:
             content_extent_gu=extent,
             player_start_gu=placements.get("Player Start", (0.0, 0.0, 0.0)),
             nebula=nebula,
+            key_light_dir=_key_light(text),
+            # An unreadable or menu-less head script yields an empty set, which
+            # must not silently unlist every region in the system.
+            menu_listed=(stem in listed) if listed else True,
         ))
     result.regions.sort(key=lambda r: (r.ordinal is None, r.ordinal or 0, r.set_name))
     return result

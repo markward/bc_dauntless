@@ -217,3 +217,66 @@ def test_the_bc_profiles_match_what_the_sdk_actually_says():
         for key in expected:
             assert region.nebula[key] == pytest.approx(expected[key]), \
                 f"{profile}.{key} does not match {region.set_name}"
+
+
+# ── The key directional light, and BC's own menu listing ────────────────────
+# A region's BEARING from its star is derived from BC's key light, so that the
+# light the artists authored already points at the star. Today the generator
+# spreads regions on a golden angle, which puts the star a median 80.7 deg from
+# where BC lit the scene -- and up to 178.8 deg, directly behind it.
+
+def test_the_key_light_is_the_brightest_directional():
+    """A region may author several directionals -- a key and softer fills.
+    Only the brightest says where the artists put the star."""
+    text = (
+        'kThis = App.LightPlacement_Create("Fill", sSetName, None)\n'
+        'kForward = App.TGPoint3()\n'
+        'kForward.SetXYZ(1.000000, 0.000000, 0.000000)\n'
+        'kThis.ConfigDirectionalLight(1.000000, 1.000000, 1.000000, 0.300000)\n'
+        'kThis = App.LightPlacement_Create("Key", sSetName, None)\n'
+        'kForward = App.TGPoint3()\n'
+        'kForward.SetXYZ(0.000000, 1.000000, 0.000000)\n'
+        'kThis.ConfigDirectionalLight(0.600000, 0.600000, 0.800000, 0.700000)\n'
+    )
+    assert survey._key_light(text) == pytest.approx((0.0, 1.0, 0.0))
+
+
+def test_the_key_light_is_returned_normalised():
+    text = ('kForward = App.TGPoint3()\n'
+            'kForward.SetXYZ(3.000000, 4.000000, 0.000000)\n'
+            'kThis.ConfigDirectionalLight(1.0, 1.0, 1.0, 0.5)\n')
+    assert survey._key_light(text) == pytest.approx((0.6, 0.8, 0.0))
+
+
+def test_a_region_with_no_directional_light_has_no_key_light():
+    assert survey._key_light(
+        'kThis.ConfigAmbientLight(1.000000, 1.000000, 1.000000, 0.250000)\n') is None
+
+
+def test_the_real_regions_carry_their_authored_key_light():
+    """Belaruz 1 holds the brightest directional in the game: pure white at
+    full strength, pointing +Y."""
+    b1 = [r for r in survey_system("Belaruz").regions
+          if r.set_name == "Belaruz1"][0]
+    assert b1.key_light_dir == pytest.approx((0.0, 1.0, 0.0), abs=1e-3)
+
+    v5 = [r for r in survey_system("Vesuvi").regions
+          if r.set_name == "Vesuvi5"][0]
+    assert v5.key_light_dir is not None
+    assert abs(sum(c * c for c in v5.key_light_dir) - 1.0) < 1e-6
+
+
+def test_menu_listing_marks_the_places_bc_actually_offers():
+    """Vesuvi1 is an orphan: still in the tree, never listed. It must not take
+    an orbital slot ahead of Vesuvi4, BC's first listed place."""
+    vesuvi = {r.set_name: r.menu_listed for r in survey_system("Vesuvi").regions}
+    assert vesuvi["Vesuvi1"] is False
+    assert vesuvi["Vesuvi4"] is True and vesuvi["Vesuvi5"] is True
+
+
+def test_a_single_place_system_lists_its_only_place():
+    """CreateSystemMenu("Riha", "Systems.Riha.Riha1") passes a default and no
+    list at all. The default IS the place -- reading only the tail arguments
+    marks every single-place system unlisted, which it is not."""
+    riha = {r.set_name: r.menu_listed for r in survey_system("Riha").regions}
+    assert riha["Riha1"] is True
