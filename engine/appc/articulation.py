@@ -30,8 +30,12 @@ have to come from here.
 
 FRAME AND MATH. `pivot` and `axis` are in the part node's PARENT space. Scene
 Root is identity in every BC ship NIF, so that is just model space — raw NIF
-units, before the instance's natural scale. The override replaces the node's
-own local transform::
+units, before the instance's natural scale. `Part.pivot` itself, however, is
+AUTHORED and STORED in SHIP units (model / 100), matching `PART_BOXES` and
+subsystem mounts; it is converted to this raw-model frame only at the one C++
+call site, `host_loop._sync_ship_articulation`, via `MODEL_TO_SHIP` below.
+`axis` is a direction, not a point, so it is unit-agnostic and needs no such
+conversion. The override replaces the node's own local transform::
 
     local' = T(pivot) . R(axis, theta) . T(-pivot) . local
 

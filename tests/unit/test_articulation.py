@@ -194,3 +194,20 @@ def test_full_deflection_lifts_the_wing_tip_towards_horizontal(node, tip_x):
     assert new_z > tip_z, "wing must rise, not sink"
     # Tip ends up near the hinge height rather than merely nudged.
     assert abs(new_z - pz) < abs(tip_z - pz) * 0.35
+
+
+# ── Units ────────────────────────────────────────────────────────────────────
+
+def test_the_conversion_constant_matches_BC_MODEL_SCALE():
+    """`articulation.MODEL_TO_SHIP` is BC_MODEL_SCALE, duplicated rather than
+    imported from `part_severance.MODEL_TO_SHIP` (or from host_loop) on
+    purpose: this module and part_severance each convert a DIFFERENT
+    ship-units value across the SAME model/ship boundary at their own single
+    call site, and neither imports the other's conversion module for it. Do
+    not "fix" that by having one import the other's constant — pin this test
+    instead, so if host_loop's BC_MODEL_SCALE ever moves, this fails loudly
+    rather than the wing pivot going quietly stale relative to the hull it
+    is authored against. Mirrors
+    test_part_severance.py::test_the_conversion_constant_matches_BC_MODEL_SCALE."""
+    from engine import host_loop
+    assert articulation.MODEL_TO_SHIP == pytest.approx(host_loop.BC_MODEL_SCALE)
