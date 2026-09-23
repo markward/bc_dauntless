@@ -416,6 +416,98 @@ stump is the follow-up if it reads wrong at close range.
 
 ---
 
+## 5b. Phase 2b — authoring detachability in the SPV (NOT BUILT)
+
+Phase 2a's data is two hand-written dicts in `articulation.py`. This is where
+they are meant to end up, recorded here because it was an assumption carried in
+conversation rather than a plan.
+
+### What is derivable and what is not
+
+| | source |
+|---|---|
+| the part list | the NIF — named `NiNode` children of `Scene Root` |
+| **part AABBs** | **derivable** — a `model_part_bounds` binding gives these at runtime for every ship, no markup and no drift (OQ-9) |
+| **which parts detach** | **authored** — a genuine design decision |
+| threshold | authored, defaulting to 0.20 |
+
+So per ship the human act is: tick two parts, accept a default. Measuring
+geometry by hand — which is what the Bird of Prey actually cost — is busywork
+that should not survive.
+
+### A geometric heuristic CANNOT decide detachability
+
+Recorded so it is not re-derived. Define **clean %** as the share of a part's
+AABB lying inside no other part's AABB — the fraction of hits that can
+attribute to it. Measured across six stock hulls:
+
+| ship | part | clean % |
+|---|---|---|
+| Bird of Prey | `left wing` / `left wing01` | **94%** |
+| | `head` | 80% |
+| | `birdofprey` (body) | 43% |
+| Akira | `OuterWing02` / `OuterWing03` (nacelles) | **90%** |
+| | `Middle Wing` | 82% |
+| | `Saucer` | 78% |
+| | `Arm02` / `Arm03` | **30%** |
+| Warbird | `rom head` | 95% |
+| | `rom engine left` / `right` | 86–87% |
+| | `rom wing top left` / `right` | 60% |
+| Sovereign | `Mesh02` / `Mesh03` | 96% |
+| | `top o dish` | 93% |
+| | `Hull` | 74% |
+| Galaxy | `Ent-D Saucer Section` (sole part) | 100% |
+| Keldon | `hull top box` | 92% |
+| | **`wing left`** | **88%** |
+| | **`wing right`** | **59.5%** |
+
+The rule *"detachable = clean % ≥ 85% and not the largest part"* reproduces the
+hand-authored Bird of Prey and Akira answers **exactly** — and is nonetheless
+wrong. It was fitted to those two ships and fails on the next two:
+
+- **The Keldon's mirror-image wings score 88% and 59.5%.** Two identical parts,
+  opposite verdicts. That alone disqualifies the metric as a decision rule.
+- The Keldon would also shed `hull top box` (92%) and `tail mid` (89%) —
+  structural centre sections.
+- The Warbird would shed `rom head` (95%), the command prow, while EXCLUDING
+  both top wings (60%) — the parts one would actually want to shoot off.
+- The Sovereign would shed `top o dish` (93%), the deflector.
+
+Clean % measures **AABB tidiness**, not "is this an appendage". The two
+coincided twice by luck. Detachability is a design judgement and stays authored.
+
+### Clean % keeps a job — as a WARNING
+
+It does predict how a part will FEEL once marked. A part at 30% attributes only
+~30% of hits, so it takes ~3× the fire and reads as arbitrary. The SPV should
+say so at author time rather than let it be discovered live — which is how the
+Akira's arms would otherwise be found out.
+
+### The panel
+
+Over existing plumbing: `hardpoint_override_writer.py` and the SPV
+hardpoint-value editing (`2026-07-25-spv-hardpoint-value-override-editing-design.md`)
+already regenerate the machine-owned per-ship file. Detachability is a new
+panel on that, not new plumbing.
+
+1. `model_part_bounds` binding — parts and boxes at runtime.
+2. SPV panel — part list, detachable toggle, threshold, writing through the
+   existing override writer.
+3. Clean-% advisory on each part.
+
+### Ordering, deliberately
+
+**Author a second ship BY HAND first** (the Akira nacelles: 90% clean, and
+`Port Warp`/`Star Warp` resolve to them at a 5.7× margin, so losing one costs
+a warp engine). Only then build the binding and the panel.
+
+Building the editor before the second ship means designing a UI for a data
+shape that has been validated exactly once. The Bird of Prey alone did not
+reveal that boxes should be derived rather than authored; a second ship is what
+makes that obvious.
+
+---
+
 ## 6. Testing
 
 Phase 1 ships `tests/unit/test_articulation.py` (17 tests): rig shape, mirroring,
@@ -485,6 +577,13 @@ hull, authored per part, at **0.20**. Built as §5a. Still wants live eyes: the
 failure modes are "wings fall off in a skirmish" and "wings never come off", and
 neither is visible from a test. The number lives in `articulation.DETACHABLE`
 and tunes with no rebuild.
+
+**OQ-10 — Should detachability have a default at all?** Phase 2b keeps it
+authored per ship, so a hull nobody has marked up sheds nothing. That is safe
+and also means the feature is invisible on most of the fleet until someone does
+the work. Whether an unmarked ship should stay inert or get some conservative
+default is unresolved; §5b only establishes that a GEOMETRIC default cannot be
+trusted to pick the parts.
 
 **OQ-9 — Per-part AABBs are AUTHORED, not derived.** `model_bounds` returns
 unnamed per-shape spheres that cannot be mapped to a named node, so §5a's boxes
