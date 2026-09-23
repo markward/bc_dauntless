@@ -13,7 +13,14 @@
 Thirty-two system maps are checked in and nothing reads them. This makes one of
 them visible: standing anywhere in a system, you see that system — its real star
 in a consistent direction, its other worlds at their true bearings and distances,
-all of them real objects you can target and orbit, at the sizes the maps specify.
+at the sizes the maps specify.
+
+The world you are *at* is a real object in your own set, targeted and orbited
+exactly as BC does today, only twenty times larger and correspondingly further
+off. The other worlds are real objects in their own sets — persistent,
+simulating, available to missions — drawn into your sky at the right place. What
+this design does **not** claim is that you can reach across a region boundary
+and act on one; see "Cross-region interaction" below.
 
 It is general. There is no per-system code; a set resolves to a system through
 the checked-in maps or it does not, and anything that does not behaves exactly
@@ -41,7 +48,15 @@ including Ona 1 itself, because ×20 scaling pushed its framing distance to
 
 ## The far plane
 
-**Raise it from 5,000 GU to 450,000 GU.**
+**Raise it from 5,000 GU to 450,000 GU** — in **two** places, and only those two.
+
+| Camera | Today | After | Why |
+|---|---|---|---|
+| Exterior scene (`host_loop.py:9661`) | 5,000 | **450,000** | The view this design exists for. |
+| Bridge viewscreen (`VS_FAR`, `host_loop.py:5894`) | 5,000 | **450,000** | It renders the *same framing the exterior view shows*. Leaving it at 5,000 means the viewscreen clips a planet the main view draws. |
+| Bridge interior (`_BridgeCamera.FAR`, `host_loop.py:3359`) | 800 | **unchanged** | A room. Raising it would cost depth precision for nothing. |
+| Ship Property Viewer (`_cam.far`) | its own | **unchanged** | A hologram in isolation. |
+| Comm viewscreen (`_comm_camera_params`) | its own | **unchanged** | A face in a window. |
 
 The widest sightline in the game is **Itari, 420,676 GU** (73,618 km) — the
 greatest distance between any two bodies or anchors across all thirty-two maps.
@@ -130,16 +145,31 @@ than pictures, which §2 of the parent spec requires:
 > the Orbit command, `GetObject("Haven")`, hailable planets and the target list
 > working with zero changes.
 
-**`DeleteSet` is suppressed within a system.** Today `warp.py:_WarpDepartAction`
-destroys the set you leave. Within one system that must stop, or the bodies you
-can see cease to exist the moment you travel. This is engine rule E of the
-parent spec.
+**"Create" means BC's own path**, the one Set Course already uses: import
+`Systems/<System>/<Region>.py` and run its `Initialize()`, which calls
+`LoadPlacements` and the sibling `<Region>_S.py`'s `Initialize(pSet)`. Nothing
+is synthesized. A region created this way is indistinguishable from one the
+player warped into, which is what keeps missions, `GetObject` and NPC warp
+destinations working.
+
+**`DeleteSet` is suppressed on the warp-departure path only** —
+`warp.py:_WarpDepartAction`, which today destroys the set you leave. Within one
+system that must stop, or the bodies you can see cease to exist the moment you
+travel. This is engine rule E of the parent spec.
+
+It is **not** suppressed globally. `g_kSetManager.DeleteSet` keeps working for
+every other caller; a mission that deletes a set deliberately must still be
+able to. Suppression is a property of *departure*, not of the set manager.
 
 **Teardown is on leaving, and "leaving" means any set that is not this system's.**
 Arriving in another system's region tears the old one down and builds the new.
 Arriving somewhere that resolves to no system at all — the bridge, a QuickBattle
 arena, a multiplayer set — tears the old one down too and builds nothing. A
 system is never left resident behind a set that is not part of it.
+
+Teardown is the ordinary `DeleteSet` on each of the system's regions, preceded
+by the render teardown the warp path already performs. The two calls the parent
+spec separates stay separate; only *when* the second fires changes.
 
 **Missions are included.** A scripted mission loads its system like any other
 arrival. The sky is the real system whether you arrived by Set Course or because
@@ -167,6 +197,21 @@ Nothing is created, nothing is deleted, no model is swapped. A BC planet at
 538 GU with a 110 GU radius becomes the same object at ~6,000 GU with a 2,200 GU
 radius. That is §2's substitution, and it is what makes `GetObject`, hailing,
 the target list and Orbit keep working untouched.
+
+**Application happens at set creation, before anything render-realizes the
+body.** `_RenderState.planet_natural_scale` caches `GetRadius() / NIF_extent`
+once, at load. A radius written after that cache is populated leaves the planet
+drawn at its old size while every non-render system sees the new one — a split
+that would be very hard to diagnose from the picture. Apply the map as part of
+creating the region, not as a later pass over existing sets.
+
+**No map declares a removal.** §2 of the parent spec allows for bodies the map
+relocates being removed from their original set, "each a deliberate entry in the
+overrides block". No such entry exists: every ambiguous case — Vesuvi 5's Inyo
+and Mori, Beol 3's Kerry and Legare, Beol 2's Ohmine — was resolved by demoting
+the body to a moon *within its own region*, and the overrides carry only `notes`,
+`star` and `cloud` keys. No removal mechanism is built here. If one is ever
+needed it arrives with the first map that declares it.
 
 **Mission staging does not move with it.** A mission's authored waypoints are
 set-local and stay where BC put them, so a body that moves away from the origin
@@ -200,6 +245,45 @@ repositioning above, every region's sun occupies the same system-space point, so
 drawing one is correct and drawing eight is waste. This is the one place the
 celestial gathering below scopes to a single region rather than the system.
 
+### Moving the sun does not move the light
+
+This is the gap that nearly shipped. **The scene's directional light has no
+connection to the Sun object at all.** `Light.direction_world()`
+(`engine/appc/lights.py:48`) resolves the direction from its `LightPlacement`'s
+rotation — `GetWorldRotation().GetCol(1)` — and `aggregate_for_renderer(pSet, …)`
+collapses the *player's set's* light rig for the renderer. The Sun object
+contributes a disc in the sky and nothing else.
+
+So repositioning the star, on its own, changes the lighting by exactly nothing,
+and "lit by the same sun" would be false while looking plausible — every region
+would keep the light direction BC authored for it in isolation, which is the
+inconsistency this work exists to remove.
+
+**Rule: keep BC's colour and intensity, replace the direction.**
+
+- **Direction** becomes `normalize(region.anchor_gu)` — the star sits at the
+  system origin, the region at its anchor, so that is the direction the light
+  travels, which is what `direction_world()` means. Set it by
+  `AlignToVectors` on the placement, which `direction_world()` re-reads, rather
+  than by writing `_direction_world` (that field is only consulted for
+  placement-less lights).
+- **Colour and dimmer stay exactly as BC authored them.** They are not noise:
+  across the eighteen systems that author a star texture, the directional's
+  colour matches that texture in seventeen. That is the artists' intent about
+  what the star *is*, and the map's `star_class` was derived from it.
+
+**Where a region authors several directionals, only the brightest is aimed.**
+Vesuvi 5 carries a key at `(0.6, 0.6, 0.8) @ 0.7` and a fill at
+`(1, 1, 1) @ 0.3`; Belaruz 4 likewise. The key light is the star and becomes
+consistent; the fills are lighting craft and are left alone. This is a judgement,
+not a measurement — if the result reads wrong in the live pass, the alternative
+is to aim all of them, which is a one-line change.
+
+A consequence worth stating: **the light direction now varies between regions of
+the same system**, because each region sits at a different bearing from the star.
+That is the point. It is also the first time BC's planet art is lit from a
+direction its authors did not choose, which is one of the unknowns listed below.
+
 ## Gathering the celestial bodies
 
 `host_loop.py:4159`'s `_live_sets()` returns just the active set, so
@@ -221,10 +305,41 @@ above: every region's sun has been repositioned to the same system-space point,
 so `_iter_suns` stays scoped to the player's own region. Widening it would draw
 up to eight coincident stars.
 
-**Ships stay scoped to the active set.** That is what bounds the cost: a
-system's body count (~15 for the largest) rather than every resident region's
-traffic. Distant regions keep simulating — their AI runs and their mission state
-advances — they simply contribute no ships to the scene.
+**Ships stay scoped to the active set — `iter_ships` is not touched.** Only
+`_live_sets()`, and only for the two body iterators that read it. That is what
+bounds the cost: a system's body count (~15 for the largest) rather than every
+resident region's traffic. Distant regions keep simulating — their AI runs and
+their mission state advances — they simply contribute no ships to the scene.
+
+**A body's own set still owns it.** The shift above is applied when building
+render data, not by moving objects. `GetWorldLocation()` keeps returning the
+set-local position BC and the map agree on, so Orbit, mission scripts and the
+physics step all continue to see a body where its own set puts it. Only the
+picture is assembled across regions.
+
+### Cross-region interaction — undetermined, and deliberately so
+
+Simulation in this engine is already global: `iter_ships` walks every set, and
+only *rendering* is scoped to the player's. So the moment several regions are
+resident, objects in all of them are iterable — which raises a question this
+design does not answer.
+
+**What is settled:** the body in the player's own region is in the player's own
+set and behaves exactly as today — target, Orbit, range readout, `GetObject`,
+hails. That is the requirement BC already meets and this design must not break.
+
+**What is open:** whether a planet 93,000 GU away in a *different* set should
+appear in the target list, and what the contact/perception layer does with it.
+This design changes neither the target list nor `iter_ships`, so the behaviour
+will be whatever those already do with a distant object in a non-active set —
+which has never been exercised, because two space sets have never been resident
+at once.
+
+**This is a thing to look at in the first live pass, not to design blind.** If
+distant worlds flood the target list, the fix is a scope or range gate there;
+if they are absent, that is arguably correct until the hand-off exists to take
+you to them. Either way the answer should come from seeing it, and neither
+outcome blocks the picture, which is what this slice is for.
 
 ## Deliberately out of scope
 
