@@ -4228,8 +4228,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d /= dlen;
               if (!std::isfinite(max_dist) || max_dist <= 0.0f) return py::none();
 
+              // Trace against the pose the instance is DRAWN at, not its
+              // rest pose. Without &inst->node_overrides a raised Bird of Prey
+              // wing is visible but unhittable, and -- because
+              // combat._resolve_impact_point runs this trace and
+              // part_severance attributes damage from the point it returns --
+              // a wing shot while raised would accumulate nothing and never
+              // come off.
               auto hit = renderer::ray_trace_instance(
-                  *model, inst->world, o, d, max_dist);
+                  *model, inst->world, o, d, max_dist, &inst->node_overrides);
               if (!hit) return py::none();
               return py::make_tuple(
                   py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
@@ -4240,8 +4247,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("origin"),
           py::arg("direction"),
           py::arg("max_dist"),
-          "Ray-cast a world-space ray against an instance's loaded mesh. "
-          "origin and direction are in world coordinates; direction is "
+          "Ray-cast a world-space ray against an instance's loaded mesh, at "
+          "the pose it is DRAWN at -- the instance's node overrides "
+          "(articulation / severance) are applied, so a moved part is hit "
+          "where it appears and a severed one cannot be hit at all. origin "
+          "and direction are in world coordinates; direction is "
           "auto-normalised. Returns ((point), (normal), t) on hit or None "
           "on miss. t is world-space distance from origin.");
 

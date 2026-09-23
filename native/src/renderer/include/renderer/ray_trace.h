@@ -2,6 +2,7 @@
 #pragma once
 
 #include <optional>
+#include <unordered_map>
 #include <glm/glm.hpp>
 
 namespace assets { struct Model; }
@@ -31,11 +32,26 @@ std::optional<float> intersect_triangle(
 /// Performs a world-space bounding-sphere coarse reject first; models whose
 /// bounding sphere the ray segment misses return std::nullopt immediately.
 /// The returned normal is flipped so dot(normal, direction) <= 0.
+/// `node_overrides` (nullptr or empty = none) is the instance's articulation /
+/// severance map — the SAME map every draw pass composes through, so what you
+/// can hit matches what you can see. A triangle belonging to an overridden node
+/// is tested through that node's override instead of its baked rest position; a
+/// SEVERED part (the zero matrix) drops out entirely and cannot be hit at all.
+///
+/// This matters beyond cosmetics: `combat.py`'s `_resolve_impact_point` runs
+/// this trace for every weapon hit, and part-severance attributes damage from
+/// the point it returns. A raised wing that traced to the rest pose would
+/// accumulate no damage and never come off.
+///
+/// Costs nothing when absent, which is the normal case: a Bird of Prey's rest
+/// pose IS its combat pose (wings down = armed), so combat traces with an empty
+/// map.
 std::optional<RayHit> ray_trace_instance(
     const assets::Model& model,
     const glm::mat4& instance_world,
     glm::vec3 origin,
     glm::vec3 direction,
-    float max_dist);
+    float max_dist,
+    const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
 
 }  // namespace renderer

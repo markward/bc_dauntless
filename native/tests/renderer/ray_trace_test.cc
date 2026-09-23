@@ -3,6 +3,7 @@
 #include <optional>
 #include <limits>
 #include <random>
+#include <unordered_map>
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -78,6 +79,122 @@ assets::Model single_triangle_model(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2) {
 }
 
 }  // namespace
+
+namespace {
+
+// Root (no geometry) + a child holding one triangle at x = +10, so an
+// override on the child is distinguishable from one on the root, and the
+// moved and rest positions are far apart.
+assets::Model root_plus_movable_child() {
+    assets::Model m;
+    m.root_node = 0;
+    m.nodes.push_back(assets::Node{
+        .name = "root", .parent_index = -1,
+        .local_transform = glm::mat4(1.0f),
+    });
+    m.nodes.push_back(assets::Node{
+        .name = "wing", .parent_index = 0,
+        .local_transform = glm::translate(glm::mat4(1.0f),
+                                          glm::vec3(10.0f, 0.0f, 0.0f)),
+        .meshes = {0},
+    });
+    assets::MeshCpu cpu;
+    cpu.vertices.push_back({.position = glm::vec3(-1, -1, 0)});
+    cpu.vertices.push_back({.position = glm::vec3(1, -1, 0)});
+    cpu.vertices.push_back({.position = glm::vec3(0, 1, 0)});
+    cpu.indices = {0u, 1u, 2u};
+    assets::Mesh mesh;
+    mesh.set_cpu_data(std::move(cpu));
+    m.meshes.push_back(std::move(mesh));
+    return m;
+}
+
+}  // namespace
+
+// -- Node overrides: what you SEE must be what you HIT ------------------
+//
+// Every render pass composes a hull through Instance::node_overrides, so a
+// Bird of Prey's raised wing is DRAWN where the override puts it. The trace
+// walked the rest pose, so a shot aimed at the wing you can see resolved
+// against where that wing sits when it is DOWN.
+//
+// That is not cosmetic: combat.py's _resolve_impact_point runs this trace to
+// get the hit point, and part_severance attributes damage from it. A raised
+// wing that traces to the body accumulates nothing and never comes off.
+
+TEST(RayTraceOverrides, AnEmptyMapIsTheRestPose) {
+    // The overwhelmingly common case, and the one that must not change: a
+    // BoP's rest pose IS its combat pose (wings down = armed), so combat
+    // almost always traces with no overrides at all.
+    auto m = root_plus_movable_child();
+    const std::unordered_map<int, glm::mat4> none;
+    auto hit = renderer::ray_trace_instance(
+        m, glm::mat4(1.0f), glm::vec3(10, 0, -5), glm::vec3(0, 0, 1), 100.0f,
+        &none);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_NEAR(hit->point.x, 10.0f, 1e-4f);
+}
+
+TEST(RayTraceOverrides, NullptrMatchesAnEmptyMap) {
+    auto m = root_plus_movable_child();
+    auto a = renderer::ray_trace_instance(
+        m, glm::mat4(1.0f), glm::vec3(10, 0, -5), glm::vec3(0, 0, 1), 100.0f,
+        nullptr);
+    const std::unordered_map<int, glm::mat4> none;
+    auto b = renderer::ray_trace_instance(
+        m, glm::mat4(1.0f), glm::vec3(10, 0, -5), glm::vec3(0, 0, 1), 100.0f,
+        &none);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+    EXPECT_NEAR(a->t, b->t, 1e-6f);
+}
+
+TEST(RayTraceOverrides, AMovedPartIsHitWhereItIsDRAWN) {
+    // THE POINT. Move the child from x = +10 to x = -10 and aim at -10.
+    auto m = root_plus_movable_child();
+    std::unordered_map<int, glm::mat4> ov;
+    ov[1] = glm::translate(glm::mat4(1.0f), glm::vec3(-10.0f, 0.0f, 0.0f));
+
+    auto hit = renderer::ray_trace_instance(
+        m, glm::mat4(1.0f), glm::vec3(-10, 0, -5), glm::vec3(0, 0, 1), 100.0f,
+        &ov);
+
+    ASSERT_TRUE(hit.has_value()) << "the wing must be hittable where it is drawn";
+    EXPECT_NEAR(hit->point.x, -10.0f, 1e-4f);
+}
+
+TEST(RayTraceOverrides, AMovedPartIsNOTHitWhereItUsedToBe) {
+    // The other half, and the one a weak test would miss: the rest position
+    // must become empty space, or a shot at nothing would still damage the
+    // wing.
+    auto m = root_plus_movable_child();
+    std::unordered_map<int, glm::mat4> ov;
+    ov[1] = glm::translate(glm::mat4(1.0f), glm::vec3(-10.0f, 0.0f, 0.0f));
+
+    auto hit = renderer::ray_trace_instance(
+        m, glm::mat4(1.0f), glm::vec3(10, 0, -5), glm::vec3(0, 0, 1), 100.0f,
+        &ov);
+
+    EXPECT_FALSE(hit.has_value())
+        << "the wing's REST position must be empty once it has moved";
+}
+
+TEST(RayTraceOverrides, ASeveredPartCannotBeHitAtAll) {
+    // A hidden part is the ZERO matrix (set_instance_node_hidden), which
+    // collapses its subtree to a point. It must vanish from the trace exactly
+    // as it vanishes from every draw pass -- you cannot shoot a wing that is
+    // no longer there.
+    auto m = root_plus_movable_child();
+    std::unordered_map<int, glm::mat4> ov;
+    ov[1] = glm::mat4(0.0f);
+
+    for (float x : {10.0f, 0.0f, -10.0f}) {
+        auto hit = renderer::ray_trace_instance(
+            m, glm::mat4(1.0f), glm::vec3(x, 0, -5), glm::vec3(0, 0, 1),
+            100.0f, &ov);
+        EXPECT_FALSE(hit.has_value()) << "severed part still hit at x = " << x;
+    }
+}
 
 TEST(RayTraceInstance, ReturnsHitOnSingleTriangleAtKnownPoint) {
     auto m = single_triangle_model({-1, -1, 0}, {1, -1, 0}, {0, 1, 0});

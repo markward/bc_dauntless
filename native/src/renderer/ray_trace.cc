@@ -1,5 +1,7 @@
 // native/src/renderer/ray_trace.cc
 #include "renderer/ray_trace.h"
+#include <renderer/node_anim.h>
+#include <cmath>
 
 #include <algorithm>
 #include <cassert>
@@ -48,7 +50,14 @@ struct WorldSphere { glm::vec3 center; float radius; };
 /// transformed the RAY into each mesh's local space instead -- one matrix
 /// inverse per mesh per ray -- and could not share an acceleration structure
 /// across meshes, because every mesh sat in a different space.
-struct TraceTri { glm::vec3 v0, v1, v2; };
+struct TraceTri {
+    glm::vec3 v0, v1, v2;
+    /// Model node this triangle was baked from. Needed only when an instance
+    /// carries node overrides: the triangle is then in the WRONG place (it was
+    /// baked at the rest pose) and must be re-tested through that node's
+    /// override instead. -1 means unknown, which is treated as never overridden.
+    int node = -1;
+};
 
 /// Binary BVH node over TraceAccel::tris, in a flat array.
 /// Internal: count == 0, left child at index + 1, right child at `right`.
@@ -208,6 +217,7 @@ const TraceAccel& ensure_trace_accel(const assets::Model& model) {
                 if (idx[k] >= verts.size() || idx[k + 1] >= verts.size() ||
                     idx[k + 2] >= verts.size()) continue;
                 TraceTri t;
+                t.node = static_cast<int>(ni);
                 t.v0 = glm::vec3(nw * glm::vec4(verts[idx[k + 0]].position, 1.0f));
                 t.v1 = glm::vec3(nw * glm::vec4(verts[idx[k + 1]].position, 1.0f));
                 t.v2 = glm::vec3(nw * glm::vec4(verts[idx[k + 2]].position, 1.0f));
@@ -308,19 +318,40 @@ std::optional<RayHit> ray_trace_instance(
     const glm::mat4& instance_world,
     glm::vec3 origin,
     glm::vec3 direction,
-    float max_dist)
+    float max_dist,
+    const std::unordered_map<int, glm::mat4>* node_overrides)
 {
     if (model.nodes.empty() || model.meshes.empty()) return std::nullopt;
+
+    // Overridden nodes (articulation / severance). The accel's triangles were
+    // baked at the REST pose, so any triangle belonging to one of these is in
+    // the wrong place: it is skipped in the BVH walk below and re-tested
+    // through its node's override afterwards.
+    //
+    // A BoP's rest pose IS its combat pose (wings down = armed), so this map
+    // is empty for essentially all of combat and the whole feature costs one
+    // null check on the hot path.
+    const bool has_ov = (node_overrides != nullptr && !node_overrides->empty());
 
     const TraceAccel& accel = ensure_trace_accel(model);
     if (accel.tris.empty() || accel.nodes.empty()) return std::nullopt;
 
-    const WorldSphere sphere =
-        compute_world_sphere(accel.aabb_center, accel.aabb_half, instance_world);
-    if (sphere.radius > 0.0f &&
-        !segment_hits_sphere(origin, direction, max_dist,
-                             sphere.center, sphere.radius)) {
-        return std::nullopt;
+    // Coarse reject, SKIPPED when the instance has node overrides: the
+    // accel's AABB was measured from REST-pose triangles, so a part that has
+    // moved outside it would be rejected before any triangle was tested. That
+    // is not hypothetical -- it is precisely a raised Bird of Prey wing, whose
+    // tip travels ~0.85 ship units from where the rest AABB expects it.
+    // Dropping the optimisation costs a full BVH walk on a hull that is both
+    // rigged and away from rest, i.e. one ship class, out of combat.
+    if (!has_ov) {
+        const WorldSphere sphere =
+            compute_world_sphere(accel.aabb_center, accel.aabb_half,
+                                 instance_world);
+        if (sphere.radius > 0.0f &&
+            !segment_hits_sphere(origin, direction, max_dist,
+                                 sphere.center, sphere.radius)) {
+            return std::nullopt;
+        }
     }
 
     // ONE inverse for the whole model, not one per mesh: the triangles were
@@ -351,6 +382,8 @@ std::optional<RayHit> ray_trace_instance(
         if (n.count > 0) {
             for (int i = n.first; i < n.first + n.count; ++i) {
                 const TraceTri& t = accel.tris[i];
+                if (has_ov && t.node >= 0 &&
+                    node_overrides->count(t.node)) continue;  // moved: see below
                 const auto t_local = intersect_triangle(
                     o_local, d_unit, max_dist_local, t.v0, t.v1, t.v2);
                 if (!t_local || *t_local >= best_t) continue;
@@ -370,10 +403,80 @@ std::optional<RayHit> ray_trace_instance(
         }
     }
 
-    if (best_tri < 0) return std::nullopt;
+    // ── Moved parts ─────────────────────────────────────────────────────
+    // Triangles of an overridden node were skipped above. Re-test them here,
+    // TRANSFORMING THE RAY rather than the geometry: for node n,
+    //
+    //     M = posed_world[n] * inverse(rest_world[n])
+    //
+    // maps a baked (rest) triangle to where that node is now, so the ray goes
+    // the other way through inverse(M) and the baked triangles are tested
+    // untouched. No geometry is rebuilt and the shared per-MODEL accel is
+    // never re-baked, which is what keeps a squadron of Birds of Prey costing
+    // one acceleration structure.
+    //
+    // A linear sweep, not a second BVH: the BVH build reorders `tris`, so a
+    // node's triangles are not contiguous and cannot be indexed as a range.
+    // This path runs only for a hull that HAS overrides and is not at rest —
+    // out of combat, on one ship class — so the sweep is microseconds and a
+    // per-part acceleration structure would be machinery for nothing.
+    glm::vec3 moved_normal_local(0.0f);
+    bool moved_hit = false;
+    if (has_ov) {
+        const std::vector<glm::mat4> rest = build_node_world(model);
+        const std::vector<glm::mat4> posed =
+            compose_node_worlds(model, glm::mat4(1.0f), *node_overrides);
+        std::unordered_map<int, glm::mat4> to_rest;   // inverse(M) per node
+        for (const auto& kv : *node_overrides) {
+            const int n = kv.first;
+            if (n < 0 || n >= static_cast<int>(rest.size())) continue;
+            // A SEVERED part is the zero matrix: posed collapses to a point and
+            // is singular. It is drawn as nothing, so it must trace as nothing —
+            // leaving it out of `to_rest` drops its triangles entirely.
+            if (std::fabs(glm::determinant(posed[n])) < 1e-12f) continue;
+            to_rest[n] = rest[n] * glm::inverse(posed[n]);
+        }
+        for (const TraceTri& mt : accel.tris) {
+            if (mt.node < 0) continue;
+            auto it = to_rest.find(mt.node);
+            if (it == to_rest.end()) continue;
+            const glm::mat4& inv_m = it->second;
+            const glm::vec3 o_n = glm::vec3(inv_m * glm::vec4(o_local, 1.0f));
+            const glm::vec3 d_n = glm::vec3(inv_m * glm::vec4(d_unit, 0.0f));
+            const float d_n_len = glm::length(d_n);
+            if (d_n_len < 1e-12f) continue;
+            const glm::vec3 d_n_unit = d_n / d_n_len;
+            const float limit = (best_tri >= 0 || moved_hit)
+                                    ? best_t * d_n_len : max_dist_local * d_n_len;
+            const auto t_n = intersect_triangle(o_n, d_n_unit, limit,
+                                                mt.v0, mt.v1, mt.v2);
+            if (!t_n) continue;
+            // Back to model units: the ray was scaled by d_n_len going in.
+            const float t_model = *t_n / d_n_len;
+            if (t_model >= best_t) continue;
+            best_t = t_model;
+            best_tri = -1;                 // the winner is a MOVED triangle
+            moved_hit = true;
+            // Normal in the node's own frame, carried back out through M.
+            const glm::mat3 nm = glm::transpose(glm::mat3(inv_m));
+            moved_normal_local = glm::normalize(
+                nm * glm::normalize(glm::cross(mt.v1 - mt.v0, mt.v2 - mt.v0)));
+        }
+    }
+
+    if (best_tri < 0 && !moved_hit) return std::nullopt;
+
+    const glm::vec3 hit_local = o_local + d_unit * best_t;
+    if (moved_hit) {
+        const glm::mat3 normal_matrix_m = glm::transpose(glm::mat3(world_inv));
+        glm::vec3 n_world = glm::normalize(normal_matrix_m * moved_normal_local);
+        if (glm::dot(n_world, direction) > 0.0f) n_world = -n_world;
+        return RayHit{glm::vec3(instance_world * glm::vec4(hit_local, 1.0f)),
+                      n_world,
+                      best_t / d_local_len};
+    }
 
     const TraceTri& t = accel.tris[best_tri];
-    const glm::vec3 hit_local = o_local + d_unit * best_t;
     const glm::mat3 normal_matrix = glm::transpose(glm::mat3(world_inv));
     glm::vec3 best_normal = glm::normalize(
         normal_matrix * glm::normalize(glm::cross(t.v1 - t.v0, t.v2 - t.v0)));
