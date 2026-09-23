@@ -21,7 +21,13 @@ namespace scenegraph {
 inline constexpr float kHullCarveStrengthIso       = 150.0f;   // absorbed-hull before geometry starts breaking
 inline constexpr float kHullCarveRadiusAtIso       = 0.03f;    // GU at the iso (emerges small)
 inline constexpr float kHullCarveRadiusPerStrength = 0.0006f;  // GU per strength above iso
-inline constexpr float kHullCarveRadiusMaxGu       = 0.3f;     // clamp (a heavily-worked breach)
+// Tuned 2026-09-23 from 0.3f (live: holes read far too large). 0.15 GU is
+// 26.25 m -- ~4% of a Galaxy's length, where 0.3 was ~8% and exceeded a whole
+// shuttle. NOTE this is now BELOW hull_carve.py's MIN_CARVE_RADIUS_GU (0.25),
+// the floor the CALLER applies to authored carves (wrecks, warp-core breach).
+// That inversion is deliberate and survives because the floor is applied
+// outside this function: a core breach tears a bigger hole than any weapon.
+inline constexpr float kHullCarveRadiusMaxGu       = 0.15f;    // clamp (a heavily-worked breach)
 
 /// Absolute carve radius (game units) for an accumulated field strength. 0 below
 /// the iso (invisible), then linear to a clamp. Pure; the caller multiplies by

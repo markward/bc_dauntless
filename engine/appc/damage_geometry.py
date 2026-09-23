@@ -37,16 +37,26 @@ __all__ = [
     "breakables_allowed_for",
 ]
 
-# A Cardassian Galor's bounding radius, MEASURED from its stock hull NIF
-# (238.1 model units x BC_MODEL_SCALE 0.01). Mark's rule: a ship breaks into
-# components only if it is larger than a Galor.
+# A hull must be meaningfully LARGER THAN THE THING CUTTING IT. Below roughly
+# four times the maximum combat carve radius (kHullCarveRadiusMaxGu, 0.15 GU in
+# native/.../hull_carve.h) a single worked breach spans the whole vehicle, and
+# "breaking into components" stops being meaningful -- such a hull is obliterated
+# rather than severed.
 #
-# The Nebula clears this by 1.5% (2.416), and how GetRadius should be derived is
-# itself an open question against the clean-room reference -- so
-# tests/unit/test_damage_geometry_flags.py pins the whole stock fleet either
-# side of this line. Change the constant and that test tells you exactly which
-# ships changed sides.
-BREAKABLE_MIN_RADIUS_GU = 2.381
+# Changed 2026-09-23 from 2.381 (a Cardassian Galor's measured radius). That
+# figure carried no technical rationale -- the comment here recorded it only as a
+# taste call -- and it excluded every small warship, the Bird of Prey included.
+# Deriving the floor from the carve curve instead admits the entire stock fleet
+# EXCEPT the Shuttle (0.141 GU), whose whole hull is a 5x6x4 voxel grid: far too
+# few cells for connectivity to yield a component worth spawning.
+#
+# Re-derive this if kHullCarveRadiusMaxGu moves.
+#
+# How GetRadius should be derived is itself an open question against the
+# clean-room reference, so tests/unit/test_damage_geometry_flags.py pins the
+# whole stock fleet either side of this line. Change the constant and that test
+# tells you exactly which ships changed sides.
+BREAKABLE_MIN_RADIUS_GU = 0.6
 
 # In Dauntless damage is always on.
 _DEFAULTS = {"damage": 1, "volume": 1, "breakable": 1}

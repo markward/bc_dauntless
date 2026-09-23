@@ -310,13 +310,21 @@ goes in ONE helper called from BOTH `realize_set_objects` and
 
 ## 7. Open questions
 
-**OQ-1 — The Bird of Prey cannot shed chunks at all.** `breakables_allowed_for`
-gates on `radius > BREAKABLE_MIN_RADIUS_GU = 2.381`; the BoP's extent (~136 NIF ×
-`BC_MODEL_SCALE` 0.01) puts it at **~1.4 GU**. So "shoot the wing off, lose the
-gun" cannot happen on a BoP however hardpoint parenting is done. Lowering the
-floor would make **every** small ship breakable — blast radius well beyond this
-feature, and it wants live eyes on how a small hull reads coming apart. Not
-decided here.
+**OQ-1 — RESOLVED 2026-09-23.** The Bird of Prey could not shed chunks at all:
+`breakables_allowed_for` gated on `radius > 2.381` (a Galor) and the BoP sits at
+~1.34 GU. That figure carried no technical rationale. The floor is now **0.6 GU**,
+derived from the carve curve — a hull must be meaningfully larger than the
+maximum combat carve (`kHullCarveRadiusMaxGu`). Five ships became breakable:
+BirdOfPrey, Freighter, CardFreighter, Marauder, Galor. Only the Shuttle
+(0.141 GU, a 5×6×4 voxel grid) stays out.
+
+Done alongside a **carve retune**, which is what makes the lower floor safe.
+Holes were opening on a Galaxy at 1% hull loss and maxing at 4%:
+`STRENGTH_PER_HULL` 1.0 → **0.25** (Python, no rebuild) and
+`kHullCarveRadiusMaxGu` 0.3 → **0.15 GU** (26.25 m, ~4% of a Galaxy's length).
+A Shuttle now needs 37% of its hull for a first hole, so it dies long before it
+can be meaningfully carved — the degenerate case disappears without a special
+case. ⚠️ **Not yet live-verified.**
 
 **OQ-2 — Seam hits mid-travel.** How a hit landing between wing and hull resolves
 when the wing is part-way through its travel is unknown. Expected to need
@@ -327,8 +335,9 @@ so per-part bakes *should* sit further from the ~96³ collapse threshold. That i
 reasoning, not a measurement.
 
 **OQ-4 — Articulation vs severance interaction.** A severed articulated part must
-stop being driven by the pose. Currently unreachable (OQ-1), so unspecified —
-but it must be settled before the floor changes.
+stop being driven by the pose. **Now reachable** (OQ-1 resolved: a BoP is
+breakable), so this is live work rather than theoretical, and must be handled in
+phase 2 — a detached wing still receiving a pose is a visible bug.
 
 **OQ-5 — Should `Port Warp`/`Star Warp` be wing-parented by hand?** The margin
 rule conservatively assigns them to the body. Physically they are on the wings.

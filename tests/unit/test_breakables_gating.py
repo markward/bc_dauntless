@@ -24,8 +24,10 @@ FLEET = {
     "Transport": 3.24, "KessokLight": 3.34, "Galaxy": 3.50, "Vorcha": 3.52,
     "Sovereign": 3.81, "CardHybrid": 4.96, "Warbird": 6.52, "KessokHeavy": 7.50,
 }
-BREAKABLE = {"Nebula", "Akira", "Ambassador", "Keldon", "Transport", "KessokLight",
-             "Galaxy", "Vorcha", "Sovereign", "CardHybrid", "Warbird", "KessokHeavy"}
+# Every stock hull EXCEPT the Shuttle, as of the 2026-09-23 floor change
+# (2.381 -- a Galor -- to 0.6, derived from kHullCarveRadiusMaxGu). The Shuttle
+# stays out because its whole hull is a 5x6x4 voxel grid.
+BREAKABLE = set(FLEET) - {"Shuttle"}
 
 
 @pytest.fixture(autouse=True)

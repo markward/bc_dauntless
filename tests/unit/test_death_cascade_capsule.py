@@ -52,7 +52,9 @@ def test_unbreakable_ship_never_queues_a_capsule(monkeypatch):
     queued = []
     monkeypatch.setattr(visible_damage, "queue_world_capsule",
                         lambda *a: queued.append(a))
-    _fire_once(_Ship(radius=2.38), roll=0)    # Galor
+    _fire_once(_Ship(radius=0.141), roll=0)   # Shuttle: the only hull below the
+                                              # gate since the 2026-09-23 floor
+                                              # change (2.381 -> 0.6)
     assert queued == []
 
 

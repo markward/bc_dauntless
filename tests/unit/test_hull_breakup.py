@@ -46,12 +46,24 @@ def _component(iid, cells, centroid, lo, hi):
             "main_body_cells": 1000}
 
 
-def test_a_galor_never_sheds(monkeypatch):
+def test_a_shuttle_never_sheds(monkeypatch):
+    """The Shuttle is the ONLY stock hull below the gate since 2026-09-23 (the
+    floor moved 2.381 -> 0.6). This used to be a Galor, which now sheds."""
     from engine.appc import hull_breakup
     monkeypatch.setattr(host_io, "hull_split_detached",
                         lambda iid, m: [_component(9, 500, (1, 0, 0), (0.5, -.5, -.5), (1.5, .5, .5))])
-    ship = _Ship(radius=2.38)                     # Galor: below the gate
+    ship = _Ship(radius=0.141)                    # Shuttle: below the gate
     assert hull_breakup.after_carve(ship, 11) == []
+
+
+def test_a_bird_of_prey_now_sheds(monkeypatch):
+    """The ship the floor was lowered FOR. A regression restoring the old 2.381
+    would leave every larger hull working while silently un-breaking this one."""
+    from engine.appc import hull_breakup
+    monkeypatch.setattr(host_io, "hull_split_detached",
+                        lambda iid, m: [_component(9, 500, (1, 0, 0), (0.5, -.5, -.5), (1.5, .5, .5))])
+    ship = _Ship(radius=1.335)                    # BirdOfPrey: above the gate
+    assert len(hull_breakup.after_carve(ship, 11)) == 1
 
 
 def test_a_severed_component_becomes_a_chunk(monkeypatch):
