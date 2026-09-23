@@ -30,6 +30,12 @@ Exactly two of the 90 regions carry a cloud, and they are the same two regions
 that carry no star and no planet. Both scripts are short enough to read whole;
 these are their complete contents.
 
+(Four SDK sets build a `MetaNebula`, not two. The other two are `Multi5_S.py`
+and `Multi6_S.py`, which never reach a map: the multiplayer arenas are single
+sets with no numbered children, so the survey finds no regions for them at all.
+They still matter as the only evidence that a file may hold **several**
+nebulae — Multi5 holds four — and that `SetupDamage` has a one-argument form.)
+
 | | **Vesuvi 4** | **Belaruz 1** |
 |---|---|---|
 | `MetaNebula_Create` colour | `155,90,185` — purple | `100,99,146` — blue-grey |
