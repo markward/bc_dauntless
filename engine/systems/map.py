@@ -24,6 +24,8 @@ from pathlib import Path
 class Appearance:
     kind: str = "nif"
     model: str = ""
+    star_class: str = ""
+    color: tuple | None = None
 
 
 @dataclass
@@ -43,6 +45,7 @@ class Region:
     anchor_gu: tuple
     radius_gu: float
     body_names: list = field(default_factory=list)
+    nebula: dict | None = None
 
 
 @dataclass
@@ -70,6 +73,22 @@ def to_json(m: SystemMap) -> str:
     return json.dumps(asdict(m), indent=2, sort_keys=False) + "\n"
 
 
+def _appearance_from_json(raw: dict) -> Appearance:
+    kwargs = dict(raw)
+    if kwargs.get("color") is not None:
+        kwargs["color"] = tuple(kwargs["color"])
+    return Appearance(**kwargs)
+
+
+def _nebula_from_json(raw: dict | None) -> dict | None:
+    if raw is None:
+        return None
+    return {
+        "color": tuple(raw["color"]),
+        "spheres": [tuple(sphere) for sphere in raw.get("spheres", [])],
+    }
+
+
 def from_json(text: str) -> SystemMap:
     raw = json.loads(text)
     bodies = [
@@ -79,7 +98,7 @@ def from_json(text: str) -> SystemMap:
             radius_gu=float(b["radius_gu"]),
             position_gu=tuple(b["position_gu"]),
             orbits=b.get("orbits"),
-            appearance=Appearance(**b.get("appearance", {})),
+            appearance=_appearance_from_json(b.get("appearance", {})),
             owner_region=b.get("owner_region"),
         )
         for b in raw.get("bodies", [])
@@ -90,6 +109,7 @@ def from_json(text: str) -> SystemMap:
             anchor_gu=tuple(r["anchor_gu"]),
             radius_gu=float(r["radius_gu"]),
             body_names=list(r.get("body_names", [])),
+            nebula=_nebula_from_json(r.get("nebula")),
         )
         for r in raw.get("regions", [])
     ]

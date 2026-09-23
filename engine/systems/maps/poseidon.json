@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Poseidon",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/moon.nif"
+        "model": "data/models/environment/moon.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Poseidon1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Poseidon",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/dryplanet.nif"
+        "model": "data/models/environment/dryplanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Poseidon2"
     }
@@ -61,7 +71,8 @@
       "radius_gu": 9749.155521206265,
       "body_names": [
         "Poseidon 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Poseidon2",
@@ -73,7 +84,8 @@
       "radius_gu": 17704.91469088136,
       "body_names": [
         "Poseidon 2"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

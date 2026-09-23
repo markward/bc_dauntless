@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Nepenthe",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/gasgiant.nif"
+        "model": "data/models/environment/gasgiant.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Nepenthe1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Nepenthe",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueRockyPlanet.nif"
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Nepenthe2"
     },
@@ -61,7 +71,9 @@
       "orbits": "Nepenthe",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PinkGasPlanet.nif"
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Nepenthe3"
     }
@@ -77,7 +89,8 @@
       "radius_gu": 13232.052052479074,
       "body_names": [
         "Nepenthe 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Nepenthe2",
@@ -89,7 +102,8 @@
       "radius_gu": 13900.0,
       "body_names": [
         "Nepenthe 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Nepenthe3",
@@ -101,7 +115,8 @@
       "radius_gu": 16900.0,
       "body_names": [
         "Nepenthe 3"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

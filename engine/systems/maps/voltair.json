@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "red",
+        "color": [
+          0.91,
+          0.35,
+          0.24
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Voltair",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PurplePlanet.nif"
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Voltair1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Voltair",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/DryPlanet.nif"
+        "model": "data/models/environment/DryPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Voltair2"
     }
@@ -61,7 +71,8 @@
       "radius_gu": 24290.792414923955,
       "body_names": [
         "Voltair 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Voltair2",
@@ -73,7 +84,8 @@
       "radius_gu": 27290.79241492395,
       "body_names": [
         "Voltair 2"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

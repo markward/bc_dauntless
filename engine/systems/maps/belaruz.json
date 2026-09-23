@@ -4,7 +4,7 @@
     {
       "name": "Belaruz",
       "display_name": "Belaruz",
-      "radius_gu": 9000.0,
+      "radius_gu": 2000.0,
       "position_gu": [
         0.0,
         0.0,
@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "brown_dwarf",
+        "color": [
+          0.42,
+          0.25,
+          0.18
+        ]
       },
       "owner_region": null
     },
@@ -22,14 +28,16 @@
       "display_name": "Belaruz 2",
       "radius_gu": 2400.0,
       "position_gu": [
-        43906.86912699905,
-        -47928.977075090785,
+        39178.43706716839,
+        -42767.39492854255,
         0.0
       ],
       "orbits": "Belaruz",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueRockyPlanet.nif"
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Belaruz2"
     },
@@ -38,14 +46,16 @@
       "display_name": "Belaruz 3",
       "radius_gu": 7200.0,
       "position_gu": [
-        -90651.56471869933,
-        7955.740949243349,
+        -83678.36743264554,
+        7343.76087622463,
         0.0
       ],
       "orbits": "Belaruz",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PurplePlanet.nif"
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Belaruz3"
     },
@@ -54,14 +64,16 @@
       "display_name": "Belaruz 4",
       "radius_gu": 3600.0,
       "position_gu": [
-        92851.28790112842,
-        71187.34673452692,
+        87296.08264208655,
+        66928.27470767488,
         0.0
       ],
       "orbits": "Belaruz",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/AquaPlanet.nif"
+        "model": "data/models/environment/AquaPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Belaruz4"
     }
@@ -71,47 +83,65 @@
       "set_name": "Belaruz1",
       "anchor_gu": [
         0.0,
-        39000.0,
+        32000.0,
         0.0
       ],
       "radius_gu": 2229.5978859987417,
-      "body_names": []
+      "body_names": [],
+      "nebula": {
+        "color": [
+          0.39215686274509803,
+          0.38823529411764707,
+          0.5725490196078431
+        ],
+        "spheres": [
+          [
+            -17.139893,
+            844.691284,
+            -30.296316,
+            900.0
+          ]
+        ]
+      }
     },
     {
       "set_name": "Belaruz2",
       "anchor_gu": [
-        36332.486266999054,
-        -59082.332945090784,
+        31604.054207168385,
+        -53920.75079854255,
         -9754.553220000002
       ],
       "radius_gu": 20540.91137511818,
       "body_names": [
         "Belaruz 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Belaruz3",
       "anchor_gu": [
-        -98225.94757869933,
-        -3197.6149207566523,
+        -91252.75029264553,
+        -3809.594993775371,
         -9754.553220000002
       ],
       "radius_gu": 25340.91137511818,
       "body_names": [
         "Belaruz 3"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Belaruz4",
       "anchor_gu": [
-        92483.65895112843,
-        79834.33632452691,
+        86928.45369208655,
+        75575.26429767488,
         -992.32652
       ],
       "radius_gu": 13811.503425743558,
       "body_names": [
         "Belaruz 4"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

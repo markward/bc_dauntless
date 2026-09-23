@@ -24,11 +24,25 @@ discarded here on purpose.
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass
 
 from engine.systems.map import Appearance, Body, Region, SystemMap
 
 _GOLDEN_ANGLE = 2.399963229728653
+
+# Star class, keyed by the basename of BC's authored Sun_Create base texture.
+# Exact values from the design brief's measured survey of the SDK.
+_STAR_CLASS_TABLE = {
+    "SunYellow.tga": ("yellow", (1.0, 0.85, 0.40)),
+    "SunRed.tga": ("red", (0.91, 0.35, 0.24)),
+    "SunRedOrange.tga": ("red_orange", (0.94, 0.54, 0.24)),
+    "SunBlueWhite.tga": ("blue_white", (0.74, 0.84, 1.0)),
+}
+# Anything else, including BC's own default (no texture argument at all).
+_WHITE_STAR = ("white", (1.0, 0.95, 0.80))
+# A system that authors no Sun_Create whatsoever (Belaruz, Vesuvi).
+_BROWN_DWARF_STAR = ("brown_dwarf", (0.42, 0.25, 0.18))
 
 
 @dataclass
@@ -39,7 +53,10 @@ class LayoutTuning:
     framing_scale: float = 2.0
     min_standoff_factor: float = 1.5
     max_standoff_factor: float = 12.0
-    default_sun_radius_gu: float = 9000.0
+    # Fallback star radius for a system that authors no Sun_Create at all
+    # (Belaruz, Vesuvi) -- those become brown dwarfs, dim and smaller than
+    # any real authored star.
+    brown_dwarf_radius_gu: float = 2000.0
     # A MINIMUM, not a fixed distance: the innermost orbit sits at least this
     # far from the star's surface, and farther still when that would leave a
     # region's sphere reaching the star (see star_clearance_gu and the push
@@ -131,11 +148,32 @@ def _split(region):
 
 def _sun_radius(s, t: LayoutTuning) -> float:
     # Two systems (Belaruz, Vesuvi) build a MetaNebula and author no Sun_Create
-    # at all -- sun_bc is 0.0 there, and default_sun_radius_gu is the fallback.
+    # at all -- sun_bc is 0.0 there, and brown_dwarf_radius_gu is the fallback.
     sun_bc = max(
         (b.radius_gu for region in s.regions for b in region.bodies if b.is_sun),
         default=0.0)
-    return (sun_bc * t.sun_radius_scale) if sun_bc > 0.0 else t.default_sun_radius_gu
+    return (sun_bc * t.sun_radius_scale) if sun_bc > 0.0 else t.brown_dwarf_radius_gu
+
+
+def _sun_textures(s) -> list:
+    return [b.base_texture for region in s.regions for b in region.bodies if b.is_sun]
+
+
+def _classify_texture(texture: str) -> tuple:
+    basename = texture.rsplit("/", 1)[-1] if texture else ""
+    return _STAR_CLASS_TABLE.get(basename, _WHITE_STAR)
+
+
+def _star_appearance(s) -> tuple:
+    """(star_class, color) for this system's star, from BC's authored sun
+    texture(s). No Sun_Create at all (Belaruz, Vesuvi) -> brown dwarf. A
+    system whose regions disagree on the texture takes the most common one;
+    ambiguities() is where that disagreement gets reported, not here."""
+    textures = _sun_textures(s)
+    if not textures:
+        return _BROWN_DWARF_STAR
+    chosen = Counter(textures).most_common(1)[0][0]
+    return _classify_texture(chosen)
 
 
 def _max_star_intrusion(m: SystemMap, star, t: LayoutTuning) -> float:
@@ -262,6 +300,17 @@ def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
                     f"{primary.name!r}, but its name does not say 'Moon' -- it may "
                     f"be a separate world needing its own orbit")
 
+    # A system whose regions disagree about the sun's texture takes the most
+    # common one (see _star_appearance) -- that pick must never be silent.
+    textures = _sun_textures(s)
+    if len(set(textures)) > 1:
+        counts = Counter(textures)
+        chosen = counts.most_common(1)[0][0]
+        notes.append(
+            f"{s.name}: regions disagree on sun base texture "
+            f"{dict(counts)} -- took the most common, {chosen!r}, for the "
+            f"star's colour")
+
     # Report a pushed first orbit -- this changes numbers a human chose (the
     # first_orbit_clearance_gu the tuning specified), so it must never happen
     # silently. Uses no pins: ambiguities() reports on the SURVEY, before any
@@ -283,10 +332,12 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float) -> S
     """
     m = SystemMap(system=s.name, generated={"tool": "gen_system_maps"})
 
+    star_class, color = _star_appearance(s)
     m.bodies.append(Body(
         name=s.name, display_name=s.name, radius_gu=sun_radius,
         position_gu=(0.0, 0.0, 0.0), orbits=None,
-        appearance=Appearance(kind="nif", model=""), owner_region=None))
+        appearance=Appearance(kind="nif", model="", star_class=star_class, color=color),
+        owner_region=None))
 
     for index, region in enumerate(_ordered(s)):
         centre = _orbit_position(index, first_orbit, t)
@@ -295,7 +346,7 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float) -> S
         if primary is None:
             m.regions.append(Region(set_name=region.set_name, anchor_gu=centre,
                                     radius_gu=region.content_extent_gu + t.region_margin_gu,
-                                    body_names=[]))
+                                    body_names=[], nebula=region.nebula))
             continue
 
         placed = []
@@ -372,7 +423,7 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float) -> S
         m.regions.append(Region(
             set_name=region.set_name, anchor_gu=anchor,
             radius_gu=max(reach, region.content_extent_gu) + t.region_margin_gu,
-            body_names=placed))
+            body_names=placed, nebula=region.nebula))
 
     return m
 

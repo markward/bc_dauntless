@@ -275,7 +275,7 @@ def test_a_system_with_no_authored_sun_still_gets_one():
         set_name="Vesuvi5", ordinal=5,
         bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
         content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
-    m = layout(s, LayoutTuning(default_sun_radius_gu=9000.0))
+    m = layout(s, LayoutTuning(brown_dwarf_radius_gu=9000.0))
     sun = [b for b in m.bodies if b.orbits is None][0]
     assert sun.radius_gu == pytest.approx(9000.0)
 
@@ -464,6 +464,56 @@ def test_a_system_that_already_clears_its_star_is_not_moved():
     innermost = min(math.dist(b.position_gu, (0.0, 0.0, 0.0))
                     for b in m.bodies if b.orbits is not None)
     assert innermost == pytest.approx(sun.radius_gu + t.first_orbit_clearance_gu)
+
+
+def test_the_star_takes_bcs_authored_colour():
+    s = _sys_one_planet_per_region()
+    for r in s.regions:
+        for b in r.bodies:
+            if b.is_sun:
+                b.base_texture = "data/Textures/SunBlueWhite.tga"
+    star = [b for b in layout(s).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "blue_white"
+    assert star.appearance.color == pytest.approx((0.74, 0.84, 1.0))
+
+
+def test_a_sun_with_no_texture_is_white_not_unclassified():
+    s = _sys_one_planet_per_region()          # its fixtures carry no texture
+    star = [b for b in layout(s).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "white"
+
+
+def test_a_system_with_no_sun_gets_a_brown_dwarf():
+    """Belaruz and Vesuvi author no Sun_Create at all."""
+    s = SurveyedSystem(name="Vesuvi", regions=[SurveyedRegion(
+        set_name="Vesuvi5", ordinal=5,
+        bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    t = LayoutTuning(brown_dwarf_radius_gu=2000.0)
+    star = [b for b in layout(s, t).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "brown_dwarf"
+    assert star.radius_gu == pytest.approx(2000.0)
+
+
+def test_a_regions_nebula_is_carried_into_the_map():
+    s = SurveyedSystem(name="Vesuvi", regions=[SurveyedRegion(
+        set_name="Vesuvi4", ordinal=4, bodies=[],
+        content_extent_gu=1870.0, player_start_gu=(0.0, 0.0, 0.0),
+        nebula={"color": (0.608, 0.353, 0.725),
+                "spheres": [(0.0, 1500.0, 0.0, 1500.0)]})])
+    region = layout(s).region("Vesuvi4")
+    assert region.nebula["color"] == pytest.approx((0.608, 0.353, 0.725))
+    assert region.nebula["spheres"][0][3] == pytest.approx(1500.0)
+
+
+def test_ambiguities_reports_a_system_whose_suns_disagree():
+    s = _sys_one_planet_per_region()
+    suns = [b for r in s.regions for b in r.bodies if b.is_sun]
+    suns[0].base_texture = "data/Textures/SunRed.tga"
+    suns[1].base_texture = "data/Textures/SunBlueWhite.tga"
+    suns[2].base_texture = "data/Textures/SunBlueWhite.tga"
+    notes = ambiguities(s)
+    assert any("colour" in n.lower() or "texture" in n.lower() for n in notes)
 
 
 def test_ambiguities_reports_a_pushed_first_orbit():

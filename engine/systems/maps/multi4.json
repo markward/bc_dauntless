@@ -4,7 +4,7 @@
     {
       "name": "Multi4",
       "display_name": "Multi4",
-      "radius_gu": 9000.0,
+      "radius_gu": 2000.0,
       "position_gu": [
         0.0,
         0.0,
@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "brown_dwarf",
+        "color": [
+          0.42,
+          0.25,
+          0.18
+        ]
       },
       "owner_region": null
     }

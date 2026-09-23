@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "red_orange",
+        "color": [
+          0.94,
+          0.54,
+          0.24
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Ascella",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SulfurPlanet.nif"
+        "model": "data/models/environment/SulfurPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ascella1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Ascella",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BrownPlanet.nif"
+        "model": "data/models/environment/BrownPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ascella2"
     },
@@ -61,7 +71,9 @@
       "orbits": "Ascella",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/GrayPlanet.nif"
+        "model": "data/models/environment/GrayPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ascella3"
     },
@@ -77,7 +89,9 @@
       "orbits": "Ascella",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SnowPlanet.nif"
+        "model": "data/models/environment/SnowPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ascella4"
     },
@@ -93,7 +107,9 @@
       "orbits": "Ascella",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/IcePlanet.nif"
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ascella5"
     }
@@ -109,7 +125,8 @@
       "radius_gu": 6018.886636610886,
       "body_names": [
         "Ascella 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Ascella2",
@@ -121,7 +138,8 @@
       "radius_gu": 13313.365430596961,
       "body_names": [
         "Ascella 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Ascella3",
@@ -133,7 +151,8 @@
       "radius_gu": 16978.80187855143,
       "body_names": [
         "Ascella 3"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Ascella4",
@@ -145,7 +164,8 @@
       "radius_gu": 7248.1696501799815,
       "body_names": [
         "Ascella 4"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Ascella5",
@@ -157,7 +177,8 @@
       "radius_gu": 8136.102922358287,
       "body_names": [
         "Ascella 5"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

@@ -4,7 +4,7 @@
     {
       "name": "Vesuvi",
       "display_name": "Vesuvi",
-      "radius_gu": 9000.0,
+      "radius_gu": 2000.0,
       "position_gu": [
         0.0,
         0.0,
@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "brown_dwarf",
+        "color": [
+          0.42,
+          0.25,
+          0.18
+        ]
       },
       "owner_region": null
     },
@@ -22,14 +28,16 @@
       "display_name": "Geki",
       "radius_gu": 2200.0,
       "position_gu": [
-        -90651.56471869933,
-        7955.740949243349,
+        -83678.36743264554,
+        7343.76087622463,
         0.0
       ],
       "orbits": "Vesuvi",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/GreenPlanet.nif"
+        "model": "data/models/environment/GreenPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Vesuvi5"
     },
@@ -38,14 +46,16 @@
       "display_name": "Inyo",
       "radius_gu": 1700.0,
       "position_gu": [
-        -94564.65905056076,
-        10418.478458857331,
+        -87591.46176450697,
+        9806.498385838611,
         -7487.497359511674
       ],
       "orbits": "Geki",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/RootBeerPlanet.nif"
+        "model": "data/models/environment/RootBeerPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Vesuvi5"
     },
@@ -54,14 +64,16 @@
       "display_name": "Mori",
       "radius_gu": 1000.0,
       "position_gu": [
-        -96295.69380305972,
-        328.8359951915936,
+        -89322.49651700593,
+        -283.14407782712533,
         -7508.936522633406
       ],
       "orbits": "Geki",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/moon.nif"
+        "model": "data/models/environment/moon.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Vesuvi5"
     },
@@ -70,14 +82,16 @@
       "display_name": "Haven",
       "radius_gu": 1800.0,
       "position_gu": [
-        92851.28790112842,
-        71187.34673452692,
+        87296.08264208655,
+        66928.27470767488,
         0.0
       ],
       "orbits": "Vesuvi",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/GreenPurplePlanet.nif"
+        "model": "data/models/environment/GreenPurplePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Vesuvi6"
     },
@@ -86,14 +100,16 @@
       "display_name": "Moon 1",
       "radius_gu": 1600.0,
       "position_gu": [
-        89117.83004511014,
-        77080.65117368857,
+        83562.62478606826,
+        72821.57914683654,
         -1780.5210542683626
       ],
       "orbits": "Haven",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/RockyPlanet.nif"
+        "model": "data/models/environment/RockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Vesuvi6"
     }
@@ -103,48 +119,66 @@
       "set_name": "Vesuvi1",
       "anchor_gu": [
         0.0,
-        39000.0,
+        32000.0,
         0.0
       ],
       "radius_gu": 3345.4686597791206,
-      "body_names": []
+      "body_names": [],
+      "nebula": null
     },
     {
       "set_name": "Vesuvi4",
       "anchor_gu": [
-        43906.86912699905,
-        -47928.977075090785,
+        39178.43706716839,
+        -42767.39492854255,
         0.0
       ],
       "radius_gu": 3566.8173329554875,
-      "body_names": []
+      "body_names": [],
+      "nebula": {
+        "color": [
+          0.6078431372549019,
+          0.35294117647058826,
+          0.7254901960784313
+        ],
+        "spheres": [
+          [
+            0.0,
+            1500.0,
+            0.0,
+            1500.0
+          ]
+        ]
+      }
     },
     {
       "set_name": "Vesuvi5",
       "anchor_gu": [
-        -87183.60193743995,
-        3534.729991097425,
+        -80210.40465138615,
+        2922.7499180787063,
         -7073.611484048361
       ],
-      "radius_gu": 13301.351325067664,
+      "radius_gu": 13301.351325067662,
       "body_names": [
         "Geki",
         "Inyo",
         "Mori"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Vesuvi6",
       "anchor_gu": [
-        89838.41166311927,
-        69921.48820410775,
+        84283.20640407741,
+        65662.4161772557,
         -890.2605271341813
       ],
-      "radius_gu": 10350.201107514411,
+      "radius_gu": 10350.201107514426,
       "body_names": [
         "Haven",
         "Moon 1"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {

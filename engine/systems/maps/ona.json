@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "red",
+        "color": [
+          0.91,
+          0.35,
+          0.24
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Ona",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/RedPlanet.nif"
+        "model": "data/models/environment/RedPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ona1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Ona",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/TanGasPlanet.nif"
+        "model": "data/models/environment/TanGasPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ona2"
     },
@@ -61,7 +71,9 @@
       "orbits": "Ona",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SulfurPlanet.nif"
+        "model": "data/models/environment/SulfurPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Ona3"
     }
@@ -77,7 +89,8 @@
       "radius_gu": 9296.766471698316,
       "body_names": [
         "Ona 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Ona2",
@@ -89,7 +102,8 @@
       "radius_gu": 7357.683381902814,
       "body_names": [
         "Ona 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Ona3",
@@ -101,7 +115,8 @@
       "radius_gu": 8448.830993094973,
       "body_names": [
         "Ona 3"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

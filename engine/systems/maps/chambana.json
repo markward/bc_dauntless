@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "red_orange",
+        "color": [
+          0.94,
+          0.54,
+          0.24
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Chambana",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PurplePlanet.nif"
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Chambana1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Chambana",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueRockyPlanet.nif"
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Chambana2"
     }
@@ -61,7 +71,8 @@
       "radius_gu": 26189.815718302947,
       "body_names": [
         "Chambana 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Chambana2",
@@ -73,7 +84,8 @@
       "radius_gu": 21389.81571830295,
       "body_names": [
         "Chambana 2"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Riha",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueRockyPlanet.nif"
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Riha1"
     }
@@ -45,7 +53,8 @@
       "radius_gu": 18974.390066114443,
       "body_names": [
         "Riha 1"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

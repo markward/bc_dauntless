@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "red_orange",
+        "color": [
+          0.94,
+          0.54,
+          0.24
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "XiEntrades",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/DryPlanet.nif"
+        "model": "data/models/environment/DryPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "XiEntrades1"
     },
@@ -45,7 +53,9 @@
       "orbits": "XiEntrades",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PinkGasPlanet.nif"
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "XiEntrades2"
     },
@@ -61,7 +71,9 @@
       "orbits": "XiEntrades",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PurpleWhitePlanet.nif"
+        "model": "data/models/environment/PurpleWhitePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "XiEntrades3"
     },
@@ -77,7 +89,9 @@
       "orbits": "XiEntrades",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SnowPlanet.nif"
+        "model": "data/models/environment/SnowPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "XiEntrades4"
     },
@@ -93,7 +107,9 @@
       "orbits": "XiEntrades",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SlimeGreenPlanet.nif"
+        "model": "data/models/environment/SlimeGreenPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "XiEntrades5"
     }
@@ -109,7 +125,8 @@
       "radius_gu": 22527.756377319947,
       "body_names": [
         "Xi Entrades 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "XiEntrades2",
@@ -121,7 +138,8 @@
       "radius_gu": 23527.756377319954,
       "body_names": [
         "Xi Entrades 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "XiEntrades3",
@@ -133,7 +151,8 @@
       "radius_gu": 23227.756377319947,
       "body_names": [
         "Xi Entrades 3"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "XiEntrades4",
@@ -145,7 +164,8 @@
       "radius_gu": 32699.999999999996,
       "body_names": [
         "Xi Entrades 4"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "XiEntrades5",
@@ -157,7 +177,8 @@
       "radius_gu": 24527.756377319947,
       "body_names": [
         "Xi Entrades 5"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {

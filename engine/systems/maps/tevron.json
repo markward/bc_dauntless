@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "yellow",
+        "color": [
+          1.0,
+          0.85,
+          0.4
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Tevron",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/TanGasPlanet.nif"
+        "model": "data/models/environment/TanGasPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Tevron1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Tevron 1",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SulfurPlanet.nif"
+        "model": "data/models/environment/SulfurPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Tevron1"
     },
@@ -61,7 +71,9 @@
       "orbits": "Tevron 1",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/TanPlanet.nif"
+        "model": "data/models/environment/TanPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Tevron1"
     },
@@ -77,7 +89,9 @@
       "orbits": "Tevron",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/IcePlanet.nif"
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Tevron2"
     },
@@ -93,7 +107,9 @@
       "orbits": "Tevron 2",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueWhiteGasPlanet.nif"
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Tevron2"
     }
@@ -111,7 +127,8 @@
         "Tevron 1",
         "Tevron 1 Moon 1",
         "Tevron 1 Moon 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Tevron2",
@@ -124,7 +141,8 @@
       "body_names": [
         "Tevron 2",
         "Moon 1"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

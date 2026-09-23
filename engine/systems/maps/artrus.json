@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "blue_white",
+        "color": [
+          0.74,
+          0.84,
+          1.0
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Artrus",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/moon.nif"
+        "model": "data/models/environment/moon.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Artrus1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Artrus",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/RockyPlanet.nif"
+        "model": "data/models/environment/RockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Artrus2"
     },
@@ -61,7 +71,9 @@
       "orbits": "Artrus",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueRockyPlanet.nif"
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Artrus3"
     }
@@ -77,7 +89,8 @@
       "radius_gu": 7466.901201469672,
       "body_names": [
         "Artrus 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Artrus2",
@@ -89,7 +102,8 @@
       "radius_gu": 10181.790590857709,
       "body_names": [
         "Artrus 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Artrus3",
@@ -101,7 +115,8 @@
       "radius_gu": 10018.114195039383,
       "body_names": [
         "Artrus 3"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},

@@ -21,14 +21,16 @@ def _ona() -> SystemMap:
                 radius_gu=1800.0,
                 position_gu=(0.0, 24000.0, 0.0),
                 orbits="Ona",
-                appearance=Appearance(kind="nif",
-                                      model="data/models/environment/RedPlanet.nif"),
+                appearance=Appearance(kind="nif", model="x.nif",
+                                      star_class="red", color=(0.91, 0.35, 0.24)),
                 owner_region="Ona1",
             ),
         ],
         regions=[
             Region(set_name="Ona1", anchor_gu=(0.0, 20000.0, 0.0),
-                   radius_gu=6000.0, body_names=["Ona 1"]),
+                   radius_gu=6000.0, body_names=["Ona 1"],
+                   nebula={"color": (0.6, 0.35, 0.72),
+                           "spheres": [(0.0, 1500.0, 0.0, 1500.0)]}),
         ],
         overrides={},
         generated={"tool": "gen_system_maps"},
@@ -79,3 +81,11 @@ def test_json_is_stable_and_human_diffable():
     assert '"system": "Ona"' in text
     # Two dumps of equal maps are byte-identical, so regeneration diffs cleanly.
     assert to_json(_ona()) == text
+
+
+def test_star_colour_and_nebula_survive_the_round_trip():
+    m = _ona()
+    back = from_json(to_json(m))
+    assert back.bodies[0].appearance.color == (0.91, 0.35, 0.24)
+    assert isinstance(back.bodies[0].appearance.color, tuple)
+    assert back.regions[0].nebula["spheres"][0] == (0.0, 1500.0, 0.0, 1500.0)

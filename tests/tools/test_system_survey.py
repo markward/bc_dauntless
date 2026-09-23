@@ -77,3 +77,38 @@ def test_regions_without_bodies_survey_cleanly():
     for set_name in ("Vesuvi1", "Vesuvi4"):
         region = [r for r in vesuvi.regions if r.set_name == set_name][0]
         assert region.bodies == [], set_name
+
+
+def test_sun_textures_are_surveyed():
+    """BC's Sun_Create carries the texture that gives a star its colour."""
+    ona = survey_system("Ona")
+    suns = [b for r in ona.regions for b in r.bodies if b.is_sun]
+    assert suns, "Ona authors suns"
+    assert all(s.base_texture.endswith("SunRed.tga") for s in suns), \
+        [s.base_texture for s in suns]
+
+
+def test_a_sun_with_no_texture_argument_surveys_as_empty_not_missing():
+    """Itari calls Sun_Create with only three arguments -- BC's own default,
+    not a parse failure."""
+    itari = survey_system("Itari")
+    suns = [b for r in itari.regions for b in r.bodies if b.is_sun]
+    assert suns
+    assert all(s.base_texture == "" for s in suns)
+
+
+def test_nebulae_are_surveyed_with_colour_and_spheres():
+    vesuvi = survey_system("Vesuvi")
+    v4 = [r for r in vesuvi.regions if r.set_name == "Vesuvi4"][0]
+    assert v4.nebula is not None
+    r, g, b = v4.nebula["color"]
+    assert (round(r, 3), round(g, 3), round(b, 3)) == (0.608, 0.353, 0.725)
+    assert len(v4.nebula["spheres"]) == 1
+    x, y, z, radius = v4.nebula["spheres"][0]
+    assert (x, y, z) == pytest.approx((0.0, 1500.0, 0.0))
+    assert radius == pytest.approx(1500.0)
+
+
+def test_a_region_with_no_nebula_surveys_as_none():
+    ona = survey_system("Ona")
+    assert all(r.nebula is None for r in ona.regions)

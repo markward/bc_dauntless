@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "yellow",
+        "color": [
+          1.0,
+          0.85,
+          0.4
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Savoy",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/SnowPlanet.nif"
+        "model": "data/models/environment/SnowPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Savoy1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Savoy",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/iceplanet.nif"
+        "model": "data/models/environment/iceplanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Savoy2"
     },
@@ -61,7 +71,9 @@
       "orbits": "Savoy",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/IcePlanet.nif"
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Savoy3"
     }
@@ -77,7 +89,8 @@
       "radius_gu": 27499.999999999996,
       "body_names": [
         "Savoy 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Savoy2",
@@ -89,7 +102,8 @@
       "radius_gu": 9500.000000000004,
       "body_names": [
         "Savoy 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Savoy3",
@@ -101,7 +115,8 @@
       "radius_gu": 9751.233864955719,
       "body_names": [
         "Savoy 3"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {

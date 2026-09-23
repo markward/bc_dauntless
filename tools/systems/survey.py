@@ -30,6 +30,8 @@ _TRANSLATE = re.compile(r'SetTranslateXYZ\(([^)]*)\)')
 _BODY_CREATE = re.compile(r'(\w+)\s*=\s*App\.(Planet|Sun)_Create\((.*)\)\s*$')
 _LOAD_PLACEMENTS_DEFAULT = re.compile(r'def LoadPlacements\(\s*sSetName\s*=\s*"([^"]+)"')
 _TRAILING_INT = re.compile(r'(\d+)$')
+_META_NEBULA_CALL = re.compile(r'App\.MetaNebula_Create\((.*?)\)', re.DOTALL)
+_ADD_NEBULA_SPHERE = re.compile(r'AddNebulaSphere\((.*?)\)', re.DOTALL)
 
 
 @dataclass
@@ -39,6 +41,10 @@ class SurveyedBody:
     model: str
     offset_gu: tuple
     is_sun: bool
+    # Sun_Create's 4th argument (the texture that gives the star its colour).
+    # Empty when BC passed fewer than four args -- that is BC's own default,
+    # not a parse failure. Always "" for a planet.
+    base_texture: str = ""
 
 
 @dataclass
@@ -48,6 +54,10 @@ class SurveyedRegion:
     bodies: list = field(default_factory=list)
     content_extent_gu: float = 0.0
     player_start_gu: tuple = (0.0, 0.0, 0.0)
+    # {"color": (r, g, b), "spheres": [(x, y, z, radius_gu), ...]} when this
+    # region's static file builds a MetaNebula, else None. Colours are BC's
+    # own 0-1 floats; sphere positions are set-local GU, read verbatim.
+    nebula: dict | None = None
 
 
 @dataclass
@@ -100,6 +110,54 @@ def _placements(text: str) -> dict:
     return out
 
 
+def _split_top_level(s: str) -> list:
+    """Split on commas that are not inside a quoted string.
+
+    BC writes plain comma-separated argument lists with no nested parens, but
+    a quoted texture path could in principle contain a comma -- respecting
+    quotes here is cheap insurance, not a case that has actually been seen.
+    """
+    parts, cur, in_str = [], [], False
+    for ch in s:
+        if ch == '"':
+            in_str = not in_str
+            cur.append(ch)
+        elif ch == ',' and not in_str:
+            parts.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append(''.join(cur))
+    return [p.strip() for p in parts]
+
+
+def _eval_num(expr: str) -> float:
+    """BC writes nebula colours as expressions ('100.0 / 255.0'), not
+    literals -- evaluate numerically rather than pattern-matching the text.
+    No builtins/names are exposed, so this only ever evaluates arithmetic on
+    literal numbers."""
+    return float(eval(expr, {"__builtins__": {}}, {}))
+
+
+def _nebula(text: str):
+    """This region's MetaNebula, if its static file builds one: explicit RGB
+    plus every AddNebulaSphere call in the file, in set-local GU exactly as
+    BC wrote them. None if the file builds no nebula at all."""
+    joined = "\n".join(_uncommented(text))
+    m = _META_NEBULA_CALL.search(joined)
+    if not m:
+        return None
+    args = _split_top_level(m.group(1))
+    color = tuple(_eval_num(a) for a in args[:3])
+    spheres = []
+    for sm in _ADD_NEBULA_SPHERE.finditer(joined):
+        parts = _split_top_level(sm.group(1))
+        if len(parts) != 4:
+            continue
+        spheres.append(tuple(_eval_num(p) for p in parts))
+    return {"color": color, "spheres": spheres}
+
+
 def _bodies(static_text: str, placements: dict) -> tuple:
     """(bodies, waypoint names consumed by bodies)."""
     bodies, used = [], set()
@@ -117,6 +175,13 @@ def _bodies(static_text: str, placements: dict) -> tuple:
         model_match = re.search(r'"([^"]*\.nif)"', args)
         if model_match:
             model = model_match.group(1)
+        base_texture = ""
+        if kind == "Sun":
+            arg_parts = _split_top_level(args)
+            if len(arg_parts) >= 4:
+                tex_match = re.search(r'"([^"]*)"', arg_parts[3])
+                if tex_match:
+                    base_texture = tex_match.group(1)
         display, waypoint = None, None
         for later in lines[i + 1:]:
             if display is None:
@@ -135,7 +200,8 @@ def _bodies(static_text: str, placements: dict) -> tuple:
         if waypoint:
             used.add(waypoint)
         bodies.append(SurveyedBody(name=display, radius_gu=radius, model=model,
-                                   offset_gu=offset, is_sun=(kind == "Sun")))
+                                   offset_gu=offset, is_sun=(kind == "Sun"),
+                                   base_texture=base_texture))
     return bodies, used
 
 
@@ -197,8 +263,11 @@ def survey_system(system: str) -> SurveyedSystem:
         placements = _placements(text)
         static = d / f"{stem}_S.py"
         bodies, used = ([], set())
+        nebula = None
         if static.is_file():
-            bodies, used = _bodies(_read(static), placements)
+            static_text = _read(static)
+            bodies, used = _bodies(static_text, placements)
+            nebula = _nebula(static_text)
         skip = used | {"Sun"}
         extent = 0.0
         for name, xyz in placements.items():
@@ -213,6 +282,7 @@ def survey_system(system: str) -> SurveyedSystem:
             bodies=bodies,
             content_extent_gu=extent,
             player_start_gu=placements.get("Player Start", (0.0, 0.0, 0.0)),
+            nebula=nebula,
         ))
     result.regions.sort(key=lambda r: (r.ordinal is None, r.ordinal or 0, r.set_name))
     return result

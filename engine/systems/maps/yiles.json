@@ -13,7 +13,13 @@
       "orbits": null,
       "appearance": {
         "kind": "nif",
-        "model": ""
+        "model": "",
+        "star_class": "red_orange",
+        "color": [
+          0.94,
+          0.54,
+          0.24
+        ]
       },
       "owner_region": null
     },
@@ -29,7 +35,9 @@
       "orbits": "Yiles",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/BlueRockyPlanet.nif"
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Yiles1"
     },
@@ -45,7 +53,9 @@
       "orbits": "Yiles",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/gasgiant.nif"
+        "model": "data/models/environment/gasgiant.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Yiles2"
     },
@@ -61,7 +71,9 @@
       "orbits": "Yiles",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/IcePlanet.nif"
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Yiles3"
     },
@@ -77,7 +89,9 @@
       "orbits": "Yiles",
       "appearance": {
         "kind": "nif",
-        "model": "data/models/environment/PinkGasPlanet.nif"
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
       },
       "owner_region": "Yiles4"
     }
@@ -93,7 +107,8 @@
       "radius_gu": 7855.79704314438,
       "body_names": [
         "Yiles 1"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Yiles2",
@@ -105,7 +120,8 @@
       "radius_gu": 7855.79704314438,
       "body_names": [
         "Yiles 2"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Yiles3",
@@ -117,7 +133,8 @@
       "radius_gu": 7855.797043144386,
       "body_names": [
         "Yiles 3"
-      ]
+      ],
+      "nebula": null
     },
     {
       "set_name": "Yiles4",
@@ -129,7 +146,8 @@
       "radius_gu": 7855.7970431443855,
       "body_names": [
         "Yiles 4"
-      ]
+      ],
+      "nebula": null
     }
   ],
   "overrides": {},
