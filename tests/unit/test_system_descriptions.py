@@ -72,6 +72,20 @@ def test_vesuvi_does_not_claim_a_station_it_does_not_have():
     assert "Geki" in detail
 
 
+def test_vesuvi_does_not_claim_geki_is_the_only_starfleet_presence():
+    """There are TWO Federation outposts in Vesuvi, not one: `GekiStation` in
+    Vesuvi5_S.py and `Facility` in Vesuvi6_S.py, both
+    loadspacehelper.CreateShip("FedOutpost", ...).
+
+    An earlier correction replaced one false claim (a station at Vesuvi IV)
+    with a weaker one -- that Geki "remains the Starfleet presence here",
+    which reads as exclusive. In a branch whose point is text agreeing with
+    data, an exclusive claim needs the data to be exclusive."""
+    detail = for_system("vesuvi")["detail"]
+    assert "the Starfleet presence" not in detail
+    assert "Starfleet is still here" in detail
+
+
 def test_summaries_stay_short_enough_for_a_one_line_readout():
     for sid in sysdesc.available():
         summary = sysdesc.for_system(sid)["summary"]
