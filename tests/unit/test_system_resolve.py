@@ -69,6 +69,34 @@ def test_for_set_returns_copies_a_caller_cannot_use_to_poison_the_index():
     assert second.anchor_gu != (999.0, 999.0, 999.0)
 
 
+def test_for_set_map_is_a_deep_copy_not_just_a_shallow_one():
+    """Nothing reachable from the returned SystemMap may share storage with
+    the cached index -- a top-level field reassignment on the Region alone
+    is not enough: a shallow copy still shares m.bodies/m.regions, and
+    SystemMap's own accessors search whatever list they are called on. So
+    the case that actually distinguishes a deep copy from
+    dataclasses.replace() is mutating THROUGH an accessor on the copy."""
+    m1, _ = resolve.for_set("Ona1")
+
+    original_radius = m1.bodies[0].radius_gu
+    m1.bodies[0].radius_gu = 99.0
+
+    original_region_count = len(m1.regions)
+    m1.regions.append(m1.regions[0])
+
+    # The critical case: go through the SystemMap's own accessor on the
+    # COPY, not a direct attribute handed back by for_set. A shallow copy
+    # (dataclasses.replace) still shares the regions list, so m1.region(...)
+    # here would find and mutate the very Region instance the cache holds.
+    m1.region("Ona1").anchor_gu = (777.0, 777.0, 777.0)
+
+    m2, r2 = resolve.for_set("Ona1")
+    assert m2.bodies[0].radius_gu == original_radius
+    assert len(m2.regions) == original_region_count
+    assert m2.region("Ona1").anchor_gu == r2.anchor_gu
+    assert m2.region("Ona1").anchor_gu != (777.0, 777.0, 777.0)
+
+
 def test_reset_cache_allows_rebuilding_the_index(tmp_path, monkeypatch):
     """Construct the case where a test would see stale data without
     reset_cache actually clearing it: point at one maps/ dir, resolve a set,
@@ -108,3 +136,19 @@ def test_reset_cache_allows_rebuilding_the_index(tmp_path, monkeypatch):
         # Never leave the fake index cached for a later test once map_dir
         # reverts to the real maps/ directory at fixture teardown.
         resolve.reset_cache()
+
+
+def test_anchor_of_agrees_with_for_set_for_every_region_of_every_map():
+    """anchor_of is the per-frame accessor Task 5 calls for every body it
+    draws, every tick. It must never drift from what for_set reports as the
+    owning region's anchor -- covering the whole tree, not one named set."""
+    for name in available():
+        m = load(name)
+        for r in m.regions:
+            got_map, got_region = resolve.for_set(r.set_name)
+            assert resolve.anchor_of(r.set_name) == got_region.anchor_gu
+
+
+def test_anchor_of_resolves_to_nothing_for_a_set_that_is_not_a_region():
+    for name in ("bridge", "QuickBattle", "Multi5", "", "ona1"):
+        assert resolve.anchor_of(name) is None
