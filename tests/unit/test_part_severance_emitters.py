@@ -193,3 +193,85 @@ def test_cast_light_from_the_severed_part_goes_dark():
     assert subsystem_glow.glow_state(star) == subsystem_glow.DESTROYED
     assert light_emitters.resolve_emitter_intensity(
         {"intensity": 1.0}, star, 0.0) is None
+
+
+# ── Attribution in the LIVE pose ────────────────────────────────────────────
+#
+# A point on the OUTER half of a wing, in SHIP units. At rest it attributes
+# to "left wing" outright; once the wings deflect, the SAME piece of hull is
+# at (-1.2843, 0.0, 0.1136), which is inside NO box and only 3.8x nearer the
+# wing than the body -- inside ATTRIBUTION_MARGIN (5.0), so part_for_point
+# answers None. Both numbers were computed against the real rig, not guessed.
+WING_TIP = (-1.0, 0.0, -0.7)
+
+
+def _posed(point, node, deflection):
+    """`point` where it is DRAWN once `node` sits at `deflection`."""
+    from engine.appc import articulation
+    part = next(p for p in articulation.rig_for("birdofprey")
+                if p.node == node)
+    return articulation.point_at_deflection(part, point, deflection)
+
+
+def test_the_live_pose_fixture_point_attributes_as_this_file_assumes():
+    """Guard for the three tests below, and a direct statement of the bug:
+    the posed wingtip is exactly the point today's rest-space primitive
+    cannot place."""
+    posed = _posed(WING_TIP, "left wing", 1.0)
+    assert ps.part_for_point("birdofprey", WING_TIP) == "left wing"
+    assert ps.part_for_point("birdofprey", posed) is None, (
+        "if this ever resolves, the live-pose function is no longer needed "
+        "for this point and these tests stop pinning anything")
+
+
+def test_a_posed_wingtip_attributes_to_its_wing():
+    """THE BUG. `_emit_pos` is a POSED body point (host_io.world_to_body of
+    a live impact), but PART_BOXES are authored REST-pose -- so a smoke plume
+    on the outer half of a deflected wing was never silenced when that wing
+    came off. Only inboard plumes, whose posed position still happens to land
+    in the rest box, ever were."""
+    ship = _Ship([])
+    ship._articulation_deflection = 1.0
+    posed = _posed(WING_TIP, "left wing", 1.0)
+    assert ps.part_for_live_point(ship, posed) == "left wing"
+
+
+def test_a_body_point_still_attributes_as_it_does_today():
+    ship = _Ship([])
+    ship._articulation_deflection = 1.0
+    assert (ps.part_for_live_point(ship, WARP_CORE)
+            == ps.part_for_point("birdofprey", WARP_CORE))
+
+
+def test_at_deflection_zero_it_agrees_with_part_for_point_exactly():
+    """Byte-identical at rest, which is the pose the model ships in and the
+    one combat runs in. Swept across representative points rather than
+    asserted on one, so a rule that only coincides at the origin fails."""
+    ship = _Ship([])
+    ship._articulation_deflection = 0.0
+    points = [WING_TIP, WARP_CORE, STAR_CANNON, (0.0, 0.5, 0.0),
+              (0.2, -0.2, 0.05), (-1.2843, 0.0, 0.1136), (5.0, 5.0, 5.0)]
+    for p in points:
+        assert (ps.part_for_live_point(ship, p)
+                == ps.part_for_point("birdofprey", p)), p
+
+
+def test_an_emitter_on_a_DEFLECTED_wingtip_stops_when_that_wing_is_severed():
+    """End to end, through the path production actually takes: the plume is
+    ship-attached with its location carried in body-frame MODEL units, and
+    the wings are down when the wing shears off."""
+    particles.reset()
+    ship = _Ship([])
+    ship._articulation_deflection = 1.0
+    posed = _posed(WING_TIP, "left wing", 1.0)
+    model_point = tuple(v / ps.MODEL_TO_SHIP for v in posed)
+    c = particles.AnimTSParticleController_Create()
+    c.SetEmitFromObject(ship)
+    c.SetEmitPositionAndDirection(model_point, (0.0, 0.0, 1.0))
+    particles.register(c)
+
+    ps.sever(ship, None, "left wing")
+
+    assert not c.is_emitting(), (
+        "a plume on the outer half of a deflected wing must be silenced "
+        "when that wing detaches")

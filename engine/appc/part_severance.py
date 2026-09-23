@@ -102,6 +102,69 @@ def part_for_point(leaf, point):
     return None
 
 
+def part_for_live_point(ship, point):
+    """Which part a body-frame point in SHIP UNITS belongs to IN THE SHIP'S
+    LIVE POSE, or None. The posed-space twin of `part_for_point`.
+
+    ⚠️ `PART_BOXES` are authored REST pose, but every point that arrives from
+    the running game is POSED -- `host_io.world_to_body` inverts the instance
+    world matrix, which carries no node override, so a hit or an emitter on a
+    deflected wing comes back where the wing IS DRAWN, not where its box is.
+    Measured on the real rig: a rest wingtip (-1.0, 0, -0.7) is drawn at
+    (-1.2843, 0, 0.1136) with the wings down, and `part_for_point` answers
+    None for that (0.2585 from the wing box vs 0.9731 from the body -- inside
+    ATTRIBUTION_MARGIN). So the OUTER half of a wing attributed to nothing,
+    and only inboard points, which happen to stay inside the rest box, ever
+    matched.
+
+    THE QUERY MOVES, NOT THE BOXES -- the same rule §4.3 of the spec applies
+    to every other consumer of a baked rest-pose structure. For each part in
+    the ship's rig the point is inverse-rotated about THAT part's hinge (same
+    pivot, same axis, negated angle -- `point_at_deflection` is linear in
+    deflection, so -deflection is exactly the inverse) and re-tested. A part
+    claims the point only when the pullback lands on ITS OWN box.
+
+    The rest-space test runs FIRST and unchanged, so a point on the body
+    attributes exactly as it always did, and at deflection 0 -- the pose the
+    model ships in and the one combat runs in -- every rotation is identity
+    and this function is byte-identical to `part_for_point`.
+
+    Re-testing through `part_for_point` rather than a bare box containment is
+    deliberate: it inherits the ambiguity and margin rules, so the two
+    primitives can never disagree about what "on the wing" means, and the
+    deflection-0 identity above holds by construction rather than by luck.
+
+    ⚠️ DETACHED PARTS ARE NOT SKIPPED, unlike
+    `articulation.part_transform_point`. `sever` marks the part detached
+    BEFORE it silences emitters, so skipping one here would make the whole
+    feature inert -- the only caller asks about the part that just came off.
+
+    ⚠️ `record_hit` has the SAME defect and is deliberately NOT changed here:
+    a hit on a wingtip accrues no severance damage while the wings are down,
+    because it too tests a posed point against the rest boxes. That is
+    pre-existing, out of this change's scope, and should probably adopt this
+    function later.
+    """
+    leaf = articulation.leaf_for(ship)
+    plain = part_for_point(leaf, point)
+    if plain is not None:
+        return plain
+    parts = articulation.rig_for(leaf)
+    if not parts:
+        return None
+    try:
+        deflection = float(ship.GetArticulationDeflection())
+    except Exception:  # noqa: BLE001 - a prop or a test double has no rig state
+        return None
+    if deflection == 0.0:
+        return None                      # identity: `plain` already answered
+    for part in parts:
+        rest_point = articulation.point_at_deflection(part, point, -deflection)
+        if part_for_point(leaf, rest_point) == part.node:
+            return part.node
+    return None
+
+
 def _totals(ship) -> dict:
     """The ship's per-part damage totals, created on first use."""
     t = getattr(ship, "_part_damage", None)
@@ -248,22 +311,26 @@ def _silence_emitters_on(ship, part_name, killed) -> None:
     if not live:
         return
     dead = {id(s) for s in (killed or [])}
-    leaf = articulation.leaf_for(ship)
     for c in list(live):
         try:
             emit_from = getattr(c, "_emit_from", None)
             if id(emit_from) in dead:
                 c.stop_emitting()
                 continue
-            if emit_from is ship and _emit_pos_on_part(c, leaf, part_name):
+            if emit_from is ship and _emit_pos_on_part(c, ship, part_name):
                 c.stop_emitting()
         except Exception as _e:  # noqa: BLE001
             dev_mode.log_swallowed("severed part emitter silence", _e)
 
 
-def _emit_pos_on_part(controller, leaf, part_name) -> bool:
+def _emit_pos_on_part(controller, ship, part_name) -> bool:
     """Whether `controller._emit_pos` (body-frame MODEL units, or None/an
-    unreadable shape) attributes to `part_name` on `leaf`.
+    unreadable shape) attributes to `part_name` on `ship`.
+
+    Attributed through `part_for_live_point`, not `part_for_point`:
+    `_emit_pos` is a POSED body point, so against the rest boxes a plume on
+    the outer half of a deflected wing attributed to nothing and was never
+    silenced.
 
     None, or anything not a `TGPoint3`-shaped object / 3-tuple, is "does not
     match" -- never treated as a coordinate (e.g. the origin), which would
@@ -282,7 +349,7 @@ def _emit_pos_on_part(controller, leaf, part_name) -> bool:
     else:
         return False
     ship_point = tuple(v * MODEL_TO_SHIP for v in point)
-    return part_for_point(leaf, ship_point) == part_name
+    return part_for_live_point(ship, ship_point) == part_name
 
 
 def sever(ship, iid, part_name):
