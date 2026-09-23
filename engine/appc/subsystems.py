@@ -560,7 +560,30 @@ class ShipSubsystem(TGEventHandlerObject):
         return ct_for_subsystem(self)
 
     def GetParentShip(self):
-        return self._parent_ship
+        """The owning ShipClass, from ANY depth in the subsystem chain.
+
+        ⚠️ CLIMBS. `ShipClass._attach_subsystem` sets `_parent_ship` only on
+        TOP-LEVEL subsystems, so an emitter added beneath a weapon system with
+        `AddChildSubsystem` has none of its own. Returning that bare field was
+        a live FATAL crash:
+
+            ConditionPulseReady.py:161  pEvent.SetSource(pWeapon.GetParentShip())
+            ConditionPulseReady.py:172  ShipClass_Cast(pEvent.GetSource())  -> None
+            ConditionPulseReady.py:179  pShip.GetPulseWeaponSystem()
+            AttributeError: 'NoneType' object has no attribute ...
+
+        — and it unwound straight out of the host frame loop, killing the game
+        mid-combat. `pWeapon` there is a pulse-weapon EMITTER, i.e. a child.
+
+        Our own code already knew and routed around it (see
+        `weapon_subsystems.CalculateRoughDirection`'s docstring, which says to
+        use `_climb_to_ship()` and NOT this). The SDK cannot route around our
+        surface: BC's `GetParentShip` answers for any subsystem in the chain,
+        so ours must too.
+        """
+        if self._parent_ship is not None:
+            return self._parent_ship
+        return self._climb_to_ship()
 
     def SetParentShip(self, ship) -> None:
         self._parent_ship = ship
@@ -804,10 +827,18 @@ class ShipSubsystem(TGEventHandlerObject):
         # Direct attachment: ShipClass._attach_subsystem set _parent_ship.
         if self._parent_ship is not None:
             return self._parent_ship
+        # ⚠️ Reads each ancestor's `_parent_ship` FIELD, never its
+        # GetParentShip() — that method now delegates HERE when its own field
+        # is None, so calling it would recurse back into this loop. Reading the
+        # field is also what makes a malformed (cyclic) chain terminate rather
+        # than blow the stack; `seen` bounds it explicitly.
+        seen = set()
         node = self.GetParentSubsystem()
-        while node is not None:
-            if hasattr(node, "GetParentShip") and node.GetParentShip() is not None:
-                return node.GetParentShip()
+        while node is not None and id(node) not in seen:
+            seen.add(id(node))
+            owner = getattr(node, "_parent_ship", None)
+            if owner is not None:
+                return owner
             node = node.GetParentSubsystem() if hasattr(node, "GetParentSubsystem") else None
         return None
 
