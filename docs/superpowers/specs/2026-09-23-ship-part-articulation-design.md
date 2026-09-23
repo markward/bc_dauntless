@@ -355,6 +355,67 @@ of chunk, so nothing downstream learns a new object type.
 
 ---
 
+## 5a. Phase 2a — appendage severance by damage share (BUILT)
+
+**The rule.** Each authored detachable part accumulates the hull damage
+attributed to it. At its authored share of the ship's MAX hull it shears off.
+Cumulative, never decaying — chip at a wing across a whole battle and it still
+comes off. Currently **0.20** for both BoP wings: 800 damage on a 4000-hull
+ship, so both wings cost 40% of the hull.
+
+A part total is an **attribution, not a second HP pool**: the hit still does its
+normal hull damage. The total only decides when the part gives way.
+
+**Attribution** (`part_severance.part_for_point`). Authored per-part AABBs in
+ship units (`articulation.PART_BOXES`). Inside exactly one box wins; inside
+several is **ambiguous and resolves to None**; outside all, the nearest wins
+only by a 5× margin. None means unattributed — the hit behaves exactly as it
+did before this existed.
+
+The ambiguous case is the norm near the hull, by design: a BoP's wing boxes
+overlap the body box from |x| 0.1236 to 0.31 because the roots are embedded.
+So only OUTBOARD wing hits count — which is also where a player naturally aims.
+
+**Detachable parts are authored** (`articulation.DETACHABLE`), never derived.
+The body must never detach and the head is deliberately excluded. A part absent
+from that table accumulates nothing and can never be lost.
+
+**On sever** (`part_severance.sever`), in this order:
+1. mark detached FIRST — a re-entrant hit (from a subsystem-destruction event)
+   cannot shear the same part twice and spawn two chunks;
+2. destroy subsystems whose mount lies on the part — `SetCondition(0.0)` through
+   the normal damage path, mirroring `hull_breakup._destroy_subsystems_inside`.
+   The Star Cannon dies with the starboard wing;
+3. hand to the renderer, **best-effort**: a part gone from the sim but still
+   drawn beats an exception unwinding through combat.
+
+**Rendering** (`part_detach_render`). The ship hides the part; a second INSTANCE
+OF THE SAME MODEL hides every part except it. Both use the new
+`set_instance_node_hidden` binding, which writes the zero matrix as a node's
+local so its subtree collapses. No mesh splitting, no generated geometry, and
+models are shared by handle — a severed wing costs a transform and a draw.
+Mass comes from the part's AABB volume share (`debris_chunk.spawn` uses its
+cell counts only as a ratio).
+
+**The hook** sits in `hit_feedback` **outside the carve throttle**. That
+throttle drops ~14 ticks in 15 to bound carve emissions and breach VFX;
+inheriting it would make a wing need ~15× the fire. It is also not gated on the
+carve itself — severance asks "has this wing taken enough", which is true
+whether or not hull geometry happened to break there.
+
+⚠️ **Known couplings, accepted for 2a:** the hook lives inside the block gated
+on `allow_hull_carve and persist_decal and damage_eligibility.is_eligible`, so
+god mode and decal-suppressed hits also suppress severance. Defensible (god mode
+should not shed the player's wings) but not deliberate design.
+
+⚠️ **The cut is CLEAN, not torn.** Voxel chunks get a ragged face free from the
+carve field; a node-part sheared at an authored boundary has none. Carving the
+stump is the follow-up if it reads wrong at close range.
+
+**Status:** gate clean, 17 unit tests. ⚠️ **Not yet live-verified.**
+
+---
+
 ## 6. Testing
 
 Phase 1 ships `tests/unit/test_articulation.py` (17 tests): rig shape, mirroring,
@@ -419,12 +480,18 @@ phase 2 — a detached wing still receiving a pose is a visible bug.
 rule conservatively assigns them to the body. Physically they are on the wings.
 Deferred to SPV authoring.
 
-**OQ-6 — What is an appendage's damage threshold?** §5 gives node-parts
-appendage severance, but not how much damage shears one. Options span a flat
-per-part HP, a fraction of the parent hull's HP, and a share scaled by the
-part's volume. None is measured; BC has no equivalent to recover it from. Wants
-live eyes: the failure modes are "wings fall off in a skirmish" and "wings never
-come off", and only one of them is visible from a test.
+**OQ-6 — RESOLVED as a first cut, 2026-09-23.** A fraction of the ship's MAX
+hull, authored per part, at **0.20**. Built as §5a. Still wants live eyes: the
+failure modes are "wings fall off in a skirmish" and "wings never come off", and
+neither is visible from a test. The number lives in `articulation.DETACHABLE`
+and tunes with no rebuild.
+
+**OQ-9 — Per-part AABBs are AUTHORED, not derived.** `model_bounds` returns
+unnamed per-shape spheres that cannot be mapped to a named node, so §5a's boxes
+were measured offline and written into `articulation.PART_BOXES`. A
+`model_part_bounds` binding would derive them and remove the chance of the data
+drifting from the mesh. Not worth a new boundary against a data set of one ship;
+revisit at the second.
 
 **OQ-7 — Carve radius vs bake quality.** `kDefaultQuality = 2` was chosen
 because *"a maximum-size carve is 0.3 GU = 30 model units, which at a Galaxy's

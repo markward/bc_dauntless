@@ -405,6 +405,24 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     from engine.appc import hull_breakup
                     hull_breakup.after_carve(ship, iid, ship_instances)
 
+            # Appendage severance (part_severance): attribute this hit to a
+            # named part and shear the part off once it has absorbed its share.
+            #
+            # Deliberately OUTSIDE the carve throttle above -- that throttle
+            # exists to bound carve emissions and breach VFX, and dropping
+            # 14 ticks in 15 of a sustained beam would make a wing take fifteen
+            # times the fire to come off. Attribution is a float add.
+            #
+            # Also deliberately NOT gated on the carve: severance answers "has
+            # this wing taken enough", which is true whether or not the hull
+            # geometry happened to break at that spot.
+            if iid is not None:
+                from engine.appc import part_severance
+                conv = host_io.world_to_body(
+                    iid, (point.x, point.y, point.z), (0.0, 0.0, 1.0))
+                if conv is not None:
+                    part_severance.record_hit(ship, iid, conv[0], absorbed_hull)
+
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:
     """Look up the tier's sound name and play positionally. Silent on

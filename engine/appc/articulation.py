@@ -241,3 +241,57 @@ def tick_ship(ship, dt: float) -> None:
 def parts_for_ship(ship) -> tuple[Part, ...]:
     """Articulation parts for `ship`, or () when it has no rig."""
     return rig_for(leaf_for(ship))
+
+
+# ── Part geometry and detachability (phase 2a) ───────────────────────────────
+# Per-part AABBs in SHIP/BODY units (model NIF units / 100 -- BC_MODEL_SCALE is
+# 0.01, so hardpoint positions and these boxes share one frame).
+#
+# AUTHORED rather than read from the model at runtime, because nothing exposes
+# per-part bounds to Python: `model_bounds` returns unnamed per-shape spheres
+# and cannot be mapped back to a named node. A `model_part_bounds` binding
+# would generalise this; against a data set of one ship it is not yet worth a
+# new boundary crossing. Measured from BirdOfPrey.nif -- see spec section 2.4.
+#
+# NOTE the wing boxes OVERLAP the body box (wings start at |x| 0.1236, the body
+# reaches 0.31): the wing roots are embedded in the hull. That overlap is why
+# attribution falls back to the body when a point is inside more than one box —
+# see part_severance.part_for_point.
+PART_BOXES = {
+    "birdofprey": {
+        # name: ((min_x, min_y, min_z), (max_x, max_y, max_z))
+        "head":        ((-0.1010, 0.1377, -0.0885), (0.1010, 0.9044, 0.0747)),
+        "left wing":   ((-1.0258, -0.6777, -0.7125), (-0.1236, 0.5344, 0.1862)),
+        "left wing01": ((0.1236, -0.6777, -0.7125), (1.0258, 0.5344, 0.1862)),
+        "birdofprey":  ((-0.3112, -0.7044, -0.1331), (0.3137, 0.2922, 0.2125)),
+    },
+}
+
+# Parts that may SHEAR OFF, and the share of the ship's MAX hull each must
+# absorb before it does. Authored, never automatic: the body must never detach,
+# and the head coming off is not wanted either. A part absent from here
+# accumulates nothing and can never be lost.
+#
+# 0.20 -> a 4000-hull Bird of Prey sheds a wing after 800 damage attributed to
+# it; both wings cost 40% of the hull. Tunable here with no rebuild, which is
+# deliberate: this is the number most likely to need a live adjustment.
+DETACHABLE = {
+    "birdofprey": {
+        "left wing":   0.20,
+        "left wing01": 0.20,
+    },
+}
+
+
+def part_boxes_for(leaf):
+    """Authored per-part AABBs (ship units) for a hardpoint leaf, or {}."""
+    if not leaf:
+        return {}
+    return PART_BOXES.get(str(leaf).lower(), {})
+
+
+def detachable_for(leaf):
+    """{part name: hull fraction that shears it} for a leaf, or {}."""
+    if not leaf:
+        return {}
+    return DETACHABLE.get(str(leaf).lower(), {})

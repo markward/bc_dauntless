@@ -55,6 +55,7 @@ _REQUIRED_BINDINGS = frozenset({
     "transform_live_count", "transform_capacity",
     "set_instance_transform_slot",
     "set_instance_node_rotation", "clear_instance_node_overrides",
+    "set_instance_node_hidden", "instance_model",
     # Not a function: the InstanceId type itself. set_instance_transform_slot
     # isinstance-checks against it to tell a real render instance from a test
     # double's plain int, so a build without it is just as broken as one
@@ -639,6 +640,37 @@ def set_instance_node_rotation(iid, node_name: str,
         iid, str(node_name),
         float(pivot[0]), float(pivot[1]), float(pivot[2]),
         float(axis[0]), float(axis[1]), float(axis[2]), float(theta)))
+
+
+def instance_model(iid):
+    """The model handle behind render instance `iid`, or None.
+
+    Appendage severance draws a severed part as a second instance of the SAME
+    model, so it needs the parent's handle to create that copy.
+    """
+    if _h is None:
+        return None
+    if not isinstance(iid, _h.InstanceId):
+        return None
+    handle = _h.instance_model(iid)
+    return handle or None
+
+
+def set_instance_node_hidden(iid, node_name: str, hidden: bool) -> bool:
+    """Collapse (hidden=True) or restore a named node's subtree on `iid`.
+
+    Used by appendage severance at both ends: the ship hides the part it just
+    lost, and the debris chunk (a second instance of the SAME model) hides
+    every part except that one.
+
+    False on headless, on a test double's plain-int iid, or when the model has
+    no node by that name.
+    """
+    if _h is None:
+        return False
+    if not isinstance(iid, _h.InstanceId):
+        return False
+    return bool(_h.set_instance_node_hidden(iid, str(node_name), bool(hidden)))
 
 
 def clear_instance_node_overrides(iid) -> bool:

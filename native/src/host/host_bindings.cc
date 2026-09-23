@@ -2252,6 +2252,52 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "clears the override. False when the instance, model or node is "
           "absent, or the axis is degenerate.");
 
+    // The model handle an instance was created from. Appendage severance draws
+    // a severed part as a SECOND INSTANCE OF THE SAME MODEL with every other
+    // part hidden, so it needs the parent's handle to create that copy. Voxel
+    // chunks never needed this because the native side instances them itself.
+    m.def("instance_model",
+          [](scenegraph::InstanceId id) -> scenegraph::ModelHandle {
+              auto* in = g_world.get(id);
+              return in ? in->model_handle : 0;
+          },
+          py::arg("iid"),
+          "The model handle behind an instance, or 0 when it is absent.");
+
+    // Hide or show ONE named node's whole subtree, by overriding its local
+    // transform with the ZERO matrix: compose_node_worlds chains
+    // parent_world * local, so every descendant collapses to a point and its
+    // triangles become zero-area (drawn, but covering no pixels).
+    //
+    // Used by appendage severance to take a wing off the ship and to show ONLY
+    // that wing on its debris chunk -- both are the same model, so one binding
+    // serves both ends. Reuses the articulation override map rather than adding
+    // a second per-node channel, which means a hidden node and an articulated
+    // node cannot fight: hiding wins, because it is written last and a detached
+    // part stops being posed (part_severance marks it detached first).
+    m.def("set_instance_node_hidden",
+          [](scenegraph::InstanceId id, const std::string& node_name,
+             bool hidden) -> bool {
+              auto* in = g_world.get(id);
+              if (!in) return false;
+              const assets::Model* m2 = resolve_model(in->model_handle);
+              if (!m2) return false;
+              const int idx = renderer::resolve_overridden_node(
+                  *m2, node_name, in->node_overrides);
+              if (idx < 0) return false;
+              if (hidden) {
+                  in->node_overrides[idx] = glm::mat4(0.0f);
+              } else {
+                  in->node_overrides.erase(idx);
+              }
+              return true;
+          },
+          py::arg("iid"), py::arg("node_name"), py::arg("hidden"),
+          "Collapse (or restore) a named node's subtree. Hiding writes the zero "
+          "matrix as its local transform; showing erases the override, so the "
+          "node returns to the model's authored local. False when the instance, "
+          "model or node is absent.");
+
     m.def("clear_instance_node_overrides",
           [](scenegraph::InstanceId id) -> bool {
               auto* in = g_world.get(id);
