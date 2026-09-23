@@ -13,9 +13,20 @@ The index is built once, lazily, from engine.systems.map.available() /
 load(), and cached with functools.lru_cache. Never capture a path at
 import: map_dir() is computed per call inside engine.systems.map, so this
 module never touches a path itself, only the already-lazy map API.
+
+for_set() hands back dataclasses.replace() copies, not the cached
+SystemMap/Region instances. map.load() re-parses JSON on every call today,
+so two callers never share an instance -- returning the raw cached objects
+here would be a behaviour change: a caller mutating a field (e.g.
+`r.anchor_gu = adjusted`) would silently corrupt the index for every later
+caller in the process. The copy is shallow -- nested lists such as
+`m.bodies`/`m.regions`/`r.body_names` are still shared with the cache -- so
+this protects reassigning a top-level field on the returned instances, not
+mutating those nested containers in place.
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
 
 from engine.systems import map as system_map
@@ -42,11 +53,19 @@ def reset_cache() -> None:
     _index.cache_clear()
 
 
-def for_set(set_name: str):
+def for_set(set_name: str) -> tuple | None:
     """(SystemMap, Region) for the set, or None if it is not a region of
-    any checked-in map."""
+    any checked-in map.
+
+    The returned instances are copies -- mutating them never poisons the
+    cached index for a later caller.
+    """
     by_set, _ = _index()
-    return by_set.get(set_name)
+    found = by_set.get(set_name)
+    if found is None:
+        return None
+    m, r = found
+    return dataclasses.replace(m), dataclasses.replace(r)
 
 
 def system_of(set_name: str) -> str | None:
@@ -55,7 +74,7 @@ def system_of(set_name: str) -> str | None:
     return found[0].system if found is not None else None
 
 
-def regions_of(system: str) -> list:
+def regions_of(system: str) -> list[str]:
     """Every region set name in that system, in map order. Empty list if
     the system is unknown."""
     _, regions_by_system = _index()

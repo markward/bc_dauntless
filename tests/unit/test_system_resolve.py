@@ -5,6 +5,9 @@ anchored in a single coordinate space per system. A set absent from every
 map (bridge, QuickBattle arenas, the seven single-set multiplayer systems)
 must resolve to nothing so its caller behaves exactly as today.
 """
+import json
+
+from engine.systems import map as system_map
 from engine.systems import resolve
 from engine.systems.map import available, load
 
@@ -53,8 +56,55 @@ def test_system_of_returns_system_name_only():
     assert resolve.system_of("bridge") is None
 
 
-def test_reset_cache_allows_rebuilding_the_index():
-    resolve.for_set("Ona1")
-    resolve.reset_cache()
-    m, r = resolve.for_set("Ona1")
-    assert m.system == "Ona"
+def test_for_set_returns_copies_a_caller_cannot_use_to_poison_the_index():
+    """A field reassignment on the returned Region must never leak into a
+    later caller's lookup of the same set -- the concrete failure mode is
+    Task 5's per-frame `m, r = resolve.for_set(name); r.anchor_gu = adjusted`
+    poisoning every subsequent lookup for the rest of the process."""
+    _, first = resolve.for_set("Ona1")
+    original = first.anchor_gu
+    first.anchor_gu = (999.0, 999.0, 999.0)
+    _, second = resolve.for_set("Ona1")
+    assert second.anchor_gu == original
+    assert second.anchor_gu != (999.0, 999.0, 999.0)
+
+
+def test_reset_cache_allows_rebuilding_the_index(tmp_path, monkeypatch):
+    """Construct the case where a test would see stale data without
+    reset_cache actually clearing it: point at one maps/ dir, resolve a set,
+    repoint map_dir at a dir with a DIFFERENT answer for the same set name,
+    and show the old answer persists until reset_cache() is called."""
+    maps_a = tmp_path / "maps_a"
+    maps_a.mkdir()
+    (maps_a / "ona.json").write_text(json.dumps({
+        "system": "Ona",
+        "regions": [{"set_name": "Ona1", "anchor_gu": [1.0, 2.0, 3.0],
+                      "radius_gu": 10.0}],
+    }), encoding="utf-8")
+    maps_b = tmp_path / "maps_b"
+    maps_b.mkdir()
+    (maps_b / "ona.json").write_text(json.dumps({
+        "system": "Ona",
+        "regions": [{"set_name": "Ona1", "anchor_gu": [9.0, 9.0, 9.0],
+                      "radius_gu": 20.0}],
+    }), encoding="utf-8")
+
+    try:
+        monkeypatch.setattr(system_map, "map_dir", lambda: maps_a)
+        resolve.reset_cache()
+        _, r = resolve.for_set("Ona1")
+        assert r.anchor_gu == (1.0, 2.0, 3.0)
+
+        # Repoint at a dir with a different answer. Without reset_cache the
+        # stale entry built from maps_a must still be what for_set returns.
+        monkeypatch.setattr(system_map, "map_dir", lambda: maps_b)
+        _, r = resolve.for_set("Ona1")
+        assert r.anchor_gu == (1.0, 2.0, 3.0)
+
+        resolve.reset_cache()
+        _, r = resolve.for_set("Ona1")
+        assert r.anchor_gu == (9.0, 9.0, 9.0)
+    finally:
+        # Never leave the fake index cached for a later test once map_dir
+        # reverts to the real maps/ directory at fixture teardown.
+        resolve.reset_cache()
