@@ -333,6 +333,34 @@ std::optional<RayHit> ray_trace_instance(
     // null check on the hot path.
     const bool has_ov = (node_overrides != nullptr && !node_overrides->empty());
 
+    // ⚠️ An override NAMES a part node, but a mesh hangs off that node's
+    // CHILD: model_build's find_parent_node_index attaches geometry to its
+    // immediate NiNode parent, and BC ships put a "__NDL_MultiMtl_Node"
+    // between the part and its NiTriShapes (spec §2.1). So a wing's triangles
+    // carry the MULTIMTL node's index, never the part's.
+    //
+    // compose_node_worlds propagates an override down the chain, which is why
+    // the renderer draws the wing correctly. Testing a triangle's OWN node
+    // against the map does not — it never matches, the triangles stay at rest,
+    // and a raised wing is drawn in one place and hit in another. That shipped.
+    //
+    // So: mark a node moved if it OR ANY ANCESTOR is overridden. Parents
+    // precede children in Model::nodes, so one forward pass suffices.
+    std::vector<char> moved;
+    if (has_ov) {
+        moved.assign(model.nodes.size(), 0);
+        for (std::size_t n = 0; n < model.nodes.size(); ++n) {
+            const int parent = model.nodes[n].parent_index;
+            const bool from_parent =
+                parent >= 0 && parent < static_cast<int>(n) && moved[parent];
+            moved[n] = (from_parent ||
+                        node_overrides->count(static_cast<int>(n)) > 0) ? 1 : 0;
+        }
+    }
+    const auto is_moved = [&](int n) -> bool {
+        return has_ov && n >= 0 && n < static_cast<int>(moved.size()) && moved[n];
+    };
+
     const TraceAccel& accel = ensure_trace_accel(model);
     if (accel.tris.empty() || accel.nodes.empty()) return std::nullopt;
 
@@ -382,8 +410,7 @@ std::optional<RayHit> ray_trace_instance(
         if (n.count > 0) {
             for (int i = n.first; i < n.first + n.count; ++i) {
                 const TraceTri& t = accel.tris[i];
-                if (has_ov && t.node >= 0 &&
-                    node_overrides->count(t.node)) continue;  // moved: see below
+                if (is_moved(t.node)) continue;   // moved: re-tested below
                 const auto t_local = intersect_triangle(
                     o_local, d_unit, max_dist_local, t.v0, t.v1, t.v2);
                 if (!t_local || *t_local >= best_t) continue;
@@ -426,15 +453,17 @@ std::optional<RayHit> ray_trace_instance(
         const std::vector<glm::mat4> rest = build_node_world(model);
         const std::vector<glm::mat4> posed =
             compose_node_worlds(model, glm::mat4(1.0f), *node_overrides);
+        // Keyed by the node the TRIANGLES belong to (the MultiMtl child),
+        // not the node the override names — `posed` already carries the
+        // inherited transform, so the child's own entry is the right one.
         std::unordered_map<int, glm::mat4> to_rest;   // inverse(M) per node
-        for (const auto& kv : *node_overrides) {
-            const int n = kv.first;
-            if (n < 0 || n >= static_cast<int>(rest.size())) continue;
+        for (std::size_t n = 0; n < model.nodes.size(); ++n) {
+            if (!is_moved(static_cast<int>(n))) continue;
             // A SEVERED part is the zero matrix: posed collapses to a point and
             // is singular. It is drawn as nothing, so it must trace as nothing —
             // leaving it out of `to_rest` drops its triangles entirely.
             if (std::fabs(glm::determinant(posed[n])) < 1e-12f) continue;
-            to_rest[n] = rest[n] * glm::inverse(posed[n]);
+            to_rest[static_cast<int>(n)] = rest[n] * glm::inverse(posed[n]);
         }
         for (const TraceTri& mt : accel.tris) {
             if (mt.node < 0) continue;

@@ -85,6 +85,20 @@ namespace {
 // Root (no geometry) + a child holding one triangle at x = +10, so an
 // override on the child is distinguishable from one on the root, and the
 // moved and rest positions are far apart.
+// ⚠️ THREE LEVELS, mirroring a REAL BC ship (spec §2.1):
+//
+//     Scene Root -> "wing" (the PART, and what an override names)
+//                -> "__NDL_MultiMtl_Node" (3ds Max exporter marker)
+//                   -> the NiTriShape geometry
+//
+// `find_parent_node_index` (model_build.cc) attaches a mesh to its IMMEDIATE
+// NiNode parent, so a wing's triangles belong to the MultiMtl node, NOT to
+// the part node the override is written against.
+//
+// An earlier version of this helper put the mesh directly on the overridden
+// node. Every test passed and the real game was still broken: the trace
+// filtered on a triangle's OWN node, which never matched. A synthetic model
+// that does not mirror the asset's real shape cannot catch that.
 assets::Model root_plus_movable_child() {
     assets::Model m;
     m.root_node = 0;
@@ -96,6 +110,10 @@ assets::Model root_plus_movable_child() {
         .name = "wing", .parent_index = 0,
         .local_transform = glm::translate(glm::mat4(1.0f),
                                           glm::vec3(10.0f, 0.0f, 0.0f)),
+    });
+    m.nodes.push_back(assets::Node{
+        .name = "__NDL_MultiMtl_Node", .parent_index = 1,
+        .local_transform = glm::mat4(1.0f),
         .meshes = {0},
     });
     assets::MeshCpu cpu;
