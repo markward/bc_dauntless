@@ -49,12 +49,32 @@ class Region:
 
 
 @dataclass
+class Volume:
+    shape: str                      # "sphere" | "lobe"
+    geometry: dict = field(default_factory=dict)
+    profile: str = ""               # "debris" | "nebula" | "mist"
+    params: dict = field(default_factory=dict)
+    origin_region: str | None = None
+
+
+@dataclass
+class Cloud:
+    name: str
+    display_name: str
+    kind: str                       # "debris_shell" | "nebula_field"
+    color: tuple = (0.0, 0.0, 0.0)
+    volumes: list = field(default_factory=list)
+    regions: list = field(default_factory=list)
+
+
+@dataclass
 class SystemMap:
     system: str
     bodies: list = field(default_factory=list)
     regions: list = field(default_factory=list)
     overrides: dict = field(default_factory=dict)
     generated: dict = field(default_factory=dict)
+    clouds: list = field(default_factory=list)
 
     def body(self, name: str):
         for b in self.bodies:
@@ -66,6 +86,12 @@ class SystemMap:
         for r in self.regions:
             if r.set_name == set_name:
                 return r
+        return None
+
+    def cloud(self, name: str):
+        for c in self.clouds:
+            if c.name == name:
+                return c
         return None
 
 
@@ -83,10 +109,31 @@ def _appearance_from_json(raw: dict) -> Appearance:
 def _nebula_from_json(raw: dict | None) -> dict | None:
     if raw is None:
         return None
-    return {
-        "color": tuple(raw["color"]),
-        "spheres": [tuple(sphere) for sphere in raw.get("spheres", [])],
-    }
+    out = dict(raw)
+    out["color"] = tuple(raw["color"])
+    out["spheres"] = [tuple(sphere) for sphere in raw.get("spheres", [])]
+    return out
+
+
+def _volume_from_json(raw: dict) -> Volume:
+    return Volume(
+        shape=raw["shape"],
+        geometry=dict(raw.get("geometry", {})),
+        profile=raw.get("profile", ""),
+        params=dict(raw.get("params", {})),
+        origin_region=raw.get("origin_region"),
+    )
+
+
+def _cloud_from_json(raw: dict) -> Cloud:
+    return Cloud(
+        name=raw["name"],
+        display_name=raw["display_name"],
+        kind=raw["kind"],
+        color=tuple(raw.get("color", (0.0, 0.0, 0.0))),
+        volumes=[_volume_from_json(v) for v in raw.get("volumes", [])],
+        regions=list(raw.get("regions", [])),
+    )
 
 
 def from_json(text: str) -> SystemMap:
@@ -113,12 +160,14 @@ def from_json(text: str) -> SystemMap:
         )
         for r in raw.get("regions", [])
     ]
+    clouds = [_cloud_from_json(c) for c in raw.get("clouds", [])]
     return SystemMap(
         system=raw["system"],
         bodies=bodies,
         regions=regions,
         overrides=raw.get("overrides", {}),
         generated=raw.get("generated", {}),
+        clouds=clouds,
     )
 
 
