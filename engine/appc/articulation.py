@@ -225,9 +225,13 @@ def ease(current: float, target: float, dt: float) -> float:
     return current + (step if delta > 0 else -step)
 
 
-def rotation_for(part: Part, deflection: float) -> tuple[
+def rotation_for(part, angle_deg: float) -> tuple[
         tuple[float, float, float], tuple[float, float, float], float]:
-    """Return (pivot, unit_axis, theta_radians) for `part` at `deflection`.
+    """Return (pivot, unit_axis, theta_radians) for `part` at `angle_deg`.
+
+    Takes DEGREES, not a 0..1 deflection. Four independent per-state angles
+    (cruise/yellow/red/warp) cannot be expressed as one scalar times an
+    authored maximum -- see `articulated_part.ArticulatedPartProperty`.
 
     Kept separate from the matrix build so the C++ binding takes the same three
     values the SPV gizmo would eventually author, rather than a baked matrix.
@@ -238,25 +242,128 @@ def rotation_for(part: Part, deflection: float) -> tuple[
         unit = (0.0, 1.0, 0.0)
     else:
         unit = (ax / n, ay / n, az / n)
-    theta = math.radians(part.angle_deg) * float(deflection)
+    theta = math.radians(float(angle_deg))
     return part.pivot, unit, theta
 
 
+# ── Four-state model (Task 4) ────────────────────────────────────────────────
+#
+# Replaces the single 0..1 deflection with a CURRENT ANGLE per part, eased
+# toward the authored angle of one of `articulated_part.STATES` ("cruise",
+# "yellow", "red", "warp"). A scalar deflection cannot express four
+# independent authored poses; a per-part current angle can, and needs no
+# captured start/end pair -- an interrupted transition just gets a new
+# target and keeps easing from wherever it already is.
+
+def _is_warping(ship) -> bool:
+    """Whether `ship` is at warp. Best-effort: a prop or test double that
+    cannot answer is not warping.
+
+    Uses `warp_state.is_ship_warping`, BC's own canonical test
+    (`GetWarpEngineSubsystem().GetWarpState() != WES_NOT_WARPING`) -- not a
+    `warp.is_at_warp` (no such name exists in `engine.appc.warp`; that was
+    the brief's assumption, wrong against this tree). `is_ship_warping` is
+    already isinstance(ShipClass)-guarded, so a Planet or other non-ship
+    reads as not-warping rather than truthy-stubbing its way to True.
+    """
+    from engine.appc import warp_state
+    try:
+        return bool(warp_state.is_ship_warping(ship))
+    except Exception:  # noqa: BLE001 - this runs per rigged ship per tick
+        return False
+
+
+def state_for(ship) -> str:
+    """Which articulation state `ship` is in.
+
+    Warp outranks alert level: wing position is a FLIGHT configuration, so
+    warp entry visibly re-configures the ship. A ship running under fire is
+    still in its travel shape.
+
+    NPCs key off "has a target" rather than alert level, and therefore never
+    show "yellow" -- BC never takes an NPC off Red Alert, so its alert level
+    carries no signal. Measured, not assumed (stbc-oracle bible s13 N2).
+    """
+    if _is_warping(ship):
+        return "warp"
+    if _is_player(ship):
+        import App
+        level = ship.GetAlertLevel()
+        if level == App.ShipClass.RED_ALERT:
+            return "red"
+        if level == App.ShipClass.YELLOW_ALERT:
+            return "yellow"
+        return "cruise"
+    getter = getattr(ship, "GetTarget", None)
+    if getter is None:
+        return "cruise"
+    try:
+        return "red" if getter() else "cruise"
+    except Exception:  # noqa: BLE001
+        return "cruise"
+
+
+def ease_angle(current: float, target: float, *, part_range: float,
+               dt: float) -> float:
+    """Move `current` toward `target` at `part_range / TRAVEL_SECONDS` per
+    second, clamped so it never overshoots.
+
+    Rate is proportional to the part's OWN range, so a part swinging its whole
+    travel always takes TRAVEL_SECONDS and parts moving between the same two
+    states arrive together. Interrupting a transition needs no special case:
+    the target changes and the part keeps easing from wherever it is.
+    """
+    if part_range <= 0.0 or TRAVEL_SECONDS <= 0.0:
+        return target
+    step = abs(part_range) * (float(dt) / TRAVEL_SECONDS)
+    delta = target - current
+    if abs(delta) <= step:
+        return target
+    return current + (step if delta > 0 else -step)
+
+
+def _part_range(part) -> float:
+    """Peak-to-peak spread of `part`'s authored angle across every state.
+
+    A single per-part constant rather than a per-transition one, so
+    `ease_angle`'s rate does not change depending on which two states a part
+    happens to be moving between -- only how far THIS part swings overall.
+    """
+    from engine.appc.articulated_part import STATES
+    values = [part.angle_for(state) for state in STATES]
+    return max(values) - min(values)
+
+
+def angle_for_part(ship, part) -> float:
+    """`ship`'s current eased angle (degrees) for `part`, or 0.0 if `ship`
+    has never been ticked (the NIF pose)."""
+    angles = getattr(ship, "_articulation_angles", None)
+    if not angles:
+        return 0.0
+    return angles.get(part.GetName(), 0.0)
+
+
 # ── Dev override ─────────────────────────────────────────────────────────────
-# A forced deflection that outranks the alert-driven target, so the pivots can
-# be judged at a frozen pose instead of only in passing. None = follow alert.
-# Dev-only by construction: the only caller is a dev keybinding, which
-# `dev_mode` never registers outside --developer.
-_dev_override: "float | None" = None
+# A forced STATE that outranks the alert/target-driven target, so the poses
+# can be judged at a frozen state instead of only in passing. None = follow
+# state_for. Dev-only by construction: the only caller is a dev keybinding,
+# which `dev_mode` never registers outside --developer.
+_dev_override: "str | None" = None
 
 
-def set_dev_override(value: "float | None") -> None:
-    """Force every rigged ship to a fixed deflection, or None to release."""
+def set_dev_override(state: "str | None") -> None:
+    """Force every rigged ship to `state` (one of `articulated_part.STATES`),
+    or None to release back to `state_for`."""
+    from engine.appc.articulated_part import STATES
     global _dev_override
-    _dev_override = None if value is None else max(0.0, min(1.0, float(value)))
+    if state is not None and state not in STATES:
+        raise ValueError(
+            "unknown articulation state %r; expected one of %r"
+            % (state, STATES))
+    _dev_override = state
 
 
-def dev_override() -> "float | None":
+def dev_override() -> "str | None":
     return _dev_override
 
 
@@ -295,31 +402,43 @@ def leaf_for(ship) -> str:
 
 
 def tick_ship(ship, dt: float) -> None:
-    """Advance one ship's articulation deflection by `dt`.
+    """Advance one ship's PER-PART articulation angles by `dt` (Task 4's
+    4-state model), easing each of `parts_for_leaf`'s parts toward its
+    authored angle at `state_for(ship)`.
 
-    A ship with no rig is skipped before any easing, so the overwhelming
-    majority of hulls pay one cached-attribute read.
+    A ship with no registered parts is skipped before any allocation, so the
+    overwhelming majority of hulls pay one leaf lookup. Angles live on the
+    ship itself (`ship._articulation_angles`, {part name: degrees}) rather
+    than in a module-level table, matching where the old single deflection
+    lived (`ship.GetArticulationDeflection`/`SetArticulationDeflection`).
     """
-    if not has_rig(leaf_for(ship)):
+    from engine.appc.articulated_part import parts_for_leaf
+    leaf = leaf_for(ship)
+    parts = parts_for_leaf(leaf)
+    if not parts:
         return
     forced = _dev_override
     if forced is not None:
-        target = forced
+        state = forced
     else:
-        # deflection_target_for, not deflection_target: the signal differs by
-        # who flies the ship. The player answers its alert keys; an NPC
-        # answers whether it has a target, because BC's alert level is RED
-        # from spawn on every NPC and never moves. See OQ-11.
         try:
-            target = deflection_target_for(ship)
+            state = state_for(ship)
         except Exception:  # noqa: BLE001
             return
-    try:
-        current = float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - not a ShipClass (test double / prop)
-        return
-    if current != target:
-        ship.SetArticulationDeflection(ease(current, target, dt))
+    angles = getattr(ship, "_articulation_angles", None)
+    if angles is None:
+        angles = {}
+        try:
+            ship._articulation_angles = angles
+        except Exception:  # noqa: BLE001 - test double / prop may reject
+            return
+    for part in parts:
+        name = part.GetName()
+        current = angles.get(name, 0.0)
+        target = part.angle_for(state)
+        if current != target:
+            angles[name] = ease_angle(current, target,
+                                      part_range=_part_range(part), dt=dt)
 
 
 def parts_for_ship(ship) -> tuple[Part, ...]:
@@ -431,7 +550,11 @@ def point_at_deflection(part, point, deflection):
     deflection 1.0 while the ship is at rest, which the ship-driven call
     cannot give it.
     """
-    pivot, axis, theta = rotation_for(part, deflection)
+    # rotation_for now takes raw degrees (Task 4); this function's own
+    # contract is unchanged (a 0..1 fraction of `part`'s authored max), so the
+    # conversion happens HERE, at the one remaining OLD-rig call site, rather
+    # than by asking every caller to redo the multiplication.
+    pivot, axis, theta = rotation_for(part, part.angle_deg * deflection)
     return _rotate_about(point, pivot, axis, theta)
 
 

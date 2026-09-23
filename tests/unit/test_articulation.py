@@ -200,8 +200,11 @@ def test_rest_deflection_yields_zero_rotation():
 
 
 def test_full_deflection_matches_the_authored_angle():
+    """rotation_for takes DEGREES now (Task 4), not a 0..1 deflection -- so
+    "full deflection" for this OLD-rig Part is passing its own angle_deg
+    directly, the degree equivalent of the old rotation_for(part, 1.0)."""
     for part in articulation.rig_for("birdofprey"):
-        _p, _a, theta = articulation.rotation_for(part, 1.0)
+        _p, _a, theta = articulation.rotation_for(part, part.angle_deg)
         assert theta == pytest.approx(math.radians(part.angle_deg))
 
 
@@ -283,7 +286,9 @@ def test_full_deflection_lifts_the_wing_tip_towards_horizontal(node, tip_x):
     part = next(p for p in articulation.rig_for("birdofprey") if p.node == node)
     px, _py, pz = part.pivot
     tip_z = -0.7125
-    _p, _axis, theta = articulation.rotation_for(part, 1.0)
+    # rotation_for takes DEGREES now (Task 4); part.angle_deg IS the full
+    # swing, the degree equivalent of the old rotation_for(part, 1.0).
+    _p, _axis, theta = articulation.rotation_for(part, part.angle_deg)
 
     # Rotate the tip about the +Y axis through the pivot. Right-handed about
     # +Y: x' = x cos + z sin, z' = -x sin + z cos.

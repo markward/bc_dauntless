@@ -7032,11 +7032,17 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
     lookup and a float compare rather than a boundary crossing per node per
     frame.
 
-    `force_rest` draws the hull in its NIF pose (every part at rotation 0)
+    `force_rest` draws the hull in its NIF pose (every part at angle 0)
     without touching game state. The Ship Property Viewer sets it, because a
     hardpoint mount is STORED in the NIF frame: editing one through an
     articulated pose writes back a number that is ~0.9 ship units out at a
     Bird of Prey's wingtip, silently. See spec section 5.1.
+
+    `rotation_for` takes raw DEGREES (Task 4), not a 0..1 deflection, so
+    "every part at angle 0" is expressed here as `part.angle_deg * 0.0` --
+    forcing `deflection` itself to 0.0 before the per-part multiply, rather
+    than deleting the multiply, is what keeps every part's angle exactly
+    zero regardless of its own authored `angle_deg`.
 
     It pushes an explicit ZERO rotation rather than skipping the push --
     skipping would leave whatever pose is already in node_overrides standing.
@@ -7063,7 +7069,8 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
             # with the rest, and a subsequent theta==0 push would erase the
             # hide for good. See part_severance.sever / part_detach_render.
             continue
-        pivot, axis, theta = articulation.rotation_for(part, deflection)
+        pivot, axis, theta = articulation.rotation_for(
+            part, part.angle_deg * deflection)
         # The rig is authored in SHIP units (shared with PART_BOXES and
         # subsystem mounts); the binding works in MODEL units. This is the
         # ONLY place the two meet.

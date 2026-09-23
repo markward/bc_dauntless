@@ -293,9 +293,14 @@ def _norm(p) -> float:
 
 
 def _part_rotation(part):
-    """(pivot, unit axis, theta) for `part` at FULL deflection."""
+    """(pivot, unit axis, theta) for `part` at FULL deflection.
+
+    `rotation_for` takes raw degrees (Task 4), not a 0..1 deflection, so
+    "full deflection" for this OLD-rig `articulation.Part` is its own
+    authored `angle_deg` -- equivalent to the old `rotation_for(part, 1.0)`.
+    """
     from engine.appc import articulation
-    return articulation.rotation_for(part, 1.0)
+    return articulation.rotation_for(part, part.angle_deg)
 
 
 def _point_at(part, centre):
