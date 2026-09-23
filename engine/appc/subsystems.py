@@ -41,7 +41,13 @@ def subsystem_world_position(sub, ship=None):
     local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
     if not isinstance(local, TGPoint3):
         return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
-    offset = TGPoint3(local.x, local.y, local.z)
+    # Follow the part this mount sits on, BEFORE rotating into world space:
+    # articulation is a body-frame motion, so it composes inside R.
+    # Identity for unrigged hulls, body mounts and deflection 0 — so the
+    # overwhelming majority of calls are unchanged.
+    from engine.appc.articulation import part_transform_point
+    px, py, pz = part_transform_point(ship, (local.x, local.y, local.z))
+    offset = TGPoint3(px, py, pz)
     if hasattr(ship, "GetWorldRotation"):
         rot = ship.GetWorldRotation()
         if isinstance(rot, TGMatrix3):
