@@ -18,7 +18,8 @@ def test_checked_in_map_validates(name):
     m = load(name)
     sdk = survey_system(m.system)
     from tools.gen_system_maps import pins_from
-    problems = validate(m, sdk_set_names=[r.set_name for r in sdk.regions],
+    problems = validate(m, sdk_set_names=[r.set_name for r in sdk.regions
+                                          if r.menu_listed],
                         pins=pins_from(m))
     assert problems == [], "\n".join(f"{p.rule}: {p.detail}" for p in problems)
 

@@ -94,6 +94,16 @@ class LayoutTuning:
     anchor_standoff_factor: float = 2.2
     moon_first_orbit_factor: float = 4.0
     moon_orbit_step_factor: float = 1.5
+    # A key light this close to straight up or down carries no usable bearing
+    # once flattened into the orbital plane. 0.999 is ~2.6 degrees, which
+    # catches the eight regions whose forward is EXACTLY (0, 0, +/-1) -- an
+    # untouched default -- while keeping the two genuinely-steep ones near 73
+    # degrees, whose flattened bearing is still real.
+    vertical_light_tol: float = 0.999
+    # Bearings come from BC's lighting, so two regions in one system can share
+    # one. When that happens the outer is pushed out in steps of this fraction
+    # of orbit_step_gu until the two spheres clear each other.
+    orbit_push_fraction: float = 0.25
 
 
 def _norm(v) -> float:
@@ -120,9 +130,40 @@ def _scale(v, k):
 
 
 def _orbit_position(index: int, first_orbit: float, t: LayoutTuning):
+    """Fallback bearing only -- see _bearing(). A golden-angle spread puts a
+    region SOMEWHERE, which is all that can be done for a region whose own
+    lighting says nothing about where its star is."""
     r = first_orbit + t.orbit_step_gu * index
     a = _GOLDEN_ANGLE * index
     return (r * math.sin(a), r * math.cos(a), 0.0)
+
+
+def _bearing(index: int, region, t: LayoutTuning):
+    """Unit bearing from the star to this region, in the orbital plane.
+
+    Taken from the region's own key light. BC's directional says which way the
+    light travels -- from the star, toward the scene -- so placing the region
+    along it puts the star exactly where the artists lit from, and their
+    authored direction needs no correction at runtime.
+
+    Two cases fall back to the golden-angle spread, and both are reported by
+    ambiguities():
+
+    - No directional at all. Does not occur in the 90 campaign regions, but a
+      mod's set might.
+    - A key light within `vertical_light_tol` of straight up or down, where the
+      flattened bearing is noise rather than signal. Eight regions are affected
+      and in every one the forward is EXACTLY (0, 0, +/-1) -- an untouched
+      default the artists never rotated, not an authored direction. Two more
+      sit around 73 degrees, steep but genuinely aimed, and those are used.
+    """
+    d = getattr(region, "key_light_dir", None)
+    if d is not None and abs(d[2]) < t.vertical_light_tol:
+        flat = math.sqrt(d[0] * d[0] + d[1] * d[1])
+        if flat > 0.0:
+            return (d[0] / flat, d[1] / flat, 0.0)
+    a = _GOLDEN_ANGLE * index
+    return (math.sin(a), math.cos(a), 0.0)
 
 
 def _standoff_factor(primary, region, t) -> float:
@@ -151,10 +192,69 @@ def _standoff_factor(primary, region, t) -> float:
 
 
 def _ordered(s):
-    numbered = [r for r in s.regions if r.ordinal is not None]
-    unnumbered = [r for r in s.regions if r.ordinal is None]
+    """The regions that get an orbit, in orbital order.
+
+    Only places BC's own CreateSystemMenu offers. An orphan still in the tree
+    is not somewhere the player can go, and giving it a slot pushes every real
+    place outward: Vesuvi1 is unlisted and was taking the innermost orbit at
+    32,000 GU, displacing Vesuvi4 -- BC's FIRST listed place, and the system's
+    dust cloud -- out to 58,000.
+
+    It is the only such case across all 32 systems. Its set still exists and
+    the survey still reads it; it simply is not a destination.
+    """
+    usable = [r for r in s.regions if getattr(r, "menu_listed", True)]
+    numbered = [r for r in usable if r.ordinal is not None]
+    unnumbered = [r for r in usable if r.ordinal is None]
     numbered.sort(key=lambda r: r.ordinal)
     return numbered + unnumbered
+
+
+def _reach_estimate(region, t: LayoutTuning) -> float:
+    """A CONSERVATIVE bound on how far this region reaches from its anchor.
+
+    Used only to space orbits before the bodies exist. It must never
+    UNDER-estimate -- an under-estimate lets two regions overlap, which
+    validate()'s region-overlap rule then reports. Over-estimating only makes a
+    system slightly roomier, so every term here is taken at its maximum.
+    """
+    primary, companions = _split(region)
+    if primary is None:
+        return region.content_extent_gu + t.region_margin_gu
+    primary_radius = primary.radius_gu * t.planet_radius_scale
+    furthest = primary_radius
+    for j, c in enumerate(companions):
+        distance = primary_radius * (t.moon_first_orbit_factor
+                                     + t.moon_orbit_step_factor * j)
+        furthest = max(furthest, distance + c.radius_gu * t.moon_radius_scale)
+    standoff = _standoff_factor(primary, region, t) * primary_radius
+    return max(standoff + furthest, region.content_extent_gu) + t.region_margin_gu
+
+
+def _orbital_centres(ordered, first_orbit: float, t: LayoutTuning) -> list:
+    """One orbital centre per region: BC's own bearing, at a radius that clears
+    everything already placed.
+
+    The bearing is not ours to choose (see _bearing), so two regions in one
+    system can be lit from the same direction and land on the same line. The
+    radius is ours, so that is what gives: push the outer one out until the two
+    spheres are clear. Measured across all 32 systems this resolves every
+    collision at a median cost of 1.03x the system's outermost radius.
+    """
+    step = t.orbit_step_gu * t.orbit_push_fraction
+    placed, centres = [], []
+    for index, region in enumerate(ordered):
+        bearing = _bearing(index, region, t)
+        reach = _reach_estimate(region, t)
+        radius = first_orbit + t.orbit_step_gu * index
+        while True:
+            centre = _scale(bearing, radius)
+            if all(_norm(_sub(centre, p)) >= reach + r for p, r in placed):
+                break
+            radius += step
+        placed.append((centre, reach))
+        centres.append(centre)
+    return centres
 
 
 def _split(region):
@@ -516,8 +616,10 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
         appearance=Appearance(kind="nif", model="", star_class=star_class, color=color),
         owner_region=None))
 
-    for index, region in enumerate(_ordered(s)):
-        centre = _orbit_position(index, first_orbit, t)
+    ordered = _ordered(s)
+    centres = _orbital_centres(ordered, first_orbit, t)
+    for index, region in enumerate(ordered):
+        centre = centres[index]
         primary, companions = _split(region)
 
         if primary is None:

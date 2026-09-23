@@ -48,26 +48,32 @@ including Ona 1 itself, because ×20 scaling pushed its framing distance to
 
 ## The far plane
 
-**Raise it from 5,000 GU to 450,000 GU** — in **two** places, and only those two.
+**Raise it from 5,000 GU to 500,000 GU** — in **two** places, and only those two.
 
 | Camera | Today | After | Why |
 |---|---|---|---|
-| Exterior scene (`host_loop.py:9661`) | 5,000 | **450,000** | The view this design exists for. |
-| Bridge viewscreen (`VS_FAR`, `host_loop.py:5894`) | 5,000 | **450,000** | It renders the *same framing the exterior view shows*. Leaving it at 5,000 means the viewscreen clips a planet the main view draws. |
+| Exterior scene (`host_loop.py:9661`) | 5,000 | **500,000** | The view this design exists for. |
+| Bridge viewscreen (`VS_FAR`, `host_loop.py:5894`) | 5,000 | **500,000** | It renders the *same framing the exterior view shows*. Leaving it at 5,000 means the viewscreen clips a planet the main view draws. |
 | Bridge interior (`_BridgeCamera.FAR`, `host_loop.py:3359`) | 800 | **unchanged** | A room. Raising it would cost depth precision for nothing. |
 | Ship Property Viewer (`_cam.far`) | its own | **unchanged** | A hologram in isolation. |
 | Comm viewscreen (`_comm_camera_params`) | its own | **unchanged** | A face in a window. |
 
-The widest sightline in the game is **Itari, 420,676 GU** (73,618 km) — the
+The widest sightline in the game is **Itari, 452,715 GU** (79,225 km) — the
 greatest distance between any two bodies or anchors across all thirty-two maps.
-450,000 covers it with margin.
+500,000 covers it with margin.
+
+That figure is a **product of the maps and must be rechecked whenever they are
+regenerated.** It was 420,676 GU before regions were placed on BC's own light
+bearings; that change alone pushed it past the 450,000 this section originally
+specified. A far plane that no longer covers the widest sightline does not fail
+loudly — it silently clips the most distant world in one system.
 
 **Depth precision is not the objection it appears to be.** For a 24-bit
 fixed-point forward-Z buffer, the resolvable gap at eye distance `z` is
 `Δz ≈ (1/2²⁴) · z² · (f−n)/(f·n)`. The `(f−n)/f` term is already ~1 at
 `f = 5000`, so raising `f` barely moves it:
 
-| Eye distance | `far = 5,000` | `far = 450,000` |
+| Eye distance | `far = 5,000` | `far = 500,000` |
 |---|---|---|
 | 100 GU | 0.000596 GU | 0.000596 GU |
 | 4,900 GU | 1.4308 GU | 1.4311 GU |
@@ -225,8 +231,9 @@ BC's suns are **per-set lighting props, not a system object**, and they
 contradict each other inside a single system: `Alioth1`'s sun sits at
 `(+70000, 0, 0)` and `Alioth3`'s at `(−70000, 0, 0)`. Two of the campaign
 systems — Belaruz and Vesuvi — author no `Sun_Create` at all while still
-carrying a bright directional light. A consistent light direction is the first
-thing the parent spec promises, so the star cannot be left to the sets.
+carrying a bright directional light. So where the star's *disc* appears cannot
+be left to the sets. (Where its *light* comes from is settled in the generator —
+see the next section.)
 
 The map's star is a `Body` at the system origin with `orbits: None`. Apply it
 the same way as any other body, with two differences:
@@ -245,44 +252,40 @@ repositioning above, every region's sun occupies the same system-space point, so
 drawing one is correct and drawing eight is waste. This is the one place the
 celestial gathering below scopes to a single region rather than the system.
 
-### Moving the sun does not move the light
+### The lighting needs no runtime change at all
 
-This is the gap that nearly shipped. **The scene's directional light has no
-connection to the Sun object at all.** `Light.direction_world()`
-(`engine/appc/lights.py:48`) resolves the direction from its `LightPlacement`'s
-rotation — `GetWorldRotation().GetCol(1)` — and `aggregate_for_renderer(pSet, …)`
-collapses the *player's set's* light rig for the renderer. The Sun object
-contributes a disc in the sky and nothing else.
+An earlier draft of this section carried a rule for aiming each region's
+directional light at the star, because **the scene's directional has no
+connection to the Sun object**: `Light.direction_world()`
+(`engine/appc/lights.py:48`) resolves from its `LightPlacement`'s rotation, and
+`aggregate_for_renderer(pSet, …)` collapses the *player's set's* rig. Moving the
+star changes the lighting by exactly nothing.
 
-So repositioning the star, on its own, changes the lighting by exactly nothing,
-and "lit by the same sun" would be false while looking plausible — every region
-would keep the light direction BC authored for it in isolation, which is the
-inconsistency this work exists to remove.
+That rule is gone, because the generator now removes the need for it. Regions are
+placed along the bearing their own key light implies, so **BC's authored
+directional already points at the star** — colour, intensity and direction all
+untouched, and consistent across a system by construction rather than by
+correction.
 
-**Rule: keep BC's colour and intensity, replace the direction.**
+Measured across the 89 regions after that change:
 
-- **Direction** becomes `normalize(region.anchor_gu)` — the star sits at the
-  system origin, the region at its anchor, so that is the direction the light
-  travels, which is what `direction_world()` means. Set it by
-  `AlignToVectors` on the placement, which `direction_world()` re-reads, rather
-  than by writing `_direction_world` (that field is only consulted for
-  placement-less lights).
-- **Colour and dimmer stay exactly as BC authored them.** They are not noise:
-  across the eighteen systems that author a star texture, the directional's
-  colour matches that texture in seventeen. That is the artists' intent about
-  what the star *is*, and the map's `star_class` was derived from it.
+| | before | after |
+|---|---|---|
+| Median divergence between BC's key light and the star | 80.7° | **4.5°** |
+| 90th percentile | — | 12.5° |
+| Worst | 178.8° | 21.1° |
 
-**Where a region authors several directionals, only the brightest is aimed.**
-Vesuvi 5 carries a key at `(0.6, 0.6, 0.8) @ 0.7` and a fill at
-`(1, 1, 1) @ 0.3`; Belaruz 4 likewise. The key light is the star and becomes
-consistent; the fills are lighting craft and are left alone. This is a judgement,
-not a measurement — if the result reads wrong in the live pass, the alternative
-is to aim all of them, which is a one-line change.
+The residual is the anchor's framing offset: a region's *orbital centre* sits
+exactly on the bearing, while its anchor is displaced back along the view
+direction by the standoff, so the star drifts a few degrees off as seen from
+where the player actually starts. Eight further regions fall back to a spread
+because their key light is exactly `(0, 0, ±1)` — an untouched default, not an
+authored direction.
 
-A consequence worth stating: **the light direction now varies between regions of
-the same system**, because each region sits at a different bearing from the star.
-That is the point. It is also the first time BC's planet art is lit from a
-direction its authors did not choose, which is one of the unknowns listed below.
+**Nothing in the runtime touches lighting.** If the residual reads wrong in the
+live pass, the fix belongs in the generator — solve for the bearing that puts the
+*anchor* on the light rather than the orbital centre — not in a per-frame
+correction here.
 
 ## Gathering the celestial bodies
 

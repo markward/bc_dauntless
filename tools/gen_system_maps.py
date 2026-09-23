@@ -119,7 +119,11 @@ def main(argv=None) -> int:
             failed += 1
             continue
         surveyed = survey_system(name)
-        problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions],
+        # Only the places BC's own menu offers. region-coverage asks "does
+        # every destination have a region", and an orphan still in the tree
+        # (Vesuvi1) is not a destination -- see _ordered() in layout.
+        problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions
+                                              if r.menu_listed],
                             pins=pins_from(m))
         status = "ok" if not problems else f"{len(problems)} PROBLEM(S)"
         where = "(not written)" if args.check else save(m)
