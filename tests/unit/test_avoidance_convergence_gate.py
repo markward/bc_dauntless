@@ -47,24 +47,24 @@ def test_bound_radius_is_zero_without_pieces():
 
 
 def test_bound_radius_encloses_every_piece():
-    pieces = [((0.0, 0.0, 0.0), 1.0),
-              ((10.0, 0.0, 0.0), 2.0),      # reaches 12
-              ((0.0, -3.0, 4.0), 0.5)]      # reaches 5.5
+    pieces = [((0.0, 0.0, 0.0), 1.0, None),
+              ((10.0, 0.0, 0.0), 2.0, None),      # reaches 12
+              ((0.0, -3.0, 4.0), 0.5, None)]      # reaches 5.5
     r = hb.bound_radius(_Ship(pieces))
     assert r == pytest.approx(12.0)
-    for (cx, cy, cz), pr in pieces:
+    for (cx, cy, cz), pr, _part in pieces:
         assert (cx * cx + cy * cy + cz * cz) ** 0.5 + pr <= r + 1e-9
 
 
 def test_bound_radius_tracks_live_scale():
-    pieces = [((3.0, 4.0, 0.0), 1.0)]        # reaches 6
+    pieces = [((3.0, 4.0, 0.0), 1.0, None)]        # reaches 6
     assert hb.bound_radius(_Ship(pieces, scale=1.0)) == pytest.approx(6.0)
     assert hb.bound_radius(_Ship(pieces, scale=2.5)) == pytest.approx(15.0)
 
 
 def test_bound_radius_memo_does_not_freeze_scale():
     """Memoised UNSCALED, so a rescale between calls must still be honoured."""
-    ship = _Ship([((0.0, 0.0, 5.0), 1.0)], scale=1.0)
+    ship = _Ship([((0.0, 0.0, 5.0), 1.0, None)], scale=1.0)
     assert hb.bound_radius(ship) == pytest.approx(6.0)
     ship._scale = 3.0
     assert hb.bound_radius(ship) == pytest.approx(18.0)
@@ -77,7 +77,7 @@ def test_bound_radius_exceeds_an_undersized_authored_radius():
     at 0, so a hardpoint script's authored value can be smaller than the
     geometry — and a protruding piece outside it would be gated away.
     """
-    ship = _Ship([((0.0, 40.0, 0.0), 2.0)], radius=5.0)
+    ship = _Ship([((0.0, 40.0, 0.0), 2.0, None)], radius=5.0)
     assert ship.GetRadius() < hb.bound_radius(ship)
 
 

@@ -58,14 +58,27 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     Drops `bound_radius`'s memo, which is derived from these pieces but lives
     in a different slot: writing one without the other would answer a
     soundness-critical question about geometry the ship no longer has.
+
+    Each piece is tagged with the articulated part its CENTRE falls on, or
+    None. `part_for_point` returns None wherever the part boxes overlap —
+    which is most of the hull by design, since a BoP's wing boxes swallow the
+    body box at the roots — so the tag is a minority case, and None keeps the
+    piece behaving exactly as it did before parts existed.
     """
     from engine.host_loop import BC_MODEL_SCALE
+    from engine.appc import articulation
+    from engine.appc.part_severance import part_for_point
     s = BC_MODEL_SCALE
-    ship.__dict__[_ATTR] = tuple(
-        ((cx * s, cy * s, cz * s), r * s)
-        for cx, cy, cz, r in spheres
-        if r > 0.0
-    )
+    # Attribution is computed ONCE here, never per tick: the pieces and the
+    # part boxes are both rest-pose and neither ever changes after load.
+    leaf = articulation.leaf_for(ship)
+    out = []
+    for cx, cy, cz, r in spheres:
+        if r <= 0.0:
+            continue
+        c = (cx * s, cy * s, cz * s)
+        out.append((c, r * s, part_for_point(leaf, c) if leaf else None))
+    ship.__dict__[_ATTR] = tuple(out)
     ship.__dict__.pop(_BOUND_R_ATTR, None)
 
 
@@ -99,8 +112,11 @@ def hull_spheres_world(ship) -> list:
     loc = ship.GetWorldLocation()
     R = ship.GetWorldRotation()
     scale = float(ship.GetScale())
+    from engine.appc.part_severance import is_detached
     out = []
-    for (cx, cy, cz), r in cached:
+    for (cx, cy, cz), r, part in cached:
+        if part is not None and is_detached(ship, part):
+            continue                           # severed: no longer collides
         v = TGPoint3(cx * scale, cy * scale, cz * scale)
         v.MultMatrixLeft(R)                    # body -> world
         out.append((TGPoint3(loc.x + v.x, loc.y + v.y, loc.z + v.z), r * scale))
@@ -139,8 +155,11 @@ def hull_spheres_near(ship, center, radius) -> list:
     qy = R.m01 * dx + R.m11 * dy + R.m21 * dz
     qz = R.m02 * dx + R.m12 * dy + R.m22 * dz
 
+    from engine.appc.part_severance import is_detached
     out = []
-    for (cx, cy, cz), r in cached:
+    for (cx, cy, cz), r, part in cached:
+        if part is not None and is_detached(ship, part):
+            continue                           # severed: no longer collides
         # Body-frame piece centre at the ship's live scale.
         sx, sy, sz = cx * scale, cy * scale, cz * scale
         ex, ey, ez = sx - qx, sy - qy, sz - qz
@@ -185,6 +204,12 @@ def bound_radius(ship) -> float:
     max(|centre| + r) over the pieces, which is exact rather than approximate.
     Memoised unscaled on the instance (pieces never change after caching) and
     multiplied by the live GetScale() per call, so a rescaled ship stays right.
+
+    Counts a SEVERED part's pieces too. This is a gate that must enclose
+    whatever it gates, so over-stating it is safe and under-stating it is
+    not; shrinking it on severance would also mean invalidating this memo on
+    every detach. Pinned by tests/unit/test_hull_bounds_parts.py::
+    test_bound_radius_still_counts_a_severed_part.
     """
     cached = ship.__dict__.get(_ATTR)
     if not cached:
@@ -192,7 +217,7 @@ def bound_radius(ship) -> float:
     r_unscaled = ship.__dict__.get(_BOUND_R_ATTR)
     if r_unscaled is None:
         r_unscaled = 0.0
-        for (cx, cy, cz), r in cached:
+        for (cx, cy, cz), r, _part in cached:
             reach = (cx * cx + cy * cy + cz * cz) ** 0.5 + r
             if reach > r_unscaled:
                 r_unscaled = reach
