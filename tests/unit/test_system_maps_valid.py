@@ -53,14 +53,23 @@ def test_regenerating_any_map_is_idempotent(name):
     Parametrised over every committed map, not just Ona: a bug in a layout
     rule that only bites when player_start_gu is non-zero would pass under
     Ona alone, since all three of its Player Starts sit at the origin. 51 of
-    the 90 real regions do not."""
+    the 90 real regions do not.
+
+    Compared against the file's ACTUAL BYTES, not against
+    `to_json(load(name))`. Normalising both sides through `to_json` makes the
+    committed file invisible to this test: adding a field to `SystemMap` made
+    `save()` start emitting a new key, and because `load()` supplies the
+    default and `to_json` re-emits it, 30 stale checked-in files compared
+    equal to freshly generated ones. The on-disk bytes are what the rest of
+    the project reads, so they are what this test must compare."""
     if name == "__none__":
         pytest.skip("no system maps checked in yet")
-    from engine.systems.map import to_json
+    from engine.systems.map import map_dir, to_json
     from tools.gen_system_maps import generate
     committed = load(name)
     fresh, _notes = generate(committed.system)
-    assert to_json(fresh) == to_json(committed)
+    on_disk = (map_dir() / f"{name}.json").read_text(encoding="utf-8")
+    assert to_json(fresh) == on_disk
 
 
 def test_overrides_survive_regeneration():
