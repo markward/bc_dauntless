@@ -128,18 +128,28 @@ TEST(ModelParts, ANodeWithNoGeometryAnywhereHasNoBounds) {
 
 TEST(ModelParts, FallsBackToTheFirstBranchingNodeWithoutASceneRoot) {
     // Not every hull names its root 'Scene Root'. The rule degrades to "the
-    // first node with more than one child" rather than returning nothing.
+    // first node with more than one child" rather than returning nothing --
+    // and NOT to model.root_node itself. w0 IS model.root_node but has only
+    // ONE child (w1); the first BRANCHING node is w1, two levels below root,
+    // mirroring BirdOfPrey.nif's two unnamed wrappers above Scene Root. A
+    // fallback that wrongly returned model.root_node would make w0 the part
+    // parent, and since no node's parent is w0, every part would come back
+    // candidate=false -- this fixture is the one that would catch that.
     assets::Model m;
     m.root_node = 0;
     const int w0 = add_node(m, "", -1);
+    const int w1 = add_node(m, "", w0);
     const int mesh = add_unit_cube_mesh(m);
-    const int a = add_node(m, "alpha", w0);
-    const int b = add_node(m, "beta", w0);
+    const int a = add_node(m, "alpha", w1);
+    const int b = add_node(m, "beta", w1);
     m.nodes[a].meshes.push_back(mesh);
     m.nodes[b].meshes.push_back(mesh);
 
     const auto parts = renderer::model_parts(m);
     const auto* alpha = find(parts, "alpha");
+    const auto* beta = find(parts, "beta");
     ASSERT_NE(alpha, nullptr);
+    ASSERT_NE(beta, nullptr);
     EXPECT_TRUE(alpha->candidate);
+    EXPECT_TRUE(beta->candidate);
 }

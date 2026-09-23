@@ -10,6 +10,15 @@ namespace {
 
 /// The node whose children are parts: "Scene Root" if present, else the first
 /// node with more than one child, else -1.
+///
+/// This is deliberately NOT model.root_node. On a real BC hull (measured on
+/// BirdOfPrey.nif) Scene Root sits below TWO unnamed wrapper nodes, each with
+/// exactly one child, so model.root_node is neither named "Scene Root" nor a
+/// branch point -- it is two levels above the node whose children are the
+/// actual parts. Falling back to model.root_node would make every node's
+/// parent-check fail (nothing's parent_index equals the root), so every part
+/// would silently come back candidate=false. See
+/// ModelParts.FallsBackToTheFirstBranchingNodeWithoutASceneRoot.
 int part_parent_index(const assets::Model& model) {
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         if (model.nodes[i].name == "Scene Root") return static_cast<int>(i);
