@@ -7,6 +7,7 @@ not a snapshot of it.
 """
 import pytest
 
+from engine.systems import clouds
 from tools.systems import survey
 from tools.systems.survey import survey_system, system_names
 
@@ -200,3 +201,19 @@ def test_the_real_vesuvi_and_belaruz_scripts_parse_as_expected():
     assert belaruz1.nebula["damage_shield_per_s"] == 0.0
     assert belaruz1.nebula["sensor_density"] == pytest.approx(6.5)
     assert belaruz1.nebula["visibility_gu"] == pytest.approx(200.0)
+
+
+def test_the_bc_profiles_match_what_the_sdk_actually_says():
+    """engine/systems/clouds.py claims debris and nebula are BC's numbers,
+    verbatim. This is the only test that can prove it: it reads the real game
+    scripts and compares. If it fails, either someone tuned a constant that is
+    not ours to tune, or the survey parser drifted."""
+    vesuvi4 = [r for r in survey_system("Vesuvi").regions
+               if r.set_name == "Vesuvi4"][0]
+    belaruz1 = [r for r in survey_system("Belaruz").regions
+                if r.set_name == "Belaruz1"][0]
+    for region, profile in ((vesuvi4, "debris"), (belaruz1, "nebula")):
+        expected = clouds.params_for(profile)
+        for key in expected:
+            assert region.nebula[key] == pytest.approx(expected[key]), \
+                f"{profile}.{key} does not match {region.set_name}"
