@@ -120,12 +120,15 @@ def part_for_live_point(ship, point):
     THE QUERY MOVES, NOT THE BOXES -- the same rule §4.3 of the spec applies
     to every other consumer of a baked rest-pose structure. For each part in
     the ship's rig the point is inverse-rotated about THAT part's hinge (same
-    pivot, same axis, negated angle -- `point_at_deflection` is linear in
-    deflection, so -deflection is exactly the inverse) and re-tested. A part
-    claims the point only when the pullback lands on ITS OWN box.
+    pivot, same axis, negated angle -- rotation is linear in the angle, so
+    negating it is exactly the inverse) and re-tested. A part claims the
+    point only when the pullback lands on ITS OWN box. The angle used is
+    each part's CURRENT one (`articulation.angle_for_part`, Task 4), not a
+    single ship-wide deflection -- different parts on the same ship can be
+    mid-ease at different angles at once.
 
     The rest-space test runs FIRST and unchanged, so a point on the body
-    attributes exactly as it always did, and at deflection 0 -- the pose the
+    attributes exactly as it always did, and at angle 0 -- the pose the
     model ships in and the one combat runs in -- every rotation is identity
     and this function is byte-identical to `part_for_point`.
 
@@ -152,14 +155,11 @@ def part_for_live_point(ship, point):
     parts = articulation.rig_for(leaf)
     if not parts:
         return None
-    try:
-        deflection = float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - a prop or a test double has no rig state
-        return None
-    if deflection == 0.0:
-        return None                      # identity: `plain` already answered
     for part in parts:
-        rest_point = articulation.point_at_deflection(part, point, -deflection)
+        angle_deg = articulation.angle_for_part(ship, part)
+        if angle_deg == 0.0:
+            continue                      # identity: `plain` already answered
+        rest_point = articulation.point_at_angle(part, point, -angle_deg)
         if part_for_point(leaf, rest_point) == part.node:
             return part.node
     return None

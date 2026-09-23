@@ -101,6 +101,26 @@ def test_an_interrupted_transition_just_changes_target():
     assert back < a
 
 
+def test_mirrored_parts_with_equal_ranges_stay_in_sync():
+    """The real BoP case, and the actual guarantee ease_angle makes: a wing
+    pair is authored mirrored (+45 / -45, EQUAL magnitude, so equal range).
+    Equal ranges give equal ease rate, so both reach their target -- and
+    every point in between -- on the same tick. (Parts with DIFFERENT ranges
+    do not generally stay in sync; that is a documented, deliberate
+    limitation, not this test's concern.)"""
+    a = articulation.ease_angle(0.0, 45.0, part_range=45.0, dt=0.7)
+    b = articulation.ease_angle(0.0, -45.0, part_range=45.0, dt=0.7)
+    assert a == pytest.approx(-b)
+
+    # And at completion:
+    a_done = articulation.ease_angle(0.0, 45.0, part_range=45.0,
+                                     dt=articulation.TRAVEL_SECONDS)
+    b_done = articulation.ease_angle(0.0, -45.0, part_range=45.0,
+                                     dt=articulation.TRAVEL_SECONDS)
+    assert a_done == pytest.approx(45.0)
+    assert b_done == pytest.approx(-45.0)
+
+
 def test_rotation_for_takes_DEGREES_not_a_deflection():
     """Signature change. rotation_for(part, 45.0) must mean 45 degrees, not
     45x the authored angle -- the old signature took a 0..1 scalar."""

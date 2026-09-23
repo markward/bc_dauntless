@@ -56,6 +56,7 @@ SPV-authored file later, once the gizmo can place a hinge.
 
 from __future__ import annotations
 
+import functools
 import math
 from typing import NamedTuple
 
@@ -308,10 +309,20 @@ def ease_angle(current: float, target: float, *, part_range: float,
     """Move `current` toward `target` at `part_range / TRAVEL_SECONDS` per
     second, clamped so it never overshoots.
 
-    Rate is proportional to the part's OWN range, so a part swinging its whole
-    travel always takes TRAVEL_SECONDS and parts moving between the same two
-    states arrive together. Interrupting a transition needs no special case:
-    the target changes and the part keeps easing from wherever it is.
+    Rate is proportional to the part's OWN range: a full swing always takes
+    TRAVEL_SECONDS, and a smaller move is proportionally faster. Two parts
+    with EQUAL ranges therefore stay in sync however far between states they
+    move -- the real Bird of Prey case, since the wing pair is authored
+    mirrored (+45 / -45, equal magnitude). Two parts with DIFFERENT ranges do
+    NOT generally arrive together: e.g. a part authored cruise 0 / red 40 /
+    warp 90 (range 90) and one authored cruise 0 / red 40 / warp 40 (range
+    40) both swing 40 degrees on cruise->red, but the first finishes at
+    0.44 * TRAVEL_SECONDS and the second at 1.0 * TRAVEL_SECONDS -- visibly
+    desynchronised, driven by a WARP angle neither part is moving to. A
+    future ship whose parts need true cross-part sync regardless of range is
+    a known, deliberate re-open, not something this function claims to
+    solve; see `_part_range`. Interrupting a transition needs no special
+    case: the target changes and the part keeps easing from wherever it is.
     """
     if part_range <= 0.0 or TRAVEL_SECONDS <= 0.0:
         return target
@@ -322,25 +333,90 @@ def ease_angle(current: float, target: float, *, part_range: float,
     return current + (step if delta > 0 else -step)
 
 
+@functools.lru_cache(maxsize=None)
 def _part_range(part) -> float:
     """Peak-to-peak spread of `part`'s authored angle across every state.
 
-    A single per-part constant rather than a per-transition one, so
-    `ease_angle`'s rate does not change depending on which two states a part
-    happens to be moving between -- only how far THIS part swings overall.
+    A single per-part constant rather than a per-transition one, computed
+    once and cached (parts are long-lived: either a module-level `Part` in
+    `_RIGS` or a snapshot entry in `articulated_part._BY_LEAF` that lives for
+    the leaf's lifetime), so `tick_ship` does not rebuild a 4-element list
+    every part every tick. This gives `ease_angle` a rate that is fixed per
+    part rather than recomputed per transition -- see that function's
+    docstring for exactly what guarantee that does, and does not, deliver.
     """
     from engine.appc.articulated_part import STATES
     values = [part.angle_for(state) for state in STATES]
     return max(values) - min(values)
 
 
+def _swing_range(part) -> float:
+    """`ease_angle`'s `part_range` for `part`, whichever rig system it is
+    from. A NEW-rig part (`ArticulatedPartProperty`) uses `_part_range`
+    (peak-to-peak across all four states). An OLD-rig part (this module's
+    hardcoded `Part`) only ever swings between 0 and its own `angle_deg`, so
+    its range IS `abs(angle_deg)`."""
+    if callable(getattr(part, "angle_for", None)):
+        return _part_range(part)
+    return abs(part.angle_deg)
+
+
+def _part_name(part) -> str:
+    """Name to key `part` by in `ship._articulation_angles`. Both part
+    shapes are supported: the NEW `ArticulatedPartProperty`
+    (`.GetName()`) and this module's OLD hardcoded `Part` (`.node`)."""
+    getter = getattr(part, "GetName", None)
+    return getter() if callable(getter) else part.node
+
+
+def _target_angle(part, state: str) -> float:
+    """Degrees `part` should swing to at `state`.
+
+    A NEW-rig part carries one authored angle per state via `.angle_for`. An
+    OLD-rig `Part` -- still the only data that exists for the stock Bird of
+    Prey until Task 5 migrates it into the template format -- carries a
+    single `angle_deg` for a binary swing: RED is the model's rest pose
+    (down/armed) and everything else, including "warp", is the fully
+    deflected one (up/cold). Warp folding into "cold" rather than getting
+    its own pose is the 4-state rule (wing position is a flight
+    configuration) applied to the only data an OLD-rig part actually has.
+    """
+    angle_for = getattr(part, "angle_for", None)
+    if callable(angle_for):
+        return angle_for(state)
+    return 0.0 if state == "red" else part.angle_deg
+
+
 def angle_for_part(ship, part) -> float:
-    """`ship`'s current eased angle (degrees) for `part`, or 0.0 if `ship`
-    has never been ticked (the NIF pose)."""
+    """`ship`'s current eased angle (degrees) for `part`.
+
+    Primary source is `ship._articulation_angles` ({name: degrees}),
+    written by `tick_ship` every sim tick -- this is what every reader of a
+    ship's LIVE pose (`host_loop._sync_ship_articulation`,
+    `part_severance.part_for_live_point`, `part_transform_point` below)
+    consults; `GetArticulationDeflection`/`SetArticulationDeflection` are no
+    longer written anywhere in this module.
+
+    Falls back to the OLD scalar `ship.GetArticulationDeflection() *
+    part.angle_deg` for an OLD-rig `Part` whose ship was never ticked
+    through this module -- e.g. a render-sync unit test that drives
+    `_sync_ship_articulation` directly, with no prior `tick_ship` call. This
+    is scaffolding for an un-ticked ship / pre-existing test double, not a
+    live production path: a real ship gets ticked every frame
+    (`engine.core.loop`), so the primary branch above is what production
+    code actually takes.
+    """
+    name = _part_name(part)
     angles = getattr(ship, "_articulation_angles", None)
-    if not angles:
+    if angles and name in angles:
+        return angles[name]
+    angle_deg = getattr(part, "angle_deg", None)
+    if angle_deg is None:
         return 0.0
-    return angles.get(part.GetName(), 0.0)
+    try:
+        return float(angle_deg) * float(ship.GetArticulationDeflection())
+    except Exception:  # noqa: BLE001 - not a ShipClass (test double / prop)
+        return 0.0
 
 
 # ── Dev override ─────────────────────────────────────────────────────────────
@@ -403,18 +479,25 @@ def leaf_for(ship) -> str:
 
 def tick_ship(ship, dt: float) -> None:
     """Advance one ship's PER-PART articulation angles by `dt` (Task 4's
-    4-state model), easing each of `parts_for_leaf`'s parts toward its
-    authored angle at `state_for(ship)`.
+    4-state model), easing each part toward its target angle at
+    `state_for(ship)` (or the dev override state).
 
-    A ship with no registered parts is skipped before any allocation, so the
-    overwhelming majority of hulls pay one leaf lookup. Angles live on the
-    ship itself (`ship._articulation_angles`, {part name: degrees}) rather
-    than in a module-level table, matching where the old single deflection
-    lived (`ship.GetArticulationDeflection`/`SetArticulationDeflection`).
+    Parts come from the NEW per-state template
+    (`articulated_part.parts_for_leaf`) when one is registered for `leaf`;
+    otherwise this falls back to this module's OLD hardcoded `rig_for` --
+    the only data the stock Bird of Prey has until Task 5 migrates it -- read
+    through `_target_angle`'s 2-state fold (RED = down/armed, everything
+    else = up/cold). Either way the result lands in
+    `ship._articulation_angles` ({name: degrees}), which is what every
+    reader of a ship's LIVE pose now consults; nothing writes
+    `ship.SetArticulationDeflection` any more.
+
+    A ship with no parts under EITHER system is skipped before any
+    allocation, so the overwhelming majority of hulls pay one leaf lookup.
     """
     from engine.appc.articulated_part import parts_for_leaf
     leaf = leaf_for(ship)
-    parts = parts_for_leaf(leaf)
+    parts = parts_for_leaf(leaf) or rig_for(leaf)
     if not parts:
         return
     forced = _dev_override
@@ -433,12 +516,12 @@ def tick_ship(ship, dt: float) -> None:
         except Exception:  # noqa: BLE001 - test double / prop may reject
             return
     for part in parts:
-        name = part.GetName()
+        name = _part_name(part)
         current = angles.get(name, 0.0)
-        target = part.angle_for(state)
+        target = _target_angle(part, state)
         if current != target:
             angles[name] = ease_angle(current, target,
-                                      part_range=_part_range(part), dt=dt)
+                                      part_range=_swing_range(part), dt=dt)
 
 
 def parts_for_ship(ship) -> tuple[Part, ...]:
@@ -505,22 +588,21 @@ def part_transform_point(ship, point):
 
     In and out are BODY frame, SHIP units (what subsystem mounts and
     PART_BOXES use). Identity for a ship with no rig, for a point on no
-    articulated part, and at deflection 0 -- so an unarticulated hull is
+    articulated part, and at angle 0 -- so an unarticulated hull is
     byte-identical to not calling this.
 
     This is what makes a hardpoint FOLLOW its part. A BoP's wingtip cannon
     sits at (1.008, 0.450, -0.670); with the wings up that mount is ~0.9 ship
     units (~150 m) from where the gun is drawn, and the beam fires from the
     stale point.
+
+    Reads the part's CURRENT angle via `angle_for_part` (Task 4) rather than
+    a ship-wide deflection: a per-part angle is what the state machine
+    actually produces, and different parts on the same ship can be mid-ease
+    at different angles at once.
     """
     parts = rig_for(leaf_for(ship))
     if not parts:
-        return point
-    try:
-        deflection = float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - not a ShipClass (prop / test double)
-        return point
-    if deflection == 0.0:
         return point
 
     from engine.appc.part_severance import part_for_point, is_detached
@@ -537,7 +619,25 @@ def part_transform_point(ship, point):
     if part is None:
         return point
 
-    return point_at_deflection(part, point, deflection)
+    angle_deg = angle_for_part(ship, part)
+    if angle_deg == 0.0:
+        return point
+    return point_at_angle(part, point, angle_deg)
+
+
+def point_at_angle(part, point, angle_deg):
+    """Where `point` (body frame, ship units) ends up when `part` alone sits
+    at `angle_deg` degrees about its hinge.
+
+    The ship-free, angle-based twin of `point_at_deflection`: no
+    attribution, no severance check, no read of any ship state. Used by the
+    LIVE-pose readers (`part_transform_point`,
+    `part_severance.part_for_live_point`), which already have a concrete
+    current angle in hand (from `angle_for_part`) rather than a 0..1
+    fraction of an authored maximum.
+    """
+    pivot, axis, theta = rotation_for(part, angle_deg)
+    return _rotate_about(point, pivot, axis, theta)
 
 
 def point_at_deflection(part, point, deflection):
@@ -548,7 +648,10 @@ def point_at_deflection(part, point, deflection):
     severance check, and — the reason it exists separately — no read of any
     ship's LIVE deflection. `hull_bounds.bound_radius` needs the reach at
     deflection 1.0 while the ship is at rest, which the ship-driven call
-    cannot give it.
+    cannot give it. Kept taking a deflection fraction (not a raw angle,
+    unlike its sibling `point_at_angle`) because both of its OLD-rig callers
+    (`hull_bounds.py`, `test_part_severance_emitters.py`'s `_posed` fixture)
+    already speak in that unit.
     """
     # rotation_for now takes raw degrees (Task 4); this function's own
     # contract is unchanged (a 0..1 fraction of `part`'s authored max), so the

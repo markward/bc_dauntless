@@ -7022,27 +7022,25 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
 def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
     """Push `ship`'s articulated part poses (BoP wings) to its render instance.
 
-    READ-ONLY on game state: the deflection is eased on the sim tick by
-    engine.appc.articulation.tick_ship. Nothing here mutates the ship — a
+    READ-ONLY on game state: each part's angle is eased on the sim tick by
+    engine.appc.articulation.tick_ship and read back here via
+    `articulation.angle_for_part`. Nothing here mutates the ship — a
     game-state mutation in the render path is exactly the class of bug that
     gave the player's phasers a half-second of aiming at a destroyed subsystem.
 
-    Guarded on CHANGE: the pose is re-pushed only when it actually moved, so a
-    settled ship (which is nearly all of them, nearly always) costs one dict
-    lookup and a float compare rather than a boundary crossing per node per
-    frame.
+    Guarded on CHANGE: the pose (now a TUPLE of per-part angles, one float per
+    rigged part, not a single scalar) is re-pushed only when it actually
+    moved, so a settled ship (which is nearly all of them, nearly always)
+    costs one dict lookup and a tuple compare rather than a boundary crossing
+    per node per frame.
 
-    `force_rest` draws the hull in its NIF pose (every part at angle 0)
-    without touching game state. The Ship Property Viewer sets it, because a
-    hardpoint mount is STORED in the NIF frame: editing one through an
-    articulated pose writes back a number that is ~0.9 ship units out at a
-    Bird of Prey's wingtip, silently. See spec section 5.1.
-
-    `rotation_for` takes raw DEGREES (Task 4), not a 0..1 deflection, so
-    "every part at angle 0" is expressed here as `part.angle_deg * 0.0` --
-    forcing `deflection` itself to 0.0 before the per-part multiply, rather
-    than deleting the multiply, is what keeps every part's angle exactly
-    zero regardless of its own authored `angle_deg`.
+    `force_rest` draws the hull in its NIF pose -- every part at angle 0,
+    literally: the pose tuple is built as all zeros rather than read from
+    `angle_for_part` at all -- without touching game state. The Ship
+    Property Viewer sets it, because a hardpoint mount is STORED in the NIF
+    frame: editing one through an articulated pose writes back a number
+    that is ~0.9 ship units out at a Bird of Prey's wingtip, silently. See
+    spec section 5.1.
 
     It pushes an explicit ZERO rotation rather than skipping the push --
     skipping would leave whatever pose is already in node_overrides standing.
@@ -7050,17 +7048,15 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
     parts = articulation.parts_for_ship(ship)
     if not parts:
         return
-    try:
-        deflection = float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - a prop / test double is not articulated
-        return
     if force_rest:
-        deflection = 0.0
+        pose = tuple(0.0 for _ in parts)
+    else:
+        pose = tuple(articulation.angle_for_part(ship, part) for part in parts)
     last = session.ship_articulation.get(iid)
-    if last is not None and last == deflection:
+    if last is not None and last == pose:
         return
     from engine.appc import part_severance
-    for part in parts:
+    for part, angle_deg in zip(parts, pose):
         if part_severance.is_detached(ship, part.node):
             # A severed part is hidden via the SAME node_overrides slot this
             # rotation would write (set_instance_node_hidden / _rotation share
@@ -7069,15 +7065,14 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
             # with the rest, and a subsequent theta==0 push would erase the
             # hide for good. See part_severance.sever / part_detach_render.
             continue
-        pivot, axis, theta = articulation.rotation_for(
-            part, part.angle_deg * deflection)
+        pivot, axis, theta = articulation.rotation_for(part, angle_deg)
         # The rig is authored in SHIP units (shared with PART_BOXES and
         # subsystem mounts); the binding works in MODEL units. This is the
         # ONLY place the two meet.
         pivot_model = tuple(c / articulation.MODEL_TO_SHIP for c in pivot)
         host_io.set_instance_node_rotation(iid, part.node, pivot_model,
                                            axis, theta)
-    session.ship_articulation[iid] = deflection
+    session.ship_articulation[iid] = pose
 
 
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
