@@ -31,18 +31,37 @@ from engine.systems.map import Appearance, Body, Region, SystemMap
 
 _GOLDEN_ANGLE = 2.399963229728653
 
-# Star class, keyed by the basename of BC's authored Sun_Create base texture.
-# Exact values from the design brief's measured survey of the SDK.
+# Star colour by CLASS NAME, not texture. Exact values from the design
+# brief's measured survey of the SDK, plus remnant_hot (see below).
+#
+# Keyed by class rather than by BC's texture basename because one class here
+# is reachable only through a star override (overrides.star in a map's JSON,
+# see layout()'s `star` argument) and no BC texture ever produces it:
+# remnant_hot is Vesuvi's star, its core destabilised by a Kessok
+# Solarformer in BC's own opening cutscene, leaving a small hot blue-white
+# remnant rather than anything Sun_Create was ever called for. Texture
+# lookups go through the separate _STAR_TEXTURE_CLASSES map below.
 _STAR_CLASS_TABLE = {
-    "SunYellow.tga": ("yellow", (1.0, 0.85, 0.40)),
-    "SunRed.tga": ("red", (0.91, 0.35, 0.24)),
-    "SunRedOrange.tga": ("red_orange", (0.94, 0.54, 0.24)),
-    "SunBlueWhite.tga": ("blue_white", (0.74, 0.84, 1.0)),
+    "yellow": (1.0, 0.85, 0.40),
+    "red": (0.91, 0.35, 0.24),
+    "red_orange": (0.94, 0.54, 0.24),
+    "blue_white": (0.74, 0.84, 1.0),
+    # Anything else, including BC's own default (no texture argument at all).
+    "white": (1.0, 0.95, 0.80),
+    # A system that authors no Sun_Create whatsoever (Belaruz, Vesuvi) --
+    # the fallback absent any star override.
+    "brown_dwarf": (0.42, 0.25, 0.18),
+    # No BC texture produces this -- only a star override does (Vesuvi).
+    "remnant_hot": (0.78, 0.86, 1.0),
 }
-# Anything else, including BC's own default (no texture argument at all).
-_WHITE_STAR = ("white", (1.0, 0.95, 0.80))
-# A system that authors no Sun_Create whatsoever (Belaruz, Vesuvi).
-_BROWN_DWARF_STAR = ("brown_dwarf", (0.42, 0.25, 0.18))
+
+# BC's authored Sun_Create base texture basename -> star class.
+_STAR_TEXTURE_CLASSES = {
+    "SunYellow.tga": "yellow",
+    "SunRed.tga": "red",
+    "SunRedOrange.tga": "red_orange",
+    "SunBlueWhite.tga": "blue_white",
+}
 
 
 @dataclass
@@ -161,7 +180,8 @@ def _sun_textures(s) -> list:
 
 def _classify_texture(texture: str) -> tuple:
     basename = texture.rsplit("/", 1)[-1] if texture else ""
-    return _STAR_CLASS_TABLE.get(basename, _WHITE_STAR)
+    star_class = _STAR_TEXTURE_CLASSES.get(basename, "white")
+    return star_class, _STAR_CLASS_TABLE[star_class]
 
 
 def _star_appearance(s) -> tuple:
@@ -171,9 +191,33 @@ def _star_appearance(s) -> tuple:
     ambiguities() is where that disagreement gets reported, not here."""
     textures = _sun_textures(s)
     if not textures:
-        return _BROWN_DWARF_STAR
+        return "brown_dwarf", _STAR_CLASS_TABLE["brown_dwarf"]
     chosen = Counter(textures).most_common(1)[0][0]
     return _classify_texture(chosen)
+
+
+def _star_class_and_color(s, star) -> tuple:
+    """(star_class, color) for this system's star -- a per-system `star`
+    override (overrides.star in the map's JSON) wins outright over anything
+    derived from BC's authored Sun_Create texture. An override with no
+    explicit colour falls back to the class table, exactly like a BC-derived
+    class does."""
+    if star is not None:
+        star_class = star["star_class"]
+        color = star.get("color")
+        if color is not None:
+            return star_class, tuple(float(c) for c in color)
+        return star_class, _STAR_CLASS_TABLE.get(star_class, _STAR_CLASS_TABLE["white"])
+    return _star_appearance(s)
+
+
+def _star_radius(s, t: LayoutTuning, star) -> float:
+    """Sun radius: an override's radius_gu wins when given; an absent one
+    leaves the derived radius (BC's authored sun, or the brown-dwarf
+    fallback when there is none) alone."""
+    if star is not None and star.get("radius_gu") is not None:
+        return float(star["radius_gu"])
+    return _sun_radius(s, t)
 
 
 def _max_star_intrusion(m: SystemMap, star, t: LayoutTuning) -> float:
@@ -187,8 +231,13 @@ def _max_star_intrusion(m: SystemMap, star, t: LayoutTuning) -> float:
         ])
 
 
-def _first_orbit_push(s, t: LayoutTuning, pins) -> tuple[float, SystemMap]:
+def _first_orbit_push(s, t: LayoutTuning, pins, star=None) -> tuple[float, SystemMap]:
     """The corrective distance added to the first orbit, and the resulting map.
+
+    `star` is the per-system star override dict (or None), threaded straight
+    through to `_sun_radius`'s replacement, `_star_radius`, and to `_place`'s
+    appearance choice -- it never changes the PUSH LOGIC itself, only the
+    sun_radius the logic starts from.
 
     All 7 known offenders are the INNERMOST region of their system, and every
     orbit is `first_orbit + orbit_step_gu * i` -- so raising the first orbit
@@ -221,21 +270,21 @@ def _first_orbit_push(s, t: LayoutTuning, pins) -> tuple[float, SystemMap]:
     OTHER region's bodies to a new position too, which is not what pinning
     a body means (see test_an_unpinned_body_in_the_same_region_is_not_moved).
     """
-    sun_radius = _sun_radius(s, t)
+    sun_radius = _star_radius(s, t, star)
     base_first_orbit = sun_radius + t.first_orbit_clearance_gu
-    m = _place(s, t, {}, base_first_orbit, sun_radius)
-    star = next(b for b in m.bodies if b.orbits is None)
-    if _max_star_intrusion(m, star, t) <= 0.0:
+    m = _place(s, t, {}, base_first_orbit, sun_radius, star)
+    star_body = next(b for b in m.bodies if b.orbits is None)
+    if _max_star_intrusion(m, star_body, t) <= 0.0:
         push = 0.0
     else:
         worst = max(m.regions, key=lambda r: (
-            r.radius_gu + star.radius_gu + t.star_clearance_gu
-            - _norm(_sub(r.anchor_gu, star.position_gu))))
-        probe = _place(s, t, {}, base_first_orbit + 1.0, sun_radius)
+            r.radius_gu + star_body.radius_gu + t.star_clearance_gu
+            - _norm(_sub(r.anchor_gu, star_body.position_gu))))
+        probe = _place(s, t, {}, base_first_orbit + 1.0, sun_radius, star)
         probe_anchor = next(r.anchor_gu for r in probe.regions if r.set_name == worst.set_name)
         direction = _sub(probe_anchor, worst.anchor_gu)  # exact anchor shift per 1 GU of first_orbit
 
-        target = worst.radius_gu + star.radius_gu + t.star_clearance_gu
+        target = worst.radius_gu + star_body.radius_gu + t.star_clearance_gu
         # worst.anchor_gu is used directly as the vector FROM THE STAR below
         # (a_dot_u, a_sq) -- valid only because _place() always puts the star
         # at the origin (see the Body appended at the top of _place()).
@@ -246,9 +295,9 @@ def _first_orbit_push(s, t: LayoutTuning, pins) -> tuple[float, SystemMap]:
         push = (-a_dot_u + math.sqrt(max(discriminant, 0.0))) / u_sq
 
     # Final placement: pins applied, at the (possibly pushed) first orbit.
-    m = _place(s, t, pins, base_first_orbit + push, sun_radius)
-    star = next(b for b in m.bodies if b.orbits is None)
-    residual = _max_star_intrusion(m, star, t)
+    m = _place(s, t, pins, base_first_orbit + push, sun_radius, star)
+    star_body = next(b for b in m.bodies if b.orbits is None)
+    residual = _max_star_intrusion(m, star_body, t)
     if residual > 1e-6:
         raise ValueError(
             f"system {s.name!r}: pushed the first orbit out by {push:.1f} GU "
@@ -324,15 +373,19 @@ def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
     return notes
 
 
-def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float) -> SystemMap:
+def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
+           star=None) -> SystemMap:
     """Place bodies and regions given an already-decided first-orbit distance
     and sun radius. Pure function of its arguments -- called twice by
     _first_orbit_push() when a corrective push is needed, so it must not read
     or cache anything beyond what it is passed.
+
+    `star` is the per-system star override dict (or None); it only changes
+    the sun Body's appearance, never the placement geometry.
     """
     m = SystemMap(system=s.name, generated={"tool": "gen_system_maps"})
 
-    star_class, color = _star_appearance(s)
+    star_class, color = _star_class_and_color(s, star)
     m.bodies.append(Body(
         name=s.name, display_name=s.name, radius_gu=sun_radius,
         position_gu=(0.0, 0.0, 0.0), orbits=None,
@@ -428,8 +481,8 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float) -> S
     return m
 
 
-def layout(s, tuning: LayoutTuning | None = None, pins=None) -> SystemMap:
+def layout(s, tuning: LayoutTuning | None = None, pins=None, star=None) -> SystemMap:
     t = tuning or LayoutTuning()
     pins = pins or {}
-    _push, m = _first_orbit_push(s, t, pins)
+    _push, m = _first_orbit_push(s, t, pins, star)
     return m

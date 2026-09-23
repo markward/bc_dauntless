@@ -141,3 +141,20 @@ def test_no_committed_map_declares_a_pin_and_here_is_why():
     declared = {name: pins_from(load(name)) for name in available()}
     assert all(p is None for p in declared.values()), \
         f"a map now declares a pin: { {k: v for k, v in declared.items() if v} }"
+
+
+def test_belaruz_and_vesuvi_carry_the_stars_their_descriptions_claim():
+    """The nav-map text says Belaruz's star is alive and Vesuvi's is a remnant.
+    Data and prose disagreeing is exactly the drift this branch exists to stop."""
+    belaruz = load("belaruz")
+    star = [b for b in belaruz.bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "white"
+    assert star.radius_gu == pytest.approx(8000.0)
+
+    vesuvi = load("vesuvi")
+    star = [b for b in vesuvi.bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "remnant_hot"
+
+    assert not any(b.appearance.star_class == "brown_dwarf"
+                   for name in ("belaruz", "vesuvi")
+                   for b in load(name).bodies)

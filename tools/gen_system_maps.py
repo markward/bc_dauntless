@@ -49,6 +49,20 @@ def pins_from(m):
     return {name: tuple(float(c) for c in offset) for name, offset in raw.items()}
 
 
+def star_from(m):
+    """The map's declared star override as a dict, or None.
+
+    A system that authors no Sun_Create at all (Belaruz, Vesuvi) falls to a
+    generic brown_dwarf. `overrides.star` corrects that by hand where the
+    player-facing description says something else and is better-evidenced --
+    see layout()'s `star` argument, which this feeds the same way pins_from()
+    feeds `pins`.
+    """
+    if m is None:
+        return None
+    return (getattr(m, "overrides", None) or {}).get("star")
+
+
 def generate(system: str):
     """Survey, lay out, and carry the existing map's overrides forward.
 
@@ -60,7 +74,9 @@ def generate(system: str):
     """
     surveyed = survey_system(system)
     old = load(system) if system.lower() in available() else None
-    fresh = layout(surveyed, pins=pins_from(old) if old is not None else None)
+    fresh = layout(surveyed,
+                    pins=pins_from(old) if old is not None else None,
+                    star=star_from(old) if old is not None else None)
     _merge_overrides(fresh, old)
     return fresh, ambiguities(surveyed)
 

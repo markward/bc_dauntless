@@ -14,11 +14,11 @@
       "appearance": {
         "kind": "nif",
         "model": "",
-        "star_class": "brown_dwarf",
+        "star_class": "remnant_hot",
         "color": [
-          0.42,
-          0.25,
-          0.18
+          0.78,
+          0.86,
+          1.0
         ]
       },
       "owner_region": null
@@ -185,6 +185,11 @@
     "notes": {
       "Vesuvi5/Inyo": "'Inyo' (1700 GU) demoted to a moon of 'Geki' (2200 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Inyo' is much smaller than 'Geki' and keeping it in 'Geki''s region preserves BC's original single-map grouping, per the brief's reasonable default.",
       "Vesuvi5/Mori": "'Mori' (1000 GU) demoted to a moon of 'Geki' (2200 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Mori' is much smaller than 'Geki' and keeping it in 'Geki''s region preserves BC's original single-map grouping, per the brief's reasonable default."
+    },
+    "star": {
+      "star_class": "remnant_hot",
+      "radius_gu": 2000.0,
+      "why": "The star's core was destabilised by a Kessok Solarformer (BC's own opening: 'the star... its core is destabilising!'). What remains is a hot remnant: small, luminous, blue-white. BC's own lighting agrees -- Vesuvi 5's authored directional is (0.6, 0.6, 0.8). Radius stays 2000 GU so the system's geometry does not move."
     }
   },
   "generated": {

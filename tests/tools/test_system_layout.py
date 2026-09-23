@@ -530,3 +530,44 @@ def test_ambiguities_reports_a_pushed_first_orbit():
             SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
         ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0))])
     assert any("first orbit" in n.lower() for n in ambiguities(s))
+
+
+def _sunless(name="Vesuvi", set_name="Vesuvi5"):
+    return SurveyedSystem(name=name, regions=[SurveyedRegion(
+        set_name=set_name, ordinal=5,
+        bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+
+
+def test_a_star_override_wins_over_the_derived_class():
+    m = layout(_sunless(), star={"star_class": "remnant_hot"})
+    star = [b for b in m.bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "remnant_hot"
+    assert star.appearance.color == pytest.approx((0.78, 0.86, 1.0))
+
+
+def test_a_star_override_may_set_an_explicit_colour_and_radius():
+    m = layout(_sunless(), star={"star_class": "white",
+                                 "color": [1.0, 0.97, 0.93],
+                                 "radius_gu": 8000.0})
+    star = [b for b in m.bodies if b.orbits is None][0]
+    assert star.appearance.color == pytest.approx((1.0, 0.97, 0.93))
+    assert star.radius_gu == pytest.approx(8000.0)
+
+
+def test_a_bigger_overridden_star_pushes_its_first_orbit_out():
+    """first_orbit is measured from the star's SURFACE, so a larger star must
+    carry every orbit outward rather than swallowing the innermost planet."""
+    t = LayoutTuning()
+    small = layout(_sunless())
+    big = layout(_sunless(), star={"star_class": "white", "radius_gu": 8000.0})
+    d_small = math.dist(small.body("Geki").position_gu, (0.0, 0.0, 0.0))
+    d_big = math.dist(big.body("Geki").position_gu, (0.0, 0.0, 0.0))
+    assert d_small == pytest.approx(t.brown_dwarf_radius_gu
+                                    + t.first_orbit_clearance_gu)
+    assert d_big == pytest.approx(8000.0 + t.first_orbit_clearance_gu)
+
+
+def test_no_override_leaves_todays_behaviour_untouched():
+    star = [b for b in layout(_sunless()).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "brown_dwarf"

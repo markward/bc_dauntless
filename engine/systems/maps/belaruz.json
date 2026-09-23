@@ -4,7 +4,7 @@
     {
       "name": "Belaruz",
       "display_name": "Belaruz",
-      "radius_gu": 2000.0,
+      "radius_gu": 8000.0,
       "position_gu": [
         0.0,
         0.0,
@@ -14,11 +14,11 @@
       "appearance": {
         "kind": "nif",
         "model": "",
-        "star_class": "brown_dwarf",
+        "star_class": "white",
         "color": [
-          0.42,
-          0.25,
-          0.18
+          1.0,
+          0.97,
+          0.93
         ]
       },
       "owner_region": null
@@ -28,8 +28,8 @@
       "display_name": "Belaruz 2",
       "radius_gu": 2400.0,
       "position_gu": [
-        39178.43706716839,
-        -42767.39492854255,
+        43231.37883273753,
+        -47191.608197012465,
         0.0
       ],
       "orbits": "Belaruz",
@@ -46,8 +46,8 @@
       "display_name": "Belaruz 3",
       "radius_gu": 7200.0,
       "position_gu": [
-        -83678.36743264554,
-        7343.76087622463,
+        -89655.3936778345,
+        7868.315224526389,
         0.0
       ],
       "orbits": "Belaruz",
@@ -64,8 +64,8 @@
       "display_name": "Belaruz 4",
       "radius_gu": 3600.0,
       "position_gu": [
-        87296.08264208655,
-        66928.27470767488,
+        92057.68714983673,
+        70578.90787354806,
         0.0
       ],
       "orbits": "Belaruz",
@@ -83,7 +83,7 @@
       "set_name": "Belaruz1",
       "anchor_gu": [
         0.0,
-        32000.0,
+        38000.0,
         0.0
       ],
       "radius_gu": 2229.5978859987417,
@@ -107,11 +107,11 @@
     {
       "set_name": "Belaruz2",
       "anchor_gu": [
-        31604.054207168385,
-        -53920.75079854255,
+        35656.995972737524,
+        -58344.964067012465,
         -9754.553220000002
       ],
-      "radius_gu": 20540.91137511818,
+      "radius_gu": 20540.911375118183,
       "body_names": [
         "Belaruz 2"
       ],
@@ -120,8 +120,8 @@
     {
       "set_name": "Belaruz3",
       "anchor_gu": [
-        -91252.75029264553,
-        -3809.594993775371,
+        -97229.77653783449,
+        -3285.040645473612,
         -9754.553220000002
       ],
       "radius_gu": 25340.91137511818,
@@ -133,8 +133,8 @@
     {
       "set_name": "Belaruz4",
       "anchor_gu": [
-        86928.45369208655,
-        75575.26429767488,
+        91690.05819983673,
+        79225.89746354806,
         -992.32652
       ],
       "radius_gu": 13811.503425743558,
@@ -144,7 +144,18 @@
       "nebula": null
     }
   ],
-  "overrides": {},
+  "overrides": {
+    "star": {
+      "star_class": "white",
+      "color": [
+        1.0,
+        0.97,
+        0.93
+      ],
+      "radius_gu": 8000.0,
+      "why": "Belaruz is not a casualty. A living system crossing a dust cloud, the star brighter for the material falling into it. Belaruz 1 carries the brightest directional in the game, pure white at full strength, which a dead star cannot produce."
+    }
+  },
   "generated": {
     "tool": "gen_system_maps"
   }
