@@ -321,11 +321,17 @@ Both are in `engine/systems/descriptions.json`, committed in `21ed51cc`.
    should be corrected to the damaged station at Geki.
 
 2. **Belaruz: "The cloud … can be entered out past the first planet."** The cloud
-   region anchors at 38,000 GU, inside Belaruz 2's orbit at 69,070 — it is the
-   innermost thing in the system, not the outermost. Under the reading above this
-   is not an error in the data but in the sentence, and the correction is also
-   the more interesting fiction: the dust has fallen inward, and that is what the
-   star is feeding on.
+   region anchors at 38,000 GU (BC's own pocket inside it at 38,845), inside
+   Belaruz 2's orbit at **64,000** — it is the innermost thing in the system, not
+   the outermost. Under the reading above this is not an error in the data but in
+   the sentence, and the correction is also the more interesting fiction: the
+   dust has fallen inward, and that is what the star is feeding on.
+
+   *(Corrected: this bullet read "Belaruz 2's orbit at 69,070", and the Open
+   question below read "Belaruz 4 at 121,181". Both were region-ANCHOR distances
+   quoted as orbital radii. A region's anchor is offset from the body it frames,
+   so the two are never the same number. The orbits in the committed map are
+   64,000 / 90,000 / 116,000 GU.)*
 
 The second depends on approving the Belaruz lobe; the first does not.
 
@@ -333,8 +339,28 @@ The second depends on approving the Belaruz lobe; the first does not.
 
 The lobe's numbers above (`near`, `far`, `radius`) are the one part of this note
 that is asserted rather than derived — BC gives us one 900 GU sphere and a
-direction, and nothing that bounds the cloud the system is crossing. They are
-sized to reach past Belaruz 4 at 121,181 GU so that the outer system sits in thin
-material, which is what the description claims. If the lobe should instead be a
-wall the system has not yet fully entered, or a shell around the outer system
-only, that is a call to make before generating.
+direction, and nothing that bounds the cloud the system is crossing.
+
+**What the generated lobe actually does.** Measured against the committed
+`engine/systems/maps/belaruz.json`: its axis is the unit star→pocket direction,
+so BC's pocket projects onto the axis at 38,845 GU with zero perpendicular
+offset, and the lobe runs on to `far_gu` = 220,000 — roughly 180,000 GU beyond
+the pocket's far edge. So the thin body does stretch out well ahead of the dense
+part, and that is what the description claims and what
+`test_belaruzs_description_matches_where_its_cloud_actually_is` pins.
+
+**What it does not do is envelop the system.** The planets are spread around the
+star at BC's own orbital angles, while the lobe is one-sided. Projected onto its
+axis, Belaruz 2 lands at *t* = −47,211 (behind the star entirely) and Belaruz 3
+at *t* = 7,908 (short of `near_gu` = 20,000); only Belaruz 4 at *t* = 70,538 is
+inside. Two of the three worlds are outside the lobe.
+
+**The question, still open.** Whether that is right is the decision this section
+exists to flag, and it is not made here. If the cloud should envelop the whole
+system, widening `radius_gu` will not do it — Belaruz 2's axial projection is
+*negative*, so it needs a negative `near_gu`, a different axis, or a different
+shape altogether. If the lobe should instead stay one-sided — a wall the system
+has not yet fully entered, or a shell around the outer system only — the current
+numbers are already close to that reading. The description was rewritten
+(`c73ad644`) to claim only what the geometry supports, so nothing is blocked on
+answering this; the text and the data agree either way.
