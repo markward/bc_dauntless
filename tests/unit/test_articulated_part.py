@@ -8,9 +8,22 @@ file, with no second format. See spec section 2.2.
 """
 import pytest
 
+import App
 from engine.appc import articulated_part as ap
 
 STATES = ("cruise", "yellow", "red", "warp")
+
+
+@pytest.fixture(autouse=True)
+def _reset_articulated_part_and_local_templates():
+    """Isolates every test in this file from the others AND from the rest of
+    the suite: App.g_kModelPropertyManager is a session-wide singleton, and
+    this project has a documented history of order-dependent failures."""
+    ap.reset()
+    App.g_kModelPropertyManager.ClearLocalTemplates()
+    yield
+    ap.reset()
+    App.g_kModelPropertyManager.ClearLocalTemplates()
 
 
 def test_the_name_IS_the_node_name():
@@ -67,3 +80,60 @@ def test_pivot_and_axis_round_trip():
     p.SetAxis(0.0, 1.0, 0.0)
     assert p.pivot == (-0.16, 0.0, 0.05)
     assert p.axis == (0.0, 1.0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# parts_for_leaf: a snapshot taken at load time, NOT a live query.
+#
+# TGModelPropertyManager._local is wiped by ClearLocalTemplates() on every
+# ship load, so it only ever holds the most recently loaded ship's templates.
+# A live parts_for_leaf would silently return whatever ship loaded last.
+# ---------------------------------------------------------------------------
+
+def test_parts_for_leaf_unrigged_ship_is_empty_tuple():
+    """An unrigged ship is the overwhelmingly common case; it must cost
+    nothing and never raise."""
+    assert ap.parts_for_leaf("no_such_ship") == ()
+
+
+def test_snapshot_for_leaf_captures_registered_parts():
+    p = ap.ArticulatedPartProperty_Create("left wing")
+    App.g_kModelPropertyManager.RegisterLocalTemplate(p)
+    ap.snapshot_for_leaf("birdofprey")
+    assert ap.parts_for_leaf("birdofprey") == (p,)
+
+
+def test_snapshotting_a_second_leaf_does_not_disturb_the_first():
+    """The one that matters: pins that the snapshot is per-leaf, not
+    'whatever is in the manager right now' -- exactly the bug a live-query
+    design would have had."""
+    a = ap.ArticulatedPartProperty_Create("left wing")
+    App.g_kModelPropertyManager.RegisterLocalTemplate(a)
+    ap.snapshot_for_leaf("birdofprey")
+
+    App.g_kModelPropertyManager.ClearLocalTemplates()
+    b = ap.ArticulatedPartProperty_Create("wing")
+    App.g_kModelPropertyManager.RegisterLocalTemplate(b)
+    ap.snapshot_for_leaf("vorcha")
+
+    assert ap.parts_for_leaf("birdofprey") == (a,)   # untouched by vorcha's snapshot
+    assert ap.parts_for_leaf("vorcha") == (b,)
+
+
+def test_reset_clears_all_snapshots():
+    p = ap.ArticulatedPartProperty_Create("left wing")
+    App.g_kModelPropertyManager.RegisterLocalTemplate(p)
+    ap.snapshot_for_leaf("birdofprey")
+    ap.reset()
+    assert ap.parts_for_leaf("birdofprey") == ()
+
+
+def test_snapshot_ignores_non_articulated_templates():
+    """A plain subsystem property registered alongside a part must not be
+    picked up -- the snapshot is type-filtered, not 'everything local'."""
+    plain = App.HullProperty_Create("Hull")
+    part = ap.ArticulatedPartProperty_Create("left wing")
+    App.g_kModelPropertyManager.RegisterLocalTemplate(plain)
+    App.g_kModelPropertyManager.RegisterLocalTemplate(part)
+    ap.snapshot_for_leaf("birdofprey")
+    assert ap.parts_for_leaf("birdofprey") == (part,)

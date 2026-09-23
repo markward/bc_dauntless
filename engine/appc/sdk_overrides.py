@@ -37,8 +37,15 @@ def on_sdk_module_exec(module, qualname: str) -> None:
         return
     if parts[1] == "Hardpoints":
         if len(parts) == 3:
+            leaf = parts[2]
             from engine.appc import hardpoint_overrides
-            _dispatch(hardpoint_overrides.apply, parts[2])
+            _dispatch(hardpoint_overrides.apply, leaf)
+            # Snapshot immediately after apply(): a stock ship's parts were
+            # just registered BY apply(); a modded ship's parts were just
+            # registered by its own hardpoint file's module body, which has
+            # just finished executing. One snapshot point covers both homes.
+            from engine.appc import articulated_part
+            _dispatch(articulated_part.snapshot_for_leaf, leaf)
     elif len(parts) == 2:
         from engine.appc import ship_overrides
         _dispatch(ship_overrides.apply, module)

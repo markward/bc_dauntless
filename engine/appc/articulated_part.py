@@ -68,3 +68,54 @@ class ArticulatedPartProperty:
 def ArticulatedPartProperty_Create(name):
     """Factory, matching BC's `App.<Type>_Create` convention."""
     return ArticulatedPartProperty(name)
+
+
+# ── Per-leaf snapshot ─────────────────────────────────────────────────────
+#
+# WHY A SNAPSHOT AND NOT A LIVE QUERY: TGModelPropertyManager._local
+# (engine/appc/properties.py:1021) is a {name: prop} dict that
+# ClearLocalTemplates() wipes on every ship load (properties.py:1033, called
+# from loadspacehelper.CreateShip before each reload). It holds only the
+# MOST RECENTLY loaded ship's templates -- a per-tick parts_for_leaf(leaf)
+# reading the manager live would silently return whatever ship happened to
+# load last. Templates are load-time scaffolding, consumed at construction;
+# per-ship data has to be copied out of the manager at the moment it exists,
+# which is what snapshot_for_leaf does.
+_BY_LEAF: dict = {}
+
+
+def snapshot_for_leaf(leaf) -> None:
+    """Copy every ArticulatedPartProperty currently registered as a LOCAL
+    template into the snapshot kept for `leaf`.
+
+    Call this immediately after `leaf`'s hardpoint file has finished
+    registering its templates -- whether that registration came from
+    hardpoint_overrides.apply(leaf) (a stock ship) or the hardpoint file's
+    own module body (a modded ship carrying its own rig): both are done by
+    the time sdk_overrides.on_sdk_module_exec calls this.
+
+    Reaches TGModelPropertyManager's private `_local` store directly --
+    there is no public "list every local template" method (FindByName and
+    FindByNameAndType both require already knowing a name). Accepted
+    coupling: adding a public enumeration method for this one caller would
+    be more surface than the one snapshot site needs.
+    """
+    import App
+    local = getattr(App.g_kModelPropertyManager, "_local", {})
+    _BY_LEAF[leaf] = tuple(
+        p for p in local.values() if isinstance(p, ArticulatedPartProperty))
+
+
+def parts_for_leaf(leaf):
+    """The articulated parts snapshotted for `leaf`, as a tuple.
+
+    Returns () for a leaf with no snapshot -- an unrigged ship is the
+    overwhelmingly common case and must cost nothing and never raise.
+    """
+    return _BY_LEAF.get(leaf, ())
+
+
+def reset() -> None:
+    """Clear every snapshot. Call on mission swap, and from test teardown --
+    _BY_LEAF is process-wide state."""
+    _BY_LEAF.clear()
