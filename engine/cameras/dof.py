@@ -149,8 +149,9 @@ MIN_FOCUS_GU = 0.5
 # since replaced by the camera-anchored ramp -- see dof.h for why -- and the
 # justification did not follow it.)
 #
-# At 500,000 GU the bound is far rarer than it was: the widest sightline across
-# all 32 system maps is 452,715 GU, so nothing inside a system can reach it,
+# At 500,000 GU the bound is far rarer than it was: the widest sightline the
+# system maps produce is under 470,000 GU (derived, never restated -- see
+# tests/unit/test_camera_far_plane.py), so nothing in a system reaches it,
 # and sensor_detection's FALLBACK_RANGE_GU (30000 GU) -- which USED to sit six
 # times past the far plane -- is now well inside it and focuses normally. The
 # bound stays because what it prevents is a property of focus >= far, not of

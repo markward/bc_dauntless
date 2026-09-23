@@ -24,9 +24,16 @@ EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 # moved and dof.py kept 5000.0, leaving the local planet unfocusable.
 #
 # A star system is ONE coordinate space at the celestial layer's x20 scale, so
-# the far plane has to span it: 452,715 GU is the widest sightline across all
-# 32 maps (Itari), and even the LOCAL planet sits at 5,997 GU -- with the old
-# 5,000 GU far plane the first thing you look at is the first thing clipped.
+# the far plane has to span it: the widest sightline is Itari's, ~467,000 GU
+# once a body's far limb is counted, and even the LOCAL planet sits at 5,997 GU
+# -- with the old 5,000 GU far plane the first thing you look at is the first
+# thing clipped.
+#
+# That figure is a PRODUCT OF THE MAPS and moves when they are regenerated (it
+# already went 420,676 -> 452,715 GU centre-to-centre in one generator change).
+# tests/unit/test_camera_far_plane.py DERIVES it from the checked-in maps
+# rather than restating it, so regenerating them re-checks this constant; the
+# number written here is prose, not the guard.
 #
 # Cheap, and measured rather than assumed. For a 24-bit forward-Z buffer the
 # resolvable gap is dz ~= (1/2**24) * z^2 * (f-n)/(f*n); the (f-n)/f term is
