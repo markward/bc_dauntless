@@ -208,7 +208,15 @@ The highest-value one: the Bird of Prey is BC's only cloaking ship, so this is w
 
 **Files:**
 - Modify: `native/src/renderer/cloak_pass.cc` (~lines 151-161)
-- Test: **none, deliberately.** This substitutes an equivalent expression — a hand-rolled walk for `compose_node_worlds` — and Task 1's three tests already characterise that equivalence. `cloak_pass` has existing C++ coverage that fails if behaviour changes for an unarticulated hull, which is the regression that matters. The behaviour this task ADDS (a cloaking ship fading with raised wings) is a GL-level visual property needing a context and a golden image, which this project does not do for these passes; the live verification section covers it instead. Do not invent a test to fill this line.
+- Test: **none, deliberately** — but read why, because the obvious justification is WRONG.
+
+  This substitutes an equivalent expression — a hand-rolled walk for `compose_node_worlds` — and Task 1's three tests characterise that equivalence at the unit level.
+
+  ⚠️ **An earlier version of this line claimed `cloak_pass` has existing coverage that would catch a broken substitution. It does not.** `native/tests/renderer/cloak_pass_test.cc` drives the shader *programs* directly with a hardcoded `u_model = identity` triangle and never calls `CloakRefractionPass::render()`, so it cannot see this call site at all. `hologram_pass` has no test file whatsoever. That claim was checked and disproved during review; it is corrected here rather than left standing.
+
+  No test is still the right call, on honest grounds: the change is one call whose composition IS unit-characterised, and a real call-site test needs headless GL plus a pixel assertion — disproportionate to a one-line substitution. **The gap is real**: a wrong instance, wrong model, or dropped `node_overrides` at either call site would pass CI. It is recorded as a deferred minor for the final review to triage.
+
+  Do not invent a cheap test to fill this line. A test that passes under both the old and new behaviour is worse than none — this branch has already shipped one.
 
 **Interfaces:**
 - Consumes: `renderer::compose_node_worlds` (as Task 1); `scenegraph::Instance::node_overrides`.
