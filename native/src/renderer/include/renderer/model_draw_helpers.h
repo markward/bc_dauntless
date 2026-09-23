@@ -3,6 +3,8 @@
 
 #include <glm/glm.hpp>
 
+#include <unordered_map>
+
 namespace assets { struct Model; }
 
 namespace renderer {
@@ -30,8 +32,15 @@ class Shader;
 /// rather than searching a proxy box for one) -- previously duplicated as
 /// frame.cc's file-local `draw_model_depth_only`; promoted here specifically
 /// so a second caller does not silently drift from the first.
+///
+/// `node_overrides` (nullptr or empty = none) replaces individual nodes' local
+/// transforms, so an articulated or severed part casts the shadow it actually
+/// has rather than its rest-pose one. Empty takes a walk byte-identical to the
+/// static one.
 void draw_model_positions_only(const assets::Model& model,
                                const glm::mat4& world,
-                               Shader& prog);
+                               Shader& prog,
+                               const std::unordered_map<int, glm::mat4>*
+                                   node_overrides = nullptr);
 
 }  // namespace renderer

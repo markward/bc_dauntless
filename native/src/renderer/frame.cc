@@ -1156,7 +1156,7 @@ void submit_shadow_depth(const scenegraph::World& world,
             if (!inst.rim_eligible) return;  // ships + stations only
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
-            draw_model_positions_only(*m, inst.world, prog);
+            draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);
         });
 
     // Restore opaque-pass defaults so later passes are unaffected.
