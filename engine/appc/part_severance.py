@@ -208,32 +208,81 @@ def damage_on(ship, part_name) -> float:
     return float(_totals(ship).get(part_name, 0.0))
 
 
-def _silence_emitters_on(killed) -> None:
-    """Stop every particle controller emitting from one of `killed`.
+def _silence_emitters_on(ship, part_name, killed) -> None:
+    """Stop every particle controller that is either emitting FROM one of
+    `killed`, or emitting from `ship` at a body-frame point that attributes
+    to `part_name`.
 
-    Identity, never name: two ships in one battle carry identically named
-    subsystems, and `_emit_from` holds the object itself. Pinned by
-    tests/unit/test_part_severance_emitters.py::
-    test_silencing_matches_by_IDENTITY_not_by_name.
+    Two matches, because identity alone never fires in production:
+
+      1. Identity on `_emit_from`. Two ships in one battle carry identically
+         named subsystems, and `_emit_from` holds the object itself, so this
+         is never name-matched. Covers any future emitter genuinely attached
+         to a subsystem object. Pinned by
+         tests/unit/test_part_severance_emitters.py::
+         test_silencing_matches_by_IDENTITY_not_by_name.
+
+      2. Position on `_emit_pos`. Every real emitter in this engine is
+         attached to the SHIP, not a subsystem: `Effects.CreateSmokeHigh`
+         (SDK) and `hull_hit_smoke._emit_smoke` both call
+         `SetEmitFromObject(ship)` and carry the actual impact location
+         separately via `SetEmitPositionAndDirection`. Match 1 alone would
+         never silence a real hull-hit smoke puff on a severed wing — this
+         leg is what actually does it.
+
+    `_emit_pos` is body-frame MODEL units (`host_io.world_to_body`'s native
+    output, exactly like the value `record_hit` receives) and `part_for_point`
+    is SHIP units -- see MODEL_TO_SHIP at the top of this module. Convert
+    before calling `part_for_point`, precisely as `record_hit` does; this
+    exact confusion has already shipped inert once.
 
     Best-effort: a VFX failure must never abort a severance that has already
     happened to the hull.
     """
-    if not killed:
-        return
     try:
         from engine.appc import particles
         live = particles.active()
     except Exception as _e:  # noqa: BLE001
         dev_mode.log_swallowed("severed part emitter silence", _e)
         return
-    dead = {id(s) for s in killed}
-    for c in list(live or []):
+    if not live:
+        return
+    dead = {id(s) for s in (killed or [])}
+    leaf = articulation.leaf_for(ship)
+    for c in list(live):
         try:
-            if id(getattr(c, "_emit_from", None)) in dead:
+            emit_from = getattr(c, "_emit_from", None)
+            if id(emit_from) in dead:
+                c.stop_emitting()
+                continue
+            if emit_from is ship and _emit_pos_on_part(c, leaf, part_name):
                 c.stop_emitting()
         except Exception as _e:  # noqa: BLE001
             dev_mode.log_swallowed("severed part emitter silence", _e)
+
+
+def _emit_pos_on_part(controller, leaf, part_name) -> bool:
+    """Whether `controller._emit_pos` (body-frame MODEL units, or None/an
+    unreadable shape) attributes to `part_name` on `leaf`.
+
+    None, or anything not a `TGPoint3`-shaped object / 3-tuple, is "does not
+    match" -- never treated as a coordinate (e.g. the origin), which would
+    otherwise silently attribute to whatever part contains (0, 0, 0). Mirrors
+    the same `hasattr(p, "x")` / tuple-or-list shape check
+    `particles._vec3` already uses, minus its None->(0,0,0) default (which
+    would be a false match here).
+    """
+    pos = getattr(controller, "_emit_pos", None)
+    if pos is None:
+        return False
+    if hasattr(pos, "x"):
+        point = (pos.x, pos.y, pos.z)
+    elif isinstance(pos, (tuple, list)) and len(pos) == 3:
+        point = tuple(pos)
+    else:
+        return False
+    ship_point = tuple(v * MODEL_TO_SHIP for v in point)
+    return part_for_point(leaf, ship_point) == part_name
 
 
 def sever(ship, iid, part_name):
@@ -256,7 +305,7 @@ def sever(ship, iid, part_name):
     if is_detached(ship, part_name):
         return None
     detached_parts(ship).add(part_name)
-    _silence_emitters_on(_destroy_subsystems_on_part(ship, part_name))
+    _silence_emitters_on(ship, part_name, _destroy_subsystems_on_part(ship, part_name))
     try:
         from engine.appc import part_detach_render
         part_detach_render.detach(ship, iid, part_name)

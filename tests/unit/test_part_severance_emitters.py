@@ -110,6 +110,75 @@ def test_silencing_matches_by_IDENTITY_not_by_name():
         "another ship's identically named cannon must keep emitting")
 
 
+def test_a_ship_attached_emitter_positioned_on_the_wing_stops_when_severed():
+    """Built the way production actually builds a hull-hit smoke emitter
+    (Effects.CreateSmokeHigh / hull_hit_smoke._emit_smoke): `SetEmitFromObject`
+    gets the SHIP, never a subsystem, and the impact location travels
+    separately via `SetEmitPositionAndDirection` in body-frame MODEL units.
+    Identity matching on `_emit_from` alone can never catch this — it always
+    matches the ship, not any subsystem."""
+    particles.reset()
+    ship = _Ship([])
+    model_point = tuple(v / ps.MODEL_TO_SHIP for v in STAR_CANNON)
+    c = particles.AnimTSParticleController_Create()
+    c.SetEmitFromObject(ship)
+    c.SetEmitPositionAndDirection(model_point, (0.0, 0.0, 1.0))
+    particles.register(c)
+
+    ps.sever(ship, None, "left wing01")
+
+    assert not c.is_emitting(), (
+        "a ship-attached smoke emitter positioned on the wing must stop "
+        "when the wing detaches, even though _emit_from is the ship")
+
+
+def test_a_ship_attached_emitter_positioned_on_the_body_keeps_emitting():
+    particles.reset()
+    ship = _Ship([])
+    model_point = tuple(v / ps.MODEL_TO_SHIP for v in WARP_CORE)
+    c = particles.AnimTSParticleController_Create()
+    c.SetEmitFromObject(ship)
+    c.SetEmitPositionAndDirection(model_point, (0.0, 0.0, 1.0))
+    particles.register(c)
+
+    ps.sever(ship, None, "left wing01")
+
+    assert c.is_emitting(), "a body-positioned ship emitter is untouched"
+
+
+def test_position_match_converts_MODEL_units_not_SHIP_units():
+    """This shipped inert once already: `_emit_pos` is body-frame MODEL
+    units (`host_io.world_to_body`'s native output, same as `record_hit`
+    receives), while `part_for_point` works in SHIP units. Checked in BOTH
+    directions so this test fails whether the MODEL_TO_SHIP conversion is
+    missing OR applied twice: the correctly-scaled MODEL-units point must
+    silence the emitter, and the same raw numbers -- which are actually the
+    SHIP-units mount, so multiplying by MODEL_TO_SHIP collapses them to
+    near the origin -- must NOT."""
+    particles.reset()
+    ship = _Ship([])
+    model_point = tuple(v / ps.MODEL_TO_SHIP for v in STAR_CANNON)
+
+    c_model = particles.AnimTSParticleController_Create()
+    c_model.SetEmitFromObject(ship)
+    c_model.SetEmitPositionAndDirection(model_point, (0.0, 0.0, 1.0))
+    particles.register(c_model)
+
+    c_raw = particles.AnimTSParticleController_Create()
+    c_raw.SetEmitFromObject(ship)
+    c_raw.SetEmitPositionAndDirection(STAR_CANNON, (0.0, 0.0, 1.0))
+    particles.register(c_raw)
+
+    ps.sever(ship, None, "left wing01")
+
+    assert not c_model.is_emitting(), (
+        "the properly-scaled MODEL-units wing point must silence")
+    assert c_raw.is_emitting(), (
+        "the raw SHIP-units mount, misread as MODEL units and scaled down "
+        "again, lands near the origin and must NOT silence -- proves the "
+        "conversion is applied exactly once")
+
+
 def test_cast_light_from_the_severed_part_goes_dark():
     """PIN. This already works — emitter intensity reads the parent
     subsystem's glow state and severance zeroes its condition — but nothing
