@@ -117,34 +117,57 @@ def _volume_extent(v) -> float:
     return 0.0
 
 
-def _pocket_matches_region(v, region) -> bool:
-    """True if pocket volume v sits at region.anchor_gu + one of the
-    region's own authored nebula spheres.
-
-    The matching sphere is chosen by RADIUS (within 1e-6 relative) -- a
-    region can carry more than one sphere, and radius is the one field BC
-    authored that a pocket volume carries verbatim. Position is then
-    checked against that specific sphere's offset, so a pocket that has
-    drifted from its anchor (the anti-drift guard this rule exists for) is
-    caught even though its radius still matches.
+def _sphere_entries(region) -> list:
+    """The region's own authored nebula spheres as (sx, sy, sz, sr) tuples,
+    filtering out anything malformed. `spheres` may arrive as a tuple as
+    readily as a list -- there is nothing in the data model that requires
+    a list specifically, so accepting either costs nothing and a bare
+    tuple is not itself a problem worth reporting.
     """
     spheres = region.nebula.get("spheres") if isinstance(region.nebula, dict) else None
-    if not isinstance(spheres, list) or not _is_point3(region.anchor_gu):
-        return False
-    center = v.geometry.get("center_gu")
-    radius = v.geometry.get("radius_gu")
-    for sphere in spheres:
-        if not (isinstance(sphere, (list, tuple)) and len(sphere) == 4
-                and all(_is_number(x) for x in sphere)):
-            continue
-        sx, sy, sz, sr = sphere
-        if not math.isclose(radius, sr, rel_tol=1e-6):
-            continue
-        expected = tuple(a + o for a, o in zip(region.anchor_gu, (sx, sy, sz)))
-        tolerance = 1e-6 * max(1.0, _dist(expected, (0.0, 0.0, 0.0)))
-        if _dist(center, expected) <= tolerance:
-            return True
-    return False
+    if not isinstance(spheres, (list, tuple)):
+        return []
+    return [tuple(s) for s in spheres
+            if isinstance(s, (list, tuple)) and len(s) == 4
+            and all(_is_number(x) for x in s)]
+
+
+def _match_pockets_to_region(pockets, region) -> tuple:
+    """Bijection between pocket volumes and the region's authored spheres.
+
+    Each sphere is consumed by AT MOST ONE pocket -- matched by radius
+    (within 1e-6 relative) and then checked at region.anchor_gu + that
+    sphere's offset, same as before. Without consumption, two spheres of
+    equal radius at different positions let a pocket sitting on EITHER one
+    "match" every time the loop re-scans the full sphere list, so a second
+    pocket duplicated onto the first sphere would silently pass and the
+    second sphere would never be reported missing -- the exact drift this
+    rule exists to catch, on both ends: a duplicated pocket AND a dropped
+    sphere.
+
+    Returns (unmatched_pockets, unmatched_spheres).
+    """
+    if not _is_point3(region.anchor_gu):
+        return list(pockets), []
+    remaining = _sphere_entries(region)
+    unmatched_pockets = []
+    for v in pockets:
+        center = v.geometry.get("center_gu")
+        radius = v.geometry.get("radius_gu")
+        match_index = None
+        for i, (sx, sy, sz, sr) in enumerate(remaining):
+            if not math.isclose(radius, sr, rel_tol=1e-6):
+                continue
+            expected = tuple(a + o for a, o in zip(region.anchor_gu, (sx, sy, sz)))
+            tolerance = 1e-6 * max(1.0, _dist(expected, (0.0, 0.0, 0.0)))
+            if _dist(center, expected) <= tolerance:
+                match_index = i
+                break
+        if match_index is None:
+            unmatched_pockets.append(v)
+        else:
+            remaining.pop(match_index)
+    return unmatched_pockets, remaining
 
 
 def _pocket_inside_large(v, large, origin) -> bool:
@@ -422,6 +445,7 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
 
     regions_by_name = {r.set_name: r for r in m.regions}
     region_cloud_count: dict = {}
+    pockets_by_region: dict = {}   # region set_name -> [pocket Volume, ...]
 
     for cl in m.clouds:
         cloud_name = getattr(cl, "name", "?")
@@ -485,23 +509,40 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
             if not geometry_ok:
                 continue
             if isinstance(v.origin_region, str):
-                region = regions_by_name.get(v.origin_region)
-                if region is not None and region.nebula is not None:
-                    if not _pocket_matches_region(v, region):
-                        problems.append(Problem(
-                            "cloud-volume-agrees-with-region",
-                            f"cloud {cloud_name!r} pocket volume for region "
-                            f"{v.origin_region!r} does not sit at "
-                            f"region.anchor_gu + its authored sphere offset"))
-                good_volumes.append(v)
+                # A pocket is always a sphere -- BC's own authored nebula
+                # spheres are the only thing a pocket ever represents (see
+                # tools/systems/layout.py:_build_clouds). Both downstream
+                # checks (agrees-with-region, inside-the-large-volume) read
+                # geometry["center_gu"] on the pocket side unconditionally,
+                # which a lobe's geometry does not carry -- that must be
+                # reported here, before either check ever runs, not left to
+                # surface as a TypeError out of `zip(None, ...)`.
+                if v.shape != "sphere":
+                    problems.append(Problem(
+                        "malformed-geometry",
+                        f"cloud {cloud_name!r} pocket volume for region "
+                        f"{v.origin_region!r} has shape {v.shape!r} -- a "
+                        f"pocket must be a sphere"))
+                else:
+                    pockets_by_region.setdefault(v.origin_region, []).append(v)
+                    good_volumes.append(v)
             elif v.origin_region is None:
                 extent = _volume_extent(v)
                 if large is None or extent > large[0]:
                     large = (extent, v)
                 good_volumes.append(v)
-            # else: a malformed origin_region type -- nothing further to
-            # check against it; the volume is neither a trustworthy pocket
-            # nor a trustworthy large-volume candidate.
+            else:
+                # A malformed origin_region type (not None, not a string) --
+                # the same failure class the `regions` field guard above
+                # reports, just on a single volume's back-reference instead
+                # of the cloud's own listing. Silently accepting it would
+                # bless a regeneration bug that writes an int or a list
+                # there instead of a region name.
+                problems.append(Problem(
+                    "cloud-region-membership",
+                    f"cloud {cloud_name!r} volume has a malformed "
+                    f"origin_region {v.origin_region!r} -- must be null or "
+                    f"a region name string"))
 
         # cloud-pocket-inside-cloud: skipped when the cloud has no large
         # volume. That is a legitimate state -- a system whose override
@@ -527,5 +568,26 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     "cloud-region-membership",
                     f"region {r.set_name!r} carries a nebula but is listed "
                     f"by {count} cloud(s) -- expected exactly 1"))
+
+            # cloud-volume-agrees-with-region, the bijection half: matched
+            # GLOBALLY across every cloud's pockets for this region (not
+            # per-cloud), so a pocket and its region are compared exactly
+            # once no matter which cloud carries it. A sphere consumed by
+            # no pocket (BC's data silently dropped) and a pocket matching
+            # no remaining sphere (drifted, or a duplicate piled onto a
+            # sphere another pocket already claimed) are both reported.
+            unmatched_pockets, unmatched_spheres = _match_pockets_to_region(
+                pockets_by_region.get(r.set_name, []), r)
+            for v in unmatched_pockets:
+                problems.append(Problem(
+                    "cloud-volume-agrees-with-region",
+                    f"pocket volume for region {r.set_name!r} does not sit "
+                    f"at region.anchor_gu + any of its authored sphere "
+                    f"offsets"))
+            for sphere in unmatched_spheres:
+                problems.append(Problem(
+                    "cloud-volume-agrees-with-region",
+                    f"region {r.set_name!r} authored a nebula sphere "
+                    f"{sphere!r} with no matching cloud pocket volume"))
 
     return problems

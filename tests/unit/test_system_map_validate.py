@@ -388,3 +388,153 @@ def test_a_malformed_cloud_is_reported_never_raised(wreck):
 def test_the_real_maps_validate_clean():
     for name in available():
         assert validate(load(name)) == [], name
+
+
+# ---- fix round 1 --------------------------------------------------------
+
+def test_a_lobe_shaped_pocket_is_reported_never_raised():
+    """Finding 1 (Critical). A pocket (origin_region set) is always a
+    sphere -- BC's authored nebula spheres are the only thing a pocket ever
+    represents. A lobe pocket's geometry carries no center_gu, which both
+    downstream checks read unconditionally; that must be REPORTED here,
+    not left to raise TypeError out of zip(None, ...) deep inside them."""
+    m = _cloud_map()
+    pocket = m.clouds[0].volumes[0]
+    pocket.shape = "lobe"
+    pocket.geometry = {"axis": (0.0, 1.0, 0.0), "near_gu": 100.0,
+                        "far_gu": 200.0, "radius_gu": 777.0}
+    problems = validate(m)          # must not raise
+    assert "malformed-geometry" in _rules(problems)
+
+
+def test_a_non_string_origin_region_is_reported_not_silently_accepted():
+    """Finding 2 (Important). origin_region must be null or a region-name
+    string; anything else (an int, a list -- a regeneration bug) must be
+    reported, not fall through the isinstance/elif chain unreported."""
+    m = _cloud_map()
+    m.clouds[0].volumes[0].origin_region = 5
+    problems = validate(m)
+    assert "cloud-region-membership" in _rules(problems)
+
+
+def _lobe_cloud_map() -> SystemMap:
+    """A valid map with a LOBE-shaped large volume, mirroring the shape
+    tools/systems/layout.py:_build_clouds produces for a "nebula_field"
+    override (axis derived from the pocket's own centre, as Belaruz's real
+    map does). Exists because _cloud_map()'s large volume is a sphere, so
+    the lobe branch of _pocket_inside_large was never exercised by any
+    test before this fix round -- a `return True` stub there passed the
+    whole suite.
+    """
+    m = _valid()
+    m.region("Ona1").nebula = {
+        "color": (0.5, 0.5, 0.5),
+        "spheres": [(0.0, 1000.0, 0.0, 800.0)],
+        "visibility_gu": 200.0,
+        "sensor_density": 6.5,
+        "damage_hull_per_s": 0.0,
+        "damage_shield_per_s": 0.0,
+        "extra_nebulae": 0,
+    }
+    pocket = Volume(
+        shape="sphere",
+        geometry={"center_gu": (0.0, 19000.0, 0.0), "radius_gu": 800.0},
+        profile="nebula",
+        params=cloud_profiles.params_for("nebula"),
+        origin_region="Ona1",
+    )
+    large = Volume(
+        shape="lobe",
+        geometry={"axis": (0.0, 1.0, 0.0), "near_gu": 5000.0,
+                  "far_gu": 40000.0, "radius_gu": 5000.0},
+        profile="mist",
+        params=cloud_profiles.params_for("mist"),
+        origin_region=None,
+    )
+    m.clouds = [Cloud(
+        name="Ona Nebula", display_name="Ona Nebula", kind="nebula_field",
+        color=(0.5, 0.5, 0.5), volumes=[pocket, large], regions=["Ona1"])]
+    return m
+
+
+def test_a_lobe_cloud_map_is_itself_valid():
+    assert validate(_lobe_cloud_map()) == []
+
+
+def test_a_pocket_pushed_past_the_lobes_far_end_is_caught():
+    """Finding 3 (Important), axial case. The pocket's position and its
+    region's authored sphere are moved TOGETHER so cloud-volume-agrees-
+    with-region stays clean -- isolating the axial failure this test is
+    actually checking."""
+    m = _lobe_cloud_map()
+    pocket = m.clouds[0].volumes[0]
+    pocket.geometry["center_gu"] = (0.0, 48000.0, 0.0)   # t=48000 > far(40000)+radius(800)
+    m.region("Ona1").nebula["spheres"] = [(0.0, 30000.0, 0.0, 800.0)]
+    problems = _rules(validate(m))
+    assert "cloud-pocket-inside-cloud" in problems
+    assert "cloud-volume-agrees-with-region" not in problems
+
+
+def test_a_pocket_pushed_off_the_lobes_axis_is_caught():
+    """Finding 3 (Important), perpendicular case. Same isolation trick as
+    the axial test above, but offset sideways instead of further out."""
+    m = _lobe_cloud_map()
+    pocket = m.clouds[0].volumes[0]
+    pocket.geometry["center_gu"] = (6000.0, 19000.0, 0.0)   # perp=6000 > radius(5000)
+    m.region("Ona1").nebula["spheres"] = [(6000.0, 1000.0, 0.0, 800.0)]
+    problems = _rules(validate(m))
+    assert "cloud-pocket-inside-cloud" in problems
+    assert "cloud-volume-agrees-with-region" not in problems
+
+
+def test_a_region_listed_by_two_clouds_is_caught():
+    """Finding 4 (Important). The != 1 check also covers 2+, not just 0 --
+    a region duplicated into two clouds -- which nothing exercised before
+    this fix round."""
+    m = _cloud_map()
+    duplicate = Cloud(name="Duplicate Cloud", display_name="Duplicate Cloud",
+                       kind="debris_shell", color=(0.5, 0.5, 0.5),
+                       volumes=[], regions=["Ona1"])
+    m.clouds.append(duplicate)
+    assert "cloud-region-membership" in _rules(validate(m))
+
+
+def test_two_equal_radius_pockets_on_one_sphere_leave_the_other_sphere_unmatched():
+    """Finding 5 (promoted Minor). Two spheres of EQUAL radius at different
+    positions: without consuming a sphere once matched, a duplicate pocket
+    parked on sphere A would independently "match" A every time (the old,
+    non-bijective algorithm always rescans the full list), and sphere B
+    would never be reported missing."""
+    m = _cloud_map()
+    m.region("Ona1").nebula["spheres"] = [
+        (0.0, 1000.0, 0.0, 800.0),   # sphere A -- both pockets target this
+        (0.0, 4000.0, 0.0, 800.0),   # sphere B -- same radius, no pocket claims it
+    ]
+    original = m.clouds[0].volumes[0]
+    duplicate = Volume(
+        shape="sphere", geometry=dict(original.geometry),
+        profile=original.profile, params=dict(original.params),
+        origin_region=original.origin_region)
+    m.clouds[0].volumes.insert(1, duplicate)
+    assert "cloud-volume-agrees-with-region" in _rules(validate(m))
+
+
+def test_a_region_with_two_spheres_and_only_one_pocket_is_caught():
+    """Finding 5 (promoted Minor), the cardinality half: a region with TWO
+    authored spheres but only one pocket volume must report the dropped
+    sphere, not validate clean because the one pocket present happens to
+    match one of the two."""
+    m = _cloud_map()
+    m.region("Ona1").nebula["spheres"] = [
+        (0.0, 1000.0, 0.0, 800.0),
+        (0.0, 4000.0, 0.0, 500.0),
+    ]
+    assert "cloud-volume-agrees-with-region" in _rules(validate(m))
+
+
+def test_sphere_list_may_be_a_tuple_not_just_a_list():
+    """Trivial fold-in: region.nebula["spheres"] being a tuple rather than
+    a list is not itself a problem worth reporting."""
+    m = _cloud_map()
+    m.region("Ona1").nebula["spheres"] = tuple(m.region("Ona1").nebula["spheres"])
+    assert validate(m) == []
