@@ -32,11 +32,16 @@ class CarveFieldCache;
 ///
 /// For each DAMAGED instance (one with a per-instance damage field in
 /// `InstanceFieldCache` — see that header's class comment for what "damaged"
-/// means there), draws the SAME hull mesh geometry, AT THE SAME PER-MESH
-/// POSE, that the opaque pass already drew (`renderer::draw_model_positions_
-/// only`, given the instance's own `node_overrides` — see `draw_instance`'s
-/// own doc), under the SAME carve stencil, masked by the ORIGINAL (uncarved)
-/// hull fill. The pose match is load-bearing, not cosmetic: this pass relies
+/// means there), draws, FOR A NON-SKINNED HULL, the SAME hull mesh geometry,
+/// AT THE SAME PER-MESH POSE, that the opaque pass already drew
+/// (`renderer::draw_model_positions_only`, given the instance's own
+/// `node_overrides` — see `render()`'s own doc for how production wires the
+/// map), under the SAME carve stencil, masked by the ORIGINAL (uncarved)
+/// hull fill. The precondition matters: the opaque pass itself picks
+/// `u_model = skinned ? world : world_per_node[i]` (frame.cc), while this
+/// pass has no skinned branch at all — unreachable today because no hull
+/// carries a skeleton, not because the two draws are asserted identical
+/// unconditionally. The pose match is load-bearing, not cosmetic: this pass relies
 /// on stencil alignment with the opaque draw, so an articulated part (a
 /// raised/lowered wing, a severed one collapsed to the zero matrix) MUST be
 /// drawn at the pose the opaque pass drew it at, or a breach on that part is
