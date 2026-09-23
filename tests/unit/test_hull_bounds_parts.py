@@ -46,28 +46,56 @@ def _nif(spheres):
 # A point deep inside PART_BOXES["birdofprey"]["left wing"] and inside no
 # other box, so part_for_point attributes it outright rather than to None.
 WING_PT = (-0.80, -0.20, -0.30)
-# In the band where the body box and a wing box overlap by design (wing roots
-# are embedded in the hull, |x| in [0.1236, 0.3112]), so part_for_point can't
-# pick one and returns None. That is the safe, common answer.
+# Deep inside the "birdofprey" body box ONLY -- unambiguous, not an overlap
+# case. This is the brief's original literal value.
 #
-# DEVIATION FROM THE BRIEF: the brief states BODY_PT = (0.0, -0.20, 0.05).
-# That point is inside ONLY the "birdofprey" body box (unambiguous), so
-# part_for_point("birdofprey", (0.0, -0.20, 0.05)) returns "birdofprey", not
-# None -- verified against the current PART_BOXES and confirmed by
-# tests/unit/test_part_severance.py's own comment ("inside the BODY box only
-# (not ambiguous)") for the equivalent x=0.0 case. Moving to x=0.20 (already
-# the value test_part_severance.py uses for this exact ambiguous-overlap
-# case) makes the point land in both the body and left-wing01 boxes, which is
-# what the surrounding comment -- and every test below -- actually needs.
-BODY_PT = (0.20, -0.20, 0.05)
+# UPDATED REASONING (fix round 2, restores the brief's original literal after
+# a round-1 deviation). Round 1 found that this point is NOT in the
+# wing/body overlap band the brief's comment describes: part_for_point
+# resolves it outright to the concrete name "birdofprey" (the body box's own
+# name), not None -- confirmed by tests/unit/test_part_severance.py's own
+# comment for the equivalent x=0.0 case ("inside the BODY box only (not
+# ambiguous)"). Round 1 worked around that by moving BODY_PT into the
+# overlap band (x=0.20), which does raw-resolve to None, but that only
+# exercises part_for_point's pre-existing ambiguity rule -- it would pass
+# even without the movable-part narrowing below and so proves nothing about
+# it.
+#
+# Round 2 adds that narrowing: cache_hull_bound_spheres now tags a piece
+# with a part name ONLY if that part can actually move or detach (union of
+# articulation.rig_for's nodes and articulation.detachable_for's keys) --
+# "birdofprey" (the body) is neither, so a piece here is untagged (None) at
+# the CACHE level even though part_for_point itself resolves it to a
+# concrete name. Restoring the original literal makes this point do exactly
+# what it is meant to: a representative, unambiguous BODY point that proves
+# the narrowing, not the overlap rule, is what untags it. See
+# test_a_boxed_but_INERT_part_is_not_tagged for the same idea pinned
+# explicitly against "head".
+BODY_PT = (0.0, -0.20, 0.05)
+# Deep inside PART_BOXES["birdofprey"]["head"] and inside no other box.
+# "head" is boxed (part_for_point resolves it) but neither rigged
+# (articulation.rig_for has no "head" Part) nor detachable
+# (articulation.detachable_for has no "head" key) -- the exact case the
+# movable-part narrowing in cache_hull_bound_spheres exists for.
+HEAD_PT = (0.0, 0.5, 0.0)
 
 
 def test_the_fixture_points_attribute_as_this_file_assumes():
     """Guards every other test in this file. If PART_BOXES is ever re-authored
-    these two constants stop meaning what the tests below need them to mean,
-    and those tests would pass vacuously instead of failing here."""
+    these constants stop meaning what the tests below need them to mean, and
+    those tests would pass vacuously instead of failing here.
+
+    WING_PT resolves to a MOVABLE part outright. BODY_PT and HEAD_PT both
+    resolve to concrete, unambiguous part names -- NOT None -- because
+    part_for_point knows nothing about movability; it is
+    cache_hull_bound_spheres' movable-part narrowing (not part_for_point)
+    that turns "birdofprey" and "head" into None downstream. Asserting the
+    raw resolution here, rather than `is None`, is what makes this guard
+    actually pin something: an `is None` assertion on either would pass
+    whether or not the movable-part narrowing below existed."""
     assert ps.part_for_point("birdofprey", WING_PT) == "left wing"
-    assert ps.part_for_point("birdofprey", BODY_PT) is None
+    assert ps.part_for_point("birdofprey", BODY_PT) == "birdofprey"
+    assert ps.part_for_point("birdofprey", HEAD_PT) == "head"
 
 
 def test_a_wing_piece_is_tagged_with_its_part():
@@ -79,9 +107,27 @@ def test_a_wing_piece_is_tagged_with_its_part():
 
 def test_a_body_piece_is_tagged_None():
     """Unattributed is the safe answer and must stay the common one: a piece
-    with no part behaves exactly as it did before this change."""
+    with no part behaves exactly as it did before this change.
+
+    BODY_PT resolves via part_for_point to the concrete name "birdofprey"
+    (see the guard test above) -- it is the movable-part narrowing in
+    cache_hull_bound_spheres, not part_for_point's ambiguity rule, that
+    untags it here, because the body can neither move nor detach."""
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, 0.05)]))
+    (_c, _r, part), = ship.__dict__["_hull_bound_spheres"]
+    assert part is None
+
+
+def test_a_boxed_but_INERT_part_is_not_tagged():
+    """A part can be boxed (part_for_point resolves it) without being
+    rigged or detachable -- "head" is exactly that case. Tagging it would
+    put a piece on the part-transform path (a later task) and the detach
+    check for no reason it could ever act on, since the head can neither
+    move nor come off. This is the case the movable-part narrowing in
+    cache_hull_bound_spheres exists for."""
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*HEAD_PT, 0.05)]))
     (_c, _r, part), = ship.__dict__["_hull_bound_spheres"]
     assert part is None
 

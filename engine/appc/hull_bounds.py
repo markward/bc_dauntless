@@ -64,6 +64,11 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     which is most of the hull by design, since a BoP's wing boxes swallow the
     body box at the roots — so the tag is a minority case, and None keeps the
     piece behaving exactly as it did before parts existed.
+
+    The tag is further restricted to parts that can actually MOVE or DETACH
+    (the union of `articulation.rig_for`'s node names and
+    `articulation.detachable_for`'s keys) — see the comment at the tagging
+    site for why.
     """
     from engine.host_loop import BC_MODEL_SCALE
     from engine.appc import articulation
@@ -72,12 +77,27 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     # Attribution is computed ONCE here, never per tick: the pieces and the
     # part boxes are both rest-pose and neither ever changes after load.
     leaf = articulation.leaf_for(ship)
+    # A tag means "this piece can move or come off" -- not merely "nearest
+    # some named box". PART_BOXES carries boxes (e.g. "head", the body box
+    # itself) that are boxed for attribution purposes but neither rigged nor
+    # detachable, so tagging them would be a no-op forever in both readers
+    # AND in the (later) part-transform call each reader makes for a
+    # non-None tag. hull_spheres_near's per-piece cost that matters is that
+    # transform, done BEFORE its distance reject -- untagging inert boxes
+    # here keeps them out of that path on every narrow-phase pair, forever,
+    # rather than paying a Python call per body piece for a tag that can
+    # never fire.
+    movable = {p.node for p in articulation.rig_for(leaf)}
+    movable.update(articulation.detachable_for(leaf))
     out = []
     for cx, cy, cz, r in spheres:
         if r <= 0.0:
             continue
         c = (cx * s, cy * s, cz * s)
-        out.append((c, r * s, part_for_point(leaf, c) if leaf else None))
+        part = part_for_point(leaf, c) if leaf else None
+        if part not in movable:
+            part = None
+        out.append((c, r * s, part))
     ship.__dict__[_ATTR] = tuple(out)
     ship.__dict__.pop(_BOUND_R_ATTR, None)
 
