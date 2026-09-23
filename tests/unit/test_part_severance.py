@@ -75,9 +75,14 @@ def test_a_ship_with_no_authored_boxes_attributes_nothing():
 
 # ── Accumulation and threshold ───────────────────────────────────────────────
 
+# A point on the starboard wing, as `host_io.world_to_body` actually delivers
+# it: body frame, MODEL units. In SHIP units this is (0.8, 0.0, -0.4).
+WING_HIT_MODEL = (80.0, 0.0, -40.0)
+
+
 def _wing_hit(ship, amount):
     # iid None = headless: the sim-side detach still runs, visuals are skipped.
-    return ps.record_hit(ship, None, (0.8, 0.0, -0.4), amount)
+    return ps.record_hit(ship, None, WING_HIT_MODEL, amount)
 
 
 def test_damage_accumulates_on_the_part_it_landed_on():
@@ -120,14 +125,14 @@ def test_a_non_detachable_part_accumulates_nothing():
     hit forever and never come off. The body must never detach either."""
     ship = _Ship()
     for _ in range(50):
-        assert ps.record_hit(ship, None, (0.0, 0.85, 0.0), 500.0) is None
+        assert ps.record_hit(ship, None, (0.0, 85.0, 0.0), 500.0) is None
     assert ps.damage_on(ship, "head") == 0.0
     assert not ps.is_detached(ship, "head")
 
 
 def test_unattributed_damage_does_not_accumulate_anywhere():
     ship = _Ship()
-    ps.record_hit(ship, None, (0.20, -0.5, -0.03), 5000.0)   # ambiguous wing root
+    ps.record_hit(ship, None, (20.0, -50.0, -3.0), 5000.0)  # ambiguous wing root
     assert ps.damage_on(ship, "left wing01") == 0.0
     assert not ps.is_detached(ship, "left wing01")
 
@@ -180,6 +185,44 @@ def test_reset_clears_damage_and_detachments():
     ps.reset_ship(ship)
     assert ps.damage_on(ship, "left wing01") == 0.0
     assert not ps.is_detached(ship, "left wing01")
+
+
+# ── Units ────────────────────────────────────────────────────────────────────
+
+def test_record_hit_takes_MODEL_units_not_ship_units():
+    """REGRESSION. This shipped broken and attribution never fired once.
+
+    `part_for_point` works in SHIP units (what hardpoints author: a BoP wingtip
+    is x = 1.008). But `host_io.world_to_body` returns the body frame in MODEL
+    units -- it inverts the instance world matrix, which carries
+    BC_MODEL_SCALE -- so the same wingtip arrives as x = 100.8, a hundred times
+    larger. Tested against a ship-units box it lands nowhere and attributes to
+    nothing, which looks exactly like the player missing.
+
+    The original test suite did not catch it because it fed `record_hit`
+    SHIP units directly, never exercising the conversion -- the test carried
+    the same bug as the code. The subsystem half worked throughout, because
+    `GetPosition()` really is in ship units, which made the suite look healthy.
+
+    So this asserts the two frames explicitly rather than trusting one number.
+    """
+    ship = _Ship()
+    ps.record_hit(ship, None, (80.0, 0.0, -40.0), 100.0)     # MODEL units
+    assert ps.damage_on(ship, "left wing01") == pytest.approx(100.0)
+
+    # The SAME numbers read as ship units are deep inside the hull, where the
+    # boxes overlap -- ambiguous, so they must attribute to nothing.
+    other = _Ship()
+    ps.record_hit(other, None, (0.8, 0.0, -0.4), 100.0)
+    assert ps.damage_on(other, "left wing01") == 0.0, (
+        "a ship-units point must NOT be accepted as model units")
+
+
+def test_the_conversion_constant_matches_BC_MODEL_SCALE():
+    """MODEL_TO_SHIP is BC_MODEL_SCALE. If host_loop's value ever moves, this
+    names the copy that has to move with it."""
+    from engine import host_loop
+    assert ps.MODEL_TO_SHIP == pytest.approx(host_loop.BC_MODEL_SCALE)
 
 
 # ── The authored data ────────────────────────────────────────────────────────

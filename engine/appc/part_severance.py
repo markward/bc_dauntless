@@ -34,6 +34,25 @@ from engine.appc import articulation
 # assignment uses, so the two never disagree about what "on the wing" means.
 ATTRIBUTION_MARGIN = 5.0
 
+# ⚠️ TWO UNIT SYSTEMS MEET IN THIS MODULE. Getting them confused is not a
+# hypothetical: it shipped, and attribution never fired once.
+#
+#   * `articulation.PART_BOXES` and subsystem `GetPosition()` are in SHIP units
+#     (what hardpoint files author: a BoP wingtip is x = 1.008).
+#   * `host_io.world_to_body` returns the body frame in MODEL units -- it
+#     inverts the instance world matrix, which carries BC_MODEL_SCALE, so the
+#     SAME wingtip comes back as x = 100.8.
+#
+# One is 100x the other. A model-units point tested against a ship-units box
+# lands nowhere near it and silently attributes to nothing, which is
+# indistinguishable from "the player missed".
+#
+# So: `part_for_point` is the SHIP-units primitive, and `record_hit` converts
+# on the way in. Anything else calling part_for_point must already hold ship
+# units -- `_destroy_subsystems_on_part` does, which is exactly why the
+# subsystem half worked while the damage half never did.
+MODEL_TO_SHIP = 0.01          # = BC_MODEL_SCALE (host_loop)
+
 
 def _distance_to_box(point, box) -> float:
     """Euclidean distance from `point` to an AABB; 0.0 when inside."""
@@ -51,7 +70,10 @@ def _distance_to_box(point, box) -> float:
 
 
 def part_for_point(leaf, point):
-    """Which part a BODY-FRAME point belongs to, or None for the body.
+    """Which part a body-frame point in SHIP UNITS belongs to, or None.
+
+    ⚠️ SHIP units, not model units -- see MODEL_TO_SHIP above. A caller holding
+    a `world_to_body` result must scale it first; `record_hit` does.
 
     None means "unattributed", which is the safe answer: an unattributed hit
     behaves exactly as it did before this module existed.
@@ -118,8 +140,13 @@ def _max_hull(ship) -> float:
         return 0.0
 
 
-def record_hit(ship, iid, body_point, absorbed_hull: float):
-    """Attribute `absorbed_hull` to whichever part `body_point` lies on.
+def record_hit(ship, iid, body_point_model, absorbed_hull: float):
+    """Attribute `absorbed_hull` to whichever part the hit landed on.
+
+    `body_point_model` is a `host_io.world_to_body` result: body frame, MODEL
+    units. It is converted to ship units here -- see MODEL_TO_SHIP. Taking the
+    raw conversion output (rather than asking callers to scale) keeps the unit
+    knowledge in the one module that owns the boxes.
 
     `iid` is the ship's render instance, passed in rather than looked up — the
     same shape `hull_breakup.after_carve` uses. None is fine (headless): the
@@ -138,7 +165,8 @@ def record_hit(ship, iid, body_point, absorbed_hull: float):
     thresholds = articulation.detachable_for(leaf)
     if not thresholds:
         return None
-    part = part_for_point(leaf, body_point)
+    point = tuple(c * MODEL_TO_SHIP for c in body_point_model)
+    part = part_for_point(leaf, point)
     if part is None or part not in thresholds:
         return None
     if is_detached(ship, part):
@@ -146,9 +174,31 @@ def record_hit(ship, iid, body_point, absorbed_hull: float):
     totals = _totals(ship)
     totals[part] = totals.get(part, 0.0) + float(absorbed_hull)
     limit = _max_hull(ship) * float(thresholds[part])
+    _report_progress(ship, part, totals[part], limit)
     if limit > 0.0 and totals[part] >= limit:
         return sever(ship, iid, part)
     return None
+
+
+# Quarters already announced, per (ship, part). Attribution is invisible from
+# the outside -- a wing that never accumulates looks exactly like a player who
+# keeps missing -- and that ambiguity cost two live sessions. So under
+# --developer it says so, at 25% steps rather than per hit.
+_announced: dict = {}
+
+
+def _report_progress(ship, part, total: float, limit: float) -> None:
+    if limit <= 0.0 or not dev_mode.is_enabled():
+        return
+    quarter = int(min(4.0, (total / limit) * 4.0))
+    if quarter <= 0:
+        return
+    key = (id(ship), part)
+    if _announced.get(key, 0) >= quarter:
+        return
+    _announced[key] = quarter
+    print("[severance] %s: %.0f/%.0f (%d%%)"
+          % (part, total, limit, int(total / limit * 100)))
 
 
 def damage_on(ship, part_name) -> float:
@@ -215,6 +265,9 @@ def _destroy_subsystems_on_part(ship, part_name) -> None:
 
 def reset_ship(ship) -> None:
     """Forget a ship's part damage and detachments (mission swap / respawn)."""
+    _announced.pop((id(ship), None), None)
+    for key in [k for k in _announced if k[0] == id(ship)]:
+        _announced.pop(key, None)
     for attr in ("_part_damage", "_parts_detached"):
         try:
             setattr(ship, attr, None)
