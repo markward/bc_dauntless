@@ -40,6 +40,15 @@ def _fake_set_with_sun(at, radius):
     return pSet
 
 
+def _fake_set_with_authored_sun(radius, atmosphere, damage):
+    """A set holding a Sun built the way BC's own placement scripts build one,
+    with all three geometry/damage arguments passed."""
+    pSet = App.SetClass_Create()
+    sun = Sun_Create(radius, atmosphere, damage, "", "")
+    pSet.AddObjectToSet(sun, "Sun")
+    return pSet
+
+
 def _only_sun(pSet):
     suns = [obj for obj in pSet._objects.values() if isinstance(obj, Sun)]
     assert len(suns) == 1, "expected exactly one Sun in the set"
@@ -182,3 +191,55 @@ def test_every_star_class_in_the_maps_has_an_explicit_texture_entry():
     assert classes, "no star classes found in the maps"
     missing = sorted(c for c in classes if c not in apply_map.STAR_TEXTURES)
     assert not missing, f"star classes with no texture decision: {missing}"
+
+
+# ── A REPOSITIONED star keeps its atmosphere proportional ───────────────────
+#
+# The celestial rescale is ours, not BC's: Ona's authored sun goes 5,000 ->
+# 10,000 GU here. BC's own data was self-consistent before we touched it --
+# 82 of 84 authored Sun_Create calls pass atmosphere EXACTLY equal to radius --
+# so leaving the atmosphere at its authored value after doubling the body puts
+# the keep-out band INSIDE the star, across roughly thirty authored systems.
+# The ratio is preserved rather than forced to 1.0, because two of the 84 are
+# deliberately not 1.0 and BC's authoring is what this module follows.
+#
+# Environmental damage is deliberately NOT touched on a repositioned sun. BC
+# authored those values and rescaling geometry is no reason to restate them.
+
+def test_a_repositioned_sun_keeps_its_atmosphere_proportional_to_its_radius():
+    """Ona1_S authors Sun_Create(5000.0, 5000, 500, ...) and the map makes the
+    star 10,000 GU. An atmosphere left at 5,000 is a keep-out band buried
+    inside the star it is supposed to keep ships out of."""
+    pSet = _fake_set_with_authored_sun(radius=5000.0, atmosphere=5000.0,
+                                       damage=500.0)
+    assert apply_map.apply_to_set(pSet, "Ona1") is True
+    sun = _only_sun(pSet)
+    star = load("ona").body("Ona")
+    assert sun.GetRadius() == pytest.approx(star.radius_gu)
+    assert sun.GetAtmosphereRadius() == pytest.approx(star.radius_gu)
+
+
+def test_a_repositioned_sun_preserves_a_ratio_that_is_not_one():
+    """Itari2_S is one of BC's two exceptions: Sun_Create(5000.0, 6000, 500),
+    an atmosphere 1.2x the body. Rescaling to the map's 14,000 GU star must
+    carry that authored 1.2 through, not flatten it to the 1.0 majority."""
+    pSet = _fake_set_with_authored_sun(radius=5000.0, atmosphere=6000.0,
+                                       damage=500.0)
+    assert apply_map.apply_to_set(pSet, "Itari2") is True
+    sun = _only_sun(pSet)
+    star = load("itari").body("Itari")
+    assert sun.GetRadius() == pytest.approx(star.radius_gu)
+    assert sun.GetAtmosphereRadius() == pytest.approx(star.radius_gu * 1.2)
+
+
+def test_a_repositioned_sun_keeps_bcs_own_environmental_damage():
+    """OmegaDraconis1_S is BC's other exception -- Sun_Create(360.0, 180, 360),
+    half-atmosphere AND 360 damage/sec. Both are authored. Geometry rescales;
+    the damage value is BC's and stays exactly as written."""
+    pSet = _fake_set_with_authored_sun(radius=360.0, atmosphere=180.0,
+                                       damage=360.0)
+    assert apply_map.apply_to_set(pSet, "OmegaDraconis1") is True
+    sun = _only_sun(pSet)
+    star = load("omegadraconis").body("OmegaDraconis")
+    assert sun.GetAtmosphereRadius() == pytest.approx(star.radius_gu * 0.5)
+    assert sun.GetEnvironmentalHullDamage() == pytest.approx(360.0)

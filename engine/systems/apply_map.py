@@ -23,9 +23,12 @@ The star is the one exception, with two halves. A set that already holds a
 Sun -- every original per-locale BC script but Belaruz's and Vesuvi's called
 Sun_Create -- keeps that Sun, repositioned to the system star's set-local
 position (the star's ``position_gu`` is the system origin, so its set-local
-position is the negated anchor) with the map's radius. A set with no Sun
-gets one created from the map's star body: Belaruz and Vesuvi render bright
-directional light from a source BC never placed, which is why their maps
+position is the negated anchor) with the map's radius -- and with its
+atmosphere radius scaled by that same factor, since the rescale is ours and
+an atmosphere left at BC's authored value ends up inside the enlarged star
+(see ``_rescale_sun``). A set with no Sun gets one created from the map's
+star body: Belaruz and Vesuvi render bright directional light from a source
+BC never placed, which is why their maps
 carry an ``overrides.star`` block explaining it -- but the star Body entry
 itself already carries the radius/position/appearance needed here, so no
 special-casing of those two systems is required in code.
@@ -169,6 +172,33 @@ def _place(obj, position_gu: tuple) -> None:
     obj.SetTranslateXYZ(x, y, z)
 
 
+def _rescale_sun(sun, radius_gu: float) -> None:
+    """Resize an authored Sun to the map's star radius -- atmosphere and all.
+
+    The rescale is OURS. BC's Ona sun is 5,000 GU and the map's is 10,000, and
+    BC's data was self-consistent before we touched it: 82 of its 84 authored
+    ``Sun_Create`` calls pass atmosphere EXACTLY equal to radius. Growing the
+    body and leaving the atmosphere behind buries the keep-out band inside the
+    very star it exists to keep ships out of, across ~30 authored systems.
+
+    The authored RATIO is preserved rather than forced to 1.0, because two of
+    the 84 deliberately are not (Itari2_S at 6000/5000, OmegaDraconis1_S at
+    180/360) and BC's authoring is what this module follows. A zero ratio is a
+    ratio too -- Multi7_S's star has no band and must not grow one. Only a sun
+    with no usable prior radius has nothing to scale, and falls back to the
+    majority convention.
+
+    Environmental damage is deliberately NOT touched here. BC authored those
+    values, they are already correct, and rescaling geometry is no reason to
+    restate them -- OmegaDraconis1_S's 360/sec stays 360/sec.
+    """
+    old_radius = float(sun.GetRadius())
+    ratio = (float(sun.GetAtmosphereRadius()) / old_radius
+             if old_radius > 0.0 else STAR_ATMOSPHERE_RATIO)
+    sun.SetRadius(radius_gu)
+    sun.SetAtmosphereRadius(radius_gu * ratio)
+
+
 def apply_to_set(pSet, set_name: str) -> bool:
     """Apply set_name's map region to pSet's bodies.
 
@@ -204,7 +234,7 @@ def apply_to_set(pSet, set_name: str) -> bool:
         star_local = _set_local_position(star.position_gu, region.anchor_gu)
         sun = _find_sun(pSet)
         if sun is not None:
-            sun.SetRadius(star.radius_gu)
+            _rescale_sun(sun, star.radius_gu)
             _place(sun, star_local)
         else:
             base_texture, flare_texture = _star_textures(star)
