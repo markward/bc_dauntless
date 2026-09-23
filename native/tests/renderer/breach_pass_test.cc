@@ -57,6 +57,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -1667,4 +1668,116 @@ TEST_F(BreachPassGLTest, ShellDebugPaintsTheShellMagentaAndLeavesTheScoopAlone) 
     EXPECT_EQ(scoop_on[0], scoop_off[0]) << "shell debug must not touch the scoop";
     EXPECT_EQ(scoop_on[1], scoop_off[1]) << "shell debug must not touch the scoop";
     EXPECT_EQ(scoop_on[2], scoop_off[2]) << "shell debug must not touch the scoop";
+}
+
+// ── node_overrides threading (BoP wing articulation / severance) ──────────
+//
+// draw_instance() threads its `node_overrides` argument down through both
+// draw_interior_shell() and draw_hull_proxy() to draw_model_positions_only()
+// (breach_pass.cc), exactly as the shadow depth pre-pass, cloak and hologram
+// passes thread `&inst.node_overrides` from frame.cc/cloak_pass.cc/
+// hologram_pass.cc. Before this test NOTHING in the suite drove a
+// NON-EMPTY node_overrides map through any of those call sites: dropping
+// `&inst.node_overrides` at either breach_pass.cc call site (or at
+// frame.cc's shadow pre-pass) left the whole gate green.
+//
+// Two nodes share ONE mesh (a quad centred at `a`): node 0 places it there
+// directly (identity local); node 1 is node 0's CHILD, translated by
+// `delta` so its copy of the SAME mesh sits at `b = a + delta`. Both points
+// lie in make_single_cavity_field()'s carved band (that field's Z profile is
+// constant across X/Y -- see its own comment -- so an X far outside its
+// authored box still samples the same carved/intact transition) and inside
+// solid_fill()'s uniformly-solid backing, so with no override both would
+// raymarch a lit interior; HotBreachBrighterThanCold and this file's other
+// tests already establish that a lit interior reads well above background.
+//
+// node_overrides[1] is the ZERO matrix -- exactly what set_instance_node_
+// hidden (host_bindings.cc) writes for a severed part (see scenegraph/
+// instance.h's node_overrides doc). compose_node_worlds chains parent_world
+// * local, so node 1's whole subtree collapses to a single point and its
+// triangles rasterize nothing. Discrimination: if node_overrides stopped
+// being threaded (the exact regression this test exists to catch), node 1
+// would draw at its STATIC local transform instead -- i.e. still visible at
+// `b` -- so the child region would read bright, not background.
+TEST_F(BreachPassGLTest, SeveredNodeOverrideCollapsesOnlyThatNodesGeometry) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+
+    // a and b=a+delta both sit well inside make_single_cavity_field()'s own
+    // x,y in [-10,10] box (margin 0.5 either side of each quad's own extent)
+    // -- staying inside the field's authored box entirely, rather than
+    // relying on any clamp-at-the-edge behaviour of its atlas packing, which
+    // this file makes no claim about outside that box.
+    const glm::vec3 a(-7.0f, 0.0f, kCavitySurfaceCenter.z);
+    const glm::vec3 delta(14.0f, 0.0f, 0.0f);
+    assets::Model shared = make_surface_patch_model(a, glm::vec3(0, 0, 1), 2.5f);
+
+    assets::Model two_node;
+    two_node.meshes.push_back(std::move(shared.meshes[0]));
+    assets::Node root;
+    root.parent_index    = -1;
+    root.local_transform = glm::mat4(1.0f);
+    root.meshes          = {0};
+    two_node.nodes.push_back(root);
+    assets::Node child;
+    child.parent_index    = 0;
+    child.local_transform = glm::translate(glm::mat4(1.0f), delta);
+    child.meshes          = {0};
+    two_node.nodes.push_back(child);
+    two_node.root_node = 0;
+
+    // Camera looking at the midpoint of a and b=a+delta (== kCavitySurface
+    // Center, since a and b are symmetric about it). cam_facing's fixed
+    // 45-degree FOV at distance 30 puts a's quad around screen column 14 and
+    // b's around column 50 of this fixture's 64-pixel frame (up = world +Y,
+    // right = world +X for a camera on +Z looking down -Z at this normal).
+    const glm::vec3 midpoint = a + 0.5f * delta;
+    scenegraph::Camera cam = cam_facing(midpoint, glm::vec3(0, 0, 1), 30.f);
+
+    std::unordered_map<int, glm::mat4> overrides;
+    overrides[1] = glm::mat4(0.0f);  // severed, exactly like set_instance_node_hidden
+
+    pass.draw_instance(/*instance_key=*/200, fill, entry, two_node,
+                       glm::mat4(1.0f), cam, *pipeline,
+                       /*breach_age=*/scenegraph::kRimLife + 1.f,
+                       /*breach_center=*/glm::vec3(0.0f),
+                       /*breach_radius=*/0.0f, test_lighting(),
+                       /*ambient_scale=*/1.0f, /*carve=*/nullptr, &overrides);
+    glFinish();
+    ASSERT_EQ(glGetError(), GL_NO_ERROR) << "GL error in severed-node draw";
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    std::vector<unsigned char> buf(kW * kH * 4);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    auto region_max = [&](int cx, int cy, int half) {
+        int best = 0;
+        for (int y = cy - half; y <= cy + half; ++y) {
+            for (int x = cx - half; x <= cx + half; ++x) {
+                if (x < 0 || x >= kW || y < 0 || y >= kH) continue;
+                const int i = (y * kW + x) * 4;
+                const int s = buf[i] + buf[i + 1] + buf[i + 2];
+                if (s > best) best = s;
+            }
+        }
+        return best;
+    };
+
+    const int root_max  = region_max(14, kH / 2, 7);
+    const int child_max = region_max(50, kH / 2, 7);
+
+    EXPECT_GT(root_max, 24)
+        << "node 0 (untouched) should still render its lit interior -- "
+           "root_max=" << root_max;
+    EXPECT_LT(child_max, 16)
+        << "node 1's override was the zero matrix (severed), which must "
+           "collapse its geometry to a point with no rasterized area -- it "
+           "must NOT still draw at its rest-pose position. child_max="
+        << child_max;
 }
