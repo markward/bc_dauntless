@@ -89,3 +89,35 @@ def test_a_body_the_map_does_not_name_is_left_alone():
     rock = pSet.GetObject("Mystery Rock")
     assert rock.GetRadius() == pytest.approx(40.0)
     assert _loc(rock) == pytest.approx((10.0, 20.0, 30.0))
+
+
+def test_a_body_lookup_is_scoped_to_its_own_region_not_the_whole_system():
+    """"Moon 1" names a body in BOTH Geble3 and Geble4, at different radii
+    and positions. Applying Geble4's map to a set must use Geble4's Moon 1,
+    never fall through to Geble3's just because it comes first in the
+    system's body list."""
+    pSet = _fake_set_with_planet("Geble 4", radius=200.0, at=(0.0, 0.0, 0.0))
+    _add_planet(pSet, "Moon 1", radius=50.0, at=(1.0, 2.0, 3.0))
+    assert apply_map.apply_to_set(pSet, "Geble4") is True
+
+    m, r = resolve.for_set("Geble4")
+    geble4_moon = next(
+        b for b in m.bodies if b.name == "Moon 1" and b.owner_region == "Geble4")
+    geble3_moon = next(
+        b for b in m.bodies if b.name == "Moon 1" and b.owner_region == "Geble3")
+    assert geble4_moon.radius_gu != geble3_moon.radius_gu
+
+    moon = pSet.GetObject("Moon 1")
+    expected = tuple(a - b for a, b in zip(geble4_moon.position_gu, r.anchor_gu))
+    assert moon.GetRadius() == pytest.approx(geble4_moon.radius_gu)
+    assert _loc(moon) == pytest.approx(expected)
+
+
+def test_apply_to_set_degrades_to_false_for_a_none_set():
+    assert apply_map.apply_to_set(None, "Ona1") is False
+
+
+def test_apply_to_set_degrades_to_false_for_an_object_with_no_getobject():
+    class _NotASet:
+        pass
+    assert apply_map.apply_to_set(_NotASet(), "Ona1") is False

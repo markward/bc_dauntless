@@ -32,6 +32,14 @@ special-casing of those two systems is required in code.
 
 A body the map does not name for the region is left exactly as BC placed
 it -- no removal path exists or is intended (see the parent spec's ruling).
+
+Body lookup within a region MUST be scoped to that region's owner_region,
+never a bare name search across the whole system map. BC's display names
+are not unique within a system -- ``engine/systems/maps/geble.json`` names
+a "Moon 1" in both Geble3 and Geble4, with different radii and positions --
+so a plain ``SystemMap.body(name)`` first-match scan silently applies the
+wrong region's body data (mirrors the same collision ``validate.py``'s
+``_resolve(by_name, name, owner=...)`` disambiguates).
 """
 from __future__ import annotations
 
@@ -41,6 +49,20 @@ from engine.systems import resolve
 
 def _set_local_position(position_gu: tuple, anchor_gu: tuple) -> tuple:
     return tuple(p - a for p, a in zip(position_gu, anchor_gu))
+
+
+def _region_body(m, name: str, owner_region: str):
+    """The map's Body named `name` AND owned by `owner_region`, or None.
+
+    Never use SystemMap.body(name) for a region-scoped lookup -- display
+    names collide across regions in the same system (e.g. "Moon 1" in both
+    Geble3 and Geble4), and a bare name match silently picks whichever body
+    happens to come first in the map's body list.
+    """
+    for b in m.bodies:
+        if b.name == name and b.owner_region == owner_region:
+            return b
+    return None
 
 
 def _star_body(m):
@@ -71,14 +93,21 @@ def apply_to_set(pSet, set_name: str) -> bool:
     when it resolved to nothing (the set is left completely untouched).
 
     Must be called before pSet is render-realized -- see module docstring.
+
+    Degrades to False (no-op) for a pSet that isn't a real set -- None, or
+    missing the GetObject/_objects surface -- rather than raising, since
+    Task 4 wires this into real set-creation paths where a
+    partially-constructed set is plausible.
     """
+    if pSet is None or not hasattr(pSet, "GetObject") or not hasattr(pSet, "_objects"):
+        return False
     found = resolve.for_set(set_name)
     if found is None:
         return False
     m, region = found
 
     for body_name in region.body_names:
-        body = m.body(body_name)
+        body = _region_body(m, body_name, region.set_name)
         if body is None:
             continue
         obj = pSet.GetObject(body_name)
