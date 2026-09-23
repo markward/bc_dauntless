@@ -208,7 +208,7 @@ The highest-value one: the Bird of Prey is BC's only cloaking ship, so this is w
 
 **Files:**
 - Modify: `native/src/renderer/cloak_pass.cc` (~lines 151-161)
-- Test: `native/tests/renderer/model_draw_helpers_test.cc` (extend — the composition is the same helper)
+- Test: **none, deliberately.** This substitutes an equivalent expression — a hand-rolled walk for `compose_node_worlds` — and Task 1's three tests already characterise that equivalence. `cloak_pass` has existing C++ coverage that fails if behaviour changes for an unarticulated hull, which is the regression that matters. The behaviour this task ADDS (a cloaking ship fading with raised wings) is a GL-level visual property needing a context and a golden image, which this project does not do for these passes; the live verification section covers it instead. Do not invent a test to fill this line.
 
 **Interfaces:**
 - Consumes: `renderer::compose_node_worlds` (as Task 1); `scenegraph::Instance::node_overrides`.
