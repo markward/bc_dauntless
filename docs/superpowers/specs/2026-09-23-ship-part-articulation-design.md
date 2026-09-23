@@ -684,18 +684,41 @@ one around X ≈ 38–45, which would mean a mid-wing shot could shed the outboa
 section (and the cannon with it). The sampling was too coarse to trust — 8 of 14
 slabs were skipped. Needs a finer measurement before anything relies on it.
 
-**OQ-11 — Added 2026-09-23 (final review, finding G1). NPC ships never
-articulate.** `ShipClass.__init__` defaults `_alert_level` to `RED_ALERT` and
-nothing ever calls `SetAlertLevel` on an NPC — only the player's alert-level
-keybind and `engine.dev_missions.combat_stress` do. Since
-`articulation.deflection_target` returns 0.0 (wings down / armed) forever for
-any hull that never leaves RED, the whole feature is reachable **only on a
-player-flown Bird of Prey**. An AI-flown BoP would sit with its wings down for
-its entire life — plausible in combat, but never actually driven by an alert
-transition the way the mechanic is designed around. Unresolved: whether NPC
-alert level should ever change (a broader gap than articulation alone), or
-whether a BoP-specific AI hook should drive its wings independently of
-`_alert_level`.
+**OQ-11 — RESOLVED 2026-09-23. The driving signal differs by who flies the
+ship.**
+
+*The problem.* `ShipClass.__init__` defaults `_alert_level` to `RED_ALERT` and
+nothing ever calls `SetAlertLevel` on an NPC — only the player's alert keybind
+and `engine.dev_missions.combat_stress`. So keying wings off alert level left
+every AI Bird of Prey permanently attack-posed, and the transition was reachable
+only on a player-flown ship.
+
+*Why the obvious fix is wrong.* The RED spawn default is not arbitrary: it is
+**measured on the original exe** across eleven campaign missions (stbc-oracle
+bible §13 N2 — every non-player ship, station and asteroid reads alert 2 from
+the first snapshot, and `MissionLib.CreatePlayerShip` explicitly sets the player
+GREEN, an instruction that only makes sense against a red default). Lowering it
+to make wings work would trade a verified BC behaviour for a cosmetic one.
+
+*The resolution.* `articulation.deflection_target_for(ship)`:
+
+| ship | signal | why |
+|---|---|---|
+| **player** | alert level | the alert keys are how a human tells the ship to brace |
+| **NPC** | **does it have a target** | the SDK's `SelectTarget` preprocessor sets one at runtime (`ai_driver.py:1452`), so it is the one signal that actually varies |
+
+The asymmetry is deliberate. Alert level is left exactly as measured; we simply
+stop treating it as a combat signal for ships it was never a combat signal for.
+An NPC BoP now cruises with its wings up until it acquires a target, then drops
+them — which is the canon beat, and costs no AI work.
+
+Falls back to alert level for any object without `GetTarget`, so a prop or test
+double holds its spawn pose rather than raising on the 60 Hz tick.
+
+⚠️ **Not yet live-verified.** And note it interacts with OQ-12: shooting a
+*raised* NPC wing still resolves against rest-pose geometry, so until picking is
+fixed the NPC-side transition is watchable but its raised wing is not reliably
+hittable.
 
 **OQ-12 — Added 2026-09-23 (final review, finding G2). Node overrides are
 honoured in exactly one draw path.** `Instance::node_overrides` (articulation's

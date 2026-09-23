@@ -148,6 +148,68 @@ def deflection_target(alert_level: int) -> float:
     return 0.0 if int(alert_level) == ShipClass.RED_ALERT else 1.0
 
 
+def _is_player(ship) -> bool:
+    """True when `ship` is the current player. Best-effort: False headlessly,
+    during teardown, or whenever the game is not resolvable."""
+    try:
+        import App
+        game = (App.Game_GetCurrentGame()
+                if hasattr(App, "Game_GetCurrentGame") else None)
+        player = (game.GetPlayer()
+                  if game is not None and hasattr(game, "GetPlayer") else None)
+    except Exception:  # noqa: BLE001 - this runs per rigged ship per tick
+        return False
+    return player is not None and player is ship
+
+
+def deflection_target_for(ship) -> float:
+    """Wing deflection wanted for `ship`. THE SIGNAL DIFFERS BY WHO FLIES IT.
+
+    **Player: alert level.** The alert keys are how a human tells the ship to
+    brace, so that is what the wings answer.
+
+    **NPC: does it have a TARGET.** BC's alert level does not vary on an NPC.
+    It is RED from spawn -- measured on the original exe across eleven
+    campaign missions (`ships.py`, stbc-oracle bible section 13 N2: every
+    non-player ship, station and asteroid reads alert 2 from the first
+    snapshot) -- and nothing in the SDK lowers it again. Keying NPC wings off
+    alert would therefore leave every AI Bird of Prey permanently
+    attack-posed, and the transition would only ever be visible on a
+    player-flown ship.
+
+    A target DOES vary: the SDK's `SelectTarget` preprocessor sets one at
+    runtime (`ai_driver.py:1452`). So it is the signal that actually answers
+    "is this ship fighting", which is the question the wings pose asks.
+
+    This is a DELIBERATE asymmetry, not an oversight -- see OQ-11 in
+    `docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md`. The
+    measured RED spawn default is left untouched; we simply stop treating
+    alert level as a combat signal for ships it was never a combat signal for.
+
+    Falls back to alert level for an object with no `GetTarget`, so a prop or
+    a test double holds its spawn pose rather than raising on the 60 Hz tick.
+    """
+    if _is_player(ship):
+        try:
+            return deflection_target(ship.GetAlertLevel())
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    getter = getattr(ship, "GetTarget", None)
+    if getter is None:
+        try:
+            return deflection_target(ship.GetAlertLevel())
+        except Exception:  # noqa: BLE001
+            return 0.0
+    try:
+        target = getter()
+    except Exception:  # noqa: BLE001
+        return 0.0
+    # A target may be an object reference OR an unresolved string name
+    # (ships.py SetTarget accepts both); either counts as hunting.
+    return 0.0 if target else 1.0
+
+
 def ease(current: float, target: float, dt: float) -> float:
     """Ramp `current` toward `target` at the fixed travel rate.
 
@@ -244,8 +306,12 @@ def tick_ship(ship, dt: float) -> None:
     if forced is not None:
         target = forced
     else:
+        # deflection_target_for, not deflection_target: the signal differs by
+        # who flies the ship. The player answers its alert keys; an NPC
+        # answers whether it has a target, because BC's alert level is RED
+        # from spawn on every NPC and never moves. See OQ-11.
         try:
-            target = deflection_target(ship.GetAlertLevel())
+            target = deflection_target_for(ship)
         except Exception:  # noqa: BLE001
             return
     try:

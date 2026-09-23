@@ -66,6 +66,105 @@ def test_non_red_alert_raises_the_wings(level_name):
     assert articulation.deflection_target(getattr(ShipClass, level_name)) == 1.0
 
 
+# ── Which signal drives a ship (OQ-11) ─────────────────────────────
+
+class _Sig:
+    """A ship for the signal test: an alert level and a target, nothing else."""
+
+    def __init__(self, alert=None, target=None):
+        from engine.appc.ships import ShipClass
+        self._alert = ShipClass.RED_ALERT if alert is None else alert
+        self._target = target
+
+    def GetAlertLevel(self):
+        return self._alert
+
+    def GetTarget(self):
+        return self._target
+
+
+def _as_player(monkeypatch, ship):
+    """Make `ship` read as the current player, the way damage_eligibility does."""
+    import App
+
+    class _Game:
+        def GetPlayer(self):
+            return ship
+
+    monkeypatch.setattr(App, "Game_GetCurrentGame", lambda: _Game(),
+                        raising=False)
+
+
+def _no_player(monkeypatch):
+    import App
+    monkeypatch.setattr(App, "Game_GetCurrentGame", lambda: None,
+                        raising=False)
+
+
+def test_the_player_keys_off_alert_level(monkeypatch):
+    """Unchanged behaviour for the player: the alert keys are how a human
+    tells the ship to brace, and that is what the wings should answer."""
+    from engine.appc.ships import ShipClass
+    ship = _Sig(alert=ShipClass.GREEN_ALERT)
+    _as_player(monkeypatch, ship)
+    assert articulation.deflection_target_for(ship) == 1.0     # cold -> up
+
+    ship._alert = ShipClass.RED_ALERT
+    assert articulation.deflection_target_for(ship) == 0.0     # armed -> down
+
+
+def test_an_npc_keys_off_HAVING_A_TARGET_not_alert(monkeypatch):
+    """THE WHOLE POINT OF OQ-11. BC's alert level does not vary on an NPC: it
+    is RED from spawn (measured on the real exe across eleven campaign
+    missions, ships.py) and nothing lowers it. Keying NPC wings off alert
+    would leave every AI Bird of Prey permanently attack-posed, so the
+    transition would only ever be visible on a player-flown ship.
+
+    A target DOES vary -- the SDK's SelectTarget preprocessor sets one at
+    runtime (ai_driver.py:1452) -- so it is the signal that actually answers
+    "is this ship fighting".
+    """
+    from engine.appc.ships import ShipClass
+    _no_player(monkeypatch)
+
+    # RED, as every NPC spawns, but no target: cruising, wings UP.
+    idle = _Sig(alert=ShipClass.RED_ALERT, target=None)
+    assert articulation.deflection_target_for(idle) == 1.0
+
+    # Still RED -- the alert has not moved and never will -- but now hunting.
+    hunting = _Sig(alert=ShipClass.RED_ALERT, target=object())
+    assert articulation.deflection_target_for(hunting) == 0.0
+
+
+def test_an_npc_target_may_be_a_NAME_not_an_object(monkeypatch):
+    """SetTarget accepts a string name OR an object reference (ships.py:1581),
+    and an unresolved name stays a string. Either counts as having a target."""
+    _no_player(monkeypatch)
+    assert articulation.deflection_target_for(_Sig(target="Enterprise")) == 0.0
+
+
+def test_a_ship_with_no_target_accessor_falls_back_to_alert(monkeypatch):
+    """A prop or a test double need not implement GetTarget. Falling back to
+    the alert level keeps such an object at its spawn pose rather than raising
+    on the 60 Hz tick."""
+    from engine.appc.ships import ShipClass
+    _no_player(monkeypatch)
+
+    class _Bare:
+        def GetAlertLevel(self):
+            return ShipClass.RED_ALERT
+
+    assert articulation.deflection_target_for(_Bare()) == 0.0
+
+
+def test_an_unresolvable_player_does_not_raise(monkeypatch):
+    """Game_GetCurrentGame is absent headlessly and during teardown. This runs
+    on every rigged ship every tick, so it must degrade, not throw."""
+    import App
+    monkeypatch.delattr(App, "Game_GetCurrentGame", raising=False)
+    assert articulation.deflection_target_for(_Sig(target=None)) in (0.0, 1.0)
+
+
 # ── Easing ───────────────────────────────────────────────────────────────────
 
 def test_ease_reaches_the_target_in_the_travel_time():
