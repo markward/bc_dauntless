@@ -175,9 +175,18 @@ def test_belaruzs_description_matches_where_its_cloud_actually_is():
 
     The description used to say the cloud "can be entered out past the first
     planet; the three inner worlds are clear of it". BC anchors the dense
-    pocket at Belaruz 1, INSIDE the orbit of every planet, and the lobe this
-    branch generated spans the whole system. Both halves of that sentence
-    were false against the map committed alongside it.
+    pocket at Belaruz 1, INSIDE the orbit of every planet, so both halves of
+    that sentence were false against the map committed alongside it.
+
+    Both clauses of the sentence that replaced it are pinned here:
+
+    1. "the dense part has fallen inward, closer to the star than any of the
+       three planets" -- the pocket's distance from the star against every
+       planet's.
+    2. "the thin body of the cloud stretches out ahead of it" -- the lobe
+       extends beyond the pocket along the lobe's OWN axis, which is by
+       construction the direction from the star to that pocket
+       (tools/systems/layout.py:_build_cloud_large_volume).
     """
     import math
     from engine.systems.descriptions import for_system
@@ -197,23 +206,37 @@ def test_belaruzs_description_matches_where_its_cloud_actually_is():
         f"pocket at {pocket_distance:.0f} GU vs innermost planet at "
         f"{min(distances):.0f} GU")
 
-    # The large volume is system-scale: it reaches past the outermost world,
-    # which is what "the whole system sits in thin material" rests on.
+    # Clause 2: the thin body stretches out AHEAD of the dense pocket. The
+    # lobe's axis is the star -> pocket direction, so the pocket's axial
+    # projection is its distance from the star (perp = 0 by construction);
+    # the lobe must still be going when the pocket's far edge has passed.
     #
     # Deliberately NOT asserted: that all three planets fall inside the lobe.
     # Measured against the committed map, only Belaruz 4 does. The lobe's
     # spine runs from the star toward the pocket (~+Y) and BC's orbital
     # angles scatter the planets around the star, so Belaruz 2 projects to
     # t = -47,211 (behind near_gu) and Belaruz 3 to t = 7,908 (short of it)
-    # under the capsule model validate.py:_pocket_inside_large uses. Pinning
-    # containment here would pin a fact the geometry does not support.
+    # under the capsule model validate.py:_pocket_inside_large uses. That
+    # discrepancy is a KNOWN OPEN DESIGN QUESTION about the lobe's shape --
+    # whether it should envelop the whole system -- not an error in the
+    # text, which no longer claims it does. Pinning containment here would
+    # pin a fact the geometry does not support.
     lobe = [v for v in cloud.volumes if v.origin_region is None][0]
-    assert lobe.geometry["far_gu"] > max(distances)
+    axis = lobe.geometry["axis"]
+    axis_len = math.sqrt(sum(a * a for a in axis))
+    unit = [a / axis_len for a in axis]
+    rel = [p - o for p, o in zip(pocket.geometry["center_gu"], star.position_gu)]
+    pocket_t = sum(r * u for r, u in zip(rel, unit))
+    assert lobe.geometry["far_gu"] > pocket_t + pocket.geometry["radius_gu"], (
+        f"lobe ends at {lobe.geometry['far_gu']:.0f} GU along its axis but the "
+        f"pocket's far edge is at {pocket_t + pocket.geometry['radius_gu']:.0f}")
 
     detail = for_system("belaruz")["detail"]
     assert "past the first planet" not in detail
     assert "clear of it" not in detail
+    assert "whole system sits in thin material" not in detail
     assert "closer to the star than any of the three planets" in detail
+    assert "stretches out ahead of it" in detail
 
 
 def test_the_two_cloud_systems_carry_their_clouds():
