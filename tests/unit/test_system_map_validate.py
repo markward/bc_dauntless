@@ -9,7 +9,7 @@ import pytest
 
 from engine.systems import clouds as cloud_profiles
 from engine.systems.map import Appearance, Body, Cloud, Region, SystemMap, Volume, available, load
-from engine.systems.validate import validate
+from engine.systems.validate import Problem, validate
 
 
 def _body(name, pos, radius=100.0, owner="Ona1", orbits="Ona"):
@@ -413,6 +413,59 @@ def test_a_list_field_may_be_a_tuple(field):
     assert validate(m) == []
 
 
+# An integer too large for a float. JSON integers are UNBOUNDED, so this is
+# reachable from a checked-in map file, not just from a constructed object:
+# json.loads gives back a Python int of arbitrary size, and nothing between
+# the file and validate() narrows it. 401 digits is comfortably past the
+# ~1.8e308 float ceiling.
+_TOO_BIG_FOR_FLOAT = int("9" * 401)
+
+
+@pytest.mark.parametrize("wreck", [
+    # Every path a 401-digit integer can reach validate() through from a FILE.
+    # (body/region `radius_gu` are absent on purpose: from_json coerces those
+    # with float() and so raises at LOAD time, which is a separate concern
+    # from validate()'s never-raises contract.)
+    lambda raw: raw["bodies"][1]["position_gu"].__setitem__(0, _TOO_BIG_FOR_FLOAT),
+    lambda raw: raw["regions"][0]["anchor_gu"].__setitem__(0, _TOO_BIG_FOR_FLOAT),
+    lambda raw: raw["regions"][0]["nebula"].__setitem__(
+        "damage_hull_per_s", _TOO_BIG_FOR_FLOAT),
+    lambda raw: raw["regions"][0]["nebula"]["spheres"][0].__setitem__(
+        3, _TOO_BIG_FOR_FLOAT),
+    lambda raw: raw["clouds"][0]["volumes"][0]["params"].__setitem__(
+        "damage_hull_per_s", _TOO_BIG_FOR_FLOAT),
+    lambda raw: raw["clouds"][0]["volumes"][0]["geometry"].__setitem__(
+        "radius_gu", _TOO_BIG_FOR_FLOAT),
+    lambda raw: raw["clouds"][0]["volumes"][1]["geometry"]["center_gu"].__setitem__(
+        0, _TOO_BIG_FOR_FLOAT),
+])
+def test_an_int_too_large_for_a_float_is_reported_never_raised(tmp_path, wreck):
+    """A number `_is_number` accepts but `float()` cannot convert.
+
+    `_is_number` admits ANY int, and float(int) raises OverflowError above
+    roughly 1.8e308. Every numeric guard in validate.py is therefore only as
+    strong as the arithmetic downstream of it: `_dist` reaches math.sqrt and
+    `_pocket_param_details` reaches math.isclose(float(...)), and both raise
+    on such a value where the rule is supposed to REPORT.
+
+    Driven from an actual JSON file, because that is the reachable path --
+    JSON integers are unbounded, so a map on disk can carry one and nothing
+    between `from_json` and `validate` narrows it.
+    """
+    import json
+    from engine.systems.map import from_json, to_json
+
+    raw = json.loads(to_json(_cloud_map()))
+    wreck(raw)
+    path = tmp_path / "wrecked.json"
+    path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    m = from_json(path.read_text(encoding="utf-8"))
+    problems = validate(m)          # must not raise
+    assert problems != []
+    assert all(isinstance(p, Problem) for p in problems)
+
+
 def test_the_real_maps_validate_clean():
     for name in available():
         assert validate(load(name)) == [], name
@@ -635,3 +688,57 @@ def test_a_pocket_whose_regions_numbers_are_non_numeric_is_reported_not_raised()
     m.region("Ona1").nebula["sensor_density"] = "thick"
     problems = validate(m)      # must not raise
     assert "cloud-profile-matches-params" in _rules(problems)
+
+
+def test_a_pockets_profile_name_must_match_its_regions_damage():
+    """The half the region comparison alone does not cover.
+
+    Comparing params against the region checks the NUMBERS. It does not tie
+    the pocket's `profile` STRING to anything, so relabelling a pocket
+    "mist" while leaving BC's 145/10.5/150/20 in place validated clean --
+    a check the old table comparison did have, because a "mist" label
+    demanded mist's four zeros.
+
+    The rule mirrors tools/systems/layout.py:_build_clouds, which derives
+    the profile from BC's own damage choice: `debris` when the region's
+    damage_hull_per_s > 0, `nebula` otherwise.
+    """
+    m = _cloud_map()                       # region authors hull 150 -> debris
+    m.clouds[0].volumes[0].profile = "mist"
+    problems = validate(m)
+    assert "cloud-profile-matches-params" in _rules(problems)
+    assert any("profile" in p.detail for p in problems
+               if p.rule == "cloud-profile-matches-params")
+
+
+def test_a_harmless_pocket_may_not_be_labelled_debris():
+    """The other direction: a region BC authored no damage for is `nebula`,
+    and labelling its pocket `debris` must be caught even though the two
+    profiles differ on every number (so the params check would catch it too
+    -- here the params are moved with the label to isolate the NAME)."""
+    m = _cloud_map()
+    m.region("Ona1").nebula["damage_hull_per_s"] = 0.0
+    m.region("Ona1").nebula["damage_shield_per_s"] = 0.0
+    m.region("Ona1").nebula["visibility_gu"] = 200.0
+    m.region("Ona1").nebula["sensor_density"] = 6.5
+    m.clouds[0].volumes[0].params = cloud_profiles.params_for("nebula")
+    # Numbers now agree with the region; only the LABEL is wrong.
+    assert m.clouds[0].volumes[0].profile == "debris"
+    problems = validate(m)
+    assert "cloud-profile-matches-params" in _rules(problems)
+    assert any("profile" in p.detail for p in problems
+               if p.rule == "cloud-profile-matches-params")
+
+
+def test_a_correctly_labelled_harmless_pocket_is_clean():
+    """The positive case of the rule above -- relabelling in step with the
+    region's authored damage is exactly what layout.py does, and must not
+    be reported."""
+    m = _cloud_map()
+    m.region("Ona1").nebula.update({
+        "visibility_gu": 200.0, "sensor_density": 6.5,
+        "damage_hull_per_s": 0.0, "damage_shield_per_s": 0.0,
+    })
+    m.clouds[0].volumes[0].profile = "nebula"
+    m.clouds[0].volumes[0].params = cloud_profiles.params_for("nebula")
+    assert validate(m) == []

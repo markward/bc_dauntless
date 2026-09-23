@@ -29,7 +29,31 @@ def _dist(a, b) -> float:
 
 
 def _is_number(x) -> bool:
-    return isinstance(x, (int, float))
+    """True if x is a number this file's arithmetic can actually survive.
+
+    Being an int or a float is not enough. Python ints are UNBOUNDED, and
+    `float()` on one above roughly 1.8e308 raises OverflowError -- so a value
+    that passes a bare isinstance check can still blow up the moment a rule
+    touches it. Both of this file's numeric consumers do exactly that:
+    `_dist` reaches `math.sqrt`, and `_pocket_param_details` reaches
+    `math.isclose(float(...))`. Either raises where the rule is supposed to
+    REPORT, which breaks validate()'s one hard contract.
+
+    That is reachable from a FILE, not just from a constructed object: JSON
+    integers are unbounded, so a checked-in map can carry a 401-digit
+    `damage_hull_per_s` or coordinate and nothing between `from_json` and
+    `validate` narrows it.
+
+    Non-finite floats (inf, nan) are rejected for the same reason in
+    reverse: they convert fine and then poison every comparison downstream
+    silently instead of loudly. A number has to be finite AND convertible.
+    """
+    if not isinstance(x, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(x))
+    except (OverflowError, ValueError):
+        return False
 
 
 def _is_point3(v) -> bool:
@@ -40,9 +64,14 @@ def _is_point3(v) -> bool:
     reports the map clean. Catching that here, before any geometric rule runs,
     is the difference between a malformed map raising deep inside a distance
     calculation and it being reported by name.
+
+    Delegates the per-coordinate test to `_is_number` rather than repeating
+    an inline isinstance check, so the unconvertible-int and non-finite
+    guards above cover coordinates too -- `position_gu` and `anchor_gu` are
+    the shortest route from a map file into `math.sqrt`.
     """
     try:
-        return len(v) == 3 and all(isinstance(c, (int, float)) for c in v)
+        return len(v) == 3 and all(_is_number(c) for c in v)
     except TypeError:
         return False
 
@@ -157,6 +186,23 @@ def _pocket_param_details(v, region) -> list:
                 f"{sorted(_PARAM_KEYS)}"]
 
     details = []
+
+    # The pocket's profile NAME, tied to the same authored number layout
+    # derives it from (tools/systems/layout.py:_build_clouds: `debris` when
+    # damage_hull_per_s > 0, `nebula` otherwise). Comparing params against
+    # the region checks the numbers but leaves the label free, so without
+    # this a pocket relabelled "mist" while keeping BC's 145/10.5/150/20
+    # validates clean -- a check the old table comparison did have, because
+    # a "mist" label demanded mist's four zeros.
+    hull = nebula.get("damage_hull_per_s")
+    if _is_number(hull):
+        want_profile = "debris" if hull > 0 else "nebula"
+        if v.profile != want_profile:
+            details.append(
+                f"profile is {v.profile!r}, but region {region.set_name!r} "
+                f"authored damage_hull_per_s {hull!r}, which makes it "
+                f"{want_profile!r}")
+
     for key in _PARAM_KEYS:
         authored = nebula.get(key)
         if key == "damage_shield_per_s" and authored is None:
