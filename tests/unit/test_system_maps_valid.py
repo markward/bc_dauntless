@@ -158,3 +158,48 @@ def test_belaruz_and_vesuvi_carry_the_stars_their_descriptions_claim():
     assert not any(b.appearance.star_class == "brown_dwarf"
                    for name in ("belaruz", "vesuvi")
                    for b in load(name).bodies)
+
+
+def test_the_two_cloud_systems_carry_their_clouds():
+    vesuvi = load("vesuvi")
+    assert len(vesuvi.clouds) == 1
+    cloud = vesuvi.clouds[0]
+    assert cloud.kind == "debris_shell"
+    assert sorted(cloud.regions) == ["Vesuvi4"]
+    pocket = [v for v in cloud.volumes if v.origin_region == "Vesuvi4"][0]
+    assert pocket.profile == "debris"
+    assert pocket.params["damage_hull_per_s"] == pytest.approx(150.0)
+    shell = [v for v in cloud.volumes if v.origin_region is None][0]
+    assert shell.shape == "sphere"
+    assert shell.geometry["radius_gu"] == pytest.approx(61567.4, rel=1e-3)
+
+    belaruz = load("belaruz")
+    cloud = belaruz.clouds[0]
+    assert cloud.kind == "nebula_field"
+    pocket = [v for v in cloud.volumes if v.origin_region == "Belaruz1"][0]
+    assert pocket.profile == "nebula"
+    assert pocket.params["damage_hull_per_s"] == 0.0
+    assert [v for v in cloud.volumes if v.origin_region is None][0].shape == "lobe"
+
+
+def test_no_other_system_grew_a_cloud():
+    for name in available():
+        if name in ("vesuvi", "belaruz"):
+            continue
+        assert load(name).clouds == [], name
+
+
+def test_a_bogus_cloud_kind_surfaces_in_ambiguities():
+    """A typo'd or unrecognised `overrides.cloud.kind` must not silently
+    degrade to a pockets-only cloud -- gen_system_maps.py must actually pass
+    the cloud override through to ambiguities(), not just to layout()."""
+    from tools.gen_system_maps import cloud_from
+    from tools.systems.layout import ambiguities
+    from tools.systems.survey import survey_system
+    from engine.systems.map import SystemMap
+
+    bogus = SystemMap(system="Vesuvi", overrides={"cloud": {
+        "name": "x", "display_name": "x", "kind": "not_a_real_kind"}})
+    surveyed = survey_system("Vesuvi")
+    notes = ambiguities(surveyed, cloud=cloud_from(bogus))
+    assert any("not_a_real_kind" in n for n in notes)
