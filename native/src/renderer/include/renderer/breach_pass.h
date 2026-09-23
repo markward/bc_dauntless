@@ -32,9 +32,15 @@ class CarveFieldCache;
 ///
 /// For each DAMAGED instance (one with a per-instance damage field in
 /// `InstanceFieldCache` — see that header's class comment for what "damaged"
-/// means there), draws the SAME hull mesh geometry the opaque pass already
-/// drew (`renderer::draw_model_positions_only`), under the SAME carve
-/// stencil, masked by the ORIGINAL (uncarved) hull fill. A fragment that
+/// means there), draws the SAME hull mesh geometry, AT THE SAME PER-MESH
+/// POSE, that the opaque pass already drew (`renderer::draw_model_positions_
+/// only`, given the instance's own `node_overrides` — see `draw_instance`'s
+/// own doc), under the SAME carve stencil, masked by the ORIGINAL (uncarved)
+/// hull fill. The pose match is load-bearing, not cosmetic: this pass relies
+/// on stencil alignment with the opaque draw, so an articulated part (a
+/// raised/lowered wing, a severed one collapsed to the zero matrix) MUST be
+/// drawn at the pose the opaque pass drew it at, or a breach on that part is
+/// drawn against its rest pose instead of its live one. A fragment that
 /// survives the stencil is therefore, by construction, sitting exactly on
 /// the hull surface at a point the damage field already reads as carved —
 /// the SAME `sample_hull_field(surface point) > margin` condition that made
@@ -148,6 +154,11 @@ public:
     /// (scaled by `breach_radius`) as well as by age. Defaults (origin,
     /// 0) are harmless when `breach_age` is also left at its cold default —
     /// heat is already 0 from the age term in that case.
+    ///
+    /// `node_overrides` (nullptr = none) is the instance's articulation /
+    /// severance map, threaded down to draw_model_positions_only so the hull
+    /// proxy is drawn at the pose the opaque pass drew. Without it a breach on
+    /// a raised wing is rendered against where that wing sits at REST.
     void draw_instance(std::uintptr_t instance_key,
                        const voxel::VoxelVolume& fill,
                        const InstanceFieldCache::Entry& field,
@@ -160,7 +171,9 @@ public:
                        float breach_radius = 0.0f,
                        const Lighting& lighting = Lighting{},
                        float ambient_scale = 1.0f,
-                       const scenegraph::HullCarveField* carve = nullptr);
+                       const scenegraph::HullCarveField* carve = nullptr,
+                       const std::unordered_map<int, glm::mat4>*
+                           node_overrides = nullptr);
 
     /// Number of PROXY SUBMISSIONS this pass instance has issued so far —
     /// one per `render()`/`draw_instance()` call that actually draws
@@ -220,7 +233,9 @@ private:
                          const Lighting& lighting,  // scene sun + ambient (world space)
                          float ambient_scale,       // frame's ambient dimmer (filmic)
                          const scenegraph::HullCarveField* carve,  // tracked carve ring, or null
-                         bool interior_shell = false);  // true = back-face interior shell
+                         bool interior_shell = false,  // true = back-face interior shell
+                         const std::unordered_map<int, glm::mat4>*
+                             node_overrides = nullptr);
 
     // Draw the hull's BACK faces under the same stencil: the inside of the
     // plating on the far side of a hole. Without it a breach whose carve
@@ -244,7 +259,9 @@ private:
                              unsigned int damage_tex,
                              const Lighting& lighting,
                              float ambient_scale,
-                             const scenegraph::HullCarveField* carve);
+                             const scenegraph::HullCarveField* carve,
+                             const std::unordered_map<int, glm::mat4>*
+                                 node_overrides = nullptr);
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.
