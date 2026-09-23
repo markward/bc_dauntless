@@ -232,15 +232,21 @@ def _max_star_intrusion(m: SystemMap, star, t: LayoutTuning) -> float:
         ])
 
 
-def _build_cloud_large_volume(kind: str, cloud: dict, members: list, pocket_centre) -> Volume | None:
+def _build_cloud_large_volume(kind: str, cloud: dict, members: list,
+                              pocket_volumes: list) -> Volume | None:
     """The system-scale volume for a cloud with a declared `kind`. Ships
     inert (profile "mist", all-zero params) until that profile is tuned.
 
     `members` are the map's own placed Regions that carry a nebula -- anchors
     are FINAL by the time this runs (built after _place()'s region loop).
-    `pocket_centre` is the first pocket Volume's centre, used only to derive
-    a lobe's axis; a debris shell needs no such reference, its radius comes
-    straight from the member regions.
+    `pocket_volumes` is this cloud's own pocket Volume list; only the
+    "nebula_field" branch below ever reads it (to derive the lobe's axis
+    from the first pocket's centre) -- a debris shell's radius comes
+    straight from the member regions and never touches it, and a
+    "nebula_field" override on a nebula authored with NO spheres (a
+    MetaNebula_Create with no AddNebulaSphere call after it, per
+    survey._nebula) has no pocket to point an axis at, so it emits no large
+    volume rather than raising IndexError on an empty list.
     """
     mist = cloud_profiles.params_for("mist")
     if kind == "debris_shell":
@@ -250,8 +256,10 @@ def _build_cloud_large_volume(kind: str, cloud: dict, members: list, pocket_cent
             geometry={"center_gu": (0.0, 0.0, 0.0), "radius_gu": radius},
             profile="mist", params=mist, origin_region=None)
     if kind == "nebula_field":
+        if not pocket_volumes:
+            return None
         geometry = dict(cloud.get("geometry", {}))
-        geometry["axis"] = list(_unit(pocket_centre))
+        geometry["axis"] = list(_unit(pocket_volumes[0].geometry["center_gu"]))
         return Volume(shape="lobe", geometry=geometry, profile="mist",
                       params=mist, origin_region=None)
     return None
@@ -277,8 +285,13 @@ def _build_clouds(m: SystemMap, cloud: dict | None) -> list:
         # BC's own damage choice, not the override: the profile must be
         # derivable from data that cannot disagree with BC.
         profile = "debris" if region.nebula["damage_hull_per_s"] > 0 else "nebula"
-        params = cloud_profiles.params_for(profile)
         for sphere in region.nebula["spheres"]:
+            # params_for() called PER SPHERE, not hoisted above this loop:
+            # each Volume gets its OWN params dict. Hoisting it made every
+            # pocket of a multi-sphere region alias one shared dict, so an
+            # in-place mutation of one pocket's params (a later pass over
+            # cloud.volumes) would silently apply to every sibling too.
+            params = cloud_profiles.params_for(profile)
             x, y, z, radius = sphere
             volumes.append(Volume(
                 shape="sphere",
@@ -297,8 +310,13 @@ def _build_clouds(m: SystemMap, cloud: dict | None) -> list:
         regions=[r.set_name for r in members])
 
     if cloud is not None:
-        large = _build_cloud_large_volume(
-            kind, cloud, members, volumes[0].geometry["center_gu"])
+        # The pocket centre is only ever needed by the "nebula_field" branch
+        # (to derive the lobe's axis) -- NOT evaluated for "debris_shell",
+        # and not evaluated at all when a nebula carries no spheres (a
+        # MetaNebula_Create with no valid AddNebulaSphere call following it,
+        # per survey._nebula). volumes[0] would previously raise IndexError
+        # in that case even for "debris_shell", which never reads it.
+        large = _build_cloud_large_volume(kind, cloud, members, volumes)
         if large is not None:
             result.volumes = result.volumes + [large]
 
@@ -385,7 +403,7 @@ def _first_orbit_push(s, t: LayoutTuning, pins, star=None, cloud=None) -> tuple[
     return push, m
 
 
-def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
+def ambiguities(s, tuning: LayoutTuning | None = None, cloud: dict | None = None) -> list:
     t = tuning or LayoutTuning()
     notes = []
     for region in s.regions:
@@ -434,6 +452,19 @@ def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
                 f"{region.set_name}: builds "
                 f"{region.nebula['extra_nebulae']} additional nebula(e) beyond "
                 f"the first -- only the first is placed, the rest are dropped")
+
+    # An override that declares a `kind` neither construction rule recognises
+    # silently degrades to a pockets-only cloud (see _build_cloud_large_volume
+    # -- an unrecognised kind returns None and the caller just skips the large
+    # volume). Losing the entire system-scale shell/lobe to a typo must not
+    # be silent, same as construction rule 5's "no override" case already
+    # isn't silent about keeping only the pockets.
+    if (cloud is not None and any(r.nebula is not None for r in s.regions)
+            and cloud.get("kind") not in ("debris_shell", "nebula_field")):
+        notes.append(
+            f"{s.name}: cloud kind {cloud.get('kind')!r} is not "
+            f"'debris_shell' or 'nebula_field' -- no system-scale volume "
+            f"will be built, the cloud ships with its BC pockets only")
 
     # A system whose regions disagree about the sun's texture takes the most
     # common one (see _star_appearance) -- that pick must never be silent.

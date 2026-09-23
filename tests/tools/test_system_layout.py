@@ -624,6 +624,17 @@ def test_the_profile_comes_from_bcs_damage_not_from_the_override():
     assert [v.profile for v in cold.clouds[0].volumes
             if v.origin_region][0] == "nebula"
 
+    # Crossed case: a "debris_shell" kind paired with BC's ZERO damage. An
+    # implementation that (wrongly) read the profile off the override's
+    # `kind` rather than the survey's damage would pass the two assertions
+    # above unchanged -- this is the one that actually pins the ruling.
+    s_crossed = SurveyedSystem(name="Crossed", regions=[
+        _nebula_region(set_name="Crossed1", hull=0.0, shield=0.0)])
+    crossed = layout(s_crossed, cloud={"name": "C", "display_name": "C",
+                                       "kind": "debris_shell"})
+    assert [v.profile for v in crossed.clouds[0].volumes
+            if v.origin_region][0] == "nebula"
+
 
 def test_the_shell_radius_is_derived_from_its_member_regions():
     """Not declared. The shell reaches exactly as far as the debris does."""
@@ -702,3 +713,59 @@ def test_the_shell_radius_reflects_the_pushed_anchor_not_the_pre_push_one():
     shell = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
     expected = _norm(region.anchor_gu) + region.radius_gu
     assert shell.geometry["radius_gu"] == pytest.approx(expected)
+
+
+def test_each_pocket_volume_gets_its_own_params_dict():
+    """Two spheres in one region must not share a single params dict -- an
+    in-place mutation to one pocket's params (a later pass over cloud.volumes)
+    must not silently leak into its sibling pocket."""
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region(
+        spheres=((0.0, 1500.0, 0.0, 1500.0), (500.0, 2000.0, 0.0, 800.0)))])
+    m = layout(s, cloud={"name": "V", "display_name": "V", "kind": "debris_shell"})
+    pockets = [v for v in m.clouds[0].volumes if v.origin_region]
+    assert len(pockets) == 2
+    assert pockets[0].params is not pockets[1].params
+    pockets[0].params["visibility_gu"] = -1.0
+    assert pockets[1].params["visibility_gu"] != -1.0
+
+
+def test_a_nebula_with_no_spheres_still_yields_a_debris_shell():
+    """A MetaNebula_Create with no AddNebulaSphere call after it (or none
+    with exactly 4 arguments) survives survey._nebula as an empty spheres
+    list. Building the shell must not crash on an empty pocket list -- the
+    shell's radius never reads a pocket centre in the first place."""
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region(spheres=())])
+    m = layout(s, cloud={"name": "V", "display_name": "V", "kind": "debris_shell"})
+    assert len(m.clouds) == 1
+    assert [v.origin_region for v in m.clouds[0].volumes] == [None]
+    assert m.clouds[0].volumes[0].shape == "sphere"
+
+
+def test_a_nebula_with_no_spheres_yields_no_lobe():
+    """A "nebula_field" kind DOES need a pocket to point its axis at -- with
+    none available, it must decline to build a large volume rather than
+    raise IndexError on an empty pocket list."""
+    s = SurveyedSystem(name="Belaruz", regions=[
+        _nebula_region(set_name="Belaruz1", hull=0.0, shield=0.0, spheres=())])
+    m = layout(s, cloud={"name": "B", "display_name": "B", "kind": "nebula_field",
+                         "geometry": {"near_gu": 1.0, "far_gu": 2.0,
+                                      "radius_gu": 3.0}})
+    assert len(m.clouds) == 1
+    assert m.clouds[0].volumes == []
+
+
+def test_ambiguities_flags_an_unrecognised_cloud_kind():
+    """A typo'd kind (e.g. a stray space) must not silently degrade to a
+    pockets-only cloud with no error and no ambiguity row -- the same
+    silent-degradation failure mode construction rule 5 exists to prevent."""
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region()])
+    notes = ambiguities(s, cloud={"name": "V", "display_name": "V",
+                                  "kind": "debris shell"})
+    assert any("kind" in n.lower() for n in notes)
+
+
+def test_ambiguities_does_not_flag_a_recognised_cloud_kind():
+    s = SurveyedSystem(name="Vesuvi", regions=[_nebula_region()])
+    notes = ambiguities(s, cloud={"name": "V", "display_name": "V",
+                                  "kind": "debris_shell"})
+    assert notes == []
