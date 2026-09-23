@@ -40,9 +40,17 @@ class LayoutTuning:
     min_standoff_factor: float = 1.5
     max_standoff_factor: float = 12.0
     default_sun_radius_gu: float = 9000.0
+    # A MINIMUM, not a fixed distance: the innermost orbit sits at least this
+    # far from the star's surface, and farther still when that would leave a
+    # region's sphere reaching the star (see star_clearance_gu and the push
+    # logic in layout()).
     first_orbit_clearance_gu: float = 30000.0
     orbit_step_gu: float = 26000.0
     region_margin_gu: float = 1500.0
+    # Margin left between a region's sphere and the star's surface after the
+    # corrective push in layout(), so the two end up clear rather than exactly
+    # tangent.
+    star_clearance_gu: float = 500.0
     # Fallback only: used when a region's BC geometry is degenerate (the
     # primary sits exactly on Player Start, so there is no distance/radius
     # ratio to derive a standoff from). See _standoff_factor.
@@ -121,6 +129,94 @@ def _split(region):
     return primary, [b for b in planets if b is not primary]
 
 
+def _sun_radius(s, t: LayoutTuning) -> float:
+    # Two systems (Belaruz, Vesuvi) build a MetaNebula and author no Sun_Create
+    # at all -- sun_bc is 0.0 there, and default_sun_radius_gu is the fallback.
+    sun_bc = max(
+        (b.radius_gu for region in s.regions for b in region.bodies if b.is_sun),
+        default=0.0)
+    return (sun_bc * t.sun_radius_scale) if sun_bc > 0.0 else t.default_sun_radius_gu
+
+
+def _max_star_intrusion(m: SystemMap, star, t: LayoutTuning) -> float:
+    """The largest amount, across all regions, by which a sphere reaches the
+    star -- 0.0 if every region already clears it by at least star_clearance_gu.
+    """
+    return max(
+        [0.0] + [
+            r.radius_gu + star.radius_gu + t.star_clearance_gu - _norm(_sub(r.anchor_gu, star.position_gu))
+            for r in m.regions
+        ])
+
+
+def _first_orbit_push(s, t: LayoutTuning, pins) -> tuple[float, SystemMap]:
+    """The corrective distance added to the first orbit, and the resulting map.
+
+    All 7 known offenders are the INNERMOST region of their system, and every
+    orbit is `first_orbit + orbit_step_gu * i` -- so raising the first orbit
+    moves every region outward by the same amount, which can fix the inner
+    ones and can never create a new clip further out. A region's radius is
+    `max(reach, content_extent) + margin`, where `reach` is measured from its
+    OWN anchor -- moving the whole system outward changes neither term, so the
+    radius is invariant under this adjustment.
+
+    Deviation from the naive `target - dist(anchor, star)` estimate: that
+    formula is only exact when the anchor sits exactly on the outward radial
+    line the orbit centre moves along. In general the anchor is offset from
+    that line by a fixed vector (the group centroid shift, the framing
+    standoff), so raising first_orbit by the naive estimate under-corrects --
+    measured live on 6 of the 7 real offenders, leaving 5-800 GU of intrusion
+    after a "second pass" that was supposed to be a float-drift guard only.
+    Because each region's anchor is an EXACT affine function of first_orbit
+    (a rigid translation along a fixed per-region direction -- see
+    _orbit_position), that direction can be measured exactly with one probe
+    placement 1 GU further out, and the exact delta solved in closed form,
+    rather than iterating the approximation. That probe plus the corrective
+    placement is two extra `_place` calls beyond the baseline -- three in
+    total, still bounded and not a loop -- and the guard pass on the final
+    result now genuinely only catches floating-point drift.
+
+    The push is computed from the UNPINNED framing, deliberately, and pins
+    are only applied to the final, returned placement. A pin exists to hold
+    ONE body at an authored offset from its own anchor; if the push amount
+    depended on pins, adding or moving a pin could silently drag every
+    OTHER region's bodies to a new position too, which is not what pinning
+    a body means (see test_an_unpinned_body_in_the_same_region_is_not_moved).
+    """
+    sun_radius = _sun_radius(s, t)
+    base_first_orbit = sun_radius + t.first_orbit_clearance_gu
+    m = _place(s, t, {}, base_first_orbit, sun_radius)
+    star = next(b for b in m.bodies if b.orbits is None)
+    if _max_star_intrusion(m, star, t) <= 0.0:
+        push = 0.0
+    else:
+        worst = max(m.regions, key=lambda r: (
+            r.radius_gu + star.radius_gu + t.star_clearance_gu
+            - _norm(_sub(r.anchor_gu, star.position_gu))))
+        probe = _place(s, t, {}, base_first_orbit + 1.0, sun_radius)
+        probe_anchor = next(r.anchor_gu for r in probe.regions if r.set_name == worst.set_name)
+        direction = _sub(probe_anchor, worst.anchor_gu)  # exact anchor shift per 1 GU of first_orbit
+
+        target = worst.radius_gu + star.radius_gu + t.star_clearance_gu
+        a_dot_u = sum(a * u for a, u in zip(worst.anchor_gu, direction))
+        u_sq = sum(u * u for u in direction)
+        a_sq = sum(a * a for a in worst.anchor_gu)
+        discriminant = a_dot_u * a_dot_u - u_sq * (a_sq - target * target)
+        push = (-a_dot_u + math.sqrt(max(discriminant, 0.0))) / u_sq
+
+    # Final placement: pins applied, at the (possibly pushed) first orbit.
+    m = _place(s, t, pins, base_first_orbit + push, sun_radius)
+    star = next(b for b in m.bodies if b.orbits is None)
+    residual = _max_star_intrusion(m, star, t)
+    if residual > 1e-6:
+        raise ValueError(
+            f"system {s.name!r}: pushed the first orbit out by {push:.1f} GU "
+            f"but {residual:.6f} GU of intrusion remains in the final "
+            f"(pinned) placement -- the reach/content_extent invariant this "
+            f"fix relies on does not hold here")
+    return push, m
+
+
 def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
     t = tuning or LayoutTuning()
     notes = []
@@ -162,21 +258,27 @@ def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
                     f"{region.set_name}: {c.name!r} was demoted to a moon of "
                     f"{primary.name!r}, but its name does not say 'Moon' -- it may "
                     f"be a separate world needing its own orbit")
+
+    # Report a pushed first orbit -- this changes numbers a human chose (the
+    # first_orbit_clearance_gu the tuning specified), so it must never happen
+    # silently. Uses no pins: ambiguities() reports on the SURVEY, before any
+    # mission-staging pin is known.
+    push, _m = _first_orbit_push(s, t, {})
+    if push > 0.0:
+        notes.append(
+            f"{s.name}: first orbit pushed out by {push:.0f} GU beyond "
+            f"first_orbit_clearance_gu -- a region's sphere would otherwise "
+            f"have reached the star")
     return notes
 
 
-def layout(s, tuning: LayoutTuning | None = None, pins=None) -> SystemMap:
-    t = tuning or LayoutTuning()
-    pins = pins or {}
+def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float) -> SystemMap:
+    """Place bodies and regions given an already-decided first-orbit distance
+    and sun radius. Pure function of its arguments -- called twice by
+    _first_orbit_push() when a corrective push is needed, so it must not read
+    or cache anything beyond what it is passed.
+    """
     m = SystemMap(system=s.name, generated={"tool": "gen_system_maps"})
-
-    # Two systems (Belaruz, Vesuvi) build a MetaNebula and author no Sun_Create
-    # at all -- sun_bc is 0.0 there, and default_sun_radius_gu is the fallback.
-    sun_bc = max(
-        (b.radius_gu for region in s.regions for b in region.bodies if b.is_sun),
-        default=0.0)
-    sun_radius = (sun_bc * t.sun_radius_scale) if sun_bc > 0.0 else t.default_sun_radius_gu
-    first_orbit = sun_radius + t.first_orbit_clearance_gu
 
     m.bodies.append(Body(
         name=s.name, display_name=s.name, radius_gu=sun_radius,
@@ -269,4 +371,11 @@ def layout(s, tuning: LayoutTuning | None = None, pins=None) -> SystemMap:
             radius_gu=max(reach, region.content_extent_gu) + t.region_margin_gu,
             body_names=placed))
 
+    return m
+
+
+def layout(s, tuning: LayoutTuning | None = None, pins=None) -> SystemMap:
+    t = tuning or LayoutTuning()
+    pins = pins or {}
+    _push, m = _first_orbit_push(s, t, pins)
     return m

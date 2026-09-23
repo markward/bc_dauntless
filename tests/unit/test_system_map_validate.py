@@ -257,3 +257,25 @@ def test_pins_as_a_list_is_reported_not_raised():
     pins = [("Ona1/Ona 1", (0.0, 4000.0, 0.0))]  # list, not dict
     problems = validate(m, pins=pins)  # must not raise
     assert "pin-respected" in _slugs(problems)
+
+
+def test_region_reaches_star_flags_a_sphere_overlapping_the_sun():
+    """anchor-inside-body misses this: the anchor stays outside the star while
+    the region's SPHERE overlaps it. Under streaming, a region boundary would
+    pass through a sun."""
+    m = _valid()
+    # The star is r=5000 at the origin; Ona1's radius is 3000.
+    m.region("Ona1").anchor_gu = (0.0, 7000.0, 0.0)   # 7000 < 3000 + 5000
+    assert "region-reaches-star" in _slugs(validate(m))
+
+
+def test_region_reaches_star_accepts_a_region_that_merely_comes_close():
+    m = _valid()
+    m.region("Ona1").anchor_gu = (0.0, 8100.0, 0.0)   # 8100 > 3000 + 5000
+    assert "region-reaches-star" not in _slugs(validate(m))
+
+
+def test_region_reaches_star_is_skipped_when_a_map_has_no_star():
+    m = _valid()
+    m.bodies = [b for b in m.bodies if b.orbits is not None]
+    assert "region-reaches-star" not in _slugs(validate(m))

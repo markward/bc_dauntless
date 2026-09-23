@@ -180,6 +180,23 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"belong to that region -- body-engulfs-anchor only checks "
                     f"a region's own bodies"))
 
+    # region-reaches-star: no *anchor* is ever inside a star (that would be
+    # anchor-inside-body's job), but a region's SPHERE can still overlap the
+    # star it orbits while its centre stays outside -- under streaming, that
+    # region's boundary would pass through the sun. The star is identified by
+    # `orbits is None`, never by name; skip the rule entirely when a map has
+    # none (two systems build a MetaNebula and author no star at all).
+    star = next((b for b in m.bodies if b.orbits is None), None)
+    if star is not None and id(star) not in bad_bodies:
+        for r in m.regions:
+            if r.set_name in bad_regions:
+                continue
+            if _dist(r.anchor_gu, star.position_gu) <= r.radius_gu + star.radius_gu:
+                problems.append(Problem(
+                    "region-reaches-star",
+                    f"region {r.set_name!r} (radius {r.radius_gu:.0f} GU) "
+                    f"reaches star {star.name!r} (radius {star.radius_gu:.0f} GU)"))
+
     if pins is not None and not hasattr(pins, "items"):
         problems.append(Problem(
             "pin-respected",

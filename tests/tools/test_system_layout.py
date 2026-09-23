@@ -421,3 +421,51 @@ def test_a_pinned_map_passes_the_pin_rule_end_to_end():
     pins = {"Prendel3/Moon 2": (400.0, 5000.0, 0.0)}
     m = layout(s, pins=pins)
     assert validate(m, pins=pins) == []
+
+
+def test_the_first_orbit_is_pushed_out_until_no_region_reaches_the_star():
+    """Voltair 1's sphere contained its star's centre. The innermost orbit must
+    move out far enough to clear it -- and every other orbit moves with it."""
+    s = SurveyedSystem(name="Tight", regions=[
+        SurveyedRegion(set_name="Tight1", ordinal=1, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=20000.0, player_start_gu=(0.0, 0.0, 0.0)),
+        SurveyedRegion(set_name="Tight2", ordinal=2, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 2", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
+    ])
+    m = layout(s)
+    star = [b for b in m.bodies if b.orbits is None][0]
+    for r in m.regions:
+        gap = math.dist(r.anchor_gu, star.position_gu) - r.radius_gu - star.radius_gu
+        assert gap > 0.0, f"{r.set_name} reaches the star by {-gap:.0f} GU"
+
+
+def test_a_system_that_already_clears_its_star_is_not_moved():
+    """The push must be corrective, not a blanket increase -- most systems are
+    already clear and their numbers must not drift."""
+    s = _sys_one_planet_per_region()
+    t = LayoutTuning()
+    m = layout(s, t)
+    sun = [b for b in m.bodies if b.orbits is None][0]
+    innermost = min(math.dist(b.position_gu, (0.0, 0.0, 0.0))
+                    for b in m.bodies if b.orbits is not None)
+    assert innermost == pytest.approx(sun.radius_gu + t.first_orbit_clearance_gu)
+
+
+def test_ambiguities_reports_a_pushed_first_orbit():
+    # content_extent_gu=30000.0, not the brief's 20000.0: with the region's
+    # OWN reach only 7500 GU, a content_extent of 20000.0 yields a region
+    # radius of 21500 GU, which clears the star (sun_radius 8000, clearance
+    # 500) at the baseline first orbit with 3500 GU to spare -- verified via
+    # _first_orbit_push(), which returns push=0.0 for that input. 30000.0
+    # yields radius 31500, which genuinely intrudes (by 6500 GU) and so
+    # genuinely exercises the code path this test names.
+    s = SurveyedSystem(name="Tight", regions=[SurveyedRegion(
+        set_name="Tight1", ordinal=1, bodies=[
+            SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
+            SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
+        ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0))])
+    assert any("first orbit" in n.lower() for n in ambiguities(s))
