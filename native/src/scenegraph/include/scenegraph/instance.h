@@ -95,11 +95,29 @@ struct Instance {
     bool  jaw_active = false;
     float jaw_openness = 0.0f;   // 0 = closed (rest), 1 = fully open
 
-    /// Per-instance node-local overrides for NON-SKINNED instances (the
-    /// bridge): node_index -> animated local_transform. Empty = every node
-    /// uses its model's static local (byte-identical to the un-animated
-    /// render). Written each frame by the bridge-node animation updater;
-    /// consulted by walk_bridge_meshes. Runtime state, never serialized.
+    /// Per-instance node-local overrides for NON-SKINNED instances:
+    /// node_index -> replacement local_transform. Empty = every node uses its
+    /// model's static local (byte-identical to the un-animated render).
+    ///
+    /// TWO independent writers, on disjoint instances in practice:
+    ///   - `set_instance_node_rotation` / `set_instance_node_hidden`
+    ///     (host_bindings.cc) — ship articulation (BoP wings) and
+    ///     appendage severance, called from Python per part per tick. A
+    ///     severed part's override is the ZERO matrix: compose_node_worlds
+    ///     chains parent_world * local, so the whole subtree collapses to a
+    ///     point and its triangles rasterize nothing.
+    ///   - the bridge-node animation store (`BridgeNodeAnimStore::sample`,
+    ///     host_bindings.cc) — REPLACES the whole map each frame for bridge
+    ///     clip playback (chairs, doors, lifts).
+    ///
+    /// Consulted by every pass that draws a hull mesh, not just the bridge
+    /// walk: the opaque hull draw and carve-stencil pass (`draw_model`,
+    /// frame.cc), the shadow depth pre-pass, cloak, hologram and breach
+    /// passes (each via `draw_model_positions_only` /
+    /// `compose_node_worlds`), and `walk_bridge_meshes` (bridge_pass.cc). A
+    /// pass that draws a hull and skips this map draws an articulated or
+    /// severed part at its REST pose instead of its live one. Runtime state,
+    /// never serialized.
     std::unordered_map<int, glm::mat4> node_overrides;
 
     /// ── Per-channel skeletal animation (BC TGAnimBlender-faithful) ──────────
