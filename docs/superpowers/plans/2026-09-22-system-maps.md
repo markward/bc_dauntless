@@ -2572,6 +2572,246 @@ git add tools/systems/layout.py engine/systems/validate.py engine/systems/maps \
 git commit -m "fix(systems): no region sphere may reach its own star"
 ```
 
+---
+
+### Task 10: Star colours and nebulae, recovered from BC
+
+**Why.** The survey reads `Sun_Create(radius, atmosphere, damage, baseTexture,
+flareTexture)` and `MetaNebula_Create(r, g, b, ...)` but keeps only the radius,
+throwing away every colour BC authored. Measured across the tree:
+
+| Base texture | Systems |
+|---|---|
+| `SunYellow.tga` | Alioth, Geble, OmegaDraconis, Prendel, Savoy, Tevron |
+| `SunRed.tga` | Albirea, Cebalrai, Ona, Serris, Voltair |
+| `SunRedOrange.tga` | Ascella, Chambana, XiEntrades, Yiles |
+| `SunBlueWhite.tga` | Artrus, Beol, Tezle, Starbase12, DryDock |
+| *(none passed — BC's default)* | Biranu, Itari, Nepenthe, Poseidon, Riha |
+
+Nebulae carry explicit RGB: `Belaruz1` is `#646392` with a 900 GU sphere at
+set-local `(-17, 845, -30)`; `Vesuvi4` is `#9b5ab9` with a 1500 GU sphere at
+`(0, 1500, 0)`.
+
+**Belaruz and Vesuvi author no sun at all.** They currently get a generic
+`default_sun_radius_gu` placeholder. They become **brown dwarfs** — dim, and
+smaller than any real star in the data.
+
+This is exactly what `Appearance` was split from identity for (spec §1): the
+body keeps its name, radius and orbit; how it *looks* travels separately.
+
+**Files:**
+- Modify: `tools/systems/survey.py`, `tools/systems/layout.py`, `engine/systems/map.py`
+- Modify: `engine/systems/maps/*.json` (regenerate all 32)
+- Test: `tests/tools/test_system_survey.py`, `tests/tools/test_system_layout.py`, `tests/unit/test_system_map.py`
+
+**Interfaces:**
+
+- `SurveyedBody` gains `base_texture: str = ""` — the 4th `Sun_Create` argument,
+  empty when BC passed fewer than four (that is BC's own default, not a failure).
+- `SurveyedRegion` gains `nebula: dict | None = None` —
+  `{"color": (r, g, b), "spheres": [(x, y, z, radius_gu), ...]}`, colours as
+  0–1 floats exactly as BC wrote them, sphere positions in **set-local** GU.
+- `Appearance` gains `star_class: str = ""` and `color: tuple | None = None`.
+  `color` is `(r, g, b)` 0–1. `from_json` must restore `color` to a tuple like
+  it does other vectors, or the round-trip test fails.
+- `Region` gains `nebula: dict | None = None`, carried through `to_json` /
+  `from_json` unchanged.
+- `LayoutTuning` gains `brown_dwarf_radius_gu: float = 2000.0`, replacing
+  `default_sun_radius_gu` for a system that authors no sun. Note this **shrinks**
+  those two stars from 9000 GU, so their first orbits move in — that is correct
+  and the existing `region-reaches-star` rule guards the result.
+
+**Star class mapping** — put this table in `layout.py` as a module constant, keyed
+by the texture's basename, with these exact values:
+
+| `star_class` | from | `color` |
+|---|---|---|
+| `yellow` | `SunYellow.tga` | `(1.0, 0.85, 0.40)` |
+| `red` | `SunRed.tga` | `(0.91, 0.35, 0.24)` |
+| `red_orange` | `SunRedOrange.tga` | `(0.94, 0.54, 0.24)` |
+| `blue_white` | `SunBlueWhite.tga` | `(0.74, 0.84, 1.0)` |
+| `white` | anything else, including no texture (BC's default `SunBase`) | `(1.0, 0.95, 0.80)` |
+| `brown_dwarf` | a system with no `Sun_Create` at all | `(0.42, 0.25, 0.18)` |
+
+A system whose regions disagree about the texture takes the most common one, and
+`ambiguities()` reports the disagreement — do not silently pick one.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/tools/test_system_survey.py`:
+
+```python
+def test_sun_textures_are_surveyed():
+    """BC's Sun_Create carries the texture that gives a star its colour."""
+    ona = survey_system("Ona")
+    suns = [b for r in ona.regions for b in r.bodies if b.is_sun]
+    assert suns, "Ona authors suns"
+    assert all(s.base_texture.endswith("SunRed.tga") for s in suns), \
+        [s.base_texture for s in suns]
+
+
+def test_a_sun_with_no_texture_argument_surveys_as_empty_not_missing():
+    """Itari calls Sun_Create with only three arguments -- BC's own default,
+    not a parse failure."""
+    itari = survey_system("Itari")
+    suns = [b for r in itari.regions for b in r.bodies if b.is_sun]
+    assert suns
+    assert all(s.base_texture == "" for s in suns)
+
+
+def test_nebulae_are_surveyed_with_colour_and_spheres():
+    vesuvi = survey_system("Vesuvi")
+    v4 = [r for r in vesuvi.regions if r.set_name == "Vesuvi4"][0]
+    assert v4.nebula is not None
+    r, g, b = v4.nebula["color"]
+    assert (round(r, 3), round(g, 3), round(b, 3)) == (0.608, 0.353, 0.725)
+    assert len(v4.nebula["spheres"]) == 1
+    x, y, z, radius = v4.nebula["spheres"][0]
+    assert (x, y, z) == pytest.approx((0.0, 1500.0, 0.0))
+    assert radius == pytest.approx(1500.0)
+
+
+def test_a_region_with_no_nebula_surveys_as_none():
+    ona = survey_system("Ona")
+    assert all(r.nebula is None for r in ona.regions)
+```
+
+`tests/tools/test_system_layout.py`:
+
+```python
+def test_the_star_takes_bcs_authored_colour():
+    s = _sys_one_planet_per_region()
+    for r in s.regions:
+        for b in r.bodies:
+            if b.is_sun:
+                b.base_texture = "data/Textures/SunBlueWhite.tga"
+    star = [b for b in layout(s).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "blue_white"
+    assert star.appearance.color == pytest.approx((0.74, 0.84, 1.0))
+
+
+def test_a_sun_with_no_texture_is_white_not_unclassified():
+    s = _sys_one_planet_per_region()          # its fixtures carry no texture
+    star = [b for b in layout(s).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "white"
+
+
+def test_a_system_with_no_sun_gets_a_brown_dwarf():
+    """Belaruz and Vesuvi author no Sun_Create at all."""
+    s = SurveyedSystem(name="Vesuvi", regions=[SurveyedRegion(
+        set_name="Vesuvi5", ordinal=5,
+        bodies=[SurveyedBody("Geki", 110.0, "g.nif", (0.0, 538.0, 0.0), False)],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0))])
+    t = LayoutTuning(brown_dwarf_radius_gu=2000.0)
+    star = [b for b in layout(s, t).bodies if b.orbits is None][0]
+    assert star.appearance.star_class == "brown_dwarf"
+    assert star.radius_gu == pytest.approx(2000.0)
+
+
+def test_a_regions_nebula_is_carried_into_the_map():
+    s = SurveyedSystem(name="Vesuvi", regions=[SurveyedRegion(
+        set_name="Vesuvi4", ordinal=4, bodies=[],
+        content_extent_gu=1870.0, player_start_gu=(0.0, 0.0, 0.0),
+        nebula={"color": (0.608, 0.353, 0.725),
+                "spheres": [(0.0, 1500.0, 0.0, 1500.0)]})])
+    region = layout(s).region("Vesuvi4")
+    assert region.nebula["color"] == pytest.approx((0.608, 0.353, 0.725))
+    assert region.nebula["spheres"][0][3] == pytest.approx(1500.0)
+
+
+def test_ambiguities_reports_a_system_whose_suns_disagree():
+    s = _sys_one_planet_per_region()
+    suns = [b for r in s.regions for b in r.bodies if b.is_sun]
+    suns[0].base_texture = "data/Textures/SunRed.tga"
+    suns[1].base_texture = "data/Textures/SunBlueWhite.tga"
+    suns[2].base_texture = "data/Textures/SunBlueWhite.tga"
+    notes = ambiguities(s)
+    assert any("colour" in n.lower() or "texture" in n.lower() for n in notes)
+```
+
+`tests/unit/test_system_map.py` — extend the existing round-trip so the new
+fields survive. Add to `_ona()`'s body an `Appearance(kind="nif", model="x.nif",
+star_class="red", color=(0.91, 0.35, 0.24))`, give its `Region` a
+`nebula={"color": (0.6, 0.35, 0.72), "spheres": [(0.0, 1500.0, 0.0, 1500.0)]}`,
+and add:
+
+```python
+def test_star_colour_and_nebula_survive_the_round_trip():
+    m = _ona()
+    back = from_json(to_json(m))
+    assert back.bodies[0].appearance.color == (0.91, 0.35, 0.24)
+    assert isinstance(back.bodies[0].appearance.color, tuple)
+    assert back.regions[0].nebula["spheres"][0] == (0.0, 1500.0, 0.0, 1500.0)
+```
+
+- [ ] **Step 2: Run them and confirm they fail**
+
+Run: `uv run pytest tests/tools/test_system_survey.py tests/tools/test_system_layout.py tests/unit/test_system_map.py -v`
+Expected: failures on the missing `base_texture`, `nebula`, `star_class`,
+`color`, and `brown_dwarf_radius_gu`.
+
+- [ ] **Step 3: Implement**, per the Interfaces block and the mapping table.
+
+In `survey.py`, `Sun_Create`'s arguments are positional and unquoted in places —
+parse the 4th argument's string literal if present, else leave `""`. The
+`MetaNebula_Create` colours are written as expressions like `100.0 / 255.0`;
+evaluate them numerically rather than pattern-matching the literal text, and
+read every `AddNebulaSphere` that follows in the same file.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `uv run pytest tests/tools/ tests/unit/test_system_map.py tests/unit/test_system_map_validate.py tests/unit/test_system_maps_valid.py -v`
+Expected: all pass.
+
+- [ ] **Step 5: Regenerate and check the colours landed**
+
+Run: `uv run python tools/gen_system_maps.py --list-ambiguities`
+
+Then verify:
+
+```bash
+uv run python -c "
+import json, glob, collections
+c = collections.Counter()
+neb = []
+for f in sorted(glob.glob('engine/systems/maps/*.json')):
+    d = json.load(open(f))
+    star = next((b for b in d['bodies'] if b['orbits'] is None), None)
+    if star: c[star['appearance'].get('star_class')] += 1
+    for r in d['regions']:
+        if r.get('nebula'): neb.append((d['system'], r['set_name'], r['nebula']['color']))
+print('star classes:', dict(c))
+print('nebulae:', neb)
+"
+```
+
+Expected: `yellow` 6, `red` 5, `red_orange` 4, `blue_white` 5, `white` 5,
+`brown_dwarf` 2 (Belaruz, Vesuvi) — plus the 5 `Multi*` and `QuickBattle`
+placeholder systems, whose class you should report rather than predict. Nebulae:
+Belaruz1 and Vesuvi4 with the colours above.
+
+- [ ] **Step 6: Confirm nothing regressed**
+
+Run: `uv run python tools/gen_system_maps.py --check --list-ambiguities`
+Expected: all 32 `ok`, exit code 0; the same seven clamped regions
+(Alioth6, Beol1, Savoy2 min; Geble4, OmegaDraconis1, Savoy1, XiEntrades4 max).
+Belaruz and Vesuvi's first orbits will move because their star shrank from 9000
+to 2000 GU — report the new values. No region may reach its star.
+
+- [ ] **Step 7: Run the gate**
+
+Run: `scripts/check_tests.sh`
+Expected: `OK — no new failures. 1 known failure(s) still baselined.`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tools/systems/survey.py tools/systems/layout.py engine/systems/map.py \
+        engine/systems/maps tests/tools/test_system_survey.py \
+        tests/tools/test_system_layout.py tests/unit/test_system_map.py
+git commit -m "feat(systems): recover BC's star colours and nebulae"
+```
+
 ## Self-review
 
 **Spec coverage (§1 only — §2–§6 are the second plan):**
