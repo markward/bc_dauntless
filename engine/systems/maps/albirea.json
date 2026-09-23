@@ -141,5 +141,6 @@
   "overrides": {},
   "generated": {
     "tool": "gen_system_maps"
-  }
+  },
+  "clouds": []
 }
