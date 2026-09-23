@@ -101,7 +101,12 @@
             -30.296316,
             900.0
           ]
-        ]
+        ],
+        "visibility_gu": 200.0,
+        "sensor_density": 6.5,
+        "damage_hull_per_s": 0.0,
+        "damage_shield_per_s": 0.0,
+        "extra_nebulae": 0
       }
     },
     {
@@ -158,5 +163,6 @@
   },
   "generated": {
     "tool": "gen_system_maps"
-  }
+  },
+  "clouds": []
 }
