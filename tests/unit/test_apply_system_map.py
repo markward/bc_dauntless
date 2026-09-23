@@ -121,3 +121,64 @@ def test_apply_to_set_degrades_to_false_for_an_object_with_no_getobject():
     class _NotASet:
         pass
     assert apply_map.apply_to_set(_NotASet(), "Ona1") is False
+
+
+# ── A created star gets ALL of Sun_Create's arguments ────────────────────────
+#
+# Belaruz and Vesuvi are the two systems BC never gave a Sun_Create, so theirs
+# is the only star this code constructs. Sun_Create(radius) alone drops four of
+# five arguments: no atmosphere radius (no keep-out band), zero environmental
+# damage (flying into the star is free, where every authored BC sun does 500/s)
+# and no textures. The values below are SURVEYED from BC's own authored calls
+# under the SDK's Systems/ tree, read as text -- see apply_map's own comments.
+
+def test_a_created_star_gets_bcs_authored_atmosphere_and_damage():
+    """82 of BC's 84 fully-specified Sun_Create calls pass atmosphere ==
+    radius; 83 of 84 pass 500 damage/sec. A created star must do the same or
+    it is a decorative light with no physics around it."""
+    pSet = _fake_set_with_planet("Belaruz 2", radius=120.0, at=(0.0, 500.0, 0.0))
+    apply_map.apply_to_set(pSet, "Belaruz2")
+    sun = _only_sun(pSet)
+    star = load("belaruz").body("Belaruz")
+    assert sun.GetAtmosphereRadius() == pytest.approx(star.radius_gu)
+    assert sun.GetEnvironmentalHullDamage() == pytest.approx(500.0)
+
+
+def test_a_created_stars_textures_come_from_the_maps_star_class():
+    """Vesuvi's override declares a "remnant_hot" blue-white star and that is
+    the whole visual point of the override. It must reach the renderer."""
+    pSet = _fake_set_with_planet("Geki", radius=200.0, at=(0.0, 500.0, 0.0))
+    assert apply_map.apply_to_set(pSet, "Vesuvi5") is True
+    sun = _only_sun(pSet)
+    assert sun.GetModelPath() == "data/Textures/SunBlueWhite.tga"
+    assert sun._flare_texture == "data/Textures/Effects/SunFlaresWhite.tga"
+
+
+def test_a_white_star_takes_bcs_default_texture_not_a_guess():
+    """BC's five white-star systems -- Biranu, Nepenthe, Itari, Riha, Poseidon
+    -- all call Sun_Create with NO texture arguments, so the engine's own
+    SunBase.tga fallback is what "white" is supposed to look like. Belaruz is
+    white. Empty is the authored answer here, not a missing one."""
+    pSet = _fake_set_with_planet("Belaruz 2", radius=120.0, at=(0.0, 500.0, 0.0))
+    apply_map.apply_to_set(pSet, "Belaruz2")
+    sun = _only_sun(pSet)
+    assert sun.GetModelPath() == ""
+    assert sun._flare_texture == ""
+
+
+def test_every_star_class_in_the_maps_has_an_explicit_texture_entry():
+    """The table falls back to BC's default for an unknown class, which is
+    safe but silent. A class that the maps actually use must be a deliberate
+    row, so regenerating the maps with a new star class fails here instead of
+    quietly rendering a generic sun."""
+    from engine.systems.map import available
+
+    classes = {
+        b.appearance.star_class
+        for system in available()
+        for b in load(system).bodies
+        if b.orbits is None and b.appearance.star_class
+    }
+    assert classes, "no star classes found in the maps"
+    missing = sorted(c for c in classes if c not in apply_map.STAR_TEXTURES)
+    assert not missing, f"star classes with no texture decision: {missing}"
