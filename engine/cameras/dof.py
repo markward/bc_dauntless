@@ -131,21 +131,30 @@ MIN_FOCUS_GU = 0.5
 # and 500,000 GU read as NO subject -- including the LOCAL planet at 5,997 GU,
 # the one body the feature exists to put in front of the player.
 #
-# This is not a tidiness bound, it is the anti-mush bound. The CoC term is
-# dd = 1 - focus/z, so with focus >= far EVERY visible pixel has dd < 0 -- the
-# whole frame is near field -- and everything nearer than focus/2 clamps to the
-# hard -1, i.e. MAXIMUM blur. The far ceiling cannot help, because no part of
-# the frame is far field. The result is the entire scene mushed behind a sharp
-# starfield: exactly the over-blur this feature exists to avoid. Racking past
-# infinity has no meaning anyway, so a subject out there reads as NO subject
-# and the lens releases to deep focus -- the same as having no target at all.
+# What the bound actually prevents, as the passes are written TODAY: with
+# focus >= far, every visible pixel has z < focus and so takes the FOREGROUND
+# branch. That branch is camera-anchored -- t = clamp((near_sharp - z)/span)
+# in both dof.frag and dof.h -- and does not read focus at all, so everything
+# past near_sharp_gu comes out SHARP. What blurs is the near ramp's own
+# catchment, which is sized in multiples of the player's radius and therefore
+# holds almost exactly one thing: the player's own hull. So the failure mode
+# is not a mushed frame, it is the player's ship going soft in service of a
+# subject that cannot be resolved or even drawn. Racking past infinity has no
+# meaning, so a subject out there reads as NO subject and the lens releases to
+# deep focus -- the same as having no target at all.
+#
+# (It WAS a whole-frame mush, and this comment used to say so. That reasoning
+# belonged to the thin-lens foreground, dd = 1 - focus/z, which pinned
+# everything nearer than focus/2 at maximum blur. The foreground branch was
+# since replaced by the camera-anchored ramp -- see dof.h for why -- and the
+# justification did not follow it.)
 #
 # At 500,000 GU the bound is far rarer than it was: the widest sightline across
 # all 32 system maps is 452,715 GU, so nothing inside a system can reach it,
 # and sensor_detection's FALLBACK_RANGE_GU (30000 GU) -- which USED to sit six
 # times past the far plane -- is now well inside it and focuses normally. The
-# bound stays because the mush it prevents is a property of focus >= far, not
-# of any particular distance.
+# bound stays because what it prevents is a property of focus >= far, not of
+# any particular distance.
 MAX_FOCUS_GU = SCENE_FAR_GU
 
 

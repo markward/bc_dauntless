@@ -160,11 +160,16 @@ def test_a_degenerate_distance_is_treated_as_no_subject():
 
 
 def test_a_subject_beyond_the_far_plane_is_treated_as_no_subject():
-    """focus_gu > far mushes the WHOLE frame. dd = 1 - focus/z is negative for
-    every visible pixel, so everything is near field and everything nearer than
-    focus/2 clamps to the hard -1 -- maximum blur, with the far ceiling unable
-    to help because nothing is far field. The lens must release to deep focus
-    rather than rack past infinity."""
+    """focus_gu > far puts every visible pixel on the FOREGROUND branch. That
+    branch is camera-anchored (t = clamp((near_sharp - z)/span) in dof.frag and
+    dof.h) and never reads focus, so everything past near_sharp_gu stays sharp
+    -- the failure is not a mushed frame but the player's own hull going soft
+    in service of a subject that cannot be resolved or even drawn. The lens
+    must release to deep focus rather than rack past infinity.
+
+    (This docstring used to describe a whole-frame mush via dd = 1 - focus/z.
+    That was the thin-lens foreground, replaced by the camera-anchored ramp;
+    the reasoning did not follow it. See MAX_FOCUS_GU in cameras/dof.py.)"""
     s = dof.FocusSolver()
     s.update(dof.MAX_FOCUS_GU + 1.0, 1.0 / 60.0)
     assert s.blend == 0.0

@@ -441,10 +441,11 @@ def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
               "                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)")
     i_cam = src.index(anchor)
     i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
-    # Proximity bound, not a byte budget: the note must sit in the same block
-    # as the set_camera it mirrors. Widened from 600 when the call gained the
-    # comment explaining why its argument ORDER matters (see the next test).
-    assert i_cam < i_note < i_cam + 1200
+    # A 600-character proximity budget, which is a proxy for "these two calls
+    # sit together". Keep prose out of the gap: the note_camera argument-order
+    # contract lives in note_camera's own docstring, where every call site
+    # reads it, not here where only this one does.
+    assert i_cam < i_note < i_cam + 600
 
 
 def test_host_loop_notes_the_camera_with_the_same_frustum_in_the_same_order():

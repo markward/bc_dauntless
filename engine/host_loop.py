@@ -9667,13 +9667,8 @@ def run(mission_name: Optional[str] = None,
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.effective_fov_y_rad,
                              near=SCENE_NEAR_GU, far=SCENE_FAR_GU)
-                # Manual Aim reads this camera on the NEXT sim tick to
-                # unproject the cursor. Data only -- no mutation here.
-                # near/far are POSITIONAL and NOT interchangeable: `near` is
-                # stored unread (cursor_ray uses eye/target/up/fov only) while
-                # `far` is the pick ray's max_dist, so swapping them truncates
-                # every pick at 1 GU -- Manual Aim then misses every hull at
-                # every range while still reporting itself live.
+                # Data only -- no mutation here. near/far are positional
+                # and NOT interchangeable; see note_camera's docstring.
                 manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,
                                        SCENE_NEAR_GU, SCENE_FAR_GU)
                 # Feed the dynamic-light distance gate. Read by next frame's
