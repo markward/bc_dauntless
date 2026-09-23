@@ -169,6 +169,53 @@ def test_belaruz_and_vesuvi_carry_the_stars_their_descriptions_claim():
                    for b in load(name).bodies)
 
 
+def test_belaruzs_description_matches_where_its_cloud_actually_is():
+    """The star half above was pinned; the CLOUD half was not, and that is
+    why nothing failed when the committed lobe contradicted the text.
+
+    The description used to say the cloud "can be entered out past the first
+    planet; the three inner worlds are clear of it". BC anchors the dense
+    pocket at Belaruz 1, INSIDE the orbit of every planet, and the lobe this
+    branch generated spans the whole system. Both halves of that sentence
+    were false against the map committed alongside it.
+    """
+    import math
+    from engine.systems.descriptions import for_system
+
+    m = load("belaruz")
+    star = [b for b in m.bodies if b.orbits is None][0]
+    planets = [b for b in m.bodies if b.orbits is not None]
+    assert len(planets) == 3, "the description says 'three planets'"
+
+    cloud = m.clouds[0]
+    pocket = [v for v in cloud.volumes if v.origin_region is not None][0]
+    pocket_distance = math.dist(pocket.geometry["center_gu"], star.position_gu)
+    distances = [math.dist(b.position_gu, star.position_gu) for b in planets]
+
+    # The dense part has fallen INWARD -- closer to the star than any planet.
+    assert pocket_distance < min(distances), (
+        f"pocket at {pocket_distance:.0f} GU vs innermost planet at "
+        f"{min(distances):.0f} GU")
+
+    # The large volume is system-scale: it reaches past the outermost world,
+    # which is what "the whole system sits in thin material" rests on.
+    #
+    # Deliberately NOT asserted: that all three planets fall inside the lobe.
+    # Measured against the committed map, only Belaruz 4 does. The lobe's
+    # spine runs from the star toward the pocket (~+Y) and BC's orbital
+    # angles scatter the planets around the star, so Belaruz 2 projects to
+    # t = -47,211 (behind near_gu) and Belaruz 3 to t = 7,908 (short of it)
+    # under the capsule model validate.py:_pocket_inside_large uses. Pinning
+    # containment here would pin a fact the geometry does not support.
+    lobe = [v for v in cloud.volumes if v.origin_region is None][0]
+    assert lobe.geometry["far_gu"] > max(distances)
+
+    detail = for_system("belaruz")["detail"]
+    assert "past the first planet" not in detail
+    assert "clear of it" not in detail
+    assert "closer to the star than any of the three planets" in detail
+
+
 def test_the_two_cloud_systems_carry_their_clouds():
     vesuvi = load("vesuvi")
     assert len(vesuvi.clouds) == 1
