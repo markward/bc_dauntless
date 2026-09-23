@@ -437,7 +437,53 @@ should not shed the player's wings) but not deliberate design.
 carve field; a node-part sheared at an authored boundary has none. Carving the
 stump is the follow-up if it reads wrong at close range.
 
-**Status:** gate clean, 17 unit tests. ⚠️ **Not yet live-verified.**
+**Status:** gate clean, 17 unit tests. ✅ **Live-verified 2026-09-23** — a wing
+shears off, and the scenario reads well in play.
+
+⚠️ One part of 5a is fixed by construction but **never observed**: the
+one-frame chunk-at-origin artefact (a collision-triggered severance used to draw
+the wing at the world origin at 100× scale for a single frame, because
+`Instance::world` defaults to identity — model units). `part_detach_render`
+now sets the world transform before the chunk can be drawn, and review verified
+the ordering against `debris_chunk.tick` / `collisions.tick_collisions`. But a
+one-frame flash is not realistically observable, so this rests on reasoning, not
+on eyes.
+
+---
+
+## 5c. Live verification log
+
+**2026-09-23, QuickBattle, player Bird of Prey.**
+
+| checked | result |
+|---|---|
+| Wing articulation follows alert level | ✅ confirmed, and read as accurate to the films first time |
+| Hull damage / crater size after the carve retune | ✅ confirmed ("looking better now") |
+| A wing shears off at its damage share | ✅ confirmed |
+| Cannons follow the wings (§4 hardpoint parenting) | ✅ confirmed — beams leave the moving guns |
+| A severed wing is NOT re-posed on an alert change (C1) | ✅ confirmed — "handled well by the game" |
+| The severed wing carries the hull's Fresnel rim (I2) | ✅ confirmed |
+| One-frame chunk-at-origin artefact (I2) | ⚠️ **not observable**; fixed by construction only |
+
+**Three failures were found live that no test caught**, which is why this log
+exists rather than a bare "verified":
+
+1. **Craters stopped appearing entirely.** `STRENGTH_PER_HULL` was cut 1.0 →
+   0.25 against a ship's TOTAL hull HP, but carve strength accumulates PER SITE
+   — the only denominator that matters is damage at one point. Reverted; see
+   §7 OQ-1.
+2. **Part attribution never fired once.** `world_to_body` returns MODEL units and
+   `PART_BOXES` are SHIP units, so every hit arrived 100× too large and matched
+   nothing. The tests missed it because they were written in the same wrong units
+   as the code.
+3. **A wing could not be shot off at all.** Voxel connectivity runs on the UNION
+   of body and wing, where the root is embedded in the hull — so the only
+   severable cross-section is invisible and, in practice, unhittable. That
+   measurement is what produced §5.
+
+Each was invisible to a green suite. The `--developer` severance readout
+(`[severance] left wing01: 400/800 (50%)`) exists because of (2): attribution
+failing looks exactly like a player missing.
 
 ---
 
