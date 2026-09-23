@@ -78,6 +78,8 @@ def _spawn_chunk(ship, ship_iid, part_name) -> None:
         if name != part_name:
             host_io.set_instance_node_hidden(chunk_iid, name, True)
 
+    _copy_render_state(ship, chunk_iid)
+
     (lo, hi) = box
     centre = tuple((lo[i] + hi[i]) * 0.5 for i in range(3))
     half = tuple((hi[i] - lo[i]) * 0.5 for i in range(3))
@@ -100,6 +102,71 @@ def _spawn_chunk(ship, ship_iid, part_name) -> None:
     # split without inventing a voxel count the part does not have.
     debris_chunk.spawn(chunk_iid, ship, int(max(1.0, frac * 1000.0)),
                        centre, radius, parent_mass, 1000)
+
+
+def _copy_render_state(ship, chunk_iid) -> None:
+    """Copy the parent ship's render-cosmetic state onto its new debris chunk.
+
+    Mirrors the native voxel-chunk path (`host_bindings.cc`'s hull-split
+    binding, ~line 4470), which copies world/visible/pass/comm_set_id/
+    rim_eligible/rim_strength/emissive_scale from parent `Instance` to child
+    so a severed chunk keeps the hull's look. Python has no GETTER for a live
+    instance's current pass / comm_set_id / rim_eligible / rim_strength /
+    visible (only setters exist on this boundary), so this cannot literally
+    copy those values the way the C++ side does. It recomputes the ones that
+    matter instead:
+
+      * world -- the ship's OWN world pose, not create_instance's default
+        IDENTITY. This one is CRITICAL: debris_chunk.tick (which pushes the
+        chunk's real, drifting pose every frame) runs BEFORE
+        collisions.tick_collisions, so a collision-triggered severance would
+        otherwise draw its first frame at the world origin, in MODEL units,
+        at scale 1 -- 100x too big, sitting at the centre of the map.
+      * rim_eligible / rim_strength -- every ship hull is rim-eligible
+        (host_loop sets this at ship-instance creation, never at the
+        model-default false); the chunk must match or it reads as a
+        different material the instant it splits off.
+      * visible / emissive_scale -- already match create_instance's defaults
+        for a live, undestroyed ship, but set explicitly so this function
+        states the whole contract rather than leaning on defaults that could
+        change under it.
+
+    pass and comm_set_id are left at create_instance's defaults (Space, 0):
+    appendage severance only ever fires on a ship rendered in the space pass,
+    so Space is already correct, and a space debris chunk does not belong to
+    any comm/viewscreen set.
+    """
+    from engine import renderer
+    from engine.host_loop import _world_matrix_from, BC_MODEL_SCALE
+
+    try:
+        py_scale = float(ship.GetScale())
+    except Exception:  # noqa: BLE001
+        py_scale = 1.0
+    world = _world_matrix_from(ship.GetWorldLocation(), ship.GetWorldRotation(),
+                               BC_MODEL_SCALE * py_scale)
+    renderer.set_world_transform(chunk_iid, world)
+    renderer.set_visible(chunk_iid, True)
+    renderer.set_rim_eligible(chunk_iid, True)
+    renderer.set_rim_strength(chunk_iid, _rim_strength_for(ship))
+    renderer.set_emissive_scale(chunk_iid, 1.0)
+
+
+def _rim_strength_for(ship) -> float:
+    """Fresnel rim intensity for `ship`'s hull. Same source and fallback as
+    host_loop._rim_strength_for (duplicated rather than imported across the
+    appc/host_loop boundary, matching this module's other lazy host_loop
+    imports): the hardpoint stats' 'SpecularCoef', captured by
+    ShipClass.SetSpecularKs, else renderer.DEFAULT_RIM_STRENGTH."""
+    from engine import renderer
+
+    try:
+        ks = ship.GetSpecularKs()
+        if ks is not None:
+            return float(ks)
+    except Exception as _e:  # noqa: BLE001
+        dev_mode.log_swallowed("severed chunk rim strength probe", _e)
+    return renderer.DEFAULT_RIM_STRENGTH
 
 
 def reattach(ship, iid, part_name) -> bool:
