@@ -34,7 +34,13 @@ def test_dof_push_sits_next_to_the_exterior_set_camera():
     cam_lines = [c.lineno for c in _calls_named(tree, "set_camera")]
     dof_lines = [c.lineno for c in _calls_named(tree, "set_dof_params")]
     assert dof_lines, "no set_dof_params call"
-    assert any(abs(d - c) < 40 for d in dof_lines for c in cam_lines), (
+    # Proximity heuristic, not a line budget. 40 left barely two lines of
+    # slack, so any comment added between the two calls tripped it without
+    # anything moving branch; widened to 60 when note_camera gained the
+    # comment explaining why its near/far ORDER matters. If this ever needs
+    # widening again, check the calls are still in the same block first --
+    # that, not the number, is the property under test.
+    assert any(abs(d - c) < 60 for d in dof_lines for c in cam_lines), (
         "set_dof_params is not adjacent to any set_camera call"
     )
 

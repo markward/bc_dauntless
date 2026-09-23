@@ -441,18 +441,24 @@ def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
               "                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)")
     i_cam = src.index(anchor)
     i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
-    assert i_cam < i_note < i_cam + 600
+    # Proximity bound, not a byte budget: the note must sit in the same block
+    # as the set_camera it mirrors. Widened from 600 when the call gained the
+    # comment explaining why its argument ORDER matters (see the next test).
+    assert i_cam < i_note < i_cam + 1200
 
 
-def test_host_loop_notes_the_camera_with_the_same_frustum_it_set():
-    """note_camera's near/far MUST be the pair handed to set_camera. Spelled as
-    the shared constants, not literals, so raising the far plane cannot move
-    one without the other -- a mismatch silently drifts the cursor
-    unprojection off the hull instead of failing loudly."""
+def test_host_loop_notes_the_camera_with_the_same_frustum_in_the_same_order():
+    """note_camera(eye, target, up, fov_y_rad, near, far) is POSITIONAL, so
+    naming the right two constants is not enough -- they have to be in the
+    right order. Swapping them sets cam.far = 1.0, and cam.far is the ray's
+    max_dist (manual_aim.update -> ray_trace(..., cam.far)), so every pick
+    TRUNCATES at 1 GU and Manual Aim misses every hull at every range while
+    still reporting itself live. Hence the ordered substring, not two
+    independent `in` checks."""
     src = _host_loop_src()
     i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
     call = src[i_note: src.index(")", i_note) + 1]
-    assert "SCENE_NEAR_GU" in call and "SCENE_FAR_GU" in call
+    assert "SCENE_NEAR_GU, SCENE_FAR_GU" in call
 
 
 def test_host_loop_resets_manual_aim_on_tcw_reset():

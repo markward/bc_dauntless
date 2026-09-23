@@ -39,22 +39,12 @@ from engine.appc.character_position_zoom import (
 import math as _math
 
 # ── Scene frustum ────────────────────────────────────────────────────────────
-# The exterior scene camera and the bridge viewscreen share one frustum. A
-# star system is ONE coordinate space at the celestial layer's x20 scale, so
-# the far plane has to span it: 452,715 GU is the widest sightline across all
-# 32 maps (Itari), and even the LOCAL planet sits at 5,997 GU — with the old
-# 5,000 GU far plane the first thing you look at is the first thing clipped.
-#
-# This is cheap, and that was measured rather than assumed. For a 24-bit
-# forward-Z buffer the resolvable gap is dz ~= (1/2**24) * z^2 * (f-n)/(f*n);
-# the (f-n)/f term is already ~1 at f=5000, so 5,000 -> 500,000 costs 0.02%.
-# Forward-Z precision is governed by the NEAR plane, which is untouched.
-#
-# Deliberately NOT applied to _BridgeCamera.FAR (800 — a room), the Ship
-# Property Viewer camera (a hologram) or the comm viewscreen (a face in a
-# window). Those gain nothing and would only spend depth precision.
-SCENE_NEAR_GU: float = 1.0
-SCENE_FAR_GU: float = 500_000.0
+# The exterior scene camera and the bridge viewscreen share one frustum.
+# Re-exported, not defined here: engine/cameras owns the pair because
+# cameras/dof.py's MAX_FOCUS_GU is derived from the far plane, and the rest of
+# the rationale (why 500,000, and why the bridge/SPV/comm cameras keep their
+# own) lives beside the definition.
+from engine.cameras import SCENE_NEAR_GU, SCENE_FAR_GU  # noqa: E402,F401
 
 # ── Audio integration ────────────────────────────────────────────────────────
 try:
@@ -9678,9 +9668,12 @@ def run(mission_name: Optional[str] = None,
                              fov_y_rad=director.effective_fov_y_rad,
                              near=SCENE_NEAR_GU, far=SCENE_FAR_GU)
                 # Manual Aim reads this camera on the NEXT sim tick to
-                # unproject the cursor. Data only -- no mutation here. The
-                # near/far MUST be the same pair set above: a mismatch makes
-                # the cursor unprojection silently drift off the hull.
+                # unproject the cursor. Data only -- no mutation here.
+                # near/far are POSITIONAL and NOT interchangeable: `near` is
+                # stored unread (cursor_ray uses eye/target/up/fov only) while
+                # `far` is the pick ray's max_dist, so swapping them truncates
+                # every pick at 1 GU -- Manual Aim then misses every hull at
+                # every range while still reporting itself live.
                 manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,
                                        SCENE_NEAR_GU, SCENE_FAR_GU)
                 # Feed the dynamic-light distance gate. Read by next frame's

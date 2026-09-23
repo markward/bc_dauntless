@@ -186,8 +186,11 @@ TEST(SunVirtualDistance, BodyBeyondFarPlaneIsRemappedPreservingAngularSize) {
     EXPECT_FLOAT_EQ(glm::length(p.position - cam.eye), expected_distance);
     EXPECT_FLOAT_EQ(p.scale, expected_distance / 63000.0f);
     // Angular size preserved: radius/distance is unchanged by the remap.
+    // Tolerance is 1e-6, not 1e-9: one float ULP near 0.063 is already
+    // ~7.4e-9, so a 1e-9 bound passes only by luck of operation ordering and
+    // would flip under different FMA contraction.
     const float radius = 4000.0f;
-    EXPECT_NEAR((radius * p.scale) / expected_distance, radius / 63000.0f, 1e-9f);
+    EXPECT_NEAR((radius * p.scale) / expected_distance, radius / 63000.0f, 1e-6f);
 }
 
 TEST(SunVirtualDistance, DirectionIsPreservedWhenRemapped) {

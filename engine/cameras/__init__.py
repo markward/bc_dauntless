@@ -16,6 +16,29 @@ import math
 # so the constant is the source of truth at startup only.
 EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 
+# Near/far planes of the exterior scene camera, in game units. Lives here
+# rather than in host_loop because it is not only the camera's: dof.py's
+# MAX_FOCUS_GU is DERIVED from the far plane (focus at or beyond far mushes
+# the whole frame), and a literal restated in two files is a literal that goes
+# stale in one of them -- which is exactly what happened when the far plane
+# moved and dof.py kept 5000.0, leaving the local planet unfocusable.
+#
+# A star system is ONE coordinate space at the celestial layer's x20 scale, so
+# the far plane has to span it: 452,715 GU is the widest sightline across all
+# 32 maps (Itari), and even the LOCAL planet sits at 5,997 GU -- with the old
+# 5,000 GU far plane the first thing you look at is the first thing clipped.
+#
+# Cheap, and measured rather than assumed. For a 24-bit forward-Z buffer the
+# resolvable gap is dz ~= (1/2**24) * z^2 * (f-n)/(f*n); the (f-n)/f term is
+# already ~1 at f=5000, so 5,000 -> 500,000 costs 0.02%. Forward-Z precision
+# is governed by the NEAR plane, which is untouched.
+#
+# Deliberately NOT applied to host_loop's _BridgeCamera.FAR (800 -- a room),
+# the Ship Property Viewer camera (a hologram) or the comm viewscreen (a face
+# in a window). Those gain nothing and would only spend depth precision.
+SCENE_NEAR_GU: float = 1.0
+SCENE_FAR_GU: float = 500_000.0
+
 def fov_distance_scale(fov_y_rad: float) -> float:
     """Framing-distance multiplier that keeps a ship's apparent size constant
     across the exterior FOV setting.
