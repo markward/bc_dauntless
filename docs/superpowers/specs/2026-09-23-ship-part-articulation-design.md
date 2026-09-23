@@ -296,27 +296,72 @@ guess, and exactly the case for a hand override once the SPV can author one.
 
 Assignment is computed **once at load** and cached per ship, never per tick.
 
-### 4.3 Consuming the part frame
+### 4.3 Consuming the part frame — TRANSFORM THE QUERY, NEVER THE STRUCTURE
 
-Everything that currently bakes node→model at build time instead resolves
-**which part, then works in part-local space**. One idea, applied four times:
+**Revised 2026-09-23.** An earlier draft of this section said "one sub-BVH per
+part" and "one `.dhv` volume **per part**". That is the wrong design: it
+multiplies memory by the part count and runs into the voxelizer's resolution
+ceiling (`project_voxelizer_resolution_collapse`), which is why this section
+previously carried an unmeasured risk. The risk is not worth measuring, because
+the bake does not need to change at all.
 
-| system | today | phase 2 |
+**Every baked structure stays WHOLE-HULL and REST-POSE, shared across instances
+exactly as today. Only the QUERY moves into part-local space.**
+
+| system | today | fix |
 |---|---|---|
-| **hardpoint mounts** | `body · local` | `part_world · local` |
-| **picking** (`ray_trace.cc`) | one model BVH, node transforms baked in (`build_node_world`) | one sub-BVH **per part**; inverse-transform the ray per part |
-| **hull volume** (`.dhv`) | one baked volume per model | one volume **per part**; transform the query point per part |
-| **damage carve** | entries in model/body space | entries **bound to a part**, stored part-local so a scar rides the wing |
+| **hardpoint mounts** | `body · local` | ✅ BUILT — `part_world · local` via `articulation.part_transform_point` |
+| **render passes** — `cloak_pass`, `hologram_pass`, `model_draw_helpers` (shadow pre-pass, breach) | static node walk | thread `node_overrides`, identical to what `draw_model` already does |
+| **picking** (`ray_trace.cc`) | one model BVH, rest-pose triangles | PARTITION its triangles **by part** at build time (still on the `Model`, still shared); per part, inverse-transform the **RAY** and trace that partition; keep the nearest hit |
+| **collision pieces** (`aabb.cc` → `hull_bounds.py`) | pieces in model space | tag each piece with its part at build; transform per instance at query, where `hull_bounds.py` already applies position + rotation + scale |
+| **hull volume** (`.dhv`) | whole-hull rest-pose SDF | **the bake is UNCHANGED** — inverse-transform the query POINT into part-local space before sampling |
+| **glow regions** (`glow_region.cc`) | authored model-space positions | same inverse transform |
+| **damage carve** | entries in body space | entries **bound to a part**, stored part-local so a scar rides the wing |
 
-`TraceAccel` is cached on the *Model* and shared by every instance; `.dhv` is
-prebaked per model file. Neither can be posed per-instance, and re-baking per
-pose is not viable. Transforming the **query** instead of the **structure**
-preserves model-level sharing, so memory stays flat across a squadron and the
-per-instance cost is a few matrix inverses.
+**Why this is strictly better than per-part bakes.** No re-bake, no extra
+memory, no resolution risk, and model-level sharing survives — a squadron of
+Birds of Prey costs one set of structures, as now. The per-instance cost is a
+handful of matrix inverses.
 
-**Rejected:** baking two whole-hull volumes (armed/cold) and switching. Cannot
-represent mid-travel, doubles memory, and runs straight into the voxelizer
-resolution ceiling already hit once (`project_voxelizer_resolution_collapse`).
+**Two facts that make it viable, both checked:**
+
+- `trace_accel` is `mutable std::shared_ptr<void>` on `assets::Model`
+  (`model.h:127`) — shared by every instance of that hull. Partitioning its
+  triangles by part keeps that sharing; posing it per instance would destroy it.
+- The opaque pass already draws **per node**
+  (`prog.set_mat4("u_model", world_per_node[i])`), so a per-draw uniform can
+  carry a part's inverse transform without the shader needing to know node
+  identity. This matters because **`sampler3D` in `opaque.frag` miscompiles on
+  this Mac's GL driver** — measured and bisected, see
+  `project_opaque_frag_sampler3d_miscompile` — so anything field-related must
+  stay CPU-side or per-draw.
+
+**Rejected:** baking two whole-hull volumes (armed/cold) and switching between
+them. Cannot represent mid-travel, doubles memory, and hits the same ceiling.
+
+### ⚠️ 4.3.1 This REVERSES Ruling 1, deliberately
+
+§5 and both characterisation tests from the hardpoint-parenting plan rest on a
+claim that is TRUE TODAY and will STOP being true when §4.3 lands:
+
+> The whole SIM is rest-pose-consistent; only the RENDERER articulates.
+
+Once collision pieces, the hull-volume query and carve entries resolve through
+part-local space, the sim articulates too. At that point
+`hull_breakup._destroy_subsystems_inside` and
+`part_severance._destroy_subsystems_on_part` **do** need the mount transform
+that Ruling 1 correctly refused to add — because the bounds they test against
+will have moved into the live pose.
+
+So `test_subsystem_kill_uses_the_REST_mount_even_mid_travel` (both copies, in
+`tests/unit/test_part_severance.py` and `tests/unit/test_hull_breakup.py`) must
+be **inverted as part of this work**, not deleted and not quietly edited. Each
+carries a docstring explaining why rest-pose was right; that docstring becomes
+the record of why it stopped being right.
+
+This is the condition those tests' own WARNING notes anticipated. It is planned,
+not a surprise — and it is the reason Ruling 1 recorded "cost if wrong" as one
+function's rework rather than something structural.
 
 ### 4.4 Ordering
 
@@ -737,6 +782,19 @@ notably:
   a shot at a deflected or severed wing can trace against where the wing
   *would* be at rest rather than where it is drawn.
 
-None of these were touched by this fix wave. Fixing them generally means
-threading the same `node_overrides` pointer `draw_model` already takes into
-each of these paths, mirroring §3.3's Phase 1 approach.
+None of these were touched by that fix wave.
+
+**DESIGNED 2026-09-23 — see §4.3, which was rewritten for it. Not built.**
+
+Threading `node_overrides` is the right answer for the four RENDER paths, and
+mirrors §3.3. It is NOT the answer for picking, collision pieces, the hull
+volume or glow regions: those consume structures that are cached PER MODEL and
+shared across instances (`trace_accel` is a `mutable shared_ptr<void>` on
+`assets::Model`), so they cannot be posed per instance at all. Those transform
+the QUERY into part-local space instead, leaving every bake untouched — which
+also removes the per-part-volume resolution risk an earlier draft of §4.3
+carried.
+
+⚠️ Building this REVERSES Ruling 1: the sim stops being rest-pose-consistent,
+and the two characterisation tests pinning the authored mount must be inverted
+with it. See §4.3.1, which says why and names both tests.
