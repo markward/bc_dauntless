@@ -117,6 +117,67 @@ def _volume_extent(v) -> float:
     return 0.0
 
 
+_PARAM_KEYS = ("visibility_gu", "sensor_density",
+               "damage_hull_per_s", "damage_shield_per_s")
+
+
+def _pocket_param_details(v, region) -> list:
+    """Why pocket volume `v`'s params disagree with its region's own survey.
+
+    This is the INDEPENDENT half of cloud-profile-matches-params. A pocket's
+    params are written by tools/systems/layout.py from
+    clouds.params_for(profile), so comparing them back against that same
+    table is a tautology: it cannot fail for a generated map. The region's
+    `nebula` dict is the other end of the survey -- BC's own four numbers,
+    read out of the set's static-placement script -- and that is what a
+    pocket must agree with.
+
+    The concrete failure this catches, with real BC data: Multi6_S.py
+    authors MetaNebula_Create(..., 75.0, 0.5, ...) + SetupDamage(1.0). If
+    such a set became a region, layout would classify it `debris` (hull > 0)
+    and stamp Vesuvi's 145 / 10.5 / 150 / 20 onto its pocket -- a 150x
+    hull-damage error the table comparison calls clean.
+
+    Returns a list of human-readable reasons; empty means agreement. Never
+    raises: a missing region, a region with no nebula, and a non-numeric
+    number on either side are all REPORTED, per validate()'s contract.
+    """
+    if region is None:
+        return [f"origin_region {v.origin_region!r} names no region in this map, "
+                f"so its params cannot be checked against BC's authored numbers"]
+    nebula = region.nebula
+    if not isinstance(nebula, dict):
+        return [f"region {region.set_name!r} carries no nebula ({nebula!r}), so "
+                f"this pocket has no authored numbers to agree with"]
+    params = v.params
+    if not isinstance(params, dict):
+        return [f"params {params!r} is not a dict"]
+    if set(params) != set(_PARAM_KEYS):
+        return [f"params keys {sorted(params)} -- expected exactly "
+                f"{sorted(_PARAM_KEYS)}"]
+
+    details = []
+    for key in _PARAM_KEYS:
+        authored = nebula.get(key)
+        if key == "damage_shield_per_s" and authored is None:
+            # BC called SetupDamage with a SINGLE argument: it authored no
+            # shield rate at all. None is not zero (see survey._nebula) --
+            # there is nothing to compare here, so skip the key rather than
+            # inventing a 0.0 to compare against.
+            continue
+        have = params.get(key)
+        if not _is_number(authored) or not _is_number(have):
+            details.append(
+                f"{key}: pocket has {have!r}, region {region.set_name!r} "
+                f"authored {authored!r} -- both must be numbers")
+        elif not math.isclose(float(have), float(authored),
+                              rel_tol=1e-9, abs_tol=0.0):
+            details.append(
+                f"{key}: pocket has {have!r} but region {region.set_name!r} "
+                f"authored {authored!r}")
+    return details
+
+
 def _sphere_entries(region) -> list:
     """The region's own authored nebula spheres as (sx, sy, sz, sr) tuples,
     filtering out anything malformed. `spheres` may arrive as a tuple as
@@ -491,20 +552,38 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     f"origin_region {v.origin_region!r}) has malformed "
                     f"geometry {v.geometry!r}"))
 
+            # cloud-profile-matches-params, in two halves.
+            #
+            # The profile NAME must always be one we know -- "fog" is a
+            # typo whichever kind of volume carries it.
             try:
                 want_params = params_for(v.profile)
             except (KeyError, TypeError):
+                want_params = None
                 problems.append(Problem(
                     "cloud-profile-matches-params",
                     f"cloud {cloud_name!r} volume has unknown profile "
                     f"{v.profile!r} -- known profiles are {sorted(PROFILES)}"))
-            else:
-                if v.params != want_params:
+
+            # The NUMBERS are compared against whichever independent source
+            # the volume has. A pocket has one: the region it was derived
+            # from, whose `nebula` holds BC's own authored four. The large
+            # volume has none -- no region, no BC original -- so the profile
+            # table is the only thing it can be held to, and holding it
+            # there is what stops `mist`'s zeros being quietly tuned.
+            if isinstance(v.origin_region, str):
+                for detail in _pocket_param_details(
+                        v, regions_by_name.get(v.origin_region)):
                     problems.append(Problem(
                         "cloud-profile-matches-params",
-                        f"cloud {cloud_name!r} volume with profile "
-                        f"{v.profile!r} has params {v.params!r}, expected "
-                        f"{want_params!r}"))
+                        f"cloud {cloud_name!r} pocket for region "
+                        f"{v.origin_region!r} -- {detail}"))
+            elif want_params is not None and v.params != want_params:
+                problems.append(Problem(
+                    "cloud-profile-matches-params",
+                    f"cloud {cloud_name!r} volume with profile "
+                    f"{v.profile!r} has params {v.params!r}, expected "
+                    f"{want_params!r}"))
 
             if not geometry_ok:
                 continue

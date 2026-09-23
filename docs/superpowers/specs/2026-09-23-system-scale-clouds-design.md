@@ -285,10 +285,27 @@ Four new rules for `engine/systems/validate.py`, which never raises:
 - **`cloud-pocket-inside-cloud`** — every volume with an `origin_region` lies
   inside its cloud's largest volume. A pocket outside its own shell means the
   derivation is wrong.
-- **`cloud-profile-matches-params`** — a volume's `params` must equal the table
-  for its `profile`. `debris` and `nebula` are BC's authored numbers and this
-  rule is what stops them being quietly tuned; it starts enforcing `mist` the
-  moment `mist` has numbers.
+- **`cloud-profile-matches-params`** — a volume's `profile` must name a known
+  profile, and its `params` must agree with whichever **independent** source
+  that volume has.
+  - A **pocket** (`origin_region` set) is compared against **its own region's
+    `Region.nebula`** — BC's four authored numbers, read straight out of the
+    set's static-placement script. It is deliberately *not* compared against
+    `clouds.PROFILES`: `tools/systems/layout.py` writes a pocket's `params`
+    *from* that table, so comparing them back against it is a tautology that
+    can never fail for a generated map. Concretely, `Multi6_S.py` authors
+    `MetaNebula_Create(..., 75.0, 0.5, ...)` + `SetupDamage(1.0)`; if such a
+    set ever became a region, layout would classify it `debris` (hull > 0) and
+    stamp Vesuvi's `145 / 10.5 / 150 / 20` onto it — a 150× hull-damage error
+    that a table comparison validates clean.
+  - `damage_shield_per_s` is **skipped when the survey has `None`** there: BC
+    called `SetupDamage` with a single argument and authored no shield rate at
+    all. `None` is not zero (see `survey._nebula`), so there is nothing to
+    compare.
+  - The **large volume** (`origin_region` is null) has no region and no BC
+    original, so the profile table is the only thing it can be held to — and
+    holding it there is what stops `mist`'s zeros being quietly tuned. It
+    starts enforcing real `mist` numbers the moment `mist` has them.
 
 `region-reaches-star` and the existing geometry rules are untouched; a cloud is
 not a body and cannot clip anything.

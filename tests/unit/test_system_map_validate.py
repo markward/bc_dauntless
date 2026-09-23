@@ -538,3 +538,72 @@ def test_sphere_list_may_be_a_tuple_not_just_a_list():
     m = _cloud_map()
     m.region("Ona1").nebula["spheres"] = tuple(m.region("Ona1").nebula["spheres"])
     assert validate(m) == []
+
+
+def test_a_pocket_whose_params_disagree_with_its_regions_survey_is_caught():
+    """cloud-profile-matches-params must compare a pocket against its own
+    REGION's authored numbers, not against the same profile table that
+    stamped them.
+
+    layout.py sets a pocket's params from clouds.params_for(profile); a rule
+    that then compares those params against clouds.PROFILES can never fail
+    for a generated map. The genuinely independent source is the region's
+    own surveyed nebula.
+
+    The numbers below are real BC data: Multi6_S.py authors
+    MetaNebula_Create(..., 75.0, 0.5, ...) + SetupDamage(1.0). If such a set
+    ever became a region, layout would classify it `debris` (hull > 0) and
+    stamp Vesuvi's 145 / 10.5 / 150 / 20 onto it -- a 150x hull-damage error
+    that a table-only comparison validates clean.
+    """
+    m = _cloud_map()
+    m.region("Ona1").nebula.update({
+        "visibility_gu": 75.0,
+        "sensor_density": 0.5,
+        "damage_hull_per_s": 1.0,
+        "damage_shield_per_s": None,
+    })
+    problems = validate(m)
+    assert "cloud-profile-matches-params" in _rules(problems)
+    assert any("damage_hull_per_s" in p.detail for p in problems
+               if p.rule == "cloud-profile-matches-params")
+
+
+def test_an_absent_shield_rate_is_skipped_not_compared_against_zero():
+    """`damage_shield_per_s` is None when BC called SetupDamage with a single
+    argument: no shield rate was authored, so there is nothing to compare.
+    None is not zero -- survey._nebula draws that distinction deliberately --
+    so the key is skipped, and the other three are still compared."""
+    m = _cloud_map()
+    m.region("Ona1").nebula["damage_shield_per_s"] = None
+    assert validate(m) == []
+
+
+def test_the_large_volume_is_still_checked_against_the_profile_table():
+    """The large volume has no region, so the table is the only source it
+    can be compared against -- that half of the rule is unchanged."""
+    m = _cloud_map()
+    large = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
+    large.params["visibility_gu"] = 900.0
+    assert "cloud-profile-matches-params" in _rules(validate(m))
+
+
+def test_a_pocket_whose_region_has_no_nebula_is_reported_not_raised():
+    m = _cloud_map()
+    m.region("Ona1").nebula = None
+    problems = validate(m)      # must not raise
+    assert "cloud-profile-matches-params" in _rules(problems)
+
+
+def test_a_pocket_whose_region_is_missing_is_reported_not_raised():
+    m = _cloud_map()
+    m.clouds[0].volumes[0].origin_region = "Nowhere1"
+    problems = validate(m)      # must not raise
+    assert "cloud-profile-matches-params" in _rules(problems)
+
+
+def test_a_pocket_whose_regions_numbers_are_non_numeric_is_reported_not_raised():
+    m = _cloud_map()
+    m.region("Ona1").nebula["sensor_density"] = "thick"
+    problems = validate(m)      # must not raise
+    assert "cloud-profile-matches-params" in _rules(problems)

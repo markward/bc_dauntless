@@ -1017,7 +1017,17 @@ mirrors `star_from` exactly, including the `m is None` guard.
 
 **One deliberate redundancy.** Task 4 rule 2 takes params from
 `clouds.params_for(profile)` rather than from the survey dict, even though the
-survey now carries the same numbers. That is what lets Task 5's
-`cloud-profile-matches-params` compare two independent sources instead of a
-value against itself, and what lets Task 3's cross-check catch a parser drift
-that would otherwise be invisible.
+survey now carries the same numbers. That is what lets Task 3's cross-check
+catch a parser drift that would otherwise be invisible.
+
+**Correction (final fix wave).** This paragraph originally also claimed the
+redundancy is "what lets Task 5's `cloud-profile-matches-params` compare two
+independent sources instead of a value against itself". That had the
+relationship exactly backwards. Taking a pocket's params from
+`clouds.params_for(profile)` and then validating them *against that same
+table* is the tautology, not the cure: the rule as first written could never
+fail for a generated map. The independent source for a pocket is its own
+region's `Region.nebula` — BC's authored numbers from the survey — and that is
+what the rule compares against now. The table comparison survives only for the
+large volume, which has no region. See the design note's
+`cloud-profile-matches-params` bullet.
