@@ -510,6 +510,36 @@ on eyes.
 | The severed wing carries the hull's Fresnel rim (I2) | ✅ confirmed |
 | One-frame chunk-at-origin artefact (I2) | ⚠️ **not observable**; fixed by construction only |
 
+**2026-09-23, second session — plan 1 (node overrides in the render passes).**
+
+| checked | result |
+|---|---|
+| Cloak with the wings UP — they stay up through the fade | ✅ confirmed |
+| Cloak with a wing SEVERED — it stays gone through the fade | ✅ confirmed |
+| NPC wings follow a target (OQ-11) | not yet isolated |
+| Shadows follow a moved wing | not yet isolated |
+| Breach drawn against the live wing pose | not yet isolated |
+
+The two cloak checks are the ones that mattered: the Bird of Prey is BC's only
+cloaking ship, so the rest-pose snap had nowhere to hide. Before plan 1 a
+cloaking BoP snapped its wings DOWN for the whole fade and regrew a severed
+one.
+
+**A FATAL crash was also found in that session, and it was PRE-EXISTING.**
+`GetParentShip()` returned the bare `_parent_ship` field, which
+`ShipClass._attach_subsystem` sets only on TOP-LEVEL subsystems — so on a
+pulse-weapon EMITTER (a child of its weapon system) it was always None.
+`ConditionPulseReady` stamps that onto an event source and immediately
+dereferences it, and the AttributeError unwinds out of the host frame loop.
+
+It needed a sustained pulse-weapon fight to trigger, which is exactly what
+testing this feature produces. It had been recorded as a known gap in TWO
+places — the stbc-oracle ledger, and a docstring in `weapon_subsystems.py`
+warning readers to use `_climb_to_ship()` instead — and still reached a fatal
+in play. **A BC-facing method that is PRESENT BUT WRONG is caught by neither
+the constant surface nor the stub heatmap**, which both guard against surface
+that is MISSING. Fixed in `df897e19`.
+
 **Three failures were found live that no test caught**, which is why this log
 exists rather than a bare "verified":
 
@@ -784,7 +814,17 @@ notably:
 
 None of these were touched by that fix wave.
 
-**DESIGNED 2026-09-23 — see §4.3, which was rewritten for it. Not built.**
+**DESIGNED §4.3. RENDER HALF BUILT AND LIVE-VERIFIED 2026-09-23** (plan
+`docs/superpowers/plans/2026-09-23-node-overrides-render-passes.md`): the
+shadow pre-pass, cloak, hologram and breach passes now all honour
+`node_overrides`. Confirmed live that a cloaking Bird of Prey keeps its raised
+wings through the fade, and a severed wing stays gone through it — the two
+cases where the rest-pose snap was most visible, since the BoP is BC's only
+cloaking ship.
+
+**Still NOT built: picking, collision pieces, the hull volume, glow regions
+and carve entries** — plans 2 and 3. Those transform the QUERY rather than
+threading overrides, and plan 3 reverses Ruling 1 (see §4.3.1).
 
 Threading `node_overrides` is the right answer for the four RENDER paths, and
 mirrors §3.3. It is NOT the answer for picking, collision pieces, the hull
