@@ -189,10 +189,17 @@ def test_no_other_system_grew_a_cloud():
         assert load(name).clouds == [], name
 
 
-def test_a_bogus_cloud_kind_surfaces_in_ambiguities():
-    """A typo'd or unrecognised `overrides.cloud.kind` must not silently
-    degrade to a pockets-only cloud -- gen_system_maps.py must actually pass
-    the cloud override through to ambiguities(), not just to layout()."""
+def test_ambiguities_itself_reports_a_bogus_cloud_kind():
+    """Documents ambiguities()'s own behaviour (a Task 4 deliverable, not new
+    here): given a cloud override with an unrecognised `kind`, it reports it.
+
+    This is NOT a substitute for
+    test_a_bogus_cloud_kind_reaches_the_generators_ambiguities_output below --
+    it calls ambiguities() directly, so it cannot detect a regression in
+    gen_system_maps.py's call site (generate()'s `ambiguities(surveyed,
+    cloud=cloud)`). Reverting that kwarg back to `ambiguities(surveyed)`
+    leaves this test green. Kept only as a small, fast pin on
+    ambiguities()'s own contract."""
     from tools.gen_system_maps import cloud_from
     from tools.systems.layout import ambiguities
     from tools.systems.survey import survey_system
@@ -203,3 +210,31 @@ def test_a_bogus_cloud_kind_surfaces_in_ambiguities():
     surveyed = survey_system("Vesuvi")
     notes = ambiguities(surveyed, cloud=cloud_from(bogus))
     assert any("not_a_real_kind" in n for n in notes)
+
+
+def test_a_bogus_cloud_kind_reaches_the_generators_ambiguities_output(monkeypatch, capsys):
+    """The requirement: a bogus `kind` in a map's `overrides.cloud` must
+    surface in the GENERATOR's `--list-ambiguities` output. Drives the real
+    `main() -> generate() -> ambiguities(surveyed, cloud=cloud)` path, not a
+    direct ambiguities() call -- so reverting generate()'s cloud kwarg
+    (tools/gen_system_maps.py) makes this test fail, unlike the test above.
+
+    Patches gen_system_maps.load (not the checked-in vesuvi.json) so the
+    "existing map" generate() reads back carries a bogus cloud kind; --check
+    keeps this from writing anything."""
+    import tools.gen_system_maps as gen_system_maps
+    real_load = gen_system_maps.load
+
+    def bogus_load(system):
+        m = real_load(system)
+        if system.lower() == "vesuvi":
+            m.overrides = dict(m.overrides)
+            m.overrides["cloud"] = dict(m.overrides["cloud"])
+            m.overrides["cloud"]["kind"] = "not_a_real_kind"
+        return m
+
+    monkeypatch.setattr(gen_system_maps, "load", bogus_load)
+    rc = gen_system_maps.main(["--system", "Vesuvi", "--list-ambiguities", "--check"])
+    out = capsys.readouterr().out
+    assert "not_a_real_kind" in out
+    assert rc == 0
