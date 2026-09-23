@@ -7019,7 +7019,7 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
     return pose_of
 
 
-def _sync_ship_articulation(session, ship, iid) -> None:
+def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
     """Push `ship`'s articulated part poses (BoP wings) to its render instance.
 
     READ-ONLY on game state: the deflection is eased on the sim tick by
@@ -7031,6 +7031,15 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     settled ship (which is nearly all of them, nearly always) costs one dict
     lookup and a float compare rather than a boundary crossing per node per
     frame.
+
+    `force_rest` draws the hull in its NIF pose (every part at rotation 0)
+    without touching game state. The Ship Property Viewer sets it, because a
+    hardpoint mount is STORED in the NIF frame: editing one through an
+    articulated pose writes back a number that is ~0.9 ship units out at a
+    Bird of Prey's wingtip, silently. See spec section 5.1.
+
+    It pushes an explicit ZERO rotation rather than skipping the push --
+    skipping would leave whatever pose is already in node_overrides standing.
     """
     parts = articulation.parts_for_ship(ship)
     if not parts:
@@ -7039,6 +7048,8 @@ def _sync_ship_articulation(session, ship, iid) -> None:
         deflection = float(ship.GetArticulationDeflection())
     except Exception:  # noqa: BLE001 - a prop / test double is not articulated
         return
+    if force_rest:
+        deflection = 0.0
     last = session.ship_articulation.get(iid)
     if last is not None and last == deflection:
         return
@@ -7065,7 +7076,8 @@ def _sync_ship_articulation(session, ship, iid) -> None:
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None,
                               player_interp_pose=None,
-                              player_is_interpolated=None) -> None:
+                              player_is_interpolated=None,
+                              spv_open=False) -> None:
     """Push ship + planet world transforms to the renderer for one frame.
 
     Player ship: rendered at its LIVE pose (it is integrated per render frame
@@ -7099,6 +7111,11 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     buffer + dead glow controllers, and pushes planet transforms.
     `model_scale` is BC_MODEL_SCALE; non-player ships additionally
     multiply by their live GetScale().
+
+    `spv_open` forces every ship's articulated parts to their rest (NIF)
+    pose for this frame -- see `_sync_ship_articulation`'s `force_rest`.
+    The caller resolves it the same way the render block does: dev mode on
+    AND the Ship Property Viewer open.
     """
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
@@ -7135,7 +7152,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # volumes and cast light spool up and burst together.
     _player_warp_glow = _warp_glow_envelope(player)
     for ship, iid in session.ship_instances.items():
-        _sync_ship_articulation(session, ship, iid)
+        _sync_ship_articulation(session, ship, iid, force_rest=spv_open)
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
             _wg.update(game_time,
@@ -9413,12 +9430,20 @@ def run(mission_name: Optional[str] = None,
                     _handover.advance(_player_dt)
                     # Same game clock the decal system ages on
                     # (engine.appc.damage_decals). Read once per frame.
+                    # Resolved the same way the render block below does
+                    # (engine/host_loop.py:9615-9617): the hull must draw in
+                    # its NIF (rest) pose while the SPV is open, because a
+                    # hardpoint mount is authored in that frame, not the
+                    # live articulated one.
+                    _spv_rest = (dev_mode.is_enabled()
+                                 and ship_property_viewer.is_open())
                     _sync_instance_transforms(
                         r, session, player, _xform_buf, _interp_alpha,
                         App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
                         player_control=player_control,
                         player_interp_pose=_player_interp_pose,
-                        player_is_interpolated=_interp_player)
+                        player_is_interpolated=_interp_player,
+                        spv_open=_spv_rest)
 
             frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
