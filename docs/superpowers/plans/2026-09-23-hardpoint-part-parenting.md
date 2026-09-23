@@ -478,42 +478,38 @@ construction. Identity at rest, on the body, and for unrigged hulls."
 
 ---
 
-### Task 4: Make severance test the live mount, and document the coupling
+### Task 4: Pin rest-pose attribution, and correct the spec
 
-`part_severance._destroy_subsystems_on_part` calls `part_for_point` with a raw `sub.GetPosition()` — the REST mount. With a wing part-way through its travel that tests the wrong point, so the wrong subsystems die. Same defect as Task 3, second call site (spec §4.1, symptom 2).
+**This task was rewritten during the pre-flight scan.** It originally said to
+route `part_severance._destroy_subsystems_on_part` through
+`part_transform_point`. That is wrong and would introduce a bug:
+
+- `PART_BOXES` are authored in the model's **REST** pose.
+- The voxel side **never sees `node_overrides`** (verified: no reference in
+  `native/src/voxel/` or `carve_field_cache.cc`), and the `.dhv` SDF is baked
+  from the NIF — so `hull_breakup`'s component bounds are rest-pose too.
+
+**The whole SIM is rest-pose-consistent; only the RENDERER articulates.** Both
+destroy-subsystem functions are already correct, and spec §4.1 symptom 2 — which
+claims they are defective — is wrong. Task 3 is unaffected, because
+`subsystem_world_position` feeds what is DRAWN and must match the moving mesh.
+
+So this task pins the correct behaviour against a future "fix", and corrects the
+spec.
 
 **Files:**
-- Modify: `engine/appc/part_severance.py` (`_destroy_subsystems_on_part`)
+- Modify: `docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md` (§4.1)
 - Test: `tests/unit/test_part_severance.py`
 
 **Interfaces:**
-- Consumes: `articulation.part_transform_point` (Task 2).
-- Produces: no signature change.
+- Consumes: `articulation.part_transform_point` (Task 2) — only to prove it is
+  NOT applied here.
+- Produces: no code change.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the regression test**
 
-Add to `tests/unit/test_part_severance.py`:
-
-```python
-def test_subsystem_kill_uses_the_LIVE_mount_not_the_rest_mount():
-    """Same defect as the firing origin, second call site: the sever-kill
-    tested a REST mount, so a wing part-way through its travel would kill the
-    wrong subsystems (or none).
-
-    The ship here is mid-travel, where a rest-pose test is most wrong."""
-    star = _Sub("Star Cannon", (1.008, 0.450, -0.670))
-    body = _Sub("Warp Core", (0.0, -0.33, 0.0))
-    ship = _Ship(subs=(star, body))
-    ship._articulation_deflection = 0.5
-
-    ps.sever(ship, None, "left wing01")
-
-    assert star.condition == 0.0, "the cannon on the severed wing must die"
-    assert body.condition == 100.0
-```
-
-Extend the `_Ship` double in that file with the accessor
-`part_transform_point` needs — add to its `__init__`:
+Extend the `_Ship` double in `tests/unit/test_part_severance.py` — add to its
+`__init__`:
 
 ```python
         self._articulation_deflection = 0.0
@@ -526,72 +522,96 @@ and add the method:
         return self._articulation_deflection
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `.venv/bin/python3 -m pytest tests/unit/test_part_severance.py -k LIVE_mount -v`
-Expected: FAIL — `assert 100.0 == 0.0`. At deflection 0.5 the rotated mount
-lands outside the rest-pose wing box, so `part_for_point` returns a different
-part (or None) and the cannon survives.
-
-- [ ] **Step 3: Use the live mount**
-
-In `engine/appc/part_severance.py`, inside `_destroy_subsystems_on_part`,
-replace:
+Then add this test:
 
 ```python
-        if part_for_point(leaf, point) != part_name:
-            continue
+def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
+    """Attribution here is a REST-pose question, and must stay one.
+
+    PART_BOXES are authored in the model's rest pose, and the sim never
+    articulates: the voxel field and the .dhv SDF are both built from the NIF
+    and never see node_overrides. Only the RENDERER moves parts. So the
+    authored mount is the right thing to test, at any deflection.
+
+    This test exists because the implementation plan originally specified the
+    opposite -- routing this through part_transform_point, so an ARTICULATED
+    mount would be tested against REST boxes. That mismatches frames and
+    misattributes. Caught in pre-flight; pinned here so it is not re-attempted.
+
+    Contrast subsystem_world_position, which feeds what is DRAWN (beam
+    origins, SPV pins) and therefore MUST articulate.
+    """
+    star = _Sub("Star Cannon", (1.008, 0.450, -0.670))
+    body = _Sub("Warp Core", (0.0, -0.33, 0.0))
+    ship = _Ship(subs=(star, body))
+    ship._articulation_deflection = 0.5      # mid-travel: worst case
+
+    ps.sever(ship, None, "left wing01")
+
+    assert star.condition == 0.0, (
+        "the cannon authored on the starboard wing must die with it, "
+        "regardless of where the wing is currently drawn")
+    assert body.condition == 100.0
 ```
 
-with:
+- [ ] **Step 2: Run it — it must PASS immediately**
 
-```python
-        # The LIVE mount, not the authored rest mount: a part-way-travelled
-        # wing puts its cannon somewhere the rest pose does not describe.
-        # Same fix as subsystem_world_position, second call site.
-        from engine.appc.articulation import part_transform_point
-        if part_for_point(leaf, part_transform_point(ship, point)) != part_name:
-            continue
-```
+Run: `.venv/bin/python3 -m pytest tests/unit/test_part_severance.py -k REST_mount -v`
+Expected: **PASS**. This is a characterisation test: it pins behaviour that is
+already correct. If it FAILS, stop — something has already routed this through
+the articulated frame, and that is the bug this test exists to prevent.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 3: Correct the spec**
 
-Run: `.venv/bin/python3 -m pytest tests/unit/test_part_severance.py -v`
-Expected: PASS (all, including the existing at-rest subsystem test).
-
-- [ ] **Step 5: Record the resolution in the spec**
-
-In `docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md`,
-replace the two numbered symptoms under `### 4.1 The defect` with:
+In `docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md`, replace
+the two numbered symptoms under `### 4.1 The defect` with:
 
 ```markdown
-1. **RESOLVED 2026-09-23.** At full deflection a wingtip travelled ~0.9 ship
+1. **RESOLVED 2026-09-23.** At full deflection a wingtip travelled ~0.85 ship
    units (~150 m) while the cannon hardpoint did not move. Normally hidden
-   (wings-up ⟺ weapons cold), but entering red alert powers weapons instantly
+   (wings-up <-> weapons cold), but entering red alert powers weapons instantly
    while the wings take 2 s to come down, so the cannons fired from
    progressively wrong positions for those two seconds — exactly when combat
    starts. Fixed by routing mounts through `articulation.part_transform_point`
    inside `subsystem_world_position`, the single choke point that firing
    origins, the SPV pins, `phaser_overlay` and `target_reticle` all share.
-2. **RESOLVED 2026-09-23.** `hull_breakup._destroy_subsystems_inside` and
-   `part_severance._destroy_subsystems_on_part` tested a static body-frame
-   mount. The latter now tests the live mount via the same helper.
+2. **WITHDRAWN 2026-09-23 — this was never a defect.** An earlier draft claimed
+   `hull_breakup._destroy_subsystems_inside` and
+   `part_severance._destroy_subsystems_on_part` were broken because they test a
+   "static body-frame mount". They are correct: `PART_BOXES` are authored in the
+   REST pose, the voxel side never sees `node_overrides`, and the `.dhv` SDF is
+   baked from the NIF. **The whole SIM is rest-pose-consistent; only the
+   RENDERER articulates.** Transforming the mount there would mismatch frames
+   and misattribute. Pinned by
+   `test_subsystem_kill_uses_the_REST_mount_even_mid_travel`.
+
+   WARNING: this changes if the sim ever articulates — per-part hull volumes and
+   picking (§4.3) would move the voxel and trace geometry into the live pose,
+   and both functions would then need the transform.
 ```
 
-- [ ] **Step 6: Run the gate**
+- [ ] **Step 4: Run the gate**
 
 Run: `scripts/check_tests.sh`
 Expected: `OK — no new failures. 1 known failure(s) still baselined.`
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
-```bash
-git add engine/appc/part_severance.py tests/unit/test_part_severance.py docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md
-git commit -m "fix(severance): kill subsystems by their LIVE mount, not the rest mount
+Stage exactly `tests/unit/test_part_severance.py` and
+`docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md` (explicit
+paths only — never `-A`), with this message:
 
-Second call site of the Task 3 defect: a wing part-way through its travel
-puts its cannon somewhere the rest pose does not describe, so the sever-kill
-tested the wrong point. Resolves spec §4.1."
+```
+test(severance): pin REST-pose attribution; withdraw spec 4.1 symptom 2
+
+The spec claimed the destroy-subsystem functions were defective for testing a
+static body-frame mount. They are not: PART_BOXES are authored in the rest
+pose, the voxel side never sees node_overrides, and the .dhv SDF is baked from
+the NIF. The whole SIM is rest-pose-consistent; only the RENDERER articulates.
+
+Transforming the mount there would mismatch frames and misattribute -- which
+the implementation plan originally specified. Caught in pre-flight and pinned
+with a characterisation test so it is not re-attempted.
 ```
 
 ---
@@ -601,7 +621,7 @@ tested the wrong point. Resolves spec §4.1."
 | spec section | covered by |
 |---|---|
 | §4.1 symptom 1 — emitters do not follow the part | Tasks 2 + 3 |
-| §4.1 symptom 2 — sever-kill tests a static mount | Task 4 |
+| §4.1 symptom 2 — sever-kill tests a static mount | **withdrawn** — not a defect; Task 4 pins the correct behaviour and corrects the spec |
 | §4.2 — proximity-with-margin assignment | **already built** in phase 2a as `part_severance.part_for_point`; Tasks 2 and 4 consume it rather than reimplementing |
 | §4.2 — "cached per ship, never per tick" | deliberate deviation, argued in Task 2 Step 5 |
 | §4.3 — picking / hull volume / carve in part space | **out of scope**, see below |
