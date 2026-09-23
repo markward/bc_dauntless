@@ -14,11 +14,29 @@ namespace renderer {
 /// of the overridden node whose geometry contains it — or nullopt when no
 /// overridden node claims that point.
 ///
-/// Every baked structure in this engine (the .dhv distance field, the carve
-/// field, the trace BVH) is whole-hull, rest-pose and SHARED across every
-/// instance of a model. So a query arriving in the LIVE pose is transformed
-/// back into rest space rather than the structure being re-posed per
-/// instance. This is the primitive that does it, and it is the same rule
+/// ⚠️ NO PRODUCTION CALLER. As of 2026-09-23 this function is exercised only
+/// by part_frame_test.cc. Do NOT read its existence as evidence that any
+/// live path pulls a query back into rest space. It was written for the
+/// damage-carve deposit (commit eb6fedc8) and that use was REVERTED, because
+/// the premise was wrong: the carve field is per-INSTANCE and mutable
+/// (instance_field_cache.h), and it is SAMPLED in POSED body space —
+/// opaque.vert builds `v_position_ws` from `world_per_node[i]`, which
+/// `compose_node_worlds` builds WITH the overrides (frame.cc), while
+/// opaque.frag's `u_ship_world_inv` is the plain instance inverse with NO
+/// override (frame.cc). So deposit and sample already agree in posed space
+/// and no transform is wanted. The primitive is kept, tested and correct
+/// because the genuinely rest-pose, genuinely SOURCE-shared structures (the
+/// `.dhv` backing-material gate, the trace BVH) are still sampled with a
+/// posed point — a pre-existing mismatch a per-draw rest transform would
+/// fix, and this is the piece that would do it.
+///
+/// The SOURCE-keyed baked structures in this engine (the `.dhv` distance
+/// field, the trace BVH) are whole-hull, rest-pose and SHARED across every
+/// instance of a model. (The per-instance carve field is NOT one of them —
+/// see the warning above; that conflation is what produced eb6fedc8.) For a
+/// genuinely shared structure, a query arriving in the LIVE pose is
+/// transformed back into rest space rather than the structure being re-posed
+/// per instance. This is the primitive that does it, and it is the same rule
 /// ray_trace.cc follows from the other direction (there the RAY moves; here
 /// the POINT does).
 ///

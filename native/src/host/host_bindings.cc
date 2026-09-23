@@ -52,7 +52,6 @@
 #include <renderer/breach_venting.h>  // venting descriptor builder
 #include <renderer/breach_debris.h>  // debris descriptor builder
 #include <renderer/carve_field_cache.h>
-#include <renderer/part_frame.h>
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/debug_volume_pass.h>
 #include <renderer/gizmo_pass.h>
@@ -4326,25 +4325,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
                        ? glm::normalize(pb)
                        : glm::vec3(0.f, 0.f, 1.f);
               }
-              // A carve struck where the part is DRAWN, but the damage field
-              // is baked rest-pose and shared by every instance of this hull.
-              // So pull the point and its normal back into the struck part's
-              // rest frame rather than re-posing the field. No-op when the
-              // instance has no overrides — which is every hull but a rigged
-              // one away from rest, i.e. almost always.
-              glm::vec3 pb_rest = pb;
-              if (!inst->node_overrides.empty()) {
-                  const assets::Model* posed_model =
-                      resolve_model(inst->model_handle);
-                  if (posed_model != nullptr) {
-                      if (auto to_rest = renderer::rest_from_posed_at(
-                              *posed_model, inst->node_overrides, pb)) {
-                          pb_rest = glm::vec3(*to_rest * glm::vec4(pb, 1.0f));
-                          const glm::vec3 nr(glm::mat3(*to_rest) * nb);
-                          if (glm::length(nr) > 1e-4f) nb = glm::normalize(nr);
-                      }
-                  }
-              }
+              // NOTE: pb stays POSED. The per-instance carve field is
+              // SAMPLED in posed body space -- opaque.vert builds
+              // v_position_ws from world_per_node[i] (overrides included)
+              // while opaque.frag's u_ship_world_inv is the INSTANCE inverse
+              // with no override -- so a hit on a moved part already lands
+              // where the shader will look for it. Pulling it back into rest
+              // space was tried (eb6fedc8) and reverted: it wrote where
+              // nothing samples. See the spec's 4.3.
               // s = |world's X column| = the uniform NIF->world scale baked into
               // inst->world (same derivation as damage_decal_add).
               const float s = glm::length(glm::vec3(inst->world[0]));
@@ -4416,7 +4404,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const renderer::HullCarveDepositResult result =
                   renderer::hull_carve_deposit(
                       inst->carve, g_instance_field_cache.get(), id, source,
-                      authored_res, pb_rest, nb, influ_model, strength,
+                      authored_res, pb, nb, influ_model, strength,
                       floor_model, radius_modifier, inv_s, fill_for_gate);
 
               // Breach event (transient VFX: debris, venting, rim) only when the
@@ -4428,15 +4416,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // counter, to decorrelate closely-spaced breaches on one ship.
                   static std::uint64_t s_counter = 0;
                   const auto bx = static_cast<std::uint64_t>(
-                      static_cast<std::uint32_t>(pb_rest.x * 1000.f));
+                      static_cast<std::uint32_t>(pb.x * 1000.f));
                   const auto by = static_cast<std::uint64_t>(
-                      static_cast<std::uint32_t>(pb_rest.y * 1000.f));
+                      static_cast<std::uint32_t>(pb.y * 1000.f));
                   const auto bz = static_cast<std::uint64_t>(
-                      static_cast<std::uint32_t>(pb_rest.z * 1000.f));
+                      static_cast<std::uint32_t>(pb.z * 1000.f));
                   const std::uint64_t seed =
                       (bx * 2654435761ull) ^ (by * 805459861ull) ^
                       (bz * 3674653429ull) ^ (++s_counter * 6364136223846793005ull);
-                  inst->breach_events.push(pb_rest, result.radius, nb,
+                  inst->breach_events.push(pb, result.radius, nb,
                                            g_decal_game_time, seed);
               }
           },

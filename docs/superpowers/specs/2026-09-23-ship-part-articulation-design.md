@@ -316,9 +316,9 @@ exactly as today. Only the QUERY moves into part-local space.**
 | **render passes** — `cloak_pass`, `hologram_pass`, `model_draw_helpers` (shadow pre-pass, breach) | static node walk | thread `node_overrides`, identical to what `draw_model` already does |
 | **picking** (`ray_trace.cc`) | ✅ BUILT — each `TraceTri` carries its node index; the BVH walk SKIPS overridden nodes and one linear sweep re-tests them with the **RAY** transformed into each part's rest frame. NO partitioning, no sub-BVH: the BVH build reorders `tris`, so a node's triangles are not a contiguous range, and the sweep runs only for a rigged hull away from rest. ⚠️ The coarse bounding-sphere reject had to be SKIPPED when overrides are present — its AABB is measured at rest, so it rejected rays aimed at a moved part before any triangle was tested. |
 | **collision pieces** (`aabb.cc` → `hull_bounds.py`) | pieces in model space | tag each piece with its part at build; transform per instance at query, where `hull_bounds.py` already applies position + rotation + scale |
-| **hull volume** (`.dhv`) | whole-hull rest-pose SDF | **NO SEPARATE WORK.** There is no sim-side point query against the .dhv — it is baked by `hull_volume.py` and sampled on the GPU in model space. The only thing that WRITES into it is a carve, and a carve arriving from a moved part is pulled back to rest by `renderer::rest_from_posed_at` before deposit (see the damage-carve row). Keeping the field rest-pose preserves model-level sharing AND keeps §4.3.1's rest-pose comparisons valid. |
+| **hull volume** (`.dhv`) | whole-hull rest-pose SDF | **NO SEPARATE WORK.** There is no sim-side point query against the .dhv — it is baked by `hull_volume.py` and sampled on the GPU in model space. The only thing that WRITES into it is a carve — and a carve is NOT written into the `.dhv` at all: it goes into the separate per-instance carve field, in posed space, needing no transform (see the damage-carve row; the rest-space pullback this row used to describe was reverted). The `.dhv` itself is only READ, by `fill_for_gate`, with a posed point — a pre-existing rest-vs-posed mismatch this work did not introduce and did not fix. Keeping the field rest-pose preserves model-level sharing AND keeps §4.3.1's rest-pose comparisons valid. |
 | **glow regions** (`glow_region.cc`) | authored model-space positions | **Not transformed — silenced instead.** Anything emitting from a DETACHED part stops: cast light already did (emitter intensity is gated on the parent subsystem's glow state, which severance zeroes), and particle controllers now do too (`part_severance._silence_emitters_on`). Transforming glow capsules into the live pose buys nothing today — no rigged hull has one — and is re-openable if one ever does. |
-| **damage carve** | entries in body space | entries **bound to a part**, stored part-local so a scar rides the wing |
+| **damage carve** | entries in body space | **NOTHING TO DO — measured 2026-09-23.** The carve field is sampled in **POSED body space**, so a carve struck on a moved part already lands where the shader looks for it. The field is per-INSTANCE and mutable (`instance_field_cache.h:19` — explicitly contrasted with the per-SOURCE immutable `HullVolumeCache`), so there is no sharing to protect. `opaque.vert:19-22` builds `v_position_ws = u_model * a_position` where `u_model` is `world_per_node[i]` from `compose_node_worlds(model, world, *node_overrides)` (`frame.cc:652`) — overrides INCLUDED — while `opaque.frag:1122` reconstructs `p_body = u_ship_world_inv * v_position_ws` with `u_ship_world_inv = inverse(inst->world)` (`frame.cc:431/474/546`), the INSTANCE inverse with NO override. Deposit at `world_to_body(inst->world, pw)` is the same posed point, so the two already agree. A rest-space pullback was built (eb6fedc8) and **REVERTED**: depositing at rest coords while the shader samples posed coords writes where nothing reads — no hole on the struck wing, and a spurious hole wherever the rest coordinates land. ⚠️ Separately, the SOURCE-keyed `.dhv` backing-material gate (`fill_for_gate`) IS rest-pose and is handed that same posed point — a real mismatch, but **PRE-EXISTING and unchanged by this work**, and the one thing a future per-draw rest transform would actually fix. |
 
 **Why this is strictly better than per-part bakes.** No re-bake, no extra
 memory, no resolution risk, and model-level sharing survives — a squadron of
@@ -341,6 +341,28 @@ handful of matrix inverses.
 **Rejected:** baking two whole-hull volumes (armed/cold) and switching between
 them. Cannot represent mid-travel, doubles memory, and hits the same ceiling.
 
+**⚠️ THE PREMISE ABOVE CONFLATED TWO DIFFERENT CACHES — recorded so it is not
+repeated.** "Every baked structure stays WHOLE-HULL and REST-POSE, shared
+across instances" is true of some of them and false of the one this section
+then reasoned about. There are two kinds:
+
+- **SOURCE-keyed, immutable, genuinely shared** — `voxel::HullVolumeCache`
+  (the `.dhv` SDF) and `assets::Model::trace_accel` (the BVH). One per hull
+  MODEL, reused by every Galaxy in the sector. A live-pose query against one
+  of these really does have to be pulled back into rest space, which is what
+  `ray_trace.cc` does for the RAY and what `renderer::part_frame.h` would do
+  for a POINT.
+- **INSTANCE-keyed, mutable, NOT shared** — `renderer::InstanceFieldCache`,
+  the damage carve field. Its own header opens by contrasting itself with the
+  above: one battle-scarred field per ship, copying only the baked LATTICE.
+  Nothing here is shared, so nothing here needs protecting by a rest-space
+  pullback — and it is sampled posed anyway.
+
+Reading "baked" as "shared and therefore rest-pose" across both is the error
+that produced eb6fedc8, a fix for a bug that did not exist which introduced a
+real one. **Check which cache a structure lives in, and check what space the
+consumer samples it in, before transforming anything.**
+
 ### ✅ 4.3.1 Ruling 1 STANDS — this section's earlier prediction was wrong
 
 **Superseded 2026-09-23, before implementation.** This section previously
@@ -357,10 +379,15 @@ the structure" they do not:
   on is a STATIC property of the hull, not a function of where the part
   currently happens to be.
 - `hull_breakup._destroy_subsystems_inside` tests a rest mount against a
-  carved component from `hull_split_detached` — the damage field, which stays
-  baked rest-pose. A carve struck on a moved part is pulled BACK into rest
-  space before deposit (`renderer::rest_from_posed_at`), precisely so this
-  stays true.
+  carved component from `hull_split_detached` — the damage field. ⚠️
+  **CORRECTED 2026-09-23:** that field is per-INSTANCE and is written AND
+  sampled in POSED body space (see the damage-carve row of §4.3), not rest
+  space; an earlier draft here claimed carves were pulled back to rest, which
+  was built and then reverted. So on a rigged hull away from rest this test
+  compares a REST mount against a POSED component. That is a real mismatch —
+  but it is the same rest-vs-posed gap `record_hit` and the `.dhv` gate carry,
+  pre-dates this work, and is out of its scope. It bites only a hull that is
+  both rigged and deflected, i.e. a Bird of Prey with its wings up.
 
 Collision pieces (`hull_bounds.py`) genuinely do articulate, but no subsystem
 kill reads them: `hull_spheres_world` / `hull_spheres_near` /
@@ -864,9 +891,11 @@ mesh is a child"). Confirmed live by the project owner.
 
 **Collision pieces and carve entries are built by THIS plan**
 (`docs/superpowers/plans/2026-09-23-part-aware-sim-geometry.md`): pieces carry
-a part tag, a severed part's pieces stop colliding, pieces follow a part
-mid-travel, and a carve struck on a moved part is pulled back into that part's
-rest frame by `renderer::rest_from_posed_at`. **Not yet live-verified.**
+a part tag, a severed part's pieces stop colliding, and pieces follow a part
+mid-travel. The carve half of that plan was built and then **REVERTED** — the
+carve field turned out to be per-instance and sampled posed, so a carve on a
+moved part already lands correctly (§4.3). `renderer::part_frame.h` survives
+as a tested primitive with NO production caller. **Not yet live-verified.**
 
 **The hull volume needed no separate work** — there is no sim-side point
 query against the `.dhv`; it is baked in Python and sampled on the GPU in
