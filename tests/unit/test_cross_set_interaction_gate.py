@@ -141,6 +141,39 @@ def test_splash_does_not_reach_a_ship_at_the_same_coords_in_another_set(monkeypa
     assert stranger not in calls
 
 
+def test_splash_reaches_a_ship_in_another_region_of_the_same_system(monkeypatch):
+    """Two regions of ONE system share a frame: a splash reaches a ship in the
+    other region when it is close in SYSTEM coordinates."""
+    from engine.appc import splash_damage
+    calls = _capture_apply_hit(monkeypatch)
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    off = frames.offset_between(ona1, ona2)          # add to Ona2-local -> Ona1-local
+    dying = _ship(0.0, 0.0, 0.0)
+    dying.SetSplashDamage(500.0, 100.0)               # splash radius covers 100 GU
+    ona1.AddObjectToSet(dying, "Dying")
+    victim = _ship(-off[0] + 50, -off[1], -off[2])    # 50 GU from `dying` in the system
+    ona2.AddObjectToSet(victim, "Victim")
+    splash_damage.apply(dying)
+    assert victim in calls
+
+
+def test_splash_does_not_reach_a_ship_at_equal_local_numbers_in_another_region(monkeypatch):
+    """Same local numbers in two DIFFERENT regions are far apart in the
+    system -- no splash."""
+    from engine.appc import splash_damage
+    calls = _capture_apply_hit(monkeypatch)
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    dying = _ship(0.0, 0.0, 0.0)
+    dying.SetSplashDamage(500.0, 100.0)
+    ona1.AddObjectToSet(dying, "Dying")
+    victim = _ship(50.0, 0.0, 0.0)
+    ona2.AddObjectToSet(victim, "Victim")
+    splash_damage.apply(dying)
+    assert victim not in calls
+
+
 # ── (c) torpedoes: hit and homing ───────────────────────────────────────────
 
 def _torpedo_from(src, vx, vy, vz):

@@ -10,16 +10,34 @@ class _Pt:
         self.x, self.y, self.z = x, y, z
 
 
+# All _Ship() instances default to this one shared, unmapped set, so distance
+# scoring in the existing tests below (none of which care about frames) stays
+# byte-identical to a raw Euclidean distance: same set -> offset (0, 0, 0).
+_DEFAULT_SET = None
+
+
+def _default_set():
+    global _DEFAULT_SET
+    if _DEFAULT_SET is None:
+        from engine.appc.sets import SetClass_Create
+        _DEFAULT_SET = SetClass_Create()
+    return _DEFAULT_SET
+
+
 class _Ship:
-    def __init__(self, pos=(0.0, 0.0, 0.0), radius=1.0):
+    def __init__(self, pos=(0.0, 0.0, 0.0), radius=1.0, pSet=None):
         self._pos = pos
         self._radius = radius
+        self._set = pSet if pSet is not None else _default_set()
 
     def GetWorldLocation(self):
         return _Pt(*self._pos)
 
     def GetRadius(self):
         return self._radius
+
+    def GetContainingSet(self):
+        return self._set
 
 
 @pytest.fixture(autouse=True)
@@ -124,3 +142,38 @@ def test_update_resolves_player_and_refreshes(monkeypatch):
     de.update([player, other])
     assert de.is_eligible(player) is True
     assert id(other) in de.current()
+
+
+# ── frame-aware proximity (system-frames spec §1) ───────────────────────────
+# Two regions of one star system share a frame; an unrelated plain set (e.g.
+# QuickBattle) does not. A ship in another frame must score on size alone --
+# no proximity credit, however close its raw local numbers look.
+
+def test_a_ship_in_another_frame_gets_no_proximity_credit():
+    import App
+    from engine.appc.sets import SetClass_Create
+    from tests.helpers.mapped_regions import load_region
+
+    ona1 = load_region("Ona", "Ona1")
+    qb = SetClass_Create()
+    App.g_kSetManager.AddSet(qb, "QuickBattle")
+    try:
+        player = _Ship(pos=(0.0, 0.0, 0.0), pSet=ona1)
+        # Equal size (radius=10 on both), so the contest is decided purely by
+        # the proximity term. near_other's RAW local numbers put it far
+        # closer to the player than near_same -- a raw (frame-blind) distance
+        # compare would wrongly prefer it. Frame-aware scoring must instead
+        # give it ZERO proximity credit (different frame from the player) and
+        # pick near_same, the one actually near in the player's own frame.
+        far_in_frame = _Ship(pos=(100.0, 0.0, 0.0), radius=10.0, pSet=ona1)
+        near_raw_only = _Ship(pos=(1.0, 0.0, 0.0), radius=10.0, pSet=qb)
+        # Player-always claims one slot (spec §4); max_count=2 leaves exactly
+        # one contested slot.
+        ids = de.select_eligible(player, [near_raw_only, far_in_frame], max_count=2)
+        assert ids == frozenset({id(player), id(far_in_frame)})
+    finally:
+        # load_region() and AddSet() above register into the shared set
+        # manager; this test owns cleaning that up (see
+        # tests/conftest.py:_reset_leakable_engine_globals, which deliberately
+        # leaves g_kSetManager._sets alone for module-scoped fixtures).
+        App.g_kSetManager._sets.clear()

@@ -19,6 +19,14 @@ and RADIUS are the ship's real authored values.
 
 This replaces the earlier artistic AoE that hung off the warp-core breach; the
 breach now only spawns its VFX (shockwave ring + hull carve).
+
+Plan 2 (system-frames spec §1/§6) moves this off the same_set stopgap onto
+FRAMES: the blast centre is expressed in each TARGET's own set-local frame via
+frames.offset_between before any distance/hit-trace math runs, so the hull,
+the ray trace and the fallback point all agree with the frame the target
+actually lives in. Same-set pairs get offset (0, 0, 0) -- byte-identical to
+the raw-coordinate arithmetic this replaces. Different frames -> None -> the
+target is skipped, same as same_set's False.
 """
 import engine.dev_mode as dev_mode
 
@@ -34,16 +42,23 @@ def apply(ship, ship_instances=None) -> None:
         return
 
     from engine.appc import combat
-    from engine.appc.ship_iter import iter_ships, same_set
+    from engine.appc.math import TGPoint3
+    from engine.appc.ship_iter import iter_ships
+    from engine.systems import frames
 
-    centre = ship.GetWorldLocation()
+    centre_set = frames.containing_set(ship)
+    c = ship.GetWorldLocation()
     for target in list(iter_ships()):
         if target is ship:
             continue
-        # A ship in another set is in another coordinate frame (Plan-1
-        # stopgap -- see ship_iter.same_set).
-        if not same_set(ship, target):
+        tgt_set = frames.containing_set(target)
+        # Express the blast centre in the TARGET's set-local frame: the hull,
+        # the ray trace and the fallback point all live there. None = another
+        # frame, which a blast never reaches.
+        off = frames.offset_between(tgt_set, centre_set)
+        if off is None:
             continue
+        centre = TGPoint3(c.x + off[0], c.y + off[1], c.z + off[2])
         loc = target.GetWorldLocation()
         dx = centre.x - loc.x
         dy = centre.y - loc.y

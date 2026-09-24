@@ -9,6 +9,13 @@ engine.appc.hit_feedback reads before emitting a carve.
 Pure selection lives in select_eligible(); update() is the impure glue that
 resolves the current player via App and refreshes the stored set once per
 combat tick (called from engine.host_loop._advance_combat).
+
+Proximity (Plan 2, system-frames spec §1) compares by FRAME via
+engine.systems.frames.system_distance, not raw world-space numbers: a ship in
+another frame (a different set unrelated to the player's) scores zero
+proximity credit no matter how close its raw local coordinates look, since
+1.0 / (1.0 + inf) == 0.0. Same-frame pairs get the real distance -- identical
+to the raw-coordinate arithmetic this replaces.
 """
 
 # Total eligible ships, INCLUDING the player. Tuning knob.
@@ -21,19 +28,8 @@ SIZE_WEIGHT = 1.0
 _current: frozenset = frozenset()
 
 
-def _world_pos(ship):
-    if not hasattr(ship, "GetWorldLocation"):
-        return (0.0, 0.0, 0.0)
-    p = ship.GetWorldLocation()
-    return (p.x, p.y, p.z)
-
-
 def _radius(ship) -> float:
     return float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 0.0
-
-
-def _dist(a, b) -> float:
-    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
 
 def select_eligible(player, ships, *, max_count: int = DEFAULT_MAX_ELIGIBLE):
@@ -53,14 +49,18 @@ def select_eligible(player, ships, *, max_count: int = DEFAULT_MAX_ELIGIBLE):
     if player is not None:
         eligible.add(id(player))
 
-    player_pos = _world_pos(player) if player is not None else None
     max_r = max((_radius(s) for s in ships), default=0.0) or 1.0
 
     def score(s) -> float:
+        from engine.systems import frames
         size = _radius(s) / max_r
-        if player_pos is None:
+        if player is None:
             return SIZE_WEIGHT * size
-        prox = 1.0 / (1.0 + _dist(_world_pos(s), player_pos))
+        # frames.system_distance is math.inf across frames, so a ship in
+        # another frame (e.g. an unrelated set numerically overlapping the
+        # player's) scores zero proximity credit no matter how close its raw
+        # local coordinates look. Same-frame pairs get the real distance.
+        prox = 1.0 / (1.0 + frames.system_distance(s, player))
         return PROX_WEIGHT * prox + SIZE_WEIGHT * size
 
     others = [s for s in ships if player is None or id(s) != id(player)]
