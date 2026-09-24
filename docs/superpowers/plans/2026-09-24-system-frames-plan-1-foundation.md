@@ -1197,3 +1197,23 @@ git commit -m "feat(systems): map every region set inside its module's Initializ
 ## After the last task
 
 Run `scripts/check_tests.sh` one final time on the branch tip and paste its summary line. Then hand back to the controller for the whole-branch review. **Plan 1 has no live pass** — Mark flies after Plan 3.
+
+---
+
+### Task 6: No body may swallow content a mission stages in its region (Prendel 3)
+
+**Added 2026-09-24 after Task 3's finding, on Mark's choice of option A.**
+
+Measured: 7 of the 8 waypoints E5M2 and E6M4 stage in Prendel 3 (`E5M2/Prendel3_P.py`, `E6M4/E6M4_Prendel3_P.py`) lie INSIDE the x20 Prendel 3 body (radius 7200 GU) — the base, three Galors, "Strange Readings" and E5M2's own Player Start (164 GU inside). Across 50 mission placement files matched to mapped regions, Prendel 3 is the only region affected. Task 3's ratchet saw only the region module's own waypoints (which are the bodies' own placement points) and missed all of these. Sliding the planet along the Player-Start→planet ray makes it worse; pushing it directly away from the content clears it (measured: 2,140 GU at 1,000 GU clearance; planet then fills ~90° of sky from Player Start instead of 121°).
+
+**Rule (general, not a Prendel 3 special case):** after a region's bodies are placed and its anchor fixed, no body the region owns may have its surface within `LayoutTuning.staged_clearance_gu = 1000.0` GU of any waypoint STAGED in that region. Staged waypoints = the region module's own `LoadPlacements` waypoints EXCEPT those a body is placed at (a waypoint coinciding with a surveyed body's BC `offset_gu`), plus every mission placement the survey attributes to that set (the same attribution `_mission_extent` already uses). If any body violates it, the region's whole body group (primary and its moons, together, so moon geometry is preserved) is translated directly away from the centroid of the offending waypoints, in steps, until every body clears. The ANCHOR does not move — staged content is set-local, so the anchor is what keeps it where BC put it relative to the player.
+
+**Files:**
+- Modify: `tools/systems/survey.py` — expose staged waypoints per region: `SurveyedRegion.staged_points: list[tuple[str, str, tuple]]` (source label, waypoint name, set-local xyz). Refactor `_mission_extent` so extent and staged points come from ONE scan (extent = max norm over the same points) — never two parsers that can disagree.
+- Modify: `tools/systems/layout.py` — `LayoutTuning.staged_clearance_gu: float = 1000.0`; the push in `_place`, after pins and anchor, before `reach`. Bounded: if it has not converged within a generous bound, raise with the region name (a layout that cannot clear its content must fail loudly, not ship).
+- Modify: `engine/systems/validate.py` — optional rule `staged-clearance` driven by new keyword args `staged_points=None` (dict set_name → list of (label, xyz)) and `staged_clearance_gu=None`; runs only when both are given; region-scoped body lookup (name AND owner_region).
+- Modify: `tools/gen_system_maps.py` — pass the new inputs to `validate()`.
+- Regenerate: `engine/systems/maps/*.json` via the generator (expected: prendel.json changes; report every map that changes and why).
+- Test: `tests/tools/test_system_layout.py` (the push: synthetic region with a waypoint inside the primary → pushed clear, moons move with it, anchor unchanged, direction is away from the content; a region with no violation is byte-identical to before), `tests/unit/test_system_map_validate.py` (rule unit tests: flags, accepts, off without inputs, region-scoped), `tests/unit/test_system_maps_valid.py` — REPLACE the Task 3 ratchet (`KNOWN_WAYPOINTS_INSIDE_BODIES` and `test_no_region_waypoint_is_inside_a_mapped_body`) with `test_no_staged_waypoint_is_within_clearance_of_a_body` over every system using `SurveyedRegion.staged_points`, asserting no problems; plus a non-vacuity test that Prendel3's staged points include E5M2's "Base Location" and "Galor Start" and E6M4's "Base Location".
+
+**Evidence the report must carry:** RED for each new test; the list of regenerated maps; for Prendel 3, before/after: the planet's set-local centre, the push distance and direction, the nearest staged waypoint's clearance, and its apparent angular size from the region's Player Start (`2·asin(r/d)`); the generator `--check` output; the far-plane guard still green (the derived widest sightline may move); the gate summary line.
