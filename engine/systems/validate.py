@@ -349,7 +349,41 @@ def _sequence_field(m, name: str, problems: list) -> list:
     return []
 
 
-def validate(m, *, sdk_set_names=None, pins=None) -> list:
+def _radius_ratio_problems(m, bc_radii: dict, radius_scale: float) -> list:
+    """Every mapped body is exactly radius_scale x the radius BC authored.
+
+    Only orbit DISTANCE is a layout knob that moves between regenerations;
+    body size is BC's radius times one scale. A regeneration that breaks this
+    for one body has changed what the player sees without anyone asking.
+    Region-scoped: BC display names collide within a system (Geble3 and Geble4
+    both name a "Moon 1"), so match name AND owner_region, never name alone.
+    """
+    problems = []
+    for (region_name, body_name), bc_radius in sorted(bc_radii.items()):
+        body = next((b for b in m.bodies
+                     if b.name == body_name and b.owner_region == region_name), None)
+        if body is None:
+            continue
+        want = radius_scale * bc_radius
+        if not math.isclose(body.radius_gu, want, rel_tol=1e-9, abs_tol=1e-9):
+            problems.append(Problem(
+                rule="radius-ratio",
+                detail=f"{region_name}/{body_name}: map radius {body.radius_gu} GU "
+                       f"is not {radius_scale} x BC's {bc_radius} = {want} GU"))
+    return problems
+
+
+def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=None) -> list:
+    """Validate a SystemMap, returning a list of Problems (empty == valid).
+
+    `sdk_set_names` and `pins` gate the region-coverage and pin-respected
+    rules as before. `bc_radii` and `radius_scale` gate the radius-ratio
+    rule -- it only runs when BOTH are given. `bc_radii` is a
+    `{(region_set_name, body_name): bc_radius_gu}` mapping (see
+    `tools.systems.survey.bc_radii`); `radius_scale` is the single scale
+    every mapped body's radius must equal `bc_radius_gu * radius_scale` to
+    (see `tools.systems.layout.LayoutTuning`).
+    """
     problems = []
     bodies = _sequence_field(m, "bodies", problems)
     regions = _sequence_field(m, "regions", problems)
@@ -743,5 +777,8 @@ def validate(m, *, sdk_set_names=None, pins=None) -> list:
                     "cloud-volume-agrees-with-region",
                     f"region {r.set_name!r} authored a nebula sphere "
                     f"{sphere!r} with no matching cloud pocket volume"))
+
+    if bc_radii is not None and radius_scale is not None:
+        problems.extend(_radius_ratio_problems(m, bc_radii, radius_scale))
 
     return problems

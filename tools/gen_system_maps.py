@@ -24,8 +24,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from engine.systems.map import available, load, save  # noqa: E402
 from engine.systems.validate import validate  # noqa: E402
-from tools.systems.layout import ambiguities, layout  # noqa: E402
-from tools.systems.survey import survey_system, system_names  # noqa: E402
+from tools.systems.layout import LayoutTuning, ambiguities, layout  # noqa: E402
+from tools.systems.survey import bc_radii, survey_system, system_names  # noqa: E402
 
 
 def _merge_overrides(fresh, old) -> None:
@@ -124,7 +124,9 @@ def main(argv=None) -> int:
         # (Vesuvi1) is not a destination -- see _ordered() in layout.
         problems = validate(m, sdk_set_names=[r.set_name for r in surveyed.regions
                                               if r.menu_listed],
-                            pins=pins_from(m))
+                            pins=pins_from(m),
+                            bc_radii=bc_radii(surveyed),
+                            radius_scale=LayoutTuning().planet_radius_scale)
         status = "ok" if not problems else f"{len(problems)} PROBLEM(S)"
         where = "(not written)" if args.check else save(m)
         print(f"{name}: {len(m.regions)} regions, {len(m.bodies)} bodies -- "

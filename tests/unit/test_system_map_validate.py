@@ -742,3 +742,64 @@ def test_a_correctly_labelled_harmless_pocket_is_clean():
     m.clouds[0].volumes[0].profile = "nebula"
     m.clouds[0].volumes[0].params = cloud_profiles.params_for("nebula")
     assert validate(m) == []
+
+
+# ---- radius-ratio ---------------------------------------------------------
+
+def _radius_map(radius_p=1900.0) -> SystemMap:
+    """A minimal, otherwise-clean map: one star, one region "R1" owning one
+    body "P" -- the same shape as _valid(), trimmed to a single region so
+    the radius-ratio tests can assert an EXACT problem list."""
+    return SystemMap(
+        system="R",
+        bodies=[
+            Body(name="Sun", display_name="Sun", radius_gu=5000.0,
+                 position_gu=(0.0, 0.0, 0.0), orbits=None,
+                 appearance=Appearance(), owner_region=None),
+            _body("P", (0.0, 22000.0, 0.0), radius=radius_p, owner="R1", orbits="Sun"),
+        ],
+        regions=[
+            Region("R1", (0.0, 18000.0, 0.0), 3000.0, ["P"]),
+        ],
+    )
+
+
+def test_radius_ratio_rule_flags_a_body_off_the_scale():
+    # A body whose map radius is 19x its BC radius, not 20x.
+    m = _radius_map(radius_p=1900.0)
+    probs = validate(m, bc_radii={("R1", "P"): 100.0}, radius_scale=20.0)
+    assert [p.rule for p in probs] == ["radius-ratio"]
+    assert "R1/P" in probs[0].detail
+
+
+def test_radius_ratio_rule_accepts_the_exact_scale():
+    m = _radius_map(radius_p=2000.0)
+    assert [p for p in validate(m, bc_radii={("R1", "P"): 100.0}, radius_scale=20.0)
+            if p.rule == "radius-ratio"] == []
+
+
+def test_radius_ratio_rule_is_off_without_inputs():
+    m = _radius_map(radius_p=1900.0)
+    assert [p for p in validate(m) if p.rule == "radius-ratio"] == []
+
+
+def test_radius_ratio_rule_is_region_scoped():
+    """Body names collide across regions (Geble3 and Geble4 both have a
+    "Moon 1"). The lookup must match name AND owner_region."""
+    m = SystemMap(
+        system="R",
+        bodies=[
+            Body(name="Sun", display_name="Sun", radius_gu=5000.0,
+                 position_gu=(0.0, 0.0, 0.0), orbits=None,
+                 appearance=Appearance(), owner_region=None),
+            _body("Moon 1", (0.0, 22000.0, 0.0), radius=2000.0, owner="R1", orbits="Sun"),
+            _body("Moon 1", (0.0, 60000.0, 0.0), radius=600.0, owner="R2", orbits="Sun"),
+        ],
+        regions=[
+            Region("R1", (0.0, 18000.0, 0.0), 3000.0, ["Moon 1"]),
+            Region("R2", (0.0, 56000.0, 0.0), 3000.0, ["Moon 1"]),
+        ],
+    )
+    probs = validate(m, bc_radii={("R1", "Moon 1"): 100.0, ("R2", "Moon 1"): 30.0},
+                     radius_scale=20.0)
+    assert [p for p in probs if p.rule == "radius-ratio"] == []

@@ -359,3 +359,38 @@ def test_planets_orbit_at_the_doubled_scale():
     # 2026-09-24); the rest are moons. Exact, so a loop that silently stops
     # seeing the maps cannot pass.
     assert checked == 87, f"{checked} planets checked, expected 87"
+
+
+def test_every_mapped_body_is_its_bc_radius_times_the_scale():
+    from engine.systems import map as system_map
+    from engine.systems.validate import validate
+    from tools.systems.layout import LayoutTuning
+    from tools.systems.survey import bc_radii, survey_system, system_names
+
+    scale = LayoutTuning().planet_radius_scale
+    assert LayoutTuning().moon_radius_scale == scale, (
+        "the ratio rule assumes planets and moons share one scale")
+    bad = []
+    for name in system_names():
+        m = system_map.load(name)
+        bad += [p.detail for p in validate(m, bc_radii=bc_radii(survey_system(name)),
+                                           radius_scale=scale)
+                if p.rule == "radius-ratio"]
+    assert bad == []
+
+
+def test_the_ratio_rule_actually_matches_every_mapped_body():
+    """Guards against a vacuous pass: if survey names stopped matching map
+    names, the rule would check nothing and still be green. 118 is the
+    measured count of (region, body) pairs across the 32 maps (2026-09-24);
+    regeneration does not change which bodies exist, only where they are."""
+    from engine.systems import map as system_map
+    from tools.systems.survey import bc_radii, survey_system, system_names
+
+    matched = 0
+    for name in system_names():
+        m = system_map.load(name)
+        for (region_name, body_name) in bc_radii(survey_system(name)):
+            if any(b.name == body_name and b.owner_region == region_name for b in m.bodies):
+                matched += 1
+    assert matched == 118

@@ -413,3 +413,14 @@ def survey_system(system: str) -> SurveyedSystem:
 
 def survey_all() -> list:
     return [survey_system(n) for n in system_names()]
+
+
+def bc_radii(surveyed) -> dict:
+    """{(region_set_name, body_name): BC radius in GU} for every non-sun body.
+
+    The input the validator's radius-ratio rule compares the map against.
+    Suns are excluded: the star is scaled by sun_radius_scale, not the body
+    scale, and systems with no Sun_Create get a generated brown dwarf.
+    """
+    return {(r.set_name, b.name): b.radius_gu
+            for r in surveyed.regions for b in r.bodies if not b.is_sun}
