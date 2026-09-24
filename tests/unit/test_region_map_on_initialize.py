@@ -273,3 +273,23 @@ def test_mission_load_realize_raises_the_alarm_for_a_hand_built_set():
     loader._realize_session(hl.MissionSession(mission_name="t"))
 
     assert region_hooks.unmapped_realized == ["Ona1"]
+
+
+def test_the_mapped_flag_has_one_spelling(monkeypatch):
+    """apply_map marks the set through region_hooks, so the flag's attribute
+    name lives in one place: renaming it there cannot desynchronise the
+    writer (apply_to_set) from the reader (is_mapped / check_realized)."""
+    monkeypatch.setattr(region_hooks, "_FLAG_ATTR", "_renamed_mapped_flag")
+    mod = _fake_region_module("Systems.Ona.Ona1", "Ona1", "Ona 1")
+    region_hooks.on_region_module_exec(mod, "Systems.Ona.Ona1")
+    mod.Initialize()
+    pSet = App.g_kSetManager.GetSet("Ona1")
+    assert region_hooks.is_mapped(pSet)
+    assert getattr(pSet, "_renamed_mapped_flag", False) is True
+
+
+def test_mark_mapped_is_what_is_mapped_reads():
+    pSet = SetClass_Create()
+    assert not region_hooks.is_mapped(pSet)
+    region_hooks.mark_mapped(pSet)
+    assert region_hooks.is_mapped(pSet)

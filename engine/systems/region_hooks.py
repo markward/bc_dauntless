@@ -16,6 +16,19 @@ set, because host_loop's planet_natural_scale caches GetRadius() at realize --
 applied after, a body is DRAWN at BC's radius and TARGETED at the map's.
 check_realized() is the alarm for that: a set whose name resolves to a system
 but which apply_to_set never marked.
+
+A BROKEN MAP INDEX BLINDS THE WRAP AND THE ALARM TOGETHER -- accepted. Both
+ask resolve.system_of(), so if the index cannot be read, the wrap's lookup
+raises inside on_region_module_exec, sdk_overrides._dispatch swallows it (no
+region is wrapped, every set renders unmapped), and check_realized swallows
+the very same failure and reports "fine". What is left is two print lines,
+"[sdk-overrides] override skipped" and "[systems] alarm check failed", and no
+alarm. Accepted because the index is checked-in data, validated by the test
+suite (engine/systems/validate.py and its tests), so a broken one is a build
+defect CI catches, not a runtime state; and because the alternative -- either
+path failing loud -- turns one bad map file into a total rendering outage
+(every region import, every realize), which is worse than rendering BC's
+unmapped placement.
 """
 from __future__ import annotations
 
@@ -32,6 +45,13 @@ def reset() -> None:
 
 def is_mapped(pSet) -> bool:
     return bool(getattr(pSet, _FLAG_ATTR, False))
+
+
+def mark_mapped(pSet) -> None:
+    """Record that apply_map.apply_to_set mapped `pSet` -- the fact
+    check_realized reads, rather than a guess from its bodies' radii. The only
+    writer of the flag, so its attribute name is spelled once."""
+    setattr(pSet, _FLAG_ATTR, True)
 
 
 def on_region_module_exec(module, qualname: str) -> None:

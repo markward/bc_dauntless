@@ -16,8 +16,8 @@ planet_natural_scale`` (engine/host_loop.py) caches
 that cache is populated leaves the body drawn at its old size while every
 other system (physics, hailing, target list, Orbit) already sees the new
 one. Callers must invoke ``apply_to_set`` as part of creating a set, before
-anything realizes it. (Task 4 wires the actual call site; this module only
-provides the function.)
+anything realizes it. Called from engine/systems/region_hooks.py, right after
+a region module's Initialize() returns.
 
 The star is the one exception, with two halves. A set that already holds a
 Sun -- every original per-locale BC script but Belaruz's and Vesuvi's called
@@ -248,7 +248,6 @@ def apply_to_set(pSet, set_name: str) -> bool:
             _place(sun, star_local)
             pSet.AddObjectToSet(sun, star.name)
 
-    # Read by region_hooks.check_realized: the fact that this set was mapped,
-    # rather than a guess from its bodies' radii.
-    pSet._system_map_applied = True
+    from engine.systems import region_hooks
+    region_hooks.mark_mapped(pSet)
     return True
