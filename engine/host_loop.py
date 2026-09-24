@@ -4938,8 +4938,14 @@ def _cache_ship_hull_pieces(ship, handle, r_) -> None:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
 
-def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> None:
+def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
+                        include_planets: bool = True) -> None:
     """Build render instances for ONE set's ships/planets mid-mission.
+
+    `include_planets=False` realizes the ships only, and skips the unmapped-
+    realize alarm with them: the alarm guards the planet-radius cache, which a
+    ships-only realize never fills. Used by `_reconcile_runtime_instances`'s
+    no-player fallback for every set that is not being viewed.
 
     Mirrors the ship/planet instance-building loops in `_MissionLoader.load`,
     filtered to a single set and made idempotent: any object already present in
@@ -4954,8 +4960,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
     nif_to_handle cache (it has no controller here); it loads per object, which
     is correct — the renderer dedupes identical NIFs internally.
     """
-    from engine.systems import region_hooks
-    region_hooks.check_realized(pSet)
+    if include_planets:
+        from engine.systems import region_hooks
+        region_hooks.check_realized(pSet)
 
     r_ = renderer
 
@@ -5039,6 +5046,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 print(f"[host_loop]   realize: shield register skipped for ship: "
                       f"{type(e).__name__}: {e}", flush=True)
 
+    if not include_planets:
+        return
     planet_tex_search = [str(p) for p in
                          _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     for planet in _iter_planets_in_set(pSet):
@@ -5152,7 +5161,14 @@ def _reconcile_runtime_instances(session, renderer, *,
     # systems' ships (the Serris2 Cardassians, the Vesuvi6 Facility, Starbase 12)
     # into the player's scene the tick after load. Idempotent — realize_set_objects
     # skips ships already in session.ship_instances. When no active set is
-    # determinable (no player yet) fall back to the legacy all-sets reconcile.
+    # determinable (no player yet) fall back to the legacy all-sets reconcile
+    # -- for SHIPS. Planets come only from the set being viewed (the explicit
+    # rendered set): since warp departure stopped deleting the set you left,
+    # every left-behind region holds torn-down ships and so qualified here,
+    # and a planet instance, unlike a ship's, is never reconciled away -- the
+    # fallback left ghost planets of unrelated systems in the scene. Ships
+    # keep the legacy walk because the first tick with a player tears down
+    # any not in the active set (REMOVALS below).
     from engine.appc.ship_iter import active_set as _active_set
     act = _active_set()
     if act is not None:
@@ -5160,12 +5176,14 @@ def _reconcile_runtime_instances(session, renderer, *,
         if any(ship not in session.ship_instances for ship in live_ships):
             realize_set_objects(session, act, renderer, verbose=verbose)
     else:
+        viewed = App.g_kSetManager.get_explicit_rendered_set()
         live_ships = set()
         for pSet in App.g_kSetManager._sets.values():
             set_ships = list(_iter_ships_in_set(pSet))
             live_ships.update(set_ships)
             if any(ship not in session.ship_instances for ship in set_ships):
-                realize_set_objects(session, pSet, renderer, verbose=verbose)
+                realize_set_objects(session, pSet, renderer, verbose=verbose,
+                                    include_planets=pSet is viewed)
 
     # REMOVALS: any realized ship not in the live (active-set) roster is destroyed
     # and forgotten — covers both despawns and ships left behind when the player
