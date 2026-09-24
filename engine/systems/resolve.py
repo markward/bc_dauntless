@@ -74,8 +74,12 @@ def for_set(set_name: str) -> tuple | None:
 
 
 def system_of(set_name: str) -> str | None:
-    """The system's name for the set, or None."""
-    found = for_set(set_name)
+    """The system's name for the set, or None.
+
+    An index lookup, never for_set()'s deep copy: engine/systems/frames.py
+    calls this for every frame resolution."""
+    by_set, _ = _index()
+    found = by_set.get(set_name)
     return found[0].system if found is not None else None
 
 

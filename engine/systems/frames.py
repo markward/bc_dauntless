@@ -1,0 +1,106 @@
+"""One way to compare positions across sets (system-frames spec §1).
+
+A set belongs to exactly one FRAME. A mapped region (a set its region module
+created, which apply_map marked) is in its star system's frame, anchored at
+the region's anchor_gu. Every other set -- Starbase 12, a mission's own set,
+the warp transit set, the bridge, QuickBattle, and a set that merely carries a
+region's NAME but was never mapped -- is its own one-set frame with a zero
+anchor.
+
+Positions stay set-local everywhere BC can see them. Engine code converts only
+when it compares, and the primitive is offset_between(set_a, set_b): add it to
+a point in b's set-local coordinates to express that point in a's. Same set
+-> zero, so same-set results are byte-identical to comparing raw numbers.
+Different frames -> None: they never interact. An object in no set has no
+frame and interacts with nothing.
+
+No cache: anchor_of() is a dict lookup returning an immutable tuple, and a
+set's frame can change exactly once, when the region hook marks it mapped
+after BC's Initialize() -- a cache would have to know that; a lookup does not.
+"""
+from __future__ import annotations
+
+import math
+from typing import NamedTuple
+
+_ZERO = (0.0, 0.0, 0.0)
+
+
+class Frame(NamedTuple):
+    key: tuple
+    anchor_gu: tuple
+
+
+def frame_of(pSet):
+    from engine.appc.sets import SetClass
+    if not isinstance(pSet, SetClass):
+        return None
+    from engine.systems import region_hooks, resolve
+    if region_hooks.is_mapped(pSet):
+        name = pSet.GetName()
+        anchor = resolve.anchor_of(name)
+        system = resolve.system_of(name)
+        if anchor is not None and system is not None:
+            return Frame(("system", system), tuple(float(c) for c in anchor))
+    return Frame(("set", pSet), _ZERO)
+
+
+def _containing_set(obj):
+    from engine.core.ids import implements
+    if obj is None or not implements(obj, "GetContainingSet"):
+        return None
+    return obj.GetContainingSet()
+
+
+def frame_of_object(obj):
+    return frame_of(_containing_set(obj))
+
+
+def offset_between(set_a, set_b):
+    fa, fb = frame_of(set_a), frame_of(set_b)
+    if fa is None or fb is None or fa.key != fb.key:
+        return None
+    if set_a is set_b:
+        return _ZERO
+    return tuple(b - a for a, b in zip(fa.anchor_gu, fb.anchor_gu))
+
+
+def _xyz(obj):
+    p = obj.GetWorldLocation()
+    return (p.x, p.y, p.z)
+
+
+def local_in(set_a, obj):
+    off = offset_between(set_a, _containing_set(obj))
+    if off is None:
+        return None
+    x, y, z = _xyz(obj)
+    return (x + off[0], y + off[1], z + off[2])
+
+
+def same_frame(a, b) -> bool:
+    return offset_between(_containing_set(a), _containing_set(b)) is not None
+
+
+def system_position(obj):
+    f = frame_of_object(obj)
+    if f is None:
+        return None
+    x, y, z = _xyz(obj)
+    return (f.key, x + f.anchor_gu[0], y + f.anchor_gu[1], z + f.anchor_gu[2])
+
+
+def system_distance(a, b) -> float:
+    pb = local_in(_containing_set(a), b)
+    if pb is None:
+        return math.inf
+    return math.dist(_xyz(a), pb)
+
+
+def viewing_set():
+    import App
+    s = App.g_kSetManager.get_explicit_rendered_set()
+    if s is not None:
+        return s
+    from engine.appc.ship_iter import active_set
+    return active_set()
