@@ -158,3 +158,23 @@ def test_containing_set_is_the_public_accessor():
     s = _ship(ona1, "S", (0.0, 0.0, 0.0))
     assert frames.containing_set(s) is ona1
     assert frames.containing_set(None) is None
+
+
+def test_viewing_set_ignores_the_bridge_and_interior_sets(monkeypatch):
+    """A cutscene ending on ChangeRenderedSet("bridge") -- or an interior set
+    built by MissionLib.SetupBridgeSet (SetBackgroundModel) -- is not a space
+    scene: the world scene stays the player's set."""
+    from engine.appc.bridge_set import BridgeSet_Create
+    ona1 = load_region("Ona", "Ona1")
+    player = _ship(ona1, "Player", (0.0, 0.0, 0.0))
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
+    App.g_kSetManager.AddSet(BridgeSet_Create(), "bridge")
+    eng = _plain_set("EngineeringSet")
+    eng.SetBackgroundModel("data/Models/Sets/DBridge/DBridge.nif")
+    App.g_kSetManager.MakeRenderedSet("bridge")
+    assert frames.viewing_set() is ona1
+    App.g_kSetManager.MakeRenderedSet("EngineeringSet")
+    assert frames.viewing_set() is ona1
+    assert frames.is_space_scene(ona1) is True
+    assert frames.is_space_scene(eng) is False
+    assert frames.is_space_scene(None) is False

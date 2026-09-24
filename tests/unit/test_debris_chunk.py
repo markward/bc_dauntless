@@ -4,6 +4,7 @@ import pytest
 
 from engine.appc.math import TGPoint3, TGMatrix3
 from tests.helpers.one_set import share_one_set
+from tests.helpers.viewed_set import viewed_set, release_viewed_set
 
 
 class _FakeRenderer:
@@ -25,6 +26,8 @@ class _Parent:
         self._vel = TGPoint3(1.0, 0.0, 0.0)
 
     def GetWorldLocation(self): return self._loc
+    # In the viewed set: a chunk's transform is pushed only in the viewed frame.
+    def GetContainingSet(self): return viewed_set()
     def GetWorldRotation(self): return self._rot
     def GetVelocity(self): return self._vel
     def GetMass(self): return 120.0
@@ -39,6 +42,7 @@ def _clean():
     dc.clear(_FakeRenderer())
     yield
     dc.clear(_FakeRenderer())
+    release_viewed_set()
 
 
 def _spawn(dc, iid=101, cells=200, centroid=(2.0, 0.0, 0.0), radius=0.5, rng=None):

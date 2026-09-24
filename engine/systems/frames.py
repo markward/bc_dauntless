@@ -126,10 +126,47 @@ def system_distance(a, b) -> float:
     return math.dist(_xyz(a), pb)
 
 
+# "No `view` given": the aggregators that take an optional view keyword
+# (host_loop._aggregate_planets, lens_flare.aggregate_lens_flares_for_renderer)
+# default to this, so view=None can mean "nothing is viewed" (-> empty).
+UNSCOPED = object()
+
+
+def is_space_scene(pSet) -> bool:
+    """True for a set the WORLD scene can show; False for the bridge and for
+    interior/comm rooms.
+
+    BC builds the two non-space kinds one way each: the main bridge is a
+    BridgeSet (LoadBridge.py: App.BridgeSet_Create(), registered as
+    "bridge"), and every other room -- EngineeringSet, DBridgeSet,
+    FedOutpostSet_Graff, LiuSet, ... -- comes from MissionLib.SetupBridgeSet,
+    which calls SetBackgroundModel (the only SDK caller of it). That is the
+    same line host_loop._realize_comm_sets draws when it picks the comm rooms
+    out of g_kSetManager (skip "bridge", take sets with a background model).
+    """
+    from engine.appc.sets import SetClass
+    if not isinstance(pSet, SetClass):
+        return False
+    from engine.appc.bridge_set import BridgeSet
+    if isinstance(pSet, BridgeSet):
+        return False
+    import App
+    if App.g_kSetManager._sets.get("bridge") is pSet:
+        return False
+    return pSet.GetBackgroundModelNIF() is None
+
+
 def viewing_set():
+    """The set the world scene is drawn in: the explicit rendered set when it
+    is a space scene (an in-space cutscene), else the player's set.
+
+    Cutscenes end with CameraScriptActions.ChangeRenderedSet("bridge")
+    (E6M1, E6M2, E7M1, E8M1, ...) and only a warp arrival resets it, so the
+    explicit rendered set is routinely the bridge while the player flies in
+    tactical view; that must not blank the world scene."""
     import App
     s = App.g_kSetManager.get_explicit_rendered_set()
-    if s is not None:
+    if s is not None and is_space_scene(s):
         return s
     from engine.appc.ship_iter import active_set
     return active_set()

@@ -137,6 +137,9 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
         bank._charge_level = bank._max_charge
 
     target = _target_with_shields()
+    # In the shooter's (viewed) set, as target_ship_at places its targets: the
+    # beam's target end is drawn from the target's own set.
+    target._containing_set = ship.GetContainingSet()
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)

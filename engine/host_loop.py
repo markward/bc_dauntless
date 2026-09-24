@@ -1130,8 +1130,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
             _build_dynamic_light_render_data(),
             _build_emitter_light_render_data(ship_instances, ship_emitters,
                                              player=player)))
-        from engine.appc import shockwaves as _shockwaves
-        host_io.set_shockwaves(_shockwaves.render_data())
+        host_io.set_shockwaves(_build_shockwave_render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
         host_io.set_phaser_beams(_build_phaser_beam_render_data(
@@ -1510,6 +1509,9 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         return out          # Cinematic Lighting off — cast no emitter lights.
     from engine.appc.subsystem_glow import commanded_impulse_frac
 
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     now = App.g_kUtopiaModule.GetGameTime()
     # Warp-nacelle brightening is player-only and only during a cross-system
     # warp; computed once per frame rather than per ship.
@@ -1531,7 +1533,14 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         # is the point: a gated-out ship skips every emitter below. The LIVE
         # location is fine here: a one-tick error on the ~86 GU cull band is
         # invisible, and it is the only pose read left in this producer.
-        fade = _camera_distance_fade((loc.x, loc.y, loc.z))
+        # The eye is in the viewed set's coordinates, so the hull position is
+        # converted into them first; a ship outside the viewed frame casts
+        # nothing into the scene.
+        hull = _frames.in_view(view, _frames.containing_set(ship),
+                               loc.x, loc.y, loc.z)
+        if hull is None:
+            continue
+        fade = _camera_distance_fade(hull)
         if fade is None:
             continue
         _wg = warp_glow if ship is player else None
@@ -1555,6 +1564,25 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
             except Exception as _e:
                 dev_mode.log_swallowed("emitter light produce", _e)
                 continue
+    return out
+
+
+def _build_shockwave_render_data():
+    """Warp-core breach shockwaves in the viewed frame, centred in the viewed
+    set's coordinates. A breach in a left-behind set stays out of the scene;
+    the birth set ("set") never reaches the renderer."""
+    from engine.appc import shockwaves as _shockwaves
+    out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
+    for entry in _shockwaves.render_data():
+        pos = _frames.in_view(view, entry["set"], *entry["world_center"])
+        if pos is None:
+            continue
+        d = {k: v for k, v in entry.items() if k != "set"}
+        d["world_center"] = pos
+        out.append(d)
     return out
 
 
@@ -1607,7 +1635,16 @@ def _build_particle_render_data(ship_instances=None):
     `ship_instances` is the session's ship→instance-id map (same dict
     used by set_hit_vfx). When None, emitters render unattached at their
     world emit_pos (instance_id will be None in every descriptor).
+
+    World-anchored descriptors (no instance) are frame-scoped: kept only in
+    the viewed frame, their emit_pos in the viewed set's coordinates -- an
+    effect on a left-behind set's (unrealized) ship stays out of the scene.
+    Instance-attached ones are body-frame; the pass resolves them through
+    inst->world. No viewed set: nothing is sent.
     """
+    view = _frames.viewing_set()
+    if view is None:
+        return []
 
     def _resolve_emit_attach(emit_from):
         """Map a controller's emit-from object to its renderer instance id +
@@ -1626,7 +1663,9 @@ def _build_particle_render_data(ship_instances=None):
         except Exception:
             return None
 
-    return particles.snapshot_descriptors(resolve_attach=_resolve_emit_attach)
+    return particles.snapshot_descriptors(
+        resolve_attach=_resolve_emit_attach,
+        to_view=lambda pSet, p: _frames.in_view(view, pSet, *p))
 
 
 # Tunable scale applied to SDK-declared beam radii (PhaserWidth /
@@ -1790,29 +1829,44 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     The beam endpoint comes from _beam_endpoint: the shield bubble while a
     facing is live, otherwise the mesh-trace hull surface (which needs
     `ship_instances`), otherwise the target's centre.
+
+    Each endpoint is in its OWN object's set-local coordinates: "emitter" in
+    the firing ship's set, "target" in the target's set (the aim point is
+    read off the target). A pair in two regions of one star system meets in
+    the TARGET's coordinates for the geometry (the bubble and the mesh trace
+    are the target's); a pair in two frames draws no beam. Same set: every
+    shift is the identity, so the arithmetic is exactly the one-set path.
     """
     target = bank._target
     if target is None:
         return []
+    ship_set = _frames.containing_set(ship)
+    target_set = _frames.containing_set(target)
+    # target-local -> ship-local; identity for one set (including "no set").
+    to_ship = (0.0, 0.0, 0.0) if ship_set is target_set else \
+        _frames.offset_between(ship_set, target_set)
+    if to_ship is None:
+        return []
     target_pos, target_sub = _phaser_aim_point(ship, target)
     # Strip emit point for curved phaser banks; point emitters (tractors,
     # Length 0) collapse this to the emitter mount world position.
-    emitter_pos = bank._strip_emit_position(target_pos)
-    dx = target_pos.x - emitter_pos.x
-    dy = target_pos.y - emitter_pos.y
-    dz = target_pos.z - emitter_pos.z
+    emitter_pos = bank._strip_emit_position(_frames.shifted(target_pos, to_ship))
+    emitter_t = _frames.shifted(emitter_pos, to_ship, -1.0)   # in target's set
+    dx = target_pos.x - emitter_t.x
+    dy = target_pos.y - emitter_t.y
+    dz = target_pos.z - emitter_t.z
     raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
     beam_length = raw_length
     beam_end = target_pos
     if raw_length > 1e-6:
         aim_unit = TGPoint3(dx / raw_length, dy / raw_length, dz / raw_length)
         beam_end = _beam_endpoint(
-            target=target, emitter_pos=emitter_pos, aim_unit=aim_unit,
+            target=target, emitter_pos=emitter_t, aim_unit=aim_unit,
             raw_length=raw_length, ship_instances=ship_instances,
             fallback=beam_end)
-        cdx = beam_end.x - emitter_pos.x
-        cdy = beam_end.y - emitter_pos.y
-        cdz = beam_end.z - emitter_pos.z
+        cdx = beam_end.x - emitter_t.x
+        cdy = beam_end.y - emitter_t.y
+        cdz = beam_end.z - emitter_t.z
         beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
     tile_per_unit = bank.GetLengthTextureTilePerUnit()
     u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
@@ -1861,12 +1915,19 @@ def _ships_in_view(ships):
             yield ship, pSet, view
 
 
-def _beam_in_view(d, view, pSet):
-    """Both beam endpoints, computed in the firing ship's set, expressed in
-    the viewed set's coordinates. Same set: the tuples untouched."""
-    d["emitter"] = _frames.in_view(view, pSet, *d["emitter"])
-    d["target"] = _frames.in_view(view, pSet, *d["target"])
-    return d
+def _beam_pair_in_view(pair, view, ship_set, target):
+    """The descriptor pair with each endpoint expressed in the viewed set's
+    coordinates -- "emitter" from the firing ship's set, "target" from the
+    target's (see _beam_descriptor_pair) -- or [] when either end is outside
+    the viewed frame. Same set: the tuples untouched."""
+    target_set = _frames.containing_set(target)
+    for d in pair:
+        e = _frames.in_view(view, ship_set, *d["emitter"])
+        t = _frames.in_view(view, target_set, *d["target"])
+        if e is None or t is None:
+            return []
+        d["emitter"], d["target"] = e, t
+    return pair
 
 
 def _build_phaser_beam_render_data(ships, ship_instances=None):
@@ -1885,8 +1946,9 @@ def _build_phaser_beam_render_data(ships, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            for d in _beam_descriptor_pair(ship, bank, ship_instances):
-                _beam_in_view(d, view, pSet)
+            for d in _beam_pair_in_view(
+                    _beam_descriptor_pair(ship, bank, ship_instances),
+                    view, pSet, bank._target):
                 c = d["color"]
                 d["color"] = (c[0] * PHASER_BEAM_BRIGHTNESS,
                               c[1] * PHASER_BEAM_BRIGHTNESS,
@@ -1932,8 +1994,9 @@ def _build_tractor_beam_render_data(ships, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            for d in _beam_descriptor_pair(ship, bank, ship_instances):
-                _beam_in_view(d, view, pSet)
+            for d in _beam_pair_in_view(
+                    _beam_descriptor_pair(ship, bank, ship_instances),
+                    view, pSet, bank._target):
                 d["end_width_scale"] = TRACTOR_BEAM_END_WIDTH_SCALE
                 c = d["color"]
                 d["color"] = (c[0] * TRACTOR_BEAM_BRIGHTNESS,
@@ -4395,10 +4458,7 @@ def _warp_clear_turn():
     _warp_turn_start_R = None
 
 
-_ALL_SETS = object()   # _aggregate_planets' unscoped default
-
-
-def _aggregate_planets(pSets, *, view=_ALL_SETS):
+def _aggregate_planets(pSets, *, view=_frames.UNSCOPED):
     """Return list[dict] {position, radius} for Planet objects across pSets,
     feeding the dust pass's proximity density scaling. Planets with
     radius <= 0 are dropped (they cannot define an influence sphere).
@@ -4410,7 +4470,7 @@ def _aggregate_planets(pSets, *, view=_ALL_SETS):
     out = []
     if view is None:
         return out
-    scoped = view is not _ALL_SETS
+    scoped = view is not _frames.UNSCOPED
     for pSet in pSets:
         if scoped and _frames.offset_between(view, pSet) is None:
             continue

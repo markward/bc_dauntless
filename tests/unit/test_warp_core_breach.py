@@ -53,8 +53,9 @@ def _patch_ships(monkeypatch, ships):
 def _spy_shockwave(monkeypatch):
     from engine.appc import shockwaves
     spawned = []
+    # pSet: the breaching ship's set, which the render feed scopes by.
     monkeypatch.setattr(shockwaves, "spawn",
-                        lambda center, max_radius, lifetime:
+                        lambda center, max_radius, lifetime, pSet=None:
                         spawned.append((center, max_radius, lifetime)))
     return spawned
 

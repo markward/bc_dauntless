@@ -280,16 +280,24 @@ def test_a_hull_hit_records_the_ships_set(world, monkeypatch):
 # ── beams ───────────────────────────────────────────────────────────────────
 
 class _Bank:
+    """A firing bank aimed at its own ship: both beam ends in one set (the
+    cross-set case runs the real descriptor path, further down)."""
+    def __init__(self, target):
+        self._target = target
+
     def IsFiring(self):
         return True
 
 
 class _System:
+    def __init__(self, ship):
+        self._ship = ship
+
     def GetNumWeapons(self):
         return 1
 
     def GetWeapon(self, i):
-        return _Bank()
+        return _Bank(self._ship)
 
 
 def _beam_ship(pSet, name, xyz):
@@ -297,8 +305,8 @@ def _beam_ship(pSet, name, xyz):
     s.SetName(name)
     pSet.AddObjectToSet(s, name)
     s.SetTranslateXYZ(*xyz)
-    s.GetPhaserSystem = lambda: _System()
-    s.GetTractorBeamSystem = lambda: _System()
+    s.GetPhaserSystem = lambda: _System(s)
+    s.GetTractorBeamSystem = lambda: _System(s)
     return s
 
 
@@ -323,3 +331,270 @@ def test_beams_by_frame(world, monkeypatch, builder):
     bx = _shifted(B, off)
     assert any(e == pytest.approx(bx) for e in emitters)
     assert any(t == pytest.approx((bx[0], bx[1] + 1.0, bx[2])) for t in targets)
+
+
+# ═════ Fix round 1 ═══════════════════════════════════════════════════════════
+
+# ── (1) the bridge is not a space scene ─────────────────────────────────────
+
+def _bridge():
+    from engine.appc.bridge_set import BridgeSet_Create
+    b = BridgeSet_Create()
+    App.g_kSetManager.AddSet(b, "bridge")
+    return b
+
+
+def test_feeds_survive_a_cutscene_that_ends_on_the_bridge(monkeypatch):
+    """E6M1:1651 & co end cutscenes with ChangeRenderedSet("bridge"), and only
+    a warp resets it -- the tactical view must keep drawing the player's set."""
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    _bridge()
+    player = App.ShipClass_Create()
+    player.SetName("Player")
+    ona1.AddObjectToSet(player, "Player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
+    _torpedo(ona1, "t", A)
+
+    App.g_kSetManager.MakeRenderedSet("bridge")
+    (entry,) = host_loop._build_torpedo_render_data()
+    assert entry["position"] == A                  # Ona1's own coordinates
+
+    App.g_kSetManager.MakeRenderedSet("Ona2")      # a space cutscene
+    (entry,) = host_loop._build_torpedo_render_data()
+    assert entry["position"] == pytest.approx(
+        _shifted(A, frames.offset_between(ona2, ona1)))
+
+
+# ── (2) beams: each endpoint in its own set, real descriptor path ──────────
+
+def _tractor_pair(shooter_set, shooter_xyz, target_set, target_xyz):
+    from unittest.mock import patch
+    from tests.unit.test_tractor_beam_render_data import (
+        _ship_with_tractor, _target)
+    ship, parent = _ship_with_tractor()
+    target = _target()
+    shooter_set.AddObjectToSet(ship, "Source")
+    target_set.AddObjectToSet(target, "Target")
+    # Engage at the helpers' in-range positions, THEN place the pair: the
+    # weapon's range gate is not what this file tests, the drawn beam is.
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        parent.StartFiring(target, None)
+    assert parent.IsFiring()
+    ship.SetTranslateXYZ(*shooter_xyz)
+    target.SetTranslateXYZ(*target_xyz)
+    return ship
+
+
+def test_a_beam_across_regions_draws_each_end_in_its_own_set(world):
+    ona1, ona2, _other, off = world
+    # The same geometry built in ONE set: the target where Ona2's (0,50,0)
+    # sits in Ona1's coordinates.
+    base_ship = _tractor_pair(ona1, (0.0, 0.0, 0.0),
+                              ona1, _shifted((0.0, 50.0, 0.0), off))
+    baseline = host_loop._build_tractor_beam_render_data([base_ship])
+    ona1.RemoveObjectFromSet("Source")
+    ona1.RemoveObjectFromSet("Target")
+    assert len(baseline) == 2
+
+    ship = _tractor_pair(ona1, (0.0, 0.0, 0.0), ona2, (0.0, 50.0, 0.0))
+    out = host_loop._build_tractor_beam_render_data([ship])
+    assert len(out) == 2
+    for got, want in zip(out, baseline):
+        assert got["emitter"] == pytest.approx(want["emitter"])
+        assert got["target"] == pytest.approx(want["target"])
+    assert out[0]["target"] == pytest.approx(_shifted((0.0, 50.0, 0.0), off))
+
+    # Viewed from Ona2 the TARGET end is raw and the emitter end shifts.
+    App.g_kSetManager.MakeRenderedSet("Ona2")
+    back = frames.offset_between(ona2, ona1)
+    out2 = host_loop._build_tractor_beam_render_data([ship])
+    assert out2[0]["target"] == pytest.approx((0.0, 50.0, 0.0))
+    assert out2[0]["emitter"] == pytest.approx(
+        _shifted(baseline[0]["emitter"], back))
+
+
+def test_a_beam_at_a_target_in_another_frame_is_not_drawn(world):
+    ona1, _ona2, other, _off = world
+    ship = _tractor_pair(ona1, (0.0, 0.0, 0.0), other, (0.0, 50.0, 0.0))
+    assert host_loop._build_tractor_beam_render_data([ship]) == []
+
+
+# ── (3) shockwaves ──────────────────────────────────────────────────────────
+
+def test_shockwaves_by_frame(world):
+    from engine.appc import shockwaves
+    ona1, ona2, other, off = world
+    shockwaves.reset()
+    try:
+        shockwaves.spawn(TGPoint3(*A), 1.0, 5.0, pSet=ona1)
+        shockwaves.spawn(TGPoint3(*B), 2.0, 5.0, pSet=ona2)
+        shockwaves.spawn(TGPoint3(*C), 3.0, 5.0, pSet=other)
+        out = host_loop._build_shockwave_render_data()
+    finally:
+        shockwaves.reset()
+    by_r = {e["max_radius"]: e["world_center"] for e in out}
+    assert by_r[1.0] == A
+    assert by_r[2.0] == pytest.approx(_shifted(B, off))
+    assert 3.0 not in by_r
+    for e in out:
+        assert set(e) == {"world_center", "max_radius", "age", "lifetime"}
+
+
+def test_a_breach_shockwave_records_the_ships_set(world, monkeypatch):
+    from engine.appc import shockwaves, warp_core_breach, core_breach_carve
+    ona1, ona2, *_ = world
+    monkeypatch.setattr(core_breach_carve, "schedule", lambda ship: None)
+    ship = App.ShipClass_Create()
+    ship.SetName("Doomed")
+    ona2.AddObjectToSet(ship, "Doomed")
+    seen = []
+    monkeypatch.setattr(shockwaves, "spawn",
+                        lambda c, r, l, pSet=None: seen.append(pSet))
+    monkeypatch.setattr(ship, "GetPowerSubsystem", lambda: object())
+    import engine.appc.subsystems as subs
+    monkeypatch.setattr(subs, "subsystem_world_position",
+                        lambda core, s: TGPoint3(*B))
+    warp_core_breach.detonate(ship)
+    assert seen == [ona2]
+
+
+# ── (3) world-anchored particles ────────────────────────────────────────────
+
+def _world_smoke(pSet, xyz):
+    from engine.appc import particles as P
+    c = P.AnimTSParticleController()
+    c.SetEmitLife(1.0); c.SetEmitFrequency(0.05); c.SetEffectLifeTime(100.0)
+    c.CreateTarget("data/Textures/Effects/ExplosionB.tga")
+    c.SetEmitPositionAndDirection(xyz, (0.0, -1.0, 0.0))
+    c.AttachEffect(pSet.GetEffectRoot())
+    P.EffectAction_Create(c).Start()
+    return c
+
+
+def test_world_anchored_particles_by_frame(world):
+    from engine.appc import particles as P
+    ona1, ona2, other, off = world
+    P.reset()
+    try:
+        _world_smoke(ona1, A)
+        _world_smoke(ona2, B)
+        _world_smoke(other, C)
+        got = [d["emit_pos"] for d in host_loop._build_particle_render_data({})]
+    finally:
+        P.reset()
+    assert len(got) == 2
+    assert A in got
+    assert any(p == pytest.approx(_shifted(B, off)) for p in got)
+
+
+def test_a_particle_on_an_unrealized_ship_is_placed_by_the_ships_set(world):
+    """The wreck-site branch: an emit-from ship with no render instance --
+    every ship in a left-behind set -- is drawn at its GetWorldLocation."""
+    from engine.appc import particles as P
+    ona1, ona2, other, off = world
+    P.reset()
+    try:
+        for pSet, name, xyz in ((ona1, "a", A), (ona2, "b", B), (other, "c", C)):
+            s = App.ShipClass_Create()
+            s.SetName(name)
+            pSet.AddObjectToSet(s, name)
+            s.SetTranslateXYZ(*xyz)
+            c = _world_smoke(pSet, (0.0, 0.0, 0.0))
+            c.SetEmitFromObject(s)
+        got = [d["emit_pos"] for d in host_loop._build_particle_render_data({})]
+    finally:
+        P.reset()
+    assert len(got) == 2
+    assert A in got
+    assert any(p == pytest.approx(_shifted(B, off)) for p in got)
+
+
+def test_instance_attached_particles_pass_through_untouched(world):
+    """Resolved in C++ through inst->world (particle_pass.cc:185-189): the
+    body-frame emit_pos must not be shifted."""
+    from engine.appc import particles as P
+    ona1, *_ = world
+    P.reset()
+    try:
+        s = App.ShipClass_Create()
+        s.SetName("a")
+        ona1.AddObjectToSet(s, "a")
+        c = _world_smoke(ona1, (0.0, 1.0, 0.0))
+        c.SetEmitFromObject(s)
+        (d,) = host_loop._build_particle_render_data({s: 7})
+    finally:
+        P.reset()
+    assert d["instance_id"] == 7
+    assert d["emit_pos"] == (0.0, 1.0, 0.0)
+
+
+# ── (3) debris chunks ───────────────────────────────────────────────────────
+
+class _ChunkRenderer:
+    def __init__(self):
+        self.transforms, self.visible = {}, {}
+
+    def set_world_transform(self, iid, mat):
+        self.transforms[iid] = mat
+
+    def set_visible(self, iid, v):
+        self.visible[iid] = v
+
+    def destroy_instance(self, iid):
+        pass
+
+
+def test_debris_chunks_by_frame(world, monkeypatch):
+    from engine.appc import debris_chunk as dc
+    ona1, ona2, other, off = world
+    monkeypatch.setattr(host_loop, "_world_matrix_from",
+                        lambda o, rot, scale: (o.x, o.y, o.z))
+    r = _ChunkRenderer()
+    dc.clear(r)
+    try:
+        chunks = []
+        for iid, (pSet, name, xyz) in enumerate(
+                ((ona1, "a", A), (ona2, "b", B), (other, "c", C)), start=1):
+            s = App.ShipClass_Create()
+            s.SetName(name)
+            pSet.AddObjectToSet(s, name)
+            s.SetTranslateXYZ(*xyz)
+            chunks.append(dc.spawn(iid, s, 100, (0.0, 0.0, 0.0), 0.5,
+                                   parent_mass=100.0, parent_occupied_cells=1000))
+        origins = {c.iid: c._mesh_origin() for c in chunks}
+        dc.tick(0.0, r)
+    finally:
+        dc.clear(r)
+    oa, ob = origins[1], origins[2]
+    assert r.transforms[1] == (oa.x, oa.y, oa.z)
+    assert 1 not in r.visible, "a same-set chunk makes no visibility call"
+    assert r.transforms[2] == pytest.approx(_shifted((ob.x, ob.y, ob.z), off))
+    assert 3 not in r.transforms
+    assert r.visible[3] is False
+
+
+# ── (3) emitter-light fade on the converted hull position ──────────────────
+
+def test_emitter_light_fade_judges_the_converted_hull_position(world):
+    from tests.unit.test_dynamic_light_camera_fade import _point_prop, _Sub
+    from engine.appc import light_emitters
+    ona1, ona2, other, off = world
+    host_loop._note_camera_eye((0.0, 0.0, 0.0))
+    ships, emitters = {}, {}
+    placements = ((ona1, "a", (20.0, 0.0, 0.0)),
+                  (ona2, "b", (-off[0], -off[1], -off[2])),   # -> the origin
+                  (other, "c", (0.0, 0.0, 0.0)))
+    for iid, (pSet, name, xyz) in enumerate(placements, start=1):
+        s = App.ShipClass_Create()
+        s.SetName(name)
+        pSet.AddObjectToSet(s, name)
+        s.SetTranslateXYZ(*xyz)
+        prop = _point_prop(intensity=2.0)
+        spec = light_emitters.baked_emitters(prop)[0]
+        ships[s] = iid
+        emitters[iid] = [(_Sub(prop), False, False, 0.0, spec,
+                          light_emitters.emitter_spec_to_struct(spec))]
+    out = host_loop._build_emitter_light_render_data(ships, emitters)
+    assert sorted(d["instance_id"] for d in out) == [1, 2]
+    assert all(d["intensity"] == pytest.approx(2.0) for d in out)

@@ -4,14 +4,21 @@ from engine.appc.particles import AnimTSParticleController
 
 def test_build_particle_render_data_snapshots_active():
     import engine.host_loop as hl
+    from tests.helpers.viewed_set import viewed_set, release_viewed_set
     P.reset()
     c = AnimTSParticleController()
     c.SetEmitPositionAndDirection((1.0, 0.0, 0.0), (0.0, -1.0, 0.0))
     c.CreateTarget("data/Textures/Effects/ExplosionB.tga")
     c.AddSizeKey(0.0, 1.0)
+    # Attached to the viewed set's effect root, as the SDK attaches effects:
+    # the world-anchored particle feed carries only the viewed frame.
+    c.AttachEffect(viewed_set().GetEffectRoot())
     P.EffectAction_Create(c).Start()
     P.advance(0.1)
-    data = hl._build_particle_render_data()
+    try:
+        data = hl._build_particle_render_data()
+    finally:
+        release_viewed_set()
     assert len(data) == 1
     assert data[0]["emit_pos"] == (1.0, 0.0, 0.0)
     assert data[0]["texture_path"].endswith("ExplosionB.tga")
