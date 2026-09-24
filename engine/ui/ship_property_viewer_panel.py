@@ -267,6 +267,31 @@ class ShipPropertyViewerPanel(Panel):
     def open(self) -> None:
         self._last_pushed = None
         ship = self._ship_getter()
+        # ── Settle the POSE before anything reads it ──────────────────────
+        # This runs FIRST, above build_descriptors, and the order is the
+        # feature. `build_descriptors` resolves `subsystem_world_position`
+        # once and CACHES it as `descriptor["world_pos"]`; that tuple is what
+        # `subsystem_pins()` hands the renderer and what `pick_pin` picks
+        # against. Build it first and every pin is captured in the ship's
+        # live articulated pose, so forcing the anchor pose afterwards moves
+        # the hull and leaves the pins floating clear of it -- shipped twice.
+        #
+        # Preview lock (Task 7): a stale forced state from whatever was open
+        # before (or left by the 'K' dev keybinding) must not carry into a
+        # freshly-opened ship -- the lock is read live from
+        # articulation.dev_override() (see _mount_lock_state_and_reason), so
+        # clearing it here is the only reset this needs.
+        from engine.appc import articulation as _articulation
+        _articulation.set_dev_override(None)
+        # ...and SNAP this ship to that released state's pose right now. The
+        # SPV freezes the sim, so `tick_ship` will not run again until it
+        # closes: without this the hull would keep whatever angles it held
+        # when the pause menu opened, and a mount authored through it would
+        # be recorded ~0.9 ship units out at a wingtip. force_pose writes the
+        # ONE dict every reader of a live pose consults, so the mesh, the
+        # pins and the derived-box queries all resolve the same angle.
+        _articulation.force_pose(ship, None)
+        # ── ...and only now resolve anything FROM it ──────────────────────
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self._model_part_nodes = self._fetch_model_part_nodes()
         self._model_parts_show_all = False
@@ -283,22 +308,6 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_emitter = {}
         self._pending_pos = {}
         self._pending_part = {}
-        # Preview lock (Task 7): a stale forced state from whatever was open
-        # before (or left by the 'K' dev keybinding) must not carry into a
-        # freshly-opened ship -- the lock is read live from
-        # articulation.dev_override() (see _mount_lock_state_and_reason), so
-        # clearing it here is the only reset this needs.
-        from engine.appc import articulation as _articulation
-        _articulation.set_dev_override(None)
-        # ...and SNAP this ship to that released state's pose right now. The
-        # SPV freezes the sim, so `tick_ship` will not run again until it
-        # closes: without this the hull would keep whatever angles it held
-        # when the pause menu opened, and a mount authored through it would
-        # be recorded ~0.9 ship units out at a wingtip. force_pose writes the
-        # ONE dict every reader of a live pose consults, so the mesh, the
-        # pins and the derived-box queries all move together -- see its
-        # docstring for the live bug that shipped when only the mesh moved.
-        _articulation.force_pose(ship, None)
         # Persist the saved-edit overlay across open/close of the SAME ship so a
         # re-opened SPV reflects edits saved this session (build_descriptors
         # reads the still-original property until the next ship build). Drop it
@@ -565,9 +574,45 @@ class ShipPropertyViewerPanel(Panel):
         # changes what the next `tick_ship` would ease toward, and the SPV
         # freezes the sim, so there is no next tick -- Preview would set a
         # lock and highlight a button and move nothing. force_pose writes the
-        # shared angle dict, so the mesh AND every mount follow together.
+        # shared angle dict, which the mesh and every LIVE mount query read.
         articulation.force_pose(self._ship_getter(), state)
+        # ...and then re-resolve the CACHED pin positions from it. The pins
+        # are not a live query: `build_descriptors` stored `world_pos` once,
+        # at open. Without this the wings swing out from under stationary
+        # pins -- the same defect as open()'s ordering, at the other edge.
+        self._refresh_world_positions()
         self._last_pushed = None
+
+    def _refresh_world_positions(self) -> None:
+        """Re-resolve every descriptor's cached `world_pos` in the ship's
+        CURRENT pose, leaving everything else about them untouched.
+
+        Rebuilds through `build_descriptors` -- the one function that knows
+        how a mount resolves -- and copies ONLY `world_pos` across, by index.
+        A wholesale swap of `self._descriptors` would be shorter and is not
+        safe: `_pending_pos`, `_pending_radius`, `_pending_light`,
+        `_pending_emitter`, `selected_index`, `_selected_light_index` and the
+        transform targets are ALL keyed by descriptor index, and several
+        descriptor fields are annotated in place after the build. Copying one
+        field cannot reorder, renumber or drop anything.
+
+        Bails out entirely if the rebuild disagrees on length or on the name
+        at any index -- that would mean the subsystem set changed under us
+        (a respawn mid-session), and a partial copy would point live pins at
+        the wrong mounts. A stale pin is recoverable by reopening; a
+        misattributed one is not.
+        """
+        ship = self._ship_getter()
+        if ship is None or not self._descriptors:
+            return
+        fresh = build_descriptors(ship)
+        if len(fresh) != len(self._descriptors):
+            return
+        if any(f.get("name") != d.get("name")
+               for f, d in zip(fresh, self._descriptors)):
+            return
+        for f, d in zip(fresh, self._descriptors):
+            d["world_pos"] = f["world_pos"]
 
     def _current_articulation_override(self):
         """`articulation.dev_override()` -- the SINGLE source of truth for
