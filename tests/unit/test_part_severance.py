@@ -276,6 +276,75 @@ def test_record_hit_takes_MODEL_units_not_ship_units():
         "a ship-units point must NOT be accepted as model units")
 
 
+# ── The hit must be attributed in the pose the ship is IN ────────────────────
+# `record_hit` used to test a POSED point (host_io.world_to_body inverts the
+# instance world matrix, which carries no node override -- so a hit arrives
+# where the wing is DRAWN) against the REST boxes. Survivable against the old
+# hand-drawn boxes, which deliberately swallowed the body at the wing roots;
+# not survivable against the derived ones, which are tighter. A Bird of Prey
+# at cruise took sustained wing fire and shed nothing, while the same ship at
+# red alert shed normally. `part_for_live_point` -- already the rule for
+# emitter attribution -- moves the QUERY instead of the boxes.
+
+# The starboard mirror of the measurement in `part_for_live_point`'s own
+# docstring: a rest wingtip that is drawn a quarter of a hull away once the
+# wings are up.
+WINGTIP_REST = (1.0, 0.0, -0.7)
+
+
+def _posed_wingtip(ship, part_name="left wing01"):
+    """Where WINGTIP_REST is DRAWN in `ship`'s current pose, ship units."""
+    part = next(p for p in articulation.rig_for(LEAF)
+                if p.GetName() == part_name)
+    return articulation.point_at_angle(
+        part, WINGTIP_REST, articulation.angle_for_part(ship, part))
+
+
+def test_a_hit_on_a_POSED_wingtip_still_attributes_to_that_wing():
+    """THE POINT. The hit lands where the wing IS, not where its box was
+    baked."""
+    ship = _Ship()
+    _pose(ship, 1.0)                                  # wings fully up
+    posed = _posed_wingtip(ship)
+    assert posed != WINGTIP_REST, "the fixture must actually move the point"
+    assert ps.part_for_point(LEAF, posed) is None, (
+        "guard: if the rest boxes still contained the posed point this test "
+        "would pass without the fix")
+
+    ps.record_hit(ship, None, tuple(c / ps.MODEL_TO_SHIP for c in posed), 100.0)
+    assert ps.damage_on(ship, "left wing01") == pytest.approx(100.0)
+
+
+def test_a_posed_wing_still_SHEARS_at_its_threshold():
+    """Attribution is only worth fixing if it reaches the detach. 4000 hull
+    x 0.20 = 800."""
+    ship = _Ship(hull=4000.0)
+    _pose(ship, 1.0)
+    model_pt = tuple(c / ps.MODEL_TO_SHIP for c in _posed_wingtip(ship))
+    for _ in range(7):
+        assert ps.record_hit(ship, None, model_pt, 100.0) is None
+    assert ps.record_hit(ship, None, model_pt, 100.0) == "left wing01"
+    assert ps.is_detached(ship, "left wing01")
+
+
+def test_at_rest_attribution_is_UNCHANGED():
+    """At angle 0 -- the pose the model ships in, and the one combat has run
+    in until now -- every rotation is identity, so the live-pose query must
+    give byte-identical answers to the rest-pose one."""
+    ship = _Ship()
+    _pose(ship, 0.0)
+    assert _posed_wingtip(ship) == WINGTIP_REST
+    ps.record_hit(ship, None,
+                  tuple(c / ps.MODEL_TO_SHIP for c in WINGTIP_REST), 100.0)
+    assert ps.damage_on(ship, "left wing01") == pytest.approx(100.0)
+
+    # And a body hit stays unattributed at rest, exactly as before.
+    body = _Ship()
+    ps.record_hit(body, None, (0.0, -33.0, 0.0), 100.0)
+    assert ps.damage_on(body, "left wing01") == 0.0
+    assert ps.damage_on(body, "left wing") == 0.0
+
+
 def test_the_conversion_constant_matches_BC_MODEL_SCALE():
     """MODEL_TO_SHIP is BC_MODEL_SCALE. If host_loop's value ever moves, this
     names the copy that has to move with it."""

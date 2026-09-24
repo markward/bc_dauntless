@@ -48,10 +48,11 @@ ATTRIBUTION_MARGIN = 5.0
 # lands nowhere near it and silently attributes to nothing, which is
 # indistinguishable from "the player missed".
 #
-# So: `part_for_point` is the SHIP-units primitive, and `record_hit` converts
-# on the way in. Anything else calling part_for_point must already hold ship
-# units -- `_destroy_subsystems_on_part` does, which is exactly why the
-# subsystem half worked while the damage half never did.
+# So: `part_for_point` and its posed twin `part_for_live_point` are the
+# SHIP-units primitives, and `record_hit` converts on the way in. Anything
+# else calling either must already hold ship units --
+# `_destroy_subsystems_on_part` does, which is exactly why the subsystem half
+# worked while the damage half never did.
 MODEL_TO_SHIP = 0.01          # = BC_MODEL_SCALE (host_loop). Multiply a
                                # MODEL-units value by this to reach SHIP units
                                # -- record_hit does exactly that, below.
@@ -152,11 +153,10 @@ def part_for_live_point(ship, point, iid=None):
     BEFORE it silences emitters, so skipping one here would make the whole
     feature inert -- the only caller asks about the part that just came off.
 
-    ⚠️ `record_hit` has the SAME defect and is deliberately NOT changed here:
-    a hit on a wingtip accrues no severance damage while the wings are down,
-    because it too tests a posed point against the rest boxes. That is
-    pre-existing, out of this change's scope, and should probably adopt this
-    function later.
+    `record_hit` uses this too, as of the final review of the SPV
+    part-authoring branch -- for exactly the reason above. It previously
+    tested its posed point against the rest boxes and so accrued no severance
+    damage on an articulated wing at all.
     """
     leaf = articulation.leaf_for(ship)
     plain = part_for_point(leaf, point, iid)
@@ -232,6 +232,18 @@ def record_hit(ship, iid, body_point_model, absorbed_hull: float):
     care about the return value can ignore it; the detach itself is applied by
     `sever`, which this calls.
 
+    Attribution goes through `part_for_live_point`, NOT `part_for_point`:
+    `body_point_model` comes from `host_io.world_to_body`, which inverts the
+    instance world matrix and so carries no node override -- the hit arrives
+    where the wing is DRAWN, while the derived boxes are baked at rest. That
+    mismatch was survivable against the old hand-drawn boxes, which
+    deliberately swallowed the body box at the wing roots; it is not
+    survivable against the tighter derived ones. A Bird of Prey at cruise
+    (wings at 45 degrees) taking sustained wing fire attributed every hit to
+    None and never shed a wing, while the same ship at red alert shed
+    normally. At angle 0 the live query is identical to the rest one by
+    construction, so combat in the model's shipped pose is unchanged.
+
     Cheap for the overwhelming majority of ships: a hull with no authored
     detachable parts returns on a dict lookup before any geometry is touched.
     """
@@ -242,7 +254,7 @@ def record_hit(ship, iid, body_point_model, absorbed_hull: float):
     if not thresholds:
         return None
     point = tuple(c * MODEL_TO_SHIP for c in body_point_model)
-    part = part_for_point(leaf, point, iid)
+    part = part_for_live_point(ship, point, iid)
     if part is None or part not in thresholds:
         return None
     if is_detached(ship, part):
@@ -305,10 +317,10 @@ def _silence_emitters_on(ship, part_name, killed, iid=None) -> None:
          leg is what actually does it.
 
     `_emit_pos` is body-frame MODEL units (`host_io.world_to_body`'s native
-    output, exactly like the value `record_hit` receives) and `part_for_point`
-    is SHIP units -- see MODEL_TO_SHIP at the top of this module. Convert
-    before calling `part_for_point`, precisely as `record_hit` does; this
-    exact confusion has already shipped inert once.
+    output, exactly like the value `record_hit` receives) and
+    `part_for_live_point` is SHIP units -- see MODEL_TO_SHIP at the top of
+    this module. Convert before calling it, precisely as `record_hit` does;
+    this exact confusion has already shipped inert once.
 
     Best-effort: a VFX failure must never abort a severance that has already
     happened to the hull.
