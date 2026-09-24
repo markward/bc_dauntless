@@ -394,3 +394,56 @@ def test_the_ratio_rule_actually_matches_every_mapped_body():
             if any(b.name == body_name and b.owner_region == region_name for b in m.bodies):
                 matched += 1
     assert matched == 118
+
+
+# Found 2026-09-24 by Plan 1 Task 3: Prendel 3's x20 radius (7200 GU) swallows
+# BC's own LoadPlacements waypoints in that region -- "Planet", "Moon1" and
+# "Moon2" -- where E5M2/E6M4 stage a base and three Galors. Same root cause as
+# test_no_committed_map_declares_a_pin_and_here_is_why: a pin would collide
+# with 20x body scaling here too. Resolution (generator layout change, vs.
+# accepting the geometry) is escalated to Mark. RATCHET, not an xfail: when
+# this is resolved, this set must be emptied -- the test below fails in BOTH
+# directions on purpose, so a NEW body swallowing a NEW waypoint is caught
+# just as loudly as this one being silently fixed and forgotten about.
+KNOWN_WAYPOINTS_INSIDE_BODIES = {
+    ("Prendel3", "Planet", "Prendel 3"),
+    ("Prendel3", "Moon1", "Prendel 3"),
+    ("Prendel3", "Moon2", "Prendel 3"),
+}
+
+
+def test_no_region_waypoint_is_inside_a_mapped_body():
+    """A x20 body at a new position must not swallow a waypoint BC placed in
+    that region -- ships placed there would spawn inside a planet. Checks the
+    region module's own LoadPlacements (Systems/<Sys>/<Region>.py).
+
+    This is a RATCHET against KNOWN_WAYPOINTS_INSIDE_BODIES, not a plain
+    assert-empty and not an xfail: it fails if the offender set grows (a new
+    layout regression) AND if it shrinks (the known Prendel 3 finding was
+    fixed but this test -- the one document of record for it -- was not
+    updated). Do not loosen it by widening the constant to cover a NEW
+    offender; do not delete an entry without confirming the underlying
+    geometry no longer collides."""
+    import math
+    from engine.systems import map as system_map
+    from tools.systems import survey
+
+    offenders = set()
+    for name in survey.system_names():
+        m = system_map.load(name)
+        for region in m.regions:
+            path = survey._systems_dir() / name / f"{region.set_name}.py"
+            if not path.exists():
+                continue
+            placements = survey._placements(survey._read(path))
+            for b in m.bodies:
+                if b.owner_region != region.set_name:
+                    continue
+                local = tuple(p - a for p, a in zip(b.position_gu, region.anchor_gu))
+                for wp_name, xyz in placements.items():
+                    if math.dist(local, xyz) < b.radius_gu:
+                        offenders.add((region.set_name, wp_name, b.name))
+    assert offenders == KNOWN_WAYPOINTS_INSIDE_BODIES, (
+        f"new offenders (not in the ratchet): {offenders - KNOWN_WAYPOINTS_INSIDE_BODIES}; "
+        f"no-longer-present entries (ratchet needs shrinking): "
+        f"{KNOWN_WAYPOINTS_INSIDE_BODIES - offenders}")
