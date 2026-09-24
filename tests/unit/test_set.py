@@ -558,3 +558,43 @@ def test_get_nav_points_on_a_set_with_none_is_an_empty_iterable_list():
     assert s.GetNavPoints() == []
     assert not s.GetNavPoints()
     assert len(s.GetNavPoints()) == 0
+
+
+# ── removal clears the object's containing set ───────────────────────────────
+
+def test_remove_object_from_set_clears_its_containing_set():
+    """A ship removed from its set must stop reporting that set as its
+    containing set -- else a torpedo (or anything else keyed off
+    GetContainingSet()) can keep interacting with it via a stale frame."""
+    s = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(ship, "ship1")
+    assert ship.GetContainingSet() is s
+    s.RemoveObjectFromSet("ship1")
+    assert ship.GetContainingSet() is None
+
+
+def test_delete_object_from_set_clears_its_containing_set():
+    s = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(ship, "ship1")
+    s.DeleteObjectFromSet("ship1")
+    assert ship.GetContainingSet() is None
+
+
+def test_remove_object_from_set_does_not_clobber_a_later_add_to_another_set():
+    """If something re-adds the object to a DIFFERENT set before removal
+    finishes (a synchronous handler on the removal broadcast), the removal
+    must not stomp that new containing set back to None."""
+    a = SetClass_Create()
+    b = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    a.AddObjectToSet(ship, "ship1")
+
+    def _rehome(event, obj, name):
+        if event == "removed":
+            b.AddObjectToSet(ship, "ship1")
+
+    a.subscribe(_rehome)
+    a.RemoveObjectFromSet("ship1")
+    assert ship.GetContainingSet() is b

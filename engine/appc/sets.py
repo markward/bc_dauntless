@@ -250,6 +250,7 @@ class SetClass(TGEventHandlerObject):
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc.objects import ObjectGroup
             ObjectGroup.broadcast_membership(obj, entered=False)
+            self._clear_containing_set(obj)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
@@ -262,7 +263,21 @@ class SetClass(TGEventHandlerObject):
             from engine.appc.objects import ObjectGroup, broadcast_object_deleted
             ObjectGroup.broadcast_membership(obj, entered=False)
             broadcast_object_deleted(obj)
+            self._clear_containing_set(obj)
         self._objects.pop(name, None)
+
+    def _clear_containing_set(self, obj) -> None:
+        """Stop `obj` reporting THIS set once it has left it, so
+        engine.systems.frames gives it no frame (never a stale one) --
+        Plan 2's frame equality would otherwise let a removed object keep
+        interacting with everything still in this set.
+
+        Checked, not unconditional: a synchronous handler on the removal
+        broadcast above (subscribe callback, ET_EXITED_SET handler, ...) may
+        already have re-added `obj` to a DIFFERENT set before we get here --
+        that new containing set must win, not be stomped back to None."""
+        if hasattr(obj, "_containing_set") and obj._containing_set is self:
+            obj._containing_set = None
 
     def _broadcast_set_transition(self, obj, *, entered: bool) -> None:
         """Post ET_ENTERED_SET / ET_EXITED_SET for a ship joining/leaving this
