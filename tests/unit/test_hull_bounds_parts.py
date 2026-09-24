@@ -41,13 +41,14 @@ def _nif(spheres):
 
 
 def _pose(ship, deflection):
-    """Set `ship`'s per-part angles to `deflection` scaled by each OLD-rig
-    part's authored `angle_deg` -- what `articulation.part_transform_point`
-    (via `angle_for_part`, Task 4) reads now; there is no scalar fallback
-    any more."""
+    """Set `ship`'s per-part angles to `deflection` scaled by each part's
+    authored "cruise" angle -- the fully-deflected (up/cold) pose, mirroring
+    the pre-migration OLD-rig's single `angle_deg` -- what
+    `articulation.part_transform_point` (via `angle_for_part`, Task 4) reads
+    now; there is no scalar fallback any more."""
     from engine.appc import articulation
     ship._articulation_angles = {
-        p.node: p.angle_deg * deflection
+        p.GetName(): p.angle_for("cruise") * deflection
         for p in articulation.rig_for("birdofprey")
     }
 

@@ -50,12 +50,21 @@ _ATTR = "_hull_bound_spheres"
 _BOUND_R_ATTR = "_hull_bound_radius_unscaled"
 
 
-def cache_hull_bound_spheres(ship, spheres) -> None:
+def cache_hull_bound_spheres(ship, spheres, iid=None) -> None:
     """Store `spheres` — an iterable of ``(cx, cy, cz, radius)`` in raw model
     (NIF) units, as returned by the host's ``model_bounds()`` — on `ship`.
 
     Called once at realize time, alongside the shield hull box. Converted to
     world units at scale 1 here so readers never have to know about NIF units.
+
+    `iid` is the SAME render instance `model_bounds()` was read from --
+    passed through to `articulation.part_boxes_for`, which derives its boxes
+    from `host_io.model_nodes(iid)`. This is realistically the FIRST time
+    this ship's leaf ever supplies a real instance id, so this call is what
+    warms that per-leaf box cache for every later attribution query against
+    any ship of the same class (including ones that never have an iid to
+    offer -- see that function's docstring). None (headless, or a caller
+    with no instance) just means no tag can be derived yet.
 
     Drops `bound_radius`'s memo, which is derived from these pieces but lives
     in a different slot: writing one without the other would answer a
@@ -68,7 +77,7 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     piece behaving exactly as it did before parts existed.
 
     The tag is further restricted to parts that can actually MOVE or DETACH
-    (the union of `articulation.rig_for`'s node names and
+    (the union of `articulation.rig_for`'s part names and
     `articulation.detachable_for`'s keys) — see the comment at the tagging
     site for why.
     """
@@ -80,23 +89,23 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     # part boxes are both rest-pose and neither ever changes after load.
     leaf = articulation.leaf_for(ship)
     # A tag means "this piece can move or come off" -- not merely "nearest
-    # some named box". PART_BOXES carries boxes (e.g. "head", the body box
-    # itself) that are boxed for attribution purposes but neither rigged nor
-    # detachable, so tagging them would be a no-op forever in both readers
-    # AND in the (later) part-transform call each reader makes for a
+    # some named box". The derived boxes carry boxes (e.g. "head", the body
+    # box itself) that are boxed for attribution purposes but neither rigged
+    # nor detachable, so tagging them would be a no-op forever in both
+    # readers AND in the (later) part-transform call each reader makes for a
     # non-None tag. hull_spheres_near's per-piece cost that matters is that
     # transform, done BEFORE its distance reject -- untagging inert boxes
     # here keeps them out of that path on every narrow-phase pair, forever,
     # rather than paying a Python call per body piece for a tag that can
     # never fire.
-    movable = {p.node for p in articulation.rig_for(leaf)}
+    movable = {p.GetName() for p in articulation.rig_for(leaf)}
     movable.update(articulation.detachable_for(leaf))
     out = []
     for cx, cy, cz, r in spheres:
         if r <= 0.0:
             continue
         c = (cx * s, cy * s, cz * s)
-        part = part_for_point(leaf, c) if leaf else None
+        part = part_for_point(leaf, c, iid) if leaf else None
         if part not in movable:
             part = None
         out.append((c, r * s, part))
@@ -228,8 +237,8 @@ def point_is_inside_hull(ship, point) -> bool:
 
 
 def _rig_parts_by_name(ship, cached) -> dict:
-    """{part name: articulation.Part} for `ship`, or {} when no cached piece
-    carries a tag.
+    """{part name: ArticulatedPartProperty} for `ship`, or {} when no cached
+    piece carries a tag.
 
     The empty-dict early out is what keeps every unrigged hull — and every
     rigged one whose pieces all landed on the body — off the import and the
@@ -238,12 +247,29 @@ def _rig_parts_by_name(ship, cached) -> dict:
     if not any(part is not None for _c, _r, part in cached):
         return {}
     from engine.appc import articulation
-    return {p.node: p for p in articulation.rig_for(articulation.leaf_for(ship))}
+    return {p.GetName(): p
+            for p in articulation.rig_for(articulation.leaf_for(ship))}
+
+
+def _angle_extremes(part):
+    """(min, max) degrees `part`'s hinge is ever authored to reach.
+
+    0.0 is always included: a part's CURRENT angle starts there (the NIF
+    rest pose, before any tick has ever run it — see
+    `articulation.angle_for_part`) and only ever eases toward one of
+    `articulated_part.STATES`'s authored angles, so it can never leave the
+    span [min(0, *authored), max(0, *authored)] -- exactly what this
+    function returns. Generalises the pre-Task-5 OLD-rig case, where the
+    span was implicitly [0, angle_deg]."""
+    from engine.appc.articulated_part import STATES
+    angles = [0.0] + [part.angle_for(s) for s in STATES]
+    return min(angles), max(angles)
 
 
 def _travel_reach(part, centre) -> float:
-    """Largest |centre| the piece reaches at ANY deflection in [0, 1], with
-    `centre` the piece's REST centre in body frame, ship units.
+    """Largest |centre| the piece reaches across `part`'s FULL authored
+    swing (see `_angle_extremes`), with `centre` the piece's REST centre in
+    body frame, ship units.
 
     The hinge sweeps the centre along a circular arc: a fixed circle centre
     `A` (the pivot plus whatever part of the offset lies ALONG the axis,
@@ -256,17 +282,23 @@ def _travel_reach(part, centre) -> float:
     `A_perp` — is the largest value on the FULL circle, but it is only
     reachable if it falls inside the arc the part actually travels. Hence:
     both endpoints always, plus the aligned peak when `phi`, the signed
-    angle from `w` to `A_perp` about the axis, lies between 0 and the full
-    travel angle.
+    angle from `w` to `A_perp` about the axis, lies between the swing's low
+    and high extreme.
 
     Right-handed about the axis, matching the rest of the engine: `phi` uses
     atan2(axis . (w x A_perp), w . A_perp), so rotating `w` by +phi about the
     axis is what lines it up.
     """
-    pivot, axis, theta = _part_rotation(part)
-    best = max(_norm(centre), _norm(_point_at(part, centre)))
-    if theta == 0.0:
+    from engine.appc import articulation
+    lo_deg, hi_deg = _angle_extremes(part)
+    pivot, axis, _theta0 = articulation.rotation_for(part, 0.0)
+    best = max(_norm(centre),
+               _norm(articulation.point_at_angle(part, centre, lo_deg)),
+               _norm(articulation.point_at_angle(part, centre, hi_deg)))
+    if lo_deg == hi_deg:
         return best
+    theta_lo = math.radians(lo_deg)
+    theta_hi = math.radians(hi_deg)
     ax, ay, az = axis
     vx, vy, vz = centre[0] - pivot[0], centre[1] - pivot[1], centre[2] - pivot[2]
     along = ax * vx + ay * vy + az * vz
@@ -279,7 +311,7 @@ def _travel_reach(part, centre) -> float:
     dot = wx * px + wy * py + wz * pz
     kx, ky, kz = wy * pz - wz * py, wz * px - wx * pz, wx * py - wy * px
     phi = math.atan2(ax * kx + ay * ky + az * kz, dot)
-    inside = (0.0 <= phi <= theta) if theta > 0.0 else (theta <= phi <= 0.0)
+    inside = theta_lo <= phi <= theta_hi
     if inside:
         w = (wx * wx + wy * wy + wz * wz) ** 0.5
         p = (px * px + py * py + pz * pz) ** 0.5
@@ -290,23 +322,6 @@ def _travel_reach(part, centre) -> float:
 
 def _norm(p) -> float:
     return (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) ** 0.5
-
-
-def _part_rotation(part):
-    """(pivot, unit axis, theta) for `part` at FULL deflection.
-
-    `rotation_for` takes raw degrees (Task 4), not a 0..1 deflection, so
-    "full deflection" for this OLD-rig `articulation.Part` is its own
-    authored `angle_deg` -- equivalent to the old `rotation_for(part, 1.0)`.
-    """
-    from engine.appc import articulation
-    return articulation.rotation_for(part, part.angle_deg)
-
-
-def _point_at(part, centre):
-    """`centre` at FULL deflection of `part` — ship state never consulted."""
-    from engine.appc import articulation
-    return articulation.point_at_deflection(part, centre, 1.0)
 
 
 def bound_radius(ship) -> float:

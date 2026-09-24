@@ -33,15 +33,16 @@ class _Sub:
 class _Ship:
     """Identity rotation at the origin, so world == body and the assertions
     read as the body-frame offsets they are. `deflection` is a test
-    convenience: it scales the OLD-rig's authored `angle_deg` per part into
-    `_articulation_angles`, the ONLY thing `part_transform_point` (via
-    `angle_for_part`, Task 4) reads -- there is no scalar fallback."""
+    convenience: it scales each part's authored "cruise" angle (the
+    fully-deflected, up/cold pose) into `_articulation_angles`, the ONLY
+    thing `part_transform_point` (via `angle_for_part`, Task 4) reads --
+    there is no scalar fallback."""
 
     def __init__(self, deflection, leaf="birdofprey"):
         from engine.appc import articulation
         self._articulation_leaf = leaf
         self._articulation_angles = {
-            p.node: p.angle_deg * deflection
+            p.GetName(): p.angle_for("cruise") * deflection
             for p in articulation.rig_for(leaf)
         }
 

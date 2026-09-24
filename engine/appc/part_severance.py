@@ -71,11 +71,17 @@ def _distance_to_box(point, box) -> float:
     return total ** 0.5
 
 
-def part_for_point(leaf, point):
+def part_for_point(leaf, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to, or None.
 
     ⚠️ SHIP units, not model units -- see MODEL_TO_SHIP above. A caller holding
     a `world_to_body` result must scale it first; `record_hit` does.
+
+    `iid` is threaded through to `articulation.part_boxes_for` for the ONE
+    case that needs it: the very first time a leaf's derived boxes are asked
+    for. Once cached (per leaf, not per instance -- see that function's
+    docstring) every later caller, with or without an iid, gets the same
+    answer, so most call sites here never pass one.
 
     None means "unattributed", which is the safe answer: an unattributed hit
     behaves exactly as it did before this module existed.
@@ -85,7 +91,7 @@ def part_for_point(leaf, point):
     wing boxes overlap the body box by design (the roots are embedded). Outside
     every box, the nearest wins only by a decisive margin.
     """
-    boxes = articulation.part_boxes_for(leaf)
+    boxes = articulation.part_boxes_for(leaf, iid)
     if not boxes:
         return None
     dists = sorted((_distance_to_box(point, b), n) for n, b in boxes.items())
@@ -102,11 +108,14 @@ def part_for_point(leaf, point):
     return None
 
 
-def part_for_live_point(ship, point):
+def part_for_live_point(ship, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to IN THE SHIP'S
     LIVE POSE, or None. The posed-space twin of `part_for_point`.
 
-    ⚠️ `PART_BOXES` are authored REST pose, but every point that arrives from
+    `iid`, like `part_for_point`'s, only matters the very first time this
+    leaf's derived boxes are needed; see that function's docstring.
+
+    ⚠️ The derived per-part boxes are authored REST pose, but every point that arrives from
     the running game is POSED -- `host_io.world_to_body` inverts the instance
     world matrix, which carries no node override, so a hit or an emitter on a
     deflected wing comes back where the wing IS DRAWN, not where its box is.
@@ -149,7 +158,7 @@ def part_for_live_point(ship, point):
     function later.
     """
     leaf = articulation.leaf_for(ship)
-    plain = part_for_point(leaf, point)
+    plain = part_for_point(leaf, point, iid)
     if plain is not None:
         return plain
     parts = articulation.rig_for(leaf)
@@ -160,8 +169,9 @@ def part_for_live_point(ship, point):
         if angle_deg == 0.0:
             continue                      # identity: `plain` already answered
         rest_point = articulation.point_at_angle(part, point, -angle_deg)
-        if part_for_point(leaf, rest_point) == part.node:
-            return part.node
+        name = part.GetName()
+        if part_for_point(leaf, rest_point, iid) == name:
+            return name
     return None
 
 
@@ -231,7 +241,7 @@ def record_hit(ship, iid, body_point_model, absorbed_hull: float):
     if not thresholds:
         return None
     point = tuple(c * MODEL_TO_SHIP for c in body_point_model)
-    part = part_for_point(leaf, point)
+    part = part_for_point(leaf, point, iid)
     if part is None or part not in thresholds:
         return None
     if is_detached(ship, part):
@@ -271,7 +281,7 @@ def damage_on(ship, part_name) -> float:
     return float(_totals(ship).get(part_name, 0.0))
 
 
-def _silence_emitters_on(ship, part_name, killed) -> None:
+def _silence_emitters_on(ship, part_name, killed, iid=None) -> None:
     """Stop every particle controller that is either emitting FROM one of
     `killed`, or emitting from `ship` at a body-frame point that attributes
     to `part_name`.
@@ -317,13 +327,13 @@ def _silence_emitters_on(ship, part_name, killed) -> None:
             if id(emit_from) in dead:
                 c.stop_emitting()
                 continue
-            if emit_from is ship and _emit_pos_on_part(c, ship, part_name):
+            if emit_from is ship and _emit_pos_on_part(c, ship, part_name, iid):
                 c.stop_emitting()
         except Exception as _e:  # noqa: BLE001
             dev_mode.log_swallowed("severed part emitter silence", _e)
 
 
-def _emit_pos_on_part(controller, ship, part_name) -> bool:
+def _emit_pos_on_part(controller, ship, part_name, iid=None) -> bool:
     """Whether `controller._emit_pos` (body-frame MODEL units, or None/an
     unreadable shape) attributes to `part_name` on `ship`.
 
@@ -349,7 +359,7 @@ def _emit_pos_on_part(controller, ship, part_name) -> bool:
     else:
         return False
     ship_point = tuple(v * MODEL_TO_SHIP for v in point)
-    return part_for_live_point(ship, ship_point) == part_name
+    return part_for_live_point(ship, ship_point, iid) == part_name
 
 
 def sever(ship, iid, part_name):
@@ -372,7 +382,8 @@ def sever(ship, iid, part_name):
     if is_detached(ship, part_name):
         return None
     detached_parts(ship).add(part_name)
-    _silence_emitters_on(ship, part_name, _destroy_subsystems_on_part(ship, part_name))
+    _silence_emitters_on(ship, part_name,
+                         _destroy_subsystems_on_part(ship, part_name, iid), iid)
     try:
         from engine.appc import part_detach_render
         part_detach_render.detach(ship, iid, part_name)
@@ -381,7 +392,7 @@ def sever(ship, iid, part_name):
     return part_name
 
 
-def _destroy_subsystems_on_part(ship, part_name) -> list:
+def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     """Destroy every subsystem whose mount lies on `part_name`, and return
     them.
 
@@ -411,7 +422,7 @@ def _destroy_subsystems_on_part(ship, part_name) -> list:
             point = (pos.GetX(), pos.GetY(), pos.GetZ())
         except Exception:  # noqa: BLE001 - not a mounted subsystem
             continue
-        if part_for_point(leaf, point) != part_name:
+        if part_for_point(leaf, point, iid) != part_name:
             continue
         try:
             sub.SetCondition(0.0)

@@ -20,17 +20,18 @@ class _Session:
 
 class _Ship:
     """`deflection` is a test convenience, not a production concept any
-    more: it scales the OLD-rig's authored `angle_deg` per part into
-    `_articulation_angles`, the ONLY thing `_sync_ship_articulation` (via
-    `articulation.angle_for_part`) reads. Building the dict here, rather
-    than going through `tick_ship`, is deliberate for the tests in this
-    file: they are about a FIXED pose and the render-sync's own guard/
-    force_rest logic, not about motion over time."""
+    more: it scales each part's authored "cruise" angle (the fully-deflected,
+    up/cold pose) into `_articulation_angles`, the ONLY thing
+    `_sync_ship_articulation` (via `articulation.angle_for_part`) reads.
+    Building the dict here, rather than going through `tick_ship`, is
+    deliberate for the tests in this file: they are about a FIXED pose and
+    the render-sync's own guard/force_rest logic, not about motion over
+    time."""
 
     def __init__(self, deflection=1.0):
         self._articulation_leaf = "birdofprey"
         self._articulation_angles = {
-            p.node: p.angle_deg * deflection
+            p.GetName(): p.angle_for("cruise") * deflection
             for p in articulation.rig_for("birdofprey")
         }
 

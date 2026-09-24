@@ -1326,6 +1326,56 @@ def _reset_leakable_engine_globals():
         ObjectGroup._live.clear()
     except Exception:
         pass
+    # Bird of Prey articulated-part snapshot: production populates
+    # articulated_part._BY_LEAF["birdofprey"] via sdk_overrides.on_sdk_module_exec,
+    # fired only when a real ship goes through the SDK loader (loadspacehelper
+    # .CreateShip). Every test double in the part-articulation suite
+    # (test_articulation.py, test_articulation_migration.py,
+    # test_hull_bounds_parts.py, test_part_severance*.py,
+    # test_subsystem_part_parenting.py, test_spv_anchor_pose.py) sets
+    # `_articulation_leaf = "birdofprey"` directly and never goes through that
+    # loader, and test_articulated_part.py's OWN autouse fixture legitimately
+    # clears the whole snapshot around each of its tests. So this re-warms it
+    # from the SAME real functions on-demand, self-healing after that wipe,
+    # rather than baking a bootstrap into articulation.rig_for itself (which
+    # would have to fire in a real running game too, clearing
+    # g_kModelPropertyManager mid-tick for every never-yet-loaded ship class).
+    # A plain membership check, so this costs one dict lookup on every other
+    # test.
+    try:
+        from engine.appc import articulated_part as _articulated_part
+        if "birdofprey" not in _articulated_part._BY_LEAF:
+            from engine.appc import hardpoint_overrides as _hpo
+            App.g_kModelPropertyManager.ClearLocalTemplates()
+            _hpo.apply("birdofprey")
+            _articulated_part.snapshot_for_leaf("birdofprey")
+            App.g_kModelPropertyManager.ClearLocalTemplates()
+    except Exception:
+        pass
+    # Bird of Prey per-part boxes: `articulation.part_boxes_for` now derives
+    # these from `host_io.model_nodes(iid)`, which needs a REAL renderer
+    # instance -- something no unit test can create. This seeds
+    # articulation._derived_boxes["birdofprey"] with the exact geometry the
+    # old hand-authored PART_BOXES constant used to carry (measured off
+    # BirdOfPrey.nif — see docs/superpowers/specs/
+    # 2026-09-23-ship-part-articulation-design.md section 2.4), so every part
+    # -attribution test still exercises the real `part_for_point` /
+    # `part_boxes_for` code path, just against a pre-populated cache instead
+    # of a live model_nodes() call. Same self-healing membership check as the
+    # snapshot above: this dict is process-lifetime and never reset by
+    # production code (the geometry never changes), so this only ever does
+    # real work once.
+    try:
+        from engine.appc import articulation as _articulation_mod
+        if "birdofprey" not in _articulation_mod._derived_boxes:
+            _articulation_mod._derived_boxes["birdofprey"] = {
+                "head": ((-0.1010, 0.1377, -0.0885), (0.1010, 0.9044, 0.0747)),
+                "left wing": ((-1.0258, -0.6777, -0.7125), (-0.1236, 0.5344, 0.1862)),
+                "left wing01": ((0.1236, -0.6777, -0.7125), (1.0258, 0.5344, 0.1862)),
+                "birdofprey": ((-0.3112, -0.7044, -0.1331), (0.3137, 0.2922, 0.2125)),
+            }
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds

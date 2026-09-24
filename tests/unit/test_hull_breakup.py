@@ -142,7 +142,8 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
     ship._articulation_leaf = "birdofprey"   # pre-cached: resolvable rig
     from engine.appc import articulation
     ship._articulation_angles = {
-        p.node: p.angle_deg for p in articulation.rig_for("birdofprey")
+        p.GetName(): p.angle_for("cruise")
+        for p in articulation.rig_for("birdofprey")
     }                                         # full travel
     lo, hi = (0.9, 0.4, -0.8), (1.1, 0.5, -0.5)
     monkeypatch.setattr(host_io, "hull_split_detached",

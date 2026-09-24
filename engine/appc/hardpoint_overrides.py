@@ -204,6 +204,7 @@ def _ambassador(find):
 
 def _birdofprey(find):
     """birdofprey."""
+    import App
     p = find("Port Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
@@ -238,6 +239,22 @@ def _birdofprey(find):
         p.SetLightEmitterRadius(0, 0.051763776534396094)
         p.SetLightEmitterColor(0, 1.0, 0.45809755461141033, 0.2607827284788081)
         p.SetLightEmitterIntensity(0, 2.0)
+    if hasattr(App, "ArticulatedPartProperty_Create"):
+        left_wing = App.ArticulatedPartProperty_Create("left wing")
+        left_wing.SetPivot(-0.16, 0.0, 0.05)
+        left_wing.SetAxis(0.0, 1.0, 0.0)
+        left_wing.SetStateAngle("cruise", 45.0)
+        left_wing.SetStateAngle("yellow", 45.0)
+        left_wing.SetDetachFraction(0.2)
+        App.g_kModelPropertyManager.RegisterLocalTemplate(left_wing)
+    if hasattr(App, "ArticulatedPartProperty_Create"):
+        left_wing01 = App.ArticulatedPartProperty_Create("left wing01")
+        left_wing01.SetPivot(0.16, 0.0, 0.05)
+        left_wing01.SetAxis(0.0, 1.0, 0.0)
+        left_wing01.SetStateAngle("cruise", -45.0)
+        left_wing01.SetStateAngle("yellow", -45.0)
+        left_wing01.SetDetachFraction(0.2)
+        App.g_kModelPropertyManager.RegisterLocalTemplate(left_wing01)
 
 
 def _bombfreighter(find):

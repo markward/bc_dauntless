@@ -49,13 +49,15 @@ class _Ship:
 
 
 def _pose(ship, deflection):
-    """Set `ship`'s per-part angles to `deflection` scaled by each OLD-rig
-    part's authored `angle_deg` -- what `angle_for_part` (Task 4) reads
-    now; there is no scalar fallback any more, so a test that used to write
-    `ship._articulation_deflection` writes this dict directly instead."""
+    """Set `ship`'s per-part angles to `deflection` scaled by each part's
+    authored "cruise" angle -- the fully-deflected (up/cold) pose, mirroring
+    the pre-migration OLD-rig's single `angle_deg` -- what `angle_for_part`
+    (Task 4) reads now; there is no scalar fallback any more, so a test that
+    used to write `ship._articulation_deflection` writes this dict directly
+    instead."""
     from engine.appc import articulation
     ship._articulation_angles = {
-        p.node: p.angle_deg * deflection
+        p.GetName(): p.angle_for("cruise") * deflection
         for p in articulation.rig_for("birdofprey")
     }
 
@@ -215,11 +217,14 @@ WING_TIP = (-1.0, 0.0, -0.7)
 
 
 def _posed(point, node, deflection):
-    """`point` where it is DRAWN once `node` sits at `deflection`."""
+    """`point` where it is DRAWN once `node` sits at `deflection` (a fraction
+    of its authored "cruise" angle, mirroring the pre-migration OLD-rig's
+    single `angle_deg`)."""
     from engine.appc import articulation
     part = next(p for p in articulation.rig_for("birdofprey")
-                if p.node == node)
-    return articulation.point_at_deflection(part, point, deflection)
+                if p.GetName() == node)
+    return articulation.point_at_angle(part, point,
+                                       part.angle_for("cruise") * deflection)
 
 
 def test_the_live_pose_fixture_point_attributes_as_this_file_assumes():

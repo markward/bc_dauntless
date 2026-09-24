@@ -35,10 +35,10 @@ def test_the_two_wings_are_mirrored():
     against the other's -102.6..-12.4. If these signs are ever made to match,
     both wings rotate the same way and the ship tips instead of spreading."""
     port, starboard = articulation.rig_for("birdofprey")
-    assert port.node == "left wing"
-    assert starboard.node == "left wing01"
+    assert port.GetName() == "left wing"
+    assert starboard.GetName() == "left wing01"
     assert port.pivot[0] == -starboard.pivot[0] != 0.0
-    assert port.angle_deg == -starboard.angle_deg != 0.0
+    assert port.angle_for("cruise") == -starboard.angle_for("cruise") != 0.0
     # Same hinge axis; the mirroring lives in the pivot and the angle SIGN.
     assert port.axis == starboard.axis
 
@@ -201,11 +201,12 @@ def test_rest_deflection_yields_zero_rotation():
 
 def test_full_deflection_matches_the_authored_angle():
     """rotation_for takes DEGREES now (Task 4), not a 0..1 deflection -- so
-    "full deflection" for this OLD-rig Part is passing its own angle_deg
+    "full deflection" is passing the part's own authored "cruise" angle
     directly, the degree equivalent of the old rotation_for(part, 1.0)."""
     for part in articulation.rig_for("birdofprey"):
-        _p, _a, theta = articulation.rotation_for(part, part.angle_deg)
-        assert theta == pytest.approx(math.radians(part.angle_deg))
+        angle_deg = part.angle_for("cruise")
+        _p, _a, theta = articulation.rotation_for(part, angle_deg)
+        assert theta == pytest.approx(math.radians(angle_deg))
 
 
 def test_axis_is_normalised():
@@ -265,7 +266,7 @@ def test_pivot_sits_inboard_of_the_wing_and_outboard_of_nothing():
     wing_inner_x = 12.36 * articulation.MODEL_TO_SHIP
     body_half_width = 31.37 * articulation.MODEL_TO_SHIP
     for part in articulation.rig_for("birdofprey"):
-        assert wing_inner_x <= abs(part.pivot[0]) <= body_half_width, part.node
+        assert wing_inner_x <= abs(part.pivot[0]) <= body_half_width, part.GetName()
 
 
 @pytest.mark.parametrize("node,tip_x", [("left wing", -1.0258),
@@ -283,12 +284,14 @@ def test_full_deflection_lifts_the_wing_tip_towards_horizontal(node, tip_x):
     checked, because a test that only covered one would have passed on the
     half that happened to be right.
     """
-    part = next(p for p in articulation.rig_for("birdofprey") if p.node == node)
+    part = next(p for p in articulation.rig_for("birdofprey")
+                if p.GetName() == node)
     px, _py, pz = part.pivot
     tip_z = -0.7125
-    # rotation_for takes DEGREES now (Task 4); part.angle_deg IS the full
-    # swing, the degree equivalent of the old rotation_for(part, 1.0).
-    _p, _axis, theta = articulation.rotation_for(part, part.angle_deg)
+    # rotation_for takes DEGREES now (Task 4); the authored "cruise" angle IS
+    # the full swing, the degree equivalent of the old rotation_for(part, 1.0).
+    angle_deg = part.angle_for("cruise")
+    _p, _axis, theta = articulation.rotation_for(part, angle_deg)
 
     # Rotate the tip about the +Y axis through the pivot. Right-handed about
     # +Y: x' = x cos + z sin, z' = -x sin + z cos.
@@ -323,14 +326,14 @@ class _PosedShip:
     """Minimal stand-in: a leaf and a per-part angle map is all the
     transform needs (Task 4 -- `part_transform_point` reads
     `angle_for_part`, which is backed ONLY by `ship._articulation_angles`,
-    not any scalar). `deflection` here is a test convenience: it scales the
-    OLD-rig's authored `angle_deg` per part, matching what this file's
-    fixtures actually describe (0 = rest, 1 = fully swung)."""
+    not any scalar). `deflection` here is a test convenience: it scales each
+    part's authored "cruise" angle, matching what this file's fixtures
+    actually describe (0 = rest, 1 = fully swung)."""
 
     def __init__(self, deflection, leaf="birdofprey"):
         self._articulation_leaf = leaf
         self._articulation_angles = {
-            p.node: p.angle_deg * deflection
+            p.GetName(): p.angle_for("cruise") * deflection
             for p in articulation.rig_for(leaf)
         }
 

@@ -53,11 +53,12 @@ class _Ship:
 
 
 def _pose(ship, deflection):
-    """Set `ship`'s per-part angles to `deflection` scaled by each OLD-rig
-    part's authored `angle_deg` -- what `angle_for_part` (Task 4) reads
-    now; there is no scalar fallback any more."""
+    """Set `ship`'s per-part angles to `deflection` scaled by each part's
+    authored "cruise" angle -- the fully-deflected (up/cold) pose, mirroring
+    the pre-migration OLD-rig's single `angle_deg` -- what `angle_for_part`
+    (Task 4) reads now; there is no scalar fallback any more."""
     ship._articulation_angles = {
-        p.node: p.angle_deg * deflection
+        p.GetName(): p.angle_for("cruise") * deflection
         for p in articulation.rig_for(LEAF)
     }
 
@@ -83,7 +84,14 @@ def test_a_point_on_the_nose_resolves_to_the_head():
 
 
 def test_a_ship_with_no_authored_boxes_attributes_nothing():
-    assert ps.part_for_point("galaxy", (0.8, 0.0, -0.4)) is None
+    """"galaxy" is deliberately NOT used here any more: boxes are now DERIVED
+    (Task 5) from a realized instance's own geometry, so a leaf real enough
+    to be realized elsewhere in the suite can legitimately pick up cached
+    boxes from that -- an ACTUAL Galaxy has real named nodes, unlike the old
+    hand-authored PART_BOXES, which never had a "galaxy" entry by
+    construction. A leaf that can never resolve to a real hull is what this
+    test actually needs to pin."""
+    assert ps.part_for_point("no_such_ship", (0.8, 0.0, -0.4)) is None
 
 
 # ── Accumulation and threshold ───────────────────────────────────────────────
@@ -317,7 +325,7 @@ def test_only_the_wings_are_detachable():
 def test_every_detachable_part_has_a_box():
     """A part that can shear but has no geometry would accumulate nothing and
     silently never detach."""
-    for leaf, parts in articulation.DETACHABLE.items():
-        boxes = articulation.part_boxes_for(leaf)
-        for name in parts:
-            assert name in boxes, (leaf, name)
+    parts = articulation.detachable_for(LEAF)
+    boxes = articulation.part_boxes_for(LEAF)
+    for name in parts:
+        assert name in boxes, (LEAF, name)

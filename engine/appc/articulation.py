@@ -31,8 +31,9 @@ have to come from here.
 FRAME AND MATH. `pivot` and `axis` are in the part node's PARENT space. Scene
 Root is identity in every BC ship NIF, so that is just model space — raw NIF
 units, before the instance's natural scale. `Part.pivot` itself, however, is
-AUTHORED and STORED in SHIP units (model / 100), matching `PART_BOXES` and
-subsystem mounts; it is converted to this raw-model frame only at the one C++
+AUTHORED and STORED in SHIP units (model / 100), matching the derived
+per-part boxes (`part_boxes_for`) and subsystem mounts; it is converted to
+this raw-model frame only at the one C++
 call site, `host_loop._sync_ship_articulation`, via `MODEL_TO_SHIP` below.
 `axis` is a direction, not a point, so it is unit-agnostic and needs no such
 conversion. The override replaces the node's own local transform::
@@ -63,13 +64,19 @@ from typing import NamedTuple
 class Part(NamedTuple):
     """One articulated part node on a ship.
 
+    RETIRED as a live rig shape: `rig_for`/`parts_for_leaf` return
+    `articulated_part.ArticulatedPartProperty` instances since Task 5
+    migrated the Bird of Prey's data into that template format. Kept only
+    because `rotation_for`'s axis-normalisation tests build one directly
+    (they need nothing but `.pivot`/`.axis`, a shape this still provides).
+
     node:      NIF node name, matched exactly (BC node names are case-stable).
     pivot:     hinge point, parent/model space, SHIP units (model NIF units
-               / 100). Shares units with PART_BOXES and subsystem mounts on
-               purpose: Task 1 of the hardpoint-parenting plan unified them
-               after a MODEL-vs-SHIP mix-up made part attribution silently
-               never fire. Converted to model units at the ONE C++ call site
-               (host_loop._sync_ship_articulation).
+               / 100). Shared units with the derived per-part boxes and
+               subsystem mounts on purpose: Task 1 of the hardpoint-parenting
+               plan unified them after a MODEL-vs-SHIP mix-up made part
+               attribution silently never fire. Converted to model units at
+               the ONE C++ call site (host_loop._sync_ship_articulation).
     axis:      hinge axis, parent/model space; normalised on use.
     angle_deg: rotation applied at deflection 1.0. Sign is per-part and
                explicit — the two wings mirror, so they carry opposite signs
@@ -96,36 +103,26 @@ MODEL_TO_SHIP = 0.01
 # Keyed by HARDPOINT LEAF (the `HardpointFile` value in the ship's
 # GetShipStats), matching `hardpoint_overrides.apply(leaf)`.
 #
-# Bird of Prey only, deliberately: it is the one stock hull we want this on.
-# The mechanism is general (the Warbird ships seven part nodes, including
-# `rom wing top left`/`right`) but the DATA is a set of one.
-#
-# Geometry these numbers were read off (model-space AABB, NIF units):
-#   left wing     X[-102.58 -12.36]  Y[-67.77 53.44]  Z[-71.25 18.62]
-#   left wing01   X[  12.36 102.58]  Y[-67.77 53.44]  Z[-71.25 18.62]
-#   birdofprey    X[ -31.12  31.37]  Y[-70.44 29.22]  Z[-13.31 21.25]
-# Wing tip sits ~41 deg below horizontal relative to a root near (|X|=16, Z=5),
-# so ~45 deg brings the wings flat -- "flatter and wider" at green/yellow.
-_RIGS: dict[str, tuple[Part, ...]] = {
-    "birdofprey": (
-        # Angle SIGNS are load-bearing and were wrong on the first pass:
-        # rotating right-handed about +Y, a POSITIVE angle lifts the PORT
-        # (-X) wing and SINKS the starboard one. Verified by
-        # tests/unit/test_articulation.py, which rotates the real tip
-        # coordinate and asserts it rises.
-        Part(node="left wing",   pivot=(-0.16, 0.0, 0.05),
-             axis=(0.0, 1.0, 0.0), angle_deg=45.0),
-        Part(node="left wing01", pivot=(0.16, 0.0, 0.05),
-             axis=(0.0, 1.0, 0.0), angle_deg=-45.0),
-    ),
-}
-
-
-def rig_for(leaf: str | None) -> tuple[Part, ...]:
+# The hand-authored `_RIGS` dict this used to be is GONE (Task 5 of
+# docs/superpowers/specs/2026-09-23-spv-part-articulation-authoring-design.md):
+# a ship's rig now lives as `ArticulatedPartProperty` templates registered by
+# its own hardpoint file (stock ships: `hardpoint_overrides.py`'s
+# `__parts__` blocks) and snapshotted per-leaf by
+# `articulated_part.snapshot_for_leaf` -- see that module's docstring for why
+# a snapshot and not a live query. `rig_for` is now a thin, case-insensitive,
+# None-safe wrapper over `articulated_part.parts_for_leaf`.
+def rig_for(leaf: str | None) -> tuple:
     """Return the articulation parts for a hardpoint leaf, or () if none."""
     if not leaf:
         return ()
-    return _RIGS.get(str(leaf).lower(), ())
+    from engine.appc.articulated_part import parts_for_leaf as _parts_for_leaf
+    return _parts_for_leaf(str(leaf).lower())
+
+
+# Same lookup under the name Task 3/4 already call it by
+# (`articulated_part.parts_for_leaf`), so either name reaches the identical
+# per-leaf snapshot.
+parts_for_leaf = rig_for
 
 
 def has_rig(leaf: str | None) -> bool:
@@ -358,21 +355,27 @@ def _part_range(part) -> float:
 
 
 def _swing_range(part) -> float:
-    """`ease_angle`'s `part_range` for `part`, whichever rig system it is
-    from. A NEW-rig part (`ArticulatedPartProperty`) uses `_part_range`
-    (peak-to-peak across all four states, cached and invalidated on the
-    part itself). An OLD-rig part (this module's hardcoded `Part`) only
-    ever swings between 0 and its own `angle_deg`, so its range IS
-    `abs(angle_deg)`."""
+    """`ease_angle`'s `part_range` for `part`.
+
+    Every part `rig_for`/`parts_for_leaf` can return since Task 5's migration
+    is an `ArticulatedPartProperty`, so this is `_part_range` (peak-to-peak
+    across all four states, cached and invalidated on the part itself). The
+    `angle_deg` fallback for this module's OLD hardcoded `Part` (retired from
+    `rig_for`'s output, but still constructed directly by a couple of
+    `rotation_for`-only unit tests) is kept as a defensive duck-type guard,
+    not a live path."""
     if callable(getattr(part, "angle_for", None)):
         return _part_range(part)
     return abs(part.angle_deg)
 
 
 def _part_name(part) -> str:
-    """Name to key `part` by in `ship._articulation_angles`. Both part
-    shapes are supported: the NEW `ArticulatedPartProperty`
-    (`.GetName()`) and this module's OLD hardcoded `Part` (`.node`)."""
+    """Name to key `part` by in `ship._articulation_angles`.
+
+    `.GetName()` is what every real `ArticulatedPartProperty` (the only
+    shape `rig_for` returns since Task 5) answers. The `.node` fallback for
+    this module's OLD hardcoded `Part` is kept as a defensive duck-type
+    guard, not a live path -- see `_swing_range`."""
     getter = getattr(part, "GetName", None)
     return getter() if callable(getter) else part.node
 
@@ -380,15 +383,11 @@ def _part_name(part) -> str:
 def _target_angle(part, state: str) -> float:
     """Degrees `part` should swing to at `state`.
 
-    A NEW-rig part carries one authored angle per state via `.angle_for`. An
-    OLD-rig `Part` -- still the only data that exists for the stock Bird of
-    Prey until Task 5 migrates it into the template format -- carries a
-    single `angle_deg` for a binary swing: RED is the model's rest pose
-    (down/armed) and everything else, including "warp", is the fully
-    deflected one (up/cold). Warp folding into "cold" rather than getting
-    its own pose is the 4-state rule (wing position is a flight
-    configuration) applied to the only data an OLD-rig part actually has.
-    """
+    Every part `rig_for` can return since Task 5's migration carries one
+    authored angle per state via `.angle_for`. The `.angle_deg` binary-swing
+    fallback (RED = the model's rest pose, everything else = fully
+    deflected) is this module's retired OLD-rig `Part` shape, kept as a
+    defensive duck-type guard -- see `_swing_range`."""
     angle_for = getattr(part, "angle_for", None)
     if callable(angle_for):
         return angle_for(state)
@@ -478,22 +477,19 @@ def tick_ship(ship, dt: float) -> None:
     4-state model), easing each part toward its target angle at
     `state_for(ship)` (or the dev override state).
 
-    Parts come from the NEW per-state template
-    (`articulated_part.parts_for_leaf`) when one is registered for `leaf`;
-    otherwise this falls back to this module's OLD hardcoded `rig_for` --
-    the only data the stock Bird of Prey has until Task 5 migrates it -- read
-    through `_target_angle`'s 2-state fold (RED = down/armed, everything
-    else = up/cold). Either way the result lands in
+    Parts come from the per-state template snapshot
+    (`articulated_part.parts_for_leaf`, reached here via `rig_for`) when one
+    is registered for `leaf` -- the only rig data any ship carries since
+    Task 5 retired the hardcoded dict. The result lands in
     `ship._articulation_angles` ({name: degrees}), which is what every
     reader of a ship's LIVE pose now consults; nothing writes
     `ship.SetArticulationDeflection` any more.
 
-    A ship with no parts under EITHER system is skipped before any
-    allocation, so the overwhelming majority of hulls pay one leaf lookup.
+    A ship with no parts is skipped before any allocation, so the
+    overwhelming majority of hulls pay one leaf lookup.
     """
-    from engine.appc.articulated_part import parts_for_leaf
     leaf = leaf_for(ship)
-    parts = parts_for_leaf(leaf) or rig_for(leaf)
+    parts = rig_for(leaf)
     if not parts:
         return
     forced = _dev_override
@@ -529,61 +525,84 @@ def parts_for_ship(ship) -> tuple[Part, ...]:
 # Per-part AABBs in SHIP/BODY units (model NIF units / 100 -- BC_MODEL_SCALE is
 # 0.01, so hardpoint positions and these boxes share one frame).
 #
-# AUTHORED rather than read from the model at runtime, because nothing exposes
-# per-part bounds to Python: `model_bounds` returns unnamed per-shape spheres
-# and cannot be mapped back to a named node. A `model_part_bounds` binding
-# would generalise this; against a data set of one ship it is not yet worth a
-# new boundary crossing. Measured from BirdOfPrey.nif -- see spec section 2.4.
+# DERIVED from the model, not authored (Task 5 of
+# docs/superpowers/specs/2026-09-23-spv-part-articulation-authoring-design.md):
+# `host_io.model_nodes(iid)` now exposes per-node bounds keyed by NIF node
+# name, so the hand-drawn `PART_BOXES` constant this used to be is gone.
 #
-# NOTE the wing boxes OVERLAP the body box (wings start at |x| 0.1236, the body
-# reaches 0.31): the wing roots are embedded in the hull. That overlap is why
-# attribution falls back to the body when a point is inside more than one box —
-# see part_severance.part_for_point.
-PART_BOXES = {
-    "birdofprey": {
-        # name: ((min_x, min_y, min_z), (max_x, max_y, max_z))
-        "head":        ((-0.1010, 0.1377, -0.0885), (0.1010, 0.9044, 0.0747)),
-        "left wing":   ((-1.0258, -0.6777, -0.7125), (-0.1236, 0.5344, 0.1862)),
-        "left wing01": ((0.1236, -0.6777, -0.7125), (1.0258, 0.5344, 0.1862)),
-        "birdofprey":  ((-0.3112, -0.7044, -0.1331), (0.3137, 0.2922, 0.2125)),
-    },
-}
-
-# Parts that may SHEAR OFF, and the share of the ship's MAX hull each must
-# absorb before it does. Authored, never automatic: the body must never detach,
-# and the head coming off is not wanted either. A part absent from here
-# accumulates nothing and can never be lost.
+# Cached PER LEAF, not per instance, once any caller supplies a real render
+# instance id: the boxes are a property of the MODEL, identical for every
+# ship of the same hull, and several callers of the geometry this feeds
+# (`part_transform_point` below, `subsystems.subsystem_world_position`,
+# `part_detach_render._spawn_chunk`) have no instance id in hand at all --
+# only the ship-realize path (`host_loop._cache_ship_hull_pieces`) does.
+# Keying by leaf means the first ship of a class to realize a render instance
+# warms the box lookup for every later mount/attribution query against any
+# ship of that class, including ones with no iid to offer.
 #
-# 0.20 -> a 4000-hull Bird of Prey sheds a wing after 800 damage attributed to
-# it; both wings cost 40% of the hull. Tunable here with no rebuild, which is
-# deliberate: this is the number most likely to need a live adjustment.
-DETACHABLE = {
-    "birdofprey": {
-        "left wing":   0.20,
-        "left wing01": 0.20,
-    },
-}
+# NOTE the wing boxes now DERIVED from the mesh are TIGHTER than the old
+# hand-drawn ones, which deliberately swallowed the body box at the wing
+# roots. Attribution near a wing root that used to fall back to "unattributed"
+# may now resolve to the wing -- deliberate, not a bug; see the migration
+# report referenced above.
+_derived_boxes: dict = {}
 
 
-def part_boxes_for(leaf):
-    """Authored per-part AABBs (ship units) for a hardpoint leaf, or {}."""
+def part_boxes_for(leaf, iid=None):
+    """Per-part AABBs (ship units) for a hardpoint leaf, derived from the
+    realized model's own geometry, or {} when there is nothing to derive
+    them from yet -- headless, no ship of this leaf has ever realized a
+    render instance, or `iid` does not name one. That degrades attribution
+    to "unattributed", the same safe answer an unboxed part has always had.
+
+    `host_io.model_nodes` is called best-effort: `iid` may be a FAKE or
+    otherwise foreign id (a test's stand-in renderer, or -- as this call
+    site once shipped -- a MODEL handle mistaken for an INSTANCE id, an
+    incompatible pybind type that raises TypeError rather than degrading to
+    []). A malformed id must not abort the caller (`cache_hull_bound_spheres`
+    at ship-realize time), which would otherwise lose ALL of a ship's pieces,
+    not just their part tags.
+    """
     if not leaf:
         return {}
-    return PART_BOXES.get(str(leaf).lower(), {})
+    leaf = str(leaf).lower()
+    cached = _derived_boxes.get(leaf)
+    if cached is not None:
+        return cached
+    if iid is None:
+        return {}
+    from engine import host_io
+    try:
+        nodes = host_io.model_nodes(iid)
+    except Exception:  # noqa: BLE001 - a bad iid must degrade, not raise
+        return {}
+    boxes = {}
+    for node in nodes:
+        if not node.get("candidate"):
+            continue                      # e.g. __NDL_MultiMtl_Node
+        boxes[node["name"]] = (tuple(node["bounds_min"]),
+                               tuple(node["bounds_max"]))
+    if boxes:                             # do not cache an empty derivation
+        _derived_boxes[leaf] = boxes
+    return boxes
 
 
 def detachable_for(leaf):
-    """{part name: hull fraction that shears it} for a leaf, or {}."""
-    if not leaf:
-        return {}
-    return DETACHABLE.get(str(leaf).lower(), {})
+    """{part name: hull fraction that shears it} for a leaf, or {}.
+
+    Reads `detach_fraction` straight off the registered templates -- see
+    `articulated_part.ArticulatedPartProperty.detach_fraction` (0.20 for
+    both Bird of Prey wings; absent, never 0.0, for anything that must not
+    come off, e.g. the head and the body)."""
+    return {p.GetName(): p.detach_fraction
+            for p in rig_for(leaf) if p.detach_fraction is not None}
 
 
 def part_transform_point(ship, point):
     """Where a body-frame point ends up once its part has articulated.
 
-    In and out are BODY frame, SHIP units (what subsystem mounts and
-    PART_BOXES use). Identity for a ship with no rig, for a point on no
+    In and out are BODY frame, SHIP units (what subsystem mounts and the
+    derived per-part boxes use). Identity for a ship with no rig, for a point on no
     articulated part, and at angle 0 -- so an unarticulated hull is
     byte-identical to not calling this.
 
@@ -611,7 +630,7 @@ def part_transform_point(ship, point):
         # longer there. See host_loop._sync_ship_articulation for the
         # render-side twin of this guard.
         return point
-    part = next((p for p in parts if p.node == name), None)
+    part = next((p for p in parts if p.GetName() == name), None)
     if part is None:
         return point
 
@@ -625,35 +644,15 @@ def point_at_angle(part, point, angle_deg):
     """Where `point` (body frame, ship units) ends up when `part` alone sits
     at `angle_deg` degrees about its hinge.
 
-    The ship-free, angle-based twin of `point_at_deflection`: no
+    The ship-free, angle-based twin of `part_transform_point`: no
     attribution, no severance check, no read of any ship state. Used by the
     LIVE-pose readers (`part_transform_point`,
     `part_severance.part_for_live_point`), which already have a concrete
-    current angle in hand (from `angle_for_part`) rather than a 0..1
-    fraction of an authored maximum.
+    current angle in hand (from `angle_for_part`), and by `hull_bounds`'s
+    travel-reach maths, which evaluates it at each state's own authored
+    angle rather than at a ship's live pose.
     """
     pivot, axis, theta = rotation_for(part, angle_deg)
-    return _rotate_about(point, pivot, axis, theta)
-
-
-def point_at_deflection(part, point, deflection):
-    """Where `point` (body frame, SHIP units) ends up when `part` alone sits
-    at `deflection`.
-
-    The ship-free half of `part_transform_point`: no attribution, no
-    severance check, and — the reason it exists separately — no read of any
-    ship's LIVE deflection. `hull_bounds.bound_radius` needs the reach at
-    deflection 1.0 while the ship is at rest, which the ship-driven call
-    cannot give it. Kept taking a deflection fraction (not a raw angle,
-    unlike its sibling `point_at_angle`) because both of its OLD-rig callers
-    (`hull_bounds.py`, `test_part_severance_emitters.py`'s `_posed` fixture)
-    already speak in that unit.
-    """
-    # rotation_for now takes raw degrees (Task 4); this function's own
-    # contract is unchanged (a 0..1 fraction of `part`'s authored max), so the
-    # conversion happens HERE, at the one remaining OLD-rig call site, rather
-    # than by asking every caller to redo the multiplication.
-    pivot, axis, theta = rotation_for(part, part.angle_deg * deflection)
     return _rotate_about(point, pivot, axis, theta)
 
 

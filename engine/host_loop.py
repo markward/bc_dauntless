@@ -4887,13 +4887,23 @@ def _iter_planets_in_set(pSet) -> Iterable:
             yield obj
 
 
-def _cache_ship_hull_pieces(ship, handle, r_) -> None:
+def _cache_ship_hull_pieces(ship, handle, r_, iid=None) -> None:
     """Cache the hull's individual pieces on `ship` for shape-aware collision
     and avoidance (engine.appc.hull_bounds). GetRadius() is one sphere round
     the whole model and so cannot express a CONCAVE hull: a ship in a
     starbase's docking bay sits well inside it while touching no structure,
     and a ship with no pieces is shoved off another hull long before the
     meshes can touch.
+
+    `handle` is the MODEL handle (`model_bounds` reads geometry off it);
+    `iid`, when given, is the render INSTANCE just created from that model --
+    a DIFFERENT, incompatible opaque pybind type (model_nodes(handle) raises
+    TypeError, it does not degrade to []). Passed through to
+    `cache_hull_bound_spheres` so it can derive this leaf's per-part boxes
+    (`articulation.part_boxes_for`) from `host_io.model_nodes(iid)` the first
+    time any ship of this class realizes. Both call sites below call
+    `create_instance` right after this, so `iid` is threaded in on a second,
+    later call once it exists — see each call site.
 
     ONE helper for BOTH realize sites (realize_set_objects and
     _MissionLoader._realize_session). Live 2026-09-21 the second site had
@@ -4909,7 +4919,7 @@ def _cache_ship_hull_pieces(ship, handle, r_) -> None:
     """
     try:
         from engine.appc.hull_bounds import cache_hull_bound_spheres
-        cache_hull_bound_spheres(ship, r_.model_bounds(handle))
+        cache_hull_bound_spheres(ship, r_.model_bounds(handle), iid=iid)
     except Exception as _e:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
@@ -4954,8 +4964,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 ship.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
-        _cache_ship_hull_pieces(ship, handle, r_)
         iid = r_.create_instance(handle)
+        _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
         # BC's authored damage-volume RESOLUTION for this hull
@@ -5659,8 +5669,8 @@ class _MissionLoader:
                     ship.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception as _e:
                     dev_mode.log_swallowed("ship.SetRadius fallback", _e)
-            _cache_ship_hull_pieces(ship, handle, r_)
             iid = r_.create_instance(handle)
+            _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
             # BC's authored damage-volume RESOLUTION for this hull
@@ -7058,7 +7068,7 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
         return
     from engine.appc import part_severance
     for part, angle_deg in zip(parts, pose):
-        if part_severance.is_detached(ship, part.node):
+        if part_severance.is_detached(ship, part.GetName()):
             # A severed part is hidden via the SAME node_overrides slot this
             # rotation would write (set_instance_node_hidden / _rotation share
             # one map). Re-posing it here would overwrite the hide with a live
@@ -7071,7 +7081,7 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
         # subsystem mounts); the binding works in MODEL units. This is the
         # ONLY place the two meet.
         pivot_model = tuple(c / articulation.MODEL_TO_SHIP for c in pivot)
-        host_io.set_instance_node_rotation(iid, part.node, pivot_model,
+        host_io.set_instance_node_rotation(iid, part.GetName(), pivot_model,
                                            axis, theta)
     session.ship_articulation[iid] = pose
 
