@@ -160,21 +160,44 @@ position, exactly as today.
 **An object's frame is its containing set's.** An object in no set has no frame
 and is comparable to nothing.
 
-**The accessor** — `engine/systems/frames.py`:
+**The accessor** — `engine/systems/frames.py` (as built in Plan 2):
 
-- `frame_of(pSet) -> Frame` — `(frame_id, anchor)`, resolved through
-  `resolve.py` once per set and cached against the set object; dropped on
-  `DeleteSet` and on mission swap. Nothing per-frame goes near
-  `resolve.for_set`'s deep copy. Maps are read-only at runtime, so a live set's
-  anchor never changes.
-- `system_position(obj) -> (frame_id, x, y, z) | None` — set-local position plus
-  anchor.
-- `system_positions_in(pSet)` — the bulk form: one anchor added to a whole
-  bucket. Needed because `contact_index`, perception's `_get_xyz` and collisions
-  read the transform store directly, bypassing `GetWorldLocation`.
-- `system_delta(a, b) -> (dx, dy, dz) | None` — `None` across frames, so a
-  consumer cannot forget the frame check; `system_distance` likewise returns
-  `math.inf`.
+- `frame_of(pSet) -> Frame | None` — `Frame(key, anchor_gu)`. A mapped region
+  (marked by the region hook) is `("system", <system>)` at the region's
+  `resolve.anchor_of` anchor; every other `SetClass` is `("set", pSet)` at
+  `(0, 0, 0)`; anything that is not a set is `None`. **No cache.**
+  `anchor_of()` is a dict lookup returning an immutable tuple, and a set's
+  frame changes exactly once — when the region hook marks it mapped after
+  BC's `Initialize()`. A cache would have to know about that transition (and
+  about `DeleteSet` and mission swap); a lookup does not. Nothing goes near
+  `resolve.for_set`'s deep copy.
+- `containing_set(obj)` — the object's set, or `None` (no set, or no
+  `GetContainingSet`). `frame_of_object(obj)` composes the two.
+- `offset_between(set_a, set_b) -> (dx, dy, dz) | None` — **the primitive.**
+  Add it to a point in b's set-local coordinates to express it in a's. Same
+  set → exactly `(0, 0, 0)`, so same-set results are byte-identical to
+  comparing raw numbers; different frames, or either side setless → `None`,
+  so a consumer cannot forget the frame check.
+- `local_in(set_a, obj)` — `obj`'s position in `set_a`'s coordinates, or `None`.
+- `in_view(view, pSet, x, y, z)` — a pSet-local point in the viewed set's
+  coordinates, or `None` when pSet is outside the viewed frame (the render
+  feeds' one filter). Same set returns the point untouched.
+- `shifted(p, off, sign=1.0)` — a `TGPoint3` moved by `±off`, or `p` itself
+  when `off` is zero/`None`, so a same-set comparison runs the old arithmetic
+  on the same objects.
+- `system_position(obj) -> (frame_key, x, y, z) | None` — set-local position
+  plus anchor. `same_frame(a, b)`.
+- `system_distance(a, b) -> float` — `math.inf` across frames.
+- `viewing_set()` / `is_space_scene(pSet)` — the viewed set (below).
+- `UNSCOPED` — sentinel for "no view given" in the aggregators that take an
+  optional view, so `view=None` can mean "nothing is viewed".
+
+A **bulk** form (one anchor added to a whole transform-store bucket, for
+`contact_index` and perception's `_get_xyz`, which read the store directly) is
+**deferred to the widening plan** — those consumers are still set-scoped. The
+two hot pair loops that did need it memoize `offset_between` per distinct
+`(set_a, set_b)` per call instead (`projectiles.update_all`,
+`collisions.resolve_collisions`).
 
 **Cross-frame comparisons are undefined, not zero.** Objects in different frames
 cannot collide, sense, target or hear each other. E7M3's eight sets across six
@@ -190,12 +213,19 @@ set, a converted consumer produces exactly today's result. Behaviour changes onl
 for pairs in different sets of one system — from wrong to right. This is what
 makes the migration additive, one consumer at a time, with no flag day.
 
-**The viewing frame** is the camera's, not the player's: the frame of the
-rendered set — `get_explicit_rendered_set()` (`MakeRenderedSet`) if any, else the
-player's set — the same resolution `_resolve_active_set` already uses for lights
-and backdrops. Consequences: a cutscene rendering another set draws that set's
-frame; the warp tunnel is its own unmapped frame, so the sky is empty in transit
-(BC's tunnel shows its own backdrop); the bridge is its own frame.
+**The viewing frame** is the frame of `frames.viewing_set()`: the explicit
+rendered set (`get_explicit_rendered_set()`, `MakeRenderedSet`) **only when it is
+a space scene**, else the player's own containing set (`ship_iter.active_set()`).
+`is_space_scene` is False for the bridge (a `BridgeSet`, or whatever is
+registered as `"bridge"`) and for interior/comm rooms (`MissionLib.SetupBridgeSet`
+sets, recognised by their background model). The rule exists because cutscenes
+end with `ChangeRenderedSet("bridge")` (E6M1, E6M2, E7M1, E8M1, …) and only a
+warp arrival resets it, so the explicit rendered set is routinely the bridge
+while the player flies in tactical view; taking it literally would blank the
+world scene. Consequences: an in-space cutscene rendering another set draws that
+set's frame; a bridge<->space camera toggle does not change the viewed frame
+(audio's `scene_scope` included); the warp tunnel is its own unmapped frame, so
+the sky is empty in transit (BC's tunnel shows its own backdrop).
 
 ### 2. Map application — one interception point
 
@@ -352,10 +382,23 @@ plan.
 **Set-scoped consumers widen afterwards, one at a time.** Perception and contacts
 (`perception.perceived_by`, `contact_index`), collision avoidance, AI conditions
 and `ProximityCheck`, weapon range gates, the target list and range readouts,
-camera modes. They are safe today — they only under-reach, never seeing a sibling
+camera modes. Most are safe today — they only under-reach, never seeing a sibling
 region's ship — and per the sensor measurement, widening them changes nothing
 until the player can be physically near another region, which the hand-off (§7)
 enables. Each lands with the same-set-pair invariant test.
+
+**Weapons did NOT only under-reach.** The phaser damage tick
+(`host_loop._advance_combat`) and `weapon_subsystems._target_within_range_gu`
+(phaser `_target_in_system_range`, tractor `_can_engage`) compared raw set-local
+numbers with no set gate at all, over every set's ships: a bank left firing could
+damage a ship in another set wherever raw numbers coincided — invisibly, once
+cross-frame beams stopped being drawn. Plan 2 closes that with an **interim
+guard** (controller Ruling 5): a target not in the *same set* as the firing ship
+(setless either side included) is out of range, and the damage tick stops such a
+bank without damage. Cost until frame-aware engagement lands here: a ship cannot
+phaser or tractor a target in a sibling region even when physically close.
+`ProximityCheck` likewise rejects a pair when either side is setless (Ruling 6),
+so a dead anchor cannot keep firing on ships in other sets.
 
 ### 7. Moving through a system — rules only
 
