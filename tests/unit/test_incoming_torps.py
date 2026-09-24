@@ -38,11 +38,20 @@ from engine.appc import projectiles
 NULL_ID = App.NULL_ID
 
 
+_space = None
+
+
 @pytest.fixture(autouse=True)
 def _clear_active_torps():
+    """Every ship and torpedo here lives in ONE plain set: an object in no set
+    has no frame and is never incoming on anything (system-frames spec §1),
+    so a setless fixture would make every negative assertion vacuous."""
+    global _space
     projectiles._active.clear()
+    _space = App.SetClass_Create()
     yield
     projectiles._active.clear()
+    _space = None
 
 
 def _ship(x=0.0, y=0.0, z=0.0):
@@ -50,16 +59,21 @@ def _ship(x=0.0, y=0.0, z=0.0):
     s._hull = HullSubsystem("H")
     s._hull.SetMaxCondition(1000.0)
     s.SetWorldLocation(TGPoint3(x, y, z))
+    _space.AddObjectToSet(s, f"Ship{id(s)}")
     return s
 
 
 def _torp(pos, vel, source=None):
-    """A registered in-flight torpedo at `pos` travelling `vel`."""
+    """A registered in-flight torpedo at `pos` travelling `vel`. A torpedo
+    joins its source's set at launch; a sourceless one is placed in the
+    shared set by hand."""
     t = projectiles.Torpedo()
     t.SetTranslateXYZ(*pos)
     t._velocity = TGPoint3(*vel)
     t._source_ship = source
     projectiles.register(t)
+    if t.GetContainingSet() is None:
+        _space.AddObjectToSet(t, f"Torp{t._id}")
     return t
 
 
@@ -196,3 +210,25 @@ def test_torpedo_get_velocity_tg_returns_a_copy():
     v = torp.GetVelocityTG()
     v.Subtract(TGPoint3(1.0, 2.0, 3.0))
     assert (torp._velocity.x, torp._velocity.y, torp._velocity.z) == (1.0, 2.0, 3.0)
+
+
+# ── Frames: a torpedo in another frame is never incoming ─────────────────────
+
+def test_a_torpedo_in_another_frame_is_never_incoming():
+    from tests.helpers.mapped_regions import load_region
+    App.g_kSetManager._sets.clear()
+    try:
+        ona1 = load_region("Ona", "Ona1")
+        qb = App.SetClass_Create()
+        App.g_kSetManager.AddSet(qb, "QuickBattle")
+        observer = _ship(0, 0, 0)
+        ona1.AddObjectToSet(observer, "Observer")
+        shooter = _ship(0, 100, 0)
+        qb.AddObjectToSet(shooter, "Shooter")
+        # At the observer's numeric position+100 on +Y, closing at 50 GU/s:
+        # ETA 2 s by raw numbers -- but QuickBattle is its own frame.
+        torp = _torp((0, 100, 0), (0, -50, 0), source=shooter)
+        assert torp.GetContainingSet() is qb
+        assert projectiles.is_incoming(observer, torp, 100.0, None, False) is False
+    finally:
+        App.g_kSetManager._sets.clear()

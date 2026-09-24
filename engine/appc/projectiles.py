@@ -331,6 +331,22 @@ def get_by_id(obj_id):
     return None
 
 
+_ZERO_OFFSET = (0.0, 0.0, 0.0)
+
+
+def _shifted(p, off, sign=1.0):
+    """`p` moved by sign*off, as a new TGPoint3 -- or `p` ITSELF when `off` is
+    zero/None, so a same-set pair runs exactly today's arithmetic on the same
+    objects (mirrors collisions._shifted; not imported across modules).
+
+    `off` is frames.offset_between(a_set, b_set): sign=+1 takes a point in
+    b's set-local coordinates into a's, sign=-1 takes it back."""
+    if off is None or off == _ZERO_OFFSET:
+        return p
+    return TGPoint3(p.x + sign * off[0], p.y + sign * off[1],
+                    p.z + sign * off[2])
+
+
 # ── Incoming-torpedo detection (AIScriptAssist_* backing) ─────────────────────
 # Backs the two AIScriptAssist entry points the SDK torpedo-evasion code calls
 # (App.AIScriptAssist_TorpIsIncoming / _GetIncomingTorpIDsInSet). The RE'd
@@ -351,10 +367,19 @@ def _closing_time(observer, torp):
     fIncomingSpeed`` (AI/PlainAI/EvadeTorps.py:113-120). We reproduce that
     closing-time. The exact formula BC's engine used is unknown; this is the
     only dimensionally-consistent reading of a 'danger *time*' from the
-    position + velocity state both entry points are handed."""
+    position + velocity state both entry points are handed.
+
+    The torpedo is read in the OBSERVER's set-local coordinates
+    (frames.local_in): a torpedo in another region of the same star system
+    is measured at its system position, and one in another frame -- or an
+    observer or torpedo in no set -- is never closing (None). Velocities are
+    directions and take no offset."""
+    from engine.systems import frames
+    p = frames.local_in(frames.containing_set(observer), torp)
+    if p is None:
+        return None
     o = observer.GetWorldLocation()
-    p = torp.GetWorldLocation()
-    d = TGPoint3(p.x - o.x, p.y - o.y, p.z - o.z)
+    d = TGPoint3(p[0] - o.x, p[1] - o.y, p[2] - o.z)
     dist = d.Length()
     if dist < 1e-6:
         return 0.0                       # already on top of us
@@ -407,11 +432,11 @@ def incoming_ids(observer, danger_threshold, firing_object_id, match_source):
     """Object ids of every in-flight torpedo incoming on `observer`, applying
     the source filter. Backs AIScriptAssist_GetIncomingTorpIDsInSet.
 
-    Scope note: BC scopes this to the ship's containing SetClass, but our
-    torpedoes live only in the module-level _active registry, not in a set
-    (see the linchpin design report). We iterate _active directly; torps from
-    a distant set are geometrically far, so the closing-time threshold
-    excludes them naturally."""
+    Scope note: BC scopes this to the ship's containing SetClass. Torpedoes
+    join their source's set at launch (_join_source_set), and _closing_time
+    returns None across frames, so iterating _active directly is safe: a
+    torpedo in another frame is never incoming, and one in another region of
+    the same star system is judged at its system position."""
     return [t.GetObjID() for t in list(_active)
             if is_incoming(observer, t, danger_threshold, firing_object_id,
                            match_source)]
@@ -438,7 +463,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                                     shield_bubble_entry, shields_block,
                                     bubble_bound_radius as _bubble_bound_radius)
     from engine.appc.math import TGPoint3
-    from engine.appc.ship_iter import same_set
+    from engine.systems import frames
 
     hits: list[tuple] = []
     expired: list[Torpedo] = []
@@ -461,13 +486,20 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     # into the subsystem layer. At 100 ships a profile showed bubble_bound_radius
     # at 1,057,500 calls and GetWorldLocation at 1,426,880 over 200 ticks --
     # roughly 5,300 and 7,100 PER TICK, for ~101 distinct answers.
+    #
+    # Each ship's containing set rides along: the hit test runs in the SHIP's
+    # set-local coordinates, so a torpedo's segment is shifted by
+    # offset_between(ship_set, torp_set) -- resolved once per distinct
+    # (ship set, torpedo set) pair per call, not once per (torpedo, ship).
     ship_cache = []
     for ship in all_ships:
         if ship.IsDead():
             continue
         pos = ship.GetWorldLocation()
         ship_cache.append((ship, pos.x, pos.y, pos.z,
-                           _bubble_bound_radius(ship)))
+                           _bubble_bound_radius(ship),
+                           frames.containing_set(ship)))
+    offsets: dict = {}
 
     for t in list(_active):
         # 1. Steer if homing within guidance window.
@@ -506,9 +538,25 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                     if seg_len > 1e-9 else None)
 
         source = t._source_ship
-        for ship, sx, sy, sz, bound in ship_cache:
+        # The torpedo's frame is its OWN set (joined at launch), never its
+        # source's current one -- the shooter may have warped away since.
+        torp_set = frames.containing_set(t)
+        for ship, sx, sy, sz, bound, ship_set in ship_cache:
             if ship is source:
                 continue
+            # Different frames never interact, and a torpedo or ship in no set
+            # interacts with nothing (offset None). Same set -> zero offset ->
+            # the segment points below ARE prev_pos/cur_pos, byte-identical.
+            key = (ship_set, torp_set)
+            if key in offsets:
+                off = offsets[key]
+            else:
+                off = offsets[key] = frames.offset_between(ship_set, torp_set)
+            if off is None:
+                continue
+            # The segment in the SHIP's set-local coordinates. Everything the
+            # narrow tests and the hit consumers see is in the ship's frame.
+            seg_prev = _shifted(prev_pos, off)
 
             # Broadphase. Both narrow tests below are expensive -- the bubble
             # test alone fetches the ship's rotation matrix and does three dot
@@ -522,18 +570,13 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             # Conservative by construction: it rejects only pairs that would
             # have missed, so hit behaviour is unchanged. Pure arithmetic on
             # values hoisted above -- no attribute or subsystem access.
-            ddx = sx - prev_pos.x
-            ddy = sy - prev_pos.y
-            ddz = sz - prev_pos.z
+            ddx = sx - seg_prev.x
+            ddy = sy - seg_prev.y
+            ddz = sz - seg_prev.z
             reach = bound + seg_len
             if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
                 continue
-            # Numerically near is not near when the ship is in another set:
-            # each set has its own origin (Plan-1 stopgap -- see
-            # ship_iter.same_set). After the broadphase so the far majority
-            # of pairs never pay for it.
-            if not same_set(t, ship):
-                continue
+            seg_cur = _shifted(cur_pos, off)
 
             # The SHIELD BUBBLE is tested first, exactly as BC's projectile
             # loop does: TestHit intersects the ellipsoid and only falls
@@ -548,11 +591,11 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             # and there was no entry point left to find), and a dorsal shot
             # detonated 2.81 GU short of the shield, never reaching it at all.
             bubble_entry = (
-                shield_bubble_entry(ship, prev_pos, aim_unit, seg_len)
+                shield_bubble_entry(ship, seg_prev, aim_unit, seg_len)
                 if (aim_unit is not None and shields_block(ship)) else None)
 
             if bubble_entry is None and not sphere_hit(
-                    cur_pos, ship.GetWorldLocation(), ship.GetRadius()):
+                    seg_cur, ship.GetWorldLocation(), ship.GetRadius()):
                 continue
 
             if bubble_entry is not None:
@@ -560,7 +603,10 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 # TestHit returned. The hull point below is still resolved from
                 # the same ray, because damage that overdraws the facing has to
                 # land on real geometry for subsystem attribution.
-                cur_pos = bubble_entry
+                # bubble_entry is in the ship's frame; the torpedo's own
+                # position is written back in ITS frame.
+                seg_cur = bubble_entry
+                cur_pos = _shifted(bubble_entry, off, -1.0)
             t._bubble_entry = bubble_entry
 
             # Cast from OUTSIDE the hull along the travel direction, long
@@ -574,20 +620,22 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
                 backoff = radius + seg_len
                 ray_origin = TGPoint3(
-                    cur_pos.x - aim_unit.x * backoff,
-                    cur_pos.y - aim_unit.y * backoff,
-                    cur_pos.z - aim_unit.z * backoff,
+                    seg_cur.x - aim_unit.x * backoff,
+                    seg_cur.y - aim_unit.y * backoff,
+                    seg_cur.z - aim_unit.z * backoff,
                 )
                 ray_max = 2.0 * radius + seg_len
             else:
-                ray_origin = prev_pos
+                ray_origin = seg_prev
                 ray_max = seg_len
+            # hit_point is in the SHIP's frame -- what every hit consumer
+            # (damage, decals, VFX, events) expects, since they act on it.
             hit_point, hit_normal = _resolve_hit_point(
                 ship_instances=ship_instances, ship=ship,
                 ray_origin=ray_origin,
                 ray_direction=aim_unit,
                 max_dist=ray_max,
-                fallback_point=cur_pos,
+                fallback_point=seg_cur,
             )
             hits.append((t, ship, hit_point, hit_normal))
             expired.append(t)
@@ -607,18 +655,32 @@ _LEAD_ACCEL_K = 0.5   # BC _DAT_008887A8 ≈ 0.5 — second-order lead term
 def _target_visible(torpedo, target) -> bool:
     """Cloak/visibility check for the last-seen cache (BC 0x005AC450 via
     Guide). Observer is the FIRING ship; headless fixtures without a source
-    ship count as visible."""
+    ship count as visible.
+
+    can_detect measures raw set-local numbers. For a source and target in two
+    regions of one star system those numbers are in different coordinates, so
+    the distance is handed in, measured in the SOURCE's frame. Same set,
+    different frames, or no set: the call is exactly today's."""
     src = torpedo._source_ship
     if src is None:
         return True
     try:
         from engine.appc.sensor_detection import can_detect
-        return bool(can_detect(src, target))
+        from engine.systems import frames
+        off = frames.offset_between(frames.containing_set(src),
+                                    frames.containing_set(target))
+        if off is None or off == _ZERO_OFFSET:
+            return bool(can_detect(src, target))
+        o = src.GetWorldLocation()
+        p = _shifted(target.GetWorldLocation(), off)
+        dx, dy, dz = p.x - o.x, p.y - o.y, p.z - o.z
+        return bool(can_detect(src, target,
+                               dist_sq_gu=dx * dx + dy * dy + dz * dz))
     except Exception:
         return True
 
 
-def _steer_point(torpedo, target):
+def _steer_point(torpedo, target, off=None):
     """The world point the torpedo is steering AT.
 
     The hull centre, unless the shot carries a target-local aim offset — the
@@ -631,17 +693,21 @@ def _steer_point(torpedo, target):
     Same transform the tube's gate uses (weapon_subsystems.
     _resolve_torpedo_aim_point): scale the local offset by the target's
     scale, rotate it by the target's world rotation, add it to the centre.
+
+    `off` is frames.offset_between(torpedo set, target set): the point is
+    returned in the TORPEDO's set-local coordinates. None/zero (same set)
+    leaves today's arithmetic untouched.
     """
     pos = target.GetWorldLocation()
     offset = getattr(torpedo, "_target_offset", None)
     if not isinstance(offset, TGPoint3):
-        return TGPoint3(pos.x, pos.y, pos.z)
+        return _shifted(TGPoint3(pos.x, pos.y, pos.z), off)
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
     rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
     if isinstance(rot, TGMatrix3):
         o.MultMatrixLeft(rot)
-    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+    return _shifted(TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z), off)
 
 
 def _guide(torpedo, dt: float) -> None:
@@ -651,11 +717,14 @@ def _guide(torpedo, dt: float) -> None:
     target = torpedo._target_ship
     if target is None:
         return
-    # A target in another set is in another coordinate frame: steering at its
-    # numbers would home on an empty point in ours. Fly ballistic, as for a
-    # dead target (Plan-1 stopgap -- see ship_iter.same_set).
-    from engine.appc.ship_iter import same_set
-    if not same_set(torpedo, target):
+    # A target in another FRAME (or either side in no set) cannot be steered
+    # at: its numbers mean nothing in ours. Fly ballistic, as for a dead
+    # target. A target in another region of the same system is steered at in
+    # the TORPEDO's set-local coordinates (its own set, joined at launch).
+    from engine.systems import frames
+    off = frames.offset_between(frames.containing_set(torpedo),
+                                frames.containing_set(target))
+    if off is None:
         return
     if hasattr(target, "IsDead") and target.IsDead():
         return                       # ballistic; NOT the cloak cache
@@ -666,7 +735,8 @@ def _guide(torpedo, dt: float) -> None:
     # up to twice per call: `to_t` in the visible branch, `to_aim` always).
     torp_pos = torpedo.GetTranslate()
     if _target_visible(torpedo, target):
-        pos = _steer_point(torpedo, target)
+        # In the torpedo's frame, so the cached last-seen point below is too.
+        pos = _steer_point(torpedo, target, off)
         torpedo._last_seen_target_pos = TGPoint3(pos.x, pos.y, pos.z)
         vel = (target.GetVelocityTG()
                if hasattr(target, "GetVelocityTG") else TGPoint3(0, 0, 0))

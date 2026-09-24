@@ -12,7 +12,8 @@ Plan 1 gated all three on `ship_iter.same_set`. Plan 2 (system-frames spec
 §1/§6) moves COLLISIONS onto frames: two regions of one star system are one
 frame offset by their anchors, so a pair there compares in one set's
 coordinates via frames.offset_between; different frames still never meet.
-Splash and torpedoes remain on the same_set stopgap here.
+Torpedoes (section g) hit and home by frame too: the hit test runs in the
+ship's set-local coordinates, homing in the torpedo's own set's.
 Each scenario is paired with its same-set control so a test cannot pass by
 excluding everything.
 """
@@ -478,3 +479,56 @@ def test_same_set_collision_events_carry_the_identical_point(monkeypatch):
     pts = _collision_points_by_dest(posted)
     assert pts[id(a)] == (c.x, c.y, c.z)
     assert pts[id(b)] == (c.x, c.y, c.z)
+
+
+# ── (g) torpedoes hit and home by FRAME: two regions of one star system ─────
+# The torpedo's frame is its OWN containing set (joined at launch); the hit
+# test runs in the SHIP's set-local coordinates, homing in the torpedo's.
+
+def test_torpedo_hits_a_ship_in_another_region_at_its_system_position():
+    from engine.appc import projectiles
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    off = frames.offset_between(ona1, ona2)
+    src = _ship(0.0, 0.0, 0.0)
+    ona1.AddObjectToSet(src, "Src")
+    t = _torpedo_from(src, 40.0, 0.0, 0.0)          # reaches (40, 0, 0) this tick
+    assert t.GetContainingSet() is ona1
+    target = _ship(-off[0] + 30.0, -off[1], -off[2], radius=20.0)
+    ona2.AddObjectToSet(target, "Target")
+    hits = projectiles.update_all(1.0, [target])
+    assert [(h[0], h[1]) for h in hits] == [(t, target)]
+
+
+def test_torpedo_homes_on_a_target_in_another_region_of_its_system():
+    from engine.appc import projectiles
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    off = frames.offset_between(ona1, ona2)
+    src = _ship(0.0, 0.0, 0.0)
+    ona1.AddObjectToSet(src, "Src")
+    target = _ship(-off[0] + 500.0, -off[1], -off[2])
+    ona2.AddObjectToSet(target, "Target")
+    t = _torpedo_from(src, 0.0, 10.0, 0.0)          # heading +y
+    t._target_ship = target
+    t._guidance_lifetime = 10.0
+    t._max_angular_accel = 1.0
+    projectiles._guide(t, 0.1)
+    assert t._velocity.x > 0.5
+
+
+def test_torpedo_resolves_through_its_own_set_after_its_source_leaves():
+    """Review Focus 5."""
+    from engine.appc import projectiles
+    ona1 = load_region("Ona", "Ona1")
+    src = _ship(0.0, 0.0, 0.0)
+    ona1.AddObjectToSet(src, "Src")
+    t = _torpedo_from(src, 40.0, 0.0, 0.0)
+    ona1.RemoveObjectFromSet("Src")                 # the shooter warps away
+    _set("Elsewhere").AddObjectToSet(src, "Src")
+    assert src.GetContainingSet() is not ona1
+    assert t.GetContainingSet() is ona1
+    target = _ship(30.0, 0.0, 0.0, radius=20.0)
+    ona1.AddObjectToSet(target, "Target")
+    hits = projectiles.update_all(1.0, [src, target])
+    assert [(h[0], h[1]) for h in hits] == [(t, target)]

@@ -54,6 +54,9 @@ def test_evade_torps_records_incoming_torpedo():
     torp.SetTranslateXYZ(0, 100, 0)
     torp._velocity = TGPoint3(0, -50, 0)
     projectiles.register(torp)
+    # Sourceless, so it joined no set at launch; an object in no set is never
+    # incoming on anything (system-frames), so place it in the ship's set.
+    ship.GetContainingSet().AddObjectToSet(torp, "Torp")
 
     plain = PlainAI_Create(ship, "TestAI")
     plain.SetScriptModule("EvadeTorps")
