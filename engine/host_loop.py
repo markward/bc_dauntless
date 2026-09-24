@@ -4846,11 +4846,12 @@ class MissionSession:
     # re-bind guard — the binding itself lives on the native instance — so the
     # per-frame path can skip the boundary crossing when nothing changed.
     slot_bindings: dict[Any, tuple] = field(default_factory=dict)
-    # Last articulation deflection PUSHED per render instance id — a re-push
-    # guard only, exactly like slot_bindings. The authoritative pose lives on
-    # the ship (ShipClass._articulation_deflection); this just stops a settled
-    # hull from re-crossing into C++ every frame.
-    ship_articulation: dict[Any, float] = field(default_factory=dict)
+    # Last articulation pose PUSHED per render instance id -- a tuple of
+    # per-part angles, one per rigged part -- a re-push guard only, exactly
+    # like slot_bindings. The authoritative pose lives on the ship
+    # (ShipClass._articulation_angles); this just stops a settled hull from
+    # re-crossing into C++ every frame.
+    ship_articulation: dict[Any, tuple] = field(default_factory=dict)
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:

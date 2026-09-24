@@ -19,12 +19,20 @@ class _Session:
 
 
 class _Ship:
+    """`deflection` is a test convenience, not a production concept any
+    more: it scales the OLD-rig's authored `angle_deg` per part into
+    `_articulation_angles`, the ONLY thing `_sync_ship_articulation` (via
+    `articulation.angle_for_part`) reads. Building the dict here, rather
+    than going through `tick_ship`, is deliberate for the tests in this
+    file: they are about a FIXED pose and the render-sync's own guard/
+    force_rest logic, not about motion over time."""
+
     def __init__(self, deflection=1.0):
         self._articulation_leaf = "birdofprey"
-        self._articulation_deflection = deflection
-
-    def GetArticulationDeflection(self):
-        return self._articulation_deflection
+        self._articulation_angles = {
+            p.node: p.angle_deg * deflection
+            for p in articulation.rig_for("birdofprey")
+        }
 
 
 @pytest.fixture
@@ -63,8 +71,9 @@ def test_force_rest_does_not_mutate_the_ship(pushes):
     a destroyed subsystem."""
     from engine import host_loop
     ship = _Ship(deflection=1.0)
+    before = dict(ship._articulation_angles)
     host_loop._sync_ship_articulation(_Session(), ship, 7, force_rest=True)
-    assert ship.GetArticulationDeflection() == 1.0
+    assert ship._articulation_angles == before
 
 
 def test_the_change_guard_still_fires_on_the_open_and_close_edges(pushes):

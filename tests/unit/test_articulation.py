@@ -320,14 +320,19 @@ def test_the_conversion_constant_matches_BC_MODEL_SCALE():
 # ── part_transform_point ─────────────────────────────────────────────────────
 
 class _PosedShip:
-    """Minimal stand-in: a leaf and a deflection is all the transform needs."""
+    """Minimal stand-in: a leaf and a per-part angle map is all the
+    transform needs (Task 4 -- `part_transform_point` reads
+    `angle_for_part`, which is backed ONLY by `ship._articulation_angles`,
+    not any scalar). `deflection` here is a test convenience: it scales the
+    OLD-rig's authored `angle_deg` per part, matching what this file's
+    fixtures actually describe (0 = rest, 1 = fully swung)."""
 
     def __init__(self, deflection, leaf="birdofprey"):
         self._articulation_leaf = leaf
-        self._d = deflection
-
-    def GetArticulationDeflection(self):
-        return self._d
+        self._articulation_angles = {
+            p.node: p.angle_deg * deflection
+            for p in articulation.rig_for(leaf)
+        }
 
 
 def test_transform_is_identity_at_rest():

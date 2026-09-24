@@ -46,11 +46,20 @@ class _Ship:
         self._hull = _Hull(hull)
         self._subs = list(subs)
         self._articulation_leaf = LEAF      # pre-cached: no SDK import in tests
-        self._articulation_deflection = 0.0
+        self._articulation_angles = {}
 
     def GetHull(self): return self._hull
     def _iter_subsystems(self): return list(self._subs)
-    def GetArticulationDeflection(self): return self._articulation_deflection
+
+
+def _pose(ship, deflection):
+    """Set `ship`'s per-part angles to `deflection` scaled by each OLD-rig
+    part's authored `angle_deg` -- what `angle_for_part` (Task 4) reads
+    now; there is no scalar fallback any more."""
+    ship._articulation_angles = {
+        p.node: p.angle_deg * deflection
+        for p in articulation.rig_for(LEAF)
+    }
 
 
 # ── Attribution ──────────────────────────────────────────────────────────────
@@ -205,7 +214,7 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     star = _Sub("Star Cannon", (1.008, 0.450, -0.670))
     body = _Sub("Warp Core", (0.0, -0.33, 0.0))
     ship = _Ship(subs=(star, body))
-    ship._articulation_deflection = 0.5      # mid-travel: guards against a
+    _pose(ship, 0.5)                          # mid-travel: guards against a
                                               # fix that special-cases only
                                               # the endpoints
 
@@ -287,7 +296,7 @@ def test_a_detached_part_is_not_repose_by_the_render_sync(monkeypatch):
         lambda iid, node, pivot, axis, theta: calls.append(node) or True)
 
     ship = _Ship()
-    ship._articulation_deflection = 0.5  # a deflection CHANGE: the guard is live
+    _pose(ship, 0.5)  # a non-zero pose: the guard is live
     ps.detached_parts(ship).add("left wing01")
     session = types.SimpleNamespace(ship_articulation={})
 

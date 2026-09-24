@@ -21,6 +21,7 @@ class ArticulatedPartProperty:
         self._axis = (0.0, 1.0, 0.0)     # ship-forward
         self._angles = {}
         self._detach = None
+        self._range_cache = None         # invalidated by SetStateAngle
 
     # ---- BC-style setters (what a hardpoint file calls) ----------------
     def SetPivot(self, x, y, z):
@@ -35,6 +36,11 @@ class ArticulatedPartProperty:
                 "unknown articulation state %r; expected one of %r"
                 % (state, STATES))
         self._angles[state] = float(degrees)
+        # Invalidate directly at the one place `_angles` can change, rather
+        # than tracking a dirty flag -- `articulation.ease_angle`'s rate
+        # depends on `angle_range`, so a re-authored angle must take effect
+        # on the very next tick, not run at the old rate silently.
+        self._range_cache = None
 
     def SetDetachFraction(self, fraction):
         self._detach = float(fraction)
@@ -63,6 +69,24 @@ class ArticulatedPartProperty:
         i.e. 'as modelled', which is the right default for a part whose
         author has not considered that state."""
         return self._angles.get(state, 0.0)
+
+    @property
+    def angle_range(self) -> float:
+        """Peak-to-peak spread of the authored angle across every state --
+        `engine.appc.articulation.ease_angle`'s per-part rate normaliser.
+
+        Cached because it is read every tick for every part that is easing;
+        invalidated by `SetStateAngle` (the only way `_angles` can change),
+        not by a TTL or an identity-keyed external cache, so re-authoring an
+        angle -- the literal subject of this feature -- takes effect on the
+        very next tick rather than running at the old rate silently. Lives
+        on the instance, so it is released exactly when the part itself is
+        (e.g. by `reset()` dropping `_BY_LEAF`'s references), never longer.
+        """
+        if self._range_cache is None:
+            values = [self._angles.get(s, 0.0) for s in STATES]
+            self._range_cache = max(values) - min(values)
+        return self._range_cache
 
 
 def ArticulatedPartProperty_Create(name):

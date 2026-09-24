@@ -74,6 +74,26 @@ def test_a_static_detachable_part_needs_no_extra_concept():
     assert p.detach_fraction == 0.20
 
 
+def test_angle_range_updates_when_a_state_angle_is_re_authored():
+    """REGRESSION guard for a caching bug: `angle_range` (peak-to-peak
+    spread across states, what `articulation.ease_angle` uses to set a
+    part's ease rate) must reflect the CURRENT authored angles, not
+    whatever they were the first time it was read. Re-authoring an angle is
+    the literal subject of this whole feature -- a cache that goes stale
+    the moment someone calls `SetStateAngle` again would make the ease rate
+    silently wrong."""
+    p = ap.ArticulatedPartProperty_Create("left wing")
+    p.SetStateAngle("cruise", 45.0)
+    p.SetStateAngle("red", 0.0)
+    first = p.angle_range
+    assert first == pytest.approx(45.0)
+
+    p.SetStateAngle("warp", 90.0)
+    second = p.angle_range
+    assert second == pytest.approx(90.0)
+    assert second != first
+
+
 def test_pivot_and_axis_round_trip():
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetPivot(-0.16, 0.0, 0.05)

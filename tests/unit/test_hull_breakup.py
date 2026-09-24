@@ -18,7 +18,7 @@ class _Ship:
     def __init__(self, radius=3.5, subs=()):
         self._r = radius; self._subs = list(subs)
         self._loc = TGPoint3(0, 0, 0); self._rot = TGMatrix3()
-        self._articulation_deflection = 0.0
+        self._articulation_angles = {}
     def GetRadius(self): return self._r
     def GetWorldLocation(self): return self._loc
     def GetWorldRotation(self): return self._rot
@@ -27,7 +27,6 @@ class _Ship:
     def GetScale(self): return 1.0
     def GetHull(self): return None
     def _iter_subsystems(self): return iter(self._subs)
-    def GetArticulationDeflection(self): return self._articulation_deflection
 
 
 @pytest.fixture(autouse=True)
@@ -107,7 +106,7 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
 
     `_destroy_subsystems_inside` compares each subsystem's body-frame
     `GetPosition()` against a carved component's REST-pose bounds. It never
-    calls `GetArticulationDeflection` at all -- there is nothing to correct
+    calls `articulation.angle_for_part` at all -- there is nothing to correct
     for, because the structures this compares against are never articulated:
     PART_BOXES are authored rest-pose, and the voxel field and .dhv SDF stay
     baked from the NIF in rest pose (a carve struck on a moved part is pulled
@@ -141,7 +140,10 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
     cannon = _Sub(TGPoint3(1.008, 0.450, -0.670), "Star Cannon")
     ship = _Ship(radius=3.5, subs=[cannon])
     ship._articulation_leaf = "birdofprey"   # pre-cached: resolvable rig
-    ship._articulation_deflection = 1.0      # full travel
+    from engine.appc import articulation
+    ship._articulation_angles = {
+        p.node: p.angle_deg for p in articulation.rig_for("birdofprey")
+    }                                         # full travel
     lo, hi = (0.9, 0.4, -0.8), (1.1, 0.5, -0.5)
     monkeypatch.setattr(host_io, "hull_split_detached",
                         lambda iid, m: [_component(9, 500, (1, 0, 0), lo, hi)])

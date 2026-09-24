@@ -41,14 +41,23 @@ class _Sub:
 class _Ship:
     def __init__(self, subs):
         self._articulation_leaf = "birdofprey"
-        self._articulation_deflection = 0.0
+        self._articulation_angles = {}
         self._subs = list(subs)
-
-    def GetArticulationDeflection(self):
-        return self._articulation_deflection
 
     def _iter_subsystems(self):
         return list(self._subs)
+
+
+def _pose(ship, deflection):
+    """Set `ship`'s per-part angles to `deflection` scaled by each OLD-rig
+    part's authored `angle_deg` -- what `angle_for_part` (Task 4) reads
+    now; there is no scalar fallback any more, so a test that used to write
+    `ship._articulation_deflection` writes this dict directly instead."""
+    from engine.appc import articulation
+    ship._articulation_angles = {
+        p.node: p.angle_deg * deflection
+        for p in articulation.rig_for("birdofprey")
+    }
 
 
 STAR_CANNON = (1.008, 0.450, -0.670)     # authored mount, starboard wing
@@ -231,14 +240,14 @@ def test_a_posed_wingtip_attributes_to_its_wing():
     came off. Only inboard plumes, whose posed position still happens to land
     in the rest box, ever were."""
     ship = _Ship([])
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     posed = _posed(WING_TIP, "left wing", 1.0)
     assert ps.part_for_live_point(ship, posed) == "left wing"
 
 
 def test_a_body_point_still_attributes_as_it_does_today():
     ship = _Ship([])
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     assert (ps.part_for_live_point(ship, WARP_CORE)
             == ps.part_for_point("birdofprey", WARP_CORE))
 
@@ -248,7 +257,7 @@ def test_at_deflection_zero_it_agrees_with_part_for_point_exactly():
     one combat runs in. Swept across representative points rather than
     asserted on one, so a rule that only coincides at the origin fails."""
     ship = _Ship([])
-    ship._articulation_deflection = 0.0
+    _pose(ship, 0.0)
     points = [WING_TIP, WARP_CORE, STAR_CANNON, (0.0, 0.5, 0.0),
               (0.2, -0.2, 0.05), (-1.2843, 0.0, 0.1136), (5.0, 5.0, 5.0)]
     for p in points:
@@ -262,7 +271,7 @@ def test_an_emitter_on_a_DEFLECTED_wingtip_stops_when_that_wing_is_severed():
     the wings are down when the wing shears off."""
     particles.reset()
     ship = _Ship([])
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     posed = _posed(WING_TIP, "left wing", 1.0)
     model_point = tuple(v / ps.MODEL_TO_SHIP for v in posed)
     c = particles.AnimTSParticleController_Create()

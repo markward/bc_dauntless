@@ -18,10 +18,7 @@ class _Ship:
 
     def __init__(self):
         self._articulation_leaf = "birdofprey"
-        self._articulation_deflection = 0.0
-
-    def GetArticulationDeflection(self):
-        return self._articulation_deflection
+        self._articulation_angles = {}
 
     def GetWorldLocation(self):
         from engine.appc.math import TGPoint3
@@ -41,6 +38,18 @@ def _nif(spheres):
     from engine.host_loop import BC_MODEL_SCALE
     inv = 1.0 / BC_MODEL_SCALE
     return [(cx * inv, cy * inv, cz * inv, r * inv) for cx, cy, cz, r in spheres]
+
+
+def _pose(ship, deflection):
+    """Set `ship`'s per-part angles to `deflection` scaled by each OLD-rig
+    part's authored `angle_deg` -- what `articulation.part_transform_point`
+    (via `angle_for_part`, Task 4) reads now; there is no scalar fallback
+    any more."""
+    from engine.appc import articulation
+    ship._articulation_angles = {
+        p.node: p.angle_deg * deflection
+        for p in articulation.rig_for("birdofprey")
+    }
 
 
 # A point deep inside PART_BOXES["birdofprey"]["left wing"] and inside no
@@ -188,10 +197,10 @@ def test_a_wing_piece_moves_with_its_part_at_full_deflection():
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
 
-    ship._articulation_deflection = 0.0
+    _pose(ship, 0.0)
     (rest, _r) = hb.hull_spheres_world(ship)[0]
 
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     (moved, _r2) = hb.hull_spheres_world(ship)[0]
 
     expected = articulation.part_transform_point(ship, WING_PT)
@@ -206,9 +215,9 @@ def test_an_untagged_piece_never_moves():
     no part is unaffected at any deflection."""
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, 0.05)]))
-    ship._articulation_deflection = 0.0
+    _pose(ship, 0.0)
     (rest, _r) = hb.hull_spheres_world(ship)[0]
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     (same, _r2) = hb.hull_spheres_world(ship)[0]
     assert (same.x, same.y, same.z) == (rest.x, rest.y, rest.z)
 
@@ -222,7 +231,7 @@ def test_hull_spheres_near_ACCEPTS_a_piece_at_its_MOVED_position():
     from engine.appc.math import TGPoint3
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     mx, my, mz = articulation.part_transform_point(ship, WING_PT)
 
     # A tight query centred on where the wing IS, too small to reach its rest
@@ -272,7 +281,7 @@ def test_bound_radius_encloses_a_wing_piece_at_FULL_deflection():
     really do touch is gated out of collision entirely."""
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, _PIECE_R)]))
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     (moved, r) = hb.hull_spheres_world(ship)[0]
     moved_reach = _reach((moved.x, moved.y, moved.z), r)
     assert hb.bound_radius(ship) >= moved_reach - 1e-9, (
@@ -290,7 +299,7 @@ def test_bound_radius_encloses_a_wing_piece_at_EVERY_point_of_its_travel():
     gate = hb.bound_radius(ship)
     worst = 0.0
     for step in range(201):
-        ship._articulation_deflection = step / 200.0
+        _pose(ship, step / 200.0)
         (c, r) = hb.hull_spheres_world(ship)[0]
         worst = max(worst, _reach((c.x, c.y, c.z), r))
     assert worst > _reach(WING_MID_TRAVEL_PT) + 1e-4, (

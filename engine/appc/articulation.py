@@ -56,7 +56,6 @@ SPV-authored file later, once the gizmo can place a hinge.
 
 from __future__ import annotations
 
-import functools
 import math
 from typing import NamedTuple
 
@@ -333,18 +332,26 @@ def ease_angle(current: float, target: float, *, part_range: float,
     return current + (step if delta > 0 else -step)
 
 
-@functools.lru_cache(maxsize=None)
 def _part_range(part) -> float:
     """Peak-to-peak spread of `part`'s authored angle across every state.
 
-    A single per-part constant rather than a per-transition one, computed
-    once and cached (parts are long-lived: either a module-level `Part` in
-    `_RIGS` or a snapshot entry in `articulated_part._BY_LEAF` that lives for
-    the leaf's lifetime), so `tick_ship` does not rebuild a 4-element list
-    every part every tick. This gives `ease_angle` a rate that is fixed per
-    part rather than recomputed per transition -- see that function's
-    docstring for exactly what guarantee that does, and does not, deliver.
+    A single per-part constant rather than a per-transition one. NOT cached
+    here: `ArticulatedPartProperty.angle_range` (a property on the part
+    itself) already caches this and -- the reason it lives there rather
+    than in a `functools.lru_cache` keyed on the part -- invalidates
+    correctly the instant `SetStateAngle` re-authors an angle, and is
+    released exactly when the part itself is (mission swap /
+    `articulated_part.reset()` dropping the snapshot's last reference)
+    rather than being pinned alive forever by a free function's cache. A
+    part without that property (a bare test double) just gets recomputed on
+    every call, which is fine: nothing but a test ever takes this path.
+    This gives `ease_angle` a rate that is fixed per part rather than
+    recomputed per transition -- see that function's docstring for exactly
+    what guarantee that does, and does not, deliver.
     """
+    cached = getattr(part, "angle_range", None)
+    if cached is not None:
+        return cached
     from engine.appc.articulated_part import STATES
     values = [part.angle_for(state) for state in STATES]
     return max(values) - min(values)
@@ -353,9 +360,10 @@ def _part_range(part) -> float:
 def _swing_range(part) -> float:
     """`ease_angle`'s `part_range` for `part`, whichever rig system it is
     from. A NEW-rig part (`ArticulatedPartProperty`) uses `_part_range`
-    (peak-to-peak across all four states). An OLD-rig part (this module's
-    hardcoded `Part`) only ever swings between 0 and its own `angle_deg`, so
-    its range IS `abs(angle_deg)`."""
+    (peak-to-peak across all four states, cached and invalidated on the
+    part itself). An OLD-rig part (this module's hardcoded `Part`) only
+    ever swings between 0 and its own `angle_deg`, so its range IS
+    `abs(angle_deg)`."""
     if callable(getattr(part, "angle_for", None)):
         return _part_range(part)
     return abs(part.angle_deg)
@@ -390,33 +398,21 @@ def _target_angle(part, state: str) -> float:
 def angle_for_part(ship, part) -> float:
     """`ship`'s current eased angle (degrees) for `part`.
 
-    Primary source is `ship._articulation_angles` ({name: degrees}),
+    The ONLY source is `ship._articulation_angles` ({name: degrees}),
     written by `tick_ship` every sim tick -- this is what every reader of a
     ship's LIVE pose (`host_loop._sync_ship_articulation`,
     `part_severance.part_for_live_point`, `part_transform_point` below)
-    consults; `GetArticulationDeflection`/`SetArticulationDeflection` are no
-    longer written anywhere in this module.
-
-    Falls back to the OLD scalar `ship.GetArticulationDeflection() *
-    part.angle_deg` for an OLD-rig `Part` whose ship was never ticked
-    through this module -- e.g. a render-sync unit test that drives
-    `_sync_ship_articulation` directly, with no prior `tick_ship` call. This
-    is scaffolding for an un-ticked ship / pre-existing test double, not a
-    live production path: a real ship gets ticked every frame
-    (`engine.core.loop`), so the primary branch above is what production
-    code actually takes.
+    consults. A ship with no entry for `part` (never ticked, or ticked but
+    still at its starting angle before any state changed it) reads 0.0 --
+    the NIF pose -- which is the honest answer, not a scalar nothing in
+    production writes any more (`GetArticulationDeflection`/
+    `SetArticulationDeflection` are gone from `ShipClass`; there is no
+    fallback to fall back to).
     """
-    name = _part_name(part)
     angles = getattr(ship, "_articulation_angles", None)
-    if angles and name in angles:
-        return angles[name]
-    angle_deg = getattr(part, "angle_deg", None)
-    if angle_deg is None:
+    if not angles:
         return 0.0
-    try:
-        return float(angle_deg) * float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - not a ShipClass (test double / prop)
-        return 0.0
+    return angles.get(_part_name(part), 0.0)
 
 
 # ── Dev override ─────────────────────────────────────────────────────────────

@@ -32,14 +32,18 @@ class _Sub:
 
 class _Ship:
     """Identity rotation at the origin, so world == body and the assertions
-    read as the body-frame offsets they are."""
+    read as the body-frame offsets they are. `deflection` is a test
+    convenience: it scales the OLD-rig's authored `angle_deg` per part into
+    `_articulation_angles`, the ONLY thing `part_transform_point` (via
+    `angle_for_part`, Task 4) reads -- there is no scalar fallback."""
 
     def __init__(self, deflection, leaf="birdofprey"):
+        from engine.appc import articulation
         self._articulation_leaf = leaf
-        self._d = deflection
-
-    def GetArticulationDeflection(self):
-        return self._d
+        self._articulation_angles = {
+            p.node: p.angle_deg * deflection
+            for p in articulation.rig_for(leaf)
+        }
 
     def GetWorldLocation(self):
         return TGPoint3(0.0, 0.0, 0.0)
@@ -75,8 +79,9 @@ def test_an_unrigged_ship_is_byte_identical():
 
 
 def test_a_ship_without_articulation_support_still_works():
-    """A prop or test double with no GetArticulationDeflection must not raise —
-    this function is on the firing path for every weapon in the game."""
+    """A prop or test double with no `_articulation_leaf`/`_articulation_angles`
+    must not raise — this function is on the firing path for every weapon in
+    the game."""
     class _Bare:
         def GetWorldLocation(self):
             return TGPoint3(0.0, 0.0, 0.0)
