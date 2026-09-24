@@ -164,7 +164,21 @@ window.setShipPropertyViewer = function (data) {
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null,
         data.selected_emitter || null);
 
-    renderSPVModelParts(data.model_parts || null);
+    // Preview lock (Task 7): while data.model_parts.mount_editing_reason is
+    // set, subsystem/light/emitter editing is refused -- see
+    // _dispatch_event_inner's gate, which is the REAL refusal. This banner +
+    // the greyed subsystem list are only the visible half.
+    var mp = data.model_parts || {};
+    var locked = mp.mount_editing_enabled === false;
+    var banner = document.getElementById('spv-lock-banner');
+    if (banner) {
+        banner.style.display = locked ? 'block' : 'none';
+        banner.textContent = locked ? (mp.mount_editing_reason || '') : '';
+    }
+    var sysList = document.getElementById('spv-syslist');
+    if (sysList) sysList.classList.toggle('spv-syslist--locked', locked);
+
+    renderSPVModelParts(mp);
 
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
@@ -854,30 +868,45 @@ function renderSPVSubsystemList(rows, selectedIndex, selectedLight, selectedEmit
     body.innerHTML = out.join('');
 }
 
+// The selected part's name, refreshed on every render so the per-part
+// control handlers below (which fire from plain onchange/onclick, not a
+// row-scoped closure) know which part they're editing.
+var spvSelectedPartName = null;
+var SPV_ARTICULATION_STATES = ['cruise', 'yellow', 'red', 'warp'];
+
 // Model Parts pane (beneath the subsystem list): collapsed header/body,
 // 25% of the vertical space when the header has been clicked open. Lists
 // the ship's mesh part CANDIDATES (engine.ui.ship_property_viewer.
 // model_part_rows -- Scene Root's children only, exporter plumbing like
-// __NDL_MultiMtl_Node hidden by default). Flat list, no accordion nesting
-// -- mirrors spvRowHtml's row idiom but a part row has no children here.
+// __NDL_MultiMtl_Node hidden by default) unless "Show all" is checked.
+// Flat list, no accordion nesting -- mirrors spvRowHtml's row idiom but a
+// part row has no children here. The selected row also gets its per-part
+// authoring controls (Task 7): four angle rows + Preview buttons, and the
+// detachable checkbox + fraction field.
 function renderSPVModelParts(modelParts) {
     var pane = document.getElementById('spv-parts');
     var body = document.getElementById('spv-parts-body');
     if (!pane || !body) return;
     var data = modelParts || {};
     pane.classList.toggle('expanded', data.expanded === true);
+    var showAllCb = document.getElementById('spv-parts-showall-cb');
+    if (showAllCb) showAllCb.checked = data.show_all === true;
     var rows = data.rows || [];
     var selected = data.selected || null;
+    spvSelectedPartName = selected;
+    var selectedRow = null;
     var out = [];
     for (var i = 0; i < rows.length; i++) {
         var row = rows[i] || {};
         var chosen = (selected !== null && selected === row.name);
+        if (chosen) selectedRow = row;
         // Mirrors pause_menu.js's action-attribute escaping: the row name
         // travels through an HTML attribute into a single-quoted JS string
         // literal, so both quote characters must be neutralised.
         var safeName = String(row.name || '')
             .replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-        out.push('<div class="spv-part-row' + (chosen ? ' spv-part-row--chosen' : '') + '"'
+        out.push('<div class="spv-part-row' + (chosen ? ' spv-part-row--chosen' : '')
+            + (row.dirty === true ? ' spv-sys-row--dirty' : '') + '"'
             + ' onclick="dauntlessEvent(\'ship-property-viewer/model_parts/select:'
             + safeName + '\')">'
             + '<span class="spv-part-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
@@ -893,8 +922,74 @@ function renderSPVModelParts(modelParts) {
             + box[0].map(function (v) { return v.toFixed(2); }).join(', ') + ') max ('
             + box[1].map(function (v) { return v.toFixed(2); }).join(', ') + ')</div>');
     }
+    if (selectedRow) {
+        out.push(spvPartControlsHtml(selectedRow, data.part_preview || null));
+    }
     body.innerHTML = out.join('');
 }
+
+// Per-part authoring controls for the currently-selected part: one row per
+// articulation state (label, numeric degrees input, Preview button that
+// forces the whole rig into that state -- see engine.appc.articulation's
+// pre-existing dev override, also driven by the 'K' dev keybinding), then
+// the detachable checkbox + fraction field. `dauntlessEvent` payloads carry
+// the part name explicitly (via spvSelectedPartName at fire time) rather
+// than baking it into each row's onclick, since a JSON payload handles the
+// quoting cleanly (see shipPropertyViewerPartAngle/Detach below).
+function spvPartControlsHtml(row, previewState) {
+    var angles = row.angles || {};
+    var rows = SPV_ARTICULATION_STATES.map(function (s) {
+        var val = (typeof angles[s] === 'number') ? angles[s] : 0.0;
+        var isPreview = (previewState === s);
+        return '<div class="spv-part-angle-row">'
+             + '<span class="spv-part-angle-row__label">' + escapeHtmlSPV(s) + '</span>'
+             + '<input type="number" step="1" value="' + val.toFixed(1) + '"'
+             + ' onchange="shipPropertyViewerPartAngle(\'' + s + '\', this.value)">'
+             + '<button class="spv-part-preview-btn' + (isPreview ? ' active' : '') + '"'
+             + ' onclick="shipPropertyViewerPartPreview(\'' + s + '\', ' + isPreview + ')">'
+             + (isPreview ? 'Previewing' : 'Preview') + '</button>'
+             + '</div>';
+    }).join('');
+    var frac = (typeof row.fraction === 'number') ? row.fraction : 0.20;
+    var detachable = row.detachable === true;
+    var detach = '<div class="spv-part-detach-row">'
+        + '<label><input type="checkbox" id="spv-part-detach-cb"'
+        + (detachable ? ' checked' : '') + ' onchange="shipPropertyViewerPartDetach()">'
+        + ' Detachable</label>'
+        + '<input id="spv-part-frac" type="number" step="0.01" min="0" max="1"'
+        + ' value="' + frac.toFixed(2) + '" onchange="shipPropertyViewerPartDetach()">'
+        + '</div>';
+    return '<div class="spv-part-controls">' + rows + detach + '</div>';
+}
+
+window.shipPropertyViewerPartAngle = function (state, value) {
+    if (!spvSelectedPartName) return;
+    var degrees = parseFloat(value);
+    if (isNaN(degrees)) return;
+    dauntlessEvent('ship-property-viewer/part/set_angle:' + JSON.stringify(
+        {name: spvSelectedPartName, state: state, degrees: degrees}));
+};
+
+// Preview toggles: clicking the button for the currently-previewed state
+// clears the preview (part/preview: with nothing after the colon); clicking
+// any other state's button switches to it. This does NOT depend on which
+// part is selected -- Preview freezes the WHOLE rig at one state (see
+// engine.appc.articulation.set_dev_override), matching the pre-existing
+// 'K' dev keybinding it shares its state with.
+window.shipPropertyViewerPartPreview = function (state, isCurrent) {
+    dauntlessEvent('ship-property-viewer/part/preview:' + (isCurrent ? '' : state));
+};
+
+window.shipPropertyViewerPartDetach = function () {
+    if (!spvSelectedPartName) return;
+    var cb = document.getElementById('spv-part-detach-cb');
+    var fr = document.getElementById('spv-part-frac');
+    var detachable = !!(cb && cb.checked);
+    var fraction = fr ? parseFloat(fr.value) : 0.20;
+    if (isNaN(fraction)) fraction = 0.20;
+    dauntlessEvent('ship-property-viewer/part/set_detach:' + JSON.stringify(
+        {name: spvSelectedPartName, detachable: detachable, fraction: fraction}));
+};
 
 function spvRowHtml(row, selectedIndex, selectedLight, selectedEmitterKey, depth) {
     var isLight = (row.kind === 'light');

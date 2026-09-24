@@ -904,6 +904,14 @@ def _reset_leakable_engine_globals():
         _spv.reset_model_parts()
     except Exception:
         pass
+    # SPV part-preview lock (Task 7): also module-level, for the same reason
+    # as Model Parts above -- one test previewing an articulated state would
+    # otherwise leave mount editing locked for the next.
+    try:
+        from engine.ui import ship_property_viewer as _spv
+        _spv.reset_part_preview()
+    except Exception:
+        pass
     try:
         import App
     except Exception:

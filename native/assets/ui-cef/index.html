@@ -278,6 +278,13 @@
            width) is mirrored by TITLEBAR_H_PT / LEFT_COL_* in
            ship_property_viewer_panel.py — keep them in sync. -->
       <div id="spv-left">
+        <!-- Preview lock banner (Task 7): shown only while
+             data.model_parts.mount_editing_reason is set -- previewing an
+             articulated pose (angles not all zero) locks subsystem/light/
+             emitter editing so a mount is never authored through the wrong
+             pose. The Python side (_dispatch_event_inner) is the real gate;
+             this + #spv-syslist's greyed-out state are the visible half. -->
+        <div id="spv-lock-banner" class="spv-lock-banner" style="display:none"></div>
         <div id="spv-syslist">
           <div class="spv-syslist__header">Subsystems</div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
@@ -285,12 +292,20 @@
         <!-- Model Parts pane: collapsed by default, 25% of the vertical when
              the header is clicked open (dauntlessEvent
              'ship-property-viewer/model_parts/toggle'). Lists the ship's
-             mesh part CANDIDATES so a part can later be marked detachable
-             and hinged. See ship_property_viewer.model_part_rows. -->
+             mesh part CANDIDATES so a part can be marked detachable and
+             hinged (per-part controls in #spv-parts-body, built by
+             renderSPVModelParts). "Show all" is the escape hatch for a hull
+             whose hierarchy doesn't fit the Scene-Root-children rule --
+             stops propagation so it doesn't also toggle the pane. -->
         <div id="spv-parts">
           <div id="spv-parts-header"
                onclick="dauntlessEvent('ship-property-viewer/model_parts/toggle')">
-            Model Parts
+            <span class="spv-parts-header__title">Model Parts</span>
+            <label class="spv-parts-showall" onclick="event.stopPropagation()">
+              <input type="checkbox" id="spv-parts-showall-cb"
+                     onchange="dauntlessEvent('ship-property-viewer/model_parts/toggle_show_all')">
+              Show all
+            </label>
           </div>
           <div id="spv-parts-body"></div>
         </div>

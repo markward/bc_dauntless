@@ -266,6 +266,27 @@
     letter-spacing: 0.12em;
     font-size: 14px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.spv-parts-header__title {
+    flex: 1 1 auto;
+}
+
+/* "Show all" escape hatch (Task 7): normal-case, non-bold so it doesn't
+   compete with the uppercase header label. Stops click propagation (see
+   index.html) so toggling it never also collapses/expands the pane. */
+.spv-parts-showall {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 11px;
+    font-weight: 400;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
 }
 
 #spv-parts-body {
@@ -314,6 +335,94 @@
     font-size: 11px;
     color: rgba(200, 220, 255, 0.75);
     letter-spacing: 0.03em;
+}
+
+/* Preview-lock banner (Task 7): appears above #spv-syslist while
+   data.model_parts.mount_editing_reason is set. The Python-side gate in
+   _dispatch_event_inner is what actually stops an edit -- this is only the
+   visible half, so a designer isn't left guessing why nothing responds. */
+.spv-lock-banner {
+    flex: 0 0 auto;
+    background: rgba(216, 60, 40, 0.85);
+    color: rgb(255, 240, 220);
+    padding: 6px 12px;
+    font-size: 11px;
+    line-height: 1.35;
+    letter-spacing: 0.02em;
+}
+
+/* Greyed-out subsystem list while mount editing is locked -- pointer-events
+   is belt-and-suspenders (the real refusal is the Python-side gate in
+   _dispatch_event_inner); this exists so the panel doesn't look interactive
+   when it isn't. */
+#spv-syslist.spv-syslist--locked {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+/* Per-part authoring controls (Task 7): rendered below the selected part's
+   derived-bounds readout in #spv-parts-body. Four angle rows (state label +
+   numeric input + Preview button) plus the detachable checkbox/fraction
+   row. Kept visually distinct from the flat row list above it. */
+.spv-part-controls {
+    padding: 6px 10px 8px 10px;
+    border-top: 1px solid rgba(216, 94, 86, 0.35);
+}
+
+.spv-part-angle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: rgba(235, 225, 255, 0.85);
+}
+
+.spv-part-angle-row__label {
+    flex: 0 0 52px;
+    text-transform: capitalize;
+}
+
+.spv-part-angle-row input[type="number"] {
+    width: 56px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.3);
+    color: #ffd;
+    font-size: 12px;
+    padding: 2px 4px;
+}
+
+.spv-part-angle-row button.spv-part-preview-btn {
+    flex: 1 1 auto;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 6px;
+}
+
+.spv-part-angle-row button.spv-part-preview-btn.active {
+    background: rgba(255, 214, 90, 0.85);
+    color: rgb(40, 24, 8);
+}
+
+.spv-part-detach-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: rgba(235, 225, 255, 0.85);
+}
+
+.spv-part-detach-row input[type="number"] {
+    width: 56px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.3);
+    color: #ffd;
+    font-size: 12px;
+    padding: 2px 4px;
 }
 
 /* Eye glyph: open = targetable, shut = untargetable (dimmed). */
