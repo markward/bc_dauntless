@@ -380,8 +380,13 @@ def _part_name(part) -> str:
     return getter() if callable(getter) else part.node
 
 
-def _target_angle(part, state: str) -> float:
+def target_angle(part, state: str) -> float:
     """Degrees `part` should swing to at `state`.
+
+    Public because two callers need it: `tick_ship` (the eased sim target)
+    and `host_loop._sync_spv_articulation` (the SPV's FORCED pose, which is
+    that same authored angle applied instantly, with no easing and no sim
+    tick -- the SPV runs with the sim frozen).
 
     Every part `rig_for` can return since Task 5's migration carries one
     authored angle per state via `.angle_for`. The `.angle_deg` binary-swing
@@ -510,7 +515,7 @@ def tick_ship(ship, dt: float) -> None:
     for part in parts:
         name = _part_name(part)
         current = angles.get(name, 0.0)
-        target = _target_angle(part, state)
+        target = target_angle(part, state)
         if current != target:
             angles[name] = ease_angle(current, target,
                                       part_range=_swing_range(part), dt=dt)

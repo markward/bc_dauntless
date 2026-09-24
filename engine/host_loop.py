@@ -7030,7 +7030,15 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
     return pose_of
 
 
-def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
+# "Not forced": read the ship's own live, sim-eased per-part angles. A
+# sentinel rather than None, because None is itself a meaningful forced value
+# -- it is `articulation.dev_override()`'s "no state selected", which the SPV
+# draws as the ANCHOR pose (every part at angle 0). See
+# `_sync_ship_articulation`'s `force_state`.
+_LIVE_POSE = object()
+
+
+def _sync_ship_articulation(session, ship, iid, *, force_state=_LIVE_POSE) -> None:
     """Push `ship`'s articulated part poses (BoP wings) to its render instance.
 
     READ-ONLY on game state: each part's angle is eased on the sim tick by
@@ -7045,24 +7053,40 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
     costs one dict lookup and a tuple compare rather than a boundary crossing
     per node per frame.
 
-    `force_rest` draws the hull in its NIF pose -- every part at angle 0,
-    literally: the pose tuple is built as all zeros rather than read from
-    `angle_for_part` at all -- without touching game state. The Ship
-    Property Viewer sets it, because a hardpoint mount is STORED in the NIF
-    frame: editing one through an articulated pose writes back a number
-    that is ~0.9 ship units out at a Bird of Prey's wingtip, silently. See
-    spec section 5.1.
+    `force_state` is ONE rule covering what spec sections 5.1 (the anchor
+    pose) and 5.4 (Preview) used to state as two:
 
-    It pushes an explicit ZERO rotation rather than skipping the push --
-    skipping would leave whatever pose is already in node_overrides standing.
+      * `_LIVE_POSE` (default) -- follow the sim: each part's own eased
+        angle, via `angle_for_part`.
+      * `None` -- the ANCHOR pose: every part at angle 0, literally, the
+        tuple built as zeros rather than read from the ship at all. This is
+        what the Ship Property Viewer draws when nothing is being previewed,
+        because a hardpoint mount is STORED in the NIF frame: editing one
+        through an articulated pose writes back a number that is ~0.9 ship
+        units out at a Bird of Prey's wingtip, silently.
+      * a state name from `articulated_part.STATES` -- that state's AUTHORED
+        angle for each part, applied instantly. This is Preview: it needs no
+        path of its own, because "draw the forced state" already describes
+        it, and the anchor pose is just the forced state of nothing.
+
+    None of the three touches game state. The forced poses are applied here
+    rather than through `tick_ship` precisely because the SPV runs with the
+    sim frozen -- there is no tick to ease on.
+
+    A forced pose pushes an explicit rotation (zero included) rather than
+    skipping the push -- skipping would leave whatever pose is already in
+    node_overrides standing.
     """
     parts = articulation.parts_for_ship(ship)
     if not parts:
         return
-    if force_rest:
+    if force_state is _LIVE_POSE:
+        pose = tuple(articulation.angle_for_part(ship, part) for part in parts)
+    elif force_state is None:
         pose = tuple(0.0 for _ in parts)
     else:
-        pose = tuple(articulation.angle_for_part(ship, part) for part in parts)
+        pose = tuple(articulation.target_angle(part, force_state)
+                     for part in parts)
     last = session.ship_articulation.get(iid)
     if last is not None and last == pose:
         return
@@ -7086,11 +7110,44 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
     session.ship_articulation[iid] = pose
 
 
+def _sync_spv_articulation(session, spv_panel) -> None:
+    """Push the Ship Property Viewer's FORCED articulation pose, every frame
+    the viewer is open -- INCLUDING the frozen ones, which is all of them.
+
+    This exists as its own sweep, called from `run()` OUTSIDE
+    `if not pause.sim_frozen:`, because the ordinary articulation push rides
+    inside `_sync_instance_transforms`, which that guard skips. Opening the
+    SPV opens the pause menu, which sets `sim_frozen` -- so the one state in
+    which the forced pose matters was exactly the state in which it never
+    ran. The hologram kept drawing whatever pose was last pushed before the
+    pause, the anchor pose never took effect, and Preview could not move a
+    wing at all.
+
+    `spv_panel` is the `ShipPropertyViewerPanel` instance (that is what is in
+    scope at the call site -- `run()` shadows the module name with it), or
+    `_NULL_PICKER` outside --developer.
+
+    Dev-only twice over: `dev_mode.is_enabled()` AND the panel being open.
+    Production rendering is byte-identical -- an ordinary paused game takes
+    the early return on a bool that is False before anything is iterated.
+
+    The forced state comes from `articulation.dev_override()`, the single
+    source of truth that both the panel's Preview buttons
+    (`_set_part_preview`) and the 'K' dev keybinding write. None means
+    nothing is being previewed, which `_sync_ship_articulation` draws as the
+    anchor pose -- one rule, not a separate "rest" mode.
+    """
+    if not (dev_mode.is_enabled() and spv_panel.is_open()):
+        return
+    state = articulation.dev_override()
+    for ship, iid in session.ship_instances.items():
+        _sync_ship_articulation(session, ship, iid, force_state=state)
+
+
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None,
                               player_interp_pose=None,
-                              player_is_interpolated=None,
-                              spv_open=False) -> None:
+                              player_is_interpolated=None) -> None:
     """Push ship + planet world transforms to the renderer for one frame.
 
     Player ship: rendered at its LIVE pose (it is integrated per render frame
@@ -7125,10 +7182,11 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     `model_scale` is BC_MODEL_SCALE; non-player ships additionally
     multiply by their live GetScale().
 
-    `spv_open` forces every ship's articulated parts to their rest (NIF)
-    pose for this frame -- see `_sync_ship_articulation`'s `force_rest`.
-    The caller resolves it the same way the render block does: dev mode on
-    AND the Ship Property Viewer open.
+    Articulation is pushed here at the ship's LIVE pose only. The Ship
+    Property Viewer's FORCED pose is NOT applied from here: this whole
+    function sits under `run()`'s `if not pause.sim_frozen:`, and the SPV
+    freezes the sim, so it would never run on a frame the SPV cares about.
+    `_sync_spv_articulation` is the sweep for that, called unguarded.
     """
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
@@ -7165,7 +7223,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # volumes and cast light spool up and burst together.
     _player_warp_glow = _warp_glow_envelope(player)
     for ship, iid in session.ship_instances.items():
-        _sync_ship_articulation(session, ship, iid, force_rest=spv_open)
+        _sync_ship_articulation(session, ship, iid)
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
             _wg.update(game_time,
@@ -9451,20 +9509,25 @@ def run(mission_name: Optional[str] = None,
                     _handover.advance(_player_dt)
                     # Same game clock the decal system ages on
                     # (engine.appc.damage_decals). Read once per frame.
-                    # Resolved the same way the render block below does
-                    # (engine/host_loop.py:9615-9617): the hull must draw in
-                    # its NIF (rest) pose while the SPV is open, because a
-                    # hardpoint mount is authored in that frame, not the
-                    # live articulated one.
-                    _spv_rest = (dev_mode.is_enabled()
-                                 and ship_property_viewer.is_open())
                     _sync_instance_transforms(
                         r, session, player, _xform_buf, _interp_alpha,
                         App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
                         player_control=player_control,
                         player_interp_pose=_player_interp_pose,
-                        player_is_interpolated=_interp_player,
-                        spv_open=_spv_rest)
+                        player_is_interpolated=_interp_player)
+
+            # --- Ship Property Viewer's FORCED articulation pose ---
+            # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The
+            # SPV opens the pause menu, which freezes the sim, so everything
+            # in that block -- including the articulation push inside
+            # _sync_instance_transforms -- is skipped on every frame the
+            # viewer is open. Leaving the forced pose in there made it dead
+            # code: the hologram kept whatever pose was last pushed before
+            # the pause, and Preview could not move a wing.
+            # Dev-only and SPV-only inside the helper, so a production paused
+            # frame is byte-identical (one False bool, then return).
+            if session is not None:
+                _sync_spv_articulation(session, ship_property_viewer)
 
             frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
