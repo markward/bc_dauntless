@@ -116,7 +116,7 @@
     {
       "name": "Alioth 6",
       "display_name": "Alioth 6",
-      "radius_gu": 7200.0,
+      "radius_gu": 360.0,
       "position_gu": [
         -223462.65057165746,
         242825.95371889166,
@@ -238,14 +238,15 @@
       "set_name": "Alioth6",
       "anchor_gu": [
         -223462.65057165746,
-        232025.95371889166,
+        241825.95371889166,
         0.0
       ],
-      "radius_gu": 19500.0,
+      "radius_gu": 4000.0,
       "body_names": [
         "Alioth 6"
       ],
-      "nebula": null
+      "nebula": null,
+      "bc_scale": true
     },
     {
       "set_name": "Alioth7",

@@ -900,3 +900,109 @@ def test_the_orbit_spacing_reach_estimate_covers_a_pushed_group():
 def test_a_layout_that_cannot_clear_its_content_fails_loudly():
     with pytest.raises(ValueError, match="Push1"):
         layout(_staged_sys(), LayoutTuning(staged_clearance_gu=1.0e7))
+
+
+# ---- encircled: a planet a mission's content surrounds keeps BC's size and place
+
+def _ring_point(bearing_deg, surface_gu=1140.0, centre=(0.0, 1000.0, 0.0), radius=360.0):
+    a = math.radians(bearing_deg)
+    d = radius + surface_gu
+    return (centre[0] + d * math.cos(a), centre[1] + d * math.sin(a), 0.0)
+
+
+def _ring_sys(bearings=(-90.0, 0.0, 90.0, 180.0), label="Maelstrom/Test/Ring6_P",
+              extra=(), surface_gu=1140.0):
+    """Alioth 6's shape: a 360 GU planet at set-local (0, 1000, 0) with a
+    small moon, and mission content on a ring 1,140 GU off its surface --
+    by default at E5M4's four bearings (Nav Alpha/Beta/Gamma/Delta)."""
+    staged = [("arrival", "Player Start", (0.0, 0.0, 0.0))]
+    staged += [(label, f"Nav {i}", _ring_point(b, surface_gu)) for i, b in enumerate(bearings)]
+    staged += list(extra)
+    return SurveyedSystem(name="Ring", regions=[SurveyedRegion(
+        set_name="Ring6", ordinal=6,
+        bodies=[
+            SurveyedBody("Ring 6", 360.0, "p.nif", (0.0, 1000.0, 0.0), False),
+            SurveyedBody("Moon 1", 50.0, "m.nif", (3000.0, 1000.0, 0.0), False),
+            SurveyedBody("Sun", 5000.0, "sun.nif", (-70000.0, 0.0, 0.0), True),
+        ],
+        content_extent_gu=3000.0, player_start_gu=(0.0, 0.0, 0.0),
+        staged_points=staged)])
+
+
+def test_the_encircle_defaults_are_three_points_3000_gu_and_270_degrees():
+    t = LayoutTuning()
+    assert (t.encircle_min_points, t.encircle_near_gu, t.encircle_min_span_deg) == (3, 3000.0, 270.0)
+
+
+def test_an_encircled_region_keeps_bcs_offsets_and_radii():
+    m = layout(_ring_sys())
+    assert m.region("Ring6").bc_scale is True
+    assert _local(m, "Ring6", "Ring 6") == pytest.approx((0.0, 1000.0, 0.0), abs=1e-6)
+    assert _local(m, "Ring6", "Moon 1") == pytest.approx((3000.0, 1000.0, 0.0), abs=1e-6)
+    radii = {b.name: b.radius_gu for b in m.bodies if b.owner_region == "Ring6"}
+    assert radii == {"Ring 6": 360.0, "Moon 1": 50.0}
+
+
+def test_an_encircled_region_skips_the_staged_clearance_push():
+    """BC stages Alioth 6's "Sat 2 Start" 176 GU off the surface. Its
+    clearances are BC's own, so nothing is pushed."""
+    sat = ("Maelstrom/Test/Ring6_P", "Sat 2 Start", _ring_point(45.0, surface_gu=176.0))
+    m = layout(_ring_sys(extra=[sat]))
+    assert _local(m, "Ring6", "Ring 6") == pytest.approx((0.0, 1000.0, 0.0), abs=1e-6)
+
+
+def _arc(span_deg, n=5):
+    """n bearings spread evenly over span_deg: the span (360 minus the largest
+    gap) is exactly span_deg, since each inner gap is span/(n-1) < 360-span."""
+    return tuple(span_deg * i / (n - 1) for i in range(n))
+
+
+def test_a_269_degree_span_is_not_encircled_and_271_is():
+    from tools.systems.layout import _encircled
+    t = LayoutTuning()
+    assert _encircled(_ring_sys(bearings=_arc(269.0)).regions[0], t) is False
+    assert _encircled(_ring_sys(bearings=_arc(271.0)).regions[0], t) is True
+
+
+def test_an_unencircled_region_keeps_the_x20_layout():
+    m = layout(_ring_sys(bearings=_arc(269.0)))
+    assert m.region("Ring6").bc_scale is False
+    assert next(b for b in m.bodies if b.name == "Ring 6").radius_gu == 7200.0
+
+
+def test_two_near_points_never_encircle():
+    """Even with the span threshold lowered below what two points reach."""
+    from tools.systems.layout import _encircled
+    t = LayoutTuning(encircle_min_span_deg=90.0)
+    assert _encircled(_ring_sys(bearings=(0.0, 180.0)).regions[0], t) is False
+    assert _encircled(_ring_sys(bearings=(0.0, 90.0, 180.0)).regions[0], t) is True
+
+
+def test_only_content_near_the_surface_counts():
+    from tools.systems.layout import _encircled
+    t = LayoutTuning()
+    far = [("Maelstrom/Test/Ring6_P", f"Far {b}", _ring_point(b, surface_gu=3500.0))
+           for b in (90.0, 180.0)]
+    assert _encircled(_ring_sys(bearings=(-90.0, 0.0), extra=far).regions[0], t) is False
+    assert _encircled(_ring_sys(bearings=(-90.0, 0.0, 90.0, 180.0), surface_gu=2999.0)
+                      .regions[0], t) is True
+
+
+def test_only_mission_staged_content_counts():
+    """The region module's own waypoints and the arrival point are BC's set
+    dressing, not a mission's staging -- a ring of them does not encircle."""
+    from tools.systems.layout import _encircled
+    s = _ring_sys(label="Systems/Ring/Ring6")
+    assert _encircled(s.regions[0], LayoutTuning()) is False
+
+
+def test_the_reach_estimate_is_exact_for_an_encircled_region():
+    """An encircled group is BC's own geometry -- no standoff, no moon
+    spacing, no push to bound -- so the orbit-spacing estimate and the placed
+    region radius come from one computation and must agree exactly."""
+    from tools.systems.layout import _reach_estimate
+    s = _ring_sys()
+    s.regions[0].content_extent_gu = 0.0
+    m = layout(s)
+    assert _reach_estimate(s.regions[0], LayoutTuning()) == pytest.approx(
+        m.region("Ring6").radius_gu, abs=1e-6)

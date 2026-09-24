@@ -466,6 +466,17 @@ def bc_radii(surveyed) -> dict:
             for r in surveyed.regions for b in r.bodies if not b.is_sun}
 
 
+def bc_offsets(surveyed) -> dict:
+    """{(region_set_name, body_name): BC set-local offset (x, y, z)} for every
+    non-sun body -- bc_radii's twin.
+
+    The input the validator's bc-scale-position rule checks a bc_scale
+    region's bodies against (see tools/systems/layout._encircled).
+    """
+    return {(r.set_name, b.name): tuple(b.offset_gu)
+            for r in surveyed.regions for b in r.bodies if not b.is_sun}
+
+
 def staged_points(surveyed) -> dict:
     """{region_set_name: [("<source label>:<waypoint>", set-local xyz), ...]}.
 

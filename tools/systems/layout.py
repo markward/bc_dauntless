@@ -108,6 +108,16 @@ class LayoutTuning:
     # content is STAGED at in that region (SurveyedRegion.staged_points). A
     # violating region's whole body group is pushed away -- see _staged_shift.
     staged_clearance_gu: float = 1000.0
+    # A region is ENCIRCLED -- a mission's content surrounds its planet, so
+    # the planet keeps BC's size and place (see _encircled) -- when at least
+    # encircle_min_points mission-staged points lie within encircle_near_gu
+    # of the primary's BC surface and span at least encircle_min_span_deg
+    # around its BC centre. Measured 2026-09-24 across every mapped region:
+    # Alioth 6 spans 314 degrees (E5M4's stealth ring), Vesuvi 6 195, every
+    # other region under 160. 270 catches Alioth 6 only, by the owner's choice.
+    encircle_min_points: int = 3
+    encircle_near_gu: float = 3000.0
+    encircle_min_span_deg: float = 270.0
 
 
 # A staged-clearance push longer than this means the layout cannot clear its
@@ -234,6 +244,13 @@ def _reach_estimate(region, t: LayoutTuning) -> float:
     primary, companions = _split(region)
     if primary is None:
         return region.content_extent_gu + t.region_margin_gu
+    if _encircled(region, t):
+        # BC's own geometry: no standoff, no moon spacing, no staged push --
+        # so the reach is exact, from the same _group_geometry _place uses.
+        positions, anchor, radii = _group_geometry(
+            region, primary, companions, t, (0.0, 0.0, 0.0))
+        reach = max(_norm(_sub(p, anchor)) + r for p, r in zip(positions, radii))
+        return max(reach, region.content_extent_gu) + t.region_margin_gu
     primary_radius = primary.radius_gu * t.planet_radius_scale
     furthest = primary_radius
     for j, c in enumerate(companions):
@@ -245,8 +262,7 @@ def _reach_estimate(region, t: LayoutTuning) -> float:
     # can lengthen the reach by at most its own length (triangle inequality).
     # Computed unpinned, like the rest of this estimate.
     origin = (0.0, 0.0, 0.0)
-    positions, anchor = _group_geometry(region, primary, companions, t, origin)
-    radii = [primary_radius] + [c.radius_gu * t.moon_radius_scale for c in companions]
+    positions, anchor, radii = _group_geometry(region, primary, companions, t, origin)
     push = _norm(_staged_shift(
         region, [(_sub(p, anchor), r) for p, r in zip(positions, radii)], t))
     return max(standoff + furthest + push, region.content_extent_gu) + t.region_margin_gu
@@ -611,15 +627,69 @@ def ambiguities(s, tuning: LayoutTuning | None = None, cloud: dict | None = None
     return notes
 
 
-def _group_geometry(region, primary, companions, t: LayoutTuning, centre):
-    """([primary position, *companion positions], anchor) for a region's body
-    group around orbital centre `centre`, before pins and the staged push.
+def _mission_points(region) -> list:
+    """The distinct set-local points a MISSION stages in this region -- every
+    staged point except the arrival point and the region module's own
+    waypoints (labelled "Systems/<system>/<set>" by the survey), which are
+    the set's dressing rather than anything a mission put there."""
+    return sorted({tuple(xyz) for label, _name, xyz in getattr(region, "staged_points", [])
+                   if label != "arrival" and not label.startswith("Systems/")})
 
-    The ONE computation of a group's shape, shared by _place and
+
+def _encircle_span_deg(region, primary, t: LayoutTuning) -> tuple:
+    """(near point count, span in degrees) of the mission content within
+    t.encircle_near_gu of the primary's BC surface, measured around its BC
+    centre in the orbital XY plane: 360 minus the largest angular gap. A point
+    exactly above/below the centre has no bearing and is not counted."""
+    cx, cy = primary.offset_gu[0], primary.offset_gu[1]
+    angles = sorted({
+        math.degrees(math.atan2(p[1] - cy, p[0] - cx)) % 360.0
+        for p in _mission_points(region)
+        if math.dist(p, primary.offset_gu) - primary.radius_gu <= t.encircle_near_gu
+        and (p[0] != cx or p[1] != cy)})
+    if len(angles) < 2:
+        return len(angles), 0.0
+    gaps = [b - a for a, b in zip(angles, angles[1:])] + [angles[0] + 360.0 - angles[-1]]
+    return len(angles), 360.0 - max(gaps)
+
+
+def _encircled(region, t: LayoutTuning) -> bool:
+    """True when a mission's content surrounds this region's planet.
+
+    Such a planet cannot grow or move: BC stages the content as close as
+    176 GU off its surface (Alioth 6's "Sat 2 Start"), and a ring of it --
+    E5M4's four nav points, each 1,140 GU off Alioth 6's surface -- is the
+    mission's route AROUND the planet. At x20 and pushed back by the framing
+    standoff, the ring ends up in a fan in front of it and the mission cannot
+    be completed (live-verified 2026-09-24). So an encircled region keeps
+    BC's set-local offsets and radii outright; see _group_geometry.
+    """
+    primary, _companions = _split(region)
+    if primary is None:
+        return False
+    count, span = _encircle_span_deg(region, primary, t)
+    return count >= t.encircle_min_points and span >= t.encircle_min_span_deg
+
+
+def _group_geometry(region, primary, companions, t: LayoutTuning, centre):
+    """([primary position, *companion positions], anchor, [radii]) for a
+    region's body group around orbital centre `centre`, before pins and the
+    staged push.
+
+    The ONE computation of a group's shape and size, shared by _place and
     _reach_estimate so orbit spacing and placement cannot disagree. Everything
     is `centre` plus a vector that depends only on the region and tuning, so
     the set-local shape (position - anchor) is the same at any centre.
+
+    An ENCIRCLED region (see _encircled) is BC's own geometry at scale 1: the
+    primary lands on its orbital centre at exactly its BC offset from the
+    anchor (anchor = centre - primary BC offset), and companions keep their
+    BC offsets and radii.
     """
+    if _encircled(region, t):
+        anchor = _sub(centre, primary.offset_gu)
+        positions = [centre] + [_add(anchor, c.offset_gu) for c in companions]
+        return positions, anchor, [primary.radius_gu] + [c.radius_gu for c in companions]
     primary_radius = primary.radius_gu * t.planet_radius_scale
     positions = [centre]
     for j, c in enumerate(companions):
@@ -646,7 +716,8 @@ def _group_geometry(region, primary, companions, t: LayoutTuning, centre):
     centroid = tuple(
         sum(p[axis] for p in positions) / len(positions) for axis in range(3))
     standoff = _standoff_factor(primary, region, t) * primary_radius
-    return positions, _sub(centroid, _scale(view, standoff))
+    radii = [primary_radius] + [c.radius_gu * t.moon_radius_scale for c in companions]
+    return positions, _sub(centroid, _scale(view, standoff)), radii
 
 
 def _staged_shift(region, local_bodies, t: LayoutTuning):
@@ -743,21 +814,21 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
         placed = []
         members = []
 
-        positions, anchor = _group_geometry(region, primary, companions, t, centre)
-        primary_radius = primary.radius_gu * t.planet_radius_scale
+        bc_scale = _encircled(region, t)
+        positions, anchor, radii = _group_geometry(region, primary, companions, t, centre)
         primary_body = Body(
             name=primary.name, display_name=primary.name,
-            radius_gu=primary_radius, position_gu=positions[0], orbits=s.name,
+            radius_gu=radii[0], position_gu=positions[0], orbits=s.name,
             appearance=Appearance(kind="nif", model=primary.model),
             owner_region=region.set_name)
         m.bodies.append(primary_body)
         placed.append(primary.name)
         members.append(primary_body)
 
-        for c, position in zip(companions, positions[1:]):
+        for c, position, radius in zip(companions, positions[1:], radii[1:]):
             companion_body = Body(
                 name=c.name, display_name=c.name,
-                radius_gu=c.radius_gu * t.moon_radius_scale,
+                radius_gu=radius,
                 position_gu=position, orbits=primary.name,
                 appearance=Appearance(kind="nif", model=c.model),
                 owner_region=region.set_name)
@@ -788,8 +859,9 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
 
         # Staged clearance: after pins and anchor, before reach. The anchor
         # stays put -- it is what keeps staged content where BC put it relative
-        # to the player -- and the whole group translates together.
-        shift = _staged_shift(
+        # to the player -- and the whole group translates together. An
+        # encircled region is skipped: its clearances are BC's own.
+        shift = (0.0, 0.0, 0.0) if bc_scale else _staged_shift(
             region, [(_sub(b.position_gu, anchor), b.radius_gu) for b in members], t)
         if shift != (0.0, 0.0, 0.0):
             for b in members:
@@ -800,7 +872,7 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
         m.regions.append(Region(
             set_name=region.set_name, anchor_gu=anchor,
             radius_gu=max(reach, region.content_extent_gu) + t.region_margin_gu,
-            body_names=placed, nebula=region.nebula))
+            body_names=placed, nebula=region.nebula, bc_scale=bc_scale))
 
     # Built here, after every region's anchor above is final -- never earlier,
     # and never re-derived anywhere else.

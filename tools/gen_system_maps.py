@@ -25,7 +25,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from engine.systems.map import available, load, save  # noqa: E402
 from engine.systems.validate import validate  # noqa: E402
 from tools.systems.layout import LayoutTuning, ambiguities, layout  # noqa: E402
-from tools.systems.survey import bc_radii, staged_points, survey_system, system_names  # noqa: E402
+from tools.systems.survey import (  # noqa: E402
+    bc_offsets, bc_radii, staged_points, survey_system, system_names,
+)
 
 
 def _merge_overrides(fresh, old) -> None:
@@ -128,7 +130,8 @@ def main(argv=None) -> int:
                             bc_radii=bc_radii(surveyed),
                             radius_scale=LayoutTuning().planet_radius_scale,
                             staged_points=staged_points(surveyed),
-                            staged_clearance_gu=LayoutTuning().staged_clearance_gu)
+                            staged_clearance_gu=LayoutTuning().staged_clearance_gu,
+                            bc_offsets=bc_offsets(surveyed))
         status = "ok" if not problems else f"{len(problems)} PROBLEM(S)"
         where = "(not written)" if args.check else save(m)
         print(f"{name}: {len(m.regions)} regions, {len(m.bodies)} bodies -- "

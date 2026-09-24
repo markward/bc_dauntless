@@ -444,3 +444,85 @@ def test_the_cli_enforces_staged_clearance(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "staged-clearance" in out
     assert rc == 1
+
+
+# ---- Alioth 6: a planet a mission's content surrounds keeps BC's size and place
+# E5M4 stages a stealth route AROUND Alioth 6 -- four nav points in an exact
+# ring 1,140 GU off its 360 GU surface. At x20 and moved 9,800 GU the ring sat
+# in a fan in front of the planet and the mission could not be completed
+# (live-verified 2026-09-24). See tools/systems/layout._encircled.
+
+def _alioth6():
+    from engine.systems import map as system_map
+    m = system_map.load("alioth")
+    region = m.region("Alioth6")
+    planet = next(b for b in m.bodies
+                  if b.name == "Alioth 6" and b.owner_region == "Alioth6")
+    local = tuple(p - a for p, a in zip(planet.position_gu, region.anchor_gu))
+    return region, planet, local
+
+
+def test_exactly_one_region_across_all_maps_is_bc_scale_and_it_is_alioth6():
+    from engine.systems import map as system_map
+    found = [(name, r.set_name) for name in system_map.available()
+             for r in system_map.load(name).regions if r.bc_scale]
+    assert found == [("alioth", "Alioth6")]
+
+
+def test_vesuvi6_is_not_bc_scale():
+    """Vesuvi 6's content spans 195 degrees -- under the 270 threshold. It
+    keeps x20 pending live evidence."""
+    from engine.systems import map as system_map
+    assert system_map.load("vesuvi").region("Vesuvi6").bc_scale is False
+
+
+def test_alioth6_keeps_bcs_centre_and_radius():
+    import pytest
+    _region, planet, local = _alioth6()
+    assert local == pytest.approx((0.0, 1000.0, 0.0), abs=1e-6)
+    assert planet.radius_gu == 360.0
+
+
+def test_e5m4s_four_nav_points_ring_alioth6_1140_gu_off_its_surface():
+    import math
+    from tools.systems.survey import survey_system
+
+    _region, planet, local = _alioth6()
+    sr = next(r for r in survey_system("Alioth").regions if r.set_name == "Alioth6")
+    navs = {name: xyz for label, name, xyz in sr.staged_points
+            if label == "Maelstrom/Episode5/E5M4/Alioth6_P"
+            and name in ("Nav Alpha", "Nav Beta", "Nav Gamma", "Nav Delta")}
+    assert sorted(navs) == ["Nav Alpha", "Nav Beta", "Nav Delta", "Nav Gamma"]
+    for name, xyz in navs.items():
+        assert abs(math.dist(local, xyz) - planet.radius_gu - 1140.0) <= 1.0, name
+
+
+def test_every_bc_scale_body_sits_at_its_bc_offset():
+    from engine.systems import map as system_map
+    from engine.systems.validate import validate
+    from tools.systems.survey import bc_offsets, survey_system, system_names
+
+    problems = []
+    for name in system_names():
+        problems += validate(system_map.load(name), bc_offsets=bc_offsets(survey_system(name)))
+    assert problems == [], "\n".join(p.detail for p in problems)
+
+
+def test_bc_offsets_are_bcs_set_local_body_offsets():
+    from tools.systems.survey import bc_offsets, survey_system
+    offsets = bc_offsets(survey_system("Alioth"))
+    assert offsets[("Alioth6", "Alioth 6")] == (0.0, 1000.0, 0.0)
+    assert not any(name == "Sun" for _region, name in offsets)
+
+
+def test_the_cli_enforces_bc_scale_position(monkeypatch, capsys):
+    """The generator must pass BC offsets to validate(): an offset the layout
+    never used must surface as a bc-scale-position problem."""
+    import tools.gen_system_maps as gen
+
+    monkeypatch.setattr(gen, "bc_offsets",
+                        lambda surveyed: {("Alioth6", "Alioth 6"): (0.0, 999.0, 0.0)})
+    rc = gen.main(["--system", "Alioth", "--check"])
+    out = capsys.readouterr().out
+    assert "bc-scale-position" in out
+    assert rc == 1

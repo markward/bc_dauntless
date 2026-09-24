@@ -141,3 +141,20 @@ def test_bcs_nebula_numbers_survive_the_round_trip():
     assert neb["extra_nebulae"] == 0
     assert neb["color"] == (0.6, 0.35, 0.72)              # tuple, not list
     assert neb["spheres"][0] == (0.0, 1500.0, 0.0, 1500.0)  # tuple, not list
+
+
+def test_a_region_is_not_bc_scale_by_default_and_does_not_serialise_it():
+    """bc_scale is written only when True, so every map without an encircled
+    region keeps its bytes."""
+    m = _ona()
+    assert m.region("Ona1").bc_scale is False
+    assert "bc_scale" not in to_json(m)
+    assert from_json(to_json(m)).region("Ona1").bc_scale is False
+
+
+def test_a_bc_scale_region_round_trips():
+    m = _ona()
+    m.region("Ona1").bc_scale = True
+    text = to_json(m)
+    assert json.loads(text)["regions"][0]["bc_scale"] is True
+    assert from_json(text) == m

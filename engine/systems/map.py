@@ -46,6 +46,11 @@ class Region:
     radius_gu: float
     body_names: list = field(default_factory=list)
     nebula: dict | None = None
+    # True when a mission's content surrounds this region's planet, so its
+    # bodies keep BC's set-local offsets and radii (scale 1) -- see
+    # tools/systems/layout._encircled. Serialised ONLY when True (see
+    # to_json), so a map with no such region keeps its bytes.
+    bc_scale: bool = False
 
 
 @dataclass
@@ -96,7 +101,11 @@ class SystemMap:
 
 
 def to_json(m: SystemMap) -> str:
-    return json.dumps(asdict(m), indent=2, sort_keys=False) + "\n"
+    raw = asdict(m)
+    for region in raw["regions"]:
+        if not region["bc_scale"]:
+            del region["bc_scale"]
+    return json.dumps(raw, indent=2, sort_keys=False) + "\n"
 
 
 def _appearance_from_json(raw: dict) -> Appearance:
@@ -157,6 +166,7 @@ def from_json(text: str) -> SystemMap:
             radius_gu=float(r["radius_gu"]),
             body_names=list(r.get("body_names", [])),
             nebula=_nebula_from_json(r.get("nebula")),
+            bc_scale=bool(r.get("bc_scale", False)),
         )
         for r in raw.get("regions", [])
     ]

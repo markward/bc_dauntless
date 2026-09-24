@@ -853,3 +853,60 @@ def test_staged_clearance_rule_is_region_scoped():
     probs = validate(m, staged_points={"R1": near_r1_only}, staged_clearance_gu=1000.0)
     assert [p.rule for p in probs] == ["staged-clearance"]
     assert "R1/Moon 1" in probs[0].detail
+
+
+# ---- bc_scale regions: an encircled planet keeps BC's size and place --------
+# _radius_map's body "P" sits at set-local (0, 4000, 0) in R1.
+
+def _bc_scale_map(radius_p=100.0) -> SystemMap:
+    m = _radius_map(radius_p=radius_p)
+    m.region("R1").bc_scale = True
+    return m
+
+
+def test_radius_ratio_expects_scale_one_in_a_bc_scale_region():
+    assert [p for p in validate(_bc_scale_map(100.0), bc_radii={("R1", "P"): 100.0},
+                                radius_scale=20.0) if p.rule == "radius-ratio"] == []
+    probs = validate(_bc_scale_map(2000.0), bc_radii={("R1", "P"): 100.0}, radius_scale=20.0)
+    assert [p.rule for p in probs] == ["radius-ratio"]
+    assert "R1/P" in probs[0].detail
+
+
+def test_staged_clearance_skips_a_bc_scale_region():
+    inside = {"R1": [("Maelstrom/T/R1_P", (0.0, 3950.0, 0.0))]}
+    assert validate(_radius_map(), staged_points=inside, staged_clearance_gu=1000.0) != []
+    assert validate(_bc_scale_map(), staged_points=inside, staged_clearance_gu=1000.0) == []
+
+
+def test_bc_scale_position_rule_accepts_a_body_at_anchor_plus_bc_offset():
+    assert validate(_bc_scale_map(), bc_offsets={("R1", "P"): (0.0, 4000.0, 0.0)}) == []
+
+
+def test_bc_scale_position_rule_flags_a_body_off_its_bc_offset():
+    probs = validate(_bc_scale_map(), bc_offsets={("R1", "P"): (0.0, 4000.001, 0.0)})
+    assert [p.rule for p in probs] == ["bc-scale-position"]
+    assert "R1/P" in probs[0].detail
+
+
+def test_bc_scale_position_rule_ignores_a_region_that_is_not_bc_scale():
+    assert validate(_radius_map(), bc_offsets={("R1", "P"): (0.0, 1000.0, 0.0)}) == []
+
+
+def test_bc_scale_position_rule_is_region_scoped():
+    """Body names collide across regions; match name AND owner_region."""
+    m = SystemMap(
+        system="R",
+        bodies=[
+            Body(name="Sun", display_name="Sun", radius_gu=5000.0,
+                 position_gu=(0.0, 0.0, 0.0), orbits=None,
+                 appearance=Appearance(), owner_region=None),
+            _body("Moon 1", (0.0, 22000.0, 0.0), radius=2000.0, owner="R1", orbits="Sun"),
+            _body("Moon 1", (0.0, 57000.0, 0.0), radius=30.0, owner="R2", orbits="Sun"),
+        ],
+        regions=[
+            Region("R1", (0.0, 18000.0, 0.0), 3000.0, ["Moon 1"]),
+            Region("R2", (0.0, 56000.0, 0.0), 3000.0, ["Moon 1"], bc_scale=True),
+        ],
+    )
+    assert validate(m, bc_offsets={("R1", "Moon 1"): (0.0, 4000.0, 0.0),
+                                   ("R2", "Moon 1"): (0.0, 1000.0, 0.0)}) == []

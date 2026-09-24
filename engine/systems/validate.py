@@ -349,8 +349,17 @@ def _sequence_field(m, name: str, problems: list) -> list:
     return []
 
 
-def _radius_ratio_problems(m, bc_radii: dict, radius_scale: float) -> list:
-    """Every mapped body is exactly radius_scale x the radius BC authored.
+def _bc_scale_regions(regions, bad_regions) -> set:
+    """Names of the regions whose bodies keep BC's size and place (see
+    tools/systems/layout._encircled)."""
+    return {r.set_name for r in regions
+            if r.set_name not in bad_regions and getattr(r, "bc_scale", False) is True}
+
+
+def _radius_ratio_problems(m, bc_radii: dict, radius_scale: float,
+                           bc_scale_regions: set) -> list:
+    """Every mapped body is exactly radius_scale x the radius BC authored --
+    or exactly BC's radius (scale 1) in a bc_scale region.
 
     Only orbit DISTANCE is a layout knob that moves between regenerations;
     body size is BC's radius times one scale. A regeneration that breaks this
@@ -364,12 +373,40 @@ def _radius_ratio_problems(m, bc_radii: dict, radius_scale: float) -> list:
                      if b.name == body_name and b.owner_region == region_name), None)
         if body is None:
             continue
-        want = radius_scale * bc_radius
+        scale = 1.0 if region_name in bc_scale_regions else radius_scale
+        want = scale * bc_radius
         if not math.isclose(body.radius_gu, want, rel_tol=1e-9, abs_tol=1e-9):
             problems.append(Problem(
                 rule="radius-ratio",
                 detail=f"{region_name}/{body_name}: map radius {body.radius_gu} GU "
-                       f"is not {radius_scale} x BC's {bc_radius} = {want} GU"))
+                       f"is not {scale} x BC's {bc_radius} = {want} GU"))
+    return problems
+
+
+def _bc_scale_position_problems(bodies, regions, bad_bodies, bad_regions,
+                                bc_offsets: dict) -> list:
+    """A bc_scale region's bodies sit at exactly anchor + BC's set-local
+    offset -- the planet a mission's content surrounds has not moved.
+
+    Region-scoped like radius-ratio: match name AND owner_region.
+    """
+    problems = []
+    anchors = {r.set_name: r.anchor_gu for r in regions
+               if r.set_name in _bc_scale_regions(regions, bad_regions)}
+    for (region_name, body_name), offset in sorted(bc_offsets.items()):
+        anchor = anchors.get(region_name)
+        if anchor is None:
+            continue
+        body = next((b for b in bodies if id(b) not in bad_bodies
+                     and b.name == body_name and b.owner_region == region_name), None)
+        if body is None:
+            continue
+        local = tuple(p - a for p, a in zip(body.position_gu, anchor))
+        if _dist(local, offset) > 1e-6:
+            problems.append(Problem(
+                "bc-scale-position",
+                f"{region_name}/{body_name}: set-local position {local} is not "
+                f"BC's offset {tuple(offset)} -- a bc_scale region keeps BC's place"))
     return problems
 
 
@@ -384,7 +421,10 @@ def _staged_clearance_problems(bodies, regions, bad_bodies, bad_regions,
     is that region, never a by-name lookup.
     """
     problems = []
-    anchors = {r.set_name: r.anchor_gu for r in regions if r.set_name not in bad_regions}
+    # A bc_scale region's clearances are BC's own (content as close as 176 GU
+    # off Alioth 6's surface), so the rule does not apply there.
+    skip = bad_regions | _bc_scale_regions(regions, bad_regions)
+    anchors = {r.set_name: r.anchor_gu for r in regions if r.set_name not in skip}
     for region_name in sorted(staged_points):
         anchor = anchors.get(region_name)
         if anchor is None:
@@ -410,7 +450,7 @@ def _staged_clearance_problems(bodies, regions, bad_bodies, bad_regions,
 
 
 def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=None,
-             staged_points=None, staged_clearance_gu=None) -> list:
+             staged_points=None, staged_clearance_gu=None, bc_offsets=None) -> list:
     """Validate a SystemMap, returning a list of Problems (empty == valid).
 
     `sdk_set_names` and `pins` gate the region-coverage and pin-respected
@@ -424,7 +464,13 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
     `staged_points` and `staged_clearance_gu` gate the staged-clearance rule
     -- it only runs when BOTH are given. `staged_points` is
     `{region_set_name: [(source_label, set-local xyz), ...]}` (built from
-    `tools.systems.survey.SurveyedRegion.staged_points`).
+    `tools.systems.survey.SurveyedRegion.staged_points`). It skips
+    bc_scale regions, and radius-ratio expects scale 1 in them.
+
+    `bc_offsets` gates the bc-scale-position rule: a
+    `{(region_set_name, body_name): BC set-local offset}` mapping (see
+    `tools.systems.survey.bc_offsets`); a bc_scale region's bodies must sit
+    at exactly anchor + that offset.
     """
     problems = []
     bodies = _sequence_field(m, "bodies", problems)
@@ -821,10 +867,15 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
                     f"{sphere!r} with no matching cloud pocket volume"))
 
     if bc_radii is not None and radius_scale is not None:
-        problems.extend(_radius_ratio_problems(m, bc_radii, radius_scale))
+        problems.extend(_radius_ratio_problems(
+            m, bc_radii, radius_scale, _bc_scale_regions(regions, bad_regions)))
 
     if staged_points is not None and staged_clearance_gu is not None:
         problems.extend(_staged_clearance_problems(
             bodies, regions, bad_bodies, bad_regions, staged_points, staged_clearance_gu))
+
+    if bc_offsets is not None:
+        problems.extend(_bc_scale_position_problems(
+            bodies, regions, bad_bodies, bad_regions, bc_offsets))
 
     return problems
