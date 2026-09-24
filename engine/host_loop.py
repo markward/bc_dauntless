@@ -2167,10 +2167,13 @@ _WARP_SKY_RATE: float = 15.0
 
 
 # Last authored starbox seen while NOT in warp transit, kept so a transit with
-# the procedural sky off has something to draw. The source set is deleted at
-# burst (warp._WarpDepartAction), so by transit time there is no set left to
-# aggregate authored backdrops from -- without this the transit renders black.
-# Reset by tests/conftest.py.
+# the procedural sky off has something to draw. The source set STANDS at burst
+# (warp._WarpDepartAction drops only its render instances) -- but the player
+# has been moved into the empty `_WarpTransit` set, which becomes both the
+# explicit rendered set and the set containing the player, so
+# `_resolve_active_set` resolves to that empty set. It has no authored
+# backdrops, so by transit time there is nothing left to aggregate from --
+# without this the transit renders black. Reset by tests/conftest.py.
 _last_static_backdrops: list = []
 
 

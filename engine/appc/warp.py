@@ -613,8 +613,9 @@ class _ArriveFinalizeAction(TGAction):
             pass
         # Silence looping weapon SFX before we leave: the warping ship (which
         # has already moved to the destination) plus every ship left behind in
-        # the source set (about to be torn down). Otherwise a phaser fired at
-        # the moment of warp loops forever in the new system.
+        # the source set, whose RENDER INSTANCES are about to be torn down (the
+        # set itself stands). Otherwise a phaser fired at the moment of warp
+        # loops forever in the new system.
         _silence_ship_weapons(self._ship)
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
