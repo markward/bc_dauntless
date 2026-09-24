@@ -184,6 +184,42 @@ class TGSound:
         self._active = [h for h in self._active if h.is_live()]
         if attach_node is not None:
             self.AttachToNode(attach_node)
+
+        from engine.audio import scene_scope
+        # Emitter's own frame when there is an attach node and it resolves to
+        # a real containing set (system-frames plan 2 task 6): a left-behind
+        # ship's fire belongs to ITS frame, not the player's. A node with no
+        # resolvable containing set (not yet placed in a set, or a test
+        # double), or a sound with only an explicit position and no node,
+        # has no opinion here -- `key` stays None and it keeps today's rule
+        # (tag/allow under the currently-active/viewed frame).
+        key = None
+        if self._node is not None:
+            from engine.systems import frames
+            node_set = frames.containing_set(self._node)
+            if node_set is not None:
+                key = frames.frame_of(node_set).key
+        active = scene_scope.active_frame()
+        # Fix round 1, review Critical #1: refuse OUTRIGHT -- nothing sent to
+        # the backend, nothing registered anywhere -- when the emitter has a
+        # real, resolved frame that differs from the already-active one. By
+        # the time this runs in production, host_loop.tick_audio has ALREADY
+        # called scene_scope.set_active_frame() for this tick's viewed frame,
+        # so "active" here is never stale. Falling through to
+        # node_world_position()'s None (the old behaviour) only forced a
+        # NON-positional source -- the sound still played, unattenuated, at
+        # full volume, registered under the EMITTER's (non-active) frame,
+        # and a later set_active_frame() call for the SAME already-active
+        # frame is a no-op (see set_active_frame's `if key == _active_frame:
+        # return`), so it was never stopped either. Same-frame (including a
+        # sibling region, where `key == active`) and "no active frame yet"
+        # (`active is None`, e.g. before the first tick_audio call) are both
+        # unaffected -- this only fires when BOTH sides are known and differ.
+        if key is not None and active is not None and key != active:
+            return None
+        if key is None:
+            key = active
+
         force_non_positional = False
         if position is None and self._node is not None:
             from engine.audio import attached_sources
@@ -199,7 +235,11 @@ class TGSound:
                 # whether a position was actually provided. That is exactly
                 # the world-origin pin attached_sources.node_world_position's
                 # guard exists to prevent, so force a genuinely non-positional
-                # source instead.
+                # source instead. (The cross-frame case that used to reach
+                # here exclusively is now caught above, before any backend
+                # call at all; this remains for a node that resolves to the
+                # SAME/no frame but still fails position extraction, e.g. a
+                # stub node or a GC'd weak owner.)
                 force_non_positional = True
         factor = self._region.filter_factor() if self._region is not None else 1.0
         pid = _audio.play(
@@ -217,25 +257,9 @@ class TGSound:
         if self._node is not None:
             from engine.audio import attached_sources
             attached_sources.attach(handle, self._node)
-        from engine.audio import scene_scope
-        if self._positional or self._node is not None or position is not None:
-            # Emitter's own frame when there is an attach node and it
-            # resolves to a real containing set (system-frames plan 2 task
-            # 6): a left-behind ship's fire belongs to ITS frame, not the
-            # player's. A node with no resolvable containing set (not yet
-            # placed in a set, or a test double), or a sound with only an
-            # explicit position and no node, keeps today's rule: tag it
-            # under the currently-active/viewed frame.
-            key = None
-            if self._node is not None:
-                from engine.systems import frames
-                node_set = frames.containing_set(self._node)
-                if node_set is not None:
-                    key = frames.frame_of(node_set).key
-            if key is None:
-                key = scene_scope.active_frame()
-            if key is not None:
-                scene_scope.register(handle, key)
+        if (self._positional or self._node is not None or position is not None) \
+                and key is not None:
+            scene_scope.register(handle, key)
         return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).

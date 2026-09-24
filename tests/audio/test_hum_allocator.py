@@ -288,3 +288,99 @@ def test_real_roster_finds_ship_via_iter_active_ships(boot):
     finally:
         App.g_kSetManager._sets.clear()
         App.g_kSetManager._sets.update(saved_sets)
+
+
+def test_roster_follows_the_viewed_frame_sibling_region_in_cross_frame_out(boot):
+    """Fix round 1, review Critical #2: the roster used to be scoped to
+    active_set() (the player's single SetClass), not the viewed FRAME. A
+    sibling region of the same star system (Ona1/Ona2) shares ONE frame and
+    must both contribute hum candidates when either is viewed; an unrelated
+    frame (here a plain "QuickBattle" set) must not, even though it is a
+    real set with a real ship in it."""
+    import App
+    from engine.appc.sets import SetClass_Create
+    from tests.helpers.mapped_regions import load_region
+
+    App.g_kSetManager._sets.clear()
+    App.g_kSetManager.ClearRenderedSet()
+    try:
+        ona1 = load_region("Ona", "Ona1")
+        ona2 = load_region("Ona", "Ona2")
+        other = SetClass_Create()
+        App.g_kSetManager.AddSet(other, "QuickBattle")
+
+        def _ship(pSet, name):
+            s = App.ShipClass_Create()
+            s.SetName(name)
+            pSet.AddObjectToSet(s, name)
+            s.SetTranslateXYZ(0.0, 0.0, 0.0)
+            return s
+
+        a = _ship(ona1, "a")
+        b = _ship(ona2, "b")
+        c = _ship(other, "c")
+
+        App.g_kSetManager.MakeRenderedSet("Ona1")
+        roster_names = {s.GetName() for s in hum_allocator._roster()}
+        assert roster_names == {"a", "b"}, (
+            "a sibling region's ship must be a candidate, and an unrelated "
+            "frame's ship must not, regardless of which one is 'active_set()'"
+        )
+    finally:
+        App.g_kSetManager._sets.clear()
+        App.g_kSetManager.ClearRenderedSet()
+
+
+def test_player_hum_does_not_spin_during_a_cross_frame_cutscene(boot):
+    """Fix round 1, review Critical #2: during a space cutscene rendered in
+    another frame, the player's own set is NOT the viewed frame. Before this
+    fix, _roster() was scoped to active_set() (always the player's own set,
+    regardless of what's rendered), so the player was offered as a hum
+    candidate every tick; tg_sound.Play's frame gate (fix round 1, Critical
+    #1) then refused it every single tick -- a real Play() attempt, wasted,
+    forever, for the whole cutscene. With the roster itself scoped to the
+    VIEWED frame, the player is never even offered as a candidate, so
+    _start_hum is never called for it: verified by asserting zero "play"
+    backend commands across three consecutive update() calls, not just that
+    _humming stays empty (which a silently-refused Play would also leave
+    empty -- the backend command count is what actually proves no attempt,
+    let alone a repeated one, was made)."""
+    import App
+    from engine.appc.sets import SetClass_Create
+    from tests.helpers.mapped_regions import load_region
+    from engine.appc.properties import ImpulseEngineProperty
+
+    App.g_kSetManager._sets.clear()
+    App.g_kSetManager.ClearRenderedSet()
+    try:
+        ona1 = load_region("Ona", "Ona1")
+        cutscene_set = SetClass_Create()
+        App.g_kSetManager.AddSet(cutscene_set, "CutsceneSet")
+
+        player = App.ShipClass_Create()
+        player.SetName("player")
+        prop = ImpulseEngineProperty("Impulse Engines")
+        prop.SetEngineSound("Federation Engines")
+        player.GetImpulseEngineSubsystem().SetProperty(prop)
+        ona1.AddObjectToSet(player, "player")
+        player.SetTranslateXYZ(0.0, 0.0, 0.0)
+
+        # The cutscene renders CutsceneSet -- a different, real, space-scene
+        # set -- while the player physically stays in Ona1.
+        App.g_kSetManager.MakeRenderedSet("CutsceneSet")
+
+        _dauntless_host.audio.clear_command_log()
+        for _ in range(3):
+            hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+
+        assert "player" not in hum_allocator.humming_ship_names()
+        plays = [c for c in _dauntless_host.audio.debug_command_log()
+                 if c["op"] == "play"]
+        assert not plays, (
+            "the player must never even be offered as a hum candidate while "
+            "a cutscene renders a different frame -- zero Play() attempts, "
+            "not merely zero successful ones"
+        )
+    finally:
+        App.g_kSetManager._sets.clear()
+        App.g_kSetManager.ClearRenderedSet()

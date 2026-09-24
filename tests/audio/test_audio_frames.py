@@ -140,3 +140,59 @@ def test_same_set_sound_position_is_unchanged(audio):
     launch_pos = (plays[-1]["f"][1], plays[-1]["f"][2], plays[-1]["f"][3])
     assert launch_pos == pytest.approx((10.0, 20.0, 30.0)), \
         "same-set positions must be byte-identical to today -- no offset applied"
+
+
+def test_realistic_ordering_cross_frame_emitter_never_plays(audio):
+    """Fix round 1, review Critical #1: in real play, tick_audio has ALREADY
+    called scene_scope.set_active_frame(...) for the VIEWED frame before a
+    left-behind NPC in another frame fires. The reviewer's repro: with the
+    active frame already set to Starbase12's, node_world_position resolves
+    to None for the Ona1 NPC, and the OLD code fell through to
+    force_non_positional -- the sound played 2D and unattenuated, was
+    registered under Ona's key (not Starbase12's), and a later
+    set_active_frame(Starbase12) was a no-op (already the active frame) so
+    the sound was NEVER stopped. The fix: Play() must refuse outright (return
+    None, nothing sent to the backend, nothing registered) whenever the
+    emitter's resolved frame and the already-active frame both exist and
+    differ."""
+    starbase = _plain_set("Starbase12")
+    App.g_kSetManager.MakeRenderedSet("Starbase12")
+    # tick_audio's ordering: the active frame is set BEFORE the NPC's Play().
+    scene_scope.set_active_frame(frames.frame_of(starbase).key)
+    ona1 = load_region("Ona", "Ona1")
+    npc = _ship(ona1, "npc", (0.0, 0.0, 0.0))
+
+    snd = audio.GetSound("SpaceSfx")
+    snd.SetLooping(True)
+    _dauntless_host.audio.clear_command_log()
+    handle = snd.Play(attach_node=npc.GetNode())
+
+    assert handle is None, "a cross-frame emitter must not play at all"
+    plays = [c for c in _dauntless_host.audio.debug_command_log() if c["op"] == "play"]
+    assert not plays, "no play command may reach the backend for a refused play"
+    ona_key = frames.frame_of(ona1).key
+    assert not scene_scope._by_frame.get(ona_key), \
+        "nothing may be registered for a play that never happened"
+
+
+def test_realistic_ordering_sibling_region_still_plays_positionally(audio):
+    """Companion to the refusal test above: the SAME-frame (sibling-region)
+    case must be unaffected by the new gate -- active frame set first (as
+    tick_audio does), then a sibling-region emitter still plays, positioned
+    at the system offset."""
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    App.g_kSetManager.MakeRenderedSet("Ona1")
+    scene_scope.set_active_frame(frames.frame_of(ona1).key)
+    emitter = _ship(ona2, "npc", (0.0, 0.0, 0.0))
+
+    snd = audio.GetSound("SpaceSfx")
+    _dauntless_host.audio.clear_command_log()
+    handle = snd.Play(attach_node=emitter.GetNode())
+
+    assert handle is not None and handle._pid
+    off = frames.offset_between(ona1, ona2)
+    plays = [c for c in _dauntless_host.audio.debug_command_log() if c["op"] == "play"]
+    assert plays, "Play() must have issued a play command"
+    pos = (plays[-1]["f"][1], plays[-1]["f"][2], plays[-1]["f"][3])
+    assert pos == pytest.approx(off)
