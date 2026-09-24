@@ -394,3 +394,54 @@ def test_respond_pair_is_translation_invariant_under_b_offset(monkeypatch, case)
     assert c_pts["b"] == pytest.approx(_minus(s_pts["b"], _OFF))
     assert c_tr[2] == pytest.approx(_minus(s_tr[2], _OFF))
     assert c_pb == pytest.approx(_minus(s_pb, _OFF))
+
+
+# ── (f) each collision event carries its point in its DESTINATION's frame ──
+# Effects.CollisionEffect reads the destination's GetContainingSet() and
+# places an explosion at pEvent.GetPoint(i) in that set, so B's event point
+# must be in B's set-local coordinates, A's in A's.
+
+def _capture_events(monkeypatch):
+    posted = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent",
+                        lambda evt: posted.append(evt))
+    return posted
+
+
+def _collision_points_by_dest(posted):
+    out = {}
+    for evt in posted:
+        if evt.GetEventType() == App.ET_OBJECT_COLLISION:
+            p = evt.GetPoint(0)
+            out[id(evt.GetDestination())] = (p.x, p.y, p.z)
+    return out
+
+
+def test_cross_region_collision_event_point_is_in_each_destinations_frame(monkeypatch):
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    off = frames.offset_between(ona1, ona2)
+    a = _closing_ship(ona1, "A", (0.0, 0.0, 0.0), 0.0)
+    b = _closing_ship(ona2, "B", (-off[0] + 60, -off[1], -off[2]), -1.0)
+    posted = _capture_events(monkeypatch)
+    hits = collisions.resolve_collisions([a, b])
+    assert len(hits) == 1
+    c = hits[0][2]                                   # A's set-local contact
+    pts = _collision_points_by_dest(posted)
+    assert pts[id(a)] == pytest.approx((c.x, c.y, c.z))
+    assert pts[id(b)] == pytest.approx((c.x - off[0], c.y - off[1], c.z - off[2]))
+
+
+def test_same_set_collision_events_carry_the_identical_point(monkeypatch):
+    ona = _set("Ona1")
+    a = _ship(0.0, 0.0, 0.0, radius=50.0)
+    b = _ship(60.0, 0.0, 0.0, radius=50.0)
+    b.SetVelocity(TGPoint3(-1.0, 0.0, 0.0))
+    ona.AddObjectToSet(a, "A")
+    ona.AddObjectToSet(b, "B")
+    posted = _capture_events(monkeypatch)
+    hits = collisions.resolve_collisions([a, b])
+    c = hits[0][2]
+    pts = _collision_points_by_dest(posted)
+    assert pts[id(a)] == (c.x, c.y, c.z)
+    assert pts[id(b)] == (c.x, c.y, c.z)

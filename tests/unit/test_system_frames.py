@@ -151,3 +151,10 @@ def test_system_of_does_not_deep_copy():
     finally:
         copy.deepcopy = real
     assert calls == []
+
+
+def test_containing_set_is_the_public_accessor():
+    ona1 = load_region("Ona", "Ona1")
+    s = _ship(ona1, "S", (0.0, 0.0, 0.0))
+    assert frames.containing_set(s) is ona1
+    assert frames.containing_set(None) is None

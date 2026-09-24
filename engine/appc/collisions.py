@@ -411,8 +411,10 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     `b_offset` is frames.offset_between(set of a, set of b): the pair maths
     runs in A's set-local coordinates, so every read of B's position adds it
     and everything handed back to B's own side (its hull trace, its hit
-    point) subtracts it. The returned/event contact is in A's frame. Zero
-    (the same set) takes today's path on the same objects."""
+    point) subtracts it. The RETURNED contact is in A's frame; each
+    ET_OBJECT_COLLISION event carries the point in its DESTINATION's own
+    frame (see _emit_object_collision). Zero (the same set) takes today's
+    path on the same objects."""
     if b_offset != _NO_OFFSET:
         b = replace(b, center=_shifted(b.center, b_offset))   # B, seen from A
     dx = b.center.x - a.center.x
@@ -586,12 +588,13 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
     _emit_cloaked_collision(a.obj, b.obj)
 
-    _emit_object_collision(a.obj, b.obj, contact, abs(j))
+    _emit_object_collision(a.obj, b.obj, contact, abs(j), b_offset)
 
     return (a.obj, b.obj, contact, v_rel)
 
 
-def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
+def _emit_object_collision(obj_a, obj_b, contact, force,
+                           b_offset=_NO_OFFSET) -> None:
     """Post ET_OBJECT_COLLISION — one event per object, source/destination
     swapped.
 
@@ -608,19 +611,26 @@ def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
     event applies BC's two-most-separated reduction on whatever it is given, so
     this stays correct if that ever yields a real manifold.
 
+    `contact` is in A's set-local frame. Each event's point is in its
+    DESTINATION's own set-local coordinates -- Effects.CollisionEffect places
+    an explosion at GetPoint(i) in the destination's GetContainingSet() -- so
+    B's event gets the contact shifted back by `b_offset` (identity when zero,
+    so a same-set pair posts the one contact to both).
+
     Raise-safe, like _emit_cloaked_collision above: a failure here must not
     abort collision response, which has already mutated positions and applied
     damage by this point.
     """
     import App
     from engine import dev_mode
-    for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
+    for dest, source, point in ((obj_a, obj_b, contact),
+                                (obj_b, obj_a, _shifted(contact, b_offset, -1.0))):
         try:
             evt = App.CollisionEvent_Create()
             evt.SetEventType(App.ET_OBJECT_COLLISION)
             evt.SetSource(source)
             evt.SetDestination(dest)
-            evt.SetPoints([contact])
+            evt.SetPoints([point])
             evt.SetCollisionForce(force)
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
@@ -712,7 +722,6 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     hoisting the reads to a single batch changes only the number of boundary
     crossings, not the values observed."""
     from engine.appc.transform_store import get_store
-    from engine.core.ids import implements
     from engine.systems import frames
     objects = list(objects)
     # Only store-backed objects (ObjectClass allocates `_xform` in __init__)
@@ -726,8 +735,7 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     positions = get_store().get_positions([o._xform for o in stored])
     by_id = {id(o): TGPoint3(*p) for o, p in zip(stored, positions)}
     bodies = [_resolve_body(o, by_id.get(id(o))) for o in objects]
-    sets = [o.GetContainingSet() if implements(o, "GetContainingSet") else None
-            for o in objects]
+    sets = [frames.containing_set(o) for o in objects]
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):

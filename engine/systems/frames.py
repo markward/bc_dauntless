@@ -45,7 +45,7 @@ def frame_of(pSet):
     return Frame(("set", pSet), _ZERO)
 
 
-def _containing_set(obj):
+def containing_set(obj):
     from engine.core.ids import implements
     if obj is None or not implements(obj, "GetContainingSet"):
         return None
@@ -53,7 +53,7 @@ def _containing_set(obj):
 
 
 def frame_of_object(obj):
-    return frame_of(_containing_set(obj))
+    return frame_of(containing_set(obj))
 
 
 def offset_between(set_a, set_b):
@@ -71,7 +71,7 @@ def _xyz(obj):
 
 
 def local_in(set_a, obj):
-    off = offset_between(set_a, _containing_set(obj))
+    off = offset_between(set_a, containing_set(obj))
     if off is None:
         return None
     x, y, z = _xyz(obj)
@@ -79,7 +79,7 @@ def local_in(set_a, obj):
 
 
 def same_frame(a, b) -> bool:
-    return offset_between(_containing_set(a), _containing_set(b)) is not None
+    return offset_between(containing_set(a), containing_set(b)) is not None
 
 
 def system_position(obj):
@@ -91,7 +91,7 @@ def system_position(obj):
 
 
 def system_distance(a, b) -> float:
-    pb = local_in(_containing_set(a), b)
+    pb = local_in(containing_set(a), b)
     if pb is None:
         return math.inf
     return math.dist(_xyz(a), pb)
