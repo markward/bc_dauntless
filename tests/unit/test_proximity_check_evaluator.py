@@ -114,6 +114,39 @@ def test_evaluate_fires_once_the_object_joins_the_anchors_set():
     assert fired == [1]
 
 
+def test_evaluate_never_fires_for_a_watched_object_removed_from_its_set():
+    """Controller Ruling 4 (system-frames Task 7 fix round 1): a watched
+    object that has been removed from its set (ship_death, DeleteObjectFromSet)
+    now reports GetContainingSet() -> None (engine.appc.sets.SetClass fix).
+    `_shares_set_with_anchor`'s "permissive when unknowable" fallback must not
+    let that object through just because its set is None -- a setless object
+    interacts with nothing, including an anchor that is still very much in a
+    set, at raw-coordinate distances that mean nothing across sets."""
+    from engine.appc.sets import SetClass_Create
+
+    starbase12 = SetClass_Create()
+    pCheck = ProximityCheck(event_type=999)
+    pCheck.SetRadius(690.0)
+    anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
+    starbase12.AddObjectToSet(anchor, "Starbase 12")
+
+    target = ShipClass(); target.SetTranslateXYZ(50.0, 0.0, 0.0)  # well inside
+    starbase12.AddObjectToSet(target, "Doomed")
+    pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
+    starbase12.RemoveObjectFromSet("Doomed")
+    assert target.GetContainingSet() is None
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda evt: fired.append(1)
+    try:
+        for _ in range(10):
+            pCheck.Evaluate(anchor)
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+    assert fired == []
+
+
 def test_check_proximity_force_still_fires_when_already_inside():
     """The explicit immediate-check path (force=True, used by CheckProximity)
     fires for an already-inside object. Under level triggering `force` no

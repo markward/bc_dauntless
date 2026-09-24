@@ -1335,10 +1335,17 @@ class ProximityCheck(ObjectClass):
         been standing in for this check — and it also suppressed the repeat
         firing E1M1's dock gate needs, which is the bug this replaces it to fix.
 
-        Permissive when the answer is unknowable: an object (or anchor) with no
-        containing set is still evaluated, so synthetic checks and test doubles
-        that never join a set behave as before. Real mission objects always
-        have one.
+        Permissive only when NEITHER side has set information: two synthetic
+        checks / test doubles that never join a set still behave as before.
+        A watched object that reports None while the anchor is genuinely in a
+        set is REJECTED, not waved through -- system-frames Task 7 Ruling 4.
+        `engine.appc.sets.SetClass.RemoveObjectFromSet` / `DeleteObjectFromSet`
+        now clear a departed object's containing set (it used to stay stale,
+        still pointing at whatever set the object had last been in), so a ship
+        ship_death has already removed from its set would otherwise pass this
+        "unknowable" fallback and get evaluated at a raw-coordinate distance
+        against an anchor that means nothing to it -- a setless object
+        interacts with nothing, same convention as engine.systems.frames.
         """
         get_anchor_set = getattr(self._anchor, "GetContainingSet", None)
         get_obj_set = getattr(obj, "GetContainingSet", None)
@@ -1346,7 +1353,11 @@ class ProximityCheck(ObjectClass):
             return True
         anchor_set = get_anchor_set()
         obj_set = get_obj_set()
-        if anchor_set is None or obj_set is None:
+        if anchor_set is None and obj_set is None:
+            return True
+        if obj_set is None:
+            return False
+        if anchor_set is None:
             return True
         return anchor_set is obj_set
 

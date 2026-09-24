@@ -155,30 +155,64 @@ def test_splash_touches_no_ship_outside_its_frame(world, monkeypatch):
 
 # ── (c) torpedoes: hit nothing outside their own frame ──────────────────────
 
-def test_torpedo_hits_nothing_outside_ona_frame(world):
-    """No Ona1 ship is offered as a target here on purpose: a torpedo hits at
-    most one ship per tick (it stops at the first match), so a legitimate
-    same-frame hit would mask a cross-frame one -- this isolates the
-    cross-frame check cleanly."""
+def test_torpedo_hits_only_its_own_frame(world):
+    """Two torpedoes, one call: a POSITIVE control (aimed at a dedicated Ona1
+    victim, well clear of the shared ARRIVAL numbers) that MUST hit, proving
+    update_all is actually landing hits in this scenario -- `hits == []`
+    from a torpedo that hits nothing would otherwise pass just as well if
+    update_all had stopped detecting hits at all. And a torpedo landing
+    exactly on the shared ARRIVAL point, which every OTHER set's sentinel
+    also sits at (in ITS OWN frame) -- named `ships_that_must_not_be_hit`
+    because Ona2/Ona3 are NOT "other frames" (they share the "Ona" system
+    frame with Ona1, just at a real anchor offset -- only XiEntrades4 and
+    Starbase12 are genuinely different frames).
+
+    No Ona1 ship sits at the shared ARRIVAL point for the negative
+    torpedo to reach: a torpedo hits at most one ship per tick (it stops at
+    the first match in ship_cache order), so a legitimate same-frame hit at
+    that exact point would mask whether a cross-region/cross-frame one would
+    ALSO have matched -- the positive control below uses its OWN, separate
+    victim and point specifically so it cannot mask this check."""
     sets, sentinels, bodies = world
     src = ShipClass()
     src.SetName("TorpSrc")
     src.SetTranslateXYZ(ARRIVAL[0], ARRIVAL[1] - 6.0, ARRIVAL[2])
     sets["Ona1"].AddObjectToSet(src, "TorpSrc")
 
-    t = Torpedo()
-    t.SetTranslateXYZ(ARRIVAL[0], ARRIVAL[1] - 6.0, ARRIVAL[2])
-    t._velocity = TGPoint3(0.0, 6.0, 0.0)       # lands exactly on ARRIVAL this tick
-    t._ttl = 30.0
-    t._source_ship = src
-    t._damage = 100.0
-    register(t)
-    assert t.GetContainingSet() is sets["Ona1"]
+    # Positive control: a dedicated Ona1 victim far from the shared ARRIVAL
+    # numbers, so it cannot be confused with any of the sentinels below.
+    victim = ShipClass()
+    victim.SetName("OnaTorpVictim")
+    victim.SetTranslateXYZ(ARRIVAL[0] + 20.0, ARRIVAL[1] - 6.0, ARRIVAL[2])
+    victim.SetRadius(1.0)
+    sets["Ona1"].AddObjectToSet(victim, "OnaTorpVictim")
+    torp_positive = Torpedo()
+    torp_positive.SetTranslateXYZ(ARRIVAL[0], ARRIVAL[1] - 6.0, ARRIVAL[2])
+    torp_positive._velocity = TGPoint3(20.0, 0.0, 0.0)   # lands exactly on victim
+    torp_positive._ttl = 30.0
+    torp_positive._source_ship = src
+    torp_positive._damage = 100.0
+    register(torp_positive)
 
-    other_frame_ships = [sentinels[name] for name in
-                         ("Ona2", "Ona3", "XiEntrades4", "Starbase12")]
-    hits = projectiles.update_all(1.0, other_frame_ships)
-    assert hits == [], "a torpedo in Ona1 hit a ship outside its own frame"
+    # Negative check: lands exactly on the shared ARRIVAL point this tick.
+    torp_negative = Torpedo()
+    torp_negative.SetTranslateXYZ(ARRIVAL[0], ARRIVAL[1] - 6.0, ARRIVAL[2])
+    torp_negative._velocity = TGPoint3(0.0, 6.0, 0.0)
+    torp_negative._ttl = 30.0
+    torp_negative._source_ship = src
+    torp_negative._damage = 100.0
+    register(torp_negative)
+    assert torp_negative.GetContainingSet() is sets["Ona1"]
+
+    ships_that_must_not_be_hit = [sentinels[name] for name in
+                                  ("Ona2", "Ona3", "XiEntrades4", "Starbase12")]
+    hits = projectiles.update_all(1.0, [victim] + ships_that_must_not_be_hit)
+    hit_by_torpedo = {id(torp): ship for torp, ship, _pt, _n in hits}
+    assert hit_by_torpedo.get(id(torp_positive)) is victim, (
+        "the same-frame positive control never hit -- update_all landed no "
+        "hits at all here, which would make the negative result below vacuous")
+    assert id(torp_negative) not in hit_by_torpedo, (
+        "a torpedo in Ona1 hit a ship outside its own frame")
 
 
 # ── (d) damage eligibility: a cross-frame ship never outranks a same-frame
@@ -275,10 +309,8 @@ def test_render_feeds_exclude_ona_and_starbase_when_xientrades4_viewed(world):
 
 # ── (f) audio: registers under the emitter's frame, stopped off-frame ───────
 
-_dauntless_host = pytest.importorskip("_dauntless_host")
-
-
 def test_positional_sound_registers_under_ona_and_stops_off_frame(world):
+    pytest.importorskip("_dauntless_host")
     import os
     import struct
     os.environ.setdefault("OPEN_STBC_AUDIO", "0")
@@ -323,7 +355,36 @@ def test_positional_sound_registers_under_ona_and_stops_off_frame(world):
 
 # ── Review Focus 1: a setless object interacts with nothing anywhere ────────
 
-def test_a_setless_object_interacts_with_nothing_anywhere(world):
+def test_a_setless_object_is_not_struck_by_a_torpedo_that_would_hit_it(world):
+    """The moving-torpedo setup from test (c): a torpedo landing exactly on
+    `loose`'s position, from a real in-frame source, WOULD hit it if a
+    setless object had any frame at all -- a stationary torpedo (zero
+    velocity) proves nothing, since it cannot hit anything regardless of
+    frames (confirmed: it also misses a real same-frame target)."""
+    sets, sentinels, bodies = world
+    loose = ShipClass()
+    loose.SetName("Loose")
+    loose.SetTranslateXYZ(*ARRIVAL)
+    loose.SetRadius(1.0)
+    assert loose.GetContainingSet() is None
+
+    src = ShipClass()
+    src.SetName("TorpSrc2")
+    src.SetTranslateXYZ(ARRIVAL[0], ARRIVAL[1] - 6.0, ARRIVAL[2])
+    sets["Ona1"].AddObjectToSet(src, "TorpSrc2")
+    t = Torpedo()
+    t.SetTranslateXYZ(ARRIVAL[0], ARRIVAL[1] - 6.0, ARRIVAL[2])
+    t._velocity = TGPoint3(0.0, 6.0, 0.0)       # lands exactly on loose's position
+    t._ttl = 30.0
+    t._source_ship = src
+    t._damage = 100.0
+    register(t)
+
+    torp_hits = projectiles.update_all(1.0, [loose])
+    assert torp_hits == [], "a torpedo struck a setless object"
+
+
+def test_a_setless_object_does_not_interact_in_collisions_or_eligibility(world):
     sets, sentinels, bodies = world
     loose = ShipClass()
     loose.SetName("Loose")
@@ -338,21 +399,22 @@ def test_a_setless_object_interacts_with_nothing_anywhere(world):
     for a_obj, b_obj, _c, _v in hits:
         assert a_obj is not loose and b_obj is not loose
 
-    all_ships = list(sentinels.values()) + [loose]
-    src = ShipClass()
-    src.SetName("TorpSrc2")
-    src.SetTranslateXYZ(*ARRIVAL)
-    sets["Ona1"].AddObjectToSet(src, "TorpSrc2")
-    t = Torpedo()
-    t.SetTranslateXYZ(*ARRIVAL)
-    t._velocity = TGPoint3(0.0, 0.0, 0.0)
-    t._ttl = 30.0
-    t._source_ship = src
-    t._damage = 100.0
-    register(t)
-    torp_hits = projectiles.update_all(1.0, all_ships)
-    for _torp, hit_ship, _pt, _n in torp_hits:
-        assert hit_ship is not loose
+    # Discriminating: `loose` sits at the exact same numbers as the
+    # XiEntrades4 player, so a bug that gave it a real (zero) offset to
+    # every frame would make it read as the CLOSEST possible ship -- the
+    # maximum proximity score -- and outrank a same-frame wingman of equal
+    # size that is genuinely 50 GU away. `isinstance(eligible, frozenset)`
+    # alone (the previous version of this test) cannot tell the difference;
+    # this checks the CONTENT.
+    player = sentinels["XiEntrades4"]
+    wingman = ShipClass()
+    wingman.SetName("Wingman2")
+    wingman.SetTranslateXYZ(ARRIVAL[0] + 50.0, ARRIVAL[1], ARRIVAL[2])
+    wingman.SetRadius(1.0)
+    sets["XiEntrades4"].AddObjectToSet(wingman, "Wingman2")
 
-    eligible = damage_eligibility.select_eligible(loose, all_ships)   # must not raise
-    assert isinstance(eligible, frozenset)
+    eligible = damage_eligibility.select_eligible(
+        player, [player, wingman, loose], max_count=2)
+    assert id(wingman) in eligible, "a same-frame ship of equal size lost out"
+    assert id(loose) not in eligible, (
+        "a setless ship outranked a same-frame ship of equal size")
