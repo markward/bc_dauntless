@@ -730,6 +730,10 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     by_id = {id(o): TGPoint3(*p) for o, p in zip(stored, positions)}
     bodies = [_resolve_body(o, by_id.get(id(o))) for o in objects]
     sets = [frames.containing_set(o) for o in objects]
+    # offset_between resolved once per distinct (set_a, set_b) per call, not
+    # once per object PAIR (~2 us each, and pairs grow quadratically with the
+    # collidables Plan 3 adds) -- the projectiles.update_all per-call cache.
+    offsets: dict = {}
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
@@ -738,7 +742,11 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
             # set you warped out of is not where your ship is, whatever the
             # numbers say. One frame (the same set, or two regions of one
             # system) compares in A's set-local coordinates.
-            b_offset = frames.offset_between(sets[i], sets[k])
+            key = (sets[i], sets[k])
+            if key in offsets:
+                b_offset = offsets[key]
+            else:
+                b_offset = offsets[key] = frames.offset_between(*key)
             if b_offset is None:
                 continue
             # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:

@@ -295,6 +295,29 @@ def test_cross_region_pair_with_equal_local_numbers_does_not_collide():
     assert collisions.resolve_collisions([a, b]) == []
 
 
+def test_resolve_collisions_resolves_each_set_pair_offset_once(monkeypatch):
+    """M1 (Plan 2 final review): offset_between is resolved once per distinct
+    (set_a, set_b) per resolve_collisions call, not once per object PAIR --
+    mirroring projectiles.update_all's per-call cache. Six objects spread
+    over two regions give 15 pairs but only three distinct set pairs
+    (Ona1/Ona1, Ona1/Ona2, Ona2/Ona2)."""
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    objs = [_closing_ship(ona1, "A%d" % i, (i * 1000.0, 0.0, 0.0), 0.0)
+            for i in range(3)]
+    objs += [_closing_ship(ona2, "B%d" % i, (i * 1000.0, 0.0, 0.0), 0.0)
+             for i in range(3)]
+    calls = []
+    real = frames.offset_between
+
+    def _counting(a, b):
+        calls.append((a, b))
+        return real(a, b)
+    monkeypatch.setattr(frames, "offset_between", _counting)
+    collisions.resolve_collisions(objs)
+    assert len(calls) == 3
+
+
 def test_cross_region_depenetration_writes_each_set_local():
     """Review Focus 4: after resolving an overlapping cross-region pair, each
     body's stored position is in its OWN set's coordinates -- b must not be
