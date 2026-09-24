@@ -735,12 +735,37 @@ class ShipPropertyViewerPanel(Panel):
         """World-space point for `_effective_pos(index)`, so a staged/dragged
         position moves the sphere + pin live even though it has no in-session
         effect on the sim. Falls back to the baked world_pos if the ship is
-        unavailable (headless / not yet resolved)."""
+        unavailable (headless / not yet resolved).
+
+        THE SELECTED PIN'S ROAD. Every OTHER pin rides the cached
+        `descriptor["world_pos"]`, which `build_descriptors` resolved through
+        `subsystem_world_position`. The moment a subsystem is selected,
+        `subsystem_pins`, `selected_subsystem_sphere` and the transform gizmo
+        switch to this instead -- and this used to hand the body position
+        straight to `world_from_body`, which is `loc + R * v` with NO
+        articulation. So selecting a wingtip cannon under a previewed pose
+        snapped its pin back to the rest mount while every neighbour stayed
+        out on the wing.
+
+        `part_transform_point` closes that: the SAME call
+        `subsystem_world_position` makes, reading the same
+        `ship._articulation_angles`, so the two roads arrive at one place by
+        construction rather than by two transforms being kept in step. It is
+        applied to `_effective_pos`, not to the baked mount, because a
+        staged/dragged position is authored in the model's UNROTATED frame
+        like every other mount and has to go through the hinge on the way
+        out too.
+
+        Identity for an unrigged hull, a body mount, a severed part and at
+        angle 0 -- so the common case is byte-identical.
+        """
         from engine.ui.ship_property_viewer import world_from_body
+        from engine.appc.articulation import part_transform_point
         ship = self._ship_getter()
         if ship is None or not hasattr(ship, "GetWorldLocation"):
             return self._descriptors[index].get("world_pos", (0.0, 0.0, 0.0))
-        return world_from_body(ship, self._effective_pos(index))
+        return world_from_body(
+            ship, part_transform_point(ship, self._effective_pos(index)))
 
     def set_subsystem_position(self, index: int, body_pos) -> None:
         """Stage a body-frame position edit for `index`. Not applied to the
