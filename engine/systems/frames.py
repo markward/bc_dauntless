@@ -65,6 +65,35 @@ def offset_between(set_a, set_b):
     return tuple(b - a for a, b in zip(fa.anchor_gu, fb.anchor_gu))
 
 
+def in_view(view, pSet, x, y, z):
+    """(x, y, z) of a point in pSet's set-local coordinates, expressed in the
+    VIEWED set's -- or None when pSet is not in the viewed frame (a left-behind
+    set of another system, an object in no set) or nothing is viewed.
+
+    Same set: the point itself, untouched, so the renderer sees exactly the
+    numbers it saw before frames existed."""
+    off = offset_between(view, pSet)
+    if off is None:
+        return None
+    if off == _ZERO:
+        return (x, y, z)
+    return (x + off[0], y + off[1], z + off[2])
+
+
+def shifted(p, off, sign=1.0):
+    """TGPoint3 `p` moved by sign*off, as a new TGPoint3 -- or `p` ITSELF when
+    `off` is zero or None, so a same-set comparison runs exactly the old
+    arithmetic on the same objects.
+
+    `off` is offset_between(set_a, set_b): sign=+1 takes a point in b's
+    set-local coordinates into a's, sign=-1 takes a point in a's back to b's
+    (a ray trace against b's mesh, a hit point on b's hull)."""
+    if off is None or off == _ZERO:
+        return p
+    from engine.appc.math import TGPoint3
+    return TGPoint3(p.x + sign * off[0], p.y + sign * off[1], p.z + sign * off[2])
+
+
 def _xyz(obj):
     p = obj.GetWorldLocation()
     return (p.x, p.y, p.z)

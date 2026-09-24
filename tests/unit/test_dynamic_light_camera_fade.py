@@ -20,6 +20,7 @@ from engine.appc.properties import SubsystemProperty
 from engine.appc import light_emitters
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
+from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
 from engine.host_loop import (
     DYN_LIGHT_CULL_GU,
     DYN_LIGHT_FADE_START_GU,
@@ -43,6 +44,7 @@ def clean_camera_and_registry():
     yield
     projectiles._active.clear()
     _note_camera_eye(None)
+    release_viewed_set()
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +252,7 @@ def _photon_at(position):
         "data/Textures/Tactical/TorpedoFlares.tga", _color(1.0, 0.25, 0.0), 8, 0.7, 0.4,
     )
     t.SetTranslateXYZ(*position)
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     return t
 

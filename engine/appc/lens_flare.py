@@ -50,8 +50,16 @@ def LensFlare_Create(pSet) -> LensFlare:
     return flare
 
 
-def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
+_ALL_SETS = object()   # aggregate_lens_flares_for_renderer's unscoped default
+
+
+def aggregate_lens_flares_for_renderer(game_root, pSets, *, view=_ALL_SETS) -> list:
     """Return list[dict] for all built LensFlares across pSets.
+
+    With `view` (the render call site passes frames.viewing_set()), only
+    flares whose set is in the viewed frame are kept, the source position
+    expressed in the viewed set's coordinates; view=None means nothing is
+    viewed, so nothing is kept.
 
     Resolves texture paths against the game root. Drops:
       - flares whose Build() was never called
@@ -61,8 +69,14 @@ def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
     Wedge counts are clamped to [3, 64]; very low or very high N produce
     degenerate or excessive meshes upstream.
     """
+    from engine.systems import frames
     out = []
+    if view is None:
+        return out
+    scoped = view is not _ALL_SETS
     for pSet in pSets:
+        if scoped and frames.offset_between(view, pSet) is None:
+            continue
         for flare in getattr(pSet, "_lens_flares", []):
             if not flare._built:
                 continue
@@ -73,6 +87,9 @@ def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
                 loc = src.GetWorldLocation()
             except Exception:
                 continue
+            pos = (loc.x, loc.y, loc.z)
+            if scoped:
+                pos = frames.in_view(view, pSet, *pos)
             try:
                 radius = float(src.GetRadius())
             except Exception:
@@ -94,7 +111,7 @@ def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
             if not elements_out:
                 continue
             out.append({
-                "source_world_pos": (loc.x, loc.y, loc.z),
+                "source_world_pos": pos,
                 "source_radius":    radius,
                 "elements":         elements_out,
             })

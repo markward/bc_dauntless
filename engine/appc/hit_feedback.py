@@ -518,11 +518,13 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
     # body_point is None unless the world->body conversion succeeded;
     # force spark_count=0 in every no-anchor path so the renderer never
     # anchors a burst at the default (0,0,0) body origin.
+    from engine.systems import frames
     hit_vfx.spawn(
         point, normal=normal, severity=severity,
         instance_id=instance_id, body_point=body_point,
         body_normal=body_normal, weapon_kind=weapon_kind,
-        spark_count=(spark_count if body_point is not None else 0))
+        spark_count=(spark_count if body_point is not None else 0),
+        pSet=frames.containing_set(ship))
 
 
 def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,

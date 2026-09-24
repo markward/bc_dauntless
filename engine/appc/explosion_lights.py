@@ -185,12 +185,18 @@ def _bear(seq) -> None:
     wreck site), so holding the ship would leave a dangling reference. A
     fireball barely moves relative to its own size, so a fixed point is a fair
     reading of a puff that tracked the hull.
+
+    The ship's set is captured with it, for the same reason: the position is
+    in that set's local coordinates, and the render feed needs the set to
+    express it in the viewed set's (or drop it outside the viewed frame).
     """
     pos = _world_position(seq["ship"])
     if pos is None:
         return
+    from engine.systems import frames
     _active.append({
         "position": pos,
+        "set":      frames.containing_set(seq["ship"]),
         "size_gu":  seq["size_gu"],
         "age":      0.0,
         "life":     seq["life_s"],
@@ -234,7 +240,8 @@ def render_data() -> list:
     """Light descriptors for the current frame.
 
     Shape mirrors _build_dynamic_light_render_data's torpedo descriptors:
-    position / color / radius / intensity.
+    position / color / radius / intensity -- plus "set", the set the blast was
+    born in, which host_loop's builder consumes and never sends on.
     """
     out = []
     for blast in _active:
@@ -247,6 +254,7 @@ def render_data() -> list:
             continue
         out.append({
             "position":  blast["position"],
+            "set":       blast["set"],
             "color":     COLOR,
             "radius":    max(blast["size_gu"] * _radius_factor,
                                  MIN_LIGHT_RADIUS_GU),

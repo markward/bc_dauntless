@@ -33,7 +33,7 @@ _active: list[dict] = []
 
 def spawn(position: TGPoint3, normal=None, severity=Severity.HULL,
           *, instance_id=None, body_point=None, body_normal=None,
-          weapon_kind=1, spark_count=0) -> None:
+          weapon_kind=1, spark_count=0, pSet=None) -> None:
     """Register a new hit VFX at `position` (world space).
 
     `normal` is a unit TGPoint3 surface normal or None (mesh trace missed).
@@ -46,6 +46,10 @@ def spawn(position: TGPoint3, normal=None, severity=Severity.HULL,
       body_normal  — surface normal in ship body frame (3-tuple)
       weapon_kind  — SPARK_KIND_PHASER (0) / SPARK_KIND_TORPEDO (1) tint+cone
       spark_count  — number of sparks to emit
+
+    `pSet` is the set `position` is local to (the struck ship's). The render
+    feed uses it to drop a hit outside the viewed frame and to express one
+    inside it in the viewed set's coordinates; a hit with no set is dropped.
     """
     if severity == Severity.SHIELD:
         return
@@ -59,6 +63,7 @@ def spawn(position: TGPoint3, normal=None, severity=Severity.HULL,
         "body_normal": body_normal,
         "weapon_kind": int(weapon_kind),
         "spark_count": int(spark_count),
+        "set":         pSet,
     })
 
 

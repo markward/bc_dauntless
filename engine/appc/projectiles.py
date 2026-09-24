@@ -20,6 +20,7 @@ import math
 
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.objects import ObjectClass
+from engine.systems.frames import shifted as _shifted
 
 
 class Torpedo(ObjectClass):
@@ -333,18 +334,9 @@ def get_by_id(obj_id):
 
 _ZERO_OFFSET = (0.0, 0.0, 0.0)
 
-
-def _shifted(p, off, sign=1.0):
-    """`p` moved by sign*off, as a new TGPoint3 -- or `p` ITSELF when `off` is
-    zero/None, so a same-set pair runs exactly today's arithmetic on the same
-    objects (mirrors collisions._shifted; not imported across modules).
-
-    `off` is frames.offset_between(a_set, b_set): sign=+1 takes a point in
-    b's set-local coordinates into a's, sign=-1 takes it back."""
-    if off is None or off == _ZERO_OFFSET:
-        return p
-    return TGPoint3(p.x + sign * off[0], p.y + sign * off[1],
-                    p.z + sign * off[2])
+# `off` is frames.offset_between(a_set, b_set): sign=+1 takes a point in b's
+# set-local coordinates into a's, sign=-1 takes it back: frames.shifted,
+# imported above as _shifted.
 
 
 # ── Incoming-torpedo detection (AIScriptAssist_* backing) ─────────────────────

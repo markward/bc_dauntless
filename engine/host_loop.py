@@ -95,6 +95,7 @@ from engine.appc import bridge_set as _bridge_set
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.appc.sensor_detection import can_detect, clear_undetectable_player_lock
 from engine import units as _units
+from engine.systems import frames as _frames
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
@@ -1193,12 +1194,22 @@ def _build_torpedo_render_data():
     families: the C++ binding (Task 3) reads every key unconditionally, so a
     photon torpedo emits neutral-default bolt fields and a disruptor emits
     empty quad textures/colors (_resolve_game_texture("") already guards
-    falsy input back to "")."""
+    falsy input back to "").
+
+    Only torpedoes in the viewed frame are sent, expressed in the viewed set's
+    local coordinates (frames.in_view) -- a left-behind set's torpedoes stay
+    out of the scene you are in. No viewed set: no scene, nothing sent."""
     out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     for t in projectiles._active:
-        pos = t.GetTranslate()
+        p = t.GetTranslate()
+        pos = _frames.in_view(view, _frames.containing_set(t), p.x, p.y, p.z)
+        if pos is None:
+            continue
         out.append({
-            "position":      (pos.x, pos.y, pos.z),
+            "position":      pos,
             "core_texture":  _resolve_game_texture(t._core_texture),
             "core_color":    _dim_color(_color_tuple(t._core_color),
                                         TORPEDO_BRIGHTNESS),
@@ -1241,8 +1252,14 @@ def _build_dynamic_light_render_data():
     (radius base = max(glow_size_a, glow_size_b)) alongside native's
     map_torpedo_params in torpedo_anim.h — a re-pin from RE Q1/Q2 must
     update both sites.
+
+    Frame-scoped like _build_torpedo_render_data; the camera-distance fade
+    judges the CONVERTED position, since the eye is in the viewed set's frame.
     """
     out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     for t in projectiles._active:
         if t._is_disruptor:
             continue
@@ -1251,7 +1268,10 @@ def _build_dynamic_light_render_data():
         if radius <= 0:
             continue
         t_pos = t.GetTranslate()
-        pos = (t_pos.x, t_pos.y, t_pos.z)
+        pos = _frames.in_view(view, _frames.containing_set(t),
+                              t_pos.x, t_pos.y, t_pos.z)
+        if pos is None:
+            continue
         fade = _camera_distance_fade(pos)
         if fade is None:
             continue        # beyond the cull distance — not built at all
@@ -1442,7 +1462,22 @@ def _build_explosion_light_render_data():
     # per instance (select_dynamic_lights) -- a genuinely irrelevant one
     # scores ~0 and is never selected. The camera distance was the wrong
     # question to ask of this light.
-    return [dict(entry) for entry in _explosion_lights.render_data()]
+    #
+    # Each entry carries the set its blast was born in ("set"): it is dropped
+    # outside the viewed frame, converted into the viewed set's coordinates
+    # inside it, and the key itself never reaches the renderer.
+    out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
+    for entry in _explosion_lights.render_data():
+        pos = _frames.in_view(view, entry["set"], *entry["position"])
+        if pos is None:
+            continue
+        d = {k: v for k, v in entry.items() if k != "set"}
+        d["position"] = pos
+        out.append(d)
+    return out
 
 
 def _build_emitter_light_render_data(ship_instances, ship_emitters,
@@ -1524,12 +1559,23 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
 
 
 def _build_hit_vfx_render_data():
+    """Impact flashes/sparks in the viewed frame, their world position in the
+    viewed set's coordinates. Off-screen combat in a left-behind set spawns
+    these too; they carry their ship's set ("set") so they can be dropped.
+    The body-frame spark anchor needs no conversion: it resolves through the
+    instance's own transform in C++."""
     out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     for entry in hit_vfx.snapshot():
-        pos = entry["position"]
+        p = entry["position"]
+        pos = _frames.in_view(view, entry.get("set"), p.x, p.y, p.z)
+        if pos is None:
+            continue
         n = entry["normal"]
         out.append({
-            "position":    (pos.x, pos.y, pos.z),
+            "position":    pos,
             "normal":      (n.x, n.y, n.z) if n is not None else (0.0, 0.0, 0.0),
             "severity":    entry["severity"],
             "age":         entry["age"],
@@ -1802,14 +1848,36 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     ]
 
 
+def _ships_in_view(ships):
+    """(ship, its set, view) for each ship in the viewed frame -- the beam
+    builders' scope. A left-behind set's ships keep firing off-screen; their
+    beams stay out of the scene you are in. Nothing viewed: nothing yields."""
+    view = _frames.viewing_set()
+    if view is None:
+        return
+    for ship in ships:
+        pSet = _frames.containing_set(ship)
+        if _frames.offset_between(view, pSet) is not None:
+            yield ship, pSet, view
+
+
+def _beam_in_view(d, view, pSet):
+    """Both beam endpoints, computed in the firing ship's set, expressed in
+    the viewed set's coordinates. Same set: the tuples untouched."""
+    d["emitter"] = _frames.in_view(view, pSet, *d["emitter"])
+    d["target"] = _frames.in_view(view, pSet, *d["target"])
+    return d
+
+
 def _build_phaser_beam_render_data(ships, ship_instances=None):
     """Snapshot active phaser beams for the renderer.
 
-    Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields the
-    outer-shell + inner-core descriptor pair via _beam_descriptor_pair.
+    Walks the PhaserSystem of every ship in the viewed frame; for each bank
+    IsFiring()=1, yields the outer-shell + inner-core descriptor pair via
+    _beam_descriptor_pair, endpoints in the viewed set's coordinates.
     """
     out = []
-    for ship in ships:
+    for ship, pSet, view in _ships_in_view(ships):
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
         if sys_ is None:
             continue
@@ -1818,6 +1886,7 @@ def _build_phaser_beam_render_data(ships, ship_instances=None):
             if bank is None or not bank.IsFiring():
                 continue
             for d in _beam_descriptor_pair(ship, bank, ship_instances):
+                _beam_in_view(d, view, pSet)
                 c = d["color"]
                 d["color"] = (c[0] * PHASER_BEAM_BRIGHTNESS,
                               c[1] * PHASER_BEAM_BRIGHTNESS,
@@ -1851,9 +1920,10 @@ def _build_tractor_beam_render_data(ships, ship_instances=None):
     Tractor beams keep the emitter taper-in and normal body width, but flare the
     TARGET end out to TRACTOR_BEAM_END_WIDTH_SCALE × the body radius (the shader
     reads end_width_scale to make the target-end taper widen instead of pinch).
+    Frame-scoped exactly like the phaser builder (_ships_in_view).
     """
     out = []
-    for ship in ships:
+    for ship, pSet, view in _ships_in_view(ships):
         sys_ = (ship.GetTractorBeamSystem()
                 if hasattr(ship, "GetTractorBeamSystem") else None)
         if sys_ is None:
@@ -1863,6 +1933,7 @@ def _build_tractor_beam_render_data(ships, ship_instances=None):
             if bank is None or not bank.IsFiring():
                 continue
             for d in _beam_descriptor_pair(ship, bank, ship_instances):
+                _beam_in_view(d, view, pSet)
                 d["end_width_scale"] = TRACTOR_BEAM_END_WIDTH_SCALE
                 c = d["color"]
                 d["color"] = (c[0] * TRACTOR_BEAM_BRIGHTNESS,
@@ -4324,13 +4395,25 @@ def _warp_clear_turn():
     _warp_turn_start_R = None
 
 
-def _aggregate_planets(pSets):
+_ALL_SETS = object()   # _aggregate_planets' unscoped default
+
+
+def _aggregate_planets(pSets, *, view=_ALL_SETS):
     """Return list[dict] {position, radius} for Planet objects across pSets,
     feeding the dust pass's proximity density scaling. Planets with
-    radius <= 0 are dropped (they cannot define an influence sphere)."""
+    radius <= 0 are dropped (they cannot define an influence sphere).
+
+    With `view` (the render call site passes frames.viewing_set()), only
+    planets in the viewed frame are kept, positioned in the viewed set's
+    coordinates; view=None means nothing is viewed, so nothing is kept."""
     from engine.appc.planet import Planet, Sun
     out = []
+    if view is None:
+        return out
+    scoped = view is not _ALL_SETS
     for pSet in pSets:
+        if scoped and _frames.offset_between(view, pSet) is None:
+            continue
         for obj in getattr(pSet, "_objects", {}).values():
             # Sun subclasses Planet; suns are fed via the separate sun list,
             # so exclude them here (planets are density-only).
@@ -4340,8 +4423,11 @@ def _aggregate_planets(pSets):
             if radius <= 0:
                 continue
             loc = obj.GetWorldLocation()
+            pos = (loc.x, loc.y, loc.z)
+            if scoped:
+                pos = _frames.in_view(view, pSet, *pos)
             out.append({
-                "position": (loc.x, loc.y, loc.z),
+                "position": pos,
                 "radius": float(radius),
             })
     return out
@@ -4380,7 +4466,8 @@ def _aggregate_lens_flares() -> list:
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
     import App
     return aggregate_lens_flares_for_renderer(
-        _paths.game_root(), list(App.g_kSetManager._sets.values()))
+        _paths.game_root(), list(App.g_kSetManager._sets.values()),
+        view=_frames.viewing_set())
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
@@ -10066,7 +10153,8 @@ def run(mission_name: Optional[str] = None,
                 r.set_lighting(_wamb, _wdirs)
 
             planets = _aggregate_planets(
-                list(App.g_kSetManager._sets.values()))
+                list(App.g_kSetManager._sets.values()),
+                view=_frames.viewing_set())
             r.set_dust_planets(planets)
 
             nebulae = [] if _warp_streaking else _aggregate_nebulae(active_set)

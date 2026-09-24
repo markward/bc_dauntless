@@ -218,11 +218,13 @@ def test_colour_is_warm():
 
 def test_render_data_carries_the_keys_the_renderer_consumes():
     """Mirrors _build_dynamic_light_render_data's descriptor shape; a missing
-    key would be a silent no-light at the binding."""
+    key would be a silent no-light at the binding. Plus "set", the blast's
+    birth set, which host_loop's builder consumes and strips before the
+    renderer (asserted in tests/unit/test_render_feeds_by_frame.py)."""
     _register(_Ship(), count=1)
     explosion_lights.advance(1.0 / 60.0)
     entry = explosion_lights.render_data()[0]
-    assert set(entry) == {"position", "color", "radius", "intensity"}
+    assert set(entry) == {"position", "color", "radius", "intensity", "set"}
     assert len(entry["position"]) == 3
     assert len(entry["color"]) == 3
 

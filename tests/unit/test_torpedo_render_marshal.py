@@ -14,6 +14,7 @@ import pytest
 import engine.host_loop as hl
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
+from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
 from engine.host_loop import (
     _build_torpedo_render_data, _color_tuple, TORPEDO_BRIGHTNESS,
 )
@@ -40,6 +41,7 @@ def clear_torpedo_registry():
     projectiles._active.clear()
     yield
     projectiles._active.clear()
+    release_viewed_set()
 
 
 def _make_photon():
@@ -52,6 +54,7 @@ def _make_photon():
         "data/Textures/Tactical/TorpedoFlares.tga", glow_color, 8, 0.7, 0.4,
     )
     t._velocity = App.TGPoint3(3.0, 4.0, 0.0)
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     return t, core_color, glow_color
 
@@ -62,6 +65,7 @@ def _make_disruptor():
     core = _color(0.639216, 1.0, 0.639216)
     t.CreateDisruptorModel(shell, core, 2.0, 0.2)
     # velocity left at __init__ default (0,0,0) to exercise the fallback.
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     return t, shell, core
 

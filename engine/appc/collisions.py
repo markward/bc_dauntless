@@ -13,6 +13,7 @@ import math
 from dataclasses import dataclass, replace
 
 from engine.appc.math import TGPoint3
+from engine.systems.frames import shifted as _shifted
 from engine.appc.warp_state import is_ship_warping
 
 # -- Tuning constants (single home; see spec §9) --
@@ -109,20 +110,13 @@ class _Body:
 _NO_OFFSET = (0.0, 0.0, 0.0)
 
 
-def _shifted(p, off, sign=1.0):
-    """`p` moved by sign*off, as a new TGPoint3 -- or `p` ITSELF when `off` is
-    zero, so a same-set pair runs exactly today's arithmetic on the same
-    objects.
-
-    A pair across two regions of one star system (system-frames spec §1) is
-    compared in A's set-local coordinates: B's positions are read with
-    sign=+1 (B-local -> A-local, frames.offset_between's convention), and a
-    point handed back to B's own side -- a ray trace against B's mesh, a hit
-    point on B's hull, A's location queried against B's pieces -- with
-    sign=-1 (A-local -> B-local)."""
-    if off == _NO_OFFSET:
-        return p
-    return TGPoint3(p.x + sign * off[0], p.y + sign * off[1], p.z + sign * off[2])
+# A pair across two regions of one star system (system-frames spec §1) is
+# compared in A's set-local coordinates: B's positions are read with sign=+1
+# (B-local -> A-local, frames.offset_between's convention), and a point handed
+# back to B's own side -- a ray trace against B's mesh, a hit point on B's
+# hull, A's location queried against B's pieces -- with sign=-1. A zero offset
+# returns the point itself, so a same-set pair runs exactly today's arithmetic.
+# The helper is frames.shifted, imported above as _shifted.
 
 
 def _overlay_vec(obj):
