@@ -1335,10 +1335,11 @@ class ProximityCheck(ObjectClass):
         been standing in for this check — and it also suppressed the repeat
         firing E1M1's dock gate needs, which is the bug this replaces it to fix.
 
-        Permissive only when NEITHER side has set information: two synthetic
-        checks / test doubles that never join a set still behave as before.
-        A watched object that reports None while the anchor is genuinely in a
-        set is REJECTED, not waved through -- system-frames Task 7 Ruling 4.
+        Rejected when EITHER side is setless (system-frames Task 7 Ruling 4
+        for the watched side; Plan 2 final review Ruling 6 for the anchor
+        side, and for the both-None pair that used to be waved through). Only
+        an object with no GetContainingSet at all -- a bare synthetic double --
+        is still treated as unknowable and passed.
         `engine.appc.sets.SetClass.RemoveObjectFromSet` / `DeleteObjectFromSet`
         now clear a departed object's containing set (it used to stay stale,
         still pointing at whatever set the object had last been in), so a ship
@@ -1346,6 +1347,10 @@ class ProximityCheck(ObjectClass):
         "unknowable" fallback and get evaluated at a raw-coordinate distance
         against an anchor that means nothing to it -- a setless object
         interacts with nothing, same convention as engine.systems.frames.
+        The same holds for a dead ANCHOR: a ConditionInRange whose anchor was
+        removed from its set used to keep firing TT_INSIDE on ships in other
+        sets at raw distances, because planet.evaluate_proximity_checks keeps
+        evaluating the check.
         """
         get_anchor_set = getattr(self._anchor, "GetContainingSet", None)
         get_obj_set = getattr(obj, "GetContainingSet", None)
@@ -1353,12 +1358,8 @@ class ProximityCheck(ObjectClass):
             return True
         anchor_set = get_anchor_set()
         obj_set = get_obj_set()
-        if anchor_set is None and obj_set is None:
-            return True
-        if obj_set is None:
+        if anchor_set is None or obj_set is None:
             return False
-        if anchor_set is None:
-            return True
         return anchor_set is obj_set
 
     def _evaluate_one(self, obj, force: bool = False) -> None:
