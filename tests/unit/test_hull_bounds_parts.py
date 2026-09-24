@@ -318,3 +318,54 @@ def test_bound_radius_for_an_UNTAGGED_piece_is_the_old_arithmetic():
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, _PIECE_R)]))
     assert hb.bound_radius(ship) == _reach(BODY_PT)
+
+
+# ── The tag the caller already holds ─────────────────────────────────────────
+# Every cached piece carries its part tag, decided once at cache time. The
+# world/near sweeps then handed the bare POINT to `part_transform_point`,
+# which re-derived that same tag with a full sorted distance scan over every
+# box on the hull -- per piece, per sweep, per frame, for an answer already in
+# the tuple being iterated.
+
+def test_part_transform_point_uses_the_part_it_is_GIVEN():
+    """Not the one it would attribute. Pinned with a point that attributes to
+    NOTHING, so a re-derivation would return it unmoved."""
+    from engine.appc import articulation
+    from engine.appc import part_severance as _ps
+    ship = _Ship()
+    _pose(ship, 1.0)
+    assert _ps.part_for_point("birdofprey", BODY_PT) not in ("left wing",), (
+        "fixture check: this point must not attribute to the wing on its own")
+
+    wing = next(p for p in articulation.rig_for("birdofprey")
+                if p.GetName() == "left wing")
+    expected = articulation.point_at_angle(
+        wing, BODY_PT, articulation.angle_for_part(ship, wing))
+
+    assert articulation.part_transform_point(
+        ship, BODY_PT, part="left wing") == expected
+    # ...and with no tag supplied it still attributes for itself, unchanged.
+    assert articulation.part_transform_point(ship, BODY_PT) == BODY_PT
+
+
+def test_the_sweeps_do_not_RE_DERIVE_the_tag_they_already_hold(monkeypatch):
+    """`hull_spheres_world` / `hull_spheres_near` carry the tag in the cached
+    tuple. Exploding the attribution scan proves they pass it through rather
+    than paying for it again."""
+    from engine.appc import part_severance as _ps
+
+    def _boom(*a, **k):
+        raise AssertionError("part_for_point must not be called: the caller "
+                             "already holds the tag")
+
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
+    _pose(ship, 1.0)
+    monkeypatch.setattr(_ps, "part_for_point", _boom)
+
+    (moved, _r) = hb.hull_spheres_world(ship)[0]
+    assert (moved.x, moved.y, moved.z) != WING_PT
+
+    from engine.appc.math import TGPoint3
+    near = hb.hull_spheres_near(ship, TGPoint3(moved.x, moved.y, moved.z), 0.1)
+    assert len(near) == 1

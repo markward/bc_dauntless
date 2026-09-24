@@ -2,9 +2,10 @@
 
 What these CANNOT see: whether the pivots look right. That is the whole reason
 the feature shipped as a spike with a dev key — the hinge points are invented,
-and only live eyes settle them. These pin the contract around them: the
-alert->pose mapping, the ease, the rest-pose identity, and the geometry claim
-the pivots were derived from.
+and only live eyes settle them. These pin the contract around them: which
+signal drives a ship's state, the rest-pose identity, and the geometry claim
+the pivots were derived from. The easing lives in test_articulation_states.py
+with the rest of the four-state model.
 """
 import math
 
@@ -18,9 +19,9 @@ from engine.appc import articulation
 def test_only_the_bird_of_prey_has_a_rig():
     """One stock hull, deliberately. A second entry appearing here is a
     decision, not a refactor — every other hull must stay unarticulated."""
-    assert articulation.has_rig("birdofprey")
+    assert articulation.rig_for("birdofprey")
     for other in ("galaxy", "sovereign", "warbird", "nebula", "akira"):
-        assert not articulation.has_rig(other), other
+        assert articulation.rig_for(other) == (), other
 
 
 def test_rig_lookup_is_case_insensitive_and_none_safe():
@@ -51,22 +52,13 @@ def test_hinge_axis_is_fore_aft():
         assert part.axis == (0.0, 1.0, 0.0)
 
 
-# ── Alert level -> pose ──────────────────────────────────────────────────────
-
-def test_red_alert_is_the_models_rest_pose():
-    """0 = wings DOWN = armed = exactly how the NIF ships. This is what makes
-    combat rendering byte-identical to an unarticulated hull."""
-    from engine.appc.ships import ShipClass
-    assert articulation.deflection_target(ShipClass.RED_ALERT) == 0.0
-
-
-@pytest.mark.parametrize("level_name", ["GREEN_ALERT", "YELLOW_ALERT"])
-def test_non_red_alert_raises_the_wings(level_name):
-    from engine.appc.ships import ShipClass
-    assert articulation.deflection_target(getattr(ShipClass, level_name)) == 1.0
-
-
 # ── Which signal drives a ship (OQ-11) ─────────────────────────────
+#
+# The 0..1 `deflection_target` / `deflection_target_for` pair these tests used
+# to drive is GONE: the four-state model replaced it, and nothing outside this
+# file had called either since. The live question is `state_for`, whose main
+# cases live in test_articulation_states.py; the EDGE cases below moved here
+# with the deletion rather than being dropped with it.
 
 class _Sig:
     """A ship for the signal test: an alert level and a target, nothing else."""
@@ -83,109 +75,38 @@ class _Sig:
         return self._target
 
 
-def _as_player(monkeypatch, ship):
-    """Make `ship` read as the current player, the way damage_eligibility does."""
-    import App
-
-    class _Game:
-        def GetPlayer(self):
-            return ship
-
-    monkeypatch.setattr(App, "Game_GetCurrentGame", lambda: _Game(),
-                        raising=False)
-
-
 def _no_player(monkeypatch):
     import App
     monkeypatch.setattr(App, "Game_GetCurrentGame", lambda: None,
                         raising=False)
 
 
-def test_the_player_keys_off_alert_level(monkeypatch):
-    """Unchanged behaviour for the player: the alert keys are how a human
-    tells the ship to brace, and that is what the wings should answer."""
-    from engine.appc.ships import ShipClass
-    ship = _Sig(alert=ShipClass.GREEN_ALERT)
-    _as_player(monkeypatch, ship)
-    assert articulation.deflection_target_for(ship) == 1.0     # cold -> up
-
-    ship._alert = ShipClass.RED_ALERT
-    assert articulation.deflection_target_for(ship) == 0.0     # armed -> down
-
-
-def test_an_npc_keys_off_HAVING_A_TARGET_not_alert(monkeypatch):
-    """THE WHOLE POINT OF OQ-11. BC's alert level does not vary on an NPC: it
-    is RED from spawn (measured on the real exe across eleven campaign
-    missions, ships.py) and nothing lowers it. Keying NPC wings off alert
-    would leave every AI Bird of Prey permanently attack-posed, so the
-    transition would only ever be visible on a player-flown ship.
-
-    A target DOES vary -- the SDK's SelectTarget preprocessor sets one at
-    runtime (ai_driver.py:1452) -- so it is the signal that actually answers
-    "is this ship fighting".
-    """
-    from engine.appc.ships import ShipClass
-    _no_player(monkeypatch)
-
-    # RED, as every NPC spawns, but no target: cruising, wings UP.
-    idle = _Sig(alert=ShipClass.RED_ALERT, target=None)
-    assert articulation.deflection_target_for(idle) == 1.0
-
-    # Still RED -- the alert has not moved and never will -- but now hunting.
-    hunting = _Sig(alert=ShipClass.RED_ALERT, target=object())
-    assert articulation.deflection_target_for(hunting) == 0.0
-
-
 def test_an_npc_target_may_be_a_NAME_not_an_object(monkeypatch):
     """SetTarget accepts a string name OR an object reference (ships.py:1581),
     and an unresolved name stays a string. Either counts as having a target."""
     _no_player(monkeypatch)
-    assert articulation.deflection_target_for(_Sig(target="Enterprise")) == 0.0
+    assert articulation.state_for(_Sig(target="Enterprise")) == "red"
 
 
-def test_a_ship_with_no_target_accessor_falls_back_to_alert(monkeypatch):
-    """A prop or a test double need not implement GetTarget. Falling back to
-    the alert level keeps such an object at its spawn pose rather than raising
-    on the 60 Hz tick."""
-    from engine.appc.ships import ShipClass
+def test_a_ship_with_no_target_accessor_holds_its_cruise_pose(monkeypatch):
+    """A prop or a test double need not implement GetTarget. Answering
+    "cruise" keeps such an object in one pose rather than raising on the
+    60 Hz tick."""
     _no_player(monkeypatch)
 
     class _Bare:
-        def GetAlertLevel(self):
-            return ShipClass.RED_ALERT
+        pass
 
-    assert articulation.deflection_target_for(_Bare()) == 0.0
+    assert articulation.state_for(_Bare()) == "cruise"
 
 
 def test_an_unresolvable_player_does_not_raise(monkeypatch):
     """Game_GetCurrentGame is absent headlessly and during teardown. This runs
     on every rigged ship every tick, so it must degrade, not throw."""
     import App
+    from engine.appc.articulated_part import STATES
     monkeypatch.delattr(App, "Game_GetCurrentGame", raising=False)
-    assert articulation.deflection_target_for(_Sig(target=None)) in (0.0, 1.0)
-
-
-# ── Easing ───────────────────────────────────────────────────────────────────
-
-def test_ease_reaches_the_target_in_the_travel_time():
-    dt = 1.0 / 60.0
-    v = 0.0
-    for _ in range(int(articulation.TRAVEL_SECONDS / dt) + 1):
-        v = articulation.ease(v, 1.0, dt)
-    assert v == 1.0
-
-
-def test_ease_does_not_overshoot():
-    """A step larger than the remaining gap must SNAP, not sail past — an
-    overshoot would drive deflection out of [0,1] and past the authored angle."""
-    assert articulation.ease(0.99, 1.0, 10.0) == 1.0
-    assert articulation.ease(0.01, 0.0, 10.0) == 0.0
-
-
-def test_ease_runs_both_ways():
-    dt = 0.1
-    assert articulation.ease(0.5, 1.0, dt) > 0.5
-    assert articulation.ease(0.5, 0.0, dt) < 0.5
+    assert articulation.state_for(_Sig(target=None)) in STATES
 
 
 # ── Rotation resolution ──────────────────────────────────────────────────────

@@ -159,7 +159,6 @@ add_library(renderer STATIC
     nebula_godray_pass.cc
     shockwave_pass.cc
     aabb.cc
-    part_frame.cc
     model_parts.cc
     glow_region.cc
     dynamic_lights.cc

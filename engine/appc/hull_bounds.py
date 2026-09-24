@@ -158,7 +158,11 @@ def hull_spheres_world(ship) -> list:
         if part is not None:
             # Body frame, ship units, in and out. Identity at rest and for an
             # unrigged hull, so an untagged piece costs one None compare.
-            cx, cy, cz = articulation.part_transform_point(ship, (cx, cy, cz))
+            # `part` is passed through: the tag was decided once at cache
+            # time, and re-deriving it here would cost a full sorted distance
+            # scan over every box on the hull, per piece, per frame.
+            cx, cy, cz = articulation.part_transform_point(
+                ship, (cx, cy, cz), part=part)
         v = TGPoint3(cx * scale, cy * scale, cz * scale)
         v.MultMatrixLeft(R)                    # body -> world
         out.append((TGPoint3(loc.x + v.x, loc.y + v.y, loc.z + v.z), r * scale))
@@ -212,8 +216,10 @@ def hull_spheres_near(ship, center, radius) -> list:
         if part is not None:
             # BEFORE the reject below, not after: the compare happens in the
             # ship's body frame, so a moved piece tested at its REST centre
-            # would be rejected and never returned.
-            cx, cy, cz = articulation.part_transform_point(ship, (cx, cy, cz))
+            # would be rejected and never returned. `part` passed through --
+            # see hull_spheres_world.
+            cx, cy, cz = articulation.part_transform_point(
+                ship, (cx, cy, cz), part=part)
         # Body-frame piece centre at the ship's live scale.
         sx, sy, sz = cx * scale, cy * scale, cz * scale
         ex, ey, ez = sx - qx, sy - qy, sz - qz

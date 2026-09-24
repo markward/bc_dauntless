@@ -205,12 +205,15 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     """Attribution here is a REST-pose question, and must stay one.
 
     the structures this compares against are never articulated: the derived
-    per-part boxes are authored rest-pose, and the voxel field and .dhv SDF stay baked from the
-    NIF in rest pose (a carve struck on a moved part is pulled back to rest
-    before deposit -- renderer::rest_from_posed_at). Collision spheres DO
-    articulate as of the part-aware sim-geometry plan, but nothing in this
-    path reads them. See spec 4.3.1. So the authored mount is the right thing
-    to test, at any deflection.
+    per-part boxes are authored rest-pose, and the .dhv SDF stays baked from
+    the NIF in rest pose. (The per-instance carve field is the exception, and
+    needs no transform either: it is both deposited and SAMPLED in posed body
+    space -- opaque.vert builds `v_position_ws` from the override-composed
+    `world_per_node`. A `rest_from_posed_at` primitive was written for a
+    pull-back that turned out not to be wanted, reverted, and has now been
+    deleted.) Collision spheres DO articulate as of the part-aware
+    sim-geometry plan, but nothing in this path reads them. See spec 4.3.1.
+    So the authored mount is the right thing to test, at any deflection.
 
     This test exists because the implementation plan originally specified the
     opposite -- routing this through part_transform_point, so an ARTICULATED

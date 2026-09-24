@@ -37,7 +37,7 @@ std::vector<ModelPart> model_parts(const assets::Model& model) {
     if (n == 0) return out;
 
     // Rest world-per-node. The asset pipeline orders nodes so parents precede
-    // children, so one linear pass suffices (same as aabb.cc / part_frame.cc).
+    // children, so one linear pass suffices (same as aabb.cc).
     std::vector<glm::mat4> rest(n, glm::mat4(1.0f));
     if (model.root_node >= 0 && static_cast<std::size_t>(model.root_node) < n) {
         rest[model.root_node] = model.nodes[model.root_node].local_transform;

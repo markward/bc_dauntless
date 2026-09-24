@@ -26,33 +26,64 @@ origin, not a hinge. Rotating a wing node in place would swing it about a
 point common to the whole ship. The NIF cannot tell us where the hinge is, and
 it cannot tell us that `left wing01` is the STARBOARD wing (that name is a Max
 clone suffix, not anatomy — its geometry spans X +12.4..+102.6). Both facts
-have to come from here.
+have to be AUTHORED, which is what the SPV's Model Parts pane is for.
+
+WHERE THE DATA LIVES — IN THE HARDPOINT FILE, NOT HERE. This module owns no
+rig data at all. A ship's parts are `ArticulatedPartProperty` templates
+registered by its own hardpoint file — for stock hulls, a `__parts__` block in
+the machine-owned `engine/appc/hardpoint_overrides.py`, which the SPV
+regenerates on save — and snapshotted per hardpoint leaf by
+`articulated_part.parts_for_leaf`. `rig_for` below is a thin case-insensitive,
+None-safe wrapper over that lookup. (The hand-authored `_RIGS` dict this
+module used to carry, and the docstring that explained why it lived here
+rather than in `hardpoint_overrides.py`, are both gone — the arrangement is
+now exactly the inverse.)
+
+FOUR STATES, NOT A DEFLECTION. Each part authors one angle per state —
+"cruise", "yellow", "red", "warp" (`articulated_part.STATES`). There is no
+0..1 deflection scalar anywhere: four independent authored poses cannot be
+expressed as one scalar times a maximum, and `ShipClass.Get/SetArticulation
+Deflection` no longer exist. Per sim tick `tick_ship` eases each part's
+CURRENT angle toward `target_angle(part, state_for(ship))` and stores it in
+`ship._articulation_angles` ({part name: degrees}) — the single source every
+reader of a live pose consults, via `angle_for_part`.
+
+`state_for` is deliberately ASYMMETRIC: the player keys off alert level, an
+NPC off whether it has a target. BC never takes an NPC off Red Alert (measured
+on the real exe), so its alert level carries no signal. Warp outranks both.
 
 FRAME AND MATH. `pivot` and `axis` are in the part node's PARENT space. Scene
 Root is identity in every BC ship NIF, so that is just model space — raw NIF
-units, before the instance's natural scale. `Part.pivot` itself, however, is
-AUTHORED and STORED in SHIP units (model / 100), matching the derived
-per-part boxes (`part_boxes_for`) and subsystem mounts; it is converted to
-this raw-model frame only at the one C++
-call site, `host_loop._sync_ship_articulation`, via `MODEL_TO_SHIP` below.
-`axis` is a direction, not a point, so it is unit-agnostic and needs no such
-conversion. The override replaces the node's own local transform::
+units, before the instance's natural scale. A part's `pivot` is AUTHORED and
+STORED in SHIP units (model / 100), matching the derived per-part boxes
+(`part_boxes_for`) and subsystem mounts; it is converted to the raw-model
+frame at exactly one place, the C++ call site
+`host_loop._sync_ship_articulation`, via `MODEL_TO_SHIP` below. `axis` is a
+direction, not a point, so it is unit-agnostic and needs no conversion. The
+override replaces the node's own local transform::
 
     local' = T(pivot) . R(axis, theta) . T(-pivot) . local
 
-`theta = deflection * angle_deg`. At deflection 0 the override is identity, so
-the emitted map is EMPTY and the render is byte-identical to an unarticulated
-ship — which is deliberately the ARMED (red alert) pose, because that is the
-pose the model ships in and the one combat runs in.
+with `theta = radians(the part's current angle)`. At angle 0 the override is
+identity, so the emitted map is EMPTY and the render is byte-identical to an
+unarticulated ship. Angle 0 is the pose the NIF ships in; for the Bird of Prey
+that is also the authored "red" angle, which is why combat rendering is
+unchanged. That is BoP-specific authoring, NOT a rule of this module: another
+hull may author a non-zero red.
+
+THE SAME HINGE, IN THREE PLACES, and they must agree or the ship lies:
+
+  * the DRAWN mesh — `host_loop._sync_ship_articulation` pushes pivot/axis/
+    theta to `set_instance_node_rotation`;
+  * a MOUNT that must follow its part (beam origins, SPV pins) —
+    `part_transform_point` / `point_at_angle`, the same Rodrigues rotation;
+  * a QUERY against a REST-baked structure (the derived per-part boxes) —
+    `part_severance.part_for_live_point` inverse-rotates the QUERY instead,
+    because the boxes cannot move.
 
 TUNING NOTE: the hinge axis IS the Y axis, so a pivot's Y COMPONENT HAS NO
 EFFECT — rotating about a line through the pivot is unchanged by sliding the
 pivot along that line. Only X and Z are live. Two numbers per wing.
-
-Data lives here rather than in `hardpoint_overrides.py` because that file is
-machine-owned ("the SPV regenerates this file on save") and subsystem-property
-shaped. The keying matches it (hardpoint leaf name) so this can fold into the
-SPV-authored file later, once the gizmo can place a hinge.
 """
 
 from __future__ import annotations
@@ -62,13 +93,19 @@ from typing import NamedTuple
 
 
 class Part(NamedTuple):
-    """One articulated part node on a ship.
+    """A bare (pivot, axis) carrier — NOT a live rig shape.
 
-    RETIRED as a live rig shape: `rig_for`/`parts_for_leaf` return
-    `articulated_part.ArticulatedPartProperty` instances since Task 5
-    migrated the Bird of Prey's data into that template format. Kept only
-    because `rotation_for`'s axis-normalisation tests build one directly
-    (they need nothing but `.pivot`/`.axis`, a shape this still provides).
+    RETIRED as rig data: `rig_for`/`parts_for_leaf` return
+    `articulated_part.ArticulatedPartProperty` instances, which is all any
+    production path ever sees. The ONLY thing that still builds one of these
+    is `rotation_for`'s axis-normalisation / degenerate-axis pair in
+    `tests/unit/test_articulation.py`, which needs a `.pivot` and an `.axis`
+    and nothing else. Kept for exactly that, and load-bearing only there —
+    do not reach for it when adding a part.
+
+    The `.angle_deg` and `.node` duck-type fallbacks in `_swing_range`,
+    `_part_name` and `target_angle` exist to keep those tests off the
+    exception path; they are defensive, not a live branch.
 
     node:      NIF node name, matched exactly (BC node names are case-stable).
     pivot:     hinge point, parent/model space, SHIP units (model NIF units
@@ -78,9 +115,8 @@ class Part(NamedTuple):
                attribution silently never fire. Converted to model units at
                the ONE C++ call site (host_loop._sync_ship_articulation).
     axis:      hinge axis, parent/model space; normalised on use.
-    angle_deg: rotation applied at deflection 1.0. Sign is per-part and
-               explicit — the two wings mirror, so they carry opposite signs
-               rather than sharing a magnitude and inferring a side.
+    angle_deg: a single rotation, the pre-four-state shape. Real parts carry
+               one angle per state instead.
     """
 
     node: str
@@ -89,8 +125,9 @@ class Part(NamedTuple):
     angle_deg: float
 
 
-# Seconds for a full 0<->1 travel. A BoP wing transition reads as a couple of
-# seconds on screen; faster looks like a glitch, slower reads as broken.
+# Seconds for a part to traverse its FULL authored range (see `_part_range`).
+# A BoP wing transition reads as a couple of seconds on screen; faster looks
+# like a glitch, slower reads as broken.
 TRAVEL_SECONDS = 2.0
 
 # Multiply a MODEL (raw NIF) unit by this to reach a SHIP (hardpoint-authored)
@@ -101,16 +138,9 @@ MODEL_TO_SHIP = 0.01
 
 
 # Keyed by HARDPOINT LEAF (the `HardpointFile` value in the ship's
-# GetShipStats), matching `hardpoint_overrides.apply(leaf)`.
-#
-# The hand-authored `_RIGS` dict this used to be is GONE (Task 5 of
-# docs/superpowers/specs/2026-09-23-spv-part-articulation-authoring-design.md):
-# a ship's rig now lives as `ArticulatedPartProperty` templates registered by
-# its own hardpoint file (stock ships: `hardpoint_overrides.py`'s
-# `__parts__` blocks) and snapshotted per-leaf by
-# `articulated_part.snapshot_for_leaf` -- see that module's docstring for why
-# a snapshot and not a live query. `rig_for` is now a thin, case-insensitive,
-# None-safe wrapper over `articulated_part.parts_for_leaf`.
+# GetShipStats), matching `hardpoint_overrides.apply(leaf)`. See
+# `articulated_part`'s docstring for why the per-leaf result is a SNAPSHOT
+# rather than a live query, and this module's for where rig data lives now.
 def rig_for(leaf: str | None) -> tuple:
     """Return the articulation parts for a hardpoint leaf, or () if none."""
     if not leaf:
@@ -125,26 +155,6 @@ def rig_for(leaf: str | None) -> tuple:
 parts_for_leaf = rig_for
 
 
-def has_rig(leaf: str | None) -> bool:
-    """True when this hardpoint leaf has an articulation rig."""
-    return bool(rig_for(leaf))
-
-
-def deflection_target(alert_level: int) -> float:
-    """Wing deflection wanted at `alert_level`.
-
-    0.0 = the model's authored rest pose = wings DOWN = weapons armed.
-    1.0 = fully deflected = wings UP = weapons cold.
-
-    RED is the only armed level (`ShipClass.SetAlertLevel` powers weapons on at
-    RED and off at every other level), so this keys off exactly that condition
-    rather than re-deriving "armed" from subsystem power.
-    """
-    from engine.appc.ships import ShipClass
-
-    return 0.0 if int(alert_level) == ShipClass.RED_ALERT else 1.0
-
-
 def _is_player(ship) -> bool:
     """True when `ship` is the current player. Best-effort: False headlessly,
     during teardown, or whenever the game is not resolvable."""
@@ -157,69 +167,6 @@ def _is_player(ship) -> bool:
     except Exception:  # noqa: BLE001 - this runs per rigged ship per tick
         return False
     return player is not None and player is ship
-
-
-def deflection_target_for(ship) -> float:
-    """Wing deflection wanted for `ship`. THE SIGNAL DIFFERS BY WHO FLIES IT.
-
-    **Player: alert level.** The alert keys are how a human tells the ship to
-    brace, so that is what the wings answer.
-
-    **NPC: does it have a TARGET.** BC's alert level does not vary on an NPC.
-    It is RED from spawn -- measured on the original exe across eleven
-    campaign missions (`ships.py`, stbc-oracle bible section 13 N2: every
-    non-player ship, station and asteroid reads alert 2 from the first
-    snapshot) -- and nothing in the SDK lowers it again. Keying NPC wings off
-    alert would therefore leave every AI Bird of Prey permanently
-    attack-posed, and the transition would only ever be visible on a
-    player-flown ship.
-
-    A target DOES vary: the SDK's `SelectTarget` preprocessor sets one at
-    runtime (`ai_driver.py:1452`). So it is the signal that actually answers
-    "is this ship fighting", which is the question the wings pose asks.
-
-    This is a DELIBERATE asymmetry, not an oversight -- see OQ-11 in
-    `docs/superpowers/specs/2026-09-23-ship-part-articulation-design.md`. The
-    measured RED spawn default is left untouched; we simply stop treating
-    alert level as a combat signal for ships it was never a combat signal for.
-
-    Falls back to alert level for an object with no `GetTarget`, so a prop or
-    a test double holds its spawn pose rather than raising on the 60 Hz tick.
-    """
-    if _is_player(ship):
-        try:
-            return deflection_target(ship.GetAlertLevel())
-        except Exception:  # noqa: BLE001
-            return 0.0
-
-    getter = getattr(ship, "GetTarget", None)
-    if getter is None:
-        try:
-            return deflection_target(ship.GetAlertLevel())
-        except Exception:  # noqa: BLE001
-            return 0.0
-    try:
-        target = getter()
-    except Exception:  # noqa: BLE001
-        return 0.0
-    # A target may be an object reference OR an unresolved string name
-    # (ships.py SetTarget accepts both); either counts as hunting.
-    return 0.0 if target else 1.0
-
-
-def ease(current: float, target: float, dt: float) -> float:
-    """Ramp `current` toward `target` at the fixed travel rate.
-
-    Linear. A spike wants a motion that is obviously right or obviously wrong;
-    an ease curve would hide a bad pivot behind pleasant motion.
-    """
-    if TRAVEL_SECONDS <= 0.0:
-        return target
-    step = dt / TRAVEL_SECONDS
-    delta = target - current
-    if abs(delta) <= step:
-        return target
-    return current + (step if delta > 0 else -step)
 
 
 def rotation_for(part, angle_deg: float) -> tuple[
@@ -604,7 +551,7 @@ def detachable_for(leaf):
             for p in rig_for(leaf) if p.detach_fraction is not None}
 
 
-def part_transform_point(ship, point):
+def part_transform_point(ship, point, part=None):
     """Where a body-frame point ends up once its part has articulated.
 
     In and out are BODY frame, SHIP units (what subsystem mounts and the
@@ -621,13 +568,19 @@ def part_transform_point(ship, point):
     a ship-wide deflection: a per-part angle is what the state machine
     actually produces, and different parts on the same ship can be mid-ease
     at different angles at once.
+
+    `part` is the part NAME when the caller already knows it -- `hull_bounds`
+    does: every cached piece carries its tag, decided once at cache time.
+    Passing it skips `part_for_point`, which would otherwise re-derive that
+    same answer with a full sorted distance scan over every box on the hull,
+    per piece, per sweep, per frame. Omit it and attribution runs as before.
     """
     parts = rig_for(leaf_for(ship))
     if not parts:
         return point
 
     from engine.appc.part_severance import part_for_point, is_detached
-    name = part_for_point(leaf_for(ship), point)
+    name = part if part is not None else part_for_point(leaf_for(ship), point)
     if name is None:
         return point
     if is_detached(ship, name):
