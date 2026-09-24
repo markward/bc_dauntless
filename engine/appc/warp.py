@@ -1,21 +1,24 @@
 """Warp Stage 1 — the hard-cut warp spine.
 
 WarpSequence_Create builds a TGSequence that (1) loads + switches to the
-destination set, (2) moves the player into it at the placement, (3) terminates
-the source set and restores player control. Renderer realize/teardown is reached
-via module-level hooks the host registers; unset hooks make those steps no-ops
-(headless set/placement logic still runs). See
-docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
+destination set, (2) moves the player into it at the placement, (3) drops the
+source set's render instances and restores player control. The source set
+itself is never deleted -- it stands, ready to be re-realized on return.
+Renderer realize/teardown is reached via module-level hooks the host
+registers; unset hooks make those steps no-ops (headless set/placement logic
+still runs). See docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
 """
 import math
 
 from engine.appc.actions import TGAction, TGSequence
 
 # Name of the temporary empty set the player occupies WHILE in warp transit.
-# The source system is torn down at burst and the player is parked here (no
-# lights, no backdrops, no other ships) until the destination swap lands — so
-# during transit nothing from the system left behind keeps simulating, firing,
-# or lighting the scene. Mirrors BC's "warp set" (project_warp_mechanism_sdk).
+# At burst the player is pulled out of the source set into this one (no
+# lights, no backdrops, no other ships) until the destination swap lands, and
+# the source set's RENDER INSTANCES are dropped -- the set itself stands, it
+# is not deleted. So during transit nothing from the system left behind keeps
+# drawing or lighting the scene, but its objects still simulate and the set
+# is there to return to. Mirrors BC's "warp set" (project_warp_mechanism_sdk).
 _WARP_TRANSIT_SET_NAME = "_WarpTransit"
 
 # Host-registered render hooks: fn(pSet) -> None. None => skip (headless).
@@ -249,7 +252,7 @@ class _ArrivalClearTargetsAction(TGAction):
     and pushes it back via `AutoTargetChange`, which is gated only on the
     "Target At Will" button that `CreateTacticalMenu` builds SetChosen(1) — on
     by default. The player then arrived in the new system still targeting a
-    ship left behind in the torn-down source set: the reticle and tracking
+    ship left behind in the source set: the reticle and tracking
     camera stayed welded to it while the target list, being derived from the
     current set, could not list it, so it could be neither selected nor cycled
     away from.
@@ -515,17 +518,20 @@ def _silence_ship_weapons(ship):
 
 
 class _WarpDepartAction(TGAction):
-    """Fires at BURST (transit start): tear down the system being left behind.
+    """Fires at BURST (transit start): drop the render instances of the system
+    being left behind. The set itself is NOT deleted -- BC never deletes a set
+    on warp.
 
     Silences every source-set ship's weapon loops, moves the player into a fresh
     empty transit set, makes that the rendered set (so lighting + backdrops fall
-    to neutral — the source sun stops lighting the scene), and deletes the source
-    set (render teardown + DeleteSet — its ships stop running AI/combat, so the
-    firing the player could hear during transit goes silent). The held
-    destination swap still lands at transit-end.
+    to neutral — the source sun stops lighting the scene), and tears down the
+    source set's render instances only (its objects keep existing and the set
+    stands, ready to be re-realized on return). The held destination swap still
+    lands at transit-end.
 
-    Fail-open: each step is guarded, and _ArriveFinalizeAction tears the source
-    down on arrival anyway (idempotent) if departure didn't complete."""
+    Fail-open: each step is guarded, and _ArriveFinalizeAction repeats the
+    render teardown on arrival anyway (idempotent) if departure didn't
+    complete."""
 
     def __init__(self, source_set, ship):
         super().__init__()
@@ -545,8 +551,9 @@ class _WarpDepartAction(TGAction):
         except Exception:
             pass
         # 1. Silence looping weapon SFX on every source-set ship (incl. the
-        #    player) before the set is deleted — otherwise a bank firing at the
-        #    moment of warp loops on into transit / the new system.
+        #    player) before its render instances are torn down — otherwise a
+        #    bank firing at the moment of warp loops on into transit / the new
+        #    system.
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
@@ -566,23 +573,24 @@ class _WarpDepartAction(TGAction):
             App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
         except Exception:
             pass
-        # 3. Tear the source system down (render teardown + DeleteSet). Guarded:
-        #    a failure here leaves it for _ArriveFinalizeAction to finish.
-        if src is not None:
+        # 3. Drop the source set's RENDER instances. The set itself stands:
+        #    departure is not a lifetime operation. BC's region modules delete
+        #    a set only in Terminate(), which nothing calls; the bound is the
+        #    mission change (host_loop's _sets.clear()). Returning to this set
+        #    re-realizes it through _realize_hook.
+        if src is not None and _teardown_hook is not None:
             try:
-                name = src.GetName()
-                if _teardown_hook is not None:
-                    _teardown_hook(src)
-                App.g_kSetManager.DeleteSet(name)
+                _teardown_hook(src)
             except Exception:
                 pass
 
 
 class _ArriveFinalizeAction(TGAction):
-    """Silence weapon-fire loops, terminate the source set (render teardown +
-    DeleteSet) if it still exists, clean up the warp-transit set, and return
-    player control. Idempotent w.r.t. the source set so it is safe whether or not
-    _WarpDepartAction already tore it down."""
+    """Silence weapon-fire loops, drop the source set's render instances (if
+    departure did not already), clean up the warp-transit set, and return
+    player control. The source set is never deleted. Idempotent w.r.t. the
+    render teardown so it is safe whether or not _WarpDepartAction already
+    ran it."""
 
     def __init__(self, source_set, ship=None):
         super().__init__()
@@ -611,14 +619,13 @@ class _ArriveFinalizeAction(TGAction):
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
-        # Terminate the source set — but ONLY if it still exists (the flythrough
-        # path tears it down earlier in _WarpDepartAction; this is the fallback
-        # for the instant path and for a departure that failed open).
+        # Drop the source set's render instances if departure did not (the
+        # instant path has no departure). The set itself stands -- see
+        # _WarpDepartAction step 3.
         if src is not None and App.g_kSetManager.GetSet(src.GetName()) is src:
             if App.g_kSetManager.get_explicit_rendered_set() is not src:
                 if _teardown_hook is not None:
                     _teardown_hook(src)
-                App.g_kSetManager.DeleteSet(src.GetName())
         # Clean up the temporary warp-transit set (flythrough only; no-op on the
         # instant path). The player has been moved into the destination by
         # _PlacePlayerAction, so the transit set is now empty.
@@ -761,9 +768,11 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         if enter_delay < 0.0:
             enter_delay = 0.0
         seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
-        # At BURST (t_align): tear down the system being left behind and park the
-        # player in an empty transit set, so during the held transit nothing from
-        # the source system keeps firing or lighting the scene.
+        # At BURST (t_align): drop the render instances of the system being left
+        # behind and park the player in an empty transit set, so during the held
+        # transit the source system no longer draws or lights the scene (the set
+        # itself stands, and its ships keep simulating -- see the Plan-2 note on
+        # left-behind-ship audibility).
         seq.AddAction(_WarpDepartAction(source, ship), t_align)
         swap = ChangeRenderedSetAction_Create(dest_module)
         seq.AddAction(swap, total)

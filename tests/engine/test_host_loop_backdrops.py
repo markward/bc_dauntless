@@ -45,9 +45,10 @@ class _Vfx:
 
 
 def test_transit_holds_the_static_starbox_when_sky_is_off(monkeypatch):
-    """Procedural Sky off: the source set is deleted at burst, so a transit has
-    no authored backdrops to aggregate and used to render black. The last
-    starbox seen before the burst is held, unmoving, for the whole transit."""
+    """Procedural Sky off: the source set's render instances are torn down at
+    burst (the set itself stands), so a transit has no authored backdrops to
+    aggregate and used to render black. The last starbox seen before the burst
+    is held, unmoving, for the whole transit."""
     monkeypatch.setattr(hl, "r", types.SimpleNamespace(procedural_sky_enabled=lambda: False))
     hl._note_static_backdrops([{"src": "authored"}])
     vfx = _Vfx()

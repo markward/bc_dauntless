@@ -44,7 +44,8 @@ def test_set_course_then_warp_engage_switches_system():
     # on_warp_engage: the Helm Warp button click engages the spine directly.
     warp.execute_warp(btn)
 
-    assert App.g_kSetManager.GetSet("Src") is None          # source terminated
+    assert App.g_kSetManager.GetSet("Src") is src           # source stands
+    assert src.GetObject("player") is None                  # but empty of us
     dst = App.g_kSetManager.GetSet("Dst")
     assert dst.GetObject("player") is player                # player moved in
     assert App.g_kSetManager.GetRenderedSet().GetName() == "Dst"

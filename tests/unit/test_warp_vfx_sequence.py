@@ -81,4 +81,6 @@ def test_flythrough_off_is_instant():
         App.g_kSetManager.AddSet(SetClass_Create(), "D2"))
     sys.modules["FakeSys.D2"] = mod
     warp.WarpSequence_Create(player, "FakeSys.D2", placement=None).Play()
-    assert App.g_kSetManager.GetSet("Src2") is None   # instant swap
+    assert App.g_kSetManager.GetSet("D2").GetObject("player") is player
+    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is None
+    assert App.g_kSetManager.GetSet("Src2") is src   # source stands

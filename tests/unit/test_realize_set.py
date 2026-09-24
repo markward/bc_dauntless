@@ -1,3 +1,5 @@
+import pytest
+
 import App
 from engine.appc.sets import SetClass_Create
 
@@ -52,3 +54,28 @@ def test_realize_then_teardown(monkeypatch):
 
     hl.teardown_set_objects(sess, s, r)
     assert ship not in sess.ship_instances and len(r.live) == 0
+
+
+def test_rerealize_after_departure_uses_the_current_radius(monkeypatch):
+    """Warping back into a set you left: departure tore its instances down,
+    arrival re-realizes them. planet_natural_scale is cached per realize, so
+    the re-realized planet must be scaled from its CURRENT radius -- the map's
+    -- never a stale one. The failure this guards is a body DRAWN at one
+    radius and TARGETED at another."""
+    from engine import host_loop as hl
+    monkeypatch.setattr(hl, "_planet_nif_path", lambda planet, **k: "fake.nif")
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    planet = App.Planet_Create(90.0, "data/models/environment/RedPlanet.nif")
+    s.AddObjectToSet(planet, "Ona 1")
+
+    hl.realize_set_objects(sess, s, r)
+    scale_at_90 = sess.planet_natural_scale[planet]
+    hl.teardown_set_objects(sess, s, r)
+    assert planet not in sess.planet_instances
+
+    planet.SetRadius(1800.0)
+    hl.realize_set_objects(sess, s, r)
+    assert sess.planet_natural_scale[planet] == pytest.approx(20.0 * scale_at_90)

@@ -42,8 +42,8 @@ import math as _math
 # The exterior scene camera and the bridge viewscreen share one frustum.
 # Re-exported, not defined here: engine/cameras owns the pair because
 # cameras/dof.py's MAX_FOCUS_GU is derived from the far plane, and the rest of
-# the rationale (why 500,000, and why the bridge/SPV/comm cameras keep their
-# own) lives beside the definition.
+# the rationale (how the far plane is derived, and why the bridge/SPV/comm
+# cameras keep their own) lives beside the definition in engine/cameras.
 from engine.cameras import SCENE_NEAR_GU, SCENE_FAR_GU  # noqa: E402,F401
 
 # ── Audio integration ────────────────────────────────────────────────────────
@@ -2147,8 +2147,9 @@ DEFAULT_DIRECTIONALS: list = [
     ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
 ]
 
-# In-warp lighting (streak phase). The system the player left is torn down, so
-# its sun is gone; the only light is the warp tunnel rushing toward the ship.
+# In-warp lighting (streak phase). The system the player left has its render
+# instances torn down (the set itself stands), so its sun no longer lights the
+# scene; the only light is the warp tunnel rushing toward the ship.
 # A bright cool key from AHEAD (down travel_dir) lights the front of the hull as
 # if by the tunnel, with a dim cool back-fill so the rear isn't black, over a low
 # cool ambient. Direction is a deliberate cinematic vector (the warp heading),
@@ -5068,9 +5069,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
 def teardown_set_objects(session, pSet, renderer) -> None:
     """Destroy render instances for this set's REMAINING objects and forget them.
 
-    The warp spine moves the player out of the source set before terminating it,
-    so the player is no longer enumerated here and survives. Objects outside
-    `pSet` are never touched."""
+    The warp spine moves the player out of the source set before tearing down
+    its render instances, so the player is no longer enumerated here and
+    survives. Objects outside `pSet` are never touched."""
     for ship in list(_iter_ships_in_set(pSet)):
         iid = session.ship_instances.pop(ship, None)
         if iid is not None:
@@ -7807,9 +7808,9 @@ def run(mission_name: Optional[str] = None,
 
         # Warp spine render hooks (Stage 1 hard cut): the warp sequence loads
         # the destination set then calls realize; on arrival it tears down the
-        # source set. Bound here to the live session+renderer. Unset hooks make
-        # those steps headless no-ops, so this wiring is what gives the spine a
-        # renderer.
+        # source set's render instances (the set itself stands). Bound here to
+        # the live session+renderer. Unset hooks make those steps headless
+        # no-ops, so this wiring is what gives the spine a renderer.
         from engine.appc import warp as _warp
         def _warp_realize(pSet):
             if controller.session is not None:
@@ -7921,8 +7922,9 @@ def run(mission_name: Optional[str] = None,
         # path: WarpPressed does camera/cinematic + control work whose engine
         # support is deferred to Stages 2-3, and it runs live before our spine
         # could (a raise there is swallowed at the CEF boundary). Calling the
-        # spine directly loads the destination set, moves the player, and
-        # terminates the source. execute_warp reads the button's destination.
+        # spine directly loads the destination set, moves the player, and tears
+        # down the source set's render instances (the set itself stands).
+        # execute_warp reads the button's destination.
         # Helm "Warp" button click -> engage the warp spine directly.
         # Module scope (see engage_warp) so the destination guard and the
         # menu side effects are reachable from a test; `controller` is the
@@ -10010,7 +10012,8 @@ def run(mission_name: Optional[str] = None,
                 backdrops = _aggregate_backdrops(active_set)
                 # Procedural sky off: `backdrops` IS the authored starbox, so
                 # remember it for the next transit to hold static. The source
-                # set is deleted at burst, so this is the last chance to see it.
+                # set's render instances are torn down at burst (the set
+                # itself stands), so this is the last chance to see it.
                 if not r.procedural_sky_enabled():
                     _note_static_backdrops(backdrops)
             r.set_backdrops(backdrops)
