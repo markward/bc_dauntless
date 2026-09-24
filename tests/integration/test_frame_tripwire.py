@@ -129,15 +129,19 @@ def test_collisions_inside_one_system_compare_by_system_position(world):
     a consumer that dropped the region anchors (a zero offset between any two
     sets of one frame) would still pass it. This pins both halves.
 
-    Negative: the Ona1 and Ona2 sentinels sit at IDENTICAL local numbers --
-    the Ona2 one given the opposite velocity so the pair is closing, not at
-    rest -- and must NOT collide: their regions' anchors put them far apart
-    in the system. Positive control: two ships at the same SYSTEM position
+    Negative: the Ona1 and Ona2 sentinels sit at the SAME local numbers and
+    must NOT collide: their regions' anchors put them far apart in the
+    system. The Ona2 one is nudged 1 GU along x (still overlapping by raw
+    numbers: two radius-1 hulls) and made to close on s1, because at exactly
+    identical numbers _respond_pair's concentric skip (degenerate normal)
+    would hide a raw compare -- a zero-offset mutation passed this test until
+    the nudge. Positive control: two ships at the same SYSTEM position
     (Ona2's placed at Ona1's point shifted by the anchor offset) DO."""
     sets, sentinels, bodies = world
     ona1, ona2 = sets["Ona1"], sets["Ona2"]
     s1, s2 = sentinels["Ona1"], sentinels["Ona2"]
-    s2.SetVelocity(TGPoint3(1.0, -0.7, 0.0))       # closing on s1's numbers
+    s2.SetTranslateXYZ(ARRIVAL[0] + 1.0, ARRIVAL[1], ARRIVAL[2])
+    s2.SetVelocity(TGPoint3(-3.0, 0.7, 0.0))       # closing on s1's numbers
 
     off = frames.offset_between(ona1, ona2)         # Ona2-local -> Ona1-local
     assert off != (0.0, 0.0, 0.0)
@@ -162,7 +166,7 @@ def test_collisions_inside_one_system_compare_by_system_position(world):
     assert {id(a), id(b)} in pairs, (
         "two ships at the same SYSTEM position in Ona1/Ona2 did not collide")
     assert {id(s1), id(s2)} not in pairs, (
-        "Ona1/Ona2 sentinels at identical LOCAL numbers collided -- a raw "
+        "Ona1/Ona2 sentinels at the same LOCAL numbers collided -- a raw "
         "compare inside one system")
 
 
