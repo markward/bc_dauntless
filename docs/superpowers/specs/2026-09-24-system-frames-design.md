@@ -152,7 +152,7 @@ at the new scale by the generator, not ported and then edited.
 | Set | Frame | Anchor |
 |---|---|---|
 | A mapped region (`Ona1`) | its system (`Ona`) | the region's `anchor_gu` |
-| Any unmapped set — Starbase 12, DeepSpace, a mission's own set, the `"warp"` transit set, the bridge, QuickBattle arenas, comm-viewscreen sets | its **own** frame, named for the set | `(0, 0, 0)` |
+| Any unmapped set — Starbase 12, DeepSpace, a mission's own set, the warp transit set (`warp._WARP_TRANSIT_SET_NAME`, `"_WarpTransit"`), the bridge, QuickBattle arenas, comm-viewscreen sets | its **own** frame, named for the set | `(0, 0, 0)` |
 
 An unmapped set is a one-set world: its system position equals its set-local
 position, exactly as today.
@@ -245,6 +245,16 @@ it. That is BC's own bound: the mission-swap `_sets.clear()` in `host_loop.py`.
 test-first against this design rather than cherry-picked — the branch's commits
 for it (`34a1e89d`, `dcdc1533`, `fbb44458`) are built on the residency and proxy
 code this design does not have.
+
+**Only the lifetime call goes; the render teardown stays until §4 replaces it.**
+`warp.py` makes two separate calls at departure: `_teardown_hook(src)`
+(`host_loop.teardown_set_objects` — destroys render instances only, never
+objects) and `DeleteSet`. The branch removed both, and losing the first is what
+produced its ghost planet (Ruling 18): a left set's Planet instance survived,
+drawn unshifted in the next system's sky. Plan 1 removes `DeleteSet` only.
+Returning re-realizes the set through `_realize_hook` (`realize_set_objects` is
+idempotent), recomputing `planet_natural_scale` from the map radius. §4's
+diff-driven drawing retires the teardown hook in Plan 3.
 
 ### 4. Drawing
 
@@ -388,7 +398,10 @@ reference branch).
 
 1. **Foundation.** Merge `67091184` into this branch (verified conflict-free
    against `main` with `git merge-tree`); cherry-pick `3b55ab30`, `676cf193`,
-   `07c396b5` (apply_map only) and `c31a5a0d`; regenerate the 32 maps at doubled
+   `07c396b5` (apply_map only), `c2f9d0c2` (far-plane bound derived from the
+   maps), `fab31c8a` (arrival-adopts tests) and `c31a5a0d` (dry-run 2026-09-24:
+   all apply cleanly except `c31a5a0d`, whose `conftest.py` hunk conflicts with
+   residency-era context and is resolved by hand); regenerate the 32 maps at doubled
    orbits; enforce the 20× radius ratio in `validate.py`; far plane to the derived
    figure; departure-keeps / arrival-adopts re-implemented test-first; the §2 wrap
    and mapped flag.
