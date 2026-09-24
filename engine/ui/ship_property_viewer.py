@@ -760,6 +760,15 @@ def part_save_edits(parts: dict) -> List[Tuple[str, str, list]]:
         fraction = spec.get("fraction")
         if fraction is not None:
             calls.append(("SetDetachFraction", (float(fraction),)))
+        if not calls:
+            # Every field absent (or already at a value with no setter to
+            # emit) -- writing (name, "__part__", []) would round-trip
+            # through the writer as an empty find-or-create block. Not
+            # reachable from the panel today (every path that stages a part
+            # edit sets at least one field), but a caller handing in a
+            # spec with nothing to say gets no edit at all rather than a
+            # no-op block on disk.
+            continue
         edits.append((name, "__part__", calls))
     return edits
 

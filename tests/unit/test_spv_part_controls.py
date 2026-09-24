@@ -62,6 +62,16 @@ def test_part_edits_reach_the_save_list():
     assert "SetDetachFraction" in setters
 
 
+def test_a_spec_with_nothing_to_say_emits_no_edit_at_all():
+    """Not reachable from the panel today (every staging path sets at least
+    one field), but a spec with everything absent must not round-trip as an
+    empty (name, "__part__", []) block written to disk."""
+    edits = spv.part_save_edits({
+        "left wing": {"pivot": None, "axis": None, "angles": {}, "fraction": None},
+    })
+    assert edits == []
+
+
 def test_a_non_detachable_part_emits_NO_detach_call():
     """Absent must stay absent -- emitting SetDetachFraction(0.0) would make
     every part shear instantly."""

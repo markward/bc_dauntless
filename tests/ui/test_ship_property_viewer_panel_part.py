@@ -179,7 +179,7 @@ def test_previewing_an_articulated_state_locks_mount_editing(make_panel):
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     p.dispatch_event("part/preview:cruise")
-    assert spv.mount_editing_enabled() is False
+    assert p._mount_editing_enabled() is False
     # The Python side is the real gate: a select_pin: action must be refused
     # outright, not merely greyed out in the DOM.
     assert p.dispatch_event("select_pin:0") is False
@@ -192,9 +192,9 @@ def test_previewing_the_anchor_state_leaves_mount_editing_enabled(make_panel):
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     p.dispatch_event("part/preview:cruise")
-    assert spv.mount_editing_enabled() is False
+    assert p._mount_editing_enabled() is False
     p.dispatch_event("part/preview:red")   # red is the BoP's NIF pose
-    assert spv.mount_editing_enabled() is True
+    assert p._mount_editing_enabled() is True
     assert p.dispatch_event("select_pin:0") is True
     assert p.selected_index == 0
 
@@ -205,7 +205,7 @@ def test_angle_editing_stays_available_while_locked(make_panel):
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     p.dispatch_event("part/preview:cruise")
-    assert spv.mount_editing_enabled() is False
+    assert p._mount_editing_enabled() is False
     ok = p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":30.0}')
     assert ok is True
@@ -223,7 +223,7 @@ def test_locked_mount_gizmo_verb_blocked_for_a_light_target(make_panel):
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     p.dispatch_event("part/preview:cruise")
-    assert spv.mount_editing_enabled() is False
+    assert p._mount_editing_enabled() is False
     assert p.dispatch_event("mirror_element") is False
     assert 0 not in p._pending_light
 
@@ -235,7 +235,7 @@ def test_locked_mount_gizmo_verb_allowed_for_a_part_target(make_panel):
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     p.dispatch_event("part/preview:cruise")
-    assert spv.mount_editing_enabled() is False
+    assert p._mount_editing_enabled() is False
     assert p.dispatch_event("mirror_element") is True
 
 
@@ -348,12 +348,152 @@ def test_rotate_copy_paste_roundtrips_the_part_axis(monkeypatch):
         (0.0, 1.0, 0.0), abs=1e-6)
 
 
+# ---------------------------------------------------------------------------
+# Fix round 1, Finding 1: the mouse-driven gizmo drag path bypassed the lock
+# entirely. _dispatch_event_inner only gates ACTION STRINGS; the reviewer's
+# repro drove the raw drag functions directly (as the real per-frame mouse
+# input does) and found a locked subsystem stayed fully draggable.
+# ---------------------------------------------------------------------------
+def _subsystem_panel(monkeypatch, light=False):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    def _build(ship):
+        out = []
+        for d in _FAKE_DESCRIPTORS:
+            row = dict(d, emitters=[dict(e) for e in d["emitters"]])
+            if light:
+                row["light"] = True
+                row["light_region"] = {
+                    "shape": "Cylinder", "position": tuple(row["properties"]["position"]),
+                    "axis": (0.0, -1.0, 0.0), "radius": (0.3,),
+                    "extent": (-2.0, 2.0), "scale": (0.25, 0.25, 0.25),
+                }
+            out.append(row)
+        return out
+
+    monkeypatch.setattr(mod, "build_descriptors", _build)
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "birdofprey")
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RotShip())
+    p.open()
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 10.0, 0.0, 0.0)
+    p._model_part_nodes = list(_PART_NODES)
+    return p
+
+
+def _lock_via_left_wing_cruise(p):
+    p.dispatch_event(
+        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
+    p.dispatch_event("part/preview:cruise")
+    assert p._mount_editing_enabled() is False
+
+
+def test_mouse_drag_cannot_move_a_subsystem_selected_before_the_lock(monkeypatch):
+    """The reviewer's exact repro: select_pin:1 -> part/set_angle cruise=45
+    -> part/preview:cruise -- the SUBSYSTEM stays the active gizmo target
+    (only model_parts/select: clears it), so the raw drag functions must
+    refuse on their own."""
+    p = _subsystem_panel(monkeypatch)
+    p.dispatch_event("select_pin:0")
+    assert p._active_transform_target() == ("subsystem", 0)
+    _lock_via_left_wing_cruise(p)
+    before = p._effective_pos(0)
+    p.dispatch_event("set_tool:transform")
+    p._begin_axis_drag_for_test(axis=0, grab_param=0.0)
+    p._apply_axis_drag(0.9)
+    assert p._effective_pos(0) == before
+    assert p._pending_pos == {}
+
+
+def test_gizmo_input_refuses_to_begin_a_drag_on_a_locked_mount(monkeypatch):
+    """The press-edge refusal in _handle_gizmo_input itself: a real gizmo
+    exists (transform_gizmo() is non-None -- this is not "no gizmo to
+    grab"), but the press must not start a drag at all while the target is
+    a locked mount."""
+    p = _subsystem_panel(monkeypatch)
+    p.dispatch_event("select_pin:0")
+    p.dispatch_event("set_tool:transform")
+    assert p.transform_gizmo() is not None
+    _lock_via_left_wing_cruise(p)
+    assert p._current_target_is_locked_mount() is True
+    consumed = p._handle_gizmo_input(400.0, 300.0, True, False, 1.0,
+                                     lambda: (800, 600))
+    assert consumed is False
+    assert p._axis_drag is None
+
+
+def test_apply_axis_drag_refuses_even_when_the_lock_engages_mid_gesture(monkeypatch):
+    """Defence in depth, independent of _handle_gizmo_input's press-edge
+    refusal: the drag BEGINS while unlocked (a legitimate grab), then the
+    lock engages before the next per-frame apply call -- _apply_axis_drag's
+    own guard must stop it from continuing."""
+    p = _subsystem_panel(monkeypatch)
+    p.dispatch_event("select_pin:0")
+    p.dispatch_event("set_tool:transform")
+    p._begin_axis_drag_for_test(axis=0, grab_param=0.0)   # begins UNLOCKED
+    _lock_via_left_wing_cruise(p)                         # locks mid-gesture
+    before = p._effective_pos(0)
+    p._apply_axis_drag(0.9)
+    assert p._effective_pos(0) == before
+
+
+def test_ring_drag_cannot_rotate_a_locked_light_mount(monkeypatch):
+    """Same repro, Rotate tool + a Cylinder light target (its `axis` is a
+    mount-editing surface exactly like a subsystem's position)."""
+    p = _subsystem_panel(monkeypatch, light=True)
+    p.dispatch_event("select_light:0")
+    assert p._active_transform_target() == ("light", 0)
+    _lock_via_left_wing_cruise(p)
+    before = p._effective_light(0)["axis"]
+    p.dispatch_event("set_tool:rotate")
+    p._begin_ring_drag(2, 0.0)
+    p._apply_ring_drag_angle(math.radians(90.0))
+    assert p._effective_light(0)["axis"] == before
+
+
+def test_part_target_remains_draggable_while_locked(monkeypatch):
+    """The negative-space check: none of the above guards may over-fire and
+    also block the PART itself -- that is how the hinge gets placed while
+    previewing the very pose it's being placed for."""
+    p = _part_panel(monkeypatch)
+    p.dispatch_event(
+        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
+    p.dispatch_event("part/preview:cruise")
+    assert p._mount_editing_enabled() is False
+    assert p._current_target_is_locked_mount() is False
+    p.dispatch_event("set_tool:transform")
+    baked_pivot = p._effective_part("left wing")["pivot"]
+    p._begin_axis_drag_for_test(axis=1, grab_param=0.0)
+    p._apply_axis_drag(2.0)
+    moved = (baked_pivot[0], baked_pivot[1] + 2.0, baked_pivot[2])
+    assert p._effective_part("left wing")["pivot"] == pytest.approx(moved)
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1, Finding 2: the 'K' dev keybinding (engine/dev_keybindings.py)
+# writes articulation.set_dev_override directly and NEVER touches
+# ship_property_viewer.preview_part_state -- the lock must read the override
+# live, not a shadow copy only Preview writes.
+# ---------------------------------------------------------------------------
+def test_the_K_dev_override_locks_mount_editing_without_touching_preview(make_panel):
+    p, _holder, _target = make_panel
+    _open_with_parts(p)
+    p.dispatch_event(
+        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
+    from engine.appc import articulation
+    articulation.set_dev_override("cruise")   # exactly what 'K' does -- and
+    # nothing else: ship_property_viewer.preview_part_state was never called.
+    assert p._mount_editing_enabled() is False
+    locked, reason = p._mount_lock_state_and_reason()
+    assert locked is True
+    assert reason
+
+
 def test_close_clears_the_preview_lock(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     p.dispatch_event("part/preview:cruise")
-    assert spv.mount_editing_enabled() is False
+    assert p._mount_editing_enabled() is False
     p.close()
-    assert spv.mount_editing_enabled() is True
+    assert p._mount_editing_enabled() is True

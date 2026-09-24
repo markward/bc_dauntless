@@ -283,11 +283,11 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_emitter = {}
         self._pending_pos = {}
         self._pending_part = {}
-        # Preview lock (Task 7): a stale preview from whatever was open before
-        # must not carry into a freshly-opened ship. Clears both halves: the
-        # pure lock state (ship_property_viewer.preview_part_state) and the
-        # visual dev override (articulation.set_dev_override) that drives it.
-        _spv.preview_part_state(None)
+        # Preview lock (Task 7): a stale forced state from whatever was open
+        # before (or left by the 'K' dev keybinding) must not carry into a
+        # freshly-opened ship -- the lock is read live from
+        # articulation.dev_override() (see _mount_lock_state_and_reason), so
+        # clearing it here is the only reset this needs.
         from engine.appc import articulation as _articulation
         _articulation.set_dev_override(None)
         # Persist the saved-edit overlay across open/close of the SAME ship so a
@@ -351,7 +351,6 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_emitter = {}
         self._pending_pos = {}
         self._pending_part = {}
-        _spv.preview_part_state(None)
         from engine.appc import articulation as _articulation
         _articulation.set_dev_override(None)
         _spv.select_model_part(None, self._model_part_nodes)
@@ -533,25 +532,51 @@ class ShipPropertyViewerPanel(Panel):
         return out
 
     def _set_part_preview(self, state) -> None:
-        """Drive both halves of Preview: the pure lock
-        (`ship_property_viewer.preview_part_state`) and the VISUAL pose —
-        the pre-existing dev override (`articulation.set_dev_override`,
-        already wired to `tick_ship` and dev-keybinding 'K') is reused
-        rather than reinvented, so Preview and 'K' share one source of
-        truth for "which state is the rig frozen at"."""
+        """Drive the VISUAL pose: the pre-existing dev override
+        (`articulation.set_dev_override`, already wired to `tick_ship` and
+        dev-keybinding 'K') is reused rather than reinvented, so Preview and
+        'K' share one source of truth for "which state is the rig frozen
+        at". Does NOT also write `ship_property_viewer.preview_part_state` --
+        `_mount_editing_enabled`/`_mount_lock_state_and_reason` below read
+        `articulation.dev_override()` directly, precisely so 'K' (which only
+        ever wrote the override, never the SPV module's shadow copy of it)
+        locks mount editing exactly the same way a Preview click does,
+        without the two needing to be kept in sync by convention -- see
+        task-7-report.md's Finding 2 fix."""
         from engine.appc import articulation
-        _spv.preview_part_state(state, angles=self._rig_angle_summary())
         articulation.set_dev_override(state)
         self._last_pushed = None
 
-    def _refresh_part_preview_lock(self) -> None:
-        """Re-evaluate the lock against whatever state is CURRENTLY previewed
-        after a part edit -- an angle re-authored to/from zero must change
-        the lock on the very next render, not only on the next Preview
-        click."""
-        state = _spv.part_preview_state()
-        if state is not None:
-            _spv.preview_part_state(state, angles=self._rig_angle_summary())
+    def _current_articulation_override(self):
+        """`articulation.dev_override()` -- the SINGLE source of truth for
+        "which state is the rig forced to right now", written by both the
+        SPV's own Preview buttons (`_set_part_preview`) and the pre-existing
+        'K' dev keybinding. None when nothing is forcing a state (the rig
+        follows `state_for`/alert level as normal)."""
+        from engine.appc import articulation
+        return articulation.dev_override()
+
+    def _mount_lock_state_and_reason(self):
+        """(locked: bool, reason: str|None), computed LIVE from
+        `_current_articulation_override()` and the current rig angles --
+        never from a cached/shadow boolean, so a re-authored angle or a
+        state change from ANY source (Preview or 'K') is reflected on the
+        very next check with no separate "refresh" step needed."""
+        state = self._current_articulation_override()
+        if state is None:
+            return False, None
+        degrees = self._rig_angle_summary().get(state, 0.0)
+        if abs(degrees) <= 1e-9:
+            return False, None
+        reason = (
+            "Mount editing is locked while previewing %r: a hardpoint is "
+            "stored in the model's own unrotated frame, so a mount placed "
+            "or dragged in this pose would be recorded wrong for every "
+            "other pose. Preview the anchor state to unlock." % state)
+        return True, reason
+
+    def _mount_editing_enabled(self) -> bool:
+        return not self._mount_lock_state_and_reason()[0]
 
     def _model_part_names(self) -> set:
         return set(n.get("name") for n in self._model_part_nodes)
@@ -704,7 +729,6 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_emitter = copy.deepcopy(e)
         self._pending_pos = copy.deepcopy(p)
         self._pending_part = copy.deepcopy(pt)
-        self._refresh_part_preview_lock()
         if self._selected_emitter is not None:
             i, j = self._selected_emitter
             if not (0 <= i < len(self._descriptors)) \
@@ -1472,6 +1496,11 @@ class ShipPropertyViewerPanel(Panel):
         drag past the origin can't invert or divide-by-zero."""
         if self._axis_drag is None:
             return
+        if self._current_target_is_locked_mount():
+            # Defence in depth: _handle_gizmo_input already refuses to BEGIN
+            # this drag on a locked mount, but a mount's radius edit must
+            # never apply even if this is ever reached some other way.
+            return
         from engine.ui.ship_property_viewer import gizmo_length
         L = gizmo_length(self.camera)
         ratio = t_now / max(self._axis_grab_param, 0.25 * L)
@@ -1533,6 +1562,9 @@ class ShipPropertyViewerPanel(Panel):
         re-orthonormalizes."""
         t = self._rotate_target()
         if t is None or self._axis_drag is None:
+            return
+        if self._current_target_is_locked_mount():
+            # Defence in depth -- see _apply_scale_drag's identical guard.
             return
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
@@ -1649,6 +1681,12 @@ class ShipPropertyViewerPanel(Panel):
         target = self._active_transform_target()
         if self._axis_drag is None or target is None:
             return
+        if self._current_target_is_locked_mount():
+            # Defence in depth -- see _apply_scale_drag's identical guard.
+            # This is THE bug the reviewer reproduced: without this check
+            # (and _handle_gizmo_input's press-edge refusal), a subsystem
+            # selected BEFORE a Preview click stayed draggable through it.
+            return
         k = self._axis_drag
         base = list(self._axis_grab_pos)
         base[k] += (param_now - self._axis_grab_param)
@@ -1756,7 +1794,12 @@ class ShipPropertyViewerPanel(Panel):
                     self.show_hull_texture,
                     _spv.model_parts_expanded(), _spv.selected_model_part(),
                     self._model_parts_show_all,
-                    _spv.part_preview_state(), _spv.mount_editing_enabled(),
+                    # Read live from articulation.dev_override() (not a
+                    # shadow copy) so a change made by the 'K' dev
+                    # keybinding -- which never touches this panel's own
+                    # state -- still triggers a re-push. See Finding 2.
+                    self._current_articulation_override(),
+                    self._mount_editing_enabled(),
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
                     tuple(sorted(self._pending_emitter)),  # subsystem indices with a staged emitter list
@@ -1932,14 +1975,20 @@ class ShipPropertyViewerPanel(Panel):
             row["detachable"] = spec["fraction"] is not None
             row["fraction"] = spec["fraction"] if spec["fraction"] is not None else 0.20
             row["dirty"] = row["name"] in self._pending_part
+        locked, reason = self._mount_lock_state_and_reason()
         return {
             "expanded": _spv.model_parts_expanded(),
             "selected": _spv.selected_model_part(),
             "selected_box": _spv.selected_part_box(),
             "show_all": self._model_parts_show_all,
-            "part_preview": _spv.part_preview_state(),
-            "mount_editing_enabled": _spv.mount_editing_enabled(),
-            "mount_editing_reason": _spv.mount_editing_reason(),
+            # Read live from articulation.dev_override() -- see Finding 2 in
+            # task-7-report.md: the pre-existing 'K' dev keybinding writes
+            # ONLY the override, never a ship_property_viewer-side shadow, so
+            # consulting anything else here would make 'K' silently disagree
+            # with the lock the panel actually enforces.
+            "part_preview": self._current_articulation_override(),
+            "mount_editing_enabled": not locked,
+            "mount_editing_reason": reason,
             "rows": rows,
         }
 
@@ -2147,8 +2196,10 @@ class ShipPropertyViewerPanel(Panel):
 
         # An axis drag is in progress — own the whole press/drag/release cycle.
         if self._axis_drag is not None:
-            if not down:
-                # Release edge: end the drag; no pin pick.
+            if not down or self._current_target_is_locked_mount():
+                # Release edge, OR the lock engaged mid-gesture (e.g. a
+                # Preview click landed between two drag frames): end the
+                # drag without applying any further delta. No pin pick.
                 self._end_axis_drag()
                 self._lmb_down = False
                 self._drag_last = None
@@ -2182,6 +2233,13 @@ class ShipPropertyViewerPanel(Panel):
 
         # Press edge: try to grab an axis. If none, fall through to orbit-press.
         if down and not self._lmb_down:
+            if self._current_target_is_locked_mount():
+                # Refuse the grab outright: the click falls through to an
+                # ordinary orbit-press, exactly as if no gizmo handle were
+                # under the cursor. THE actual gate -- see
+                # _current_target_is_locked_mount's docstring for why this
+                # cannot be the DOM's `disabled` attribute alone.
+                return False
             if self.active_tool == "rotate":
                 ring = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
                                        self.camera, fb_size(), dsf)
@@ -2301,6 +2359,21 @@ class ShipPropertyViewerPanel(Panel):
     )
     _MOUNT_GIZMO_PREFIXES = ("coord_nudge:", "scale_nudge:", "rotate_nudge:")
 
+    def _current_target_is_locked_mount(self) -> bool:
+        """True when mount editing is locked AND the CURRENT transform
+        target is a subsystem/light/emitter mount -- the single predicate
+        both the action-string gate (`_is_locked_mount_action`, for
+        `_dispatch_event_inner`) and the raw mouse-driven gizmo drag gate
+        (`_handle_gizmo_input` / the `_apply_*_drag` methods) consult, so
+        there is exactly one place that decides "is the thing under the
+        gizmo right now a locked mount" rather than two copies that could
+        drift. A part target is never locked -- previewing a pose so you can
+        author THAT part's own pivot/axis is the entire point of the lock."""
+        if self._mount_editing_enabled():
+            return False
+        t = self._active_transform_target()
+        return t is not None and t[0] in ("subsystem", "light", "emitter")
+
     def _is_locked_mount_action(self, action: str) -> bool:
         """True when `action` would select-toward-editing or edit a
         subsystem/light/emitter mount while `mount_editing_enabled()` is
@@ -2308,16 +2381,18 @@ class ShipPropertyViewerPanel(Panel):
         docstring in `engine.ui.ship_property_viewer` for why this must be a
         Python-side gate, not only a greyed-out DOM: a stale click, a queued
         event, or a JS path that skips the disabled attribute must not slip
-        an edit through."""
+        an edit through. Covers ACTION STRINGS only -- the raw mouse-driven
+        gizmo drag (`_handle_gizmo_input`) never goes through
+        `_dispatch_event_inner` at all and is gated separately, by
+        `_current_target_is_locked_mount()` directly."""
         if action.startswith(self._MOUNT_SELECT_ACTIONS):
             return True
         if action in self._MOUNT_GIZMO_VERBS or action.startswith(self._MOUNT_GIZMO_PREFIXES):
-            t = self._active_transform_target()
-            return t is not None and t[0] in ("subsystem", "light", "emitter")
+            return self._current_target_is_locked_mount()
         return False
 
     def _dispatch_event_inner(self, action: str) -> bool:
-        if not _spv.mount_editing_enabled() and self._is_locked_mount_action(action):
+        if not self._mount_editing_enabled() and self._is_locked_mount_action(action):
             return False
         if action == "pipette":
             if self._pipette_armed:
@@ -2420,7 +2495,8 @@ class ShipPropertyViewerPanel(Panel):
             angles = dict(self._effective_part(name).get("angles") or {})
             angles[state] = degrees
             self._stage_part_field(name, angles=angles)
-            self._refresh_part_preview_lock()
+            # No explicit "refresh" needed: _mount_editing_enabled() computes
+            # the lock live from _rig_angle_summary() on every check.
             return True
         if action.startswith("part/set_detach:"):
             try:
