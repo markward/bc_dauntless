@@ -396,54 +396,51 @@ def test_the_ratio_rule_actually_matches_every_mapped_body():
     assert matched == 118
 
 
-# Found 2026-09-24 by Plan 1 Task 3: Prendel 3's x20 radius (7200 GU) swallows
-# BC's own LoadPlacements waypoints in that region -- "Planet", "Moon1" and
-# "Moon2" -- where E5M2/E6M4 stage a base and three Galors. Same root cause as
-# test_no_committed_map_declares_a_pin_and_here_is_why: a pin would collide
-# with 20x body scaling here too. Resolution (generator layout change, vs.
-# accepting the geometry) is escalated to Mark. RATCHET, not an xfail: when
-# this is resolved, this set must be emptied -- the test below fails in BOTH
-# directions on purpose, so a NEW body swallowing a NEW waypoint is caught
-# just as loudly as this one being silently fixed and forgotten about.
-KNOWN_WAYPOINTS_INSIDE_BODIES = {
-    ("Prendel3", "Planet", "Prendel 3"),
-    ("Prendel3", "Moon1", "Prendel 3"),
-    ("Prendel3", "Moon2", "Prendel 3"),
-}
-
-
-def test_no_region_waypoint_is_inside_a_mapped_body():
-    """A x20 body at a new position must not swallow a waypoint BC placed in
-    that region -- ships placed there would spawn inside a planet. Checks the
-    region module's own LoadPlacements (Systems/<Sys>/<Region>.py).
-
-    This is a RATCHET against KNOWN_WAYPOINTS_INSIDE_BODIES, not a plain
-    assert-empty and not an xfail: it fails if the offender set grows (a new
-    layout regression) AND if it shrinks (the known Prendel 3 finding was
-    fixed but this test -- the one document of record for it -- was not
-    updated). Do not loosen it by widening the constant to cover a NEW
-    offender; do not delete an entry without confirming the underlying
-    geometry no longer collides."""
-    import math
+def test_no_staged_waypoint_is_within_clearance_of_a_body():
+    """No body may have its surface within staged_clearance_gu of any point a
+    region stages content at -- the region module's own waypoints (minus the
+    bodies' own placement points) and every mission placement the survey
+    attributes to that set. Replaces Task 3's ratchet, which saw only the
+    region module and missed the E5M2/E6M4 base and Galors inside Prendel 3.
+    The generator pushes a violating body group clear (layout._staged_shift),
+    so this asserts NO problems anywhere."""
     from engine.systems import map as system_map
-    from tools.systems import survey
+    from engine.systems.validate import validate
+    from tools.systems.layout import LayoutTuning
+    from tools.systems.survey import staged_points, survey_system, system_names
 
-    offenders = set()
-    for name in survey.system_names():
-        m = system_map.load(name)
-        for region in m.regions:
-            path = survey._systems_dir() / name / f"{region.set_name}.py"
-            if not path.exists():
-                continue
-            placements = survey._placements(survey._read(path))
-            for b in m.bodies:
-                if b.owner_region != region.set_name:
-                    continue
-                local = tuple(p - a for p, a in zip(b.position_gu, region.anchor_gu))
-                for wp_name, xyz in placements.items():
-                    if math.dist(local, xyz) < b.radius_gu:
-                        offenders.add((region.set_name, wp_name, b.name))
-    assert offenders == KNOWN_WAYPOINTS_INSIDE_BODIES, (
-        f"new offenders (not in the ratchet): {offenders - KNOWN_WAYPOINTS_INSIDE_BODIES}; "
-        f"no-longer-present entries (ratchet needs shrinking): "
-        f"{KNOWN_WAYPOINTS_INSIDE_BODIES - offenders}")
+    clearance = LayoutTuning().staged_clearance_gu
+    problems = []
+    for name in system_names():
+        problems += validate(system_map.load(name),
+                             staged_points=staged_points(survey_system(name)),
+                             staged_clearance_gu=clearance)
+    assert problems == [], "\n".join(p.detail for p in problems)
+
+
+def test_prendel3_staged_points_include_the_missions_base_and_galors():
+    """Non-vacuity for the test above: the survey really does attribute E5M2's
+    and E6M4's staging to Prendel3 (the case Task 3's ratchet missed)."""
+    from tools.systems.survey import survey_system
+
+    region = next(r for r in survey_system("Prendel").regions if r.set_name == "Prendel3")
+    have = {(label, name) for label, name, _xyz in region.staged_points}
+    assert ("Maelstrom/Episode5/E5M2/Prendel3_P", "Base Location") in have
+    assert ("Maelstrom/Episode5/E5M2/Prendel3_P", "Galor Start") in have
+    assert ("Maelstrom/Episode6/E6M4/E6M4_Prendel3_P", "Base Location") in have
+
+
+def test_the_cli_enforces_staged_clearance(monkeypatch, capsys):
+    """The generator must pass staged points and the clearance to validate().
+    A clearance no layout can meet (1e9 GU, validator side only -- layout()
+    keeps its own default) must surface as staged-clearance problems."""
+    import dataclasses
+    import tools.gen_system_maps as gen
+    from tools.systems.layout import LayoutTuning
+
+    monkeypatch.setattr(gen, "LayoutTuning",
+                        lambda: dataclasses.replace(LayoutTuning(), staged_clearance_gu=1.0e9))
+    rc = gen.main(["--system", "Ona", "--check"])
+    out = capsys.readouterr().out
+    assert "staged-clearance" in out
+    assert rc == 1

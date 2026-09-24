@@ -373,7 +373,44 @@ def _radius_ratio_problems(m, bc_radii: dict, radius_scale: float) -> list:
     return problems
 
 
-def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=None) -> list:
+def _staged_clearance_problems(bodies, regions, bad_bodies, bad_regions,
+                               staged_points, clearance_gu: float) -> list:
+    """No body a region owns has its surface within `clearance_gu` of a point
+    content is staged at in that region -- a ship staged there would spawn in,
+    or skimming, a planet. Points are set-local (region anchor + xyz).
+
+    Region-scoped: BC display names collide across regions (Geble3 and Geble4
+    both have a "Moon 1"), so a region's bodies are those whose owner_region
+    is that region, never a by-name lookup.
+    """
+    problems = []
+    anchors = {r.set_name: r.anchor_gu for r in regions if r.set_name not in bad_regions}
+    for region_name in sorted(staged_points):
+        anchor = anchors.get(region_name)
+        if anchor is None:
+            continue
+        owned = [b for b in bodies
+                 if b.owner_region == region_name and id(b) not in bad_bodies]
+        for label, xyz in staged_points[region_name]:
+            if not _is_point3(xyz):
+                problems.append(Problem(
+                    "staged-clearance",
+                    f"{region_name}: staged point from {label!r} is malformed: {xyz!r}"))
+                continue
+            for b in owned:
+                local = tuple(p - a for p, a in zip(b.position_gu, anchor))
+                clearance = _dist(local, xyz) - b.radius_gu
+                if clearance < clearance_gu - 1e-6:
+                    problems.append(Problem(
+                        "staged-clearance",
+                        f"{region_name}/{b.name}: surface is {clearance:.0f} GU from "
+                        f"content staged at set-local {tuple(xyz)} by {label!r} "
+                        f"-- must clear it by {clearance_gu:.0f} GU"))
+    return problems
+
+
+def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=None,
+             staged_points=None, staged_clearance_gu=None) -> list:
     """Validate a SystemMap, returning a list of Problems (empty == valid).
 
     `sdk_set_names` and `pins` gate the region-coverage and pin-respected
@@ -383,6 +420,11 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
     `tools.systems.survey.bc_radii`); `radius_scale` is the single scale
     every mapped body's radius must equal `bc_radius_gu * radius_scale` to
     (see `tools.systems.layout.LayoutTuning`).
+
+    `staged_points` and `staged_clearance_gu` gate the staged-clearance rule
+    -- it only runs when BOTH are given. `staged_points` is
+    `{region_set_name: [(source_label, set-local xyz), ...]}` (built from
+    `tools.systems.survey.SurveyedRegion.staged_points`).
     """
     problems = []
     bodies = _sequence_field(m, "bodies", problems)
@@ -780,5 +822,9 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
 
     if bc_radii is not None and radius_scale is not None:
         problems.extend(_radius_ratio_problems(m, bc_radii, radius_scale))
+
+    if staged_points is not None and staged_clearance_gu is not None:
+        problems.extend(_staged_clearance_problems(
+            bodies, regions, bad_bodies, bad_regions, staged_points, staged_clearance_gu))
 
     return problems

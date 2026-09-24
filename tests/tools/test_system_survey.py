@@ -63,6 +63,43 @@ def test_content_extent_excludes_bodies_and_includes_mission_placements():
     assert 250.0 < by_name["Ona3"].content_extent_gu < 600.0
 
 
+def _staged(system, set_name):
+    region = [r for r in survey_system(system).regions if r.set_name == set_name][0]
+    return region.staged_points
+
+
+def test_staged_points_carry_mission_content_with_its_source():
+    """E5M2 and E6M4 stage a base and Galors in Prendel 3. Each staged point is
+    (source label, waypoint name, set-local xyz), the label naming the file."""
+    staged = _staged("Prendel", "Prendel3")
+    by_key = {(label, name): xyz for label, name, xyz in staged}
+    assert by_key[("Maelstrom/Episode5/E5M2/Prendel3_P", "Base Location")] == pytest.approx(
+        (514.0, 6098.0, 35.0), abs=1.0)
+    assert any(label == "Maelstrom/Episode6/E6M4/E6M4_Prendel3_P" and name == "Base Location"
+               for label, name, _ in staged)
+
+
+def test_staged_points_exclude_a_bodys_own_placement_point():
+    """"Planet", "Moon1" and "Moon2" are where Prendel 3's bodies are placed --
+    the bodies' own points, not content -- as is the far "Sun" waypoint. A
+    region-module waypoint that is not a body's point (Player Start) stays."""
+    own = {name for label, name, _ in _staged("Prendel", "Prendel3")
+           if label == "Systems/Prendel/Prendel3"}
+    assert "Player Start" in own
+    assert not own & {"Planet", "Moon1", "Moon2", "Sun"}
+
+
+def test_content_extent_and_staged_points_come_from_one_scan():
+    """Ona3's only non-body content is mission staging, so its extent is exactly
+    the furthest staged point -- extent and staged points cannot disagree."""
+    import math
+    staged = _staged("Ona", "Ona3")
+    region = [r for r in survey_system("Ona").regions if r.set_name == "Ona3"][0]
+    assert any(label.startswith("Maelstrom/") for label, _, _ in staged)
+    assert region.content_extent_gu == pytest.approx(
+        max(math.sqrt(sum(c * c for c in xyz)) for _, _, xyz in staged))
+
+
 def test_system_names_covers_the_campaign_and_excludes_utils():
     names = system_names()
     assert "Ona" in names and "Vesuvi" in names and "Alioth" in names

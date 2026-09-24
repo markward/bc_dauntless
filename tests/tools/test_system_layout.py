@@ -819,3 +819,84 @@ def test_ambiguities_does_not_flag_a_recognised_cloud_kind():
     notes = ambiguities(s, cloud={"name": "V", "display_name": "V",
                                   "kind": "debris_shell"})
     assert notes == []
+
+
+# ---- staged clearance: a body is pushed clear of content staged in its region
+
+def _staged_sys(staged=(("Maelstrom/Test/Push1_P", "Base", (-4000.0, 9000.0, 0.0)),)):
+    """One region: a 100 GU planet 1000 GU ahead of Player Start (standoff 5
+    radii = 10,000 GU at x20) and a moon 1000 GU to its +X. The group centroid
+    sits 4,000 GU +X of the planet, so the planet's set-local centre is
+    (-4000, 10000, 0). The default staged point is 1,000 GU inside it."""
+    return SurveyedSystem(name="Push", regions=[SurveyedRegion(
+        set_name="Push1", ordinal=1,
+        bodies=[
+            SurveyedBody("Push 1", 100.0, "p.nif", (0.0, 1000.0, 0.0), False),
+            SurveyedBody("Moon 1", 20.0, "m.nif", (1000.0, 1000.0, 0.0), False),
+            SurveyedBody("Sun", 5000.0, "sun.nif", (-70000.0, 0.0, 0.0), True),
+        ],
+        content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0),
+        staged_points=list(staged))])
+
+
+def _local(m, set_name, body_name):
+    r = m.region(set_name)
+    b = next(b for b in m.bodies if b.name == body_name and b.owner_region == set_name)
+    return tuple(p - a for p, a in zip(b.position_gu, r.anchor_gu))
+
+
+def test_the_default_staged_clearance_is_1000_gu():
+    assert LayoutTuning().staged_clearance_gu == 1000.0
+
+
+def test_a_body_is_pushed_clear_of_content_staged_in_its_region():
+    m = layout(_staged_sys())
+    for name, radius in (("Push 1", 2000.0), ("Moon 1", 400.0)):
+        d = math.dist(_local(m, "Push1", name), (-4000.0, 9000.0, 0.0))
+        assert d - radius >= 1000.0 - 1e-6, name
+
+
+def test_the_push_is_directly_away_from_the_content_and_carries_the_moons():
+    before = layout(_staged_sys(staged=()))
+    after = layout(_staged_sys())
+    # The anchor does not move: staged content is set-local.
+    assert after.region("Push1").anchor_gu == pytest.approx(before.region("Push1").anchor_gu)
+    p0, p1 = _local(before, "Push1", "Push 1"), _local(after, "Push1", "Push 1")
+    m0, m1 = _local(before, "Push1", "Moon 1"), _local(after, "Push1", "Moon 1")
+    shift = tuple(b - a for a, b in zip(p0, p1))
+    # Moon geometry preserved: the moon moved by exactly the planet's shift.
+    assert tuple(b - a for a, b in zip(m0, m1)) == pytest.approx(shift)
+    # Directly away from the content (+Y here), and exactly far enough:
+    # 2000 radius + 1000 clearance - 1000 current distance = 2000 GU.
+    assert shift == pytest.approx((0.0, 2000.0, 0.0), abs=1e-6)
+
+
+def test_a_region_with_no_violation_is_byte_identical():
+    from engine.systems.map import to_json
+    far = (("Maelstrom/Test/Push1_P", "Base", (0.0, 0.0, 0.0)),)
+    assert to_json(layout(_staged_sys(staged=far))) == to_json(layout(_staged_sys(staged=())))
+
+
+def test_the_push_does_not_depend_on_the_first_orbit():
+    """_first_orbit_push() probes the anchor per GU of first orbit; the push is
+    set-local, so it must be the same wherever the region's orbit lands."""
+    near = layout(_staged_sys(), LayoutTuning(first_orbit_clearance_gu=60000.0))
+    far = layout(_staged_sys(), LayoutTuning(first_orbit_clearance_gu=90000.0))
+    assert _local(near, "Push1", "Push 1") == pytest.approx(_local(far, "Push1", "Push 1"))
+    assert _local(near, "Push1", "Moon 1") == pytest.approx(_local(far, "Push1", "Moon 1"))
+
+
+def test_the_orbit_spacing_reach_estimate_covers_a_pushed_group():
+    """_reach_estimate must never under-estimate (orbits are spaced by it).
+    A lone planet makes the unpushed estimate EXACT (standoff + radius), so a
+    push the estimate ignores would show here as an under-estimate."""
+    from tools.systems.layout import _reach_estimate
+    s = _staged_sys(staged=(("Maelstrom/Test/Push1_P", "Base", (0.0, 9000.0, 0.0)),))
+    s.regions[0].bodies = [b for b in s.regions[0].bodies if b.name != "Moon 1"]
+    m = layout(s)
+    assert _reach_estimate(s.regions[0], LayoutTuning()) >= m.region("Push1").radius_gu - 1e-6
+
+
+def test_a_layout_that_cannot_clear_its_content_fails_loudly():
+    with pytest.raises(ValueError, match="Push1"):
+        layout(_staged_sys(), LayoutTuning(staged_clearance_gu=1.0e7))

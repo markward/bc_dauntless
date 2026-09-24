@@ -100,9 +100,9 @@
       "display_name": "Omega Draconis 5",
       "radius_gu": 600.0,
       "position_gu": [
-        -102344.90361769464,
-        -258475.3773640437,
-        0.0
+        -102598.17514717214,
+        -258191.6734716687,
+        -87.23981145914814
       ],
       "orbits": "OmegaDraconis",
       "appearance": {
@@ -174,7 +174,7 @@
         -261475.3773640437,
         150.0
       ],
-      "radius_gu": 5104.16377715996,
+      "radius_gu": 5406.201385507464,
       "body_names": [
         "Omega Draconis 5"
       ],

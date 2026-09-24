@@ -104,6 +104,19 @@ class LayoutTuning:
     # one. When that happens the outer is pushed out in steps of this fraction
     # of orbit_step_gu until the two spheres clear each other.
     orbit_push_fraction: float = 0.25
+    # No body a region owns may have its surface nearer than this to any point
+    # content is STAGED at in that region (SurveyedRegion.staged_points). A
+    # violating region's whole body group is pushed away -- see _staged_shift.
+    staged_clearance_gu: float = 1000.0
+
+
+# A staged-clearance push longer than this means the layout cannot clear its
+# content honestly (the push would carry the planet out of its own framing), so
+# _staged_shift raises rather than ship it. Measured need is ~2,100 GU
+# (Prendel 3), so this is generous by more than an order of magnitude.
+_STAGED_PUSH_MAX_GU = 50000.0
+_STAGED_PUSH_MAX_STEPS = 64
+_STAGED_TOL_GU = 1e-6
 
 
 def _norm(v) -> float:
@@ -228,7 +241,15 @@ def _reach_estimate(region, t: LayoutTuning) -> float:
                                      + t.moon_orbit_step_factor * j)
         furthest = max(furthest, distance + c.radius_gu * t.moon_radius_scale)
     standoff = _standoff_factor(primary, region, t) * primary_radius
-    return max(standoff + furthest, region.content_extent_gu) + t.region_margin_gu
+    # The staged push translates the whole group away from its anchor, so it
+    # can lengthen the reach by at most its own length (triangle inequality).
+    # Computed unpinned, like the rest of this estimate.
+    origin = (0.0, 0.0, 0.0)
+    positions, anchor = _group_geometry(region, primary, companions, t, origin)
+    radii = [primary_radius] + [c.radius_gu * t.moon_radius_scale for c in companions]
+    push = _norm(_staged_shift(
+        region, [(_sub(p, anchor), r) for p, r in zip(positions, radii)], t))
+    return max(standoff + furthest + push, region.content_extent_gu) + t.region_margin_gu
 
 
 def _orbital_centres(ordered, first_orbit: float, t: LayoutTuning) -> list:
@@ -590,6 +611,97 @@ def ambiguities(s, tuning: LayoutTuning | None = None, cloud: dict | None = None
     return notes
 
 
+def _group_geometry(region, primary, companions, t: LayoutTuning, centre):
+    """([primary position, *companion positions], anchor) for a region's body
+    group around orbital centre `centre`, before pins and the staged push.
+
+    The ONE computation of a group's shape, shared by _place and
+    _reach_estimate so orbit spacing and placement cannot disagree. Everything
+    is `centre` plus a vector that depends only on the region and tuning, so
+    the set-local shape (position - anchor) is the same at any centre.
+    """
+    primary_radius = primary.radius_gu * t.planet_radius_scale
+    positions = [centre]
+    for j, c in enumerate(companions):
+        # Keep each moon's original bearing from the primary, at a distance
+        # scaled to the new primary radius.
+        direction = _unit(_sub(c.offset_gu, primary.offset_gu))
+        distance = primary_radius * (t.moon_first_orbit_factor
+                                     + t.moon_orbit_step_factor * j)
+        positions.append(_add(centre, _scale(direction, distance)))
+
+    # The anchor: the group's centroid, displaced back along the ORIGINAL
+    # viewing direction by a standoff scaled to the new primary radius.
+    # With one body the centroid IS the primary, so the primary's bearing
+    # from the anchor is exactly the bearing BC gave it. With companions the
+    # centroid shifts and the bearing is approximate -- which is the point:
+    # "anchor between the two" frames the group, not just the planet.
+    #
+    # Positions come straight from the group built above, NOT a by-name lookup
+    # through m.body() -- moon names collide across regions (e.g. "Moon 1"
+    # appears in both Geble3 and Geble4), and m.body() returns the first match
+    # in the whole map, which silently pulled in a companion from a DIFFERENT
+    # region's group and blew up the anchor.
+    view = _unit(_sub(primary.offset_gu, region.player_start_gu))
+    centroid = tuple(
+        sum(p[axis] for p in positions) / len(positions) for axis in range(3))
+    standoff = _standoff_factor(primary, region, t) * primary_radius
+    return positions, _sub(centroid, _scale(view, standoff))
+
+
+def _staged_shift(region, local_bodies, t: LayoutTuning):
+    """The set-local translation that carries a region's body group clear of
+    the content staged in it, or (0, 0, 0) when nothing is within
+    `t.staged_clearance_gu` of a body's surface.
+
+    `local_bodies` is [(set-local centre, radius)] -- the WHOLE group, so the
+    group moves together and moon geometry is preserved. Everything here is
+    set-local and so independent of where the region's orbit lands: the push
+    is the same at any first orbit (which _first_orbit_push relies on, since
+    it probes how the ANCHOR moves per GU of first orbit, and the push never
+    moves the anchor).
+
+    The direction is fixed once: from the centroid of the offending staged
+    points to the centroid of the violating bodies ("directly away from the
+    content"). Each step then moves along it by exactly the distance the
+    worst remaining offender needs (closed form), and re-checks, since the
+    moved group can come within reach of a point it was clear of. Moving along
+    a fixed direction clears any finite point set eventually, so the loop is
+    bounded twice -- by steps and by total distance -- and raises, naming the
+    region, if either bound is hit.
+    """
+    points = sorted({tuple(xyz) for _label, _name, xyz in getattr(region, "staged_points", [])})
+    clearance = t.staged_clearance_gu
+    shift = (0.0, 0.0, 0.0)
+    direction = None
+    for _step in range(_STAGED_PUSH_MAX_STEPS):
+        offending = [(c, r, p) for c, r in local_bodies for p in points
+                     if math.dist(_add(c, shift), p) < r + clearance - _STAGED_TOL_GU]
+        if not offending:
+            return shift
+        if direction is None:
+            bodies = sorted({c for c, _r, _p in offending})
+            pts = sorted({p for _c, _r, p in offending})
+            body_centroid = tuple(sum(c[i] for c in bodies) / len(bodies) for i in range(3))
+            point_centroid = tuple(sum(p[i] for p in pts) / len(pts) for i in range(3))
+            direction = _unit(_sub(body_centroid, point_centroid))
+        need = 0.0
+        for c, r, p in offending:
+            # Smallest s >= 0 with |d + s*u| = r + clearance, d = centre - point.
+            d = _sub(_add(c, shift), p)
+            b = sum(x * u for x, u in zip(d, direction))
+            target = r + clearance
+            need = max(need, -b + math.sqrt(max(b * b - (_norm(d) ** 2 - target * target), 0.0)))
+        shift = _add(shift, _scale(direction, need))
+        if _norm(shift) > _STAGED_PUSH_MAX_GU:
+            break
+    raise ValueError(
+        f"region {region.set_name!r}: could not push its bodies "
+        f"{t.staged_clearance_gu:.0f} GU clear of the content staged in it "
+        f"within {_STAGED_PUSH_MAX_GU:.0f} GU / {_STAGED_PUSH_MAX_STEPS} steps "
+        f"-- a layout that cannot clear its content must not ship")
+
+
 def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
            star=None, cloud=None) -> SystemMap:
     """Place bodies and regions given an already-decided first-orbit distance
@@ -631,50 +743,27 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
         placed = []
         members = []
 
+        positions, anchor = _group_geometry(region, primary, companions, t, centre)
         primary_radius = primary.radius_gu * t.planet_radius_scale
         primary_body = Body(
             name=primary.name, display_name=primary.name,
-            radius_gu=primary_radius, position_gu=centre, orbits=s.name,
+            radius_gu=primary_radius, position_gu=positions[0], orbits=s.name,
             appearance=Appearance(kind="nif", model=primary.model),
             owner_region=region.set_name)
         m.bodies.append(primary_body)
         placed.append(primary.name)
         members.append(primary_body)
 
-        for j, c in enumerate(companions):
-            radius = c.radius_gu * t.moon_radius_scale
-            # Keep each moon's original bearing from the primary, at a distance
-            # scaled to the new primary radius.
-            direction = _unit(_sub(c.offset_gu, primary.offset_gu))
-            distance = primary_radius * (t.moon_first_orbit_factor
-                                         + t.moon_orbit_step_factor * j)
+        for c, position in zip(companions, positions[1:]):
             companion_body = Body(
-                name=c.name, display_name=c.name, radius_gu=radius,
-                position_gu=_add(centre, _scale(direction, distance)),
-                orbits=primary.name,
+                name=c.name, display_name=c.name,
+                radius_gu=c.radius_gu * t.moon_radius_scale,
+                position_gu=position, orbits=primary.name,
                 appearance=Appearance(kind="nif", model=c.model),
                 owner_region=region.set_name)
             m.bodies.append(companion_body)
             placed.append(c.name)
             members.append(companion_body)
-
-        # The anchor: the group's centroid, displaced back along the ORIGINAL
-        # viewing direction by a standoff scaled to the new primary radius.
-        # With one body the centroid IS the primary, so the primary's bearing
-        # from the anchor is exactly the bearing BC gave it. With companions the
-        # centroid shifts and the bearing is approximate -- which is the point:
-        # "anchor between the two" frames the group, not just the planet.
-        #
-        # `members` holds the Body objects just created above directly, NOT a
-        # by-name lookup through m.body() -- moon names collide across regions
-        # (e.g. "Moon 1" appears in both Geble3 and Geble4), and m.body()
-        # returns the first match in the whole map, which silently pulled in
-        # a companion from a DIFFERENT region's group and blew up the anchor.
-        view = _unit(_sub(primary.offset_gu, region.player_start_gu))
-        centroid = tuple(
-            sum(b.position_gu[axis] for b in members) / len(members) for axis in range(3))
-        standoff = _standoff_factor(primary, region, t) * primary_radius
-        anchor = _sub(centroid, _scale(view, standoff))
 
         # Pins: reposition a body to anchor + offset AFTER the anchor above is
         # computed from the pre-pin centroid, and do not recompute the anchor
@@ -696,6 +785,15 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
                 if b.name == pin_body:
                     b.position_gu = _add(anchor, tuple(offset))
                     break
+
+        # Staged clearance: after pins and anchor, before reach. The anchor
+        # stays put -- it is what keeps staged content where BC put it relative
+        # to the player -- and the whole group translates together.
+        shift = _staged_shift(
+            region, [(_sub(b.position_gu, anchor), b.radius_gu) for b in members], t)
+        if shift != (0.0, 0.0, 0.0):
+            for b in members:
+                b.position_gu = _add(b.position_gu, shift)
 
         reach = max(
             _norm(_sub(b.position_gu, anchor)) + b.radius_gu for b in members)

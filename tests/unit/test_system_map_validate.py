@@ -803,3 +803,53 @@ def test_radius_ratio_rule_is_region_scoped():
     probs = validate(m, bc_radii={("R1", "Moon 1"): 100.0, ("R2", "Moon 1"): 30.0},
                      radius_scale=20.0)
     assert [p for p in probs if p.rule == "radius-ratio"] == []
+
+
+# ---- staged-clearance -----------------------------------------------------
+# _radius_map's body "P" (radius 1900) sits at set-local (0, 4000, 0) in R1.
+
+def test_staged_clearance_rule_flags_content_near_a_body():
+    m = _radius_map()
+    probs = validate(m, staged_points={"R1": [("Maelstrom/T/R1_P", (0.0, 1500.0, 0.0))]},
+                     staged_clearance_gu=1000.0)
+    assert [p.rule for p in probs] == ["staged-clearance"]
+    assert "R1/P" in probs[0].detail and "Maelstrom/T/R1_P" in probs[0].detail
+
+
+def test_staged_clearance_rule_accepts_content_that_clears():
+    m = _radius_map()
+    assert validate(m, staged_points={"R1": [("Maelstrom/T/R1_P", (0.0, 0.0, 0.0))]},
+                    staged_clearance_gu=1000.0) == []
+
+
+def test_staged_clearance_rule_is_off_without_inputs():
+    m = _radius_map()
+    inside = {"R1": [("Maelstrom/T/R1_P", (0.0, 4000.0, 0.0))]}
+    assert validate(m) == []
+    assert validate(m, staged_points=inside) == []
+    assert validate(m, staged_clearance_gu=1000.0) == []
+
+
+def test_staged_clearance_rule_is_region_scoped():
+    """Content staged in R2 is judged against R2's "Moon 1" only, never R1's
+    same-named body -- even at R1's Moon 1's set-local spot."""
+    m = SystemMap(
+        system="R",
+        bodies=[
+            Body(name="Sun", display_name="Sun", radius_gu=5000.0,
+                 position_gu=(0.0, 0.0, 0.0), orbits=None,
+                 appearance=Appearance(), owner_region=None),
+            _body("Moon 1", (0.0, 22000.0, 0.0), radius=2000.0, owner="R1", orbits="Sun"),
+            _body("Moon 1", (0.0, 60000.0, 600.0), radius=600.0, owner="R2", orbits="Sun"),
+        ],
+        regions=[
+            Region("R1", (0.0, 18000.0, 0.0), 3000.0, ["Moon 1"]),
+            Region("R2", (0.0, 56000.0, 0.0), 3000.0, ["Moon 1"]),
+        ],
+    )
+    # R1's Moon 1 is at set-local (0, 4000, 0); R2's at (0, 4000, 600).
+    near_r1_only = [("Maelstrom/T/X_P", (0.0, 4000.0, -2500.0))]
+    assert validate(m, staged_points={"R2": near_r1_only}, staged_clearance_gu=1000.0) == []
+    probs = validate(m, staged_points={"R1": near_r1_only}, staged_clearance_gu=1000.0)
+    assert [p.rule for p in probs] == ["staged-clearance"]
+    assert "R1/Moon 1" in probs[0].detail

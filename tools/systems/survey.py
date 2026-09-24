@@ -75,6 +75,13 @@ class SurveyedRegion:
     # place BC actually lets the player go. False for orphans still in the
     # tree: Vesuvi1 is the only one across all 32 systems.
     menu_listed: bool = True
+    # [(source label, waypoint name, set-local xyz)] -- every waypoint content
+    # is staged at in this set: the region module's own LoadPlacements except
+    # the points its bodies are placed at, plus every mission placement
+    # attributed to this set. The label is the source file relative to the
+    # SDK scripts root, without ".py" ("Maelstrom/Episode5/E5M2/Prendel3_P").
+    # The layout keeps every body clear of these (LayoutTuning.staged_clearance_gu).
+    staged_points: list = field(default_factory=list)
 
 
 @dataclass
@@ -323,39 +330,52 @@ def _bodies(static_text: str, placements: dict) -> tuple:
     return bodies, used
 
 
-def _mission_extent(set_name: str) -> float:
-    """Largest distance from the origin of any placement a mission puts in this set."""
-    best = 0.0
+def _mission_staged_points(set_name: str) -> list:
+    """[(source label, waypoint name, set-local xyz)] for every placement a
+    mission puts in this set.
+
+    The ONE scan behind both a region's mission content extent and its staged
+    points -- see survey_system(), which takes the extent as the largest norm
+    over exactly these points, so the two can never disagree.
+    """
+    out = []
     root = _missions_dir()
     if not root.is_dir():
-        return best
-    for path in root.rglob("*.py"):
+        return out
+    for path in sorted(root.rglob("*.py")):
         text = _read(path)
         # A module is "about" this set if it names it literally, or if its own
         # filename does and its placements take sSetName.
         filename_hint = ("_%s_" % set_name) in path.name or path.stem == f"{set_name}_P"
         if set_name not in text and not filename_hint:
             continue
+        label = "Maelstrom/" + path.relative_to(root).with_suffix("").as_posix()
         default = None
         m = _LOAD_PLACEMENTS_DEFAULT.search(text)
         if m:
             default = m.group(1)
-        pending = None
+        pending, pending_name = None, None
         for line in _uncommented(text):
             m = _CREATE_PLACEMENT.search(line)
             if m:
                 literal = m.group(4)
                 target = literal if literal else (default or (set_name if filename_hint else None))
-                pending = target
+                pending, pending_name = target, m.group(2)
                 continue
             m = _TRANSLATE.search(line)
             if m and pending is not None:
                 if pending == set_name:
                     xyz = _xyz(m.group(1))
                     if xyz is not None:
-                        best = max(best, math.sqrt(sum(c * c for c in xyz)))
+                        out.append((label, pending_name, xyz))
                 pending = None
-    return best
+    return out
+
+
+def _is_body_point(xyz, bodies) -> bool:
+    """True if xyz is exactly where BC placed one of this region's bodies --
+    that waypoint is the body's own placement point, not staged content."""
+    return any(math.dist(xyz, b.offset_gu) < 1e-6 for b in bodies)
 
 
 def system_names() -> list:
@@ -393,7 +413,13 @@ def survey_system(system: str) -> SurveyedSystem:
             if name in skip:
                 continue
             extent = max(extent, math.sqrt(sum(c * c for c in xyz)))
-        extent = max(extent, _mission_extent(stem))
+        own_label = f"Systems/{system}/{stem}"
+        staged = [(own_label, name, xyz) for name, xyz in placements.items()
+                  if not _is_body_point(xyz, bodies)]
+        mission_staged = _mission_staged_points(stem)
+        staged += mission_staged
+        for _label, _name, xyz in mission_staged:
+            extent = max(extent, math.sqrt(sum(c * c for c in xyz)))
         ordinal_match = _TRAILING_INT.search(stem)
         result.regions.append(SurveyedRegion(
             set_name=stem,
@@ -406,6 +432,7 @@ def survey_system(system: str) -> SurveyedSystem:
             # An unreadable or menu-less head script yields an empty set, which
             # must not silently unlist every region in the system.
             menu_listed=(stem in listed) if listed else True,
+            staged_points=staged,
         ))
     result.regions.sort(key=lambda r: (r.ordinal is None, r.ordinal or 0, r.set_name))
     return result
@@ -424,3 +451,14 @@ def bc_radii(surveyed) -> dict:
     """
     return {(r.set_name, b.name): b.radius_gu
             for r in surveyed.regions for b in r.bodies if not b.is_sun}
+
+
+def staged_points(surveyed) -> dict:
+    """{region_set_name: [("<source label>:<waypoint>", set-local xyz), ...]}.
+
+    The input the validator's staged-clearance rule checks the map against --
+    SurveyedRegion.staged_points reshaped, with the waypoint name folded into
+    the label so a problem names both the file and the waypoint.
+    """
+    return {r.set_name: [(f"{label}:{name}", xyz) for label, name, xyz in r.staged_points]
+            for r in surveyed.regions}
