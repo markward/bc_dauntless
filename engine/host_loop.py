@@ -232,15 +232,16 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     if _audio_mod is None:
         return
     from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
-    from engine.appc.ship_iter import active_set
-    # Guide §11: only the rendered set is audible — stop the outgoing set's
+    from engine.systems import frames
+    # Guide §11: only the viewed FRAME is audible — stop every other frame's
     # sources before anything else touches this tick's audio state.
-    # Caveat: active_set() is NOT App.g_kSetManager.GetRenderedSet() — it is
-    # the player's own containing (space) set, which does not change on a
+    # frames.viewing_set() is NOT App.g_kSetManager.GetRenderedSet() — it
+    # falls back to the player's own containing (space) set whenever the
+    # explicit rendered set isn't a space scene, so it does not change on a
     # bridge<->space camera toggle. See scene_scope's module docstring
     # ("Current wiring note") for what this gate does and does not cover.
-    act = active_set()
-    scene_scope.set_rendered_set(act.GetName() if act is not None else None)
+    viewed = frames.viewing_set()
+    scene_scope.set_active_frame(frames.frame_of(viewed).key if viewed is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt)

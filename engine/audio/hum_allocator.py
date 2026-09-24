@@ -124,7 +124,7 @@ def update(listener_pos) -> None:
     # Liveness (`_PlayingSound.is_live`), not mere dict-key presence or a
     # bare `_pid` truthiness check (review Critical #1): a humming ship's
     # source can go dead two ways this registry cannot see on its own --
-    # (a) a scene switch (scene_scope.set_rendered_set) can Stop() it
+    # (a) a scene switch (scene_scope.set_active_frame) can Stop() it
     # directly, out from under this registry, in the SAME tick BEFORE this
     # call runs (host_loop.tick_audio's ordering); the player ship is always
     # a roster member of the newly-active set (active_set() IS the player's

@@ -50,6 +50,16 @@ class _ObjectNodeRef(_NodeStub):
         owner = self._owner()
         return None if owner is None else owner.GetWorldLocation()
 
+    def GetContainingSet(self):
+        # Forwarded so a positional sound AttachToNode()'d to this ref (the
+        # SDK's only positioning mechanism -- see attached_sources' module
+        # docstring) can be tagged/positioned by its owner's real frame
+        # (engine.systems.frames), not the chainable _NodeStub fallback --
+        # see engine.core.ids.implements, which requires the method to be
+        # defined here, not reachable only via __getattr__.
+        owner = self._owner()
+        return None if owner is None else owner.GetContainingSet()
+
     def __repr__(self):
         owner = self._owner()
         return "<_ObjectNodeRef %r>" % (owner.GetName() if owner else None)

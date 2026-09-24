@@ -4,13 +4,13 @@ hum_allocator's _humming registry.
 `_PlayingSound.Stop()` already keeps `attached_sources._attached` consistent
 synchronously (it calls `attached_sources.detach(self)` before zeroing
 `_pid`). `hum_allocator._humming`, however, is a ship -> handle map that
-`scene_scope.set_rendered_set` knows nothing about: when a scene switch stops
+`scene_scope.set_active_frame` knows nothing about: when a scene switch stops
 a humming ship's source directly, `_humming` is left holding a dead handle
 (`_pid == 0`) for one instant, keyed by a ship `hum_allocator.update()` used
 to consider "already humming" purely by dict-key presence.
 
 In production this self-heals within the same tick: `host_loop.tick_audio`
-calls `scene_scope.set_rendered_set(...)` and then `hum_allocator.update(...)`
+calls `scene_scope.set_active_frame(...)` and then `hum_allocator.update(...)`
 back-to-back, and `_roster()` (`iter_active_ships`) is *already* scoped to the
 new active set by the time `update()` runs.
 
@@ -102,7 +102,7 @@ def test_scene_switch_stopped_hum_self_heals_on_next_update(boot, monkeypatch):
     ship = _Ship("s0", x=10)
     monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
 
-    scene_scope.set_rendered_set("space1")
+    scene_scope.set_active_frame("space1")
     hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
     assert "s0" in hum_allocator.humming_ship_names()
     handle = hum_allocator._humming[ship]
@@ -110,7 +110,7 @@ def test_scene_switch_stopped_hum_self_heals_on_next_update(boot, monkeypatch):
 
     # The scene switches away from space1 (as host_loop.tick_audio does,
     # BEFORE hum_allocator.update runs this tick).
-    scene_scope.set_rendered_set("space2")
+    scene_scope.set_active_frame("space2")
     assert not handle._pid, "scene_scope must stop the source directly"
     # The ship is still keyed in _humming for one instant, with a dead handle.
     assert ship in hum_allocator._humming
@@ -134,12 +134,12 @@ def test_scene_switch_stopped_hum_ship_still_in_new_roster_restarts_clean(boot, 
     ship = _Ship("s0", x=10)
     monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
 
-    scene_scope.set_rendered_set("space1")
+    scene_scope.set_active_frame("space1")
     hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
     stale_handle = hum_allocator._humming[ship]
     assert stale_handle._pid
 
-    scene_scope.set_rendered_set("space2")
+    scene_scope.set_active_frame("space2")
     assert not stale_handle._pid
 
     # Roster still contains the ship (e.g. it was re-added to the new active
@@ -160,7 +160,7 @@ def test_player_warp_restarts_engine_hum_live_not_just_by_name(boot, monkeypatch
     active_set() IS player.GetContainingSet() -- the player is ALWAYS a
     roster member of the newly-active set; it is the ship that DEFINES it.
     On a warp (engine/appc/warp.py removes the ship from the old set, then
-    adds it to the destination), scene_scope.set_rendered_set stops the
+    adds it to the destination), scene_scope.set_active_frame stops the
     player's old-set hum handle, and hum_allocator.update must restart it
     in that same tick's reconcile -- not merely continue reporting it as
     "humming" by dict-key while the handle stays dead, which was the
@@ -168,7 +168,7 @@ def test_player_warp_restarts_engine_hum_live_not_just_by_name(boot, monkeypatch
     player = _Ship("player", x=0)
     monkeypatch.setattr(hum_allocator, "_roster", lambda: [player])
 
-    scene_scope.set_rendered_set("space1")
+    scene_scope.set_active_frame("space1")
     hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
     assert "player" in hum_allocator.humming_ship_names()
     assert hum_allocator._humming[player]._pid
@@ -176,7 +176,7 @@ def test_player_warp_restarts_engine_hum_live_not_just_by_name(boot, monkeypatch
     # The warp: the player leaves space1 and enters space2. active_set()
     # now resolves to space2 (the player's new containing set) -- the
     # player is a roster member of it by construction.
-    scene_scope.set_rendered_set("space2")
+    scene_scope.set_active_frame("space2")
     assert not hum_allocator._humming[player]._pid, \
         "scene_scope must stop the old-set source"
 

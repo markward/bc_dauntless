@@ -1149,11 +1149,12 @@ def _reset_leakable_engine_globals():
         _td._real_bridge_handlers = None
     except Exception:
         pass
-    # scene_scope (guide §11 one-active-scene rule): _rendered is a scalar, not
-    # a container, so it needs its own reset_for_tests() rather than a plain
-    # .clear() -- same leak class as attached_sources/_attached and
-    # hum_allocator/_humming just above (a test that calls set_rendered_set
-    # would otherwise leak the active scene name into a later, unrelated test).
+    # scene_scope (guide §11 one-active-scene rule): _active_frame is a
+    # scalar, not a container, so it needs its own reset_for_tests() rather
+    # than a plain .clear() -- same leak class as attached_sources/_attached
+    # and hum_allocator/_humming just above (a test that calls
+    # set_active_frame would otherwise leak the active frame key into a
+    # later, unrelated test).
     try:
         _m = sys.modules.get("engine.audio.scene_scope")
         if _m is not None:

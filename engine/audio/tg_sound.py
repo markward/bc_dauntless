@@ -218,9 +218,24 @@ class TGSound:
             from engine.audio import attached_sources
             attached_sources.attach(handle, self._node)
         from engine.audio import scene_scope
-        if scene_scope.rendered_set() is not None and (
-                self._positional or self._node is not None or position is not None):
-            scene_scope.register(handle, scene_scope.rendered_set())
+        if self._positional or self._node is not None or position is not None:
+            # Emitter's own frame when there is an attach node and it
+            # resolves to a real containing set (system-frames plan 2 task
+            # 6): a left-behind ship's fire belongs to ITS frame, not the
+            # player's. A node with no resolvable containing set (not yet
+            # placed in a set, or a test double), or a sound with only an
+            # explicit position and no node, keeps today's rule: tag it
+            # under the currently-active/viewed frame.
+            key = None
+            if self._node is not None:
+                from engine.systems import frames
+                node_set = frames.containing_set(self._node)
+                if node_set is not None:
+                    key = frames.frame_of(node_set).key
+            if key is None:
+                key = scene_scope.active_frame()
+            if key is not None:
+                scene_scope.register(handle, key)
         return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).
