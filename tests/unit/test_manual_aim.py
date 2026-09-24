@@ -436,10 +436,30 @@ def test_host_loop_runs_manual_aim_update_in_the_sim_block():
 
 def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
     src = _host_loop_src()
-    anchor = "r.set_camera(eye=eye, target=target, up=up_vec,\n                             fov_y_rad=director.effective_fov_y_rad,\n                             near=1.0, far=5000.0)"
+    anchor = ("r.set_camera(eye=eye, target=target, up=up_vec,\n"
+              "                             fov_y_rad=director.effective_fov_y_rad,\n"
+              "                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)")
     i_cam = src.index(anchor)
-    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad, 1.0, 5000.0)")
+    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
+    # A 600-character proximity budget, which is a proxy for "these two calls
+    # sit together". Keep prose out of the gap: the note_camera argument-order
+    # contract lives in note_camera's own docstring, where every call site
+    # reads it, not here where only this one does.
     assert i_cam < i_note < i_cam + 600
+
+
+def test_host_loop_notes_the_camera_with_the_same_frustum_in_the_same_order():
+    """note_camera(eye, target, up, fov_y_rad, near, far) is POSITIONAL, so
+    naming the right two constants is not enough -- they have to be in the
+    right order. Swapping them sets cam.far = 1.0, and cam.far is the ray's
+    max_dist (manual_aim.update -> ray_trace(..., cam.far)), so every pick
+    TRUNCATES at 1 GU and Manual Aim misses every hull at every range while
+    still reporting itself live. Hence the ordered substring, not two
+    independent `in` checks."""
+    src = _host_loop_src()
+    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
+    call = src[i_note: src.index(")", i_note) + 1]
+    assert "SCENE_NEAR_GU, SCENE_FAR_GU" in call
 
 
 def test_host_loop_resets_manual_aim_on_tcw_reset():

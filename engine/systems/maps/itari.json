@@ -1,0 +1,358 @@
+{
+  "system": "Itari",
+  "bodies": [
+    {
+      "name": "Itari",
+      "display_name": "Itari",
+      "radius_gu": 14000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Itari 1",
+      "display_name": "Itari 1",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        0.0,
+        51626.43656274899,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari1"
+    },
+    {
+      "name": "Itari 2",
+      "display_name": "Itari 2",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        77626.43656274899,
+        0.0,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari2"
+    },
+    {
+      "name": "Itari 3",
+      "display_name": "Itari 3",
+      "radius_gu": 9000.0,
+      "position_gu": [
+        0.0,
+        -103626.43656274899,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari3"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 700.0,
+      "position_gu": [
+        0.0,
+        -103626.43656274899,
+        36000.0
+      ],
+      "orbits": "Itari 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/Moon.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari3"
+    },
+    {
+      "name": "Itari 4",
+      "display_name": "Itari 4",
+      "radius_gu": 4400.0,
+      "position_gu": [
+        -129626.43656274899,
+        0.0,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari4"
+    },
+    {
+      "name": "Itari 5",
+      "display_name": "Itari 5",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        -37296.96034827156,
+        -210853.18964587757,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/dryplanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari5"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 700.0,
+      "position_gu": [
+        -37296.96034827156,
+        -210853.18964587757,
+        -28800.0
+      ],
+      "orbits": "Itari 5",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SnowPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari5"
+    },
+    {
+      "name": "Itari 6",
+      "display_name": "Itari 6",
+      "radius_gu": 5000.0,
+      "position_gu": [
+        3631.8024433878277,
+        181590.12216939137,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari6"
+    },
+    {
+      "name": "Itari 7",
+      "display_name": "Itari 7",
+      "radius_gu": 5000.0,
+      "position_gu": [
+        207626.43656274898,
+        0.0,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari7"
+    },
+    {
+      "name": "Itari 8",
+      "display_name": "Itari 8",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        -233626.43656274898,
+        0.0,
+        0.0
+      ],
+      "orbits": "Itari",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari8"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -233626.43656274898,
+        0.0,
+        28800.0
+      ],
+      "orbits": "Itari 8",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari8"
+    },
+    {
+      "name": "Moon 2",
+      "display_name": "Moon 2",
+      "radius_gu": 300.0,
+      "position_gu": [
+        -218919.36577912647,
+        -36767.67695905627,
+        0.0
+      ],
+      "orbits": "Itari 8",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GrayPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Itari8"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Itari1",
+      "anchor_gu": [
+        9673.896560000001,
+        39361.119022748986,
+        -10000.0
+      ],
+      "radius_gu": 27247.837852715114,
+      "body_names": [
+        "Itari 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari2",
+      "anchor_gu": [
+        87300.33312274898,
+        -17265.31754,
+        -4999.999999999999
+      ],
+      "radius_gu": 29112.63002189114,
+      "body_names": [
+        "Itari 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari3",
+      "anchor_gu": [
+        9673.896560000001,
+        -120891.754102749,
+        18000.0
+      ],
+      "radius_gu": 37252.111400983136,
+      "body_names": [
+        "Itari 3",
+        "Moon 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari4",
+      "anchor_gu": [
+        -139952.54000274898,
+        -17265.31754,
+        5000.0
+      ],
+      "radius_gu": 26629.679254889867,
+      "body_names": [
+        "Itari 4"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari5",
+      "anchor_gu": [
+        -47623.06378827156,
+        -228118.50718587756,
+        -21900.0
+      ],
+      "radius_gu": 38437.67983570021,
+      "body_names": [
+        "Itari 5",
+        "Moon 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari6",
+      "anchor_gu": [
+        -6694.300996612172,
+        194324.80462939138,
+        -3499.9999999999995
+      ],
+      "radius_gu": 23264.562314913317,
+      "body_names": [
+        "Itari 6"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari7",
+      "anchor_gu": [
+        217300.33312274897,
+        -17265.31754,
+        -7499.999999999999
+      ],
+      "radius_gu": 27664.249677477615,
+      "body_names": [
+        "Itari 7"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Itari8",
+      "anchor_gu": [
+        -219050.18307487483,
+        -29521.209859685427,
+        9600.0
+      ],
+      "radius_gu": 42994.73716654425,
+      "body_names": [
+        "Itari 8",
+        "Moon 1",
+        "Moon 2"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

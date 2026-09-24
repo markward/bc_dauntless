@@ -1,0 +1,65 @@
+{
+  "system": "Riha",
+  "bodies": [
+    {
+      "name": "Riha",
+      "display_name": "Riha",
+      "radius_gu": 12000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Riha 1",
+      "display_name": "Riha 1",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        0.0,
+        -42000.0,
+        0.0
+      ],
+      "orbits": "Riha",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Riha1"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Riha1",
+      "anchor_gu": [
+        -7286.199420000001,
+        -50888.038329999996,
+        -9754.55322
+      ],
+      "radius_gu": 18974.390066114443,
+      "body_names": [
+        "Riha 1"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

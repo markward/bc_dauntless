@@ -2,6 +2,10 @@
 #include "renderer/lens_flare_pass.h"
 
 #include "renderer/pipeline.h"
+// solve_virtual_placement lives with SunPass: the flare MUST project from the
+// exact screen position the sun disc was drawn at, or the depth-occlusion
+// sample below misses it. One shared function, not two copies that can drift.
+#include "renderer/sun_pass.h"
 
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
@@ -86,18 +90,14 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
         gl_state_active = true;
     };
 
-    // Remap the source position to sit just inside the far plane along
-    // the camera-to-source ray. Matches SunPass so the flare projects
-    // from the same screen position as the rendered sun disc and the
-    // depth-buffer occlusion sample lands on it correctly.
-    const float virtual_distance = camera.far * 0.95f;
-
     for (const auto& f : flares) {
-        const glm::vec3 cam_to_src = f.source_world_pos - camera.eye;
-        const float true_distance = glm::length(cam_to_src);
-        if (true_distance < 1e-3f) continue;
-        const glm::vec3 virtual_src =
-            camera.eye + (cam_to_src / true_distance) * virtual_distance;
+        // A source INSIDE the far plane projects from where it actually is;
+        // only one beyond it is remapped to sit just inside. Identical rule
+        // to SunPass, so disc and flare always share a screen position.
+        const VirtualPlacement placement =
+            solve_virtual_placement(f.source_world_pos, camera.eye, camera.far);
+        if (!placement.valid) continue;
+        const glm::vec3 virtual_src = placement.position;
 
         const glm::vec4 clip = vp * glm::vec4(virtual_src, 1.0f);
         if (clip.w <= 0.0f) continue;

@@ -1,0 +1,146 @@
+{
+  "system": "Albirea",
+  "bodies": [
+    {
+      "name": "Albirea",
+      "display_name": "Albirea",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "red",
+        "color": [
+          0.91,
+          0.35,
+          0.24
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Albirea 1",
+      "display_name": "Albirea 1",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        38000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Albirea",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Albirea1"
+    },
+    {
+      "name": "Albirea 2",
+      "display_name": "Albirea 2",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        64000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Albirea",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RootBeerPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Albirea2"
+    },
+    {
+      "name": "Albirea 2 Moon",
+      "display_name": "Albirea 2 Moon",
+      "radius_gu": 600.0,
+      "position_gu": [
+        64000.0,
+        -3066.958156624671,
+        9096.9097865986
+      ],
+      "orbits": "Albirea 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/Moon.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Albirea2"
+    },
+    {
+      "name": "Albirea 3",
+      "display_name": "Albirea 3",
+      "radius_gu": 3000.0,
+      "position_gu": [
+        90000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Albirea",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Albirea3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Albirea1",
+      "anchor_gu": [
+        35995.09018,
+        -4002.86932,
+        3007.4942
+      ],
+      "radius_gu": 8493.29653758843,
+      "body_names": [
+        "Albirea 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Albirea2",
+      "anchor_gu": [
+        64023.24634,
+        -2718.2854483123356,
+        8557.6817732993
+      ],
+      "radius_gu": 12879.060836406503,
+      "body_names": [
+        "Albirea 2",
+        "Albirea 2 Moon"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Albirea3",
+      "anchor_gu": [
+        87995.09018,
+        -4002.86932,
+        1007.4942000000001
+      ],
+      "radius_gu": 9088.863774657442,
+      "body_names": [
+        "Albirea 3"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

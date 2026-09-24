@@ -38,6 +38,14 @@ from engine.appc.character_position_zoom import (
 
 import math as _math
 
+# ── Scene frustum ────────────────────────────────────────────────────────────
+# The exterior scene camera and the bridge viewscreen share one frustum.
+# Re-exported, not defined here: engine/cameras owns the pair because
+# cameras/dof.py's MAX_FOCUS_GU is derived from the far plane, and the rest of
+# the rationale (why 500,000, and why the bridge/SPV/comm cameras keep their
+# own) lives beside the definition.
+from engine.cameras import SCENE_NEAR_GU, SCENE_FAR_GU  # noqa: E402,F401
+
 # ── Audio integration ────────────────────────────────────────────────────────
 try:
     import _dauntless_host as _host_mod
@@ -5914,8 +5922,8 @@ def _player_forward_speed_gups(player, rot) -> float:
 # behind the target on the ship->target axis, looking at the target's
 # subsystem aim point, FOV unchanged from the exterior view (never narrowed).
 # Lengths in game units.
-VS_NEAR: float = 1.0
-VS_FAR: float = 5000.0
+VS_NEAR: float = SCENE_NEAR_GU
+VS_FAR: float = SCENE_FAR_GU
 
 
 def _viewscreen_scene_feed(player, forward_fov):
@@ -9727,10 +9735,11 @@ def run(mission_name: Optional[str] = None,
                     _spv_hidden_iid = None
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.effective_fov_y_rad,
-                             near=1.0, far=5000.0)
-                # Manual Aim reads this camera on the NEXT sim tick to
-                # unproject the cursor. Data only -- no mutation here.
-                manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad, 1.0, 5000.0)
+                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)
+                # Data only -- no mutation here. near/far are positional
+                # and NOT interchangeable; see note_camera's docstring.
+                manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,
+                                       SCENE_NEAR_GU, SCENE_FAR_GU)
                 # Feed the dynamic-light distance gate. Read by next frame's
                 # _advance_combat, which runs upstream of this solve.
                 _note_camera_eye(eye)
@@ -9784,9 +9793,11 @@ def run(mission_name: Optional[str] = None,
                         reticle_hidden=_reticle_top.reticle_hidden(),
                         cinematic_active=_reticle_top.is_cinematic_active()):
                     r.set_target_reticle(build_target_reticle(player))
+                    # Mirrors the exterior camera set above; the label
+                    # projection must use the same frustum as the box.
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.effective_fov_y_rad,
-                                        near=1.0, far=5000.0)
+                                        near=SCENE_NEAR_GU, far=SCENE_FAR_GU)
                     r.set_reticle_text(build_reticle_text(
                         player, _rcam, (_CEF_VIEW_W, _CEF_VIEW_H)))
                 else:

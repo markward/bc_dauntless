@@ -1,0 +1,127 @@
+{
+  "system": "Ona",
+  "bodies": [
+    {
+      "name": "Ona",
+      "display_name": "Ona",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "red",
+        "color": [
+          0.91,
+          0.35,
+          0.24
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Ona 1",
+      "display_name": "Ona 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        40000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Ona",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Ona1"
+    },
+    {
+      "name": "Ona 2",
+      "display_name": "Ona 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        65916.15667754218,
+        3325.7012586386995,
+        0.0
+      ],
+      "orbits": "Ona",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Ona2"
+    },
+    {
+      "name": "Ona 3",
+      "display_name": "Ona 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -92000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Ona",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Ona3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Ona1",
+      "anchor_gu": [
+        40971.83075,
+        -5917.02881,
+        74.31804
+      ],
+      "radius_gu": 9296.766471698313,
+      "body_names": [
+        "Ona 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Ona2",
+      "anchor_gu": [
+        64329.20187754218,
+        -368.26511136130057,
+        -548.6176700000001
+      ],
+      "radius_gu": 7357.6833819028125,
+      "body_names": [
+        "Ona 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Ona3",
+      "anchor_gu": [
+        -92059.48907,
+        -5063.396609999999,
+        932.1675899999999
+      ],
+      "radius_gu": 8448.830993094973,
+      "body_names": [
+        "Ona 3"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

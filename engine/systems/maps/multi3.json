@@ -1,0 +1,33 @@
+{
+  "system": "Multi3",
+  "bodies": [
+    {
+      "name": "Multi3",
+      "display_name": "Multi3",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "brown_dwarf",
+        "color": [
+          0.42,
+          0.25,
+          0.18
+        ]
+      },
+      "owner_region": null
+    }
+  ],
+  "regions": [],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

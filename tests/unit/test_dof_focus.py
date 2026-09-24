@@ -160,44 +160,75 @@ def test_a_degenerate_distance_is_treated_as_no_subject():
 
 
 def test_a_subject_beyond_the_far_plane_is_treated_as_no_subject():
-    """focus_gu > far mushes the WHOLE frame. dd = 1 - focus/z is negative for
-    every visible pixel, so everything is near field and everything nearer than
-    focus/2 clamps to the hard -1 -- maximum blur, with the far ceiling unable
-    to help because nothing is far field. The lens must release to deep focus
-    rather than rack past infinity."""
+    """focus_gu > far puts every visible pixel on the FOREGROUND branch. That
+    branch is camera-anchored (t = clamp((near_sharp - z)/span) in dof.frag and
+    dof.h) and never reads focus, so everything past near_sharp_gu stays sharp
+    -- the failure is not a mushed frame but the player's own hull going soft
+    in service of a subject that cannot be resolved or even drawn. The lens
+    must release to deep focus rather than rack past infinity.
+
+    (This docstring used to describe a whole-frame mush via dd = 1 - focus/z.
+    That was the thin-lens foreground, replaced by the camera-anchored ramp;
+    the reasoning did not follow it. See MAX_FOCUS_GU in cameras/dof.py.)"""
     s = dof.FocusSolver()
     s.update(dof.MAX_FOCUS_GU + 1.0, 1.0 / 60.0)
     assert s.blend == 0.0
     assert s.focus_gu == 0.0
 
 
-def test_the_far_bound_is_reachable_from_a_real_sensor_fallback_range():
-    """Not a theoretical edge: sensor_detection.FALLBACK_RANGE_GU is 30000 GU,
-    six times the exterior camera's far plane, and a lock is only dropped when
-    can_detect fails."""
+def test_a_sensor_fallback_range_contact_is_now_focusable():
+    """This test used to assert the OPPOSITE: with far = 5000 GU,
+    sensor_detection.FALLBACK_RANGE_GU (30000 GU) was six times the far plane
+    and a lock out there released the lens. The celestial-layer far plane is
+    500,000 GU, so that contact is now comfortably INSIDE the frustum -- it is
+    real, visible geometry, and refusing to focus it would be the bug."""
     from engine.appc import sensor_detection
-    assert sensor_detection.FALLBACK_RANGE_GU > dof.MAX_FOCUS_GU
+    assert sensor_detection.FALLBACK_RANGE_GU < dof.MAX_FOCUS_GU
     s = dof.FocusSolver()
     s.update(sensor_detection.FALLBACK_RANGE_GU, 1.0 / 60.0)
-    assert s.blend == 0.0
+    assert s.blend > 0.0
 
 
 def test_a_held_subject_racking_past_the_far_plane_releases_the_lens():
     """A target that warps out to beyond the far plane must ramp the blend down
-    like any other loss, not hold a saturated frame."""
+    like any other loss, not hold a saturated frame.
+
+    The "beyond" distance is taken FROM the bound rather than written as a
+    literal. It used to be 9000.0, chosen when far was 5,000 GU; at 500,000 GU
+    that is a perfectly focusable subject and the test would have been
+    asserting the opposite of its own name."""
     s = dof.FocusSolver()
     for _ in range(240):
         s.update(120.0, 1.0 / 60.0)
     assert s.blend == pytest.approx(1.0, abs=1e-3)
+    beyond = dof.MAX_FOCUS_GU * 1.8
     for _ in range(600):
-        s.update(9000.0, 1.0 / 60.0)
+        s.update(beyond, 1.0 / 60.0)
     assert s.blend == 0.0
 
 
 def test_the_far_bound_matches_the_exterior_cameras_far_plane():
-    """MAX_FOCUS_GU is not a free parameter -- it IS the camera's far plane
-    (host_loop's r.set_camera(..., far=5000.0)). If that changes, this must."""
-    assert dof.MAX_FOCUS_GU == 5000.0
+    """MAX_FOCUS_GU is not a free parameter -- it IS the camera's far plane.
+    Pinned as the RELATIONSHIP, not as a literal: the literal form of this
+    test (== 5000.0) stayed green while the far plane moved to 500,000 and
+    left MAX_FOCUS_GU stranded, which is the exact drift it existed to catch.
+    MIN_FOCUS_GU is NOT far-derived (the thin-lens term degenerating at the
+    near plane) and stays a literal."""
+    from engine import host_loop
+    assert dof.MAX_FOCUS_GU == host_loop.SCENE_FAR_GU
+
+
+def test_the_local_planet_can_be_focused():
+    """The whole point of the celestial layer. At x20 scale the LOCAL planet
+    sits at 5,997 GU; against the old 5,000 GU bound it read as NO subject, so
+    the one body this feature exists to put in front of the player was the one
+    thing the lens refused to focus."""
+    LOCAL_PLANET_GU = 5997.0
+    assert LOCAL_PLANET_GU < dof.MAX_FOCUS_GU
+    s = dof.FocusSolver()
+    s.update(LOCAL_PLANET_GU, 1.0 / 60.0)
+    assert s.blend > 0.0
+    assert s.focus_gu == pytest.approx(LOCAL_PLANET_GU)
 
 
 # ── a focus failure must never take the frame down ───────────────────────

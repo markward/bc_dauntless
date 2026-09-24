@@ -72,6 +72,27 @@ def test_selecting_a_system_lists_its_warp_points():
     assert data["warp_points"], "vesuvi should have warp points"
 
 
+def test_selecting_a_system_sends_its_description():
+    """The written description has to reach the payload, or the nav UI shows
+    a destination list with no answer to 'what is this place'."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:vesuvi")
+    data = _payload(p.render_payload())
+    assert "Geki" in data["description"]
+    assert len(data["description"]) > 80, "should be the detail, not the summary"
+
+
+def test_the_description_is_empty_while_no_system_is_selected():
+    """The block is hidden on empty text, so a stale description must not
+    survive a deselect and sit over the map."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    data = _payload(p.render_payload())
+    assert data["targets_open"] is False
+    assert data["description"] == ""
+
+
 def test_selecting_a_system_does_not_move_the_camera():
     """Anchor is fixed (spec §5)."""
     p = StarMapPanel()

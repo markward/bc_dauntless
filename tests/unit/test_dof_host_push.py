@@ -10,6 +10,26 @@ import pathlib
 HOST_LOOP = pathlib.Path(__file__).resolve().parents[2] / "engine" / "host_loop.py"
 
 
+def _block_of_each_call(node, out, block=None):
+    """Map every Call in `node` to the innermost statement list containing it.
+
+    Recurses outer-block-first, so a nested block overwrites the provisional
+    outer assignment and each call ends up owned by its TIGHTEST block.
+    """
+    for field in ("body", "orelse", "finalbody"):
+        lst = getattr(node, field, None)
+        if not isinstance(lst, list):
+            continue
+        for stmt in lst:
+            if not isinstance(stmt, ast.stmt):
+                continue
+            for sub in ast.walk(stmt):
+                if isinstance(sub, ast.Call):
+                    out[id(sub)] = id(lst)
+            _block_of_each_call(stmt, out)
+    return out
+
+
 def _calls_named(tree, name):
     out = []
     for node in ast.walk(tree):
@@ -27,15 +47,40 @@ def test_host_loop_pushes_dof_params():
     )
 
 
-def test_dof_push_sits_next_to_the_exterior_set_camera():
-    """The push must be near the exterior camera solve, not in some unrelated
-    branch: it needs that frame's eye position to measure the subject."""
+def test_dof_push_sits_in_the_same_block_as_the_exterior_set_camera():
+    """The push must run beside the exterior camera solve, not in some
+    unrelated branch: it needs THAT frame's eye position to measure the
+    subject, and `eye` is a local of the block they share.
+
+    Asserted STRUCTURALLY -- same innermost statement list -- rather than as a
+    line-distance budget. The budget version was a proxy for this, and a bad
+    one in both directions: it tripped on a comment added between the two
+    calls while nothing moved branch, and it could not tell the exterior
+    solve from the bridge one except by accident of spacing. This check can
+    tell them apart by construction, and no amount of prose between the calls
+    can break it.
+    """
     tree = ast.parse(HOST_LOOP.read_text())
-    cam_lines = [c.lineno for c in _calls_named(tree, "set_camera")]
-    dof_lines = [c.lineno for c in _calls_named(tree, "set_dof_params")]
-    assert dof_lines, "no set_dof_params call"
-    assert any(abs(d - c) < 40 for d in dof_lines for c in cam_lines), (
-        "set_dof_params is not adjacent to any set_camera call"
+    blocks = _block_of_each_call(tree, {})
+    cam_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_camera")}
+    dof_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_dof_params")}
+    assert dof_blocks, "no set_dof_params call"
+    assert cam_blocks & dof_blocks, (
+        "set_dof_params does not share a block with any set_camera call"
+    )
+
+
+def test_the_bridge_camera_solve_is_a_different_block():
+    """Guards the test above from degenerating into a tautology. host_loop has
+    more than one set_camera; if they all shared one block, the check would
+    pass no matter where the DOF push sat. The bridge solve is deliberately
+    elsewhere, so the set intersection above is load-bearing."""
+    tree = ast.parse(HOST_LOOP.read_text())
+    blocks = _block_of_each_call(tree, {})
+    cam_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_camera")}
+    assert len(cam_blocks) > 1, (
+        "every set_camera shares one block -- the same-block assertion above "
+        "no longer distinguishes the exterior solve from any other"
     )
 
 

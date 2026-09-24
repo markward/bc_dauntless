@@ -1,0 +1,317 @@
+{
+  "system": "Beol",
+  "bodies": [
+    {
+      "name": "Beol",
+      "display_name": "Beol",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "blue_white",
+        "color": [
+          0.74,
+          0.84,
+          1.0
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Beol 1",
+      "display_name": "Beol 1",
+      "radius_gu": 3700.0,
+      "position_gu": [
+        43575.28812448043,
+        0.0,
+        0.0
+      ],
+      "orbits": "Beol",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol1"
+    },
+    {
+      "name": "Beol 1 Moon 1",
+      "display_name": "Beol 1 Moon 1",
+      "radius_gu": 2200.0,
+      "position_gu": [
+        57370.964756006244,
+        -5299.43937946174,
+        -797.0248062530324
+      ],
+      "orbits": "Beol 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GrayPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol1"
+    },
+    {
+      "name": "Beol 1 Moon 2",
+      "display_name": "Beol 1 Moon 2",
+      "radius_gu": 1500.0,
+      "position_gu": [
+        25859.860051326144,
+        -4171.409483282494,
+        9104.144721371575
+      ],
+      "orbits": "Beol 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol1"
+    },
+    {
+      "name": "Beol 1 Moon 3",
+      "display_name": "Beol 1 Moon 3",
+      "radius_gu": 2800.0,
+      "position_gu": [
+        27699.90903040742,
+        -1405.1937558387065,
+        -20415.870520945744
+      ],
+      "orbits": "Beol 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol1"
+    },
+    {
+      "name": "Beol 2",
+      "display_name": "Beol 2",
+      "radius_gu": 4000.0,
+      "position_gu": [
+        108575.28812448043,
+        0.0,
+        0.0
+      ],
+      "orbits": "Beol",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol2"
+    },
+    {
+      "name": "Ohmine",
+      "display_name": "Ohmine",
+      "radius_gu": 1700.0,
+      "position_gu": [
+        118730.92415909776,
+        10430.779709954428,
+        6637.913179214153
+      ],
+      "orbits": "Beol 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol2"
+    },
+    {
+      "name": "Beol 3",
+      "display_name": "Beol 3",
+      "radius_gu": 4000.0,
+      "position_gu": [
+        -95209.33425191948,
+        8355.73882931495,
+        0.0
+      ],
+      "orbits": "Beol",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol3"
+    },
+    {
+      "name": "Kerry",
+      "display_name": "Kerry",
+      "radius_gu": 1700.0,
+      "position_gu": [
+        -96558.96350650692,
+        -7197.807810841743,
+        -3502.2403954657702
+      ],
+      "orbits": "Beol 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol3"
+    },
+    {
+      "name": "Legare",
+      "display_name": "Legare",
+      "radius_gu": 2200.0,
+      "position_gu": [
+        -105371.8182507744,
+        -4951.662240497395,
+        -14270.143508044159
+      ],
+      "orbits": "Beol 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol3"
+    },
+    {
+      "name": "Beol 4",
+      "display_name": "Beol 4",
+      "radius_gu": 2300.0,
+      "position_gu": [
+        38603.848898234195,
+        115283.5353933628,
+        0.0
+      ],
+      "orbits": "Beol",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SnowPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol4"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 1200.0,
+      "position_gu": [
+        31973.598854369884,
+        108923.64693075755,
+        481.25159642108144
+      ],
+      "orbits": "Beol 4",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol4"
+    },
+    {
+      "name": "Moon 2",
+      "display_name": "Moon 2",
+      "radius_gu": 1500.0,
+      "position_gu": [
+        43161.915308761214,
+        109942.09449606294,
+        10522.145206082163
+      ],
+      "orbits": "Beol 4",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GrayPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Beol4"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Beol1",
+      "anchor_gu": [
+        38343.46547555312,
+        1633.1254232677793,
+        405.20217331999356
+      ],
+      "radius_gu": 27880.36779558426,
+      "body_names": [
+        "Beol 1",
+        "Beol 1 Moon 1",
+        "Beol 1 Moon 2",
+        "Beol 1 Moon 3"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Beol2",
+      "anchor_gu": [
+        115706.5161517891,
+        4850.0188649772135,
+        10351.525349607076
+      ],
+      "radius_gu": 18973.350482773963,
+      "body_names": [
+        "Beol 2",
+        "Ohmine"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Beol3",
+      "anchor_gu": [
+        -109202.06347640026,
+        -16576.17549400806,
+        -18461.027377836643
+      ],
+      "radius_gu": 39532.43092728451,
+      "body_names": [
+        "Beol 3",
+        "Kerry",
+        "Legare"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Beol4",
+      "anchor_gu": [
+        26820.362230455095,
+        111548.00072339445,
+        1775.4718941677481
+      ],
+      "radius_gu": 21604.55820081289,
+      "body_names": [
+        "Beol 4",
+        "Moon 1",
+        "Moon 2"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "Beol1": "Standoff clamped to the MIN floor (1.5 radii). Anchor position and region radius look reasonable at this system's scale (no absurd value) -- left as generated, no override applied.",
+      "Beol2/Ohmine": "'Ohmine' (1700 GU) demoted to a moon of 'Beol 2' (4000 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Ohmine' is much smaller than 'Beol 2' and keeping it in 'Beol 2''s region preserves BC's original single-map grouping, per the brief's reasonable default.",
+      "Beol3/Kerry": "'Kerry' (1700 GU) demoted to a moon of 'Beol 3' (4000 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Kerry' is much smaller than 'Beol 3' and keeping it in 'Beol 3''s region preserves BC's original single-map grouping, per the brief's reasonable default.",
+      "Beol3/Legare": "'Legare' (2200 GU) demoted to a moon of 'Beol 3' (4000 GU) despite its name not saying 'Moon'. Accepted the generator's demotion: 'Legare' is much smaller than 'Beol 3' and keeping it in 'Beol 3''s region preserves BC's original single-map grouping, per the brief's reasonable default."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

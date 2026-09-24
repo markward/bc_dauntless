@@ -137,4 +137,82 @@ TEST_F(SunPassTest, EmptyFlareTexturePathSkipsOverlayWithoutError) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// ── Virtual-distance placement ────────────────────────────────────────────
+// A body INSIDE the far plane must be drawn where it actually is: at the
+// celestial layer's scale the star (34,097 GU) and a far-side planet
+// (96,211 GU) are both real geometry, and remapping the star to far*0.95
+// would draw it at 475,000 GU -- behind the planet it occludes. The trick
+// stays correct for anything that genuinely exceeds the far plane.
+
+TEST(SunVirtualDistance, BodyInsideFarPlaneKeepsTruePositionAndRadius) {
+    scenegraph::Camera cam;
+    cam.eye  = {0.0f, 0.0f, 0.0f};
+    cam.far  = 500000.0f;
+
+    const glm::vec3 star{34097.0f, 0.0f, 0.0f};
+    const auto p = renderer::solve_virtual_placement(star, cam.eye, cam.far);
+
+    EXPECT_FLOAT_EQ(p.scale, 1.0f);
+    EXPECT_FLOAT_EQ(p.position.x, star.x);
+    EXPECT_FLOAT_EQ(p.position.y, star.y);
+    EXPECT_FLOAT_EQ(p.position.z, star.z);
+}
+
+TEST(SunVirtualDistance, FarSideBodyStillSitsBeyondANearerStar) {
+    // Ona 1: the star at 34,097 GU must render nearer than Ona 3 at
+    // 96,211 GU on the far side of the system.
+    scenegraph::Camera cam;
+    cam.eye  = {0.0f, 0.0f, 0.0f};
+    cam.far  = 500000.0f;
+
+    const auto star   = renderer::solve_virtual_placement(
+        {34097.0f, 0.0f, 0.0f}, cam.eye, cam.far);
+    const auto planet = renderer::solve_virtual_placement(
+        {96211.0f, 0.0f, 0.0f}, cam.eye, cam.far);
+
+    EXPECT_LT(glm::length(star.position - cam.eye),
+              glm::length(planet.position - cam.eye));
+}
+
+TEST(SunVirtualDistance, BodyBeyondFarPlaneIsRemappedPreservingAngularSize) {
+    scenegraph::Camera cam;
+    cam.eye  = {0.0f, 0.0f, 0.0f};
+    cam.far  = 5000.0f;
+
+    const glm::vec3 pos{0.0f, 0.0f, -63000.0f};   // BC sun, tens of km out
+    const auto p = renderer::solve_virtual_placement(pos, cam.eye, cam.far);
+
+    const float expected_distance = cam.far * 0.95f;
+    EXPECT_FLOAT_EQ(glm::length(p.position - cam.eye), expected_distance);
+    EXPECT_FLOAT_EQ(p.scale, expected_distance / 63000.0f);
+    // Angular size preserved: radius/distance is unchanged by the remap.
+    // Tolerance is 1e-6, not 1e-9: one float ULP near 0.063 is already
+    // ~7.4e-9, so a 1e-9 bound passes only by luck of operation ordering and
+    // would flip under different FMA contraction.
+    const float radius = 4000.0f;
+    EXPECT_NEAR((radius * p.scale) / expected_distance, radius / 63000.0f, 1e-6f);
+}
+
+TEST(SunVirtualDistance, DirectionIsPreservedWhenRemapped) {
+    scenegraph::Camera cam;
+    cam.eye  = {100.0f, -50.0f, 25.0f};
+    cam.far  = 5000.0f;
+
+    const glm::vec3 pos{40000.0f, 30000.0f, -20000.0f};
+    const auto p = renderer::solve_virtual_placement(pos, cam.eye, cam.far);
+
+    const glm::vec3 true_dir = glm::normalize(pos - cam.eye);
+    const glm::vec3 drawn_dir = glm::normalize(p.position - cam.eye);
+    EXPECT_NEAR(glm::dot(true_dir, drawn_dir), 1.0f, 1e-5f);
+}
+
+TEST(SunVirtualDistance, DegenerateDistanceIsReportedAsInvalid) {
+    scenegraph::Camera cam;
+    cam.eye = {0.0f, 0.0f, 0.0f};
+    cam.far = 5000.0f;
+
+    const auto p = renderer::solve_virtual_placement(cam.eye, cam.eye, cam.far);
+    EXPECT_FALSE(p.valid);
+}
+
 }  // namespace

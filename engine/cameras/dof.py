@@ -31,6 +31,12 @@ Spec: docs/superpowers/specs/2026-09-06-depth-of-field-design.md
 """
 import math
 
+# The far plane is owned by engine.cameras (see SCENE_FAR_GU there). Importing
+# the package __init__ is safe from inside it: the constant is defined above
+# __init__'s own bottom-of-file director import, the same partial-init pattern
+# director.py already relies on.
+from engine.cameras import SCENE_FAR_GU
+
 # ── Lens shape — pushed to the shader as uniforms ────────────────────────
 # Deliberately conservative. Expect to calibrate UP and then back down after a
 # live look, the way the directional ambient gradient went 0.6 -> 1.0 -> 0.8.
@@ -114,22 +120,42 @@ _BLEND_EPSILON = 1e-3
 # degenerates as focus approaches the near plane.
 MIN_FOCUS_GU = 0.5
 
-# ...and so is a subject at or beyond the camera's FAR plane, which is
-# 5000 GU on the exterior view (host_loop's r.set_camera(near=1.0, far=5000.0)).
+# ...and so is a subject at or beyond the camera's FAR plane.
 #
-# This is not a tidiness bound, it is the anti-mush bound. The CoC term is
-# dd = 1 - focus/z, so with focus >= far EVERY visible pixel has dd < 0 -- the
-# whole frame is near field -- and everything nearer than focus/2 clamps to the
-# hard -1, i.e. MAXIMUM blur. The far ceiling cannot help, because no part of
-# the frame is far field. The result is the entire scene mushed behind a sharp
-# starfield: exactly the over-blur this feature exists to avoid.
+# DERIVED, never restated. This is the one DOF constant that is not a fraction
+# of far -- FAR_STRENGTH, FAR_CEILING, the curve and dof.frag's starfield
+# exemption all rescale by construction, and this one does not. It was written
+# as the literal 5000.0 with a comment quoting host_loop's old
+# `r.set_camera(near=1.0, far=5000.0)`; when the far plane moved to 500,000 GU
+# for the celestial layer, this stayed behind and every subject between 5,000
+# and 500,000 GU read as NO subject -- including the LOCAL planet at 5,997 GU,
+# the one body the feature exists to put in front of the player.
 #
-# It is reachable in normal play, not a theoretical edge: sensor_detection's
-# FALLBACK_RANGE_GU is 30000 GU, six times the far plane, and a lock is only
-# dropped when can_detect fails. Racking past infinity has no meaning anyway,
-# so a subject out there reads as NO subject and the lens releases to deep
-# focus -- the same behaviour as having no target at all.
-MAX_FOCUS_GU = 5000.0
+# What the bound actually prevents, as the passes are written TODAY: with
+# focus >= far, every visible pixel has z < focus and so takes the FOREGROUND
+# branch. That branch is camera-anchored -- t = clamp((near_sharp - z)/span)
+# in both dof.frag and dof.h -- and does not read focus at all, so everything
+# past near_sharp_gu comes out SHARP. What blurs is the near ramp's own
+# catchment, which is sized in multiples of the player's radius and therefore
+# holds almost exactly one thing: the player's own hull. So the failure mode
+# is not a mushed frame, it is the player's ship going soft in service of a
+# subject that cannot be resolved or even drawn. Racking past infinity has no
+# meaning, so a subject out there reads as NO subject and the lens releases to
+# deep focus -- the same as having no target at all.
+#
+# (It WAS a whole-frame mush, and this comment used to say so. That reasoning
+# belonged to the thin-lens foreground, dd = 1 - focus/z, which pinned
+# everything nearer than focus/2 at maximum blur. The foreground branch was
+# since replaced by the camera-anchored ramp -- see dof.h for why -- and the
+# justification did not follow it.)
+#
+# At 500,000 GU the bound is far rarer than it was: the widest sightline across
+# all 32 system maps is 452,715 GU, so nothing inside a system can reach it,
+# and sensor_detection's FALLBACK_RANGE_GU (30000 GU) -- which USED to sit six
+# times past the far plane -- is now well inside it and focuses normally. The
+# bound stays because what it prevents is a property of focus >= far, not of
+# any particular distance.
+MAX_FOCUS_GU = SCENE_FAR_GU
 
 
 def _ease(current, target, dt, tau):

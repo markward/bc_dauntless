@@ -1,0 +1,219 @@
+{
+  "system": "Geble",
+  "bodies": [
+    {
+      "name": "Geble",
+      "display_name": "Geble",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "yellow",
+        "color": [
+          1.0,
+          0.85,
+          0.4
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Geble 1",
+      "display_name": "Geble 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        42483.262393247714,
+        0.0,
+        0.0
+      ],
+      "orbits": "Geble",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/dryplanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble1"
+    },
+    {
+      "name": "Geble 2",
+      "display_name": "Geble 2",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        -68483.26239324771,
+        0.0,
+        0.0
+      ],
+      "orbits": "Geble",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GrayPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble2"
+    },
+    {
+      "name": "Geble 3",
+      "display_name": "Geble 3",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        -65063.36973073728,
+        68511.6398267672,
+        0.0
+      ],
+      "orbits": "Geble",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble3"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        -74393.60162536001,
+        63228.118560573945,
+        -9612.032866269665
+      ],
+      "orbits": "Geble 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownBluePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble3"
+    },
+    {
+      "name": "Moon 2",
+      "display_name": "Moon 2",
+      "radius_gu": 2600.0,
+      "position_gu": [
+        -82609.475829411,
+        68968.57029114057,
+        -9163.262264325513
+      ],
+      "orbits": "Geble 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble3"
+    },
+    {
+      "name": "Geble 4",
+      "display_name": "Geble 4",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        120483.26239324771,
+        0.0,
+        0.0
+      ],
+      "orbits": "Geble",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble4"
+    },
+    {
+      "name": "Moon 1",
+      "display_name": "Moon 1",
+      "radius_gu": 1000.0,
+      "position_gu": [
+        130083.21939999261,
+        -24.006557386204022,
+        -15.784608078353106
+      ],
+      "orbits": "Geble 4",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Geble4"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Geble1",
+      "anchor_gu": [
+        27641.210393247715,
+        -8573.317259999998,
+        -6.73401
+      ],
+      "radius_gu": 20440.25442513058,
+      "body_names": [
+        "Geble 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Geble2",
+      "anchor_gu": [
+        -68485.31409324771,
+        -20003.31665,
+        -6.734010000000001
+      ],
+      "radius_gu": 25103.317888703634,
+      "body_names": [
+        "Geble 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Geble3",
+      "anchor_gu": [
+        -78864.2007618361,
+        62329.459266160586,
+        -11965.165720198394
+      ],
+      "radius_gu": 24383.347332470395,
+      "body_names": [
+        "Geble 3",
+        "Moon 1",
+        "Moon 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Geble4",
+      "anchor_gu": [
+        123485.42621901499,
+        28731.828041655423,
+        -12.730933879295366
+      ],
+      "radius_gu": 32788.25180464682,
+      "body_names": [
+        "Geble 4",
+        "Moon 1"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "Geble4": "Standoff clamped to the MAX cap (12.0 radii). Anchor position and region radius look reasonable at this system's scale (no absurd value) -- left as generated, no override applied."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

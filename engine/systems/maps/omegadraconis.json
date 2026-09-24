@@ -1,0 +1,193 @@
+{
+  "system": "OmegaDraconis",
+  "bodies": [
+    {
+      "name": "OmegaDraconis",
+      "display_name": "OmegaDraconis",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "yellow",
+        "color": [
+          1.0,
+          0.85,
+          0.4
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Omega Draconis 1",
+      "display_name": "Omega Draconis 1",
+      "radius_gu": 600.0,
+      "position_gu": [
+        0.0,
+        -40000.0,
+        0.0
+      ],
+      "orbits": "OmegaDraconis",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "OmegaDraconis1"
+    },
+    {
+      "name": "Omega Draconis 2",
+      "display_name": "Omega Draconis 2",
+      "radius_gu": 1200.0,
+      "position_gu": [
+        66000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "OmegaDraconis",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "OmegaDraconis2"
+    },
+    {
+      "name": "Kessok Colony",
+      "display_name": "Kessok Colony",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        92000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "OmegaDraconis",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "OmegaDraconis3"
+    },
+    {
+      "name": "Omega Draconis 4",
+      "display_name": "Omega Draconis 4",
+      "radius_gu": 4000.0,
+      "position_gu": [
+        124500.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "OmegaDraconis",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "OmegaDraconis4"
+    },
+    {
+      "name": "Omega Draconis 5",
+      "display_name": "Omega Draconis 5",
+      "radius_gu": 600.0,
+      "position_gu": [
+        -53013.18748542456,
+        -133886.52640439675,
+        0.0
+      ],
+      "orbits": "OmegaDraconis",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/dryplanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "OmegaDraconis5"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "OmegaDraconis1",
+      "anchor_gu": [
+        -1405.296105045888,
+        -32973.51947477056,
+        702.648052522944
+      ],
+      "radius_gu": 9300.0,
+      "body_names": [
+        "Omega Draconis 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "OmegaDraconis2",
+      "anchor_gu": [
+        66000.0,
+        -5000.0,
+        0.0
+      ],
+      "radius_gu": 7700.0,
+      "body_names": [
+        "Omega Draconis 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "OmegaDraconis3",
+      "anchor_gu": [
+        92000.0,
+        -10000.0,
+        0.0
+      ],
+      "radius_gu": 13500.0,
+      "body_names": [
+        "Kessok Colony"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "OmegaDraconis4",
+      "anchor_gu": [
+        124000.0,
+        -7999.999999999998,
+        -999.9999999999998
+      ],
+      "radius_gu": 13577.747210701753,
+      "body_names": [
+        "Omega Draconis 4"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "OmegaDraconis5",
+      "anchor_gu": [
+        -52963.18748542456,
+        -136886.52640439675,
+        150.0
+      ],
+      "radius_gu": 5104.16377715996,
+      "body_names": [
+        "Omega Draconis 5"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "OmegaDraconis1": "Standoff clamped to the MAX cap (12.0 radii). Anchor position and region radius look reasonable at this system's scale (no absurd value) -- left as generated, no override applied."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

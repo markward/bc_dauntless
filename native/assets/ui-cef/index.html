@@ -227,6 +227,11 @@
                 <button id="star-map-back" title="Back to the map"
                         onclick="dauntlessEvent('star-map/back')">&times;</button>
               </div>
+              <!-- What this system IS, before the list of where in it you can
+                   go. Hidden when the system has no written entry, so the
+                   destination list keeps its full height rather than sitting
+                   under an empty block. -->
+              <p id="star-map-desc" style="display:none"></p>
               <ul id="star-map-warps"></ul>
             </div>
           </div>
