@@ -45,9 +45,10 @@ def _load_galaxy_hardpoint(ship):
 @pytest.fixture
 def combat_set():
     """The one set galaxy_red and every target_ship_at ship stand in: a
-    torpedo, collision or splash only reaches objects in its own set
-    (engine.appc.ship_iter.same_set). Unregistered, so no set walk sees it;
-    a torpedo joins it through its shooter (projectiles._join_source_set)."""
+    torpedo, collision or splash only reaches objects in its own FRAME
+    (engine.systems.frames), and objects in one set are always one frame.
+    Unregistered, so no set walk sees it; a torpedo joins it through its
+    shooter (projectiles._join_source_set)."""
     return App.SetClass_Create()
 
 

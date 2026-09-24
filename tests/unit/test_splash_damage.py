@@ -46,7 +46,7 @@ def _capture_apply_hit(monkeypatch):
 def _patch_ships(monkeypatch, ships):
     import engine.appc.ship_iter as ship_iter
     monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: list(ships))
-    share_one_set(*ships)   # splash reaches only its own set (same_set)
+    share_one_set(*ships)   # splash reaches only its own FRAME (engine.systems.frames)
 
 
 # ── accessors on DamageableObject ────────────────────────────────────────────

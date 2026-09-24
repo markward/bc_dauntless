@@ -71,8 +71,8 @@ class DebrisChunk:
         # later re-contact counts.
         self._collision_disabled_ids = frozenset()
         # The set the piece's coordinates are expressed in: its parent's, at
-        # the moment of severance. Collision pairing is gated on same-set
-        # membership (ship_iter.same_set), so a chunk with no set would strike
+        # the moment of severance. Collision pairing is gated on FRAME
+        # (engine.systems.frames), so a chunk with no set would strike
         # nothing. Stamped by spawn(); None for a parent in no set.
         self._containing_set = None
         # True while tick() has hidden the instance because the chunk's set is

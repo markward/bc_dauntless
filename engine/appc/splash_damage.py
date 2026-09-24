@@ -20,13 +20,13 @@ and RADIUS are the ship's real authored values.
 This replaces the earlier artistic AoE that hung off the warp-core breach; the
 breach now only spawns its VFX (shockwave ring + hull carve).
 
-Plan 2 (system-frames spec §1/§6) moves this off the same_set stopgap onto
-FRAMES: the blast centre is expressed in each TARGET's own set-local frame via
-frames.offset_between before any distance/hit-trace math runs, so the hull,
-the ray trace and the fallback point all agree with the frame the target
-actually lives in. Same-set pairs get offset (0, 0, 0) -- byte-identical to
-the raw-coordinate arithmetic this replaces. Different frames -> None -> the
-target is skipped, same as same_set's False.
+Plan 2 (system-frames spec §1/§6) moves this off the retired Plan-1 same-set
+stopgap onto FRAMES: the blast centre is expressed in each TARGET's own
+set-local frame via frames.offset_between before any distance/hit-trace math
+runs, so the hull, the ray trace and the fallback point all agree with the
+frame the target actually lives in. Same-set pairs get offset (0, 0, 0) --
+byte-identical to the raw-coordinate arithmetic this replaces. Different
+frames -> None -> the target is skipped.
 """
 import engine.dev_mode as dev_mode
 

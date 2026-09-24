@@ -202,6 +202,6 @@ def test_torpedo_uses_host_ray_trace_mesh_when_supplied(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _doubles_share_one_set(monkeypatch):
-    """A torpedo only meets ships in its own set (ship_iter.same_set); the
-    doubles all stand in one, and a torpedo joins its shooter's."""
+    """A torpedo only meets ships in its own FRAME (engine.systems.frames);
+    the doubles all stand in one set, and a torpedo joins its shooter's."""
     one_set_for(_FakeShip, monkeypatch=monkeypatch)

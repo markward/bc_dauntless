@@ -82,7 +82,7 @@ def test_critical_death_splashes_neighbour_breach_is_vfx_only(monkeypatch):
 
     import engine.appc.ship_iter as ship_iter
     monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: [src, nbr])
-    share_one_set(src, nbr)     # splash reaches only its own set (same_set)
+    share_one_set(src, nbr)     # splash reaches only its own FRAME (engine.systems.frames)
 
     import engine.appc.combat as combat
     hits = []

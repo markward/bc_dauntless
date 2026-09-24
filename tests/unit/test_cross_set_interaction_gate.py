@@ -8,14 +8,16 @@ compared raw positions across every set, so after warping Ona1 ->
 XiEntrades4 the player's arrival point (0, 5236, 1.5) sat inside Ona 1's
 set-local planet sphere and the player struck an invisible planet.
 
-Plan 1 gated all three on `ship_iter.same_set`. Plan 2 (system-frames spec
-§1/§6) moves COLLISIONS onto frames: two regions of one star system are one
-frame offset by their anchors, so a pair there compares in one set's
+Plan 1 gated all three on a now-retired same-set-identity stopgap
+(``ship_iter``'s containing-set-equality predicate). Plan 2 (system-frames
+spec §1/§6) moves COLLISIONS onto frames: two regions of one star system are
+one frame offset by their anchors, so a pair there compares in one set's
 coordinates via frames.offset_between; different frames still never meet.
 Torpedoes (section g) hit and home by frame too: the hit test runs in the
-ship's set-local coordinates, homing in the torpedo's own set's.
-Each scenario is paired with its same-set control so a test cannot pass by
-excluding everything.
+ship's set-local coordinates, homing in the torpedo's own set's. Each
+scenario is paired with its same-set control so a test cannot pass by
+excluding everything. (The retired predicate's own identity/no-set-frame
+coverage now lives in tests/unit/test_system_frames.py.)
 """
 import App
 import pytest
@@ -51,29 +53,6 @@ def _ship(x, y, z, radius=1.0, mass=1000.0):
     s.SetMass(mass)
     s.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
     return s
-
-
-# ── same_set predicate ───────────────────────────────────────────────────────
-
-def test_same_set_is_identity_of_containing_set():
-    from engine.appc.ship_iter import same_set
-    a_set, b_set = _set("A"), _set("B")
-    a1, a2, b1 = _ship(0, 0, 0), _ship(0, 0, 0), _ship(0, 0, 0)
-    a_set.AddObjectToSet(a1, "a1")
-    a_set.AddObjectToSet(a2, "a2")
-    b_set.AddObjectToSet(b1, "b1")
-    assert same_set(a1, a2) is True
-    assert same_set(a1, b1) is False
-
-
-def test_an_object_in_no_set_interacts_with_nothing():
-    from engine.appc.ship_iter import same_set
-    loose, other_loose = _ship(0, 0, 0), _ship(0, 0, 0)
-    assert same_set(loose, other_loose) is False
-    a_set = _set("A")
-    placed = _ship(0, 0, 0)
-    a_set.AddObjectToSet(placed, "placed")
-    assert same_set(loose, placed) is False
 
 
 # ── (a) collisions: the reviewer's Ona1 -> XiEntrades4 scenario ──────────────

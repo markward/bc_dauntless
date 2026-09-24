@@ -334,6 +334,21 @@ these pairs objects across regions by raw position.
 (`scene_scope.rendered_set()`) set rather than the emitter's. It moves to the
 emitter's frame, with distance from the listener in system coordinates.
 
+**Status (Plan 2).** All of the above are converted: collision pairing,
+splash damage, torpedoes (hit/home/incoming), and damage eligibility compare
+through `engine/systems/frames.py`, not raw set-local numbers; dust density,
+lens flares, torpedo/explosion-light render data, and the rest of the render
+feeds carry only the viewed frame; and audio keys `scene_scope` by frame and
+refuses a cross-frame `Play()`. The Plan-1 `same_set`
+(`ship_iter`'s containing-set-equality) stopgap is retired —
+`tests/integration/test_frame_tripwire.py` is the tripwire named above, and it
+guards every one of these consumers together in one scenario (three Ona
+regions plus an unrelated XiEntrades4 region and an unmapped Starbase12, with
+identical local numbers placed in every set on purpose). The set-scoped
+widening list below remains open — perception, avoidance, AI conditions,
+weapon range gates, the target list, and camera modes are unaffected by this
+plan.
+
 **Set-scoped consumers widen afterwards, one at a time.** Perception and contacts
 (`perception.perceived_by`, `contact_index`), collision avoidance, AI conditions
 and `ProximityCheck`, weapon range gates, the target list and range readouts,

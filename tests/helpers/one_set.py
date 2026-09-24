@@ -1,8 +1,9 @@
-"""Put test objects in ONE set, so the same-set interaction gate lets them meet.
+"""Put test objects in ONE set, so they share a FRAME and can interact.
 
 Collision pairing, splash damage and torpedo hit/homing only let two objects
-interact when they are in the same set (`engine.appc.ship_iter.same_set`, the
-Plan-1 stopgap for overlapping set-local coordinates). An object in no set
+interact when they compare in the same FRAME (`engine.systems.frames`,
+system-frames spec Sec1/Sec6) -- objects in the same set are always the same
+frame (`offset_between` returns zero). An object in no set has no frame and
 interacts with nothing. Tests that exercise those paths on bare objects --
 hand-rolled doubles, or real ObjectClasses never added to a set -- put them in
 one set with `share_one_set`; what the test then asserts is unchanged.
@@ -16,8 +17,8 @@ import App
 
 class InSet:
     """Mixin for hand-rolled doubles: the containing-set surface ObjectClass
-    has. `same_set` probes it with `implements`, so it must be a real method
-    on the class."""
+    has. `engine.systems.frames.containing_set` probes it with `implements`,
+    so it must be a real method on the class."""
     _containing_set = None
 
     def GetContainingSet(self):
