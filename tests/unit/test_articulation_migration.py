@@ -1,58 +1,13 @@
-"""The Bird of Prey's authored numbers survive the move to templates.
+"""The move from hardcoded dicts to authored templates stays done.
 
-Migration, not rewrite: identical pivots, axes and detach fraction, so day-one
-behaviour is verifiable rather than merely plausible. The ONE deliberate change
-is that bounding boxes now come from the mesh (spec section 2.5).
+The migration's VALUE tests (pivots, axes, angle signs, warp == cruise, 20%
+shear) used to live here and read the real hardpoint_overrides.py. That file
+is authored data the SPV rewrites, so those tests broke on every legitimate
+edit. The migrated numbers are now frozen in conftest.bop_fixture_rig, which
+the mechanism tests run against, and the real file is checked for invariants
+only by test_authored_part_data.py.
 """
 from engine.appc import articulation
-
-
-def test_the_bop_rig_survives_the_move():
-    parts = {p.GetName(): p for p in articulation.parts_for_leaf("birdofprey")}
-    assert set(parts) >= {"left wing", "left wing01"}
-
-    port, star = parts["left wing"], parts["left wing01"]
-    assert port.pivot == (-0.16, 0.0, 0.05)
-    assert star.pivot == (0.16, 0.0, 0.05)
-    assert port.axis == (0.0, 1.0, 0.0)
-    assert star.axis == (0.0, 1.0, 0.0)
-
-
-def test_the_wing_angle_SIGNS_are_preserved():
-    """REGRESSION GUARD. The signs were swapped once during the spike: +45 on
-    the starboard wing SANK the tip instead of raising it, and only a test
-    against the real tip coordinate caught it."""
-    parts = {p.GetName(): p for p in articulation.parts_for_leaf("birdofprey")}
-    assert parts["left wing"].angle_for("cruise") == 45.0
-    assert parts["left wing01"].angle_for("cruise") == -45.0
-
-
-def test_red_alert_is_the_NIF_pose():
-    """Zero rotation, because the BoP's NIF is modelled wings-down. This is
-    what makes Red the anchor for this ship -- no declaration needed."""
-    for p in articulation.parts_for_leaf("birdofprey"):
-        assert p.angle_for("red") == 0.0
-
-
-def test_warp_preserves_the_pre_migration_deflected_pose():
-    """FINDING 3 (fix round 1). The retired OLD-rig fallback was
-    `0.0 if state == "red" else part.angle_deg`, so a warping ship (like
-    every non-Red state) got the FULLY DEFLECTED pose -- wings up. Leaving
-    "warp" unauthored would silently give it 0.0 instead (wings down, the
-    Red pose), which is a real behaviour regression, not just an unauthored
-    value. Warp is therefore seeded to match "cruise" -- exactly what the OLD
-    rig gave it -- so the migration stays behaviour-preserving; a future SPV
-    edit authoring a DISTINCT warp pose is the first real use of the new
-    per-state surface, not something this migration itself does."""
-    parts = {p.GetName(): p for p in articulation.parts_for_leaf("birdofprey")}
-    assert parts["left wing"].angle_for("warp") == parts["left wing"].angle_for("cruise") == 45.0
-    assert parts["left wing01"].angle_for("warp") == parts["left wing01"].angle_for("cruise") == -45.0
-
-
-def test_both_wings_shear_at_twenty_percent():
-    parts = {p.GetName(): p for p in articulation.parts_for_leaf("birdofprey")}
-    assert parts["left wing"].detach_fraction == 0.20
-    assert parts["left wing01"].detach_fraction == 0.20
 
 
 def test_the_hardcoded_dicts_are_GONE():

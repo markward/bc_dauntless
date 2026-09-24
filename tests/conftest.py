@@ -1341,27 +1341,24 @@ def _reset_leakable_engine_globals():
     # Bird of Prey articulated-part snapshot: production populates
     # articulated_part._BY_LEAF["birdofprey"] via sdk_overrides.on_sdk_module_exec,
     # fired only when a real ship goes through the SDK loader (loadspacehelper
-    # .CreateShip). Every test double in the part-articulation suite
-    # (test_articulation.py, test_articulation_migration.py,
-    # test_hull_bounds_parts.py, test_part_severance*.py,
-    # test_subsystem_part_parenting.py, test_spv_anchor_pose.py) sets
+    # .CreateShip). Every test double in the part-articulation suite sets
     # `_articulation_leaf = "birdofprey"` directly and never goes through that
-    # loader, and test_articulated_part.py's OWN autouse fixture legitimately
-    # clears the whole snapshot around each of its tests. So this re-warms it
-    # from the SAME real functions on-demand, self-healing after that wipe,
-    # rather than baking a bootstrap into articulation.rig_for itself (which
-    # would have to fire in a real running game too, clearing
-    # g_kModelPropertyManager mid-tick for every never-yet-loaded ship class).
-    # A plain membership check, so this costs one dict lookup on every other
-    # test.
+    # loader, so it is seeded here.
+    #
+    # Seeded from a FROZEN FIXTURE (bop_fixture_rig), never from the real
+    # engine/appc/hardpoint_overrides.py. That file is AUTHORED DATA -- the
+    # SPV's Save button rewrites it -- and when the mechanism tests read it,
+    # every legitimate authoring edit turned the gate red (marking the head
+    # detachable in-game broke 8 tests, none of them about the head). The
+    # real file is checked separately, for invariants only, by
+    # tests/unit/test_authored_part_data.py.
+    #
+    # UNCONDITIONAL, every test: a membership check here let whichever test
+    # ran first decide what every later test saw, including a test that loads
+    # a real BoP through the SDK loader and snapshots the real file.
     try:
         from engine.appc import articulated_part as _articulated_part
-        if "birdofprey" not in _articulated_part._BY_LEAF:
-            from engine.appc import hardpoint_overrides as _hpo
-            App.g_kModelPropertyManager.ClearLocalTemplates()
-            _hpo.apply("birdofprey")
-            _articulated_part.snapshot_for_leaf("birdofprey")
-            App.g_kModelPropertyManager.ClearLocalTemplates()
+        _articulated_part._BY_LEAF["birdofprey"] = bop_fixture_rig()
     except Exception:
         pass
     # Bird of Prey per-part boxes: `articulation.part_boxes_for` now derives
@@ -1398,6 +1395,32 @@ def _reset_leakable_engine_globals():
     # reset would raise StaleHandleError the next time it was read. The real
     # fix is the rule the conformance suite already states and follows:
     # every test that allocates a transform handle must free it.
+
+
+def bop_fixture_rig():
+    """The Bird of Prey rig the mechanism tests run against.
+
+    A frozen copy of the numbers migrated out of the retired _RIGS /
+    DETACHABLE dicts: two wings, mirrored pivots and angle signs, warp seeded
+    to the cruise pose, both shearing at 20%. Deliberately NOT read from
+    hardpoint_overrides.py -- see the seeding comment in
+    _reset_leakable_engine_globals. Change it only when a mechanism test
+    needs a different shape, never to track what someone authored.
+    """
+    from engine.appc.articulated_part import ArticulatedPartProperty
+    rig = []
+    for name, x, angle in (("left wing", -0.16, 45.0),
+                           ("left wing01", 0.16, -45.0)):
+        p = ArticulatedPartProperty(name)
+        p.SetPivot(x, 0.0, 0.05)
+        p.SetAxis(0.0, 1.0, 0.0)
+        p.SetStateAngle("cruise", angle)
+        p.SetStateAngle("yellow", angle)
+        p.SetStateAngle("red", 0.0)
+        p.SetStateAngle("warp", angle)
+        p.SetDetachFraction(0.20)
+        rig.append(p)
+    return tuple(rig)
 
 
 @pytest.fixture(autouse=True)
