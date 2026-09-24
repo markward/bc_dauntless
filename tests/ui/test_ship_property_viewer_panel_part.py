@@ -488,6 +488,78 @@ def test_the_K_dev_override_locks_mount_editing_without_touching_preview(make_pa
     assert reason
 
 
+# ---------------------------------------------------------------------------
+# The EVENT EDGES that apply the forced pose. `set_dev_override` alone only
+# changes what the next `tick_ship` would ease toward -- and the SPV freezes
+# the sim, so there is no next tick. Without these the viewer showed a stale
+# pose and Preview moved nothing.
+# ---------------------------------------------------------------------------
+
+class _RiggedShip(_FakeShip):
+    """A `_FakeShip` that resolves to the Bird of Prey rig."""
+
+    def __init__(self):
+        super().__init__()
+        self._articulation_leaf = "birdofprey"
+        self._articulation_angles = {}
+
+
+def _angles(ship):
+    return dict(ship._articulation_angles)
+
+
+def test_opening_the_viewer_snaps_the_ship_to_the_ANCHOR_pose(make_panel):
+    """Every part at angle 0 -- the frame a hardpoint mount is stored in."""
+    from engine.appc import articulation
+    p, holder, _target = make_panel
+    holder["ship"] = _RiggedShip()
+    holder["ship"]._articulation_angles = {
+        part.GetName(): part.angle_for("cruise")
+        for part in articulation.rig_for("birdofprey")}
+    assert any(v for v in _angles(holder["ship"]).values()), "fixture check"
+
+    _open_with_parts(p)
+
+    assert _angles(holder["ship"]), "the rig must still be there"
+    assert all(v == 0.0 for v in _angles(holder["ship"]).values()), (
+        "opening the SPV must put the shared angle dict -- which the mesh, "
+        "the pins and the derived-box queries all read -- at the anchor pose")
+
+
+def test_previewing_a_state_snaps_the_ship_to_its_authored_angles(make_panel):
+    """Preview has to MOVE the wings, not just set a lock and a highlight."""
+    from engine.appc import articulation
+    p, holder, _target = make_panel
+    holder["ship"] = _RiggedShip()
+    _open_with_parts(p)
+
+    p.dispatch_event("part/preview:cruise")
+
+    expected = {part.GetName(): part.angle_for("cruise")
+                for part in articulation.rig_for("birdofprey")}
+    assert _angles(holder["ship"]) == expected
+    assert any(v != 0.0 for v in expected.values()), "fixture check"
+
+
+def test_closing_the_viewer_leaves_the_angles_for_tick_ship_to_ease_home(
+        make_panel):
+    """Deliberately NOT a snap: the sim resumes on close and `tick_ship` eases
+    the wings back over TRAVEL_SECONDS. This pins that close RELEASES the
+    override without also jumping the pose."""
+    from engine.appc import articulation
+    p, holder, _target = make_panel
+    holder["ship"] = _RiggedShip()
+    _open_with_parts(p)
+    p.dispatch_event("part/preview:cruise")
+    posed = _angles(holder["ship"])
+
+    p.close()
+
+    assert articulation.dev_override() is None, "the override must be released"
+    assert _angles(holder["ship"]) == posed, (
+        "close must not snap the pose; tick_ship eases it home")
+
+
 def test_close_clears_the_preview_lock(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)

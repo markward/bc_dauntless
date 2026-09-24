@@ -290,6 +290,15 @@ class ShipPropertyViewerPanel(Panel):
         # clearing it here is the only reset this needs.
         from engine.appc import articulation as _articulation
         _articulation.set_dev_override(None)
+        # ...and SNAP this ship to that released state's pose right now. The
+        # SPV freezes the sim, so `tick_ship` will not run again until it
+        # closes: without this the hull would keep whatever angles it held
+        # when the pause menu opened, and a mount authored through it would
+        # be recorded ~0.9 ship units out at a wingtip. force_pose writes the
+        # ONE dict every reader of a live pose consults, so the mesh, the
+        # pins and the derived-box queries all move together -- see its
+        # docstring for the live bug that shipped when only the mesh moved.
+        _articulation.force_pose(ship, None)
         # Persist the saved-edit overlay across open/close of the SAME ship so a
         # re-opened SPV reflects edits saved this session (build_descriptors
         # reads the still-original property until the next ship build). Drop it
@@ -352,6 +361,12 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_pos = {}
         self._pending_part = {}
         from engine.appc import articulation as _articulation
+        # Release only. Deliberately NO force_pose here, unlike open(): once
+        # the viewer closes the sim resumes and `tick_ship` owns the angles
+        # again, easing them from wherever the SPV left them back toward
+        # `state_for(ship)` over TRAVEL_SECONDS. Snapping here would replace
+        # that with a jump, and the mesh and the mounts stay in agreement
+        # either way because they read the same dict.
         _articulation.set_dev_override(None)
         _spv.select_model_part(None, self._model_part_nodes)
         # NOTE: _saved_* (and _authored_ship_id) deliberately persist across
@@ -546,6 +561,12 @@ class ShipPropertyViewerPanel(Panel):
         deleted; `tests/unit/test_spv_part_controls.py` keeps it deleted."""
         from engine.appc import articulation
         articulation.set_dev_override(state)
+        # Apply it NOW, at this event edge. `set_dev_override` alone only
+        # changes what the next `tick_ship` would ease toward, and the SPV
+        # freezes the sim, so there is no next tick -- Preview would set a
+        # lock and highlight a button and move nothing. force_pose writes the
+        # shared angle dict, so the mesh AND every mount follow together.
+        articulation.force_pose(self._ship_getter(), state)
         self._last_pushed = None
 
     def _current_articulation_override(self):

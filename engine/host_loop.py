@@ -7030,15 +7030,7 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
     return pose_of
 
 
-# "Not forced": read the ship's own live, sim-eased per-part angles. A
-# sentinel rather than None, because None is itself a meaningful forced value
-# -- it is `articulation.dev_override()`'s "no state selected", which the SPV
-# draws as the ANCHOR pose (every part at angle 0). See
-# `_sync_ship_articulation`'s `force_state`.
-_LIVE_POSE = object()
-
-
-def _sync_ship_articulation(session, ship, iid, *, force_state=_LIVE_POSE) -> None:
+def _sync_ship_articulation(session, ship, iid) -> None:
     """Push `ship`'s articulated part poses (BoP wings) to its render instance.
 
     READ-ONLY on game state: each part's angle is eased on the sim tick by
@@ -7053,40 +7045,18 @@ def _sync_ship_articulation(session, ship, iid, *, force_state=_LIVE_POSE) -> No
     costs one dict lookup and a tuple compare rather than a boundary crossing
     per node per frame.
 
-    `force_state` is ONE rule covering what spec sections 5.1 (the anchor
-    pose) and 5.4 (Preview) used to state as two:
-
-      * `_LIVE_POSE` (default) -- follow the sim: each part's own eased
-        angle, via `angle_for_part`.
-      * `None` -- the ANCHOR pose: every part at angle 0, literally, the
-        tuple built as zeros rather than read from the ship at all. This is
-        what the Ship Property Viewer draws when nothing is being previewed,
-        because a hardpoint mount is STORED in the NIF frame: editing one
-        through an articulated pose writes back a number that is ~0.9 ship
-        units out at a Bird of Prey's wingtip, silently.
-      * a state name from `articulated_part.STATES` -- that state's AUTHORED
-        angle for each part, applied instantly. This is Preview: it needs no
-        path of its own, because "draw the forced state" already describes
-        it, and the anchor pose is just the forced state of nothing.
-
-    None of the three touches game state. The forced poses are applied here
-    rather than through `tick_ship` precisely because the SPV runs with the
-    sim frozen -- there is no tick to ease on.
-
-    A forced pose pushes an explicit rotation (zero included) rather than
-    skipping the push -- skipping would leave whatever pose is already in
-    node_overrides standing.
+    THERE IS NO "forced pose" ARGUMENT HERE, deliberately. A forced pose --
+    the Ship Property Viewer's anchor pose, or a Preview click -- is applied
+    to `ship._articulation_angles` at the SPV's own event edges by
+    `articulation.force_pose`, so it arrives through the line below like
+    every other pose. A second, render-side forcing path is what drew a Bird
+    of Prey's wings down while every cannon pin floated at its stale raised
+    position: the mesh knew about the override and the mounts did not.
     """
     parts = articulation.parts_for_ship(ship)
     if not parts:
         return
-    if force_state is _LIVE_POSE:
-        pose = tuple(articulation.angle_for_part(ship, part) for part in parts)
-    elif force_state is None:
-        pose = tuple(0.0 for _ in parts)
-    else:
-        pose = tuple(articulation.target_angle(part, force_state)
-                     for part in parts)
+    pose = tuple(articulation.angle_for_part(ship, part) for part in parts)
     last = session.ship_articulation.get(iid)
     if last is not None and last == pose:
         return
@@ -7131,17 +7101,19 @@ def _sync_spv_articulation(session, spv_panel) -> None:
     Production rendering is byte-identical -- an ordinary paused game takes
     the early return on a bool that is False before anything is iterated.
 
-    The forced state comes from `articulation.dev_override()`, the single
-    source of truth that both the panel's Preview buttons
-    (`_set_part_preview`) and the 'K' dev keybinding write. None means
-    nothing is being previewed, which `_sync_ship_articulation` draws as the
-    anchor pose -- one rule, not a separate "rest" mode.
+    It pushes the ship's LIVE angles, exactly like the unfrozen path. It does
+    NOT know about the forced state: the SPV writes the forced pose into
+    `ship._articulation_angles` at its event edges
+    (`articulation.force_pose`, from the panel's open/Preview), so by the
+    time this runs the live angles ARE the forced ones. That is the whole
+    point -- mounts, pins, the derived-box queries and this sweep all read
+    one dict, so they cannot disagree. Making this sweep force the pose
+    itself is what drew the wings down while the cannon pins stayed up.
     """
     if not (dev_mode.is_enabled() and spv_panel.is_open()):
         return
-    state = articulation.dev_override()
     for ship, iid in session.ship_instances.items():
-        _sync_ship_articulation(session, ship, iid, force_state=state)
+        _sync_ship_articulation(session, ship, iid)
 
 
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,

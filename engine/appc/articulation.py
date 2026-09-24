@@ -390,6 +390,58 @@ def dev_override() -> "str | None":
     return _dev_override
 
 
+def force_pose(ship, state: "str | None") -> None:
+    """SNAP every rigged part of `ship` to `state` NOW, with no easing.
+
+    `state` is None for the ANCHOR pose (every part at angle 0 -- the pose the
+    NIF ships in, and the frame a hardpoint mount is STORED in), or a name
+    from `articulated_part.STATES` for that state's authored angles.
+
+    WHY THIS EXISTS, AND WHY IT IS AN EVENT-EDGE CALL. `ship.
+    _articulation_angles` is the ONE source every reader of a live pose
+    consults -- the render sweep (`host_loop._sync_ship_articulation`), every
+    mount (`subsystems.subsystem_world_position` via `part_transform_point`),
+    the derived-box queries (`part_severance.part_for_live_point`) and the SPV
+    overlays. `tick_ship` normally owns it. But the Ship Property Viewer
+    FREEZES THE SIM, so `tick_ship` never runs while it is open and the dict
+    stays at whatever it held the instant the pause menu opened.
+
+    Shipping a forced pose down the RENDER path instead is what produced the
+    live bug this replaces: the hull drew its wings down at the forced anchor
+    pose while every disruptor-cannon pin floated at its stale raised
+    position, because only one of the two halves knew about the override.
+
+    So the forced pose is applied HERE, to the shared dict, at the SPV's own
+    event edges (panel open, Preview clicked) -- an explicit, named, dev-only
+    mutation on the sim side. The render sweep then reads live angles like
+    everything else, and mesh and mounts agree by construction rather than by
+    two code paths being kept in step.
+
+    NOT for the per-frame render path: `_sync_ship_articulation` is documented
+    read-only on game state, and that rule exists because a game-state
+    mutation in the render path once gave the player's phasers half a second
+    aiming at a destroyed subsystem.
+
+    Harmless when the sim is NOT frozen: this only seeds the angles, and the
+    next `tick_ship` eases on from wherever they are -- toward the same
+    `state` while `_dev_override` names it, and back toward `state_for(ship)`
+    once it is released (which is what makes the wings ease home when the
+    viewer closes, rather than snapping).
+
+    A ship with no rig, or one that rejects the attribute (a prop, a test
+    double), is left alone.
+    """
+    parts = parts_for_ship(ship)
+    if not parts:
+        return
+    angles = {_part_name(p): (0.0 if state is None else target_angle(p, state))
+              for p in parts}
+    try:
+        ship._articulation_angles = angles
+    except Exception:  # noqa: BLE001 - a prop / test double may reject it
+        pass
+
+
 def reset() -> None:
     """Drop dev state. Currently called only from the test fixture
     (tests/conftest.py) -- there is no mission-swap call site yet, so a dev
