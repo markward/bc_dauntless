@@ -126,9 +126,9 @@ MIN_FOCUS_GU = 0.5
 # of far -- FAR_STRENGTH, FAR_CEILING, the curve and dof.frag's starfield
 # exemption all rescale by construction, and this one does not. It was written
 # as the literal 5000.0 with a comment quoting host_loop's old
-# `r.set_camera(near=1.0, far=5000.0)`; when the far plane moved to 500,000 GU
+# `r.set_camera(near=1.0, far=5000.0)`; when the far plane moved to SCENE_FAR_GU
 # for the celestial layer, this stayed behind and every subject between 5,000
-# and 500,000 GU read as NO subject -- including the LOCAL planet at 5,997 GU,
+# and SCENE_FAR_GU read as NO subject -- including the LOCAL planet at 5,997 GU,
 # the one body the feature exists to put in front of the player.
 #
 # What the bound actually prevents, as the passes are written TODAY: with
@@ -149,13 +149,13 @@ MIN_FOCUS_GU = 0.5
 # since replaced by the camera-anchored ramp -- see dof.h for why -- and the
 # justification did not follow it.)
 #
-# At 500,000 GU the bound is far rarer than it was: the widest sightline the
-# system maps produce is under 470,000 GU (derived, never restated -- see
-# tests/unit/test_camera_far_plane.py), so nothing in a system reaches it,
-# and sensor_detection's FALLBACK_RANGE_GU (30000 GU) -- which USED to sit six
-# times past the far plane -- is now well inside it and focuses normally. The
-# bound stays because what it prevents is a property of focus >= far, not of
-# any particular distance.
+# At SCENE_FAR_GU the bound is far rarer than it was: the widest sightline the
+# system maps produce is comfortably under it (derived, never restated -- see
+# tests/unit/test_camera_far_plane.py::widest_sightline_gu), so nothing in a
+# system reaches it, and sensor_detection's FALLBACK_RANGE_GU (30000 GU) --
+# which USED to sit six times past the far plane -- is now well inside it and
+# focuses normally. The bound stays because what it prevents is a property of
+# focus >= far, not of any particular distance.
 MAX_FOCUS_GU = SCENE_FAR_GU
 
 

@@ -18,6 +18,49 @@ def _unit(v):
     return tuple(c / n for c in v)
 
 
+def _content_extent_that_reaches_the_star(t: LayoutTuning, primary_bc_radius=150.0,
+                                          primary_offset=(0.0, 400.0, 0.0)) -> float:
+    """`content_extent_gu` for the "Tight1"-style fixture (a single planet at
+    `primary_offset`, orbit index 0, no `key_light_dir`) that puts the
+    region's sphere EXACTLY on the star's surface at the CURRENT
+    `LayoutTuning()` defaults -- derived from `t`'s own fields, not a
+    literal, so a future retune of any of them keeps the fixture genuinely
+    exercising `_first_orbit_push()` rather than silently going slack.
+
+    At orbit index 0 with no `key_light_dir`, `_bearing()` falls back to the
+    golden-angle spread at index 0, i.e. bearing (0, 1, 0) exactly -- so the
+    region's anchor sits `first_orbit - standoff` along +Y from the star at
+    the origin, where `first_orbit = sun_radius + t.first_orbit_clearance_gu`
+    (`_first_orbit_push`'s baseline placement, before any push).
+
+    The star's OWN radius cancels out of the intrusion test entirely:
+    `_max_star_intrusion` adds `star.radius_gu` (= that same `sun_radius`)
+    back on the far side of the same subtraction that `first_orbit` used it
+    on, so the fixture's Sun body's radius is irrelevant to how big
+    `content_extent_gu` needs to be -- only `first_orbit_clearance_gu`, this
+    region's own standoff, `star_clearance_gu` and `region_margin_gu` matter:
+
+        intrusion = region_radius + star_clearance_gu - first_orbit_clearance_gu + standoff
+                  = [content_extent_gu + region_margin_gu] + star_clearance_gu
+                    - first_orbit_clearance_gu + standoff   (content_extent_gu dominates the
+                                                              region's natural reach here)
+
+    Solving `intrusion = 0` for `content_extent_gu` gives the value this
+    function returns. Callers that want a GENUINE (not knife-edge) intrusion
+    use this value directly: because `_place()` always adds
+    `region_margin_gu` on top of `content_extent_gu` when it dominates reach,
+    the actual intrusion at this exact value comes out to `region_margin_gu`
+    -- comfortably positive, and it grows automatically if a future retune
+    raises the margin, without a fudge-factor literal here.
+    """
+    primary_radius = primary_bc_radius * t.planet_radius_scale
+    d_bc = math.sqrt(sum(c * c for c in primary_offset))
+    raw_standoff = (d_bc / primary_bc_radius) / t.framing_scale
+    standoff_factor = min(max(raw_standoff, t.min_standoff_factor), t.max_standoff_factor)
+    standoff = standoff_factor * primary_radius
+    return t.first_orbit_clearance_gu - standoff - t.star_clearance_gu
+
+
 def _sys_one_planet_per_region():
     return SurveyedSystem(
         name="Ona",
@@ -426,25 +469,25 @@ def test_a_pinned_map_passes_the_pin_rule_end_to_end():
 def test_the_first_orbit_is_pushed_out_until_no_region_reaches_the_star():
     """Voltair 1's sphere contained its star's centre. The innermost orbit must
     move out far enough to clear it -- and every other orbit moves with it."""
-    # content_extent_gu=30000.0, not a smaller value: with the region's own
-    # reach only 7500 GU, a content_extent of 20000.0 yields a region radius
-    # of 21500 GU, which clears the star (sun_radius 8000, clearance 500) at
-    # the baseline first orbit with 3500 GU to spare -- _first_orbit_push()
-    # returns push=0.0 for that input, so the test would pass even with the
-    # push mechanism disabled. 30000.0 yields radius 31500, which genuinely
-    # intrudes (by 6500 GU) and so genuinely exercises the code path this
-    # test names. Same arithmetic as test_ambiguities_reports_a_pushed_first_orbit.
+    # Tight1's content_extent_gu is DERIVED (see
+    # _content_extent_that_reaches_the_star), not a literal: that value puts
+    # Tight1's sphere exactly on the star's surface at whatever
+    # LayoutTuning() currently says, so the fixture keeps genuinely
+    # exercising _first_orbit_push() even after a future retune of
+    # first_orbit_clearance_gu (or anything else the derivation reads).
+    # Same arithmetic as test_ambiguities_reports_a_pushed_first_orbit.
+    t = LayoutTuning()
+    intruding_content_extent_gu = _content_extent_that_reaches_the_star(t)
     s = SurveyedSystem(name="Tight", regions=[
         SurveyedRegion(set_name="Tight1", ordinal=1, bodies=[
             SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
             SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
-        ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0)),
+        ], content_extent_gu=intruding_content_extent_gu, player_start_gu=(0.0, 0.0, 0.0)),
         SurveyedRegion(set_name="Tight2", ordinal=2, bodies=[
             SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
             SurveyedBody("Tight 2", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
         ], content_extent_gu=0.0, player_start_gu=(0.0, 0.0, 0.0)),
     ])
-    t = LayoutTuning()
     push, _probe_m = _first_orbit_push(s, t, {})
     assert push > 0.0, "fixture must genuinely require a push, or this test cannot fail"
     m = layout(s, t)
@@ -520,18 +563,19 @@ def test_ambiguities_reports_a_system_whose_suns_disagree():
 
 
 def test_ambiguities_reports_a_pushed_first_orbit():
-    # content_extent_gu=30000.0, not the brief's 20000.0: with the region's
-    # OWN reach only 7500 GU, a content_extent of 20000.0 yields a region
-    # radius of 21500 GU, which clears the star (sun_radius 8000, clearance
-    # 500) at the baseline first orbit with 3500 GU to spare -- verified via
-    # _first_orbit_push(), which returns push=0.0 for that input. 30000.0
-    # yields radius 31500, which genuinely intrudes (by 6500 GU) and so
-    # genuinely exercises the code path this test names.
+    # content_extent_gu is DERIVED (see _content_extent_that_reaches_the_star)
+    # rather than a literal, so this fixture keeps genuinely intruding on
+    # the star -- and so genuinely exercising the code path this test names
+    # -- across a future retune of LayoutTuning()'s defaults. ambiguities()
+    # itself lays out at LayoutTuning() (see its `t = tuning or
+    # LayoutTuning()`), so the derivation below must use the same defaults.
+    t = LayoutTuning()
+    intruding_content_extent_gu = _content_extent_that_reaches_the_star(t)
     s = SurveyedSystem(name="Tight", regions=[SurveyedRegion(
         set_name="Tight1", ordinal=1, bodies=[
             SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
             SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
-        ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0))])
+        ], content_extent_gu=intruding_content_extent_gu, player_start_gu=(0.0, 0.0, 0.0))])
     assert any("first orbit" in n.lower() for n in ambiguities(s))
 
 
@@ -693,19 +737,25 @@ def test_the_shell_radius_reflects_the_pushed_anchor_not_the_pre_push_one():
     the pushed first orbit. The cloud built by the FIRST call must not be the
     one that survives: its region anchors are the pre-push ones, so a shell
     radius derived from them would be too small once the push moves every
-    region's anchor outward."""
+    region's anchor outward.
+
+    Tight1's content_extent_gu is DERIVED (see
+    _content_extent_that_reaches_the_star), not a literal, so the fixture
+    keeps genuinely requiring a push across a future retune of
+    LayoutTuning()'s defaults."""
+    t = LayoutTuning()
+    intruding_content_extent_gu = _content_extent_that_reaches_the_star(t)
     s = SurveyedSystem(name="Tight", regions=[
         SurveyedRegion(set_name="Tight1", ordinal=1, bodies=[
             SurveyedBody("Sun", 4000.0, "", (-70000.0, 0.0, 0.0), True),
             SurveyedBody("Tight 1", 150.0, "p.nif", (0.0, 400.0, 0.0), False),
-        ], content_extent_gu=30000.0, player_start_gu=(0.0, 0.0, 0.0),
+        ], content_extent_gu=intruding_content_extent_gu, player_start_gu=(0.0, 0.0, 0.0),
            nebula={"color": (0.61, 0.35, 0.73),
                    "spheres": [(0.0, 1500.0, 0.0, 1500.0)],
                    "visibility_gu": 145.0, "sensor_density": 10.5,
                    "damage_hull_per_s": 150.0, "damage_shield_per_s": 20.0,
                    "extra_nebulae": 0}),
     ])
-    t = LayoutTuning()
     push, _probe_m = _first_orbit_push(s, t, {})
     assert push > 0.0, "fixture must genuinely require a push, or this test cannot fail"
     m = layout(s, t, cloud={"name": "T", "display_name": "T", "kind": "debris_shell"})

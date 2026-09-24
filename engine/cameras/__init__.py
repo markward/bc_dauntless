@@ -24,27 +24,26 @@ EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 # moved and dof.py kept 5000.0, leaving the local planet unfocusable.
 #
 # A star system is ONE coordinate space at the celestial layer's x20 scale, so
-# the far plane has to span it: the widest sightline is Itari's, ~467,000 GU
-# once a body's far limb is counted, and even the LOCAL planet sits at 5,997 GU
-# -- with the old 5,000 GU far plane the first thing you look at is the first
-# thing clipped.
-#
-# That figure is a PRODUCT OF THE MAPS and moves when they are regenerated (it
-# already went 420,676 -> 452,715 GU centre-to-centre in one generator change).
-# tests/unit/test_camera_far_plane.py DERIVES it from the checked-in maps
-# rather than restating it, so regenerating them re-checks this constant; the
-# number written here is prose, not the guard.
+# the far plane has to span it. The number below is NOT restated as fact here
+# -- it is derived from the checked-in maps by
+# tests/unit/test_camera_far_plane.py::widest_sightline_gu, which
+# test_the_exterior_and_viewscreen_cameras_reach_the_whole_system then checks
+# this constant against, so regenerating the maps re-checks the number rather
+# than silently going stale. Orbital spacing doubled 2026-09-24 per the
+# system-frames spec, which is what most recently moved the widest sightline
+# and this constant with it.
 #
 # Cheap, and measured rather than assumed. For a 24-bit forward-Z buffer the
 # resolvable gap is dz ~= (1/2**24) * z^2 * (f-n)/(f*n); the (f-n)/f term is
-# already ~1 at f=5000, so 5,000 -> 500,000 costs 0.02%. Forward-Z precision
-# is governed by the NEAR plane, which is untouched.
+# already ~1 regardless of how far f moves, so raising it costs a fraction of
+# a percent of resolvable depth. Forward-Z precision is governed by the NEAR
+# plane, which is untouched.
 #
 # Deliberately NOT applied to host_loop's _BridgeCamera.FAR (800 -- a room),
 # the Ship Property Viewer camera (a hologram) or the comm viewscreen (a face
 # in a window). Those gain nothing and would only spend depth precision.
 SCENE_NEAR_GU: float = 1.0
-SCENE_FAR_GU: float = 500_000.0
+SCENE_FAR_GU: float = 900_000.0
 
 def fov_distance_scale(fov_y_rad: float) -> float:
     """Framing-distance multiplier that keeps a ship's apparent size constant

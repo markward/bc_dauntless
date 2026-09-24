@@ -329,3 +329,33 @@ def test_a_bogus_cloud_kind_reaches_the_generators_ambiguities_output(monkeypatc
     out = capsys.readouterr().out
     assert "not_a_real_kind" in out
     assert rc == 0
+
+
+def test_planets_orbit_at_the_doubled_scale():
+    """Orbits double; radii do not (spec: "Scale"). Live feedback: the system
+    read as too small because of SPACING, so the first orbit and the orbit step
+    both double while every body keeps its x20 radius. The first orbit is a
+    MINIMUM measured from the star's surface -- the push logic may move a
+    planet further out, never nearer."""
+    import math
+    from engine.systems import map as system_map
+    from tools.systems.layout import LayoutTuning
+
+    t = LayoutTuning()
+    assert t.first_orbit_clearance_gu == 60000.0
+    assert t.orbit_step_gu == 52000.0
+    checked = 0
+    for name in system_map.available():
+        m = system_map.load(name)
+        star = next(b for b in m.bodies if b.orbits is None)
+        for b in m.bodies:
+            if b.orbits == star.name:
+                d = math.dist(b.position_gu, star.position_gu)
+                assert d >= star.radius_gu + t.first_orbit_clearance_gu - 1e-6, (
+                    f"{name}/{b.name} orbits at {d:.0f} GU, inside the doubled "
+                    f"first orbit {star.radius_gu + t.first_orbit_clearance_gu:.0f}")
+                checked += 1
+    # 87 bodies orbit their star directly across the 32 maps (measured
+    # 2026-09-24); the rest are moons. Exact, so a loop that silently stops
+    # seeing the maps cannot pass.
+    assert checked == 87, f"{checked} planets checked, expected 87"
