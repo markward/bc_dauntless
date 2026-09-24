@@ -667,6 +667,14 @@ def point_at_angle(part, point, angle_deg):
     return _rotate_about(point, pivot, axis, theta)
 
 
+def vector_at_angle(part, vec, angle_deg):
+    """Where a body-frame DIRECTION points when `part` sits at `angle_deg`:
+    the hinge's rotation without its translation. `point_at_angle` is for
+    positions; a spot light's direction and up are directions."""
+    _pivot, axis, theta = rotation_for(part, angle_deg)
+    return _rotate_about(vec, (0.0, 0.0, 0.0), axis, theta)
+
+
 def _rotate_about(point, pivot, axis, theta):
     """Rodrigues rotation of `point` about the line (pivot, unit axis) by
     `theta` radians. Right-handed, matching the renderer's column-vector

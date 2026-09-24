@@ -1437,6 +1437,52 @@ def _build_explosion_light_render_data():
     return [dict(entry) for entry in _explosion_lights.render_data()]
 
 
+def _articulate_emitter_light(ship, iid, spec, d):
+    """Carry body-frame light dict `d` with the articulated part it sits on,
+    or return None when that part has been severed.
+
+    The part is decided from the LIGHT's own authored position (rest frame,
+    ship units -- the same frame as the derived part boxes), never from its
+    parent subsystem's mount: a light authored on a wing but parented to a
+    body subsystem must still ride, and die with, the wing. Severance
+    destroying the parent was the only thing that used to darken one.
+
+    Still body frame out: the renderer places it through the hull's matrix
+    as before. The angle is the same `_articulation_angles` value
+    `_sync_ship_articulation` pushes to the renderer this frame, so the light
+    and the drawn part cannot disagree. Decided per frame rather than cached
+    at spawn: the boxes derive from `model_nodes(iid)`, which a spawn-time
+    tag could run before, silently tagging every light None forever.
+
+    Identity -- the same dict, untouched -- for an unrigged ship, a light on
+    no part, or a part at angle 0.
+    """
+    from engine.appc import articulation
+    leaf = articulation.leaf_for(ship)
+    parts = articulation.rig_for(leaf)
+    if not parts:
+        return d
+    from engine.appc.part_severance import part_for_point, is_detached
+    name = part_for_point(leaf, tuple(spec["position"]), iid)
+    if name is None:
+        return d
+    if is_detached(ship, name):
+        return None
+    part = next((p for p in parts if p.GetName() == name), None)
+    if part is None:
+        return d
+    angle = articulation.angle_for_part(ship, part)
+    if angle == 0.0:
+        return d
+    for key in ("position", "position_b"):
+        if key in d:
+            d[key] = articulation.point_at_angle(part, d[key], angle)
+    for key in ("direction", "up"):
+        if key in d:
+            d[key] = articulation.vector_at_angle(part, d[key], angle)
+    return d
+
+
 def _build_emitter_light_render_data(ship_instances, ship_emitters,
                                      player=None):
     """Body-frame dynamic lights from subsystem-attached light emitters,
@@ -1505,7 +1551,9 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
                 # lights), so the light and the hull share one pose per frame
                 # — interpolated, live or mid-handover alike. Shallow copy is
                 # enough: every value in `struct` is an immutable tuple/float.
-                d = dict(struct)
+                d = _articulate_emitter_light(ship, iid, spec, dict(struct))
+                if d is None:
+                    continue    # its part has been shot off
                 d["intensity"] = inten * fade
                 d["instance_id"] = iid
                 out.append(d)
