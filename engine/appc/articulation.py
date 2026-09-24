@@ -516,8 +516,9 @@ def tick_ship(ship, dt: float) -> None:
                                       part_range=_swing_range(part), dt=dt)
 
 
-def parts_for_ship(ship) -> tuple[Part, ...]:
-    """Articulation parts for `ship`, or () when it has no rig."""
+def parts_for_ship(ship) -> tuple:
+    """Articulation parts for `ship` (ArticulatedPartProperty instances), or
+    () when it has no rig."""
     return rig_for(leaf_for(ship))
 
 

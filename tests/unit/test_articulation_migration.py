@@ -5,7 +5,6 @@ behaviour is verifiable rather than merely plausible. The ONE deliberate change
 is that bounding boxes now come from the mesh (spec section 2.5).
 """
 from engine.appc import articulation
-from engine.appc.articulated_part import STATES
 
 
 def test_the_bop_rig_survives_the_move():
@@ -33,6 +32,21 @@ def test_red_alert_is_the_NIF_pose():
     what makes Red the anchor for this ship -- no declaration needed."""
     for p in articulation.parts_for_leaf("birdofprey"):
         assert p.angle_for("red") == 0.0
+
+
+def test_warp_preserves_the_pre_migration_deflected_pose():
+    """FINDING 3 (fix round 1). The retired OLD-rig fallback was
+    `0.0 if state == "red" else part.angle_deg`, so a warping ship (like
+    every non-Red state) got the FULLY DEFLECTED pose -- wings up. Leaving
+    "warp" unauthored would silently give it 0.0 instead (wings down, the
+    Red pose), which is a real behaviour regression, not just an unauthored
+    value. Warp is therefore seeded to match "cruise" -- exactly what the OLD
+    rig gave it -- so the migration stays behaviour-preserving; a future SPV
+    edit authoring a DISTINCT warp pose is the first real use of the new
+    per-state surface, not something this migration itself does."""
+    parts = {p.GetName(): p for p in articulation.parts_for_leaf("birdofprey")}
+    assert parts["left wing"].angle_for("warp") == parts["left wing"].angle_for("cruise") == 45.0
+    assert parts["left wing01"].angle_for("warp") == parts["left wing01"].angle_for("cruise") == -45.0
 
 
 def test_both_wings_shear_at_twenty_percent():

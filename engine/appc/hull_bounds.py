@@ -105,7 +105,13 @@ def cache_hull_bound_spheres(ship, spheres, iid=None) -> None:
         if r <= 0.0:
             continue
         c = (cx * s, cy * s, cz * s)
-        part = part_for_point(leaf, c, iid) if leaf else None
+        # `movable` empty (every unrigged hull -- Galaxy, Sovereign, Akira,
+        # ...) means the answer would be thrown away below regardless, but
+        # part_for_point still forces the first-ever derivation for this leaf
+        # (model_parts: an O(nodes^2 + nodes*vertices) C++ sweep). Skip the
+        # call outright rather than pay that spawn hitch for a tag that can
+        # never fire.
+        part = part_for_point(leaf, c, iid) if (leaf and movable) else None
         if part not in movable:
             part = None
         out.append((c, r * s, part))

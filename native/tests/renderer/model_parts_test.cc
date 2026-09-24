@@ -12,6 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+#include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -19,6 +22,8 @@
 
 #include <assets/model.h>
 #include <renderer/model_parts.h>
+
+#include "model_build.h"
 
 namespace {
 
@@ -152,4 +157,94 @@ TEST(ModelParts, FallsBackToTheFirstBranchingNodeWithoutASceneRoot) {
     ASSERT_NE(beta, nullptr);
     EXPECT_TRUE(alpha->candidate);
     EXPECT_TRUE(beta->candidate);
+}
+
+// ── Content-gated: the REAL BirdOfPrey.nif ──────────────────────────────────
+//
+// Every test above runs against a SYNTHETIC three-level fixture built to
+// mirror what this file's header comment says was measured on the real hull
+// with native/tools/dump_nif_tree. Nothing before this point ever actually
+// loads BirdOfPrey.nif and asks model_parts() the same question -- so a
+// real-world mismatch (wrong case, a stray whitespace, "Scene Root" not
+// being the part parent on this particular hull) would ship invisibly behind
+// an all-green suite. articulation.py's whole Bird-of-Prey rig (severance,
+// wing-follow) is keyed on these exact four names, so if this ever fails,
+// STOP and report it -- it is a real discovery about the asset, not
+// something to quietly work around.
+namespace {
+
+// Stubs return zero IDs so destructors short-circuit (no GL context here) --
+// mirrors native/tests/assets/cpu/model_build_test.cc's stub_texture/stub_mesh.
+assets::Texture stub_texture(const assets::Image&, bool) {
+    return assets::Texture(/*id=*/0, 1, 1, false);
+}
+assets::Mesh stub_mesh(assets::MeshCpu cpu) {
+    return assets::Mesh(
+        /*vao=*/0, /*vbo=*/0, /*ebo=*/0,
+        static_cast<std::uint32_t>(cpu.indices.size()),
+        cpu.material_index, cpu.node_index);
+}
+
+}  // namespace
+
+TEST(ModelParts, RealBirdOfPreyExposesExactlyTheFourCandidates) {
+    namespace fs = std::filesystem;
+    const fs::path root(OPEN_STBC_PROJECT_ROOT);
+
+    // Honour the same env var engine/paths.py reads as its second-precedence
+    // source (and scripts/check_tests.sh derives from it), so this runs
+    // against a real install wherever it is; fall back to the legacy
+    // in-project relative "game" when unset -- mirrors
+    // BuildVentingDescriptors.TextureFileExistsOnDisk in breach_venting_test.cc.
+    fs::path game_dir;
+    if (const char* env = std::getenv("DAUNTLESS_GAME_DIR")) {
+        game_dir = env;
+    } else {
+        game_dir = root / "game";
+    }
+    const fs::path nif = game_dir / "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif";
+    if (!fs::is_regular_file(nif)) {
+        GTEST_SKIP() << "no BC install / BirdOfPrey.nif under \"" << game_dir
+                     << "\" -- set DAUNTLESS_GAME_DIR to run this test";
+    }
+
+    nif::File f = nif::load(nif);
+
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+    // model_parts() sweeps mesh.cpu_data() to compute per-part bounds
+    // (aabb.cc-style); without this the meshes upload and discard their CPU
+    // vertices, and every part comes back has_bounds=false.
+    ctx.keep_cpu_data = true;
+    auto model = assets::detail::build_model(f, ctx);
+
+    const auto parts = renderer::model_parts(model);
+    ASSERT_FALSE(parts.empty()) << "BirdOfPrey.nif produced no named nodes at all";
+
+    std::set<std::string> candidates;
+    for (const auto& p : parts) {
+        if (p.candidate) candidates.insert(p.name);
+    }
+    EXPECT_EQ(candidates, (std::set<std::string>{
+                  "head", "left wing", "left wing01", "birdofprey"}))
+        << "the real hull's candidate set no longer matches what "
+           "engine/appc/hardpoint_overrides.py's BoP rig and "
+           "articulation.part_boxes_for assume -- this is a genuine "
+           "discovery, not something to work around here";
+
+    for (const auto& p : parts) {
+        if (p.name == "__NDL_MultiMtl_Node") {
+            EXPECT_FALSE(p.candidate)
+                << "the exporter-marker node must never be a candidate";
+        }
+    }
+
+    for (const auto& name : candidates) {
+        const auto* part = find(parts, name);
+        ASSERT_NE(part, nullptr);
+        EXPECT_TRUE(part->has_bounds) << name << " must have bounds";
+    }
 }

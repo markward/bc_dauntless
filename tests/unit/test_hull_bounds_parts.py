@@ -53,8 +53,9 @@ def _pose(ship, deflection):
     }
 
 
-# A point deep inside PART_BOXES["birdofprey"]["left wing"] and inside no
-# other box, so part_for_point attributes it outright rather than to None.
+# A point deep inside the derived box for "birdofprey"'s "left wing" and
+# inside no other box, so part_for_point attributes it outright rather than
+# to None.
 WING_PT = (-0.80, -0.20, -0.30)
 # Deep inside the "birdofprey" body box ONLY -- unambiguous, not an overlap
 # case. This is the brief's original literal value.
@@ -82,7 +83,7 @@ WING_PT = (-0.80, -0.20, -0.30)
 # test_a_boxed_but_INERT_part_is_not_tagged for the same idea pinned
 # explicitly against "head".
 BODY_PT = (0.0, -0.20, 0.05)
-# Deep inside PART_BOXES["birdofprey"]["head"] and inside no other box.
+# Deep inside the derived box for "birdofprey"'s "head" and inside no other box.
 # "head" is boxed (part_for_point resolves it) but neither rigged
 # (articulation.rig_for has no "head" Part) nor detachable
 # (articulation.detachable_for has no "head" key) -- the exact case the
@@ -91,9 +92,10 @@ HEAD_PT = (0.0, 0.5, 0.0)
 
 
 def test_the_fixture_points_attribute_as_this_file_assumes():
-    """Guards every other test in this file. If PART_BOXES is ever re-authored
-    these constants stop meaning what the tests below need them to mean, and
-    those tests would pass vacuously instead of failing here.
+    """Guards every other test in this file. If the derived per-part boxes
+    this file's conftest fixture seeds are ever re-authored, these constants
+    stop meaning what the tests below need them to mean, and those tests
+    would pass vacuously instead of failing here.
 
     WING_PT resolves to a MOVABLE part outright. BODY_PT and HEAD_PT both
     resolve to concrete, unambiguous part names -- NOT None -- because
@@ -269,9 +271,9 @@ def _reach(centre, r=_PIECE_R):
 
 
 def test_the_mid_travel_fixture_point_attributes_as_this_file_assumes():
-    """Same role as the guard at the top of this file. If PART_BOXES moves,
-    WING_MID_TRAVEL_PT stops being on the wing and the two tests below would
-    pass vacuously against an untagged piece."""
+    """Same role as the guard at the top of this file. If the derived boxes
+    move, WING_MID_TRAVEL_PT stops being on the wing and the two tests below
+    would pass vacuously against an untagged piece."""
     assert ps.part_for_point("birdofprey", WING_MID_TRAVEL_PT) == "left wing"
 
 

@@ -227,10 +227,11 @@ def test_degenerate_axis_does_not_produce_nan():
 
 
 def test_pivot_is_in_ship_units():
-    """The pivot must share units with PART_BOXES and subsystem mounts, which
-    are SHIP units (a BoP wingtip is x = 1.008, not 100.8). It used to be in
-    MODEL units, which is the same confusion that made part attribution
-    silently never fire — see part_severance.MODEL_TO_SHIP."""
+    """The pivot must share units with the derived per-part boxes
+    (articulation.part_boxes_for) and subsystem mounts, which are SHIP units
+    (a BoP wingtip is x = 1.008, not 100.8). It used to be in MODEL units,
+    which is the same confusion that made part attribution silently never
+    fire — see part_severance.MODEL_TO_SHIP."""
     port, starboard = articulation.rig_for("birdofprey")
     assert starboard.pivot[0] == pytest.approx(0.16)
     assert port.pivot[0] == pytest.approx(-0.16)

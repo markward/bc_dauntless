@@ -142,8 +142,9 @@ def test_a_part_never_severs_twice():
 
 
 def test_a_non_detachable_part_accumulates_nothing():
-    """The head is inside PART_BOXES but absent from DETACHABLE, so it can be
-    hit forever and never come off. The body must never detach either."""
+    """The head is a boxed part but has no `detach_fraction` authored on its
+    template, so it can be hit forever and never come off. The body must
+    never detach either."""
     ship = _Ship()
     for _ in range(50):
         assert ps.record_hit(ship, None, (0.0, 85.0, 0.0), 500.0) is None
@@ -203,8 +204,8 @@ def test_a_severed_wing_destroys_the_cannon_mounted_on_it():
 def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     """Attribution here is a REST-pose question, and must stay one.
 
-    the structures this compares against are never articulated: PART_BOXES are
-    authored rest-pose, and the voxel field and .dhv SDF stay baked from the
+    the structures this compares against are never articulated: the derived
+    per-part boxes are authored rest-pose, and the voxel field and .dhv SDF stay baked from the
     NIF in rest pose (a carve struck on a moved part is pulled back to rest
     before deposit -- renderer::rest_from_posed_at). Collision spheres DO
     articulate as of the part-aware sim-geometry plan, but nothing in this
@@ -267,8 +268,8 @@ def test_record_hit_takes_MODEL_units_not_ship_units():
 
     # The SAME numbers read as ship units, converted a second time by
     # MODEL_TO_SHIP, land deep inside the hull -- inside the BODY box only
-    # (not ambiguous), which is not in DETACHABLE, so they must attribute
-    # to nothing.
+    # (not ambiguous), whose template authors no detach_fraction, so they
+    # must attribute to nothing.
     other = _Ship()
     ps.record_hit(other, None, (0.8, 0.0, -0.4), 100.0)
     assert ps.damage_on(other, "left wing01") == 0.0, (

@@ -240,7 +240,7 @@ def test_the_live_pose_fixture_point_attributes_as_this_file_assumes():
 
 def test_a_posed_wingtip_attributes_to_its_wing():
     """THE BUG. `_emit_pos` is a POSED body point (host_io.world_to_body of
-    a live impact), but PART_BOXES are authored REST-pose -- so a smoke plume
+    a live impact), but the derived per-part boxes are authored REST-pose -- so a smoke plume
     on the outer half of a deflected wing was never silenced when that wing
     came off. Only inboard plumes, whose posed position still happens to land
     in the rest box, ever were."""

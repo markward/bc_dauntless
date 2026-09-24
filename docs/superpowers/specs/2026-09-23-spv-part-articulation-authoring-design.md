@@ -335,8 +335,14 @@ states, `0.20` detach. Day-one behaviour is therefore unchanged **except** for
 the derived-bounds sharpening of §2.5, which makes the migration verifiable
 rather than a rewrite.
 
-`warp` has no authored value in the migration — the spike never had a warp pose.
-It is authored in the SPV as the first real use of the new surface.
+**`warp` is seeded to the "cruise" angle (45° / −45°), not left at 0.** The
+spike had no 4-state model, only a binary fold — Red down/armed, everything
+else (including warp) up/cold, i.e. 45°/−45° — so a warping ship shipped
+wings-up. Leaving `warp` unauthored in the migration would have SILENTLY
+dropped it to 0° (the Red/rest pose) instead, a real behaviour regression the
+migration is not supposed to introduce (fix round 1, Task 5). Authoring a
+DISTINCT warp pose in the SPV — rather than one that merely happens to equal
+cruise — is still the first real exercise of the new per-state surface.
 
 ---
 

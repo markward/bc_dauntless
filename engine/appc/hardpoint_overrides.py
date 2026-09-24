@@ -245,6 +245,7 @@ def _birdofprey(find):
         left_wing.SetAxis(0.0, 1.0, 0.0)
         left_wing.SetStateAngle("cruise", 45.0)
         left_wing.SetStateAngle("yellow", 45.0)
+        left_wing.SetStateAngle("warp", 45.0)
         left_wing.SetDetachFraction(0.2)
         App.g_kModelPropertyManager.RegisterLocalTemplate(left_wing)
     if hasattr(App, "ArticulatedPartProperty_Create"):
@@ -253,6 +254,7 @@ def _birdofprey(find):
         left_wing01.SetAxis(0.0, 1.0, 0.0)
         left_wing01.SetStateAngle("cruise", -45.0)
         left_wing01.SetStateAngle("yellow", -45.0)
+        left_wing01.SetStateAngle("warp", -45.0)
         left_wing01.SetDetachFraction(0.2)
         App.g_kModelPropertyManager.RegisterLocalTemplate(left_wing01)
 

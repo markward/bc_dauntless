@@ -37,8 +37,9 @@ ATTRIBUTION_MARGIN = 5.0
 # ⚠️ TWO UNIT SYSTEMS MEET IN THIS MODULE. Getting them confused is not a
 # hypothetical: it shipped, and attribution never fired once.
 #
-#   * `articulation.PART_BOXES` and subsystem `GetPosition()` are in SHIP units
-#     (what hardpoint files author: a BoP wingtip is x = 1.008).
+#   * `articulation.part_boxes_for`'s derived boxes and subsystem
+#     `GetPosition()` are in SHIP units (what hardpoint files author: a BoP
+#     wingtip is x = 1.008).
 #   * `host_io.world_to_body` returns the body frame in MODEL units -- it
 #     inverts the instance world matrix, which carries BC_MODEL_SCALE, so the
 #     SAME wingtip comes back as x = 100.8.

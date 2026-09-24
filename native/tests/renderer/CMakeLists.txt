@@ -103,6 +103,7 @@ endif()
 
 target_include_directories(renderer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu  # reuse gl_fixture for offscreen contexts
+    ${CMAKE_SOURCE_DIR}/native/src/assets/src    # model_build.h (model_parts_test.cc)
 )
 
 gtest_discover_tests(renderer_tests

@@ -7077,9 +7077,9 @@ def _sync_ship_articulation(session, ship, iid, *, force_rest=False) -> None:
             # hide for good. See part_severance.sever / part_detach_render.
             continue
         pivot, axis, theta = articulation.rotation_for(part, angle_deg)
-        # The rig is authored in SHIP units (shared with PART_BOXES and
-        # subsystem mounts); the binding works in MODEL units. This is the
-        # ONLY place the two meet.
+        # The rig is authored in SHIP units (shared with articulation's
+        # derived per-part boxes and subsystem mounts); the binding works in
+        # MODEL units. This is the ONLY place the two meet.
         pivot_model = tuple(c / articulation.MODEL_TO_SHIP for c in pivot)
         host_io.set_instance_node_rotation(iid, part.GetName(), pivot_model,
                                            axis, theta)

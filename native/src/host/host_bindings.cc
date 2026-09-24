@@ -2210,9 +2210,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("model_nodes",
           [](scenegraph::InstanceId id) {
-              // SHIP units out: the SPV, PART_BOXES and hardpoint mounts all
-              // work in ship units, and this is the only place the model-unit
-              // geometry meets them. MODEL_TO_SHIP == BC_MODEL_SCALE == 0.01.
+              // SHIP units out: the SPV, articulation.part_boxes_for's derived
+              // per-part boxes and hardpoint mounts all work in ship units,
+              // and this is the only place the model-unit geometry meets
+              // them. MODEL_TO_SHIP == BC_MODEL_SCALE == 0.01.
               constexpr float kModelToShip = 0.01f;
               py::list out;
               auto* inst = g_world.get(id);

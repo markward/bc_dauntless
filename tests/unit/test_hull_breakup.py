@@ -108,7 +108,7 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel(monkeypatch):
     `GetPosition()` against a carved component's REST-pose bounds. It never
     calls `articulation.angle_for_part` at all -- there is nothing to correct
     for, because the structures this compares against are never articulated:
-    PART_BOXES are authored rest-pose, and the voxel field and .dhv SDF stay
+    the derived per-part boxes are authored rest-pose, and the voxel field and .dhv SDF stay
     baked from the NIF in rest pose (a carve struck on a moved part is pulled
     back to rest before deposit -- renderer::rest_from_posed_at). Collision
     spheres DO articulate as of the part-aware sim-geometry plan, but nothing
