@@ -13,6 +13,12 @@ from unittest.mock import patch
 import App
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass_Create
+
+
+# One set for every ship in this file: the interim cross-set weapon guard
+# (system-frames Plan 2 Ruling 5) puts a target outside the shooter's set --
+# or a setless one -- out of tractor range.
+_SHARED_SET = App.SetClass_Create()
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
 
@@ -33,6 +39,7 @@ def _make_emitter(name):
 
 def _player_with_tractor(with_tractor=True):
     ship = ShipClass_Create("Player")
+    ship._containing_set = _SHARED_SET
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
     if with_tractor:
         parent = TractorBeamSystem("Tractors")
@@ -47,6 +54,7 @@ def _player_with_tractor(with_tractor=True):
 
 def _target():
     t = ShipClass_Create("Target")
+    t._containing_set = _SHARED_SET
     t.SetWorldLocation(TGPoint3(0, 50, 0))
     return t
 

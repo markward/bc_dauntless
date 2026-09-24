@@ -24,6 +24,12 @@ from engine.appc.subsystems import (
 )
 from engine.appc.weapon_subsystems import TorpedoAmmoType
 from engine.appc import weapon_config
+import App
+
+# One set for every ship here: the interim cross-set weapon guard
+# (system-frames Plan 2 Ruling 5) puts a setless target out of range, which
+# would make the out-of-range tractor case below pass for the wrong reason.
+_SHARED_SET = App.SetClass_Create()
 
 
 # ── Construction helpers ────────────────────────────────────────────────────
@@ -31,6 +37,7 @@ from engine.appc import weapon_config
 def _bare_ship():
     ship = ShipClass_Create("Player")
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship._containing_set = _SHARED_SET
     return ship
 
 
@@ -105,6 +112,7 @@ def _attach_cloak(ship):
 def _target(*, shields_up=False, pos=(0, 40, 0)):
     t = ShipClass_Create("Enemy")
     t.SetWorldLocation(TGPoint3(*pos))
+    t._containing_set = _SHARED_SET
     if shields_up:
         shields = ShieldSubsystem("Shields")
         shields.TurnOn()

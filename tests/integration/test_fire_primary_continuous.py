@@ -53,6 +53,9 @@ def galaxy_in_red_alert():
 
     _setup_input_chain(ship)
     ship.SetAlertLevel(ShipClass.RED_ALERT)
+    # In a set: the interim cross-set weapon guard (system-frames Plan 2
+    # Ruling 5) puts a target outside the shooter's set out of range.
+    ship._containing_set = App.SetClass_Create()
 
     yield ship
 
@@ -74,6 +77,8 @@ def _target_ahead_of(ship, distance=100.0):
             self._pos = pos
         def GetWorldLocation(self):  return self._pos
         def IsDead(self):            return 0
+        # The shooter's set (interim cross-set weapon guard, Ruling 5).
+        def GetContainingSet(self):  return ship.GetContainingSet()
     p = ship.GetWorldLocation()
     return _Target(TGPoint3(p.x, p.y + distance, p.z))
 

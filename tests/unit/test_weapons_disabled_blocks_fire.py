@@ -6,6 +6,11 @@ from engine.appc.subsystems import (
     PhaserSystem, PhaserBank, WeaponSystem,
     TorpedoSystem, TorpedoTube, PulseWeaponSystem, PulseWeapon,
 )
+import App
+
+# One set for shooter and target: the interim cross-set weapon guard
+# (system-frames Plan 2 Ruling 5) puts a setless target out of phaser range.
+_SHARED_SET = App.SetClass_Create()
 
 
 def _bank(name, max_charge=5.0, charge=5.0, min_firing=3.0,
@@ -35,6 +40,7 @@ def _target(world_x=0.0, world_y=100.0, world_z=0.0):
             from engine.appc.math import TGPoint3
             return TGPoint3(world_x, world_y, world_z)
         def IsDead(self): return False
+        def GetContainingSet(self): return _SHARED_SET
     return _T()
 
 
@@ -43,6 +49,7 @@ def _firing_phaser_system():
     from engine.appc.ships import ShipClass
     ship = ShipClass()
     ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    ship._containing_set = _SHARED_SET
     sys_ = PhaserSystem("Phasers")
     sys_._max_condition = 100.0
     sys_._condition = 100.0
@@ -158,6 +165,7 @@ def test_advance_combat_stops_disabled_system_mid_tick():
     ship, sys_ = _firing_phaser_system()
     from engine.appc.ships import ShipClass_Create
     target = ShipClass_Create("Galaxy")
+    target._containing_set = _SHARED_SET
     target.SetTranslateXYZ(0.0, 100.0, 0.0)  # straight ahead (model-Y forward)
     sys_.StartFiring(target=target)
     # At least one bank firing.
@@ -219,6 +227,7 @@ def test_advance_combat_fires_when_sensors_healthy():
     from engine.appc.ships import ShipClass_Create
     ship, sys_, _ = _firing_ship_with_sensor(condition=100.0)
     target = ShipClass_Create("Galaxy")
+    target._containing_set = _SHARED_SET
     target.SetTranslateXYZ(0.0, 100.0, 0.0)  # 100 GU ahead, within 2000 range
     sys_.StartFiring(target=target)
     assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
@@ -236,6 +245,7 @@ def test_advance_combat_stops_firing_when_sensors_offline():
     from engine.appc.ships import ShipClass_Create
     ship, sys_, sensors = _firing_ship_with_sensor(condition=100.0)
     target = ShipClass_Create("Galaxy")
+    target._containing_set = _SHARED_SET
     target.SetTranslateXYZ(0.0, 100.0, 0.0)
     sys_.StartFiring(target=target)
     assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
@@ -260,6 +270,7 @@ def test_advance_combat_stops_firing_when_weapons_powered_off():
     from engine.appc.ships import ShipClass_Create
     ship, sys_ = _firing_phaser_system()
     target = ShipClass_Create("Galaxy")
+    target._containing_set = _SHARED_SET
     target.SetTranslateXYZ(0.0, 100.0, 0.0)  # straight ahead
 
     # System is ON and healthy — start firing.

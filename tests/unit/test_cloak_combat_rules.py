@@ -13,6 +13,10 @@ checks them), so Dauntless authors them here:
 import App
 
 from engine.appc.ships import ShipClass, ShipClass_Create
+
+# One set for shooter and target: the interim cross-set weapon guard
+# (system-frames Plan 2 Ruling 5) puts a setless target out of phaser range.
+_SHARED_SET = App.SetClass_Create()
 from engine.appc.subsystems import (
     PhaserSystem, PhaserBank, ShieldSubsystem, CloakingSubsystem,
 )
@@ -37,6 +41,7 @@ def _cloak_ship():
     """Firing-ready PhaserSystem ship that also carries a cloaking device."""
     ship = ShipClass()
     ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    ship._containing_set = _SHARED_SET
     sys_ = PhaserSystem("Phasers")
     sys_._max_condition = 100.0
     sys_._condition = 100.0
@@ -55,6 +60,7 @@ def _target():
             from engine.appc.math import TGPoint3
             return TGPoint3(0.0, 100.0, 0.0)
         def IsDead(self): return False
+        def GetContainingSet(self): return _SHARED_SET
     return _T()
 
 

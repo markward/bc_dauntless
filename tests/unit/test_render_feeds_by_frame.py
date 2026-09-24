@@ -378,7 +378,12 @@ def _tractor_pair(shooter_set, shooter_xyz, target_set, target_xyz):
     target_set.AddObjectToSet(target, "Target")
     # Engage at the helpers' in-range positions, THEN place the pair: the
     # weapon's range gate is not what this file tests, the drawn beam is.
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+    # The interim cross-set weapon guard (system-frames Plan 2 Ruling 5)
+    # would refuse a cross-set engagement; bypass it for the same reason.
+    from engine.appc.weapon_subsystems import TractorBeamSystem
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
+         patch.object(TractorBeamSystem, "_can_engage",
+                      lambda self, s, t: True):
         parent.StartFiring(target, None)
     assert parent.IsFiring()
     ship.SetTranslateXYZ(*shooter_xyz)

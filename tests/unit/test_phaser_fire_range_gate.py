@@ -9,12 +9,21 @@ import pytest
 from engine.appc.math import TGPoint3
 from engine.appc.subsystems import PhaserSystem, PHASER_MAX_RANGE_GU
 
+import App
+
+# One set for every double here: the interim cross-set weapon guard
+# (system-frames Plan 2 Ruling 5) puts a target outside the shooter's set --
+# or a setless one -- out of phaser range.
+_SHARED_SET = App.SetClass_Create()
+
 
 class _Target:
     def __init__(self, x, y, z):
         self._loc = TGPoint3(float(x), float(y), float(z))
     def GetWorldLocation(self):
         return self._loc
+    def GetContainingSet(self):
+        return _SHARED_SET
     def IsDead(self):
         return 0
 
@@ -24,6 +33,8 @@ class _Ship:
         self._loc = TGPoint3(float(x), float(y), float(z))
     def GetWorldLocation(self):
         return self._loc
+    def GetContainingSet(self):
+        return _SHARED_SET
     def GetWorldRotation(self):
         # Identity rotation — no rotation needed for these tests.
         class _R:

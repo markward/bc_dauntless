@@ -347,6 +347,10 @@ def _real_tractor_rig():
 
     target = ShipClass_Create("Target")
     target.SetWorldLocation(TGPoint3(0, 50, 0))   # dead ahead, in range, no shields
+    # One set (direct attribute: no ET_ENTERED_SET into `posted`): the interim
+    # cross-set weapon guard (system-frames Plan 2 Ruling 5) puts a setless
+    # target out of tractor range.
+    ship._containing_set = target._containing_set = App.SetClass_Create()
     return ship, sys_, emitter, target
 
 

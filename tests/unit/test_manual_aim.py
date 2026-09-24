@@ -195,6 +195,10 @@ def test_advance_combat_routes_phaser_damage_at_the_manual_offset(monkeypatch):
     sys_.AddChildSubsystem(b)
     ship.SetPhaserSystem(sys_)
     target = _galaxy_target_at(0.0, 100.0, 0.0)
+    # One set: the interim cross-set weapon guard (system-frames Plan 2
+    # Ruling 5) puts a setless target out of range.
+    import App
+    ship._containing_set = target._containing_set = App.SetClass_Create()
     ship.SetTarget(target)
     ship.set_manual_target_offset(TGPoint3(0.0, 0.0, 5.0))
     sys_.StartFiring(target=target, offset=ship.GetTargetOffsetTG())

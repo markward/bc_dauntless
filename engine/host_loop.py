@@ -108,7 +108,7 @@ from engine.appc.subsystems import (
     _resolve_bank_aim_world,
     impulse_online_fraction,
 )
-from engine.appc.weapon_subsystems import _target_undetectable
+from engine.appc.weapon_subsystems import _target_undetectable, _same_set
 
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 
@@ -1018,6 +1018,19 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 # keep firing at it. See engine/appc/sensor_detection.can_detect.
                 if flush_dwell is None and not can_detect(ship, target):
                     bank.StopFiring()
+                    continue
+                # INTERIM cross-set guard (system-frames Plan 2, Ruling 5):
+                # everything below -- _phaser_aim_point, the emitter strip, the
+                # distance falloff, the hit trace -- is a raw set-local compare,
+                # so a bank left firing at a target in ANOTHER set (or a setless
+                # one) would deal damage wherever raw numbers coincide, invisibly
+                # (the beam builder already drops cross-frame beams). No damage,
+                # no feedback; stop the bank, and drop any banked dwell. Stopgap
+                # until frame-aware weapon engagement lands (spec §6 widening
+                # list). Same-set pairs are untouched.
+                if not _same_set(ship, target):
+                    if flush_dwell is None:
+                        bank.StopFiring()
                     continue
                 target_pos, target_sub = _phaser_aim_point(ship, target)
                 emitter_pos = bank._strip_emit_position(target_pos)
