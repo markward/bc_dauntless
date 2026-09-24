@@ -659,78 +659,6 @@ def reset_model_parts() -> None:
     _selected_model_part_box = None
 
 
-# ---------------------------------------------------------------------------
-# Part preview + the mount-editing lock (Task 7) — a hardpoint mount is
-# stored in the model's own UNROTATED frame. Previewing an articulated pose
-# (wings raised) and then dragging a mount would silently write a value
-# that's right for the pose on screen and wrong — by as much as the part's
-# own swing, ~0.9 ship units at a BoP wingtip — for every other pose. The
-# lock makes that mistake impossible instead of relying on a banner being
-# read. See `ArticulatedPartProperty`/`STATES` in engine.appc.articulated_part.
-# ---------------------------------------------------------------------------
-_part_preview_state: Optional[str] = None
-_part_preview_locked: bool = False
-_part_preview_reason: Optional[str] = None
-
-
-def preview_part_state(state: Optional[str], angles: Optional[dict] = None) -> None:
-    """Record which articulation state is being previewed (or None to clear),
-    and whether that preview LOCKS mount editing.
-
-    `angles` is {state_name: degrees} — the angle the previewed state would
-    put on whichever part(s) matter to the caller (the panel passes the
-    largest magnitude across the whole rig). The lock is keyed on exactly
-    `angles.get(state)`: a state whose angle is 0.0 is, by definition, the
-    model's own NIF pose — nothing to be wrong about — so it must never lock,
-    even though a state WAS selected. "Articulated" means a non-zero angle,
-    not "a state is selected"."""
-    global _part_preview_state, _part_preview_locked, _part_preview_reason
-    _part_preview_state = state
-    if state is None:
-        _part_preview_locked = False
-        _part_preview_reason = None
-        return
-    degrees = float((angles or {}).get(state, 0.0))
-    _part_preview_locked = abs(degrees) > 1e-9
-    if _part_preview_locked:
-        _part_preview_reason = (
-            "Mount editing is locked while previewing %r: a hardpoint is "
-            "stored in the model's own unrotated frame, so a mount placed "
-            "or dragged in this pose would be recorded wrong for every "
-            "other pose. Preview the anchor state to unlock." % state)
-    else:
-        _part_preview_reason = None
-
-
-def mount_editing_enabled() -> bool:
-    """False while the previewed state's angles are not all zero — see
-    `preview_part_state`. Subsystem/light/emitter editing must be refused
-    while this is False."""
-    return not _part_preview_locked
-
-
-def mount_editing_reason() -> Optional[str]:
-    """Why mount editing is locked, or None when it isn't. A disabled
-    control with no stated reason reads as a bug, not a safeguard."""
-    return _part_preview_reason
-
-
-def angle_editing_enabled() -> bool:
-    """A part's OWN pivot/axis/angle/detach controls stay editable even
-    while `mount_editing_enabled()` is False — you must be able to tune the
-    very angle you are previewing. Always True; kept as a named predicate
-    (rather than inlining `True` at call sites) so the two locks read as the
-    deliberate pair they are."""
-    return True
-
-
-def part_preview_state() -> Optional[str]:
-    """The state currently being previewed, or None. Distinct from the
-    lock: previewing the anchor state (all angles zero) still reports that
-    state here so the UI can highlight its Preview button, even though it
-    does not lock anything."""
-    return _part_preview_state
-
 
 def part_save_edits(parts: dict) -> List[Tuple[str, str, list]]:
     """Build `(name, "__part__", calls)` writer edits (Task 3's verb) from a
@@ -771,15 +699,6 @@ def part_save_edits(parts: dict) -> List[Tuple[str, str, list]]:
             continue
         edits.append((name, "__part__", calls))
     return edits
-
-
-def reset_part_preview() -> None:
-    """Test-only reset of the module-level preview/lock state -- see
-    tests/conftest.py:_reset_leakable_engine_globals."""
-    global _part_preview_state, _part_preview_locked, _part_preview_reason
-    _part_preview_state = None
-    _part_preview_locked = False
-    _part_preview_reason = None
 
 
 def axis_drag_param(cursor_x, cursor_y, origin, axis, length, cam, viewport):

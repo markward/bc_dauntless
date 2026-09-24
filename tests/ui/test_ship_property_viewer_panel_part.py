@@ -470,9 +470,9 @@ def test_part_target_remains_draggable_while_locked(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # Fix round 1, Finding 2: the 'K' dev keybinding (engine/dev_keybindings.py)
-# writes articulation.set_dev_override directly and NEVER touches
-# ship_property_viewer.preview_part_state -- the lock must read the override
-# live, not a shadow copy only Preview writes.
+# writes articulation.set_dev_override directly -- the lock must read that
+# override live. (A shadow copy in ship_property_viewer, which only Preview
+# would ever have written, has since been deleted outright.)
 # ---------------------------------------------------------------------------
 def test_the_K_dev_override_locks_mount_editing_without_touching_preview(make_panel):
     p, _holder, _target = make_panel
@@ -480,8 +480,8 @@ def test_the_K_dev_override_locks_mount_editing_without_touching_preview(make_pa
     p.dispatch_event(
         'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     from engine.appc import articulation
-    articulation.set_dev_override("cruise")   # exactly what 'K' does -- and
-    # nothing else: ship_property_viewer.preview_part_state was never called.
+    articulation.set_dev_override("cruise")   # exactly what 'K' does, and
+    # nothing else -- no panel event, no Preview click.
     assert p._mount_editing_enabled() is False
     locked, reason = p._mount_lock_state_and_reason()
     assert locked is True

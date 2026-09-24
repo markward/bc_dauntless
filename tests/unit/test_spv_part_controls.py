@@ -4,48 +4,144 @@ the wrong pose.
 The lock is the feature. Its failure mode without one is silent and invisible:
 a wingtip cannon authored ~0.9 ship units out, discovered only in combat. A
 banner relies on the author reading it.
+
+THE LOCK LIVES ON THE PANEL. These tests used to drive a second, module-level
+copy (`ship_property_viewer.preview_part_state` / `mount_editing_enabled`)
+that no production code ever called -- and because nothing wrote its
+`_part_preview_locked` global, `mount_editing_enabled()` answered True
+forever, with five green assertions standing behind it. It has been deleted;
+`test_there_is_no_module_level_twin_of_the_lock` keeps it deleted. The real
+lock is `ShipPropertyViewerPanel._mount_lock_state_and_reason`, computed live
+from `articulation.dev_override()` (written by BOTH the panel's Preview
+buttons and the 'K' dev keybinding) and the rig's current angles.
 """
 import pytest
 
 from engine.ui import ship_property_viewer as spv
+from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
+
+# BOTH wings. The lock reads the largest angle across the WHOLE rig, so a
+# fixture that can only stage one of them cannot express "every angle is
+# zero" -- see test_a_state_whose_angles_are_all_zero_is_not_a_lock.
+_PART_NODES = [
+    {"name": "left wing", "parent": "Scene Root", "candidate": True,
+     "bounds_min": (-1.0, -0.5, -0.5), "bounds_max": (-0.1, 0.5, 0.5)},
+    {"name": "left wing01", "parent": "Scene Root", "candidate": True,
+     "bounds_min": (0.1, -0.5, -0.5), "bounds_max": (1.0, 0.5, 0.5)},
+]
 
 
-def test_previewing_the_anchor_state_leaves_editing_ENABLED():
+class _FakeSubsystem:
+    def GetPosition(self):
+        return (0.0, 0.0, 0.0)
+
+    def GetProperty(self):
+        return None
+
+    def GetNumChildSubsystems(self):
+        return 0
+
+
+class _FakeShip:
+    def GetHull(self):
+        return _FakeSubsystem()
+
+    def GetSensorSubsystem(self):
+        return _FakeSubsystem()
+
+
+@pytest.fixture
+def panel(monkeypatch):
+    """An opened panel whose BoP rig has one articulated part staged at
+    cruise 45 / red 0 -- the real Bird of Prey shape."""
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: [])
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: None)
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "birdofprey")
+    p = ShipPropertyViewerPanel(ship_getter=_FakeShip)
+    p.open()
+    p._model_part_nodes = list(_PART_NODES)
+    p.dispatch_event(
+        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
+    p.dispatch_event(
+        'part/set_angle:{"name":"left wing","state":"red","degrees":0.0}')
+    return p
+
+
+def test_previewing_the_anchor_state_leaves_editing_ENABLED(panel):
     """Red is the BoP's NIF pose, so previewing it changes nothing and must
     not lock anything."""
-    spv.preview_part_state("red", angles={"red": 0.0, "cruise": 45.0})
-    assert spv.mount_editing_enabled() is True
+    panel.dispatch_event("part/preview:red")
+    assert panel._mount_lock_state_and_reason() == (False, None)
 
 
-def test_previewing_an_ARTICULATED_state_DISABLES_mount_editing():
+def test_previewing_an_ARTICULATED_state_DISABLES_mount_editing(panel):
     """THE POINT."""
-    spv.preview_part_state("cruise", angles={"red": 0.0, "cruise": 45.0})
-    assert spv.mount_editing_enabled() is False
+    panel.dispatch_event("part/preview:cruise")
+    assert panel._mount_lock_state_and_reason()[0] is True
+    assert panel._mount_editing_enabled() is False
 
 
-def test_the_lock_names_its_reason():
+def test_the_lock_names_its_reason(panel):
     """A disabled control with no explanation reads as a bug."""
-    spv.preview_part_state("cruise", angles={"red": 0.0, "cruise": 45.0})
-    assert spv.mount_editing_reason()
+    panel.dispatch_event("part/preview:cruise")
+    assert panel._mount_lock_state_and_reason()[1]
 
 
-def test_clearing_the_preview_restores_editing():
-    spv.preview_part_state("cruise", angles={"red": 0.0, "cruise": 45.0})
-    spv.preview_part_state(None, angles={})
-    assert spv.mount_editing_enabled() is True
+def test_clearing_the_preview_restores_editing(panel):
+    panel.dispatch_event("part/preview:cruise")
+    assert panel._mount_editing_enabled() is False
+    panel.dispatch_event("part/preview:")          # deselect -> no forced state
+    assert panel._mount_lock_state_and_reason() == (False, None)
 
 
-def test_angle_editing_stays_available_while_locked():
-    """You must be able to tune the very angle you are looking at."""
-    spv.preview_part_state("cruise", angles={"red": 0.0, "cruise": 45.0})
-    assert spv.angle_editing_enabled() is True
+def test_angle_editing_stays_available_while_locked(panel):
+    """You must be able to tune the very angle you are looking at. The panel
+    states this by what it REFUSES: a part action is not a locked mount
+    action, so it still dispatches."""
+    panel.dispatch_event("part/preview:cruise")
+    assert panel._mount_editing_enabled() is False
+    assert panel._is_locked_mount_action(
+        'part/set_angle:{"name":"left wing","state":"cruise","degrees":30.0}'
+    ) is False
+    assert panel.dispatch_event(
+        'part/set_angle:{"name":"left wing","state":"cruise","degrees":30.0}'
+    ) is True
+    assert panel._pending_part["left wing"]["angles"]["cruise"] == 30.0
 
 
-def test_a_state_whose_angles_are_all_zero_is_not_a_lock():
+def test_a_state_whose_angles_are_all_zero_is_not_a_lock(panel):
     """'Articulated' means a non-zero angle, not 'a state was selected'. A
-    ship whose cruise pose equals its NIF pose must stay editable."""
-    spv.preview_part_state("cruise", angles={"red": 0.0, "cruise": 0.0})
-    assert spv.mount_editing_enabled() is True
+    ship whose cruise pose equals its NIF pose must stay editable.
+
+    Every part of the rig is zeroed, not just the staged one: the lock reads
+    the LARGEST angle across the whole rig, so the second wing's baked 45
+    would keep it on -- which is correct, and is why the module-level twin's
+    caller-supplied `angles` dict was the wrong shape for this question."""
+    from engine.appc import articulation
+    for part in articulation.parts_for_leaf("birdofprey"):
+        panel.dispatch_event(
+            'part/set_angle:{"name":"%s","state":"cruise","degrees":0.0}'
+            % part.GetName())
+    panel.dispatch_event("part/preview:cruise")
+    assert panel._mount_lock_state_and_reason() == (False, None)
+
+
+def test_there_is_no_module_level_twin_of_the_lock():
+    """A second `mount_editing_enabled()` with the obvious name, no
+    production writer and therefore a permanently-open lock is worse than no
+    API at all: the next control wired to it is unguarded, and green tests
+    say otherwise. Keep it deleted."""
+    dead = ("preview_part_state", "mount_editing_enabled",
+            "mount_editing_reason", "part_preview_state",
+            "angle_editing_enabled", "reset_part_preview",
+            "_part_preview_state", "_part_preview_locked",
+            "_part_preview_reason")
+    present = [n for n in dead if hasattr(spv, n)]
+    assert present == [], (
+        "engine.ui.ship_property_viewer still exposes a dead copy of the "
+        "mount lock: %r -- the live one is "
+        "ShipPropertyViewerPanel._mount_lock_state_and_reason" % (present,))
 
 
 def test_part_edits_reach_the_save_list():

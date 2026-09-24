@@ -511,10 +511,9 @@ class ShipPropertyViewerPanel(Panel):
     def _rig_angle_summary(self) -> dict:
         """{state: largest |angle| across every articulated part of the
         current ship's rig, INCLUDING this session's staged/saved edits} --
-        exactly what `ship_property_viewer.preview_part_state`'s lock
-        checks. Staged edits are folded in (not just the baked rig) so
-        re-authoring an angle updates the lock on the very next render, not
-        only after Save."""
+        exactly what `_mount_lock_state_and_reason` below checks. Staged
+        edits are folded in (not just the baked rig) so re-authoring an angle
+        updates the lock on the very next render, not only after Save."""
         from engine.appc.articulated_part import STATES
         from engine.appc import articulation
         ship = self._ship_getter()
@@ -536,13 +535,15 @@ class ShipPropertyViewerPanel(Panel):
         (`articulation.set_dev_override`, already wired to `tick_ship` and
         dev-keybinding 'K') is reused rather than reinvented, so Preview and
         'K' share one source of truth for "which state is the rig frozen
-        at". Does NOT also write `ship_property_viewer.preview_part_state` --
-        `_mount_editing_enabled`/`_mount_lock_state_and_reason` below read
-        `articulation.dev_override()` directly, precisely so 'K' (which only
-        ever wrote the override, never the SPV module's shadow copy of it)
-        locks mount editing exactly the same way a Preview click does,
-        without the two needing to be kept in sync by convention -- see
-        task-7-report.md's Finding 2 fix."""
+        at". There is deliberately NO second, module-level copy of this state
+        to keep in sync: `_mount_editing_enabled` /
+        `_mount_lock_state_and_reason` below read
+        `articulation.dev_override()` directly, so 'K' (which only ever wrote
+        the override) locks mount editing exactly the same way a Preview
+        click does. A shadow copy in `ship_property_viewer` did exist, was
+        never written by anything in production -- so its
+        `mount_editing_enabled()` answered True forever -- and has been
+        deleted; `tests/unit/test_spv_part_controls.py` keeps it deleted."""
         from engine.appc import articulation
         articulation.set_dev_override(state)
         self._last_pushed = None
@@ -2376,10 +2377,10 @@ class ShipPropertyViewerPanel(Panel):
 
     def _is_locked_mount_action(self, action: str) -> bool:
         """True when `action` would select-toward-editing or edit a
-        subsystem/light/emitter mount while `mount_editing_enabled()` is
+        subsystem/light/emitter mount while `_mount_editing_enabled()` is
         False -- see `_dispatch_event_inner`'s call site and the module
-        docstring in `engine.ui.ship_property_viewer` for why this must be a
-        Python-side gate, not only a greyed-out DOM: a stale click, a queued
+        docstring of `tests/unit/test_spv_part_controls.py` for why this must
+        be a Python-side gate, not only a greyed-out DOM: a stale click, a queued
         event, or a JS path that skips the disabled attribute must not slip
         an edit through. Covers ACTION STRINGS only -- the raw mouse-driven
         gizmo drag (`_handle_gizmo_input`) never goes through
