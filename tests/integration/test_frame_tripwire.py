@@ -123,6 +123,49 @@ def test_collisions_never_pair_across_frames(world):
         "the XiEntrades4 ship was struck by Ona 1's planet")
 
 
+def test_collisions_inside_one_system_compare_by_system_position(world):
+    """The guard above cannot see a raw compare INSIDE one system: frames
+    that differ still never pair, but Ona1 and Ona2 share the "Ona" frame, so
+    a consumer that dropped the region anchors (a zero offset between any two
+    sets of one frame) would still pass it. This pins both halves.
+
+    Negative: the Ona1 and Ona2 sentinels sit at IDENTICAL local numbers --
+    the Ona2 one given the opposite velocity so the pair is closing, not at
+    rest -- and must NOT collide: their regions' anchors put them far apart
+    in the system. Positive control: two ships at the same SYSTEM position
+    (Ona2's placed at Ona1's point shifted by the anchor offset) DO."""
+    sets, sentinels, bodies = world
+    ona1, ona2 = sets["Ona1"], sets["Ona2"]
+    s1, s2 = sentinels["Ona1"], sentinels["Ona2"]
+    s2.SetVelocity(TGPoint3(1.0, -0.7, 0.0))       # closing on s1's numbers
+
+    off = frames.offset_between(ona1, ona2)         # Ona2-local -> Ona1-local
+    assert off != (0.0, 0.0, 0.0)
+    far = (ARRIVAL[0] + 40000.0, ARRIVAL[1], ARRIVAL[2])   # clear of both sentinels
+    a = ShipClass()
+    a.SetName("SysA")
+    a.SetTranslateXYZ(*far)
+    a.SetRadius(50.0)
+    a.SetMass(1000.0)
+    a.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    ona1.AddObjectToSet(a, "SysA")
+    b = ShipClass()
+    b.SetName("SysB")
+    b.SetTranslateXYZ(far[0] - off[0] + 60.0, far[1] - off[1], far[2] - off[2])
+    b.SetRadius(50.0)
+    b.SetMass(1000.0)
+    b.SetVelocity(TGPoint3(-1.0, 0.0, 0.0))
+    ona2.AddObjectToSet(b, "SysB")
+
+    hits = collisions.resolve_collisions([s1, s2, a, b])
+    pairs = [{id(x), id(y)} for x, y, _c, _v in hits]
+    assert {id(a), id(b)} in pairs, (
+        "two ships at the same SYSTEM position in Ona1/Ona2 did not collide")
+    assert {id(s1), id(s2)} not in pairs, (
+        "Ona1/Ona2 sentinels at identical LOCAL numbers collided -- a raw "
+        "compare inside one system")
+
+
 # ── (b) splash: reaches nothing outside the dying ship's frame ──────────────
 
 def test_splash_touches_no_ship_outside_its_frame(world, monkeypatch):
