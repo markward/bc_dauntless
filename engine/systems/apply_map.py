@@ -248,4 +248,7 @@ def apply_to_set(pSet, set_name: str) -> bool:
             _place(sun, star_local)
             pSet.AddObjectToSet(sun, star.name)
 
+    # Read by region_hooks.check_realized: the fact that this set was mapped,
+    # rather than a guess from its bodies' radii.
+    pSet._system_map_applied = True
     return True

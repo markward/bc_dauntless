@@ -481,12 +481,13 @@ class _SDKLoader(importlib.abc.Loader):
                     setattr(sys.modules[parent], attr, module)
                 except (AttributeError, TypeError):
                     pass
-        # Second pass: engine-owned ship-data overrides (glow regions, stats
-        # overlays) applied after the SDK module registers its own data. Fires
-        # on reload too, so loadspacehelper's ClearLocalTemplates() -> reload()
-        # window is covered. Keep in sync with the twin in tests/conftest.py.
+        # Second pass: engine-owned overrides -- ship data, and the system map
+        # on region modules -- applied after the SDK module registers its own
+        # data. Fires on reload too, so loadspacehelper's ClearLocalTemplates()
+        # -> reload() window is covered. Keep in sync with the twin in
+        # tests/conftest.py.
         _qual = self.also_register_as or module.__name__
-        if _qual.startswith("ships."):
+        if _qual.startswith(("ships.", "Systems.")):
             try:
                 from engine.appc import sdk_overrides
                 sdk_overrides.on_sdk_module_exec(module, _qual)

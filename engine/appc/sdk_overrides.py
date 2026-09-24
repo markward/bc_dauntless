@@ -2,9 +2,12 @@
 
 Both SDK loaders (`_SDKLoader.exec_module` in tools/mission_harness.py and its
 twin in tests/conftest.py) call `on_sdk_module_exec` after executing any module
-whose qualified name starts with "ships.". This is the second pass of the
-"pre-load then override" scheme: the SDK file runs untouched, then we extend or
-tweak what it produced. sdk/Build/scripts/ stays byte-identical.
+whose qualified name starts with "ships." or "Systems.". This is the second
+pass of the "pre-load then override" scheme: the SDK file runs untouched, then
+we extend or tweak what it produced. sdk/Build/scripts/ stays byte-identical.
+
+Systems.<System>.<Region> -> region_hooks.on_region_module_exec (applies the
+system map after the region's Initialize()).
 
 Timing matters for hardpoints: loadspacehelper.CreateShip does
 ClearLocalTemplates() -> reload(mod) -> mod.LoadPropertySet(...), and
@@ -29,10 +32,18 @@ def on_sdk_module_exec(module, qualname: str) -> None:
 
     ships.Hardpoints.<leaf>  -> hardpoint_overrides.apply(<leaf>)
     ships.<Leaf>             -> ship_overrides.apply(module)
-    Anything else (including the "ships" and "ships.Hardpoints" packages) is a
-    no-op.
+    Systems.<System>.<Region> -> region_hooks.on_region_module_exec(module, qualname)
+        (applies the system map after the region's Initialize())
+    Anything else (including the "ships" and "ships.Hardpoints" packages, the
+    "Systems" and "Systems.<System>" packages, "Systems.Utils", and any
+    "Systems.<System>.<Region>_S" static module) is a no-op.
     """
     parts = qualname.split(".")
+    if parts[0] == "Systems":
+        if len(parts) == 3 and not parts[2].endswith("_S"):
+            from engine.systems import region_hooks
+            _dispatch(region_hooks.on_region_module_exec, module, qualname)
+        return
     if parts[0] != "ships" or len(parts) < 2:
         return
     if parts[1] == "Hardpoints":

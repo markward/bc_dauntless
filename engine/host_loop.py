@@ -4954,6 +4954,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
     nif_to_handle cache (it has no controller here); it loads per object, which
     is correct — the renderer dedupes identical NIFs internally.
     """
+    from engine.systems import region_hooks
+    region_hooks.check_realized(pSet)
+
     r_ = renderer
 
     for ship in _iter_ships_in_set(pSet):
