@@ -3,8 +3,8 @@
 FIELD REPORT: target a ship, order Tactical "Destroy", then warp to another
 system. In the new system the reticle and the tracking camera stay welded to
 the old ship, which the target list cannot even list -- it is still sitting in
-the torn-down source set -- so the player can neither select it nor cycle away
-from it. Without the tactical order the target drops normally.
+the source set, which stands with its render instances torn down -- so the
+player can neither select it nor cycle away from it. Without the tactical order the target drops normally.
 
 THE CHAIN (each step verified by the stack trace this test's first version
 captured):

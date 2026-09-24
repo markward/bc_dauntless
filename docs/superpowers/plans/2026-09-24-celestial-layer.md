@@ -1,3 +1,8 @@
+> **SUPERSEDED** by `docs/superpowers/specs/2026-09-24-system-frames-design.md`.
+> Kept as the record of how the design got here. Several decisions below are
+> reversed there — see its "Decisions this reverses". Do not implement from
+> this document.
+
 # Celestial layer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -179,9 +179,10 @@ def test_a_subject_beyond_the_far_plane_is_treated_as_no_subject():
 def test_a_sensor_fallback_range_contact_is_now_focusable():
     """This test used to assert the OPPOSITE: with far = 5000 GU,
     sensor_detection.FALLBACK_RANGE_GU (30000 GU) was six times the far plane
-    and a lock out there released the lens. The celestial-layer far plane is
-    500,000 GU, so that contact is now comfortably INSIDE the frustum -- it is
-    real, visible geometry, and refusing to focus it would be the bug."""
+    and a lock out there released the lens. The far plane is now
+    engine.cameras.SCENE_FAR_GU, so that contact is comfortably INSIDE the
+    frustum -- it is real, visible geometry, and refusing to focus it would
+    be the bug."""
     from engine.appc import sensor_detection
     assert sensor_detection.FALLBACK_RANGE_GU < dof.MAX_FOCUS_GU
     s = dof.FocusSolver()
