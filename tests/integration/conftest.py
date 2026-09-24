@@ -43,7 +43,16 @@ def _load_galaxy_hardpoint(ship):
 
 
 @pytest.fixture
-def galaxy_red():
+def combat_set():
+    """The one set galaxy_red and every target_ship_at ship stand in: a
+    torpedo, collision or splash only reaches objects in its own set
+    (engine.appc.ship_iter.same_set). Unregistered, so no set walk sees it;
+    a torpedo joins it through its shooter (projectiles._join_source_set)."""
+    return App.SetClass_Create()
+
+
+@pytest.fixture
+def galaxy_red(combat_set):
     """Galaxy at RED alert with hardpoint loaded + input chain wired."""
     from engine.appc import projectiles, hit_vfx
     projectiles._active.clear()
@@ -54,6 +63,7 @@ def galaxy_red():
     _setup_input_chain(ship)
     ship.SetAlertLevel(ShipClass.RED_ALERT)
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship._containing_set = combat_set
 
     yield ship
 
@@ -70,7 +80,7 @@ def galaxy_red():
 
 
 @pytest.fixture
-def target_ship_at():
+def target_ship_at(combat_set):
     """Factory: returns a function that creates a stub target ship at a
     given world position with hull + optional shields.
     """
@@ -81,6 +91,7 @@ def target_ship_at():
         hull.SetMaxCondition(hull_max)
         tgt._hull = hull
         tgt.SetWorldLocation(TGPoint3(x, y, z))
+        tgt._containing_set = combat_set
         tgt._radius = radius
         # Provide GetRadius accessor (some code paths read it).
         type(tgt).GetRadius = lambda self: self._radius

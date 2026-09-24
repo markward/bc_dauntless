@@ -6,6 +6,8 @@ Since pick_target_subsystem was removed (splash attribution), update_all
 now returns 3-tuples: (torpedo, ship, hit_point).
 """
 import pytest
+
+from tests.helpers.one_set import InSet, one_set_for
 from engine.appc.math import TGPoint3
 from engine.appc.projectiles import Torpedo, register, update_all, _active
 
@@ -29,7 +31,7 @@ def _torp_at(x, y, z, vx, vy, vz, ttl=30.0, age=0.0, src=None):
     return t
 
 
-class _FakeShip:
+class _FakeShip(InSet):
     def __init__(self, x, y, z, radius=10.0, dead=False):
         self._loc = TGPoint3(x, y, z)
         self._r = radius
@@ -74,3 +76,10 @@ def test_update_all_hit_point_is_tgpoint_not_tuple():
         f"hit_point must be a TGPoint3, got {type(hit_point).__name__}"
     assert isinstance(hit_point.x, float), \
         f"hit_point.x must be float, got {type(hit_point.x).__name__}"
+
+
+@pytest.fixture(autouse=True)
+def _doubles_share_one_set(monkeypatch):
+    """A torpedo only meets ships in its own set (ship_iter.same_set); the
+    doubles all stand in one, and a torpedo joins its shooter's."""
+    one_set_for(_FakeShip, monkeypatch=monkeypatch)

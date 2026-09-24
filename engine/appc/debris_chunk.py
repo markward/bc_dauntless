@@ -70,6 +70,11 @@ class DebrisChunk:
         # takes to clear. Emptied by tick() once the pair is clear, so a
         # later re-contact counts.
         self._collision_disabled_ids = frozenset()
+        # The set the piece's coordinates are expressed in: its parent's, at
+        # the moment of severance. Collision pairing is gated on same-set
+        # membership (ship_iter.same_set), so a chunk with no set would strike
+        # nothing. Stamped by spawn(); None for a parent in no set.
+        self._containing_set = None
 
     @property
     def origin_ship(self):
@@ -87,6 +92,7 @@ class DebrisChunk:
     def IsImmobile(self): return False
     def GetObjID(self): return self._obj_id
     def GetHull(self): return None   # no hull: apply_hit is a no-op on us
+    def GetContainingSet(self): return self._containing_set
 
     def _mesh_origin(self):
         """Where the shared model's origin goes so the piece's centroid
@@ -156,6 +162,9 @@ def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
     # carry no ObjID at all.
     if getattr(type(origin_ship), "GetObjID", None) is not None:
         chunk._collision_disabled_ids = frozenset((origin_ship.GetObjID(),))
+    from engine.core.ids import implements
+    if implements(origin_ship, "GetContainingSet"):
+        chunk._containing_set = origin_ship.GetContainingSet()
     _live.append(chunk)
     return chunk
 

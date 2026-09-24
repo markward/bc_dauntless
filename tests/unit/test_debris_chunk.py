@@ -3,6 +3,7 @@ import math
 import pytest
 
 from engine.appc.math import TGPoint3, TGMatrix3
+from tests.helpers.one_set import share_one_set
 
 
 class _FakeRenderer:
@@ -214,6 +215,7 @@ def _real_parent():
     p.SetRadius(3.0)
     p.SetMass(120.0)
     p.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    share_one_set(p)        # its chunks inherit it; collisions are same-set only
     return p
 
 

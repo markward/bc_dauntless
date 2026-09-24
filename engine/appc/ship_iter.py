@@ -29,6 +29,36 @@ def iter_set_objects(pSet) -> Iterable:
         yield obj
 
 
+def same_set(a, b) -> bool:
+    """True iff `a` and `b` are in the SAME set (``GetContainingSet()``
+    identity). An object in no set -- or with no containing-set surface at all
+    -- interacts with nothing, not even another setless object: its position
+    belongs to no frame, so a distance to it means nothing.
+
+    ⚠️ PLAN-1 STOPGAP. Every set has its own set-local origin, and since warp
+    departure stopped deleting the set you left, sets of unrelated star systems
+    coexist with numerically OVERLAPPING coordinates. Collision pairing
+    (collisions.resolve_collisions), splash damage (splash_damage.apply) and
+    torpedo hit/homing (projectiles.update_all / _guide) all compared raw
+    positions across every set; this is the one gate they share. Plan 2's
+    system_position accessor (docs/superpowers/specs/
+    2026-09-24-system-frames-design.md §1/§6) replaces it with a real
+    same-frame test. For two sets of the SAME system (cross-region pairs) this
+    gate is deliberately conservative -- they never interact, which is what
+    the engine did before any set outlived a warp -- and widening that is
+    Plan 2's job, not this function's.
+
+    The surface is probed with `implements`, not hasattr: TGObject.__getattr__
+    vends a truthy _Stub for any unknown name, and a _Stub "set" would compare
+    unequal to everything anyway but only by accident."""
+    from engine.core.ids import implements
+    if not (implements(a, "GetContainingSet")
+            and implements(b, "GetContainingSet")):
+        return False
+    set_a = a.GetContainingSet()
+    return set_a is not None and set_a is b.GetContainingSet()
+
+
 def active_set():
     """The single space set that is currently 'live' for the WORLD SCENE — the
     one the player ship occupies. BC renders exactly one space set at a time;

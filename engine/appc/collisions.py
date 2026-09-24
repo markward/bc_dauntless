@@ -665,6 +665,7 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     hoisting the reads to a single batch changes only the number of boundary
     crossings, not the values observed."""
     from engine.appc.transform_store import get_store
+    from engine.appc.ship_iter import same_set
     objects = list(objects)
     # Only store-backed objects (ObjectClass allocates `_xform` in __init__)
     # go through the bulk fetch. A DebrisChunk keeps its own TGPoint3 and
@@ -681,6 +682,11 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
             a_obj, b_obj = bodies[i].obj, bodies[k].obj
+            # Different sets are different coordinate frames: a planet left
+            # standing in the set you warped out of is not where your ship is,
+            # whatever the numbers say. Plan-1 stopgap -- see same_set.
+            if not same_set(a_obj, b_obj):
+                continue
             # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
             # either side disabling the other exempts the pair.
             if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)

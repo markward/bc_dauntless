@@ -18,6 +18,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.projectiles import Torpedo, register
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
+from tests.helpers.one_set import share_one_set
 
 # Galaxy AABB half-extents x BC_MODEL_SCALE, as _cache_shield_hull_box leaves
 # them. Values from native model_aabb (see combat._shield_face_from_hit_point).
@@ -65,14 +66,16 @@ def _place_one_step_outside_the_bubble(t, dt):
     t.SetTranslateXYZ(0.0, GALAXY_HALF[1] * SQRT3 + 0.5 * step, 0.0)
 
 
-def _torpedo_inbound(src, speed_gu_s=55.0):
-    """A photon torpedo closing on the bow along -Y."""
+def _torpedo_inbound(src, tgt, speed_gu_s=55.0):
+    """A photon torpedo closing on the bow along -Y. Shooter, target and
+    torpedo share one set: a torpedo only strikes a ship in its own set."""
     t = Torpedo()
     t._damage = 500.0
     t._damage_radius_factor = 0.13
     t._source_ship = src
     t._velocity = TGPoint3(0.0, -speed_gu_s, 0.0)
     register(t)
+    share_one_set(t, src, tgt)
     return t
 
 
@@ -94,7 +97,7 @@ def _run_tick(ships, dt, ship_instances, monkeypatch):
 
 def test_torpedo_absorbed_by_shields_fires_a_shield_flash(monkeypatch):
     src, tgt = _shooter(), _target()
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     _place_one_step_outside_the_bubble(t, dt)
 
@@ -106,7 +109,7 @@ def test_torpedo_absorbed_by_shields_fires_a_shield_flash(monkeypatch):
 
 def test_torpedo_shield_flash_is_anchored_on_the_bubble(monkeypatch):
     src, tgt = _shooter(), _target()
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     _place_one_step_outside_the_bubble(t, dt)
 
@@ -137,7 +140,7 @@ def test_partial_absorption_fires_both_the_flash_and_the_hull_impact(monkeypatch
     # holds 200, so it absorbs 200 and the overdraw joins the bleed: 300 leaks.
     tgt.GetShields().SetMaxShields(ShieldSubsystem.FRONT_SHIELDS, 1000.0)
     tgt.GetShields().SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 200.0)
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     _place_one_step_outside_the_bubble(t, dt)
 
@@ -159,7 +162,7 @@ def test_zero_absorption_does_not_flash(monkeypatch):
     flash — only the hull impact."""
     src, tgt = _shooter(), _target()
     tgt.GetShields().SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 0.0)
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     _place_one_step_outside_the_bubble(t, dt)
 
@@ -185,7 +188,7 @@ def test_zero_absorption_does_not_flash(monkeypatch):
 def test_torpedo_detonates_on_the_bubble_not_the_bounding_sphere():
     from engine.appc.projectiles import update_all
     src, tgt = _shooter(), _target()
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     step = abs(t._velocity.y) * dt
     bubble_y = GALAXY_HALF[1] * SQRT3
@@ -205,7 +208,7 @@ def test_torpedo_with_shields_down_still_uses_the_hull_path():
     from engine.appc.projectiles import update_all
     src, tgt = _shooter(), _target()
     tgt.GetShields().TurnOff()
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     step = abs(t._velocity.y) * dt
     bubble_y = GALAXY_HALF[1] * SQRT3
@@ -223,7 +226,7 @@ def test_dorsal_torpedo_reaches_the_thin_axis_of_the_bubble():
     (4.03), so the old rule detonated the torpedo 2.81 GU short of the shield."""
     from engine.appc.projectiles import update_all
     src, tgt = _shooter(), _target()
-    t = _torpedo_inbound(src)
+    t = _torpedo_inbound(src, tgt)
     dt = 1.0 / 60.0
     speed = abs(t._velocity.y)
     t._velocity = TGPoint3(0.0, 0.0, -speed)          # straight down onto the dorsal

@@ -34,11 +34,15 @@ def apply(ship, ship_instances=None) -> None:
         return
 
     from engine.appc import combat
-    from engine.appc.ship_iter import iter_ships
+    from engine.appc.ship_iter import iter_ships, same_set
 
     centre = ship.GetWorldLocation()
     for target in list(iter_ships()):
         if target is ship:
+            continue
+        # A ship in another set is in another coordinate frame (Plan-1
+        # stopgap -- see ship_iter.same_set).
+        if not same_set(ship, target):
             continue
         loc = target.GetWorldLocation()
         dx = centre.x - loc.x

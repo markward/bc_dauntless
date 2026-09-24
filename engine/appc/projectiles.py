@@ -438,6 +438,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                                     shield_bubble_entry, shields_block,
                                     bubble_bound_radius as _bubble_bound_radius)
     from engine.appc.math import TGPoint3
+    from engine.appc.ship_iter import same_set
 
     hits: list[tuple] = []
     expired: list[Torpedo] = []
@@ -526,6 +527,12 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             ddz = sz - prev_pos.z
             reach = bound + seg_len
             if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
+                continue
+            # Numerically near is not near when the ship is in another set:
+            # each set has its own origin (Plan-1 stopgap -- see
+            # ship_iter.same_set). After the broadphase so the far majority
+            # of pairs never pay for it.
+            if not same_set(t, ship):
                 continue
 
             # The SHIELD BUBBLE is tested first, exactly as BC's projectile
@@ -643,6 +650,12 @@ def _guide(torpedo, dt: float) -> None:
     linearly-decaying turn budget → clamped rotation, speed preserved."""
     target = torpedo._target_ship
     if target is None:
+        return
+    # A target in another set is in another coordinate frame: steering at its
+    # numbers would home on an empty point in ours. Fly ballistic, as for a
+    # dead target (Plan-1 stopgap -- see ship_iter.same_set).
+    from engine.appc.ship_iter import same_set
+    if not same_set(torpedo, target):
         return
     if hasattr(target, "IsDead") and target.IsDead():
         return                       # ballistic; NOT the cloak cache

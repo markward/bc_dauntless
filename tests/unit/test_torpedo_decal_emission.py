@@ -11,6 +11,8 @@ the torpedo path must do the same. These tests pin that contract.
 """
 import pytest
 
+from tests.helpers.one_set import InSet, one_set_for
+
 from engine import host_io
 from engine.appc.math import TGPoint3
 from engine.appc.projectiles import Torpedo, register, update_all, _active
@@ -23,7 +25,7 @@ def clear_registry():
     _active.clear()
 
 
-class _FakeShip:
+class _FakeShip(InSet):
     """Minimal victim sufficient for update_all collision + apply_hit routing.
 
     Shields are absent (offline) so post-shield damage reaches the hull and
@@ -136,3 +138,10 @@ def test_torpedo_path_emits_decal_end_to_end(make_host):
     call = host.decal_calls[0]
     assert call["instance_id"] == "IID"
     assert call["weapon_class"] == dd.WEAPON_CLASS_SCORCH
+
+
+@pytest.fixture(autouse=True)
+def _doubles_share_one_set(monkeypatch):
+    """A torpedo only meets ships in its own set (ship_iter.same_set); the
+    doubles all stand in one, and a torpedo joins its shooter's."""
+    one_set_for(_FakeShip, monkeypatch=monkeypatch)

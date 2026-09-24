@@ -27,9 +27,11 @@ def clear_torpedo_registry():
 
 def test_torpedo_hit_uses_mesh_trace_point(monkeypatch):
     from tests.unit.test_torpedo_advance import _FakeShip
+    from tests.helpers.one_set import share_one_set
 
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
+    share_one_set(src, target)   # the torpedo joins src's set on register
     t = Torpedo()
     t.SetTranslateXYZ(0, 0, 0)
     t._velocity = TGPoint3(10, 0, 0)
