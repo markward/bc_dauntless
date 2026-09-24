@@ -81,12 +81,44 @@ def test_staged_points_carry_mission_content_with_its_source():
 
 def test_staged_points_exclude_a_bodys_own_placement_point():
     """"Planet", "Moon1" and "Moon2" are where Prendel 3's bodies are placed --
-    the bodies' own points, not content -- as is the far "Sun" waypoint. A
-    region-module waypoint that is not a body's point (Player Start) stays."""
+    the bodies' own points, not content -- as is the far "Sun" waypoint."""
     own = {name for label, name, _ in _staged("Prendel", "Prendel3")
            if label == "Systems/Prendel/Prendel3"}
-    assert "Player Start" in own
     assert not own & {"Planet", "Moon1", "Moon2", "Sun"}
+
+
+def test_a_light_placement_is_not_staged_content():
+    """Lights carry a direction, not a place anything is put (Ruling 5).
+    Albirea2 builds "Ambient Light" and "Directional Light" at the origin;
+    Prendel3 builds "Light 1"."""
+    names = {name for _l, name, _xyz in _staged("Albirea", "Albirea2")}
+    assert not names & {"Ambient Light", "Directional Light"}
+    assert "Light 1" not in {name for _l, name, _xyz in _staged("Prendel", "Prendel3")}
+
+
+def test_a_region_without_player_start_arrives_at_the_origin():
+    """Albirea2 defines no "Player Start"; the player arrives at the set
+    origin, so that is staged explicitly as the arrival point."""
+    arrival = [p for p in _staged("Albirea", "Albirea2") if p[0] == "arrival"]
+    assert arrival == [("arrival", "origin", (0.0, 0.0, 0.0))]
+
+
+def test_a_region_with_player_start_arrives_there(tmp_path, monkeypatch):
+    """A region module that defines "Player Start" contributes it (and only
+    it) as the arrival point -- even though a light sits elsewhere."""
+    system = tmp_path / "Systems" / "Synth"
+    system.mkdir(parents=True)
+    (system / "Synth.py").write_text('CreateSystemMenu("Synth", "Systems.Synth.Synth1")\n')
+    (system / "Synth1.py").write_text(
+        'def LoadPlacements(sSetName):\n'
+        '\tkThis = App.Waypoint_Create("Player Start", sSetName, None)\n'
+        '\tkThis.SetTranslateXYZ(10.0, 20.0, 30.0)\n'
+        '\tkThis = App.LightPlacement_Create("Directional Light", sSetName, None)\n'
+        '\tkThis.SetTranslateXYZ(5.0, 5.0, 5.0)\n')
+    monkeypatch.setattr(survey, "_systems_dir", lambda: tmp_path / "Systems")
+    monkeypatch.setattr(survey, "_missions_dir", lambda: tmp_path / "Maelstrom")
+    staged = survey_system("Synth").regions[0].staged_points
+    assert staged == [("arrival", "Player Start", (10.0, 20.0, 30.0))]
 
 
 def test_content_extent_and_staged_points_come_from_one_scan():

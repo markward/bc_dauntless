@@ -29,6 +29,8 @@ _CREATE_PLACEMENT = re.compile(r'App\.(\w+)_Create\("([^"]+)",\s*("([^"]+)"|\w+)
 _TRANSLATE = re.compile(r'SetTranslateXYZ\(([^)]*)\)')
 _BODY_CREATE = re.compile(r'(\w+)\s*=\s*App\.(Planet|Sun)_Create\((.*)\)\s*$')
 _LOAD_PLACEMENTS_DEFAULT = re.compile(r'def LoadPlacements\(\s*sSetName\s*=\s*"([^"]+)"')
+# Lights carry a direction, not a place anything is put -- never staged content.
+_LIGHT_CREATE = re.compile(r'App\.LightPlacement_Create\("([^"]+)"')
 _TRAILING_INT = re.compile(r'(\d+)$')
 _META_NEBULA_CALL = re.compile(r'App\.MetaNebula_Create\((.*?)\)', re.DOTALL)
 _ADD_NEBULA_SPHERE = re.compile(r'AddNebulaSphere\((.*?)\)', re.DOTALL)
@@ -76,9 +78,10 @@ class SurveyedRegion:
     # tree: Vesuvi1 is the only one across all 32 systems.
     menu_listed: bool = True
     # [(source label, waypoint name, set-local xyz)] -- every waypoint content
-    # is staged at in this set: the region module's own LoadPlacements except
-    # the points its bodies are placed at, plus every mission placement
-    # attributed to this set. The label is the source file relative to the
+    # is staged at in this set: the arrival point (label "arrival": the region's
+    # "Player Start", else "origin" (0, 0, 0)), the region module's other
+    # LoadPlacements except lights and the points its bodies are placed at, plus
+    # every non-light mission placement attributed to this set. The label is the source file relative to the
     # SDK scripts root, without ".py" ("Maelstrom/Episode5/E5M2/Prendel3_P").
     # The layout keeps every body clear of these (LayoutTuning.staged_clearance_gu).
     staged_points: list = field(default_factory=list)
@@ -360,6 +363,8 @@ def _mission_staged_points(set_name: str) -> list:
             if m:
                 literal = m.group(4)
                 target = literal if literal else (default or (set_name if filename_hint else None))
+                if m.group(1) == "LightPlacement":
+                    target = None  # a light is not staged content
                 pending, pending_name = target, m.group(2)
                 continue
             m = _TRANSLATE.search(line)
@@ -414,8 +419,16 @@ def survey_system(system: str) -> SurveyedSystem:
                 continue
             extent = max(extent, math.sqrt(sum(c * c for c in xyz)))
         own_label = f"Systems/{system}/{stem}"
-        staged = [(own_label, name, xyz) for name, xyz in placements.items()
-                  if not _is_body_point(xyz, bodies)]
+        lights = set(_LIGHT_CREATE.findall("\n".join(_uncommented(text))))
+        # The arrival point is staged explicitly: where the player enters the
+        # set -- its "Player Start", or the set origin when it defines none.
+        if "Player Start" in placements:
+            staged = [("arrival", "Player Start", placements["Player Start"])]
+        else:
+            staged = [("arrival", "origin", (0.0, 0.0, 0.0))]
+        staged += [(own_label, name, xyz) for name, xyz in placements.items()
+                   if name != "Player Start" and name not in lights
+                   and not _is_body_point(xyz, bodies)]
         mission_staged = _mission_staged_points(stem)
         staged += mission_staged
         for _label, _name, xyz in mission_staged:
