@@ -8200,10 +8200,18 @@ def run(mission_name: Optional[str] = None,
             def _spv_player():
                 sess = controller.session
                 return sess.player if sess is not None else None
+            def _spv_player_iid():
+                # Model Parts pane: the player's renderer InstanceId, for
+                # host_io.model_nodes(iid). None between missions/headless.
+                sess = controller.session
+                if sess is None or sess.player is None:
+                    return None
+                return sess.ship_instances.get(sess.player)
             ship_property_viewer = ShipPropertyViewerPanel(
                 ship_getter=_spv_player,
                 on_saved=lambda ship, specs: refresh_ship_emitters(
                     controller.session, ship, specs),
+                iid_getter=_spv_player_iid,
             )
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,

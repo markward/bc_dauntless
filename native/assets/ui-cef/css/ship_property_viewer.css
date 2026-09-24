@@ -245,6 +245,77 @@
     transition: width 120ms linear;
 }
 
+/* Model Parts pane (Task 6): collapsed by default, beneath #spv-syslist.
+   Clicking #spv-parts-header toggles the .expanded class (dauntlessEvent
+   'ship-property-viewer/model_parts/toggle'), which reveals #spv-parts-body
+   at 25% of the viewport height -- Mark's spec, "25% of the vertical
+   space". Same visual language as #spv-syslist. */
+#spv-parts {
+    flex: 0 0 auto;
+    pointer-events: auto;
+    font-weight: 600;
+    -webkit-font-smoothing: antialiased;
+}
+
+#spv-parts-header {
+    background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
+    color: rgb(0, 0, 0);
+    padding: 3px 14px 3px 18px;
+    border-top-right-radius: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#spv-parts-body {
+    display: none;
+    overflow-y: auto;
+    background: rgba(10, 10, 16, 0.97);
+    border-left: 4px solid rgb(216, 94, 86);
+    padding: 6px 0;
+}
+
+#spv-parts.expanded #spv-parts-body {
+    display: block;
+    height: 25vh;
+}
+
+.spv-part-row {
+    display: flex;
+    align-items: center;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: rgba(235, 225, 255, 0.85);
+}
+
+.spv-part-row:hover {
+    background: rgba(255, 255, 175, 0.10);
+}
+
+.spv-part-row--chosen {
+    background: rgba(255, 214, 90, 0.25);
+    color: rgb(235, 225, 255);
+}
+
+.spv-part-row__name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Derived-bounds readout for the selected part -- what severance will
+   actually test against (see model_part_rows / select_model_part). */
+.spv-part-box {
+    padding: 6px 10px 3px 10px;
+    font-size: 11px;
+    color: rgba(200, 220, 255, 0.75);
+    letter-spacing: 0.03em;
+}
+
 /* Eye glyph: open = targetable, shut = untargetable (dimmed). */
 .spv-sys-row__eye {
     flex: 0 0 auto;

@@ -282,6 +282,18 @@
           <div class="spv-syslist__header">Subsystems</div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
         </div>
+        <!-- Model Parts pane: collapsed by default, 25% of the vertical when
+             the header is clicked open (dauntlessEvent
+             'ship-property-viewer/model_parts/toggle'). Lists the ship's
+             mesh part CANDIDATES so a part can later be marked detachable
+             and hinged. See ship_property_viewer.model_part_rows. -->
+        <div id="spv-parts">
+          <div id="spv-parts-header"
+               onclick="dauntlessEvent('ship-property-viewer/model_parts/toggle')">
+            Model Parts
+          </div>
+          <div id="spv-parts-body"></div>
+        </div>
       </div>
       <!-- Action tools (undo / pipette / mirror). Momentary buttons stacked
            above #spv-transform-tools. Undo/Mirror disable without a target;

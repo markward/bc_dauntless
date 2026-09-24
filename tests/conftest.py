@@ -896,6 +896,14 @@ def _reset_leakable_engine_globals():
         _articulation.reset()
     except Exception:
         pass
+    # SPV Model Parts pane: expanded/selection are module-level (mirrors the
+    # panel's own session state) so one test's selection would otherwise
+    # decide whether the next test's pane starts expanded/selected.
+    try:
+        from engine.ui import ship_property_viewer as _spv
+        _spv.reset_model_parts()
+    except Exception:
+        pass
     try:
         import App
     except Exception:

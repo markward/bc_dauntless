@@ -18,6 +18,7 @@ from engine.ui.ship_property_viewer import (
     build_descriptors, OrbitCamera, pick_pin, region_spec_to_calls,
     emitter_spec_to_calls,
 )
+from engine.ui import ship_property_viewer as _spv
 
 # Fraction of the view height the ship's bounding sphere should fill when the
 # viewer first frames the ship (1.0 = sphere touches top/bottom edges).
@@ -90,10 +91,17 @@ class ShipPropertyViewerPanel(Panel):
     _NO_UNDO_ACTIONS = ("undo", "save", "cancel")
 
     def __init__(self, ship_getter: Callable[[], object],
-                 on_saved: Optional[Callable[[object, dict], None]] = None
+                 on_saved: Optional[Callable[[object, dict], None]] = None,
+                 iid_getter: Optional[Callable[[], Optional[int]]] = None,
                  ) -> None:
         super().__init__()
         self._ship_getter = ship_getter
+        # Resolves the player ship's renderer InstanceId (session.ship_
+        # instances[ship]) for host_io.model_nodes(iid) -- the Model Parts
+        # pane's node list. Optional: a caller that never wires it (or a test)
+        # just sees an empty pane. Construction-time config, not session
+        # state: never reset in open()/close().
+        self._iid_getter = iid_getter
         # Optional caller hook invoked after a successful Save with
         # (ship, specs_by_sub_id) — see the "save" action handler below.
         # Construction-time config, not session state: never reset in
@@ -101,6 +109,12 @@ class ShipPropertyViewerPanel(Panel):
         self._on_saved = on_saved
         self._visible = False
         self._descriptors: List[dict] = []
+        # Model Parts pane: the ship's mesh nodes (host_io.model_nodes),
+        # snapshotted once at open() like _descriptors (the mesh doesn't
+        # change mid-session). "show all" defaults off every open — the
+        # pane always starts hiding exporter plumbing.
+        self._model_part_nodes: List[dict] = []
+        self._model_parts_show_all: bool = False
         self.selected_index: Optional[int] = None
         # Active transform-gizmo tool: None|"transform"|"rotate"|"scale".
         # Mutually exclusive radio, reset every open/close.
@@ -241,6 +255,8 @@ class ShipPropertyViewerPanel(Panel):
         self._last_pushed = None
         ship = self._ship_getter()
         self._descriptors = build_descriptors(ship) if ship is not None else []
+        self._model_part_nodes = self._fetch_model_part_nodes()
+        self._model_parts_show_all = False
         self.selected_index = None
         self._selected_light_index = None
         self._selected_emitter = None
@@ -298,6 +314,8 @@ class ShipPropertyViewerPanel(Panel):
     def close(self) -> None:
         self.visible = False
         self._descriptors = []
+        self._model_part_nodes = []
+        self._model_parts_show_all = False
         self.selected_index = None
         self._selected_light_index = None
         self._selected_emitter = None
@@ -381,6 +399,25 @@ class ShipPropertyViewerPanel(Panel):
 
     def descriptors(self) -> List[dict]:
         return self._descriptors
+
+    def _fetch_model_part_nodes(self) -> List[dict]:
+        """host_io.model_nodes(iid) for the current ship, or [] when the ship
+        or its renderer instance id can't be resolved (headless, no
+        iid_getter wired, or between missions) -- the Model Parts pane just
+        shows no rows in that case rather than raising."""
+        if self._iid_getter is None:
+            return []
+        try:
+            iid = self._iid_getter()
+        except Exception:
+            return []
+        if iid is None:
+            return []
+        from engine import host_io
+        try:
+            return host_io.model_nodes(iid)
+        except Exception:
+            return []
 
     def _effective_radius(self, index: int, baked):
         """Radius to display for a descriptor: a staged (unsaved) edit wins,
@@ -1494,6 +1531,8 @@ class ShipPropertyViewerPanel(Panel):
                     self.active_tool,
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
+                    _spv.model_parts_expanded(), _spv.selected_model_part(),
+                    self._model_parts_show_all,
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
                     tuple(sorted(self._pending_emitter)),  # subsystem indices with a staged emitter list
@@ -1545,6 +1584,7 @@ class ShipPropertyViewerPanel(Panel):
                                  | set(self._pending_pos) | set(self._pending_emitter)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
+            "model_parts": self._model_parts_payload(),
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
@@ -1633,6 +1673,22 @@ class ShipPropertyViewerPanel(Panel):
             if row["children"]:
                 row["expanded"] = row["name"] in self._expanded_groups
         return rows
+
+    def _model_parts_payload(self) -> dict:
+        """Data for the Model Parts pane beneath the subsystem tree:
+        {"expanded", "selected", "selected_box", "rows"}. `rows` lists part
+        CANDIDATES only -- see ship_property_viewer.model_part_rows; no
+        show-all toggle is wired to the UI yet (not in this task's action
+        list). Selection is module-level state on ship_property_viewer
+        (survives a re-render, cleared by model_part_rows if the selected
+        name drops out of the current node list)."""
+        return {
+            "expanded": _spv.model_parts_expanded(),
+            "selected": _spv.selected_model_part(),
+            "selected_box": _spv.selected_part_box(),
+            "rows": _spv.model_part_rows(self._model_part_nodes,
+                                         show_all=self._model_parts_show_all),
+        }
 
     def pending_light_specs(self) -> dict:
         """{subsystem_name: spec|None} overriding the baked overlay. A spec draws
@@ -2034,6 +2090,15 @@ class ShipPropertyViewerPanel(Panel):
         if action == "toggle_hull_texture":
             self.show_hull_texture = not self.show_hull_texture
             self._last_pushed = None  # re-push so the button state updates
+            return True
+        if action == "model_parts/toggle":
+            _spv.toggle_model_parts_expanded()
+            self._last_pushed = None  # re-push so the pane's expanded state updates
+            return True
+        if action.startswith("model_parts/select:"):
+            name = action.split(":", 1)[1]
+            _spv.select_model_part(name, self._model_part_nodes)
+            self._last_pushed = None
             return True
         if action.startswith("select_pin:"):
             try:

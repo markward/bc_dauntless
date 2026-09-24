@@ -164,6 +164,8 @@ window.setShipPropertyViewer = function (data) {
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null,
         data.selected_emitter || null);
 
+    renderSPVModelParts(data.model_parts || null);
+
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
     var bar = document.getElementById('spv-savebar');
@@ -849,6 +851,48 @@ function renderSPVSubsystemList(rows, selectedIndex, selectedLight, selectedEmit
         ? (selectedEmitter[0] + '/' + selectedEmitter[1]) : null;
     var out = [];
     spvRenderRows(rows, out, selectedIndex, selectedLight, selectedEmitterKey, 0);
+    body.innerHTML = out.join('');
+}
+
+// Model Parts pane (beneath the subsystem list): collapsed header/body,
+// 25% of the vertical space when the header has been clicked open. Lists
+// the ship's mesh part CANDIDATES (engine.ui.ship_property_viewer.
+// model_part_rows -- Scene Root's children only, exporter plumbing like
+// __NDL_MultiMtl_Node hidden by default). Flat list, no accordion nesting
+// -- mirrors spvRowHtml's row idiom but a part row has no children here.
+function renderSPVModelParts(modelParts) {
+    var pane = document.getElementById('spv-parts');
+    var body = document.getElementById('spv-parts-body');
+    if (!pane || !body) return;
+    var data = modelParts || {};
+    pane.classList.toggle('expanded', data.expanded === true);
+    var rows = data.rows || [];
+    var selected = data.selected || null;
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i] || {};
+        var chosen = (selected !== null && selected === row.name);
+        // Mirrors pause_menu.js's action-attribute escaping: the row name
+        // travels through an HTML attribute into a single-quoted JS string
+        // literal, so both quote characters must be neutralised.
+        var safeName = String(row.name || '')
+            .replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+        out.push('<div class="spv-part-row' + (chosen ? ' spv-part-row--chosen' : '') + '"'
+            + ' onclick="dauntlessEvent(\'ship-property-viewer/model_parts/select:'
+            + safeName + '\')">'
+            + '<span class="spv-part-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
+            + '</div>');
+    }
+    // Derived-box readout for the selected part -- what severance will
+    // actually test against, so the author sees it before committing to a
+    // detach fraction (Task 6). Plain text; no GL overlay in this task.
+    var box = data.selected_box;
+    if (selected !== null && Array.isArray(box) && box.length === 2) {
+        out.push('<div class="spv-part-box">'
+            + escapeHtmlSPV(selected) + ': min ('
+            + box[0].map(function (v) { return v.toFixed(2); }).join(', ') + ') max ('
+            + box[1].map(function (v) { return v.toFixed(2); }).join(', ') + ')</div>');
+    }
     body.innerHTML = out.join('');
 }
 

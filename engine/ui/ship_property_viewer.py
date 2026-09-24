@@ -573,6 +573,92 @@ def ring_drag_angle(cursor_x, cursor_y, origin, cam, viewport):
     return math.atan2(cursor_y - oy, cursor_x - ox)
 
 
+# ---------------------------------------------------------------------------
+# Model Parts pane (Task 6) — lists host_io.model_nodes(iid) part candidates
+# beneath the subsystem tree so a part can later be marked detachable and
+# hinged. Collapsed by default; module-level like the panel's other
+# session-scoped selection state, so a test that leaves state set would
+# otherwise leak into the next test -- reset via
+# tests/conftest.py:_reset_leakable_engine_globals (see reset_model_parts()).
+# ---------------------------------------------------------------------------
+_model_parts_expanded = False
+_selected_model_part_name: Optional[str] = None
+_selected_model_part_box: Optional[Tuple[Vec3, Vec3]] = None
+
+
+def model_parts_expanded() -> bool:
+    return _model_parts_expanded
+
+
+def set_model_parts_expanded(expanded: bool) -> None:
+    global _model_parts_expanded
+    _model_parts_expanded = bool(expanded)
+
+
+def toggle_model_parts_expanded() -> None:
+    set_model_parts_expanded(not _model_parts_expanded)
+
+
+def model_part_rows(nodes: List[dict], show_all: bool = False) -> List[dict]:
+    """Rows for the Model Parts pane. Only `candidate` nodes (Scene Root's
+    children) are listed unless `show_all` is set — a real hull's node list
+    is mostly `__NDL_MultiMtl_Node` exporter plumbing that must never reach
+    the author by default.
+
+    Also reconciles the current selection against `nodes`: a mission swap
+    can replace the model out from under the panel, so a selection that no
+    longer names a node in the fresh list is cleared rather than left
+    dangling."""
+    global _selected_model_part_name, _selected_model_part_box
+    present = {n.get("name") for n in nodes}
+    if _selected_model_part_name is not None and _selected_model_part_name not in present:
+        _selected_model_part_name = None
+        _selected_model_part_box = None
+    rows = []
+    for n in nodes:
+        if not show_all and not n.get("candidate", False):
+            continue
+        rows.append({
+            "name": n.get("name"),
+            "candidate": bool(n.get("candidate", False)),
+            "detachable": False,
+            "fraction": 1.0,
+            "angles": {},
+        })
+    return rows
+
+
+def select_model_part(name: Optional[str], nodes: List[dict]) -> None:
+    """Select `name` and cache its bounds box for the pane's derived-box
+    readout. Clears the selection if `name` isn't in `nodes` (e.g. stale
+    click after a model swap)."""
+    global _selected_model_part_name, _selected_model_part_box
+    for n in nodes:
+        if n.get("name") == name:
+            _selected_model_part_name = name
+            _selected_model_part_box = (tuple(n["bounds_min"]), tuple(n["bounds_max"]))
+            return
+    _selected_model_part_name = None
+    _selected_model_part_box = None
+
+
+def selected_model_part() -> Optional[str]:
+    return _selected_model_part_name
+
+
+def selected_part_box() -> Optional[Tuple[Vec3, Vec3]]:
+    return _selected_model_part_box
+
+
+def reset_model_parts() -> None:
+    """Test-only reset of the module-level Model Parts state -- see
+    tests/conftest.py:_reset_leakable_engine_globals."""
+    global _model_parts_expanded, _selected_model_part_name, _selected_model_part_box
+    _model_parts_expanded = False
+    _selected_model_part_name = None
+    _selected_model_part_box = None
+
+
 def axis_drag_param(cursor_x, cursor_y, origin, axis, length, cam, viewport):
     """World distance along `axis` (from origin) of the cursor's projection
     onto the screen-projected shaft. Reuses project() only (no unprojection):
