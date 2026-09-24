@@ -870,14 +870,8 @@ def _phaser_aim_point(ship, target):
     so they can never disagree about where the beam lands."""
     probe = getattr(type(ship), "is_using_target_offset", None)
     if callable(probe) and ship.is_using_target_offset():
-        pos = target.GetWorldLocation()
-        o = ship.GetTargetOffsetTG()
-        scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
-        o = TGPoint3(o.x * scale, o.y * scale, o.z * scale)
-        rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
-        if isinstance(rot, TGMatrix3):
-            o.MultMatrixLeft(rot)
-        return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z), None
+        from engine.appc.subsystems import target_offset_world
+        return target_offset_world(target, ship.GetTargetOffsetTG()), None
     target_sub = ship.GetTargetSubsystem() if hasattr(ship, "GetTargetSubsystem") else None
     if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
         return target_sub.GetWorldLocation(), target_sub

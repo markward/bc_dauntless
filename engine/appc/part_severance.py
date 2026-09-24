@@ -176,6 +176,29 @@ def part_for_live_point(ship, point, iid=None):
     return None
 
 
+def rest_point_for_live_point(ship, point, iid=None):
+    """Where a POSED body-frame point (ship units) sits in the REST pose:
+    the inverse of `articulation.part_transform_point`.
+
+    Manual Aim picks off the posed hull, but a target offset is stored REST
+    frame (see `subsystems.target_offset_world`), so its pick is pulled back
+    through this. Identity for a point on no part, a part at angle 0, and a
+    severed part -- mirroring `part_transform_point`, so the round trip is
+    exact in every case it can arise.
+    """
+    name = part_for_live_point(ship, point, iid)
+    if name is None or is_detached(ship, name):
+        return point
+    part = next((p for p in articulation.rig_for(articulation.leaf_for(ship))
+                 if p.GetName() == name), None)
+    if part is None:
+        return point
+    angle = articulation.angle_for_part(ship, part)
+    if angle == 0.0:
+        return point
+    return articulation.point_at_angle(part, point, -angle)
+
+
 def _totals(ship) -> dict:
     """The ship's per-part damage totals, created on first use."""
     t = getattr(ship, "_part_damage", None)

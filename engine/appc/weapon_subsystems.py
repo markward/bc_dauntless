@@ -2760,16 +2760,12 @@ def _resolve_torpedo_aim_point(tube, target):
         return None
     if hasattr(target, "IsDead") and target.IsDead():
         return None
-    pos = target.GetWorldLocation()
     offset = getattr(tube, "_target_offset", None)
     if not isinstance(offset, TGPoint3):
+        pos = target.GetWorldLocation()
         return TGPoint3(pos.x, pos.y, pos.z)
-    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
-    o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
-    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
-    if isinstance(rot, TGMatrix3):
-        o.MultMatrixLeft(rot)
-    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+    from engine.appc.subsystems import target_offset_world
+    return target_offset_world(target, offset)
 
 
 def _in_torpedo_cone(tube, ship, aim_point) -> bool:

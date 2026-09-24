@@ -18,7 +18,7 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 """
 import math
 
-from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
 
 
@@ -621,20 +621,16 @@ def _steer_point(torpedo, target):
     a steering target: the firing tube's own copy is only a fire-cone gate,
     so this is where it has to be read while the shot is in flight.
 
-    Same transform the tube's gate uses (weapon_subsystems.
-    _resolve_torpedo_aim_point): scale the local offset by the target's
-    scale, rotate it by the target's world rotation, add it to the centre.
+    Same transform the tube's gate uses: `subsystems.target_offset_world`,
+    which also carries the offset with an articulated part -- read every
+    tick, so a shot locked on a wing keeps tracking it while it moves.
     """
-    pos = target.GetWorldLocation()
     offset = getattr(torpedo, "_target_offset", None)
     if not isinstance(offset, TGPoint3):
+        pos = target.GetWorldLocation()
         return TGPoint3(pos.x, pos.y, pos.z)
-    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
-    o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
-    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
-    if isinstance(rot, TGMatrix3):
-        o.MultMatrixLeft(rot)
-    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+    from engine.appc.subsystems import target_offset_world
+    return target_offset_world(target, offset)
 
 
 def _guide(torpedo, dt: float) -> None:

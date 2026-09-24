@@ -57,6 +57,35 @@ def subsystem_world_position(sub, ship=None):
                     ship_pos.z + offset.z)
 
 
+def target_offset_world(target, offset):
+    """World point for a target-local aim `offset` on `target` -- 0x005852A0:
+    target world pos + R·(offset·scale), with the offset first carried by the
+    articulated part it sits on.
+
+    `offset` is REST frame, target-local, unscaled: what a subsystem lock
+    hands over (`GetPositionTG()`, and the SDK's own
+    `SetTargetOffset(pSubsystem.GetPosition())`). Manual Aim picks off the
+    POSED hull and pulls its pick back to rest before storing it
+    (`part_severance.rest_point_for_live_point`), so every offset arrives in
+    the one frame. Without the articulation step a torpedo locked on a raised
+    Bird of Prey wingtip flew at where the tip would be wings-down.
+
+    The ONE copy of this transform: torpedo/pulse tube aim
+    (`weapon_subsystems._resolve_torpedo_aim_point`), in-flight steering
+    (`projectiles._steer_point`) and Manual Aim phasers
+    (`host_loop._phaser_aim_point`) all call it.
+    """
+    from engine.appc.articulation import part_transform_point
+    pos = target.GetWorldLocation()
+    px, py, pz = part_transform_point(target, (offset.x, offset.y, offset.z))
+    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
+    o = TGPoint3(px * scale, py * scale, pz * scale)
+    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
+    if isinstance(rot, TGMatrix3):
+        o.MultMatrixLeft(rot)
+    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+
+
 def _is_offline(sub) -> bool:
     """True when a subsystem is disabled OR destroyed, OR its parent ship is
     out of action (dying/dead — inert coast). Single source of truth for the
