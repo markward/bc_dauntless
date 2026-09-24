@@ -4509,7 +4509,20 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     """
     tier = _TEXTURE_TIER
     share = _ship_texture_share_path(ship)
+    # Project replacements for the NIF's own folder must precede it, or the
+    # stock file of the same name wins. Only reachable when the NIF sits under
+    # the game root; a mod-supplied NIF has no game-relative folder to match.
+    from engine import mods as _mods
+    nif_dir = Path(nif_path).parent
+    try:
+        nif_rel = nif_dir.relative_to(_paths.game_root()).as_posix()
+    except ValueError:
+        nif_rel = None
+    own_replacements = [] if nif_rel is None else [
+        str(p) for rel in (f"{nif_rel}/{tier}", nif_rel)
+        for p in _mods.replacements().dirs_for(rel)]
     return [
+        *own_replacements,
         str(Path(nif_path).parent / tier),
         str(Path(nif_path).parent),
         *[str(p) for p in _paths.game_asset_dirs(f"{share}/{tier}")],
@@ -7736,7 +7749,8 @@ def run(mission_name: Optional[str] = None,
     # _resolve_paths_or_report installed above (or the empty index its own
     # failure-isolation guard leaves in place).
     from engine import mods as _mods
-    r.set_asset_overrides(_mods.renderer_overrides(_mods.current()))
+    r.set_asset_overrides(
+        _mods.renderer_overrides_with_replacements(_mods.current()))
 
     _setup_sdk()
 
