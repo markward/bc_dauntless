@@ -9740,6 +9740,7 @@ def run(mission_name: Optional[str] = None,
                 # selection drives the damage-radius sphere instead).
                 from engine.ui.glow_region_overlay import (
                     build_glow_region_overlay, build_emitter_overlay,
+                    build_part_box_overlay,
                 )
                 _cyls, _boxes = build_glow_region_overlay(
                     player,
@@ -9752,8 +9753,24 @@ def run(mission_name: Optional[str] = None,
                 # neither overlay drops the other's wireframes.
                 _em_spheres, _em_cyls, _em_cones = build_emitter_overlay(
                     player, ship_property_viewer)
+                # Selected MODEL PART's derived box, in magenta — what part
+                # severance actually tests against, drawn on the hull so a
+                # selection is visible at all. Merged additively into the
+                # same boxes payload for the same reason as the emitter
+                # wireframes above: a second set_debug_boxes call would
+                # replace this one and drop the glow regions.
+                #
+                # Imported under an alias: the `ship_property_viewer` name in
+                # this scope is the PANEL INSTANCE, not the module, and the
+                # Model Parts selection is module-level state (the panel
+                # reads it the same way, via its own `_spv`).
+                from engine.ui import ship_property_viewer as _spv_mod
+                _part_boxes = build_part_box_overlay(
+                    player,
+                    _spv_mod.selected_model_part(),
+                    _spv_mod.selected_part_box())
                 r.set_debug_cylinders(_cyls + _em_cyls)
-                r.set_debug_boxes(_boxes)
+                r.set_debug_boxes(_boxes + _part_boxes)
                 r.set_debug_cones(_em_cones)
                 # Selected subsystem's damage-radius volume as a wireframe
                 # sphere at its icon (only while a subsystem is selected).

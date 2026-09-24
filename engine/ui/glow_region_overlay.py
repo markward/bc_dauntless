@@ -25,6 +25,12 @@ Vec3 = Tuple[float, float, float]
 # Wireframe colour — distinct from the yellow phaser strips / cyan arcs.
 GLOW_COLOR = (1.0, 0.55, 0.1)   # orange
 
+# Selected model part's derived box. Magenta: it shares one debug-box payload
+# with the ORANGE glow regions, sits on a BLUE hologram, and must not be read
+# as either — nor as the emitter overlay, whose colour is the authored light's
+# own and so is almost always a warm white or a blue.
+PART_BOX_COLOR = (1.0, 0.25, 0.85)
+
 
 def _body_to_world(v: Vec3, ship_pos, rot) -> Vec3:
     """ship_pos + R · v (column-vector; mounts/regions are world-scale body
@@ -65,8 +71,8 @@ def _cylinder(center: Vec3, axis: Vec3, radius: float, length: float) -> dict:
     }
 
 
-def _box(center: Vec3, ex: Vec3, ey: Vec3, ez: Vec3) -> dict:
-    return {"center": center, "ex": ex, "ey": ey, "ez": ez, "color": GLOW_COLOR}
+def _box(center: Vec3, ex: Vec3, ey: Vec3, ez: Vec3, color=GLOW_COLOR) -> dict:
+    return {"center": center, "ex": ex, "ey": ey, "ez": ez, "color": color}
 
 
 def _basis_from(forward: Vec3, up: Vec3) -> Tuple[Vec3, Vec3, Vec3]:
@@ -231,3 +237,60 @@ def build_glow_region_overlay(ship, selected_name: str = None,
                         world_c[2] - up[2] * radius)
                 out.append(_cylinder(base, up, radius, 2.0 * radius))
     return out, boxes
+
+
+def build_part_box_overlay(ship, name, box) -> List[dict]:
+    """The selected model part's DERIVED box, as one world-space DebugBox.
+
+    Spec 5.2: selecting a part draws its box on the hull, "so you can see what
+    severance will actually test against". `selected_box` reached the CEF
+    payload and the JS printed its numbers, but nothing drew it -- so
+    selecting a part looked identical to selecting nothing.
+
+    `box` is `((min), (max))` in BODY frame, SHIP units, straight off
+    `host_io.model_nodes` (`ship_property_viewer.selected_part_box()`).
+    `name` is the NIF node name. Returns `[]` when nothing is selected, so the
+    caller can concatenate unconditionally.
+
+    ⚠️ MERGE the result into the ONE `set_debug_boxes` call, never add a
+    second: the later call replaces the earlier payload and one overlay
+    silently drops the other's boxes.
+
+    IT FOLLOWS THE POSE, and it rotates rather than merely sliding. What
+    `part_severance.part_for_live_point` actually tests is this REST box seen
+    through the part's own hinge rotation, so that is what is drawn: a box
+    dragged to a moved centre but left rest-axis-aligned would neither hug a
+    45-degree wing nor describe the volume it claims to.
+
+    The rotation is taken by transforming the centre AND the three
+    half-extent tips through `part_transform_point(..., part=name)` -- the
+    same function every mount uses, reading the same
+    `ship._articulation_angles`. Deliberately not a second way of asking what
+    angle the part is at: one source of truth is what the wings-down /
+    pins-up bug cost. A part with no hinge (the head), an unrigged hull, or a
+    severed part all fall out as the identity, so the box is simply drawn at
+    rest.
+    """
+    if ship is None or not name or not box:
+        return []
+    lo, hi = box
+    centre = tuple((lo[i] + hi[i]) / 2.0 for i in range(3))
+    half = tuple((hi[i] - lo[i]) / 2.0 for i in range(3))
+
+    from engine.appc.articulation import part_transform_point
+    posed = part_transform_point(ship, centre, part=name)
+
+    def _edge(axis: int) -> Vec3:
+        tip = list(centre)
+        tip[axis] += half[axis]
+        moved = part_transform_point(ship, tuple(tip), part=name)
+        return (moved[0] - posed[0], moved[1] - posed[1], moved[2] - posed[2])
+
+    ship_pos = ship.GetWorldLocation()
+    rot = (ship.GetWorldRotation()
+           if hasattr(ship, "GetWorldRotation") else None)
+    return [_box(_body_to_world(posed, ship_pos, rot),
+                 _rotate_vec(_edge(0), rot),
+                 _rotate_vec(_edge(1), rot),
+                 _rotate_vec(_edge(2), rot),
+                 color=PART_BOX_COLOR)]
