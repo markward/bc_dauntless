@@ -5755,6 +5755,18 @@ class _MissionLoader:
                     print(f"[host_loop]   shield register skipped for ship: "
                           f"{type(e).__name__}: {e}", flush=True)
 
+        # Alarm for a mapped-frame set realized without the map (spec §2).
+        # realize_set_objects (the mid-mission/warp path) checks per-set at
+        # its own single-set entry; this is the mission-LOAD path, which has
+        # no single pSet argument -- _iter_planets below pulls from
+        # _live_sets() internally, so check every distinct set that supplies
+        # BEFORE those planets are instanced (once per set, not per object;
+        # planet_natural_scale below is exactly the cache apply_to_set's
+        # docstring says must not be populated pre-map).
+        from engine.systems import region_hooks
+        for _pSet in _live_sets():
+            region_hooks.check_realized(_pSet)
+
         planet_tex_search = [str(p) for p in
                              _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
         for planet in _iter_planets(verbose=self._verbose):

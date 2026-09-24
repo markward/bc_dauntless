@@ -189,6 +189,26 @@ def test_realizing_an_unmapped_region_set_raises_the_alarm():
     assert region_hooks.unmapped_realized == ["Ona3"]
 
 
+def test_check_realized_is_fail_soft_when_resolve_raises(monkeypatch, capsys):
+    """Fix round 1, item 1: a diagnostic must never break rendering. If the
+    map index fails to build (unreadable/malformed map dir), resolve.system_of
+    would otherwise raise on EVERY realize -- Starbase12, QuickBattle, every
+    warp arrival -- since functools.lru_cache never caches an exception."""
+    from engine.systems import resolve
+
+    def _boom(_name):
+        raise RuntimeError("map dir exploded")
+
+    monkeypatch.setattr(resolve, "system_of", _boom)
+    raw = SetClass_Create()
+    App.g_kSetManager.AddSet(raw, "Ona4")
+    assert region_hooks.check_realized(raw) is True
+    out = capsys.readouterr().out
+    assert "[systems] alarm check failed" in out
+    assert "RuntimeError" in out
+    assert region_hooks.unmapped_realized == []
+
+
 def _fresh(qualname):
     import tools.mission_harness as mh
     mh.setup_sdk()
@@ -226,3 +246,30 @@ def test_real_sdk_warp_arrival_is_mapped():
     warp.ChangeRenderedSetAction_Create("Systems.Ona.Ona3")._do_play()
     _assert_mapped("Ona3", "Ona 3")
     App.g_kSetManager.ClearRenderedSet()
+
+
+def test_mission_load_realize_raises_the_alarm_for_a_hand_built_set():
+    """Fix round 1, item 2: _MissionLoader._realize_session (the mission-LOAD
+    path -- QuickBattle boot and the ordinary load() path) does not go through
+    realize_set_objects, so it needs its own check_realized call, once per
+    set, before planet_natural_scale is populated for that set's planets.
+
+    Drives _realize_session directly (mirrors tests/unit/test_hull_volume_
+    wiring.py's Site 2 fixture, minus the QuickBattle cascade, which builds
+    its own named set and would drown out "Ona1"): a hand-built "Ona1" set,
+    unmapped, with no player anywhere so _live_sets() falls back to every set
+    in g_kSetManager (see engine.appc.ship_iter.active_set)."""
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    from tests.unit.test_realize_set import _FakeRenderer
+
+    _set_current_game(Game())  # a player-less game -- active_set() -> None
+    raw = SetClass_Create()
+    App.g_kSetManager.AddSet(raw, "Ona1")
+
+    controller = hl.HostController()
+    controller.renderer = _FakeRenderer()
+    loader = hl._MissionLoader(controller, verbose=False)
+    loader._realize_session(hl.MissionSession(mission_name="t"))
+
+    assert region_hooks.unmapped_realized == ["Ona1"]

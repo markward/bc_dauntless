@@ -69,12 +69,35 @@ def on_region_module_exec(module, qualname: str) -> None:
 
 
 def check_realized(pSet) -> bool:
-    """False, with one loud line, when a mapped-frame set is realized unmapped."""
+    """False, with one loud line, when a mapped-frame set is realized unmapped.
+
+    Fail-soft by design: this is a DIAGNOSTIC, called from the middle of both
+    realization paths (realize_set_objects, _MissionLoader._realize_session).
+    A diagnostic must never break rendering. resolve.system_of() does not
+    cache exceptions (functools.lru_cache never caches a raise), so a broken
+    or unreadable map directory would otherwise raise on EVERY realize --
+    Starbase12, QuickBattle, every warp arrival, every runtime ship spawn --
+    turning one bad map file into a total rendering outage. Any exception
+    from the resolve lookup is swallowed, printed once, and treated as "fine"
+    (True, nothing appended to unmapped_realized) -- the alarm failing closed
+    would be worse than the alarm going briefly blind.
+
+    The wrap's own apply_to_set call, in on_region_module_exec, is
+    deliberately NOT given this treatment -- that is the one call site meant
+    to fail loud (see its docstring and test_a_raising_initialize_propagates_
+    and_maps_nothing).
+    """
     if pSet is None or is_mapped(pSet):
         return True
-    from engine.systems import resolve
-    name = pSet.GetName()
-    if resolve.system_of(name) is None:
+    try:
+        from engine.systems import resolve
+        name = pSet.GetName()
+        mapped_system = resolve.system_of(name)
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must never raise
+        print(f"[systems] alarm check failed: {type(exc).__name__}: {exc}",
+              flush=True)
+        return True
+    if mapped_system is None:
         return True
     unmapped_realized.append(name)
     print(f"[systems] ALARM: set {name!r} belongs to a mapped system but was "
