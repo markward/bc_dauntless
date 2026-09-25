@@ -4046,6 +4046,11 @@ def reset_sdk_globals() -> None:
     except Exception as _e:
         dev_mode.log_swallowed("ui_attention.install on swap", _e)
     App.g_kSetManager._sets.clear()
+    try:
+        from engine.systems import system_loader
+        system_loader.reset()
+    except Exception as _e:
+        dev_mode.log_swallowed("system_loader.reset on swap", _e)
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
     App._reset_target_menu_singleton()
@@ -9227,6 +9232,18 @@ def run(mission_name: Optional[str] = None,
             # Capture the player ship at combat start; revert to it on End
             # Combat (so a mid-combat ship swap is temporary).
             _sync_quickbattle_player_revert(controller)
+            # Entering a system loads all its regions (system-frames spec
+            # §3): level-triggered, cheap when the player's system hasn't
+            # changed since last tick. Guarded so a missing/mid-swap player
+            # is a no-op, and run BEFORE _reconcile_runtime_instances so any
+            # region set it creates this tick is realized in the same pass.
+            if session is not None and session.player is not None:
+                try:
+                    from engine.systems import system_loader
+                    system_loader.ensure_loaded(session.player)
+                except Exception as _e_sysload:
+                    dev_mode.log_swallowed(
+                        "system_loader.ensure_loaded", _e_sysload)
             # Per-tick realization reconciliation: realize ships created at
             # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
             # tear down ships removed from the set. Also retargets the camera if

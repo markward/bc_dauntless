@@ -903,6 +903,11 @@ def _reset_leakable_engine_globals():
     except Exception:
         pass
     try:
+        from engine.systems import system_loader as _sysload
+        _sysload.reset()
+    except Exception:
+        pass
+    try:
         import App
     except Exception:
         return
