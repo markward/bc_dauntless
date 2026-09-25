@@ -113,6 +113,12 @@ class STWarpButton(STButton):
         self._mission_name = ""
         self._episode_name = ""
         self._mission_destination = None
+        # BC's five warp-button queues (SDK App.py:8723-8738). Missions fill them
+        # from their ET_WARP_BUTTON_PRESSED handlers (E6M5:2672 queues the
+        # Episode 7 cutscene BeforeDuring; E4M5:1646 AddActionAfterWarp(seq, 0.0)).
+        # The C++ that merged them into the warp is not in the SDK; where each
+        # plays is spec §1's table (inferred from WarpSequence.SetupSequence).
+        self._queues = {k: [] for k in ("before", "before_during", "during", "after_during", "after")}
 
     def SetWarpTime(self, t) -> None:     self._warp_time = float(t)
     def GetWarpTime(self) -> float:       return self._warp_time
@@ -189,6 +195,23 @@ class STWarpButton(STButton):
 
     def GetPlacementName(self) -> str:
         return self._placement_name
+
+    def AddActionBeforeWarp(self, action):         self._queues["before"].append((action, 0.0))
+    def AddActionBeforeDuringWarp(self, action):   self._queues["before_during"].append((action, 0.0))
+    def AddActionDuringWarp(self, action):         self._queues["during"].append((action, 0.0))
+    def AddActionAfterDuringWarp(self, action):    self._queues["after_during"].append((action, 0.0))
+    def AddActionAfterWarp(self, action, delay=0.0):
+        self._queues["after"].append((action, float(delay)))
+
+    def ClearBDASequences(self):
+        for v in self._queues.values():
+            v.clear()
+
+    # engine-only: the warp that is built consumes the queues.
+    def take_queues(self):
+        taken = {k: list(v) for k, v in self._queues.items()}
+        self.ClearBDASequences()
+        return taken
 
 
 class SortedRegionMenu(STMenu):

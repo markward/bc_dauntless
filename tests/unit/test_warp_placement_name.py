@@ -137,7 +137,7 @@ class _RecordingSequence:
 def captured(monkeypatch):
     seen = {}
 
-    def _fake_create(ship, dest_module, warp_time=0.0, placement=DEFAULT):
+    def _fake_create(ship, dest_module, warp_time=0.0, placement=DEFAULT, **kwargs):
         seen["placement"] = placement
         seen["dest"] = dest_module
         return _RecordingSequence()

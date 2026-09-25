@@ -642,15 +642,20 @@ class _ArriveFinalizeAction(TGAction):
 
 
 class WarpSequence(TGSequence):
-    def __init__(self, ship, dest_module, warp_time, placement):
+    def __init__(self, ship, dest_module, warp_time, placement, mission=None, episode=None, queues=None):
         super().__init__()
         self._ship = ship
         self._dest_module = dest_module
         self._warp_time = float(warp_time)
         self._placement = placement
-        # No cross-mission warp path exists yet; see the accessors below.
-        self._dest_mission = None
-        self._dest_episode = None
+        # Mission and episode names are carried from the warp button's
+        # SetDestination call, which records the button's mission/episode
+        # context so that cross-mission warps later have the context they need.
+        self._dest_mission = mission or None
+        self._dest_episode = episode or None
+        # The five action queues from the button (BC SDK App.py:8723-8738).
+        # Stored only in this task; Task 5 plays them.
+        self._queues = queues or {k: [] for k in ("before", "before_during", "during", "after_during", "after")}
 
     def GetShip(self):          return self._ship
     def GetDestination(self):   return self._dest_module
@@ -722,9 +727,9 @@ def WarpSequence_Cast(obj):
     return obj if isinstance(obj, WarpSequence) else None
 
 
-def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Start"):
+def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Start", mission=None, episode=None, queues=None):
     import App
-    seq = WarpSequence(ship, dest_module, warp_time, placement)
+    seq = WarpSequence(ship, dest_module, warp_time, placement, mission=mission, episode=episode, queues=queues)
     dest_name = _set_name_from_module(dest_module)
     # Capture the source set NOW (before the player is moved).
     source = None
@@ -916,4 +921,7 @@ def execute_warp(button, event=None):
     # visibly E1M1's, dropping the player 93 km from the Starbase 12 nav point
     # instead of the scripted 312 km.
     placement = button.GetPlacementName()
-    WarpSequence_Create(player, dest, button.GetWarpTime(), placement).Play()
+    WarpSequence_Create(player, dest, button.GetWarpTime(), placement,
+                        mission=button.get_mission_name() or None,
+                        episode=button.get_episode_name() or None,
+                        queues=button.take_queues()).Play()
