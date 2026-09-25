@@ -2,25 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Standing in any region of a mapped system, you see that system — its other worlds at their true bearings, distances and sizes, drawn from the system map — because entering a system loads all its regions, celestial bodies are drawn from the map only, and ships are realized from every set in the viewed frame.
+**Goal:** Standing in any region of a mapped system, you see that system — its other worlds at their true bearings, distances and sizes, drawn from the system map — because entering a system loads all its regions, celestial bodies are drawn from the map only, ships are realized from every set in the viewed frame, and a double-precision floating render origin keeps near-camera geometry exact anywhere in a 900,000 GU system.
 
 **Architecture:** A level-triggered system loader creates a system's missing regions through BC's own region modules (Plan 1's wrap maps them). A pure function turns the viewed frame into a celestial draw list (map bodies, positioned in the viewed set's local coordinates); `host_loop` diffs render instances against it, so there is nothing to cache, supersede or sweep. A mapped set's Planet objects are never realized — they exist only for interaction, and `apply_map` put them exactly where the map body is drawn. Ship realization and the celestial/sun scope follow `frames.viewing_set()`, unifying the render scope Plan 2 left split (its Ruling 3).
 
-**Tech Stack:** Python 3 (engine, pytest). No native changes in this plan.
+**Tech Stack:** Python 3 (engine, pytest); C++17 / glm / pybind11 (native renderer, scenegraph, transform store; GoogleTest via ctest).
 
-**Spec:** `docs/superpowers/specs/2026-09-24-system-frames-design.md` — §3 (loading a system), §4 (drawing), testing and live yardstick. Plans 1 and 2 are complete on this branch.
+**Spec:** `docs/superpowers/specs/2026-09-24-system-frames-design.md` — §3 (loading a system), §4 (drawing), §5 (the render origin), testing and live yardstick. Plans 1 and 2 are complete on this branch.
 
-## ⚠️ Proposed spec change — needs Mark's approval at plan review
+## Decision: the render origin is in this plan
 
-Spec §5 (the double-precision render origin) and its mesh-query relativisation are **deferred from Plan 3 to the plan that builds the hand-off and dash.** Evidence:
-
-- float32 precision only degrades FAR from the viewed set's local origin: ulp is 0.0039 GU at 50,000 GU and 0.0625 GU at 900,000 GU.
-- Until the player can travel between regions, the camera stays within a region's content: every region's staged content lies within 46,773 GU of its set origin (Prendel 3's region radius, the largest). Near-camera precision is therefore ≤ ~0.004 GU — as today.
-- Distant map bodies are drawn up to ~900,000 GU away, where 0.06 GU is invisible.
-- Precision fails exactly when a ship can be ~450,000 GU from its set's origin — only possible once the dash / hand-off lets the player leave a region, which is the next plan.
-- The render origin touches every native pass that reads `camera.eye` as absolute (15+ sites: torpedo, dust, nebula, godray, reticle, hologram, cloak, sun, lens flare, shadow fit, pins) plus the transform store and five mesh-query bindings; doing it now delays the next live pass for no visible benefit.
-
-Task 5 records this in the spec. If Mark declines, the render origin becomes an extra task before Task 5 and this plan grows by that task.
+Mark, 2026-09-25: "get it done the right way from the off." Spec §5 is built here (Tasks 5-6), as a true floating origin: every Space-pass render instance keeps its translation in DOUBLE (in the viewed set's coordinates); once per frame C++ subtracts the render origin (the camera eye, double) before narrowing to float; every Python position feed and the camera go through ONE `frames.to_render`; the five mesh queries take INSTANCE-RELATIVE points and C++ inverts rotation+scale only (spec §5 verbatim). Bridge and comm passes are never offset.
 
 ## Global Constraints
 
@@ -30,7 +22,7 @@ Task 5 records this in the spec. If Mark declines, the render origin becomes an 
 - **In a mapped frame the system map is the only draw source for planets/moons.** A mapped set's Planet objects are never realized as render instances. Unmapped frames draw exactly as today.
 - **Suns:** exactly one, from the VIEWED set's own Sun object (Plan 1's `apply_map` placed every region's Sun at the map star, so the viewed set's Sun is already the map star in view coordinates). Never draw a sibling set's Sun.
 - **Nothing unloads until the mission changes** (spec §3); arrival adopts an existing set, never re-creates it.
-- All positions handed to the renderer are in the VIEWED set's local coordinates (Plan 2's convention; `frames.in_view`, `frames.viewing_set()`).
+- All positions handed to the renderer are in the VIEWED set's local coordinates (Plan 2's convention; `frames.in_view`, `frames.viewing_set()`) until Task 6, which makes every Space-pass feed RENDER-SPACE (view coordinates minus the render origin) through `frames.to_render`. The render origin applies to the Space pass only — never to Bridge or Comm pass instances or their cameras.
 - A region module is `Systems.<map.system>.<region.set_name>` — verified: every map's `system` equals its SDK `Systems/` directory name.
 - Never spell `game`/`sdk` as a path segment; never capture a path at import. Never launch the game. The gate (`scripts/check_tests.sh`) decides failures. Known intermittents: `tests/integration/test_pursuers_avoid_each_other.py`, `tests/integration/test_orbit_planet_ai.py::test_orbit_ai_out_of_range_fires_only_on_arrival` — re-run in isolation and report if one fails.
 - In test bodies `<...>` stands for objects built with the builders the cited existing test file uses; assertions are fixed in meaning and never weakened.
@@ -39,7 +31,7 @@ Task 5 records this in the spec. If Mark declines, the render origin becomes an 
 
 1. **A mission that `Initialize()`s a region AFTER the loader already created it** (BC's Initialize creates a new SetClass and `AddSet` replaces ours). The mission's set must win and be mapped; nothing may keep drawing or interacting with the orphaned set. → Task 1, `test_a_mission_reinitializing_a_loaded_region_wins`.
 2. **A region module that fails to import or raises in Initialize** must not strand the player or stop the other regions loading (the reference branch's `51412754` lesson); it must be logged loudly. → Task 1, `test_one_broken_region_does_not_stop_the_rest`.
-3. **The warp tunnel** (`_WarpTransit`, an unmapped one-set frame) must draw NO map bodies, and arriving back must restore exactly the arrival frame's bodies — the reference branch's live bug. → Task 5, `test_sky_round_trip`.
+3. **The warp tunnel** (`_WarpTransit`, an unmapped one-set frame) must draw NO map bodies, and arriving back must restore exactly the arrival frame's bodies — the reference branch's live bug. → Task 7, `test_sky_round_trip`.
 4. **A cutscene rendering a sibling region** (`MakeRenderedSet("Ona2")` while the player is in Ona1): planets, the sun and ships must all come from the Ona2 view — one scope, not two. → Task 3, `test_a_sibling_region_cutscene_draws_one_consistent_scene`.
 5. **Two mapped bodies with the same display name in one system** (Geble3 and Geble4 both have "Moon 1"): the draw list must key by owner region, never name alone. → Task 2, `test_draw_list_keys_bodies_by_owner_region`.
 
@@ -515,7 +507,54 @@ git commit -m "feat(render): draw the system map's bodies, diffed against the vi
 
 ---
 
-### Task 5: System Preview, the sky round trip, the yardstick, and the spec
+### Task 5: Native floating origin — double translations, one subtraction per frame
+
+**Files:**
+- Modify: `native/src/scenegraph/include/scenegraph/instance.h` (Instance gains `glm::dvec3 world_translation_d{0.0}` and `glm::mat3 world_linear{1.0f}` — the double translation and the float rotation·scale; `world` stays the float matrix every pass reads, now RENDER-space), `native/src/scenegraph/src/world.cc` + `world.h` (`set_world_transform` keeps its float-mat4 overload for existing callers and gains `set_world_transform_d(id, const glm::mat3& linear, const glm::dvec3& translation)`; a `resolve_render_space(const glm::dvec3& origin)` that, for every alive instance, writes `world = [linear | float(translation_d − (pass == Space ? origin : 0))]`)
+- Modify: `native/src/transforms/src/transform_store.cc` + header (`compose_world_matrix` keeps its signature for existing tests and gains `compose_world_linear_translation(t, scale, glm::mat3& linear, glm::dvec3& translation)` — no narrowing of the translation)
+- Modify: `native/src/host/host_bindings.cc` — `sync_instance_transforms_from_store` fills `world_linear` + `world_translation_d` via the new composer; new binding `set_render_origin(x, y, z)` (doubles) storing `g_render_origin`; `frame()` calls `g_world.resolve_render_space(g_render_origin)` immediately after the xform sync and BEFORE `resolve_attached_dynamic_lights` and every pass; `set_world_transform` (Python push) accepts a row-major 16-element list of DOUBLES (pybind converts Python floats losslessly), splitting it into linear (float) + translation (double); `set_instance_transform_slot`'s immediate compose uses the new path. The five mesh-query bindings (`ray_trace_mesh`, `shield_hit`, `hull_carve_add`, `hull_carve_capsule`, `world_to_body`) and `damage_decal_add` take points RELATIVE TO THE INSTANCE'S TRANSLATION and invert `world_linear` only (never a large translation); `ray_trace_mesh` returns its hit instance-relative. `renderer::ray_trace_instance` and `scenegraph::world_to_body` get linear-only variants; keep the old ones only if a non-Space caller still needs them (grep; say which).
+- Test: `native/tests/transforms/transform_store_test.cc`, `native/tests/scenegraph/` (new `render_space_test.cc`), `native/tests/renderer/` (precision FrameTest)
+
+**Interfaces (Task 6 relies on these exact names):** `set_render_origin(x: float, y: float, z: float)`; `set_world_transform(iid, mat4_row_major_16_doubles)` (translation column = view-space double); the five mesh queries and `damage_decal_add` with the same argument names as today but the point arguments now INSTANCE-RELATIVE (point − the instance's view-space translation, computed in double by the caller); `ray_trace_mesh` result point instance-relative. Add `instance_translation(iid) -> (x, y, z)` (doubles) so Python can form instance-relative points without recomputing the pose.
+
+- [ ] **Step 1: Write the failing ctests**
+  - `transform_store_test.cc`: `compose_world_linear_translation` of a transform at `(1e6+0.25, -3e5, 7.5)` returns that translation EXACTLY in double; the linear part equals `compose_world_matrix`'s upper-left 3×3.
+  - `render_space_test.cc`: an instance at view-space `(1e6, 0, 0)` with origin `(1e6 − 50, 0, 0)` resolves to float translation `(50, 0, 0)` exactly; a Bridge-pass instance at `(3, 4, 5)` resolves to `(3, 4, 5)` whatever the origin; `resolve_render_space` is idempotent for an unchanged origin.
+  - Precision FrameTest (`native/tests/renderer/`, the `FrameTest` fixture shape in `frame_test.cc`): render a Galaxy at view-space `(0,0,0)` with the camera 1500 GU away and origin `(0,0,0)`; render it again at `(1e6, 0, 0)` with the camera 1500 GU away and origin `(1e6, 0, 0)`; the two framebuffers are byte-identical (or within ±1 per channel if MSAA resolve differs — state which). Then the counter-test: the same scene at 1e6 with origin (0,0,0) differs visibly (proves the test would catch a missing origin).
+  - Mesh query: `ray_trace_mesh` on an instance at view-space `(1e6, 0, 0)` with an instance-relative origin/direction returns the same instance-relative hit as the same instance at `(0,0,0)` (to 1e-4 GU).
+- [ ] **Step 2: Build and run to verify they fail** — `cmake --build build -j && ctest --test-dir build -R "render_space|transform_store|Precision|RayTrace" --output-on-failure` (adapt the regex to the test names you choose; never run cmake from inside `native/`).
+- [ ] **Step 3: Implement** the interfaces above. Every pass keeps reading `inst->world`; nothing else in the renderer changes in this task. `set_camera` is unchanged here (Task 6 feeds it render-space values).
+- [ ] **Step 4: Run** ctest fully (`ctest --test-dir build --output-on-failure`) and the Python suites that exercise these bindings (`tests/host tests/unit/test_render_transform_binding.py tests/host/test_instance_transform_slots.py tests/unit/test_manual_aim.py` and any test calling the five mesh queries — grep). Python callers still send view-space matrices and world points at this step: with the origin left at (0,0,0) world == view space and every existing Python test must pass UNCHANGED except the mesh-query callers, which Task 6 converts — if a mesh-query Python test fails here, list it and leave it for Task 6 only if Task 6 lists it; otherwise convert the caller in this task.
+- [ ] **Step 5: Commit** `git add <explicit paths>`; `git commit -m "feat(native): floating render origin -- double translations, one subtraction per frame; instance-relative mesh queries"`
+
+---
+
+### Task 6: Python feeds, cameras and mesh queries in render space
+
+**Files:**
+- Modify: `engine/systems/frames.py` (`set_render_origin(view_xyz)`, `render_origin()`, `to_render(view, pSet, x, y, z) -> tuple | None` = `in_view(...) − origin`; `reset_render_origin()` for mission swap/tests), `engine/host_loop.py` (compute the camera in VIEW coordinates, set the origin = camera eye, push it to native, feed `set_camera` eye/target relative to the origin; every Space-pass position feed through `frames.to_render`), `engine/appc/combat.py` / `engine/appc/hull_carve.py` / `engine/appc/hit_feedback.py` / `engine/manual_aim.py` / `engine/ui/ship_property_viewer*.py` and every other caller of the five mesh queries or `damage_decal_add` (instance-relative points, results converted back)
+- Test: `tests/unit/test_render_origin.py` (new), `tests/host/test_render_space_feeds.py` (new)
+
+**Interfaces:**
+- The render origin is the exterior camera eye in the VIEWED set's coordinates (double), set once per frame BEFORE any feed is built. The exterior camera, the bridge viewscreen's space-scene camera, the comm "scene source" space camera and the Ship Property Viewer camera are passed to native in render space (eye − origin, target − origin); the bridge interior camera, comm faces and the star map are NOT (their passes are not Space).
+- Camera math in VIEW coordinates: when the camera's subject (player, cutscene subject) is in a different set of the viewed frame, its pose is converted with `frames.offset_between(view, subject_set)` before the camera is solved — the camera and the scene share one frame. Python-side projection/picking (reticle text, manual-aim `cursor_ray`, SPV pin picking) keeps working in view coordinates, consistent with the objects it projects.
+- Mesh queries: callers pass `point − instance_translation(iid)` (double) and add `instance_translation(iid)` back to returned points; the resulting points are then in VIEW coordinates and are converted to the target's own set-local frame (`offset_between(target_set, view)`) before reaching BC's surface or damage/decal consumers (Plan 2's rule: a point handed to a receiver is in its own set's coordinates).
+
+- [ ] **Step 0: Inventory** — grep every `host_io.`/renderer call that passes a world position, a camera, or a mesh-query point, and every `set_camera`/`starmap_set_camera`/`scene_source`/`viewscreen` camera push. Report the table: call site, what it passes, Space pass or not, and its conversion. Every Space-pass item must convert.
+- [ ] **Step 1: Write the failing tests**
+  - `tests/unit/test_render_origin.py`: `to_render` = `in_view` minus the origin; same-set with origin (0,0,0) byte-identical to `in_view`; cross-frame None.
+  - `tests/host/test_render_space_feeds.py` (fake renderer recording calls): with the player 450,000 GU from its set origin (placed directly — no dash needed) and the camera 30 GU behind it, every recorded Space-pass position (suns, flares, dust planets, torpedoes, lights, beams, particles, shockwaves, debris, hit VFX) and the exterior camera eye are within a few thousand GU of zero; the pushed ship matrices' translations are view-space (native subtracts); `set_render_origin` was called once this frame with the camera eye; a bridge-view frame leaves bridge cameras unconverted.
+  - A mesh-query round trip through a fake: a hit on a target at view-space `(450000, 0, 0)` passes an instance-relative origin (small numbers) and hands damage a point in the target's own set coordinates.
+  - A sibling-region cutscene (`MakeRenderedSet("Ona2")`, player in Ona1): the camera eye pushed to native is the player-follow camera expressed in Ona2 coordinates minus the origin.
+- [ ] **Step 2: Run to verify they fail.**
+- [ ] **Step 3: Implement** per the interfaces and the Step 0 inventory.
+- [ ] **Step 4: Run** the new tests, `tests/host tests/unit tests/integration -q`, then `scripts/check_tests.sh` (builds C++). Existing tests that assert raw positions reach the renderer: update them only by setting the origin to (0,0,0) (where render space == view space) or by asserting the converted value — never by weakening; list each.
+- [ ] **Step 5: Prove it bites** — make `to_render` ignore the origin (cp/restore/diff-silent): the 450,000 GU feed test fails.
+- [ ] **Step 6: Commit** `git add <explicit paths>`; `git commit -m "feat(render): every Space-pass feed, camera and mesh query in render space"`
+
+---
+
+### Task 7: System Preview, the sky round trip, the yardstick, and the spec
 
 **Files:**
 - Create: `engine/dev_missions/system_preview.py`, `tools/systems/yardstick.py`
@@ -536,7 +575,7 @@ git commit -m "feat(render): draw the system map's bodies, diffed against the vi
 
 - [ ] **Step 3: Implement** the mission, its registration, and the yardstick tool. Keep the tool thin: it reuses `celestial.draw_list`, `frames`, `engine.units`.
 
-- [ ] **Step 4: Record the spec change** in `docs/superpowers/specs/2026-09-24-system-frames-design.md`: under §5 add "Deferred to the moving-through-a-system plan (Plan 3 decision, approved by Mark <date of approval>)" with the evidence from this plan's "Proposed spec change" section; under §3 and §4 add a one-paragraph "Status (Plan 3)" each: what is built and the draw-distance figure with its derivation.
+- [ ] **Step 4: Record status in the spec** (`docs/superpowers/specs/2026-09-24-system-frames-design.md`): a one-paragraph "Status (Plan 3)" under each of §3, §4 and §5 — what is built; the ship draw-distance figure with its derivation; the floating-origin design as built (double instance translations resolved once per frame; `frames.to_render`; instance-relative mesh queries) and the precision FrameTest that guards it.
 
 - [ ] **Step 5: Produce the yardstick for the live pass**
 
@@ -553,4 +592,4 @@ git commit -m "feat(systems): System Preview dev mission, the sky round trip, an
 
 ## After the last task
 
-Mark flies: `--developer` → Load Mission → Developer → System Preview, with the Task 5 yardstick in hand. What must hold: Ona 2 and Ona 3 visible from Ona 1 at the yardstick's bearings and sizes; the star once, at its bearing; Set Course Ona 1 → Ona 2 → Ona 1 and every world still in the sky from each station (the reference branch's live bug); no body changes size or jumps when its region's set loads.
+Mark flies: `--developer` → Load Mission → Developer → System Preview, with the Task 5 yardstick in hand. What must hold: the ship and nearby geometry are rock-steady (no shimmer) — the render origin at work; Ona 2 and Ona 3 visible from Ona 1 at the yardstick's bearings and sizes; the star once, at its bearing; Set Course Ona 1 → Ona 2 → Ona 1 and every world still in the sky from each station (the reference branch's live bug); no body changes size or jumps when its region's set loads.
