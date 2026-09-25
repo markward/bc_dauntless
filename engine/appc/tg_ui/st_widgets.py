@@ -213,6 +213,23 @@ class STWarpButton(STButton):
         self.ClearBDASequences()
         return taken
 
+    # ── ET_WARP_BUTTON_PRESSED chain (spec §1) ──────────────────────────────
+    def AddPythonFuncHandlerForInstance(self, event_type, qualified_name) -> None:
+        import App
+        from engine.appc import warp_button
+        # SDK WarpPressed is replaced by the engine step (spec §1).
+        if (event_type == App.ET_WARP_BUTTON_PRESSED
+                and warp_button.is_warp_replaced(qualified_name)):
+            return
+        super().AddPythonFuncHandlerForInstance(event_type, qualified_name)
+
+    def ProcessEvent(self, event) -> None:
+        import App
+        from engine.appc import warp_button
+        if event.GetEventType() == App.ET_WARP_BUTTON_PRESSED:
+            warp_button.ensure_engine_step(self)
+        super().ProcessEvent(event)
+
 
 class SortedRegionMenu(STMenu):
     """Set-course region list. Sorting/pause flags recorded, unused.

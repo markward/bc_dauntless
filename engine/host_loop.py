@@ -8164,66 +8164,16 @@ def _drive_star_map(star_map_panel, framebuffer_size, cef_view_h) -> None:
 def engage_warp(button, controller) -> None:
     """Helm "Warp" click -> run the warp spine. Module scope so it is testable.
 
-    Bails when the button holds no destination. That guard is not defensive
-    tidiness: the two side effects below grey the Helm menu and drop any open
-    bridge menu, and the matching re-enable is scheduled INSIDE the warp
-    sequence (_EnableHelmMenuAction). execute_warp does nothing without a
-    destination, so a course-less click greyed the Helm menu with nothing left
-    to un-grey it — the menu was gone for the rest of the session.
-
-    STWarpButton.IsEnabled() now reports false without a destination, so the
-    click should never arrive; this is the second line, because the cost of
-    being wrong is an unrecoverable UI rather than a missed warp.
-
-    BC's WarpPressed has no such check — it did not need one, because the
-    engine kept its Warp button disabled until a course was set.
+    Thin wrapper over engine.appc.warp_button.engage — that module is now the
+    single body shared by this direct call and the ET_WARP_BUTTON_PRESSED
+    engine step (warp_button.engine_warp_step), see spec §1. `controller` is
+    unused: the player fallback it used to supply
+    (`controller.session.player`) is now `engine.appc.warp._player_hook`,
+    configured in `run()` by the same `configure_warp_hooks(current_player=...)`
+    call that wires the render hooks — confirmed still wired there.
     """
-    from engine.appc import warp as _w
-    from engine.appc import warp_gates as _wg
-    import App
-
-    if not button or not button.GetDestination():
-        if dev_mode.is_enabled():
-            print("[warp] ignored: no course set", flush=True)
-        return
-
-    player = App.Game_GetCurrentPlayer()
-    if player is None and controller is not None and controller.session is not None:
-        player = controller.session.player
-    result = _wg.warp_gate(player)
-    if not result.allowed:
-        if dev_mode.is_enabled():
-            print("[warp] gated: %s (line=%s)"
-                  % (result.reason or "unknown",
-                     result.deny_line or "-"), flush=True)
-        if result.deny_line is not None:
-            _wg.speak_deny(player, result.deny_line)
-        return
-    # Clear Helm's "ReadyToWarp" the way SDK WarpPressed does
-    # (HelmMenuHandlers.py:871-872). announce_course_set put it there;
-    # bypassing WarpPressed meant nothing ever took it away, so the Helm box
-    # advertised a pending warp for the rest of the session. Before
-    # execute_warp, matching BC's order.
-    try:
-        from engine.bridge_officers import announce_warp_engaged
-        announce_warp_engaged()
-    except Exception as _e:
-        dev_mode.log_swallowed("announce warp engaged", _e)
-    # WarpPressed's other two menu side effects, in its order
-    # (HelmMenuHandlers.py:862-864): grey out the Helm menu for the duration
-    # of the warp, then drop any open bridge menu and turn its officers back.
-    # Both were missing -- verified live: the Helm menu stayed clickable
-    # mid-warp and an open menu stayed open. The matching re-enable is
-    # scheduled inside the warp sequence (_EnableHelmMenuAction); without it
-    # the menu never comes back -- see the destination guard above.
-    try:
-        from engine import bridge_officers
-        from engine.appc.top_window import drop_menus_turn_back
-        bridge_officers.disable_helm_menu()
-        drop_menus_turn_back()
-    except Exception as _e:
-        dev_mode.log_swallowed("warp menu side effects", _e)
-    _w.execute_warp(button)
+    from engine.appc import warp_button
+    warp_button.engage(button)
 
 
 def record_course_selection(module) -> None:
@@ -8754,20 +8704,12 @@ def run(mission_name: Optional[str] = None,
         # it captured nothing from here.
         on_course_set = record_course_selection
 
-        # Helm "Warp" button click -> engage the warp spine directly. Stage 1
-        # deliberately bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed
-        # path: WarpPressed does camera/cinematic + control work whose engine
-        # support is deferred to Stages 2-3, and it runs live before our spine
-        # could (a raise there is swallowed at the CEF boundary). Calling the
-        # spine directly loads the destination set, moves the player, and tears
-        # down the source set's render instances (the set itself stands).
-        # execute_warp reads the button's destination.
-        # Helm "Warp" button click -> engage the warp spine directly.
-        # Module scope (see engage_warp) so the destination guard and the
-        # menu side effects are reachable from a test; `controller` is the
-        # only thing it captured.
-        def on_warp_engage(button):
-            engage_warp(button, controller)
+        # Helm "Warp" button click -> send ET_WARP_BUTTON_PRESSED (spec §1,
+        # engine/appc/warp_button.py). Mission handlers registered on the
+        # button run newest-first; the engine step at the bottom of the chain
+        # replaces SDK WarpPressed and calls warp_button.engage.
+        from engine.appc import warp_button
+        on_warp_engage = warp_button.press
 
         # Register the bridge cutscene controller BEFORE the initial mission
         # load so that TGAnimActions created during Initialize()/Briefing()

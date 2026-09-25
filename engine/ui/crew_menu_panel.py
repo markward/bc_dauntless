@@ -225,9 +225,9 @@ class CrewMenuPanel(Panel):
                     self._on_set_course(widget)
                 return True
             if isinstance(widget, STWarpButton):
-                # The SDK Helm "Warp" button. Engage the warp spine directly
-                # (Stage 1 bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed
-                # path, whose camera/control work is deferred to later stages).
+                # The SDK Helm "Warp" button. The callback now PRESSES the
+                # button (engine.appc.warp_button.press) rather than engaging
+                # the warp spine directly — see that module for the chain.
                 if self._on_warp_engage is not None:
                     self._on_warp_engage(widget)
                 return True
