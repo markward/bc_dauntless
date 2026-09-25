@@ -1,10 +1,17 @@
 """The ArticulatedPartProperty template -- a ship part that moves or comes off.
 
 A BC property template like any other, because a hardpoint file is nothing but
-`X = App.Something_Create(name); X.SetFoo(...); RegisterLocalTemplate(X)`.
-Choosing that shape means a modded ship can carry its own rig in its own
-hardpoint file with no second format, and that `hardpoint_overrides.py` can
-carry it for stock ships with no new file. See spec section 2.2.
+`X = App.Something_Create(name); X.SetAnchor(...); X.SetStatePose(...);
+RegisterLocalTemplate(X)`. Choosing that shape means a modded ship can carry
+its own rig in its own hardpoint file with no second format, and that
+`hardpoint_overrides.py` can carry it for stock ships with no new file. See
+spec section 2.2.
+
+`SetAnchor`/`SetTransitionSeconds`/`SetStatePose`/`SetBreakFraction` are the
+current authoring surface (spec §3, §6). The legacy `SetPivot`/`SetAxis`/
+`SetStateAngle`/`SetDetachFraction` calls are still accepted and read: a
+state with a legacy angle but no `SetStatePose` for that state converts
+through the hinge at read time.
 
 The template NAME is the NIF node name. One string, and the same key `find()`
 already uses. A node named identically to a subsystem would collide in
@@ -22,6 +29,10 @@ class ArticulatedPartProperty:
         self._angles = {}
         self._detach = None
         self._range_cache = None         # invalidated by SetStateAngle
+        self._anchor = None
+        self._transition = 2.0
+        self._poses = {}                 # state -> p6
+        self._pivot_set = False
 
     # ---- BC-style setters (what a hardpoint file calls) ----------------
     def SetPivot(self, x, y, z):
@@ -47,6 +58,68 @@ class ArticulatedPartProperty:
 
     def GetName(self):
         return self._name
+
+    # ---- the pose surface (spec 2026-09-25) -------------------------------
+    def SetAnchor(self, x, y, z):
+        self._anchor = (float(x), float(y), float(z))
+
+    def SetTransitionSeconds(self, seconds):
+        self._transition = float(seconds)
+
+    def SetStatePose(self, state, tx, ty, tz, rx, ry, rz):
+        if state not in STATES:
+            raise ValueError(
+                "unknown articulation state %r; expected one of %r"
+                % (state, STATES))
+        self._poses[state] = tuple(float(v) for v in (tx, ty, tz, rx, ry, rz))
+
+    def SetBreakFraction(self, fraction):
+        self._detach = float(fraction)
+
+    @property
+    def anchor(self):
+        """Swing centre (ship units, body frame), or None. A legacy hinge
+        with no explicit anchor anchors at its pivot."""
+        if self._anchor is not None:
+            return self._anchor
+        if self._angles:
+            return self._pivot
+        return None
+
+    @property
+    def transition_seconds(self):
+        return self._transition
+
+    @property
+    def break_fraction(self):
+        """Fraction of the ship's MAX hull accumulated ON this part that
+        shears it, or None (never breaks)."""
+        return self._detach
+
+    def pose6_for(self, state):
+        """(tx,ty,tz,rx,ry,rz) authored for `state`, or None. A legacy angle
+        converts through the hinge."""
+        if state in self._poses:
+            return self._poses[state]
+        if state in self._angles:
+            from engine.appc import part_pose
+            return part_pose.pose_to6(part_pose.hinge_pose(
+                self._pivot, self._axis, self._angles[state]))
+        return None
+
+    def pose_for(self, state):
+        """The part's pose in `state`; the NIF pose (identity) when unset."""
+        from engine.appc import part_pose
+        if state in self._poses:
+            return part_pose.pose_from6(self._poses[state])
+        if state in self._angles:
+            return part_pose.hinge_pose(self._pivot, self._axis,
+                                        self._angles[state])
+        return part_pose.IDENTITY
+
+    def authored_states(self):
+        return tuple(s for s in STATES
+                     if s in self._poses or s in self._angles)
 
     # ---- readers -------------------------------------------------------
     @property
