@@ -37,19 +37,46 @@ from engine.systems import map as system_map
 
 
 @functools.lru_cache(maxsize=None)
-def _index() -> tuple[dict, dict]:
-    """Build the set_name -> (SystemMap, Region) index and the
-    system_name -> [set_name, ...] index, in map order."""
+def _index() -> tuple[dict, dict, dict]:
+    """Build the set_name -> (SystemMap, Region) index, the
+    system_name -> [set_name, ...] index, and the system_name -> SystemMap
+    index, in map order.
+
+    `_index` is private to this module -- every caller below unpacks all
+    three values, and nothing outside resolve.py touches it -- so widening
+    it from two values to three breaks nothing.
+    """
     by_set: dict = {}
     regions_by_system: dict = {}
+    maps_by_system: dict = {}
     for name in system_map.available():
         m = system_map.load(name)
+        maps_by_system[m.system] = m
         region_names = []
         for r in m.regions:
             by_set[r.set_name] = (m, r)
             region_names.append(r.set_name)
         regions_by_system[m.system] = region_names
-    return by_set, regions_by_system
+    return by_set, regions_by_system, maps_by_system
+
+
+def map_of(system: str):
+    """The CACHED SystemMap for that system name, or None -- no copy.
+
+    Read-only: this is the same instance `_index()` hands every other
+    caller in the process, not a fresh load or a deep copy. Mutating
+    anything reachable from it (a field, an element of `.bodies`/`.regions`,
+    anything a `region()`/`body()` accessor can return) poisons every later
+    caller for the rest of the process. Need a copy to mutate? Use
+    `for_set()`, which deep-copies.
+
+    Reads `_index()`'s own maps_by_system, filled in the same loop that
+    already loads every map once -- no second `system_map.load()` pass, so
+    a map is still loaded at most once per process, covering systems with
+    zero regions too (`regions_by_system` alone can't distinguish those from
+    an unknown system, but this can)."""
+    _, _, maps_by_system = _index()
+    return maps_by_system.get(system)
 
 
 def reset_cache() -> None:
@@ -66,7 +93,7 @@ def for_set(set_name: str) -> tuple | None:
     through SystemMap's own m.region()/m.body() accessors -- never poisons
     a later caller's lookup.
     """
-    by_set, _ = _index()
+    by_set, _, _ = _index()
     found = by_set.get(set_name)
     if found is None:
         return None
@@ -78,7 +105,7 @@ def system_of(set_name: str) -> str | None:
 
     An index lookup, never for_set()'s deep copy: engine/systems/frames.py
     calls this for every frame resolution."""
-    by_set, _ = _index()
+    by_set, _, _ = _index()
     found = by_set.get(set_name)
     return found[0].system if found is not None else None
 
@@ -86,7 +113,7 @@ def system_of(set_name: str) -> str | None:
 def regions_of(system: str) -> list[str]:
     """Every region set name in that system, in map order. Empty list if
     the system is unknown."""
-    _, regions_by_system = _index()
+    _, regions_by_system, _ = _index()
     return list(regions_by_system.get(system, []))
 
 
@@ -97,7 +124,7 @@ def anchor_of(set_name: str) -> tuple | None:
     nothing to copy and nothing a caller can poison the cache with --
     unlike for_set(), which deep-copies a whole SystemMap on every call.
     """
-    by_set, _ = _index()
+    by_set, _, _ = _index()
     found = by_set.get(set_name)
     if found is None:
         return None
