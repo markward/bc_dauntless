@@ -83,8 +83,11 @@ class Torpedo(ObjectClass):
         self._damage_radius_factor = 0.0
         self._target_ship = None
         # Target-local aim offset stamped at fire time (BC torp+0x11C..+0x124).
-        # Rides the projectile for the wire and for SDK readers; in-flight
-        # guidance never reads it (audited §5.5 -- Guide leads the CENTRE).
+        # In-flight guidance STEERS at it (`_steer_point`, via
+        # subsystems.target_offset_world), hull centre when None. That departs
+        # from the audited §5.5 reading "Guide leads the CENTRE" on purpose:
+        # 9ce63166, after a live report that torpedoes no longer homed on the
+        # locked subsystem.
         self._target_offset = None
         self._guidance_lifetime = 4.0
         self._guidance_initial = 4.0
