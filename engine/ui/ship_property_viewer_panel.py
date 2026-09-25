@@ -377,9 +377,9 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_part = {}
         from engine.appc import articulation as _articulation
         # Release only. Deliberately NO force_pose here, unlike open(): once
-        # the viewer closes the sim resumes and `tick_ship` owns the angles
-        # again, easing them from wherever the SPV left them back toward
-        # `state_for(ship)` over TRAVEL_SECONDS. Snapping here would replace
+        # the viewer closes the sim resumes and `tick_ship` owns the poses
+        # again, transitioning them from wherever the SPV left them back
+        # toward `state_for(ship)` over each part's transition_seconds. Snapping here would replace
         # that with a jump, and the mesh and the mounts stay in agreement
         # either way because they read the same dict.
         _articulation.set_dev_override(None)
@@ -779,7 +779,7 @@ class ShipPropertyViewerPanel(Panel):
 
         `part_transform_point` closes that: the SAME call
         `subsystem_world_position` makes, reading the same
-        `ship._articulation_angles`, so the two roads arrive at one place by
+        `ship._articulation_poses`, so the two roads arrive at one place by
         construction rather than by two transforms being kept in step. It is
         applied to `_effective_pos`, not to the baked mount, because a
         staged/dragged position is authored in the model's UNROTATED frame

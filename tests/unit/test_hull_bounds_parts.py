@@ -18,7 +18,7 @@ class _Ship:
 
     def __init__(self):
         self._articulation_leaf = "birdofprey"
-        self._articulation_angles = {}
+        self._articulation_poses = {}
 
     def GetWorldLocation(self):
         from engine.appc.math import TGPoint3
@@ -41,14 +41,14 @@ def _nif(spheres):
 
 
 def _pose(ship, deflection):
-    """Set `ship`'s per-part angles to `deflection` scaled by each part's
-    authored "cruise" angle -- the fully-deflected (up/cold) pose, mirroring
-    the pre-migration OLD-rig's single `angle_deg` -- what
-    `articulation.part_transform_point` (via `angle_for_part`, Task 4) reads
-    now; there is no scalar fallback any more."""
-    from engine.appc import articulation
-    ship._articulation_angles = {
-        p.GetName(): p.angle_for("cruise") * deflection
+    """Set `ship`'s per-part poses `deflection` of the way (0..1) along each
+    part's swing from the NIF pose to its authored "cruise" pose -- the
+    fully-deflected (up/cold) pose at 1.0 -- what
+    `articulation.part_transform_point` (via `pose_for_part`) reads."""
+    from engine.appc import articulation, part_pose
+    ship._articulation_poses = {
+        p.GetName(): part_pose.interpolate(
+            part_pose.IDENTITY, p.pose_for("cruise"), p.anchor, deflection)
         for p in articulation.rig_for("birdofprey")
     }
 
@@ -194,7 +194,7 @@ def test_an_unrigged_ship_tags_nothing():
 
 def test_a_wing_piece_moves_with_its_part_at_full_deflection():
     """The piece must sit where the wing is DRAWN. `part_transform_point` is
-    the same Rodrigues hinge the renderer's node override uses, so the
+    the same pose the renderer's node matrix is built from, so the
     collision sphere and the drawn mesh agree by construction."""
     from engine.appc import articulation
     ship = _Ship()
@@ -312,6 +312,34 @@ def test_bound_radius_encloses_a_wing_piece_at_EVERY_point_of_its_travel():
         "at the two ends")
 
 
+def test_bound_radius_encloses_a_piece_through_INTERRUPTED_transitions(
+        monkeypatch):
+    """A transition can be interrupted at any point and restarted from where
+    the part is (spec 2026-09-25 §4.1), so the reachable set is not one arc
+    between two authored poses. Drive the real `tick_ship` through a run of
+    mid-swing state flips and check the gate encloses every position the
+    piece is actually drawn at."""
+    from engine.appc import articulation
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_MID_TRAVEL_PT, _PIECE_R),
+                                            (*WING_PT, _PIECE_R)]))
+    gate = hb.bound_radius(ship)
+    state = {"s": "cruise"}
+    monkeypatch.setattr(articulation, "state_for", lambda _ship: state["s"])
+    ship._articulation_poses = {}
+    worst = 0.0
+    plan = ["cruise"] * 13 + ["red"] * 7 + ["warp"] * 5 + ["red"] * 11 + \
+        ["cruise"] * 30 + ["red"] * 3 + ["yellow"] * 40
+    for s in plan:
+        state["s"] = s
+        articulation.tick_ship(ship, 1.0 / 15.0)
+        for c, r in hb.hull_spheres_world(ship):
+            worst = max(worst, _reach((c.x, c.y, c.z), r))
+    assert worst > _reach(WING_PT) + 1e-4 or worst > _reach(
+        WING_MID_TRAVEL_PT) + 1e-4, "fixture check: the pieces must move"
+    assert gate >= worst - 1e-9
+
+
 def test_bound_radius_for_an_UNTAGGED_piece_is_the_old_arithmetic():
     """The overwhelming majority of pieces, and every piece on an unrigged
     hull. Travel awareness must not perturb them by so much as a float."""
@@ -339,8 +367,8 @@ def test_part_transform_point_uses_the_part_it_is_GIVEN():
 
     wing = next(p for p in articulation.rig_for("birdofprey")
                 if p.GetName() == "left wing")
-    expected = articulation.point_at_angle(
-        wing, BODY_PT, articulation.angle_for_part(ship, wing))
+    from engine.appc import part_pose
+    expected = part_pose.apply(articulation.pose_for_part(ship, wing), BODY_PT)
 
     assert articulation.part_transform_point(
         ship, BODY_PT, part="left wing") == expected

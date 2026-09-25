@@ -11,7 +11,7 @@ through it is ~0.9 ship units out.
 THREE layers, and the splits matter -- each one shipped broken on its own:
 
   * `articulation.force_pose(ship, state)` -- WHAT pose, written once at the
-    SPV's event edges into `ship._articulation_angles`, the single dict every
+    SPV's event edges into `ship._articulation_poses`, the single dict every
     reader of a live pose consults. Applying the forced pose in the render
     sweep instead drew the wings down while every cannon pin floated at its
     stale raised position; see "ONE SOURCE OF TRUTH" below.
@@ -20,11 +20,20 @@ THREE layers, and the splits matter -- each one shipped broken on its own:
     happens at all on a frozen frame. The SPV freezes the sim, and this
     originally sat under `if not pause.sim_frozen:`. See "THE GUARD" below.
 """
-import math
-
 import pytest
 
-from engine.appc import articulation
+from engine.appc import articulation, part_pose
+
+# The identity node matrix: what the sync pushes for a part in its NIF pose,
+# and the signal the binding uses to CLEAR the override.
+_IDENTITY_M16 = part_pose.matrix4_model(part_pose.IDENTITY,
+                                        articulation.MODEL_TO_SHIP)
+assert _IDENTITY_M16 == (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                         0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _m16(pose):
+    return part_pose.matrix4_model(pose, articulation.MODEL_TO_SHIP)
 
 
 class _Session:
@@ -47,9 +56,10 @@ class _Panel:
 
 class _Ship:
     """`deflection` is a test convenience, not a production concept any
-    more: it scales each part's authored "cruise" angle (the fully-deflected,
-    up/cold pose) into `_articulation_angles`, the ONLY thing
-    `_sync_ship_articulation` (via `articulation.angle_for_part`) reads.
+    more: the fraction (0..1) of each part's swing from the NIF pose to its
+    authored "cruise" pose (the fully-deflected, up/cold pose), written into
+    `_articulation_poses`, the ONLY thing `_sync_ship_articulation` (via
+    `articulation.pose_for_part`) reads.
     Building the dict here, rather than going through `tick_ship`, is
     deliberate for the tests in this file: they are about a FIXED pose and
     the render-sync's own guard/force_state logic, not about motion over
@@ -57,20 +67,23 @@ class _Ship:
 
     def __init__(self, deflection=1.0):
         self._articulation_leaf = "birdofprey"
-        self._articulation_angles = {
-            p.GetName(): p.angle_for("cruise") * deflection
+        self._articulation_poses = {
+            p.GetName(): part_pose.interpolate(
+                part_pose.IDENTITY, p.pose_for("cruise"), p.anchor,
+                deflection)
             for p in articulation.rig_for("birdofprey")
         }
 
 
 @pytest.fixture
 def pushes(monkeypatch):
-    """Record every set_instance_node_rotation the sync makes."""
+    """Record every set_instance_node_transform the sync makes, as
+    (node, 16-float matrix)."""
     from engine import host_io
     seen = []
     monkeypatch.setattr(
-        host_io, "set_instance_node_rotation",
-        lambda iid, node, pivot, axis, theta: seen.append((node, theta)))
+        host_io, "set_instance_node_transform",
+        lambda iid, node, m16: seen.append((node, tuple(m16))))
     return seen
 
 
@@ -80,22 +93,22 @@ def test_the_fixture_ship_actually_articulates(pushes):
     from engine import host_loop
     host_loop._sync_ship_articulation(_Session(), _Ship(deflection=1.0), 7)
     assert pushes, "the fixture must push a real pose, or the tests prove nothing"
-    assert any(theta != 0.0 for _node, theta in pushes)
+    assert any(m != _IDENTITY_M16 for _node, m in pushes)
 
 
-def test_the_anchor_pose_pushes_ZERO_rotation_on_every_part(pushes):
+def test_the_anchor_pose_pushes_the_IDENTITY_on_every_part(pushes):
     """THE POINT. Not 'pushes nothing' -- pushing nothing would leave the
     previous articulated pose standing in node_overrides.
 
     The anchor pose now arrives the same way every other pose does: written
-    into `_articulation_angles` by `force_pose`, then read back out by the
+    into `_articulation_poses` by `force_pose`, then read back out by the
     sync. There is no second, render-side forcing path to test."""
     from engine import host_loop
     ship = _Ship(deflection=1.0)
     articulation.force_pose(ship, None)
     host_loop._sync_ship_articulation(_Session(), ship, 7)
     assert pushes, "the rest pose must be pushed, not merely not-overwritten"
-    assert all(theta == 0.0 for _node, theta in pushes), pushes
+    assert all(m == _IDENTITY_M16 for _node, m in pushes), pushes
 
 
 def test_the_render_sync_does_not_mutate_the_ship(pushes):
@@ -106,13 +119,15 @@ def test_the_render_sync_does_not_mutate_the_ship(pushes):
     from engine import host_loop
     ship = _Ship(deflection=1.0)
     articulation.force_pose(ship, None)
-    before = dict(ship._articulation_angles)
+    before = dict(ship._articulation_poses)
+    before_tr = dict(ship._articulation_transitions)
     host_loop._sync_ship_articulation(_Session(), ship, 7)
-    assert ship._articulation_angles == before
+    assert ship._articulation_poses == before
+    assert ship._articulation_transitions == before_tr
 
 
 def test_the_change_guard_still_fires_on_the_open_and_close_edges(pushes):
-    """The sync is guarded on CHANGE so a settled ship costs one float compare.
+    """The sync is guarded on CHANGE so a settled ship costs one tuple compare.
     Forcing the anchor pose must not defeat that, and must not be defeated BY
     it: opening the SPV has to push once, and closing has to push the live
     pose back."""
@@ -126,21 +141,21 @@ def test_the_change_guard_still_fires_on_the_open_and_close_edges(pushes):
     articulation.force_pose(ship, None)                            # SPV opens
     host_loop._sync_ship_articulation(session, ship, 7)
     assert pushes, "the open edge must re-push"
-    assert all(theta == 0.0 for _n, theta in pushes)
+    assert all(m == _IDENTITY_M16 for _n, m in pushes)
     pushes.clear()
 
     host_loop._sync_ship_articulation(session, ship, 7)
     assert pushes == [], "a settled forced pose must not re-push every frame"
 
-    ship._articulation_angles = _Ship(deflection=1.0)._articulation_angles
+    ship._articulation_poses = _Ship(deflection=1.0)._articulation_poses
     host_loop._sync_ship_articulation(session, ship, 7)
     assert pushes, "the close edge must restore the live pose"
-    assert any(theta != 0.0 for _n, theta in pushes)
+    assert pushes == live, "the close edge must push back the SAME live pose"
 
 
 def test_a_severed_part_stays_severed_while_forced(pushes, monkeypatch):
     """A severed part is HIDDEN through the same node_overrides slot this
-    rotation writes. Pushing a rest rotation onto it would snap the wing back
+    transform writes. Pushing a rest matrix onto it would snap the wing back
     onto the hull and then erase the hide for good."""
     from engine import host_loop
     from engine.appc import part_severance
@@ -150,7 +165,7 @@ def test_a_severed_part_stays_severed_while_forced(pushes, monkeypatch):
     articulation.force_pose(ship, None)
     host_loop._sync_ship_articulation(_Session(), ship, 7)
     assert pushes, "the other wing must still be posed"
-    assert all(node != "left wing" for node, _t in pushes)
+    assert all(node != "left wing" for node, _m in pushes)
 
 
 def test_an_unrigged_ship_is_untouched(pushes):
@@ -229,7 +244,7 @@ def test_the_articulation_sweep_runs_while_the_sim_is_FROZEN():
 
 # ---------------------------------------------------------------------------
 # `_sync_spv_articulation` -- the sweep the call site above must reach. It
-# pushes the ship's LIVE angles, exactly like the unfrozen path; it knows
+# pushes the ship's LIVE poses, exactly like the unfrozen path; it knows
 # nothing about the forced state. The forcing happened earlier, at the SPV's
 # event edge, in the shared dict.
 # ---------------------------------------------------------------------------
@@ -241,13 +256,14 @@ def dev_on(monkeypatch):
 
 
 def test_the_sweep_pushes_the_ANCHOR_pose_the_edge_forced(pushes, dev_on):
-    """Every part at angle 0 -- the frame a hardpoint mount is stored in."""
+    """Every part at the identity (NIF) pose -- the frame a hardpoint mount
+    is stored in."""
     from engine import host_loop
     ship = _Ship(deflection=1.0)
     articulation.force_pose(ship, None)          # the SPV's open edge
     host_loop._sync_spv_articulation(_Session([ship]), _Panel())
     assert pushes, "the anchor pose must be PUSHED, not merely not-overwritten"
-    assert all(theta == 0.0 for _n, theta in pushes), pushes
+    assert all(m == _IDENTITY_M16 for _n, m in pushes), pushes
 
 
 def test_the_sweep_pushes_the_PREVIEWED_state(pushes, dev_on):
@@ -259,11 +275,13 @@ def test_the_sweep_pushes_the_PREVIEWED_state(pushes, dev_on):
     articulation.force_pose(ship, "cruise")      # the SPV's Preview edge
     host_loop._sync_spv_articulation(_Session([ship]), _Panel())
     assert pushes
-    expected = sorted(
-        math.radians(p.angle_for("cruise"))
-        for p in articulation.rig_for("birdofprey"))
-    assert sorted(theta for _n, theta in pushes) == pytest.approx(expected)
-    assert any(theta != 0.0 for _n, theta in pushes)
+    drawn = dict(pushes)
+    assert set(drawn) == {p.GetName()
+                          for p in articulation.rig_for("birdofprey")}
+    for p in articulation.rig_for("birdofprey"):
+        assert drawn[p.GetName()] == pytest.approx(
+            _m16(p.pose_for("cruise")), abs=1e-12)
+    assert any(m != _IDENTITY_M16 for _n, m in pushes)
 
 
 def test_the_sweep_is_INERT_in_production(pushes, monkeypatch):
@@ -284,7 +302,7 @@ def test_the_sweep_is_inert_while_the_viewer_is_CLOSED(pushes, dev_on):
 
 
 def test_the_sweep_keeps_a_SEVERED_part_hidden(pushes, dev_on, monkeypatch):
-    """The hide and this rotation share one node_overrides slot; re-posing a
+    """The hide and this transform share one node_overrides slot; re-posing a
     severed wing snaps it back onto the hull."""
     from engine import host_loop
     from engine.appc import part_severance
@@ -293,7 +311,7 @@ def test_the_sweep_keeps_a_SEVERED_part_hidden(pushes, dev_on, monkeypatch):
     host_loop._sync_spv_articulation(_Session([_Ship(deflection=1.0)]),
                                      _Panel())
     assert pushes, "the other wing must still be posed"
-    assert all(node != "left wing" for node, _t in pushes)
+    assert all(node != "left wing" for node, _m in pushes)
 
 
 # ---------------------------------------------------------------------------
@@ -301,34 +319,35 @@ def test_the_sweep_keeps_a_SEVERED_part_hidden(pushes, dev_on, monkeypatch):
 # while the disruptor-cannon pins floated in space at their RAISED positions.
 #
 # The mesh read the sweep's FORCED pose; every mount read
-# `ship._articulation_angles`, which `tick_ship` owns -- and `tick_ship` never
+# `ship._articulation_poses`, which `tick_ship` owns -- and `tick_ship` never
 # runs while the SPV is open, because the SPV freezes the sim. So the two
-# halves resolved different angles for the same part.
+# halves resolved different poses for the same part.
 #
 # Each test above pins ONE side. That is exactly how this got through, so the
 # test below pins the AGREEMENT.
 # ---------------------------------------------------------------------------
 
-def test_the_MOUNT_and_the_MESH_resolve_the_SAME_angle(pushes, dev_on):
-    """THE LINCHPIN. Whatever pose the viewer is showing, the angle a mount
-    resolves through `angle_for_part` must be the angle the render sweep
+def test_the_MOUNT_and_the_MESH_resolve_the_SAME_pose(pushes, dev_on):
+    """THE LINCHPIN. Whatever pose the viewer is showing, the pose a mount
+    resolves through `pose_for_part` must be the pose the render sweep
     pushes into the node override -- for every part, at any instant."""
     from engine import host_loop
-    ship = _Ship(deflection=1.0)          # live angles: cruise, +/-45 deg
+    ship = _Ship(deflection=1.0)          # live poses: cruise, +/-45 deg
     host_loop._sync_spv_articulation(_Session([ship]), _Panel())
 
     drawn = dict(pushes)
     assert drawn, "nothing was pushed; the test would prove nothing"
     for part in articulation.rig_for("birdofprey"):
-        mount = articulation.angle_for_part(ship, part)
-        assert drawn[part.GetName()] == pytest.approx(math.radians(mount)), (
-            "part %r: mesh drawn at %r rad, mount resolved at %r deg"
+        mount = articulation.pose_for_part(ship, part)
+        assert not part_pose.is_identity(mount)
+        assert drawn[part.GetName()] == pytest.approx(_m16(mount), abs=1e-12), (
+            "part %r: mesh drawn with %r, mount resolved at %r"
             % (part.GetName(), drawn[part.GetName()], mount))
 
 
 def test_they_STILL_agree_once_the_anchor_pose_is_forced(pushes, dev_on):
-    """The same assertion on the other side of the edge. Both must be zero --
-    not 'the mesh is zero and the mount is whatever it was'."""
+    """The same assertion on the other side of the edge. Both must be the
+    identity -- not 'the mesh is at rest and the mount is whatever it was'."""
     from engine import host_loop
     ship = _Ship(deflection=1.0)
     articulation.force_pose(ship, None)
@@ -337,8 +356,8 @@ def test_they_STILL_agree_once_the_anchor_pose_is_forced(pushes, dev_on):
     drawn = dict(pushes)
     assert drawn
     for part in articulation.rig_for("birdofprey"):
-        assert articulation.angle_for_part(ship, part) == 0.0
-        assert drawn[part.GetName()] == 0.0
+        assert articulation.pose_for_part(ship, part) == part_pose.IDENTITY
+        assert drawn[part.GetName()] == _IDENTITY_M16
 
 
 # The starboard wingtip disruptor cannon, as `hardpoint_overrides` authors it
@@ -373,14 +392,15 @@ def test_the_wingtip_PIN_lands_on_the_wingtip(pushes, dev_on):
     """Mark's screenshot, at the level he saw it: the hull drew its wings
     DOWN while the disruptor-cannon pins floated in space at their RAISED
     positions. A pin is `subsystems.subsystem_world_position`, which reaches
-    the same `_articulation_angles` the mesh does."""
+    the same `_articulation_poses` the mesh does."""
     from engine import host_loop
     from engine.appc import subsystems
     ship = _PosedShip(deflection=1.0)         # live: wings up, +/-45
     articulation.force_pose(ship, None)       # the SPV's open edge
     host_loop._sync_spv_articulation(_Session([ship]), _Panel())
 
-    assert all(theta == 0.0 for _n, theta in pushes), "the mesh must be at rest"
+    assert pushes
+    assert all(m == _IDENTITY_M16 for _n, m in pushes), "the mesh must be at rest"
     pin = subsystems.subsystem_world_position(_Cannon(WINGTIP_CANNON), ship)
     assert (pin.x, pin.y, pin.z) == pytest.approx(WINGTIP_CANNON), (
         "the mesh is in its NIF pose, so the mount must be too")

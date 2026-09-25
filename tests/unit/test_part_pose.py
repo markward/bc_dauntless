@@ -12,7 +12,8 @@ from engine.appc import part_pose as pp
 
 
 def _rodrigues(point, pivot, axis, degrees):
-    """The OLD hinge maths, verbatim in spirit (articulation._rotate_about):
+    """The OLD hinge maths, verbatim in spirit (the retired
+    articulation._rotate_about):
     the reference the legacy conversion must match."""
     n = math.sqrt(sum(a * a for a in axis))
     ax, ay, az = (a / n for a in axis)

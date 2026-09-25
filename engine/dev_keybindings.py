@@ -290,7 +290,7 @@ def register_for_frame(_h, session, player) -> None:
     # The old 0.5 mid-travel stop is gone: with four independent authored
     # poses instead of one 0..1 deflection, the interesting poses ARE the
     # authored states, and mid-travel is still reachable by switching states
-    # and watching the ease run (TRAVEL_SECONDS is a couple of seconds).
+    # and watching the ease run (a part's transition_seconds is a couple of seconds).
     #
     # 'K' is free in all four namespaces (see the note above): not in
     # input_map ACTIONS, not among the dev bindings, not a throttle digit or

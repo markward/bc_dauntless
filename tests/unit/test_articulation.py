@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from engine.appc import articulation
+from engine.appc import articulation, part_pose
 
 
 # ── The rig itself ───────────────────────────────────────────────────────────
@@ -38,10 +38,16 @@ def test_the_two_wings_are_mirrored():
     port, starboard = articulation.rig_for("birdofprey")
     assert port.GetName() == "left wing"
     assert starboard.GetName() == "left wing01"
-    assert port.pivot[0] == -starboard.pivot[0] != 0.0
-    assert port.angle_for("cruise") == -starboard.angle_for("cruise") != 0.0
-    # Same hinge axis; the mirroring lives in the pivot and the angle SIGN.
-    assert port.axis == starboard.axis
+    assert port.anchor[0] == -starboard.anchor[0] != 0.0
+    port6, star6 = port.pose6_for("cruise"), starboard.pose6_for("cruise")
+    # The swing about Y (the ry Euler) is mirrored in SIGN ...
+    assert port6[4] == pytest.approx(-star6[4])
+    assert port6[4] != pytest.approx(0.0)
+    # ... about the same hinge axis: neither pose has any X or Z rotation, so
+    # the mirroring lives in the anchor and the swing sign alone.
+    for p6 in (port6, star6):
+        assert p6[3] == pytest.approx(0.0, abs=1e-9)
+        assert p6[5] == pytest.approx(0.0, abs=1e-9)
 
 
 def test_hinge_axis_is_fore_aft():
@@ -49,7 +55,16 @@ def test_hinge_axis_is_fore_aft():
     component is therefore inert — rotation about a line is unchanged by
     sliding the pivot along it — which is why tuning is two numbers per wing."""
     for part in articulation.rig_for("birdofprey"):
-        assert part.axis == (0.0, 1.0, 0.0)
+        for state in part.authored_states():
+            pose = part.pose_for(state)
+            # The fore-aft axis is left fixed by the rotation ...
+            assert part_pose.apply_vector(pose, (0.0, 1.0, 0.0)) == \
+                pytest.approx((0.0, 1.0, 0.0), abs=1e-12)
+            # ... and sliding a point along it slides the image with it: the
+            # anchor's Y component is inert.
+            a = part_pose.apply(pose, (0.5, 0.0, -0.3))
+            b = part_pose.apply(pose, (0.5, 0.7, -0.3))
+            assert (b[0], b[1] - 0.7, b[2]) == pytest.approx(a, abs=1e-12)
 
 
 # ── Which signal drives a ship (OQ-11) ─────────────────────────────
@@ -111,40 +126,62 @@ def test_an_unresolvable_player_does_not_raise(monkeypatch):
 
 # ── Rotation resolution ──────────────────────────────────────────────────────
 
-def test_rest_deflection_yields_zero_rotation():
-    """theta == 0 is the signal the binding uses to ERASE the override rather
-    than store an identity, which is what keeps the node-override map empty on
-    a ship at rest."""
+_IDENTITY_M16 = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def test_rest_pose_yields_the_identity_matrix():
+    """The identity matrix is the signal the binding uses to ERASE the
+    override rather than store one, which is what keeps the node-override map
+    empty on a ship at rest. The BoP's "red" is unset, so it is the NIF pose
+    and must convert to exactly that matrix."""
     part = articulation.rig_for("birdofprey")[0]
-    _pivot, _axis, theta = articulation.rotation_for(part, 0.0)
-    assert theta == 0.0
+    pose = part.pose_for("red")
+    assert part_pose.is_identity(pose)
+    assert part_pose.matrix4_model(pose, articulation.MODEL_TO_SHIP) == \
+        _IDENTITY_M16
 
 
 def test_full_deflection_matches_the_authored_angle():
-    """rotation_for takes DEGREES now (Task 4), not a 0..1 deflection -- so
-    "full deflection" is passing the part's own authored "cruise" angle
-    directly, the degree equivalent of the old rotation_for(part, 1.0)."""
+    """The cruise pose is a 45-degree swing about the fore-aft hinge through
+    the anchor -- the pose equivalent of the old full-deflection angle."""
     for part in articulation.rig_for("birdofprey"):
-        angle_deg = part.angle_for("cruise")
-        _p, _a, theta = articulation.rotation_for(part, angle_deg)
-        assert theta == pytest.approx(math.radians(angle_deg))
+        ry = part.pose6_for("cruise")[4]
+        assert abs(ry) == pytest.approx(45.0)
+        want = part_pose.hinge_pose(part.anchor, (0.0, 1.0, 0.0), ry)
+        got = part.pose_for("cruise")
+        for x in [(1.0, 0.45, -0.67), (-1.0, 0.0, -0.7), (0.0, 0.0, 0.0)]:
+            assert part_pose.apply(got, x) == pytest.approx(
+                part_pose.apply(want, x), abs=1e-12)
+
+
+def _legacy_part(axis):
+    from engine.appc.articulated_part import ArticulatedPartProperty
+    p = ArticulatedPartProperty("n")
+    p.SetPivot(0.0, 0.0, 0.0)
+    p.SetAxis(*axis)
+    p.SetStateAngle("cruise", 90.0)
+    return p
 
 
 def test_axis_is_normalised():
-    part = articulation.Part(node="n", pivot=(0.0, 0.0, 0.0),
-                             axis=(0.0, 3.0, 4.0), angle_deg=90.0)
-    _p, axis, _t = articulation.rotation_for(part, 1.0)
-    assert math.sqrt(sum(c * c for c in axis)) == pytest.approx(1.0)
+    """A legacy hinge authored with a non-unit axis converts to a proper
+    rotation (orthonormal, det +1), not a scaled one."""
+    R, _t = _legacy_part((0.0, 3.0, 4.0)).pose_for("cruise")
+    for i in range(3):
+        col = [R[r][i] for r in range(3)]
+        assert math.sqrt(sum(c * c for c in col)) == pytest.approx(1.0)
+    # The axis itself is fixed by the rotation.
+    assert part_pose.apply_vector((R, _t), (0.0, 0.6, 0.8)) == \
+        pytest.approx((0.0, 0.6, 0.8))
 
 
 def test_degenerate_axis_does_not_produce_nan():
     """A zero axis must fall back, not emit NaN — a NaN reaching the node
     transform would take the whole hull off screen, not just a wing."""
-    part = articulation.Part(node="n", pivot=(0.0, 0.0, 0.0),
-                             axis=(0.0, 0.0, 0.0), angle_deg=45.0)
-    _p, axis, theta = articulation.rotation_for(part, 1.0)
-    assert all(math.isfinite(c) for c in axis)
-    assert math.isfinite(theta)
+    pose = _legacy_part((0.0, 0.0, 0.0)).pose_for("cruise")
+    m16 = part_pose.matrix4_model(pose, articulation.MODEL_TO_SHIP)
+    assert all(math.isfinite(c) for c in m16)
 
 
 def test_pivot_is_in_ship_units():
@@ -154,19 +191,25 @@ def test_pivot_is_in_ship_units():
     which is the same confusion that made part attribution silently never
     fire — see part_severance.MODEL_TO_SHIP."""
     port, starboard = articulation.rig_for("birdofprey")
-    assert starboard.pivot[0] == pytest.approx(0.16)
-    assert port.pivot[0] == pytest.approx(-0.16)
-    assert starboard.pivot[2] == pytest.approx(0.05)
+    assert starboard.anchor[0] == pytest.approx(0.16)
+    assert port.anchor[0] == pytest.approx(-0.16)
+    assert starboard.anchor[2] == pytest.approx(0.05)
     # Inside the authored wing box, which is also ship units.
     box = articulation.part_boxes_for("birdofprey")["left wing01"]
-    assert box[0][0] <= starboard.pivot[0] <= box[1][0]
+    assert box[0][0] <= starboard.anchor[0] <= box[1][0]
 
 
-def test_rotation_for_returns_ship_units():
+def test_the_pose_is_ship_units_and_the_matrix_is_model_units():
+    """The pose carries SHIP units; `matrix4_model` is the one place they
+    become MODEL units for the node matrix."""
     part = articulation.rig_for("birdofprey")[1]
-    pivot, _axis, _theta = articulation.rotation_for(part, 1.0)
-    assert pivot == part.pivot
-    assert abs(pivot[0]) < 1.0, "a ship-units pivot is ~0.16, not ~16"
+    _R, t = part.pose_for("cruise")
+    assert 0.0 < max(abs(c) for c in t) < 1.0, \
+        "a ship-units hinge offset is ~0.1, not ~10"
+    m16 = part_pose.matrix4_model(part.pose_for("cruise"),
+                                  articulation.MODEL_TO_SHIP)
+    assert m16[12:15] == pytest.approx(
+        tuple(c / articulation.MODEL_TO_SHIP for c in t))
 
 
 # ── The geometry claim behind the pivots ─────────────────────────────────────
@@ -184,11 +227,11 @@ def test_pivot_sits_inboard_of_the_wing_and_outboard_of_nothing():
     |X| between the wing's inner edge and the body's half-width is the band
     that can be physically right. This test is the reason a future tuning pass
     cannot silently wander outside it. Bounds are in SHIP units (model / 100),
-    matching `Part.pivot` since Task 1 of the hardpoint-parenting plan."""
+    matching the part anchor since Task 1 of the hardpoint-parenting plan."""
     wing_inner_x = 12.36 * articulation.MODEL_TO_SHIP
     body_half_width = 31.37 * articulation.MODEL_TO_SHIP
     for part in articulation.rig_for("birdofprey"):
-        assert wing_inner_x <= abs(part.pivot[0]) <= body_half_width, part.GetName()
+        assert wing_inner_x <= abs(part.anchor[0]) <= body_half_width, part.GetName()
 
 
 @pytest.mark.parametrize("node,tip_x", [("left wing", -1.0258),
@@ -208,17 +251,10 @@ def test_full_deflection_lifts_the_wing_tip_towards_horizontal(node, tip_x):
     """
     part = next(p for p in articulation.rig_for("birdofprey")
                 if p.GetName() == node)
-    px, _py, pz = part.pivot
+    _px, _py, pz = part.anchor
     tip_z = -0.7125
-    # rotation_for takes DEGREES now (Task 4); the authored "cruise" angle IS
-    # the full swing, the degree equivalent of the old rotation_for(part, 1.0).
-    angle_deg = part.angle_for("cruise")
-    _p, _axis, theta = articulation.rotation_for(part, angle_deg)
-
-    # Rotate the tip about the +Y axis through the pivot. Right-handed about
-    # +Y: x' = x cos + z sin, z' = -x sin + z cos.
-    dx, dz = tip_x - px, tip_z - pz
-    new_z = pz + (-dx * math.sin(theta) + dz * math.cos(theta))
+    # The authored "cruise" pose IS the full swing.
+    new_z = part_pose.apply(part.pose_for("cruise"), (tip_x, 0.0, tip_z))[2]
 
     assert new_z > tip_z, "wing must rise, not sink"
     # Tip ends up near the hinge height rather than merely nudged.
@@ -245,17 +281,20 @@ def test_the_conversion_constant_matches_BC_MODEL_SCALE():
 # ── part_transform_point ─────────────────────────────────────────────────────
 
 class _PosedShip:
-    """Minimal stand-in: a leaf and a per-part angle map is all the
-    transform needs (Task 4 -- `part_transform_point` reads
-    `angle_for_part`, which is backed ONLY by `ship._articulation_angles`,
-    not any scalar). `deflection` here is a test convenience: it scales each
-    part's authored "cruise" angle, matching what this file's fixtures
-    actually describe (0 = rest, 1 = fully swung)."""
+    """Minimal stand-in: a leaf and a per-part pose map is all the
+    transform needs (`part_transform_point` reads `pose_for_part`, which is
+    backed ONLY by `ship._articulation_poses`). `deflection` here is a test
+    convenience: the fraction of the way from the NIF pose to the authored
+    "cruise" pose along the part's swing (`part_pose.interpolate`), matching
+    what this file's fixtures actually describe (0 = rest, 1 = fully
+    swung)."""
 
     def __init__(self, deflection, leaf="birdofprey"):
         self._articulation_leaf = leaf
-        self._articulation_angles = {
-            p.GetName(): p.angle_for("cruise") * deflection
+        self._articulation_poses = {
+            p.GetName(): part_pose.interpolate(
+                part_pose.IDENTITY, p.pose_for("cruise"), p.anchor,
+                deflection)
             for p in articulation.rig_for(leaf)
         }
 
@@ -301,7 +340,7 @@ def test_the_two_wings_mirror():
 
 def test_a_detached_part_does_not_transform_its_point():
     """REGRESSION (finding C1b). A severed wing has no mount to follow — its
-    mount point must stay put rather than rotate about a hinge the wing no
+    mount point must stay put rather than follow a pose the wing no
     longer has. Mirrors the C1a fix in host_loop._sync_ship_articulation:
     both consult part_severance.is_detached, so a mount and the mesh it once
     sat on never disagree about whether the wing is still there."""

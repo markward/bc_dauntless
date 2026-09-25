@@ -23,7 +23,7 @@ def test_the_matrix_is_passed_as_sixteen_floats(monkeypatch):
         # the real module's InstanceId is a distinct wrapped type, but a
         # fake standing in for it can alias `int` so a plain-int test iid
         # still exercises the success path through the isinstance guard
-        # that `set_instance_node_rotation` also has.
+        # that `set_instance_transform_slot` also has.
         InstanceId = int
 
         def set_instance_node_transform(self, iid, node, m16):
@@ -40,7 +40,7 @@ def test_a_non_instance_id_iid_is_false_not_a_typeerror(monkeypatch):
     """A real-module-shaped fake: InstanceId is a DISTINCT type from int, as
     it is in the actual _dauntless_host module. A plain-int iid (e.g. a test
     double's placeholder) must degrade to False here, not raise -- mirroring
-    set_instance_node_rotation's isinstance guard exactly. This is the guard
+    set_instance_transform_slot's isinstance guard exactly. This is the guard
     a stale wrapper without it would skip, raising TypeError from the native
     binding instead."""
     class _RealInstanceId:

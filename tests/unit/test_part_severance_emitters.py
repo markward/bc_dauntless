@@ -41,7 +41,7 @@ class _Sub:
 class _Ship:
     def __init__(self, subs):
         self._articulation_leaf = "birdofprey"
-        self._articulation_angles = {}
+        self._articulation_poses = {}
         self._subs = list(subs)
 
     def _iter_subsystems(self):
@@ -49,15 +49,13 @@ class _Ship:
 
 
 def _pose(ship, deflection):
-    """Set `ship`'s per-part angles to `deflection` scaled by each part's
-    authored "cruise" angle -- the fully-deflected (up/cold) pose, mirroring
-    the pre-migration OLD-rig's single `angle_deg` -- what `angle_for_part`
-    (Task 4) reads now; there is no scalar fallback any more, so a test that
-    used to write `ship._articulation_deflection` writes this dict directly
-    instead."""
-    from engine.appc import articulation
-    ship._articulation_angles = {
-        p.GetName(): p.angle_for("cruise") * deflection
+    """Set `ship`'s per-part poses `deflection` of the way (0..1) along each
+    part's swing from the NIF pose to its authored "cruise" pose -- the
+    fully-deflected (up/cold) pose at 1.0 -- what `pose_for_part` reads."""
+    from engine.appc import articulation, part_pose
+    ship._articulation_poses = {
+        p.GetName(): part_pose.interpolate(
+            part_pose.IDENTITY, p.pose_for("cruise"), p.anchor, deflection)
         for p in articulation.rig_for("birdofprey")
     }
 
@@ -217,14 +215,14 @@ WING_TIP = (-1.0, 0.0, -0.7)
 
 
 def _posed(point, node, deflection):
-    """`point` where it is DRAWN once `node` sits at `deflection` (a fraction
-    of its authored "cruise" angle, mirroring the pre-migration OLD-rig's
-    single `angle_deg`)."""
-    from engine.appc import articulation
+    """`point` where it is DRAWN once `node` sits `deflection` (0..1) of the
+    way along its swing from the NIF pose to its authored "cruise" pose."""
+    from engine.appc import articulation, part_pose
     part = next(p for p in articulation.rig_for("birdofprey")
                 if p.GetName() == node)
-    return articulation.point_at_angle(part, point,
-                                       part.angle_for("cruise") * deflection)
+    return part_pose.apply(
+        part_pose.interpolate(part_pose.IDENTITY, part.pose_for("cruise"),
+                              part.anchor, deflection), point)
 
 
 def test_the_live_pose_fixture_point_attributes_as_this_file_assumes():

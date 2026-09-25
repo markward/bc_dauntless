@@ -18,7 +18,7 @@ import math
 
 import pytest
 
-from engine.appc import articulation
+from engine.appc import articulation, part_pose
 from engine.ui.glow_region_overlay import build_part_box_overlay
 
 LEAF = "birdofprey"
@@ -32,8 +32,10 @@ class _Ship:
 
     def __init__(self, deflection=0.0):
         self._articulation_leaf = LEAF
-        self._articulation_angles = {
-            p.GetName(): p.angle_for("cruise") * deflection
+        self._articulation_poses = {
+            p.GetName(): part_pose.interpolate(
+                part_pose.IDENTITY, p.pose_for("cruise"), p.anchor,
+                deflection)
             for p in articulation.rig_for(LEAF)
         }
 
@@ -86,13 +88,13 @@ def test_the_box_FOLLOWS_a_previewed_pose():
                                    WING_BOX)[0]
     assert posed["center"] != pytest.approx(rest["center"])
 
-    # It lands exactly where the shared angle dict says the part is -- the
+    # It lands exactly where the shared pose dict says the part is -- the
     # same source the mesh and the mounts read.
     ship = _Ship(deflection=1.0)
     part = next(p for p in articulation.rig_for(LEAF)
                 if p.GetName() == "left wing")
-    expected = articulation.point_at_angle(
-        part, _centre(WING_BOX), articulation.angle_for_part(ship, part))
+    expected = part_pose.apply(articulation.pose_for_part(ship, part),
+                               _centre(WING_BOX))
     assert posed["center"] == pytest.approx(expected)
 
 

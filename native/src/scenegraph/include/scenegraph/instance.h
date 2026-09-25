@@ -100,7 +100,7 @@ struct Instance {
     /// model's static local (byte-identical to the un-animated render).
     ///
     /// TWO independent writers, on disjoint instances in practice:
-    ///   - `set_instance_node_rotation` / `set_instance_node_hidden`
+    ///   - `set_instance_node_transform` / `set_instance_node_hidden`
     ///     (host_bindings.cc) — ship articulation (BoP wings) and
     ///     appendage severance, called from Python per part per tick. A
     ///     severed part's override is the ZERO matrix: compose_node_worlds

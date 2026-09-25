@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from engine.appc import articulation, part_severance as ps
+from engine.appc import articulation, part_pose, part_severance as ps
 
 
 LEAF = "birdofprey"
@@ -46,19 +46,19 @@ class _Ship:
         self._hull = _Hull(hull)
         self._subs = list(subs)
         self._articulation_leaf = LEAF      # pre-cached: no SDK import in tests
-        self._articulation_angles = {}
+        self._articulation_poses = {}
 
     def GetHull(self): return self._hull
     def _iter_subsystems(self): return list(self._subs)
 
 
 def _pose(ship, deflection):
-    """Set `ship`'s per-part angles to `deflection` scaled by each part's
-    authored "cruise" angle -- the fully-deflected (up/cold) pose, mirroring
-    the pre-migration OLD-rig's single `angle_deg` -- what `angle_for_part`
-    (Task 4) reads now; there is no scalar fallback any more."""
-    ship._articulation_angles = {
-        p.GetName(): p.angle_for("cruise") * deflection
+    """Set `ship`'s per-part poses `deflection` of the way (0..1) along each
+    part's swing from the NIF pose to its authored "cruise" pose -- the
+    fully-deflected (up/cold) pose at 1.0 -- what `pose_for_part` reads."""
+    ship._articulation_poses = {
+        p.GetName(): part_pose.interpolate(
+            part_pose.IDENTITY, p.pose_for("cruise"), p.anchor, deflection)
         for p in articulation.rig_for(LEAF)
     }
 
@@ -299,8 +299,8 @@ def _posed_wingtip(ship, part_name="left wing01"):
     """Where WINGTIP_REST is DRAWN in `ship`'s current pose, ship units."""
     part = next(p for p in articulation.rig_for(LEAF)
                 if p.GetName() == part_name)
-    return articulation.point_at_angle(
-        part, WINGTIP_REST, articulation.angle_for_part(ship, part))
+    return part_pose.apply(articulation.pose_for_part(ship, part),
+                           WINGTIP_REST)
 
 
 def test_a_hit_on_a_POSED_wingtip_still_attributes_to_that_wing():
@@ -331,8 +331,8 @@ def test_a_posed_wing_still_SHEARS_at_its_threshold():
 
 
 def test_at_rest_attribution_is_UNCHANGED():
-    """At angle 0 -- the pose the model ships in, and the one combat has run
-    in until now -- every rotation is identity, so the live-pose query must
+    """At the identity pose -- the pose the model ships in, and the one
+    combat has run in until now -- every pullback is identity, so the live-pose query must
     give byte-identical answers to the rest-pose one."""
     ship = _Ship()
     _pose(ship, 0.0)
@@ -360,12 +360,12 @@ def test_the_conversion_constant_matches_BC_MODEL_SCALE():
 def test_a_detached_part_is_not_repose_by_the_render_sync(monkeypatch):
     """REGRESSION. `_sync_ship_articulation` used to push a pose for EVERY
     rigged part whenever deflection changed, with no regard for severance.
-    `set_instance_node_rotation` and `set_instance_node_hidden` write into the
-    SAME node_overrides slot, so re-posing a severed wing overwrote the zero
-    matrix that was hiding it -- the wing snapped back onto the hull and
+    `set_instance_node_transform` and `set_instance_node_hidden` write into
+    the SAME node_overrides slot, so re-posing a severed wing overwrote the
+    zero matrix that was hiding it -- the wing snapped back onto the hull and
     animated with the good one, while its cannon stayed dead and its debris
-    chunk flew off on its own. theta == 0 at the end of travel then ERASED the
-    hide permanently.
+    chunk flew off on its own. An identity push at the end of travel then
+    ERASED the hide permanently.
 
     Fixed by skipping any part `part_severance.is_detached` reports as gone,
     mirroring the `part_transform_point` guard above."""
@@ -373,18 +373,25 @@ def test_a_detached_part_is_not_repose_by_the_render_sync(monkeypatch):
 
     calls = []
     monkeypatch.setattr(
-        host_loop.host_io, "set_instance_node_rotation",
-        lambda iid, node, pivot, axis, theta: calls.append(node) or True)
+        host_loop.host_io, "set_instance_node_transform",
+        lambda iid, node, m16: calls.append((node, tuple(m16))) or True)
 
     ship = _Ship()
-    _pose(ship, 0.5)  # a non-zero pose: the guard is live
+    _pose(ship, 0.5)  # a non-identity pose: the guard is live
     ps.detached_parts(ship).add("left wing01")
     session = types.SimpleNamespace(ship_articulation={})
 
     host_loop._sync_ship_articulation(session, ship, iid=1)
 
-    assert calls == ["left wing"], (
-        "the severed wing must not receive a node-rotation push")
+    port = next(p for p in articulation.rig_for(LEAF)
+                if p.GetName() == "left wing")
+    want = part_pose.matrix4_model(
+        part_pose.interpolate(part_pose.IDENTITY, port.pose_for("cruise"),
+                              port.anchor, 0.5),
+        articulation.MODEL_TO_SHIP)
+    assert [c[0] for c in calls] == ["left wing"], (
+        "the severed wing must not receive a node-transform push")
+    assert calls[0][1] == pytest.approx(want, abs=1e-12)
 
 
 # ── The authored data ────────────────────────────────────────────────────────

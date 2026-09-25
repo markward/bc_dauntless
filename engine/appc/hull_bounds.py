@@ -35,7 +35,6 @@ BC_MODEL_SCALE, the same flat factor `_ship_world_matrix` applies), matching how
 `_cache_shield_hull_box` stores the hull AABB. The ship's live position,
 rotation and scale are applied on read.
 """
-import math
 
 from engine.appc.math import TGPoint3
 
@@ -263,73 +262,40 @@ def _rig_parts_by_name(ship, cached) -> dict:
             for p in articulation.rig_for(articulation.leaf_for(ship))}
 
 
-def _angle_extremes(part):
-    """(min, max) degrees `part`'s hinge is ever authored to reach.
-
-    0.0 is always included: a part's CURRENT angle starts there (the NIF
-    rest pose, before any tick has ever run it — see
-    `articulation.angle_for_part`) and only ever eases toward one of
-    `articulated_part.STATES`'s authored angles, so it can never leave the
-    span [min(0, *authored), max(0, *authored)] -- exactly what this
-    function returns. Generalises the pre-Task-5 OLD-rig case, where the
-    span was implicitly [0, angle_deg]."""
-    from engine.appc.articulated_part import STATES
-    angles = [0.0] + [part.angle_for(s) for s in STATES]
-    return min(angles), max(angles)
-
-
 def _travel_reach(part, centre) -> float:
-    """Largest |centre| the piece reaches across `part`'s FULL authored
-    swing (see `_angle_extremes`), with `centre` the piece's REST centre in
-    body frame, ship units.
+    """An upper bound on |centre| over EVERY position the piece can reach,
+    with `centre` the piece's REST centre in body frame, ship units.
 
-    The hinge sweeps the centre along a circular arc: a fixed circle centre
-    `A` (the pivot plus whatever part of the offset lies ALONG the axis,
-    which never moves) plus a rotating radius `w` (the part perpendicular to
-    the axis, whose length is constant). So
+    A conservative bound, not an exact maximum, because a transition can be
+    interrupted at any `u` and restarted from wherever the part is (spec
+    2026-09-25 §4.1, §10), so the reachable set is not one arc between two
+    states. With anchor `a` (the body origin when unauthored, as `tick_ship`
+    uses) and `P` ranging over IDENTITY and every authored state's pose:
 
-        |p(theta)|^2 = |A|^2 + |w|^2 + 2 * (A_perp . w(theta))
+      * the anchor only ever travels in STRAIGHT lines between positions it
+        already occupies, starting from `a` (the NIF pose), so it stays
+        inside the convex hull of its end positions {P.a}: |anchor(u)| <=
+        max |P.a|;
+      * the piece is `R(u).(centre - a) + anchor(u)`, and rotation preserves
+        |centre - a|;
 
-    which is sinusoidal in theta. Its peak — `w` swung into line with
-    `A_perp` — is the largest value on the FULL circle, but it is only
-    reachable if it falls inside the arc the part actually travels. Hence:
-    both endpoints always, plus the aligned peak when `phi`, the signed
-    angle from `w` to `A_perp` about the axis, lies between the swing's low
-    and high extreme.
+    so |x(u)| <= |centre - a| + max |P.a|. The per-pose end positions
+    max |P.centre| are included too (they are always reached, and can be the
+    larger term when the anchor is far from the piece). The larger of the two
+    encloses every reachable position.
 
-    Right-handed about the axis, matching the rest of the engine: `phi` uses
-    atan2(axis . (w x A_perp), w . A_perp), so rotating `w` by +phi about the
-    axis is what lines it up.
+    A part with no authored state never moves: |centre|.
     """
-    from engine.appc import articulation
-    lo_deg, hi_deg = _angle_extremes(part)
-    pivot, axis, _theta0 = articulation.rotation_for(part, 0.0)
-    best = max(_norm(centre),
-               _norm(articulation.point_at_angle(part, centre, lo_deg)),
-               _norm(articulation.point_at_angle(part, centre, hi_deg)))
-    if lo_deg == hi_deg:
-        return best
-    theta_lo = math.radians(lo_deg)
-    theta_hi = math.radians(hi_deg)
-    ax, ay, az = axis
-    vx, vy, vz = centre[0] - pivot[0], centre[1] - pivot[1], centre[2] - pivot[2]
-    along = ax * vx + ay * vy + az * vz
-    wx, wy, wz = vx - ax * along, vy - ay * along, vz - az * along
-    cx = pivot[0] + ax * along
-    cy = pivot[1] + ay * along
-    cz = pivot[2] + az * along
-    a_along = ax * cx + ay * cy + az * cz
-    px, py, pz = cx - ax * a_along, cy - ay * a_along, cz - az * a_along
-    dot = wx * px + wy * py + wz * pz
-    kx, ky, kz = wy * pz - wz * py, wz * px - wx * pz, wx * py - wy * px
-    phi = math.atan2(ax * kx + ay * ky + az * kz, dot)
-    inside = theta_lo <= phi <= theta_hi
-    if inside:
-        w = (wx * wx + wy * wy + wz * wz) ** 0.5
-        p = (px * px + py * py + pz * pz) ** 0.5
-        peak = (cx * cx + cy * cy + cz * cz) + w * w + 2.0 * p * w
-        best = max(best, peak ** 0.5)
-    return best
+    from engine.appc import part_pose
+    states = part.authored_states()
+    if not states:
+        return _norm(centre)
+    poses = [part_pose.IDENTITY] + [part.pose_for(s) for s in states]
+    a = part.anchor or (0.0, 0.0, 0.0)
+    ends = max(_norm(part_pose.apply(P, centre)) for P in poses)
+    arm = _norm((centre[0] - a[0], centre[1] - a[1], centre[2] - a[2]))
+    swing = arm + max(_norm(part_pose.apply(P, a)) for P in poses)
+    return max(ends, swing)
 
 
 def _norm(p) -> float:
@@ -355,9 +321,9 @@ def bound_radius(ship) -> float:
 
     A TAGGED piece MOVES, so its rest centre is not its furthest reach. The
     radius therefore encloses such a piece AT EVERY POINT IN ITS TRAVEL:
-    `_travel_reach` maximises |centre| over the whole 0->1 arc the part's
-    hinge sweeps it through, analytically, not just at the two ends (the far
-    point of an arc can fall mid-travel — see
+    `_travel_reach` bounds |centre| over every pose the part can pass
+    through, interrupted transitions included, not just at the authored ends
+    (the far point of a swing can fall mid-travel — see
     tests/unit/test_hull_bounds_parts.py::WING_MID_TRAVEL_PT, where the
     endpoints understate by 1.3%).
 
@@ -370,8 +336,8 @@ def bound_radius(ship) -> float:
     really do reach.
 
     STILL ONE MEMO, computed once. Deliberately NOT a function of the ship's
-    live deflection: making it so would defeat the memo and put trigonometry
-    in the narrow phase, for a gate that only has to enclose.
+    live pose: making it so would defeat the memo and put pose maths in the
+    narrow phase, for a gate that only has to enclose.
 
     Memoised unscaled on the instance (pieces never change after caching) and
     multiplied by the live GetScale() per call, so a rescaled ship stays right.

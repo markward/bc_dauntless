@@ -501,62 +501,67 @@ class _RiggedShip(_FakeShip):
     def __init__(self):
         super().__init__()
         self._articulation_leaf = "birdofprey"
-        self._articulation_angles = {}
+        self._articulation_poses = {}
 
 
-def _angles(ship):
-    return dict(ship._articulation_angles)
+def _poses(ship):
+    return dict(ship._articulation_poses)
 
 
 def test_opening_the_viewer_snaps_the_ship_to_the_ANCHOR_pose(make_panel):
-    """Every part at angle 0 -- the frame a hardpoint mount is stored in."""
-    from engine.appc import articulation
+    """Every part at the identity (NIF) pose -- the frame a hardpoint mount
+    is stored in."""
+    from engine.appc import articulation, part_pose
     p, holder, _target = make_panel
     holder["ship"] = _RiggedShip()
-    holder["ship"]._articulation_angles = {
-        part.GetName(): part.angle_for("cruise")
+    holder["ship"]._articulation_poses = {
+        part.GetName(): part.pose_for("cruise")
         for part in articulation.rig_for("birdofprey")}
-    assert any(v for v in _angles(holder["ship"]).values()), "fixture check"
+    assert any(not part_pose.is_identity(v)
+               for v in _poses(holder["ship"]).values()), "fixture check"
 
     _open_with_parts(p)
 
-    assert _angles(holder["ship"]), "the rig must still be there"
-    assert all(v == 0.0 for v in _angles(holder["ship"]).values()), (
-        "opening the SPV must put the shared angle dict -- which the mesh, "
+    assert _poses(holder["ship"]), "the rig must still be there"
+    assert all(v == part_pose.IDENTITY
+               for v in _poses(holder["ship"]).values()), (
+        "opening the SPV must put the shared pose dict -- which the mesh, "
         "the pins and the derived-box queries all read -- at the anchor pose")
 
 
-def test_previewing_a_state_snaps_the_ship_to_its_authored_angles(make_panel):
+def test_previewing_a_state_snaps_the_ship_to_its_authored_poses(make_panel):
     """Preview has to MOVE the wings, not just set a lock and a highlight."""
-    from engine.appc import articulation
+    from engine.appc import articulation, part_pose
     p, holder, _target = make_panel
     holder["ship"] = _RiggedShip()
     _open_with_parts(p)
 
     p.dispatch_event("part/preview:cruise")
 
-    expected = {part.GetName(): part.angle_for("cruise")
+    expected = {part.GetName(): part.pose_for("cruise")
                 for part in articulation.rig_for("birdofprey")}
-    assert _angles(holder["ship"]) == expected
-    assert any(v != 0.0 for v in expected.values()), "fixture check"
+    assert _poses(holder["ship"]) == expected
+    assert any(not part_pose.is_identity(v)
+               for v in expected.values()), "fixture check"
 
 
-def test_closing_the_viewer_leaves_the_angles_for_tick_ship_to_ease_home(
+def test_closing_the_viewer_leaves_the_poses_for_tick_ship_to_ease_home(
         make_panel):
-    """Deliberately NOT a snap: the sim resumes on close and `tick_ship` eases
-    the wings back over TRAVEL_SECONDS. This pins that close RELEASES the
-    override without also jumping the pose."""
+    """Deliberately NOT a snap: the sim resumes on close and `tick_ship`
+    transitions the wings back over each part's transition_seconds. This pins
+    that close RELEASES the override without also jumping the pose."""
     from engine.appc import articulation
     p, holder, _target = make_panel
     holder["ship"] = _RiggedShip()
     _open_with_parts(p)
     p.dispatch_event("part/preview:cruise")
-    posed = _angles(holder["ship"])
+    posed = _poses(holder["ship"])
+    assert posed, "fixture check"
 
     p.close()
 
     assert articulation.dev_override() is None, "the override must be released"
-    assert _angles(holder["ship"]) == posed, (
+    assert _poses(holder["ship"]) == posed, (
         "close must not snap the pose; tick_ship eases it home")
 
 

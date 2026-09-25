@@ -1471,14 +1471,14 @@ def _articulate_emitter_light(ship, iid, spec, d):
     destroying the parent was the only thing that used to darken one.
 
     Still body frame out: the renderer places it through the hull's matrix
-    as before. The angle is the same `_articulation_angles` value
+    as before. The pose is the same `_articulation_poses` value
     `_sync_ship_articulation` pushes to the renderer this frame, so the light
     and the drawn part cannot disagree. Decided per frame rather than cached
     at spawn: the boxes derive from `model_nodes(iid)`, which a spawn-time
     tag could run before, silently tagging every light None forever.
 
     Identity -- the same dict, untouched -- for an unrigged ship, a light on
-    no part, or a part at angle 0.
+    no part, or a part at its identity pose.
     """
     from engine.appc import articulation
     leaf = articulation.leaf_for(ship)
@@ -1494,15 +1494,16 @@ def _articulate_emitter_light(ship, iid, spec, d):
     part = next((p for p in parts if p.GetName() == name), None)
     if part is None:
         return d
-    angle = articulation.angle_for_part(ship, part)
-    if angle == 0.0:
+    from engine.appc import part_pose
+    pose = articulation.pose_for_part(ship, part)
+    if part_pose.is_identity(pose):
         return d
     for key in ("position", "position_b"):
         if key in d:
-            d[key] = articulation.point_at_angle(part, d[key], angle)
+            d[key] = part_pose.apply(pose, d[key])
     for key in ("direction", "up"):
         if key in d:
-            d[key] = articulation.vector_at_angle(part, d[key], angle)
+            d[key] = part_pose.apply_vector(pose, d[key])
     return d
 
 
@@ -4931,9 +4932,9 @@ class MissionSession:
     # per-frame path can skip the boundary crossing when nothing changed.
     slot_bindings: dict[Any, tuple] = field(default_factory=dict)
     # Last articulation pose PUSHED per render instance id -- a tuple of
-    # per-part angles, one per rigged part -- a re-push guard only, exactly
-    # like slot_bindings. The authoritative pose lives on the ship
-    # (ShipClass._articulation_angles); this just stops a settled hull from
+    # per-part pose 6-tuples, one per rigged part -- a re-push guard only,
+    # exactly like slot_bindings. The authoritative pose lives on the ship
+    # (ShipClass._articulation_poses); this just stops a settled hull from
     # re-crossing into C++ every frame.
     ship_articulation: dict[Any, tuple] = field(default_factory=dict)
     player: Optional[Any] = None
@@ -7117,21 +7118,20 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
 def _sync_ship_articulation(session, ship, iid) -> None:
     """Push `ship`'s articulated part poses (BoP wings) to its render instance.
 
-    READ-ONLY on game state: each part's angle is eased on the sim tick by
+    READ-ONLY on game state: each part's pose is advanced on the sim tick by
     engine.appc.articulation.tick_ship and read back here via
-    `articulation.angle_for_part`. Nothing here mutates the ship — a
+    `articulation.pose_for_part`. Nothing here mutates the ship — a
     game-state mutation in the render path is exactly the class of bug that
     gave the player's phasers a half-second of aiming at a destroyed subsystem.
 
-    Guarded on CHANGE: the pose (now a TUPLE of per-part angles, one float per
-    rigged part, not a single scalar) is re-pushed only when it actually
-    moved, so a settled ship (which is nearly all of them, nearly always)
-    costs one dict lookup and a tuple compare rather than a boundary crossing
-    per node per frame.
+    Guarded on CHANGE: the pose (a TUPLE of per-part 6-tuples, one per rigged
+    part) is re-pushed only when it actually moved, so a settled ship (which
+    is nearly all of them, nearly always) costs one dict lookup and a tuple
+    compare rather than a boundary crossing per node per frame.
 
     THERE IS NO "forced pose" ARGUMENT HERE, deliberately. A forced pose --
-    the Ship Property Viewer's anchor pose, or a Preview click -- is applied
-    to `ship._articulation_angles` at the SPV's own event edges by
+    the Ship Property Viewer's NIF pose, or a Preview click -- is applied to
+    `ship._articulation_poses` at the SPV's own event edges by
     `articulation.force_pose`, so it arrives through the line below like
     every other pose. A second, render-side forcing path is what drew a Bird
     of Prey's wings down while every cannon pin floated at its stale raised
@@ -7140,27 +7140,29 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     parts = articulation.parts_for_ship(ship)
     if not parts:
         return
-    pose = tuple(articulation.angle_for_part(ship, part) for part in parts)
+    from engine.appc import part_pose
+    live = [articulation.pose_for_part(ship, part) for part in parts]
+    pose = tuple(part_pose.pose_to6(p) for p in live)
     last = session.ship_articulation.get(iid)
     if last is not None and last == pose:
         return
     from engine.appc import part_severance
-    for part, angle_deg in zip(parts, pose):
+    for part, part_live in zip(parts, live):
         if part_severance.is_detached(ship, part.GetName()):
             # A severed part is hidden via the SAME node_overrides slot this
-            # rotation would write (set_instance_node_hidden / _rotation share
-            # one map). Re-posing it here would overwrite the hide with a live
-            # matrix -- the wing would snap back onto the hull and animate
-            # with the rest, and a subsequent theta==0 push would erase the
-            # hide for good. See part_severance.sever / part_detach_render.
+            # transform would write (set_instance_node_hidden / _transform
+            # share one map). Re-posing it here would overwrite the hide with
+            # a live matrix -- the wing would snap back onto the hull and
+            # animate with the rest, and a subsequent identity push would
+            # erase the hide for good. See part_severance.sever /
+            # part_detach_render.
             continue
-        pivot, axis, theta = articulation.rotation_for(part, angle_deg)
         # The rig is authored in SHIP units (shared with articulation's
         # derived per-part boxes and subsystem mounts); the binding works in
-        # MODEL units. This is the ONLY place the two meet.
-        pivot_model = tuple(c / articulation.MODEL_TO_SHIP for c in pivot)
-        host_io.set_instance_node_rotation(iid, part.GetName(), pivot_model,
-                                           axis, theta)
+        # MODEL units. `matrix4_model` is the ONLY place the two meet.
+        host_io.set_instance_node_transform(
+            iid, part.GetName(),
+            part_pose.matrix4_model(part_live, articulation.MODEL_TO_SHIP))
     session.ship_articulation[iid] = pose
 
 
@@ -7185,11 +7187,11 @@ def _sync_spv_articulation(session, spv_panel) -> None:
     Production rendering is byte-identical -- an ordinary paused game takes
     the early return on a bool that is False before anything is iterated.
 
-    It pushes the ship's LIVE angles, exactly like the unfrozen path. It does
+    It pushes the ship's LIVE poses, exactly like the unfrozen path. It does
     NOT know about the forced state: the SPV writes the forced pose into
-    `ship._articulation_angles` at its event edges
+    `ship._articulation_poses` at its event edges
     (`articulation.force_pose`, from the panel's open/Preview), so by the
-    time this runs the live angles ARE the forced ones. That is the whole
+    time this runs the live poses ARE the forced ones. That is the whole
     point -- mounts, pins, the derived-box queries and this sweep all read
     one dict, so they cannot disagree. Making this sweep force the pose
     itself is what drew the wings down while the cannon pins stayed up.

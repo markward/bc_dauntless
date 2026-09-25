@@ -2243,50 +2243,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the nodes a human would call a part (renderer::model_parts).");
 
     // ── Part articulation (BoP wings) ────────────────────────────────────
-    // Python owns the POSE (engine/appc/articulation.py, eased on the sim
-    // tick); this binding owns the MATRIX, so the hinge maths lives in one
-    // place and the call takes exactly what the SPV gizmo would author:
-    // a pivot, an axis and an angle.
-    //
-    // `local' = T(pivot) . R(axis, theta) . T(-pivot) . local`, all in the
-    // node's PARENT space (Scene Root, i.e. model space, in every BC ship
-    // NIF). theta == 0 ERASES the override rather than storing an identity,
-    // so an unarticulated hull keeps an EMPTY map and frame()'s draw takes
-    // the static node walk -- byte-identical to an unrigged ship.
-    m.def("set_instance_node_rotation",
-          [](scenegraph::InstanceId id, const std::string& node_name,
-             float px, float py_, float pz,
-             float ax, float ay, float az, float theta) -> bool {
-              auto* in = g_world.get(id);
-              if (!in) return false;
-              const assets::Model* m2 = resolve_model(in->model_handle);
-              if (!m2) return false;
-              const int idx = renderer::resolve_overridden_node(
-                  *m2, node_name, in->node_overrides);
-              if (idx < 0) return false;
-              if (theta == 0.0f) {
-                  in->node_overrides.erase(idx);
-                  return true;
-              }
-              const glm::vec3 pivot(px, py_, pz);
-              const glm::vec3 axis(ax, ay, az);
-              if (glm::length(axis) <= 0.0f) return false;
-              const glm::mat4 rot =
-                  glm::translate(glm::mat4(1.0f), pivot) *
-                  glm::rotate(glm::mat4(1.0f), theta, glm::normalize(axis)) *
-                  glm::translate(glm::mat4(1.0f), -pivot);
-              in->node_overrides[idx] =
-                  rot * m2->nodes[static_cast<std::size_t>(idx)].local_transform;
-              return true;
-          },
-          py::arg("iid"), py::arg("node_name"),
-          py::arg("px"), py::arg("py"), py::arg("pz"),
-          py::arg("ax"), py::arg("ay"), py::arg("az"), py::arg("theta"),
-          "Rotate a named model node about (pivot, axis) by theta radians, in "
-          "the node's PARENT space, replacing its local transform. theta == 0 "
-          "clears the override. False when the instance, model or node is "
-          "absent, or the axis is degenerate.");
-
+    // Python owns the POSE (engine/appc/articulation.py, advanced on the sim
+    // tick) and builds its matrix (part_pose.matrix4_model, the one place
+    // ship units become model units); this binding just installs it.
     m.def("set_instance_node_transform",
           [](scenegraph::InstanceId id, const std::string& node_name,
              const std::vector<float>& m16) -> bool {
@@ -2344,13 +2303,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // node_overrides[idx] slot, so whichever one is called LAST wins outright
     // -- there is no ordering or priority enforced here in C++.
     //
-    // That means a re-posed rotation call on an already-hidden node WOULD
-    // overwrite the hide (and, at theta == 0, ERASE it permanently). This
+    // That means a re-posed transform call on an already-hidden node WOULD
+    // overwrite the hide (and, with the identity, ERASE it permanently). This
     // binding cannot see severance state to refuse that call, so the
     // guarantee that it never happens lives entirely on the Python side:
     // host_loop._sync_ship_articulation skips any part
     // part_severance.is_detached() reports as gone before it ever reaches
-    // set_instance_node_rotation, and articulation.part_transform_point
+    // set_instance_node_transform, and articulation.part_transform_point
     // applies the same guard to mount points. See
     // tests/unit/test_part_severance.py's render-sync regression test for the
     // failure this once was.

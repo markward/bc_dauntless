@@ -2,7 +2,7 @@
 built in the pose the viewer is showing.
 
 THE THIRD STORE. The previous two rounds unified the node overrides and
-`ship._articulation_angles`. Both were right, and the pins still floated,
+`ship._articulation_poses`. Both were right, and the pins still floated,
 because nothing draws from either at pin time: `build_descriptors` resolves
 `subsystem_world_position` ONCE and stores the answer as
 `descriptor["world_pos"]`. `subsystem_pins()` hands that tuple to the renderer
@@ -19,7 +19,7 @@ one layer down, twice.
 """
 import pytest
 
-from engine.appc import articulation
+from engine.appc import articulation, part_pose
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
 
@@ -60,8 +60,8 @@ class _Ship:
 
     def __init__(self, state="cruise"):
         self._articulation_leaf = LEAF
-        self._articulation_angles = {
-            p.GetName(): p.angle_for(state)
+        self._articulation_poses = {
+            p.GetName(): p.pose_for(state)
             for p in articulation.rig_for(LEAF)
         }
         self._hull = _Sub("Hull", (0.0, 0.0, 0.0))
@@ -90,8 +90,7 @@ def _raised(body_point=CANNON_BODY):
     """Where a starboard-wing body point is DRAWN with the wings up."""
     part = next(p for p in articulation.rig_for(LEAF)
                 if p.GetName() == "left wing01")
-    return articulation.point_at_angle(part, body_point,
-                                       part.angle_for("cruise"))
+    return part_pose.apply(part.pose_for("cruise"), body_point)
 
 
 def _raised_cannon(ship):
@@ -135,9 +134,9 @@ def test_the_fixture_actually_articulates():
     ship = _Ship()
     raised = _raised_cannon(ship)
     assert raised != pytest.approx(CANNON_BODY)
-    assert articulation.angle_for_part(
+    assert not part_pose.is_identity(articulation.pose_for_part(
         ship, next(p for p in articulation.rig_for(LEAF)
-                   if p.GetName() == "left wing01")) != 0.0
+                   if p.GetName() == "left wing01")))
 
 
 def test_opening_the_viewer_CACHES_the_pin_at_the_ANCHOR_pose(panel):

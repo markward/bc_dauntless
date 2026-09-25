@@ -54,8 +54,10 @@ class _Sub:
 class _Ship:
     def __init__(self, wings_up=True, leaf="birdofprey"):
         self._articulation_leaf = leaf
-        self._articulation_angles = {
-            p.GetName(): (p.angle_for("cruise") if wings_up else 0.0)
+        from engine.appc import part_pose
+        self._articulation_poses = {
+            p.GetName(): (p.pose_for("cruise") if wings_up
+                          else part_pose.IDENTITY)
             for p in articulation.rig_for("birdofprey")
         }
 
@@ -81,8 +83,8 @@ def _star_wing():
 
 
 def _posed(point):
-    part = _star_wing()
-    return articulation.point_at_angle(part, point, part.angle_for("cruise"))
+    from engine.appc import part_pose
+    return part_pose.apply(_star_wing().pose_for("cruise"), point)
 
 
 def test_the_fixture_light_is_on_the_starboard_wing():
@@ -131,10 +133,12 @@ def test_a_cone_turns_with_the_wing():
     sit where it now is. Direction and up rotate; neither translates."""
     (d,) = _lights(_Ship(), _prop("cone", STAR_TIP, axis=(0.0, 0.0, -1.0),
                                   length=0.5))
-    part = _star_wing()
-    pivot, axis, theta = articulation.rotation_for(part, part.angle_for("cruise"))
-    want_dir = articulation._rotate_about((0.0, 0.0, -1.0), (0.0, 0.0, 0.0),
-                                          axis, theta)
+    # The cruise pose is a pure swing about +Y (the fore-aft hinge) by the
+    # authored ry; right-handed about +Y, (0, 0, -1) goes to (-sin, 0, -cos).
+    # Computed independently of part_pose so the test is not a tautology.
+    ry = math.radians(_star_wing().pose6_for("cruise")[4])
+    assert ry != pytest.approx(0.0)
+    want_dir = (-math.sin(ry), 0.0, -math.cos(ry))
     assert d["position"] == pytest.approx(_posed(STAR_TIP))
     assert d["direction"] == pytest.approx(want_dir)
     assert math.hypot(*d["up"]) == pytest.approx(1.0)

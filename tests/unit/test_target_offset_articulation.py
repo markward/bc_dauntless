@@ -26,12 +26,14 @@ TARGET_POS = (0.0, 100.0, 0.0)
 
 
 class _BoP:
-    """A Bird of Prey target with both wings at their cruise angle."""
+    """A Bird of Prey target with both wings at their cruise pose."""
 
     def __init__(self, wings_up=True, leaf="birdofprey"):
+        from engine.appc import part_pose
         self._articulation_leaf = leaf
-        self._articulation_angles = {
-            p.GetName(): (p.angle_for("cruise") if wings_up else 0.0)
+        self._articulation_poses = {
+            p.GetName(): (p.pose_for("cruise") if wings_up
+                          else part_pose.IDENTITY)
             for p in articulation.rig_for("birdofprey")
         }
 

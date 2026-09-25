@@ -258,16 +258,16 @@ def build_part_box_overlay(ship, name, box) -> List[dict]:
 
     IT FOLLOWS THE POSE, and it rotates rather than merely sliding. What
     `part_severance.part_for_live_point` actually tests is this REST box seen
-    through the part's own hinge rotation, so that is what is drawn: a box
+    through the part's own pose, so that is what is drawn: a box
     dragged to a moved centre but left rest-axis-aligned would neither hug a
     45-degree wing nor describe the volume it claims to.
 
     The rotation is taken by transforming the centre AND the three
     half-extent tips through `part_transform_point(..., part=name)` -- the
     same function every mount uses, reading the same
-    `ship._articulation_angles`. Deliberately not a second way of asking what
-    angle the part is at: one source of truth is what the wings-down /
-    pins-up bug cost. A part with no hinge (the head), an unrigged hull, or a
+    `ship._articulation_poses`. Deliberately not a second way of asking what
+    pose the part is in: one source of truth is what the wings-down /
+    pins-up bug cost. A part with no pose (the head), an unrigged hull, or a
     severed part all fall out as the identity, so the box is simply drawn at
     rest.
     """

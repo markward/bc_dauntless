@@ -38,15 +38,17 @@ class _Sub:
 
 
 class _Ship(App.TGEventHandlerObject):
-    """A Bird of Prey with both wings at their authored cruise angle."""
+    """A Bird of Prey with both wings at their authored cruise pose."""
 
     def __init__(self, subs, wings_up=True):
         super().__init__()
         self._hull = subs[0]
         self._subs = list(subs)
         self._articulation_leaf = "birdofprey"
-        self._articulation_angles = {
-            p.GetName(): (p.angle_for("cruise") if wings_up else 0.0)
+        from engine.appc import part_pose
+        self._articulation_poses = {
+            p.GetName(): (p.pose_for("cruise") if wings_up
+                          else part_pose.IDENTITY)
             for p in articulation.rig_for("birdofprey")
         }
         self.damaged = []
@@ -97,7 +99,7 @@ def test_a_hit_where_the_cannon_WOULD_be_at_rest_misses_it():
 
 
 def test_wings_down_the_rest_mount_is_still_the_catchment():
-    """At angle 0 articulation is identity -- the unarticulated path must be
+    """At the identity pose articulation is identity -- the unarticulated path must be
     unchanged."""
     ship, _cannon = _ship(wings_up=False)
     assert _hit(ship, STAR_CANNON)

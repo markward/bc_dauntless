@@ -1401,24 +1401,30 @@ def bop_fixture_rig():
     """The Bird of Prey rig the mechanism tests run against.
 
     A frozen copy of the numbers migrated out of the retired _RIGS /
-    DETACHABLE dicts: two wings, mirrored pivots and angle signs, warp seeded
-    to the cruise pose, both shearing at 20%. Deliberately NOT read from
+    DETACHABLE dicts: two wings, mirrored anchors and swing signs, warp and
+    yellow seeded to the cruise pose, red left unset (the NIF pose), both
+    shearing at 20%. Authored through the POSE surface (anchor + per-state
+    poses, spec 2026-09-25): each pose is the old hinge -- about the Y axis
+    through the anchor, +/-45 degrees -- built by `part_pose.hinge_pose` and
+    emitted through `SetStatePose`, so the rig is geometrically the one the
+    legacy hinge calls described. Deliberately NOT read from
     hardpoint_overrides.py -- see the seeding comment in
     _reset_leakable_engine_globals. Change it only when a mechanism test
     needs a different shape, never to track what someone authored.
     """
+    from engine.appc import part_pose
     from engine.appc.articulated_part import ArticulatedPartProperty
     rig = []
     for name, x, angle in (("left wing", -0.16, 45.0),
                            ("left wing01", 0.16, -45.0)):
         p = ArticulatedPartProperty(name)
-        p.SetPivot(x, 0.0, 0.05)
-        p.SetAxis(0.0, 1.0, 0.0)
-        p.SetStateAngle("cruise", angle)
-        p.SetStateAngle("yellow", angle)
-        p.SetStateAngle("red", 0.0)
-        p.SetStateAngle("warp", angle)
-        p.SetDetachFraction(0.20)
+        anchor = (x, 0.0, 0.05)
+        p.SetAnchor(*anchor)
+        pose6 = part_pose.pose_to6(
+            part_pose.hinge_pose(anchor, (0.0, 1.0, 0.0), angle))
+        for state in ("cruise", "yellow", "warp"):
+            p.SetStatePose(state, *pose6)
+        p.SetBreakFraction(0.20)
         rig.append(p)
     return tuple(rig)
 

@@ -7,20 +7,7 @@ articulation keys off 'has a target' rather than off alert level.
 """
 import pytest
 
-from engine.appc import articulation
-
-
-class _Part:
-    def __init__(self, angles):
-        self._angles = angles
-        self.pivot = (0.0, 0.0, 0.0)
-        self.axis = (0.0, 1.0, 0.0)
-
-    def GetName(self):
-        return "left wing"
-
-    def angle_for(self, state):
-        return self._angles.get(state, 0.0)
+from engine.appc import articulation, part_pose
 
 
 class _Ship:
@@ -77,54 +64,38 @@ def test_an_npc_NEVER_shows_yellow(monkeypatch):
             _Ship(alert=App.ShipClass.YELLOW_ALERT, target=target)) != "yellow"
 
 
-def test_a_part_eases_toward_its_target_angle():
-    part = _Part({"cruise": 45.0, "red": 0.0})
-    a = articulation.ease_angle(0.0, 45.0, part_range=45.0, dt=1.0)
-    assert 0.0 < a < 45.0
-    assert articulation.ease_angle(a, 45.0, part_range=45.0, dt=10.0) == 45.0
+# The easing tests that lived here (ease_angle / TRAVEL_SECONDS /
+# rotation_for) moved with the pose runtime: see
+# tests/unit/test_articulation_transitions.py for the transition timing and
+# the interrupted-transition rule.
 
 
-def test_a_full_swing_takes_TRAVEL_SECONDS():
-    """Each part eases at its own range / TRAVEL_SECONDS, so parts moving
-    between the same two states stay in sync."""
-    a = articulation.ease_angle(0.0, 45.0, part_range=45.0,
-                                dt=articulation.TRAVEL_SECONDS)
-    assert a == pytest.approx(45.0)
+class _Rigged:
+    """A Bird of Prey for the transition tests: a leaf, nothing else."""
+    _articulation_leaf = "birdofprey"
 
 
-def test_an_interrupted_transition_just_changes_target():
-    """No captured start pose, no from/to pair -- the part keeps easing from
-    wherever it is. This is the case that makes per-part angles simpler than a
-    normalised t."""
-    a = articulation.ease_angle(0.0, 45.0, part_range=45.0, dt=1.0)
-    back = articulation.ease_angle(a, 0.0, part_range=45.0, dt=1.0)
-    assert back < a
+def _tip(ship, part, x):
+    return part_pose.apply(articulation.pose_for_part(ship, part), x)
 
 
-def test_mirrored_parts_with_equal_ranges_stay_in_sync():
-    """The real BoP case, and the actual guarantee ease_angle makes: a wing
-    pair is authored mirrored (+45 / -45, EQUAL magnitude, so equal range).
-    Equal ranges give equal ease rate, so both reach their target -- and
-    every point in between -- on the same tick. (Parts with DIFFERENT ranges
-    do not generally stay in sync; that is a documented, deliberate
-    limitation, not this test's concern.)"""
-    a = articulation.ease_angle(0.0, 45.0, part_range=45.0, dt=0.7)
-    b = articulation.ease_angle(0.0, -45.0, part_range=45.0, dt=0.7)
-    assert a == pytest.approx(-b)
+def test_mirrored_parts_stay_in_sync(monkeypatch):
+    """The real BoP case: the wing pair is authored mirrored (+45 / -45 about
+    the fore-aft axis, mirrored anchors) with one transition time, so both
+    reach their target -- and every point in between -- on the same tick,
+    as mirror images."""
+    monkeypatch.setattr(articulation, "state_for", lambda ship: "cruise")
+    port, starboard = articulation.rig_for("birdofprey")
+    ship = _Rigged()
+    articulation.tick_ship(ship, 0.7)
+    a = _tip(ship, port, (-1.0, 0.45, -0.7))
+    b = _tip(ship, starboard, (1.0, 0.45, -0.7))
+    assert a != pytest.approx((-1.0, 0.45, -0.7)), "mid-swing, not at rest"
+    assert (a[0], a[1], a[2]) == pytest.approx((-b[0], b[1], b[2]), abs=1e-12)
 
     # And at completion:
-    a_done = articulation.ease_angle(0.0, 45.0, part_range=45.0,
-                                     dt=articulation.TRAVEL_SECONDS)
-    b_done = articulation.ease_angle(0.0, -45.0, part_range=45.0,
-                                     dt=articulation.TRAVEL_SECONDS)
-    assert a_done == pytest.approx(45.0)
-    assert b_done == pytest.approx(-45.0)
-
-
-def test_rotation_for_takes_DEGREES_not_a_deflection():
-    """Signature change. rotation_for(part, 45.0) must mean 45 degrees, not
-    45x the authored angle -- the old signature took a 0..1 scalar."""
-    import math
-    part = _Part({"cruise": 45.0})
-    _pivot, _axis, theta = articulation.rotation_for(part, 45.0)
-    assert theta == pytest.approx(math.radians(45.0))
+    articulation.tick_ship(ship, port.transition_seconds)
+    for part, x in ((port, (-1.0, 0.45, -0.7)), (starboard, (1.0, 0.45, -0.7))):
+        assert _tip(ship, part, x) == pytest.approx(
+            part_pose.apply(part.pose_for("cruise"), x), abs=1e-12)
+    assert not ship._articulation_transitions

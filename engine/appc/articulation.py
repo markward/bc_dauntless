@@ -1,4 +1,4 @@
-"""Per-ship PART ARTICULATION — named NIF part nodes rotated about an authored hinge.
+"""Per-ship PART ARTICULATION — named NIF part nodes moved through authored poses.
 
 SPIKE (2026-09-23), visual-only. BC never did this: `BirdOfPrey.py` is a plain
 LOD load, its hardpoint file is stock subsystems, and the wing nodes carry
@@ -20,7 +20,7 @@ the node array at all. A part is therefore "a named child of Scene Root that
 is not `__NDL_MultiMtl_Node`" — which is what makes addressing one by name
 safe.
 
-WHY THE PIVOT MUST BE AUTHORED. Every part node in BirdOfPrey.nif carries the
+WHY THE POSE AND ANCHOR MUST BE AUTHORED. Every part node in BirdOfPrey.nif carries the
 IDENTICAL local translation (0, -56.3314, -6.3288) — the shared 3ds Max scene
 origin, not a hinge. Rotating a wing node in place would swing it about a
 point common to the whole ship. The NIF cannot tell us where the hinge is, and
@@ -39,101 +39,64 @@ module used to carry, and the docstring that explained why it lived here
 rather than in `hardpoint_overrides.py`, are both gone — the arrangement is
 now exactly the inverse.)
 
-FOUR STATES, NOT A DEFLECTION. Each part authors one angle per state —
-"cruise", "yellow", "red", "warp" (`articulated_part.STATES`). There is no
-0..1 deflection scalar anywhere: four independent authored poses cannot be
-expressed as one scalar times a maximum, and `ShipClass.Get/SetArticulation
-Deflection` no longer exist. Per sim tick `tick_ship` eases each part's
-CURRENT angle toward `target_angle(part, state_for(ship))` and stores it in
-`ship._articulation_angles` ({part name: degrees}) — the single source every
-reader of a live pose consults, via `angle_for_part`.
+FOUR STATES, EACH A FULL POSE. Each part authors one rigid POSE per state --
+"cruise", "yellow", "red", "warp" (`articulated_part.STATES`) -- a rotation R
+and a translation t (`part_pose`, spec 2026-09-25). There is no 0..1
+deflection scalar anywhere. Per sim tick `tick_ship` advances each part's
+TRANSITION toward `target_pose(part, state_for(ship))` and stores the result in
+`ship._articulation_poses` ({part name: (R, t)}) -- the single source every
+reader of a live pose consults, via `pose_for_part`.
 
 `state_for` is deliberately ASYMMETRIC: the player keys off alert level, an
 NPC off whether it has a target. BC never takes an NPC off Red Alert (measured
 on the real exe), so its alert level carries no signal. Warp outranks both.
 
-FRAME AND MATH. `pivot` and `axis` are in the part node's PARENT space. Scene
-Root is identity in every BC ship NIF, so that is just model space — raw NIF
-units, before the instance's natural scale. A part's `pivot` is AUTHORED and
-STORED in SHIP units (model / 100), matching the derived per-part boxes
-(`part_boxes_for`) and subsystem mounts; it is converted to the raw-model
-frame at exactly one place, the C++ call site
-`host_loop._sync_ship_articulation`, via `MODEL_TO_SHIP` below. `axis` is a
-direction, not a point, so it is unit-agnostic and needs no conversion. The
-override replaces the node's own local transform::
+FRAME AND MATH. A pose is in the part node's PARENT space. Scene Root is
+identity in every BC ship NIF, so that is just model space. Poses and the
+part's `anchor` are AUTHORED and STORED in SHIP units (model / 100), matching
+the derived per-part boxes (`part_boxes_for`) and subsystem mounts; the
+translation is converted to the raw-model frame at exactly one place, the C++
+call site `host_loop._sync_ship_articulation`, via
+`part_pose.matrix4_model(pose, MODEL_TO_SHIP)`. A rotation is unit-agnostic.
+The override replaces the node's own local transform::
 
-    local' = T(pivot) . R(axis, theta) . T(-pivot) . local
+    local' = M(pose) . local
 
-with `theta = radians(the part's current angle)`. At angle 0 the override is
-identity, so the emitted map is EMPTY and the render is byte-identical to an
-unarticulated ship. Angle 0 is the pose the NIF ships in; for the Bird of Prey
-that is also the authored "red" angle, which is why combat rendering is
-unchanged. That is BoP-specific authoring, NOT a rule of this module: another
-hull may author a non-zero red.
+where M draws a body point x at R.x + t. The identity pose is the pose the
+NIF ships in; its matrix is identity, so the native override map stays EMPTY
+and the render is byte-identical to an unarticulated ship. For the Bird of
+Prey "red" is unset (identity), which is why combat rendering is unchanged.
+That is BoP-specific authoring, NOT a rule of this module: another hull may
+author a non-identity red.
 
-THE SAME HINGE, IN THREE PLACES, and they must agree or the ship lies:
+A TRANSITION (spec §4.1) runs over the part's `transition_seconds`: the part
+rotates (slerp) about its `anchor` while the anchor travels straight between
+its start and end positions (`part_pose.interpolate`) -- a swing, not a
+slide. A state change mid-transition starts a new transition from the
+CURRENT pose, so a part never snaps back. For a legacy hinge (anchor on the
+axis) this is exactly the old linear angle ease.
 
-  * the DRAWN mesh — `host_loop._sync_ship_articulation` pushes pivot/axis/
-    theta to `set_instance_node_rotation`;
-  * a MOUNT that must follow its part (beam origins, SPV pins) —
-    `part_transform_point` / `point_at_angle`, the same Rodrigues rotation;
-  * a QUERY against a REST-baked structure (the derived per-part boxes) —
-    `part_severance.part_for_live_point` inverse-rotates the QUERY instead,
-    because the boxes cannot move.
+THE SAME POSE, IN THREE PLACES, and they must agree or the ship lies:
 
-TUNING NOTE: the hinge axis IS the Y axis, so a pivot's Y COMPONENT HAS NO
-EFFECT — rotating about a line through the pivot is unchanged by sliding the
-pivot along that line. Only X and Z are live. Two numbers per wing.
+  * the DRAWN mesh -- `host_loop._sync_ship_articulation` pushes the pose's
+    matrix to `set_instance_node_transform`;
+  * a MOUNT that must follow its part (beam origins, SPV pins, lights) --
+    `part_transform_point` / `part_transform_vector`, the same R.x + t;
+  * a QUERY against a REST-baked structure (the derived per-part boxes) --
+    `part_severance.part_for_live_point` applies the INVERSE pose to the
+    QUERY instead, because the boxes cannot move.
 """
 
 from __future__ import annotations
 
-import math
-from typing import NamedTuple
+from engine.appc import part_pose
 
-
-class Part(NamedTuple):
-    """A bare (pivot, axis) carrier — NOT a live rig shape.
-
-    RETIRED as rig data: `rig_for`/`parts_for_leaf` return
-    `articulated_part.ArticulatedPartProperty` instances, which is all any
-    production path ever sees. The ONLY thing that still builds one of these
-    is `rotation_for`'s axis-normalisation / degenerate-axis pair in
-    `tests/unit/test_articulation.py`, which needs a `.pivot` and an `.axis`
-    and nothing else. Kept for exactly that, and load-bearing only there —
-    do not reach for it when adding a part.
-
-    The `.angle_deg` and `.node` duck-type fallbacks in `_swing_range`,
-    `_part_name` and `target_angle` exist to keep those tests off the
-    exception path; they are defensive, not a live branch.
-
-    node:      NIF node name, matched exactly (BC node names are case-stable).
-    pivot:     hinge point, parent/model space, SHIP units (model NIF units
-               / 100). Shared units with the derived per-part boxes and
-               subsystem mounts on purpose: Task 1 of the hardpoint-parenting
-               plan unified them after a MODEL-vs-SHIP mix-up made part
-               attribution silently never fire. Converted to model units at
-               the ONE C++ call site (host_loop._sync_ship_articulation).
-    axis:      hinge axis, parent/model space; normalised on use.
-    angle_deg: a single rotation, the pre-four-state shape. Real parts carry
-               one angle per state instead.
-    """
-
-    node: str
-    pivot: tuple[float, float, float]
-    axis: tuple[float, float, float]
-    angle_deg: float
-
-
-# Seconds for a part to traverse its FULL authored range (see `_part_range`).
-# A BoP wing transition reads as a couple of seconds on screen; faster looks
-# like a glitch, slower reads as broken.
-TRAVEL_SECONDS = 2.0
 
 # Multiply a MODEL (raw NIF) unit by this to reach a SHIP (hardpoint-authored)
 # unit -- = BC_MODEL_SCALE. The one call site that needs the OPPOSITE
 # direction, host_loop._sync_ship_articulation, therefore DIVIDES a ship-units
-# pivot by this constant to reach model units for the C++ node-rotation call.
+# pose translation by this constant (inside `part_pose.matrix4_model`) to reach
+# model units for the C++ node-transform call.
 MODEL_TO_SHIP = 0.01
 
 
@@ -169,35 +132,12 @@ def _is_player(ship) -> bool:
     return player is not None and player is ship
 
 
-def rotation_for(part, angle_deg: float) -> tuple[
-        tuple[float, float, float], tuple[float, float, float], float]:
-    """Return (pivot, unit_axis, theta_radians) for `part` at `angle_deg`.
-
-    Takes DEGREES, not a 0..1 deflection. Four independent per-state angles
-    (cruise/yellow/red/warp) cannot be expressed as one scalar times an
-    authored maximum -- see `articulated_part.ArticulatedPartProperty`.
-
-    Kept separate from the matrix build so the C++ binding takes the same three
-    values the SPV gizmo would eventually author, rather than a baked matrix.
-    """
-    ax, ay, az = part.axis
-    n = math.sqrt(ax * ax + ay * ay + az * az)
-    if n <= 0.0:
-        unit = (0.0, 1.0, 0.0)
-    else:
-        unit = (ax / n, ay / n, az / n)
-    theta = math.radians(float(angle_deg))
-    return part.pivot, unit, theta
-
-
-# ── Four-state model (Task 4) ────────────────────────────────────────────────
+# ── Four-state model ─────────────────────────────────────────────────────────
 #
-# Replaces the single 0..1 deflection with a CURRENT ANGLE per part, eased
-# toward the authored angle of one of `articulated_part.STATES` ("cruise",
-# "yellow", "red", "warp"). A scalar deflection cannot express four
-# independent authored poses; a per-part current angle can, and needs no
-# captured start/end pair -- an interrupted transition just gets a new
-# target and keeps easing from wherever it already is.
+# A CURRENT POSE per part, carried toward the authored pose of one of
+# `articulated_part.STATES` ("cruise", "yellow", "red", "warp") by a
+# transition (spec 2026-09-25 §4.1). An interrupted transition starts a new
+# one from wherever the part already is.
 
 def _is_warping(ship) -> bool:
     """Whether `ship` is at warp. Best-effort: a prop or test double that
@@ -247,123 +187,44 @@ def state_for(ship) -> str:
         return "cruise"
 
 
-def ease_angle(current: float, target: float, *, part_range: float,
-               dt: float) -> float:
-    """Move `current` toward `target` at `part_range / TRAVEL_SECONDS` per
-    second, clamped so it never overshoots.
-
-    Rate is proportional to the part's OWN range: a full swing always takes
-    TRAVEL_SECONDS, and a smaller move is proportionally faster. Two parts
-    with EQUAL ranges therefore stay in sync however far between states they
-    move -- the real Bird of Prey case, since the wing pair is authored
-    mirrored (+45 / -45, equal magnitude). Two parts with DIFFERENT ranges do
-    NOT generally arrive together: e.g. a part authored cruise 0 / red 40 /
-    warp 90 (range 90) and one authored cruise 0 / red 40 / warp 40 (range
-    40) both swing 40 degrees on cruise->red, but the first finishes at
-    0.44 * TRAVEL_SECONDS and the second at 1.0 * TRAVEL_SECONDS -- visibly
-    desynchronised, driven by a WARP angle neither part is moving to. A
-    future ship whose parts need true cross-part sync regardless of range is
-    a known, deliberate re-open, not something this function claims to
-    solve; see `_part_range`. Interrupting a transition needs no special
-    case: the target changes and the part keeps easing from wherever it is.
-    """
-    if part_range <= 0.0 or TRAVEL_SECONDS <= 0.0:
-        return target
-    step = abs(part_range) * (float(dt) / TRAVEL_SECONDS)
-    delta = target - current
-    if abs(delta) <= step:
-        return target
-    return current + (step if delta > 0 else -step)
-
-
-def _part_range(part) -> float:
-    """Peak-to-peak spread of `part`'s authored angle across every state.
-
-    A single per-part constant rather than a per-transition one. NOT cached
-    here: `ArticulatedPartProperty.angle_range` (a property on the part
-    itself) already caches this and -- the reason it lives there rather
-    than in a `functools.lru_cache` keyed on the part -- invalidates
-    correctly the instant `SetStateAngle` re-authors an angle, and is
-    released exactly when the part itself is (mission swap /
-    `articulated_part.reset()` dropping the snapshot's last reference)
-    rather than being pinned alive forever by a free function's cache. A
-    part without that property (a bare test double) just gets recomputed on
-    every call, which is fine: nothing but a test ever takes this path.
-    This gives `ease_angle` a rate that is fixed per part rather than
-    recomputed per transition -- see that function's docstring for exactly
-    what guarantee that does, and does not, deliver.
-    """
-    cached = getattr(part, "angle_range", None)
-    if cached is not None:
-        return cached
-    from engine.appc.articulated_part import STATES
-    values = [part.angle_for(state) for state in STATES]
-    return max(values) - min(values)
-
-
-def _swing_range(part) -> float:
-    """`ease_angle`'s `part_range` for `part`.
-
-    Every part `rig_for`/`parts_for_leaf` can return since Task 5's migration
-    is an `ArticulatedPartProperty`, so this is `_part_range` (peak-to-peak
-    across all four states, cached and invalidated on the part itself). The
-    `angle_deg` fallback for this module's OLD hardcoded `Part` (retired from
-    `rig_for`'s output, but still constructed directly by a couple of
-    `rotation_for`-only unit tests) is kept as a defensive duck-type guard,
-    not a live path."""
-    if callable(getattr(part, "angle_for", None)):
-        return _part_range(part)
-    return abs(part.angle_deg)
-
-
 def _part_name(part) -> str:
-    """Name to key `part` by in `ship._articulation_angles`.
-
-    `.GetName()` is what every real `ArticulatedPartProperty` (the only
-    shape `rig_for` returns since Task 5) answers. The `.node` fallback for
-    this module's OLD hardcoded `Part` is kept as a defensive duck-type
-    guard, not a live path -- see `_swing_range`."""
-    getter = getattr(part, "GetName", None)
-    return getter() if callable(getter) else part.node
+    """Name to key `part` by in `ship._articulation_poses`: the NIF node
+    name, which is the template name (`ArticulatedPartProperty.GetName`)."""
+    return part.GetName()
 
 
-def target_angle(part, state: str) -> float:
-    """Degrees `part` should swing to at `state`.
+def target_pose(part, state: str):
+    """The pose `part` should reach at `state` -- `part.pose_for(state)`, the
+    NIF pose (identity) for a state its author left unset.
 
-    Public because two callers need it: `tick_ship` (the eased sim target)
-    and `host_loop._sync_spv_articulation` (the SPV's FORCED pose, which is
-    that same authored angle applied instantly, with no easing and no sim
-    tick -- the SPV runs with the sim frozen).
-
-    Every part `rig_for` can return since Task 5's migration carries one
-    authored angle per state via `.angle_for`. The `.angle_deg` binary-swing
-    fallback (RED = the model's rest pose, everything else = fully
-    deflected) is this module's retired OLD-rig `Part` shape, kept as a
-    defensive duck-type guard -- see `_swing_range`."""
-    angle_for = getattr(part, "angle_for", None)
-    if callable(angle_for):
-        return angle_for(state)
-    return 0.0 if state == "red" else part.angle_deg
+    Public because two callers need it: `tick_ship` (the transition target)
+    and `force_pose` (the SPV's FORCED pose, that same authored pose applied
+    instantly -- the SPV runs with the sim frozen)."""
+    return part.pose_for(state)
 
 
-def angle_for_part(ship, part) -> float:
-    """`ship`'s current eased angle (degrees) for `part`.
+def pose_for_part(ship, part):
+    """`ship`'s current pose (R, t) for `part`, SHIP units.
 
-    The ONLY source is `ship._articulation_angles` ({name: degrees}),
-    written by `tick_ship` every sim tick -- this is what every reader of a
-    ship's LIVE pose (`host_loop._sync_ship_articulation`,
-    `part_severance.part_for_live_point`, `part_transform_point` below)
-    consults. A ship with no entry for `part` (never ticked, or ticked but
-    still at its starting angle before any state changed it) reads 0.0 --
-    the NIF pose -- which is the honest answer, not a scalar nothing in
-    production writes any more (`GetArticulationDeflection`/
-    `SetArticulationDeflection` are gone from `ShipClass`; there is no
-    fallback to fall back to).
+    The ONLY source is `ship._articulation_poses` ({name: pose}), written by
+    `tick_ship` every sim tick (and snapped by `force_pose` /
+    `force_part_pose`) -- this is what every reader of a ship's LIVE pose
+    (`host_loop._sync_ship_articulation`, `part_severance.part_for_live_point`,
+    `part_transform_point` below) consults. A ship with no entry for `part`
+    (never ticked, or still in the NIF pose) reads IDENTITY -- the NIF pose.
     """
-    angles = getattr(ship, "_articulation_angles", None)
-    if not angles:
-        return 0.0
-    return angles.get(_part_name(part), 0.0)
+    poses = getattr(ship, "_articulation_poses", None)
+    if not poses:
+        return part_pose.IDENTITY
+    return poses.get(_part_name(part), part_pose.IDENTITY)
+
+
+def _poses_equal(a, b, eps=1e-9) -> bool:
+    """Element compare of two poses within `eps`."""
+    (Ra, ta), (Rb, tb) = a, b
+    return (all(abs(Ra[i][j] - Rb[i][j]) <= eps
+                for i in range(3) for j in range(3))
+            and all(abs(ta[i] - tb[i]) <= eps for i in range(3)))
 
 
 # ── Dev override ─────────────────────────────────────────────────────────────
@@ -391,14 +252,15 @@ def dev_override() -> "str | None":
 
 
 def force_pose(ship, state: "str | None") -> None:
-    """SNAP every rigged part of `ship` to `state` NOW, with no easing.
+    """SNAP every rigged part of `ship` to `state` NOW, with no transition.
 
-    `state` is None for the ANCHOR pose (every part at angle 0 -- the pose the
+    `state` is None for the NIF pose (every part at IDENTITY -- the pose the
     NIF ships in, and the frame a hardpoint mount is STORED in), or a name
-    from `articulated_part.STATES` for that state's authored angles.
+    from `articulated_part.STATES` for that state's authored poses. Any
+    in-flight transition is dropped.
 
     WHY THIS EXISTS, AND WHY IT IS AN EVENT-EDGE CALL. `ship.
-    _articulation_angles` is the ONE source every reader of a live pose
+    _articulation_poses` is the ONE source every reader of a live pose
     consults -- the render sweep (`host_loop._sync_ship_articulation`), every
     mount (`subsystems.subsystem_world_position` via `part_transform_point`),
     the derived-box queries (`part_severance.part_for_live_point`) and the SPV
@@ -413,7 +275,7 @@ def force_pose(ship, state: "str | None") -> None:
 
     So the forced pose is applied HERE, to the shared dict, at the SPV's own
     event edges (panel open, Preview clicked) -- an explicit, named, dev-only
-    mutation on the sim side. The render sweep then reads live angles like
+    mutation on the sim side. The render sweep then reads live poses like
     everything else, and mesh and mounts agree by construction rather than by
     two code paths being kept in step.
 
@@ -422,8 +284,8 @@ def force_pose(ship, state: "str | None") -> None:
     mutation in the render path once gave the player's phasers half a second
     aiming at a destroyed subsystem.
 
-    Harmless when the sim is NOT frozen: this only seeds the angles, and the
-    next `tick_ship` eases on from wherever they are -- toward the same
+    Harmless when the sim is NOT frozen: this only seeds the poses, and the
+    next `tick_ship` transitions on from wherever they are -- toward the same
     `state` while `_dev_override` names it, and back toward `state_for(ship)`
     once it is released (which is what makes the wings ease home when the
     viewer closes, rather than snapping).
@@ -434,10 +296,30 @@ def force_pose(ship, state: "str | None") -> None:
     parts = parts_for_ship(ship)
     if not parts:
         return
-    angles = {_part_name(p): (0.0 if state is None else target_angle(p, state))
-              for p in parts}
+    poses = {_part_name(p): (part_pose.IDENTITY if state is None
+                             else target_pose(p, state))
+             for p in parts}
+    _store_forced(ship, poses)
+
+
+def force_part_pose(ship, part_name: str, pose) -> None:
+    """SNAP ONE part of `ship` to `pose` and every other part to IDENTITY
+    (the NIF pose), dropping any in-flight transition. The SPV uses it to
+    preview a single part's pose in isolation; same event-edge contract as
+    `force_pose`. A ship with no rig is left alone."""
+    parts = parts_for_ship(ship)
+    if not parts:
+        return
+    poses = {_part_name(p): (pose if _part_name(p) == part_name
+                             else part_pose.IDENTITY)
+             for p in parts}
+    _store_forced(ship, poses)
+
+
+def _store_forced(ship, poses) -> None:
     try:
-        ship._articulation_angles = angles
+        ship._articulation_poses = poses
+        ship._articulation_transitions = {}
     except Exception:  # noqa: BLE001 - a prop / test double may reject it
         pass
 
@@ -477,17 +359,21 @@ def leaf_for(ship) -> str:
 
 
 def tick_ship(ship, dt: float) -> None:
-    """Advance one ship's PER-PART articulation angles by `dt` (Task 4's
-    4-state model), easing each part toward its target angle at
-    `state_for(ship)` (or the dev override state).
+    """Advance one ship's PER-PART transitions by `dt` (spec 2026-09-25
+    §4.1), carrying each part toward its pose at `state_for(ship)` (or the
+    dev override state).
 
-    Parts come from the per-state template snapshot
-    (`articulated_part.parts_for_leaf`, reached here via `rig_for`) when one
-    is registered for `leaf` -- the only rig data any ship carries since
-    Task 5 retired the hardcoded dict. The result lands in
-    `ship._articulation_angles` ({name: degrees}), which is what every
-    reader of a ship's LIVE pose now consults; nothing writes
-    `ship.SetArticulationDeflection` any more.
+    Per part: `target = part.pose_for(state)`. With no transition, or one
+    heading to a different state, and the current pose not already equal to
+    `target`, a new transition starts FROM THE CURRENT POSE (u = 0) -- so an
+    interrupted transition never snaps back. `u` advances by
+    `dt / transition_seconds`; the pose is `part_pose.interpolate(pose0,
+    target, anchor, u)`, a swing about the part's anchor. At u >= 1 the pose
+    is stored as `target` exactly and the transition is dropped.
+
+    The result lands in `ship._articulation_poses` ({name: pose}); in-flight
+    transitions in `ship._articulation_transitions` ({name: (pose0,
+    target_state, u)}).
 
     A ship with no parts is skipped before any allocation, so the
     overwhelming majority of hulls pay one leaf lookup.
@@ -504,20 +390,35 @@ def tick_ship(ship, dt: float) -> None:
             state = state_for(ship)
         except Exception:  # noqa: BLE001
             return
-    angles = getattr(ship, "_articulation_angles", None)
-    if angles is None:
-        angles = {}
+    poses = getattr(ship, "_articulation_poses", None)
+    transitions = getattr(ship, "_articulation_transitions", None)
+    if poses is None or transitions is None:
+        poses = {} if poses is None else poses
+        transitions = {} if transitions is None else transitions
         try:
-            ship._articulation_angles = angles
+            ship._articulation_poses = poses
+            ship._articulation_transitions = transitions
         except Exception:  # noqa: BLE001 - test double / prop may reject
             return
     for part in parts:
         name = _part_name(part)
-        current = angles.get(name, 0.0)
-        target = target_angle(part, state)
-        if current != target:
-            angles[name] = ease_angle(current, target,
-                                      part_range=_swing_range(part), dt=dt)
+        current = poses.get(name, part_pose.IDENTITY)
+        target = target_pose(part, state)
+        tr = transitions.get(name)
+        if tr is None or tr[1] != state:
+            if _poses_equal(current, target):
+                transitions.pop(name, None)
+                continue
+            tr = (current, state, 0.0)
+        pose0, _state, u = tr
+        u += float(dt) / max(float(part.transition_seconds), 1e-6)
+        if u >= 1.0:
+            poses[name] = target
+            transitions.pop(name, None)
+            continue
+        anchor = part.anchor or (0.0, 0.0, 0.0)
+        poses[name] = part_pose.interpolate(pose0, target, anchor, u)
+        transitions[name] = (pose0, state, u)
 
 
 def parts_for_ship(ship) -> tuple:
@@ -607,19 +508,17 @@ def part_transform_point(ship, point, part=None):
     """Where a body-frame point ends up once its part has articulated.
 
     In and out are BODY frame, SHIP units (what subsystem mounts and the
-    derived per-part boxes use). Identity for a ship with no rig, for a point on no
-    articulated part, and at angle 0 -- so an unarticulated hull is
-    byte-identical to not calling this.
+    derived per-part boxes use). Identity for a ship with no rig, for a point
+    on no articulated part, and at the identity pose -- so an unarticulated
+    hull is byte-identical to not calling this.
 
     This is what makes a hardpoint FOLLOW its part. A BoP's wingtip cannon
     sits at (1.008, 0.450, -0.670); with the wings up that mount is ~0.9 ship
     units (~150 m) from where the gun is drawn, and the beam fires from the
     stale point.
 
-    Reads the part's CURRENT angle via `angle_for_part` (Task 4) rather than
-    a ship-wide deflection: a per-part angle is what the state machine
-    actually produces, and different parts on the same ship can be mid-ease
-    at different angles at once.
+    Reads the part's CURRENT pose via `pose_for_part`: different parts on the
+    same ship can be mid-transition at different poses at once.
 
     `part` is the part NAME when the caller already knows it -- `hull_bounds`
     does: every cached piece carries its tag, decided once at cache time.
@@ -627,71 +526,48 @@ def part_transform_point(ship, point, part=None):
     same answer with a full sorted distance scan over every box on the hull,
     per piece, per sweep, per frame. Omit it and attribution runs as before.
     """
+    found = _live_part(ship, part, point)
+    if found is None:
+        return point
+    pose = pose_for_part(ship, found)
+    if part_pose.is_identity(pose):
+        return point
+    return part_pose.apply(pose, point)
+
+
+def part_transform_vector(ship, vec, part_name):
+    """Where a body-frame DIRECTION points once part `part_name` has
+    articulated: the pose's rotation, no translation. Unchanged for a ship
+    with no rig, an unknown part, a detached part, or the identity pose.
+    `part_transform_point` is for positions; a spot light's direction and up
+    are directions."""
+    found = _live_part(ship, part_name, None)
+    if found is None:
+        return vec
+    pose = pose_for_part(ship, found)
+    if part_pose.is_identity(pose):
+        return vec
+    return part_pose.apply_vector(pose, vec)
+
+
+def _live_part(ship, name, point):
+    """The rigged, NOT-detached part `name` of `ship` (attributed from
+    `point` when `name` is None), or None."""
     parts = rig_for(leaf_for(ship))
     if not parts:
-        return point
+        return None
 
     from engine.appc.part_severance import part_for_point, is_detached
-    name = part if part is not None else part_for_point(leaf_for(ship), point)
     if name is None:
-        return point
+        if point is None:
+            return None
+        name = part_for_point(leaf_for(ship), point)
+    if name is None:
+        return None
     if is_detached(ship, name):
-        # A severed part has no hinge left to follow -- rotating a mount
-        # about a phantom wing would drag it along with a wing that is no
-        # longer there. See host_loop._sync_ship_articulation for the
-        # render-side twin of this guard.
-        return point
-    part = next((p for p in parts if p.GetName() == name), None)
-    if part is None:
-        return point
-
-    angle_deg = angle_for_part(ship, part)
-    if angle_deg == 0.0:
-        return point
-    return point_at_angle(part, point, angle_deg)
-
-
-def point_at_angle(part, point, angle_deg):
-    """Where `point` (body frame, ship units) ends up when `part` alone sits
-    at `angle_deg` degrees about its hinge.
-
-    The ship-free, angle-based twin of `part_transform_point`: no
-    attribution, no severance check, no read of any ship state. Used by the
-    LIVE-pose readers (`part_transform_point`,
-    `part_severance.part_for_live_point`), which already have a concrete
-    current angle in hand (from `angle_for_part`), and by `hull_bounds`'s
-    travel-reach maths, which evaluates it at each state's own authored
-    angle rather than at a ship's live pose.
-    """
-    pivot, axis, theta = rotation_for(part, angle_deg)
-    return _rotate_about(point, pivot, axis, theta)
-
-
-def vector_at_angle(part, vec, angle_deg):
-    """Where a body-frame DIRECTION points when `part` sits at `angle_deg`:
-    the hinge's rotation without its translation. `point_at_angle` is for
-    positions; a spot light's direction and up are directions."""
-    _pivot, axis, theta = rotation_for(part, angle_deg)
-    return _rotate_about(vec, (0.0, 0.0, 0.0), axis, theta)
-
-
-def _rotate_about(point, pivot, axis, theta):
-    """Rodrigues rotation of `point` about the line (pivot, unit axis) by
-    `theta` radians. Right-handed, matching the renderer's column-vector
-    convention (CLAUDE.md) and glm::rotate in set_instance_node_rotation, so
-    the mount and the drawn mesh agree by construction."""
-    if theta == 0.0:
-        return point
-    vx = point[0] - pivot[0]
-    vy = point[1] - pivot[1]
-    vz = point[2] - pivot[2]
-    ax, ay, az = axis
-    c = math.cos(theta)
-    s = math.sin(theta)
-    dot = ax * vx + ay * vy + az * vz
-    cx = ay * vz - az * vy
-    cy = az * vx - ax * vz
-    cz = ax * vy - ay * vx
-    return (pivot[0] + vx * c + cx * s + ax * dot * (1.0 - c),
-            pivot[1] + vy * c + cy * s + ay * dot * (1.0 - c),
-            pivot[2] + vz * c + cz * s + az * dot * (1.0 - c))
+        # A severed part has no pose left to follow -- moving a mount with a
+        # phantom wing would drag it along with a wing that is no longer
+        # there. See host_loop._sync_ship_articulation for the render-side
+        # twin of this guard.
+        return None
+    return next((p for p in parts if p.GetName() == name), None)

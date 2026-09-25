@@ -25,7 +25,7 @@ wing across a whole battle and it still comes off.
 from __future__ import annotations
 
 import engine.dev_mode as dev_mode
-from engine.appc import articulation
+from engine.appc import articulation, part_pose
 
 
 # A point inside exactly one part box resolves to that part. Otherwise the
@@ -130,18 +130,17 @@ def part_for_live_point(ship, point, iid=None):
 
     THE QUERY MOVES, NOT THE BOXES -- the same rule §4.3 of the spec applies
     to every other consumer of a baked rest-pose structure. For each part in
-    the ship's rig the point is inverse-rotated about THAT part's hinge (same
-    pivot, same axis, negated angle -- rotation is linear in the angle, so
-    negating it is exactly the inverse) and re-tested. A part claims the
-    point only when the pullback lands on ITS OWN box. The angle used is
-    each part's CURRENT one (`articulation.angle_for_part`, Task 4), not a
-    single ship-wide deflection -- different parts on the same ship can be
-    mid-ease at different angles at once.
+    the ship's rig the point is pulled back through THAT part's INVERSE pose
+    (`part_pose.inverse_apply`, R^T.(x - t)) and re-tested. A part claims the
+    point only when the pullback lands on ITS OWN box. The pose used is each
+    part's CURRENT one (`articulation.pose_for_part`), not a single ship-wide
+    deflection -- different parts on the same ship can be mid-transition at
+    different poses at once.
 
     The rest-space test runs FIRST and unchanged, so a point on the body
-    attributes exactly as it always did, and at angle 0 -- the pose the
-    model ships in and the one combat runs in -- every rotation is identity
-    and this function is byte-identical to `part_for_point`.
+    attributes exactly as it always did, and at the identity pose -- the pose
+    the model ships in and the one combat runs in -- every pullback is
+    identity and this function is byte-identical to `part_for_point`.
 
     Re-testing through `part_for_point` rather than a bare box containment is
     deliberate: it inherits the ambiguity and margin rules, so the two
@@ -166,10 +165,10 @@ def part_for_live_point(ship, point, iid=None):
     if not parts:
         return None
     for part in parts:
-        angle_deg = articulation.angle_for_part(ship, part)
-        if angle_deg == 0.0:
+        pose = articulation.pose_for_part(ship, part)
+        if part_pose.is_identity(pose):
             continue                      # identity: `plain` already answered
-        rest_point = articulation.point_at_angle(part, point, -angle_deg)
+        rest_point = part_pose.inverse_apply(pose, point)
         name = part.GetName()
         if part_for_point(leaf, rest_point, iid) == name:
             return name
@@ -182,7 +181,7 @@ def rest_point_for_live_point(ship, point, iid=None):
 
     Manual Aim picks off the posed hull, but a target offset is stored REST
     frame (see `subsystems.target_offset_world`), so its pick is pulled back
-    through this. Identity for a point on no part, a part at angle 0, and a
+    through this. Identity for a point on no part, a part at its identity pose, and a
     severed part -- mirroring `part_transform_point`, so the round trip is
     exact in every case it can arise.
     """
@@ -193,10 +192,10 @@ def rest_point_for_live_point(ship, point, iid=None):
                  if p.GetName() == name), None)
     if part is None:
         return point
-    angle = articulation.angle_for_part(ship, part)
-    if angle == 0.0:
+    pose = articulation.pose_for_part(ship, part)
+    if part_pose.is_identity(pose):
         return point
-    return articulation.point_at_angle(part, point, -angle)
+    return part_pose.inverse_apply(pose, point)
 
 
 def _totals(ship) -> dict:

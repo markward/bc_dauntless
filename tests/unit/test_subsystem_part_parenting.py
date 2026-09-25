@@ -33,16 +33,19 @@ class _Sub:
 class _Ship:
     """Identity rotation at the origin, so world == body and the assertions
     read as the body-frame offsets they are. `deflection` is a test
-    convenience: it scales each part's authored "cruise" angle (the
-    fully-deflected, up/cold pose) into `_articulation_angles`, the ONLY
-    thing `part_transform_point` (via `angle_for_part`, Task 4) reads --
-    there is no scalar fallback."""
+    convenience: the fraction (0..1) of each part's swing from the NIF
+    pose to its authored "cruise" pose (the fully-deflected, up/cold pose),
+    written into `_articulation_poses`, the ONLY thing
+    `part_transform_point` (via `pose_for_part`) reads -- there is no scalar
+    fallback."""
 
     def __init__(self, deflection, leaf="birdofprey"):
-        from engine.appc import articulation
+        from engine.appc import articulation, part_pose
         self._articulation_leaf = leaf
-        self._articulation_angles = {
-            p.GetName(): p.angle_for("cruise") * deflection
+        self._articulation_poses = {
+            p.GetName(): part_pose.interpolate(
+                part_pose.IDENTITY, p.pose_for("cruise"), p.anchor,
+                deflection)
             for p in articulation.rig_for(leaf)
         }
 
@@ -80,7 +83,7 @@ def test_an_unrigged_ship_is_byte_identical():
 
 
 def test_a_ship_without_articulation_support_still_works():
-    """A prop or test double with no `_articulation_leaf`/`_articulation_angles`
+    """A prop or test double with no `_articulation_leaf`/`_articulation_poses`
     must not raise — this function is on the firing path for every weapon in
     the game."""
     class _Bare:
