@@ -60,10 +60,13 @@ class _FakeRenderer:
 class _Ship:
     """Stands in for a ShipClass. Mirrors only the surface _spawn_chunk touches."""
 
-    def __init__(self):
+    def __init__(self, pSet=None):
         self._articulation_leaf = "birdofprey"
         self._loc = TGPoint3(10.0, 20.0, 30.0)
         self._rot = TGMatrix3()
+        self._set = pSet
+
+    def GetContainingSet(self): return self._set
 
     def GetWorldLocation(self): return self._loc
     def GetWorldRotation(self): return self._rot
@@ -88,12 +91,18 @@ def fr(monkeypatch):
     monkeypatch.setattr(host_io, "instance_model", lambda iid: fake.model)
     monkeypatch.setattr(host_io, "set_instance_node_hidden", lambda *a, **k: True)
     monkeypatch.setattr(debris_chunk, "spawn", lambda *a, **k: None)
+    # The chunk's first pose is pushed in the VIEWED set's coordinates, so the
+    # fake ship must sit in the viewed set; same set -> the raw numbers.
+    from engine.appc.sets import SetClass_Create
+    from engine.systems import frames
+    fake.set = SetClass_Create()
+    monkeypatch.setattr(frames, "viewing_set", lambda: fake.set)
     return fake
 
 
 def test_the_chunk_gets_the_parents_world_pose_not_identity(fr):
     """REGRESSION: was IDENTITY (origin, scale 1) -- 100x too big at (0,0,0)."""
-    ship = _Ship()
+    ship = _Ship(fr.set)
     part_detach_render._spawn_chunk(ship, ship_iid=1, part_name="left wing01")
 
     chunk_iid = 900
@@ -108,7 +117,7 @@ def test_the_chunk_gets_the_parents_world_pose_not_identity(fr):
 def test_the_chunk_is_rim_eligible(fr):
     """REGRESSION: was False -- the chunk had no Fresnel rim, a visibly
     different material from the hull it just left."""
-    ship = _Ship()
+    ship = _Ship(fr.set)
     part_detach_render._spawn_chunk(ship, ship_iid=1, part_name="left wing01")
 
     chunk_iid = 900
@@ -116,9 +125,25 @@ def test_the_chunk_is_rim_eligible(fr):
 
 
 def test_the_chunk_is_visible_and_normally_lit(fr):
-    ship = _Ship()
+    ship = _Ship(fr.set)
     part_detach_render._spawn_chunk(ship, ship_iid=1, part_name="left wing01")
 
     chunk_iid = 900
     assert fr.visible.get(chunk_iid) is True
     assert fr.emissive.get(chunk_iid) == pytest.approx(1.0)
+
+
+def test_a_chunk_spawned_hidden_is_marked_frame_hidden(fr, monkeypatch):
+    """A chunk whose first frame is out of the viewed frame starts hidden; it
+    must carry debris_chunk's _frame_hidden flag, or debris_chunk.tick -- which
+    only calls set_visible(True) when that flag is set -- never re-shows it
+    once its frame is viewed (final review M2)."""
+    import types
+    from engine.appc import debris_chunk
+
+    chunk = types.SimpleNamespace(_frame_hidden=False)
+    monkeypatch.setattr(debris_chunk, "spawn", lambda *a, **k: chunk)
+    monkeypatch.setattr(part_detach_render, "_copy_render_state",
+                        lambda ship, iid: False)
+    part_detach_render._spawn_chunk(_Ship(fr.set), ship_iid=1, part_name="left wing01")
+    assert chunk._frame_hidden is True

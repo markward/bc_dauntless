@@ -579,6 +579,52 @@ def test_debris_chunks_by_frame(world, monkeypatch):
     assert r.visible[3] is False
 
 
+def _severing_ship(pSet, name, xyz):
+    s = App.ShipClass_Create()
+    s.SetName(name)
+    pSet.AddObjectToSet(s, name)
+    s.SetTranslateXYZ(*xyz)
+    return s
+
+
+def _detach_renderer(monkeypatch):
+    from engine import renderer
+    r = _ChunkRenderer()
+    for name in ("set_rim_eligible", "set_rim_strength", "set_emissive_scale"):
+        monkeypatch.setattr(renderer, name, lambda *a, **k: None)
+    monkeypatch.setattr(renderer, "set_world_transform", r.set_world_transform)
+    monkeypatch.setattr(renderer, "set_visible", r.set_visible)
+    monkeypatch.setattr(host_loop, "_world_matrix_from",
+                        lambda o, rot, scale: (o.x, o.y, o.z))
+    return r
+
+
+def test_a_severed_chunks_first_frame_is_in_view_coordinates(world, monkeypatch):
+    """REGRESSION (final review M2): part_detach_render pushed the chunk's
+    FIRST pose in the ship's set-local coordinates, while debris_chunk.tick
+    pushes every later one in the VIEWED set's -- a chunk severed off a ship
+    in a sibling region flashed one frame a region-offset away."""
+    from engine.appc import part_detach_render
+    ona1, ona2, other, off = world
+    r = _detach_renderer(monkeypatch)
+    ship = _severing_ship(ona2, "b", B)
+    part_detach_render._copy_render_state(ship, 901)
+    assert r.transforms[901] == pytest.approx(_shifted(B, off))
+    assert r.visible[901] is True
+
+
+def test_a_severed_chunk_in_another_frame_starts_hidden(world, monkeypatch):
+    """Same rule as debris_chunk.tick: not in the viewed frame -> hidden, and
+    the chunk carries _frame_hidden so tick re-shows it when it is viewed."""
+    from engine.appc import part_detach_render
+    ona1, ona2, other, off = world
+    r = _detach_renderer(monkeypatch)
+    ship = _severing_ship(other, "c", C)
+    assert part_detach_render._copy_render_state(ship, 902) is False
+    assert 902 not in r.transforms
+    assert r.visible[902] is False
+
+
 # ── (3) emitter-light fade on the converted hull position ──────────────────
 
 def test_emitter_light_fade_judges_the_converted_hull_position(world):
