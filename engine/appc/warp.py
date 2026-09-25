@@ -419,39 +419,28 @@ class _HoldUntilAction(TGAction):
 
     def Play(self):
         import App
-        from engine.appc.actions import _ET_ACTION_DEFERRED_COMPLETE
         self._playing = True
         start = self._seq._t_start
         now = App.g_kUtopiaModule.GetGameTime()
+        # A sequence never Play()ed has no start: fail open to an early swap.
         remaining = 0.0 if start is None else start + self._span - now
-        if remaining <= 0.0:
-            self.Completed()
-            return
-        mgr = App.g_kTimerManager
-        timer = App.TGTimer_Create()
-        timer.SetTimerStart(mgr.get_time() + remaining)
-        timer.SetDelay(-1.0)            # one-shot
-        ev = App.TGEvent_Create()
-        ev.SetEventType(_ET_ACTION_DEFERRED_COMPLETE)
-        ev.SetDestination(self)
-        timer.SetEvent(ev)
-        mgr.AddTimer(timer)
-        # TGAction.ProcessEvent completes us on the event; Abort cancels it.
-        self._deferred_timer = (mgr, timer)
+        # <= 0 completes inline; otherwise a game-time timer (Abort cancels).
+        self._complete_after(remaining, mgr=App.g_kTimerManager)
 
 
 class _TransitReleaseAction(TGAction):
     """End the transit hold: the WarpVFX resumes with its exit flash to play.
-    Player only, matching _WarpDepartAction's hold. Fail-open, like
-    _WarpVfxBeginAction -- never blocks the swap."""
+    Releases iff _WarpDepartAction took the hold (seq._vfx_held). Fail-open,
+    like _WarpVfxBeginAction -- never blocks the swap."""
 
-    def __init__(self, ship):
+    def __init__(self, seq):
         super().__init__()
-        self._ship = ship
+        self._seq = seq
 
     def _do_play(self):
-        if not _is_current_player(self._ship):
+        if not self._seq._vfx_held:
             return
+        self._seq._vfx_held = False
         try:
             import App
             from engine import warp_vfx
@@ -627,10 +616,11 @@ class _WarpDepartAction(TGAction):
     render teardown on arrival anyway (idempotent) if departure didn't
     complete."""
 
-    def __init__(self, source_set, ship):
+    def __init__(self, source_set, ship, seq=None):
         super().__init__()
         self._source = source_set
         self._ship = ship
+        self._seq = seq     # records whether we took the WarpVFX hold
 
     def _do_play(self):
         import App
@@ -669,11 +659,13 @@ class _WarpDepartAction(TGAction):
         # The streak holds at its plateau until _TransitReleaseAction: the
         # swap now waits on the queues and the master sequence (spec §1).
         # Player only -- the WarpVFX singleton is the player's tunnel, and an
-        # NPC warp must not freeze it.
-        if _is_current_player(ship):
+        # NPC warp must not freeze it. Only with a sequence, whose
+        # _TransitReleaseAction is what lets go again.
+        if self._seq is not None and _is_current_player(ship):
             try:
                 from engine import warp_vfx
                 warp_vfx.get().hold()
+                self._seq._vfx_held = True
             except Exception:
                 pass
         # 3. Drop the source set's RENDER instances. The set itself stands:
@@ -758,6 +750,7 @@ class WarpSequence(TGSequence):
         # played at their points by WarpSequence_Create (spec §1).
         self._queues = queues or {k: [] for k in ("before", "before_during", "during", "after_during", "after")}
         self._t_start = None    # game time of Play(); _HoldUntilAction's origin
+        self._vfx_held = False  # _WarpDepartAction held the WarpVFX
 
     def GetShip(self):          return self._ship
     def GetDestination(self):   return self._dest_module
@@ -887,7 +880,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # the scene (the set itself stands, and its ships keep simulating --
         # see the Plan-2 note on left-behind-ship audibility).
         _add_before_queue(seq)
-        depart = _WarpDepartAction(source, ship)
+        depart = _WarpDepartAction(source, ship, seq)
         seq.AddAction(depart, t_align)
         # Transit is chained, not timed (spec §1 "Transit holds"): departure ->
         # SDK WaitForQueued (player only) -> the in-transit queues -> the
@@ -904,7 +897,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         prev = _add_transit_queues(seq, prev)
         hold = _HoldUntilAction(seq, t_align, t_transit)
         seq.AddAction(hold, prev)
-        release = _TransitReleaseAction(ship)
+        release = _TransitReleaseAction(seq)
         seq.AddAction(release, hold)
         swap = ChangeRenderedSetAction_Create(dest_module)
         seq.AddAction(swap, release, 0.1 * t_transit)

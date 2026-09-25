@@ -66,7 +66,7 @@ def _flythrough_warp(name, queues, monkeypatch, is_player=False,
                         lambda: ship if is_player else None)
     mod = types.ModuleType("FakeSys." + name)
     mod.Initialize = lambda: App.g_kSetManager.AddSet(SetClass_Create(), name)
-    sys.modules["FakeSys." + name] = mod
+    monkeypatch.setitem(sys.modules, "FakeSys." + name, mod)
     seq = warp.WarpSequence_Create(ship, "FakeSys." + name, 0.0, None,
                                    queues=queues)
     # Unmapped vantages => T_BASE transit; identity rotation already faces the
@@ -246,7 +246,7 @@ def test_fallback_waits_for_the_mission_master_sequence(monkeypatch):
     monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
     mod = types.ModuleType("FakeSys.QFall")
     mod.Initialize = lambda: App.g_kSetManager.AddSet(SetClass_Create(), "QFall")
-    sys.modules["FakeSys.QFall"] = mod
+    monkeypatch.setitem(sys.modules, "FakeSys.QFall", mod)
     seq = warp.WarpSequence_Create(ship, "FakeSys.QFall", 0.0, None,
                                    queues=_queues())
     seq.Play()
@@ -256,3 +256,63 @@ def test_fallback_waits_for_the_mission_master_sequence(monkeypatch):
     dialogue.Completed()
     _advance_game_time(1.0 / 60.0)
     assert _in_set("QFall", ship)
+
+
+def test_unheld_release_is_continuous(monkeypatch):
+    """An ordinary player warp (nothing queued) passes through the hold and
+    release without a visible seam: between consecutive 60 Hz ticks the
+    streak and the travel progress change by no more than one tick's normal
+    change -- no freeze-then-jump at the release."""
+    import MissionLib
+    from engine import warp_vfx
+    monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", None)
+    vfx = warp_vfx.get()
+    vfx.stop()
+
+    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None):
+        # Unit src->dst vantages: sky_vantage()[0] IS the travel progress.
+        vfx.start(heading, t_align, t_transit,
+                  App.g_kUtopiaModule.GetGameTime(),
+                  (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+
+    ship, seq, total = _flythrough_warp("QSeam", _queues(), monkeypatch,
+                                        is_player=True, start=_start)
+    step = 1.0 / 60.0
+    tick_progress = step / warp._T_BASE
+    samples = []
+    try:
+        seq.Play()
+        for _ in range(int(round((total + 0.5) / step))):
+            App.g_kTimerManager.tick(step)
+            vfx.tick(App.g_kUtopiaModule.GetGameTime())
+            samples.append((vfx.phase(), vfx.streak_intensity(),
+                            vfx.sky_vantage(0.0)[0]))
+    finally:
+        vfx.stop()
+    transit = [(a, b) for a, b in zip(samples, samples[1:])
+               if a[0] == "transit" and b[0] == "transit"]
+    assert len(transit) > 100
+    for (_, s0, p0), (_, s1, p1) in transit:
+        assert 0.0 < p1 - p0 <= 1.5 * tick_progress + 1e-9, (p0, p1)
+        assert abs(s1 - s0) <= 0.05, (s0, s1)
+
+
+def test_release_lets_go_only_of_a_hold_this_warp_took(monkeypatch):
+    """_TransitReleaseAction releases iff this sequence's departure took the
+    hold -- not by re-asking who the player is at release time."""
+    from engine import warp_vfx
+    vfx = warp_vfx.get()
+    vfx.stop()
+    ship, seq, total = _flythrough_warp("QRel", _queues(), monkeypatch,
+                                        is_player=False)
+    vfx.hold()                     # someone else's hold (e.g. the player's)
+    seq.Play()
+    try:
+        _advance_game_time(warp._T_ALIGN_MIN + 0.5)     # departed, as an NPC
+        # The player changes to this ship mid-transit: still not our hold.
+        monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
+        _advance_game_time(total)
+        assert _in_set("QRel", ship)                    # release ran
+        assert vfx.is_held() is True
+    finally:
+        vfx.stop()

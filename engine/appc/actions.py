@@ -65,10 +65,14 @@ class TGAction(TGEventHandlerObject):
         for ev in events:
             App.g_kEventManager.AddEvent(ev)
 
-    def _complete_after(self, duration_real_s, on_elapsed=None) -> None:
+    def _complete_after(self, duration_real_s, on_elapsed=None,
+                        mgr=None) -> None:
         """Complete this action after duration_real_s wall-clock seconds via
         g_kRealtimeTimerManager. duration <= 0 (or None) completes inline,
         preserving synchronous behavior when there is no audio to wait on.
+
+        `mgr` overrides the timer manager (e.g. App.g_kTimerManager for a
+        game-time wait); the duration is then in that manager's seconds.
 
         `on_elapsed`, when supplied, is called INSTEAD of self.Completed()
         once the duration elapses (or immediately, for duration <= 0) — the
@@ -82,7 +86,8 @@ class TGAction(TGEventHandlerObject):
                 self.Completed()
             return
         import App
-        mgr = App.g_kRealtimeTimerManager
+        if mgr is None:
+            mgr = App.g_kRealtimeTimerManager
         timer = App.TGTimer_Create()
         timer.SetTimerStart(mgr.get_time() + float(duration_real_s))
         timer.SetDelay(-1.0)            # one-shot
