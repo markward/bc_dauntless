@@ -5274,6 +5274,34 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             session.slot_bindings.pop(planet, None)
 
 
+def _ensure_system_loaded(session) -> None:
+    """Ask system_loader to load the CURRENT player's system's regions.
+
+    Reads Game_GetCurrentGame().GetPlayer() -- the same accessor
+    _reconcile_runtime_instances uses for its own player-identity check --
+    never session.player. On a RecreatePlayer tick (QuickBattle's
+    StartSimulation2, a reinforcement spawn that replaces the player)
+    session.player is still the OLD ship until _reconcile_runtime_instances
+    (which runs right after this call) updates it; reading session.player
+    here would resolve last tick's set, one tick late, instead of the set
+    the live player is actually in THIS tick.
+
+    Best-effort plumbing, not gameplay logic: no game, no player, and any
+    exception from the loader are all silent no-ops so a broken region map
+    or missing player never breaks the tick.
+    """
+    if session is None:
+        return
+    try:
+        game = Game_GetCurrentGame()
+        player = game.GetPlayer() if game is not None else None
+        if player is not None:
+            from engine.systems import system_loader
+            system_loader.ensure_loaded(player)
+    except Exception as exc:  # noqa: BLE001 - best-effort per-tick plumbing
+        dev_mode.log_swallowed("system_loader.ensure_loaded", exc)
+
+
 def _reconcile_runtime_instances(session, renderer, *,
                                  on_player_change=None,
                                  verbose: bool = False) -> None:
@@ -9233,17 +9261,11 @@ def run(mission_name: Optional[str] = None,
             # Combat (so a mid-combat ship swap is temporary).
             _sync_quickbattle_player_revert(controller)
             # Entering a system loads all its regions (system-frames spec
-            # §3): level-triggered, cheap when the player's system hasn't
-            # changed since last tick. Guarded so a missing/mid-swap player
-            # is a no-op, and run BEFORE _reconcile_runtime_instances so any
-            # region set it creates this tick is realized in the same pass.
-            if session is not None and session.player is not None:
-                try:
-                    from engine.systems import system_loader
-                    system_loader.ensure_loaded(session.player)
-                except Exception as _e_sysload:
-                    dev_mode.log_swallowed(
-                        "system_loader.ensure_loaded", _e_sysload)
+            # §3). Run BEFORE _reconcile_runtime_instances so any region set
+            # it creates this tick is realized in the same pass -- see
+            # _ensure_system_loaded's docstring for why it must read the
+            # LIVE player, not session.player.
+            _ensure_system_loaded(session)
             # Per-tick realization reconciliation: realize ships created at
             # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
             # tear down ships removed from the set. Also retargets the camera if
