@@ -108,10 +108,16 @@ def _resolve_hit_point(ship_instances, ship,
     iid = ship_instances.get(ship) if ship_instances is not None else None
     if iid is None:
         return fallback_point, None
+    # The ray is in the ship's own set coordinates; the mesh query speaks the
+    # renderer's (view) coordinates. Move in, and move the hit back out, so
+    # the point handed on is in the ship's own set (Plan 2's rule).
+    from engine.systems import frames
+    to_view = frames.view_offset(frames.containing_set(ship))
+    o = frames.shifted(ray_origin, to_view)
     try:
         result = host_io.ray_trace_mesh(
             iid,
-            (ray_origin.x, ray_origin.y, ray_origin.z),
+            (o.x, o.y, o.z),
             (ray_direction.x, ray_direction.y, ray_direction.z),
             max_dist,
         )
@@ -120,7 +126,8 @@ def _resolve_hit_point(ship_instances, ship,
         result = None
     if result is not None:
         (px, py, pz), (nx, ny, nz), _t = result
-        return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
+        return (frames.shifted(TGPoint3(px, py, pz), to_view, -1.0),
+                TGPoint3(nx, ny, nz))
     if not sphere_fallback:
         return fallback_point, None
     center = ship.GetWorldLocation()

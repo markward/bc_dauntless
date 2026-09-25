@@ -4,6 +4,7 @@
 #include "renderer/pipeline.h"
 
 #include <renderer/asset_path.h>
+#include <renderer/render_origin.h>
 
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
@@ -171,11 +172,13 @@ void DustPass::render(const scenegraph::Camera& camera,
                       const std::vector<SunDescriptor>& suns,
                       const std::vector<glm::vec4>& planets,
                       float warp_streak,
-                      glm::vec3 warp_travel) {
+                      glm::vec3 warp_travel,
+                      const glm::dvec3& origin) {
     if (!enabled_ || particle_count_ <= 0) {
         // Still update prev_eye_ tracking so we don't get a phantom huge
         // velocity on the frame after re-enabling.
         prev_eye_ = camera.eye;
+        prev_origin_ = origin;
         have_prev_ = true;
         return;
     }
@@ -184,11 +187,16 @@ void DustPass::render(const scenegraph::Camera& camera,
 
     // Camera velocity in world units / second. First frame and abnormal
     // dt suppress the streak entirely.
+    // The WORLD eye's travel: under the floating origin the render-space eye
+    // barely moves, the origin carries it (render_origin.h).
     glm::vec3 velocity(0.0f);
     if (have_prev_ && dt_seconds > 0.0f && dt_seconds < kVelocityClampSeconds) {
-        velocity = (camera.eye - prev_eye_) / dt_seconds;
+        velocity = render_origin::eye_travel(camera.eye, prev_eye_,
+                                             origin, prev_origin_)
+                   / dt_seconds;
     }
     prev_eye_ = camera.eye;
+    prev_origin_ = origin;
     have_prev_ = true;
 
     glm::vec3 smear = -velocity * kSmearSeconds;
@@ -234,7 +242,14 @@ void DustPass::render(const scenegraph::Camera& camera,
     }
     const glm::vec3 sun_drift = inf.sun_dir * sun_drift_phase_;
 
-    shader.set_vec3 ("u_sun_drift", sun_drift);
+    // The wrap is keyed to the WORLD eye (eye + origin): the shader folds
+    // u_sun_drift INTO the wrap, so subtracting the origin's phase there
+    // makes the field world-anchored with no shader change. Origin zero:
+    // phase zero, byte-identical.
+    const glm::vec3 origin_phase =
+        render_origin::wrap_phase(origin, 2.0 * kVolumeRadius);
+
+    shader.set_vec3 ("u_sun_drift", sun_drift - origin_phase);
     shader.set_float("u_sun_tint",  inf.sun_tint);
 
     // Warp fly-past drift: while warping, advance an accumulator along the

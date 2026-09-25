@@ -109,9 +109,12 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     # Core breach carries its own size: pass the eased radius as both the merge
     # influence and the visible floor, with strength 0 (it's a self-destruct
     # wound, not accumulated combat damage). floor keeps it visible as it grows.
+    # The core sits in the ship's own set coordinates; the carve speaks the
+    # renderer's view coordinates (hit_feedback._mesh_xyz).
+    from engine.appc.hit_feedback import _mesh_xyz
     host_io.hull_carve_add(
         iid,
-        (core_world.x, core_world.y, core_world.z),
+        _mesh_xyz(ship, core_world),
         (normal.x, normal.y, normal.z),
         radius,   # influ
         0.0,      # strength

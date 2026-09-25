@@ -330,9 +330,10 @@ def snapshot_descriptors(resolve_attach=None, to_view=None):
     maps an emit-from object -> {'instance_id', 'velocity'} or None.
 
     `to_view(pSet, (x, y, z)) -> (x, y, z) | None` (the host passes
-    frames.in_view bound to the viewed set) re-expresses every WORLD-anchored
-    descriptor -- no instance_id -- from its controller's set into the viewed
-    set's coordinates; None drops it (another frame, or no known set).
+    frames.to_render bound to the viewed set) re-expresses every
+    WORLD-anchored descriptor -- no instance_id -- from its controller's set
+    into the renderer's space (the viewed set's coordinates minus the render
+    origin); None drops it (another frame, or no known set).
     Instance-attached descriptors are body-frame and resolved through the
     instance's own transform in the pass, so they pass through untouched."""
     out = []

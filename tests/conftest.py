@@ -907,6 +907,11 @@ def _reset_leakable_engine_globals():
         _sysload.reset()
     except Exception:
         pass
+    try:
+        from engine.systems import frames as _frames
+        _frames.reset_render_origin()
+    except Exception:
+        pass
     # host_loop's mapped-body detector warns once per body per mission; only
     # touch it if host_loop is already imported (it is heavy to import).
     _hl = sys.modules.get("engine.host_loop")

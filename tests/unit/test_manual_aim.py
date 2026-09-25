@@ -440,9 +440,12 @@ def test_host_loop_runs_manual_aim_update_in_the_sim_block():
 
 def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
     src = _host_loop_src()
-    anchor = ("r.set_camera(eye=eye, target=target, up=up_vec,\n"
-              "                             fov_y_rad=director.effective_fov_y_rad,\n"
-              "                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)")
+    # The exterior camera goes to the renderer through _push_space_camera
+    # (render space, system-frames Plan 3 Task 6) -- same arguments, in view
+    # coordinates, which is what note_camera must see too.
+    anchor = ("_push_space_camera(r, eye, target, up_vec,\n"
+              "                                   director.effective_fov_y_rad,\n"
+              "                                   SCENE_NEAR_GU, SCENE_FAR_GU)")
     i_cam = src.index(anchor)
     i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,")
     # A 600-character proximity budget, which is a proxy for "these two calls

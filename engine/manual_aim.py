@@ -184,7 +184,14 @@ def update(*, player, tcw, ship_instances, is_exterior: bool,
     if hit is None:
         return _revert(player)
     (px, py, pz), _normal, _t = hit
-    dx, dy, dz = combat._body_frame_delta(target, TGPoint3(px, py, pz))
+    # The cursor ray and the hit are in VIEW coordinates (the camera's, the
+    # renderer's); the offset is taken against the target's own pose, so the
+    # hit goes back into the target's set coordinates first.
+    from engine.systems import frames
+    hit_pt = frames.shifted(TGPoint3(px, py, pz),
+                            frames.view_offset(frames.containing_set(target)),
+                            -1.0)
+    dx, dy, dz = combat._body_frame_delta(target, hit_pt)
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     if scale <= 1e-9:
         scale = 1.0

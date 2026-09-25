@@ -123,3 +123,28 @@ def test_ray_trace_mesh_on_a_stale_instance_still_reaches_the_binding(monkeypatc
 
 def test_instance_translation_is_a_required_binding():
     assert "instance_translation" in host_io._REQUIRED_BINDINGS
+
+
+# ── Carried from Task 5's review ────────────────────────────────────────────
+
+class _CountingHost(_FakeHost):
+    def __init__(self, translations):
+        super().__init__()
+        self._seq = list(translations)
+        self.translation_reads = 0
+
+    def instance_translation(self, iid):
+        self.translation_reads += 1
+        return self._seq.pop(0) if self._seq else None
+
+
+def test_hull_carve_capsule_reads_the_translation_once(monkeypatch):
+    # Both endpoints are relative to ONE translation. A second read could see
+    # a different (or stale -> None) answer mid-call.
+    h = _CountingHost([T, None])
+    monkeypatch.setattr(host_io, "_h", h)
+    host_io.hull_carve_capsule(7, T, (T[0] + 2.0, T[1], T[2]), 0.6)
+    assert h.translation_reads == 1
+    (name, args), = h.calls
+    assert args[2] == pytest.approx((2.0, 0.0, 0.0), abs=1e-9)
+

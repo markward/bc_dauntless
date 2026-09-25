@@ -42,7 +42,7 @@ _REQUIRED_BINDINGS = frozenset({
     "destroy_instance", "dof_enabled", "dof_set_enabled", "dof_set_params",
     "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
-    "get_instance_head_center", "hdr_lens_flare_enabled", "instance_translation",
+    "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
@@ -64,6 +64,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
+    "set_render_origin",
     "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_project_asset_root",
     "set_glow_region_gain",
@@ -229,6 +230,14 @@ def set_camera(eye: Tuple[float, float, float],
                up: Tuple[float, float, float],
                fov_y_rad: float, near: float, far: float) -> None:
     _h.set_camera(eye, target, up, fov_y_rad, near, far)
+
+
+def set_render_origin(x: float, y: float, z: float) -> None:
+    """The floating render origin, in VIEW coordinates (doubles). Native
+    subtracts it from every Space-pass instance's translation at the next
+    frame(); the Space camera and every world-space feed must then be in the
+    same render space (engine.systems.frames.to_render)."""
+    _h.set_render_origin(float(x), float(y), float(z))
 
 
 def set_lighting(ambient: Tuple[float, float, float],
@@ -799,11 +808,11 @@ def shield_hit(instance_id: InstanceId,
 
     The native binding takes the point RELATIVE TO THE INSTANCE'S
     TRANSLATION (the floating render origin); it is formed here in doubles.
-    A stale instance drops the hit."""
-    t = _h.instance_translation(instance_id)
-    if t is None:
+    A stale instance drops the hit. The subtraction is host_io's, shared."""
+    from engine.host_io import _instance_relative
+    rel = _instance_relative(instance_id, point, host=_h)
+    if rel is None:
         return
-    rel = (point[0] - t[0], point[1] - t[1], point[2] - t[2])
     _h.shield_hit(instance_id, rel, rgba, intensity)
 
 

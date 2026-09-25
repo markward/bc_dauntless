@@ -89,15 +89,15 @@ def fire_debug_hit(host, instance_id, world_point):
 
     The native shield_hit takes a point RELATIVE TO THE INSTANCE'S
     TRANSLATION (the floating render origin), formed here in Python doubles;
-    a stale instance drops the hit."""
+    a stale instance drops the hit. The subtraction is host_io's, shared."""
     from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
-    t = host.instance_translation(instance_id)
-    if t is None:
+    from engine.host_io import _instance_relative
+    rel = _instance_relative(instance_id, _point_tuple(world_point), host=host)
+    if rel is None:
         return
-    p = _point_tuple(world_point)
     host.shield_hit(
         instance_id=instance_id,
-        point=(p[0] - t[0], p[1] - t[1], p[2] - t[2]),
+        point=rel,
         rgba=(0.0, 0.0, 0.0, 0.0),
         intensity=SHIELD_IMPACT_INTENSITY,
     )

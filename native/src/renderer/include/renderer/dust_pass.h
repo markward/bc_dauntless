@@ -115,13 +115,19 @@ public:
     /// Render the dust pass. Caller is responsible for the scene depth
     /// buffer being populated (so ships/planets occlude dust correctly).
     /// `dt_seconds` is the host-loop frame delta used for velocity.
+    /// `render_origin` is the floating render origin `camera`, `suns` and
+    /// `planets` are relative to (renderer/render_origin.h): the smear
+    /// velocity and the toroidal wrap are keyed to the WORLD eye
+    /// (eye + origin), so the field stays put in the world while the origin
+    /// follows the camera. Zero: byte-identical to before.
     void render(const scenegraph::Camera& camera,
                 float dt_seconds,
                 Pipeline& pipeline,
                 const std::vector<SunDescriptor>& suns,
                 const std::vector<glm::vec4>& planets,
                 float warp_streak = 0.0f,
-                glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f),
+                const glm::dvec3& render_origin = glm::dvec3(0.0));
 
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }
@@ -135,6 +141,7 @@ private:
     bool       enabled_      = true;
     bool       initialized_  = false;   // GL objects created lazily on first render
     glm::vec3  prev_eye_     = glm::vec3(0.0f);
+    glm::dvec3 prev_origin_  = glm::dvec3(0.0);   // the render origin prev_eye_ was in
     bool       have_prev_    = false;
     int        particle_count_ = kSeededCount;
     // Accumulated solar-wind drift distance (GU), wrapped to [0, 2*kVolumeRadius)

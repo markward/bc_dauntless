@@ -35,9 +35,16 @@ def _calls_named(tree, name):
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             fn = node.func
-            if isinstance(fn, ast.Attribute) and fn.attr == name:
+            if ((isinstance(fn, ast.Attribute) and fn.attr == name)
+                    or (isinstance(fn, ast.Name) and fn.id == name)):
                 out.append(node)
     return out
+
+
+# Every SPACE camera reaches the renderer through host_loop._push_space_camera
+# (render space: eye/target minus the render origin, system-frames Plan 3
+# Task 6), so that is the call the exterior-solve structure is read from.
+SPACE_CAMERA = "_push_space_camera"
 
 
 def test_host_loop_pushes_dof_params():
@@ -62,7 +69,7 @@ def test_dof_push_sits_in_the_same_block_as_the_exterior_set_camera():
     """
     tree = ast.parse(HOST_LOOP.read_text())
     blocks = _block_of_each_call(tree, {})
-    cam_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_camera")}
+    cam_blocks = {blocks[id(c)] for c in _calls_named(tree, SPACE_CAMERA)}
     dof_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_dof_params")}
     assert dof_blocks, "no set_dof_params call"
     assert cam_blocks & dof_blocks, (
@@ -77,7 +84,7 @@ def test_the_bridge_camera_solve_is_a_different_block():
     elsewhere, so the set intersection above is load-bearing."""
     tree = ast.parse(HOST_LOOP.read_text())
     blocks = _block_of_each_call(tree, {})
-    cam_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_camera")}
+    cam_blocks = {blocks[id(c)] for c in _calls_named(tree, SPACE_CAMERA)}
     assert len(cam_blocks) > 1, (
         "every set_camera shares one block -- the same-block assertion above "
         "no longer distinguishes the exterior solve from any other"

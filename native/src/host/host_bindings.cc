@@ -71,6 +71,7 @@
 #include <renderer/smaa_pass.h>
 #include <renderer/filmic_pass.h>
 #include <renderer/motion_blur_pass.h>
+#include <renderer/render_origin.h>
 #include <renderer/dof_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/shadow_light.h>
@@ -204,6 +205,17 @@ scenegraph::World g_world;
 // float matrix the passes read (World::resolve_render_space). Pushed from
 // Python via set_render_origin; (0,0,0) = render space IS view space.
 glm::dvec3 g_render_origin{0.0};
+
+// What to add to a point computed from `inst.world` (RENDER space) to put it
+// back in VIEW space: the origin that world was last resolved against, for a
+// Space-pass instance; zero for Bridge/Comm, which never move with it. The
+// bindings that hand inst->world-derived points to Python (node worlds,
+// surface points, bounds, head centre) return VIEW space through this.
+glm::dvec3 view_offset_of(const scenegraph::Instance& inst) {
+    return inst.pass == scenegraph::Pass::Space ? g_world.render_origin()
+                                                : glm::dvec3(0.0);
+}
+
 scenegraph::Camera g_camera;
 renderer::Lighting g_lighting;
 // Separate lighting state for the bridge pass. Populated by the Python
@@ -380,6 +392,7 @@ std::unique_ptr<renderer::MotionBlurPass>  g_motion_blur_pass;
 std::unique_ptr<renderer::DofPass>    g_dof_pass;
 std::unique_ptr<renderer::HdrTarget>  g_dof_target;
 glm::mat4 g_prev_viewproj = glm::mat4(1.0f);   // previous exterior frame proj*view
+glm::dvec3 g_prev_viewproj_origin{0.0};       // the render origin g_prev_viewproj was in
 bool      g_have_prev_viewproj = false;         // false until first exterior frame
 // Motion blur is normalised to this frame rate. At or above it the shutter
 // scale is 1.0 and the blur is exactly as tuned; below it the blur shrinks in
@@ -614,6 +627,11 @@ void reset_frame_state() {
     // Motion blur reprojects against the previous exterior frame's viewproj.
     // Left set, frame 1 of a new session smears against the OLD camera.
     g_have_prev_viewproj = false;
+
+    // The floating render origin: a new session starts at (0,0,0). Left set,
+    // the next session's first frames draw every Space instance offset by
+    // the last session's camera eye until Python pushes its own origin.
+    g_render_origin = glm::dvec3(0.0);
 
     // Rising/falling-edge maps: a stale entry reports a phantom key/button
     // release on the first frame of the next session.
@@ -1017,7 +1035,8 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.dust");
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
-                                dauntless_warp_vfx::travel_dir());
+                                dauntless_warp_vfx::travel_dir(),
+                                g_world.render_origin());
         }
         if (!g_nebulae.empty()) {
             DAUNTLESS_FRAME_SCOPE("space.nebula");
@@ -1029,9 +1048,11 @@ void frame() {
                 g_nebula_volumetric_pass->render(
                     cam, *g_pipeline, g_nebulae, g_lighting,
                     target.color_texture(), target.depth_texture(),
-                    inv_vp, cam.eye, static_cast<float>(now));
+                    inv_vp, cam.eye, static_cast<float>(now),
+                    g_world.render_origin());
             } else if (g_nebula_pass) {
-                g_nebula_pass->render(cam, *g_pipeline, g_nebulae);  // V1 faithful
+                g_nebula_pass->render(cam, *g_pipeline, g_nebulae,  // V1 faithful
+                                      g_world.render_origin());
             }
             // Decoupled additive wake trail (Plan B #1) — drawn over the cloud
             // so the soft-glow billboards add on top of the nebula density.
@@ -1480,7 +1501,10 @@ void frame() {
             const glm::mat4 inv_proj = glm::inverse(g_camera.proj_matrix());
             const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
             const glm::vec3 cam_pos  = g_camera.eye;
-            const glm::mat4 prev     = g_prev_viewproj;
+            // Last frame's matrix was in last frame's render space; the
+            // origin followed the camera since (render_origin.h).
+            const glm::mat4 prev     = renderer::render_origin::rebase_prev_viewproj(
+                g_prev_viewproj, g_prev_viewproj_origin, g_world.render_origin());
             // Shutter-angle normalisation. The motion vector is a per-FRAME
             // displacement, so a dipped framerate moves the camera further and
             // smears harder -- blur measuring frames instead of time. Scaling
@@ -1561,6 +1585,7 @@ void frame() {
     // one frame of blur instead of smearing across the transition.
     if (exterior) {
         g_prev_viewproj = g_camera.proj_matrix() * g_camera.view_matrix();
+        g_prev_viewproj_origin = g_world.render_origin();
         g_have_prev_viewproj = true;
     } else {
         g_have_prev_viewproj = false;
@@ -1808,6 +1833,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["bridge_pass_enabled"]    = g_bridge_pass_enabled;
               d["transform_gizmo_length"] = g_transform_gizmo.length;
               d["have_prev_viewproj"]     = g_have_prev_viewproj;
+              d["render_origin"] = py::make_tuple(
+                  g_render_origin.x, g_render_origin.y, g_render_origin.z);
               d["letterbox_covered"]      = renderer::letterbox::covered();
               d["sky_dirty"]              = g_sky_dirty;
               d["prev_input_edges"]       = g_prev_key_state.size()
@@ -1866,7 +1893,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_world_transform",
           [](scenegraph::InstanceId id, const std::vector<double>& m) {
               if (m.size() != 16) {
-                  throw std::runtime_error("set_world_transform: need 16 floats");
+                  throw std::runtime_error("set_world_transform: need 16 doubles");
               }
               // Row-major DOUBLES from Python (pybind converts Python floats
               // losslessly); glm is column-major. Rotation*scale narrows to
@@ -2237,15 +2264,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
               auto worlds = renderer::compose_node_worlds(
                   *m, in->world, animated ? in->node_overrides : kEmpty);
               const glm::mat4& w = worlds[idx];
-              std::vector<float> out(16);              // ROW-MAJOR for Python
+              std::vector<double> out(16);             // ROW-MAJOR for Python
               for (int r = 0; r < 4; ++r)
                   for (int c = 0; c < 4; ++c) out[r * 4 + c] = w[c][r];
+              // VIEW space: add back the render origin inst->world has
+              // subtracted (Space pass only), in double.
+              const glm::dvec3 o = view_offset_of(*in);
+              out[3] += o.x; out[7] += o.y; out[11] += o.z;
               return py::cast(out);
           },
           py::arg("iid"), py::arg("node_name"), py::arg("animated") = true,
-          "Return the named node's world transform as 16 floats (row-major), "
-          "or None if the instance/node is absent. animated=True applies the "
-          "current node overrides; False composes the static locals (rest).");
+          "Return the named node's VIEW-space world transform as 16 doubles "
+          "(row-major), or None if the instance/node is absent. animated=True "
+          "applies the current node overrides; False composes the static "
+          "locals (rest).");
 
     // ── Part articulation (BoP wings) ────────────────────────────────────
     // Python owns the POSE (engine/appc/articulation.py, eased on the sim
@@ -2366,16 +2398,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!in) return py::none();
               const assets::Model* mdl = resolve_model(in->model_handle);
               if (!mdl) return py::none();
-              std::vector<std::tuple<float, float, float>> out;
+              std::vector<std::tuple<double, double, double>> out;
               out.reserve(mdl->surface_points.size());
+              const glm::dvec3 o = view_offset_of(*in);
               for (const glm::vec3& p : mdl->surface_points) {
-                  glm::vec4 w = in->world * glm::vec4(p, 1.0f);  // model -> world
-                  out.emplace_back(w.x, w.y, w.z);
+                  glm::vec4 w = in->world * glm::vec4(p, 1.0f);  // model -> render
+                  out.emplace_back(w.x + o.x, w.y + o.y, w.z + o.z);
               }
               return py::cast(out);
           },
           py::arg("iid"),
-          "World-space sample of the instance model's hull surface points "
+          "VIEW-space sample of the instance model's hull surface points "
           "(spread across the hull) for VFX anchoring.");
 
     m.def("load_animation_clips",
@@ -2508,13 +2541,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const glm::vec3 frame_point = cam.eye + fwd * (radius * 2.5f);
               const glm::vec3 pos = frame_point - center;
 
-              glm::mat4 world(1.0f);
-              world[3][0] = pos.x;
-              world[3][1] = pos.y;
-              world[3][2] = pos.z;
-              g_world.set_world_transform(id, world);
+              // `pos` is in the camera's space. The space camera is pushed in
+              // RENDER space (relative to g_render_origin, the origin Python
+              // set alongside it), and set_world_transform_d takes VIEW
+              // space -- so add the origin back once, or the resolve would
+              // subtract it a second time. The bridge camera is not Space.
+              const glm::dvec3 view_pos =
+                  glm::dvec3(pos) + (bridge ? glm::dvec3(0.0) : g_render_origin);
               g_world.set_pass(id, bridge ? scenegraph::Pass::Bridge
                                           : scenegraph::Pass::Space);
+              g_world.set_world_transform_d(id, glm::mat3(1.0f), view_pos);
               return id;
           },
           py::arg("nif_path"),
@@ -3532,10 +3568,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // radius matches the rendered size even if the ship is scaled.
               const float scale = glm::length(glm::vec3(inst->world[0]));
               const float radius = glm::length(box.half_extents) * scale;
-              return py::make_tuple(c.x, c.y, c.z, radius);
+              const glm::dvec3 o = view_offset_of(*inst);
+              return py::make_tuple(c.x + o.x, c.y + o.y, c.z + o.z, radius);
           },
           py::arg("instance_id"),
-          "Return (cx, cy, cz, radius) world-space bounding sphere of the "
+          "Return (cx, cy, cz, radius) VIEW-space bounding sphere of the "
           "instance's model, or None if the instance/model is not resolvable.");
     m.def("get_instance_head_center",
           [](scenegraph::InstanceId iid) -> py::object {
@@ -3626,10 +3663,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               else if (any_body) center = 0.5f * (body_lo + body_hi);
               else               return py::none();
               const glm::vec4 c = inst->world * glm::vec4(center, 1.0f);
-              return py::make_tuple(c.x, c.y, c.z);
+              const glm::dvec3 o = view_offset_of(*inst);
+              return py::make_tuple(c.x + o.x, c.y + o.y, c.z + o.z);
           },
           py::arg("instance_id"),
-          "Return (cx, cy, cz) world-space centre of a posed character's HEAD "
+          "Return (cx, cy, cz) VIEW-space centre of a posed character's HEAD "
           "(vertices in the grafted head mesh range, model->head_mesh_begin, "
           "or bound to 'Bip01 Head' as a fallback for non-composed models), "
           "or the full skinned centre if there is no head, or None if "

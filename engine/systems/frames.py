@@ -80,6 +80,80 @@ def in_view(view, pSet, x, y, z):
     return (x + off[0], y + off[1], z + off[2])
 
 
+# ── The floating render origin (spec §5) ────────────────────────────────────
+#
+# The renderer draws the Space pass in RENDER space: view coordinates minus
+# one render origin -- the exterior camera eye, in the viewed set's
+# coordinates, held in double. host_loop sets it once per frame BEFORE any
+# feed is built (and pushes it to native, which subtracts it from every
+# Space-pass instance's double translation); every Space-pass position then
+# crosses into the renderer through to_render. At origin (0,0,0) render space
+# IS view space, and to_render hands back in_view's own tuple.
+
+_render_origin = _ZERO
+
+
+def set_render_origin(view_xyz) -> None:
+    global _render_origin
+    _render_origin = tuple(float(c) for c in view_xyz)
+
+
+def render_origin() -> tuple:
+    return _render_origin
+
+
+def reset_render_origin() -> None:
+    """Back to (0,0,0): mission swap, tests."""
+    global _render_origin
+    _render_origin = _ZERO
+
+
+def view_to_render(p):
+    """A point ALREADY in view coordinates, minus the render origin; None
+    stays None. The one subtraction every Space-pass feed goes through (via
+    to_render when the point is still set-local)."""
+    if p is None:
+        return None
+    o = _render_origin
+    if o == _ZERO:
+        return p
+    return (p[0] - o[0], p[1] - o[1], p[2] - o[2])
+
+
+def render_to_view(p):
+    """Inverse of view_to_render: a render-space point back in view
+    coordinates."""
+    if p is None:
+        return None
+    o = _render_origin
+    if o == _ZERO:
+        return p
+    return (p[0] + o[0], p[1] + o[1], p[2] + o[2])
+
+
+def to_render(view, pSet, x, y, z):
+    """(x, y, z) of a point in pSet's set-local coordinates, in RENDER space
+    (in_view minus the render origin) -- or None exactly when in_view is None
+    (another frame, nothing viewed)."""
+    return view_to_render(in_view(view, pSet, x, y, z))
+
+
+def view_offset(pSet):
+    """offset_between(viewing_set(), pSet) when it is a real shift, else
+    None: add it to a point in pSet's set-local coordinates to express it in
+    VIEW coordinates -- the frame the renderer's instance translations (and
+    so the mesh queries) are in. shifted(p, view_offset(s)) goes there,
+    shifted(p, view_offset(s), -1) comes back. None for the viewed set itself
+    (the point untouched), and for a set outside the viewed frame, whose
+    instances host_loop pushes in their own set coordinates."""
+    if pSet is None:
+        return None
+    off = offset_between(viewing_set(), pSet)
+    if off is None or off == _ZERO:
+        return None
+    return off
+
+
 def shifted(p, off, sign=1.0):
     """TGPoint3 `p` moved by sign*off, as a new TGPoint3 -- or `p` ITSELF when
     `off` is zero or None, so a same-set comparison runs exactly the old

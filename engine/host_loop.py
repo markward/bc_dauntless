@@ -898,8 +898,14 @@ def _phaser_aim_point(ship, target):
 
 
 def _advance_combat(ships, dt: float, ship_instances=None,
-                     ship_emitters=None, player=None) -> None:
+                     ship_emitters=None, player=None,
+                     push_render_data: bool = True) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
+
+    `push_render_data=False` leaves the renderer push to the caller
+    (_push_combat_render_data): run() makes it after the camera is solved
+    and the render origin set, so the feeds are built in this frame's
+    render space. Standalone callers (tests, tools) keep the push here.
 
     Walks the active torpedo registry, advances motion, routes hits
     through combat.apply_hit (which calls hit_feedback.dispatch and
@@ -1131,15 +1137,22 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         from engine.appc import tractor as _tractor
         _tractor.advance_tractors(ships_list, dt)
 
+    if push_render_data:
+        _push_combat_render_data(ships_list, ship_instances=ship_instances,
+                                 ship_emitters=ship_emitters, player=player)
+
+
+def _push_combat_render_data(ships_list, *, ship_instances=None,
+                             ship_emitters=None, player=None) -> None:
+    """Build and push the per-frame combat VFX feeds (torpedoes, dynamic
+    lights, shockwaves, hit VFX, particles, phaser and tractor beams), every
+    world position in RENDER space (frames.to_render) -- so it runs after
+    the render origin is set for the frame (_apply_render_origin)."""
     # Per-frame VFX descriptor lists route through the host_io façade, which
     # no-ops when the native module is absent (headless). The hit/damage
     # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
     # _build_* helpers and the combat/carve advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
-    # Manual enter/exit rather than a `with`, to keep this block's indentation
-    # (and its blame) unchanged. try/finally so an exception in any _build_*
-    # still closes the scope -- a leaked scope corrupts every later phase in
-    # the report, which is worse than the exception itself.
     with frame_profiler.scope("cb.render_data"):
         host_io.set_torpedoes(_build_torpedo_render_data())
         host_io.set_dynamic_lights(_budgeted_dynamic_lights(
@@ -1212,16 +1225,17 @@ def _build_torpedo_render_data():
     empty quad textures/colors (_resolve_game_texture("") already guards
     falsy input back to "").
 
-    Only torpedoes in the viewed frame are sent, expressed in the viewed set's
-    local coordinates (frames.in_view) -- a left-behind set's torpedoes stay
-    out of the scene you are in. No viewed set: no scene, nothing sent."""
+    Only torpedoes in the viewed frame are sent, in RENDER space
+    (frames.to_render: the viewed set's coordinates minus the render origin)
+    -- a left-behind set's torpedoes stay out of the scene you are in. No
+    viewed set: no scene, nothing sent."""
     out = []
     view = _frames.viewing_set()
     if view is None:
         return out
     for t in projectiles._active:
         p = t.GetTranslate()
-        pos = _frames.in_view(view, _frames.containing_set(t), p.x, p.y, p.z)
+        pos = _frames.to_render(view, _frames.containing_set(t), p.x, p.y, p.z)
         if pos is None:
             continue
         out.append({
@@ -1292,7 +1306,9 @@ def _build_dynamic_light_render_data():
         if fade is None:
             continue        # beyond the cull distance — not built at all
         out.append({
-            "position":  pos,
+            # The fade judged the VIEW position (the eye is in view
+            # coordinates); the renderer takes it in render space.
+            "position":  _frames.view_to_render(pos),
             "color":     _color_tuple(t._glow_color)[:3],
             "radius":    radius,
             "intensity": _TORPEDO_LIGHT_INTENSITY * fade,
@@ -1487,7 +1503,7 @@ def _build_explosion_light_render_data():
     if view is None:
         return out
     for entry in _explosion_lights.render_data():
-        pos = _frames.in_view(view, entry["set"], *entry["position"])
+        pos = _frames.to_render(view, entry["set"], *entry["position"])
         if pos is None:
             continue
         d = {k: v for k, v in entry.items() if k != "set"}
@@ -1594,7 +1610,7 @@ def _build_shockwave_render_data():
     if view is None:
         return out
     for entry in _shockwaves.render_data():
-        pos = _frames.in_view(view, entry["set"], *entry["world_center"])
+        pos = _frames.to_render(view, entry["set"], *entry["world_center"])
         if pos is None:
             continue
         d = {k: v for k, v in entry.items() if k != "set"}
@@ -1615,7 +1631,7 @@ def _build_hit_vfx_render_data():
         return out
     for entry in hit_vfx.snapshot():
         p = entry["position"]
-        pos = _frames.in_view(view, entry.get("set"), p.x, p.y, p.z)
+        pos = _frames.to_render(view, entry.get("set"), p.x, p.y, p.z)
         if pos is None:
             continue
         n = entry["normal"]
@@ -1682,7 +1698,7 @@ def _build_particle_render_data(ship_instances=None):
 
     return particles.snapshot_descriptors(
         resolve_attach=_resolve_emit_attach,
-        to_view=lambda pSet, p: _frames.in_view(view, pSet, *p))
+        to_view=lambda pSet, p: _frames.to_render(view, pSet, *p))
 
 
 # Tunable scale applied to SDK-declared beam radii (PhaserWidth /
@@ -1770,6 +1786,50 @@ def _note_camera_eye(eye) -> None:
     _last_camera_eye = tuple(eye) if eye is not None else None
     _last_camera_eye_view = (_frames.viewing_set()
                              if _last_camera_eye is not None else None)
+
+
+def _apply_render_origin(r, eye) -> None:
+    """Set this frame's floating render origin: the exterior camera eye, in
+    the VIEWED set's coordinates (system-frames spec §5). Called once per
+    running frame, right after the camera is solved and BEFORE any
+    Space-pass feed is built, so every feed below subtracts the same origin
+    native subtracts from the instances at the next frame(). A frozen frame
+    (pause, the Ship Property Viewer) keeps the last origin: the feeds pushed
+    under it stay valid, and the frozen camera is pushed relative to it."""
+    _frames.set_render_origin(eye)
+    r.set_render_origin(*_frames.render_origin())
+
+
+def _push_space_camera(r, eye, target, up, fov_y_rad, near, far) -> None:
+    """Push a SPACE-pass camera (exterior, Ship Property Viewer) given in
+    VIEW coordinates: eye and target minus the render origin. `up` is a
+    direction. The bridge interior camera, the comm feed and the star map
+    are not Space and never come through here."""
+    r.set_camera(eye=_frames.view_to_render(tuple(eye)),
+                 target=_frames.view_to_render(tuple(target)),
+                 up=tuple(up), fov_y_rad=fov_y_rad, near=near, far=far)
+
+
+def _view_pose_of(pose_of, view):
+    """A camera pose provider whose locations are in `view`'s coordinates.
+
+    The camera is solved in the VIEWED set's coordinates, like the scene it
+    looks at: a subject in another set of the viewed frame (the player
+    followed through a sibling-region cutscene) is moved by
+    offset_between(view, its set) before the camera math sees it. Same set,
+    no view, no set, another frame: the pose `pose_of` (or the live pose)
+    returns, untouched."""
+    def _pose(obj):
+        if pose_of is not None:
+            loc, rot = pose_of(obj)
+        else:
+            loc, rot = obj.GetWorldLocation(), obj.GetWorldRotation()
+        if view is None:
+            return loc, rot
+        pSet = _frames.containing_set(obj)
+        off = _frames.offset_between(view, pSet) if pSet is not None else None
+        return _frames.shifted(loc, off), rot
+    return _pose
 
 
 def _camera_distance_fade(position):
@@ -1938,14 +1998,15 @@ def _ships_in_view(ships):
 
 
 def _beam_pair_in_view(pair, view, ship_set, target):
-    """The descriptor pair with each endpoint expressed in the viewed set's
-    coordinates -- "emitter" from the firing ship's set, "target" from the
-    target's (see _beam_descriptor_pair) -- or [] when either end is outside
-    the viewed frame. Same set: the tuples untouched."""
+    """The descriptor pair with each endpoint in RENDER space (the viewed
+    set's coordinates minus the render origin) -- "emitter" from the firing
+    ship's set, "target" from the target's (see _beam_descriptor_pair) -- or
+    [] when either end is outside the viewed frame. Same set at origin zero:
+    the tuples untouched."""
     target_set = _frames.containing_set(target)
     for d in pair:
-        e = _frames.in_view(view, ship_set, *d["emitter"])
-        t = _frames.in_view(view, target_set, *d["target"])
+        e = _frames.to_render(view, ship_set, *d["emitter"])
+        t = _frames.to_render(view, target_set, *d["target"])
         if e is None or t is None:
             return []
         d["emitter"], d["target"] = e, t
@@ -4059,6 +4120,14 @@ def reset_sdk_globals() -> None:
         system_loader.reset()
     except Exception as _e:
         dev_mode.log_swallowed("system_loader.reset on swap", _e)
+    # A new mission starts at render origin zero, both halves: the first
+    # frame may be frozen (no _apply_render_origin), and its camera is then
+    # pushed relative to Python's origin -- native must agree.
+    _frames.reset_render_origin()
+    try:
+        r.set_render_origin(0.0, 0.0, 0.0)
+    except Exception as _e:
+        dev_mode.log_swallowed("set_render_origin reset on swap", _e)
     _mapped_body_warned.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
@@ -4583,6 +4652,96 @@ def _aggregate_dust_planets(view) -> list:
     import App
     return _aggregate_planets(list(App.g_kSetManager._sets.values()),
                               view=view)
+
+
+def _with_render_positions(descs, key, to_render):
+    """Copies of `descs` with `key` moved into render space by `to_render`
+    (point -> point | None); a descriptor whose point is None is dropped.
+    Every other field rides through untouched."""
+    out = []
+    for d in descs:
+        p = to_render(d[key])
+        if p is None:
+            continue
+        d = dict(d)
+        d[key] = p
+        out.append(d)
+    return out
+
+
+def _render_nebulae(nebulae, view, pSet):
+    """_aggregate_nebulae's descriptors with every sphere centre in render
+    space (the radius rides along); a sphere outside the viewed frame is
+    dropped, and a nebula left with none is not drawn."""
+    out = []
+    for d in nebulae:
+        spheres = []
+        for (x, y, z, radius) in d["spheres"]:
+            c = _frames.to_render(view, pSet, x, y, z)
+            if c is not None:
+                spheres.append((c[0], c[1], c[2], radius))
+        if spheres:
+            d = dict(d)
+            d["spheres"] = spheres
+            out.append(d)
+    return out
+
+
+def _push_environment_feeds(r, active_set, warp_streaking):
+    """Push the per-frame environment feeds -- suns, dust planets, nebulae,
+    nebula godrays, hull discharges, the nebula wake, lens flares -- every
+    world position in RENDER space, so after _apply_render_origin. Returns
+    (suns, planets, lens_flares) for the tick-0 verbose log.
+
+    Coordinates in: suns, flares and dust planets are the viewed set's (view
+    coordinates); nebulae and the wake belong to `active_set` (the player's
+    set, where the nebula tracker runs); hull discharges are anchored on the
+    player's instance surface points, which the renderer reports in view
+    coordinates."""
+    view = _frames.viewing_set()
+    to_view_render = _frames.view_to_render
+
+    suns = [] if warp_streaking else _aggregate_suns()
+    suns = _with_render_positions(suns, "position", to_view_render)
+    r.set_suns(suns)
+
+    planets = _with_render_positions(_aggregate_dust_planets(view),
+                                     "position", to_view_render)
+    r.set_dust_planets(planets)
+
+    nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
+    r.set_nebulae(_render_nebulae(nebulae, view, active_set))
+
+    godrays = []
+    if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
+        godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
+                   for f in _nebula_thunder.active_flashes()]
+    r.set_nebula_godrays(godrays)
+
+    discharges = []
+    if (_hull_discharge is not None
+            and r.nebula_lightning_enabled()
+            and not warp_streaking):
+        discharges = _with_render_positions(
+            _hull_discharge.active_discharges(), "world_pos", to_view_render)
+    r.set_hull_discharges(discharges)
+
+    wake_pts = []
+    if (_nebula_wake is not None and r.volumetric_nebulae_enabled()
+            and not warp_streaking):
+        wake_pts = _with_render_positions(
+            _nebula_wake.trail_points(), "pos",
+            lambda p: _frames.to_render(view, active_set, *p))
+    r.set_nebula_wake(wake_pts)
+
+    # The image-based Modern Lens Flares and the classic per-sun billboard
+    # flares are mutually exclusive: when the modern flare is on, suppress
+    # the billboards so only the screen-space flare renders.
+    lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
+    lens_flares = _with_render_positions(lens_flares, "source_world_pos",
+                                         to_view_render)
+    r.set_lens_flares(lens_flares)
+    return suns, planets, lens_flares
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
@@ -6509,11 +6668,37 @@ def _viewscreen_scene_feed(player, forward_fov):
     tc = _TrackingCamera()
     tc.set_ship_radius(max(player.GetRadius(), 1e-6))
     tc.enter_zoom_target()
+    # Solved in the VIEWED set's coordinates, like the exterior camera: the
+    # player and the watched object are each moved into them (_view_pose_of).
+    pose_of = _view_pose_of(None, _frames.viewing_set())
     # Subsystem-aware aim only when watching the player's OWN target; a mission
     # ViewscreenWatchObject on a different object frames that object's centre.
-    aim = target_aim_point(player) if tgt is player.GetTarget() else None
-    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None, aim_point=aim)
+    aim = (target_aim_point(player, pose_of=pose_of)
+           if tgt is player.GetTarget() else None)
+    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None,
+                                  aim_point=aim, pose_of=pose_of)
     return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
+
+
+def _push_target_reticle(r, player) -> None:
+    """Feed the target reticle pass (a SPACE-pass overlay drawn with the
+    exterior camera): the payload's target centre and sub-target point in
+    render space. A target outside the viewed frame is not drawn."""
+    from dataclasses import replace
+    payload = build_target_reticle(player)
+    if payload.visible:
+        view = _frames.viewing_set()
+        tset = _frames.containing_set(player.GetTarget())
+        centre = _frames.to_render(view, tset, *payload.ship_center)
+        if centre is None:
+            payload = replace(payload, visible=False)
+        else:
+            sub = payload.subtarget_pos
+            payload = replace(
+                payload, ship_center=centre,
+                subtarget_pos=(_frames.to_render(view, tset, *sub)
+                               if sub is not None else None))
+    r.set_target_reticle(payload)
 
 
 def _select_viewscreen_source(r, comm_feed, scene_feed):
@@ -6530,7 +6715,12 @@ def _select_viewscreen_source(r, comm_feed, scene_feed):
         return "comm"
     r.clear_viewscreen_comm_source()
     if scene_feed is not None:
-        r.set_viewscreen_scene_source(*scene_feed)
+        # The VZT camera is a SPACE camera: solved in view coordinates
+        # (_viewscreen_scene_feed), pushed relative to the render origin.
+        eye, look_at, *rest = scene_feed
+        r.set_viewscreen_scene_source(_frames.view_to_render(tuple(eye)),
+                                      _frames.view_to_render(tuple(look_at)),
+                                      *rest)
         return "scene"
     r.clear_viewscreen_scene_source()
     return "forward"
@@ -8470,6 +8660,12 @@ def run(mission_name: Optional[str] = None,
             dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             if dist <= 1e-6:
                 return False
+            # from/to are in the starbase's own set coordinates; the trace
+            # speaks the renderer's view coordinates.
+            _off = _frames.view_offset(_frames.containing_set(starbase))
+            if _off is not None:
+                from_pt = (from_pt[0] + _off[0], from_pt[1] + _off[1],
+                           from_pt[2] + _off[2])
             try:
                 hit = host_io.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
             except Exception:
@@ -9689,6 +9885,9 @@ def run(mission_name: Optional[str] = None,
                     if _cmd_held or _ctrl_held:
                         _h.cef_reload()
 
+            # This frame's ships, when the sim runs; None on a frozen frame
+            # (the render section keys the combat feed push off it).
+            _ships_this_tick = None
             # Everything below is SIMULATION — ship/camera input, firing,
             # weapons, combat, sensors, nebula — so it gates on sim_frozen,
             # not on the menu. The DevTools keys above deliberately sit in the
@@ -9816,6 +10015,9 @@ def run(mission_name: Optional[str] = None,
                         ship_instances=(session.ship_instances if session is not None else None),
                         ship_emitters=(session.ship_emitters if session is not None else None),
                         player=player,
+                        # Pushed after the camera, once the render origin is
+                        # set (_push_combat_render_data below).
+                        push_render_data=False,
                     )
 
                 # Sensor contact identification → drives the SDK bridge Hail /
@@ -9898,15 +10100,21 @@ def run(mission_name: Optional[str] = None,
                             # sample, not just the central subsystem mounts.
                             _piid = (session.ship_instances.get(player)
                                      if session is not None else None)
+                            # VIEW coordinates, both sources: the discharge
+                            # feed is pushed through frames.view_to_render.
                             if _piid is not None:
                                 hull_pts = r.instance_surface_points(_piid)
                             if not hull_pts:
                                 # Fallback: subsystem mounts (central, but better
                                 # than nothing) when no surface sample is available.
                                 from engine.appc.subsystems import subsystem_world_position
+                                _hview = _frames.viewing_set()
                                 for sub in player.GetSubsystems():
                                     wp = subsystem_world_position(sub, player)
-                                    hull_pts.append((wp.x, wp.y, wp.z))
+                                    _hp = _frames.in_view(_hview, pset,
+                                                          wp.x, wp.y, wp.z)
+                                    hull_pts.append(_hp if _hp is not None
+                                                    else (wp.x, wp.y, wp.z))
                         _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
 
                     # Nebula ship wake: record the player's path while in a nebula.
@@ -10067,14 +10275,19 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
+                # The camera is solved in the VIEWED set's coordinates, like
+                # the scene: a subject in another set of the viewed frame (the
+                # player through a sibling-region cutscene) is moved into them
+                # first (_view_pose_of). Same set: _pose_of's own poses.
+                _cam_pose_of = _view_pose_of(_pose_of, _frames.viewing_set())
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
-                    player=player, dt=_player_dt, pose_of=_pose_of)
+                    player=player, dt=_player_dt, pose_of=_cam_pose_of)
                 # Cutscene camera (computed above) drives the main-scene pose,
                 # converting the mode's forward DIRECTION to a look-at POINT.
                 if _cc is not None:
                     eye, target, up_vec = _cutscene_pose(
-                        _cc[1], _player_dt, _pose_of)
+                        _cc[1], _player_dt, _cam_pose_of)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
@@ -10215,6 +10428,20 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
 
+            # --- The floating render origin (system-frames spec §5) ---
+            # The exterior eye, in the VIEWED set's coordinates, set once per
+            # running frame now that the camera is solved and BEFORE any
+            # Space-pass feed is built; the combat feeds the sim produced
+            # above are built here for that reason. A frozen frame keeps the
+            # last origin and pushes no new combat feeds (as before).
+            if _ships_this_tick is not None:
+                _apply_render_origin(r, eye)
+                _push_combat_render_data(
+                    _ships_this_tick,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                    ship_emitters=(session.ship_emitters if session is not None else None),
+                    player=player)
+
             frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---
             # When the viewer is open the world is already frozen (the
@@ -10236,35 +10463,57 @@ def run(mission_name: Optional[str] = None,
                 # world-space bounding sphere so it fills the view. The
                 # subsystem-centroid fit in open() is only a fallback (it
                 # underestimates the hull extent and leaves the ship small).
+                # The viewer works in the PLAYER's set coordinates (its pins,
+                # overlays, orbit camera and picking all read the player's
+                # own poses); only what reaches the renderer is converted --
+                # into view coordinates, then render space (_spv_render).
+                _spv_view = _frames.viewing_set()
+                _spv_set = _frames.containing_set(player)
+
+                def _spv_in_view(p, _v=_spv_view, _s=_spv_set):
+                    q = _frames.in_view(_v, _s, p[0], p[1], p[2])
+                    return q if q is not None else tuple(p)
+
+                def _spv_render(p):
+                    return _frames.view_to_render(_spv_in_view(p))
+
                 if not _spv_was_open and _player_iid_spv is not None:
                     _bounds = r.get_instance_bounds(_player_iid_spv)
                     if _bounds is not None:
+                        # The bounds come back in VIEW coordinates.
                         _bx, _by, _bz, _br = _bounds
-                        ship_property_viewer.frame_to_bounds((_bx, _by, _bz), _br)
+                        _boff = (_frames.offset_between(_spv_set, _spv_view)
+                                 if _spv_view is not None else None)
+                        _bc = _frames.shifted(TGPoint3(_bx, _by, _bz), _boff)
+                        ship_property_viewer.frame_to_bounds(
+                            (_bc.x, _bc.y, _bc.z), _br)
                 # Take over the frame: solid background, no space scene / bridge.
                 r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
                 # Render mode: hologram (default) vs real hull textures.
                 r.set_spv_hull_mode(ship_property_viewer.show_hull_texture)
                 _cam = ship_property_viewer.camera
-                r.set_camera(eye=_cam.eye(), target=_cam.target,
-                             up=_cam.up(), fov_y_rad=_cam.fov_y_rad,
-                             near=_cam.near, far=_cam.far)
+                _push_space_camera(r, _spv_in_view(_cam.eye()),
+                                   _spv_in_view(_cam.target), _cam.up(),
+                                   _cam.fov_y_rad, _cam.near, _cam.far)
                 if _player_iid_spv is not None:
                     r.set_visible(_player_iid_spv, False)
                     r.set_hologram_ship(_player_iid_spv)
                 # Selection-scoped pins: only the selected subsystem's pin
                 # renders while one is selected; all render when deselected.
-                r.set_subsystem_pins(ship_property_viewer.subsystem_pins())
+                r.set_subsystem_pins([
+                    (_spv_render(_pos), _icon, _hi) for (_pos, _icon, _hi)
+                    in ship_property_viewer.subsystem_pins()])
                 # Selection-scoped phaser overlay: the SELECTED bank's emitter
                 # strip, plus its firing arc only when the Weapon Arcs toggle is
                 # on (arc scoped to the selected weapon). Nothing when unselected.
                 from engine.ui.phaser_overlay import build_phaser_overlay
-                r.set_spv_overlay_beams(
-                    build_phaser_overlay(
+                r.set_spv_overlay_beams([
+                    dict(_b, emitter=_spv_render(_b["emitter"]),
+                         target=_spv_render(_b["target"]))
+                    for _b in build_phaser_overlay(
                         player,
                         ship_property_viewer.selected_name(),
-                        show_all_arcs=ship_property_viewer.show_weapon_arcs)
-                )
+                        show_all_arcs=ship_property_viewer.show_weapon_arcs)])
                 # Glow regions as orange wireframe cylinders (debug volume
                 # pass): the toggle shows every subsystem's; with it off, the
                 # selected LIGHT node reveals its own (the subsystem pin's
@@ -10283,19 +10532,23 @@ def run(mission_name: Optional[str] = None,
                 # neither overlay drops the other's wireframes.
                 _em_spheres, _em_cyls, _em_cones = build_emitter_overlay(
                     player, ship_property_viewer)
-                r.set_debug_cylinders(_cyls + _em_cyls)
-                r.set_debug_boxes(_boxes)
-                r.set_debug_cones(_em_cones)
+                def _spv_shapes(shapes, key):
+                    return [dict(_d, **{key: _spv_render(_d[key])})
+                            for _d in shapes]
+                r.set_debug_cylinders(_spv_shapes(_cyls + _em_cyls, "center"))
+                r.set_debug_boxes(_spv_shapes(_boxes, "center"))
+                r.set_debug_cones(_spv_shapes(_em_cones, "apex"))
                 # Selected subsystem's damage-radius volume as a wireframe
                 # sphere at its icon (only while a subsystem is selected).
                 _sphere = ship_property_viewer.selected_subsystem_sphere()
-                r.set_debug_spheres(([_sphere] if _sphere else []) + _em_spheres)
+                r.set_debug_spheres(_spv_shapes(
+                    ([_sphere] if _sphere else []) + _em_spheres, "center"))
                 # Transform gizmo: three body-frame drag axes at the
                 # selected subsystem/light, only while the Transform tool
                 # is active and something is selected.
                 _gizmo = ship_property_viewer._active_gizmo()
                 if _gizmo is not None:
-                    ox, oy, oz = _gizmo["origin"]
+                    ox, oy, oz = _spv_render(_gizmo["origin"])
                     ax, ay, az = _gizmo["axes"]
                     r.set_transform_gizmo((ox, oy, oz), ax, ay, az,
                                           _gizmo["length"], _gizmo["highlight"],
@@ -10323,9 +10576,9 @@ def run(mission_name: Optional[str] = None,
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
-                r.set_camera(eye=eye, target=target, up=up_vec,
-                             fov_y_rad=director.effective_fov_y_rad,
-                             near=SCENE_NEAR_GU, far=SCENE_FAR_GU)
+                _push_space_camera(r, eye, target, up_vec,
+                                   director.effective_fov_y_rad,
+                                   SCENE_NEAR_GU, SCENE_FAR_GU)
                 # Data only -- no mutation here. near/far are positional
                 # and NOT interchangeable; see note_camera's docstring.
                 manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,
@@ -10382,7 +10635,7 @@ def run(mission_name: Optional[str] = None,
                         has_player=player is not None,
                         reticle_hidden=_reticle_top.reticle_hidden(),
                         cinematic_active=_reticle_top.is_cinematic_active()):
-                    r.set_target_reticle(build_target_reticle(player))
+                    _push_target_reticle(r, player)
                     # Mirrors the exterior camera set above; the label
                     # projection must use the same frustum as the box.
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
@@ -10602,9 +10855,6 @@ def run(mission_name: Optional[str] = None,
                     _note_static_backdrops(backdrops)
             r.set_backdrops(backdrops)
 
-            suns = [] if _warp_streaking else _aggregate_suns()
-            r.set_suns(suns)
-
             # In-warp lighting: the system's sun is gone (torn down at burst), so
             # replace the earlier set_lighting() with a cool warp-tunnel key from
             # ahead. Overrides this frame's lighting only while streaking.
@@ -10613,36 +10863,10 @@ def run(mission_name: Optional[str] = None,
                     _w.travel_dir(), _w.streak_intensity())
                 r.set_lighting(_wamb, _wdirs)
 
-            planets = _aggregate_dust_planets(_frames.viewing_set())
-            r.set_dust_planets(planets)
-
-            nebulae = [] if _warp_streaking else _aggregate_nebulae(active_set)
-            r.set_nebulae(nebulae)
-
-            godrays = []
-            if _nebula_thunder is not None and not _warp_streaking and r.nebula_lightning_enabled():
-                godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
-                           for f in _nebula_thunder.active_flashes()]
-            r.set_nebula_godrays(godrays)
-
-            discharges = []
-            if (_hull_discharge is not None
-                    and r.nebula_lightning_enabled()
-                    and not _warp_streaking):
-                discharges = _hull_discharge.active_discharges()
-            r.set_hull_discharges(discharges)
-
-            wake_pts = []
-            if (_nebula_wake is not None and r.volumetric_nebulae_enabled()
-                    and not _warp_streaking):
-                wake_pts = _nebula_wake.trail_points()
-            r.set_nebula_wake(wake_pts)
-
-            # The image-based Modern Lens Flares and the classic per-sun billboard
-            # flares are mutually exclusive: when the modern flare is on, suppress
-            # the billboards so only the screen-space flare renders.
-            lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
-            r.set_lens_flares(lens_flares)
+            # Suns, dust planets, nebulae, godrays, discharges, the wake and
+            # lens flares -- in render space (the origin was set above).
+            suns, planets, lens_flares = _push_environment_feeds(
+                r, active_set, _warp_streaking)
 
             _push_cloak_refraction(r, session, player)
 

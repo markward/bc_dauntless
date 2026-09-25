@@ -114,7 +114,8 @@ unsigned int NebulaPass::ensure_external(const std::string& path) {
 
 void NebulaPass::render(const scenegraph::Camera& camera,
                         Pipeline& pipeline,
-                        const std::vector<NebulaVolume>& volumes) {
+                        const std::vector<NebulaVolume>& volumes,
+                        const glm::dvec3& origin) {
     // Stock-BC byte-identity: empty list => zero GL work.
     if (!enabled_ || volumes.empty()) return;
     if (!initialized_) initialize_gl();
@@ -144,6 +145,7 @@ void NebulaPass::render(const scenegraph::Camera& camera,
     shader.set_float("u_max_fog",      0.92f);
     shader.set_float("u_noise_amount", 0.35f);
     shader.set_float("u_noise_scale",  0.004f);
+    shader.set_vec3("u_noise_origin", glm::vec3(origin));
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, overlay_id);

@@ -91,8 +91,9 @@ def maybe_emit(ship, point, normal, weapon_type, ship_instances=None,
     iid = ship_instances.get(ship) if ship_instances is not None else None
     if iid is None:
         return
+    from engine.appc.hit_feedback import _mesh_xyz
     conv = host_io.world_to_body(
-        iid, (point.x, point.y, point.z), (normal.x, normal.y, normal.z))
+        iid, _mesh_xyz(ship, point), (normal.x, normal.y, normal.z))
     if conv is None:
         return
     body_point, body_normal = conv

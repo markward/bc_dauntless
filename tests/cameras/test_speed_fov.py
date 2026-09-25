@@ -128,6 +128,8 @@ def test_exterior_render_and_unproject_paths_use_the_effective_fov():
     must all read director.effective_fov_y_rad, or the drawn frame and the
     cursor/reticle math disagree by up to 4 deg at speed."""
     src = re.sub(r"\s+", " ", inspect.getsource(__import__("engine.host_loop").host_loop.run))
-    assert "r.set_camera(eye=eye, target=target, up=up_vec, fov_y_rad=director.effective_fov_y_rad" in src
+    # The exterior camera reaches the renderer through _push_space_camera
+    # (render space, system-frames Plan 3 Task 6); same fov argument.
+    assert "_push_space_camera(r, eye, target, up_vec, director.effective_fov_y_rad" in src
     assert "manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad" in src
     assert "_ReticleCam(eye=eye, target=target, up=up_vec, fov_y_rad=director.effective_fov_y_rad" in src

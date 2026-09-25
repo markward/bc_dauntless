@@ -158,3 +158,28 @@ def test_emit_from_object_still_uses_resolver():
     assert d["instance_id"] == (7, 1)
     assert d["emit_pos"] == (0.0, 1.0, 0.0)  # body-frame, resolved in the pass
     P.reset()
+
+
+def test_a_surface_point_comes_back_in_the_objects_own_set(monkeypatch):
+    """The renderer reports surface points in VIEW coordinates (system-frames
+    Plan 3 Task 6); BC receives the point in the object's own set."""
+    import App
+    from engine import renderer
+    from engine.systems import frames
+    from tests.helpers.mapped_regions import load_region
+    App.g_kSetManager._sets.clear()
+    try:
+        load_region("Ona", "Ona1")
+        ona2 = load_region("Ona", "Ona2")
+        App.g_kSetManager.MakeRenderedSet("Ona1")
+        obj = _make_object(10.0, 0.0, 0.0, radius=5.0)
+        ona2.AddObjectToSet(obj, "Rock")
+        render_instances.register(obj, 42)
+        view_pt = frames.local_in(frames.viewing_set(), obj)   # where it is drawn
+        monkeypatch.setattr(renderer, "instance_surface_points",
+                            lambda iid: [view_pt])
+        pt = obj.GetRandomPointOnModel()
+        assert (pt.x, pt.y, pt.z) == pytest.approx((10.0, 0.0, 0.0), abs=1e-6)
+    finally:
+        App.g_kSetManager.ClearRenderedSet()
+        App.g_kSetManager._sets.clear()
