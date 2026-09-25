@@ -88,7 +88,7 @@ if hasattr(App, "ArticulatedPartProperty_Create"):
 | Call | Units | Meaning |
 |---|---|---|
 | `SetAnchor(x, y, z)` | SHIP units, body frame | swing centre; optional, required by any pose |
-| `SetTransitionSeconds(s)` | seconds | time for any state change; default 2.0 |
+| `SetTransitionSeconds(s)` | seconds | time for a FULL swing between the part's two farthest poses; a partial move takes proportionally less; default 2.0 |
 | `SetStatePose(state, tx,ty,tz, rx,ry,rz)` | SHIP units; degrees | the part's rigid pose in `state` |
 | `SetBreakFraction(f)` | fraction of MAX hull | shears the part; omit = unbreakable |
 
@@ -109,7 +109,17 @@ emits them again. `SetDetachFraction` maps to `SetBreakFraction`.
 
 Each rigged part holds a transition: the pose it started from `(R₀, t₀)`, the
 target pose `(R₁, t₁)` of the state it is heading to, and progress
-`u ∈ [0, 1]`, advanced by `dt / TransitionSeconds`. With anchor `a`:
+`u ∈ [0, 1]`, advanced by `dt / D`, where the transition's duration
+`D = TransitionSeconds × f` and `f ∈ [0, 1]` is the fraction of the part's
+full swing still to travel: the larger of the rotation still to turn (the
+angle of `R₀ᵀ·R₁`) over the largest pairwise rotation among IDENTITY and the
+authored poses, and the anchor travel still to go (`|R₀·a+t₀ − R₁·a−t₁|`)
+over the largest pairwise anchor travel (a spread of 0 contributes 0; `f = 1`
+if both spreads are 0 but the poses differ). This is why an INTERRUPTED Bird
+of Prey swing behaves exactly as before: for a hinge it is the old constant
+angular rate, so reversing at 22.5° takes 1 s, not 2 s. A state change whose
+target pose equals the in-flight target (cruise → yellow on the BoP) keeps
+the running transition rather than restarting it. With anchor `a`:
 
 ```
 a₀ = R₀·a + t₀        a₁ = R₁·a + t₁          (where the anchor starts / ends)

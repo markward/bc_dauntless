@@ -89,6 +89,8 @@ THE SAME POSE, IN THREE PLACES, and they must agree or the ship lies:
 
 from __future__ import annotations
 
+import math
+
 from engine.appc import part_pose
 
 
@@ -367,13 +369,20 @@ def tick_ship(ship, dt: float) -> None:
     heading to a different state, and the current pose not already equal to
     `target`, a new transition starts FROM THE CURRENT POSE (u = 0) -- so an
     interrupted transition never snaps back. `u` advances by
-    `dt / transition_seconds`; the pose is `part_pose.interpolate(pose0,
+    `dt / duration`; the pose is `part_pose.interpolate(pose0,
     target, anchor, u)`, a swing about the part's anchor. At u >= 1 the pose
-    is stored as `target` exactly and the transition is dropped.
+    is stored as `target` exactly and the transition is dropped. A state
+    change whose target POSE equals the in-flight one (BoP cruise -> yellow)
+    keeps the transition running rather than restarting it.
+
+    Each transition's duration is `transition_seconds` scaled by the fraction
+    of the part's full swing still to travel (`_transition_duration`), so a
+    partial move takes proportionally less -- the old constant-rate feel,
+    exactly, for a hinge.
 
     The result lands in `ship._articulation_poses` ({name: pose}); in-flight
     transitions in `ship._articulation_transitions` ({name: (pose0,
-    target_state, u)}).
+    target_state, u, duration)}).
 
     A ship with no parts is skipped before any allocation, so the
     overwhelming majority of hulls pay one leaf lookup.
@@ -405,20 +414,95 @@ def tick_ship(ship, dt: float) -> None:
         current = poses.get(name, part_pose.IDENTITY)
         target = target_pose(part, state)
         tr = transitions.get(name)
-        if tr is None or tr[1] != state:
+        if tr is not None and _poses_equal(target_pose(part, tr[1]), target):
+            # Same destination POSE (e.g. cruise -> yellow on the BoP): keep
+            # the in-flight transition, only re-label its state.
+            tr = (tr[0], state, tr[2], tr[3])
+        else:
             if _poses_equal(current, target):
                 transitions.pop(name, None)
                 continue
-            tr = (current, state, 0.0)
-        pose0, _state, u = tr
-        u += float(dt) / max(float(part.transition_seconds), 1e-6)
+            tr = (current, state, 0.0, _transition_duration(part, current,
+                                                            target))
+        pose0, _state, u, duration = tr
+        u += float(dt) / max(duration, 1e-6)
         if u >= 1.0:
             poses[name] = target
             transitions.pop(name, None)
             continue
         anchor = part.anchor or (0.0, 0.0, 0.0)
         poses[name] = part_pose.interpolate(pose0, target, anchor, u)
-        transitions[name] = (pose0, state, u)
+        transitions[name] = (pose0, state, u, duration)
+
+
+def _rot_angle(R0, R1) -> float:
+    """Angle (radians) of R0^T . R1."""
+    tr = sum(R0[i][j] * R1[i][j] for i in range(3) for j in range(3))
+    return math.acos(max(-1.0, min(1.0, (tr - 1.0) / 2.0)))
+
+
+def _dist(a, b) -> float:
+    return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
+
+
+_SPREAD_EPS = 1e-9
+
+
+def _anchor_of(part):
+    return part.anchor or (0.0, 0.0, 0.0)
+
+
+def _swing_spreads(part):
+    """(largest pairwise rotation angle, largest pairwise ANCHOR travel)
+    among IDENTITY and the part's authored poses -- the part's FULL swing.
+
+    Translation is measured where the anchor lands (P.a), not by the raw t:
+    the anchor is what `part_pose.interpolate` moves in a straight line, and
+    t depends on where the body origin happens to sit. For a hinge with its
+    anchor on the axis the anchor never moves, so the rotation alone sets
+    the pace -- exactly the old constant angular rate. With no anchor (the
+    origin) P.a IS t, so the two measures coincide."""
+    a = _anchor_of(part)
+    poses = [part_pose.IDENTITY] + [part.pose_for(s)
+                                    for s in part.authored_states()]
+    ends = [part_pose.apply(P, a) for P in poses]
+    rot = trans = 0.0
+    for i in range(len(poses)):
+        for j in range(i + 1, len(poses)):
+            rot = max(rot, _rot_angle(poses[i][0], poses[j][0]))
+            trans = max(trans, _dist(ends[i], ends[j]))
+    return rot, trans
+
+
+def _transition_duration(part, current, target) -> float:
+    """`transition_seconds` x the fraction of the part's full swing still to
+    travel from `current` to `target`, clamped to [0, 1]: the larger of the
+    rotation still to turn over the largest rotation spread, and the anchor
+    travel still to go over the largest anchor-travel spread.
+
+    `transition_seconds` is the time for a FULL swing between the part's two
+    farthest poses; a partial move takes proportionally less. For a hinge
+    that is exactly the retired constant-rate `ease_angle`, so an interrupted
+    Bird of Prey swing (reversing at 22.5 degrees takes 1 s, not 2 s) feels
+    identical to before. A spread of 0 contributes 0; if both spreads are 0
+    but the poses still differ, the fraction is 1."""
+    rot_spread, trans_spread = _swing_spreads(part)
+    # A spread at float-noise level is a spread of 0: a hinge's anchor sits
+    # on its axis and "travels" ~1e-17, and noise over noise is not a
+    # fraction of anything.
+    rot_spread = rot_spread if rot_spread > _SPREAD_EPS else 0.0
+    trans_spread = trans_spread if trans_spread > _SPREAD_EPS else 0.0
+    a = _anchor_of(part)
+    f = 0.0
+    if rot_spread > 0.0:
+        f = max(f, _rot_angle(current[0], target[0]) / rot_spread)
+    if trans_spread > 0.0:
+        f = max(f, _dist(part_pose.apply(current, a),
+                         part_pose.apply(target, a)) / trans_spread)
+    if rot_spread <= 0.0 and trans_spread <= 0.0:
+        f = 1.0
+    f = max(0.0, min(1.0, f))
+    return float(part.transition_seconds) * f
 
 
 def parts_for_ship(ship) -> tuple:
