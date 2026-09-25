@@ -1346,8 +1346,14 @@ void main() {
     if (u_glow_region_count > 0) {
         // REST-frame position + normal: a region authored on a part keeps
         // covering that part's surface while the part is rotated.
+        // No normalize() on n_glow: u_node_rest_fix (C_i, see rest_corrections)
+        // is assumed RIGID -- rotation and translation only, never scale -- so
+        // mat3(C_i) is orthonormal and preserves length exactly. In particular
+        // mat3(identity)*n == n exactly, which is what the unarticulated path
+        // (C_i == identity for every ship with no node overrides) relies on to
+        // render byte-identically to before this correction existed.
         vec3 p_glow = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
-        vec3 n_glow = normalize(mat3(u_node_rest_fix) * n_body);
+        vec3 n_glow = mat3(u_node_rest_fix) * n_body;
         nac = glow_region_mult(p_glow, n_glow, u_decal_time, region_gain);
     }
 

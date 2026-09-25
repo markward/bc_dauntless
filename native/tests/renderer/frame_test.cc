@@ -435,9 +435,9 @@ TEST_F(FrameTest, SpecularShipRendersWithDirectionalLight) {
     // numerically; the binding test in material_build_test.cc and the
     // mapping test in lighting_test.cc cover those layers.
     const std::filesystem::path keldon_nif =
-        kProjectRoot / "game" / "data" / "Models" / "Ships" / "Keldon" / "Keldon.nif";
+        game_root() / "data" / "Models" / "Ships" / "Keldon" / "Keldon.nif";
     const std::filesystem::path keldon_tex =
-        kProjectRoot / "game" / "data" / "Models" / "SharedTextures" / "CardShips" / "High";
+        game_root() / "data" / "Models" / "SharedTextures" / "CardShips" / "High";
     if (!std::filesystem::is_regular_file(keldon_nif)) {
         GTEST_SKIP() << "BC asset not available at " << keldon_nif;
     }

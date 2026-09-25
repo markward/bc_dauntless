@@ -45,6 +45,11 @@ std::vector<glm::mat4> compose_node_worlds(
 /// Identity for every node when `overrides` is empty, for a node whose chain
 /// carries no override, and for a SEVERED node (a zero-matrix override, from
 /// set_instance_node_hidden), whose P_i is singular: identity, never NaN.
+///
+/// Assumes the correction is RIGID: node overrides only rotate/translate, so
+/// C_i is orthonormal and safe to apply directly to a normal. An override
+/// carrying non-uniform scale would need the inverse-transpose of C_i for
+/// normals instead of C_i itself.
 std::vector<glm::mat4> rest_corrections(
     const assets::Model& model,
     const std::unordered_map<int, glm::mat4>& overrides);
