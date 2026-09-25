@@ -32,6 +32,23 @@ std::vector<glm::mat4> compose_node_worlds(
     const assets::Model& model, const glm::mat4& instance_world,
     const std::unordered_map<int, glm::mat4>& overrides);
 
+/// Per-node matrix mapping a POSED body-frame point back to its REST
+/// position: C_i = R_i * P_i^-1, where R_i / P_i are node i's world matrices
+/// composed with an IDENTITY instance world, without / with `overrides`.
+/// The instance world cancels (p_body = W^-1 * W * P_i * v), so this needs
+/// no per-instance transform.
+///
+/// Used by opaque.frag's glow-region test: regions are authored in the NIF
+/// (rest) frame, but the shader rebuilds a POSED body position, so on a
+/// rotated part the region and the surface it was authored on came apart.
+///
+/// Identity for every node when `overrides` is empty, for a node whose chain
+/// carries no override, and for a SEVERED node (a zero-matrix override, from
+/// set_instance_node_hidden), whose P_i is singular: identity, never NaN.
+std::vector<glm::mat4> rest_corrections(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides);
+
 /// Sample a clip's node tracks against a model at time `t`, returning a
 /// node_index -> local_transform override for every track whose
 /// target_node_name matches a model node. Tracks with no matching node (e.g. a
