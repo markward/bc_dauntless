@@ -3308,6 +3308,36 @@ class _NullPicker:
 _NULL_PICKER = _NullPicker()
 
 
+def _developer_family_entry():
+    """The synthetic "Developer" mission-picker family: in-repo preview
+    missions that don't live under sdk/. Split out of _get_mission_registry
+    so tests can assert a mission is registered without booting main()."""
+    from engine.missions import FamilyEntry, EpisodeEntry, MissionEntry
+    return FamilyEntry(
+        dir_name="Developer", display_name="Developer",
+        episodes=[EpisodeEntry(
+            dir_name=".", display_name="Developer",
+            missions=[MissionEntry(
+                module_name="engine.dev_missions.damage_preview",
+                dir_name="Damage Preview",
+                display_name="Damage Preview",
+            ), MissionEntry(
+                module_name="engine.dev_missions.combat_stress",
+                dir_name="Combat Stress",
+                display_name="Combat Stress",
+            ), MissionEntry(
+                module_name="engine.dev_missions.collision_sim",
+                dir_name="Collision Sim",
+                display_name="Collision Sim",
+            ), MissionEntry(
+                module_name="engine.dev_missions.system_preview",
+                dir_name="System Preview",
+                display_name="System Preview",
+            )],
+        )],
+    )
+
+
 def _register_ai_inspector(registry):
     """Register the dev-only AI Inspector panel + its pause-menu row.
 
@@ -8910,27 +8940,7 @@ def run(mission_name: Optional[str] = None,
                     # don't live under sdk/. The single "." episode is collapsed
                     # by the picker so the mission rows sit directly under
                     # "Developer".
-                    from engine.missions import (
-                        FamilyEntry, EpisodeEntry, MissionEntry)
-                    reg.families.append(FamilyEntry(
-                        dir_name="Developer", display_name="Developer",
-                        episodes=[EpisodeEntry(
-                            dir_name=".", display_name="Developer",
-                            missions=[MissionEntry(
-                                module_name="engine.dev_missions.damage_preview",
-                                dir_name="Damage Preview",
-                                display_name="Damage Preview",
-                            ), MissionEntry(
-                                module_name="engine.dev_missions.combat_stress",
-                                dir_name="Combat Stress",
-                                display_name="Combat Stress",
-                            ), MissionEntry(
-                                module_name="engine.dev_missions.collision_sim",
-                                dir_name="Collision Sim",
-                                display_name="Collision Sim",
-                            )],
-                        )],
-                    ))
+                    reg.families.append(_developer_family_entry())
                     _picker_registry_cache[0] = reg
                 return _picker_registry_cache[0]
 

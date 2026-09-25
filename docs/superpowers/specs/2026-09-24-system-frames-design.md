@@ -286,6 +286,20 @@ Returning re-realizes the set through `_realize_hook` (`realize_set_objects` is
 idempotent), recomputing `planet_natural_scale` from the map radius. §4's
 diff-driven drawing retires the teardown hook in Plan 3.
 
+**Status (Plan 3).** Built as designed: `engine/systems/system_loader.py`
+(`ensure_loaded(player)` / `reset()`) is level-triggered exactly as specified —
+`host_loop._ensure_system_loaded` reads the *live* player every tick, not a
+cached one, so it covers Set Course, mission start and a dev swap alike, the
+single-caller trap the reference branch fell into. A region whose import or
+`Initialize()` raises is logged loudly and skipped without stranding its
+siblings or the player, and is retried on the next visit to that system rather
+than permanently written off. The developer "System Preview" mission
+(`engine.dev_missions.system_preview`) is the live harness for this and for §4
+below: it loads only Ona1 and the player, and `ensure_loaded` brings up Ona2
+and Ona3 on the first tick, unattended. `tests/integration/test_sky_round_trip.py`
+pins the property this section promises across a real departure/arrival pair —
+a region left behind is still there, unmodified, when the player comes back.
+
 ### 4. Drawing
 
 **In a mapped frame, the system map is the only source for celestial bodies.**
@@ -322,6 +336,32 @@ negligible: forward-Z precision is `Δz ≈ z²/(2²⁴·n)` once `f ≫ n`, gov
 **Lighting and backdrops are unchanged.** Backdrops stay per-set (BC authored
 them that way); lighting resolves via the rendered set, as today.
 
+**Status (Plan 3).** Built as designed. `engine/systems/celestial.py:draw_list(view)`
+is the pure function this section specifies — a dataclass tuple keyed by
+`(system, owner_region, name)`, computed fresh from the map and the viewed
+frame's anchor every call, nothing cached and nothing to invalidate.
+`host_loop._reconcile_celestial_instances` diffs it against
+`session.celestial_instances` each tick: a new key creates and scales an
+instance to `radius_gu` over the model's bound-sphere radius, a vanished key
+destroys it, a moved key (the view shifted to a sibling region) re-pushes its
+transform, and an unchanged list costs one tuple comparison and no renderer
+call. `host_loop._aggregate_suns` draws only the viewed set's own Sun — never
+its siblings', which `apply_map` places at the same map star — and
+`_check_mapped_bodies_untouched` is the "logged loudly, not arbitrated" script
+detector, one warning per body per mission. The warp-streak hide (map bodies
+disappear while the tunnel effect runs and return on its last frame) reuses
+the same mechanism as ship instances. Ship culling is
+`engine.systems.render_scope.SHIP_DRAW_DISTANCE_GU` (30,000 GU / 5,250 km),
+derived so the largest non-station ship class (the Warbird, half-diagonal 8.18
+GU) still covers one pixel at the exterior camera's 35° vertical FOV over a
+1080px viewport, rounded up; a 10% hysteresis band keeps a ship sitting on the
+line from flickering. `tests/integration/test_sky_round_trip.py` drives a real
+warp through `_WarpDepartAction` / `ChangeRenderedSetAction` /
+`_ArriveFinalizeAction` and checks both draw-list correctness and the
+reconcile's one-instance-per-key invariant at every station and in the
+tunnel — pinning, as a test, the exact ghost/gap shape of the reference
+branch's live bug this section calls out above.
+
 ### 5. Precision — the render origin
 
 The render origin is the camera eye's system position in the viewing frame, held
@@ -339,6 +379,38 @@ in **double**.
 
 A body 400,000 GU away loses ~0.03 GU to float — invisible at that range.
 Near-camera geometry keeps full precision anywhere in the system.
+
+**Status (Plan 3). Built in this plan, not deferred** — Mark's decision,
+2026-09-25. `_apply_render_origin` sets the origin to the exterior camera eye
+(in the viewed frame) once per running frame, before any feed is built, and
+pushes it to native with `set_render_origin`; every Space-pass position then
+crosses over through `engine/systems/frames.py:to_render` (`view_to_render`
+composed with `in_view`), one subtraction, one place, exactly as designed.
+Native resolves each instance's **double** translation against that origin
+once per frame in `frame()` (`resolve_render_space`) — not per draw call — so
+every pass, camera and mesh query for that frame shares one pose. Mesh
+queries stay instance-relative: Python forms the query point relative to the
+target instance's own translation (`world_to_body`, `relative_to_body`,
+`dir_to_body`) and C++ inverts rotation and scale only, never a large
+translation, so a hit lands identically at the origin and at 1,000,000 GU.
+The guarding test is `render_origin_precision_test.cc`
+(`AMillionGUOutRendersByteIdenticalWhenTheOriginFollows`): a real Galaxy at
+1,000,000 GU from the render origin renders **byte-identical, 0 differing
+pixels** to the same shot at the origin, against a companion test proving the
+old float, origin-less path visibly breaks at that range (17% of lit pixels
+differ by more than 8/255). **Carried, not converted here** — cross-set DOF
+subject distance (`dof.subject_distance_gu` reads the player's raw location
+against the view-space eye), reticle-text projection of a cross-set target,
+the audio listener, and TorpCam (`self._torp.GetWorldLocation()` read
+directly) are all Plan-2-style cross-set gaps in logic that already works
+correctly in view space; NPC damage is lost across an in-system tunnel warp,
+because the tunnel parks the player in its own frame during transit and so
+takes the source set out of both frames for that span — the planned dash
+(removing the tunnel for in-system trips) fixes this, not this plan; and the
+interim same-set engagement guard from Plan
+2 (`Ruling 5`: a target not in the firing ship's own set is out of range) is
+still standing — frame-aware weapon engagement across regions is not part of
+this plan.
 
 ### 6. Converting consumers — order is a safety property
 
