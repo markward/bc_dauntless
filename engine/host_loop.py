@@ -4059,6 +4059,7 @@ def reset_sdk_globals() -> None:
         system_loader.reset()
     except Exception as _e:
         dev_mode.log_swallowed("system_loader.reset on swap", _e)
+    _mapped_body_warned.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
     App._reset_target_menu_singleton()
@@ -4586,7 +4587,13 @@ def _aggregate_dust_planets(view) -> list:
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
     """Return absolute path to the planet's NIF, or None if unavailable."""
-    rel = planet.GetModelPath()
+    return _planet_model_path(planet.GetModelPath(), verbose=verbose)
+
+
+def _planet_model_path(rel, *, verbose: bool = False) -> Optional[str]:
+    """Absolute path of a planet/moon NIF from its relative game-asset path
+    (a Planet's GetModelPath(), a map body's appearance.model), or None when
+    it is empty or missing. The ONE resolver for both planet sources."""
     if not rel:
         if verbose:
             print(f"[host_loop]   skip planet: GetModelPath() returned empty", flush=True)
@@ -4597,6 +4604,38 @@ def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
             print(f"[host_loop]   skip planet: NIF not found at {abs_path}", flush=True)
         return None
     return str(abs_path)
+
+
+def _load_planet_model(r_, nif_path: str, *, cache=None,
+                       verbose: bool = False) -> Optional[tuple]:
+    """(handle, extent, sphere_radius) for a planet/moon NIF, or None when
+    load_model raises. Shared by every planet realize path: the mission load,
+    realize_set_objects, and the map-drawn bodies.
+
+    `cache` is the HostController (its nif_to_handle / nif_to_extent /
+    nif_to_sphere_radius survive mission swaps); None loads uncached, as
+    realize_set_objects always has."""
+    handle = cache.nif_to_handle.get(nif_path) if cache is not None else None
+    if handle is not None:
+        extent = cache.nif_to_extent.get(nif_path, 1.0)
+        return handle, extent, cache.nif_to_sphere_radius.get(nif_path, extent)
+    planet_tex_search = [str(p) for p in
+                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
+    try:
+        handle = r_.load_model(nif_path, planet_tex_search)
+    except Exception as e:
+        if verbose:
+            print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
+                  f"{type(e).__name__}: {e}", flush=True)
+        return None
+    center, half_extents = r_.model_aabb(handle)
+    extent = _model_extent_from_aabb(center, half_extents)
+    sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
+    if cache is not None:
+        cache.nif_to_handle[nif_path] = handle
+        cache.nif_to_extent[nif_path] = extent
+        cache.nif_to_sphere_radius[nif_path] = sphere_radius
+    return handle, extent, sphere_radius
 
 
 def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
@@ -5081,6 +5120,17 @@ class MissionSession:
     # or past the draw distance; _reconcile_runtime_instances). Consulted by
     # every other per-frame visibility writer so none re-shows them.
     scope_hidden: set = field(default_factory=set)
+    # The system map's planets and moons (system-frames Plan 3 Task 4),
+    # diffed each tick against celestial.draw_list(viewing_set()) by
+    # _reconcile_celestial_instances. celestial_instances: body key -> iid;
+    # celestial_placed: body key -> the CelestialBody last pushed, in
+    # draw-list order (a body whose model failed to load is placed with no
+    # instance, so it is warned about once, not every tick).
+    celestial_instances: dict[Any, Any] = field(default_factory=dict)
+    celestial_placed: dict[Any, Any] = field(default_factory=dict)
+    # key -> natural scale of its instance (radius_gu / model sphere radius),
+    # so a reposition re-pushes the matrix without re-reading the model.
+    celestial_scale: dict[Any, float] = field(default_factory=dict)
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
@@ -5088,6 +5138,11 @@ class MissionSession:
             renderer.destroy_instance(iid)
         for iid in list(self.planet_instances.values()):
             renderer.destroy_instance(iid)
+        for iid in list(self.celestial_instances.values()):
+            renderer.destroy_instance(iid)
+        self.celestial_instances.clear()
+        self.celestial_placed.clear()
+        self.celestial_scale.clear()
         self.ship_instances.clear()
         self.ship_glow_controllers.clear()
         self.ship_emitters.clear()
@@ -5266,24 +5321,16 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     from engine.systems import region_hooks
     if region_hooks.is_mapped(pSet):
         return
-    planet_tex_search = [str(p) for p in
-                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     for planet in _iter_planets_in_set(pSet):
         if planet in session.planet_instances:
             continue
         nif_path = _planet_nif_path(planet, verbose=verbose)
         if nif_path is None:
             continue
-        try:
-            handle = r_.load_model(nif_path, planet_tex_search)
-        except Exception as e:
-            if verbose:
-                print(f"[host_loop]   realize: skip planet: load_model({nif_path}) "
-                      f"raised: {type(e).__name__}: {e}", flush=True)
+        loaded = _load_planet_model(r_, nif_path, verbose=verbose)
+        if loaded is None:
             continue
-        center, half_extents = r_.model_aabb(handle)
-        extent = _model_extent_from_aabb(center, half_extents)
-        sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
+        handle, extent, sphere_radius = loaded
         if planet.GetRadius() <= 0.0:
             try:
                 planet.SetRadius(extent * BC_MODEL_SCALE)
@@ -5550,6 +5597,117 @@ def _reconcile_runtime_instances(session, renderer, *,
         session.player = new_player
         if on_player_change is not None:
             on_player_change(new_player)
+
+
+def _celestial_matrix(body, natural_scale: float) -> list:
+    from engine.appc.math import TGMatrix3, TGPoint3
+    return _world_matrix_from(TGPoint3(*body.position), TGMatrix3(),
+                              natural_scale)
+
+
+def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
+                                   verbose: bool = False) -> None:
+    """Make the celestial render instances equal the draw list of the viewed
+    frame (system-frames Plan 3 Task 4). The draw list is the ONLY source of
+    a mapped system's planets and moons -- realize_set_objects skips a mapped
+    set's Planet objects.
+
+      * new key      -> create (scale radius_gu / model bound-sphere radius)
+                        and push its matrix with set_world_transform: a static
+                        body, never bound to a transform-store slot,
+      * vanished key -> destroy,
+      * moved key    -> re-push (the view moved to a sibling region),
+      * no change    -> one tuple compare, zero renderer calls.
+
+    A body whose model does not resolve or load is skipped with ONE warning
+    and remembered in celestial_placed, so it is not retried every tick."""
+    from engine.systems import celestial
+    drawn = celestial.draw_list(_frames.viewing_set())
+    placed = session.celestial_placed
+    if tuple(placed.values()) == drawn:
+        return
+    instances = session.celestial_instances
+    want = {b.key for b in drawn}
+    for key in [k for k in placed if k not in want]:
+        session.celestial_scale.pop(key, None)
+        iid = instances.pop(key, None)
+        if iid is not None:
+            renderer.destroy_instance(iid)
+    new_placed = {}
+    for body in drawn:
+        new_placed[body.key] = body
+        old = placed.get(body.key)
+        if old == body:
+            continue
+        iid = instances.get(body.key)
+        if iid is not None:
+            renderer.set_world_transform(
+                iid, _celestial_matrix(body, session.celestial_scale[body.key]))
+            continue
+        if old is not None:
+            continue            # its model failed once; already warned
+        nif_path = _planet_model_path(body.model, verbose=verbose)
+        loaded = (_load_planet_model(renderer, nif_path, cache=nif_cache,
+                                     verbose=verbose)
+                  if nif_path is not None else None)
+        if loaded is None:
+            print(f"[systems] map body not drawn, no model: "
+                  f"{'/'.join(str(k) for k in body.key)} ({body.model!r})",
+                  flush=True)
+            continue
+        handle, _extent, sphere_radius = loaded
+        # BC's render_scale divisor: the model's bound-sphere radius, so the
+        # body draws at exactly radius_gu (as realize_set_objects' planets).
+        scale = (body.radius_gu / sphere_radius) if sphere_radius > 0.0 else 1.0
+        iid = renderer.create_instance(handle)
+        instances[body.key] = iid
+        session.celestial_scale[body.key] = scale
+        renderer.set_world_transform(iid, _celestial_matrix(body, scale))
+    session.celestial_placed = new_placed
+
+
+# Mapped bodies a script has moved or resized, already warned about this
+# mission: (set name, body name). Cleared on mission swap (and by the test
+# suite's autouse reset).
+_mapped_body_warned: set = set()
+
+
+def _check_mapped_bodies_untouched(view) -> None:
+    """Warn -- once per body per mission -- when a script has moved or
+    resized one of the viewed mapped set's own Planet objects away from its
+    map body (spec §4: logged loudly, not arbitrated). Changes nothing: the
+    map keeps drawing the body where the map puts it."""
+    from engine.systems import region_hooks, resolve
+    if view is None or not region_hooks.is_mapped(view):
+        return
+    set_name = view.GetName()
+    system = resolve.system_of(set_name)
+    m = resolve.map_of(system) if system is not None else None
+    region = m.region(set_name) if m is not None else None
+    if region is None:
+        return
+    from engine.appc.planet import Planet, Sun
+    from engine.systems.apply_map import _region_body
+    for name in region.body_names:
+        if (set_name, name) in _mapped_body_warned:
+            continue
+        obj = view.GetObject(name)
+        if not isinstance(obj, Planet) or isinstance(obj, Sun):
+            continue
+        body = _region_body(m, name, region.set_name)
+        if body is None:
+            continue
+        want = tuple(p - a for p, a in zip(body.position_gu, region.anchor_gu))
+        loc = obj.GetWorldLocation()
+        got = (loc.x, loc.y, loc.z)
+        radius = float(obj.GetRadius())
+        if (max(abs(g - w) for g, w in zip(got, want)) <= 1e-3
+                and abs(radius - float(body.radius_gu)) <= 1e-3):
+            continue
+        _mapped_body_warned.add((set_name, name))
+        print(f"[systems] mapped body moved by a script: {set_name}/{name} "
+              f"at {got} r={radius:g}, map has {want} r={body.radius_gu:g} "
+              f"-- drawn where the map puts it", flush=True)
 
 
 def _fire_pending_preload_done() -> None:
@@ -6130,28 +6288,15 @@ class _MissionLoader:
         for _pSet in _live_sets():
             region_hooks.check_realized(_pSet)
 
-        planet_tex_search = [str(p) for p in
-                             _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
         for planet in _iter_planets(verbose=self._verbose):
             nif_path = _planet_nif_path(planet, verbose=self._verbose)
             if nif_path is None:
                 continue
-            handle = self._c.nif_to_handle.get(nif_path)
-            if handle is None:
-                try:
-                    handle = r_.load_model(nif_path, planet_tex_search)
-                except Exception as e:
-                    if self._verbose:
-                        print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
-                              f"{type(e).__name__}: {e}", flush=True)
-                    continue
-                self._c.nif_to_handle[nif_path] = handle
-                center, half_extents = r_.model_aabb(handle)
-                self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
-                self._c.nif_to_sphere_radius[nif_path] = \
-                    _model_sphere_radius_from_aabb(center, half_extents)
-            extent = self._c.nif_to_extent.get(nif_path, 1.0)
-            sphere_radius = self._c.nif_to_sphere_radius.get(nif_path, extent)
+            loaded = _load_planet_model(r_, nif_path, cache=self._c,
+                                        verbose=self._verbose)
+            if loaded is None:
+                continue
+            handle, extent, sphere_radius = loaded
             if planet.GetRadius() <= 0.0:
                 try:
                     planet.SetRadius(extent * BC_MODEL_SCALE)
@@ -9464,9 +9609,19 @@ def run(mission_name: Optional[str] = None,
                     _d.tracking.set_ship_radius(_r)
                     _d.snap()
                     _xb.reset_all()
+                # INVARIANT: this must run before every other visibility
+                # writer (warp hide, SPV, bridge player, cloak): they AND their
+                # conditions with scope_hidden, and the scope only writes on
+                # a change.
                 _reconcile_runtime_instances(
                     session, controller.renderer,
                     on_player_change=_on_player_change, verbose=verbose)
+                # The system map's planets and moons: the draw list of the
+                # viewed frame, diffed (an unchanged list is one compare).
+                _reconcile_celestial_instances(
+                    session, controller.renderer, nif_cache=controller,
+                    verbose=verbose)
+                _check_mapped_bodies_untouched(_frames.viewing_set())
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 _r = player.GetRadius()
