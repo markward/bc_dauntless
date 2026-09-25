@@ -4042,14 +4042,8 @@ def reset_sdk_globals() -> None:
     from engine.appc import top_window
 
     App.g_kTimerManager._time = 0.0
-    App.g_kTimerManager._timers.clear()
     App.g_kRealtimeTimerManager._time = 0.0
-    App.g_kRealtimeTimerManager._timers.clear()
-    # Deferred-completion timers just died with the managers above; drop the
-    # matching skip-candidate registry so Backspace can't "skip" stale actions
-    # from the prior mission.
-    from engine.appc import actions as _appc_actions
-    _appc_actions.reset_deferred_playing()
+    _reset_timers()
     # Drop the object→render-instance mirror; the instances themselves are
     # torn down with the set, and the next mission's realize loops repopulate.
     render_instances.reset()
@@ -4064,12 +4058,6 @@ def reset_sdk_globals() -> None:
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
     top_window.reset_for_tests()
-    # Clear the global crew-speech channel so a line still "live" at swap
-    # time can't suppress the next mission's first SpeakLine. The subtitle
-    # crew slot itself is cleared transitively by reset_for_tests (it
-    # rebuilds _SubtitleWindow).
-    from engine.appc import crew_speech
-    crew_speech.bus().reset()
     # (The target menu needs no unhooking on swap: membership is derived
     # every frame from the player's containing set, so there is no
     # subscription that could dangle on a recreated set.)
@@ -4081,57 +4069,16 @@ def reset_sdk_globals() -> None:
     # the process.
     from engine.appc import contact_index
     contact_index.reset()
-    # ObjectGroup._live: clear for parity with the per-test reset
-    # (tests/conftest.py). Game.GetPlayerGroup() returns None in this engine
-    # (engine/core/game.py:~446) -- there is no persistent Game-level player
-    # group surviving a swap to justify leaving a prior mission's groups
-    # registered -- so a stale group with an SDK instance handler must not go
-    # on hearing the next mission's set adds. Registration is self-healing:
-    # ObjectGroup.SetEventFlag re-adds `self` to `_live`, so any group that
-    # re-arms its flags after this reset (AddFleetCommandHandlers does, at
-    # registration) is live again.
-    from engine.appc.objects import ObjectGroup
-    ObjectGroup._live.clear()
-    # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
-    # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
-    # time (which can be minutes) while the new mission's clock restarts at
-    # 0.0 above -- run_update_tooltip's `now - last < period` throttle then
-    # reads as deeply negative and stays "not yet due" for however long it
-    # takes real game time to climb back past the old value, silently
-    # freezing the Helm/XO tooltip rows for the whole stretch. Clearing the
-    # owner too so a stale reference from the old mission's crew menu can't
-    # be mistaken for the new mission's focused officer.
-    _tooltip_dispatch_state["last"] = -1e9
-    from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
-    CharacterClass_SetCurrentToolTipOwner(None)
+    _reset_session_scratch()
     # Drop the resolved projectile-module cache. It memoises import FAILURES
     # too (so an unimportable mod projectile is not retried every shot), and a
     # swap reloads the SDK tree — a failure cached against the old tree must
     # not decide the next mission's torpedoes.
     from engine.appc.weapon_subsystems import _reset_projectile_module_cache
     _reset_projectile_module_cache()
-    # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
-    # away mid-briefing (while its bridge viewscreen shows a comm character),
-    # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
-    # ViewscreenOn() then sees the viewscreen as already in use and enters a
-    # 2-second retry loop that never completes — the comm character (e.g. Liu
-    # in E1M1) never speaks or renders. ResetViewscreen() clears the flag
-    # (first thing it does) and re-enables the Hail/Contact menus; call it
-    # before _sets.clear() so its CallWaiting() still sees the live bridge.
-    # Best-effort, matching the surrounding reset discipline.
-    try:
-        import MissionLib
-        MissionLib.ResetViewscreen()
-        # Drop any master action sequence carried over from the previous
-        # mission. QueueActionToPlay stores the master's id in
-        # g_idMasterSequenceObj and appends every subsequent queued action onto
-        # it; a stalled/leftover master from the prior mission would otherwise
-        # swallow the next mission's queued cutscene/comm sequences. Completed
-        # masters already invalidate their id (TGSequence.Completed), so this is
-        # a belt-and-suspenders reset for a master left mid-play at swap time.
-        MissionLib.g_idMasterSequenceObj = App.NULL_ID
-    except Exception as _e:
-        dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
+    # MissionLib's viewscreen flag + master sequence; before _sets.clear()
+    # (see the helper).
+    _reset_missionlib_state()
     # Re-apply the identifier-centric ShowPointerArrow/HidePointerArrows
     # override (engine/ui/ui_attention.py). MissionLib the module is never
     # reloaded/re-imported by a mission swap — it stays cached in
@@ -4146,11 +4093,7 @@ def reset_sdk_globals() -> None:
     except Exception as _e:
         dev_mode.log_swallowed("ui_attention.install on swap", _e)
     App.g_kSetManager._sets.clear()
-    try:
-        from engine.systems import system_loader
-        system_loader.reset()
-    except Exception as _e:
-        dev_mode.log_swallowed("system_loader.reset on swap", _e)
+    _reset_system_loader_state()
     # A new mission starts at render origin zero, both halves: the first
     # frame may be frozen (no _apply_render_origin), and its camera is then
     # pushed relative to Python's origin -- native must agree.
@@ -4159,7 +4102,6 @@ def reset_sdk_globals() -> None:
         r.reset_render_origin()
     except Exception as _e:
         dev_mode.log_swallowed("reset_render_origin on swap", _e)
-    _mapped_body_warned.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
     App._reset_target_menu_singleton()
@@ -4226,6 +4168,154 @@ def reset_sdk_globals() -> None:
         crew_menu_hotkeys.rewire()
     except Exception as _e:
         dev_mode.log_swallowed("crew_menu_hotkeys.rewire after TCW reset", _e)
+    _reset_sensor_state()
+    # Drop the named-action registry. g_kTGActionManager is a process-lifetime
+    # singleton (App.py) and RegisterAction appends to a per-name LIST, so
+    # without this every action ever registered is retained forever — and the
+    # no-argument KillActions() form (E6M1.py:894, E6M2.py:1043, ...) would
+    # Abort() a previous mission's actions, which is not inert (TGSequence.Abort
+    # unregisters the object id, TGSoundAction.Abort stops audio). Clear only:
+    # the LIST semantics are correct (E1M1 registers six sequences under
+    # "CharacterIntros" and the skip must kill all six) — only the lifetime was
+    # wrong, and pruning on registration would drop the not-yet-started
+    # sequences this feature exists to kill.
+    _reset_action_registry()
+    # Re-apply the dev-only PlayedTutorial force after the clear. This function
+    # runs once at start-of-mission and again on every swap, so it is the one
+    # seam that covers every load path: _init_mission,
+    # MissionController._drain_pending_swap and MissionController.load_quickbattle
+    # all route through reset_sdk_globals(). (mission_change's carry-over
+    # re-applies it too.)
+    from engine import dev_tutorial_flag
+    dev_tutorial_flag.apply_played_tutorial_flag()
+
+
+# ── Shared resets ────────────────────────────────────────────────────────────
+# Called by reset_sdk_globals (dev swap / boot: everything goes) and by
+# engine.core.mission_change (a warp's carry-over change: the Game, the player,
+# the bridge and the warp set stay -- spec §2's keep/reset table). One body
+# each, so the two paths cannot drift.
+
+def _reset_timers(keep=None) -> None:
+    """Drop the game- and realtime-manager timers and the deferred-playing
+    registry. `keep` (a set of object ids) spares every timer whose event is
+    addressed to one of those objects -- TGTimer records no owner; its event's
+    destination IS the owner (a TGSequence for its step delays, the action
+    itself for a _complete_after deferral). None drops everything. Clocks are
+    the caller's business."""
+    import App
+    for mgr in (App.g_kTimerManager, App.g_kRealtimeTimerManager):
+        if keep is None:
+            mgr._timers.clear()
+            continue
+        for obj_id, timer in list(mgr._timers.items()):
+            ev = timer.GetEvent()
+            dest = ev.GetDestination() if ev is not None else None
+            if dest is None or id(dest) not in keep:
+                del mgr._timers[obj_id]
+    # Deferred-completion timers just died with the managers above; drop the
+    # matching skip-candidate registry so Backspace can't "skip" stale actions
+    # from the prior mission.
+    from engine.appc import actions as _appc_actions
+    if keep is None:
+        _appc_actions.reset_deferred_playing()
+    else:
+        for action in list(_appc_actions._deferred_playing):
+            if id(action) not in keep:
+                _appc_actions._deferred_playing.discard(action)
+
+
+def _reset_action_registry(keep=None) -> None:
+    """Drop g_kTGActionManager's named actions (all, or all but the actions
+    whose id is in `keep`; a name left with none is dropped)."""
+    import App
+    _action_mgr = getattr(App, "g_kTGActionManager", None)
+    registered = getattr(_action_mgr, "_registered", None)
+    if not isinstance(registered, dict):
+        return
+    if keep is None:
+        registered.clear()
+        return
+    for name, actions in list(registered.items()):
+        kept = [a for a in actions if id(a) in keep]
+        if kept:
+            registered[name] = kept
+        else:
+            del registered[name]
+
+
+def _reset_session_scratch() -> None:
+    """The crew-speech channel, live ObjectGroups and the tooltip throttle."""
+    # Clear the global crew-speech channel so a line still "live" at swap
+    # time can't suppress the next mission's first SpeakLine. The subtitle
+    # crew slot itself is cleared transitively by reset_for_tests (it
+    # rebuilds _SubtitleWindow).
+    from engine.appc import crew_speech
+    crew_speech.bus().reset()
+    # ObjectGroup._live: clear for parity with the per-test reset
+    # (tests/conftest.py). Game.GetPlayerGroup() returns None in this engine
+    # (engine/core/game.py:~446) -- there is no persistent Game-level player
+    # group surviving a swap to justify leaving a prior mission's groups
+    # registered -- so a stale group with an SDK instance handler must not go
+    # on hearing the next mission's set adds. Registration is self-healing:
+    # ObjectGroup.SetEventFlag re-adds `self` to `_live`, so any group that
+    # re-arms its flags after this reset (AddFleetCommandHandlers does, at
+    # registration) is live again.
+    from engine.appc.objects import ObjectGroup
+    ObjectGroup._live.clear()
+    # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
+    # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
+    # time (which can be minutes) while the new mission's clock restarts at
+    # 0.0 above -- run_update_tooltip's `now - last < period` throttle then
+    # reads as deeply negative and stays "not yet due" for however long it
+    # takes real game time to climb back past the old value, silently
+    # freezing the Helm/XO tooltip rows for the whole stretch. Clearing the
+    # owner too so a stale reference from the old mission's crew menu can't
+    # be mistaken for the new mission's focused officer.
+    _tooltip_dispatch_state["last"] = -1e9
+    from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
+    CharacterClass_SetCurrentToolTipOwner(None)
+
+
+def _reset_missionlib_state() -> None:
+    """MissionLib's viewscreen-in-use flag and master action sequence."""
+    import App
+    # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
+    # away mid-briefing (while its bridge viewscreen shows a comm character),
+    # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
+    # ViewscreenOn() then sees the viewscreen as already in use and enters a
+    # 2-second retry loop that never completes — the comm character (e.g. Liu
+    # in E1M1) never speaks or renders. ResetViewscreen() clears the flag
+    # (first thing it does) and re-enables the Hail/Contact menus; call it
+    # before _sets.clear() so its CallWaiting() still sees the live bridge.
+    # Best-effort, matching the surrounding reset discipline.
+    try:
+        import MissionLib
+        MissionLib.ResetViewscreen()
+        # Drop any master action sequence carried over from the previous
+        # mission. QueueActionToPlay stores the master's id in
+        # g_idMasterSequenceObj and appends every subsequent queued action onto
+        # it; a stalled/leftover master from the prior mission would otherwise
+        # swallow the next mission's queued cutscene/comm sequences. Completed
+        # masters already invalidate their id (TGSequence.Completed), so this is
+        # a belt-and-suspenders reset for a master left mid-play at swap time.
+        MissionLib.g_idMasterSequenceObj = App.NULL_ID
+    except Exception as _e:
+        dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
+
+
+def _reset_system_loader_state() -> None:
+    """The loaded-star-system latch and the unmapped-body warnings."""
+    try:
+        from engine.systems import system_loader
+        system_loader.reset()
+    except Exception as _e:
+        dev_mode.log_swallowed("system_loader.reset on swap", _e)
+    _mapped_body_warned.clear()
+
+
+def _reset_sensor_state() -> None:
+    """Nebula trackers, concealment latches, the identification clock."""
     # Clear the nebula tracker so stale membership state from the prior set
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
@@ -4243,26 +4333,6 @@ def reset_sdk_globals() -> None:
     # Force the next tick to re-run sensor identification for the new mission.
     global _last_identify_gt
     _last_identify_gt = None
-    # Drop the named-action registry. g_kTGActionManager is a process-lifetime
-    # singleton (App.py) and RegisterAction appends to a per-name LIST, so
-    # without this every action ever registered is retained forever — and the
-    # no-argument KillActions() form (E6M1.py:894, E6M2.py:1043, ...) would
-    # Abort() a previous mission's actions, which is not inert (TGSequence.Abort
-    # unregisters the object id, TGSoundAction.Abort stops audio). Clear only:
-    # the LIST semantics are correct (E1M1 registers six sequences under
-    # "CharacterIntros" and the skip must kill all six) — only the lifetime was
-    # wrong, and pruning on registration would drop the not-yet-started
-    # sequences this feature exists to kill.
-    _action_mgr = getattr(App, "g_kTGActionManager", None)
-    if isinstance(getattr(_action_mgr, "_registered", None), dict):
-        _action_mgr._registered.clear()
-    # Re-apply the dev-only PlayedTutorial force after the clear. This function
-    # runs once at start-of-mission and again on every swap, so it is the one
-    # seam that covers every load path: _init_mission,
-    # MissionController._drain_pending_swap and MissionController.load_quickbattle
-    # all route through reset_sdk_globals().
-    from engine import dev_tutorial_flag
-    dev_tutorial_flag.apply_played_tutorial_flag()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
@@ -4353,6 +4423,11 @@ def _init_mission(mission_module_name: str):
 
     mission = Mission()
     episode = Episode()
+    # The dev loader skips the Game -> Episode cascade, so the episode's module
+    # is derived from the mission's (None -> "": no episode to change from).
+    from engine.core import mission_change
+    mission._module_name = mission_module_name
+    episode._module_name = mission_change.episode_module_for(mission_module_name) or ""
     episode.SetCurrentMission(mission)
     game = Game()
     game.SetCurrentEpisode(episode)

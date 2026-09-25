@@ -119,3 +119,10 @@ def reset() -> None:
     """Drop every bucket. Called on mission swap and between tests."""
     _buckets.clear()
     _nebula_buckets.clear()
+
+
+def forget_set(pSet) -> None:
+    """Drop *pSet*'s buckets -- a set deleted by a carry-over mission change
+    (engine.core.mission_change), whose kept sets keep theirs."""
+    _buckets.pop(pSet, None)
+    _nebula_buckets.pop(pSet, None)

@@ -163,6 +163,54 @@ progress is not started twice (E5M4 queues its win on the button **and** calls
 
 **Unchanged:** the dev mission picker keeps its full reset (`swap_mission`).
 
+#### Keep / reset table (`engine/core/mission_change.py`)
+
+Derived from `reset_sdk_globals` and `_drain_pending_swap`. The shared resets
+are named helpers in `engine/host_loop.py` (`_reset_timers`,
+`_reset_action_registry`, `_reset_session_scratch`, `_reset_missionlib_state`,
+`_reset_system_loader_state`, `_reset_sensor_state`) called by both paths.
+Rows marked † were changed from the plan's draft because the code proved the
+draft wrong.
+
+| Item | Carry-over change | Why |
+|---|---|---|
+| `Game`, player ship object, its subsystems/damage/AI-free state | **keep** | BC reuses the player (`MissionLib.CreatePlayerShip` reuse branch) |
+| Bridge set(s) and bridge characters | **keep** | "specifically ignored from mission to mission" (`Maelstrom.py:258-262`) |
+| `"warp"` set, and the player's containing set | **keep** | the player is in it |
+| Every other set | **reset** (teardown hook + `DeleteSet`) | BC's unload deletes them |
+| Game/realtime timer managers | **reset except** survivors | the warp must finish; everything else is the old mission's |
+| Game clock (`_time`) | **keep** | the warp's hold deadline and every surviving timer are on it |
+| `_appc_actions` deferred-playing registry | **reset except** survivors | as timers |
+| Event manager **func** broadcast handlers † | **reset** those owned by the old Mission, a replaced Episode, a deleted set or an object in one; **keep** the rest (the input handler stays registered, so it is not re-added) | the kept bridge's menus (`HelmMenuHandlers`, `EngineerCharacterHandlers`, `PowerDisplay`, …) register theirs once, in `LoadBridge.CreateAndPopulateBridgeSet`, which never runs again for a kept bridge set |
+| Event manager **method** broadcast handlers † | **reset** those whose wrapped instance is a `Conditions.*` or `AI.*` object; **keep** the rest | conditions and AI are the old mission's and its ships'; `DynamicMusic` is initialized once per Game (`Maelstrom.py`) and its `ET_MISSION_START` handler exists for exactly this change |
+| `crew_speech` bus | **reset** | as swap |
+| `contact_index` † | **reset** the deleted sets' buckets only (`forget_set`) | buckets are event-maintained; a full reset would drop the player from the kept warp set for good |
+| `ObjectGroup._live` | **reset** | as swap |
+| Tooltip throttle/owner | **reset** | as swap |
+| Projectile module cache | **keep** | same SDK tree |
+| `MissionLib.ResetViewscreen()`, `g_idMasterSequenceObj = NULL_ID` | **reset** | the queued dialogue finished before the change point |
+| `system_loader.reset()`, `_mapped_body_warned` | **reset** | new mission, new systems |
+| Waypoint registry | **reset** entries not contained in a kept set | names repeat across sets |
+| `App._next_event_type_id` | **keep** | kept objects may hold allocated types |
+| Target menu singleton, TCW singleton, `st_widgets` registry, ShipDisplay slots, TacticalInterfaceHandlers/manual_aim/crew hotkeys re-wire † | **keep** | `LoadBridge.Load` returns early for an existing bridge set of the same config (`IsSameConfig`) and otherwise swaps only model/characters; `CreateCharacterMenus` runs only in `CreateAndPopulateBridgeSet`, so a reset TCW would never get its menus back |
+| `top_window` shim | **keep** | the warp's cinematic/control state is live |
+| `render_instances` mirror | **keep** | the player and the bridge are still drawn; deleted sets' instances go through the teardown hook |
+| Nebula trackers, concealment latches, `_last_identify_gt` | **reset** | as swap |
+| `g_kTGActionManager._registered` | **reset except** survivors | as timers |
+| dev tutorial flag | **re-apply** | as swap |
+| Render origin, camera eye, focus solver, WarpVFX / warp_state / `ReturnControl` | **keep** | the camera is mid-flight and the warp is live |
+| Per-ship engine modules (`ship_lifecycle`, `ship_death`, `visible_damage`, `registry_texture`, `hit_feedback` throttles, …) | **keep** | keyed per ship; the player's entries must survive; deleted ships' entries go with `DeleteSet` |
+
+**Survivors.** `TGTimer` records no owner; its event's destination *is* the
+owner — the `TGSequence` for a step delay, the action itself for a
+`_complete_after` deferral (`_HoldUntilAction`, sound waits). The survivors are
+every playing `WarpSequence` whose ship is the player, plus every action and
+dependency in its steps, recursively through nested sequences (a during-warp
+cutscene). A timer, deferred-playing entry or named-action registration
+survives iff its owner is a survivor. Not covered: a leaf a survivor spawns
+dynamically without making it a step (e.g. a script action that queues onto
+MissionLib's master sequence) — its timers are the old mission's and go.
+
 ## Testing
 
 **In the gate (`scripts/check_tests.sh`):**
