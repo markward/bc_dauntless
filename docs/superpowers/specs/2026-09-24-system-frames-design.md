@@ -487,6 +487,12 @@ so a dead anchor cannot keep firing on ships in other sets.
 
 ### 7. Moving through a system — rules only
 
+**Designed in detail 2026-09-25:** `docs/superpowers/specs/2026-09-25-in-system-warp-design.md`
+(one in-system warp for every ship; Set Course and heading dashes; the hand-off).
+It refines A′'s timing during a dash (`ET_EXITED_WARP` at drop-out, hand-offs
+deferred to it). Built **before** Plan 4 (widening), by Mark's call: the branch
+does not merge without it.
+
 The hand-off and the dash are designed in detail after §1–§6 survive a live
 pass, because what that pass shows will shape them. These rules bind that design;
 each gets a guard test.
