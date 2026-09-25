@@ -5780,6 +5780,20 @@ def _reconcile_runtime_instances(session, renderer, *,
                 session.slot_bindings.pop(ship, None)
 
     # PLAYER/CAMERA: detect a player identity change (covers RecreatePlayer).
+    _sync_player_identity(session, on_player_change)
+
+
+def _sync_player_identity(session, on_player_change=None) -> None:
+    """Point session.player at the game's current player, firing
+    `on_player_change` once when the identity changed (RecreatePlayer's
+    destroy+recreate). A no-op when unchanged, and when there is no game or no
+    player yet.
+
+    The scene reconcile's player tail, split out because the reconcile runs
+    AFTER the sim: the host loop also calls this ahead of the sim, so on a
+    RecreatePlayer tick input, weapons, combat and the warp FSM drive the new
+    ship rather than the destroyed one (system-frames Plan 3, Ruling 11;
+    order guarded by tests/host/test_scene_reconcile_ordering.py)."""
     game = Game_GetCurrentGame()
     new_player = game.GetPlayer() if game is not None else None
     if new_player is not None and new_player is not session.player:
@@ -9832,8 +9846,9 @@ def run(mission_name: Optional[str] = None,
             # Capture the player ship at combat start; revert to it on End
             # Combat (so a mid-combat ship swap is temporary).
             _sync_quickbattle_player_revert(controller)
-            # The camera follows session.player; the scene reconcile (after
-            # the sim, below) calls this when the player's identity changed
+            # The camera follows session.player; _sync_player_identity (just
+            # below, and again in the scene reconcile after the sim) calls
+            # this when the player's identity changed
             # (RecreatePlayer's destroy+recreate). Snap so the new player
             # doesn't lerp from the destroyed ship's pose, and re-seed the
             # director's ship-radius distances.
@@ -9843,6 +9858,11 @@ def run(mission_name: Optional[str] = None,
                 _d.tracking.set_ship_radius(_r)
                 _d.snap()
                 _xb.reset_all()
+            # Sync the player BEFORE the sim reads it: the preload-done event
+            # above may have just run RecreatePlayer, and the scene reconcile
+            # that would otherwise catch it runs after the sim (Ruling 11).
+            if session is not None:
+                _sync_player_identity(session, _on_player_change)
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 _r = player.GetRadius()

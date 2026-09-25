@@ -377,3 +377,65 @@ def test_fallback_at_load_still_realizes_the_viewed_set_in_full(monkeypatch):
     assert ship in sess.ship_instances
     assert planet in sess.planet_instances
     App.g_kSetManager.DeleteAllSets()
+
+
+# ── Player identity is synced BEFORE the sim, not only in the scene reconcile ─
+# The scene reconcile runs after the sim (Plan 3 I2), so on a RecreatePlayer
+# tick every pre-sim consumer (input, weapons, combat, warp) would read the
+# destroyed ship for one frame. _sync_player_identity is the reconcile's
+# player tail, split out so the host loop can also run it ahead of the sim.
+
+def test_sync_player_identity_retargets_once_to_the_new_player():
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    old = _add_ship(s, "old")
+    new = _add_ship(s, "new")
+    game = Game()
+    game.SetPlayer(new)
+    _set_current_game(game)
+    sess = hl.MissionSession(mission_name="t")
+    sess.player = old
+
+    retargeted = []
+    hl._sync_player_identity(sess, lambda p: retargeted.append(p))
+    hl._sync_player_identity(sess, lambda p: retargeted.append(p))
+
+    assert sess.player is new
+    assert retargeted == [new]
+
+    _set_current_game(None)
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_sync_player_identity_is_a_no_op_without_a_game_or_a_player():
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    old = _add_ship(s, "old")
+    sess = hl.MissionSession(mission_name="t")
+    sess.player = old
+    fired = []
+
+    _set_current_game(None)
+    hl._sync_player_identity(sess, fired.append)
+    _set_current_game(Game())
+    hl._sync_player_identity(sess, fired.append)
+
+    assert sess.player is old
+    assert fired == []
+
+    _set_current_game(None)
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_the_scene_reconcile_uses_the_same_player_sync():
+    """One implementation, two call sites: the reconcile's tail must not
+    drift from the pre-sim sync."""
+    import inspect
+    from engine import host_loop as hl
+    src = inspect.getsource(hl._reconcile_runtime_instances)
+    assert "_sync_player_identity(" in src
+    assert "session.player = " not in src

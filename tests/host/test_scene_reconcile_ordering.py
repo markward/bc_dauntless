@@ -94,3 +94,19 @@ def test_reconcile_scene_loads_the_system_first_then_scope_then_bodies():
                                     "_reconcile_celestial_instances(",
                                     "_check_mapped_bodies_untouched(")]
     assert order == sorted(order)
+
+
+def test_player_identity_is_synced_before_the_sim_reads_the_player():
+    """Ruling 11 (Plan 3 residual): the reconcile now runs after the sim, so
+    a RecreatePlayer tick (QuickBattle's preload-done handler) must sync
+    session.player BEFORE the frame's first `player = session.player` read --
+    otherwise input, weapons, combat and the warp FSM drive the destroyed
+    ship for a frame. The sync sits outside the sim-tick branch, so it also
+    covers a frozen (paused) frame."""
+    src = _run_source()
+    preload = _at(src, "_fire_pending_preload_done()")
+    sync = _at(src, "_sync_player_identity(", preload)
+    first_read = _at(src, "player = session.player", preload)
+    assert preload < sync < first_read
+    for call in _SIM_CALLS[1:]:  # everything after loop.tick reads `player`
+        assert sync < _at(src, call), call
