@@ -81,13 +81,18 @@ def test_content_staged_in_the_source_set_survives_a_full_warp():
     assert App.g_kSetManager.GetSet("Ona1").GetObject("Sensor Post 1") is post
 
 
-def test_the_warp_transit_set_is_still_cleaned_up():
-    """The tunnel is not a region. Leaking one per warp is a slow leak nobody
-    would attribute to this change."""
+def test_the_warp_transit_set_now_persists_like_every_other_set():
+    """The tunnel is BC's own persistent "warp" set (spec §1b), not an
+    engine-only artifact -- it stands after arrival just like a region set
+    does, ready for the next warp or a mission's own housekeeping
+    (MissionLib.DeleteShipsFromWarpSetExceptForMe). (This helper's `_arrive`
+    calls only `_ArriveFinalizeAction`, not `_PlacePlayerAction` -- the ship
+    is moved out of the warp set by the latter, exercised in
+    test_warp_spine.py, not here.)"""
     src = _space_set("Ona1")
     ship = _depart(src)
     _arrive(src, ship, to="Ona2")
-    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is None
+    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is not None
 
 
 def test_the_render_teardown_still_fires_for_the_source_set():

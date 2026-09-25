@@ -110,15 +110,19 @@ def test_non_ship_objects_do_not_broadcast():
     assert _captured == []
 
 
-def test_warp_transit_set_is_suppressed():
-    """The engine-internal warp-transit set has no BC equivalent; moving a ship
-    through it must not inject a spurious region entry/exit."""
+def test_warp_transit_set_broadcasts_like_any_other_set():
+    """The warp transit set is BC's own persistent "warp" set (spec §1b), not
+    an engine-only artifact -- moving a ship through it broadcasts the same
+    ET_ENTERED_SET/ET_EXITED_SET pair as any other set, so missions'
+    PlayerEntersWarpSet (ET_ENTERED_SET) handlers run."""
     _register()
     pTransit = SetClass(); pTransit.SetName(_WARP_TRANSIT_SET_NAME)
     pShip = ShipClass()
     pTransit.AddObjectToSet(pShip, "player")
+    assert ("entered", pShip, App.ET_ENTERED_SET) in _captured
+    _captured.clear()
     pTransit.RemoveObjectFromSet("player")
-    assert _captured == []
+    assert ("exited", pShip, _WARP_TRANSIT_SET_NAME) in _captured
 
 
 # ── Player-identity-before-broadcast (E6M2 Starbase 12 dock-button regression) ──

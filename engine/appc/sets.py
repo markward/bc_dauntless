@@ -290,15 +290,13 @@ class SetClass(TGEventHandlerObject):
         name as a CString because ExitSet reads pEvent.GetCString() (the object's
         containing-set may already point at its next set by dispatch time).
 
-        The internal warp-transit set (an engine artifact BC has no equivalent
-        for) is suppressed so a warp doesn't inject a spurious region entry/exit
-        between the real source and destination sets.
+        The warp transit set ("warp") is BC's own persistent set, not an
+        engine-only artifact (spec §1b) — entering/leaving it broadcasts like
+        any other set so missions' PlayerEntersWarpSet (ET_ENTERED_SET)
+        handlers run.
         """
         from engine.appc.ships import ShipClass
         if not isinstance(obj, ShipClass):
-            return
-        from engine.appc.warp import _WARP_TRANSIT_SET_NAME
-        if self._name == _WARP_TRANSIT_SET_NAME:
             return
         import App
         if entered:

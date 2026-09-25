@@ -12,14 +12,37 @@ import math
 
 from engine.appc.actions import TGAction, TGSequence
 
-# Name of the temporary empty set the player occupies WHILE in warp transit.
-# At burst the player is pulled out of the source set into this one (no
-# lights, no backdrops, no other ships) until the destination swap lands, and
-# the source set's RENDER INSTANCES are dropped -- the set itself stands, it
-# is not deleted. So during transit nothing from the system left behind keeps
-# drawing or lighting the scene, but its objects still simulate and the set
-# is there to return to. Mirrors BC's "warp set" (project_warp_mechanism_sdk).
-_WARP_TRANSIT_SET_NAME = "_WarpTransit"
+# Name of the set the player occupies WHILE in warp transit. At burst the
+# player is pulled out of the source set into this one (no lights, no
+# backdrops, no other ships unless a mission put them there) until the
+# destination swap lands, and the source set's RENDER INSTANCES are dropped --
+# the set itself stands, it is not deleted. So during transit nothing from the
+# system left behind keeps drawing or lighting the scene, but its objects
+# still simulate and the set is there to return to.
+#
+# This is BC's own persistent "warp" set (spec §1b), not an engine-only
+# artifact: E6M5/E7M6 load placements into it and queue cutscenes there,
+# E6M1-E6M5's PlayerEntersWarpSet handler (ET_ENTERED_SET) creates ships in it
+# during the tunnel, and 12 missions test GetName() == "warp" as their
+# in-transit guard. It is created on first use and never deleted by the
+# tunnel itself -- only MissionLib.DeleteShipsFromWarpSetExceptForMe (a
+# mission's own housekeeping) or a mission change clears it.
+_WARP_TRANSIT_SET_NAME = "warp"
+
+
+def WarpSequence_GetWarpSet():
+    """BC's warp set: one set named "warp", created on first use and kept.
+    E6M5/E7M6 load placements into it (Warp_P.LoadPlacements("warp")) and
+    E6M1-E6M5 create ships there on ET_ENTERED_SET; MissionLib.
+    DeleteShipsFromWarpSetExceptForMe clears it. Persistent by design
+    (spec §1b, HelmMenuHandlers.py:407)."""
+    import App
+    from engine.appc.sets import SetClass_Create
+    s = App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME)
+    if s is None:
+        s = SetClass_Create()
+        App.g_kSetManager.AddSet(s, _WARP_TRANSIT_SET_NAME)
+    return s
 
 # Host-registered render hooks: fn(pSet) -> None. None => skip (headless).
 _realize_hook = None
@@ -522,12 +545,14 @@ class _WarpDepartAction(TGAction):
     being left behind. The set itself is NOT deleted -- BC never deletes a set
     on warp.
 
-    Silences every source-set ship's weapon loops, moves the player into a fresh
-    empty transit set, makes that the rendered set (so lighting + backdrops fall
-    to neutral — the source sun stops lighting the scene), and tears down the
-    source set's render instances only (its objects keep existing and the set
-    stands, ready to be re-realized on return). The held destination swap still
-    lands at transit-end.
+    Silences every source-set ship's weapon loops, moves the player into BC's
+    persistent warp set (get-or-create; never recreated, so a mission's own
+    placements/ships already parked there survive), makes that the rendered
+    set (so lighting + backdrops fall to neutral — the source sun stops
+    lighting the scene), and tears down the source set's render instances
+    only (its objects keep existing and the set stands, ready to be
+    re-realized on return). The held destination swap still lands at
+    transit-end.
 
     Fail-open: each step is guarded, and _ArriveFinalizeAction repeats the
     render teardown on arrival anyway (idempotent) if departure didn't
@@ -540,7 +565,6 @@ class _WarpDepartAction(TGAction):
 
     def _do_play(self):
         import App
-        from engine.appc.sets import SetClass_Create
         src = self._source
         ship = self._ship
         # Burst: the ship is now at warp.
@@ -557,14 +581,14 @@ class _WarpDepartAction(TGAction):
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
-        # 2. Park the player in a fresh empty transit set and render that, so the
-        #    lighting/backdrop aggregation (which keys off the rendered/player
-        #    set) yields neutral defaults instead of the source system's sun.
+        # 2. Park the player in BC's persistent warp set and render that, so
+        #    the lighting/backdrop aggregation (which keys off the
+        #    rendered/player set) yields neutral defaults instead of the
+        #    source system's sun. The warp set is get-or-create -- it is
+        #    never recreated, so a mission's placements/ships already parked
+        #    there (spec §1b) survive departure.
         try:
-            if App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME) is not None:
-                App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
-            transit = SetClass_Create()
-            App.g_kSetManager.AddSet(transit, _WARP_TRANSIT_SET_NAME)
+            transit = WarpSequence_GetWarpSet()
             if ship is not None:
                 for s in list(App.g_kSetManager._sets.values()):
                     if s.GetObject(ship.GetName()) is ship:
@@ -587,10 +611,10 @@ class _WarpDepartAction(TGAction):
 
 class _ArriveFinalizeAction(TGAction):
     """Silence weapon-fire loops, drop the source set's render instances (if
-    departure did not already), clean up the warp-transit set, and return
-    player control. The source set is never deleted. Idempotent w.r.t. the
-    render teardown so it is safe whether or not _WarpDepartAction already
-    ran it."""
+    departure did not already), and return player control. Neither the
+    source set nor the (persistent) warp set is deleted here. Idempotent
+    w.r.t. the render teardown so it is safe whether or not
+    _WarpDepartAction already ran it."""
 
     def __init__(self, source_set, ship=None):
         super().__init__()
@@ -627,12 +651,10 @@ class _ArriveFinalizeAction(TGAction):
             if App.g_kSetManager.get_explicit_rendered_set() is not src:
                 if _teardown_hook is not None:
                     _teardown_hook(src)
-        # Clean up the temporary warp-transit set (flythrough only; no-op on the
-        # instant path). The player has been moved into the destination by
-        # _PlacePlayerAction, so the transit set is now empty.
-        transit = App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME)
-        if transit is not None and App.g_kSetManager.get_explicit_rendered_set() is not transit:
-            App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
+        # The warp set itself is never deleted here -- it is BC's persistent
+        # "warp" set (spec §1b): a mission's placements/ships parked there
+        # survive arrival, and only MissionLib.DeleteShipsFromWarpSetExceptForMe
+        # or a mission change clears it.
         # Undo SDK WarpPressed's RemoveControl (no-op if MissionLib absent).
         try:
             import MissionLib

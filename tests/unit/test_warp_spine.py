@@ -156,10 +156,11 @@ def test_depart_parks_player_in_transit_and_leaves_source_standing():
     assert App.g_kSetManager.GetRenderedSet() is transit       # and it's rendered
 
 
-def test_depart_then_arrive_cleans_transit_set():
+def test_depart_then_arrive_leaves_the_warp_set_standing_and_empty():
     # The full flythrough chain: after the destination swap + placement, the
-    # arrive-finalize must delete the now-empty transit set and not double-tear
-    # the already-gone source.
+    # arrive-finalize must NOT delete the (persistent, BC-owned) warp set --
+    # only the player leaves it, empty or not depending on what a mission
+    # parked there -- and must not double-tear the already-gone source.
     import types, sys
     src = _make_set("SrcFull")
     player = App.ShipClass_Create()
@@ -175,7 +176,9 @@ def test_depart_then_arrive_cleans_transit_set():
     warp._PlacePlayerAction(player, "DestFull", "Player Start").Play()
     warp._ArriveFinalizeAction(src, player).Play()
 
-    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is None  # transit cleaned
+    transit = App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME)
+    assert transit is not None                                    # warp set stands
+    assert transit.GetObject("player") is None                    # player left it
     dest = App.g_kSetManager.GetSet("DestFull")
     assert dest.GetObject("player") is player                            # player arrived
 
