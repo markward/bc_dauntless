@@ -153,3 +153,26 @@ def test_engine_glow_fades_over_the_exit_decel():
     assert 0.0 < mid < 1.0
     w.tick(8.0)                               # tail end: cold, and inactive
     assert w.engine_glow() == (0.0, 0.0)
+
+
+def test_vfx_hold_freezes_the_transit_plateau_and_release_plays_the_exit():
+    w = WarpVFX()
+    w.start((0.0, 1.0, 0.0), 1.0, 8.0, 0.0)
+    w.tick(3.0)
+    w.hold()
+    w.tick(100.0)
+    assert w.phase() == "transit" and w.streak_intensity() == 1.0
+    assert w.flash_intensity() == 0.0
+    w.release(100.0)
+    w.tick(100.0 + 0.8 * 0.5)       # inside the final 10 % of transit
+    assert w.phase() == "transit" and w.flash_intensity() > 0.0
+
+
+def test_vfx_start_clears_a_leftover_hold():
+    """A warp aborted while held must not freeze the next one."""
+    w = WarpVFX()
+    w.start((0.0, 1.0, 0.0), 1.0, 8.0, 0.0)
+    w.hold()
+    w.start((0.0, 1.0, 0.0), 1.0, 8.0, 0.0)
+    w.tick(20.0)
+    assert w.is_active() is False

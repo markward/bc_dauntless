@@ -393,6 +393,65 @@ class _WarpVfxEndAction(TGAction):
             pass
 
 
+class _MissionChangePoint(TGAction):
+    """The point in transit, after the after-during queue, where a
+    cross-mission warp changes mission (spec §2). A no-op placeholder here;
+    the mission change fills it."""
+
+    def __init__(self, seq):
+        super().__init__()
+        self._seq = seq
+
+
+class _HoldUntilAction(TGAction):
+    """Completes no earlier than the end of the nominal transit
+    (sequence start + t_align + t_transit), so a transit whose queues finish
+    early still lasts its full length. Completes at once when that deadline
+    has already passed -- a queue or the master sequence ran long and the
+    streak has been held (spec §1 "Transit holds"). Game time, via
+    g_kTimerManager, like TGSequence's own step delays."""
+
+    def __init__(self, seq, t_align, t_transit):
+        super().__init__()
+        self._seq = seq
+        self._span = float(t_align) + float(t_transit)
+
+    def Play(self):
+        import App
+        from engine.appc.actions import _ET_ACTION_DEFERRED_COMPLETE
+        self._playing = True
+        start = self._seq._t_start
+        now = App.g_kUtopiaModule.GetGameTime()
+        remaining = 0.0 if start is None else start + self._span - now
+        if remaining <= 0.0:
+            self.Completed()
+            return
+        mgr = App.g_kTimerManager
+        timer = App.TGTimer_Create()
+        timer.SetTimerStart(mgr.get_time() + remaining)
+        timer.SetDelay(-1.0)            # one-shot
+        ev = App.TGEvent_Create()
+        ev.SetEventType(_ET_ACTION_DEFERRED_COMPLETE)
+        ev.SetDestination(self)
+        timer.SetEvent(ev)
+        mgr.AddTimer(timer)
+        # TGAction.ProcessEvent completes us on the event; Abort cancels it.
+        self._deferred_timer = (mgr, timer)
+
+
+class _TransitReleaseAction(TGAction):
+    """End the transit hold: the WarpVFX resumes with its exit flash to play.
+    Fail-open, like _WarpVfxBeginAction -- never blocks the swap."""
+
+    def _do_play(self):
+        try:
+            import App
+            from engine import warp_vfx
+            warp_vfx.get().release(App.g_kUtopiaModule.GetGameTime())
+        except Exception:
+            pass
+
+
 def _module_is_empty(module):
     """True when there's no destination module to load (None / empty /
     whitespace). Mirrors BC's `if pcDestModule != None:` guard in
@@ -599,6 +658,13 @@ class _WarpDepartAction(TGAction):
             App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
         except Exception:
             pass
+        # The streak holds at its plateau until _TransitReleaseAction: the
+        # swap now waits on the queues and the master sequence (spec §1).
+        try:
+            from engine import warp_vfx
+            warp_vfx.get().hold()
+        except Exception:
+            pass
         # 3. Drop the source set's RENDER instances. The set itself stands:
         #    departure is not a lifetime operation. BC's region modules delete
         #    a set only in Terminate(), which nothing calls; the bound is the
@@ -677,9 +743,10 @@ class WarpSequence(TGSequence):
         # context so that cross-mission warps later have the context they need.
         self._dest_mission = mission or None
         self._dest_episode = episode or None
-        # The five action queues from the button (BC SDK App.py:8723-8738).
-        # Stored only in this task; Task 5 plays them.
+        # The five action queues from the button (BC SDK App.py:8723-8738),
+        # played at their points by WarpSequence_Create (spec §1).
         self._queues = queues or {k: [] for k in ("before", "before_during", "during", "after_during", "after")}
+        self._t_start = None    # game time of Play(); _HoldUntilAction's origin
 
     def GetShip(self):          return self._ship
     def GetDestination(self):   return self._dest_module
@@ -698,6 +765,9 @@ class WarpSequence(TGSequence):
         engine = self._warp_engine()
         if engine is not None:
             engine.SetWarpSequence(self)
+        # _HoldUntilAction measures the nominal transit from here.
+        import App
+        self._t_start = App.g_kUtopiaModule.GetGameTime()
         super().Play()
 
     def Completed(self) -> None:
@@ -763,9 +833,9 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
             break
     # Stage 2 timed flythrough: only when the flythrough is live (toggle AND
     # renderer AND procedural sky, via the host predicate) AND there's a real
-    # destination to fly to. The set swap is HELD by a game-time delay = the
-    # transit duration, so it lands when the transit ends (masked by the exit
-    # flash); the begin/end actions drive the WarpVFX manager. Fail-open: the
+    # destination to fly to. The set swap is HELD until the transit ends AND
+    # the in-transit queues / master sequence finish (spec §1 "Transit
+    # holds"); the begin/end actions drive the WarpVFX manager. Fail-open: the
     # begin/end hook calls are try/excepted, so a VFX failure never blocks the
     # swap chain.
     flythrough = (bool(_vfx_enabled and _vfx_enabled())
@@ -776,14 +846,14 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         heading = _warp_heading(src_v, dst_v)
         t_transit = _transit_duration(src_v, dst_v)
         t_align = _align_duration(ship, heading)
-        total = t_align + t_transit
         # Align start: remove control + start VFX (root @ 0). The "Enter Warp"
         # SFX is a separate root scheduled so its in-file flash (~_SFX_ENTER_
         # FLASH_AT into the clip) lands on the BURST (= t_align), now that the
         # align length is angle-driven (the old fixed-1.5s align kept it in sync
-        # by luck). The set-swap is a root HELD by total = t_align + t_transit so
-        # it lands when the transit ends (masked by the exit flash); placement +
-        # teardown + exit SFX + VFX-end chain after the swap, firing on arrival.
+        # by luck). The set-swap is CHAINED behind departure, the in-transit
+        # queues and _HoldUntilAction (no earlier than t_align + t_transit);
+        # placement + teardown + exit SFX + VFX-end chain after the swap,
+        # firing on arrival.
         # Procedural-sky vantage to fly the backdrop from during transit: the
         # source system's galaxy position (fall back to the destination's when
         # the source is unmapped). None => the sky stays blacked out.
@@ -804,9 +874,27 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # during the held transit the source system no longer draws or lights
         # the scene (the set itself stands, and its ships keep simulating --
         # see the Plan-2 note on left-behind-ship audibility).
-        seq.AddAction(_WarpDepartAction(source, ship), t_align)
+        _add_before_queue(seq)
+        depart = _WarpDepartAction(source, ship)
+        seq.AddAction(depart, t_align)
+        # Transit is chained, not timed (spec §1 "Transit holds"): departure ->
+        # SDK WaitForQueued (player only) -> the in-transit queues -> the
+        # mission-change point -> no earlier than the nominal transit end ->
+        # release the streak -> swap. The SDK's own WaitForQueued holds for
+        # MissionLib's master dialogue sequence; where BC's C++ puts it in the
+        # chain is inferred.
+        prev = depart
+        if _is_current_player(ship):
+            wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
+            seq.AddAction(wait, prev)
+            prev = wait
+        prev = _add_transit_queues(seq, prev)
+        hold = _HoldUntilAction(seq, t_align, t_transit)
+        seq.AddAction(hold, prev)
+        release = _TransitReleaseAction()
+        seq.AddAction(release, hold)
         swap = ChangeRenderedSetAction_Create(dest_module)
-        seq.AddAction(swap, total)
+        seq.AddAction(swap, release)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         # BC's PostWarpEnableMenu clear — the player is in the destination set
@@ -821,6 +909,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         from engine.warp_vfx import _T_EXIT_DECEL
         seq.AppendAction(_WarpVfxEndAction(ship), _T_EXIT_DECEL + 0.5)
         seq.AppendAction(_EnableHelmMenuAction())
+        _append_after_queue(seq)
         return seq
 
     # Falsy destination => no set change/placement/teardown: the whole warp
@@ -830,13 +919,60 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     # only cleared when a real warp actually happens (real destination).
     if not _module_is_empty(dest_module):
         seq.AddAction(_ClearTargetsAction(ship))
-    seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
+    # Same queue order as the flythrough, with no tunnel to hold.
+    _add_before_queue(seq)
+    swap = ChangeRenderedSetAction_Create(dest_module)
+    prev = _add_transit_queues(seq, None)
+    if prev is None:
+        seq.AddAction(swap)
+    else:
+        seq.AddAction(swap, prev)
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
     seq.AppendAction(_EnableHelmMenuAction())
+    _append_after_queue(seq)
     return seq
+
+
+def _is_current_player(ship):
+    import App
+    try:
+        player = App.Game_GetCurrentPlayer()
+    except Exception:
+        return False
+    return player is not None and player is ship
+
+
+def _add_before_queue(seq):
+    """The button's "before" queue: roots, at their delays from the start."""
+    for action, delay in seq._queues.get("before", ()):
+        seq.AddAction(action, delay)
+
+
+def _add_transit_queues(seq, prev):
+    """Chain before-during -> during -> after-during -> _MissionChangePoint
+    after `prev` (None => the first is a root). Returns the last action."""
+    for key in ("before_during", "during", "after_during"):
+        for action, delay in seq._queues.get(key, ()):
+            if prev is None:
+                seq.AddAction(action, delay)
+            else:
+                seq.AddAction(action, prev, delay)
+            prev = action
+    point = _MissionChangePoint(seq)
+    if prev is None:
+        seq.AddAction(point)
+    else:
+        seq.AddAction(point, prev)
+    return point
+
+
+def _append_after_queue(seq):
+    """The button's "after" queue: after control returns, at their delays."""
+    for action, delay in seq._queues.get("after", ()):
+        seq.AppendAction(action, delay)
 
 
 def find_set_course_menu():

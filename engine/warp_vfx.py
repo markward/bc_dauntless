@@ -44,6 +44,7 @@ class WarpVFX:
         self._streak = 0.0
         self._flash = 0.0
         self._phase = "align"
+        self._held = False
 
     def start(self, heading, t_align, t_transit, now, vantage=None,
               dst_vantage=None):
@@ -67,14 +68,29 @@ class WarpVFX:
         self._streak = 0.0
         self._flash = 0.0
         self._phase = "align"
+        self._held = False
 
     def _elapsed(self, now):
         return now - self._t0
+
+    def hold(self):
+        """Freeze transit at the streak plateau (streak 1, flash 0) until
+        release(): the warp's swap is waiting on queued actions / the mission's
+        master sequence (spec §1 "Transit holds"), and the streak simply holds."""
+        self._held = True
+
+    def release(self, now):
+        """Resume with the final 10 % of transit -- the exit flash -- still to
+        play, from `now`."""
+        self._held = False
+        self._t0 = float(now) - (self._t_align + 0.9 * self._t_transit)
 
     def tick(self, now):
         if not self._active:
             return
         e = self._elapsed(now)
+        if self._held:
+            e = min(e, self._t_align + 0.5 * self._t_transit)
         self._e = e
         total = self._t_align + self._t_transit
         if e < self._t_align:
@@ -213,6 +229,7 @@ class WarpVFX:
 
     def stop(self):
         self._active = False
+        self._held = False
         self._turn = 0.0
         self._streak = 0.0
         self._flash = 0.0
