@@ -1,8 +1,10 @@
 """Developer-only "System Preview" mission.
 
 Loads a real BC region (Ona1, of the Ona system) through its own SDK
-Initialize(), the same way any mission does, and drops the player Galaxy at
-its "Player Start" waypoint. Nothing else -- no NPCs, no scripted events.
+Initialize(), the same way any mission does, drops the player Galaxy at its
+"Player Start" waypoint, and adds the Ona system to Helm > Set Course through
+Systems.Ona.Ona.CreateMenus(), as SDK missions do. Nothing else -- no NPCs,
+no scripted events.
 
 The system loader (engine/systems/system_loader.py, Task 1) loads Ona1's
 siblings (Ona2, Ona3) on the first host_loop tick once it notices the player
@@ -38,3 +40,10 @@ def Initialize(pMission):
     pSet = App.g_kSetManager.GetSet("Ona1")
 
     MissionLib.CreatePlayerShip("Galaxy", pSet, "player", "Player Start")
+
+    # Create menus available at mission start -- the SDK's own way of putting
+    # a system under Helm > Set Course (E6M2 CreateStartingMenus; E6M1
+    # ResetSFAI "Add Ona to the helm menu"). Without it the classic menu has
+    # no way to fly between Ona's regions.
+    import Systems.Ona.Ona
+    Systems.Ona.Ona.CreateMenus()
