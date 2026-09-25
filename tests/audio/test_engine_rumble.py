@@ -117,7 +117,9 @@ def test_attached_sources_pumps_ship_world_location(boot, monkeypatch):
 
     ship = _FakeShip("Federation Engines", loc=(100.0, 200.0, 300.0))
     monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
-    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+    # Listener beside the ship: the allocator hums only ships within
+    # HUM_MAX_DISTANCE, and this test is about the pumped position.
+    hum_allocator.update(listener_pos=(100.0, 200.0, 290.0))
 
     _dauntless_host.audio.clear_command_log()
     attached_sources.pump(dt=0.016)

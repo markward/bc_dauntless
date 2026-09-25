@@ -4323,29 +4323,36 @@ def _post_dev_player_arrival() -> None:
 
 
 def _live_sets() -> list:
-    """The set(s) whose astro bodies belong in the world scene: just the active
-    space set (the one the player occupies) when determinable, else every set
-    (legacy fallback). Mirrors iter_ships' active-set filtering so the player at
-    Serris 3 doesn't see other systems' planets/suns bleed into the scene."""
-    from engine.appc.ship_iter import active_set
-    act = active_set()
-    if act is not None:
-        return [act]
-    import App
-    return list(App.g_kSetManager._sets.values())
+    """The set whose astro bodies belong in the world scene: the VIEWED set
+    (frames.viewing_set() -- an in-space cutscene's rendered set, else the
+    player's), or nothing when no set is viewed.
+
+    Exactly one set, never its siblings: every loaded region of a star system
+    has its own Sun object, and apply_map puts each one at the SAME map star.
+    Drawing the whole viewed frame's suns would draw that star once per loaded
+    region, coincident. Ships and the dust feed take the whole frame; suns,
+    flares and a set's own (unmapped) planets take only this."""
+    view = _frames.viewing_set()
+    return [view] if view is not None else []
 
 
 def _iter_planets(*, verbose: bool = False) -> Iterable:
-    """Walk every Planet (non-Sun) in the active set (see _live_sets)."""
+    """Walk every Planet (non-Sun) the world scene realizes as an instance:
+    those of the viewed set (see _live_sets) when that set is NOT mapped. A
+    mapped set's planets are drawn from the system map (celestial.draw_list),
+    never as instances of their Planet objects."""
     from engine.appc.planet import Planet, Sun
+    from engine.systems import region_hooks
     for pSet in _live_sets():
+        if region_hooks.is_mapped(pSet):
+            continue
         for obj in _iter_set_objects(pSet):
             if isinstance(obj, Planet) and not isinstance(obj, Sun):
                 yield obj
 
 
 def _iter_suns() -> Iterable:
-    """Walk every Sun in the active set (see _live_sets)."""
+    """Walk every Sun in the viewed set (see _live_sets)."""
     from engine.appc.planet import Sun
     for pSet in _live_sets():
         for obj in _iter_set_objects(pSet):
@@ -4541,12 +4548,32 @@ def _aggregate_nebulae(pSet):
 
 
 def _aggregate_lens_flares() -> list:
-    """Collect lens-flare descriptors in BC native world units."""
+    """Collect lens-flare descriptors in BC native world units.
+
+    Only the viewed set's flares, like the suns (_live_sets): every loaded
+    region's flare is sourced on its own Sun, and every one of those Suns sits
+    at the same map star, so taking the whole viewed frame would draw one
+    coincident flare per loaded region."""
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
-    import App
     return aggregate_lens_flares_for_renderer(
-        _paths.game_root(), list(App.g_kSetManager._sets.values()),
-        view=_frames.viewing_set())
+        _paths.game_root(), _live_sets(), view=_frames.viewing_set())
+
+
+def _aggregate_dust_planets(view) -> list:
+    """The dust pass's planet feed ({position, radius}, view coordinates).
+
+    A MAPPED viewed frame takes the system map's bodies (celestial.draw_list):
+    its sets' Planet objects are never realized, the map is what is drawn, and
+    it holds every body of the system -- not only those of loaded regions. An
+    unmapped frame is unchanged: its sets' Planet objects (_aggregate_planets).
+    """
+    from engine.systems import celestial, region_hooks
+    if view is not None and region_hooks.is_mapped(view):
+        return [{"position": b.position, "radius": float(b.radius_gu)}
+                for b in celestial.draw_list(view) if b.radius_gu > 0]
+    import App
+    return _aggregate_planets(list(App.g_kSetManager._sets.values()),
+                              view=view)
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
@@ -5105,8 +5132,17 @@ def _cache_ship_hull_pieces(ship, handle, r_) -> None:
 
 
 def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
-                        include_planets: bool = True) -> None:
+                        include_planets: bool = True,
+                        ships: Optional[Iterable] = None) -> None:
     """Build render instances for ONE set's ships/planets mid-mission.
+
+    `ships`, when given, restricts the ship pass to those ships (all of which
+    are in `pSet`): `_reconcile_runtime_instances` passes only the ships inside
+    the draw distance, so a far ship is never loaded just to be destroyed.
+
+    A MAPPED set's Planet objects are never realized: the system map draws
+    every body of a mapped frame (celestial.draw_list), so an instance of the
+    set's own Planet would draw it twice.
 
     `include_planets=False` realizes the ships only, and skips the unmapped-
     realize alarm with them: the alarm guards the planet-radius cache, which a
@@ -5132,7 +5168,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
 
     r_ = renderer
 
-    for ship in _iter_ships_in_set(pSet):
+    for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
         nif_path = _ship_nif_path(ship, verbose=verbose)
@@ -5213,6 +5249,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                       f"{type(e).__name__}: {e}", flush=True)
 
     if not include_planets:
+        return
+    from engine.systems import region_hooks
+    if region_hooks.is_mapped(pSet):
         return
     planet_tex_search = [str(p) for p in
                          _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
@@ -5302,6 +5341,48 @@ def _ensure_system_loaded(session) -> None:
         dev_mode.log_swallowed("system_loader.ensure_loaded", exc)
 
 
+# How far from the camera a ship is still realized, in GU. Derived so the
+# LARGEST ship class commonly present still covers at least one pixel at the
+# cull line:
+#   * exterior vertical FOV 35 deg (engine.cameras.EXTERIOR_FOV_Y_RAD) over a
+#     1080 px viewport: one pixel ~ radians(35)/1080 = 5.657e-4 rad;
+#   * ship radius = half the diagonal of the high-LOD NIF's AABB x
+#     BC_MODEL_SCALE, measured with the renderer's own model_aabb on each
+#     ships/*.py GetShipStats()["FilenameHigh"] (2026-09-25):
+#       Galaxy  data/Models/Ships/Galaxy/Galaxy.nif    half (232.1, 322.2, 70.5)
+#               -> r = 4.03 GU, 1 px at 2*4.03/5.657e-4  = 14,258 GU
+#       Warbird data/Models/Ships/Warbird/Warbird.nif  half (493.6, 628.8, 173.2)
+#               -> r = 8.18 GU, 1 px at 2*8.18/5.657e-4  = 28,917 GU
+#     The Warbird is the largest non-station ship (next: KessokHeavy 6.71 GU,
+#     CardHybrid 5.13 GU; bases/stations and the one-mission Sunbuster at
+#     10.42 GU, which is still 1.23 px at the line, excluded). The hardpoints
+#     (ships/Hardpoints/*.py) carry no whole-ship radius -- Hull.SetRadius(1.0)
+#     on the Galaxy is the hull SUBSYSTEM's -- hence the model extent.
+#   * 28,917 rounded up to a round number: 30,000 GU (5,250 km).
+# Hysteresis: a ship is realized inside SHIP_DRAW_DISTANCE_GU and removed only
+# past SHIP_DRAW_DISTANCE_GU * (1 + SHIP_DRAW_HYSTERESIS), so a ship sitting on
+# the line does not load and destroy its model every tick.
+SHIP_DRAW_DISTANCE_GU = 30000.0
+SHIP_DRAW_HYSTERESIS = 0.10
+
+
+def _in_ship_draw_range(ship, off, eye, realized: bool) -> bool:
+    """True when `ship` (in a set `off` = offset_between(view, its set) from
+    the viewed set) is within the draw distance of the camera `eye` (view
+    coordinates; None before the first frame -> no cull). A realized ship
+    gets the 10% hysteresis band."""
+    if eye is None:
+        return True
+    loc = ship.GetWorldLocation()
+    dx = loc.x + off[0] - eye[0]
+    dy = loc.y + off[1] - eye[1]
+    dz = loc.z + off[2] - eye[2]
+    limit = SHIP_DRAW_DISTANCE_GU
+    if realized:
+        limit *= 1.0 + SHIP_DRAW_HYSTERESIS
+    return dx * dx + dy * dy + dz * dz <= limit * limit
+
+
 def _reconcile_runtime_instances(session, renderer, *,
                                  on_player_change=None,
                                  verbose: bool = False) -> None:
@@ -5350,25 +5431,49 @@ def _reconcile_runtime_instances(session, renderer, *,
                 and not registry_texture.has_replacements(_p)):
             registry_texture.apply_class_default(_p)
 
-    # ADDITIONS: realize un-realized ships in the ACTIVE set only. BC keeps one
-    # space set live at a time; realizing every set here would re-bleed other
-    # systems' ships (the Serris2 Cardassians, the Vesuvi6 Facility, Starbase 12)
-    # into the player's scene the tick after load. Idempotent — realize_set_objects
-    # skips ships already in session.ship_instances. When no active set is
-    # determinable (no player yet) fall back to the legacy all-sets reconcile
-    # -- for SHIPS. Planets come only from the set being viewed (the explicit
-    # rendered set): since warp departure stopped deleting the set you left,
-    # every left-behind region holds torn-down ships and so qualified here,
-    # and a planet instance, unlike a ship's, is never reconciled away -- the
-    # fallback left ghost planets of unrelated systems in the scene. Ships
-    # keep the legacy walk because the first tick with a player tears down
-    # any not in the active set (REMOVALS below).
-    from engine.appc.ship_iter import active_set as _active_set
-    act = _active_set()
-    if act is not None:
-        live_ships = set(_iter_ships_in_set(act))
-        if any(ship not in session.ship_instances for ship in live_ships):
-            realize_set_objects(session, act, renderer, verbose=verbose)
+    # ADDITIONS: realize un-realized ships in every set of the VIEWED FRAME
+    # (system-frames Plan 3 Task 3). Entering a star system loads all its
+    # regions (system_loader), and a ship in Ona2 is as much in the scene as
+    # one in Ona1 -- it is drawn at its position in the viewed set's
+    # coordinates (_sync_instance_transforms). A set in another frame (a
+    # left-behind system, Starbase 12, the bridge) contributes nothing: that
+    # is what keeps other systems' ships (the Serris2 Cardassians, the
+    # Vesuvi6 Facility) out of the scene. Ships beyond SHIP_DRAW_DISTANCE_GU
+    # of the camera are not realized (see _in_ship_draw_range). Planets come
+    # only from the viewed set, and only when it is unmapped (realize_set_
+    # objects) -- a planet instance, unlike a ship's, is never reconciled away.
+    # Idempotent: realize_set_objects skips ships already realized.
+    #
+    # When no set is viewed at all (no player, no explicit space rendered set)
+    # fall back to the legacy all-sets reconcile -- for SHIPS; planets only
+    # for the explicit rendered set. Since warp departure stopped deleting the
+    # set you left, every left-behind region holds torn-down ships and would
+    # otherwise leave ghost planets of unrelated systems in the scene.
+    view = _frames.viewing_set()
+    if view is not None:
+        game = Game_GetCurrentGame()
+        cur_player = game.GetPlayer() if game is not None else None
+        eye = _last_camera_eye
+        live_ships = set()
+        for pSet in App.g_kSetManager._sets.values():
+            off = _frames.offset_between(view, pSet)
+            if off is None:
+                continue
+            wanted = [ship for ship in _iter_ships_in_set(pSet)
+                      if ship is cur_player
+                      or _in_ship_draw_range(ship, off, eye,
+                                             ship in session.ship_instances)]
+            live_ships.update(wanted)
+            if any(ship not in session.ship_instances for ship in wanted):
+                realize_set_objects(session, pSet, renderer, verbose=verbose,
+                                    include_planets=pSet is view,
+                                    ships=wanted)
+        # The player is never scoped away: a cutscene rendered in another
+        # frame must not destroy (and so lose the carve/decals of) the ship
+        # the mission returns to. It is drawn as before (see
+        # _sync_instance_transforms).
+        if cur_player is not None and cur_player in session.ship_instances:
+            live_ships.add(cur_player)
     else:
         viewed = App.g_kSetManager.get_explicit_rendered_set()
         live_ships = set()
@@ -5379,9 +5484,10 @@ def _reconcile_runtime_instances(session, renderer, *,
                 realize_set_objects(session, pSet, renderer, verbose=verbose,
                                     include_planets=pSet is viewed)
 
-    # REMOVALS: any realized ship not in the live (active-set) roster is destroyed
-    # and forgotten — covers both despawns and ships left behind when the player
-    # warps to another set.
+    # REMOVALS: any realized ship not in the live (viewed-frame, in-range)
+    # roster is destroyed and forgotten — covers despawns, ships left behind
+    # when the player warps to another system, and ships that crossed out past
+    # the draw distance.
     for ship in list(session.ship_instances.keys()):
         if ship not in live_ships:
             iid = session.ship_instances.pop(ship, None)
@@ -7357,10 +7463,31 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     buffer + dead glow controllers, and pushes planet transforms.
     `model_scale` is BC_MODEL_SCALE; non-player ships additionally
     multiply by their live GetScale().
+
+    View coordinates (system-frames Plan 3 Task 3): ships of every set in the
+    viewed frame are realized, so a ship's pushed position is its set-local
+    position plus offset_between(view, its set) -- zero in the viewed set, so
+    those numbers are untouched. The player is store-bound only when its set
+    IS the viewed set; in a sibling region (a cutscene rendered at Ona2 while
+    the player is in Ona1) the store's set-local pose would be in the wrong
+    coordinates, so it is pushed like any other ship, with its offset. An
+    object with no offset (no view, no set, another frame) is drawn exactly
+    as before.
     """
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
     _player_iid = session.ship_instances.get(player)
+    _view = _frames.viewing_set()
+    _offsets = {}
+
+    def _view_offset(obj):
+        """offset_between(view, obj's set) when non-zero, else None."""
+        pSet = _frames.containing_set(obj)
+        if pSet not in _offsets:
+            off = (_frames.offset_between(_view, pSet)
+                   if _view is not None and pSet is not None else None)
+            _offsets[pSet] = off if off is not None and any(off) else None
+        return _offsets[pSet]
     # Warp blackout: once we jump to lightspeed (streak > 0) the whole local
     # scene is left behind — hide every non-player ship/station + planet so the
     # transit is just the player in the dust tunnel. _apply re-runs while
@@ -7407,7 +7534,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             r.set_emissive_scale(iid, _hd_boost)
         else:
             r.set_emissive_scale(iid, 1.0)
-        if iid == _player_iid:
+        _off = _view_offset(ship)
+        if iid == _player_iid and _off is None:
             if player_interp_pose is not None:
                 # The player is ALWAYS drawn from the pose the camera resolved
                 # (`pose_of`), so the two cannot disagree — that shared pose is
@@ -7461,6 +7589,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             iid, ship.GetWorldLocation(), ship.GetWorldRotation())
         _sampled = xform_buf.sample(iid, interp_alpha)
         _iloc, _irot = _sampled
+        if _off is not None:
+            _iloc = _frames.shifted(_iloc, _off)
         r.set_world_transform(
             iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
     xform_buf.prune(_live_ship_iids)
@@ -10265,9 +10395,7 @@ def run(mission_name: Optional[str] = None,
                     _w.travel_dir(), _w.streak_intensity())
                 r.set_lighting(_wamb, _wdirs)
 
-            planets = _aggregate_planets(
-                list(App.g_kSetManager._sets.values()),
-                view=_frames.viewing_set())
+            planets = _aggregate_dust_planets(_frames.viewing_set())
             r.set_dust_planets(planets)
 
             nebulae = [] if _warp_streaking else _aggregate_nebulae(active_set)

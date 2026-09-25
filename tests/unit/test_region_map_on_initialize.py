@@ -257,8 +257,8 @@ def test_mission_load_realize_raises_the_alarm_for_a_hand_built_set():
     Drives _realize_session directly (mirrors tests/unit/test_hull_volume_
     wiring.py's Site 2 fixture, minus the QuickBattle cascade, which builds
     its own named set and would drown out "Ona1"): a hand-built "Ona1" set,
-    unmapped, with no player anywhere so _live_sets() falls back to every set
-    in g_kSetManager (see engine.appc.ship_iter.active_set)."""
+    unmapped, with no player anywhere, made the rendered set so it is the
+    viewed set _live_sets() returns."""
     from engine import host_loop as hl
     from engine.core.game import Game, _set_current_game
     from tests.unit.test_realize_set import _FakeRenderer
@@ -266,11 +266,15 @@ def test_mission_load_realize_raises_the_alarm_for_a_hand_built_set():
     _set_current_game(Game())  # a player-less game -- active_set() -> None
     raw = SetClass_Create()
     App.g_kSetManager.AddSet(raw, "Ona1")
+    App.g_kSetManager.MakeRenderedSet("Ona1")
 
     controller = hl.HostController()
     controller.renderer = _FakeRenderer()
     loader = hl._MissionLoader(controller, verbose=False)
-    loader._realize_session(hl.MissionSession(mission_name="t"))
+    try:
+        loader._realize_session(hl.MissionSession(mission_name="t"))
+    finally:
+        App.g_kSetManager.ClearRenderedSet()
 
     assert region_hooks.unmapped_realized == ["Ona1"]
 

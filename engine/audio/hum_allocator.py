@@ -62,7 +62,7 @@ BOUNDARY_HYSTERESIS_FRACTION = 0.05
 _humming: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
-def _roster():
+def _roster(listener_pos=None):
     """Ships in the VIEWED FRAME (system-frames plan 2 task 6 fix round 1) --
     every set sharing `frames.viewing_set()`'s frame, not the single
     `active_set()` SetClass. A sibling region of the same star system
@@ -93,7 +93,12 @@ def _roster():
     `iter_active_ships` already had, preserved for load-time/headless-test
     boots with no game world yet
     (test_real_roster_finds_ship_via_iter_active_ships pins this). Seam for
-    tests."""
+    tests.
+
+    With `listener_pos` (view coordinates), ships beyond HUM_MAX_DISTANCE of
+    it are dropped (system-frames Plan 3 Task 3): a whole star system's
+    regions are loaded at once, so the viewed frame routinely holds ships tens
+    of thousands of GU away. See `_audible`."""
     import App
     from engine.appc.ships import ShipClass
     from engine.appc.ship_iter import iter_set_objects
@@ -109,7 +114,21 @@ def _roster():
         for obj in iter_set_objects(pSet):
             if isinstance(obj, ShipClass):
                 out.append(obj)
+    if listener_pos is not None:
+        out = [s for s in out if _audible(_distance_sq(s, listener_pos))]
     return out
+
+
+def _audible(dist_sq: float) -> bool:
+    """Within HUM_MAX_DISTANCE of the listener.
+
+    The hum is AL_INVERSE_DISTANCE_CLAMPED with max HUM_MAX_DISTANCE: past it
+    the gain is pinned at its floor (ref/max = 0.125), so a ship out there is
+    no quieter at 40 GU than at 40,000. Candidates beyond it would take a
+    top-4 slot and hum at that floor from across the system; this gate is
+    ours, not recovered BC behaviour (see the module docstring's note on
+    what BC's own proximity query may have done)."""
+    return dist_sq <= HUM_MAX_DISTANCE * HUM_MAX_DISTANCE
 
 
 def _distance_sq(ship, listener_pos) -> float:
@@ -163,8 +182,9 @@ def update(listener_pos) -> None:
     humming — see the module docstring's divergence note — so a stable-ish
     formation at the #4/#5 cutoff doesn't stop/restart every frame.
     """
-    candidates = [(s, _distance_sq(s, listener_pos))
-                  for s in _roster() if _engine_sound_name_for(s)]
+    candidates = [(s, d) for s, d in
+                  ((s, _distance_sq(s, listener_pos)) for s in _roster())
+                  if _audible(d) and _engine_sound_name_for(s)]
     # Liveness (`_PlayingSound.is_live`), not mere dict-key presence or a
     # bare `_pid` truthiness check (review Critical #1): a humming ship's
     # source can go dead two ways this registry cannot see on its own --

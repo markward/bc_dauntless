@@ -10,10 +10,13 @@ def test_iter_suns_yields_sun_objects():
     pSun = Sun_Create(4000.0, 4000.0, 500.0)
     pSet.AddObjectToSet(pSun, "Sun")
     App.g_kSetManager.AddSet(pSet, "_test_iter_suns_basic")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_iter_suns_basic")
     try:
         suns = list(host_loop._iter_suns())
         assert pSun in suns
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_iter_suns_basic")
 
 
@@ -28,11 +31,14 @@ def test_iter_suns_skips_plain_planets():
     pSet.AddObjectToSet(pSun, "Sun")
     pSet.AddObjectToSet(pPlanet, "Planet")
     App.g_kSetManager.AddSet(pSet, "_test_iter_suns_no_planet")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_iter_suns_no_planet")
     try:
         suns = list(host_loop._iter_suns())
         assert pSun in suns
         assert pPlanet not in suns
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_iter_suns_no_planet")
 
 
@@ -103,11 +109,14 @@ def test_aggregate_suns_applies_astro_scale(tmp_path, monkeypatch):
     pSun.SetTranslateXYZ(10.0, 20.0, 30.0)
     pSet.AddObjectToSet(pSun, "Sun")
     App.g_kSetManager.AddSet(pSet, "_test_agg_suns_astro_scale")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_agg_suns_astro_scale")
 
     monkeypatch.setattr(hl._paths, "game_root", lambda: tmp_path / "game")
     try:
         result = host_loop._aggregate_suns()
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_agg_suns_astro_scale")
 
     expected_tex = str(tex_abs.resolve())
@@ -139,11 +148,14 @@ def test_aggregate_suns_empty_flare_path_when_no_flare_texture(tmp_path, monkeyp
     pSun = Sun_Create(1000.0, 1000.0, 0.0, tex_rel)  # 4 args — no flare
     pSet.AddObjectToSet(pSun, "Sun")
     App.g_kSetManager.AddSet(pSet, "_test_agg_suns_no_flare")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_agg_suns_no_flare")
 
     monkeypatch.setattr(hl._paths, "game_root", lambda: tmp_path / "game")
     try:
         result = host_loop._aggregate_suns()
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_agg_suns_no_flare")
 
     expected_tex = str(tex_abs.resolve())
@@ -170,6 +182,8 @@ def test_aggregate_suns_empty_flare_path_when_flare_texture_missing(tmp_path, ca
                       "data/Textures/Effects/Nonexistent.tga")
     pSet.AddObjectToSet(pSun, "Sun")
     App.g_kSetManager.AddSet(pSet, "_test_agg_suns_missing_flare")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_agg_suns_missing_flare")
 
     monkeypatch.setattr(hl._paths, "game_root", lambda: tmp_path / "game")
     try:
@@ -177,6 +191,7 @@ def test_aggregate_suns_empty_flare_path_when_flare_texture_missing(tmp_path, ca
         # Call twice; the warning must only fire once.
         host_loop._aggregate_suns()
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_agg_suns_missing_flare")
 
     expected_tex = str(tex_abs.resolve())

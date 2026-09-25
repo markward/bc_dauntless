@@ -36,10 +36,13 @@ def test_iter_planets_yields_planet_objects():
     pPlanet = Planet_Create(170.0, "data/models/environment/GreenPurplePlanet.nif")
     pSet.AddObjectToSet(pPlanet, "Biranu 1")
     App.g_kSetManager.AddSet(pSet, "_test_planets_basic")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_planets_basic")
     try:
         planets = list(host_loop._iter_planets())
         assert pPlanet in planets
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_planets_basic")
 
 
@@ -55,11 +58,14 @@ def test_iter_planets_skips_sun():
     pPlanet = Planet_Create(170.0, "data/models/environment/GreenPurplePlanet.nif")
     pSet.AddObjectToSet(pPlanet, "Biranu 1")
     App.g_kSetManager.AddSet(pSet, "_test_planets_no_sun")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_planets_no_sun")
     try:
         planets = list(host_loop._iter_planets())
         assert pPlanet in planets
         assert pSun not in planets
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_planets_no_sun")
 
 
@@ -79,11 +85,14 @@ def test_iter_planets_skips_ship_like_objects():
     pSet.AddObjectToSet(pPlanet, "planet")
     pSet.AddObjectToSet(pShip, "ship")
     App.g_kSetManager.AddSet(pSet, "_test_planets_skip_ships")
+    # Suns and realized planets come only from the VIEWED set.
+    App.g_kSetManager.MakeRenderedSet("_test_planets_skip_ships")
     try:
         planets = list(host_loop._iter_planets())
         assert pPlanet in planets
         assert pShip not in planets
     finally:
+        App.g_kSetManager.ClearRenderedSet()
         App.g_kSetManager.DeleteSet("_test_planets_skip_ships")
 
 

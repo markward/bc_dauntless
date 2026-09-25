@@ -329,9 +329,11 @@ def test_fallback_realizes_no_planet_of_a_set_that_is_not_viewed(monkeypatch):
     hl._reconcile_runtime_instances(sess, r)
 
     assert left_planet not in sess.planet_instances
-    # Ships keep the legacy all-sets walk (next tick with a player tears
-    # down whatever is not in the active set).
-    assert left_ship in sess.ship_instances
+    # A rendered space set IS a viewed set (frames.viewing_set), so ships
+    # come only from its frame (system-frames Plan 3 Task 3): the left-behind
+    # set is another frame. The legacy all-sets ship walk now runs only when
+    # nothing is viewed at all -- see the next test.
+    assert left_ship not in sess.ship_instances
     App.g_kSetManager.DeleteAllSets()
 
 
@@ -343,13 +345,16 @@ def test_fallback_with_no_rendered_set_realizes_no_planet(monkeypatch):
     App.g_kSetManager.ClearRenderedSet()
     ona = _make_set("Ona1")
     planet = _add_planet(ona, "Ona 1")
-    _add_ship(ona, "Left Behind")
+    left_ship = _add_ship(ona, "Left Behind")
     monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
 
     sess = hl.MissionSession(mission_name="t")
     hl._reconcile_runtime_instances(sess, _FakeRenderer())
 
     assert planet not in sess.planet_instances
+    # Nothing viewed: ships keep the legacy all-sets walk (the next tick with
+    # a player tears down whatever is not in the viewed frame).
+    assert left_ship in sess.ship_instances
     App.g_kSetManager.DeleteAllSets()
 
 
