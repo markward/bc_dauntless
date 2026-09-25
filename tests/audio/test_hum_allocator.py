@@ -97,16 +97,14 @@ def test_caps_at_four_nearest_ships(boot, monkeypatch):
 
 
 def test_ship_falling_out_of_top4_stops_humming(boot, monkeypatch):
-    # All within HUM_MAX_DISTANCE of both listener positions, so this tests
-    # the top-4 ordering alone, not the audible-range gate.
-    near = [_Ship(f"s{i}", x=i * 2) for i in range(4)]
-    far = _Ship("far", x=12)
+    near = [_Ship(f"s{i}", x=i * 10) for i in range(4)]
+    far = _Ship("far", x=500)
     _stub_roster(monkeypatch, near + [far])
     hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
     assert "far" not in hum_allocator.humming_ship_names()
 
     # Listener travels out to the far ship; s0 (x=0) is now the odd one out.
-    hum_allocator.update(listener_pos=(12.0, 0.0, 0.0))
+    hum_allocator.update(listener_pos=(500.0, 0.0, 0.0))
     humming = hum_allocator.humming_ship_names()
     assert "far" in humming
     assert "s0" not in humming
@@ -388,14 +386,16 @@ def test_player_hum_does_not_spin_during_a_cross_frame_cutscene(boot):
         App.g_kSetManager.ClearRenderedSet()
 
 
-def test_update_never_hums_a_ship_beyond_audible_range(boot, monkeypatch):
-    """system-frames Plan 3 Task 3: a whole system's regions are loaded at
-    once, so the viewed frame holds ships tens of thousands of GU away. Past
-    HUM_MAX_DISTANCE the clamped gain is pinned at its floor; such a ship must
-    not take a top-4 slot even when fewer than four are near."""
+def test_update_never_hums_a_ship_beyond_the_draw_distance(boot, monkeypatch):
+    """system-frames Plan 3 Task 3 (Ruling 2): a whole system's regions are
+    loaded at once, so the viewed frame holds ships tens of thousands of GU
+    away. A ship past the render draw distance -- one the scene does not
+    draw -- must not take a top-4 slot even when fewer than four are near."""
+    from engine.systems import render_scope
+    d = render_scope.SHIP_DRAW_DISTANCE_GU
     near = _Ship("near", x=10)
-    edge = _Ship("edge", x=engine_rumble.HUM_MAX_DISTANCE)
-    far = _Ship("far", x=40000)
+    edge = _Ship("edge", x=d)
+    far = _Ship("far", x=2.0 * d)
     _stub_roster(monkeypatch, [near, edge, far])
     hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
     assert hum_allocator.humming_ship_names() == {"near", "edge"}

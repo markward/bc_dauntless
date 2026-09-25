@@ -735,7 +735,10 @@ def _push_cloak_refraction(r, session, player) -> None:
         r.set_cloak_ships([])
         return
     cloak_list = []
+    scope_hidden = getattr(session, "scope_hidden", ())
     for ship, iid in list(ships.items()):
+        if iid in scope_hidden:
+            continue          # hidden by the render scope: no hull, no shell
         getter = getattr(ship, "GetCloakingSubsystem", None)
         if getter is None:
             continue
@@ -1748,6 +1751,9 @@ DYN_LIGHT_CULL_GU       = 15.0 / _units.GU_TO_KM   # 85.71 GU
 # of latency on a 13 km threshold is imperceptible. Only the main space camera
 # writes here — see _note_camera_eye.
 _last_camera_eye = None
+# The set that was VIEWED when _last_camera_eye was noted: the eye is in that
+# set's coordinates, so it means nothing under another view (_cull_centre).
+_last_camera_eye_view = None
 
 
 def _note_camera_eye(eye) -> None:
@@ -1760,8 +1766,10 @@ def _note_camera_eye(eye) -> None:
     the next real frame's lights against a camera that was never looking at
     the scene.
     """
-    global _last_camera_eye
+    global _last_camera_eye, _last_camera_eye_view
     _last_camera_eye = tuple(eye) if eye is not None else None
+    _last_camera_eye_view = (_frames.viewing_set()
+                             if _last_camera_eye is not None else None)
 
 
 def _camera_distance_fade(position):
@@ -5069,6 +5077,10 @@ class MissionSession:
     # the ship (ShipClass._articulation_deflection); this just stops a settled
     # hull from re-crossing into C++ every frame.
     ship_articulation: dict[Any, float] = field(default_factory=dict)
+    # Ship instance ids the render scope has HIDDEN (out of the viewed frame
+    # or past the draw distance; _reconcile_runtime_instances). Consulted by
+    # every other per-frame visibility writer so none re-shows them.
+    scope_hidden: set = field(default_factory=set)
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
@@ -5080,6 +5092,7 @@ class MissionSession:
         self.ship_glow_controllers.clear()
         self.ship_emitters.clear()
         self.ship_articulation.clear()
+        self.scope_hidden.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
         # The bindings themselves died with the instances above; drop the
@@ -5302,6 +5315,7 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # look already-posed, or a re-realized BoP would render its wings
             # at the static pose until its deflection next CHANGED.
             session.ship_articulation.pop(iid, None)
+            session.scope_hidden.discard(iid)
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
@@ -5341,46 +5355,41 @@ def _ensure_system_loaded(session) -> None:
         dev_mode.log_swallowed("system_loader.ensure_loaded", exc)
 
 
-# How far from the camera a ship is still realized, in GU. Derived so the
-# LARGEST ship class commonly present still covers at least one pixel at the
-# cull line:
-#   * exterior vertical FOV 35 deg (engine.cameras.EXTERIOR_FOV_Y_RAD) over a
-#     1080 px viewport: one pixel ~ radians(35)/1080 = 5.657e-4 rad;
-#   * ship radius = half the diagonal of the high-LOD NIF's AABB x
-#     BC_MODEL_SCALE, measured with the renderer's own model_aabb on each
-#     ships/*.py GetShipStats()["FilenameHigh"] (2026-09-25):
-#       Galaxy  data/Models/Ships/Galaxy/Galaxy.nif    half (232.1, 322.2, 70.5)
-#               -> r = 4.03 GU, 1 px at 2*4.03/5.657e-4  = 14,258 GU
-#       Warbird data/Models/Ships/Warbird/Warbird.nif  half (493.6, 628.8, 173.2)
-#               -> r = 8.18 GU, 1 px at 2*8.18/5.657e-4  = 28,917 GU
-#     The Warbird is the largest non-station ship (next: KessokHeavy 6.71 GU,
-#     CardHybrid 5.13 GU; bases/stations and the one-mission Sunbuster at
-#     10.42 GU, which is still 1.23 px at the line, excluded). The hardpoints
-#     (ships/Hardpoints/*.py) carry no whole-ship radius -- Hull.SetRadius(1.0)
-#     on the Galaxy is the hull SUBSYSTEM's -- hence the model extent.
-#   * 28,917 rounded up to a round number: 30,000 GU (5,250 km).
-# Hysteresis: a ship is realized inside SHIP_DRAW_DISTANCE_GU and removed only
-# past SHIP_DRAW_DISTANCE_GU * (1 + SHIP_DRAW_HYSTERESIS), so a ship sitting on
-# the line does not load and destroy its model every tick.
-SHIP_DRAW_DISTANCE_GU = 30000.0
-SHIP_DRAW_HYSTERESIS = 0.10
+def _cull_centre(view, player):
+    """Where the ship draw-distance cull is measured from, in `view`'s
+    coordinates, or None when there is nothing trustworthy to measure from.
+
+    The camera eye, when it was noted while THIS set was viewed. An eye noted
+    under another view is in that set's coordinates (a cutscene cut, a warp
+    to another region or system): it is dropped -- reset, so the dynamic-light
+    fade does not misjudge it either -- and the player's position in view
+    coordinates stands in, as it does on the first tick after a load (no eye
+    yet). No usable eye and no player in the viewed frame -> None."""
+    global _last_camera_eye, _last_camera_eye_view
+    if _last_camera_eye is not None and _last_camera_eye_view is view:
+        return _last_camera_eye
+    _last_camera_eye = None
+    _last_camera_eye_view = None
+    if player is None:
+        return None
+    return _frames.local_in(view, player)
 
 
-def _in_ship_draw_range(ship, off, eye, realized: bool) -> bool:
-    """True when `ship` (in a set `off` = offset_between(view, its set) from
-    the viewed set) is within the draw distance of the camera `eye` (view
-    coordinates; None before the first frame -> no cull). A realized ship
-    gets the 10% hysteresis band."""
-    if eye is None:
-        return True
-    loc = ship.GetWorldLocation()
-    dx = loc.x + off[0] - eye[0]
-    dy = loc.y + off[1] - eye[1]
-    dz = loc.z + off[2] - eye[2]
-    limit = SHIP_DRAW_DISTANCE_GU
-    if realized:
-        limit *= 1.0 + SHIP_DRAW_HYSTERESIS
-    return dx * dx + dy * dy + dz * dz <= limit * limit
+def _set_scope_visible(session, renderer, ship, visible: bool) -> None:
+    """Show or hide `ship`'s instance for the render scope, calling the
+    renderer only on a change. `session.scope_hidden` is the record the other
+    per-frame visibility writers (warp hide, cloak, bridge view) consult, so
+    none of them re-shows a ship the scope hides."""
+    iid = session.ship_instances.get(ship)
+    if iid is None:
+        return
+    hidden = session.scope_hidden
+    if visible and iid in hidden:
+        hidden.discard(iid)
+        renderer.set_visible(iid, True)
+    elif not visible and iid not in hidden:
+        hidden.add(iid)
+        renderer.set_visible(iid, False)
 
 
 def _reconcile_runtime_instances(session, renderer, *,
@@ -5431,18 +5440,26 @@ def _reconcile_runtime_instances(session, renderer, *,
                 and not registry_texture.has_replacements(_p)):
             registry_texture.apply_class_default(_p)
 
-    # ADDITIONS: realize un-realized ships in every set of the VIEWED FRAME
-    # (system-frames Plan 3 Task 3). Entering a star system loads all its
-    # regions (system_loader), and a ship in Ona2 is as much in the scene as
-    # one in Ona1 -- it is drawn at its position in the viewed set's
-    # coordinates (_sync_instance_transforms). A set in another frame (a
-    # left-behind system, Starbase 12, the bridge) contributes nothing: that
-    # is what keeps other systems' ships (the Serris2 Cardassians, the
-    # Vesuvi6 Facility) out of the scene. Ships beyond SHIP_DRAW_DISTANCE_GU
-    # of the camera are not realized (see _in_ship_draw_range). Planets come
-    # only from the viewed set, and only when it is unmapped (realize_set_
-    # objects) -- a planet instance, unlike a ship's, is never reconciled away.
-    # Idempotent: realize_set_objects skips ships already realized.
+    # SCOPE (system-frames Plan 3 Task 3, Ruling 4). Entering a star system
+    # loads all its regions (system_loader); a ship in Ona2 is as much in the
+    # scene as one in Ona1, drawn at its position in the viewed set's
+    # coordinates (_sync_instance_transforms). So:
+    #   * KEPT: every ship in the PLAYER's frame or the VIEWED frame keeps its
+    #     instance. A set in neither (a left-behind system, Starbase 12 once a
+    #     cutscene there ends) is torn down below -- that is what keeps other
+    #     systems' ships (the Serris2 Cardassians, the Vesuvi6 Facility) out.
+    #   * VISIBLE: in the viewed frame AND within SHIP_DRAW_DISTANCE_GU of the
+    #     cull centre (_cull_centre), with render_scope's hysteresis. Culling
+    #     HIDES, never destroys: a destroyed instance loses its hull carve and
+    #     decals. The player is never distance-culled, only hidden while a
+    #     cutscene shows another frame.
+    #   * REALIZED: a kept ship is realized only once it would be visible, so
+    #     loading a system never loads every model in it.
+    # With no usable cull centre (no eye for this view and no player in its
+    # frame) no visibility decision is made this tick, and only the viewed
+    # set's own ships are realized -- never every sibling region's.
+    # Planets come only from the viewed set, and only when it is unmapped
+    # (realize_set_objects). Idempotent: realize skips realized ships.
     #
     # When no set is viewed at all (no player, no explicit space rendered set)
     # fall back to the legacy all-sets reconcile -- for SHIPS; planets only
@@ -5451,29 +5468,52 @@ def _reconcile_runtime_instances(session, renderer, *,
     # otherwise leave ghost planets of unrelated systems in the scene.
     view = _frames.viewing_set()
     if view is not None:
+        from engine.systems import render_scope
         game = Game_GetCurrentGame()
         cur_player = game.GetPlayer() if game is not None else None
-        eye = _last_camera_eye
+        p_set = _frames.containing_set(cur_player)
+        centre = _cull_centre(view, cur_player)
+        hidden = session.scope_hidden
         live_ships = set()
         for pSet in App.g_kSetManager._sets.values():
-            off = _frames.offset_between(view, pSet)
-            if off is None:
+            v_off = _frames.offset_between(view, pSet)
+            in_player_frame = (p_set is not None and
+                               _frames.offset_between(p_set, pSet) is not None)
+            if v_off is None and not in_player_frame:
                 continue
-            wanted = [ship for ship in _iter_ships_in_set(pSet)
-                      if ship is cur_player
-                      or _in_ship_draw_range(ship, off, eye,
-                                             ship in session.ship_instances)]
-            live_ships.update(wanted)
-            if any(ship not in session.ship_instances for ship in wanted):
+            to_realize = []
+            decisions = []          # (ship, visible) to apply after realize
+            for ship in _iter_ships_in_set(pSet):
+                iid = session.ship_instances.get(ship)
+                if ship is cur_player:
+                    visible = v_off is not None
+                elif v_off is None:
+                    visible = False
+                elif centre is None:
+                    visible = None              # no decision this tick
+                else:
+                    loc = ship.GetWorldLocation()
+                    visible = render_scope.within_draw_distance(
+                        (loc.x + v_off[0], loc.y + v_off[1], loc.z + v_off[2]),
+                        centre, shown=iid is not None and iid not in hidden)
+                if iid is None:
+                    if (ship is cur_player or visible
+                            or (visible is None and pSet is view)):
+                        to_realize.append(ship)
+                        if visible is False:    # the player, off-frame
+                            decisions.append((ship, False))
+                    continue
+                live_ships.add(ship)
+                if visible is not None:
+                    decisions.append((ship, visible))
+            if to_realize:
                 realize_set_objects(session, pSet, renderer, verbose=verbose,
                                     include_planets=pSet is view,
-                                    ships=wanted)
-        # The player is never scoped away: a cutscene rendered in another
-        # frame must not destroy (and so lose the carve/decals of) the ship
-        # the mission returns to. It is drawn as before (see
-        # _sync_instance_transforms).
-        if cur_player is not None and cur_player in session.ship_instances:
-            live_ships.add(cur_player)
+                                    ships=to_realize)
+                live_ships.update(s_ for s_ in to_realize
+                                  if s_ in session.ship_instances)
+            for ship, visible in decisions:
+                _set_scope_visible(session, renderer, ship, visible)
     else:
         viewed = App.g_kSetManager.get_explicit_rendered_set()
         live_ships = set()
@@ -5484,17 +5524,22 @@ def _reconcile_runtime_instances(session, renderer, *,
                 realize_set_objects(session, pSet, renderer, verbose=verbose,
                                     include_planets=pSet is viewed)
 
-    # REMOVALS: any realized ship not in the live (viewed-frame, in-range)
-    # roster is destroyed and forgotten — covers despawns, ships left behind
-    # when the player warps to another system, and ships that crossed out past
-    # the draw distance.
+    # REMOVALS: any realized ship not in the live (kept) roster is destroyed
+    # and forgotten — covers despawns and ships whose set left both the
+    # player's and the viewed frame. A ship merely out of range is HIDDEN
+    # above, never removed here.
     for ship in list(session.ship_instances.keys()):
         if ship not in live_ships:
             iid = session.ship_instances.pop(ship, None)
             if iid is not None:
                 renderer.destroy_instance(iid)
-                # ship_glow_controllers is keyed by instance id.
+                # The per-instance records keyed by the dead iid (the same
+                # set teardown_set_objects drops): a recycled iid must not
+                # inherit them.
                 session.ship_glow_controllers.pop(iid, None)
+                session.ship_articulation.pop(iid, None)
+                session.ship_emitters.pop(iid, None)
+                session.scope_hidden.discard(iid)
                 # The transform-slot binding died with the instance.
                 session.slot_bindings.pop(ship, None)
 
@@ -7223,14 +7268,18 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
         controller._vs_off_texture_sent = off_path
 
 
-def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
+def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open,
+                                    scope_hidden=False) -> None:
     """Hide the player ship while in bridge view so it doesn't appear on its
     own viewscreen feed (and the centre-mounted forward cam doesn't clip its
     hull). No-op while the Ship Property Viewer owns the frame (it manages
-    visibility itself). Idempotent — safe to call every frame."""
+    visibility itself). Idempotent — safe to call every frame.
+
+    `scope_hidden`: the render scope hides the player while a cutscene shows
+    another frame (_reconcile_runtime_instances); this must not re-show it."""
     if spv_open or player_iid is None:
         return
-    r.set_visible(player_iid, not is_bridge)
+    r.set_visible(player_iid, not is_bridge and not scope_hidden)
 
 
 def _ensure_target_menu() -> None:
@@ -7576,7 +7625,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         if session.slot_bindings:
             _unbind_store_transform(session, ship, iid)
         if _warp_apply_vis:
-            r.set_visible(iid, not _warp_hide)
+            r.set_visible(iid, not _warp_hide
+                          and iid not in session.scope_hidden)
         # NOTE: scale is read live, not interpolated — the
         # buffer only stores loc+rot. Fine for steady scale;
         # a mid-animation GetScale() change applies the
@@ -10267,7 +10317,9 @@ def run(mission_name: Optional[str] = None,
             # cutscene exterior empty — the ship you're watching is invisible.
             _apply_bridge_player_visibility(
                 r, _player_iid_vs,
-                is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open)
+                is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open,
+                scope_hidden=(session is not None
+                              and _player_iid_vs in session.scope_hidden))
 
             # Audio listener (skipped while paused — silence the rumble).
             if not pause.sim_frozen:

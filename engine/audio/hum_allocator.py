@@ -95,10 +95,10 @@ def _roster(listener_pos=None):
     (test_real_roster_finds_ship_via_iter_active_ships pins this). Seam for
     tests.
 
-    With `listener_pos` (view coordinates), ships beyond HUM_MAX_DISTANCE of
-    it are dropped (system-frames Plan 3 Task 3): a whole star system's
-    regions are loaded at once, so the viewed frame routinely holds ships tens
-    of thousands of GU away. See `_audible`."""
+    With `listener_pos` (view coordinates), ships beyond the render draw
+    distance of it are dropped (system-frames Plan 3 Task 3): a whole star
+    system's regions are loaded at once, so the viewed frame routinely holds
+    ships tens of thousands of GU away. See `_audible`."""
     import App
     from engine.appc.ships import ShipClass
     from engine.appc.ship_iter import iter_set_objects
@@ -115,20 +115,29 @@ def _roster(listener_pos=None):
             if isinstance(obj, ShipClass):
                 out.append(obj)
     if listener_pos is not None:
-        out = [s for s in out if _audible(_distance_sq(s, listener_pos))]
+        out = [s for s, _d in _audible(out, listener_pos)]
     return out
 
 
-def _audible(dist_sq: float) -> bool:
-    """Within HUM_MAX_DISTANCE of the listener.
+def _audible(ships, listener_pos):
+    """[(ship, dist_sq)] for the ships within the render draw distance
+    (engine.systems.render_scope.SHIP_DRAW_DISTANCE_GU) of the listener --
+    THE one hum range gate, shared by `_roster` and `update`.
 
-    The hum is AL_INVERSE_DISTANCE_CLAMPED with max HUM_MAX_DISTANCE: past it
-    the gain is pinned at its floor (ref/max = 0.125), so a ship out there is
-    no quieter at 40 GU than at 40,000. Candidates beyond it would take a
-    top-4 slot and hum at that floor from across the system; this gate is
-    ours, not recovered BC behaviour (see the module docstring's note on
-    what BC's own proximity query may have done)."""
-    return dist_sq <= HUM_MAX_DISTANCE * HUM_MAX_DISTANCE
+    The draw distance, not HUM_MAX_DISTANCE: past 35 GU the clamped hum gain
+    only floors (ref/max = 0.125), it never reaches zero, so BC-range ships
+    keep humming faintly. The gate drops only ships the scene does not draw
+    -- a sibling region's, tens of thousands of GU away -- which would
+    otherwise take a top-4 slot from across the system. Ours, not recovered
+    BC behaviour (see the module docstring's note on BC's proximity query)."""
+    from engine.systems.render_scope import SHIP_DRAW_DISTANCE_GU
+    limit_sq = SHIP_DRAW_DISTANCE_GU * SHIP_DRAW_DISTANCE_GU
+    out = []
+    for s in ships:
+        d = _distance_sq(s, listener_pos)
+        if d <= limit_sq:
+            out.append((s, d))
+    return out
 
 
 def _distance_sq(ship, listener_pos) -> float:
@@ -182,9 +191,8 @@ def update(listener_pos) -> None:
     humming — see the module docstring's divergence note — so a stable-ish
     formation at the #4/#5 cutoff doesn't stop/restart every frame.
     """
-    candidates = [(s, d) for s, d in
-                  ((s, _distance_sq(s, listener_pos)) for s in _roster())
-                  if _audible(d) and _engine_sound_name_for(s)]
+    candidates = [(s, d) for s, d in _audible(_roster(), listener_pos)
+                  if _engine_sound_name_for(s)]
     # Liveness (`_PlayingSound.is_live`), not mere dict-key presence or a
     # bare `_pid` truthiness check (review Critical #1): a humming ship's
     # source can go dead two ways this registry cannot see on its own --
