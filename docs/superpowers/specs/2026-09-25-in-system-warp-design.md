@@ -7,6 +7,11 @@
 document is the "detailed design" its §7 deferred. §7's rules **A, A′, H, C, D, N**
 bind it and are restated where they apply; where this document refines one (the
 timing of A′ during a dash, below) it says so.
+**Depends on:** `docs/superpowers/specs/2026-09-25-warp-button-chain-and-mission-warps-design.md`,
+built first. The survey for this plan found that **nothing sends
+`ET_WARP_BUTTON_PRESSED` today** — the tunnel bypasses the mission handlers too —
+so rule D's "mission chain" does not exist until that spec lands (Mark: build it,
+option A). Every mention of the chain below means the chain as that spec builds it.
 
 ## Goal
 
@@ -134,12 +139,14 @@ boost term) and the `ships.py` comment tying AI warp speed to it.
 
 ### 2. The player's two dashes
 
-**Set Course → Warp.** Unchanged up to the moment it would build the tunnel:
-destination picked, Warp pressed, `warp_gate`, the mission
-`ET_WARP_BUTTON_PRESSED` chain, the Helm-menu disable. Then one test:
+**Set Course → Warp.** Through the warp button chain unchanged — destination
+picked, Warp pressed, the mission handlers, then the engine's final step
+(`warp_gate`, the Helm-menu disable). At the point that step builds the warp,
+one test:
 
 - the destination region belongs to the **same mapped system** as the player's
-  current region → **dash**;
+  current region **and the warp names no mission or episode change** → **dash**
+  (a mission change needs the transit, so it always takes the tunnel);
 - anything else → the **tunnel**, unchanged (**rule C**: E6M1–E6M5 create ships
   during it).
 
@@ -151,8 +158,17 @@ so the ship ends where and facing where the tunnel would have put it, without a
 snap. Every mission's arrival geometry holds.
 
 **Warp on Heading.** A new Helm entry beside Warp, with a project-authored label
-(BC has no string for it). It runs the same `warp_gate` and the same mission
-`ET_WARP_BUTTON_PRESSED` chain (**rule D**); the event carries no destination.
+(BC has no string for it). It sends the same `ET_WARP_BUTTON_PRESSED` through
+the same chain and final `warp_gate` (**rule D**), with the button's destination,
+mission and episode **cleared for the dispatch** and the plotted course restored
+after it — so no handler acts on a stale course (E6M5's Beol 4 → Episode 7, E7M6's
+Starbase 12 → Episode 8). Anything a handler sets on the button during that
+dispatch is ignored by the heading dash. Actions handlers queue play at the
+dash's matching points: before-warp at engage, the during queues in flight,
+after-warp at drop-out. The survey's audit of all 26 handlers with no
+destination: none crashes; E1M2 refuses silently, E6M1 answers "follow orders",
+E8M2 counts it as leaving Omega Draconis (game over after three) — each the
+mission's own rule, now enforced.
 No align: engage flash, then the heading dash until drop-out. Greyed out in an
 unmapped set.
 
