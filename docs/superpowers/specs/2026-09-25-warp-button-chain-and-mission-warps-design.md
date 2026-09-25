@@ -109,6 +109,30 @@ BC's `WaitForQueued`, player only. The streak simply holds until then.
 chosen `SortedRegionMenu`'s `GetMissionName()` / `GetEpisodeName()` onto the
 button alongside the placement; a new pick clears names from an older one.
 
+### 1b. The tunnel runs through BC's `warp` set
+
+Added in planning (Mark: option A). The handlers this spec switches on expect
+BC's warp set: E6M5 and E7M6 call `App.WarpSequence_GetWarpSet()` then
+`Warp_P.LoadPlacements("warp")` and queue their episode cutscene to play there;
+E6M1–E6M5's `PlayerEntersWarpSet` (on `ET_ENTERED_SET`) create ships during the
+tunnel that E6M1 dereferences on arrival without a None check; 12 missions test
+`GetName() == "warp"` as their in-transit guard. Today the tunnel parks the
+player in a private `_WarpTransit` set that is recreated per warp, deleted on
+arrival, and deliberately excluded from `ET_ENTERED_SET`/`ET_EXITED_SET`
+(`engine/appc/sets.py:300`), and `WarpSequence_GetWarpSet` is unimplemented.
+
+- **`App.WarpSequence_GetWarpSet()`** returns the set named `"warp"`, creating
+  it on first call. It is the tunnel's transit set.
+- **It persists.** Departure no longer deletes and recreates it, and arrival no
+  longer deletes it — objects a mission put there (placements, ships) survive
+  until the mission clears them (`MissionLib.DeleteShipsFromWarpSetExceptForMe`)
+  or the mission changes. It survives the §2 clear while the player is in it.
+- **Entering and leaving it are ordinary set transitions:** the
+  `_WARP_TRANSIT_SET_NAME` broadcast exclusion is removed, so `ET_ENTERED_SET` /
+  `ET_EXITED_SET` fire for the player and missions' `PlayerEntersWarpSet` run.
+- BC's own region banner already skips it (`HelmMenuHandlers.py:407`,
+  `GetName() != "warp"`).
+
 ### 2. Changing mission in transit
 
 When the warp names a mission or episode different from the current one, the
@@ -156,6 +180,10 @@ progress is not started twice (E5M4 queues its win on the button **and** calls
   Episode 3. In each: the **same ship object** arrives, damage intact; the old
   mission's `Terminate` ran; only the bridge set survived the clear; no second
   change starts.
+- **Warp set:** `WarpSequence_GetWarpSet()` returns one persistent `"warp"`
+  set; the tunnel parks the player there; `ET_ENTERED_SET` fires for it; objects
+  a mission put there survive arrival; E6M1's in-tunnel Artrus ships exist on
+  arrival.
 - **Sweep:** every campaign mission loads, Warp is pressed headlessly, and
   nothing raises — all 26 handlers exercised.
 
