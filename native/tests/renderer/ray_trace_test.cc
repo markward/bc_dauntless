@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <array>
 #include <optional>
 #include <limits>
@@ -244,6 +245,58 @@ TEST(RayTraceInstance, InstanceWorldTranslateRelocatesHit) {
     ASSERT_TRUE(hit.has_value());
     EXPECT_NEAR(hit->point.x, 100.0f, 1e-4f);
     EXPECT_NEAR(hit->point.z, 0.0f, 1e-4f);
+}
+
+// ── ray_trace_instance_linear (floating render origin) ──────────────────────
+// The mesh-query bindings hand the trace a ray RELATIVE TO THE INSTANCE'S
+// TRANSLATION and invert only the float rotation·scale, so a ship 1e6 GU out
+// is traced with the same precision as one at the origin.
+
+TEST(RayTraceInstanceLinear, MatchesTheFullTraceOfAnUntranslatedInstance) {
+    auto m = single_triangle_model({-1, -1, 0}, {1, -1, 0}, {0, 1, 0});
+    const glm::mat3 lin = glm::mat3(glm::rotate(glm::mat4(1.0f),
+                                                glm::radians(30.0f),
+                                                glm::vec3(0, 1, 0))) * 0.5f;
+    const glm::vec3 o(0.1f, 0.05f, -5.0f), d(0.0f, 0.0f, 1.0f);
+    auto a = renderer::ray_trace_instance_linear(m, lin, o, d, 100.0f);
+    auto b = renderer::ray_trace_instance(m, glm::mat4(lin), o, d, 100.0f);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+    EXPECT_EQ(a->point, b->point);
+    EXPECT_EQ(a->normal, b->normal);
+    EXPECT_EQ(a->t, b->t);
+}
+
+TEST(RayTraceInstanceLinear, AMillionGUOutTheRelativeTraceKeepsItsPrecision) {
+    // A game-scale hull (model units x 0.01 -> a 0.02 GU triangle) placed at
+    // x = 1e6 + 0.3 GU, where a float carries only 1/16 GU.
+    auto m = single_triangle_model({-1, -1, 0}, {1, -1, 0}, {0, 1, 0});
+    const float s = 0.01f;
+    const glm::mat3 lin(s);
+    const double tx = 1e6 + 0.3;
+
+    // Instance-relative: ray 0.004 GU off-centre, straight down +z.
+    const glm::vec3 o_rel(0.004f, 0.0f, -5.0f), d(0.0f, 0.0f, 1.0f);
+    auto rel = renderer::ray_trace_instance_linear(m, lin, o_rel, d, 100.0f);
+    ASSERT_TRUE(rel.has_value());
+    EXPECT_NEAR(rel->point.x, 0.004f, 1e-6f);
+    EXPECT_NEAR(rel->point.z, 0.0f, 1e-6f);
+    // Adding the translation back in DOUBLE lands on the true world point.
+    EXPECT_NEAR(tx + rel->point.x, 1e6 + 0.304, 1e-6);
+
+    // Counter-test: the old full-world path with a float translation cannot
+    // even see this triangle correctly -- its world matrix and ray origin
+    // round to the 1/16 GU grid, three times the triangle's size.
+    glm::mat4 world(lin);
+    world[3] = glm::vec4(static_cast<float>(tx), 0.0f, 0.0f, 1.0f);
+    const glm::vec3 o_world(static_cast<float>(tx + 0.004), 0.0f, -5.0f);
+    auto full = renderer::ray_trace_instance(m, world, o_world, d, 100.0f);
+    const bool full_is_right =
+        full.has_value() &&
+        std::abs((static_cast<double>(full->point.x) - tx) - 0.004) < 1e-4;
+    EXPECT_FALSE(full_is_right)
+        << "the float full-world trace should not resolve a 0.004 GU offset "
+           "at 1e6 GU -- if it does, this counter-test proves nothing";
 }
 
 TEST(RayTraceInstance, NodeLocalTransformApplied) {

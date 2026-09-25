@@ -32,6 +32,7 @@ def _color(r, g, b, a):
 def test_fire_debug_hit_sends_to_host():
     import engine.shields as s
     host = MagicMock()
+    host.instance_translation.return_value = (0.0, 0.0, 0.0)
     s.fire_debug_hit(host, instance_id=42, world_point=(1.0, 2.0, 3.0))
     from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
     host.shield_hit.assert_called_once_with(
@@ -48,9 +49,30 @@ def test_fire_debug_hit_accepts_tgpoint3():
     import engine.shields as s
     from engine.appc.math import TGPoint3
     host = MagicMock()
+    host.instance_translation.return_value = (0.0, 0.0, 0.0)
     s.fire_debug_hit(host, instance_id=1, world_point=TGPoint3(4.0, 5.0, 6.0))
     host.shield_hit.assert_called_once()
     assert host.shield_hit.call_args.kwargs["point"] == (4.0, 5.0, 6.0)
+
+
+def test_fire_debug_hit_sends_an_instance_relative_point():
+    """The native shield_hit takes a point RELATIVE TO THE INSTANCE'S
+    TRANSLATION (the floating render origin); the debug glue forms it."""
+    import engine.shields as s
+    host = MagicMock()
+    host.instance_translation.return_value = (1e6 + 0.3, -2.0, 0.5)
+    s.fire_debug_hit(host, instance_id=1, world_point=(1e6 + 1.3, -2.0, 0.5))
+    host.instance_translation.assert_called_once_with(1)
+    assert host.shield_hit.call_args.kwargs["point"] == (
+        (1e6 + 1.3) - (1e6 + 0.3), 0.0, 0.0)
+
+
+def test_fire_debug_hit_drops_a_stale_instance():
+    import engine.shields as s
+    host = MagicMock()
+    host.instance_translation.return_value = None
+    s.fire_debug_hit(host, instance_id=1, world_point=(1.0, 2.0, 3.0))
+    host.shield_hit.assert_not_called()
 
 
 def test_register_ship_shield_skips_when_no_shield_property():

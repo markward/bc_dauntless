@@ -93,21 +93,51 @@ def test_max_dist_clip_returns_none(galaxy_instance):
 
 def test_instance_world_transform_translates_hit(galaxy_instance):
     h, iid = galaxy_instance
-    # Move the Galaxy out by +500 in x; the same ray (along +z at x=0) now
-    # misses; a ray at x=500 hits.
+    # Move the Galaxy out by +500 in x. The ray is INSTANCE-RELATIVE (world
+    # origin minus the instance's translation), and so is the hit it returns.
     h.set_world_transform(iid, _translation_mat(500.0, 0.0, 0.0))
+    tx, ty, tz = h.instance_translation(iid)
+    assert (tx, ty, tz) == (500.0, 0.0, 0.0)
+    # World ray along +z at x=0 -> 500 to the ship's left: misses.
     miss = h.ray_trace_mesh(iid,
-                            origin=(0.0, 0.0, -1000.0),
+                            origin=(0.0 - tx, 0.0 - ty, -1000.0 - tz),
                             direction=(0.0, 0.0, 1.0),
                             max_dist=2000.0)
     assert miss is None
+    # World ray at x=500 goes through the ship's centre: hits.
     hit = h.ray_trace_mesh(iid,
-                           origin=(500.0, 0.0, -1000.0),
+                           origin=(500.0 - tx, 0.0 - ty, -1000.0 - tz),
                            direction=(0.0, 0.0, 1.0),
                            max_dist=2000.0)
     assert hit is not None
     point, _, _ = hit
-    assert abs(point[0] - 500.0) < 1.0
+    assert abs(point[0] + tx - 500.0) < 1.0
+
+
+def test_a_million_gu_out_the_relative_hit_matches_the_origin_hit(galaxy_instance):
+    """The floating render origin: a Galaxy at game scale 1e6 + 0.3 GU out
+    (float32 carries only 1/16 GU there) returns the same instance-relative
+    hit as the same Galaxy at the origin, to 1e-4 GU."""
+    h, iid = galaxy_instance
+    s = 0.0055                      # NIF units -> GU for a Galaxy (~3.6 GU)
+    origin_rel = (0.013, 0.021, -10.0)
+    direction = (0.0, 0.0, 1.0)
+
+    def scaled_at(x):
+        return [s, 0.0, 0.0, x,
+                0.0, s, 0.0, 0.0,
+                0.0, 0.0, s, 0.0,
+                0.0, 0.0, 0.0, 1.0]
+
+    h.set_world_transform(iid, scaled_at(0.0))
+    near = h.ray_trace_mesh(iid, origin_rel, direction, 20.0)
+    h.set_world_transform(iid, scaled_at(1e6 + 0.3))
+    assert h.instance_translation(iid)[0] == 1e6 + 0.3
+    far = h.ray_trace_mesh(iid, origin_rel, direction, 20.0)
+    assert near is not None and far is not None
+    assert far[0] == pytest.approx(near[0], abs=1e-4)
+    assert far[1] == pytest.approx(near[1], abs=1e-4)
+    assert far[2] == pytest.approx(near[2], abs=1e-4)
 
 
 def test_invalid_instance_id_raises(galaxy_instance):

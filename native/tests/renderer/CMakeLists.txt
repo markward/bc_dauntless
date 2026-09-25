@@ -4,6 +4,7 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
+    render_origin_precision_test.cc
     test_cone_light_frame.cc
     explosion_light_frame_test.cc
     skinned_program_test.cc

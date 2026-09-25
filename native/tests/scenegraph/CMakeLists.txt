@@ -4,6 +4,7 @@ add_executable(scenegraph_tests
     damage_decals_test.cc
     hull_carve_test.cc
     breach_events_test.cc
+    render_space_test.cc
 )
 target_link_libraries(scenegraph_tests
     PRIVATE

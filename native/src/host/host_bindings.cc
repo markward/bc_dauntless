@@ -199,6 +199,11 @@ namespace {
 
 std::unique_ptr<renderer::Window> g_window;
 scenegraph::World g_world;
+// The floating render origin (VIEW-space, double). frame() subtracts it from
+// every Space-pass instance's double translation before narrowing to the
+// float matrix the passes read (World::resolve_render_space). Pushed from
+// Python via set_render_origin; (0,0,0) = render space IS view space.
+glm::dvec3 g_render_origin{0.0};
 scenegraph::Camera g_camera;
 renderer::Lighting g_lighting;
 // Separate lighting state for the bridge pass. Populated by the Python
@@ -806,14 +811,11 @@ void sync_instance_transforms_from_store() {
             inst.xform_index = -1;
             return;
         }
-        float m[16];
-        dauntless::compose_world_matrix(store.at(index), inst.xform_scale, m);
-        // compose_world_matrix is row-major (it mirrors _world_matrix_from);
-        // glm is column-major. Transpose on the way in, exactly as
-        // set_world_transform does for a Python-supplied matrix.
-        for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c)
-                inst.world[c][r] = m[r * 4 + c];
+        // The translation stays DOUBLE here; it is narrowed only after the
+        // render origin is subtracted (resolve_render_space, below).
+        dauntless::compose_world_linear_translation(
+            store.at(index), inst.xform_scale, inst.world_linear,
+            inst.world_translation_d);
     });
 }
 
@@ -849,10 +851,16 @@ void frame() {
         // every draw pass) reads inst->world.
         DAUNTLESS_FRAME_SCOPE("xform_sync");
         sync_instance_transforms_from_store();
+        // The floating render origin's one per-frame narrowing: every alive
+        // instance's float `world` = [linear | float(translation_d - origin)]
+        // (origin zero off the Space pass). Follows the sweep, which fills the
+        // double translations; everything below reads the RENDER-space
+        // inst->world it produces.
+        g_world.resolve_render_space(g_render_origin);
         // Attached dynamic lights resolve through the SAME inst->world the
-        // hull draws with this frame. Must follow the sweep (store-bound
-        // ships) and every set_world_transform push (interpolated ships,
-        // which landed before frame() was entered).
+        // hull draws with this frame. Must follow the sweep + resolve
+        // (store-bound ships) and every set_world_transform push
+        // (interpolated ships, which landed before frame() was entered).
         renderer::resolve_attached_dynamic_lights(g_world, g_dynamic_lights);
     }
 
@@ -1856,18 +1864,49 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("id"));
     m.def("set_world_transform",
-          [](scenegraph::InstanceId id, const std::vector<float>& m) {
+          [](scenegraph::InstanceId id, const std::vector<double>& m) {
               if (m.size() != 16) {
                   throw std::runtime_error("set_world_transform: need 16 floats");
               }
-              glm::mat4 mat;
-              // Row-major from Python; glm is column-major. Transpose on input.
-              for (int r = 0; r < 4; ++r)
-                  for (int c = 0; c < 4; ++c)
-                      mat[c][r] = m[r * 4 + c];
-              g_world.set_world_transform(id, mat);
+              // Row-major DOUBLES from Python (pybind converts Python floats
+              // losslessly); glm is column-major. Rotation*scale narrows to
+              // float here (bounded, precision is fine); the translation
+              // column stays double until the render origin is subtracted.
+              glm::mat3 linear;
+              for (int r = 0; r < 3; ++r)
+                  for (int c = 0; c < 3; ++c)
+                      linear[c][r] = static_cast<float>(m[r * 4 + c]);
+              g_world.set_world_transform_d(id, linear,
+                                            glm::dvec3(m[3], m[7], m[11]));
           },
-          py::arg("id"), py::arg("mat4"));
+          py::arg("id"), py::arg("mat4"),
+          "Push an instance's VIEW-space pose as a row-major 4x4 of doubles. "
+          "The translation column is kept in double; the renderer subtracts "
+          "the render origin (set_render_origin) before narrowing to float. "
+          "Unbinds any transform-store slot (a push wins over a binding).");
+    m.def("set_render_origin",
+          [](double x, double y, double z) {
+              g_render_origin = glm::dvec3(x, y, z);
+          },
+          py::arg("x"), py::arg("y"), py::arg("z"),
+          "The floating render origin, in VIEW space (doubles). Each frame the "
+          "renderer subtracts it from every Space-pass instance's double "
+          "translation before narrowing to float; Bridge and Comm instances "
+          "never move with it. Takes effect at the next frame(). The camera "
+          "(set_camera) must then be supplied in the same render space.");
+    m.def("instance_translation",
+          [](scenegraph::InstanceId id) -> py::object {
+              const auto* inst = g_world.get(id);
+              if (inst == nullptr) return py::none();
+              const glm::dvec3& t = inst->world_translation_d;
+              return py::make_tuple(t.x, t.y, t.z);
+          },
+          py::arg("iid"),
+          "The instance's VIEW-space translation (x, y, z) in double, or None "
+          "for a stale id. Subtract it (in double) from a world point to form "
+          "the INSTANCE-RELATIVE points the mesh queries take (ray_trace_mesh, "
+          "shield_hit, hull_carve_add, hull_carve_capsule, world_to_body, "
+          "damage_decal_add), and add it back to ray_trace_mesh's hit.");
     m.def("set_instance_transform_slot",
           [](scenegraph::InstanceId id, int index, std::uint32_t generation,
              double scale) {
@@ -1886,13 +1925,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   auto& store = dauntless::transform_store();
                   const auto i = static_cast<std::uint32_t>(index);
                   if (store.valid(i, generation)) {
-                      float m4[16];
-                      dauntless::compose_world_matrix(store.at(i), scale, m4);
-                      glm::mat4 mat;
-                      for (int r = 0; r < 4; ++r)
-                          for (int c = 0; c < 4; ++c)
-                              mat[c][r] = m4[r * 4 + c];
-                      g_world.set_world_transform(id, mat);
+                      glm::mat3 linear;
+                      glm::dvec3 translation;
+                      dauntless::compose_world_linear_translation(
+                          store.at(i), scale, linear, translation);
+                      g_world.set_world_transform_d(id, linear, translation);
                   }
               }
               g_world.set_transform_slot(id, index, generation, scale);
@@ -1913,9 +1950,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // host_main.cc's argv parsing, so dauntless::is_developer_mode() would
     // read permanently false there and silently no-op every caller.
     m.def("_test_only_sync_instance_transforms",
-          []() { sync_instance_transforms_from_store(); },
-          "Test hook: run the per-frame store->instance sweep that frame() "
-          "runs, without needing a GL context.");
+          []() {
+              sync_instance_transforms_from_store();
+              g_world.resolve_render_space(g_render_origin);
+          },
+          "Test hook: run the per-frame store->instance sweep (and the render "
+          "origin resolve) that frame() runs, without needing a GL context.");
 
     m.def("set_instance_bone_palette",
           [](scenegraph::InstanceId id,
@@ -4180,15 +4220,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(rgba),
                                  std::get<2>(rgba),
                                  std::get<3>(rgba));
-              // Callers pass a WORLD point (that is what combat resolves), but
-              // the state stores BODY so the splash rides the hull instead of
-              // being left behind as the ship flies on. Convert here, once, so
-              // the Python surface stays world-space like every other hit
-              // binding. An unknown instance drops the hit — the pass would
+              // Callers pass an INSTANCE-RELATIVE point (the world hit minus
+              // instance_translation, formed in double), but the state stores
+              // BODY so the splash rides the hull instead of being left behind
+              // as the ship flies on. Convert here, once, inverting only
+              // rotation*scale — never a large translation (the floating render
+              // origin). An unknown instance drops the hit — the pass would
               // drop it anyway.
               const auto* inst = g_world.get(id);
               if (inst == nullptr) return;
-              const glm::vec3 body(glm::inverse(inst->world) * glm::vec4(p, 1.0f));
+              const glm::vec3 body = scenegraph::relative_to_body(inst->world_linear, p);
               g_shield_pass->shield_hit(id, body, c, intensity, glfwGetTime(),
                                         radius);
           },
@@ -4196,7 +4237,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("rgba") = std::make_tuple(0.0f, 0.0f, 0.0f, 0.0f),
           py::arg("intensity") = 1.0f,
           py::arg("radius") = 0.0f,
-          "Push a shield-hit flash for the given ship at a world-space point. "
+          "Push a shield-hit flash for the given ship at an INSTANCE-RELATIVE "
+          "point (world point minus instance_translation). "
           "rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor. "
           "radius is the weapon's DamageRadiusFactor in GU, which sizes the "
           "procedural ripple; 0 clamps up to the renderer's reach floor.");
@@ -4235,8 +4277,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // part_severance attributes damage from the point it returns --
               // a wing shot while raised would accumulate nothing and never
               // come off.
-              auto hit = renderer::ray_trace_instance(
-                  *model, inst->world, o, d, max_dist, &inst->node_overrides);
+              // Instance-relative ray, rotation*scale inverted only: a ship
+              // 1e6 GU out traces with the precision of one at the origin.
+              auto hit = renderer::ray_trace_instance_linear(
+                  *model, inst->world_linear, o, d, max_dist,
+                  &inst->node_overrides);
               if (!hit) return py::none();
               return py::make_tuple(
                   py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
@@ -4247,13 +4292,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("origin"),
           py::arg("direction"),
           py::arg("max_dist"),
-          "Ray-cast a world-space ray against an instance's loaded mesh, at "
+          "Ray-cast a ray against an instance's loaded mesh, at "
           "the pose it is DRAWN at -- the instance's node overrides "
           "(articulation / severance) are applied, so a moved part is hit "
           "where it appears and a severed one cannot be hit at all. origin "
-          "and direction are in world coordinates; direction is "
-          "auto-normalised. Returns ((point), (normal), t) on hit or None "
-          "on miss. t is world-space distance from origin.");
+          "is INSTANCE-RELATIVE (world origin minus instance_translation); "
+          "direction is a world direction, auto-normalised. Returns "
+          "((point), (normal), t) on hit or None on miss; point is "
+          "instance-relative too (add instance_translation back). t is the "
+          "world-space distance from origin.");
 
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,
@@ -4271,14 +4318,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const glm::vec3 nw(std::get<0>(world_normal),
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
-              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
-              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              // pw is INSTANCE-RELATIVE (floating render origin).
+              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
+              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
               const glm::vec3 tw(std::get<0>(world_tangent),
                                  std::get<1>(world_tangent),
                                  std::get<2>(world_tangent));
-              // Zero stays zero (world_dir_to_body returns a length-0 input
+              // Zero stays zero (dir_to_body returns a length-0 input
               // unchanged); the ring then derives a perpendicular.
-              const glm::vec3 tb = scenegraph::world_dir_to_body(inst->world, tw);
+              const glm::vec3 tb = scenegraph::dir_to_body(inst->world_linear, tw);
               // Convert radius game-units -> NIF/model units here (the same
               // space as pb), so the ring's merge test and the shader both work
               // in model units. s = |world's X column| = the uniform NIF->world
@@ -4294,8 +4342,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("weapon_class"), py::arg("time"),
           py::arg("world_tangent") = std::make_tuple(0.0f, 0.0f, 0.0f),
           py::arg("dent") = 0.0f,
-          "Record an object-space damage decal on a ship instance. World-space "
-          "point/normal are transformed into the ship body frame. weapon_class: "
+          "Record an object-space damage decal on a ship instance. The point is "
+          "INSTANCE-RELATIVE (world point minus instance_translation); it and "
+          "the world normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor), 2=Scuff (collision; "
           "world_tangent = slip direction, zero = no preferred direction; "
           "dent 1 = impact crumple, 0 = grind scratches).");
@@ -4314,12 +4363,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const glm::vec3 nw(std::get<0>(world_normal),
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
-              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              // pw is INSTANCE-RELATIVE (floating render origin): only
+              // rotation*scale is inverted.
+              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
               // Transform the world-space surface normal to body frame.
-              // world_dir_to_body strips translation and scale; result is
-              // a unit body-frame outward normal. Fall back to the radial
-              // direction from origin if the transformed result is degenerate.
-              glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              // dir_to_body strips scale; result is a unit body-frame outward
+              // normal. Fall back to the radial direction from origin if the
+              // transformed result is degenerate.
+              glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
               if (glm::length(nb) < 1e-4f) {
                   nb = (glm::length(pb) > 1e-4f)
                        ? glm::normalize(pb)
@@ -4500,7 +4551,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           g_world.create_instance(inst->model_handle);
                       auto* cinst = g_world.get(child);
                       if (cinst != nullptr) {
+                          // All three pose fields: `world` alone would be
+                          // rebuilt from the child's default (identity at the
+                          // origin) pose by the next resolve_render_space.
                           cinst->world = inst->world;
+                          cinst->world_linear = inst->world_linear;
+                          cinst->world_translation_d = inst->world_translation_d;
                           // Copy render-cosmetic fields from parent to child
                           // so a severed chunk keeps the hull's look --
                           // without rim_eligible/rim_strength the Fresnel
@@ -4568,8 +4624,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float authored_res = renderer::hull_volume_resolution(model->source);
               const glm::vec3 a(std::get<0>(p0_world), std::get<1>(p0_world), std::get<2>(p0_world));
               const glm::vec3 b(std::get<0>(p1_world), std::get<1>(p1_world), std::get<2>(p1_world));
-              const glm::vec3 pa = scenegraph::world_to_body(inst->world, a);
-              const glm::vec3 pb = scenegraph::world_to_body(inst->world, b);
+              // a, b are INSTANCE-RELATIVE (floating render origin).
+              const glm::vec3 pa = scenegraph::relative_to_body(inst->world_linear, a);
+              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, b);
               const float s = glm::length(glm::vec3(inst->world[0]));
               const float inv_s = (s > 0.0f) ? 1.0f / s : 1.0f;
               g_instance_field_cache->carve_capsule(id, model->source, authored_res,
@@ -4577,7 +4634,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("instance_id"), py::arg("p0_world"), py::arg("p1_world"),
           py::arg("radius_gu"),
-          "Field-only swept cut between two world points. Never enters the "
+          "Field-only swept cut between two INSTANCE-RELATIVE points (world "
+          "points minus instance_translation). Never enters the "
           "sphere list -- beyond tracked carves the field is the hole "
           "authority (plan 2c).");
 
@@ -4908,14 +4966,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const glm::vec3 nw(std::get<0>(world_normal),
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
-              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
-              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              // pw is INSTANCE-RELATIVE (floating render origin).
+              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
+              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
               return py::make_tuple(
                   py::make_tuple(pb.x, pb.y, pb.z),
                   py::make_tuple(nb.x, nb.y, nb.z));
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
-          "Convert a world-space hit point + normal into the ship instance's "
+          "Convert an INSTANCE-RELATIVE hit point (world point minus "
+          "instance_translation) + world normal into the ship instance's "
           "body frame (model units). Returns ((bx,by,bz),(nx,ny,nz)) or None "
           "if the instance id is stale.");
 

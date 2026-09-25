@@ -54,4 +54,20 @@ std::optional<RayHit> ray_trace_instance(
     float max_dist,
     const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
 
+/// The floating-render-origin form every mesh-query binding uses: the ray is
+/// RELATIVE TO THE INSTANCE'S TRANSLATION (world origin minus the instance's
+/// translation, formed in double by the caller) and only the float
+/// rotation·scale `linear` (Instance::world_linear) is inverted, so a ship
+/// 1e6 GU out traces with the precision of one at the origin. The returned
+/// hit point is instance-relative too — add the translation back in double.
+/// Otherwise identical to ray_trace_instance (which remains the general form;
+/// this is it with a zero translation).
+std::optional<RayHit> ray_trace_instance_linear(
+    const assets::Model& model,
+    const glm::mat3& linear,
+    glm::vec3 origin_rel,
+    glm::vec3 direction,
+    float max_dist,
+    const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
+
 }  // namespace renderer

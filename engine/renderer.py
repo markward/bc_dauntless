@@ -42,7 +42,7 @@ _REQUIRED_BINDINGS = frozenset({
     "destroy_instance", "dof_enabled", "dof_set_enabled", "dof_set_params",
     "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
-    "get_instance_head_center", "hdr_lens_flare_enabled",
+    "get_instance_head_center", "hdr_lens_flare_enabled", "instance_translation",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
@@ -795,8 +795,16 @@ def shield_hit(instance_id: InstanceId,
                rgba: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
                intensity: float = 1.0) -> None:
     """Push a shield-hit flash for the given ship at a world-space point.
-    rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor."""
-    _h.shield_hit(instance_id, point, rgba, intensity)
+    rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor.
+
+    The native binding takes the point RELATIVE TO THE INSTANCE'S
+    TRANSLATION (the floating render origin); it is formed here in doubles.
+    A stale instance drops the hit."""
+    t = _h.instance_translation(instance_id)
+    if t is None:
+        return
+    rel = (point[0] - t[0], point[1] - t[1], point[2] - t[2])
+    _h.shield_hit(instance_id, rel, rgba, intensity)
 
 
 # ── Bridge view ─────────────────────────────────────────────────────────────

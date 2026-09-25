@@ -11,7 +11,27 @@ class World {
 public:
     InstanceId create_instance(ModelHandle model);
     void destroy_instance(InstanceId id);
+    /// Float push (every pre-floating-origin caller): the matrix's upper 3x3
+    /// becomes world_linear and its fourth column world_translation_d. With
+    /// the render origin at zero the matrix read back is the one pushed.
     void set_world_transform(InstanceId id, const glm::mat4& world);
+
+    /// Double push: rotation·scale in float, VIEW-space translation in double.
+    /// Like the float overload it UNBINDS any transform-store slot (a push
+    /// wins over a binding) and resolves `world` at once against the last
+    /// resolved render origin, so readers between frames see render space.
+    void set_world_transform_d(InstanceId id, const glm::mat3& linear,
+                               const glm::dvec3& translation);
+
+    /// The floating render origin. For every alive instance:
+    ///   world = [world_linear | float(world_translation_d − o)]
+    /// with o = origin for Space-pass instances and zero for Bridge/Comm
+    /// (their sets are self-contained and never move with the origin). The
+    /// subtraction is in double; only the small remainder is narrowed.
+    /// Idempotent for an unchanged origin. The host runs it once per frame,
+    /// after the transform-store sync and before anything reads `world`.
+    void resolve_render_space(const glm::dvec3& origin);
+    const glm::dvec3& render_origin() const noexcept { return render_origin_; }
 
     /// Bind this instance's world matrix to a transform-store slot plus a
     /// uniform scale; `index < 0` unbinds and restores the explicit-matrix
@@ -79,6 +99,7 @@ private:
     };
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_;
+    glm::dvec3 render_origin_{0.0};
 };
 
 }  // namespace scenegraph

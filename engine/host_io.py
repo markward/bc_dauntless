@@ -48,7 +48,7 @@ _REQUIRED_BINDINGS = frozenset({
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
-    "ray_trace_mesh",
+    "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
     "transform_get_rotation_col", "transform_get_positions",
@@ -260,6 +260,24 @@ def set_tractor_beams(beams: list) -> None:
 
 
 # ── Hit / damage feedback ────────────────────────────────────────────────────
+#
+# The floating render origin: the native mesh queries (shield_hit,
+# world_to_body, damage_decal_add, hull_carve_add, hull_carve_capsule,
+# ray_trace_mesh) take points RELATIVE TO THE INSTANCE'S TRANSLATION and invert
+# only rotation*scale, so a ship 1e6 GU from the system origin is queried with
+# the precision of one at the origin. Engine code keeps speaking world points;
+# these wrappers form the relative point here, in Python doubles, from
+# `instance_translation(iid)`, and add it back to ray_trace_mesh's hit.
+# Directions and normals are translation-free and pass through untouched.
+
+def _instance_relative(instance_id, point):
+    """`point` minus the instance's double translation, or None when the
+    instance is stale (every point query drops a stale id)."""
+    t = _h.instance_translation(instance_id)
+    if t is None:
+        return None
+    return (point[0] - t[0], point[1] - t[1], point[2] - t[2])
+
 
 def shield_hit(
     instance_id: int,
@@ -277,7 +295,10 @@ def shield_hit(
     """
     if _h is None:
         return
-    _h.shield_hit(instance_id, point, rgba, intensity, radius)
+    rel = _instance_relative(instance_id, point)
+    if rel is None:
+        return
+    _h.shield_hit(instance_id, rel, rgba, intensity, radius)
 
 
 def world_to_body(
@@ -287,7 +308,10 @@ def world_to_body(
 ) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
     if _h is None:
         return None
-    return _h.world_to_body(instance_id, world_point, world_normal)
+    rel = _instance_relative(instance_id, world_point)
+    if rel is None:
+        return None
+    return _h.world_to_body(instance_id, rel, world_normal)
 
 
 def damage_decal_add(
@@ -307,7 +331,10 @@ def damage_decal_add(
     (an impact), 0 = scratches (a grind)."""
     if _h is None:
         return
-    _h.damage_decal_add(instance_id, world_point, world_normal, radius,
+    rel = _instance_relative(instance_id, world_point)
+    if rel is None:
+        return
+    _h.damage_decal_add(instance_id, rel, world_normal, radius,
                         intensity, weapon_class, time,
                         world_tangent if world_tangent is not None
                         else (0.0, 0.0, 0.0),
@@ -326,7 +353,10 @@ def hull_carve_add(
 ) -> None:
     if _h is None:
         return
-    _h.hull_carve_add(instance_id, world_point, world_normal, influ_radius,
+    rel = _instance_relative(instance_id, world_point)
+    if rel is None:
+        return
+    _h.hull_carve_add(instance_id, rel, world_normal, influ_radius,
                      strength, time, floor_radius, radius_modifier)
 
 
@@ -363,7 +393,11 @@ def hull_carve_capsule(
     enters the sphere list. No-op when headless."""
     if _h is None:
         return
-    _h.hull_carve_capsule(instance_id, p0_world, p1_world, float(radius_gu))
+    rel0 = _instance_relative(instance_id, p0_world)
+    if rel0 is None:
+        return
+    rel1 = _instance_relative(instance_id, p1_world)
+    _h.hull_carve_capsule(instance_id, rel0, rel1, float(radius_gu))
 
 
 def ray_trace_mesh(
@@ -372,9 +406,19 @@ def ray_trace_mesh(
     direction: Tuple[float, float, float],
     max_dist: float,
 ) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float], float]]:
+    """World ray in, world hit out; the binding in between is
+    instance-relative. A stale id still reaches the binding, which raises."""
     if _h is None:
         return None
-    return _h.ray_trace_mesh(instance_id, origin, direction, max_dist)
+    t = _h.instance_translation(instance_id)
+    if t is None:
+        return _h.ray_trace_mesh(instance_id, origin, direction, max_dist)
+    rel = (origin[0] - t[0], origin[1] - t[1], origin[2] - t[2])
+    hit = _h.ray_trace_mesh(instance_id, rel, direction, max_dist)
+    if hit is None:
+        return None
+    (px, py, pz), normal, dist = hit
+    return (px + t[0], py + t[1], pz + t[2]), normal, dist
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

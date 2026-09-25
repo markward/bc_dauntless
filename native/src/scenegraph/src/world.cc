@@ -28,17 +28,41 @@ void World::destroy_instance(InstanceId id) {
     free_.push_back(id.index);
 }
 
+namespace {
+
+// [linear | float(translation − origin)], origin zero off the Space pass.
+void resolve_instance(Instance& inst, const glm::dvec3& origin) {
+    const glm::dvec3 o = (inst.pass == Pass::Space) ? origin : glm::dvec3(0.0);
+    const glm::vec3 t(inst.world_translation_d - o);   // narrow AFTER subtract
+    inst.world = glm::mat4(inst.world_linear);
+    inst.world[3] = glm::vec4(t, 1.0f);
+}
+
+}  // namespace
+
 void World::set_world_transform(InstanceId id, const glm::mat4& world) {
+    set_world_transform_d(id, glm::mat3(world), glm::dvec3(glm::vec3(world[3])));
+}
+
+void World::set_world_transform_d(InstanceId id, const glm::mat3& linear,
+                                  const glm::dvec3& translation) {
     // A push wins over a binding BY CONSTRUCTION: unbinding here is what stops
     // sync_instance_transforms_from_store() (host_bindings.cc, run at the top
-    // of every frame()) silently overwriting this matrix with whatever the
+    // of every frame()) silently overwriting this pose with whatever the
     // transform store still holds for the slot. Without this, an explicit
     // push onto a still-bound instance would render at the store's live pose
     // instead, with no error and nothing a headless FrameTest could catch.
     if (auto* inst = get(id)) {
-        inst->world = world;
+        inst->world_linear = linear;
+        inst->world_translation_d = translation;
         inst->xform_index = -1;
+        resolve_instance(*inst, render_origin_);
     }
+}
+
+void World::resolve_render_space(const glm::dvec3& origin) {
+    render_origin_ = origin;
+    for_each_alive([&origin](Instance& inst) { resolve_instance(inst, origin); });
 }
 
 void World::set_transform_slot(InstanceId id, int index,

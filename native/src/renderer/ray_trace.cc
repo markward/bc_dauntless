@@ -515,4 +515,16 @@ std::optional<RayHit> ray_trace_instance(
                   best_t / d_local_len};
 }
 
+std::optional<RayHit> ray_trace_instance_linear(
+    const assets::Model& model,
+    const glm::mat3& linear,
+    glm::vec3 origin_rel,
+    glm::vec3 direction,
+    float max_dist,
+    const std::unordered_map<int, glm::mat4>* node_overrides)
+{
+    return ray_trace_instance(model, glm::mat4(linear), origin_rel, direction,
+                              max_dist, node_overrides);
+}
+
 }  // namespace renderer
