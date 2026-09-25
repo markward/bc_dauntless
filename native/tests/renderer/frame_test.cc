@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -109,14 +110,27 @@ namespace {
 
 const std::filesystem::path kProjectRoot =
     std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
+
+// The BC content root is configurable (engine/paths.py) -- it does not have
+// to live under <project>/game. Honour the same DAUNTLESS_GAME_DIR env var
+// the engine resolves game_root() from: when set and non-empty, the asset
+// constants below resolve under it instead. Without this, every
+// asset-backed FrameTest SKIPs on a machine whose BC content isn't in-project.
+std::filesystem::path game_root() {
+    if (const char* env = std::getenv("DAUNTLESS_GAME_DIR")) {
+        if (*env != '\0') return std::filesystem::path(env);
+    }
+    return kProjectRoot / "game";
+}
+
 const std::filesystem::path kGalaxyNif =
-    kProjectRoot / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif";
+    game_root() / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif";
 const std::filesystem::path kGalaxyTex =
-    kProjectRoot / "game" / "data" / "Models" / "SharedTextures" / "FedShips" / "High";
+    game_root() / "data" / "Models" / "SharedTextures" / "FedShips" / "High";
 const std::filesystem::path kWarbirdNif =
-    kProjectRoot / "game" / "data" / "Models" / "Ships" / "Warbird" / "Warbird.nif";
+    game_root() / "data" / "Models" / "Ships" / "Warbird" / "Warbird.nif";
 const std::filesystem::path kWarbirdTex =
-    kProjectRoot / "game" / "data" / "Models" / "Ships" / "Warbird" / "High";
+    game_root() / "data" / "Models" / "Ships" / "Warbird" / "High";
 class FrameTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window> w;
@@ -2264,6 +2278,135 @@ void render_galaxy_zero_ambient(scenegraph::World& world,
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     submitter.submit_opaque_in_pass(world, cam, pipeline, lut, zero_light,
                                     scenegraph::Pass::Space, decal_time);
+}
+
+// ── Glow regions follow an articulated node ────────────────────────────────
+// Regions are authored in the NIF (rest) frame; opaque.frag used to test them
+// against the POSED body position, so on a rotated node the region stayed put
+// while the surface it was authored on moved away. See
+// docs/superpowers/specs/2026-09-25-glow-region-articulation-design.md.
+namespace {
+
+// A destroyed, fully-settled (dark) box over the saucer's +X half at REST:
+// body X 10..190 (the right sample block covers X ~ +14..+182), all Y and Z.
+scenegraph::Instance::GlowRegion dark_right_half_region() {
+    scenegraph::Instance::GlowRegion r;
+    r.center       = glm::vec3(100.0f, 0.0f, 0.0f);
+    r.shape        = 1.0f;                                 // box
+    r.half_extents = glm::vec3(90.0f, 1000.0f, 1000.0f);
+    r.dim_target   = 0.0f;                                 // off when settled
+    r.disable_time = 0.0f;                                 // destroyed at t=0
+    r.flicker      = 0.0f;                                 // destroyed, not disabled
+    r.active       = true;
+    return r;
+}
+
+// Root-node override: the model's own root local, then 180 degrees about +Y.
+glm::mat4 spun_root_local(const assets::Model& m) {
+    return m.nodes[m.root_node].local_transform *
+           glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0, 1, 0));
+}
+
+constexpr float kSettled = 65.0f;   // well past GLOW_FLICKER_SECS
+
+}  // namespace
+
+TEST_F(FrameTest, GlowRegionFollowsARotatedNode) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    const auto& model = *model_h;
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Guard: the SPUN ship, no region, glows in BOTH sample blocks. If not,
+    // the camera/sample geometry is wrong and nothing below means anything.
+    scenegraph::World w0;
+    auto i0 = w0.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w0.set_world_transform(i0, glm::mat4(1.0f));
+    w0.get(i0)->node_overrides[model.root_node] = spun_root_local(model);
+    render_galaxy_zero_ambient(w0, *p, lut, kSettled);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double L0 = block_mean(93, 100, 25, 50);
+    const double R0 = block_mean(130, 100, 25, 50);
+    ASSERT_GT(L0, 0.0) << "spun ship: left block has no glow (sample geometry wrong)";
+    ASSERT_GT(R0, 0.0) << "spun ship: right block has no glow (sample geometry wrong)";
+
+    // The spun ship with the dark rest-frame region over the (rest) +X half.
+    scenegraph::World w1;
+    auto i1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w1.set_world_transform(i1, glm::mat4(1.0f));
+    w1.get(i1)->node_overrides[model.root_node] = spun_root_local(model);
+    w1.get(i1)->glow_regions[0] = dark_right_half_region();
+    render_galaxy_zero_ambient(w1, *p, lut, kSettled);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double L1 = block_mean(93, 100, 25, 50);
+    const double R1 = block_mean(130, 100, 25, 50);
+
+    // The authored (+X at rest) surface is now on screen-LEFT: it goes dark.
+    EXPECT_LT(L1, L0 * 0.5) << "the region did not follow its surface to screen-left";
+    // Screen-right now shows the rest -X surface, which the region never covered.
+    EXPECT_NEAR(R1, R0, R0 * 0.05) << "the region stayed at its rest position";
+}
+
+TEST_F(FrameTest, RestPoseOverrideRendersIdenticallyToNoOverride) {
+    // An override equal to the node's own rest local must render exactly as no
+    // override at all: the correction is then the identity.
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    const auto& model = *model_h;
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    scenegraph::World w0;
+    auto i0 = w0.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w0.set_world_transform(i0, glm::mat4(1.0f));
+    w0.get(i0)->glow_regions[0] = dark_right_half_region();
+    render_galaxy_zero_ambient(w0, *p, lut, kSettled);
+    const auto plain = read_frame();
+
+    scenegraph::World w1;
+    auto i1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w1.set_world_transform(i1, glm::mat4(1.0f));
+    w1.get(i1)->node_overrides[model.root_node] =
+        model.nodes[model.root_node].local_transform;
+    w1.get(i1)->glow_regions[0] = dark_right_half_region();
+    render_galaxy_zero_ambient(w1, *p, lut, kSettled);
+    const auto overridden = read_frame();
+
+    EXPECT_EQ(differing_texels(plain, overridden), 0u);
+}
+
+TEST_F(FrameTest, GlowRegionOnPlainShipUnaffectedByArticulatedShipDrawnFirst) {
+    // u_node_rest_fix is a uniform: it keeps its value between draws unless
+    // set again. A spun ship drawn BEFORE a plain one must not carry its
+    // correction onto the plain ship's glow test.
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    const auto& model = *model_h;
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Plain ship alone, with the region.
+    scenegraph::World w0;
+    auto p0 = w0.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w0.set_world_transform(p0, glm::mat4(1.0f));
+    w0.get(p0)->glow_regions[0] = dark_right_half_region();
+    render_galaxy_zero_ambient(w0, *p, lut, kSettled);
+    const double L0 = block_mean(93, 100, 25, 50);
+    const double R0 = block_mean(130, 100, 25, 50);
+
+    // A spun ship created FIRST (so drawn first), shrunk and parked in the top
+    // corner of the view so it is drawn but covers neither sample block; then
+    // the same plain ship.
+    scenegraph::World w1;
+    auto a1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w1.set_world_transform(a1, glm::translate(glm::mat4(1.0f), glm::vec3(700, 700, 0)) *
+                               glm::scale(glm::mat4(1.0f), glm::vec3(0.1f)));
+    w1.get(a1)->node_overrides[model.root_node] = spun_root_local(model);
+    auto p1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w1.set_world_transform(p1, glm::mat4(1.0f));
+    w1.get(p1)->glow_regions[0] = dark_right_half_region();
+    render_galaxy_zero_ambient(w1, *p, lut, kSettled);
+
+    EXPECT_DOUBLE_EQ(block_mean(93, 100, 25, 50), L0);
+    EXPECT_DOUBLE_EQ(block_mean(130, 100, 25, 50), R0);
 }
 
 // Test 1: A SCORCH decal's glow region OSCILLATES (is non-monotonic) across

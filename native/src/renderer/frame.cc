@@ -664,6 +664,17 @@ void draw_model(const assets::Model& model,
             }
         }
     }
+
+    // Glow regions are authored in the NIF (rest) frame, but opaque.frag
+    // rebuilds a POSED body position. C_i = R_i * P_i^-1 maps it back, for
+    // the glow test only. Identity for every node of an unarticulated
+    // instance -- computed only when there are overrides, so the common path
+    // allocates nothing extra.
+    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
+    const std::vector<glm::mat4> rest_fix =
+        articulated ? rest_corrections(model, *node_overrides)
+                    : std::vector<glm::mat4>{};
+
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const auto& node = model.nodes[i];
         for (int mesh_idx : node.meshes) {
@@ -672,6 +683,12 @@ void draw_model(const assets::Model& model,
             // bone palette, so the instance world is the model matrix. Static
             // (non-skinned) models keep the node-walk transform.
             prog.set_mat4("u_model", skinned ? world : world_per_node[i]);
+            // EVERY draw sets it, identity included: a uniform keeps its value
+            // between draws, so skipping the identity would leak the previous
+            // articulated ship's correction onto this one. Skinned draws are
+            // posed by the bone palette, not by node overrides: identity.
+            prog.set_mat4("u_node_rest_fix",
+                          (!skinned && articulated) ? rest_fix[i] : glm::mat4(1.0f));
 
             const auto& mat = (mesh.material_index() >= 0
                 ? model.materials[mesh.material_index()]
