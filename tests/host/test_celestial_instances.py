@@ -32,6 +32,7 @@ class _FakeRenderer:
         self._next = 1
         self.live = set()
         self.pushed = {}
+        self.visible = {}
         self.calls = []
 
     def load_model(self, path, search, texture_replacements=None):
@@ -57,8 +58,21 @@ class _FakeRenderer:
         self.calls.append(("set_world_transform", iid))
         self.pushed[iid] = m
 
+    def set_emissive_scale(self, iid, s):
+        self.calls.append(("set_emissive_scale", iid))
+
+    def set_rim_eligible(self, iid, b):
+        pass
+
+    def set_rim_strength(self, iid, s):
+        pass
+
+    def nebula_lightning_enabled(self):
+        return False
+
     def set_visible(self, iid, v):
         self.calls.append(("set_visible", iid))
+        self.visible[iid] = v
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +84,7 @@ def _isolate(monkeypatch):
         host_loop._mapped_body_warned.clear()
     _clear()
     monkeypatch.setattr(host_loop, "_planet_model_path",
-                        lambda rel, **k: f"/fake/{rel}", raising=False)
+                        lambda rel, **k: f"/fake/{rel}")
     yield
     _clear()
 
@@ -274,3 +288,47 @@ def test_a_mission_swap_forgets_which_bodies_were_warned_about(ona, capsys):
     host_loop.reset_sdk_globals()
     host_loop._check_mapped_bodies_untouched(ona1)
     assert len(_warnings(capsys)) == 1
+
+
+# ── the warp-streak hide ────────────────────────────────────────────────────
+
+class _Warp:
+    def __init__(self, streak):
+        self._streak = streak
+
+    def is_active(self):
+        return self._streak > 0.0
+
+    def streak_intensity(self):
+        return self._streak
+
+
+def test_map_bodies_hide_during_the_warp_streak_and_return_on_the_stop_frame(
+        ona, monkeypatch):
+    """Exactly as session.planet_instances: hidden while the streak runs,
+    restored on the single frame it stops."""
+    from engine import warp_vfx
+    from engine.core.transform_buffer import TransformBuffer
+    ona1, *_ = ona
+    player = _make_player(ona1)
+    sess = host_loop.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    _reconcile(sess, r)
+    iids = set(sess.celestial_instances.values())
+    assert len(iids) == 3
+    sess.ship_instances[player] = 99
+    sess.player = player
+    monkeypatch.setattr(host_loop, "_warp_hidden", False)
+
+    def _sync():
+        host_loop._sync_instance_transforms(
+            r, sess, player, TransformBuffer(), 1.0,
+            game_time=1.0, model_scale=1.0)
+
+    monkeypatch.setattr(warp_vfx, "get", lambda: _Warp(1.0))
+    _sync()
+    assert {i: r.visible.get(i) for i in iids} == {i: False for i in iids}
+
+    monkeypatch.setattr(warp_vfx, "get", lambda: _Warp(0.0))
+    _sync()
+    assert {i: r.visible.get(i) for i in iids} == {i: True for i in iids}

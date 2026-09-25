@@ -5125,7 +5125,7 @@ class MissionSession:
     # _reconcile_celestial_instances. celestial_instances: body key -> iid;
     # celestial_placed: body key -> the CelestialBody last pushed, in
     # draw-list order (a body whose model failed to load is placed with no
-    # instance, so it is warned about once, not every tick).
+    # instance, so it is warned about once per entry into view, not per tick).
     celestial_instances: dict[Any, Any] = field(default_factory=dict)
     celestial_placed: dict[Any, Any] = field(default_factory=dict)
     # key -> natural scale of its instance (radius_gu / model sphere radius),
@@ -5600,6 +5600,8 @@ def _reconcile_runtime_instances(session, renderer, *,
 
 
 def _celestial_matrix(body, natural_scale: float) -> list:
+    # Identity rotation: the system map carries no orientation, so a stock
+    # planet's scripted rotation is not reproduced on a map body.
     from engine.appc.math import TGMatrix3, TGPoint3
     return _world_matrix_from(TGPoint3(*body.position), TGMatrix3(),
                               natural_scale)
@@ -5619,8 +5621,11 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
       * moved key    -> re-push (the view moved to a sibling region),
       * no change    -> one tuple compare, zero renderer calls.
 
-    A body whose model does not resolve or load is skipped with ONE warning
-    and remembered in celestial_placed, so it is not retried every tick."""
+    A body whose model does not resolve or load is skipped with a warning and
+    remembered in celestial_placed, so it is not retried (or re-warned) while
+    it stays in the draw list. Once the view leaves the system and comes back
+    it is tried again -- and, still failing, warned again: one warning per
+    entry into view, not per mission."""
     from engine.systems import celestial
     drawn = celestial.draw_list(_frames.viewing_set())
     placed = session.celestial_placed
@@ -7804,6 +7809,12 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         # instead of two transform reads and a 16-float push.
         _apply_live_world_transform(r, session, planet, iid, ns)
         if _warp_apply_vis:
+            r.set_visible(iid, not _warp_hide)
+    # The map's planets and moons (_reconcile_celestial_instances) take the
+    # same warp hide. They have no scope_hidden: nothing else ever hides one,
+    # so the stop-frame restore is simply visible.
+    if _warp_apply_vis:
+        for iid in session.celestial_instances.values():
             r.set_visible(iid, not _warp_hide)
 
 
