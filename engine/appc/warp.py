@@ -869,50 +869,54 @@ def find_set_course_menu():
 
 
 def set_course_placement(button, dest_module) -> None:
-    """Record on the warp button where `dest_module` should drop the player out.
+    """Record on the warp button where `dest_module` should drop the player out,
+    and which mission (if any) that course starts.
 
     Called when a course is plotted. In stock BC the SortedRegionMenu's own
     course button carried this across; our CEF Set Course modal replaced those
     buttons, so the engine performs the same carry here.
 
-    Always assigns — including the default — because one warp button serves
+    Always assigns — including the defaults — because one warp button serves
     every course in the game. Plotting an un-overridden system after an
-    overridden one must not inherit the previous arrival point.
+    overridden one must not inherit the previous arrival point, mission, or
+    episode.
     """
+    from engine.appc.tg_ui.st_widgets import DEFAULT_ARRIVAL_PLACEMENT
+    menu = region_menu_for_destination(dest_module, find_set_course_menu())
     button.SetPlacementName(
-        placement_name_for_destination(dest_module, find_set_course_menu()))
+        menu.GetPlacementName() if menu else DEFAULT_ARRIVAL_PLACEMENT)
+    # BC's "warping here starts mission X" (SortedRegionMenu.SetMissionName /
+    # SetEpisodeName, 67 SDK sites). Always assigned, like the placement, so a
+    # plain course never inherits a previous one's mission (spec §1).
+    button.set_course_mission(menu.GetMissionName() if menu else "",
+                              menu.GetEpisodeName() if menu else "")
 
 
-def placement_name_for_destination(dest_module, course_menu):
-    """The arrival placement a mission has linked to `dest_module`, or the
-    default when it has not linked one.
+def region_menu_for_destination(dest_module, course_menu):
+    """The live SortedRegionMenu offering `dest_module`, or None when the Set
+    Course subtree has no such entry (or doesn't exist yet).
 
-    BC keeps this on the menu, not on the destination: MissionLib.
-    LinkMenuToPlacement resolves a system (or a region inside it) to its
-    SortedRegionMenu and calls SetPlacementName on it. So the lookup is
-    "find the region menu that offers this destination module, and ask it" —
-    a walk of the LIVE Set Course subtree, deliberately not a module->name
+    BC keeps the mission's arrival/mission/episode overrides on the menu, not
+    on the destination: MissionLib.LinkMenuToPlacement resolves a system (or a
+    region inside it) to its SortedRegionMenu and calls SetPlacementName on
+    it, and SetMissionName/SetEpisodeName follow the same pattern. So the
+    lookup is "find the region menu that offers this destination module" — a
+    walk of the LIVE Set Course subtree, deliberately not a module->menu
     registry, because a registry outlives the mission that filled it and the
     menu tree is rebuilt per mission (see the SDK's own ClearSetCourseMenu).
 
     Recursive: a system menu can hold per-region submenus, and
     GetSystemOrRegionMenu links either level.
-
-    Fail-soft. Every caller is on the warp path, where the sane degradation is
-    BC's own default arrival rather than an exception — the same reason
-    WarpSequence_Create's `placement` argument has a default at all.
     """
-    from engine.appc.tg_ui.st_widgets import (
-        DEFAULT_ARRIVAL_PLACEMENT, SortedRegionMenu,
-    )
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu
     if not dest_module or course_menu is None:
-        return DEFAULT_ARRIVAL_PLACEMENT
+        return None
     target = str(dest_module)
 
     def _walk(node):
         if (isinstance(node, SortedRegionMenu)
                 and node.GetRegionModule() == target):
-            return node.GetPlacementName()
+            return node
         # __dict__ read, not getattr: TGObject.__getattr__ hands back a truthy
         # _Stub for any missing name, and iterating a _Stub never terminates.
         # STMenu stores children flat; TGPane stores (child, x, y) triples —
@@ -925,7 +929,20 @@ def placement_name_for_destination(dest_module, course_menu):
                 return found
         return None
 
-    return _walk(course_menu) or DEFAULT_ARRIVAL_PLACEMENT
+    return _walk(course_menu)
+
+
+def placement_name_for_destination(dest_module, course_menu):
+    """The arrival placement a mission has linked to `dest_module`, or the
+    default when it has not linked one.
+
+    Fail-soft. Every caller is on the warp path, where the sane degradation is
+    BC's own default arrival rather than an exception — the same reason
+    WarpSequence_Create's `placement` argument has a default at all.
+    """
+    from engine.appc.tg_ui.st_widgets import DEFAULT_ARRIVAL_PLACEMENT
+    menu = region_menu_for_destination(dest_module, course_menu)
+    return menu.GetPlacementName() if menu else DEFAULT_ARRIVAL_PLACEMENT
 
 
 def execute_warp(button, event=None):

@@ -175,6 +175,12 @@ class STWarpButton(STButton):
     # writers apart.
     def set_player_destination(self, dest) -> None:
         self._destination = dest
+        # A player pick never inherits a mission's SetDestination mission name
+        # (E3M2.py:2124 et al.) or the previous course's Set Course menu
+        # mission/episode. set_course_placement re-applies the NEW menu's
+        # names right after this call; a plain course leaves both cleared.
+        self._mission_name = ""
+        self._episode_name = ""
 
     def get_mission_destination(self):
         return self._mission_destination
@@ -184,6 +190,15 @@ class STWarpButton(STButton):
 
     def get_episode_name(self) -> str:
         return self._episode_name
+
+    # engine-only: the Set Course menu's own mission/episode markers
+    # (SortedRegionMenu.SetMissionName/SetEpisodeName) carried onto the button
+    # by warp.set_course_placement — the same carry BC's SortedRegionMenu
+    # course buttons did directly, before the CEF Set Course modal replaced
+    # them (see set_course_placement's docstring).
+    def set_course_mission(self, mission_name, episode_name) -> None:
+        self._mission_name = str(mission_name or "")
+        self._episode_name = str(episode_name or "")
 
     # Where THIS course drops the player out of warp. Real published surface
     # (sdk/.../App.py:8738 STWarpButton_SetPlacementName). The button is the
