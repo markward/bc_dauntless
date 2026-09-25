@@ -165,10 +165,12 @@ class _WarpSoundAction(TGAction):
 def _clear_all_targets(ship) -> None:
     """Drop the player's target + subsystem lock the instant warp engages.
 
-    The target LIST needs no clearing: mid-warp the player is alone in the
-    _WarpTransit set, so the derived membership is empty by construction and
-    repopulates from the destination on arrival. Fail-open: a failure here
-    never blocks the warp.
+    The target LIST needs no clearing: it is derived from the player's
+    containing set, which mid-warp is BC's persistent "warp" set (spec §1b) --
+    empty unless a mission has parked ships there (E6M1's Artrus ships), in
+    which case the list lists them, as BC's would. Either way it repopulates
+    from the destination on arrival. Fail-open: a failure here never blocks
+    the warp.
 
     ⚠️ THIS IS THE ENGAGE-TIME CLEAR, AND IT DOES NOT STICK ON ITS OWN. It is
     ours, not BC's -- BC clears on ARRIVAL (PostWarpEnableMenu). Read
@@ -797,10 +799,11 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
             enter_delay = 0.0
         seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
         # At BURST (t_align): drop the render instances of the system being left
-        # behind and park the player in an empty transit set, so during the held
-        # transit the source system no longer draws or lights the scene (the set
-        # itself stands, and its ships keep simulating -- see the Plan-2 note on
-        # left-behind-ship audibility).
+        # behind and park the player in BC's persistent warp set (spec §1b --
+        # not necessarily empty, a mission may have parked ships there), so
+        # during the held transit the source system no longer draws or lights
+        # the scene (the set itself stands, and its ships keep simulating --
+        # see the Plan-2 note on left-behind-ship audibility).
         seq.AddAction(_WarpDepartAction(source, ship), t_align)
         swap = ChangeRenderedSetAction_Create(dest_module)
         seq.AddAction(swap, total)
