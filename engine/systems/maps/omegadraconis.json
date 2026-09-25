@@ -29,7 +29,7 @@
       "radius_gu": 600.0,
       "position_gu": [
         0.0,
-        -70000.0,
+        -130000.0,
         0.0
       ],
       "orbits": "OmegaDraconis",
@@ -46,7 +46,7 @@
       "display_name": "Omega Draconis 2",
       "radius_gu": 1200.0,
       "position_gu": [
-        122000.0,
+        234000.0,
         0.0,
         0.0
       ],
@@ -64,7 +64,7 @@
       "display_name": "Kessok Colony",
       "radius_gu": 2000.0,
       "position_gu": [
-        174000.0,
+        338000.0,
         0.0,
         0.0
       ],
@@ -82,7 +82,7 @@
       "display_name": "Omega Draconis 4",
       "radius_gu": 4000.0,
       "position_gu": [
-        226000.0,
+        442000.0,
         0.0,
         0.0
       ],
@@ -100,8 +100,8 @@
       "display_name": "Omega Draconis 5",
       "radius_gu": 600.0,
       "position_gu": [
-        -102344.90361769464,
-        -258475.3773640437,
+        -201008.3358822348,
+        -507653.07928333763,
         0.0
       ],
       "orbits": "OmegaDraconis",
@@ -119,10 +119,10 @@
       "set_name": "OmegaDraconis1",
       "anchor_gu": [
         -1405.296105045888,
-        -62973.51947477056,
+        -122973.51947477055,
         702.648052522944
       ],
-      "radius_gu": 9300.0,
+      "radius_gu": 9300.000000000007,
       "body_names": [
         "Omega Draconis 1"
       ],
@@ -131,7 +131,7 @@
     {
       "set_name": "OmegaDraconis2",
       "anchor_gu": [
-        122000.0,
+        234000.0,
         -5000.0,
         0.0
       ],
@@ -144,7 +144,7 @@
     {
       "set_name": "OmegaDraconis3",
       "anchor_gu": [
-        174000.0,
+        338000.0,
         -10000.0,
         0.0
       ],
@@ -157,7 +157,7 @@
     {
       "set_name": "OmegaDraconis4",
       "anchor_gu": [
-        225500.0,
+        441500.0,
         -7999.999999999998,
         -999.9999999999998
       ],
@@ -170,8 +170,8 @@
     {
       "set_name": "OmegaDraconis5",
       "anchor_gu": [
-        -102294.90361769464,
-        -261475.3773640437,
+        -200958.3358822348,
+        -510653.07928333763,
         150.0
       ],
       "radius_gu": 5104.16377715996,

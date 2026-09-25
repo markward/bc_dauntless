@@ -334,7 +334,8 @@ def test_a_bogus_cloud_kind_reaches_the_generators_ambiguities_output(monkeypatc
 def test_planets_orbit_at_the_doubled_scale():
     """Orbits double; radii do not (spec: "Scale"). Live feedback: the system
     read as too small because of SPACING, so the first orbit and the orbit step
-    both double while every body keeps its x20 radius. The first orbit is a
+    both double while every body keeps its x20 radius -- and doubled again
+    2026-09-25, when the planets still read as too close together. The first orbit is a
     MINIMUM measured from the star's surface -- the push logic may move a
     planet further out, never nearer."""
     import math
@@ -342,8 +343,8 @@ def test_planets_orbit_at_the_doubled_scale():
     from tools.systems.layout import LayoutTuning
 
     t = LayoutTuning()
-    assert t.first_orbit_clearance_gu == 60000.0
-    assert t.orbit_step_gu == 52000.0
+    assert t.first_orbit_clearance_gu == 120000.0
+    assert t.orbit_step_gu == 104000.0
     checked = 0
     for name in system_map.available():
         m = system_map.load(name)

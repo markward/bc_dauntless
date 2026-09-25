@@ -30,8 +30,8 @@ EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 # test_the_exterior_and_viewscreen_cameras_reach_the_whole_system then checks
 # this constant against, so regenerating the maps re-checks the number rather
 # than silently going stale. Orbital spacing doubled 2026-09-24 per the
-# system-frames spec, which is what most recently moved the widest sightline
-# and this constant with it.
+# system-frames spec, and doubled AGAIN 2026-09-25 after the live pass, which
+# is what most recently moved the widest sightline and this constant with it.
 #
 # Cheap, and measured rather than assumed. For a 24-bit forward-Z buffer the
 # resolvable gap is dz ~= (1/2**24) * z^2 * (f-n)/(f*n); the (f-n)/f term is
@@ -43,7 +43,7 @@ EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 # the Ship Property Viewer camera (a hologram) or the comm viewscreen (a face
 # in a window). Those gain nothing and would only spend depth precision.
 SCENE_NEAR_GU: float = 1.0
-SCENE_FAR_GU: float = 900_000.0
+SCENE_FAR_GU: float = 1_800_000.0
 
 def fov_distance_scale(fov_y_rad: float) -> float:
     """Framing-distance multiplier that keeps a ship's apparent size constant

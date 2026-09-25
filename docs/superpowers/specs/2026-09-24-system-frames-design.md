@@ -97,7 +97,7 @@ Precision is lost only where positions cross into the renderer:
   world matrix: `ray_trace_mesh`, `shield_hit`, `hull_carve_add`,
   `hull_carve_capsule`, `world_to_body` (`native/src/host/host_bindings.cc`).
 
-At 1,000,000 GU a float32 ulp is 0.0625 GU. Player-centring is therefore **not**
+At 2,000,000 GU a float32 ulp is 0.125 GU. Player-centring is therefore **not**
 a physics requirement; it **is** a rendering and mesh-query requirement.
 
 **Sensor range separates regions — at the doubled scale.** Authored
@@ -134,6 +134,12 @@ a future one.
 **Orbits double.** Current system coordinates run to ~450,000 GU (Itari's widest
 sightline is 452,715 GU); the target is ~1,000,000. The maps are **regenerated**
 at the new scale by the generator, not ported and then edited.
+
+**Doubled again 2026-09-25.** The live pass at the doubled scale still read the
+planets as too close together, so the first orbit clearance went 60,000 →
+120,000 GU and the orbit step 52,000 → 104,000 GU, with radii, moon spacing and
+framing untouched. The widest sightline is now 1,644,170 GU (was 848,642), and
+the far plane follows it to 1,800,000 GU by the same derivation.
 
 - Orbit distance and body radius are separate knobs; **only distance changes.**
   The ×20 body radius stays (every one of the 118 mapped bodies is exactly
@@ -332,7 +338,7 @@ appears as you approach it.
 conditional virtual-distance treatment beyond it; a draw-distance cull for ships.
 No impostors or body LOD — ~15 bodies per system does not need them.
 
-**Far plane ≈ 1,000,000 GU** for the exterior scene and bridge viewscreen only
+**Far plane ≈ 2,000,000 GU** (1,800,000 as built) for the exterior scene and bridge viewscreen only
 (the interior, SPV and comm cameras keep theirs). The exact figure is derived from
 the regenerated maps' widest sightline, with margin, and pinned by a test that
 derives rather than restates it — a far plane that stops covering the widest
@@ -527,7 +533,7 @@ reference branch).
 | "Interact only with your own region; see across regions" | Compare by system position; cross-**frame** is undefined, cross-region within a frame is ordinary |
 | A "space set" per system for the space between regions | None — the player stays in their last region's set |
 | Residency: only a system's regions are loaded, torn down on leaving | Whole system loaded on entry; nothing unloads until the mission changes |
-| Far plane 500,000 GU | ~1,000,000 GU, derived from regenerated maps |
+| Far plane 500,000 GU | 1,800,000 GU, derived from regenerated maps (orbits doubled twice) |
 | Radius / star-position alarm for an unmapped set | A mapped flag set by `apply_to_set` |
 | Map applied by per-call-site `create_region_set` | One wrap on the region module's `Initialize` |
 

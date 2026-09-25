@@ -81,8 +81,8 @@ class LayoutTuning:
     # far from the star's surface, and farther still when that would leave a
     # region's sphere reaching the star (see star_clearance_gu and the push
     # logic in layout()).
-    first_orbit_clearance_gu: float = 60000.0
-    orbit_step_gu: float = 52000.0
+    first_orbit_clearance_gu: float = 120000.0
+    orbit_step_gu: float = 104000.0
     region_margin_gu: float = 1500.0
     # Margin left between a region's sphere and the star's surface after the
     # corrective push in layout(), so the two end up clear rather than exactly
