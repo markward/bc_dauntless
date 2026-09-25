@@ -439,7 +439,8 @@ def game_asset_dirs(rel) -> list:
     list.
     """
     from engine import mods
-    return [*mods.current().dirs_for(rel), game_root() / rel]
+    return [*mods.replacements().dirs_for(rel), *mods.current().dirs_for(rel),
+            game_root() / rel]
 
 
 # --- the failure message ----------------------------------------------------

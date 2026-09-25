@@ -581,9 +581,41 @@ def current() -> ModIndex:
     return _INDEX
 
 
+# Project-shipped replacements for stock BC content, under
+# <project_asset_root>/replacements/, laid out like the game root
+# (replacements/data/Models/Ships/BirdOfPrey/High/bop_wing.tga). They win over
+# stock AND over installed mods, and apply even under --disable-mods: they are
+# ours, not a mod. Scanned once per root, on first use.
+_REPLACEMENTS: Optional[tuple] = None   # (root, ModIndex)
+
+
+def replacements_root() -> Path:
+    return paths.project_asset_root() / "replacements"
+
+
+def replacements() -> ModIndex:
+    """Index of every file under replacements_root(), keyed like a mod's."""
+    global _REPLACEMENTS
+    root = replacements_root()
+    if _REPLACEMENTS is not None and _REPLACEMENTS[0] == root:
+        return _REPLACEMENTS[1]
+    files: dict = {}
+    if root.is_dir():
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.name.lower() in IGNORED_NAMES:
+                continue
+            raw_rel = path.relative_to(root).as_posix()
+            files[fold(raw_rel)] = ModFile(abs_path=path, mod_name="replacements",
+                                           target="game",  # paths-guard: kind label
+                                           rel=fold(raw_rel), raw_rel=raw_rel)
+    index = ModIndex(files=files, mods=[])
+    _REPLACEMENTS = (root, index)
+    return index
+
+
 def game_override(rel) -> Optional[Path]:
-    """The mod file for a game-root-relative path, or None."""
-    hit = current().lookup(rel)
+    """The replacement or mod file for a game-root-relative path, or None."""
+    hit = replacements().lookup(rel) or current().lookup(rel)
     if hit is None or hit.target != "game":  # paths-guard: kind label
         return None
     return hit.abs_path
@@ -641,6 +673,11 @@ def renderer_overrides(index: ModIndex) -> dict:
     """The game-targeted subset, as {folded_rel: abs_path_str}, for C++."""
     return {rel: str(mf.abs_path) for rel, mf in sorted(index.files.items())
             if mf.target == "game"}  # paths-guard: kind label
+
+
+def renderer_overrides_with_replacements(index: ModIndex) -> dict:
+    """renderer_overrides(index) with the project replacements layered on top."""
+    return {**renderer_overrides(index), **renderer_overrides(replacements())}
 
 
 def install(argv=None, env=None, game_root=None, sdk_scripts=None) -> ModIndex:
