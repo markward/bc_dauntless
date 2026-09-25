@@ -145,7 +145,13 @@ def view_offset(pSet):
     so the mesh queries) are in. shifted(p, view_offset(s)) goes there,
     shifted(p, view_offset(s), -1) comes back. None for the viewed set itself
     (the point untouched), and for a set outside the viewed frame, whose
-    instances host_loop pushes in their own set coordinates."""
+    instances host_loop pushes in their own set coordinates.
+
+    Note the other-frame case for a mesh query: the target's set-local point
+    passes UNSHIFTED. That is right only while its instance is still pushed
+    in those same coordinates; a target with no instance in view (or one
+    already culled) simply misses the trace, and the caller falls back to
+    its bounding-sphere / given-point path (combat._resolve_hit_point)."""
     if pSet is None:
         return None
     off = offset_between(viewing_set(), pSet)

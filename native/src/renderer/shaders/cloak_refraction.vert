@@ -13,6 +13,9 @@ layout(location = 2) in vec2 a_uv;
 uniform mat4  u_model;
 uniform mat4  u_view_proj;
 uniform float u_time;
+// World phase of the render origin, dot(origin, k) mod 2pi, so the ripple
+// belongs to the WORLD point, not the camera-following render one.
+uniform float u_ripple_phase_origin;
 uniform float u_frac;           // 0..1 cloak progress
 uniform float u_shimmer_speed;  // shimmer angular frequency (rad/s)
 uniform float u_vertex_wobble;  // displacement amplitude (game units)
@@ -29,7 +32,7 @@ void main() {
     // u_vertex_wobble at full cloak, so the silhouette eases into the waver over
     // the cloak-in transition and eases back out when decloaking (u_frac ramps
     // 1 -> 0). u_frac is the same 0..1 progress the opacity fade uses.
-    float phase = dot(wp.xyz, vec3(0.15, 0.11, 0.13));
+    float phase = dot(wp.xyz, vec3(0.15, 0.11, 0.13)) + u_ripple_phase_origin;
     float wob   = sin(u_time * u_shimmer_speed + phase)
                 * u_vertex_wobble * 0.25 * u_frac;
     wp.xyz += nrm * wob;

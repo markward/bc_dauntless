@@ -4125,9 +4125,9 @@ def reset_sdk_globals() -> None:
     # pushed relative to Python's origin -- native must agree.
     _frames.reset_render_origin()
     try:
-        r.set_render_origin(0.0, 0.0, 0.0)
+        r.reset_render_origin()
     except Exception as _e:
-        dev_mode.log_swallowed("set_render_origin reset on swap", _e)
+        dev_mode.log_swallowed("reset_render_origin on swap", _e)
     _mapped_body_warned.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200

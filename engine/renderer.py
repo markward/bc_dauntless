@@ -64,7 +64,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
-    "set_render_origin",
+    "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_project_asset_root",
     "set_glow_region_gain",
@@ -238,6 +238,13 @@ def set_render_origin(x: float, y: float, z: float) -> None:
     frame(); the Space camera and every world-space feed must then be in the
     same render space (engine.systems.frames.to_render)."""
     _h.set_render_origin(float(x), float(y), float(z))
+
+
+def reset_render_origin() -> None:
+    """Back to render origin (0,0,0) for a new mission, and drop the passes'
+    memory of the old origin (dust smear, nebula history, motion blur), so
+    the jump is not read as camera travel."""
+    _h.reset_render_origin()
 
 
 def set_lighting(ambient: Tuple[float, float, float],

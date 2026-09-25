@@ -132,6 +132,15 @@ public:
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }
 
+    /// Forget the previous eye and the render origin it was in: the next
+    /// frame draws no velocity smear. For a discontinuity in the origin (a
+    /// mission swap resetting it to zero), which is not camera travel.
+    void reset_motion_history() {
+        have_prev_ = false;
+        prev_origin_ = glm::dvec3(0.0);
+    }
+    bool has_motion_history() const { return have_prev_; }
+
     /// Reseed the per-instance buffer with `count` particles (clamped to
     /// [0, 50000]). Used by the deferred dynamic-density work; safe to
     /// call from the same thread as render().

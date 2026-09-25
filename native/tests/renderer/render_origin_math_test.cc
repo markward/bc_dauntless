@@ -92,3 +92,72 @@ TEST(RenderOriginMath, WrapPhaseMakesTheDustFieldWorldAnchored) {
     }
     EXPECT_EQ(wrap_phase(glm::dvec3(0.0), 2.0 * R), glm::vec3(0.0f));
 }
+
+// A shader phase or noise keyed to position must read the WORLD point:
+// render point + origin. The uniform the passes upload is float(origin).
+TEST(RenderOriginMath, NoiseOriginIsTheOriginAsFloat) {
+    EXPECT_EQ(renderer::render_origin::noise_origin(glm::dvec3(0.0)),
+              glm::vec3(0.0f));
+    const glm::dvec3 o(450000.25, -3.5, 12.0);
+    EXPECT_EQ(renderer::render_origin::noise_origin(o), glm::vec3(o));
+}
+
+// The cloak shimmer (vertex ripple and fragment wobble) is sin(t + k.p): a
+// phase keyed to position. Keyed to the render-space p it crawls with the
+// camera; adding phase_offset(origin, k) makes it the WORLD point's phase,
+// reduced in double so a 450,000 GU origin costs no precision.
+TEST(RenderOriginMath, PhaseOffsetMakesAPositionPhaseWorldStable) {
+    const glm::dvec3 k(glm::vec3(0.15f, 0.11f, 0.13f));   // the shader's floats
+    const glm::dvec3 origin(450000.3, -1234.7, 88.25);
+    const glm::dvec3 p(3.5, -2.0, 1.25);                  // render space
+    const double world = std::sin(0.7 + glm::dot(p + origin, k));
+    const double render = std::sin(
+        0.7 + glm::dot(p, k)
+        + double(renderer::render_origin::phase_offset(origin, glm::vec3(k))));
+    EXPECT_NEAR(render, world, 1e-5);
+    const float off = renderer::render_origin::phase_offset(origin, glm::vec3(k));
+    EXPECT_GE(off, 0.0f);
+    EXPECT_LT(off, 6.2832f);
+    EXPECT_EQ(renderer::render_origin::phase_offset(glm::dvec3(0.0),
+                                                    glm::vec3(k)), 0.0f);
+}
+
+// Wiring guard for the cloak shimmer: each shader's position phase must add
+// the host-computed world phase offset, and the k it dots with must be the
+// one the pass hands phase_offset (a drifted literal re-introduces the crawl).
+#include <renderer/cloak_pass.h>
+
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+namespace {
+std::string read_shader(const char* rel) {
+    const auto p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT) / "native" /
+                   "src" / "renderer" / "shaders" / rel;
+    std::ifstream f(p);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+std::string k_literal(const glm::vec3& k) {
+    auto f = [](float v) {
+        std::ostringstream o;
+        o << v;
+        return o.str();
+    };
+    return "vec3(" + f(k.x) + ", " + f(k.y) + ", " + f(k.z) + ")";
+}
+}  // namespace
+
+TEST(RenderOriginMath, CloakShimmerPhasesAddTheWorldPhaseOffset) {
+    const std::string vert = read_shader("cloak_refraction.vert");
+    const std::string frag = read_shader("cloak_refraction.frag");
+    ASSERT_FALSE(vert.empty());
+    ASSERT_FALSE(frag.empty());
+    EXPECT_NE(vert.find("dot(wp.xyz, " + k_literal(renderer::kCloakRipplePhaseK)
+                        + ") + u_ripple_phase_origin"), std::string::npos);
+    EXPECT_NE(frag.find("dot(v_world_pos, " + k_literal(renderer::kCloakShimmerPhaseK)
+                        + ") + u_shimmer_phase_origin"), std::string::npos);
+}

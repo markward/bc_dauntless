@@ -79,6 +79,14 @@ public:
                 float time,
                 const glm::dvec3& render_origin = glm::dvec3(0.0));
 
+    /// Drop the temporal history (and the origin it was in): the next frame
+    /// marches fresh instead of reprojecting across an origin discontinuity.
+    void reset_history() {
+        have_history_ = false;
+        prev_origin_ = glm::dvec3(0.0);
+    }
+    bool has_history() const { return have_history_; }
+
 private:
     void initialize_gl();
     /// (Re)allocate the half-res ping-pong targets to (w, h). No-op if already

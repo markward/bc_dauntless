@@ -55,4 +55,22 @@ inline glm::vec3 wrap_phase(const glm::dvec3& origin, double period) {
     return glm::vec3(m(origin.x), m(origin.y), m(origin.z));
 }
 
+/// The uniform a shader adds to a RENDER-space position to key a noise
+/// field or a phase to the WORLD point (render point + origin). Float: at
+/// 450,000 GU that is ~0.03 GU, far below any noise frequency in use.
+inline glm::vec3 noise_origin(const glm::dvec3& origin) {
+    return glm::vec3(origin);
+}
+
+/// For a shader phase keyed to position, sin(t + dot(p, k)): the offset to
+/// add so it is the WORLD point's phase, dot(origin, k) reduced into
+/// [0, 2*pi) in double. Adding float(origin) to p instead would cost the
+/// phase ~0.004 rad of precision at 450,000 GU.
+inline float phase_offset(const glm::dvec3& origin, const glm::vec3& k) {
+    constexpr double kTwoPi = 6.283185307179586;
+    double r = std::fmod(glm::dot(origin, glm::dvec3(k)), kTwoPi);
+    if (r < 0.0) r += kTwoPi;
+    return static_cast<float>(r);
+}
+
 }  // namespace renderer::render_origin

@@ -155,3 +155,24 @@ TEST(HitVfxAnchor, BodyOriginIsANormalAnchorNotASentinel) {
     EXPECT_EQ(renderer::hit_vfx_anchor_point(v, &world),
               glm::vec3(100.0f, 0.0f, 0.0f));
 }
+
+// Floating render origin (system-frames Plan 3 Task 6, fix round 1): the
+// instance matrix is RENDER space and its translation moves every frame the
+// camera does. Spark directions must be seeded from something stable in the
+// hit ship's own frame, or a stationary target's sparks re-roll every frame
+// the player moves (the particle pass's "mad flurry").
+TEST(HitVfxSparkJitter, IdenticalUnderTwoRenderOrigins) {
+    renderer::HitVfxDescriptor v;
+    v.has_body_anchor = true;
+    v.body_point = glm::vec3(1.25f, -0.5f, 0.75f);
+    v.spark_count = 8;
+    glm::mat4 world_a(1.0f), world_b(1.0f);
+    world_a[3] = glm::vec4(50.0f, 0.0f, 0.0f, 1.0f);      // origin 1e6 - 50
+    world_b[3] = glm::vec4(-3.0f, 12.0f, 7.0f, 1.0f);     // origin moved on
+    const auto a = renderer::hit_vfx_spark_jitters(v, world_a);
+    const auto b = renderer::hit_vfx_spark_jitters(v, world_b);
+    ASSERT_EQ(a.size(), 8u);
+    ASSERT_EQ(a, b);
+    // Distinct sparks still get distinct directions.
+    EXPECT_NE(a[0], a[1]);
+}

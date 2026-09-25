@@ -105,3 +105,41 @@ def test_the_dev_spawn_lands_in_front_of_the_render_space_camera(host):
     moved = host.instance_translation(b)
     assert moved == pytest.approx(
         (at_zero[0] + ORIGIN[0], at_zero[1], at_zero[2]), abs=1e-3)
+
+
+# ── a mission swap resets the origin AND what the passes remember of it ────
+
+def _nebula():
+    return {"spheres": [(0.0, 50.0, 0.0, 40.0)], "rgb": (0.5, 0.5, 0.5),
+            "visibility": 10.0, "external_tex": "", "internal_tex": "",
+            "fbm": (0.02, 1.0, 0.2), "seed": (1.0, 2.0, 3.0)}
+
+
+def test_reset_render_origin_forgets_the_passes_origin_tracking(host):
+    # Run frames at a far origin so the dust smear and the volumetric
+    # nebula's temporal history both remember it. The volumetric toggle is a
+    # process global (default ON) that host_loop reads to decide what to
+    # build, so it is restored exactly -- leaving it off perturbed later tests.
+    was_volumetric = host.volumetric_nebulae_enabled()
+    host.set_game_root(str(bc_assets.GAME_ROOT))     # the dust sprite
+    host.set_camera(eye=(0.0, 0.0, 0.0), target=(0.0, 1.0, 0.0),
+                    up=(0.0, 0.0, 1.0), fov_y_rad=0.6, near=1.0, far=1e5)
+    host.volumetric_nebulae_set_enabled(True)
+    try:
+        host.set_nebulae([_nebula()])
+        host.set_render_origin(1.0e6, 0.0, 0.0)
+        host.frame()
+        host.frame()
+        before = host.frame_state_debug()
+        assert before["dust_motion_history"] is True, "premise: dust tracked"
+        assert before["nebula_history"] is True, "premise: nebula history"
+        host.reset_render_origin()
+        after = host.frame_state_debug()
+        assert after["render_origin"] == (0.0, 0.0, 0.0)
+        # The next frame at origin 0 must not read a 1e6 GU jump as camera
+        # travel: no dust smear from it, no history reprojected across it.
+        assert after["dust_motion_history"] is False
+        assert after["nebula_history"] is False
+    finally:
+        host.set_nebulae([])
+        host.volumetric_nebulae_set_enabled(was_volumetric)

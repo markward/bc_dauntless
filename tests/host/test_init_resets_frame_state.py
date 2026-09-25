@@ -108,6 +108,9 @@ CLEAN = {
     "sky_dirty": True,
     "prev_input_edges": 0,
     "render_origin": (0.0, 0.0, 0.0),
+    # Fresh passes after init: no origin-dependent history carried over.
+    "dust_motion_history": False,
+    "nebula_history": False,
 }
 
 

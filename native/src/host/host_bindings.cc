@@ -1114,7 +1114,7 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.cloak");
             g_cloak_pass->render(g_cloak_ships, g_world, cam, *g_pipeline, lookup,
                                  static_cast<float>(now), g_lighting, ambient_scale,
-                                 g_decal_game_time);
+                                 g_decal_game_time, g_world.render_origin());
         }
     };
 
@@ -1835,6 +1835,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["have_prev_viewproj"]     = g_have_prev_viewproj;
               d["render_origin"] = py::make_tuple(
                   g_render_origin.x, g_render_origin.y, g_render_origin.z);
+              d["dust_motion_history"] =
+                  g_dust_pass ? g_dust_pass->has_motion_history() : false;
+              d["nebula_history"] = g_nebula_volumetric_pass
+                  ? g_nebula_volumetric_pass->has_history() : false;
               d["letterbox_covered"]      = renderer::letterbox::covered();
               d["sky_dirty"]              = g_sky_dirty;
               d["prev_input_edges"]       = g_prev_key_state.size()
@@ -1921,6 +1925,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "translation before narrowing to float; Bridge and Comm instances "
           "never move with it. Takes effect at the next frame(). The camera "
           "(set_camera) must then be supplied in the same render space.");
+    m.def("reset_render_origin",
+          []() {
+              // A discontinuity, not camera travel: zero the origin AND make
+              // every pass that remembers last frame's origin forget it, so
+              // the jump is never read as a smear or reprojected history.
+              g_render_origin = glm::dvec3(0.0);
+              if (g_dust_pass) g_dust_pass->reset_motion_history();
+              if (g_nebula_volumetric_pass)
+                  g_nebula_volumetric_pass->reset_history();
+              g_have_prev_viewproj = false;
+          },
+          "Reset the floating render origin to (0,0,0) for a new mission, and "
+          "drop the origin-dependent history of the dust, volumetric-nebula "
+          "and motion-blur passes. Use set_render_origin for per-frame moves.");
     m.def("instance_translation",
           [](scenegraph::InstanceId id) -> py::object {
               const auto* inst = g_world.get(id);

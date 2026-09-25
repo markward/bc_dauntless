@@ -489,14 +489,16 @@ def test_bridge_comm_and_star_map_cameras_are_not_converted():
 # ── a mission swap starts at origin zero ───────────────────────────────────
 
 def test_a_mission_swap_resets_the_render_origin(monkeypatch):
-    pushed = []
-    monkeypatch.setattr(host_loop.r, "set_render_origin",
-                        lambda *xyz: pushed.append(xyz))
+    resets = []
+    monkeypatch.setattr(host_loop.r, "reset_render_origin",
+                        lambda: resets.append(True))
     frames.set_render_origin(EYE)
     host_loop.reset_sdk_globals()
     assert frames.render_origin() == (0.0, 0.0, 0.0)
-    assert pushed == [(0.0, 0.0, 0.0)], "native must follow, or a frozen " \
-        "first frame pushes a camera relative to 0 into an old origin"
+    # Native must follow (or a frozen first frame pushes a camera relative to
+    # 0 into an old origin), and forget what its passes remember of the old
+    # origin (reset_render_origin, not a bare set_render_origin(0,0,0)).
+    assert resets == [True]
 
 
 # ── every mesh-query caller: target-set points in, view-relative out ──────
