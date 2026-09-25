@@ -292,8 +292,15 @@ diff-driven drawing retires the teardown hook in Plan 3.
 cached one, so it covers Set Course, mission start and a dev swap alike, the
 single-caller trap the reference branch fell into. A region whose import or
 `Initialize()` raises is logged loudly and skipped without stranding its
-siblings or the player, and is retried on the next visit to that system rather
-than permanently written off. The developer "System Preview" mission
+siblings or the player. The system is still recorded as loaded
+(`system_loader._loaded`), so the failed region is **not** retried while that
+record stands. It is retried only after the record is cleared, which happens in
+exactly two ways: the player's set becomes a region of a *different mapped
+system* (`ensure_loaded` overwrites `_loaded` with that system, so the next
+arrival back re-runs the loop), or a mission swap calls `reset()`
+(`host_loop`'s swap path). Leaving to a set that is not a region of any mapped
+system — Starbase 12, the warp transit set — returns early without touching
+`_loaded`, so returning from there to the same system does **not** retry it. The developer "System Preview" mission
 (`engine.dev_missions.system_preview`) is the live harness for this and for §4
 below: it loads only Ona1 and the player, and `ensure_loaded` brings up Ona2
 and Ona3 on the first tick, unattended. `tests/integration/test_sky_round_trip.py`
