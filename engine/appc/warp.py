@@ -300,7 +300,7 @@ class _ArrivalClearTargetsAction(TGAction):
 
 class _EnableHelmMenuAction(TGAction):
     """Restore the Helm menu on arrival — the counterpart to the
-    `disable_helm_menu()` that `on_warp_engage` performs at engage time.
+    `disable_helm_menu()` that `warp_button.engage` performs at engage time.
 
     BC's equivalent is PostWarpEnableMenu (Bridge/HelmMenuHandlers.py:918),
     which stock BC schedules into its own warp sequence at
@@ -929,8 +929,11 @@ def placement_name_for_destination(dest_module, course_menu):
 
 
 def execute_warp(button, event=None):
-    """ET_WARP_BUTTON_PRESSED handler (registered second, after SDK WarpPressed)
-    — builds and plays the warp spine for the button's destination."""
+    """Builds and plays the warp spine for the button's destination.
+
+    Called by `engine.appc.warp_button.engage` — the last step of the
+    ET_WARP_BUTTON_PRESSED chain (spec §1), which stands in for SDK
+    WarpPressed rather than being registered as a handler alongside it."""
     import App
     dest = button.GetDestination()
     if not dest:

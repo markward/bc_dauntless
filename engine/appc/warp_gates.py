@@ -2,9 +2,10 @@
 
 warp_gate(ship) runs the same checks in the same order as
 sdk/Build/scripts/Bridge/HelmMenuHandlers.py:WarpPressed and returns a
-GateResult. on_warp_engage calls it before execute_warp; a denial speaks the
-authentic CantWarp*/XO line (Helm AT_SAY_LINE, else subtitle). Nothing here
-ever raises — an un-evaluable check is treated as not-blocking.
+GateResult. engine.appc.warp_button.engage calls it before execute_warp; a
+denial speaks the authentic CantWarp*/XO line (Helm AT_SAY_LINE, else
+subtitle). Nothing here ever raises — an un-evaluable check is treated as
+not-blocking.
 
 Spec: docs/superpowers/specs/2026-06-22-warp-gating-design.md
 """

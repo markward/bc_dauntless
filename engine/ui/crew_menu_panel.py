@@ -69,11 +69,12 @@ class CrewMenuPanel(Panel):
         # Set Course button is clicked. None -> click is a silent no-op
         # (keeps headless construction and existing tests working).
         self._on_set_course = on_set_course
-        # Injected by host_loop: engages the warp spine when the SDK Helm
-        # "Warp" button (an STWarpButton) is clicked. Stage 1 drives the warp
-        # directly through this callback rather than firing the SDK
-        # ET_WARP_BUTTON_PRESSED event (whose WarpPressed handler does
-        # camera/control work deferred to later stages). None -> no-op.
+        # Injected by host_loop (engine.appc.warp_button.press): PRESSES the
+        # SDK Helm "Warp" button (an STWarpButton) when it's clicked, sending
+        # ET_WARP_BUTTON_PRESSED through the button's real handler chain. The
+        # chain's engine step (warp_button.engine_warp_step) replaces SDK
+        # WarpPressed at the bottom and calls warp_button.engage — see spec
+        # §1. None -> no-op.
         self._on_warp_engage = on_warp_engage
         # Set by _officer_for_menu on a label-only resolution miss (broken
         # attach); read back in toggle_menu's unowned-menu branch.
