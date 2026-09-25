@@ -55,7 +55,8 @@ _REQUIRED_BINDINGS = frozenset({
     "transform_get_rotation_col", "transform_get_positions",
     "transform_live_count", "transform_capacity",
     "set_instance_transform_slot",
-    "set_instance_node_rotation", "clear_instance_node_overrides",
+    "set_instance_node_rotation", "set_instance_node_transform",
+    "clear_instance_node_overrides",
     "set_instance_node_hidden", "instance_model",
     # Not a function: the InstanceId type itself. set_instance_transform_slot
     # isinstance-checks against it to tell a real render instance from a test
@@ -651,6 +652,18 @@ def set_instance_node_rotation(iid, node_name: str,
         iid, str(node_name),
         float(pivot[0]), float(pivot[1]), float(pivot[2]),
         float(axis[0]), float(axis[1]), float(axis[2]), float(theta)))
+
+
+def set_instance_node_transform(iid, node_name: str, m16) -> bool:
+    """Set `node_name`'s pose on instance `iid`: a column-major 4x4 (16
+    floats) in the node's PARENT space, MODEL units, applied as M * local.
+    Identity clears the override. False headless, on a fake iid, or when the
+    model has no such node -- "nothing to articulate", never "binding
+    missing" (a stale build trips validate_bindings() at boot)."""
+    if _h is None:
+        return False
+    return bool(_h.set_instance_node_transform(
+        iid, str(node_name), [float(v) for v in m16]))
 
 
 def instance_model(iid):

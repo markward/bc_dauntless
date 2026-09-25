@@ -2287,6 +2287,39 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "clears the override. False when the instance, model or node is "
           "absent, or the axis is degenerate.");
 
+    m.def("set_instance_node_transform",
+          [](scenegraph::InstanceId id, const std::string& node_name,
+             const std::vector<float>& m16) -> bool {
+              // A full rigid pose per node (spec 2026-09-25 §5): the override
+              // becomes M * local, M column-major in the node's PARENT
+              // (model) space, MODEL units. Identity clears the override so a
+              // part at its NIF pose leaves an EMPTY map (static node walk).
+              if (m16.size() != 16) return false;
+              auto* in = g_world.get(id);
+              if (!in) return false;
+              const assets::Model* m2 = resolve_model(in->model_handle);
+              if (!m2) return false;
+              const int idx = renderer::resolve_overridden_node(
+                  *m2, node_name, in->node_overrides);
+              if (idx < 0) return false;
+              glm::mat4 M(1.0f);
+              for (int c = 0; c < 4; ++c)
+                  for (int r = 0; r < 4; ++r)
+                      M[c][r] = m16[static_cast<std::size_t>(c * 4 + r)];
+              if (M == glm::mat4(1.0f)) {
+                  in->node_overrides.erase(idx);
+                  return true;
+              }
+              in->node_overrides[idx] =
+                  M * m2->nodes[static_cast<std::size_t>(idx)].local_transform;
+              return true;
+          },
+          py::arg("iid"), py::arg("node_name"), py::arg("m16"),
+          "Set a named node's pose: override = M * local, M a column-major "
+          "4x4 (16 floats) in the node's PARENT space, MODEL units. Identity "
+          "clears the override. False when the instance, model or node is "
+          "absent, or m16 is not 16 values.");
+
     // The model handle an instance was created from. Appendage severance draws
     // a severed part as a SECOND INSTANCE OF THE SAME MODEL with every other
     // part hidden, so it needs the parent's handle to create that copy. Voxel
