@@ -662,6 +662,8 @@ def set_instance_node_transform(iid, node_name: str, m16) -> bool:
     missing" (a stale build trips validate_bindings() at boot)."""
     if _h is None:
         return False
+    if not isinstance(iid, _h.InstanceId):
+        return False
     return bool(_h.set_instance_node_transform(
         iid, str(node_name), [float(v) for v in m16]))
 
