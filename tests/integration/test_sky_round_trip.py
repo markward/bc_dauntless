@@ -162,3 +162,38 @@ def test_the_sky_round_trip_ona1_ona2_ona1():
     warp._ArriveFinalizeAction(ona2, ship).Play()
     assert App.g_kSetManager.GetSet("Ona1") is ona1
     _assert_station(ona1, sess, r)
+
+
+def _translation(m):
+    return (m[3], m[7], m[11])
+
+
+def test_the_frame_that_changes_the_view_pushes_bodies_in_the_new_view():
+    """REGRESSION (final review I2). host_loop._reconcile_scene is the block
+    the frame runs AFTER its sim section (ordering pinned by
+    tests/host/test_scene_reconcile_ordering.py). Run after a sim step that
+    moves the player Ona1 -> Ona2, every map body it pushes is in Ona2's
+    coordinates THAT frame -- not Ona1's, ~50,000 GU away, which is what the
+    frame drew while the reconcile ran before the sim."""
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    ship = _ship_in(ona1, "player")
+    App.g_kSetManager.MakeRenderedSet("Ona1")
+    sess = host_loop.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    host_loop._reconcile_scene(sess, r)
+    assert frames.viewing_set() is ona1
+
+    # The frame's sim changes the view: the warp primitives WarpSequence
+    # plays, departure through arrival.
+    warp._WarpDepartAction(ona1, ship).Play()
+    warp.ChangeRenderedSetAction_Create("Systems.Ona.Ona2").Play()
+    warp._ArriveFinalizeAction(ona1, ship).Play()
+    assert frames.viewing_set() is ona2
+
+    r.pushed.clear()
+    host_loop._reconcile_scene(sess, r)
+    drawn = {b.key: b.position for b in celestial.draw_list(ona2)}
+    assert drawn and set(sess.celestial_instances) == set(drawn)
+    for key, iid in sess.celestial_instances.items():
+        assert _translation(r.pushed[iid]) == pytest.approx(drawn[key]), key

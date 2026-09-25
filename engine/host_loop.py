@@ -5904,6 +5904,36 @@ def _check_mapped_bodies_untouched(view) -> None:
               f"-- drawn where the map puts it", flush=True)
 
 
+def _reconcile_scene(session, renderer, *, nif_cache=None,
+                     on_player_change=None, verbose: bool = False) -> None:
+    """The frame's scene reconcile: load the player's system, then make the
+    render instances match the VIEWED frame -- ship scope (keep / cull /
+    hide), the map's bodies, and the mapped-body tripwire.
+
+    Every piece reads frames.viewing_set(), so the host loop runs this AFTER
+    the frame's sim section (which may warp the player or change the rendered
+    set) and immediately before _sync_instance_transforms, the camera and
+    _apply_render_origin -- all of which read the same view. Run before the
+    sim, a frame that changed the view pushed map bodies in the OLD view's
+    coordinates (Ona1 <-> Ona2 is ~50,000 GU) and culled against a stale view
+    (system-frames Plan 3 final review I2; order guarded by
+    tests/host/test_scene_reconcile_ordering.py).
+
+    Order inside: _ensure_system_loaded first, so a region set it creates is
+    realized by the scope reconcile in the same pass. The scope reconcile is
+    the FIRST visibility writer of the frame -- warp hide, the SPV hull hide,
+    bridge-player visibility and the cloak push all AND with scope_hidden,
+    and the scope only writes on a change."""
+    _ensure_system_loaded(session)
+    if session is None:
+        return
+    _reconcile_runtime_instances(
+        session, renderer, on_player_change=on_player_change, verbose=verbose)
+    _reconcile_celestial_instances(
+        session, renderer, nif_cache=nif_cache, verbose=verbose)
+    _check_mapped_bodies_untouched(_frames.viewing_set())
+
+
 def _fire_pending_preload_done() -> None:
     """Fire the current game's stored preload-done event once, if pending.
 
@@ -9802,43 +9832,17 @@ def run(mission_name: Optional[str] = None,
             # Capture the player ship at combat start; revert to it on End
             # Combat (so a mid-combat ship swap is temporary).
             _sync_quickbattle_player_revert(controller)
-            # Entering a system loads all its regions (system-frames spec
-            # §3). Run BEFORE _reconcile_runtime_instances so any region set
-            # it creates this tick is realized in the same pass -- see
-            # _ensure_system_loaded's docstring for why it must read the
-            # LIVE player, not session.player.
-            _ensure_system_loaded(session)
-            # Per-tick realization reconciliation: realize ships created at
-            # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
-            # tear down ships removed from the set. Also retargets the camera if
-            # the player object identity changed (RecreatePlayer destroy+
-            # recreate). Runs BEFORE reading session.player below so the new
-            # player is followed this same frame. No-op for steady-state
-            # missions (all ships present at load) — see
-            # _reconcile_runtime_instances. Verbose mirrors loader verbosity.
-            if session is not None:
-                def _on_player_change(new_player, _d=director, _xb=_xform_buf):
-                    # The camera follows session.player (re-read below). Snap so
-                    # the new player doesn't lerp from the destroyed ship's pose,
-                    # and re-seed the director's ship-radius distances.
-                    _r = new_player.GetRadius()
-                    _d.chase.set_ship_radius(_r)
-                    _d.tracking.set_ship_radius(_r)
-                    _d.snap()
-                    _xb.reset_all()
-                # INVARIANT: this must run before every other visibility
-                # writer (warp hide, SPV, bridge player, cloak): they AND their
-                # conditions with scope_hidden, and the scope only writes on
-                # a change.
-                _reconcile_runtime_instances(
-                    session, controller.renderer,
-                    on_player_change=_on_player_change, verbose=verbose)
-                # The system map's planets and moons: the draw list of the
-                # viewed frame, diffed (an unchanged list is one compare).
-                _reconcile_celestial_instances(
-                    session, controller.renderer, nif_cache=controller,
-                    verbose=verbose)
-                _check_mapped_bodies_untouched(_frames.viewing_set())
+            # The camera follows session.player; the scene reconcile (after
+            # the sim, below) calls this when the player's identity changed
+            # (RecreatePlayer's destroy+recreate). Snap so the new player
+            # doesn't lerp from the destroyed ship's pose, and re-seed the
+            # director's ship-radius distances.
+            def _on_player_change(new_player, _d=director, _xb=_xform_buf):
+                _r = new_player.GetRadius()
+                _d.chase.set_ship_radius(_r)
+                _d.tracking.set_ship_radius(_r)
+                _d.snap()
+                _xb.reset_all()
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 _r = player.GetRadius()
@@ -10175,6 +10179,28 @@ def run(mission_name: Optional[str] = None,
                         ship_instances=(session.ship_instances if session is not None else None),
                     )
 
+                # The scene reconcile (_reconcile_scene): load the player's
+                # system, realize / tear down / cull / hide ships for the
+                # render scope, and diff the viewed frame's map bodies. It
+                # reads frames.viewing_set(), so it runs HERE -- after every
+                # part of the frame's sim that can change the view (the timers
+                # in loop.tick, input and clicks that engage a warp, combat,
+                # the warp FSM, collisions) and immediately before
+                # _sync_instance_transforms, the camera and
+                # _apply_render_origin, which read the same view. Before the
+                # sim, a frame that changed the view drew map bodies in the
+                # OLD view's coordinates. INVARIANT: it is the FIRST visibility
+                # writer of the frame -- warp hide (in _sync_instance_
+                # transforms), SPV, bridge player and cloak all run after it
+                # and AND their conditions with scope_hidden, and the scope
+                # only writes on a change. Order guarded by
+                # tests/host/test_scene_reconcile_ordering.py.
+                _reconcile_scene(
+                    session, controller.renderer, nif_cache=controller,
+                    on_player_change=_on_player_change, verbose=verbose)
+                # It may have retargeted session.player (RecreatePlayer).
+                player = session.player if session is not None else None
+
                 # Sync transforms for known instances.
                 #
                 # Player ship: pushed live (it is integrated per render
@@ -10249,6 +10275,14 @@ def run(mission_name: Optional[str] = None,
                         player_control=player_control,
                         player_interp_pose=_player_interp_pose,
                         player_is_interpolated=_interp_player)
+            else:
+                # Frozen frame (pause, DevTools): no sim ran, so nothing
+                # changed the view; reconcile as every frame always has, still
+                # ahead of the SPV / bridge-player / cloak visibility writers.
+                _reconcile_scene(
+                    session, controller.renderer, nif_cache=controller,
+                    on_player_change=_on_player_change, verbose=verbose)
+                player = session.player if session is not None else None
 
             frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
