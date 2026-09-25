@@ -35,7 +35,8 @@ _REQUIRED_BINDINGS = frozenset({
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
-    "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
+    "cef_toggle_devtools", "clear_glow_regions", "clear_hologram_ship",
+    "clear_subsystem_pins",
     "clear_viewscreen_comm_source", "clear_viewscreen_scene_source",
     "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
     "create_instance", "damage_decals_tick",
@@ -715,6 +716,13 @@ def add_box_region(instance_id: InstanceId, center, half_extents,
     legacy 2-arg call). Returns the region index, or -1."""
     return _h.add_box_region(instance_id, tuple(center), tuple(half_extents),
                              tuple(forward), tuple(up))
+
+
+def clear_glow_regions(instance_id: InstanceId) -> None:
+    """Deactivate every glow region on an instance, so they can be
+    re-registered. Used by the SPV's Save refresh (host_loop.
+    refresh_ship_glow); regions otherwise register once, at spawn."""
+    _h.clear_glow_regions(instance_id)
 
 
 def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,

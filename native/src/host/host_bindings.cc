@@ -4768,6 +4768,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "center/axis/radius are in game units / body frame. Returns the "
           "region index, or -1 on failure (stale id, no model, no slot).");
 
+    m.def("clear_glow_regions",
+          [](scenegraph::InstanceId id) {
+              // Reset every slot to its default (inactive) state, so a
+              // controller can re-register from scratch. Regions otherwise
+              // register once, at spawn; the SPV's Save refresh
+              // (host_loop.refresh_ship_glow) is the caller. Stale id: no-op.
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              for (auto& n : inst->glow_regions) n = {};
+          },
+          py::arg("instance_id"),
+          "Deactivate every glow region on the instance (stale id: no-op).");
+
     m.def("add_sphere_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center, float radius) -> int {

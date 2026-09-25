@@ -93,9 +93,15 @@ class ShipPropertyViewerPanel(Panel):
     def __init__(self, ship_getter: Callable[[], object],
                  on_saved: Optional[Callable[[object, dict], None]] = None,
                  iid_getter: Optional[Callable[[], Optional[int]]] = None,
+                 on_regions_saved: Optional[Callable[[object, dict], None]] = None,
                  ) -> None:
         super().__init__()
         self._ship_getter = ship_getter
+        # Optional caller hook invoked after a successful Save with
+        # (ship, regions_by_sub_id): the effective glow-region list per
+        # subsystem, so the host can re-register them without a mission
+        # reload (host_loop.refresh_ship_glow). Construction-time config.
+        self._on_regions_saved = on_regions_saved
         # Resolves the player ship's renderer InstanceId (session.ship_
         # instances[ship]) for host_io.model_nodes(iid) -- the Model Parts
         # pane's node list. Optional: a caller that never wires it (or a test)
@@ -669,6 +675,30 @@ class ShipPropertyViewerPanel(Panel):
             return self._saved_light[index]
         d = self._descriptors[index]
         return d.get("light_region") if d.get("light") else None
+
+    def _effective_regions_by_sub(self, ship) -> dict:
+        """{id(sub): [region spec, ...]} for every subsystem the panel lists.
+
+        Region 0 is the panel's effective light (staged, saved this session,
+        or baked; absent when removed); regions 1.. are the property's own
+        baked ones, which the panel does not edit. Walks subsystems exactly as
+        `build_descriptors` does (same skip rule), so descriptor index `di`
+        lines up with the subsystem.
+        """
+        from engine.appc.subsystem_glow import baked_glow_regions
+        from engine.ui.ship_property_viewer import _iter_subsystems
+        out = {}
+        di = 0
+        for sub in _iter_subsystems(ship):
+            local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+            if local is None:
+                continue                       # same skip as build_descriptors
+            prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+            region0 = self._effective_light(di)
+            out[id(sub)] = (([dict(region0)] if region0 else [])
+                            + baked_glow_regions(prop)[1:])
+            di += 1
+        return out
 
     def _has_light(self, index) -> bool:
         return (0 <= index < len(self._descriptors)
@@ -3049,6 +3079,11 @@ class ShipPropertyViewerPanel(Panel):
                         specs_by_sub_id[id(sub)] = self._effective_emitters(di)
                         di += 1
                     self._on_saved(ship, specs_by_sub_id)
+                except Exception:
+                    pass   # live refresh is best-effort; never break Save/persistence
+            if self._on_regions_saved is not None:
+                try:
+                    self._on_regions_saved(ship, self._effective_regions_by_sub(ship))
                 except Exception:
                     pass   # live refresh is best-effort; never break Save/persistence
             return True

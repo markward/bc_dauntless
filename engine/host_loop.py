@@ -1336,6 +1336,35 @@ def refresh_ship_emitters(session, ship, specs_by_sub_id):
         dev_mode.log_swallowed("spv live emitter refresh", e)
 
 
+def refresh_ship_glow(session, ship, regions_by_sub_id):
+    """Re-register `ship`'s glow regions from SPV effective region specs.
+
+    Regions used to register once, at spawn, so a region authored in the
+    Ship Property Viewer did not show until the ship was rebuilt. Clears the
+    instance's regions, then builds a fresh ShipGlowController fed the SPV's
+    specs -- saved specs have not reached the live property yet (they do on
+    the next ship build), the same reason refresh_ship_emitters takes specs.
+
+    `regions_by_sub_id` maps id(subsystem) -> list of baked-shaped region
+    dicts; a subsystem absent from it gets none. No-op without a live render
+    instance. Best-effort: never raises, so it can never break Save.
+    """
+    if session is None or ship is None:
+        return
+    instances = getattr(session, "ship_instances", None)
+    iid = instances.get(ship) if instances else None
+    if iid is None:
+        return
+    try:
+        from engine.appc.subsystem_glow import ShipGlowController
+        r.clear_glow_regions(iid)
+        session.ship_glow_controllers[iid] = ShipGlowController(
+            r, iid, ship,
+            regions_of=lambda sub: regions_by_sub_id.get(id(sub), []))
+    except Exception as e:
+        dev_mode.log_swallowed("spv live glow-region refresh", e)
+
+
 def _warp_glow_envelope(ship):
     """`(drive, burst)` warp-nacelle glow envelope for `ship`, else None.
 
@@ -8297,6 +8326,8 @@ def run(mission_name: Optional[str] = None,
                 ship_getter=_spv_player,
                 on_saved=lambda ship, specs: refresh_ship_emitters(
                     controller.session, ship, specs),
+                on_regions_saved=lambda ship, regions: refresh_ship_glow(
+                    controller.session, ship, regions),
                 iid_getter=_spv_player_iid,
             )
             dev_mode.register_dev_pause_menu_entry(

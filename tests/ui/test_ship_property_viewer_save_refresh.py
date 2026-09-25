@@ -132,3 +132,45 @@ def test_on_saved_exception_does_not_break_save(spv_panel_factory):
     p.dispatch_event('add_emitter:{"i":0,"kind":"point"}')
     p.dispatch_event("save")
     assert not p._pending_emitter   # pending still cleared -> save completed
+
+
+# ── Glow regions (light volumes) refresh on Save ──────────────────────────────
+# Regions registered only at spawn, so a region authored in the SPV did not
+# show until the mission reloaded. Save now hands `on_regions_saved` the
+# effective region list per subsystem (keyed by id(sub)) -- saved specs have
+# not reached the live property yet.
+
+@pytest.fixture
+def spv_regions_factory(spv_panel_factory, monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    def _make(on_regions_saved):
+        ship = _FakeShip()
+        return ship, ShipPropertyViewerPanel(
+            ship_getter=lambda: ship, on_regions_saved=on_regions_saved)
+
+    return _make
+
+
+def test_save_hands_on_regions_saved_the_added_light_volume(spv_regions_factory):
+    calls = []
+    ship, p = spv_regions_factory(lambda s, regions: calls.append((s, regions)))
+    p.open()
+    p.dispatch_event('add_light:{"i":0,"shape":"Box"}')
+    p.dispatch_event("save")
+    assert len(calls) == 1
+    s, regions = calls[0]
+    assert s is ship
+    # Descriptor 0 walks 1:1 to ship._hull (GetHull first).
+    assert [r["shape"] for r in regions[id(ship._hull)]] == ["Box"]
+    assert regions[id(ship._sensors)] == [], "an un-edited sub with no region"
+
+
+def test_on_regions_saved_exception_does_not_break_save(spv_regions_factory):
+    def boom(ship, regions):
+        raise RuntimeError("refresh failed")
+    _ship, p = spv_regions_factory(boom)
+    p.open()
+    p.dispatch_event('add_light:{"i":0,"shape":"Box"}')
+    p.dispatch_event("save")
+    assert not p._pending_light
