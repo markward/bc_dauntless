@@ -90,7 +90,9 @@ class WarpVFX:
             return
         e = self._elapsed(now)
         if self._held:
-            e = min(e, self._t_align + 0.5 * self._t_transit)
+            # End of the streak plateau (streak 1, flash 0); release() then
+            # resumes at 0.9, so an unheld warp barely pauses here.
+            e = min(e, self._t_align + 0.85 * self._t_transit)
         self._e = e
         total = self._t_align + self._t_transit
         if e < self._t_align:
@@ -235,6 +237,7 @@ class WarpVFX:
         self._flash = 0.0
 
     def is_active(self):        return self._active
+    def is_held(self):          return self._held
     def phase(self):            return self._phase
     def turn_fraction(self):    return self._turn
     def streak_intensity(self): return self._streak

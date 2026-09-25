@@ -404,17 +404,18 @@ class _MissionChangePoint(TGAction):
 
 
 class _HoldUntilAction(TGAction):
-    """Completes no earlier than the end of the nominal transit
-    (sequence start + t_align + t_transit), so a transit whose queues finish
-    early still lasts its full length. Completes at once when that deadline
-    has already passed -- a queue or the master sequence ran long and the
-    streak has been held (spec §1 "Transit holds"). Game time, via
-    g_kTimerManager, like TGSequence's own step delays."""
+    """Completes no earlier than the start of the nominal transit's exit
+    flash (sequence start + t_align + 0.9 * t_transit), so a transit whose
+    queues finish early still lasts its full length -- the swap follows the
+    release 0.1 * t_transit later, at transit end under the flash. Completes
+    at once when that deadline has already passed -- a queue or the master
+    sequence ran long and the streak has been held (spec §1 "Transit holds").
+    Game time, via g_kTimerManager, like TGSequence's own step delays."""
 
     def __init__(self, seq, t_align, t_transit):
         super().__init__()
         self._seq = seq
-        self._span = float(t_align) + float(t_transit)
+        self._span = float(t_align) + 0.9 * float(t_transit)
 
     def Play(self):
         import App
@@ -441,9 +442,16 @@ class _HoldUntilAction(TGAction):
 
 class _TransitReleaseAction(TGAction):
     """End the transit hold: the WarpVFX resumes with its exit flash to play.
-    Fail-open, like _WarpVfxBeginAction -- never blocks the swap."""
+    Player only, matching _WarpDepartAction's hold. Fail-open, like
+    _WarpVfxBeginAction -- never blocks the swap."""
+
+    def __init__(self, ship):
+        super().__init__()
+        self._ship = ship
 
     def _do_play(self):
+        if not _is_current_player(self._ship):
+            return
         try:
             import App
             from engine import warp_vfx
@@ -660,11 +668,14 @@ class _WarpDepartAction(TGAction):
             pass
         # The streak holds at its plateau until _TransitReleaseAction: the
         # swap now waits on the queues and the master sequence (spec §1).
-        try:
-            from engine import warp_vfx
-            warp_vfx.get().hold()
-        except Exception:
-            pass
+        # Player only -- the WarpVFX singleton is the player's tunnel, and an
+        # NPC warp must not freeze it.
+        if _is_current_player(ship):
+            try:
+                from engine import warp_vfx
+                warp_vfx.get().hold()
+            except Exception:
+                pass
         # 3. Drop the source set's RENDER instances. The set itself stands:
         #    departure is not a lifetime operation. BC's region modules delete
         #    a set only in Terminate(), which nothing calls; the bound is the
@@ -851,7 +862,8 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # FLASH_AT into the clip) lands on the BURST (= t_align), now that the
         # align length is angle-driven (the old fixed-1.5s align kept it in sync
         # by luck). The set-swap is CHAINED behind departure, the in-transit
-        # queues and _HoldUntilAction (no earlier than t_align + t_transit);
+        # queues, _HoldUntilAction and the exit flash (no earlier than
+        # t_align + t_transit);
         # placement + teardown + exit SFX + VFX-end chain after the swap,
         # firing on arrival.
         # Procedural-sky vantage to fly the backdrop from during transit: the
@@ -879,10 +891,11 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         seq.AddAction(depart, t_align)
         # Transit is chained, not timed (spec §1 "Transit holds"): departure ->
         # SDK WaitForQueued (player only) -> the in-transit queues -> the
-        # mission-change point -> no earlier than the nominal transit end ->
-        # release the streak -> swap. The SDK's own WaitForQueued holds for
-        # MissionLib's master dialogue sequence; where BC's C++ puts it in the
-        # chain is inferred.
+        # mission-change point -> no earlier than 90 % of the nominal transit ->
+        # release the streak (the exit flash plays) -> swap 0.1 * t_transit
+        # later, at transit end under the flash. The SDK's own WaitForQueued
+        # holds for MissionLib's master dialogue sequence; where BC's C++ puts
+        # it in the chain is inferred.
         prev = depart
         if _is_current_player(ship):
             wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
@@ -891,10 +904,10 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         prev = _add_transit_queues(seq, prev)
         hold = _HoldUntilAction(seq, t_align, t_transit)
         seq.AddAction(hold, prev)
-        release = _TransitReleaseAction()
+        release = _TransitReleaseAction(ship)
         seq.AddAction(release, hold)
         swap = ChangeRenderedSetAction_Create(dest_module)
-        seq.AddAction(swap, release)
+        seq.AddAction(swap, release, 0.1 * t_transit)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         # BC's PostWarpEnableMenu clear — the player is in the destination set
@@ -919,14 +932,15 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     # only cleared when a real warp actually happens (real destination).
     if not _module_is_empty(dest_module):
         seq.AddAction(_ClearTargetsAction(ship))
-    # Same queue order as the flythrough, with no tunnel to hold.
+    # Same queue order as the flythrough, with no tunnel to hold: the SDK's
+    # WaitForQueued (player only) still gates the swap on the master sequence.
     _add_before_queue(seq)
     swap = ChangeRenderedSetAction_Create(dest_module)
-    prev = _add_transit_queues(seq, None)
-    if prev is None:
-        seq.AddAction(swap)
-    else:
-        seq.AddAction(swap, prev)
+    prev = None
+    if _is_current_player(ship):
+        prev = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
+        seq.AddAction(prev)
+    seq.AddAction(swap, _add_transit_queues(seq, prev))
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))

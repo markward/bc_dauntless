@@ -51,12 +51,13 @@ def teardown_function(_):
     App.g_kSetManager._sets.clear()
 
 
-def _flythrough_warp(name, queues, monkeypatch, is_player=False):
+def _flythrough_warp(name, queues, monkeypatch, is_player=False,
+                     start=lambda *a, **k: None):
     """A flythrough warp of a ship from set Src to a fake module whose
     Initialize registers set `name`; the ship is Game_GetCurrentPlayer() iff
     `is_player`. Returns (ship, seq, t_align + t_transit)."""
     warp.configure_warp_vfx(
-        enabled=lambda: True, start=lambda *a, **k: None, stop=lambda: None,
+        enabled=lambda: True, start=start, stop=lambda: None,
         vantage_of=lambda key: None)
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
     ship = App.ShipClass_Create(); ship.SetName("player")
@@ -141,6 +142,8 @@ def test_transit_holds_until_a_long_during_action_completes(monkeypatch):
     assert not _in_set("QHold", ship)
     long_.Completed()
     _advance_game_time(1.0 / 60.0)
+    assert not _in_set("QHold", ship)            # the exit flash plays first
+    _advance_game_time(0.1 * warp._T_BASE)
     assert _in_set("QHold", ship)
 
 
@@ -162,6 +165,8 @@ def test_transit_waits_for_the_mission_master_sequence(monkeypatch):
     assert not _in_set("QMaster", ship)
     dialogue.Completed()                      # master sequence finishes
     _advance_game_time(1.0 / 60.0)
+    assert not _in_set("QMaster", ship)            # the exit flash plays first
+    _advance_game_time(0.1 * warp._T_BASE)
     assert _in_set("QMaster", ship)
 
 
@@ -174,3 +179,80 @@ def test_no_hold_swaps_at_the_end_of_transit(monkeypatch):
     assert _in_set(warp._WARP_TRANSIT_SET_NAME, ship)
     _advance_game_time(1.0)
     assert _in_set("QPlain", ship)
+
+
+def test_unheld_swap_lands_at_transit_end_under_the_exit_flash(monkeypatch):
+    """Nothing to wait for: the hold releases at 90 % of transit and the swap
+    follows 0.1 * t_transit later -- at t_align + t_transit, never earlier,
+    with the exit flash peaking to mask it. WarpVFX puts e == t_align +
+    t_transit itself in the "exit" phase (flash 0), so the flash is read on
+    the last 60 Hz frame before the swap -- the frame the swap replaces."""
+    import MissionLib
+    from engine import warp_vfx
+    monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", None)
+    vfx = warp_vfx.get()
+    vfx.stop()
+    seen = {}
+
+    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None):
+        vfx.start(heading, t_align, t_transit,
+                  App.g_kUtopiaModule.GetGameTime(), vantage, dst_vantage)
+
+    def _realize(pSet):
+        now = App.g_kUtopiaModule.GetGameTime()
+        vfx.tick(now - 1.0 / 60.0)
+        seen.update(t=now, flash=vfx.flash_intensity())
+        vfx.tick(now)
+
+    ship, seq, total = _flythrough_warp("QFlash", _queues(), monkeypatch,
+                                        is_player=True, start=_start)
+    warp.configure_warp_hooks(realize=_realize, teardown=None)
+    try:
+        t0 = App.g_kUtopiaModule.GetGameTime()
+        seq.Play()
+        _advance_game_time(total + 1.0)
+        assert "t" in seen
+        assert seen["t"] - t0 >= total - 1e-6
+        assert seen["flash"] > 0.9
+    finally:
+        vfx.stop()
+
+
+def test_npc_flythrough_does_not_hold_the_shared_vfx(monkeypatch):
+    """The WarpVFX singleton is the player's tunnel; an NPC warp through the
+    flythrough path must not freeze it."""
+    from engine import warp_vfx
+    warp_vfx.get().stop()
+    ship, seq, total = _flythrough_warp("QNpc", _queues(), monkeypatch,
+                                        is_player=False)
+    seq.Play()
+    _advance_game_time(warp._T_ALIGN_MIN + 1.0)     # past departure
+    assert _in_set(warp._WARP_TRANSIT_SET_NAME, ship)
+    assert warp_vfx.get().is_held() is False
+
+
+def test_fallback_waits_for_the_mission_master_sequence(monkeypatch):
+    """No flythrough: the swap still waits on SDK WaitForQueued (player only)
+    for MissionLib's master sequence."""
+    import MissionLib
+    master = App.TGSequence_Create()
+    dialogue = _Long("DIALOGUE")
+    master.AddAction(dialogue)
+    master.Play()
+    monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", master.GetObjID())
+    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
+    ship = App.ShipClass_Create(); ship.SetName("player")
+    src.AddObjectToSet(ship, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
+    mod = types.ModuleType("FakeSys.QFall")
+    mod.Initialize = lambda: App.g_kSetManager.AddSet(SetClass_Create(), "QFall")
+    sys.modules["FakeSys.QFall"] = mod
+    seq = warp.WarpSequence_Create(ship, "FakeSys.QFall", 0.0, None,
+                                   queues=_queues())
+    seq.Play()
+    _advance_game_time(1.0)
+    assert _in_set("Src", ship)
+    assert not _in_set("QFall", ship)
+    dialogue.Completed()
+    _advance_game_time(1.0 / 60.0)
+    assert _in_set("QFall", ship)
