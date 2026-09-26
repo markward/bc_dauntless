@@ -324,6 +324,16 @@ from engine.appc.particles import (
     EffectController_GetEffectLevel,
 )
 
+# Versioned marker for Dauntless-only code in hardpoint files (spec
+# 2026-09-26 section 4.3). Emitted code guards with
+#   if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= N:
+# so stock stbc.exe skips it. Bump ONLY when newly emitted hardpoint code
+# needs engine surface an older Dauntless lacks, and guard that code with the
+# new level. Must stay a real definition: this module's __getattr__ answers
+# any undefined name with a stub. Not a measured BC constant -- never add it
+# to constants_generated.py.
+DAUNTLESS_ENV = 1
+
 # ── App.CT_* object type-tag constants ────────────────────────────────────────
 # In the original BC engine these are integer enum tags, and since the q13
 # constant sweep they are ints here too (measured values, read out of the

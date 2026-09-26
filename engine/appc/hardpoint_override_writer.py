@@ -66,7 +66,14 @@ class _RecordingApp:
     needs its own hook onto `App` itself. This stands in for the real App
     shim during read_models exactly as `_Recorder` stands in for a live
     property, so recovering a ship's parts never depends on the real App
-    module (or its side effects on a real g_kModelPropertyManager)."""
+    module (or its side effects on a real g_kModelPropertyManager).
+
+    `DAUNTLESS_ENV` must be present here too: a part block's guard is now
+    `if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= N:`, and
+    without it read_models would skip every part block, silently dropping
+    all parts on the next save."""
+
+    DAUNTLESS_ENV = 1
 
     class _Mgr:
         def RegisterLocalTemplate(self, part):
@@ -207,14 +214,22 @@ def _ident_for(name) -> str:
     return ident.lower()
 
 
+def env_guard(level: int = 1) -> str:
+    """The Python-1.5-safe guard every Dauntless-only emitted block sits
+    under (spec 2026-09-26 section 4.3)."""
+    return 'if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= %d:' % level
+
+
 def _emit_part(lines, name, calls) -> None:
     """Append a find-or-CREATE block for one articulated part to `lines`.
 
-    The App-level hasattr guard (not the usual per-instance one) is required
-    because stock BC has never heard of this property type: there is no
-    instance to guard on until Create succeeds, so the guard sits on App
-    itself. It is Python-1.5-safe -- hasattr is a two-argument builtin -- and
-    so is everything inside it: no True/False literals, no f-strings.
+    The guard sits on the versioned `App.DAUNTLESS_ENV` marker (not on a
+    borrowed function name like `ArticulatedPartProperty_Create`): stock BC
+    has never heard of this property type, so there is no instance to guard
+    on until Create succeeds, and gating on the marker lets the guard level
+    be bumped independently of any one Appc surface. It is Python-1.5-safe --
+    hasattr is a two-argument builtin -- and so is everything inside it: no
+    True/False literals, no f-strings.
 
     hardpoint_overrides.py does not strictly need the guard (stbc.exe never
     loads it), but emitting the identical block in both homes means the SPV
@@ -222,7 +237,7 @@ def _emit_part(lines, name, calls) -> None:
     straight into a mod's own hardpoint file. See spec section 2.3.
     """
     var = _ident_for(name)
-    lines.append('    if hasattr(App, "ArticulatedPartProperty_Create"):')
+    lines.append('    ' + env_guard())
     lines.append('        %s = App.ArticulatedPartProperty_Create(%s)'
                  % (var, _lit(name)))
     for setter, args in calls:

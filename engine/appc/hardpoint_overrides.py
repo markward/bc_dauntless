@@ -239,7 +239,7 @@ def _birdofprey(find):
         p.SetLightEmitterRadius(0, 0.051763776534396094)
         p.SetLightEmitterColor(0, 1.0, 0.45809755461141033, 0.2607827284788081)
         p.SetLightEmitterIntensity(0, 2.0)
-    if hasattr(App, "ArticulatedPartProperty_Create"):
+    if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= 1:
         left_wing = App.ArticulatedPartProperty_Create("left wing")
         left_wing.SetAnchor(-0.16, 0.0, 0.05)
         left_wing.SetTransitionSeconds(2.0)
@@ -248,7 +248,7 @@ def _birdofprey(find):
         left_wing.SetStatePose("warp", -0.08221825406947976, 0.0, -0.09849242404917498, 0.0, 44.99999999999999, 0.0)
         left_wing.SetBreakFraction(0.2)
         App.g_kModelPropertyManager.RegisterLocalTemplate(left_wing)
-    if hasattr(App, "ArticulatedPartProperty_Create"):
+    if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= 1:
         left_wing01 = App.ArticulatedPartProperty_Create("left wing01")
         left_wing01.SetAnchor(0.16, 0.0, 0.05)
         left_wing01.SetTransitionSeconds(2.0)
