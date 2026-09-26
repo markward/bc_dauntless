@@ -182,6 +182,10 @@ namespace dauntless_warp_vfx {
     glm::vec3 travel_dir();
     void set_streak(float); void set_flash(float); void set_travel(glm::vec3);
 }
+namespace dauntless_dash_vfx {
+    float intensity();          // defined in frame.cc
+    void set_intensity(float v); // defined in frame.cc
+}
 namespace dauntless_volumetric_nebulae {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
@@ -1036,7 +1040,8 @@ void frame() {
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir(),
-                                g_world.render_origin());
+                                g_world.render_origin(),
+                                dauntless_dash_vfx::intensity());
         }
         if (!g_nebulae.empty()) {
             DAUNTLESS_FRAME_SCOPE("space.nebula");
@@ -4000,6 +4005,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](float x, float y, float z) { dauntless_warp_vfx::set_travel(glm::vec3(x, y, z)); },
           py::arg("x"), py::arg("y"), py::arg("z"),
           "Set the world-space travel direction for the warp flythrough.");
+    m.def("set_dash_intensity",
+          [](float i) { dauntless_dash_vfx::set_intensity(i); },
+          py::arg("intensity"),
+          "Set the 0..1 intensity for the player's in-system-warp dash "
+          "(raises the dust pass's smear cap; separate from the warp "
+          "flythrough's streak channel).");
     m.def("hdr_set_enabled",
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),

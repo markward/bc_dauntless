@@ -76,6 +76,13 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
     return local;
 }
 
+float dash_smear_cap(float dash_intensity) {
+    if (dash_intensity < 0.0f) dash_intensity = 0.0f;
+    if (dash_intensity > 1.0f) dash_intensity = 1.0f;
+    return DustPass::kMaxSmearLength *
+           (1.0f + dash_intensity * (DustPass::kDashSmearScale - 1.0f));
+}
+
 namespace {
 
 // Closeness ramp: 1 at/inside the body surface, smoothly 0 by
@@ -173,7 +180,8 @@ void DustPass::render(const scenegraph::Camera& camera,
                       const std::vector<glm::vec4>& planets,
                       float warp_streak,
                       glm::vec3 warp_travel,
-                      const glm::dvec3& origin) {
+                      const glm::dvec3& origin,
+                      float dash_intensity) {
     if (!enabled_ || particle_count_ <= 0) {
         // Still update prev_eye_ tracking so we don't get a phantom huge
         // velocity on the frame after re-enabling.
@@ -201,8 +209,9 @@ void DustPass::render(const scenegraph::Camera& camera,
 
     glm::vec3 smear = -velocity * kSmearSeconds;
     const float smear_len = glm::length(smear);
-    if (smear_len > kMaxSmearLength) {
-        smear *= (kMaxSmearLength / smear_len);
+    const float smear_cap = dash_smear_cap(dash_intensity);
+    if (smear_len > smear_cap) {
+        smear *= (smear_cap / smear_len);
     }
 
     auto& shader = pipeline.dust_shader();

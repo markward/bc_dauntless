@@ -74,13 +74,42 @@ class _Dash:
 
 
 # ── hooks Task 6 fills (ruling R3) ─────────────────────────────────────────
+#
+# Weapon-loop silencing already happened at engage (warp._silence_ship_
+# weapons, called from _engage() -- ruling R3 says Task 6 must not duplicate
+# it). These two hooks own only the screen flash / dust-smear / nacelle-glow
+# clock (engine.dash_vfx) and the departure/arrival sound, exactly as the
+# tunnel's own _WarpSoundAction plays "Enter Warp" / "Exit Warp". Gated on
+# warp._is_current_player like every other player-scene effect in warp.py --
+# the dash is player-only today (spec §4 "NPCs: Player only for now"), so
+# this is a defensive match to that convention rather than a live branch.
 
 def _on_engage_fx(player) -> None:
     """Engage flash + "Enter Warp" (Task 6)."""
+    from engine.appc import warp
+    if not warp._is_current_player(player):
+        return
+    import App
+    from engine import dash_vfx
+    dash_vfx.get().engage(App.g_kUtopiaModule.GetGameTime())
+    try:
+        App.g_kSoundManager.PlaySound("Enter Warp")
+    except Exception:
+        pass
 
 
 def _on_drop_out_fx(player) -> None:
     """Drop-out flash + "Exit Warp" (Task 6)."""
+    from engine.appc import warp
+    if not warp._is_current_player(player):
+        return
+    import App
+    from engine import dash_vfx
+    dash_vfx.get().drop_out(App.g_kUtopiaModule.GetGameTime())
+    try:
+        App.g_kSoundManager.PlaySound("Exit Warp")
+    except Exception:
+        pass
 
 
 # ── queries ────────────────────────────────────────────────────────────────

@@ -78,6 +78,36 @@ TEST(DustPassWrap, ZeroCameraOffsetIsIdentityInsideSphere) {
     EXPECT_FLOAT_EQ(local.z, inside.z);
 }
 
+TEST(DustDashSmearCap, ZeroIsOffParity) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(0.0f),
+                    renderer::DustPass::kMaxSmearLength);
+}
+
+TEST(DustDashSmearCap, FullDashScalesByKDashSmearScale) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(1.0f),
+                    renderer::DustPass::kMaxSmearLength *
+                        renderer::DustPass::kDashSmearScale);
+}
+
+TEST(DustDashSmearCap, ScalesMonotonicallyWithIntensity) {
+    const float low  = renderer::dash_smear_cap(0.25f);
+    const float mid  = renderer::dash_smear_cap(0.5f);
+    const float high = renderer::dash_smear_cap(0.75f);
+    EXPECT_GT(low, renderer::DustPass::kMaxSmearLength);
+    EXPECT_GT(mid, low);
+    EXPECT_GT(high, mid);
+    EXPECT_LT(high, renderer::DustPass::kMaxSmearLength *
+                        renderer::DustPass::kDashSmearScale);
+}
+
+TEST(DustDashSmearCap, ClampsOutOfRangeIntensity) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(-1.0f),
+                    renderer::DustPass::kMaxSmearLength);
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(2.0f),
+                    renderer::DustPass::kMaxSmearLength *
+                        renderer::DustPass::kDashSmearScale);
+}
+
 TEST(DustInfluence, NoBodiesIsBaseline) {
     const auto inf = renderer::compute_dust_influence(
         glm::vec3(0.0f), {}, {});
@@ -256,6 +286,17 @@ TEST_F(DustPassGLTest, DisabledPassDoesNothing) {
     cam.target = {0, 0, 0};
     cam.aspect = 1.0f;
     pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {});
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(DustPassGLTest, DashIntensityRendersWithNoGLError) {
+    renderer::DustPass pass;
+    scenegraph::Camera cam;
+    cam.eye = {0, 0, 100};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+    pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {}, 0.0f,
+               glm::vec3(0.0f, 1.0f, 0.0f), glm::dvec3(0.0), 1.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

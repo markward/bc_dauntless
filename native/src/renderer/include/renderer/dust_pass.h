@@ -62,6 +62,14 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
                               glm::vec3 camera_pos,
                               float radius);
 
+/// Smear-length cap for the given 0..1 dash intensity (in-system-warp spec
+/// §4: the player's Set Course / heading dash raises the dust pass's smear
+/// cap so the dust stretches into streaks along the real travel direction).
+/// 0 => `DustPass::kMaxSmearLength` (off-parity); 1 =>
+/// `kMaxSmearLength * DustPass::kDashSmearScale`. Pure — testable without a
+/// GL context; `DustPass::render` calls this internally.
+float dash_smear_cap(float dash_intensity);
+
 class DustPass {
 public:
     // Tunable constants. Documented in the spec as the dials for visual
@@ -75,6 +83,12 @@ public:
     // Hard cap on streak length so high-velocity camera motion (warp
     // exits, fast chase) doesn't stretch dust into screen-spanning lines.
     static constexpr float kMaxSmearLength       = 1.5f;        // BC units
+    // In-system-warp dash (spec §4): at full dash intensity the cap is
+    // raised to kMaxSmearLength * kDashSmearScale so the dust reads as
+    // streaks at dash speed instead of vanishing under the ordinary cap
+    // (10,000 GU/s would otherwise be capped at 1.5 GU; 400 * 1.5 = 600 GU
+    // streaks). Live-tuned by eye; no correctness dependency on the value.
+    static constexpr float kDashSmearScale       = 400.0f;
     static constexpr float kSizeMin              = 0.02f;       // BC units
     static constexpr float kSizeMax              = 0.035f;
     // Brightness boosted ~1.6x (spec §1, "moderate").
@@ -120,6 +134,10 @@ public:
     /// velocity and the toroidal wrap are keyed to the WORLD eye
     /// (eye + origin), so the field stays put in the world while the origin
     /// follows the camera. Zero: byte-identical to before.
+    /// `dash_intensity` (0..1) raises the smear cap (dash_smear_cap, above)
+    /// during a player Set Course / heading dash — separate from
+    /// `warp_streak`, which drives the tunnel's own drift/prism mode and is
+    /// left untouched by a dash (0 there throughout).
     void render(const scenegraph::Camera& camera,
                 float dt_seconds,
                 Pipeline& pipeline,
@@ -127,7 +145,8 @@ public:
                 const std::vector<glm::vec4>& planets,
                 float warp_streak = 0.0f,
                 glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f),
-                const glm::dvec3& render_origin = glm::dvec3(0.0));
+                const glm::dvec3& render_origin = glm::dvec3(0.0),
+                float dash_intensity = 0.0f);
 
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }

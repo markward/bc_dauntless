@@ -250,6 +250,21 @@ namespace dauntless_warp_vfx {
     void      set_travel(glm::vec3 v) { g_travel = v; }
 }
 
+// Per-frame state channel for the player's in-system-warp DASH (Set Course /
+// heading, in-system-warp spec §4). A single 0..1 intensity — the dust
+// pass's smear cap is the only consumer (dust_pass.h:kDashSmearScale). The
+// dash draws the real system at real speed (nothing is hidden, no black
+// transit), so it does NOT feed dauntless_warp_vfx's streak/travel channel —
+// that drives the tunnel's own u_warp_streak drift/prism mode, which a dash
+// never uses. The dash's screen flash reuses dauntless_warp_vfx's g_flash
+// channel instead (engine/host_loop.py combines both flashes with `max`
+// before pushing it), so there is no separate flash channel here.
+namespace dauntless_dash_vfx {
+    float g_intensity = 0.0f;                    // 0..1 dash intensity
+    float intensity()          { return g_intensity; }
+    void  set_intensity(float v) { g_intensity = v; }
+}
+
 namespace renderer {
 
 namespace {

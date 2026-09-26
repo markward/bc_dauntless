@@ -64,7 +64,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
-    "set_render_origin", "reset_render_origin",
+    "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_project_asset_root",
     "set_glow_region_gain",
@@ -388,6 +388,13 @@ def set_warp_travel_dir(direction) -> None:
     """Set the world-space travel direction (x, y, z) for the warp flythrough."""
     x, y, z = direction
     _h.set_warp_travel_dir(float(x), float(y), float(z))
+
+
+def set_dash_intensity(intensity: float) -> None:
+    """Set the 0..1 intensity for the player's in-system-warp dash (raises
+    the dust pass's smear cap; separate from the warp flythrough's streak
+    channel -- a dash never uses `u_warp_streak`'s drift/prism mode)."""
+    _h.set_dash_intensity(float(intensity))
 
 
 def volumetric_nebulae_enabled() -> bool:

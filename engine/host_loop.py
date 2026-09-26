@@ -1405,13 +1405,18 @@ def refresh_ship_emitters(session, ship, specs_by_sub_id):
 def _warp_glow_envelope(ship):
     """`(drive, burst)` warp-nacelle glow envelope for `ship`, else None.
 
-    Two conditions, and the second is the one that is easy to get wrong: the
-    warp animator must be running AND `ship` must be the ship registered as
-    flying that warp. `WarpVFX` is a singleton and `WarpSequence_Create` takes
-    the flythrough branch for ANY ship with no player check (see
-    engine/appc/warp_state.py), so "a warp is happening" is not "this ship is
-    warping" — without the registration test an NPC warping out would light up
-    the player's nacelles.
+    Two sources, checked in order:
+
+    * a player dash (engine/appc/dash.py) in progress — `dash.is_dashing`
+      only ever returns True for the player (the dash is player-only for
+      now, spec §4), so no separate registration check is needed here;
+    * the cross-system warp tunnel, gated the way it always was: the warp
+      animator must be running AND `ship` must be the ship registered as
+      flying that warp. `WarpVFX` is a singleton and `WarpSequence_Create`
+      takes the flythrough branch for ANY ship with no player check (see
+      engine/appc/warp_state.py), so "a warp is happening" is not "this ship
+      is warping" — without the registration test an NPC warping out would
+      light up the player's nacelles.
 
     Read (not latched) by both consumers — the glow volumes via
     `ShipGlowController.update` and the emitter lights via
@@ -1419,12 +1424,24 @@ def _warp_glow_envelope(ship):
     """
     if ship is None:
         return None
+    from engine.appc import dash
+    if dash.is_dashing(ship):
+        from engine import dash_vfx
+        return dash_vfx.get().engine_glow()
     from engine import warp_vfx
     from engine.appc import warp_state
     w = warp_vfx.get()
     if not w.is_active() or not warp_state.is_flythrough(ship):
         return None
     return w.engine_glow()
+
+
+def _combined_flash_intensity(tunnel_flash: float, dash_flash: float) -> float:
+    """Neither the tunnel's screen flash nor the dash's should zero the
+    other -- the two never overlap in play, but a flat `set_warp_flash_
+    intensity(0.0)` push from whichever isn't running would stomp the other's
+    value if it ran second. Use whichever is brighter this frame (spec §4)."""
+    return max(tunnel_flash, dash_flash)
 
 
 # ── Dynamic-light budget ─────────────────────────────────────────────────
@@ -10936,12 +10953,24 @@ def run(mission_name: Optional[str] = None,
             # sensation comes from the DUST streaking along travel_dir — the
             # backdrops and local suns/planets aggregate normally (off-parity:
             # non-warp rendering is byte-identical when is_active() is False).
+            # The player's in-system-warp DASH (engine/dash_vfx.py, spec §4)
+            # ticks on the same game clock, independently of whether the
+            # tunnel is running -- the two are mutually exclusive in play,
+            # but neither's push may zero the other's channel out from under
+            # it, hence _combined_flash_intensity below.
+            from engine import dash_vfx as _dvx
+            _dv = _dvx.get()
+            _dv.tick(App.g_kUtopiaModule.GetGameTime())
+            r.set_dash_intensity(_dv.dash_intensity())
+            _dash_flash = _dv.flash_intensity()
+
             from engine import warp_vfx as _wv
             _w = _wv.get()
             if _w.is_active():
                 _w.tick(App.g_kUtopiaModule.GetGameTime())
                 r.set_warp_streak_intensity(_w.streak_intensity())
-                r.set_warp_flash_intensity(_w.flash_intensity())
+                r.set_warp_flash_intensity(
+                    _combined_flash_intensity(_w.flash_intensity(), _dash_flash))
                 r.set_warp_travel_dir(_w.travel_dir())
                 # Cinematic turn onto the warp heading — but NOT during the exit
                 # decel: after arrival the placement owns the ship's orientation,
@@ -10958,7 +10987,8 @@ def run(mission_name: Optional[str] = None,
                     player_control._warp_speed_override = _w.ship_speed(_nom, _wsp)
             else:
                 r.set_warp_streak_intensity(0.0)
-                r.set_warp_flash_intensity(0.0)
+                r.set_warp_flash_intensity(
+                    _combined_flash_intensity(0.0, _dash_flash))
                 _warp_clear_turn()
                 player_control._warp_speed_override = None
 
