@@ -621,30 +621,41 @@ class _WarpDepartAction(TGAction):
 
     Fail-open: each step is guarded, and _ArriveFinalizeAction repeats the
     render teardown on arrival anyway (idempotent) if departure didn't
-    complete."""
+    complete.
 
-    def __init__(self, source_set, ship, seq=None):
+    `hard_cut`: the no-flythrough warp's departure. It parks the ship in the
+    warp set all the same -- a mission change carries only the warp set's
+    occupant, and missions script "entered warp" (E6M1 PlayerEntersWarpSet
+    creates the Artrus ships there) -- but sets no WES_WARPING, which only the
+    flythrough's _WarpVfxEndAction clears, and for an NPC touches nothing the
+    player sees (no rendered-set change, no teardown, no silencing)."""
+
+    def __init__(self, source_set, ship, seq=None, hard_cut=False):
         super().__init__()
         self._source = source_set
         self._ship = ship
         self._seq = seq     # records whether we took the WarpVFX hold
+        self._hard_cut = hard_cut
 
     def _do_play(self):
         import App
         src = self._source
         ship = self._ship
+        # Whether this departure changes the player's scene.
+        scene = not self._hard_cut or _is_current_player(ship)
         # Burst: the ship is now at warp.
-        try:
-            from engine.appc import warp_state
-            from engine.appc.subsystems import WarpEngineSubsystem
-            warp_state.set_state(ship, WarpEngineSubsystem.WES_WARPING)
-        except Exception:
-            pass
+        if not self._hard_cut:
+            try:
+                from engine.appc import warp_state
+                from engine.appc.subsystems import WarpEngineSubsystem
+                warp_state.set_state(ship, WarpEngineSubsystem.WES_WARPING)
+            except Exception:
+                pass
         # 1. Silence looping weapon SFX on every source-set ship (incl. the
         #    player) before its render instances are torn down — otherwise a
         #    bank firing at the moment of warp loops on into transit / the new
         #    system.
-        if src is not None:
+        if scene and src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
         # 2. Park the player in BC's persistent warp set and render that, so
@@ -660,7 +671,8 @@ class _WarpDepartAction(TGAction):
                     if s.GetObject(ship.GetName()) is ship:
                         s.RemoveObjectFromSet(ship.GetName())
                 transit.AddObjectToSet(ship, ship.GetName())
-            App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
+            if scene:
+                App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
         except Exception:
             pass
         # The streak holds at its plateau until _TransitReleaseAction: the
@@ -680,7 +692,7 @@ class _WarpDepartAction(TGAction):
         #    a set only in Terminate(), which nothing calls; the bound is the
         #    mission change (host_loop's _sets.clear()). Returning to this set
         #    re-realizes it through _realize_hook.
-        if src is not None and _teardown_hook is not None:
+        if scene and src is not None and _teardown_hook is not None:
             try:
                 _teardown_hook(src)
             except Exception:
@@ -937,9 +949,16 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     _add_before_queue(seq)
     swap = ChangeRenderedSetAction_Create(dest_module)
     prev = None
-    if _is_current_player(ship):
-        prev = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
+    if not _module_is_empty(dest_module):
+        prev = _WarpDepartAction(source, ship, hard_cut=True)
         seq.AddAction(prev)
+    if _is_current_player(ship):
+        wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
+        if prev is None:
+            seq.AddAction(wait)
+        else:
+            seq.AddAction(wait, prev)
+        prev = wait
     seq.AddAction(swap, _add_transit_queues(seq, prev))
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))

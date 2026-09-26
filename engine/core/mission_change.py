@@ -92,6 +92,7 @@ def change(*, mission=None, episode=None) -> bool:
             return False
         try:
             if ep_changes:
+                _ensure_campaign_music(game, episode)
                 game._load_episode_raw(episode)
             else:
                 import App
@@ -115,6 +116,29 @@ def change(*, mission=None, episode=None) -> bool:
         except Exception:
             traceback.print_exc()
     return True
+
+
+def _ensure_campaign_music(game, episode_module) -> None:
+    """Start the campaign's DynamicMusic if nothing has. Every Maelstrom
+    Episode*.Initialize calls DynamicMusic.ChangeMusic, which reads the
+    globals DynamicMusic.Initialize sets; that runs from the campaign's
+    SetupMusic (Maelstrom.py:109), called by the campaign Initialize at boot.
+    The dev loader never runs the campaign Initialize, so the first episode
+    change out of a dev-loaded mission raised NameError: pStateMachine. BC
+    always booted through the campaign, so music was always started by here
+    (inferred)."""
+    import importlib
+    import DynamicMusic
+    if DynamicMusic.g_bInitialized:
+        return
+    family = str(episode_module).split(".")[0]
+    try:
+        campaign = importlib.import_module("%s.%s" % (family, family))
+    except ImportError:
+        return
+    setup = getattr(campaign, "SetupMusic", None)
+    if callable(setup):
+        setup(game)
 
 
 def _terminate(obj) -> None:

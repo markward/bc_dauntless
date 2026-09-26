@@ -234,7 +234,10 @@ def test_npc_flythrough_does_not_hold_the_shared_vfx(monkeypatch):
 
 def test_fallback_waits_for_the_mission_master_sequence(monkeypatch):
     """No flythrough: the swap still waits on SDK WaitForQueued (player only)
-    for MissionLib's master sequence."""
+    for MissionLib's master sequence -- with the player parked in BC's "warp"
+    set meanwhile, as in the flythrough, so a mission change at the
+    after-during point carries it and a mission's "entered warp" handler
+    (E6M1 PlayerEntersWarpSet) runs."""
     MissionLib = warp_missionlib()
     master = App.TGSequence_Create()
     dialogue = _Long("DIALOGUE")
@@ -252,7 +255,8 @@ def test_fallback_waits_for_the_mission_master_sequence(monkeypatch):
                                    queues=_queues())
     seq.Play()
     _advance_game_time(1.0)
-    assert _in_set("Src", ship)
+    assert _in_set("warp", ship)
+    assert not _in_set("Src", ship)
     assert not _in_set("QFall", ship)
     dialogue.Completed()
     _advance_game_time(1.0 / 60.0)
@@ -317,3 +321,22 @@ def test_release_lets_go_only_of_a_hold_this_warp_took(monkeypatch):
         assert vfx.is_held() is True
     finally:
         vfx.stop()
+
+
+def test_fallback_departure_does_not_mark_the_ship_warping(monkeypatch):
+    """The hard cut has no _WarpVfxEndAction to clear a WES_WARPING state, so
+    parking must not set one (the ship would stay non-collidable)."""
+    from engine.appc import warp_state
+    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
+    ship = App.ShipClass_Create(); ship.SetName("player")
+    src.AddObjectToSet(ship, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
+    mod = types.ModuleType("FakeSys.QFall2")
+    mod.Initialize = lambda: App.g_kSetManager.AddSet(SetClass_Create(), "QFall2")
+    monkeypatch.setitem(sys.modules, "FakeSys.QFall2", mod)
+    seq = warp.WarpSequence_Create(ship, "FakeSys.QFall2", 0.0, None,
+                                   queues=_queues())
+    seq.Play()
+    _advance_game_time(1.0)
+    assert _in_set("QFall2", ship)
+    assert not warp_state.is_ship_warping(ship)

@@ -82,5 +82,8 @@ def test_flythrough_off_is_instant():
     sys.modules["FakeSys.D2"] = mod
     warp.WarpSequence_Create(player, "FakeSys.D2", placement=None).Play()
     assert App.g_kSetManager.GetSet("D2").GetObject("player") is player
-    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is None
+    # The hard cut passes through BC's persistent warp set too (a mission
+    # change carries only its occupant), but does not leave the player there.
+    assert App.g_kSetManager.GetSet(
+        warp._WARP_TRANSIT_SET_NAME).GetObject("player") is None
     assert App.g_kSetManager.GetSet("Src2") is src   # source stands

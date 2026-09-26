@@ -306,3 +306,38 @@ def test_a_direct_load_deletes_the_players_region_and_the_player():
     assert App.g_kSetManager.GetSet("Beol4") is None
     assert App.g_kSetManager.GetSet("bridge") is bridge
     assert App.g_kSetManager.GetSet("warp") is warp_set
+
+
+def test_an_episode_change_starts_the_campaign_music_the_dev_loader_skipped(
+        monkeypatch):
+    """Every Maelstrom Episode*.Initialize calls DynamicMusic.ChangeMusic,
+    which reads the module globals DynamicMusic.Initialize sets -- run once by
+    the campaign's SetupMusic (Maelstrom.py:109) at campaign boot. The dev
+    loader never runs the campaign Initialize, so warping from a dev-loaded
+    E6M5 into Episode 7 died with NameError: pStateMachine. The change runs
+    the campaign's SetupMusic first when DynamicMusic was never started."""
+    import DynamicMusic
+    monkeypatch.setattr(DynamicMusic, "g_bInitialized", 0)
+    game, _, _ = _world()
+    _install("_t.Old", Terminate=lambda m: None)
+    _install("_t._t", SetupMusic=lambda g: log.append(("SetupMusic", g)))
+    _install("_t.EpNew", Initialize=lambda e: log.append("EpNew.Initialize"))
+    try:
+        assert mission_change.change(episode="_t.EpNew") is True
+    finally:
+        sys.modules.pop("_t._t", None)
+    assert log == [("SetupMusic", game), "EpNew.Initialize"]
+
+
+def test_an_episode_change_leaves_running_campaign_music_alone(monkeypatch):
+    import DynamicMusic
+    monkeypatch.setattr(DynamicMusic, "g_bInitialized", 1)
+    _world()
+    _install("_t.Old", Terminate=lambda m: None)
+    _install("_t._t", SetupMusic=lambda g: log.append("SetupMusic"))
+    _install("_t.EpNew", Initialize=lambda e: log.append("EpNew.Initialize"))
+    try:
+        assert mission_change.change(episode="_t.EpNew") is True
+    finally:
+        sys.modules.pop("_t._t", None)
+    assert log == ["EpNew.Initialize"]
