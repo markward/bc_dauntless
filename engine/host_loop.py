@@ -10249,6 +10249,18 @@ def run(mission_name: Optional[str] = None,
                         ship_instances=(session.ship_instances if session is not None else None),
                     )
 
+                # The impulse region hand-off (in-system-warp spec section 3,
+                # rule H): the player crosses into another region's sphere
+                # under its own power. Runs after collisions (this frame's
+                # last mover of the player) and before the scene reconcile,
+                # which reads the player's containing set to decide what the
+                # render scope shows this frame. A no-op while the player is
+                # dashing (handoff._is_dashing) -- Task 4's drop-out calls
+                # handoff.hand_off directly once the flight ends.
+                if player is not None:
+                    from engine.systems import handoff
+                    handoff.tick(player)
+
                 # The scene reconcile (_reconcile_scene): load the player's
                 # system, realize / tear down / cull / hide ships for the
                 # render scope, and diff the viewed frame's map bodies. It

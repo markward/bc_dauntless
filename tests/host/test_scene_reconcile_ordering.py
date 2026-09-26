@@ -46,6 +46,7 @@ _SIM_CALLS = (
     "_advance_combat(",
     "_warp_state.tick_warp_states(",
     "collisions.tick_collisions(",
+    "handoff.tick(",
 )
 
 
