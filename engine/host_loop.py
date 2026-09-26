@@ -1481,21 +1481,20 @@ def _articulate_emitter_light(ship, iid, spec, d):
     no part, or a part at its identity pose.
     """
     from engine.appc import articulation
-    leaf = articulation.leaf_for(ship)
-    parts = articulation.rig_for(leaf)
-    if not parts:
+    names = articulation.posed_part_names(ship)
+    if not names:
         return d
+    leaf = articulation.leaf_for(ship)
     from engine.appc.part_severance import part_for_point, is_detached
     name = part_for_point(leaf, tuple(spec["position"]), iid)
     if name is None:
         return d
     if is_detached(ship, name):
         return None
-    part = next((p for p in parts if p.GetName() == name), None)
-    if part is None:
+    if name not in names:
         return d
     from engine.appc import part_pose
-    pose = articulation.pose_for_part(ship, part)
+    pose = articulation.pose_for_part(ship, name)
     if part_pose.is_identity(pose):
         return d
     for key in ("position", "position_b"):
@@ -7124,10 +7123,17 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     game-state mutation in the render path is exactly the class of bug that
     gave the player's phasers a half-second of aiming at a destroyed subsystem.
 
-    Guarded on CHANGE: the pose (a TUPLE of per-part 6-tuples, one per rigged
+    Guarded on CHANGE: the pose (a TUPLE of (name, 6-tuple), one per posable
     part) is re-pushed only when it actually moved, so a settled ship (which
     is nearly all of them, nearly always) costs one dict lookup and a tuple
     compare rather than a boundary crossing per node per frame.
+
+    Posable = the rig's parts plus any part the Ship Property Viewer has
+    posed by NAME (`articulation.posed_part_names`) -- a part authored fresh
+    in the SPV has no rig entry yet but must still be drawn posed. The guard
+    covers every name it pushed: one released back to the NIF pose is pushed
+    once more as identity. An unrigged ship with nothing forced returns
+    before any work.
 
     THERE IS NO "forced pose" ARGUMENT HERE, deliberately. A forced pose --
     the Ship Property Viewer's NIF pose, or a Preview click -- is applied to
@@ -7137,18 +7143,24 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     of Prey's wings down while every cannon pin floated at its stale raised
     position: the mesh knew about the override and the mounts did not.
     """
-    parts = articulation.parts_for_ship(ship)
-    if not parts:
-        return
-    from engine.appc import part_pose
-    live = [articulation.pose_for_part(ship, part) for part in parts]
-    pose = tuple(part_pose.pose_to6(p) for p in live)
+    names = articulation.posed_part_names(ship)
     last = session.ship_articulation.get(iid)
+    if not names and not last:
+        return                       # unrigged, nothing forced, nothing pushed
+    # A name pushed last time but gone from the dict now (a part the SPV
+    # posed by name, released back to the NIF pose) must still be pushed
+    # ONCE more, as identity -- or its node override keeps the old pose.
+    if last:
+        known = set(names)
+        names = names + tuple(n for n, _p6 in last if n not in known)
+    from engine.appc import part_pose
+    live = [articulation.pose_for_part(ship, name) for name in names]
+    pose = tuple((name, part_pose.pose_to6(p)) for name, p in zip(names, live))
     if last is not None and last == pose:
         return
     from engine.appc import part_severance
-    for part, part_live in zip(parts, live):
-        if part_severance.is_detached(ship, part.GetName()):
+    for name, part_live in zip(names, live):
+        if part_severance.is_detached(ship, name):
             # A severed part is hidden via the SAME node_overrides slot this
             # transform would write (set_instance_node_hidden / _transform
             # share one map). Re-posing it here would overwrite the hide with
@@ -7161,8 +7173,10 @@ def _sync_ship_articulation(session, ship, iid) -> None:
         # derived per-part boxes and subsystem mounts); the binding works in
         # MODEL units. `matrix4_model` is the ONLY place the two meet.
         host_io.set_instance_node_transform(
-            iid, part.GetName(),
+            iid, name,
             part_pose.matrix4_model(part_live, articulation.MODEL_TO_SHIP))
+    # Every pushed name stays in the guard (a released SPV part as identity),
+    # so it is compared -- not re-pushed -- on every later frame.
     session.ship_articulation[iid] = pose
 
 

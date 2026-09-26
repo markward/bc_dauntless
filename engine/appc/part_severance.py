@@ -161,15 +161,13 @@ def part_for_live_point(ship, point, iid=None):
     plain = part_for_point(leaf, point, iid)
     if plain is not None:
         return plain
-    parts = articulation.rig_for(leaf)
-    if not parts:
-        return None
-    for part in parts:
-        pose = articulation.pose_for_part(ship, part)
+    # Every posable part -- the rig's, plus any the SPV has posed by name
+    # (`articulation.posed_part_names`).
+    for name in articulation.posed_part_names(ship):
+        pose = articulation.pose_for_part(ship, name)
         if part_pose.is_identity(pose):
             continue                      # identity: `plain` already answered
         rest_point = part_pose.inverse_apply(pose, point)
-        name = part.GetName()
         if part_for_point(leaf, rest_point, iid) == name:
             return name
     return None
@@ -188,11 +186,9 @@ def rest_point_for_live_point(ship, point, iid=None):
     name = part_for_live_point(ship, point, iid)
     if name is None or is_detached(ship, name):
         return point
-    part = next((p for p in articulation.rig_for(articulation.leaf_for(ship))
-                 if p.GetName() == name), None)
-    if part is None:
+    if name not in articulation.posed_part_names(ship):
         return point
-    pose = articulation.pose_for_part(ship, part)
+    pose = articulation.pose_for_part(ship, name)
     if part_pose.is_identity(pose):
         return point
     return part_pose.inverse_apply(pose, point)

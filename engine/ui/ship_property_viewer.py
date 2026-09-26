@@ -699,8 +699,14 @@ def part_save_edits(parts: dict) -> List[Tuple[str, str, list]]:
       ("SetBreakFraction", (f,))                if the part is breakable
 
     `break` of None emits NO `SetBreakFraction` -- absent means "this part
-    does not come off"; emitting 0.0 would shear it at once. A spec with
-    nothing to say emits no edit at all rather than an empty block."""
+    does not come off"; emitting 0.0 would shear it at once.
+
+    A staged spec with nothing left to say (every node removed) is a
+    REMOVAL and emits `(name, "__part__", [])`: the writer's `set_part`
+    stores the empty call list and `_emit_function` drops a part whose list
+    is empty, so the block is DELETED from the file. Skipping it instead
+    would leave the old block on disk, and the part's nodes would come back
+    on the next reload."""
     from engine.appc.articulated_part import STATES
     edits: List[Tuple[str, str, list]] = []
     for name in sorted(parts):
@@ -719,8 +725,6 @@ def part_save_edits(parts: dict) -> List[Tuple[str, str, list]]:
         fraction = spec.get("break")
         if fraction is not None:
             calls.append(("SetBreakFraction", (float(fraction),)))
-        if not calls:
-            continue
         edits.append((name, "__part__", calls))
     return edits
 

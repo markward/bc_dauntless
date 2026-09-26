@@ -345,18 +345,47 @@ def test_the_selected_pin_on_an_UNRIGGED_hull_is_unchanged(panel, monkeypatch):
 
 
 def test_an_unrigged_ship_is_unaffected(panel, monkeypatch):
-    """The overwhelming majority of hulls. Posing a freshly authored part on
-    a ship with no rig must leave every cached pin exactly where it was."""
+    """The overwhelming majority of hulls. With no forced pose, a ship with
+    no rig keeps every cached pin exactly where it was."""
     import engine.ui.ship_property_viewer_panel as mod
     monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
     p, holder = panel
     holder["ship"]._articulation_leaf = "galaxy"
     p.open()
-    before = _cannon_world(p)
+    assert _cannon_world(p) == pytest.approx(CANNON_BODY)
     p.dispatch_event("part/add_anchor:left wing01")
     p.dispatch_event('part/add_state:{"name":"left wing01","state":"cruise"}')
+    _back_to_nif(p)                              # nothing posed
+    assert _cannon_world(p) == pytest.approx(CANNON_BODY)
+
+
+def test_a_FRESH_part_posed_on_an_unrigged_ship_moves_its_pins(
+        panel, monkeypatch):
+    """A part authored in the SPV on a hull with no rig: forcing a
+    non-identity pose on it moves the pins mounted inside its derived box,
+    exactly as a rigged part's would."""
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setitem(articulation._derived_boxes, "galaxy", {
+        "left wing01": ((0.1236, -0.6777, -0.7125), (1.0258, 0.5344, 0.1862)),
+        "body": ((-0.3112, -0.7044, -0.1331), (0.3137, 0.2922, 0.2125))})
+    p, holder = panel
+    holder["ship"]._articulation_leaf = "galaxy"
+    holder["ship"]._articulation_poses = {}
+    assert articulation.rig_for("galaxy") == (), "fixture: no rig"
+    p.open()
+    assert _cannon_world(p) == pytest.approx(CANNON_BODY)
+    p.dispatch_event("part/add_anchor:left wing01")
+    p.dispatch_event('part/add_state:{"name":"left wing01","state":"cruise"}')
+    p6 = (0.0, 0.0, 0.5, 0.0, 45.0, 0.0)
     spec = dict(p._pending_part["left wing01"])
-    spec["poses"] = {"cruise": (0.0, 0.0, 0.5, 0.0, 45.0, 0.0)}
+    spec["poses"] = {"cruise": p6}
     p._pending_part["left wing01"] = spec
+
     _pose_starboard_wing(p)
-    assert _cannon_world(p) == pytest.approx(before)
+
+    want = part_pose.apply(part_pose.pose_from6(p6), CANNON_BODY)
+    assert _cannon_world(p) == pytest.approx(want)
+    assert _cannon_world(p) != pytest.approx(CANNON_BODY)
+    _back_to_nif(p)
+    assert _cannon_world(p) == pytest.approx(CANNON_BODY)

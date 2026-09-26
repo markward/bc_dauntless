@@ -191,8 +191,32 @@ def state_for(ship) -> str:
 
 def _part_name(part) -> str:
     """Name to key `part` by in `ship._articulation_poses`: the NIF node
-    name, which is the template name (`ArticulatedPartProperty.GetName`)."""
+    name, which is the template name (`ArticulatedPartProperty.GetName`).
+    A bare name passes straight through, so a part the rig has never heard
+    of (one authored fresh in the SPV) is keyed the same way."""
+    if isinstance(part, str):
+        return part
     return part.GetName()
+
+
+def posed_part_names(ship) -> tuple:
+    """Every part name `ship` may be drawn posed by: its rig's parts, in rig
+    order, then any other name present in `ship._articulation_poses`, sorted.
+
+    The second group exists for the Ship Property Viewer, which forces a
+    pose by NAME (`force_part_pose`) on a part no hardpoint file has rigged
+    yet -- the BoP's head, or any part of an unrigged hull. Only the SPV
+    writes such names, and which points belong to them is still decided by
+    the DERIVED part boxes, so only real model nodes are ever posed.
+
+    () for an unrigged ship with no forced pose -- the overwhelming
+    majority -- after one rig lookup and one attribute read."""
+    rig = tuple(_part_name(p) for p in rig_for(leaf_for(ship)))
+    poses = getattr(ship, "_articulation_poses", None)
+    if not poses:
+        return rig
+    known = set(rig)
+    return rig + tuple(sorted(n for n in poses if n not in known))
 
 
 def target_pose(part, state: str):
@@ -206,7 +230,8 @@ def target_pose(part, state: str):
 
 
 def pose_for_part(ship, part):
-    """`ship`'s current pose (R, t) for `part`, SHIP units.
+    """`ship`'s current pose (R, t) for `part` (a part or a part NAME), SHIP
+    units.
 
     The ONLY source is `ship._articulation_poses` ({name: pose}), written by
     `tick_ship` every sim tick (and snapped by `force_pose` /
@@ -297,7 +322,14 @@ def force_pose(ship, state: "str | None") -> None:
     """
     parts = parts_for_ship(ship)
     if not parts:
+        # No rig -- but a part the SPV posed by name may still be in the
+        # dict; the NIF pose means dropping it. A ship with nothing forced
+        # is left alone.
+        if getattr(ship, "_articulation_poses", None):
+            _store_forced(ship, {})
         return
+    # Rebuilt from the rig alone: any name posed outside the rig drops back
+    # to the NIF pose (absent reads IDENTITY).
     poses = {_part_name(p): (part_pose.IDENTITY if state is None
                              else target_pose(p, state))
              for p in parts}
@@ -305,16 +337,18 @@ def force_pose(ship, state: "str | None") -> None:
 
 
 def force_part_pose(ship, part_name: str, pose) -> None:
-    """SNAP ONE part of `ship` to `pose` and every other part to IDENTITY
+    """SNAP ONE part of `ship` to `pose` and every rigged part to IDENTITY
     (the NIF pose), dropping any in-flight transition. The SPV uses it to
     preview a single part's pose in isolation; same event-edge contract as
-    `force_pose`. A ship with no rig is left alone."""
-    parts = parts_for_ship(ship)
-    if not parts:
-        return
-    poses = {_part_name(p): (pose if _part_name(p) == part_name
-                             else part_pose.IDENTITY)
-             for p in parts}
+    `force_pose`.
+
+    `part_name` need NOT be in the rig: a part authored fresh in the SPV
+    (no hardpoint file has registered it yet, or the hull has no rig at all)
+    is posed by name, and every reader of a live pose honours it -- see
+    `posed_part_names`. Otherwise the mounts would lock for a pose the mesh
+    never shows."""
+    poses = {_part_name(p): part_pose.IDENTITY for p in parts_for_ship(ship)}
+    poses[str(part_name)] = pose
     _store_forced(ship, poses)
 
 
@@ -635,10 +669,11 @@ def part_transform_vector(ship, vec, part_name):
 
 
 def _live_part(ship, name, point):
-    """The rigged, NOT-detached part `name` of `ship` (attributed from
-    `point` when `name` is None), or None."""
-    parts = rig_for(leaf_for(ship))
-    if not parts:
+    """The NAME of `ship`'s posable, NOT-detached part `name` (attributed
+    from `point` when `name` is None), or None. Posable = in the rig, or
+    posed by name in `ship._articulation_poses` (`posed_part_names`)."""
+    names = posed_part_names(ship)
+    if not names:
         return None
 
     from engine.appc.part_severance import part_for_point, is_detached
@@ -654,4 +689,4 @@ def _live_part(ship, name, point):
         # there. See host_loop._sync_ship_articulation for the render-side
         # twin of this guard.
         return None
-    return next((p for p in parts if p.GetName() == name), None)
+    return name if name in names else None

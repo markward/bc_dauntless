@@ -189,15 +189,30 @@ def test_part_edits_reach_the_save_list():
     ])]
 
 
-def test_a_spec_with_nothing_to_say_emits_no_edit_at_all():
-    """A spec with everything absent must not round-trip as an empty
-    (name, "__part__", []) block written to disk. The transition alone says
-    nothing: it belongs to the anchor, and there is none."""
+def test_an_emptied_part_is_DELETED_from_the_file():
+    """A staged spec with nothing left to say is a REMOVAL: it emits an
+    empty call list, which the writer turns into no block at all -- so a
+    part whose every node was removed does not come back from the file on
+    reload. (The transition alone says nothing: it belongs to the anchor.)"""
+    from engine.appc import hardpoint_override_writer as writer
     edits = spv.part_save_edits({
         "left wing": {"anchor": None, "transition": 2.0, "poses": {},
                       "break": None},
     })
-    assert edits == []
+    assert edits == [("left wing", "__part__", [])]
+
+    models = {}
+    writer.set_part(models, "birdofprey", "left wing",
+                    [("SetAnchor", (-0.16, 0.0, 0.05)),
+                     ("SetStatePose", ("cruise", 0.0, 0.0, 0.0, 0.0, 45.0, 0.0))])
+    writer.set_part(models, "birdofprey", "head", [("SetBreakFraction", (0.2,))])
+    assert '"left wing"' in writer.emit(models), "fixture: the block exists"
+    for name, _tag, calls in edits:
+        writer.set_part(models, "birdofprey", name, calls)
+    text = writer.emit(models)
+    assert '"left wing"' not in text
+    again = writer.read_models_from_source(text)
+    assert set(again["birdofprey"]["__parts__"]) == {"head"}
 
 
 def test_an_unbreakable_part_emits_NO_break_call():

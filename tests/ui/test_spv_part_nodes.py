@@ -211,8 +211,10 @@ def test_add_transformation_without_anchor_toasts_and_changes_nothing(make_panel
 
     _add_state(p, "left wing", "warp")
 
-    parts = _parts(p)
+    payload = _payload(p)
+    parts = payload["model_parts"]
     assert parts["toast"] == NO_ANCHOR_TOAST
+    assert "toast" not in payload, "the toast lives ONLY under model_parts"
     assert p._pending_part == before
     assert not any(r.get("label") == "Warp Transformation"
                    for r in parts["rows"])
@@ -449,3 +451,91 @@ def test_every_part_edit_is_undoable(make_panel):
 
     assert p._pending_part == {}
     assert _labels(p, "left wing") == []
+
+
+# ── fix round 1 ──────────────────────────────────────────────────────────────
+
+class _UnriggedShip(_FakeShip):
+    """Resolves to a leaf with NO rig snapshot: every part is fresh."""
+
+    def __init__(self):
+        super().__init__()
+        self._articulation_leaf = UNRIGGED_LEAF
+
+
+def test_a_fresh_part_previews_posed(make_panel, monkeypatch):
+    """A part no hardpoint file has rigged yet must still be DRAWN posed when
+    its State Transformation is selected -- the mounts lock, so the mesh has
+    to move too."""
+    from engine import host_io, host_loop
+    ship = _UnriggedShip()
+    p, _ship, _target = make_panel(ship=ship)
+    assert articulation.rig_for(UNRIGGED_LEAF) == (), "fixture: no rig"
+    p.dispatch_event("part/add_anchor:head")
+    _add_state(p, "head", "warp")
+    p6 = (0.0, 0.1, 0.05, 20.0, 0.0, 0.0)
+    spec = copy.deepcopy(p._pending_part["head"])
+    spec["poses"]["warp"] = p6
+    p._pending_part["head"] = spec
+
+    assert _select_node(p, "head", "warp") is True
+
+    assert ship._articulation_poses["head"] == part_pose.pose_from6(p6)
+    seen = []
+    monkeypatch.setattr(
+        host_io, "set_instance_node_transform",
+        lambda iid, node, m16: seen.append((node, tuple(m16))))
+    session = type("S", (), {"ship_articulation": {}})()
+    host_loop._sync_ship_articulation(session, ship, 3)
+    assert seen == [("head", tuple(part_pose.matrix4_model(
+        part_pose.pose_from6(p6), articulation.MODEL_TO_SHIP)))]
+
+
+def _roundtrip(models, edits, leaf):
+    for name, _tag, calls in edits:
+        writer.set_part(models, leaf, name, calls)
+    text = writer.emit(models)
+    return text, writer.read_models_from_source(text)
+
+
+def test_emptying_a_baked_part_deletes_its_block(make_panel):
+    """Removing every node of a part the file already carries must persist
+    as a DELETION, or the block comes straight back on reload."""
+    from engine.appc.articulated_part import STATES
+    p, _ship, target = make_panel(leaf=RIGGED_LEAF, ship=_RiggedShip())
+    baked = p._effective_part("left wing")
+    for state in STATES:
+        if state in baked["poses"]:
+            _remove(p, "left wing", state)
+    _remove(p, "left wing", "anchor")
+    _remove(p, "left wing", "breakage")
+    assert _labels(p, "left wing") == [], "fixture: every node removed"
+
+    assert p.dispatch_event("save") is True
+    _leaf, edits = target.calls[-1]
+    part_edits = [e for e in edits if e[1] == "__part__"]
+    assert part_edits == [("left wing", "__part__", [])]
+
+    # The file as it stood carries the block; the save deletes it.
+    models = {}
+    writer.set_part(models, RIGGED_LEAF, "left wing",
+                    [("SetAnchor", (-0.16, 0.0, 0.05)),
+                     ("SetBreakFraction", (0.2,))])
+    writer.set_part(models, RIGGED_LEAF, "left wing01",
+                    [("SetBreakFraction", (0.2,))])
+    text, again = _roundtrip(models, part_edits, RIGGED_LEAF)
+    assert '"left wing"' not in text
+    assert set(again[RIGGED_LEAF]["__parts__"]) == {"left wing01"}
+
+
+def test_a_fresh_part_added_then_removed_leaves_no_block(make_panel):
+    p, _ship, target = make_panel()
+    p.dispatch_event("part/add_anchor:head")
+    _remove(p, "head", "anchor")
+    assert p.dispatch_event("save") is True
+    _leaf, edits = target.calls[-1]
+    part_edits = [e for e in edits if e[1] == "__part__"]
+    assert part_edits == [("head", "__part__", [])]
+    text, again = _roundtrip({}, part_edits, UNRIGGED_LEAF)
+    assert "ArticulatedPartProperty_Create" not in text
+    assert "__parts__" not in again.get(UNRIGGED_LEAF, {})

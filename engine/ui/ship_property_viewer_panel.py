@@ -2096,7 +2096,6 @@ class ShipPropertyViewerPanel(Panel):
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "model_parts": self._model_parts_payload(),
-            "toast": self._current_toast(),
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
