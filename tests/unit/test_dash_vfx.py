@@ -101,13 +101,17 @@ def test_combined_flash_intensity_is_the_brighter_of_the_two():
     assert _combined_flash_intensity(0.0, 0.0) == 0.0
 
 
-def test_warp_glow_envelope_returns_dash_glow_while_player_dashes():
+def test_warp_glow_envelope_returns_dash_glow_while_player_dashes(
+        monkeypatch):
+    import App
     from engine import dash_vfx, host_loop
 
     class _Ship:
         pass
 
     ship = _Ship()
+    # The dash branch is player-only (warp._is_current_player).
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
     d = dash_vfx.get()
     try:
         d.engage(0.0)
