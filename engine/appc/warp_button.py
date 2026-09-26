@@ -47,17 +47,29 @@ def press(button) -> None:
 def press_heading(button) -> None:
     """Warp on Heading (in-system-warp spec §2, rule D): the same
     ET_WARP_BUTTON_PRESSED through the same chain, with the button's course
-    (destination, mission, episode -- and the placement and mission latch
-    SetDestination also writes) cleared for the dispatch, so no mission
-    handler acts on a stale course, and restored exactly afterwards. What a
-    handler sets on the course meanwhile is discarded; what it queues stays
-    on the button for the dash to take."""
+    (destination, mission, episode and placement -- back to the button's
+    no-course default -- plus the mission latch SetDestination also writes)
+    cleared for the dispatch, so no mission handler acts on a stale course,
+    and restored exactly afterwards. What a handler sets on the course
+    meanwhile is discarded; what it queues stays on the button for the dash
+    to take.
+
+    Re-entrancy: ``_heading_press`` is one module flag, not per press. A
+    handler that, inside this dispatch, calls ``press`` on the button (a
+    nested plain Warp press) is read by the engine step as a heading press;
+    one that calls ``press_heading`` again clears the flag in its own
+    ``finally`` before the outer dispatch's engine step runs. No SDK script
+    posts ET_WARP_BUTTON_PRESSED or activates the warp button itself (grep
+    of the SDK scripts), so neither case arises today; a per-event marker
+    would be the fix if one did."""
     global _heading_press
+    from engine.appc.tg_ui.st_widgets import DEFAULT_ARRIVAL_PLACEMENT
     saved = (button._destination, button._mission_name, button._episode_name,
              button._placement_name, button._mission_destination)
     button._destination = None
     button._mission_name = ""
     button._episode_name = ""
+    button._placement_name = DEFAULT_ARRIVAL_PLACEMENT
     _heading_press = True
     try:
         press(button)

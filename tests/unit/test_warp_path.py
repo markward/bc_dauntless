@@ -86,10 +86,35 @@ def test_drop_out_never_goes_backwards():
     assert d == pytest.approx((0.0, 0.0, 0.0))
 
 
-def test_drop_out_lookahead_is_measured_to_the_surface():
-    # 10,000 GU/s x 2 s = 20,000 GU: a surface at 28,200 is not yet in range.
+def test_drop_out_lookahead_is_measured_to_the_drop_point():
+    # 10,000 GU/s x 2 s = 20,000 GU: the drop point at 26,000 is not yet in
+    # range. (Was "..._to_the_surface": the lookahead counted a body once its
+    # surface was in reach, and with a standoff more than the reach above the
+    # surface the dash dropped short of it -- fix round 1 of Task 5.)
     planet = wp.Obstacle("P", (30000.0, 0.0, 0.0), 1800.0)
     assert wp.drop_out((0, 0, 0), (1, 0, 0), 10000.0, [planet], lambda o: 4000.0) is None
+
+
+def test_drop_out_with_a_large_standoff_stops_exactly_at_it():
+    """A region-arrival standoff far above the surface (Prendel's Moon 2:
+    43,249 GU for a 1,800 GU moon): the drop is counted once the DROP POINT
+    is in reach, so the dash stops at the standoff, not ~reach above the
+    surface."""
+    moon = wp.Obstacle("M", (100000.0, 0.0, 0.0), 1800.0)
+    sd = lambda o: 40000.0
+    reach = 10000.0 * wp.DROP_LOOKAHEAD_S
+    # Stepping along the ray: nothing until the drop point is in reach...
+    assert wp.drop_out((39000.0 - reach, 0, 0), (1, 0, 0), 10000.0, [moon], sd) is None
+    # ...then exactly the standoff, from every point up to it.
+    for x in (60000.0 - reach, 50000.0, 59999.0, 60000.0):
+        d = wp.drop_out((x, 0, 0), (1, 0, 0), 10000.0, [moon], sd)
+        assert d == pytest.approx((60000.0, 0.0, 0.0)), x
+
+
+def test_drop_out_never_enters_the_body_even_with_a_small_standoff():
+    planet = wp.Obstacle("P", (30000.0, 0.0, 0.0), 1800.0)
+    d = wp.drop_out((0, 0, 0), (1, 0, 0), 20000.0, [planet], lambda o: 500.0)
+    assert d == pytest.approx((28200.0, 0.0, 0.0))
 
 
 def _joins(path):

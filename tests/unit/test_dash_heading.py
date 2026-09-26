@@ -208,6 +208,52 @@ def test_a_heading_dash_at_ona2_drops_out_at_its_arrival_range(world):
     assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_NOT_WARPING
 
 
+def test_a_reversing_ship_drops_out_still_reversing(world):
+    """The engaged impulse speed is SIGNED (the forward component, as
+    _PlayerControl keeps it): a ship backing at 2 GU/s when it engages drops
+    out backing at 2 GU/s along the heading."""
+    w = world
+    h = _aim(w, tuple(_body("Ona 2").position_gu))
+    w.player.SetVelocity(TGPoint3(-2.0 * h[0], -2.0 * h[1], -2.0 * h[2]))
+    _press(w)
+    _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=20.0)
+    assert w.player.GetContainingSet() is w.ona2
+    v = w.player.GetVelocity()
+    assert (v.x, v.y, v.z) == pytest.approx(
+        (-2.0 * h[0], -2.0 * h[1], -2.0 * h[2]), abs=1e-9)
+
+
+def test_a_standoff_far_above_a_small_body_is_reached_exactly(world):
+    """Xi Entrades 4 (radius 2,400): its region's arrival point is further
+    above the surface than the 20,000 GU lookahead, and the dash still stops
+    exactly at that range on its line.
+
+    Not asserted: a hand-off. XiEntrades4's sphere is centred near its
+    Player Start (~29,000 GU from the body's centre), so from Xi Entrades 1
+    -- approaching from the far side -- the arrival range lands ~61,000 GU
+    from the anchor, outside the 32,700 GU sphere (Task 5 fix report)."""
+    w = world
+    xe1 = load_region("XiEntrades", "XiEntrades1")
+    xe4 = load_region("XiEntrades", "XiEntrades4")
+    w.ona1.RemoveObjectFromSet("player")
+    xe1.AddObjectToSet(w.player, "player")
+    w.player.PlaceObjectByName("Player Start")
+    dash_helm.sync(w.player)
+    m = resolve.map_of("XiEntrades")
+    body = next(b for b in m.bodies if b.name == "Xi Entrades 4")
+    centre = tuple(body.position_gu)
+    standoff = math.dist(centre, _sys(xe4.GetObject("Player Start")))
+    assert standoff - body.radius_gu > 20000.0
+    h = _aim(w, centre)
+    _press(w)
+    w.events.clear()
+    _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=60.0)
+    p = _sys(w.player)
+    assert p == pytest.approx(
+        tuple(centre[i] - h[i] * standoff for i in range(3)), abs=1e-3)
+    assert (App.ET_EXITED_WARP, None) in _events_of(w, App.ET_EXITED_WARP)
+
+
 # ── 3. a heading dash at the sun stops one radius above it ─────────────────
 
 def test_a_heading_dash_at_the_sun_stops_one_radius_above_it(world):
@@ -312,13 +358,14 @@ def test_the_chain_sees_no_destination_and_the_course_is_restored(world):
     b.set_player_destination(ONA2)
     warp.set_course_placement(b, ONA2)
     b.set_course_mission("E2M1", "Episode2")
+    b.SetPlacementName("PlayerSpecialStart")
     placement = b.GetPlacementName()
     seen = []
     w.played = []
 
     def H(o, e):
         seen.append((o.GetDestination(), o.get_mission_name(),
-                     o.get_episode_name()))
+                     o.get_episode_name(), o.GetPlacementName()))
         # Anything a handler sets on the button is ignored by the dash...
         o.SetDestination("Systems.Vesuvi.Vesuvi4", "E3M2", "Somewhere")
         # ...but its queued actions play at the dash's points.
@@ -333,7 +380,8 @@ def test_the_chain_sees_no_destination_and_the_course_is_restored(world):
     _aim(w, tuple(_body("Ona 2").position_gu))
     _press(w)
 
-    assert seen == [(None, "", "")]
+    assert placement != "Player Start"
+    assert seen == [(None, "", "", "Player Start")]
     assert b.GetDestination() == ONA2
     assert b.get_mission_name() == "E2M1"
     assert b.get_episode_name() == "Episode2"

@@ -549,10 +549,17 @@ def drop_out(pos, direction, speed_gups: float, obstacles: Sequence[Obstacle],
              standoff_of: Callable[[Obstacle], float]):
     """Where a straight-line warp must end short of a body, or None.
 
-    A body counts when the ray from ``pos`` along ``direction`` enters it
-    within ``speed_gups * DROP_LOOKAHEAD_S`` of travel. The drop point is the
-    point on the ray ``standoff_of(body)`` from the body's centre, before the
-    centre, and never behind ``pos``. The nearest such point wins."""
+    A body counts when the ray from ``pos`` along ``direction`` passes
+    through it and its DROP POINT lies within ``speed_gups *
+    DROP_LOOKAHEAD_S`` of travel. The drop point is the point on the ray
+    ``standoff_of(body)`` from the body's centre, before the centre -- but
+    never past where the ray enters the body, and never behind ``pos``. The
+    nearest such point wins.
+
+    Reach is measured to the drop point, not the surface: a region-arrival
+    standoff can sit tens of thousands of GU above a small moon (Prendel's
+    Moon 2: 43,249 GU for a 1,800 GU radius), further than the reach, and a
+    surface-reach test then clamped the drop to ``pos`` short of it."""
     p = tuple(float(v) for v in pos)
     d = _unit(tuple(float(v) for v in direction))
     if d is None:
@@ -569,10 +576,11 @@ def drop_out(pos, direction, speed_gups: float, obstacles: Sequence[Obstacle],
         half = math.sqrt(r2 - lat2)
         if along + half < 0.0:
             continue                       # behind
-        if along - half > reach:
-            continue                       # beyond the lookahead
         sd = float(standoff_of(o))
-        t = max(along - math.sqrt(max(sd * sd - lat2, 0.0)), 0.0)
+        t = min(along - math.sqrt(max(sd * sd - lat2, 0.0)), along - half)
+        t = max(t, 0.0)
+        if t > reach:
+            continue                       # beyond the lookahead
         if best is None or t < best:
             best = t
     return None if best is None else _add(p, _mul(d, best))

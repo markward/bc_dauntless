@@ -203,6 +203,11 @@ def start_heading(player, queues, button=None) -> bool:
     v = player.GetVelocity()
     engaged = v.x * f.x + v.y * f.y + v.z * f.z   # the forward impulse speed
 
+    # Everything that can raise is built BEFORE the dash is stored on the
+    # player, so a failure leaves no half-built dash behind.
+    flight = WarpFlight(heading=heading, speed_policy="heading",
+                        exit_policy="engaged_impulse", engaged_speed=engaged,
+                        standoff_of=_heading_standoffs(player))
     st = _Dash(None, None, None, None, heading, None,
                {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
                button)
@@ -218,10 +223,7 @@ def start_heading(player, queues, button=None) -> bool:
     # press never greyed the Helm menu -- warp_button.engage.)
     from engine.appc import dash_helm
     dash_helm.sync(player)
-    _engage(player, st, WarpFlight(
-        heading=heading, speed_policy="heading",
-        exit_policy="engaged_impulse", engaged_speed=engaged,
-        standoff_of=_heading_standoffs(player)))
+    _engage(player, st, flight)
     return True
 
 
