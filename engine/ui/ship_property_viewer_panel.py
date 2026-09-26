@@ -1069,7 +1069,7 @@ class ShipPropertyViewerPanel(Panel):
             self._restore_pending(self._undo_stack.pop())
 
     # ------------------------------------------------------------------
-    # Transform gizmo (subsystem or light-volume target)
+    # Transform gizmo (part anchor/pose, emitter, light or subsystem target)
     # ------------------------------------------------------------------
     def _active_transform_target(self):
         """Which node the transform gizmo/drag currently targets:
@@ -1108,6 +1108,15 @@ class ShipPropertyViewerPanel(Panel):
         """True for a part-node transform target (anchor or state pose)."""
         return target is not None and target[0] in ("part_anchor", "part_pose")
 
+    @staticmethod
+    def _coord_clipboard_kind(target) -> str:
+        """Coord-clipboard tag: "part_anchor" / "part_pose" for a part node,
+        "mount" for any subsystem/light/emitter (which interchange freely,
+        as they always have)."""
+        if target is not None and target[0] in ("part_anchor", "part_pose"):
+            return target[0]
+        return "mount"
+
     def _part_pose6(self, name: str, state: str) -> tuple:
         """Part `name`'s effective `state` pose as a float 6-tuple
         (tx, ty, tz, rx, ry, rz)."""
@@ -1135,6 +1144,33 @@ class ShipPropertyViewerPanel(Panel):
             part_pose.pose_from6(self._part_pose6(name, state)),
             tuple(float(c) for c in anchor))
 
+    def _stage_pose_euler(self, name: str, state: str, angles) -> None:
+        """Set part `name`'s `state` pose to Euler `angles` (rx, ry, rz
+        degrees) while holding its POSED ANCHOR fixed (fix-round ruling 14):
+        q = apply(pose, anchor) before the edit, R' from the new angles,
+        t' = q - R'.anchor. Every numeric pose rotation (the rotate steppers,
+        rotate paste) goes through here, so it turns the part about the
+        hinge it is drawn at -- as a ring drag does -- instead of sliding
+        the hinge round the ship origin.
+
+        Stores the REQUESTED angles with t' -- the same pose as
+        pose_to6((R', t')), but not re-extracted through matrix_to_euler,
+        which would renormalise ry past +/-90 and leave the Y stepper stuck
+        at the gimbal."""
+        from engine.appc import part_pose
+        angles = tuple(float(a) for a in angles)
+        p6 = self._part_pose6(name, state)
+        anchor = self._effective_part(name).get("anchor")
+        if anchor is None:
+            t_new = p6[:3]
+        else:
+            a = tuple(float(c) for c in anchor)
+            q = part_pose.apply(part_pose.pose_from6(p6), a)
+            ra = part_pose.apply_vector(
+                (part_pose.euler_to_matrix(*angles), (0.0, 0.0, 0.0)), a)
+            t_new = tuple(q[k] - ra[k] for k in range(3))
+        self._stage_part_pose(name, state, t_new + angles)
+
     def _target_pos_of(self, target):
         """Body-frame (x, y, z) of an arbitrary transform target -- where its
         gizmo sits -- or None. A part anchor sits at the anchor; a part pose
@@ -1158,15 +1194,12 @@ class ShipPropertyViewerPanel(Panel):
 
     def _transform_target_pos(self):
         """The current transform target's editable body-frame coordinate --
-        what the Move panel shows and the coord steppers/copy/paste/mirror
-        edit -- or None (no tool target). The gizmo position
-        (`_target_pos_of`) for every kind except a part POSE, whose
-        coordinate is its translation (tx, ty, tz) while its gizmo sits at
-        the posed anchor."""
-        t = self._active_transform_target()
-        if t is not None and t[0] == "part_pose":
-            return self._part_pose6(t[1], t[2])[:3]
-        return self._target_pos_of(t)
+        what the Move panel shows and the coord steppers/copy/paste edit --
+        or None (no tool target). Always where the gizmo sits
+        (`_target_pos_of`): for a part POSE that is the POSED anchor, so the
+        panel describes what is on screen (fix-round ruling 15), never the
+        raw translation t."""
+        return self._target_pos_of(self._active_transform_target())
 
     def _set_transform_target_pos(self, xyz) -> None:
         """Stage `xyz` as the current transform target's coordinate (see
@@ -1181,9 +1214,14 @@ class ShipPropertyViewerPanel(Panel):
             self._stage_part_field(t[1], anchor=tuple(float(c) for c in xyz))
             return
         if t[0] == "part_pose":
+            # xyz is the NEW posed anchor: translate the pose by the move,
+            # t += (xyz - q_old), R unchanged (ruling 15).
             p6 = self._part_pose6(t[1], t[2])
-            self._stage_part_pose(t[1], t[2],
-                                  tuple(float(c) for c in xyz) + p6[3:])
+            q_old = self._target_pos_of(t)
+            if q_old is None:          # no anchor: the coordinate is t
+                q_old = p6[:3]
+            t_new = tuple(p6[k] + float(xyz[k]) - q_old[k] for k in range(3))
+            self._stage_part_pose(t[1], t[2], t_new + p6[3:])
             return
         if t[0] == "emitter":
             _, i, j = t
@@ -1572,11 +1610,11 @@ class ShipPropertyViewerPanel(Panel):
             rotate_about_axis, orthonormalize_basis)
         ang = math.radians(delta_deg)
         if t[0] == "part_pose":
-            # The stepper edits that Euler component directly (spec section
-            # 3): rx/ry/rz += delta, translation untouched.
-            p6 = list(self._part_pose6(t[1], t[2]))
-            p6[3 + index] += float(delta_deg)
-            self._stage_part_pose(t[1], t[2], p6)
+            # The stepper edits that Euler component (spec section 3),
+            # holding the posed anchor fixed (ruling 14).
+            angles = list(self._part_pose6(t[1], t[2])[3:])
+            angles[index] += float(delta_deg)
+            self._stage_pose_euler(t[1], t[2], angles)
             return
         if t[0] == "emitter":
             # A CONE carries an oriented (forward=axis, up) basis like a Box, so
@@ -2813,9 +2851,10 @@ class ShipPropertyViewerPanel(Panel):
     )
     # Shared gizmo verbs: these edit whatever the CURRENT transform target is,
     # so they are refused only when that target is a subsystem/light/emitter
-    # mount. (A part is never a transform target -- see
-    # _active_transform_target -- and the part/* actions are never locked:
-    # tuning the very pose you are looking at is the point.)
+    # mount. (A part Anchor or State node IS a transform target -- see
+    # _active_transform_target -- but never a locked one, and the part/*
+    # actions are never locked either: tuning the very pose you are looking
+    # at is the point.)
     _MOUNT_GIZMO_VERBS = (
         "pipette", "coord_copy", "coord_paste", "coord_mirror",
         "scale_copy", "scale_paste", "scale_uniform",
@@ -3188,15 +3227,28 @@ class ShipPropertyViewerPanel(Panel):
         if action == "coord_copy":
             pos = self._transform_target_pos()
             if pos is not None:
-                self._coord_clipboard = pos
+                # Tagged with its source kind (ruling 15): a part anchor and
+                # a posed anchor only paste onto their own kind.
+                self._coord_clipboard = (
+                    self._coord_clipboard_kind(self._active_transform_target()),
+                    pos)
                 self._last_pushed = None
             return True
         if action == "coord_paste":
-            if self._coord_clipboard is not None and self._transform_target_pos() is not None:
-                self._set_transform_target_pos(self._coord_clipboard)
+            clip = self._coord_clipboard
+            if (clip is not None and self._transform_target_pos() is not None
+                    and clip[0] == self._coord_clipboard_kind(
+                        self._active_transform_target())):
+                self._set_transform_target_pos(clip[1])
                 self._last_pushed = None
             return True
         if action == "coord_mirror":
+            t = self._active_transform_target()
+            if t is not None and t[0] == "part_pose":
+                # The same whole-pose reflection as the action-row Mirror,
+                # so the two agree (ruling 15).
+                self._mirror_target_rotation(t)
+                return True
             pos = self._transform_target_pos()
             if pos is not None:
                 p = list(pos); p[0] = -p[0]
@@ -3296,11 +3348,8 @@ class ShipPropertyViewerPanel(Panel):
                     and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t)):
                 if self._rotate_clipboard[0] == "pose_euler":
                     # Only a part pose target has this kind: set its three
-                    # Euler angles, keep its translation.
-                    p6 = self._part_pose6(t[1], t[2])
-                    self._stage_part_pose(
-                        t[1], t[2],
-                        p6[:3] + tuple(float(a) for a in self._rotate_clipboard[1]))
+                    # Euler angles, holding its posed anchor (ruling 14).
+                    self._stage_pose_euler(t[1], t[2], self._rotate_clipboard[1])
                 elif self._rotate_clipboard[0] == "box_orientation":
                     # box_orientation only matches a Box LIGHT target (an emitter
                     # kind is cylinder_axis/cone_orientation), so t is

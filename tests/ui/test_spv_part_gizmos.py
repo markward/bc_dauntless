@@ -237,6 +237,11 @@ def test_anchor_move_leaves_state_poses(make_panel):
 
 
 def test_pose_move_adds_to_the_translation(make_panel):
+    """Fix round 1, ruling 15: the Move panel describes what is on screen --
+    the POSED anchor, where the gizmo sits -- not the raw translation t.
+    (Re-pointed from Task 8's raw-t display: the behaviour changed by
+    ruling; this is not a weakening.) Dragging or nudging still adds the
+    delta to t and leaves R alone, so q moves by exactly that delta."""
     warp = (0.1, 0.0, 0.0, 0.0, 30.0, 0.0)
     anchor = (-0.5, 0.0, 0.0)
     p, ship = _authored(make_panel, anchor=anchor, warp=warp)
@@ -246,11 +251,11 @@ def test_pose_move_adds_to_the_translation(make_panel):
         "fixture: a selected state node locks the mounts")
 
     assert p._active_transform_target() == ("part_pose", "left wing", "warp")
+    q = part_pose.apply(part_pose.pose_from6(warp), anchor)
     coords = p.transform_coords()
-    assert (coords["x"], coords["y"], coords["z"]) == pytest.approx(
-        (0.1, 0.0, 0.0)), "the numeric panel shows the pose translation"
-    posed_anchor = part_pose.apply(part_pose.pose_from6(warp), anchor)
-    assert p.transform_gizmo()["origin"] == pytest.approx(posed_anchor), (
+    assert (coords["x"], coords["y"], coords["z"]) == pytest.approx(q), (
+        "the numeric panel shows the POSED anchor")
+    assert p.transform_gizmo()["origin"] == pytest.approx(q), (
         "the gizmo sits at the POSED anchor")
 
     # A drag along body Z adds its delta to t; R is untouched. The mount
@@ -263,7 +268,7 @@ def test_pose_move_adds_to_the_translation(make_panel):
     assert ship._articulation_poses["left wing"] == part_pose.pose_from6(
         _pose6(p, "left wing", "warp")), "the preview follows the drag"
 
-    # The stepper adds to the translation too, and the preview follows.
+    # The stepper translates the pose too, and the preview follows.
     assert p.dispatch_event('coord_nudge:{"axis":1,"delta":-0.02}') is True
     want = (0.1, -0.02, 0.05, 0.0, 30.0, 0.0)
     assert _pose6(p, "left wing", "warp") == pytest.approx(want)
@@ -278,6 +283,95 @@ def test_pose_move_adds_to_the_translation(make_panel):
     assert _pose6(p, "left wing", "warp") == pytest.approx(warp)
     assert ship._articulation_poses["left wing"] == part_pose.pose_from6(
         _pose6(p, "left wing", "warp"))
+
+
+def test_move_panel_shows_the_posed_anchor_and_a_nudge_moves_it_exactly(
+        make_panel):
+    """Ruling 15 on a translated AND rotated pose: the panel shows q, a
+    nudge moves q by exactly the nudge, and R does not change."""
+    warp = (0.03, -0.02, 0.04, 12.0, 25.0, -8.0)
+    anchor = (-0.16, 0.1, 0.05)
+    p, ship = _authored(make_panel, anchor=anchor, warp=warp)
+    p.dispatch_event("set_tool:transform")
+    _select_node(p, "left wing", "warp")
+    pose0 = part_pose.pose_from6(warp)
+    q0 = part_pose.apply(pose0, anchor)
+    c = p.transform_coords()
+    assert (c["x"], c["y"], c["z"]) == pytest.approx(q0, abs=1e-12)
+
+    assert p.dispatch_event('coord_nudge:{"axis":0,"delta":0.07}') is True
+
+    pose1 = part_pose.pose_from6(_pose6(p, "left wing", "warp"))
+    q1 = part_pose.apply(pose1, anchor)
+    assert q1 == pytest.approx((q0[0] + 0.07, q0[1], q0[2]), abs=1e-12)
+    for i in range(3):
+        for j in range(3):
+            assert pose1[0][i][j] == pytest.approx(pose0[0][i][j], abs=1e-12)
+    c = p.transform_coords()
+    assert (c["x"], c["y"], c["z"]) == pytest.approx(q1, abs=1e-12)
+    _assert_pose_close(ship._articulation_poses["left wing"], pose1)
+
+
+def test_coord_mirror_matches_the_action_row_mirror_on_a_pose(make_panel):
+    warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
+    mirrored = (-0.1, 0.2, 0.3, 10.0, -20.0, -30.0)
+    p, _ship = _authored(make_panel, warp=warp)
+    p.dispatch_event("set_tool:transform")
+    _select_node(p, "left wing", "warp")
+
+    p.dispatch_event("coord_mirror")
+    via_coord = _pose6(p, "left wing", "warp")
+    _set_pose(p, "left wing", "warp", warp)
+    p.dispatch_event("mirror_element")
+    via_row = _pose6(p, "left wing", "warp")
+
+    assert via_coord == pytest.approx(mirrored)
+    assert via_row == pytest.approx(mirrored)
+
+
+def test_coord_paste_refuses_across_part_kinds(make_panel):
+    """Anchor <-> anchor and pose <-> pose only: a point copied from one
+    kind means something else on the other. A refused paste changes
+    nothing and leaves no undo entry."""
+    warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
+    p, _ship = _authored(make_panel, anchor=(-0.4, 0.2, 0.1), warp=warp)
+    p.dispatch_event("set_tool:transform")
+
+    # anchor -> pose: refused.
+    _select_node(p, "left wing", "anchor")
+    p.dispatch_event("coord_copy")
+    _select_node(p, "left wing", "warp")
+    before = copy.deepcopy(p._pending_part)
+    undo_len = len(p._undo_stack)
+    p.dispatch_event("coord_paste")
+    assert p._pending_part == before
+    assert len(p._undo_stack) == undo_len
+
+    # pose -> anchor: refused.
+    p.dispatch_event("coord_copy")
+    _select_node(p, "left wing", "anchor")
+    before = copy.deepcopy(p._pending_part)
+    p.dispatch_event("coord_paste")
+    assert p._pending_part == before
+    assert len(p._undo_stack) == undo_len
+
+    # pose -> pose: allowed (onto another state of the part).
+    _add_state(p, "left wing", "cruise")
+    _select_node(p, "left wing", "cruise")
+    p.dispatch_event("coord_paste")
+    anchor = p._effective_part("left wing")["anchor"]
+    q_warp = part_pose.apply(part_pose.pose_from6(warp), anchor)
+    q_cruise = part_pose.apply(
+        part_pose.pose_from6(_pose6(p, "left wing", "cruise")), anchor)
+    assert q_cruise == pytest.approx(q_warp, abs=1e-12)
+
+    # anchor -> anchor: allowed.
+    _select_node(p, "left wing", "anchor")
+    p.dispatch_event("coord_copy")
+    p.dispatch_event('coord_nudge:{"axis":0,"delta":0.3}')
+    p.dispatch_event("coord_paste")
+    assert p._pending_part["left wing"]["anchor"] == pytest.approx(
+        (-0.4, 0.2, 0.1))
 
 
 def test_pose_ring_drag_rotates_about_the_posed_anchor(make_panel):
@@ -331,9 +425,22 @@ def test_pose_ring_drag_pivots_on_the_posed_anchor_not_the_rest_anchor(
             assert got[0][i][j] == pytest.approx(R30[i][j], abs=1e-12)
 
 
+def _euler_matches(pose, rx, ry, rz):
+    want = part_pose.euler_to_matrix(rx, ry, rz)
+    for i in range(3):
+        for j in range(3):
+            assert pose[0][i][j] == pytest.approx(want[i][j], abs=1e-9)
+
+
 def test_rotate_values_show_and_edit_the_euler_angles(make_panel):
+    """Fix round 1, ruling 14: a numeric rotate edit sets that Euler angle
+    and holds the POSED ANCHOR fixed, so t changes with it. (Re-pointed
+    from Task 8's 'only rz changes, t kept' -- the behaviour changed by
+    ruling; this is not a weakening.)"""
     warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
     p, ship = _authored(make_panel, warp=warp)
+    anchor = p._effective_part("left wing")["anchor"]
+    q0 = part_pose.apply(part_pose.pose_from6(warp), anchor)
     p.dispatch_event("set_tool:rotate")
     _select_node(p, "left wing", "warp")
 
@@ -345,8 +452,9 @@ def test_rotate_values_show_and_edit_the_euler_angles(make_panel):
         30.0)
 
     assert p.dispatch_event('rotate_nudge:{"axis":2,"delta":5}') is True
-    assert _pose6(p, "left wing", "warp") == pytest.approx(
-        (0.1, 0.2, 0.3, 10.0, 20.0, 35.0)), "only rz changes"
+    got = part_pose.pose_from6(_pose6(p, "left wing", "warp"))
+    _euler_matches(got, 10.0, 20.0, 35.0)
+    assert part_pose.apply(got, anchor) == pytest.approx(q0, abs=1e-9)
     assert [f["value"] for f in p.rotate_values()["fields"]] == pytest.approx(
         [10.0, 20.0, 35.0])
     assert ship._articulation_poses["left wing"] == part_pose.pose_from6(
@@ -360,8 +468,48 @@ def test_rotate_values_show_and_edit_the_euler_angles(make_panel):
     p.dispatch_event('rotate_nudge:{"axis":0,"delta":-10}')
     assert _pose6(p, "left wing", "warp")[3] == pytest.approx(0.0)
     p.dispatch_event("rotate_paste")
-    assert _pose6(p, "left wing", "warp") == pytest.approx(
-        (0.1, 0.2, 0.3, 10.0, 20.0, 35.0))
+    got = part_pose.pose_from6(_pose6(p, "left wing", "warp"))
+    _euler_matches(got, 10.0, 20.0, 35.0)
+    assert part_pose.apply(got, anchor) == pytest.approx(q0, abs=1e-9)
+
+
+def test_rotate_nudge_holds_the_posed_anchor(make_panel):
+    """Six +5 degree clicks on a translated + rotated pose: the hinge point
+    does not slide (the review measured ~0.09 ship units of drift when the
+    stepper rotated about the ship origin)."""
+    warp = (0.05, -0.04, 0.02, 15.0, -30.0, 40.0)
+    p, ship = _authored(make_panel, anchor=(-0.16, 0.0, 0.05), warp=warp)
+    anchor = p._effective_part("left wing")["anchor"]
+    q0 = part_pose.apply(part_pose.pose_from6(warp), anchor)
+    p.dispatch_event("set_tool:rotate")
+    _select_node(p, "left wing", "warp")
+
+    for _ in range(6):
+        assert p.dispatch_event('rotate_nudge:{"axis":1,"delta":5}') is True
+    got = part_pose.pose_from6(_pose6(p, "left wing", "warp"))
+    _euler_matches(got, 15.0, 0.0, 40.0)
+    assert part_pose.apply(got, anchor) == pytest.approx(q0, abs=1e-9)
+    _assert_pose_close(ship._articulation_poses["left wing"], got)
+
+
+def test_rotate_paste_holds_the_posed_anchor(make_panel):
+    p, _ship = _authored(make_panel, anchor=(-0.16, 0.0, 0.05),
+                         warp=(0.0, 0.0, 0.0, 30.0, 0.0, 0.0))
+    _add_state(p, "left wing", "cruise")
+    cruise = (0.05, -0.04, 0.02, 15.0, -30.0, 40.0)
+    _set_pose(p, "left wing", "cruise", cruise)
+    anchor = p._effective_part("left wing")["anchor"]
+    q0 = part_pose.apply(part_pose.pose_from6(cruise), anchor)
+    p.dispatch_event("set_tool:rotate")
+    _select_node(p, "left wing", "warp")
+    p.dispatch_event("rotate_copy")
+    _select_node(p, "left wing", "cruise")
+
+    p.dispatch_event("rotate_paste")
+
+    got = part_pose.pose_from6(_pose6(p, "left wing", "cruise"))
+    _euler_matches(got, 30.0, 0.0, 0.0)
+    assert part_pose.apply(got, anchor) == pytest.approx(q0, abs=1e-9)
 
 
 def test_mirror_reflects_a_pose_across_ship_x(make_panel):
