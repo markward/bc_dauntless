@@ -87,29 +87,36 @@ class _RecordingApp:
         return _Recorder(self._parts.setdefault(name, []))
 
 
+def record_fn(fn) -> dict:
+    """{subsystem: [(setter, args), ...]} for ONE override-shaped function, by
+    executing it against a recording `find` and a recording `App`.
+
+    A function with articulated parts also gets a "__parts__" entry:
+    {..., "__parts__": {part_name: [(setter, args), ...]}}.
+    """
+    per_sub: dict = {}
+    parts: dict = {}
+    prev_app = sys.modules.get("App", _NOT_SET)
+    sys.modules["App"] = _RecordingApp(parts)
+    try:
+        fn(_make_find(per_sub))
+    finally:
+        if prev_app is _NOT_SET:
+            del sys.modules["App"]
+        else:
+            sys.modules["App"] = prev_app
+    if parts:
+        per_sub[_PARTS_KEY] = parts
+    return per_sub
+
+
 def read_models(module) -> dict:
     """{leaf: {subsystem: [(setter, args), ...]}} by executing each override fn.
 
     A leaf with articulated parts also gets a "__parts__" entry:
     {leaf: {..., "__parts__": {part_name: [(setter, args), ...]}}}.
     """
-    models: dict = {}
-    for leaf, fn in module.OVERRIDES.items():
-        per_sub: dict = {}
-        parts: dict = {}
-        prev_app = sys.modules.get("App", _NOT_SET)
-        sys.modules["App"] = _RecordingApp(parts)
-        try:
-            fn(_make_find(per_sub))
-        finally:
-            if prev_app is _NOT_SET:
-                del sys.modules["App"]
-            else:
-                sys.modules["App"] = prev_app
-        if parts:
-            per_sub[_PARTS_KEY] = parts
-        models[leaf] = per_sub
-    return models
+    return dict((leaf, record_fn(fn)) for leaf, fn in module.OVERRIDES.items())
 
 
 def read_models_from_source(text) -> dict:
@@ -161,6 +168,24 @@ def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) ->
             if not (s.startswith(prefix) and a and a[0] == index)]
     kept.extend((s, tuple(a)) for (s, a) in calls)
     per_sub[subsystem] = kept
+
+
+def apply_edit(models, leaf, edit) -> None:
+    """Apply one SPV edit tuple (see HardpointOverridesFileTarget.write):
+    (subsystem, setter, args) 3-tuples, (name, "__part__", calls) 3-tuples,
+    and/or (subsystem, "__region__"/"__emitter__", index, calls) 4-tuples."""
+    if len(edit) == 4 and edit[1] == "__region__":
+        subsystem, _tag, index, calls = edit
+        set_region(models, leaf, subsystem, index, calls)
+    elif len(edit) == 4 and edit[1] == "__emitter__":
+        subsystem, _tag, index, calls = edit
+        set_region(models, leaf, subsystem, index, calls, prefix=_EMITTER_PREFIX)
+    elif len(edit) == 3 and edit[1] == "__part__":
+        name, _tag, calls = edit
+        set_part(models, leaf, name, calls)
+    else:
+        subsystem, setter, args = edit
+        set_setter(models, leaf, subsystem, setter, args)
 
 
 # ── Emission ────────────────────────────────────────────────────────────────
@@ -245,8 +270,8 @@ def _emit_part(lines, name, calls) -> None:
     lines.append('        App.g_kModelPropertyManager.RegisterLocalTemplate(%s)' % var)
 
 
-def _emit_function(leaf, per_sub) -> str:
-    out = ["def _%s(find):" % leaf, '    """%s."""' % leaf]
+def _emit_function(leaf, per_sub, fn_name=None) -> str:
+    out = ["def %s(find):" % (fn_name or "_" + leaf), '    """%s."""' % leaf]
     non_empty = [(s, c) for s, c in per_sub.items() if s != _PARTS_KEY and c]
     parts = dict((n, c) for n, c in per_sub.get(_PARTS_KEY, {}).items() if c)
     if not non_empty and not parts:

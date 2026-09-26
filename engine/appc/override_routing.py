@@ -48,19 +48,7 @@ class HardpointOverridesFileTarget:
         exec(compile(src, self.path, "exec"), module.__dict__)  # noqa: S102
         models = _writer.read_models(module)
         for edit in edits:
-            if len(edit) == 4 and edit[1] == "__region__":
-                subsystem, tag, index, calls = edit
-                _writer.set_region(models, leaf, subsystem, index, calls)
-            elif len(edit) == 4 and edit[1] == "__emitter__":
-                subsystem, tag, index, calls = edit
-                _writer.set_region(models, leaf, subsystem, index, calls,
-                                    prefix="SetLightEmitter")
-            elif len(edit) == 3 and edit[1] == "__part__":
-                name, tag, calls = edit
-                _writer.set_part(models, leaf, name, calls)
-            else:
-                subsystem, setter, args = edit
-                _writer.set_setter(models, leaf, subsystem, setter, args)
+            _writer.apply_edit(models, leaf, edit)
         text = _writer.emit(models)          # raises on a bad emit
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
