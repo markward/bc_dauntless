@@ -302,32 +302,6 @@
     height: 25vh;
 }
 
-.spv-part-row {
-    display: flex;
-    align-items: center;
-    padding: 3px 10px;
-    cursor: pointer;
-    font-size: 13px;
-    letter-spacing: 0.04em;
-    color: rgba(235, 225, 255, 0.85);
-}
-
-.spv-part-row:hover {
-    background: rgba(255, 255, 175, 0.10);
-}
-
-.spv-part-row--chosen {
-    background: rgba(255, 214, 90, 0.25);
-    color: rgb(235, 225, 255);
-}
-
-.spv-part-row__name {
-    flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 /* Derived-bounds readout for the selected part -- what severance will
    actually test against (see model_part_rows / select_model_part). */
 .spv-part-box {
@@ -360,69 +334,70 @@
     pointer-events: none;
 }
 
-/* Per-part authoring controls (Task 7): rendered below the selected part's
-   derived-bounds readout in #spv-parts-body. Four angle rows (state label +
-   numeric input + Preview button) plus the detachable checkbox/fraction
-   row. Kept visually distinct from the flat row list above it. */
-.spv-part-controls {
-    padding: 6px 10px 8px 10px;
-    border-top: 1px solid rgba(216, 94, 86, 0.35);
+/* Part-node context-menu items (Task 7, spec section 7.2): reuse
+   #spv-ctxmenu / .spv-ctxmenu__item for Add Anchor / Add State
+   Transformation / Make Breakable / Remove rather than a second menu
+   element. "Add State Transformation" has no real flyout -- no submenu CSS
+   pattern exists elsewhere in this file -- so it is a non-clickable label
+   (.spv-ctxmenu__item--label) followed by one indented, clickable item per
+   missing state (.spv-ctxmenu__item--sub), filled by
+   spvRenderAddStateItems. */
+.spv-ctxmenu__item--label {
+    cursor: default;
+    color: rgba(255, 221, 170, 0.55);
+    font-size: 12px;
 }
 
-.spv-part-angle-row {
+.spv-ctxmenu__item--label:hover {
+    background: none;
+}
+
+.spv-ctxmenu__item--sub {
+    padding-left: 26px;
+}
+
+/* Inline field on a chosen Anchor / Breakage row (Task 7, spec section
+   7.3): a label + a numeric input, pushed to the row's trailing edge.
+   Stops click propagation (see the row's onclick in ship_property_viewer.js)
+   so interacting with the field never also re-fires the row's own
+   select_node click. */
+.spv-part-inline-field {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 4px;
-    font-size: 12px;
-    color: rgba(235, 225, 255, 0.85);
-}
-
-.spv-part-angle-row__label {
-    flex: 0 0 52px;
-    text-transform: capitalize;
-}
-
-.spv-part-angle-row input[type="number"] {
-    width: 56px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 230, 160, 0.3);
-    color: #ffd;
-    font-size: 12px;
-    padding: 2px 4px;
-}
-
-.spv-part-angle-row button.spv-part-preview-btn {
-    flex: 1 1 auto;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 230, 160, 0.4);
-    color: #ffd;
-    cursor: pointer;
+    margin-left: auto;
     font-size: 11px;
-    padding: 2px 6px;
+    color: rgba(235, 225, 255, 0.75);
+    white-space: nowrap;
 }
 
-.spv-part-angle-row button.spv-part-preview-btn.active {
-    background: rgba(255, 214, 90, 0.85);
-    color: rgb(40, 24, 8);
-}
-
-.spv-part-detach-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 6px;
-    font-size: 12px;
-    color: rgba(235, 225, 255, 0.85);
-}
-
-.spv-part-detach-row input[type="number"] {
-    width: 56px;
+.spv-part-inline-field input[type="number"] {
+    width: 52px;
     background: rgba(0, 0, 0, 0.35);
     border: 1px solid rgba(255, 230, 160, 0.3);
     color: #ffd;
-    font-size: 12px;
+    font-size: 11px;
     padding: 2px 4px;
+}
+
+/* Toast (Task 7, spec section 7.4): a transient message at the top-centre
+   of the SPV. Shown/hidden purely from data.model_parts.toast -- see
+   renderSPVModelParts. */
+#spv-toast {
+    position: absolute;
+    top: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 22, 28, 0.95);
+    border: 1px solid rgba(255, 230, 160, 0.5);
+    color: #ffd;
+    padding: 8px 16px;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+    z-index: 80;
+    max-width: 60%;
+    text-align: center;
 }
 
 /* Eye glyph: open = targetable, shut = untargetable (dimmed). */
