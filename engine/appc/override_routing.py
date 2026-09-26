@@ -69,12 +69,19 @@ class ModHardpointFileTarget:
     written back in the same encoding with newline translation off."""
 
     def __init__(self, path: str) -> None:
-        self.path = str(path)
+        # Resolve symlinks so .orig/.tmp/os.replace all act on the real file:
+        # os.replace onto a link would swap the link for a regular file.
+        self.path = os.path.realpath(str(path))
 
     def describe(self) -> str:
         return "mod file: " + self.path
 
     def write(self, leaf, edits) -> None:
+        # Known limitation: the SDK loader decodes mod files as UTF-8 with
+        # errors="replace", so a subsystem name containing non-UTF-8 (e.g.
+        # Latin-1) bytes reaches the SPV as U+FFFD and cannot be matched in
+        # the file. Such a save fails safely -- encoding U+FFFD back to
+        # Latin-1 raises, which the SPV reports as a "Save failed" toast.
         with open(self.path, "rb") as fh:
             raw = fh.read()
         try:

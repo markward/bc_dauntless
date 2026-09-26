@@ -100,3 +100,24 @@ def test_unwritable_directory_raises_and_leaves_file(tmp_path):
     finally:
         os.chmod(f.parent, stat.S_IRWXU)
     assert f.read_bytes() == SRC.encode()
+
+
+def test_non_finite_edit_leaves_the_file_untouched(tmp_path):
+    f = _mod_tree(tmp_path)
+    with pytest.raises(ValueError, match="Hull"):
+        r.ModHardpointFileTarget(str(f)).write(
+            "refit", [("Hull", "SetRadius", (float("nan"),))])
+    assert f.read_bytes() == SRC.encode()
+    assert not (f.parent / "refit.py.orig").exists()
+    assert not (f.parent / "refit.py.tmp").exists()
+
+
+def test_write_through_a_symlink_keeps_the_link(tmp_path):
+    real = _mod_tree(tmp_path)
+    link = tmp_path / "link_refit.py"
+    link.symlink_to(real)
+    r.ModHardpointFileTarget(str(link)).write(
+        "refit", [("Port Warp", "SetRadius", (0.5,))])
+    assert link.is_symlink()
+    assert os.readlink(link) == str(real)
+    assert "PortWarp.SetRadius(0.500000)" in real.read_text()
