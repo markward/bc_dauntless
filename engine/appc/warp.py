@@ -1214,7 +1214,18 @@ def execute_warp(button, event=None):
     # visibly E1M1's, dropping the player 93 km from the Starbase 12 nav point
     # instead of the scripted 312 km.
     placement = button.GetPlacementName()
+    mission = button.get_mission_name() or None
+    episode = button.get_episode_name() or None
+    queues = button.take_queues()
+    # Same-system Set Course: the dash, not the tunnel (in-system-warp spec
+    # §2; rule C keeps the tunnel for anything else). start_set_course
+    # returns False when it cannot dash, and the tunnel runs as before.
+    from engine.appc import dash
+    if dash.is_same_system_dash(player, dest, mission, episode) and \
+            dash.start_set_course(
+                player, App.g_kSetManager.GetSet(_set_name_from_module(dest)),
+                placement, queues):
+        return
     WarpSequence_Create(player, dest, button.GetWarpTime(), placement,
-                        mission=button.get_mission_name() or None,
-                        episode=button.get_episode_name() or None,
-                        queues=button.take_queues()).Play()
+                        mission=mission, episode=episode,
+                        queues=queues).Play()

@@ -156,7 +156,10 @@ class ShipClass(DamageableObject):
         # trigger; HelmCharacterHandlers.AIDone).
         old = self._ai
         self._ai = ai
-        self._insystem_warp_transit = None
+        # Through _end_in_system_warp, never a bare None: a player dash ended
+        # here must still post ET_IN_SYSTEM_WARP False and record why, so
+        # engine/appc/dash.py runs its drop-out (ruling R10).
+        self._end_in_system_warp("aborted")
         if old is not None and old is not ai:
             self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
@@ -171,7 +174,7 @@ class ShipClass(DamageableObject):
         # ended tree via ET_AI_DONE, like SetAI above.
         old = self._ai
         self._ai = None
-        self._insystem_warp_transit = None
+        self._end_in_system_warp("aborted")     # see SetAI
         if old is not None:
             self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
@@ -340,7 +343,7 @@ class ShipClass(DamageableObject):
         # Zero-speed setpoint (model-forward dir) so the integrator holds at 0.
         self._speed_setpoint = (0.0, TGPoint3(0.0, 1.0, 0.0), 0)
         self._target_angular_velocity_setpoint = TGPoint3(0.0, 0.0, 0.0)
-        self._insystem_warp_transit = None
+        self._end_in_system_warp("stopped")     # see SetAI
 
     # ── Pure-math kinematic helpers ──────────────────────────────────────────
     # No state read/written beyond the explicit arg list (GetPredictedPosition)

@@ -48,6 +48,11 @@ def engine_warp_step(button, event) -> None:
 
 
 def is_warp_active(player) -> bool:
+    """A tunnel warp (a WarpSequence on the engine) or a dash
+    (engine/appc/dash.py) is in progress: Warp pressed again starts nothing."""
+    from engine.appc import dash
+    if dash.is_dashing(player):
+        return True
     eng = player.GetWarpEngineSubsystem() if hasattr(
         player, "GetWarpEngineSubsystem") else None
     return bool(eng is not None and eng.GetWarpSequence() is not None)

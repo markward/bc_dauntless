@@ -2514,6 +2514,9 @@ class _PlayerControl:
         # (manual→AI: seed the ship-side integrator; AI→manual: resume from
         # the ship's actual motion with no velocity snap).
         self._ai_owned = False
+        # True while a dash owns the ship (see apply()); the first apply()
+        # after its drop-out re-syncs from the ship.
+        self._dash_owned = False
         # Scroll-wheel throttle nudges arrive outside apply() (see
         # _route_scroll_wheel); latch them so a nudge while an AI owns the
         # ship counts as manual input and cancels the AI next apply().
@@ -2709,7 +2712,9 @@ class _PlayerControl:
         player._target_angular_velocity_setpoint = None
         # Taking the conn also aborts any AI-initiated in-system-warp
         # transit (BC: touching the helm cancels the autopilot's warp).
-        player._insystem_warp_transit = None
+        # Through _end_in_system_warp so the end is announced (ruling R10).
+        if getattr(player, "_insystem_warp_transit", None) is not None:
+            player._end_in_system_warp("aborted")
 
     def _cancel_player_ai(self, player) -> None:
         """Clear the player's helm AI (BC: manual input overrides the current
@@ -2751,6 +2756,24 @@ class _PlayerControl:
                                        p.z + fwd.z * s * dt)
                 player.SetVelocity(TGPoint3(fwd.x * s, fwd.y * s, fwd.z * s))
             return
+        # A dash (engine/appc/dash.py) owns the ship from the press to the
+        # drop-out: steering, throttle and every other key are inert, read
+        # nothing -- except full stop, which drops out at rest.
+        from engine.appc import dash
+        if dash.is_dashing(player):
+            self._dash_owned = True
+            self._manual_throttle_nudge = False
+            if h.key_pressed(self._input_map.code("full_stop")):
+                dash.drop_out(player, "stopped")
+            return
+        if self._dash_owned:
+            # Dropped out: resume from the ship's actual motion (at rest, or
+            # the speed the dash left it with), not the pre-dash throttle.
+            self._dash_owned = False
+            self._ai_owned = False
+            self._sync_control_from_ship(player)
+            if self._current_speed == 0.0:
+                self.impulse_level = 0
         # Helm-AI ownership arbitration (see section comment above apply()).
         nudged = self._manual_throttle_nudge
         self._manual_throttle_nudge = False
@@ -9625,6 +9648,9 @@ def run(mission_name: Optional[str] = None,
                 # cheap every tick and self-heals the per-bridge-load rebuild.
                 if _player is not None:
                     weapon_tactical_commands.sync(_player)
+                    # The Helm entries a dash greys, and its All Stop handler.
+                    from engine.appc import dash_helm
+                    dash_helm.sync(_player)
                 # Drop the player's weapon lock the instant its target stops
                 # being detectable — cloaked, out of sensor range, lost in a
                 # nebula, or the player's own sensors dead/unpowered. You can't
@@ -10248,6 +10274,14 @@ def run(mission_name: Optional[str] = None,
                         _player_dt,
                         ship_instances=(session.ship_instances if session is not None else None),
                     )
+
+                # The player's dash (engine/appc/dash.py): its align, its
+                # engage, and the drop-out of a flight that ended this frame
+                # -- before the hand-off tick, so a drop-out's own hand-off
+                # lands first.
+                if player is not None:
+                    from engine.appc import dash
+                    dash.tick(player, _player_dt)
 
                 # The impulse region hand-off (in-system-warp spec section 3,
                 # rule H): the player crosses into another region's sphere
