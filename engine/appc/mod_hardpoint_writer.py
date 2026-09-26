@@ -10,6 +10,7 @@ skips it. Emitted code must stay Python 1.5 safe.
 from __future__ import annotations
 
 import ast
+import math
 
 from engine.appc import hardpoint_override_writer as _w
 
@@ -124,16 +125,49 @@ def _contains_setter_call(node, var, setter):
     return False
 
 
-def find_setter_call(tree, subsystem, setter):
+def _is_numeric_literal(node):
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        node = node.operand
+    return (isinstance(node, ast.Constant)
+            and isinstance(node.value, (int, float))
+            and not isinstance(node.value, bool))
+
+
+def _args_are_plain_literals(call, arity):
+    """Exactly `arity` positional numeric literals (optionally negated), no
+    keywords, no *args/**kwargs. Stock BC emitter/orientation properties call
+    SetPosition(<TGPoint3 var>): rewriting that to three floats is a
+    TypeError in stbc.exe."""
+    return (not call.keywords
+            and len(call.args) == arity
+            and all(_is_numeric_literal(a) for a in call.args))
+
+
+def _create_count(tree, subsystem):
+    return sum(1 for n in ast.walk(tree) if _is_create_of(n, subsystem))
+
+
+def find_setter_call(tree, subsystem, setter, arity=None):
     """The LAST module-level, top-level-statement `V.<setter>(...)` issued
     while V is bound to `App.<X>Property_Create("<subsystem>")`. None when
-    absent (loop-built, computed name, inside a function, or no such call) --
-    and ALSO None when any later statement contains a `V.<setter>(...)` call
-    at any OTHER nesting depth (inside an `if`, a loop, a function body, or as
-    a sub-expression): such a call runs after ours at runtime and would
-    silently override an in-place rewrite of the top-level call, so the whole
-    candidacy is treated as unsafe rather than producing a save that looks
-    right in the file but does nothing in the game."""
+    absent (loop-built, computed name, inside a function, or no such call).
+
+    Also None -- the whole candidacy treated as unsafe rather than producing
+    a save that looks right in the file but does nothing (or crashes) in the
+    game -- when:
+      * `<subsystem>` is Created more than once anywhere in the module (two
+        properties sharing a name: we cannot tell which one the user edited);
+      * the chosen call does not take exactly `arity` plain numeric literal
+        positional arguments (when `arity` is given);
+      * any `V.<setter>(...)` call exists ANYWHERE in the module (any
+        position, any depth -- an `if`, a loop, a function body defined
+        before or after the Create, a sub-expression) other than as a
+        top-level expression statement: such a call may run after ours at
+        runtime and silently override the in-place rewrite. Top-level
+        `V.<setter>(...)` statements on V bound to OTHER subsystems are fine
+        (common SDK variable reuse)."""
+    if _create_count(tree, subsystem) != 1:
+        return None
     var, hit = None, None
     for stmt in tree.body:
         if isinstance(stmt, ast.Assign):
@@ -151,7 +185,24 @@ def find_setter_call(tree, subsystem, setter):
             continue
         if _contains_setter_call(stmt, var, setter):
             return None                              # could override us at runtime
+    if hit is None:
+        return None
+    if arity is not None and not _args_are_plain_literals(hit, arity):
+        return None
+    if _has_non_toplevel_setter_call(tree, var, setter):
+        return None
     return hit
+
+
+def _has_non_toplevel_setter_call(tree, var, setter):
+    toplevel = {id(stmt.value) for stmt in tree.body
+                if _is_setter_call_on(stmt, var, setter)}
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Call) and id(n) not in toplevel
+                and isinstance(n.func, ast.Attribute) and n.func.attr == setter
+                and isinstance(n.func.value, ast.Name) and n.func.value.id == var):
+            return True
+    return False
 
 
 def format_setter_call(var, setter, args):
@@ -211,7 +262,35 @@ def _check_no_overlapping_spans(replacements):
             raise ManagedBlockError("in-place rewrite spans overlap")
 
 
+def _numbers_in(value):
+    if isinstance(value, bool):
+        return
+    if isinstance(value, (int, float)):
+        yield value
+    elif isinstance(value, (tuple, list)):
+        for v in value:
+            yield from _numbers_in(v)
+
+
+def _check_finite(edits):
+    """nan/inf would be emitted as bare names -> NameError on import in both
+    engines. Reject before anything else touches the text."""
+    for edit in edits:
+        subsystem, kind = edit[0], edit[1]
+        payload = edit[2] if len(edit) == 3 else edit[3]
+        if len(edit) == 3 and kind not in ("__part__",):
+            calls = [(kind, payload)]
+        else:
+            calls = list(payload)
+        for setter, args in calls:
+            for x in _numbers_in(args):
+                if not math.isfinite(x):
+                    raise ValueError("non-finite value %r for %s.%s"
+                                     % (x, subsystem, setter))
+
+
 def rewrite(text, leaf, edits):
+    _check_finite(edits)
     newline = _newline_of(text)
     author, block = split_block(text)
     models = {leaf: read_block(block)}
@@ -225,7 +304,7 @@ def rewrite(text, leaf, edits):
     for edit in edits:
         if tree is not None and len(edit) == 3 and edit[1] in INPLACE_SETTERS:
             subsystem, setter, args = edit
-            call = find_setter_call(tree, subsystem, setter)
+            call = find_setter_call(tree, subsystem, setter, arity=len(args))
             if call is not None:
                 var = call.func.value.id
                 start, end = _char_span(author, call)

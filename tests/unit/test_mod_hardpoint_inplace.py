@@ -199,3 +199,104 @@ def test_non_property_create_is_not_treated_as_the_binding():
     out = mw.rewrite(src, "x", [("A", "SetRadius", (9.0,))])
     assert out.startswith(src)                 # not rewritten in place
     assert mw.read_block(mw.split_block(out)[1])["A"] == [("SetRadius", (9.0,))]
+
+
+# ── Arity / duplicate-name guards (final review item 2) ──────────────────────
+
+EMITTER_SRC = '''import App
+ShuttleBayPosition = App.TGPoint3()
+ShuttleBayPosition.SetXYZ(0.000000, 1.000000, 2.000000)
+ShuttleBay = App.ObjectEmitterProperty_Create("Shuttle Bay")
+ShuttleBay.SetPosition(ShuttleBayPosition)
+App.g_kModelPropertyManager.RegisterLocalTemplate(ShuttleBay)
+'''
+
+
+def test_setposition_with_a_tgpoint3_argument_falls_back_to_the_block():
+    out = mw.rewrite(EMITTER_SRC, "refit",
+                     [("Shuttle Bay", "SetPosition", (5.0, 6.0, 7.0))])
+    author, block = mw.split_block(out)
+    assert author == EMITTER_SRC                  # byte-identical author text
+    assert mw.read_block(block)["Shuttle Bay"] == [("SetPosition", (5.0, 6.0, 7.0))]
+
+
+def test_duplicate_created_name_falls_back_to_the_block():
+    src = ('import App\n'
+           'ShuttleBay = App.HullProperty_Create("Shuttle Bay")\n'
+           'ShuttleBay.SetPosition(1.000000, 2.000000, 3.000000)\n'
+           'App.g_kModelPropertyManager.RegisterLocalTemplate(ShuttleBay)\n'
+           + EMITTER_SRC.replace("import App\n", "", 1))
+    out = mw.rewrite(src, "refit", [("Shuttle Bay", "SetPosition", (5.0, 6.0, 7.0))])
+    author, block = mw.split_block(out)
+    assert author == src
+    assert mw.read_block(block)["Shuttle Bay"] == [("SetPosition", (5.0, 6.0, 7.0))]
+
+
+def test_duplicate_create_nested_anywhere_falls_back_to_the_block():
+    src = SRC + 'def later():\n    x = App.EngineProperty_Create("Port Warp")\n'
+    out = mw.rewrite(src, "refit", [("Port Warp", "SetRadius", (0.5,))])
+    author, block = mw.split_block(out)
+    assert author == src
+    assert mw.read_block(block)["Port Warp"] == [("SetRadius", (0.5,))]
+
+
+def test_negative_literal_args_still_rewrite_in_place():
+    # SRC's SetPosition uses unary-minus literals; one-arg SetRadius(r) too.
+    out = mw.rewrite(SRC, "refit", [("Port Warp", "SetPosition", (1.0, 2.0, 3.0)),
+                                    ("Port Warp", "SetRadius", (0.5,))])
+    assert mw.START_MARKER not in out
+    assert "PortWarp.SetRadius(0.500000)" in out
+
+
+def test_keyword_or_starred_args_fall_back():
+    for call in ("PortWarp.SetRadius(r=1.0)", "PortWarp.SetRadius(*rr)"):
+        src = SRC.replace("PortWarp.SetRadius(1.200000)", call)
+        out = mw.rewrite(src, "refit", [("Port Warp", "SetRadius", (0.5,))])
+        assert mw.split_block(out)[0] == src, call
+
+
+def test_wrong_arity_falls_back():
+    src = SRC.replace("PortWarp.SetRadius(1.200000)", "PortWarp.SetRadius(1.0, 2.0)")
+    out = mw.rewrite(src, "refit", [("Port Warp", "SetRadius", (0.5,))])
+    assert mw.split_block(out)[0] == src
+
+
+# ── Non-finite values (final review item 3) ─────────────────────────────────
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_args_are_rejected(bad):
+    with pytest.raises(ValueError, match="Hull.*SetRadius|SetRadius.*Hull"):
+        mw.rewrite(SRC, "refit", [("Hull", "SetRadius", (bad,))])
+
+
+def test_non_finite_in_a_region_call_is_rejected():
+    with pytest.raises(ValueError, match="Port Warp"):
+        mw.rewrite(SRC, "refit", [
+            ("Port Warp", "__region__", 0,
+             [("SetGlowRegionPosition", (0, float("nan"), 0.0, 0.0))])])
+
+
+# ── A helper defined BEFORE the Create (final review item 4) ────────────────
+
+def test_setter_in_a_function_defined_before_the_create_falls_back():
+    src = ('import App\n'
+           'def Fix():\n'
+           '    Hull.SetRadius(9.0)\n'
+           'Hull = App.HullProperty_Create("Hull")\n'
+           'Hull.SetRadius(1.000000)\n'
+           'Fix()\n')
+    out = mw.rewrite(src, "refit", [("Hull", "SetRadius", (4.0,))])
+    author, block = mw.split_block(out)
+    assert author == src
+    assert mw.read_block(block)["Hull"] == [("SetRadius", (4.0,))]
+
+
+def test_toplevel_reuse_of_the_variable_for_another_subsystem_is_fine():
+    src = ('import App\n'
+           'p = App.EngineProperty_Create("A")\n'
+           'p.SetRadius(1.000000)\n'
+           'p = App.EngineProperty_Create("B")\n'
+           'p.SetRadius(2.000000)\n')
+    out = mw.rewrite(src, "refit", [("B", "SetRadius", (3.0,))])
+    assert mw.START_MARKER not in out
+    assert "p.SetRadius(1.000000)" in out and "p.SetRadius(3.000000)" in out
