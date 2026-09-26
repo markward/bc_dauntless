@@ -305,6 +305,29 @@ class _ArrivalClearTargetsAction(TGAction):
             _clear_all_targets(self._ship)
 
 
+class _ArrivalExitedWarpAction(TGAction):
+    """Post ET_EXITED_WARP (source = destination = the player) on the
+    player's arrival -- ruling R16. Nine SDK hooks listen for it (E1M2
+    FirstHavenHail, E2M6 PlayerEntersBiranu, E8M2 Briefing, ...), written
+    for tunnel arrivals; the in-system dash posts it at every drop-out
+    through the same `handoff.post_exited_warp`. Appended AFTER the
+    placement and the arrival target clear, so a handler reads the arrival
+    set and pose, and a target it picks is not cleared under it. Where BC's
+    C++ posts it within its warp chain is inferred from those hooks.
+
+    Player only, like every arrival beat here: the SDK hooks test the event
+    against the player."""
+
+    def __init__(self, ship):
+        super().__init__()
+        self._ship = ship
+
+    def _do_play(self):
+        if _is_current_player(self._ship):
+            from engine.systems import handoff
+            handoff.post_exited_warp(self._ship)
+
+
 class _EnableHelmMenuAction(TGAction):
     """Restore the Helm menu on arrival — the counterpart to the
     `disable_helm_menu()` that `warp_button.engage` performs at engage time.
@@ -968,6 +991,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # than at the end of the tail below: the reticle must drop the instant
         # you come out of warp, not _T_EXIT_DECEL seconds later.
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
+        seq.AppendAction(_ArrivalExitedWarpAction(ship))
         seq.AppendAction(_WarpSoundAction("Exit Warp"))
         # The manager keeps running for _T_EXIT_DECEL seconds after arrival to
         # glide the ship from in-system warp speed down to 0; schedule the
@@ -1005,6 +1029,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
+        seq.AppendAction(_ArrivalExitedWarpAction(ship))
     seq.AppendAction(_EnableHelmMenuAction(ship))
     _append_after_queue(seq)
     return seq
