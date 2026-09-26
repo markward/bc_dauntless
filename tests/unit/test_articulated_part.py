@@ -49,7 +49,19 @@ def test_state_angles_round_trip():
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetStateAngle("cruise", 45.0)
     p.SetStateAngle("red", 0.0)
-    assert not pp.is_identity(p.pose_for("cruise"))
+    assert p.angle_for("cruise") == 45.0
+    assert p.angle_for("red") == 0.0
+    assert p.angle_for("warp") == 0.0               # unset -> 0.0 (the NIF pose)
+
+    # And the pose surface must be EXACTLY the hinge at the authored angle,
+    # not merely "not identity" -- a wrong angle or a wrong sign would still
+    # satisfy that weaker check. No SetPivot/SetAxis here, so the hinge is at
+    # the class defaults: origin, ship-forward axis.
+    pivot, axis = (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+    want_cruise = pp.hinge_pose(pivot, axis, 45.0)
+    for x in ((0.3, 0.45, -0.67), (-1.0, 0.0, 0.2)):
+        assert pp.apply(p.pose_for("cruise"), x) == pytest.approx(
+            pp.apply(want_cruise, x), abs=1e-12)
     assert pp.is_identity(p.pose_for("red"))
     assert pp.is_identity(p.pose_for("warp"))       # unset -> the NIF pose
 
@@ -81,15 +93,23 @@ def test_a_static_detachable_part_needs_no_extra_concept():
 
 
 def test_pivot_and_axis_feed_the_anchor_and_pose():
-    """`SetPivot`/`SetAxis` are legacy setters; a state angle authored
-    against them converts to an anchor and a rigid pose through the hinge
-    (spec section 6), read via the pose surface."""
+    """`SetPivot`/`SetAxis` are legacy setters, still pinned directly (they
+    stay on the class until Task 6 rewrites the SPV panel that reads them);
+    a state angle authored against them ALSO converts to an anchor and an
+    exact rigid pose through the hinge (spec section 6), read via the pose
+    surface."""
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetPivot(-0.16, 0.0, 0.05)
     p.SetAxis(0.0, 1.0, 0.0)
     p.SetStateAngle("cruise", 45.0)
+    assert p.pivot == (-0.16, 0.0, 0.05)
+    assert p.axis == (0.0, 1.0, 0.0)
     assert p.anchor == (-0.16, 0.0, 0.05)
-    assert not pp.is_identity(p.pose_for("cruise"))
+
+    want = pp.hinge_pose((-0.16, 0.0, 0.05), (0.0, 1.0, 0.0), 45.0)
+    for x in ((-1.0, 0.45, -0.67), (0.3, -0.2, 0.1)):
+        assert pp.apply(p.pose_for("cruise"), x) == pytest.approx(
+            pp.apply(want, x), abs=1e-12)
 
 
 # ---------------------------------------------------------------------------
