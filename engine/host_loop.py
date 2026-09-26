@@ -11022,6 +11022,22 @@ def run(mission_name: Optional[str] = None,
     finally:
         from engine.core import mission_change as _mission_change
         _mission_change.configure(on_changed=None)
+        # The warp hooks close over this controller too; left installed they
+        # outlive it (a stale starbase line-of-sight hook refused every later
+        # warp near Starbase 12).
+        from engine.appc import warp as _warp_hooks, warp_gates as _gate_hooks
+        _warp_hooks.configure_warp_hooks(realize=None, teardown=None)
+        _warp_hooks.configure_warp_vfx(start=None, stop=None, enabled=None,
+                                       vantage_of=None)
+        _gate_hooks.configure_gate_hooks(ray_collide=None)
+        # Likewise the bridge controllers registered "for the lifetime of
+        # run()": a leaked walk controller makes a later headless MoveTo wait
+        # on a renderer that is gone, stalling any sequence behind it.
+        from engine import (bridge_camera_watch, bridge_character_anim,
+                            bridge_character_walk, bridge_cutscene)
+        for _mod in (bridge_cutscene, bridge_character_anim,
+                     bridge_character_walk, bridge_camera_watch):
+            _mod.clear_controller()
         shutdown_audio()
         r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()

@@ -15,6 +15,7 @@ import App
 from engine.appc.bridge_set import BridgeSet
 from engine.core import mission_change
 from tests.helpers import headless_mission as hm
+from tests.helpers.headless_mission import no_logged_failures  # noqa: F401 (fixture)
 
 
 @pytest.fixture
@@ -30,18 +31,6 @@ def changes(monkeypatch):
         return ok
     monkeypatch.setattr(mission_change, "change", _spy)
     return calls
-
-
-@pytest.fixture
-def no_logged_failures(capfd):
-    """A handler that raises inside a broadcast is logged and swallowed
-    (events.py), and a failed change is printed and returns False -- read
-    both logs so neither can pass silently."""
-    yield
-    out, err = capfd.readouterr()
-    for marker in ("[events] broadcast handler", "[mission_change]",
-                   "Traceback"):
-        assert marker not in out + err, (out + err)[-4000:]
 
 
 def _spy_terminate(monkeypatch, mod):

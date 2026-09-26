@@ -5,29 +5,25 @@ Testing -- the campaign transitions and the handler sweep).
 fresh world; the warp runs its fallback branch, since the flythrough VFX is
 off headless, but the queues, WaitForQueued and _MissionChangePoint all run.
 """
+import pytest
+
 import App
 from engine import host_loop
-from engine.appc import warp, warp_button, warp_gates
-from engine.core import mission_change
+from engine.appc import warp, warp_button
 from engine.core.loop import GameLoop, TICK_DELTA
-from tests.integration.test_sdk_bridge_load import _fresh_world
+from tests.helpers.fresh_world import _fresh_world
 
 # Bound on one warp, in game time (Task 8 brief). The master dialogue a
 # mission has queued holds the transit (WaitForQueued), so this is long.
 WARP_BOUND_S = 120.0
+# A warp pressed during a mission's opening waits (WaitForQueued) for all of
+# its queued dialogue: E8M2's runs ~255 s of game time headless.
+MASTER_DIALOGUE_BOUND_S = 600.0
 
 
 def load(name):
     """(mission, episode, game, mod) for mission module `name`, loaded the
-    way the dev picker loads it, with the warp's host hooks, VFX and the
-    starbase line-of-sight gate hook unset (host_loop.run() installs them and
-    does not uninstall them; left over, the starbase hook reads a stale
-    session and refuses every warp near Starbase 12)."""
-    warp.configure_warp_hooks(realize=None, teardown=None)
-    warp_gates.configure_gate_hooks(ray_collide=None)
-    warp.configure_warp_vfx(start=None, stop=None, enabled=None,
-                            vantage_of=None)
-    mission_change.configure(on_changed=None)
+    way the dev picker loads it."""
     _fresh_world()
     return host_loop._init_mission(name)
 
@@ -79,13 +75,16 @@ def placement_location(set_name, placement):
     return wp.GetWorldLocation() if wp is not None else None
 
 
-def first_offered_course():
-    """The first region module the live Set Course menu offers, or None."""
+def first_offered_course(exclude_set=None):
+    """The first region module the live Set Course menu offers whose set is
+    not `exclude_set` (the player's own), or None."""
     from engine.appc.tg_ui.st_widgets import SortedRegionMenu
 
     def _walk(node):
-        if isinstance(node, SortedRegionMenu) and node.GetRegionModule():
-            return node.GetRegionModule()
+        mod = (node.GetRegionModule()
+               if isinstance(node, SortedRegionMenu) else None)
+        if mod and warp._set_name_from_module(mod) != exclude_set:
+            return mod
         # __dict__ read: see warp.region_menu_for_destination.
         for entry in node.__dict__.get("_children", []):
             child = entry[0] if isinstance(entry, tuple) else entry
@@ -96,3 +95,24 @@ def first_offered_course():
 
     menu = warp.find_set_course_menu()
     return _walk(menu) if menu is not None else None
+
+
+@pytest.fixture
+def no_logged_failures(capfd):
+    """A handler that raises inside a broadcast is logged and swallowed
+    (events.py), and a failed change is printed and returns False -- read
+    both logs so neither can pass silently."""
+    yield
+    out, err = capfd.readouterr()
+    for marker in ("[events] broadcast handler", "[mission_change]",
+                   "Traceback"):
+        assert marker not in out + err, (out + err)[-4000:]
+
+
+def tick_until(pred, bound_s=WARP_BOUND_S) -> None:
+    loop = GameLoop()
+    for _ in range(int(round(bound_s / TICK_DELTA))):
+        if pred():
+            return
+        loop.tick()
+    raise AssertionError("condition not reached in %.0f s" % bound_s)
