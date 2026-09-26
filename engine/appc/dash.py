@@ -112,6 +112,16 @@ def _on_drop_out_fx(player) -> None:
         pass
 
 
+def _on_cancel_fx() -> None:
+    """A dash that ends with no drop-out (cancelled; the player swapped
+    away) drops its VFX at once: nothing else would ramp the dust smear cap
+    and the nacelle glow back down. Not gated on the current player -- the
+    clock only ever runs for the player's dash, and after a player swap the
+    ship being cancelled is no longer the current player."""
+    from engine import dash_vfx
+    dash_vfx.reset()
+
+
 # ── queries ────────────────────────────────────────────────────────────────
 
 def _state(player):
@@ -426,6 +436,7 @@ def _cancel(player, st) -> None:
         if player._insystem_warp_transit is st.flight:
             player._end_in_system_warp("aborted")
         warp_state.set_state(player, WarpEngineSubsystem.WES_NOT_WARPING)
+        _on_cancel_fx()
     dash_helm.sync(player)
 
 

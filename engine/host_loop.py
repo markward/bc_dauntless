@@ -6284,6 +6284,14 @@ class HostController:
             _wv.get().stop()
         except Exception:
             pass
+        # Likewise the in-system dash's VFX clock: a dash torn down by the
+        # swap never drops out, so its intensity would hold at 1 (dust smear
+        # cap, nacelle glow) into the next mission.
+        try:
+            from engine import dash_vfx as _dvx
+            _dvx.reset()
+        except Exception:
+            pass
         try:
             # end_flythrough() (no ship) releases EVERY registered ship and
             # sets each back to WES_NOT_WARPING — not warp_state.reset(),

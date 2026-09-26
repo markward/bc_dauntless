@@ -23,6 +23,9 @@ from tests.helpers.fresh_world import _fresh_world
 from tests.helpers.mapped_regions import load_region
 
 ONA2 = "Systems.Ona.Ona2"
+# The real flash/sound hooks, captured before the fixture stubs them.
+_REAL_ENGAGE_FX = dash._on_engage_fx
+_REAL_DROP_OUT_FX = dash._on_drop_out_fx
 
 
 def _helm_menu():
@@ -471,6 +474,32 @@ def test_a_player_killed_in_flight_ends_it_with_no_hand_off(world):
     assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
                       App.ET_EXITED_WARP) == []
     assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_NOT_WARPING
+
+
+def test_a_player_killed_in_flight_leaves_no_dash_smear_or_glow(
+        world, monkeypatch):
+    """A cancelled dash never drops out, so _on_drop_out_fx never ramps the
+    dash VFX down: the cancel itself must, or the dust cap and nacelle glow
+    stay at the dash's full intensity for good."""
+    from engine import dash_vfx
+    w = world
+    stub_engage = dash._on_engage_fx
+
+    def engage_fx(p):
+        stub_engage(p)              # the fixture's record (_engaged)
+        _REAL_ENGAGE_FX(p)
+    monkeypatch.setattr(dash, "_on_engage_fx", engage_fx)
+    monkeypatch.setattr(dash, "_on_drop_out_fx", _REAL_DROP_OUT_FX)
+    _mid_flight(w)
+    vfx = dash_vfx.get()
+    vfx.tick(App.g_kUtopiaModule.GetGameTime())
+    assert vfx.dash_intensity() == 1.0
+    w.player.SetDead()
+    _tick(w, GameLoop())
+    assert not dash.is_dashing(w.player)
+    vfx.tick(App.g_kUtopiaModule.GetGameTime() + 10.0)
+    assert vfx.dash_intensity() == 0.0
+    assert vfx.engine_glow() == (0.0, 0.0)
 
 
 def test_the_dash_clears_targets_and_stands_the_ai_down_like_the_tunnel(world):
