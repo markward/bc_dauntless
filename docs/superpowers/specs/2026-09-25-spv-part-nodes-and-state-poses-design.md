@@ -209,25 +209,55 @@ The Model Parts pane renders as a tree in the subsystem tree's row style:
 
 ### 7.2 Menus
 
-Part row (right-click):
-- **Add Anchor**, hidden once present. The anchor starts at the part's derived
-  box centre.
-- **Add State Transformation ▸** listing only states without one. Without an
-  anchor: toast "Add an anchor first — transformations swing around it", no
-  change. A new transformation starts at the NIF pose (identity).
-- **Make Breakable**, hidden once present; starts at 20%.
+Tree rows show their **name only** — no values, no inline controls. A node's
+attributes are set in popups (§7.3), styled like the Set Radius modal:
+mouse-only steppers with **Add** / **Apply** and **Cancel**. *(2026-09-26,
+approved by Mark: supersedes the inline-field column and Ruling 13's inline
+steppers.)*
 
-Child row (right-click): **Remove**. Removing the anchor while transformations
-exist: toast, no change.
+Part row (right-click):
+- **Add Anchor…**, hidden once present. Opens the *Add Anchor* popup:
+  "Transition time" (default 2.00 s, ±0.25, never below 0.25). Add sends
+  `part/add_anchor:{"name","seconds"}`; the anchor starts at the part's
+  derived box centre with that transition. (The bare `part/add_anchor:<name>`
+  form still works, at 2.0 s.)
+- **Add State Transformation…**, one entry, hidden once every state has a
+  transformation. It sends `part/begin_add_state:<name>`; Python decides.
+  Without an anchor: toast "Add an anchor first — transformations swing around
+  it", nothing opens. Otherwise the payload carries
+  `model_parts.add_state_picker = {"name", "states"}` (the missing states in
+  STATES order; null when closed) and the *Add State Transformation* picker
+  lists them by label; **Add** (disabled until one is chosen) sends
+  `part/add_state:{"name","state"}` and closes it, **Cancel** sends
+  `part/cancel_add_state`. The picker holds the overlay open (3D input
+  blocked) while it shows; ESC closes it. A new transformation starts at the
+  NIF pose (identity).
+- **Make Breakable…**, hidden once present. Opens the *Make Breakable* popup:
+  "Breaks off after taking [20]% of the ship's hull strength" (±5, clamped
+  5–100). Add sends `part/make_breakable:{"name","percent"}` (break =
+  percent/100). (The bare form still works, at 20%.)
+
+Child row (right-click): **Edit Anchor…** on the Anchor (the same popup, titled
+*Edit Anchor*, pre-filled, Apply sends `part/set_transition`), **Edit
+Breakage…** on the Breakage (titled *Edit Breakage*, Apply sends
+`part/set_break`), then **Remove** on every child row. A State Transformation
+has no popup: its attributes are the pose, edited with the gizmos. Removing
+the anchor while transformations exist: toast, no change.
+
+**Every add selects the node it made** — add_anchor the Anchor (which switches
+to Move, so the gizmo marks it), add_state that State (which poses the part),
+make_breakable the Breakage — clearing any subsystem/light/emitter selection
+exactly as clicking the row does. Each add is one undo step; undoing it drops
+the selection with the node.
 
 ### 7.3 Selection
 
-| Node | Part drawn | Gizmos | Inline field |
+| Node | Part drawn | Gizmos | Popup |
 |---|---|---|---|
 | Part row | NIF pose, derived box | none | none |
-| Anchor | NIF pose, anchor marker | Move (the anchor) | Transition time (s) |
+| Anchor | NIF pose, anchor marker | Move (the anchor) | Add/Edit Anchor: transition time (s) |
 | {State} Transformation | posed in that state (this part only) | Move + Rotate the part, Rotate centred on the anchor | none |
-| Breakage | NIF pose, derived box | none | "Breaks off after taking [20]% of the ship's hull strength" |
+| Breakage | NIF pose, derived box | none | Make Breakable/Edit Breakage: "Breaks off after taking [20]% of the ship's hull strength" |
 
 While a transformation is selected, subsystem, light and emitter editing are
 locked with the existing one-line reason. Selecting anything else, or closing
@@ -272,7 +302,8 @@ Each stage leaves the game working.
   unit conversion.
 - **SPV (pure):** tree payload; each menu rule; the no-anchor toast; the
   remove-anchor refusal; one node per kind; selection poses only that part and
-  locks mounts; inline fields stage edits; Save emits §3 and round-trips.
+  locks mounts; popup values stage edits; each add selects its node; the
+  State picker's anchor check; Save emits §3 and round-trips.
 - **Live (Mark):** author an anchor and a Warp pose on the BoP and see it on
   warp entry; the swing reads as a hinge; moving the anchor leaves the poses
   where they were.

@@ -334,54 +334,44 @@
     pointer-events: none;
 }
 
-/* Part-node context-menu items (Task 7, spec section 7.2): reuse
-   #spv-ctxmenu / .spv-ctxmenu__item for Add Anchor / Add State
-   Transformation / Make Breakable / Remove rather than a second menu
-   element. "Add State Transformation" has no real flyout -- no submenu CSS
-   pattern exists elsewhere in this file -- so it is a non-clickable label
-   (.spv-ctxmenu__item--label) followed by one indented, clickable item per
-   missing state (.spv-ctxmenu__item--sub), filled by
-   spvRenderAddStateItems. */
-.spv-ctxmenu__item--label {
-    cursor: default;
-    color: rgba(255, 221, 170, 0.55);
-    font-size: 12px;
-}
-
-.spv-ctxmenu__item--label:hover {
-    background: none;
-}
-
-.spv-ctxmenu__item--sub {
-    padding-left: 26px;
-}
-
-/* Inline field on a chosen Anchor / Breakage row (Task 7, spec section
-   7.3): value text + -/+ steppers (.spv-step-btn, shared with the radius/
-   light/emitter modals), pushed to the row's trailing edge -- no
-   <input type="number">, since this engine has no keyboard->CEF forwarding
-   (see the no-keyboard-input note on spvAnchorInlineFieldHtml in
-   ship_property_viewer.js). Stops click propagation (see the row's onclick)
-   so interacting with the field never also re-fires the row's own
-   select_node click. */
-.spv-part-inline-field {
+/* Add State Transformation picker (spec section 7.2): one selectable row
+   per missing state, filled by spvRenderAddStateChoices from
+   model_parts.add_state_picker. Mouse-only, like every SPV modal. */
+.spv-part-choices {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
-    font-size: 11px;
-    color: rgba(235, 225, 255, 0.75);
-    white-space: nowrap;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
 }
 
-.spv-part-inline-field__text {
-    white-space: normal;
-}
-
-.spv-part-inline-field .spv-step-btn {
-    width: 20px;
-    height: 20px;
+.spv-part-choice {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    padding: 5px 10px;
+    cursor: pointer;
     font-size: 12px;
+}
+
+.spv-part-choice:hover {
+    background: rgba(255, 214, 90, 0.25);
+}
+
+.spv-part-choice--chosen {
+    background: rgba(255, 214, 90, 0.85);
+    color: rgb(40, 24, 8);
+}
+
+/* A disabled primary button (the picker's Add until a state is chosen). */
+.spv-modal__btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* The breakage popup's sentence wraps around its stepper. */
+.spv-part-break-stepper {
+    flex-wrap: wrap;
+    max-width: 320px;
 }
 
 /* Toast (Task 7, spec section 7.4): a transient message at the top-centre

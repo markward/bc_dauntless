@@ -214,6 +214,11 @@ class ShipPropertyViewerPanel(Panel):
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
+        # Part name the Add State Transformation picker is open for, or None
+        # (spec 7.2). Python-driven: `part/begin_add_state` opens it after
+        # the anchor check, `part/add_state` / `part/cancel_add_state` / ESC
+        # close it. Reset every open/close.
+        self._add_state_picker: Optional[str] = None
         # One-shot flag: set by handle_key_esc() when ESC closes an overlay
         # (not the panel); render_payload() surfaces it once as
         # payload["close_overlays"] then clears it. Deliberately excluded
@@ -326,6 +331,7 @@ class ShipPropertyViewerPanel(Panel):
         _spv.select_part_node(None, None)
         self._applied_part_pose = None
         self._toast = None
+        self._add_state_picker = None
         # ── ...and only now resolve anything FROM it ──────────────────────
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self._model_part_nodes = self._fetch_model_part_nodes()
@@ -419,6 +425,7 @@ class ShipPropertyViewerPanel(Panel):
         _spv.select_model_part(None, self._model_part_nodes)
         self._applied_part_pose = None
         self._toast = None
+        self._add_state_picker = None
         # NOTE: _saved_* (and _authored_ship_id) deliberately persist across
         # close so a reopen of the same ship still shows edits saved this
         # session. They are dropped in open() on a ship-identity change.
@@ -693,26 +700,131 @@ class ShipPropertyViewerPanel(Panel):
         text, until = self._toast
         return text if time.monotonic() < until else None
 
+    def _select_part_node(self, name: str, kind: str) -> None:
+        """Select part `name`'s child node `kind` -- what clicking its row
+        (`part/select_node`) does, and what every add does to the node it
+        just made."""
+        from engine.appc.articulated_part import STATES
+        _spv.select_model_part(name, self._model_part_nodes)
+        _spv.select_part_node(name, kind)
+        # Ruling 16 (spec 7.3 "anchor marker"): the Move gizmo IS the
+        # marker, and every gizmo exists only under its own tool, so an
+        # Anchor or State node activates Move -- under any other tool
+        # nothing would be drawn at the anchor at all. The one exception
+        # is Rotate on a State node: its rings already sit at the posed
+        # anchor, and posing a part is mostly rotating it.
+        if kind == "anchor" or (kind in STATES
+                                and self.active_tool != "rotate"):
+            self.active_tool = "transform"
+        # Mutually exclusive with subsystem/light/emitter selection, as
+        # model_parts/select is.
+        self.selected_index = None
+        self._selected_light_index = None
+        self._selected_emitter = None
+        self._last_pushed = None
+
+    def _close_add_state_picker(self) -> None:
+        """Close the Add State Transformation picker (and the overlay it
+        holds open). A no-op when it is already closed."""
+        if self._add_state_picker is None:
+            return
+        self._add_state_picker = None
+        self._overlay_open = False
+        self._last_pushed = None
+
+    def _add_state_picker_payload(self):
+        """`model_parts.add_state_picker`: {"name", "states"} -- the part the
+        picker is open for and its still-missing states in STATES order --
+        or None while closed. Computed from the EFFECTIVE spec at push time,
+        so an undo under an open picker is reflected at once."""
+        from engine.appc.articulated_part import STATES
+        name = self._add_state_picker
+        if name is None or name not in self._model_part_names():
+            return None
+        poses = self._effective_part(name).get("poses") or {}
+        return {"name": name, "states": [s for s in STATES if s not in poses]}
+
+    def _viewport_input_blocked(self) -> bool:
+        """True while CEF chrome owns the mouse: a JS overlay (context menu,
+        modal) announced via `overlay:1`, or the Python-driven Add State
+        Transformation picker -- which blocks on its own, whatever order the
+        JS's `overlay:0` (closing the menu that opened it) arrives in."""
+        return self._overlay_open or self._add_state_picker is not None
+
+    @staticmethod
+    def _parse_part_add_arg(arg: str, key: str, default: float):
+        """(name, value) from an add action's argument: the JSON form
+        {"name", key} or the bare-name form (value `default`). None for a
+        malformed JSON form or a non-finite value."""
+        if not arg.startswith("{"):
+            return arg, default
+        try:
+            data = json.loads(arg)
+            name = str(data["name"])
+            value = float(data[key])
+        except (ValueError, KeyError, TypeError):
+            return None
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return name, value
+
     def _dispatch_part_action(self, action: str) -> bool:
-        """The `part/*` actions: add/remove/select a part's child nodes and
-        edit their inline fields. Returns False for a malformed action, an
-        unknown part, or a no-op (adding a node that is already there); a
-        refusal that shows a toast returns True with nothing staged."""
+        """The `part/*` actions: add/remove/select a part's child nodes, edit
+        their attributes (set from the CEF popups), and open/close the Add
+        State Transformation picker. Every add selects the node it made.
+        Returns False for a malformed action, an unknown part, or a no-op
+        (adding a node that is already there); a refusal that shows a toast
+        returns True with nothing staged."""
         from engine.appc.articulated_part import STATES
         verb, _sep, arg = action.partition(":")
-        if verb in ("part/add_anchor", "part/make_breakable"):
+        if verb == "part/add_anchor":
+            parsed = self._parse_part_add_arg(arg, "seconds", 2.0)
+            if parsed is None:
+                return False
+            name, seconds = parsed
+            if name not in self._model_part_names() or not (seconds > 0.0):
+                return False
+            if self._effective_part(name).get("anchor") is not None:
+                return False
+            self._stage_part_field(name, anchor=self._part_box_centre(name),
+                                   transition=seconds)
+            self._select_part_node(name, "anchor")
+            return True
+        if verb == "part/make_breakable":
+            parsed = self._parse_part_add_arg(
+                arg, "percent", DEFAULT_BREAK_FRACTION * 100.0)
+            if parsed is None:
+                return False
+            name, percent = parsed
+            if name not in self._model_part_names():
+                return False
+            if not (0.0 < percent <= 100.0):
+                return False
+            if self._effective_part(name).get("break") is not None:
+                return False
+            self._stage_part_field(name, **{"break": percent / 100.0})
+            self._select_part_node(name, "breakage")
+            return True
+        if verb == "part/begin_add_state":
             name = arg
             if name not in self._model_part_names():
                 return False
             spec = self._effective_part(name)
-            if verb == "part/add_anchor":
-                if spec.get("anchor") is not None:
-                    return False
-                self._stage_part_field(name, anchor=self._part_box_centre(name))
-            else:
-                if spec.get("break") is not None:
-                    return False
-                self._stage_part_field(name, **{"break": DEFAULT_BREAK_FRACTION})
+            # Python, not the JS, decides the anchor refusal.
+            if spec.get("anchor") is None:
+                self._show_toast(TOAST_NO_ANCHOR)
+                return True
+            poses = spec.get("poses") or {}
+            if all(s in poses for s in STATES):
+                return False
+            self._add_state_picker = name
+            self._overlay_open = True
+            self._last_pushed = None
+            return True
+        if verb == "part/cancel_add_state":
+            if self._add_state_picker is None:
+                return False
+            self._close_add_state_picker()
             return True
         try:
             data = json.loads(arg)
@@ -726,6 +838,8 @@ class ShipPropertyViewerPanel(Panel):
             state = data.get("state")
             if state not in STATES:
                 return False
+            # The picker's Add: whatever happens next, the picker is done.
+            self._close_add_state_picker()
             if spec.get("anchor") is None:
                 self._show_toast(TOAST_NO_ANCHOR)
                 return True
@@ -734,6 +848,7 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             poses[state] = IDENTITY_POSE6
             self._stage_part_field(name, poses=poses)
+            self._select_part_node(name, state)
             return True
         if verb == "part/remove":
             kind = data.get("kind")
@@ -755,23 +870,7 @@ class ShipPropertyViewerPanel(Panel):
             kind = data.get("kind")
             if not self._part_node_exists(name, kind):
                 return False
-            _spv.select_model_part(name, self._model_part_nodes)
-            _spv.select_part_node(name, kind)
-            # Ruling 16 (spec 7.3 "anchor marker"): the Move gizmo IS the
-            # marker, and every gizmo exists only under its own tool, so an
-            # Anchor or State node activates Move -- under any other tool
-            # nothing would be drawn at the anchor at all. The one exception
-            # is Rotate on a State node: its rings already sit at the posed
-            # anchor, and posing a part is mostly rotating it.
-            if kind == "anchor" or (kind in STATES
-                                    and self.active_tool != "rotate"):
-                self.active_tool = "transform"
-            # Mutually exclusive with subsystem/light/emitter selection, as
-            # model_parts/select is.
-            self.selected_index = None
-            self._selected_light_index = None
-            self._selected_emitter = None
-            self._last_pushed = None
+            self._select_part_node(name, kind)
             return True
         if verb == "part/set_transition":
             try:
@@ -2283,6 +2382,7 @@ class ShipPropertyViewerPanel(Panel):
                     _spv.model_parts_expanded(), _spv.selected_model_part(),
                     _spv.selected_part_node(),
                     self._model_parts_show_all,
+                    self._add_state_picker,
                     # The toast TEXT while unexpired, None after: its expiry
                     # alone changes the snapshot, so the push that hides it
                     # happens without anything else changing.
@@ -2444,7 +2544,8 @@ class ShipPropertyViewerPanel(Panel):
     def _model_parts_payload(self) -> dict:
         """The Model Parts pane (spec 2026-09-25 section 7):
         {"expanded", "show_all", "selected_box", "toast",
-        "mount_editing_enabled", "mount_editing_reason", "rows"}.
+        "mount_editing_enabled", "mount_editing_reason", "add_state_picker",
+        "rows"}.
 
         `rows` is flat, in display order: each listed part (candidates only
         unless `show_all`) as
@@ -2456,8 +2557,11 @@ class ShipPropertyViewerPanel(Panel):
         -- Anchor first (value = transition seconds), then one
         "<Label> Transformation" per posed state in STATES order, then
         Breakage (value = break PERCENT of the ship's max hull). Everything
-        comes from the EFFECTIVE spec, so staged edits show at once.
-        `missing_states` feeds the "Add State Transformation" submenu."""
+        comes from the EFFECTIVE spec, so staged edits show at once. The
+        tree shows names only; `value` pre-fills the Edit popups, and
+        `missing_states` decides whether the part menu offers "Add State
+        Transformation…". `add_state_picker` is the open picker
+        ({"name", "states"}) or None -- see `_add_state_picker_payload`."""
         from engine.appc.articulated_part import STATES
         # model_part_rows first: it reconciles a selection whose part has
         # vanished from the node list before anything reads the selection.
@@ -2502,6 +2606,7 @@ class ShipPropertyViewerPanel(Panel):
             "toast": self._current_toast(),
             "mount_editing_enabled": not locked,
             "mount_editing_reason": reason,
+            "add_state_picker": self._add_state_picker_payload(),
             "rows": rows,
         }
 
@@ -2534,8 +2639,9 @@ class ShipPropertyViewerPanel(Panel):
             self._pipette_armed = False
             self._last_pushed = None
             return
-        if self._overlay_open:
+        if self._viewport_input_blocked():
             self._overlay_open = False
+            self._add_state_picker = None
             self._close_overlays = True
             self._last_pushed = None
             return
@@ -2595,7 +2701,7 @@ class ShipPropertyViewerPanel(Panel):
         Degrades to a no-op if any required binding is missing (headless)."""
         if self.camera is None:
             return
-        if self._overlay_open:
+        if self._viewport_input_blocked():
             return
         try:
             btn_state = h.mouse_button_state

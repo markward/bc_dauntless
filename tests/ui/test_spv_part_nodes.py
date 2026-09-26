@@ -582,3 +582,221 @@ def test_a_fresh_part_added_then_removed_leaves_no_block(make_panel):
     text, again = _roundtrip({}, part_edits, UNRIGGED_LEAF)
     assert "ArticulatedPartProperty_Create" not in text
     assert "__parts__" not in again.get(UNRIGGED_LEAF, {})
+
+
+# ── popups + auto-select (2026-09-26, supersedes the inline fields) ─────────
+#
+# A part's attributes are set in popups (Add/Edit Anchor, Make Breakable/Edit
+# Breakage, the Add State Transformation picker) rather than inline fields
+# on the tree rows, and every add selects the node it made.
+
+def _picker(p):
+    return _parts(p)["add_state_picker"]
+
+
+def test_add_anchor_with_seconds_selects_the_anchor_under_move(make_panel):
+    p, _ship, _target = make_panel()
+    p.active_tool = "scale"
+    p.selected_index = 0
+
+    assert p.dispatch_event("part/add_anchor:" + json.dumps(
+        {"name": "left wing", "seconds": 3.25})) is True
+
+    spec = p._pending_part["left wing"]
+    assert spec["anchor"] == pytest.approx(LEFT_WING_BOX_CENTRE)
+    assert spec["transition"] == pytest.approx(3.25)
+    assert _children(p, "left wing")[0]["value"] == pytest.approx(3.25)
+    assert spv.selected_part_node() == ("left wing", "anchor")
+    assert _children(p, "left wing")[0]["chosen"] is True
+    assert p.active_tool == "transform", "the Move gizmo IS the anchor marker"
+    assert p.selected_index is None, "a node selection clears the mount one"
+    assert p._selected_light_index is None
+    assert p._selected_emitter is None
+
+
+def test_add_anchor_bare_form_defaults_to_two_seconds(make_panel):
+    p, _ship, _target = make_panel()
+    assert p.dispatch_event("part/add_anchor:head") is True
+    assert p._pending_part["head"]["transition"] == pytest.approx(2.0)
+    assert spv.selected_part_node() == ("head", "anchor")
+
+
+@pytest.mark.parametrize("bad", [0, -1.0, "x", None])
+def test_add_anchor_refuses_a_bad_transition(make_panel, bad):
+    p, _ship, _target = make_panel()
+    assert p.dispatch_event("part/add_anchor:" + json.dumps(
+        {"name": "left wing", "seconds": bad})) is False
+    assert p._pending_part == {}
+    assert spv.selected_part_node() is None
+
+
+def test_make_breakable_with_percent_selects_the_breakage(make_panel):
+    p, _ship, _target = make_panel()
+    p.selected_index = 0
+
+    assert p.dispatch_event("part/make_breakable:" + json.dumps(
+        {"name": "left wing", "percent": 35})) is True
+
+    assert p._pending_part["left wing"]["break"] == pytest.approx(0.35)
+    assert spv.selected_part_node() == ("left wing", "breakage")
+    kids = _children(p, "left wing")
+    assert [k["label"] for k in kids] == ["Breakage"]
+    assert kids[0]["chosen"] is True
+    assert kids[0]["value"] == pytest.approx(35.0)
+    assert p.selected_index is None
+
+
+def test_make_breakable_bare_form_defaults_to_twenty_percent(make_panel):
+    p, _ship, _target = make_panel()
+    assert p.dispatch_event("part/make_breakable:head") is True
+    assert p._pending_part["head"]["break"] == pytest.approx(0.20)
+    assert spv.selected_part_node() == ("head", "breakage")
+
+
+@pytest.mark.parametrize("bad", [0, 150, -5, "x"])
+def test_make_breakable_refuses_a_bad_percent(make_panel, bad):
+    p, _ship, _target = make_panel()
+    assert p.dispatch_event("part/make_breakable:" + json.dumps(
+        {"name": "left wing", "percent": bad})) is False
+    assert p._pending_part == {}
+
+
+def test_add_state_selects_and_poses_that_state(make_panel):
+    ship = _UnriggedShip()
+    ship._articulation_poses = {}
+    p, _ship, _target = make_panel(ship=ship)
+    p.dispatch_event("part/add_anchor:head")
+
+    assert _add_state(p, "head", "warp") is True
+
+    assert spv.selected_part_node() == ("head", "warp")
+    warp = [k for k in _children(p, "head") if k.get("state") == "warp"][0]
+    assert warp["chosen"] is True
+    assert ship._articulation_poses["head"] == part_pose.pose_from6(
+        p._pending_part["head"]["poses"]["warp"])
+    assert p.active_tool == "transform"
+
+
+def test_begin_add_state_without_an_anchor_toasts_and_opens_nothing(make_panel):
+    p, _ship, _target = make_panel()
+    assert _picker(p) is None, "closed by default"
+
+    assert p.dispatch_event("part/begin_add_state:left wing") is True
+
+    parts = _parts(p)
+    assert parts["toast"] == NO_ANCHOR_TOAST
+    assert parts["add_state_picker"] is None
+    assert p._pending_part == {}
+    assert p._undo_stack == []
+    assert p._overlay_open is False
+
+
+def test_begin_add_state_lists_the_missing_states_in_order(make_panel):
+    p, _ship, _target = make_panel()
+    p.dispatch_event("part/add_anchor:left wing")
+    _add_state(p, "left wing", "yellow")
+    undo_depth = len(p._undo_stack)
+
+    assert p.dispatch_event("part/begin_add_state:left wing") is True
+
+    assert _picker(p) == {"name": "left wing",
+                          "states": ["cruise", "red", "warp"]}
+    assert _parts(p)["toast"] is None
+    assert len(p._undo_stack) == undo_depth, "opening the picker is not an edit"
+    # The picker is an overlay: the 3D view must not orbit/pick under it.
+    assert p._overlay_open is True
+
+    assert _add_state(p, "left wing", "red") is True
+    assert _picker(p) is None, "add_state closes the picker"
+    assert p._overlay_open is False
+    assert spv.selected_part_node() == ("left wing", "red")
+
+
+def test_cancel_add_state_closes_the_picker_staging_nothing(make_panel):
+    p, _ship, _target = make_panel()
+    p.dispatch_event("part/add_anchor:left wing")
+    before = copy.deepcopy(p._pending_part)
+    undo_depth = len(p._undo_stack)
+    p.dispatch_event("part/begin_add_state:left wing")
+    assert _picker(p) is not None
+
+    assert p.dispatch_event("part/cancel_add_state") is True
+
+    assert _picker(p) is None
+    assert p._pending_part == before
+    assert len(p._undo_stack) == undo_depth
+    assert p._overlay_open is False
+
+
+def test_the_picker_blocks_viewport_input_even_after_overlay_0(make_panel):
+    """The JS closes the context menu (overlay:0) around opening the picker;
+    whatever order those arrive in, the 3D view stays blocked while the
+    Python-driven picker is showing."""
+    p, _ship, _target = make_panel()
+    p.dispatch_event("part/add_anchor:left wing")
+    p.dispatch_event("part/begin_add_state:left wing")
+    p.dispatch_event("overlay:0")
+    assert p._viewport_input_blocked() is True
+    p.dispatch_event("part/cancel_add_state")
+    assert p._viewport_input_blocked() is False
+
+
+def test_esc_closes_the_picker_not_the_panel(make_panel):
+    p, _ship, _target = make_panel()
+    p.dispatch_event("part/add_anchor:left wing")
+    p.dispatch_event("part/begin_add_state:left wing")
+
+    p.handle_key_esc()
+
+    assert p._visible is True
+    payload = _payload(p)
+    assert payload["model_parts"]["add_state_picker"] is None
+    assert payload["close_overlays"] is True
+    assert "left wing" in p._pending_part, "ESC keeps staged edits"
+
+
+def test_the_picker_closes_on_reopen(make_panel):
+    p, _ship, _target = make_panel()
+    p.dispatch_event("part/add_anchor:left wing")
+    p.dispatch_event("part/begin_add_state:left wing")
+    p.close()
+    p.open()
+    p._model_part_nodes = [dict(n) for n in _PART_NODES]
+    assert _picker(p) is None
+
+
+@pytest.mark.parametrize("add, kind", [
+    ("part/add_anchor:left wing", "anchor"),
+    ('part/make_breakable:{"name":"left wing","percent":40}', "breakage"),
+])
+def test_each_add_is_one_undo_step_that_drops_its_selection(make_panel, add, kind):
+    p, _ship, _target = make_panel()
+    assert p.dispatch_event(add) is True
+    assert spv.selected_part_node() == ("left wing", kind)
+    assert len(p._undo_stack) == 1
+
+    p.dispatch_event("undo")
+
+    assert p._pending_part == {}
+    assert _labels(p, "left wing") == []
+    assert spv.selected_part_node() is None, "nothing selected that is gone"
+    assert all(r["chosen"] is False for r in _children(p, "left wing"))
+
+
+def test_add_state_is_one_undo_step_that_drops_its_selection(make_panel):
+    ship = _UnriggedShip()
+    ship._articulation_poses = {}
+    p, _ship, _target = make_panel(ship=ship)
+    p.dispatch_event("part/add_anchor:head")
+    p.dispatch_event("part/begin_add_state:head")
+    depth = len(p._undo_stack)
+    _add_state(p, "head", "cruise")
+    assert len(p._undo_stack) == depth + 1
+    assert spv.selected_part_node() == ("head", "cruise")
+
+    p.dispatch_event("undo")
+
+    assert "cruise" not in p._pending_part["head"]["poses"]
+    assert spv.selected_part_node() is None
+    assert ship._articulation_poses.get("head", part_pose.IDENTITY) == \
+        part_pose.IDENTITY, "back at the NIF pose"
