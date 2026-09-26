@@ -52,18 +52,23 @@ def tick(seconds, loop=None) -> None:
         loop.tick()
 
 
-def warp_and_wait(button, player, bound_s=WARP_BOUND_S) -> float:
+def warp_and_wait(button, player, bound_s=WARP_BOUND_S,
+                  after_tick=None) -> float:
     """Press Warp, then tick until the player's warp sequence detaches.
     Returns the game seconds it took (0 when the warp ran to completion
     inside the press: the hard cut with nothing to wait for is synchronous);
     raises AssertionError if it is still attached after `bound_s`. Callers
-    assert the outcome -- a refused warp also returns 0."""
+    assert the outcome -- a refused warp also returns 0. `after_tick()` runs
+    after every sim tick, where the host's frame does its per-frame work
+    (the WarpVFX tick)."""
     warp_button.press(button)
     if not warp_button.is_warp_active(player):
         return 0.0
     loop = GameLoop()
     for i in range(int(round(bound_s / TICK_DELTA))):
         loop.tick()
+        if after_tick is not None:
+            after_tick()
         if not warp_button.is_warp_active(player):
             return (i + 1) * TICK_DELTA
     raise AssertionError("the warp was still attached after %.0f s" % bound_s)

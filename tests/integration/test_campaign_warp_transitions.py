@@ -7,11 +7,14 @@ on the real Warp button, presses it (ET_WARP_BUTTON_PRESSED through the
 mission's own WarpHandler and the engine step) and ticks until the warp
 detaches. The warp takes the fallback branch headless (no flythrough VFX),
 which still plays the queues, holds on WaitForQueued and runs the change at
-_MissionChangePoint.
+_MissionChangePoint. The E6M5 case also runs the production branch -- the
+flythrough, which is always on live -- with the real WarpVFX driven on game
+time as host_loop.run() drives it.
 """
 import pytest
 
 import App
+from engine.appc import warp
 from engine.appc.bridge_set import BridgeSet
 from engine.core import mission_change
 from tests.helpers import headless_mission as hm
@@ -80,7 +83,64 @@ def _assert_carried(player, pid, condition, changes):
     assert now.GetHull().GetCondition() == pytest.approx(condition)
 
 
-def test_e6m5_warps_into_episode_7(monkeypatch, changes, no_logged_failures):
+@pytest.fixture(params=["hard_cut", "flythrough"])
+def warp_branch(request):
+    """The warp branch to run, and the per-tick host work it needs. For the
+    flythrough, the hooks host_loop.run() installs (configure_warp_vfx: the
+    predicate is always True live; start/stop drive the engine.warp_vfx
+    singleton on game time; vantages from the sector model) plus the
+    per-frame WarpVFX tick; restored afterwards."""
+    from engine import warp_vfx
+    from engine.appc import warp
+    if request.param == "hard_cut":
+        yield request.param, None
+        return
+    vfx = warp_vfx.get()
+    vfx.stop()
+
+    def _vantage_of(key):
+        # host_loop.run()'s _vantage_of: a live SetClass or a module string.
+        from engine.appc import sector_model, sky_projection
+        try:
+            model = sky_projection.load_sector_model()
+            if hasattr(key, "GetName"):
+                v = sky_projection.vantage_for_set(key, model)
+            else:
+                set_name = warp._set_name_from_module(key)
+                if not set_name:
+                    return None
+                sysid = sector_model.system_id_for_set(set_name)
+                v = None
+                for s in model.get("systems", []):
+                    if s.get("id") == sysid:
+                        v = s.get("position")
+                        break
+            return None if v is None else (v[0], v[1], v[2])
+        except Exception:
+            return None
+
+    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None):
+        vfx.start(heading, t_align, t_transit,
+                  App.g_kUtopiaModule.GetGameTime(), vantage, dst_vantage)
+
+    def _tick():
+        if vfx.is_active():
+            vfx.tick(App.g_kUtopiaModule.GetGameTime())
+
+    warp.configure_warp_vfx(start=_start, stop=vfx.stop,
+                            enabled=lambda: True, vantage_of=_vantage_of)
+    try:
+        yield request.param, _tick
+    finally:
+        warp.configure_warp_vfx(start=None, stop=None, enabled=None,
+                                vantage_of=None)
+        vfx.stop()
+
+
+def test_e6m5_warps_into_episode_7(monkeypatch, changes, no_logged_failures,
+                                   warp_branch):
+    from engine import warp_vfx
+    branch, after_tick = warp_branch
     _, _, game, mod = hm.load("Maelstrom.Episode6.E6M5.E6M5")
     terminated = _spy_terminate(monkeypatch, mod)
     player = App.Game_GetCurrentPlayer()
@@ -93,9 +153,19 @@ def test_e6m5_warps_into_episode_7(monkeypatch, changes, no_logged_failures):
     btn = hm.the_warp_button()
     hm.plot_course(btn, "Systems.Beol.Beol4")
     old = _old_sets()
+    started = []
+    if branch == "flythrough":
+        real_start = warp._vfx_start
+        monkeypatch.setattr(warp, "_vfx_start",
+                            lambda *a: (started.append(a), real_start(*a)))
 
-    hm.warp_and_wait(btn, player)
+    hm.warp_and_wait(btn, player, after_tick=after_tick)
 
+    if branch == "flythrough":
+        assert len(started) == 1, "the flythrough branch did not run"
+    # Not left holding the streak, nor running the tunnel.
+    assert warp_vfx.get().is_held() is False
+    assert warp_vfx.get().is_active() is False
     assert hm.current_mission_name(game) == "Maelstrom.Episode7.E7M1.E7M1"
     assert game.GetCurrentEpisode()._module_name == \
         "Maelstrom.Episode7.Episode7"
