@@ -170,7 +170,8 @@ destination: none crashes; E1M2 refuses silently, E6M1 answers "follow orders",
 E8M2 counts it as leaving Omega Draconis (game over after three) — each the
 mission's own rule, now enforced.
 No align: engage flash, then the heading dash until drop-out. Greyed out in an
-unmapped set.
+unmapped set, and whenever a mission has disabled Helm > Set Course (ruling
+R15: missions hold the player that way — E1M1, E1M2, E3M1).
 
 **While dashing (either kind):**
 
@@ -281,7 +282,8 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
   unpowered or in a nebula; a mission swallowing `ET_WARP_BUTTON_PRESSED` aborts
   both; **all 26 handlers are audited** against an event with no destination.
 - **Controls:** 0 and All Stop drop out at rest; 1–9 and steering inert; Helm
-  entries disabled and restored; Warp on Heading greyed in an unmapped set;
+  entries disabled and restored; Warp on Heading greyed in an unmapped set
+  and while Set Course is disabled;
   Ctrl+W is gone.
 - **End to end, headless:** Ona 1 → dash → Ona 2 → dash → Ona 1. At each stop the
   draw list is the system's bodies, the player is in the right set, at the

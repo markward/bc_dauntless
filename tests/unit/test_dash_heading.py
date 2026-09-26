@@ -172,6 +172,46 @@ def test_warp_on_heading_is_greyed_in_an_unmapped_set(world):
     assert w.entry.IsEnabled()
 
 
+def _set_course_entry(w):
+    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+    try:
+        label = str(db.GetString("Set Course"))
+    finally:
+        App.g_kLocalizationManager.Unload(db)
+    return next(c for c in w.helm.__dict__["_children"]
+                if hasattr(c, "GetLabel") and c.GetLabel() == label)
+
+
+def test_warp_on_heading_is_greyed_while_a_mission_bars_set_course(world):
+    """Ruling R15: a mission holds the player by disabling Helm > Set Course
+    (E3M1:286 exactly as here; E1M1 through BridgeUtils.DisableButton,
+    which needs a Helm character); "no course is available" bars a heading
+    dash too."""
+    import MissionLib
+    w = world
+    MissionLib.GetCharacterSubmenu("Helm", "Set Course").SetDisabled()
+    assert not _set_course_entry(w).IsEnabled(), "premise: the SDK call"
+    dash_helm.sync(w.player)
+    assert not w.entry.IsEnabled()
+    _set_course_entry(w).SetEnabled()
+    dash_helm.sync(w.player)
+    assert w.entry.IsEnabled()
+
+
+def test_a_dash_leaves_warp_on_heading_enabled_after_its_drop_out(world):
+    """The dash itself disables Set Course while it runs; that must not
+    read as a mission's bar once it drops out."""
+    w = world
+    p0 = _sys(w.player)
+    _aim(w, (p0[0], p0[1], p0[2] - 1.0e6))
+    _press(w)
+    _tick(w, GameLoop())
+    assert not _set_course_entry(w).IsEnabled()
+    dash.drop_out(w.player, "stopped")
+    assert _set_course_entry(w).IsEnabled()
+    assert w.entry.IsEnabled()
+
+
 # ── 2. a heading dash at Ona 2 drops out at its arrival range ──────────────
 
 def test_a_heading_dash_at_ona2_drops_out_at_its_arrival_range(world):

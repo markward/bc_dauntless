@@ -16,7 +16,7 @@ otherwise end the flight through SetAI with no drop-out of its own choosing.
 
 Warp on Heading: ``sync`` also adds that entry once per Helm menu, right
 after the Warp button, and -- out of a dash -- greys it while the player's
-set is unmapped. Its click runs ``_on_heading`` -> warp_button.press_heading.
+set is unmapped or a mission has disabled Set Course (ruling R15). Its click runs ``_on_heading`` -> warp_button.press_heading.
 
 ``sync(player)`` runs every tick (like weapon_tactical_commands.sync) and at
 dash start and drop-out. Raise-safe: it must never throw into the tick loop.
@@ -123,6 +123,15 @@ def _ensure_heading_entry(menu):
     return entry
 
 
+def _set_course_enabled(menu, entry_labels) -> bool:
+    """Whether the Helm's "Set Course" entry is enabled (absent: True)."""
+    label = entry_labels[_ENTRY_KEYS.index("Set Course")]
+    for child in menu.__dict__.get("_children", []):
+        if hasattr(child, "GetLabel") and child.GetLabel() == label:
+            return bool(child.IsEnabled())
+    return True
+
+
 def _in_mapped_set(player) -> bool:
     from engine.systems import frames, region_hooks
     pSet = frames.containing_set(player) if player is not None else None
@@ -164,8 +173,13 @@ def sync(player) -> None:
                 del disabled[:]
             # Out of a dash, Warp on Heading follows the player's set: a
             # heading dash needs a mapped system to fly (spec §2, "Greyed out
-            # in an unmapped set").
-            if _in_mapped_set(player):
+            # in an unmapped set"). And it follows Set Course (ruling R15):
+            # missions hold the player by disabling that entry (E1M1:4343,
+            # E1M2:5991, E3M1:286), and "no course is available" bars a
+            # heading dash as well. Checked after the restore above, so the
+            # dash's own disabling never reads as a mission's bar.
+            if _in_mapped_set(player) and _set_course_enabled(
+                    menu, entry_labels):
                 heading.SetEnabled()
             else:
                 heading.SetDisabled()
