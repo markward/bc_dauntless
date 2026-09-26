@@ -405,3 +405,104 @@ def test_queued_actions_play_at_engage_in_flight_and_after(world):
         assert by[t][2]                        # still dashing
     assert by["after"][0] >= drop_t - 1e-9
     assert not by["after"][2]
+
+
+# ── fix round 1 ─────────────────────────────────────────────────────────────
+
+def _queue_all(w):
+    w.played = []
+    marks = {k: _Mark(w, k) for k in ("before", "before_during", "during",
+                                      "after_during", "after")}
+    b = w.button
+    b.AddActionBeforeWarp(marks["before"])
+    b.AddActionBeforeDuringWarp(marks["before_during"])
+    b.AddActionDuringWarp(marks["during"])
+    b.AddActionAfterDuringWarp(marks["after_during"])
+    b.AddActionAfterWarp(marks["after"], 1.5)
+    return marks
+
+
+def _assert_queues_back(w, marks):
+    back = w.button.take_queues()
+    assert {k: [a for a, _ in v] for k, v in back.items()} == {
+        k: [m] for k, m in marks.items()}
+    assert back["after"][0][1] == 1.5
+    assert w.played == []
+
+
+def test_full_stop_during_the_align_puts_the_queues_back(world):
+    from engine.host_loop import _PlayerControl
+    w = world
+    marks = _queue_all(w)
+    warp_button.press(w.button)
+    assert dash.is_dashing(w.player) and not _engaged(w)
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(pressed={pc._input_map.code("full_stop")}))
+    assert not dash.is_dashing(w.player)
+    for _ in range(30):
+        _tick(w, GameLoop())
+    _assert_queues_back(w, marks)
+    assert w.flashes == []
+
+
+def test_a_player_killed_during_the_align_stops_dashing(world):
+    w = world
+    marks = _queue_all(w)
+    warp_button.press(w.button)
+    w.player.SetDead()
+    _tick(w, GameLoop())
+    assert not dash.is_dashing(w.player)
+    for _ in range(int(round(15.0 / TICK_DELTA))):
+        _tick(w, GameLoop())
+    assert w.flashes == []
+    assert w.player.IsDoingInSystemWarp() == 0
+    _assert_queues_back(w, marks)
+
+
+def test_a_player_killed_in_flight_ends_it_with_no_hand_off(world):
+    w = world
+    _mid_flight(w)
+    w.events.clear()
+    w.player.SetDead()
+    _tick(w, GameLoop())
+    assert not dash.is_dashing(w.player)
+    assert w.player.IsDoingInSystemWarp() == 0
+    assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
+                      App.ET_EXITED_WARP) == []
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_NOT_WARPING
+
+
+def test_the_dash_clears_targets_and_stands_the_ai_down_like_the_tunnel(world):
+    """Ruling R12: _ClearTargetsAction's semantics."""
+    import AI.Player.Stay
+    w = world
+    enemy = ShipClass_Create("Galaxy")
+    w.ona1.AddObjectToSet(enemy, "enemy")
+    w.player.SetTarget(enemy)
+    w.player.SetAI(AI.Player.Stay.CreateAI(w.player))
+    assert w.player.GetTarget() is enemy
+    warp_button.press(w.button)
+    assert dash.is_dashing(w.player)
+    assert w.player.GetTarget() is None
+    assert w.player.GetAI() is None
+
+
+def test_helm_sync_reads_the_tgl_once_per_helm_menu(world, monkeypatch):
+    calls = []
+    real = dash_helm._labels
+    monkeypatch.setattr(dash_helm, "_labels",
+                        lambda: (calls.append(1), real())[1])
+    monkeypatch.setattr(dash_helm, "_cache", None)
+    for _ in range(5):
+        dash_helm.sync(world.player)
+    assert len(calls) == 1
+
+
+def test_the_headless_warp_wait_completes_a_dash(world):
+    from tests.helpers import headless_mission as hm
+    w = world
+    took = hm.warp_and_wait(w.button, w.player)
+    assert 10.0 < took < 30.0
+    assert not dash.is_dashing(w.player)
+    assert w.player.GetContainingSet() is w.ona2

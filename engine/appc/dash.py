@@ -15,8 +15,13 @@ Phases, all driven from ``tick`` once per frame:
   the button's queues start (``_on_engage_fx`` is the flash/sound hook);
 * **flight** -- the flight moves the ship (~10 s: ``set_course_speed``);
 * **drop-out** -- ``drop_out``, run once for a flight that ended for ANY
-  reason (arrival, the 0 key, All Stop, an AI order or death, which end it
+  reason (arrival, the 0 key, All Stop, or an AI order, which ends it
   through ``ShipClass._end_in_system_warp``).
+
+A dash stopped during its align, or whose player dies (dying or dead, the
+``ship_death._out_of_action`` test) at any point, is **cancelled** instead:
+no hand-off, no ET_EXITED_WARP, no queue played -- and a dash that never
+engaged hands the button's queues back, since none of them started.
 
 Hand-offs are deferred for the whole dash (engine/systems/handoff.py) and
 done here at the drop-out, so the order is ET_EXITED_SET, ET_ENTERED_SET,
@@ -44,8 +49,9 @@ class _Dash:
     """One dash in progress."""
 
     def __init__(self, dest_set, placement, waypoint, end, forward, path,
-                 queues):
+                 queues, button=None):
         import App
+        self.button = button            # takes the queues back if never engaged
         self.dest_set = dest_set
         self.placement = placement
         self.waypoint = waypoint
@@ -108,8 +114,12 @@ def is_same_system_dash(player, dest_module, mission, episode) -> bool:
 
 # ── start ──────────────────────────────────────────────────────────────────
 
-def start_set_course(player, dest_set, placement_name, queues) -> bool:
+def start_set_course(player, dest_set, placement_name, queues,
+                     button=None) -> bool:
     """Plan the dash to ``dest_set``'s placement and begin its align.
+
+    ``button`` is the warp button the queues were taken from: a dash
+    cancelled before it engages hands them back to it (they never started).
 
     Returns False -- nothing started, the caller takes the tunnel -- when
     there is no placement to arrive at or the planner could only return a
@@ -138,7 +148,8 @@ def start_set_course(player, dest_set, placement_name, queues) -> bool:
         return False
 
     st = _Dash(dest_set, placement, wp, end, forward, path,
-               {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS})
+               {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
+               button)
     first = path.tangent_at(0.0)
     st.t_align = warp._align_duration(player, first)
     st.pos0 = player.GetTranslate()
@@ -146,9 +157,13 @@ def start_set_course(player, dest_set, placement_name, queues) -> bool:
     st.axis, st.angle = _turn_to(st.rot0.GetCol(1), first, st.rot0.GetCol(2))
     player.__dict__["_dash"] = st
 
-    # The Helm has the conn: stand the player's AI down (the tunnel does the
-    # same at engage) and drop any stale motion setpoints, so nothing but
-    # the dash moves the ship from here to the drop-out.
+    # The Helm has the conn (ruling R12): drop the targets and stand the
+    # player's AI down exactly as the tunnel's _ClearTargetsAction does at
+    # the start of its sequence -- clear FIRST, then stand down (see
+    # warp._stand_down_player_ai for why the order matters) -- and drop any
+    # stale motion setpoints, so nothing but the dash moves the ship from
+    # here to the drop-out.
+    warp._clear_all_targets(player)
     warp._stand_down_player_ai(player)
     player._speed_setpoint = None
     player._target_angular_velocity_setpoint = None
@@ -195,6 +210,10 @@ def tick(player, dt: float) -> None:
     st = _state(player)
     if st is None:
         return
+    from engine.appc import ship_death
+    if ship_death._out_of_action(player):
+        _cancel(player, st)
+        return
     if st.flight is None:
         import App
         s = (App.g_kUtopiaModule.GetGameTime() - st.t0) / max(st.t_align, 1e-9)
@@ -219,6 +238,23 @@ def _align(player, st, s) -> None:
     player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
 
 
+def _cancel(player, st) -> None:
+    """End the dash with no drop-out: the player died (or a drop-out came
+    during the align). No hand-off, no ET_EXITED_WARP, no flash, no queue
+    played; a dash that never engaged hands its queues back to the button."""
+    from engine.appc import dash_helm, warp_state
+    from engine.appc.subsystems import WarpEngineSubsystem
+    del player.__dict__["_dash"]
+    if st.flight is None:
+        if st.button is not None:
+            st.button.put_back_queues(st.queues)
+    else:
+        if player._insystem_warp_transit is st.flight:
+            player._end_in_system_warp("aborted")
+        warp_state.set_state(player, WarpEngineSubsystem.WES_NOT_WARPING)
+    dash_helm.sync(player)
+
+
 def _engage(player, st) -> None:
     from engine.appc import warp, warp_state
     from engine.appc.subsystems import WarpEngineSubsystem
@@ -240,17 +276,10 @@ def _engage(player, st) -> None:
 
 def _play_engage_queues(queues) -> None:
     import App
+    from engine.appc import warp
     seq = App.TGSequence_Create()
-    for action, delay in queues.get("before", ()):
-        seq.AddAction(action, delay)
-    prev = None
-    for key in ("before_during", "during", "after_during"):
-        for action, delay in queues.get(key, ()):
-            if prev is None:
-                seq.AddAction(action, delay)
-            else:
-                seq.AddAction(action, prev, delay)
-            prev = action
+    warp.queue_before(seq, queues)
+    warp.queue_transit(seq, queues, None)
     seq.Play()
 
 
@@ -260,17 +289,18 @@ def drop_out(player, reason) -> None:
     """End the dash where the ship is (or at the placement, on arrival):
     at rest; hand off to the region it stopped in (or post ET_EXITED_WARP
     alone); WES_NOT_WARPING; the Helm entries back; the "after" queue.
-    A dash cancelled during its align never engaged: it only restores."""
+    A dash stopped during its align never engaged: it is cancelled
+    (``_cancel``) and its queues go back on the button."""
     st = _state(player)
     if st is None:
+        return
+    if st.flight is None:
+        _cancel(player, st)
         return
     del player.__dict__["_dash"]
     from engine.appc import dash_helm, warp_state
     from engine.appc.subsystems import WarpEngineSubsystem
     from engine.systems import frames, handoff
-    if st.flight is None:
-        dash_helm.sync(player)
-        return
     if player._insystem_warp_transit is st.flight:
         player._end_in_system_warp(reason)
     # Exit at rest (this flight's exit policy, and the manual drop-out's).
@@ -302,10 +332,9 @@ def drop_out(player, reason) -> None:
     _on_drop_out_fx(player)
     warp_state.set_state(player, WarpEngineSubsystem.WES_NOT_WARPING)
     dash_helm.sync(player)
-    after = st.queues.get("after", ())
-    if after:
+    if st.queues.get("after"):
         import App
+        from engine.appc import warp
         seq = App.TGSequence_Create()
-        for action, delay in after:
-            seq.AppendAction(action, delay)
+        warp.queue_after(seq, st.queues)
         seq.Play()

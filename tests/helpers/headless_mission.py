@@ -9,7 +9,7 @@ import pytest
 
 import App
 from engine import host_loop
-from engine.appc import warp, warp_button
+from engine.appc import dash, warp, warp_button
 from engine.core.loop import GameLoop, TICK_DELTA
 from tests.helpers.fresh_world import _fresh_world
 
@@ -46,10 +46,21 @@ def current_mission_name(game):
     return mis._module_name if mis is not None else None
 
 
+def _sim_tick(loop, player=None) -> None:
+    """One sim tick plus the per-frame work the host does for the player's
+    dash (engine/appc/dash.py) -- the host calls dash.tick each frame, the
+    GameLoop does not, so a harness wait on is_warp_active needs it too."""
+    loop.tick()
+    if player is None:
+        player = App.Game_GetCurrentPlayer()
+    if player is not None:
+        dash.tick(player, TICK_DELTA)
+
+
 def tick(seconds, loop=None) -> None:
     loop = loop or GameLoop()
     for _ in range(int(round(seconds / TICK_DELTA))):
-        loop.tick()
+        _sim_tick(loop)
 
 
 def warp_and_wait(button, player, bound_s=WARP_BOUND_S,
@@ -66,7 +77,7 @@ def warp_and_wait(button, player, bound_s=WARP_BOUND_S,
         return 0.0
     loop = GameLoop()
     for i in range(int(round(bound_s / TICK_DELTA))):
-        loop.tick()
+        _sim_tick(loop, player)
         if after_tick is not None:
             after_tick()
         if not warp_button.is_warp_active(player):
@@ -119,5 +130,5 @@ def tick_until(pred, bound_s=WARP_BOUND_S) -> None:
     for _ in range(int(round(bound_s / TICK_DELTA))):
         if pred():
             return
-        loop.tick()
+        _sim_tick(loop)
     raise AssertionError("condition not reached in %.0f s" % bound_s)

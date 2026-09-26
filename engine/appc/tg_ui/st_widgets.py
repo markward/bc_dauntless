@@ -228,6 +228,13 @@ class STWarpButton(STButton):
         self.ClearBDASequences()
         return taken
 
+    # engine-only: a warp that was taken but never started (a dash cancelled
+    # during its align) hands its queues back, ahead of anything queued
+    # since, so the next warp plays them.
+    def put_back_queues(self, queues):
+        for k, v in queues.items():
+            self._queues.setdefault(k, [])[:0] = list(v)
+
     # ── ET_WARP_BUTTON_PRESSED chain (spec §1) ──────────────────────────────
     def AddPythonFuncHandlerForInstance(self, event_type, qualified_name) -> None:
         import App

@@ -46,6 +46,7 @@ _SIM_CALLS = (
     "_advance_combat(",
     "_warp_state.tick_warp_states(",
     "collisions.tick_collisions(",
+    "dash.tick(",
     "handoff.tick(",
 )
 
@@ -111,3 +112,14 @@ def test_player_identity_is_synced_before_the_sim_reads_the_player():
     assert preload < sync < first_read
     for call in _SIM_CALLS[1:]:  # everything after loop.tick reads `player`
         assert sync < _at(src, call), call
+
+
+def test_the_dash_tick_runs_after_collisions_and_before_the_hand_off():
+    """The dash's drop-out (engine/appc/dash.py) reads the frame's final
+    player pose and does its own hand-off, so it runs after the last mover
+    (collisions) and before handoff.tick and the scene reconcile."""
+    src = _run_source()
+    collisions = _at(src, "collisions.tick_collisions(")
+    dash_tick = _at(src, "dash.tick(")
+    assert collisions < dash_tick < _at(src, "handoff.tick(") < _at(
+        src, "_reconcile_scene(")

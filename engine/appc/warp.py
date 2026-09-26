@@ -1026,22 +1026,43 @@ def _is_current_player(ship):
     return player is not None and player is ship
 
 
-def _add_before_queue(seq):
-    """The button's "before" queue: roots, at their delays from the start."""
-    for action, delay in seq._queues.get("before", ()):
+def queue_before(seq, queues):
+    """The button's "before" queue: roots, at their delays from the start.
+    Shared by the tunnel and the dash (engine/appc/dash.py)."""
+    for action, delay in queues.get("before", ()):
         seq.AddAction(action, delay)
 
 
-def _add_transit_queues(seq, prev):
-    """Chain before-during -> during -> after-during -> _MissionChangePoint
-    after `prev` (None => the first is a root). Returns the last action."""
+def queue_transit(seq, queues, prev):
+    """Chain before-during -> during -> after-during after `prev` (None =>
+    the first is a root). Returns the last action added, or `prev` when the
+    three queues are empty. Shared by the tunnel and the dash."""
     for key in ("before_during", "during", "after_during"):
-        for action, delay in seq._queues.get(key, ()):
+        for action, delay in queues.get(key, ()):
             if prev is None:
                 seq.AddAction(action, delay)
             else:
                 seq.AddAction(action, prev, delay)
             prev = action
+    return prev
+
+
+def queue_after(seq, queues):
+    """The button's "after" queue, appended at their delays. Shared by the
+    tunnel and the dash."""
+    for action, delay in queues.get("after", ()):
+        seq.AppendAction(action, delay)
+
+
+def _add_before_queue(seq):
+    """The button's "before" queue: roots, at their delays from the start."""
+    queue_before(seq, seq._queues)
+
+
+def _add_transit_queues(seq, prev):
+    """Chain before-during -> during -> after-during -> _MissionChangePoint
+    after `prev` (None => the first is a root). Returns the last action."""
+    prev = queue_transit(seq, seq._queues, prev)
     point = _MissionChangePoint(seq)
     if prev is None:
         seq.AddAction(point)
@@ -1052,8 +1073,7 @@ def _add_transit_queues(seq, prev):
 
 def _append_after_queue(seq):
     """The button's "after" queue: after control returns, at their delays."""
-    for action, delay in seq._queues.get("after", ()):
-        seq.AppendAction(action, delay)
+    queue_after(seq, seq._queues)
 
 
 def find_set_course_menu():
@@ -1224,7 +1244,7 @@ def execute_warp(button, event=None):
     if dash.is_same_system_dash(player, dest, mission, episode) and \
             dash.start_set_course(
                 player, App.g_kSetManager.GetSet(_set_name_from_module(dest)),
-                placement, queues):
+                placement, queues, button=button):
         return
     WarpSequence_Create(player, dest, button.GetWarpTime(), placement,
                         mission=mission, episode=episode,
