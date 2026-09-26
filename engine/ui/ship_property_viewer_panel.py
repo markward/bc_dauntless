@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from typing import Callable, List, Optional
 
 from engine.appc.override_routing import (
@@ -83,6 +84,20 @@ SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
 # nudge or paste can never drive a dimension to zero or negative.
 SCALE_MIN = 0.01
 
+# Model Parts nodes (spec 2026-09-25 section 7). A state's node label is
+# "<label> Transformation".
+STATE_LABELS = {"cruise": "Cruising", "yellow": "Yellow Alert",
+                "red": "Red Alert", "warp": "Warp"}
+# A new {State} Transformation starts at the NIF pose.
+IDENTITY_POSE6 = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+# Make Breakable starts a part at 20% of the ship's max hull.
+DEFAULT_BREAK_FRACTION = 0.20
+# How long a toast stays at the top of the SPV (spec section 7.4).
+TOAST_SECONDS = 3.0
+TOAST_NO_ANCHOR = "Add an anchor first — transformations swing around it"
+TOAST_ANCHOR_IN_USE = ("Remove the transformations first — they swing around "
+                       "the anchor")
+
 
 class ShipPropertyViewerPanel(Panel):
     # Actions the dispatch_event undo wrapper does not snapshot around:
@@ -121,8 +136,8 @@ class ShipPropertyViewerPanel(Panel):
         # pane always starts hiding exporter plumbing.
         self._model_part_nodes: List[dict] = []
         self._model_parts_show_all: bool = False
-        # Staged part edits (Task 7): part name -> full merged spec
-        # ({"pivot","axis","angles","fraction"}). Whole-spec-per-name, like
+        # Staged part edits: part name -> full merged spec
+        # ({"anchor","transition","poses","break"}). Whole-spec-per-name, like
         # _pending_light -- any single-field edit re-stages the full merged
         # spec (see _effective_part) so a later save never loses a field the
         # designer isn't currently touching. Reset every open/close.
@@ -133,6 +148,12 @@ class ShipPropertyViewerPanel(Panel):
         # build). Survives close/reopen of the SAME ship; dropped on a ship-
         # identity change in open() alongside the others (_clear_saved_edits).
         self._saved_part: dict = {}
+        # Toast shown at the top of the SPV: (text, expires_at monotonic
+        # seconds) or None. Reset every open/close. See _show_toast.
+        self._toast: Optional[tuple] = None
+        # The part pose `_sync_part_pose` last forced: (part, state, p6) while
+        # a {State} Transformation node is selected, None for the NIF pose.
+        self._applied_part_pose: Optional[tuple] = None
         self.selected_index: Optional[int] = None
         # Active transform-gizmo tool: None|"transform"|"rotate"|"scale".
         # Mutually exclusive radio, reset every open/close.
@@ -297,6 +318,11 @@ class ShipPropertyViewerPanel(Panel):
         # ONE dict every reader of a live pose consults, so the mesh, the
         # pins and the derived-box queries all resolve the same angle.
         _articulation.force_pose(ship, None)
+        # No part node survives a reopen: the pose just forced is the NIF
+        # pose, which is what "no State Transformation selected" means.
+        _spv.select_part_node(None, None)
+        self._applied_part_pose = None
+        self._toast = None
         # ── ...and only now resolve anything FROM it ──────────────────────
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self._model_part_nodes = self._fetch_model_part_nodes()
@@ -376,14 +402,17 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_pos = {}
         self._pending_part = {}
         from engine.appc import articulation as _articulation
-        # Release only. Deliberately NO force_pose here, unlike open(): once
-        # the viewer closes the sim resumes and `tick_ship` owns the poses
-        # again, transitioning them from wherever the SPV left them back
-        # toward `state_for(ship)` over each part's transition_seconds. Snapping here would replace
-        # that with a jump, and the mesh and the mounts stay in agreement
-        # either way because they read the same dict.
+        # Closing returns every part to the NIF pose (spec section 7.3) -- the
+        # pose the viewer opened in, so a State Transformation previewed here
+        # never leaks out as the ship's live pose. The sim then resumes and
+        # `tick_ship` eases the rig from there toward `state_for(ship)` over
+        # each part's transition, exactly as it would after an open/close with
+        # nothing selected.
+        _articulation.force_pose(self._ship_getter(), None)
         _articulation.set_dev_override(None)
         _spv.select_model_part(None, self._model_part_nodes)
+        self._applied_part_pose = None
+        self._toast = None
         # NOTE: _saved_* (and _authored_ship_id) deliberately persist across
         # close so a reopen of the same ship still shows edits saved this
         # session. They are dropped in open() on a ship-identity change.
@@ -476,8 +505,16 @@ class ShipPropertyViewerPanel(Panel):
             return []
 
     # ------------------------------------------------------------------
-    # Model Parts pane: per-part authoring (Task 7)
+    # Model Parts pane: part NODES (spec 2026-09-25 section 7)
     # ------------------------------------------------------------------
+    # A part's rules are child nodes -- Anchor, one {State} Transformation
+    # per state, Breakage -- each added/removed by right-click and edited by
+    # selecting it. The staged spec per part is
+    #   {"anchor": (x,y,z)|None, "transition": s, "poses": {state: p6},
+    #    "break": fraction|None}
+    # in SHIP units / degrees / fraction of max hull, exactly what
+    # `part_save_edits` turns into SetAnchor / SetTransitionSeconds /
+    # SetStatePose / SetBreakFraction.
     def _baked_articulated_part(self, name: str):
         """The `ArticulatedPartProperty` registered for `name` on the current
         ship's rig, or None (unrigged part / no ship / no rig at all).
@@ -495,21 +532,24 @@ class ShipPropertyViewerPanel(Panel):
         return None
 
     def _baked_part_spec(self, name: str) -> dict:
-        """The part's spec as BC (or a mod's hardpoint file) authored it --
-        {"pivot","axis","angles","fraction"} with `angles` populated for
-        EVERY state (0.0 default, the NIF pose), so a designer opening a
-        never-touched part sees every angle row rather than a sparse one.
-        `fraction` stays None (never 0.0) for a part with no rig entry or no
-        detach fraction -- see ArticulatedPartProperty.detach_fraction."""
-        from engine.appc.articulated_part import STATES
+        """The part's spec as BC (or a mod's hardpoint file) authored it,
+        read through the template's pose surface -- a legacy hinge file
+        arrives here already converted (anchor at its pivot, one rigid pose
+        per authored angle). A part with no rig entry has no nodes at all:
+        no anchor, no poses, not breakable (`break` None, never 0.0 --
+        absent must not read as 'shears at once')."""
+        from engine.appc.articulated_part import ArticulatedPartProperty
         p = self._baked_articulated_part(name)
         if p is None:
-            return {"pivot": (0.0, 0.0, 0.0), "axis": (0.0, 1.0, 0.0),
-                    "angles": dict((s, 0.0) for s in STATES),
-                    "fraction": None}
-        return {"pivot": tuple(p.pivot), "axis": tuple(p.axis),
-                "angles": dict((s, p.angle_for(s)) for s in STATES),
-                "fraction": p.detach_fraction}
+            return {"anchor": None,
+                    "transition": ArticulatedPartProperty(name).transition_seconds,
+                    "poses": {}, "break": None}
+        anchor = p.anchor
+        return {"anchor": tuple(anchor) if anchor is not None else None,
+                "transition": float(p.transition_seconds),
+                "poses": dict((s, tuple(p.pose6_for(s)))
+                              for s in p.authored_states()),
+                "break": p.break_fraction}
 
     def _effective_part(self, name: str) -> dict:
         """Spec to show/edit for part `name`: a staged (unsaved) edit wins,
@@ -525,69 +565,219 @@ class ShipPropertyViewerPanel(Panel):
         """Merge `fields` onto part `name`'s current effective spec and stage
         the FULL result -- the same whole-spec-per-edit pattern as
         `set_light_position`/`_set_scale_field` for a light, so editing one
-        field (say, the pivot) never drops another (say, an already-staged
-        angle)."""
+        field (say, the anchor) never drops another (say, an already-staged
+        pose). `poses` is copied, never shared with the saved/baked spec it
+        came from."""
         spec = dict(self._effective_part(name))
+        spec["poses"] = dict(spec.get("poses") or {})
         spec.update(fields)
         self._pending_part[name] = spec
         self._last_pushed = None
 
-    def set_part_pivot(self, name: str, xyz) -> None:
-        """Stage a body-frame pivot for part `name` -- what the Transform
-        gizmo drives when a part is the active transform target."""
-        self._stage_part_field(
-            name, pivot=(float(xyz[0]), float(xyz[1]), float(xyz[2])))
+    def _part_box_centre(self, name: str) -> tuple:
+        """Centre of part `name`'s derived box (ship units) from the model
+        nodes snapshotted at open -- where a new anchor starts. The origin
+        when the node carries no bounds."""
+        for n in self._model_part_nodes:
+            if n.get("name") != name:
+                continue
+            lo, hi = n.get("bounds_min"), n.get("bounds_max")
+            if lo is None or hi is None:
+                break
+            return tuple((float(lo[k]) + float(hi[k])) / 2.0 for k in range(3))
+        return (0.0, 0.0, 0.0)
 
-    def _rig_angle_summary(self) -> dict:
-        """{state: largest |angle| across every articulated part of the
-        current ship's rig, INCLUDING this session's staged/saved edits} --
-        exactly what `_mount_lock_state_and_reason` below checks. Staged
-        edits are folded in (not just the baked rig) so re-authoring an angle
-        updates the lock on the very next render, not only after Save."""
+    def _part_node_exists(self, name: str, kind) -> bool:
+        """True when part `name` currently has child node `kind` ("anchor",
+        "breakage" or a state name) in its effective spec."""
+        if name not in self._model_part_names():
+            return False
+        spec = self._effective_part(name)
+        if kind == "anchor":
+            return spec.get("anchor") is not None
+        if kind == "breakage":
+            return spec.get("break") is not None
+        return kind in (spec.get("poses") or {})
+
+    def _selected_state_node(self):
+        """(part_name, state) while a {State} Transformation node is
+        selected, else None."""
         from engine.appc.articulated_part import STATES
-        from engine.appc import articulation
+        node = _spv.selected_part_node()
+        if node is not None and node[1] in STATES:
+            return node
+        return None
+
+    def _state_is_articulated(self, state: str) -> bool:
+        """True when any part of the current ship's rig -- INCLUDING this
+        session's staged/saved edits -- has a pose in `state` that is not the
+        NIF pose. What the 'K' dev override's arm of the lock checks: a
+        state whose poses are all identity moves nothing, so forcing it must
+        not lock anything. Staged edits are folded in (not just the baked
+        rig) so re-authoring a pose updates the lock on the very next render,
+        not only after Save."""
+        from engine.appc import articulation, part_pose
         ship = self._ship_getter()
         leaf = hardpoint_leaf_for_ship(ship) if ship is not None else None
         names = set(p.GetName() for p in articulation.parts_for_leaf(leaf))
         names |= set(self._pending_part) | set(self._saved_part)
-        out = {}
-        for s in STATES:
-            best = 0.0
-            for nm in names:
-                v = abs(self._effective_part(nm)["angles"].get(s, 0.0))
-                if v > best:
-                    best = v
-            out[s] = best
-        return out
+        for nm in names:
+            p6 = (self._effective_part(nm).get("poses") or {}).get(state)
+            if p6 is not None and not part_pose.is_identity(part_pose.pose_from6(p6)):
+                return True
+        return False
 
-    def _set_part_preview(self, state) -> None:
-        """Drive the VISUAL pose: the pre-existing dev override
-        (`articulation.set_dev_override`, already wired to `tick_ship` and
-        dev-keybinding 'K') is reused rather than reinvented, so Preview and
-        'K' share one source of truth for "which state is the rig frozen
-        at". There is deliberately NO second, module-level copy of this state
-        to keep in sync: `_mount_editing_enabled` /
-        `_mount_lock_state_and_reason` below read
-        `articulation.dev_override()` directly, so 'K' (which only ever wrote
-        the override) locks mount editing exactly the same way a Preview
-        click does. A shadow copy in `ship_property_viewer` did exist, was
-        never written by anything in production -- so its
-        `mount_editing_enabled()` answered True forever -- and has been
-        deleted; `tests/unit/test_spv_part_controls.py` keeps it deleted."""
-        from engine.appc import articulation
-        articulation.set_dev_override(state)
-        # Apply it NOW, at this event edge. `set_dev_override` alone only
-        # changes what the next `tick_ship` would ease toward, and the SPV
-        # freezes the sim, so there is no next tick -- Preview would set a
-        # lock and highlight a button and move nothing. force_pose writes the
-        # shared angle dict, which the mesh and every LIVE mount query read.
-        articulation.force_pose(self._ship_getter(), state)
-        # ...and then re-resolve the CACHED pin positions from it. The pins
-        # are not a live query: `build_descriptors` stored `world_pos` once,
-        # at open. Without this the wings swing out from under stationary
-        # pins -- the same defect as open()'s ordering, at the other edge.
+    def _sync_part_pose(self) -> None:
+        """Apply the pose the node selection calls for, at the event edge.
+
+        A selected {State} Transformation draws THAT part in that pose and
+        every other part at the NIF pose (`articulation.force_part_pose`);
+        anything else -- the part row, the Anchor or Breakage node, a mount,
+        nothing -- draws the whole rig at the NIF pose
+        (`articulation.force_pose(ship, None)`), the frame a hardpoint mount
+        is stored in. The SPV freezes the sim, so nothing else would move
+        the rig: the forced pose goes into `ship._articulation_poses`, which
+        the mesh, the pins and the derived-box queries all read, and the
+        CACHED pin positions are then re-resolved from it
+        (`_refresh_world_positions`) -- without that the part swings out from
+        under stationary pins.
+
+        Runs after every dispatched action (see `dispatch_event`), so undo
+        and a node removed from under its selection are covered too: a
+        selection that names a node which no longer exists is dropped first.
+        Acts only when the wanted pose CHANGED, so an unrelated click does
+        not rebuild every descriptor."""
+        from engine.appc import articulation, part_pose
+        node = _spv.selected_part_node()
+        if node is not None and not self._part_node_exists(*node):
+            _spv.select_part_node(None, None)
+        state_node = self._selected_state_node()
+        want = None
+        if state_node is not None:
+            name, state = state_node
+            p6 = self._effective_part(name)["poses"][state]
+            want = (name, state, tuple(float(v) for v in p6))
+        if want == self._applied_part_pose:
+            return
+        ship = self._ship_getter()
+        if want is None:
+            articulation.force_pose(ship, None)
+        else:
+            articulation.force_part_pose(ship, want[0],
+                                         part_pose.pose_from6(want[2]))
+        self._applied_part_pose = want
         self._refresh_world_positions()
         self._last_pushed = None
+
+    def _show_toast(self, text: str) -> None:
+        """Show `text` at the top of the SPV for TOAST_SECONDS -- one at a
+        time, a newer toast replaces the current one (spec section 7.4)."""
+        self._toast = (text, time.monotonic() + TOAST_SECONDS)
+        self._last_pushed = None
+
+    def _current_toast(self):
+        """The toast text while it is unexpired, else None. Read-only: an
+        expired toast simply stops being reported (it is part of the payload
+        snapshot, so its expiry alone triggers the re-push that hides it)."""
+        if self._toast is None:
+            return None
+        text, until = self._toast
+        return text if time.monotonic() < until else None
+
+    def _dispatch_part_action(self, action: str) -> bool:
+        """The `part/*` actions: add/remove/select a part's child nodes and
+        edit their inline fields. Returns False for a malformed action, an
+        unknown part, or a no-op (adding a node that is already there); a
+        refusal that shows a toast returns True with nothing staged."""
+        from engine.appc.articulated_part import STATES
+        verb, _sep, arg = action.partition(":")
+        if verb in ("part/add_anchor", "part/make_breakable"):
+            name = arg
+            if name not in self._model_part_names():
+                return False
+            spec = self._effective_part(name)
+            if verb == "part/add_anchor":
+                if spec.get("anchor") is not None:
+                    return False
+                self._stage_part_field(name, anchor=self._part_box_centre(name))
+            else:
+                if spec.get("break") is not None:
+                    return False
+                self._stage_part_field(name, **{"break": DEFAULT_BREAK_FRACTION})
+            return True
+        try:
+            data = json.loads(arg)
+            name = str(data["name"])
+        except (ValueError, KeyError, TypeError):
+            return False
+        if name not in self._model_part_names():
+            return False
+        spec = self._effective_part(name)
+        if verb == "part/add_state":
+            state = data.get("state")
+            if state not in STATES:
+                return False
+            if spec.get("anchor") is None:
+                self._show_toast(TOAST_NO_ANCHOR)
+                return True
+            poses = dict(spec.get("poses") or {})
+            if state in poses:
+                return False
+            poses[state] = IDENTITY_POSE6
+            self._stage_part_field(name, poses=poses)
+            return True
+        if verb == "part/remove":
+            kind = data.get("kind")
+            if not self._part_node_exists(name, kind):
+                return False
+            if kind == "anchor":
+                if spec.get("poses"):
+                    self._show_toast(TOAST_ANCHOR_IN_USE)
+                    return True
+                self._stage_part_field(name, anchor=None)
+            elif kind == "breakage":
+                self._stage_part_field(name, **{"break": None})
+            else:
+                poses = dict(spec.get("poses") or {})
+                del poses[kind]
+                self._stage_part_field(name, poses=poses)
+            return True
+        if verb == "part/select_node":
+            kind = data.get("kind")
+            if not self._part_node_exists(name, kind):
+                return False
+            _spv.select_model_part(name, self._model_part_nodes)
+            _spv.select_part_node(name, kind)
+            # Mutually exclusive with subsystem/light/emitter selection, as
+            # model_parts/select is.
+            self.selected_index = None
+            self._selected_light_index = None
+            self._selected_emitter = None
+            self._last_pushed = None
+            return True
+        if verb == "part/set_transition":
+            try:
+                seconds = float(data["seconds"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if not (seconds > 0.0) or math.isinf(seconds):
+                return False
+            if spec.get("anchor") is None:
+                return False
+            self._stage_part_field(name, transition=seconds)
+            return True
+        if verb == "part/set_break":
+            try:
+                percent = float(data["percent"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if not (0.0 < percent <= 100.0):
+                return False
+            if spec.get("break") is None:
+                return False
+            self._stage_part_field(name, **{"break": percent / 100.0})
+            return True
+        return False
 
     def _refresh_world_positions(self) -> None:
         """Re-resolve every descriptor's cached `world_pos` in the ship's
@@ -621,31 +811,38 @@ class ShipPropertyViewerPanel(Panel):
             d["world_pos"] = f["world_pos"]
 
     def _current_articulation_override(self):
-        """`articulation.dev_override()` -- the SINGLE source of truth for
-        "which state is the rig forced to right now", written by both the
-        SPV's own Preview buttons (`_set_part_preview`) and the pre-existing
-        'K' dev keybinding. None when nothing is forcing a state (the rig
-        follows `state_for`/alert level as normal)."""
+        """`articulation.dev_override()` -- the state the 'K' dev keybinding
+        is forcing the rig toward, or None (the rig follows `state_for` /
+        alert level as normal). Read live, never mirrored: 'K' writes only
+        the override, so any shadow copy here would silently disagree with
+        the lock."""
         from engine.appc import articulation
         return articulation.dev_override()
 
     def _mount_lock_state_and_reason(self):
-        """(locked: bool, reason: str|None), computed LIVE from
-        `_current_articulation_override()` and the current rig angles --
-        never from a cached/shadow boolean, so a re-authored angle or a
-        state change from ANY source (Preview or 'K') is reflected on the
-        very next check with no separate "refresh" step needed."""
+        """(locked: bool, reason: str|None), computed LIVE on every check --
+        never from a cached boolean. Two arms:
+
+        * a {State} Transformation node is selected: the part is drawn posed,
+          and a hardpoint is stored in the model's own unposed frame, so a
+          mount placed through this pose would be recorded wrong;
+        * the 'K' dev override forces a state in which some part of the rig
+          (staged edits included) is not at the NIF pose. A state whose
+          poses are all identity moves nothing and locks nothing."""
+        node = self._selected_state_node()
+        if node is not None:
+            name, state = node
+            return True, ("Posing %s Transformation on %s — mount editing "
+                          "is locked" % (STATE_LABELS[state], name))
         state = self._current_articulation_override()
-        if state is None:
-            return False, None
-        degrees = self._rig_angle_summary().get(state, 0.0)
-        if abs(degrees) <= 1e-9:
+        if state is None or not self._state_is_articulated(state):
             return False, None
         reason = (
-            "Mount editing is locked while previewing %r: a hardpoint is "
-            "stored in the model's own unrotated frame, so a mount placed "
-            "or dragged in this pose would be recorded wrong for every "
-            "other pose. Preview the anchor state to unlock." % state)
+            "Mount editing is locked while the rig is forced to %r: a "
+            "hardpoint is stored in the model's own unposed frame, so a "
+            "mount placed or dragged in this pose would be recorded wrong "
+            "for every other pose. Release the forced state to unlock."
+            % state)
         return True, reason
 
     def _mount_editing_enabled(self) -> bool:
@@ -867,21 +1064,16 @@ class ShipPropertyViewerPanel(Panel):
     # ------------------------------------------------------------------
     def _active_transform_target(self):
         """Which node the transform gizmo/drag currently targets:
-        ("part", name), ("emitter", i, j), ("light", i), ("subsystem", i), or
-        None. Part, emitter, light, and subsystem selection are mutually
-        exclusive by construction (dispatch_event's selection handlers clear
-        the others), so a selected model PART wins first — it is Model Parts'
-        own selection (module-level on ship_property_viewer, like Task 6),
-        deliberately cleared/clearing the other three on either side's select
-        (see model_parts/select and select_pin/select_light/select_emitter).
-        The emitter arm's 3D gizmo DRAG routing (transform move, strip/cone
-        scale, strip/cone rotate) is implemented; every consumer that unpacks
-        a 2-tuple (`kind, i = t`) branches on `t[0] == "emitter"` first
-        (routing it or degrading to a safe "no target"). Only the emitter CEF
-        value panels + Copy/Paste/Mirror/Nudge remain Task 10."""
-        part = _spv.selected_model_part()
-        if part is not None:
-            return ("part", part)
+        ("emitter", i, j), ("light", i), ("subsystem", i), or None. Emitter,
+        light, and subsystem selection are mutually exclusive by construction
+        (dispatch_event's selection handlers clear the others).
+
+        A model part -- its row or any of its nodes -- is NOT a transform
+        target: selecting one clears the mount selection, so this answers
+        None and no gizmo appears. The part-node gizmos (anchor Move, pose
+        Move/Rotate about the anchor) are a separate, later surface (spec
+        2026-09-25 section 8, stage 4). Every consumer that unpacks a 2-tuple
+        (`kind, i = t`) branches on `t[0] == "emitter"` first."""
         if self._selected_emitter is not None:
             return ("emitter",) + self._selected_emitter   # ("emitter", i, j)
         if self._selected_light_index is not None:
@@ -894,8 +1086,6 @@ class ShipPropertyViewerPanel(Panel):
         """Body-frame (x, y, z) of an arbitrary transform target, or None."""
         if target is None:
             return None
-        if target[0] == "part":
-            return tuple(float(c) for c in self._effective_part(target[1])["pivot"])
         if target[0] == "emitter":
             _, i, j = target
             spec = self._effective_emitter(i, j)
@@ -918,9 +1108,6 @@ class ShipPropertyViewerPanel(Panel):
         staging path as appropriate."""
         t = self._active_transform_target()
         if t is None:
-            return
-        if t[0] == "part":
-            self.set_part_pivot(t[1], xyz)
             return
         if t[0] == "emitter":
             _, i, j = t
@@ -1032,12 +1219,7 @@ class ShipPropertyViewerPanel(Panel):
         depend on its shape (`Box` -> xyz axes, `Cylinder` -> radius+length,
         else -> radius). An emitter is scalar-`radius`/`length`: a point emitter
         exposes only Radius; a strip or cone exposes Radius + Length (the cone's
-        half-angle is DERIVED from radius/length, so no separate field). A
-        part has no scale concept at all -- "none"/[] never matches any other
-        kind, so a pipette apply that computes this for a part target (Step 3
-        of `_apply_pipette`, unconditional) is always a safe no-op."""
-        if target[0] == "part":
-            return "none", []
+        half-angle is DERIVED from radius/length, so no separate field)."""
         if target[0] == "emitter":
             _, i, j = target
             spec = self._effective_emitter(i, j)
@@ -1092,10 +1274,7 @@ class ShipPropertyViewerPanel(Panel):
         if self.active_tool != "scale":
             return None
         t = self._active_transform_target()
-        if t is None or t[0] == "part":
-            # A part has no size concept -- only a pivot (Transform) and an
-            # axis (Rotate). Inert on a part like the Scale tool is already
-            # inert on a non-cylinder light.
+        if t is None:
             return None
         kind, fields = self._scale_kind_and_fields(t)
         clip = self._scale_clipboard
@@ -1108,7 +1287,7 @@ class ShipPropertyViewerPanel(Panel):
         current transform target, routing to the radius or light-spec staging
         path as appropriate."""
         t = self._active_transform_target()
-        if t is None or t[0] == "part":
+        if t is None:
             return
         value = max(SCALE_MIN, float(value))
         kind, fields = self._scale_kind_and_fields(t)
@@ -1170,9 +1349,7 @@ class ShipPropertyViewerPanel(Panel):
     # Rotate tool (Cylinder light-volume axis only)
     # ------------------------------------------------------------------
     def _rotate_target(self):
-        """The rotate tool's target: ("part", name) for a part (rotate its
-        single hinge `axis` -- pivot placement is the Transform tool's job);
-        ("light", i) for a Cylinder (rotate its axis) or Box (rotate its
+        """The rotate tool's target: ("light", i) for a Cylinder (rotate its axis) or Box (rotate its
         forward+up orientation basis) light; ("emitter", i, j) for a strip
         emitter (rotate its single `axis`) or a cone emitter (rotate its
         forward+up basis, like a Box); None otherwise (sphere/subsystem, and
@@ -1181,8 +1358,6 @@ class ShipPropertyViewerPanel(Panel):
         if t is None:
             return None
         kt = t[0]
-        if kt == "part":
-            return t
         if kt == "emitter":
             _, i, j = t
             spec = self._effective_emitter(i, j)
@@ -1201,11 +1376,6 @@ class ShipPropertyViewerPanel(Panel):
         """Reflect the rotate target `t`'s orientation across the ship X axis
         (starboard): negate X of the axis (cylinder/strip) or of both forward
         and up (box/cone), then set it absolutely."""
-        if t[0] == "part":
-            axis = list(self._effective_part(t[1]).get("axis") or (0.0, 1.0, 0.0))
-            axis[0] = -axis[0]
-            self._set_axis_absolute(t, axis)
-            return
         if t[0] == "emitter":
             _, i, j = t
             spec = self._effective_emitter(i, j) or {}
@@ -1265,12 +1435,7 @@ class ShipPropertyViewerPanel(Panel):
         INTENTIONALLY — both rotate a single axis, so a cylinder-light rotation
         can be copied and pasted/mirrored onto a strip emitter and vice versa
         (the mirror-a-light workflow). A cone carries a full orientation basis,
-        so it uses `cone_orientation` and only interchanges with other cones.
-        A part's single hinge `axis` shares `cylinder_axis` too -- the same
-        "copy a rotation between things that rotate about one axis" workflow
-        this sharing already supports for cylinder lights and strip emitters."""
-        if target[0] == "part":
-            return "cylinder_axis"
+        so it uses `cone_orientation` and only interchanges with other cones."""
         if target[0] == "emitter":
             spec = self._effective_emitter(target[1], target[2]) or {}
             return "cone_orientation" if spec.get("kind") == "cone" \
@@ -1290,15 +1455,6 @@ class ShipPropertyViewerPanel(Panel):
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
         ang = math.radians(delta_deg)
-        if t[0] == "part":
-            name = t[1]
-            spec = dict(self._effective_part(name))
-            axis = spec.get("axis") or (0.0, 1.0, 0.0)
-            spec["axis"] = rotate_about_axis(axis, index, ang)
-            self._pending_part[name] = spec
-            self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
-            self._last_pushed = None
-            return
         if t[0] == "emitter":
             # A CONE carries an oriented (forward=axis, up) basis like a Box, so
             # it rotates BOTH and re-orthonormalizes; a strip rotates its single
@@ -1348,14 +1504,6 @@ class ShipPropertyViewerPanel(Panel):
         restages the whole compacted emitter list (dense-index invariant)."""
         n = math.sqrt(sum(a*a for a in axis)) or 1.0
         naxis = (axis[0]/n, axis[1]/n, axis[2]/n)
-        if isinstance(target, tuple) and target[0] == "part":
-            name = target[1]
-            spec = dict(self._effective_part(name))
-            spec["axis"] = naxis
-            self._pending_part[name] = spec
-            self._rotate_accum[target] = [0.0, 0.0, 0.0]
-            self._last_pushed = None
-            return
         if isinstance(target, tuple) and target[0] == "emitter":
             _, i, j = target
             lst = list(self._effective_emitters(i))
@@ -1432,9 +1580,7 @@ class ShipPropertyViewerPanel(Panel):
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
-        if kt == "part":
-            origin = world_from_body(ship, self._effective_part(target[1])["pivot"])
-        elif kt == "emitter":
+        if kt == "emitter":
             spec = self._effective_emitter(target[1], target[2])
             if spec is None:
                 return None
@@ -1464,8 +1610,7 @@ class ShipPropertyViewerPanel(Panel):
         if self.active_tool != "scale" or self.camera is None:
             return None
         t = self._active_transform_target()
-        if t is None or t[0] == "part":
-            # No scale concept on a part -- see scale_values().
+        if t is None:
             return None
         ship = self._ship_getter()
         if ship is None or not hasattr(ship, "GetWorldRotation"):
@@ -1500,8 +1645,8 @@ class ShipPropertyViewerPanel(Panel):
         }
 
     def rotate_gizmo(self) -> Optional[dict]:
-        """The rotate-gizmo (orientation rings) for the selected part/cylinder
-        light/strip-or-cone emitter, or None. Same shape as `scale_gizmo` but
+        """The rotate-gizmo (orientation rings) for the selected cylinder/box
+        light or strip-or-cone emitter, or None. Same shape as `scale_gizmo` but
         with `"handle_kind": 2` so the renderer draws rings. Gated on the
         rotate tool being active, a rotate target selected, and the ship
         resolvable with a world rotation."""
@@ -1515,22 +1660,19 @@ class ShipPropertyViewerPanel(Panel):
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
-        if t[0] == "part":
-            origin = world_from_body(ship, self._effective_part(t[1])["pivot"])
-        else:
-            i = t[1]
-            if not (0 <= i < len(self._descriptors)):
+        i = t[1]
+        if not (0 <= i < len(self._descriptors)):
+            return None
+        if t[0] == "emitter":
+            spec = self._effective_emitter(i, t[2])
+            if spec is None:
                 return None
-            if t[0] == "emitter":
-                spec = self._effective_emitter(i, t[2])
-                if spec is None:
-                    return None
-                origin = world_from_body(ship, spec["position"])
-            else:
-                light = self._effective_light(i)
-                if light is None:
-                    return None
-                origin = world_from_body(ship, light["position"])
+            origin = world_from_body(ship, spec["position"])
+        else:
+            light = self._effective_light(i)
+            if light is None:
+                return None
+            origin = world_from_body(ship, light["position"])
         return {
             "origin": origin,
             "axes": gizmo_axes(ship.GetWorldRotation()),
@@ -1563,11 +1705,7 @@ class ShipPropertyViewerPanel(Panel):
         g = self._active_gizmo()
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
         t = self._active_transform_target()
-        if t is None or t[0] == "part":
-            # A part has no scale concept (see scale_values()); the mouse
-            # path never reaches here because scale_gizmo() is already None
-            # for a part, but guard directly too rather than rely solely on
-            # that gate.
+        if t is None:
             self._scale_grab = (0, 0.0)
             return
         kind, fields = self._scale_kind_and_fields(t)
@@ -1649,8 +1787,6 @@ class ShipPropertyViewerPanel(Panel):
         i = t[1]
         if t[0] == "emitter":
             spec = self._effective_emitter(i, t[2]) or {}
-        elif t[0] == "part":
-            spec = self._effective_part(i) or {}
         else:
             spec = self._effective_light(i) or {}
         self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
@@ -1691,15 +1827,6 @@ class ShipPropertyViewerPanel(Panel):
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
         k = self._axis_drag
-        if t[0] == "part":
-            name = t[1]
-            spec = dict(self._effective_part(name))
-            spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
-            self._pending_part[name] = spec
-            self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
-            self._rotate_accum[t][k] = self._ring_grab_accum[k] + math.degrees(d_body)
-            self._last_pushed = None
-            return
         if t[0] == "emitter":
             # A CONE rotates BOTH `forward` and `up` of its grab-start
             # orientation (like a Box), then re-orthonormalizes; a strip rotates
@@ -1757,15 +1884,6 @@ class ShipPropertyViewerPanel(Panel):
         target = self._active_transform_target()
         if target is None:
             return
-        if target[0] == "part":
-            self._axis_drag = axis
-            self._axis_grab_param = grab_param
-            self._axis_grab_pos = tuple(self._effective_part(target[1])["pivot"])
-            ship = self._ship_getter()
-            if ship is not None and hasattr(ship, "GetWorldRotation"):
-                from engine.ui.ship_property_viewer import world_from_body
-                self._axis_grab_origin = world_from_body(ship, self._axis_grab_pos)
-            return
         if target[0] == "emitter":
             _, i, j = target
             spec = self._effective_emitter(i, j)
@@ -1812,9 +1930,6 @@ class ShipPropertyViewerPanel(Panel):
         k = self._axis_drag
         base = list(self._axis_grab_pos)
         base[k] += (param_now - self._axis_grab_param)
-        if target[0] == "part":
-            self.set_part_pivot(target[1], tuple(base))
-            return
         if target[0] == "emitter":
             _, i, j = target
             self.set_emitter_position(i, j, tuple(base))
@@ -1915,7 +2030,12 @@ class ShipPropertyViewerPanel(Panel):
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
                     _spv.model_parts_expanded(), _spv.selected_model_part(),
+                    _spv.selected_part_node(),
                     self._model_parts_show_all,
+                    # The toast TEXT while unexpired, None after: its expiry
+                    # alone changes the snapshot, so the push that hides it
+                    # happens without anything else changing.
+                    self._current_toast(),
                     # Read live from articulation.dev_override() (not a
                     # shadow copy) so a change made by the 'K' dev
                     # keybinding -- which never touches this panel's own
@@ -1976,6 +2096,7 @@ class ShipPropertyViewerPanel(Panel):
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "model_parts": self._model_parts_payload(),
+            "toast": self._current_toast(),
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
@@ -2071,44 +2192,64 @@ class ShipPropertyViewerPanel(Panel):
         return rows
 
     def _model_parts_payload(self) -> dict:
-        """Data for the Model Parts pane beneath the subsystem tree:
-        {"expanded", "selected", "selected_box", "rows", "show_all",
-        "part_preview", "mount_editing_enabled", "mount_editing_reason"}.
-        `rows` lists part CANDIDATES unless `show_all` is set (Task 7's
-        escape-hatch checkbox); each row is enriched here (beyond the bare
-        Task 6 shape) with its EFFECTIVE authored spec -- `detachable`,
-        `fraction`, `angles`, `pivot`, `axis`, `dirty` -- so the per-part
-        controls have something to pre-fill. Selection is module-level state
-        on ship_property_viewer (survives a re-render, cleared by
-        model_part_rows if the selected name drops out of the current node
-        list)."""
-        rows = _spv.model_part_rows(self._model_part_nodes,
-                                     show_all=self._model_parts_show_all)
-        for row in rows:
-            # Pivot/axis are NOT duplicated onto the row: they're already
-            # reachable through the generic Transform/Rotate tool panels
-            # (transform_coords()/rotate_values()) once a part is the active
-            # transform target, via the same ("part", name) gizmo kind a
-            # subsystem or light uses -- adding a second, unread copy here
-            # would be exactly the "wired but never reached" payload weight
-            # this project has repeatedly tripped on.
-            spec = self._effective_part(row["name"])
-            row["angles"] = dict(spec["angles"])
-            row["detachable"] = spec["fraction"] is not None
-            row["fraction"] = spec["fraction"] if spec["fraction"] is not None else 0.20
-            row["dirty"] = row["name"] in self._pending_part
+        """The Model Parts pane (spec 2026-09-25 section 7):
+        {"expanded", "show_all", "selected_box", "toast",
+        "mount_editing_enabled", "mount_editing_reason", "rows"}.
+
+        `rows` is flat, in display order: each listed part (candidates only
+        unless `show_all`) as
+          {"kind": "part", "name", "depth": 0, "chosen", "dirty",
+           "has_anchor", "missing_states", "breakable"}
+        followed by its child nodes, each
+          {"kind": "anchor"|"state"|"breakage", "part", "state"?, "label",
+           "depth": 1, "chosen", "value"?}
+        -- Anchor first (value = transition seconds), then one
+        "<Label> Transformation" per posed state in STATES order, then
+        Breakage (value = break PERCENT of the ship's max hull). Everything
+        comes from the EFFECTIVE spec, so staged edits show at once.
+        `missing_states` feeds the "Add State Transformation" submenu."""
+        from engine.appc.articulated_part import STATES
+        # model_part_rows first: it reconciles a selection whose part has
+        # vanished from the node list before anything reads the selection.
+        listed = _spv.model_part_rows(self._model_part_nodes,
+                                      show_all=self._model_parts_show_all)
+        node = _spv.selected_part_node()
+        selected_part = _spv.selected_model_part()
+        rows: List[dict] = []
+        for base in listed:
+            name = base["name"]
+            spec = self._effective_part(name)
+            poses = spec.get("poses") or {}
+            anchor = spec.get("anchor")
+            fraction = spec.get("break")
+            rows.append({
+                "kind": "part", "name": name, "depth": 0,
+                "chosen": selected_part == name and node is None,
+                "dirty": name in self._pending_part,
+                "has_anchor": anchor is not None,
+                "missing_states": [s for s in STATES if s not in poses],
+                "breakable": fraction is not None,
+            })
+            if anchor is not None:
+                rows.append({"kind": "anchor", "part": name, "label": "Anchor",
+                             "depth": 1, "chosen": node == (name, "anchor"),
+                             "value": float(spec.get("transition", 2.0))})
+            for state in STATES:
+                if state in poses:
+                    rows.append({"kind": "state", "part": name, "state": state,
+                                 "label": "%s Transformation" % STATE_LABELS[state],
+                                 "depth": 1, "chosen": node == (name, state)})
+            if fraction is not None:
+                rows.append({"kind": "breakage", "part": name,
+                             "label": "Breakage", "depth": 1,
+                             "chosen": node == (name, "breakage"),
+                             "value": round(float(fraction) * 100.0, 6)})
         locked, reason = self._mount_lock_state_and_reason()
         return {
             "expanded": _spv.model_parts_expanded(),
-            "selected": _spv.selected_model_part(),
-            "selected_box": _spv.selected_part_box(),
             "show_all": self._model_parts_show_all,
-            # Read live from articulation.dev_override() -- see Finding 2 in
-            # task-7-report.md: the pre-existing 'K' dev keybinding writes
-            # ONLY the override, never a ship_property_viewer-side shadow, so
-            # consulting anything else here would make 'K' silently disagree
-            # with the lock the panel actually enforces.
-            "part_preview": self._current_articulation_override(),
+            "selected_box": _spv.selected_part_box(),
+            "toast": self._current_toast(),
             "mount_editing_enabled": not locked,
             "mount_editing_reason": reason,
             "rows": rows,
@@ -2456,11 +2597,16 @@ class ShipPropertyViewerPanel(Panel):
         undo snapshot/record bracket, skipping "undo"/"save"/"cancel" (which
         themselves clear/discard state) and "overlay:" chrome toggles."""
         if action in self._NO_UNDO_ACTIONS or action.startswith("overlay:"):
-            return self._dispatch_event_inner(action)
-        before = self._snapshot_pending()
-        result = self._dispatch_event_inner(action)
-        if before != self._snapshot_pending():
-            self._undo_stack.append(before)
+            result = self._dispatch_event_inner(action)
+        else:
+            before = self._snapshot_pending()
+            result = self._dispatch_event_inner(action)
+            if before != self._snapshot_pending():
+                self._undo_stack.append(before)
+        # Every action -- a node select, an undo, a node removed from under
+        # its selection -- may change which pose the rig should be drawn in.
+        if self._visible:
+            self._sync_part_pose()
         return result
 
     # Actions that pick TOWARD subsystem/light/emitter editing -- refused
@@ -2472,8 +2618,9 @@ class ShipPropertyViewerPanel(Panel):
     )
     # Shared gizmo verbs: these edit whatever the CURRENT transform target is,
     # so they are refused only when that target is a subsystem/light/emitter
-    # mount -- never when it's a part (previewing a pose so you can author
-    # THAT part's own pivot/axis/angle is the entire point of the lock).
+    # mount. (A part is never a transform target -- see
+    # _active_transform_target -- and the part/* actions are never locked:
+    # tuning the very pose you are looking at is the point.)
     _MOUNT_GIZMO_VERBS = (
         "pipette", "coord_copy", "coord_paste", "coord_mirror",
         "scale_copy", "scale_paste", "scale_uniform",
@@ -2489,8 +2636,7 @@ class ShipPropertyViewerPanel(Panel):
         (`_handle_gizmo_input` / the `_apply_*_drag` methods) consult, so
         there is exactly one place that decides "is the thing under the
         gizmo right now a locked mount" rather than two copies that could
-        drift. A part target is never locked -- previewing a pose so you can
-        author THAT part's own pivot/axis is the entire point of the lock."""
+        drift."""
         if self._mount_editing_enabled():
             return False
         t = self._active_transform_target()
@@ -2588,57 +2734,16 @@ class ShipPropertyViewerPanel(Panel):
             name = action.split(":", 1)[1]
             _spv.select_model_part(name, self._model_part_nodes)
             # Mutually exclusive with subsystem/light/emitter selection, same
-            # as those three are with each other -- a part and a mount are
-            # never both the active transform target.
+            # as those three are with each other. (A part row is not itself a
+            # transform target -- see _active_transform_target.)
             if _spv.selected_model_part() is not None:
                 self.selected_index = None
                 self._selected_light_index = None
                 self._selected_emitter = None
             self._last_pushed = None
             return True
-        if action.startswith("part/preview:"):
-            from engine.appc.articulated_part import STATES
-            raw = action.split(":", 1)[1]
-            state = raw or None
-            if state is not None and state not in STATES:
-                return False
-            self._set_part_preview(state)
-            return True
-        if action.startswith("part/set_angle:"):
-            try:
-                arg = json.loads(action.split(":", 1)[1])
-                name = str(arg["name"]); state = str(arg["state"])
-                degrees = float(arg["degrees"])
-            except (ValueError, KeyError, TypeError):
-                return False
-            from engine.appc.articulated_part import STATES
-            if state not in STATES or name not in self._model_part_names():
-                return False
-            angles = dict(self._effective_part(name).get("angles") or {})
-            angles[state] = degrees
-            self._stage_part_field(name, angles=angles)
-            # No explicit "refresh" needed: _mount_editing_enabled() computes
-            # the lock live from _rig_angle_summary() on every check.
-            return True
-        if action.startswith("part/set_detach:"):
-            try:
-                arg = json.loads(action.split(":", 1)[1])
-                name = str(arg["name"])
-            except (ValueError, KeyError, TypeError):
-                return False
-            if name not in self._model_part_names():
-                return False
-            detachable = bool(arg.get("detachable", False))
-            if detachable:
-                try:
-                    fraction = float(arg.get("fraction"))
-                except (TypeError, ValueError):
-                    fraction = 0.20
-                fraction = max(0.0, min(1.0, fraction))
-            else:
-                fraction = None
-            self._stage_part_field(name, fraction=fraction)
-            return True
+        if action.startswith("part/"):
+            return self._dispatch_part_action(action)
         if action.startswith("select_pin:"):
             try:
                 idx = int(action.split(":", 1)[1])
@@ -2958,10 +3063,7 @@ class ShipPropertyViewerPanel(Panel):
         if action == "rotate_copy":
             t = self._rotate_target()
             if t is not None:
-                if t[0] == "part":
-                    axis = self._effective_part(t[1]).get("axis") or (0.0, 1.0, 0.0)
-                    self._rotate_clipboard = ("cylinder_axis", tuple(axis))
-                elif t[0] == "emitter":
+                if t[0] == "emitter":
                     _, i, j = t
                     spec = self._effective_emitter(i, j) or {}
                     if spec.get("kind") == "cone":

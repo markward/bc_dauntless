@@ -1,8 +1,10 @@
-"""Panel-level integration for Task 7: selecting a model part makes it the
-gizmo's transform target, angle/detach edits stage and save as `__part__`
-writer edits, and previewing an articulated pose locks subsystem/light/
-emitter editing -- gated in `_dispatch_event_inner` itself, not only by a
-greyed-out DOM, so a stale action string can never slip an edit through.
+"""Panel-level integration for the Model Parts pane: selecting a part (row
+or node) is exclusive with mount selection and is NOT a gizmo target (the
+part-node gizmos come later -- spec 2026-09-25 section 8 stage 4), part
+edits stage and save as `__part__` writer edits, and posing a part locks
+subsystem/light/emitter editing -- gated in `_dispatch_event_inner` itself,
+not only by a greyed-out DOM, so a stale action string can never slip an edit
+through. The node actions themselves are covered in test_spv_part_nodes.py.
 
 Fixture mirrors test_ship_property_viewer_save_persistence.py.
 """
@@ -103,11 +105,33 @@ def _open_with_parts(p):
     p._model_part_nodes = list(_PART_NODES)
 
 
-def test_selecting_a_part_becomes_the_transform_target(make_panel):
+def _select_node(p, name, kind):
+    return p.dispatch_event(
+        "part/select_node:" + json.dumps({"name": name, "kind": kind}))
+
+
+def test_a_part_row_or_node_is_never_a_transform_target(make_panel):
+    """No part gizmo until the part-node gizmo surface exists: selecting a
+    part row, or any of its nodes, leaves no transform target, so no gizmo
+    is drawn and no Transform/Rotate/Scale panel appears."""
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    assert p.dispatch_event("model_parts/select:left wing") is True
-    assert p._active_transform_target() == ("part", "left wing")
+    p.dispatch_event("part/add_anchor:head")
+    p.dispatch_event('part/add_state:{"name":"head","state":"warp"}')
+    p.dispatch_event("part/make_breakable:head")
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 10.0, 0.0, 0.0)
+    for tool in ("transform", "rotate", "scale"):
+        p.active_tool = tool
+        assert p.dispatch_event("model_parts/select:head") is True
+        assert p._active_transform_target() is None
+        assert p._active_gizmo() is None
+        for kind in ("anchor", "warp", "breakage"):
+            assert _select_node(p, "head", kind) is True, kind
+            assert p._active_transform_target() is None
+            assert p._active_gizmo() is None
+            assert p.transform_coords() is None
+            assert p.rotate_values() is None
+            assert p.scale_values() is None
 
 
 def test_selecting_a_part_clears_subsystem_selection(make_panel):
@@ -117,68 +141,53 @@ def test_selecting_a_part_clears_subsystem_selection(make_panel):
     assert p.selected_index == 0
     p.dispatch_event("model_parts/select:left wing")
     assert p.selected_index is None
-    assert p._active_transform_target() == ("part", "left wing")
+    assert p._active_transform_target() is None
+
+
+def test_selecting_a_part_node_clears_subsystem_selection(make_panel):
+    p, _holder, _target = make_panel
+    _open_with_parts(p)
+    p.dispatch_event("select_light:0")
+    assert p._selected_light_index == 0
+    assert _select_node(p, "left wing", "anchor") is True
+    assert p._selected_light_index is None
+    assert spv.selected_part_node() == ("left wing", "anchor")
 
 
 def test_selecting_a_subsystem_clears_the_part_selection(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event("model_parts/select:left wing")
+    _select_node(p, "left wing", "anchor")
     p.dispatch_event("select_pin:0")
     assert spv.selected_model_part() is None
+    assert spv.selected_part_node() is None
     assert p._active_transform_target() == ("subsystem", 0)
 
 
-def test_transform_gizmo_places_the_part_pivot(make_panel):
+def test_add_state_rejects_an_unknown_state(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.set_part_pivot("left wing", (-0.16, 0.0, 0.05))
-    assert p._pending_part["left wing"]["pivot"] == (-0.16, 0.0, 0.05)
-    assert p._target_pos_of(("part", "left wing")) == (-0.16, 0.0, 0.05)
-
-
-def test_set_angle_action_stages_the_angle(make_panel):
-    p, _holder, _target = make_panel
-    _open_with_parts(p)
-    ok = p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    assert ok is True
-    assert p._pending_part["left wing"]["angles"]["cruise"] == 45.0
-
-
-def test_set_angle_rejects_an_unknown_state(make_panel):
-    p, _holder, _target = make_panel
-    _open_with_parts(p)
-    ok = p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"REd","degrees":45.0}')
+    p.dispatch_event("part/add_anchor:head")
+    ok = p.dispatch_event('part/add_state:{"name":"head","state":"REd"}')
     assert ok is False
-    assert "left wing" not in p._pending_part
+    assert p._pending_part["head"]["poses"] == {}
 
 
-def test_set_detach_action_stages_fraction(make_panel):
+def test_removing_breakage_makes_the_part_unbreakable(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_detach:{"name":"head","detachable":true,"fraction":0.35}')
-    assert p._pending_part["head"]["fraction"] == 0.35
+    p.dispatch_event("part/make_breakable:head")
+    p.dispatch_event('part/set_break:{"name":"head","percent":35}')
+    assert p._pending_part["head"]["break"] == pytest.approx(0.35)
+    p.dispatch_event('part/remove:{"name":"head","kind":"breakage"}')
+    assert p._pending_part["head"]["break"] is None
 
 
-def test_unchecking_detachable_clears_the_fraction(make_panel):
+def test_forcing_an_articulated_state_locks_mount_editing(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_detach:{"name":"head","detachable":true,"fraction":0.35}')
-    p.dispatch_event(
-        'part/set_detach:{"name":"head","detachable":false,"fraction":0.35}')
-    assert p._pending_part["head"]["fraction"] is None
-
-
-def test_previewing_an_articulated_state_locks_mount_editing(make_panel):
-    p, _holder, _target = make_panel
-    _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
+    from engine.appc import articulation
+    articulation.set_dev_override("cruise")    # 'K'; the rig's cruise is 45
     assert p._mount_editing_enabled() is False
     # The Python side is the real gate: a select_pin: action must be refused
     # outright, not merely greyed out in the DOM.
@@ -186,67 +195,50 @@ def test_previewing_an_articulated_state_locks_mount_editing(make_panel):
     assert p.selected_index is None
 
 
-def test_previewing_the_anchor_state_leaves_mount_editing_enabled(make_panel):
+def test_leaving_a_state_node_unlocks_mount_editing(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
+    _select_node(p, "left wing", "cruise")
     assert p._mount_editing_enabled() is False
-    p.dispatch_event("part/preview:red")   # red is the BoP's NIF pose
+    assert p.dispatch_event("select_pin:0") is False
+    _select_node(p, "left wing", "anchor")
     assert p._mount_editing_enabled() is True
     assert p.dispatch_event("select_pin:0") is True
     assert p.selected_index == 0
 
 
-def test_angle_editing_stays_available_while_locked(make_panel):
+def test_part_editing_stays_available_while_locked(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
+    _select_node(p, "left wing", "cruise")
     assert p._mount_editing_enabled() is False
-    ok = p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":30.0}')
-    assert ok is True
-    assert p._pending_part["left wing"]["angles"]["cruise"] == 30.0
+    assert p.dispatch_event(
+        'part/add_state:{"name":"left wing","state":"red"}') is True
+    assert "red" in p._pending_part["left wing"]["poses"]
 
 
 def test_locked_mount_gizmo_verb_blocked_for_a_light_target(make_panel):
     """A mount selected BEFORE the lock engaged must still be refused --
     the lock is keyed on the ACTIVE TARGET's kind, not on when it was
-    picked."""
+    picked. (Selecting a state node clears the light, so the lock that can
+    coexist with a selected light is the 'K' override's.)"""
     p, _holder, _target = make_panel
     _open_with_parts(p)
     assert p.dispatch_event("select_light:0") is True
     assert p._active_transform_target() == ("light", 0)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
+    from engine.appc import articulation
+    articulation.set_dev_override("cruise")
     assert p._mount_editing_enabled() is False
     assert p.dispatch_event("mirror_element") is False
     assert 0 not in p._pending_light
 
 
-def test_locked_mount_gizmo_verb_allowed_for_a_part_target(make_panel):
-    p, _holder, _target = make_panel
-    _open_with_parts(p)
-    p.dispatch_event("model_parts/select:left wing")
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
-    assert p._mount_editing_enabled() is False
-    assert p.dispatch_event("mirror_element") is True
-
-
 def test_save_writes_a_part_edit(make_panel):
     p, _holder, target = make_panel
     _open_with_parts(p)
-    p.set_part_pivot("left wing", (-0.16, 0.0, 0.05))
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event(
-        'part/set_detach:{"name":"left wing","detachable":true,"fraction":0.2}')
+    p.dispatch_event("part/add_anchor:head")
+    p.dispatch_event('part/add_state:{"name":"head","state":"cruise"}')
+    p.dispatch_event("part/make_breakable:head")
     assert p.dispatch_event("save") is True
     assert target.calls, "write() was never called"
     leaf, edits = target.calls[-1]
@@ -254,98 +246,36 @@ def test_save_writes_a_part_edit(make_panel):
     part_edits = [e for e in edits if e[1] == "__part__"]
     assert len(part_edits) == 1
     name, _tag, calls = part_edits[0]
-    assert name == "left wing"
-    setters = [c[0] for c in calls]
-    assert "SetPivot" in setters
-    assert "SetStateAngle" in setters
-    assert "SetDetachFraction" in setters
+    assert name == "head"
+    assert [c[0] for c in calls] == [
+        "SetAnchor", "SetTransitionSeconds", "SetStatePose", "SetBreakFraction"]
     # Saved edits keep driving the in-session state; pending clears.
-    assert "left wing" not in p._pending_part
-    assert p._saved_part["left wing"]["pivot"] == (-0.16, 0.0, 0.05)
+    assert "head" not in p._pending_part
+    assert p._saved_part["head"]["anchor"] == pytest.approx((0.0, 0.5, 0.0))
 
 
-def test_a_non_detachable_part_never_saves_a_detach_call(make_panel):
+def test_an_unbreakable_part_never_saves_a_break_call(make_panel):
     p, _holder, target = make_panel
     _open_with_parts(p)
-    p.set_part_pivot("head", (0.0, 0.0, 0.0))
+    p.dispatch_event("part/add_anchor:head")
     assert p.dispatch_event("save") is True
     leaf, edits = target.calls[-1]
     name, _tag, calls = [e for e in edits if e[1] == "__part__"][0]
     assert name == "head"
-    assert all(c[0] != "SetDetachFraction" for c in calls)
+    assert all(c[0] not in ("SetBreakFraction", "SetDetachFraction")
+               for c in calls)
 
 
-# ---------------------------------------------------------------------------
-# Mouse-driven gizmo interaction on a part target -- the ACTUAL Transform/
-# Rotate tool drag path (_begin_axis_drag/_apply_axis_drag,
-# _begin_ring_drag/_apply_ring_drag_angle, transform_gizmo()/rotate_gizmo()
-# for the render-time origin), as distinct from the coord-panel/pipette path
-# already covered by _set_transform_target_pos / _set_axis_absolute above.
-# These previously crashed on a "part" target -- see task-7-report.md.
-# ---------------------------------------------------------------------------
 class _RotShip:
     """Just enough of a ship for transform_gizmo()/rotate_gizmo() to place an
     origin: identity world transform (no rotation/translation to account
-    for), and no subsystems (build_descriptors degrades to [] for a ship
-    with none of the GetHull/.../GetNumChildSubsystems getters)."""
+    for)."""
 
     def GetWorldLocation(self):
         return TGPoint3(0.0, 0.0, 0.0)
 
     def GetWorldRotation(self):
         return TGMatrix3()   # identity
-
-
-def _part_panel(monkeypatch):
-    import engine.ui.ship_property_viewer_panel as mod
-    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "birdofprey")
-    p = ShipPropertyViewerPanel(ship_getter=lambda: _RotShip())
-    p.open()
-    p.camera = OrbitCamera((0.0, 0.0, 0.0), 10.0, 0.0, 0.0)
-    p._model_part_nodes = list(_PART_NODES)
-    p.dispatch_event("model_parts/select:left wing")
-    return p
-
-
-def test_transform_gizmo_and_axis_drag_move_the_part_pivot(monkeypatch):
-    p = _part_panel(monkeypatch)
-    p.dispatch_event("set_tool:transform")
-    g = p.transform_gizmo()
-    assert g is not None
-    # The real BoP rig's authored pivot (conftest's self-healing snapshot of
-    # hardpoint_overrides.py's "left wing" block), not a from-scratch zero --
-    # proves the gizmo reads the BAKED spec, not just a staged one.
-    baked_pivot = p._effective_part("left wing")["pivot"]
-    assert g["origin"] == pytest.approx(baked_pivot)
-    p._begin_axis_drag_for_test(axis=1, grab_param=0.0)
-    p._apply_axis_drag(2.0)
-    moved = (baked_pivot[0], baked_pivot[1] + 2.0, baked_pivot[2])
-    assert p._effective_part("left wing")["pivot"] == pytest.approx(moved)
-    assert p.transform_gizmo()["origin"] == pytest.approx(moved)
-
-
-def test_rotate_gizmo_and_ring_drag_rotate_the_part_axis(monkeypatch):
-    p = _part_panel(monkeypatch)
-    p.dispatch_event("set_tool:rotate")
-    g = p.rotate_gizmo()
-    assert g is not None
-    p._begin_ring_drag(2, 0.0)
-    p._apply_ring_drag_angle(math.radians(90.0))
-    ax = p._effective_part("left wing")["axis"]
-    # +Y rotated +90 about +Z -> -X (right-handed) -- same identity used by
-    # test_ship_property_viewer_panel_rotate.py's cylinder-light case.
-    assert ax == pytest.approx((-1.0, 0.0, 0.0), abs=1e-6)
-
-
-def test_rotate_copy_paste_roundtrips_the_part_axis(monkeypatch):
-    p = _part_panel(monkeypatch)
-    p.dispatch_event("set_tool:rotate")
-    p.dispatch_event("rotate_copy")
-    assert p.rotate_values()["can_paste"] is True
-    p.dispatch_event('rotate_nudge:' + json.dumps({"axis": 2, "delta": 45.0}))
-    p.dispatch_event("rotate_paste")
-    assert p._effective_part("left wing")["axis"] == pytest.approx(
-        (0.0, 1.0, 0.0), abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -381,17 +311,19 @@ def _subsystem_panel(monkeypatch, light=False):
 
 
 def _lock_via_left_wing_cruise(p):
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
+    """Engage the lock WITHOUT touching the mount selection: the 'K'
+    override on a state whose rig poses are articulated (the BoP's cruise
+    is 45 degrees). Selecting a state node would also lock, but it clears
+    the mount selection first, so it cannot express these repros."""
+    from engine.appc import articulation
+    articulation.set_dev_override("cruise")
     assert p._mount_editing_enabled() is False
 
 
 def test_mouse_drag_cannot_move_a_subsystem_selected_before_the_lock(monkeypatch):
-    """The reviewer's exact repro: select_pin:1 -> part/set_angle cruise=45
-    -> part/preview:cruise -- the SUBSYSTEM stays the active gizmo target
-    (only model_parts/select: clears it), so the raw drag functions must
-    refuse on their own."""
+    """The reviewer's exact repro, re-pointed at the 'K' lock: a subsystem
+    selected before the lock stays the active gizmo target, so the raw drag
+    functions must refuse on their own."""
     p = _subsystem_panel(monkeypatch)
     p.dispatch_event("select_pin:0")
     assert p._active_transform_target() == ("subsystem", 0)
@@ -450,24 +382,6 @@ def test_ring_drag_cannot_rotate_a_locked_light_mount(monkeypatch):
     assert p._effective_light(0)["axis"] == before
 
 
-def test_part_target_remains_draggable_while_locked(monkeypatch):
-    """The negative-space check: none of the above guards may over-fire and
-    also block the PART itself -- that is how the hinge gets placed while
-    previewing the very pose it's being placed for."""
-    p = _part_panel(monkeypatch)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
-    assert p._mount_editing_enabled() is False
-    assert p._current_target_is_locked_mount() is False
-    p.dispatch_event("set_tool:transform")
-    baked_pivot = p._effective_part("left wing")["pivot"]
-    p._begin_axis_drag_for_test(axis=1, grab_param=0.0)
-    p._apply_axis_drag(2.0)
-    moved = (baked_pivot[0], baked_pivot[1] + 2.0, baked_pivot[2])
-    assert p._effective_part("left wing")["pivot"] == pytest.approx(moved)
-
-
 # ---------------------------------------------------------------------------
 # Fix round 1, Finding 2: the 'K' dev keybinding (engine/dev_keybindings.py)
 # writes articulation.set_dev_override directly -- the lock must read that
@@ -477,11 +391,9 @@ def test_part_target_remains_draggable_while_locked(monkeypatch):
 def test_the_K_dev_override_locks_mount_editing_without_touching_preview(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
     from engine.appc import articulation
     articulation.set_dev_override("cruise")   # exactly what 'K' does, and
-    # nothing else -- no panel event, no Preview click.
+    # nothing else -- no panel event. The rig's baked cruise is 45 degrees.
     assert p._mount_editing_enabled() is False
     locked, reason = p._mount_lock_state_and_reason()
     assert locked is True
@@ -529,48 +441,54 @@ def test_opening_the_viewer_snaps_the_ship_to_the_ANCHOR_pose(make_panel):
         "the pins and the derived-box queries all read -- at the anchor pose")
 
 
-def test_previewing_a_state_snaps_the_ship_to_its_authored_poses(make_panel):
-    """Preview has to MOVE the wings, not just set a lock and a highlight."""
+def test_selecting_a_state_node_snaps_that_part_to_its_authored_pose(
+        make_panel):
+    """Selecting a {State} Transformation has to MOVE the part, not just set
+    a lock and a highlight -- and only that part."""
     from engine.appc import articulation, part_pose
     p, holder, _target = make_panel
     holder["ship"] = _RiggedShip()
     _open_with_parts(p)
+    p._model_part_nodes.append(
+        {"name": "left wing01", "parent": "Scene Root", "candidate": True,
+         "bounds_min": (0.1, -0.5, -0.5), "bounds_max": (1.0, 0.5, 0.5)})
 
-    p.dispatch_event("part/preview:cruise")
+    assert _select_node(p, "left wing01", "cruise") is True
 
-    expected = {part.GetName(): part.pose_for("cruise")
-                for part in articulation.rig_for("birdofprey")}
-    assert _poses(holder["ship"]) == expected
-    assert any(not part_pose.is_identity(v)
-               for v in expected.values()), "fixture check"
+    part = next(q for q in articulation.rig_for("birdofprey")
+                if q.GetName() == "left wing01")
+    want = part_pose.pose_from6(part.pose6_for("cruise"))
+    assert not part_pose.is_identity(want), "fixture check"
+    poses = _poses(holder["ship"])
+    assert poses["left wing01"] == want
+    assert poses["left wing"] == part_pose.IDENTITY
 
 
-def test_closing_the_viewer_leaves_the_poses_for_tick_ship_to_ease_home(
-        make_panel):
-    """Deliberately NOT a snap: the sim resumes on close and `tick_ship`
-    transitions the wings back over each part's transition_seconds. This pins
-    that close RELEASES the override without also jumping the pose."""
-    from engine.appc import articulation
+def test_closing_the_viewer_returns_the_rig_to_the_NIF_pose(make_panel):
+    """Spec section 7.3: closing the SPV returns a previewed part to the NIF
+    pose -- the pose the viewer opened in -- and releases the 'K' override,
+    so `tick_ship` eases the rig from there once the sim resumes."""
+    from engine.appc import articulation, part_pose
     p, holder, _target = make_panel
     holder["ship"] = _RiggedShip()
     _open_with_parts(p)
-    p.dispatch_event("part/preview:cruise")
-    posed = _poses(holder["ship"])
-    assert posed, "fixture check"
+    _select_node(p, "left wing", "cruise")
+    assert not part_pose.is_identity(_poses(holder["ship"])["left wing"]), (
+        "fixture check")
+    articulation.set_dev_override("cruise")
 
     p.close()
 
     assert articulation.dev_override() is None, "the override must be released"
-    assert _poses(holder["ship"]) == posed, (
-        "close must not snap the pose; tick_ship eases it home")
+    assert all(v == part_pose.IDENTITY
+               for v in _poses(holder["ship"]).values())
 
 
-def test_close_clears_the_preview_lock(make_panel):
+def test_close_clears_the_lock(make_panel):
     p, _holder, _target = make_panel
     _open_with_parts(p)
-    p.dispatch_event(
-        'part/set_angle:{"name":"left wing","state":"cruise","degrees":45.0}')
-    p.dispatch_event("part/preview:cruise")
+    _select_node(p, "left wing", "cruise")
     assert p._mount_editing_enabled() is False
     p.close()
+    assert spv.selected_part_node() is None
     assert p._mount_editing_enabled() is True

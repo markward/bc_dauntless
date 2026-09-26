@@ -114,31 +114,11 @@ class ArticulatedPartProperty:
         return tuple(s for s in STATES
                      if s in self._poses or s in self._angles)
 
-    # ---- legacy readers ------------------------------------------------
-    # Kept ONLY because engine/ui/ship_property_viewer_panel.py still reads
-    # them (Task 6 of spec 2026-09-25 rewrites that surface onto anchor /
-    # pose6_for / break_fraction). Every other caller reads the pose surface
-    # above instead -- do not add a new reader of these four.
-    @property
-    def pivot(self):
-        return self._pivot
-
-    @property
-    def axis(self):
-        return self._axis
-
-    @property
-    def detach_fraction(self):
-        """Fraction of MAX hull that shears this part, or None for a part that
-        does not come off. None, never 0.0 -- absent must not read as
-        'detaches instantly'."""
-        return self._detach
-
-    def angle_for(self, state):
-        """Degrees about the hinge in `state`. Unset is 0.0: the NIF pose,
-        i.e. 'as modelled', which is the right default for a part whose
-        author has not considered that state."""
-        return self._angles.get(state, 0.0)
+    # There are deliberately NO legacy readers (`pivot`, `axis`,
+    # `angle_for`, `detach_fraction`): the legacy SETTERS above still load a
+    # hinge-format file, and `anchor` / `pose_for` / `pose6_for` /
+    # `break_fraction` convert what they stored. Every reader goes through
+    # the pose surface; tests/unit/test_articulated_part.py keeps it so.
 
 
 def ArticulatedPartProperty_Create(name):

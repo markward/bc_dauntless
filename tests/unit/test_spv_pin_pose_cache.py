@@ -9,7 +9,9 @@ because nothing draws from either at pin time: `build_descriptors` resolves
 and `pick_pin` picks against it.
 
 So the pose has to be settled BEFORE the cache is built, and the cache has to
-be refreshed whenever the pose is re-forced.
+be refreshed whenever the pose is re-forced -- which, since the Preview buttons
+went (spec 2026-09-25 section 7.5), is whenever a part's {State}
+Transformation node is selected or left.
 
 These tests assert on `_descriptors[i]["world_pos"]` and on `subsystem_pins()`
 -- the last thing before the screen. The round that cleared the previous fix
@@ -106,9 +108,26 @@ def panel(monkeypatch):
     monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: LEAF)
     holder = {"ship": _Ship()}
     p = ShipPropertyViewerPanel(ship_getter=lambda: holder["ship"])
-    # No render instance headlessly, so the Model Parts walk finds nothing.
-    monkeypatch.setattr(p, "_fetch_model_part_nodes", lambda: [])
+    # No render instance headlessly, so stand in for the Model Parts walk:
+    # the starboard wing is the part the cannon and its neighbour ride on.
+    monkeypatch.setattr(p, "_fetch_model_part_nodes", lambda: [
+        {"name": "left wing01", "parent": "Scene Root", "candidate": True,
+         "bounds_min": (0.1236, -0.6777, -0.7125),
+         "bounds_max": (1.0258, 0.5344, 0.1862)}])
     return p, holder
+
+
+def _pose_starboard_wing(p, state="cruise"):
+    """Select the starboard wing's {State} Transformation node -- the event
+    edge that forces that part's pose now."""
+    assert p.dispatch_event(
+        'part/select_node:{"name":"left wing01","kind":"%s"}' % state) is True
+
+
+def _back_to_nif(p):
+    """Select the part row -- anything but a State node returns the rig to
+    the NIF pose."""
+    assert p.dispatch_event("model_parts/select:left wing01") is True
 
 
 def _cannon_world(panel_obj):
@@ -150,26 +169,29 @@ def test_opening_the_viewer_CACHES_the_pin_at_the_ANCHOR_pose(panel):
     assert _cannon_pin(p) == pytest.approx(CANNON_BODY)
 
 
-def test_previewing_a_state_MOVES_the_cached_pin(panel):
-    """Preview forces the pose and the mesh follows; the cache has to follow
-    too, or the wings swing out from under stationary pins."""
+def test_posing_a_state_MOVES_the_cached_pin(panel):
+    """Selecting a State Transformation forces the pose and the mesh
+    follows; the cache has to follow too, or the wing swings out from under
+    stationary pins."""
     p, holder = panel
     p.open()
     assert _cannon_world(p) == pytest.approx(CANNON_BODY)   # anchor
 
-    p.dispatch_event("part/preview:cruise")
+    _pose_starboard_wing(p)
 
     assert _cannon_world(p) == pytest.approx(_raised_cannon(holder["ship"])), (
         "the cached pin must move to where the wing is now drawn")
     assert _cannon_pin(p) == pytest.approx(_raised_cannon(holder["ship"]))
 
 
-def test_previewing_back_to_the_ANCHOR_state_returns_the_pin(panel):
-    """Not a one-way trip. 'red' is the BoP's NIF pose (angle 0)."""
+def test_leaving_the_state_node_returns_the_pin(panel):
+    """Not a one-way trip: leaving the State node puts the rig back at the
+    NIF pose, and the cached pin with it."""
     p, _holder = panel
     p.open()
-    p.dispatch_event("part/preview:cruise")
-    p.dispatch_event("part/preview:red")
+    _pose_starboard_wing(p)
+    assert _cannon_world(p) != pytest.approx(CANNON_BODY), "fixture check"
+    _back_to_nif(p)
     assert _cannon_world(p) == pytest.approx(CANNON_BODY)
 
 
@@ -181,10 +203,20 @@ def test_the_refresh_does_not_RENUMBER_the_descriptors(panel):
     p, _holder = panel
     p.open()
     before_names = [d["name"] for d in p._descriptors]
+    # Pose first: selecting a State node clears the mount selection by
+    # design, so the index-keyed state is set up AFTER it, and the refresh
+    # under test is the RE-force a changed staged pose triggers on the next
+    # event edge.
+    _pose_starboard_wing(p)
+    posed = _cannon_world(p)
     p.selected_index = len(before_names) - 1
     p.set_subsystem_position(p.selected_index, (9.0, 9.0, 9.0))
-
-    p.dispatch_event("part/preview:cruise")
+    spec = dict(p._effective_part("left wing01"))
+    spec["poses"] = dict(spec["poses"], cruise=(0.0, 0.0, 0.2, 0.0, -30.0, 0.0))
+    p._pending_part["left wing01"] = spec
+    p.dispatch_event("model_parts/toggle")      # any event edge
+    assert _cannon_world(p) != pytest.approx(posed), (
+        "fixture check: the re-forced pose must have refreshed the cache")
 
     assert [d["name"] for d in p._descriptors] == before_names
     assert p.selected_index == len(before_names) - 1
@@ -213,10 +245,13 @@ def _cannon_index(p):
 
 
 def _select_cannon_previewing_cruise(p):
-    """Open at the anchor pose, preview `cruise`, select the cannon, and arm
-    the transform tool -- the exact state of Mark's retest step 3."""
+    """Open at the anchor pose, pose the starboard wing in `cruise`, select
+    the cannon, and arm the transform tool -- the state of Mark's retest step
+    3. Selecting the State node clears (and locks) mount selection, so the
+    cannon is selected directly: these tests pin the SELECTED-pin road's
+    articulation, whatever put a pose and a selection together."""
     p.open()
-    p.dispatch_event("part/preview:cruise")
+    _pose_starboard_wing(p)
     i = _cannon_index(p)
     p.selected_index = i
     p.active_tool = "transform"
@@ -310,13 +345,18 @@ def test_the_selected_pin_on_an_UNRIGGED_hull_is_unchanged(panel, monkeypatch):
 
 
 def test_an_unrigged_ship_is_unaffected(panel, monkeypatch):
-    """The overwhelming majority of hulls. Forcing a pose on a ship with no
-    rig must leave every cached pin exactly where it was."""
+    """The overwhelming majority of hulls. Posing a freshly authored part on
+    a ship with no rig must leave every cached pin exactly where it was."""
     import engine.ui.ship_property_viewer_panel as mod
     monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
     p, holder = panel
     holder["ship"]._articulation_leaf = "galaxy"
     p.open()
     before = _cannon_world(p)
-    p.dispatch_event("part/preview:cruise")
+    p.dispatch_event("part/add_anchor:left wing01")
+    p.dispatch_event('part/add_state:{"name":"left wing01","state":"cruise"}')
+    spec = dict(p._pending_part["left wing01"])
+    spec["poses"] = {"cruise": (0.0, 0.0, 0.5, 0.0, 45.0, 0.0)}
+    p._pending_part["left wing01"] = spec
+    _pose_starboard_wing(p)
     assert _cannon_world(p) == pytest.approx(before)

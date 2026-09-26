@@ -36,9 +36,7 @@ def test_the_name_IS_the_node_name():
 
 def test_an_unset_state_angle_is_zero():
     """Zero is the NIF pose, so an unauthored state means 'as modelled'
-    rather than an error. Read via the pose surface -- `angle_for` is a
-    legacy reader kept only for the SPV panel (spec 2026-09-25 section 7,
-    not yet rewritten); everything else reads `pose_for`/`pose6_for`."""
+    rather than an error. Read via the pose surface -- the only reader."""
     p = ap.ArticulatedPartProperty_Create("left wing")
     for s in STATES:
         assert pp.is_identity(p.pose_for(s))
@@ -49,9 +47,9 @@ def test_state_angles_round_trip():
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetStateAngle("cruise", 45.0)
     p.SetStateAngle("red", 0.0)
-    assert p.angle_for("cruise") == 45.0
-    assert p.angle_for("red") == 0.0
-    assert p.angle_for("warp") == 0.0               # unset -> 0.0 (the NIF pose)
+    # Both authored angles are states with a pose; the unset one is not.
+    assert p.authored_states() == ("cruise", "red")
+    assert p.pose6_for("warp") is None              # unset -> the NIF pose
 
     # And the pose surface must be EXACTLY the hinge at the authored angle,
     # not merely "not identity" -- a wrong angle or a wrong sign would still
@@ -93,23 +91,35 @@ def test_a_static_detachable_part_needs_no_extra_concept():
 
 
 def test_pivot_and_axis_feed_the_anchor_and_pose():
-    """`SetPivot`/`SetAxis` are legacy setters, still pinned directly (they
-    stay on the class until Task 6 rewrites the SPV panel that reads them);
-    a state angle authored against them ALSO converts to an anchor and an
-    exact rigid pose through the hinge (spec section 6), read via the pose
+    """`SetPivot`/`SetAxis` are legacy setters with no reader of their own:
+    a state angle authored against them converts to an anchor and an exact
+    rigid pose through the hinge (spec section 6), read via the pose
     surface."""
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetPivot(-0.16, 0.0, 0.05)
     p.SetAxis(0.0, 1.0, 0.0)
     p.SetStateAngle("cruise", 45.0)
-    assert p.pivot == (-0.16, 0.0, 0.05)
-    assert p.axis == (0.0, 1.0, 0.0)
     assert p.anchor == (-0.16, 0.0, 0.05)
 
     want = pp.hinge_pose((-0.16, 0.0, 0.05), (0.0, 1.0, 0.0), 45.0)
     for x in ((-1.0, 0.45, -0.67), (0.3, -0.2, 0.1)):
         assert pp.apply(p.pose_for("cruise"), x) == pytest.approx(
             pp.apply(want, x), abs=1e-12)
+
+
+def test_the_legacy_READERS_are_gone():
+    """Spec 2026-09-25: the legacy setters still load a hinge file, but
+    nothing reads a part through `pivot`/`axis`/`angle_for`/
+    `detach_fraction` any more -- a new reader of them would bypass the
+    pose surface (and a legacy file's conversion). Keep them deleted."""
+    p = ap.ArticulatedPartProperty_Create("left wing")
+    p.SetPivot(-0.16, 0.0, 0.05)
+    p.SetAxis(0.0, 1.0, 0.0)
+    p.SetStateAngle("cruise", 45.0)
+    p.SetDetachFraction(0.2)
+    present = [n for n in ("pivot", "axis", "angle_for", "detach_fraction")
+               if hasattr(p, n)]
+    assert present == []
 
 
 # ---------------------------------------------------------------------------

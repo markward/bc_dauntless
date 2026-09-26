@@ -37,7 +37,8 @@ def test_transition_seconds_and_break_fraction():
     p.SetBreakFraction(0.25)
     assert p.transition_seconds == 3.5
     assert p.break_fraction == 0.25
-    assert p.detach_fraction == 0.25, "the old reader aliases the new value"
+    p.SetBreakFraction(0.5)
+    assert p.break_fraction == 0.5, "a later SetBreakFraction replaces the first"
 
 
 def test_legacy_detach_fraction_sets_break_fraction():
