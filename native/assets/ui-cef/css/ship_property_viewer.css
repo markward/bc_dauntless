@@ -357,8 +357,11 @@
 }
 
 /* Inline field on a chosen Anchor / Breakage row (Task 7, spec section
-   7.3): a label + a numeric input, pushed to the row's trailing edge.
-   Stops click propagation (see the row's onclick in ship_property_viewer.js)
+   7.3): value text + -/+ steppers (.spv-step-btn, shared with the radius/
+   light/emitter modals), pushed to the row's trailing edge -- no
+   <input type="number">, since this engine has no keyboard->CEF forwarding
+   (see the no-keyboard-input note on spvAnchorInlineFieldHtml in
+   ship_property_viewer.js). Stops click propagation (see the row's onclick)
    so interacting with the field never also re-fires the row's own
    select_node click. */
 .spv-part-inline-field {
@@ -371,13 +374,14 @@
     white-space: nowrap;
 }
 
-.spv-part-inline-field input[type="number"] {
-    width: 52px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 230, 160, 0.3);
-    color: #ffd;
-    font-size: 11px;
-    padding: 2px 4px;
+.spv-part-inline-field__text {
+    white-space: normal;
+}
+
+.spv-part-inline-field .spv-step-btn {
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
 }
 
 /* Toast (Task 7, spec section 7.4): a transient message at the top-centre

@@ -870,16 +870,6 @@ function renderSPVSubsystemList(rows, selectedIndex, selectedLight, selectedEmit
     body.innerHTML = out.join('');
 }
 
-// Escapes a string for embedding as a JS string-literal argument inside an
-// HTML attribute (onclick/oncontextmenu) -- mirrors pause_menu.js's
-// action-attribute escaping: the value travels through an HTML attribute
-// into a single-quoted JS string literal, so both quote characters (and
-// `&`, which would otherwise mangle the entity decode) must be neutralised.
-function spvEscAttr(s) {
-    return String(s || '')
-        .replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-}
-
 // Labels for engine.appc.articulated_part.STATES -- must match
 // STATE_LABELS in ship_property_viewer_panel.py exactly (Cruising / Yellow
 // Alert / Red Alert / Warp), since these are what the "Add State
@@ -955,45 +945,51 @@ function renderSPVModelParts(modelParts) {
     }
 }
 
-// A part row (kind "part", depth 0): clicking selects the part
-// (model_parts/select:<name>, same action the pane has always used);
-// right-clicking opens #spv-ctxmenu with Add Anchor / Add State
-// Transformation / Make Breakable, each hidden per the row's own
-// has_anchor/missing_states/breakable flags.
+// A part row (kind "part", depth 0). The row's identity travels ONLY in
+// data-* attributes (data-part-name/-has-anchor/-missing-states/-breakable),
+// never interpolated into a JS string literal inside an on* attribute: the
+// browser HTML-decodes an attribute value BEFORE the handler text is
+// compiled, so a part named e.g. `Nacelle's Strut` would decode `&#39;` back
+// to a raw `'` and terminate a `'...'` JS string early -- every on*
+// attribute here is therefore a bare `handlerName(this)` / `(event, this)`
+// call, and the handler reads the real value back off `this.dataset`
+// (itself just an ordinary, once-decoded HTML attribute -- no JS parse step
+// in between). Clicking selects the part (model_parts/select:<name>, same
+// action the pane has always used); right-clicking opens #spv-ctxmenu with
+// Add Anchor / Add State Transformation / Make Breakable, each hidden per
+// the row's own has_anchor/missing_states/breakable.
 function spvPartRowHtml(row) {
-    var safeName = spvEscAttr(row.name);
-    var missingStates = row.missing_states || [];
-    var missingJs = '[' + missingStates.map(function (s) {
-        return "'" + spvEscAttr(s) + "'";
-    }).join(',') + ']';
+    var safeName = escapeHtmlSPV(row.name || '');
+    var missingCsv = escapeHtmlSPV((row.missing_states || []).join(','));
     var depth = row.depth || 0;
     var indent = ' style="padding-left:' + (10 + depth * 14) + 'px"';
-    var menuJs = "return shipPropertyViewerPartRowMenu(event, '" + safeName + "', "
-        + (row.has_anchor === true) + ", " + missingJs + ", " + (row.breakable === true) + ")";
     return '<div class="spv-sys-row'
         + (row.chosen ? ' spv-sys-row--chosen' : '')
         + (row.dirty === true ? ' spv-sys-row--dirty' : '') + '"' + indent
-        + ' onclick="dauntlessEvent(\'ship-property-viewer/model_parts/select:'
-        + safeName + '\')"'
-        + ' oncontextmenu="' + menuJs + '">'
+        + ' data-part-name="' + safeName + '"'
+        + ' data-has-anchor="' + (row.has_anchor === true) + '"'
+        + ' data-missing-states="' + missingCsv + '"'
+        + ' data-breakable="' + (row.breakable === true) + '"'
+        + ' onclick="shipPropertyViewerPartRowClick(this)"'
+        + ' oncontextmenu="return shipPropertyViewerPartRowMenu(event, this)">'
         + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
-        + '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
+        + '<span class="spv-sys-row__name">' + safeName + '</span>'
         + '</div>';
 }
 
-// A part's child row (kind "anchor" | "state" | "breakage", depth 1):
-// clicking selects the node (part/select_node:{name,kind}); right-clicking
-// opens #spv-ctxmenu with just Remove. A chosen Anchor/Breakage row also
-// grows its inline field (spec section 7.3) -- a State Transformation row
-// has none; it is edited with the Move/Rotate gizmos (Task 8), not a field.
+// A part's child row (kind "anchor" | "state" | "breakage", depth 1). Same
+// data-* convention as spvPartRowHtml, for the same reason. Clicking selects
+// the node (part/select_node:{name,kind}); right-clicking opens #spv-ctxmenu
+// with just Remove. A chosen Anchor/Breakage row also grows its inline
+// stepper field (spec section 7.3, and see the no-keyboard-input note on
+// spvAnchorInlineFieldHtml) -- a State Transformation row has none; it is
+// edited with the Move/Rotate gizmos (Task 8), not a field.
 function spvPartChildRowHtml(row) {
-    var safeName = spvEscAttr(row.part);
+    var safeName = escapeHtmlSPV(row.part || '');
     var kind = (row.kind === 'state') ? row.state : row.kind;
-    var safeKind = spvEscAttr(kind);
+    var safeKind = escapeHtmlSPV(kind || '');
     var depth = row.depth || 1;
     var indent = ' style="padding-left:' + (10 + depth * 14) + 'px"';
-    var clickJs = "shipPropertyViewerPartNodeRow('" + safeName + "', '" + safeKind + "')";
-    var menuJs = "return shipPropertyViewerPartChildMenu(event, '" + safeName + "', '" + safeKind + "')";
     var extra = '';
     if (row.chosen && row.kind === 'anchor') {
         extra = spvAnchorInlineFieldHtml(row, safeName);
@@ -1002,65 +998,93 @@ function spvPartChildRowHtml(row) {
     }
     return '<div class="spv-sys-row spv-sys-row--child'
         + (row.chosen ? ' spv-sys-row--chosen' : '') + '"' + indent
-        + ' onclick="' + clickJs + '"'
-        + ' oncontextmenu="' + menuJs + '">'
+        + ' data-part-name="' + safeName + '"'
+        + ' data-node-kind="' + safeKind + '"'
+        + ' onclick="shipPropertyViewerPartNodeRowClick(this)"'
+        + ' oncontextmenu="return shipPropertyViewerPartChildMenu(event, this)">'
         + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
         + '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.label || '') + '</span>'
         + extra
         + '</div>';
 }
 
-// Anchor's inline field: transition seconds (row.value). Stops click
-// propagation so interacting with the input never also re-fires the row's
-// own select_node click.
+// Anchor's inline field: transition seconds (row.value), shown as text with
+// -/+ steppers rather than a keyboard-editable <input> -- this engine has no
+// keyboard->CEF forwarding (every sibling SPV numeric control -- the radius
+// stepper, the light shape/extent steppers, the emitter intensity slider --
+// is mouse-only for the same reason). Each click sends the ABSOLUTE new
+// value immediately; never below 0.25s. The part name and the pre-click
+// value travel on the BUTTON's own data-* attributes (not the field's, and
+// not the ancestor row's) so the handler needs no DOM traversal -- just
+// `this.dataset`. Stops click propagation so interacting with the field
+// never also re-fires the row's own select_node click.
 function spvAnchorInlineFieldHtml(row, safeName) {
     var val = (typeof row.value === 'number') ? row.value : 2.0;
     return '<span class="spv-part-inline-field" onclick="event.stopPropagation()">'
-        + '<label>Transition time (s)</label>'
-        + '<input type="number" step="0.1" min="0.01" value="' + val.toFixed(2) + '"'
-        + ' onchange="shipPropertyViewerPartSetTransition(\'' + safeName + '\', this.value)">'
+        + '<span class="spv-part-inline-field__text">Transition time: ' + val.toFixed(2) + ' s</span>'
+        + '<button class="spv-step-btn" data-part-name="' + safeName + '" data-value="' + val + '"'
+        + ' onclick="shipPropertyViewerAnchorStep(this, -0.25)">&minus;</button>'
+        + '<button class="spv-step-btn" data-part-name="' + safeName + '" data-value="' + val + '"'
+        + ' onclick="shipPropertyViewerAnchorStep(this, 0.25)">+</button>'
         + '</span>';
 }
 
 // Breakage's inline field: break PERCENT of the ship's max hull (row.value,
-// already a 0-100 percent -- see _model_parts_payload).
+// already a 0-100 percent -- see _model_parts_payload), steppers of 5,
+// clamped to [5, 100] -- same no-keyboard-input reasoning as the Anchor
+// field above.
 function spvBreakageInlineFieldHtml(row, safeName) {
     var val = (typeof row.value === 'number') ? row.value : 20.0;
     return '<span class="spv-part-inline-field" onclick="event.stopPropagation()">'
-        + 'Breaks off after taking '
-        + '<input type="number" step="1" min="0.01" max="100" value="' + val.toFixed(2) + '"'
-        + ' onchange="shipPropertyViewerPartSetBreak(\'' + safeName + '\', this.value)">'
-        + "% of the ship's hull strength"
+        + '<span class="spv-part-inline-field__text">Breaks off after taking '
+        + Math.round(val) + "% of the ship's hull strength</span>"
+        + '<button class="spv-step-btn" data-part-name="' + safeName + '" data-value="' + val + '"'
+        + ' onclick="shipPropertyViewerBreakStep(this, -5)">&minus;</button>'
+        + '<button class="spv-step-btn" data-part-name="' + safeName + '" data-value="' + val + '"'
+        + ' onclick="shipPropertyViewerBreakStep(this, 5)">+</button>'
         + '</span>';
 }
 
-window.shipPropertyViewerPartNodeRow = function (name, kind) {
+window.shipPropertyViewerPartRowClick = function (el) {
+    dauntlessEvent('ship-property-viewer/model_parts/select:' + el.dataset.partName);
+};
+
+window.shipPropertyViewerPartNodeRowClick = function (el) {
     dauntlessEvent('ship-property-viewer/part/select_node:'
-        + JSON.stringify({name: name, kind: kind}));
+        + JSON.stringify({name: el.dataset.partName, kind: el.dataset.nodeKind}));
 };
 
-window.shipPropertyViewerPartSetTransition = function (name, value) {
-    var seconds = parseFloat(value);
-    if (isNaN(seconds)) return;
+window.shipPropertyViewerAnchorStep = function (btn, delta) {
+    var current = parseFloat(btn.dataset.value);
+    if (isNaN(current)) current = 2.0;
+    var next = Math.max(0.25, Math.round((current + delta) * 100) / 100);
     dauntlessEvent('ship-property-viewer/part/set_transition:'
-        + JSON.stringify({name: name, seconds: seconds}));
+        + JSON.stringify({name: btn.dataset.partName, seconds: next}));
 };
 
-window.shipPropertyViewerPartSetBreak = function (name, value) {
-    var percent = parseFloat(value);
-    if (isNaN(percent)) return;
+window.shipPropertyViewerBreakStep = function (btn, delta) {
+    var current = parseFloat(btn.dataset.value);
+    if (isNaN(current)) current = 20.0;
+    var next = Math.min(100, Math.max(5, Math.round(current + delta)));
     dauntlessEvent('ship-property-viewer/part/set_break:'
-        + JSON.stringify({name: name, percent: percent}));
+        + JSON.stringify({name: btn.dataset.partName, percent: next}));
 };
 
 // Right-click a part row: populate and show the part-node menu items,
 // hiding every subsystem/light/emitter item (spvShowMenuItems defaults any
-// key it isn't given to hidden). "Add State Transformation" is shown
-// whenever there is at least one missing state -- whether adding one
-// without an anchor yet refuses with a toast is the Python side's call
-// (_dispatch_part_action), not something this menu pre-empts.
-window.shipPropertyViewerPartRowMenu = function (event, name, hasAnchor, missingStates, breakable) {
+// key it isn't given to hidden). Every flag needed to decide which items
+// show comes off the row's own data-* attributes -- "Add State
+// Transformation" is shown whenever there is at least one missing state;
+// whether adding one without an anchor yet refuses with a toast is the
+// Python side's call (_dispatch_part_action), not something this menu
+// pre-empts.
+window.shipPropertyViewerPartRowMenu = function (event, el) {
     event.preventDefault(); event.stopPropagation();
+    var name = el.dataset.partName;
+    var hasAnchor = el.dataset.hasAnchor === 'true';
+    var breakable = el.dataset.breakable === 'true';
+    var missingCsv = el.dataset.missingStates || '';
+    var missingStates = missingCsv.length ? missingCsv.split(',') : [];
     spvCtxPartName = name; spvCtxPartKind = null;
     spvShowMenuItems({addanchor: !hasAnchor, addstate: missingStates.length > 0,
                        makebreakable: !breakable, removenode: false});
@@ -1071,9 +1095,9 @@ window.shipPropertyViewerPartRowMenu = function (event, name, hasAnchor, missing
 
 // Right-click a child row (Anchor / State Transformation / Breakage):
 // just Remove.
-window.shipPropertyViewerPartChildMenu = function (event, name, kind) {
+window.shipPropertyViewerPartChildMenu = function (event, el) {
     event.preventDefault(); event.stopPropagation();
-    spvCtxPartName = name; spvCtxPartKind = kind;
+    spvCtxPartName = el.dataset.partName; spvCtxPartKind = el.dataset.nodeKind;
     spvShowMenuItems({addanchor: false, addstate: false, makebreakable: false, removenode: true});
     spvOpenMenuAt(event);
     return false;
