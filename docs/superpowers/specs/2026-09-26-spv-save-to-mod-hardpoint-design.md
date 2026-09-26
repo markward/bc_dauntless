@@ -30,6 +30,7 @@ Success:
 | D2 | How is the mod file edited? | **Hybrid.** `SetPosition`/`SetRadius` are rewritten in place on the author's own call; everything else lives in one machine-owned managed block at the end of the file. |
 | D3 | Existing overrides that apply to mod-loaded hardpoints? | **No change, no migration.** The override mechanism does not take effect for mod hardpoints today (Mark tried it); that stays as-is. |
 | D4 | Backup? | **Yes.** A one-time pristine `<leaf>.py.orig` next to the file before its first write, never overwritten; every write is atomic via `.tmp`. |
+| D5 | How does emitted code detect Dauntless? | **A versioned marker**, `App.DAUNTLESS_ENV = 1`, defined explicitly in the root `App.py` shim. Guards read `hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= N`, so later features can require a higher N. Replaces borrowing `hasattr(App, "ArticulatedPartProperty_Create")`, including in the existing part blocks. |
 
 ## 3. Routing
 
@@ -95,10 +96,9 @@ def _dauntless_spv(find):
     if p is not None:
         p.SetGlowRegionShape(0, ...)
         ...
-    if hasattr(App, "ArticulatedPartProperty_Create"):
-        ...part blocks, exactly as _emit_part writes them...
+    ...part blocks, exactly as _emit_part writes them...
 
-if hasattr(App, "ArticulatedPartProperty_Create"):
+if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= 1:
     _dauntless_spv(lambda n: App.g_kModelPropertyManager.FindByName(n, App.TGModelPropertyManager.LOCAL_TEMPLATES))
 # <<< dauntless SPV edits <<<
 ```
@@ -106,11 +106,10 @@ if hasattr(App, "ArticulatedPartProperty_Create"):
 - **One emitter.** The function body is produced by the writer's existing
   `_emit_function` / `_emit_part` logic (parameterised on the function name), so
   the override file and the mod file share one code path for block text.
-- **Guard.** The call site is guarded by `hasattr(App,
-  "ArticulatedPartProperty_Create")` — a name Dauntless already defines and stock
-  `Appc` does not. Stock `stbc.exe` defines the function (harmless) and never
-  calls it, so unguarded `SetGlowRegion*` / `SetLightEmitter*` calls inside it
-  never reach stock property objects. No new marker name is invented.
+- **Guard.** The call site is guarded by the `DAUNTLESS_ENV` marker (§4.3).
+  Stock `stbc.exe` defines the function (harmless) and never calls it, so
+  unguarded `SetGlowRegion*` / `SetLightEmitter*` calls inside it never reach
+  stock property objects.
 - **Python 1.5 safe.** The block uses no f-strings, no `True`/`False`, no
   `import X as Y`; `lambda` and two-argument `hasattr` exist in 1.5.
 - **Ordering.** The block is at the end of the file, after the author's
@@ -121,7 +120,30 @@ if hasattr(App, "ArticulatedPartProperty_Create"):
   regenerated. A file with a start marker but no end marker (or two blocks) is
   refused with an error, never guessed at.
 
-### 4.3 Fallback into the managed block
+### 4.3 The `DAUNTLESS_ENV` marker
+
+- Defined **explicitly** as a module-level int in the project-root `App.py`
+  shim: `DAUNTLESS_ENV = 1`. It must be a real definition: the shim's module
+  `__getattr__` answers *any* undefined name with a stub, so in Dauntless
+  `hasattr(App, <anything>)` is always true and an undefined marker would
+  compare as a stub, not a number.
+- Emitted guard form (Python 1.5 safe — two-arg `hasattr`, short-circuit
+  `and`): `if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= 1:`.
+  The required level is a parameter of the emitter; everything shipped by this
+  spec requires 1.
+- **Bump rule:** raise `DAUNTLESS_ENV` only when newly emitted hardpoint code
+  needs engine surface that an older Dauntless lacks; the emitter then guards
+  that code with the new level. Documented beside the definition in `App.py`.
+- `_emit_part`'s existing `hasattr(App, "ArticulatedPartProperty_Create")`
+  guard switches to the marker form, so there is one convention. The part
+  blocks already in `engine/appc/hardpoint_overrides.py` are re-emitted with the
+  new guard in the same change, and `tests/unit/test_bop_pose_migration.py`
+  (which pins the old text) is updated with it.
+- Not a measured BC constant: it must not be added to
+  `constants_generated.py`; if `tests/unit/test_constant_surface.py` objects to
+  an unmeasured name, it gets a documented exemption there.
+
+### 4.4 Fallback into the managed block
 
 A `SetPosition`/`SetRadius` edit that cannot be done in place goes into the
 managed block instead (as a `find(name)` setter, which still wins because the
@@ -147,7 +169,7 @@ disagree.
    recording `find` + `_RecordingApp` (same mechanism as `read_models`),
    yielding the same `{sub: [(setter, args)], "__parts__": {...}}` shape.
 4. Apply the edits: in-place candidates per §4.1; everything else (and every
-   §4.3 fallback) via the existing `set_setter` / `set_region` / `set_part`
+   §4.4 fallback) via the existing `set_setter` / `set_region` / `set_part`
    into the block model.
 5. Emit the new block (or none) and append it to the author's text.
 6. Verify before swapping:
@@ -190,7 +212,9 @@ replaced by a fake for routing tests.
   `LoadPropertySet`; the new position, radius and glow values reach the
   property objects.
 - **Stock-BC compatibility:** exec the saved file against an `App` stand-in
-  lacking `ArticulatedPartProperty_Create` and the Dauntless setters; it runs
-  without raising and applies only the in-place SDK edits.
+  lacking `DAUNTLESS_ENV` and the Dauntless setters; it runs without raising
+  and applies only the in-place SDK edits.
+- **Marker:** `App.DAUNTLESS_ENV` is a real int `>= 1` (not a stub); a guard
+  requiring level 2 is skipped under level 1.
 - **SPV:** save on a mod-backed ship routes to the mod target and toasts its
   `describe()`; a failing write toasts the error and keeps the staged edits.
