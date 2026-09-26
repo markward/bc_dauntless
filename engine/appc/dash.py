@@ -7,6 +7,11 @@ warp_flight.py) and drops out at the destination's arrival placement, at
 rest, facing where the tunnel would have left it. ``warp.execute_warp``
 forks here; everything else (rule C) keeps the tunnel.
 
+Warp on Heading (``start_heading``) is the other dash: no destination and no
+align -- it engages at once along the nose at HEADING_DASH_GUPS and runs
+until a body ahead drops it out (at the body's region-arrival range, keeping
+the impulse speed engaged at) or 0 / All Stop drops it out at rest.
+
 Phases, all driven from ``tick`` once per frame:
 
 * **align** -- the ship is held where it is and swung onto the path's first
@@ -178,6 +183,85 @@ def start_set_course(player, dest_set, placement_name, queues,
     return True
 
 
+def start_heading(player, queues, button=None) -> bool:
+    """Warp on Heading: engage at once (no align) along the nose at
+    HEADING_DASH_GUPS until a body ahead drops the flight out, keeping the
+    impulse speed engaged at, or 0 / All Stop drops it out at rest.
+
+    Returns False -- nothing started, the queues go back on ``button`` --
+    when the player is not in a mapped region (the entry is greyed there;
+    this is the guard behind it)."""
+    from engine.appc.warp_flight import WarpFlight
+    from engine.systems import frames, region_hooks
+    src = frames.containing_set(player) if player is not None else None
+    if src is None or not region_hooks.is_mapped(src):
+        if button is not None:
+            button.put_back_queues(queues or {})
+        return False
+    f = player.GetWorldRotation().GetCol(1)
+    heading = (f.x, f.y, f.z)
+    v = player.GetVelocity()
+    engaged = v.x * f.x + v.y * f.y + v.z * f.z   # the forward impulse speed
+
+    st = _Dash(None, None, None, None, heading, None,
+               {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
+               button)
+    player.__dict__["_dash"] = st
+    # Ruling R12, as at a Set Course press.
+    from engine.appc import warp
+    warp._clear_all_targets(player)
+    warp._stand_down_player_ai(player)
+    player._speed_setpoint = None
+    player._target_angular_velocity_setpoint = None
+
+    # (No enable_helm_menu here: unlike a Set Course press, the heading
+    # press never greyed the Helm menu -- warp_button.engage.)
+    from engine.appc import dash_helm
+    dash_helm.sync(player)
+    _engage(player, st, WarpFlight(
+        heading=heading, speed_policy="heading",
+        exit_policy="engaged_impulse", engaged_speed=engaged,
+        standoff_of=_heading_standoffs(player)))
+    return True
+
+
+def _heading_standoffs(player):
+    """``standoff_of`` for the player's heading flight (rulings R1, R9): from
+    a body's centre, the distance to its owning region's arrival point (the
+    region set's "Player Start", system coordinates) -- where the tunnel
+    would frame it; else one radius above the surface (a star, a body whose
+    region is not loaded). A body whose arrival range already holds the ship
+    at engage (it starts there) uses radius + clearance instead, so the dash
+    neither ends on its first tick nor passes through the body."""
+    import App
+    from engine.systems import frames, resolve
+    from engine.systems.warp_path import clearance_gu
+    f = frames.frame_of(frames.containing_set(player))
+    m = (resolve.map_of(f.key[1])
+         if f is not None and f.key[0] == "system" else None)
+    here = frames.system_position(player)
+    here = tuple(here[1:]) if here is not None else None
+    table = {}
+    for b in (m.bodies if m is not None else ()):
+        if not b.owner_region:
+            continue
+        pSet = App.g_kSetManager.GetSet(b.owner_region)
+        wp = pSet.GetObject(_FALLBACK_PLACEMENT) if pSet is not None else None
+        arrival = frames.system_position(wp) if wp is not None else None
+        if arrival is None:
+            continue
+        centre = tuple(float(c) for c in b.position_gu)
+        sd = math.dist(centre, tuple(arrival[1:]))
+        if here is not None and sd >= math.dist(here, centre):
+            sd = b.radius_gu + clearance_gu(b.radius_gu)
+        table[b.name] = sd
+
+    def standoff_of(obstacle):
+        sd = table.get(obstacle.name)
+        return 2.0 * obstacle.radius_gu if sd is None else sd
+    return standoff_of
+
+
 def _log_body_fallback(dest_set) -> None:
     global _logged_body_fallback
     from engine import dev_mode
@@ -255,19 +339,22 @@ def _cancel(player, st) -> None:
     dash_helm.sync(player)
 
 
-def _engage(player, st) -> None:
+def _engage(player, st, flight=None) -> None:
+    """Begin the flight: the Set Course path at the end of its align, or the
+    ``flight`` given (a heading dash, which has no align)."""
     from engine.appc import warp, warp_state
     from engine.appc.subsystems import WarpEngineSubsystem
     from engine.appc.warp_flight import WarpFlight
-    turn = TGMatrix3().MakeRotation(st.angle, st.axis)
-    player.SetMatrixRotation(turn.MultMatrix(st.rot0))
+    if flight is None:
+        turn = TGMatrix3().MakeRotation(st.angle, st.axis)
+        player.SetMatrixRotation(turn.MultMatrix(st.rot0))
+        flight = WarpFlight(target=(st.end, st.forward),
+                            speed_policy="set_course", exit_policy="rest")
+        # The ship was held at the planned start through the align: fly the
+        # path already planned rather than planning it a second time.
+        flight._path = st.path
     warp._silence_ship_weapons(player)
     warp_state.set_state(player, WarpEngineSubsystem.WES_WARPING)
-    flight = WarpFlight(target=(st.end, st.forward), speed_policy="set_course",
-                        exit_policy="rest")
-    # The ship was held at the planned start through the align: fly the
-    # path already planned rather than planning it a second time.
-    flight._path = st.path
     st.flight = flight
     player.begin_warp_flight(flight)
     _play_engage_queues(st.queues)
@@ -303,9 +390,12 @@ def drop_out(player, reason) -> None:
     from engine.systems import frames, handoff
     if player._insystem_warp_transit is st.flight:
         player._end_in_system_warp(reason)
-    # Exit at rest (this flight's exit policy, and the manual drop-out's).
-    player._current_speed = 0.0
-    player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    # Exit at rest (a Set Course arrival, and every manual drop-out) -- except
+    # a heading dash's body drop-out, where the flight has already left the
+    # ship at its engaged impulse speed along the heading.
+    if st.flight.ended_reason != "body":
+        player._current_speed = 0.0
+        player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
 
     src = frames.containing_set(player)
     if st.flight.ended_reason == "arrived":

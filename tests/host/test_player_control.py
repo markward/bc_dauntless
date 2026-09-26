@@ -431,29 +431,25 @@ def test_nudge_multiple_notches_applies_each():
     assert pc.impulse_level == 3
 
 
-def test_ctrl_w_toggles_warp_boost():
-    """Finding 4: the in-system warp-boost toggle moved from Ctrl+I to
-    Ctrl+W (Ctrl+I now drives the SDK's ET_INPUT_INTERCEPT chord)."""
-    pc = _PlayerControl()
-    ship = _FakeShip()
-    reader = _FakeKeyReader()
-    reader.held.add(reader.keys.KEY_LEFT_CONTROL)
-    reader.pressed_once.add(reader.keys.KEY_W)
-    assert pc._warp_boost is False
-    pc.apply(ship, dt=1.0/60, h=reader)
-    assert pc._warp_boost is True
-
-
-def test_ctrl_i_no_longer_toggles_warp_boost():
-    """Ctrl+I must be a no-op for the boost toggle now that it's freed up
-    for the SDK's Intercept chord."""
-    pc = _PlayerControl()
-    ship = _FakeShip()
-    reader = _FakeKeyReader()
-    reader.held.add(reader.keys.KEY_LEFT_CONTROL)
-    reader.pressed_once.add(reader.keys.KEY_I)
-    pc.apply(ship, dt=1.0/60, h=reader)
-    assert pc._warp_boost is False
+def test_ctrl_w_changes_nothing():
+    """The Ctrl+W in-system warp boost is gone (in-system-warp spec: "Helm
+    command only ... Ctrl+W's boost is removed"): Ctrl+W at impulse 5 leaves
+    the throttle, the commanded speed and the current speed exactly as a
+    frame with no keys at all does."""
+    ship_a, ship_b = _FakeShip(), _FakeShip()
+    pc_a, pc_b = _PlayerControl(), _PlayerControl()
+    for pc in (pc_a, pc_b):
+        pc.impulse_level = 5
+    quiet = _FakeKeyReader()
+    chord = _FakeKeyReader()
+    chord.held.add(chord.keys.KEY_LEFT_CONTROL)
+    chord.pressed_once.add(chord.keys.KEY_W)
+    pc_a.apply(ship_a, dt=1.0/60, h=quiet)
+    pc_b.apply(ship_b, dt=1.0/60, h=chord)
+    assert pc_b.impulse_level == pc_a.impulse_level == 5
+    assert pc_b.GetTargetSpeed(ship_b) == pc_a.GetTargetSpeed(ship_a)
+    assert pc_b.GetCurrentSpeed() == pc_a.GetCurrentSpeed()
+    assert not hasattr(pc_b, "_warp_boost")
 
 
 def test_nudge_zero_is_noop():

@@ -18,6 +18,10 @@ _WARP_PRESSED_SUFFIX = "HelmMenuHandlers.WarpPressed"
 # Tests replace the engine step's body; production leaves this None.
 _engage_override = None
 
+# True only while press_heading's dispatch runs: the engine step then starts
+# a heading dash (engine/appc/dash.py) instead of a warp to the course.
+_heading_press = False
+
 
 def is_warp_replaced(qualified_name) -> bool:
     return str(qualified_name).endswith(_WARP_PRESSED_SUFFIX)
@@ -38,6 +42,29 @@ def press(button) -> None:
     evt.SetSource(button)
     evt.SetDestination(button)
     App.g_kEventManager.AddEvent(evt)
+
+
+def press_heading(button) -> None:
+    """Warp on Heading (in-system-warp spec §2, rule D): the same
+    ET_WARP_BUTTON_PRESSED through the same chain, with the button's course
+    (destination, mission, episode -- and the placement and mission latch
+    SetDestination also writes) cleared for the dispatch, so no mission
+    handler acts on a stale course, and restored exactly afterwards. What a
+    handler sets on the course meanwhile is discarded; what it queues stays
+    on the button for the dash to take."""
+    global _heading_press
+    saved = (button._destination, button._mission_name, button._episode_name,
+             button._placement_name, button._mission_destination)
+    button._destination = None
+    button._mission_name = ""
+    button._episode_name = ""
+    _heading_press = True
+    try:
+        press(button)
+    finally:
+        _heading_press = False
+        (button._destination, button._mission_name, button._episode_name,
+         button._placement_name, button._mission_destination) = saved
 
 
 def engine_warp_step(button, event) -> None:
@@ -75,7 +102,8 @@ def engage(button) -> None:
     from engine import dev_mode
     from engine.appc import warp as _w
     from engine.appc import warp_gates as _wg
-    if not button or not button.GetDestination():
+    heading = _heading_press
+    if not button or (not heading and not button.GetDestination()):
         if dev_mode.is_enabled():
             print("[warp] ignored: no course set", flush=True)
         return
@@ -91,6 +119,17 @@ def engage(button) -> None:
                 result.reason or "unknown", result.deny_line or "-"), flush=True)
         if result.deny_line is not None:
             _wg.speak_deny(player, result.deny_line)
+        return
+    if heading:
+        # Warp on Heading: no course, no tunnel, and the Helm menu stays
+        # enabled (the dash disables only its entries -- dash_helm).
+        from engine.appc import dash
+        if dash.start_heading(player, button.take_queues(), button=button):
+            try:
+                from engine.appc.top_window import drop_menus_turn_back
+                drop_menus_turn_back()
+            except Exception as _e:
+                dev_mode.log_swallowed("warp menu side effects", _e)
         return
     # Clear Helm's "ReadyToWarp" the way SDK WarpPressed does
     # (HelmMenuHandlers.py:871-872). announce_course_set put it there;

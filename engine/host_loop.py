@@ -2480,12 +2480,6 @@ class _PlayerControl:
     # Reverse magnitude as a fraction of MaxSpeed (BC convention: ¼ impulse).
     REVERSE_FRACTION = 0.25
 
-    # Ctrl+I "in-system warp" boost: forward target speed is multiplied by
-    # this factor while the toggle is on. Lets us reach distant astro
-    # objects (suns ~63 km out) in seconds without piping through BC's
-    # full WarpSequence machinery. Forward only — no reverse boost.
-    WARP_BOOST_FACTOR = 100.0
-
     def __init__(self, input_map=None):
         # Single source of truth for action → physical key.  Defaults to a
         # fresh InputMap (stock keys, no file) so headless tests that build
@@ -2499,7 +2493,6 @@ class _PlayerControl:
         self._current_pitch_rate = 0.0
         self._current_yaw_rate   = 0.0
         self._current_roll_rate  = 0.0
-        self._warp_boost = False
         self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
         # Set by the warp sequence (host) during a warp: forces the ship's speed
         # (0 = hold during align, >0 = burst forward during transit) along its
@@ -2560,9 +2553,6 @@ class _PlayerControl:
         authored MaxSpeed; with a pod shot out it targets correspondingly less,
         which is exactly the cap _effective_motion enforces, so command and cap
         agree by construction.
-
-        Forward speed is additionally multiplied by WARP_BOOST_FACTOR when
-        the in-system warp toggle is on (Ctrl+I); reverse is unaffected.
         """
         ies = self._get_ies(player)
         # The AUTHORED value decides whether this ship has real limits at all;
@@ -2570,13 +2560,12 @@ class _PlayerControl:
         # "fallback ship".
         authored_max = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
         effective_max = ies.GetMaxSpeed() if ies is not None else 0.0
-        boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
         if authored_max > 0.0:
             if self.impulse_level >= 0:
-                return (self.impulse_level / 9.0) * effective_max * boost
+                return (self.impulse_level / 9.0) * effective_max
             return -self.REVERSE_FRACTION * effective_max
         if self.impulse_level >= 0:
-            return self.impulse_level * self.IMPULSE_UNIT * boost
+            return self.impulse_level * self.IMPULSE_UNIT
         return self.impulse_level * self.IMPULSE_UNIT
 
     def GetCurrentSpeed(self) -> float:
@@ -2809,28 +2798,6 @@ class _PlayerControl:
         _super_held = h.key_state(h.keys.KEY_LEFT_SUPER) if hasattr(h.keys, "KEY_LEFT_SUPER") else False
         _ctrl_held = _ctrl_held_either(h)
         _alt_is_held = _alt_held(h)
-        # Ctrl+W → toggle in-system warp boost (moved off Ctrl+I: this branch
-        # makes the SDK's Ctrl+I = ET_INPUT_INTERCEPT live, so Ctrl+I now
-        # means both at once; Mark's call, Finding 4 — Ctrl+W is unbound in
-        # the SDK). Snap _current_speed to the new target so the boost
-        # engages instantly rather than ramping over many seconds at the
-        # IES's normal MaxAccel.
-        if (
-            _ctrl_held
-            and hasattr(h.keys, "KEY_W")
-            and h.key_pressed(h.keys.KEY_W)
-        ):
-            self._warp_boost = not self._warp_boost
-            # While drifting (all engines offline) _current_speed is frozen and
-            # _drift_velocity drives motion; don't snap it — drift-exit re-seeds
-            # it from the drift magnitude. The boost flag still flips so it
-            # takes effect once an engine is repaired.
-            if self._drift_velocity is None:
-                self._current_speed = self.GetTargetSpeed(player)
-            print(
-                f"[host_loop] in-system warp {'ON' if self._warp_boost else 'OFF'}",
-                flush=True,
-            )
         if h.key_pressed(self._input_map.code("reverse")) and not (_super_held or _ctrl_held):
             self.impulse_level = self.REVERSE_LEVEL
         elif h.key_pressed(self._input_map.code("full_stop")):
