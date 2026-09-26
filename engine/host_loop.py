@@ -7205,7 +7205,7 @@ def _sync_spv_articulation(session, spv_panel) -> None:
     It pushes the ship's LIVE poses, exactly like the unfrozen path. It does
     NOT know about the forced state: the SPV writes the forced pose into
     `ship._articulation_poses` at its event edges
-    (`articulation.force_pose` / `force_part_pose`, from the panel's open
+    (`articulation.force_pose` / `force_state_poses`, from the panel's open
     and its part-node selection -- `_sync_part_pose`), so by the
     time this runs the live poses ARE the forced ones. That is the whole
     point -- mounts, pins, the derived-box queries and this sweep all read

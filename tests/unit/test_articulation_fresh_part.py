@@ -128,3 +128,59 @@ def test_an_unrigged_ship_with_no_forced_pose_is_untouched(boxes, pushes):
     assert pushes == []
     assert session.ship_articulation == {}
     assert not hasattr(ship, "_articulation_poses")
+
+
+# ── force_state_poses: the SPV's whole-state preview ─────────────────────────
+#
+# Selecting a State node previews EVERY part in that state (Mark,
+# 2026-09-26), so the forcing helper takes {name: pose} and must honour fresh
+# (non-rig) names exactly as force_part_pose does (Ruling 10).
+
+POSE_B = part_pose.pose_from6((0.05, -0.1, 0.0, 0.0, -25.0, 10.0))
+
+
+def test_force_state_poses_poses_every_named_part_including_fresh_ones(boxes):
+    ship = _Ship()
+    articulation.force_state_poses(ship, {"head": POSE, "body": POSE_B})
+    assert ship._articulation_poses == {"head": POSE, "body": POSE_B}
+    assert articulation.pose_for_part(ship, "head") == POSE
+    assert articulation.pose_for_part(ship, "body") == POSE_B
+    assert set(articulation.posed_part_names(ship)) == {"head", "body"}
+
+
+def test_force_state_poses_drops_a_previously_forced_name(boxes):
+    """A part forced by the LAST preview but absent from this one returns to
+    the NIF pose -- the dict is rebuilt, not merged."""
+    ship = _Ship()
+    articulation.force_state_poses(ship, {"head": POSE, "body": POSE_B})
+    articulation.force_state_poses(ship, {"body": POSE_B})
+    assert part_pose.is_identity(articulation.pose_for_part(ship, "head"))
+    assert articulation.pose_for_part(ship, "body") == POSE_B
+
+
+def test_force_state_poses_puts_unnamed_rig_parts_at_the_nif_pose(monkeypatch):
+    from engine.appc import articulated_part as ap
+    wing = ap.ArticulatedPartProperty_Create("left wing")
+    wing.SetAnchor(0.0, 0.0, 0.0)
+    wing.SetStatePose("warp", 0.0, 0.0, 0.0, 0.0, 45.0, 0.0)
+    monkeypatch.setattr(articulation, "rig_for",
+                        lambda leaf: (wing,) if leaf == LEAF else ())
+    ship = _Ship()
+    ship._articulation_transitions = {"left wing": object()}
+    articulation.force_state_poses(ship, {"head": POSE})
+    assert ship._articulation_poses == {"left wing": part_pose.IDENTITY,
+                                        "head": POSE}
+    assert ship._articulation_transitions == {}, "in-flight swings dropped"
+
+
+def test_the_render_sync_pushes_every_state_posed_part(boxes, pushes):
+    from engine import host_loop
+    ship = _Ship()
+    articulation.force_state_poses(ship, {"head": POSE, "body": POSE_B})
+    host_loop._sync_ship_articulation(_Session(), ship, 7)
+    assert sorted(pushes) == sorted([
+        (7, "head", tuple(part_pose.matrix4_model(
+            POSE, articulation.MODEL_TO_SHIP))),
+        (7, "body", tuple(part_pose.matrix4_model(
+            POSE_B, articulation.MODEL_TO_SHIP))),
+    ])

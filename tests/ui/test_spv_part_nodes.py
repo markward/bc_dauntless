@@ -273,8 +273,18 @@ def test_remove_anchor_with_poses_is_refused(make_panel):
     assert _part_row(p, "left wing")["has_anchor"] is False
 
 
-def test_selecting_a_transformation_poses_only_that_part_and_locks_mounts(
+def _rig_pose(name, state):
+    part = next(q for q in articulation.rig_for(RIGGED_LEAF)
+                if q.GetName() == name)
+    return part_pose.pose_from6(part.pose6_for(state))
+
+
+def test_selecting_a_transformation_poses_every_part_in_that_state_and_locks_mounts(
         make_panel):
+    """A selected State node previews the WHOLE SHIP in that state (Mark,
+    2026-09-26). REPLACES "poses only that part" -- the old assertion that
+    the other wing stays at the NIF pose was changed by Mark's request, not
+    weakened."""
     ship = _RiggedShip()
     p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
     p6 = (0.0, 0.1, 0.0, 0.0, 30.0, 0.0)
@@ -290,8 +300,10 @@ def test_selecting_a_transformation_poses_only_that_part_and_locks_mounts(
     poses = ship._articulation_poses
     assert set(poses) == {"left wing", "left wing01"}
     assert poses["left wing"] == part_pose.pose_from6(p6)
-    assert poses["left wing01"] == part_pose.IDENTITY, (
-        "the other wing stays at the NIF pose -- this part only")
+    assert not part_pose.is_identity(_rig_pose("left wing01", "warp")), (
+        "fixture: the other wing's baked warp pose is not the NIF pose")
+    assert poses["left wing01"] == _rig_pose("left wing01", "warp"), (
+        "the other wing is previewed in the same state")
 
     parts = _parts(p)
     assert parts["mount_editing_enabled"] is False
@@ -353,7 +365,9 @@ def test_selecting_anything_else_returns_to_the_nif_pose(make_panel):
     p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
 
     def _posed():
-        return not part_pose.is_identity(ship._articulation_poses["left wing"])
+        # BOTH wings: a State node previews every part (Mark, 2026-09-26).
+        return all(not part_pose.is_identity(ship._articulation_poses[n])
+                   for n in ("left wing", "left wing01"))
 
     def _all_nif():
         return all(v == part_pose.IDENTITY
@@ -376,11 +390,142 @@ def test_selecting_anything_else_returns_to_the_nif_pose(make_panel):
     assert _part_row(p, "left wing")["chosen"] is True
     assert all(k["chosen"] is False for k in _children(p, "left wing"))
 
+    # The Breakage node.
+    if p._effective_part("left wing").get("break") is None:
+        assert p.dispatch_event("part/make_breakable:left wing") is True
+    assert p._part_node_exists("left wing", "breakage"), "fixture"
+    _select_node(p, "left wing", "warp")
+    assert _posed()
+    _select_node(p, "left wing", "breakage")
+    assert _all_nif()
+
     # Closing the viewer.
     _select_node(p, "left wing", "warp")
     assert _posed()
     p.close()
     assert _all_nif()
+
+
+@pytest.mark.parametrize("source", ["baked", "staged", "saved"])
+def test_the_other_parts_state_pose_comes_from_its_effective_spec(
+        make_panel, source):
+    """Selecting part A's Warp node poses part B at B's EFFECTIVE warp pose,
+    wherever it lives: baked in the rig, staged this session, or saved this
+    session."""
+    ship = _RiggedShip()
+    p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
+    want = _rig_pose("left wing01", "warp")
+    if source != "baked":
+        p6b = (0.02, -0.03, 0.01, 5.0, -40.0, 12.0)
+        spec = copy.deepcopy(p._effective_part("left wing01"))
+        spec["poses"]["warp"] = p6b
+        if source == "staged":
+            p._pending_part["left wing01"] = spec
+        else:
+            p._saved_part["left wing01"] = spec
+        want = part_pose.pose_from6(p6b)
+
+    assert _select_node(p, "left wing", "warp") is True
+
+    assert ship._articulation_poses["left wing01"] == want
+    assert ship._articulation_poses["left wing"] == _rig_pose(
+        "left wing", "warp")
+
+
+def test_a_part_with_no_pose_for_that_state_stays_at_the_nif_pose(make_panel):
+    """Red is unset on the fixture rig: give ONLY the left wing a Red pose,
+    and add a fresh part (head) posed only in Cruise. Selecting the left
+    wing's Red node poses the left wing alone -- the other wing (a rig part)
+    and the head (a fresh part) have no Red pose, so they stay at the NIF
+    pose."""
+    ship = _RiggedShip()
+    p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
+    assert "red" not in p._effective_part("left wing01")["poses"], "fixture"
+    assert _add_state(p, "left wing", "red") is True
+    red6 = (0.0, 0.05, 0.0, 0.0, 20.0, 0.0)
+    spec = copy.deepcopy(p._pending_part["left wing"])
+    spec["poses"]["red"] = red6
+    p._pending_part["left wing"] = spec
+    p.dispatch_event("part/add_anchor:head")
+    _add_state(p, "head", "cruise")
+    spec = copy.deepcopy(p._pending_part["head"])
+    spec["poses"]["cruise"] = (0.0, 0.1, 0.0, 15.0, 0.0, 0.0)
+    p._pending_part["head"] = spec
+
+    assert _select_node(p, "left wing", "red") is True
+
+    poses = ship._articulation_poses
+    assert poses["left wing"] == part_pose.pose_from6(red6)
+    assert poses.get("left wing01", part_pose.IDENTITY) == part_pose.IDENTITY
+    assert poses.get("head", part_pose.IDENTITY) == part_pose.IDENTITY
+
+    # ...while the head's Cruise node poses the head AND both rig wings.
+    assert _select_node(p, "head", "cruise") is True
+    poses = ship._articulation_poses
+    assert not part_pose.is_identity(poses["head"])
+    assert poses["left wing"] == _rig_pose("left wing", "cruise")
+    assert poses["left wing01"] == _rig_pose("left wing01", "cruise")
+
+
+def test_editing_the_selected_pose_keeps_every_other_part_posed(make_panel):
+    """An edit re-posts the whole state: the other parts stay posed while
+    the selected one moves -- a stepper, a gizmo drag (no dispatch) and an
+    undo alike."""
+    ship = _RiggedShip()
+    p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
+    other = _rig_pose("left wing01", "warp")
+    assert _select_node(p, "left wing", "warp") is True
+    before = ship._articulation_poses["left wing"]
+
+    assert p.dispatch_event('rotate_nudge:{"axis":2,"delta":7.5}') is True
+
+    poses = ship._articulation_poses
+    assert poses["left wing01"] == other, "the other wing stays posed"
+    assert poses["left wing"] != before
+    assert poses["left wing"] == part_pose.pose_from6(
+        p._pending_part["left wing"]["poses"]["warp"])
+
+    # A path that bypasses dispatch_event (a gizmo drag stages directly).
+    p6 = (0.01, 0.02, 0.03, 1.0, 2.0, 3.0)
+    p._stage_part_pose("left wing", "warp", p6)
+    assert ship._articulation_poses["left wing"] == part_pose.pose_from6(p6)
+    assert ship._articulation_poses["left wing01"] == other
+
+    p.dispatch_event("undo")
+    assert ship._articulation_poses["left wing01"] == other
+
+
+def test_a_state_previews_every_fresh_part_and_the_render_sync_pushes_each(
+        make_panel, monkeypatch):
+    """Fresh (non-rig) parts preview together too (Ruling 10), and the
+    render sync pushes a matrix for every posed name."""
+    from engine import host_io, host_loop
+    ship = _UnriggedShip()
+    p, _ship, _target = make_panel(ship=ship)
+    assert articulation.rig_for(UNRIGGED_LEAF) == (), "fixture: no rig"
+    want = {"head": (0.0, 0.1, 0.05, 20.0, 0.0, 0.0),
+            "left wing": (0.02, 0.0, -0.01, 0.0, 30.0, -10.0)}
+    for name, p6 in want.items():
+        p.dispatch_event("part/add_anchor:" + name)
+        _add_state(p, name, "warp")
+        spec = copy.deepcopy(p._pending_part[name])
+        spec["poses"]["warp"] = p6
+        p._pending_part[name] = spec
+
+    assert _select_node(p, "head", "warp") is True
+
+    assert ship._articulation_poses == {
+        n: part_pose.pose_from6(p6) for n, p6 in want.items()}
+    seen = []
+    monkeypatch.setattr(
+        host_io, "set_instance_node_transform",
+        lambda iid, node, m16: seen.append((node, tuple(m16))))
+    session = type("S", (), {"ship_articulation": {}})()
+    host_loop._sync_ship_articulation(session, ship, 3)
+    assert sorted(seen) == sorted(
+        (n, tuple(part_pose.matrix4_model(part_pose.pose_from6(p6),
+                                          articulation.MODEL_TO_SHIP)))
+        for n, p6 in want.items())
 
 
 def test_breakage_is_edited_as_a_percentage(make_panel):

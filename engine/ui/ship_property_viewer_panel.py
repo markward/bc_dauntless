@@ -151,8 +151,9 @@ class ShipPropertyViewerPanel(Panel):
         # Toast shown at the top of the SPV: (text, expires_at monotonic
         # seconds) or None. Reset every open/close. See _show_toast.
         self._toast: Optional[tuple] = None
-        # The part pose `_sync_part_pose` last forced: (part, state, p6) while
-        # a {State} Transformation node is selected, None for the NIF pose.
+        # The state preview `_sync_part_pose` last forced: (state, sorted
+        # ((part, p6), ...)) for every part posed in that state while a
+        # {State} Transformation node is selected, None for the NIF pose.
         self._applied_part_pose: Optional[tuple] = None
         self.selected_index: Optional[int] = None
         # Active transform-gizmo tool: None|"transform"|"rotate"|"scale".
@@ -632,23 +633,38 @@ class ShipPropertyViewerPanel(Panel):
         not lock anything. Staged edits are folded in (not just the baked
         rig) so re-authoring a pose updates the lock on the very next render,
         not only after Save."""
-        from engine.appc import articulation, part_pose
+        from engine.appc import part_pose
+        for p6 in self._state_pose6s(state).values():
+            if not part_pose.is_identity(part_pose.pose_from6(p6)):
+                return True
+        return False
+
+    def _state_pose6s(self, state: str) -> dict:
+        """{part name: effective `state` pose6} for every part of the current
+        ship that HAS a pose in `state` -- the baked rig's parts and every
+        part staged or saved this session (a fresh, non-rig part included,
+        Ruling 10). A part with no pose for `state` is absent."""
+        from engine.appc import articulation
         ship = self._ship_getter()
         leaf = hardpoint_leaf_for_ship(ship) if ship is not None else None
         names = set(p.GetName() for p in articulation.parts_for_leaf(leaf))
         names |= set(self._pending_part) | set(self._saved_part)
+        out = {}
         for nm in names:
             p6 = (self._effective_part(nm).get("poses") or {}).get(state)
-            if p6 is not None and not part_pose.is_identity(part_pose.pose_from6(p6)):
-                return True
-        return False
+            if p6 is not None:
+                out[nm] = tuple(float(v) for v in p6)
+        return out
 
     def _sync_part_pose(self) -> None:
         """Apply the pose the node selection calls for, at the event edge.
 
-        A selected {State} Transformation draws THAT part in that pose and
-        every other part at the NIF pose (`articulation.force_part_pose`);
-        anything else -- the part row, the Anchor or Breakage node, a mount,
+        A selected {State} Transformation previews the WHOLE SHIP in that
+        state (Mark, 2026-09-26): every part -- rig or fresh -- with an
+        effective pose for the state takes it, and every other part stays at
+        the NIF pose (`articulation.force_state_poses`). Editing the selected
+        pose re-posts the whole state, so the other parts stay posed while
+        it moves. Anything else -- the part row, the Anchor or Breakage node, a mount,
         nothing -- draws the whole rig at the NIF pose
         (`articulation.force_pose(ship, None)`), the frame a hardpoint mount
         is stored in. The SPV freezes the sim, so nothing else would move
@@ -670,17 +686,16 @@ class ShipPropertyViewerPanel(Panel):
         state_node = self._selected_state_node()
         want = None
         if state_node is not None:
-            name, state = state_node
-            p6 = self._effective_part(name)["poses"][state]
-            want = (name, state, tuple(float(v) for v in p6))
+            state = state_node[1]
+            want = (state, tuple(sorted(self._state_pose6s(state).items())))
         if want == self._applied_part_pose:
             return
         ship = self._ship_getter()
         if want is None:
             articulation.force_pose(ship, None)
         else:
-            articulation.force_part_pose(ship, want[0],
-                                         part_pose.pose_from6(want[2]))
+            articulation.force_state_poses(
+                ship, {nm: part_pose.pose_from6(p6) for nm, p6 in want[1]})
         self._applied_part_pose = want
         self._refresh_world_positions()
         self._last_pushed = None
@@ -1625,13 +1640,18 @@ class ShipPropertyViewerPanel(Panel):
         (starboard): negate X of the axis (cylinder/strip) or of both forward
         and up (box/cone), then set it absolutely.
 
-        A part POSE reflects whole across ship X -- (tx, ty, tz, rx, ry, rz)
-        -> (-tx, ty, tz, rx, -ry, -rz), i.e. M.R.M and M.t with M = diag(-1,
-        1, 1) -- so the mirrored pose draws the mirror image of the part; a
-        part ANCHOR reflects x -> -x."""
+        A part POSE flips its swing in place (Mark, 2026-09-26: "Mirror just
+        flips the sign"): Euler (rx, ry, rz) -> (rx, -ry, -rz), i.e. R ->
+        M.R.M with M = diag(-1, 1, 1), holding the POSED ANCHOR fixed
+        (`_stage_pose_euler`, ruling 14). The translation is not otherwise
+        touched -- reflecting it too swung a side-mounted part about a pivot
+        on the far side of the ship. The action-row Mirror adds the posed
+        anchor's q.x -> -q.x (the coord Mirror); together they are the exact
+        reflection M.P.M once the anchor is mirrored. A part ANCHOR
+        reflects x -> -x."""
         if t[0] == "part_pose":
-            tx, ty, tz, rx, ry, rz = self._part_pose6(t[1], t[2])
-            self._stage_part_pose(t[1], t[2], (-tx, ty, tz, rx, -ry, -rz))
+            rx, ry, rz = self._part_pose6(t[1], t[2])[3:]
+            self._stage_pose_euler(t[1], t[2], (rx, -ry, -rz))
             return
         if t[0] == "part_anchor":
             anchor = self._effective_part(t[1]).get("anchor")
@@ -3383,12 +3403,8 @@ class ShipPropertyViewerPanel(Panel):
                 self._last_pushed = None
             return True
         if action == "coord_mirror":
-            t = self._active_transform_target()
-            if t is not None and t[0] == "part_pose":
-                # The same whole-pose reflection as the action-row Mirror,
-                # so the two agree (ruling 15).
-                self._mirror_target_rotation(t)
-                return True
+            # On a part pose the coordinate is the POSED anchor, so this
+            # reflects q.x -> -q.x with R unchanged (ruling 15).
             pos = self._transform_target_pos()
             if pos is not None:
                 p = list(pos); p[0] = -p[0]
@@ -3509,13 +3525,11 @@ class ShipPropertyViewerPanel(Panel):
                 self._mirror_target_rotation(t)
             return True
         if action == "mirror_element":
+            # A part pose takes both steps like any mount: the posed anchor's
+            # q.x -> -q.x, then (rx, -ry, -rz) about that held anchor -- one
+            # dispatch, so one undo step.
             t = self._active_transform_target()
-            if t is not None and t[0] == "part_pose":
-                # A pose mirrors WHOLE, once: its translation is part of
-                # the reflection, so the position step below would negate
-                # tx a second time and undo it.
-                self._mirror_target_rotation(t)
-            elif t is not None:
+            if t is not None:
                 pos = self._transform_target_pos()
                 if pos is not None:
                     self._set_transform_target_pos((-pos[0], pos[1], pos[2]))

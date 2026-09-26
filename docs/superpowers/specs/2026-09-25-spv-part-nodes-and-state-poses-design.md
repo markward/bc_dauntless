@@ -256,12 +256,37 @@ the selection with the node.
 |---|---|---|---|
 | Part row | NIF pose, derived box | none | none |
 | Anchor | NIF pose, anchor marker | Move (the anchor) | Add/Edit Anchor: transition time (s) |
-| {State} Transformation | posed in that state (this part only) | Move + Rotate the part, Rotate centred on the anchor | none |
+| {State} Transformation | the WHOLE SHIP posed in that state: every part (rig or fresh) with a pose for it takes it, the rest stay at the NIF pose | Move + Rotate the part, Rotate centred on the anchor | none |
 | Breakage | NIF pose, derived box | none | Make Breakable/Edit Breakage: "Breaks off after taking [20]% of the ship's hull strength" |
 
 While a transformation is selected, subsystem, light and emitter editing are
 locked with the existing one-line reason. Selecting anything else, or closing
-the SPV, returns the part to the NIF pose.
+the SPV, returns every part to the NIF pose. (Amended 2026-09-26 by Mark: a
+State node previews every part in that state, not just its own part, so a
+pair can be judged together; editing the selected pose re-posts the whole
+state, so the other parts stay posed during the edit.)
+
+**Mirror on a part node** (amended 2026-09-26 by Mark: "Mirror just flips the
+sign"). A pose is (R, t) about the ship origin, so reflecting it whole
+(−tx, ty, tz, rx, −ry, −rz) — the original rule — also mirrored the hidden
+translation about the ship centre and flung a side-mounted part round a pivot
+on the far side of the ship. Now:
+
+- *Rotate panel Mirror* on a Transformation: Euler (rx, ry, rz) → (rx, −ry,
+  −rz), holding the POSED anchor fixed (the same rule as every numeric
+  rotation edit); the translation is not otherwise touched.
+- *Move panel Mirror* on a Transformation: the posed anchor q → (−q.x, q.y,
+  q.z), R unchanged (the same translate-by-Δq as a coordinate edit).
+- *Action-row Mirror* on a Transformation: both, in one undo step.
+- *Mirror on an Anchor* (either): anchor.x → −anchor.x; the poses are untouched.
+
+The twin workflow this makes exact, with no dedicated option: Anchor —
+copy the source part's, paste onto the other part's, Move-panel Mirror;
+then the pose — copy the source Transformation's coordinate and rotation,
+paste both onto the other part's same-state Transformation, action-row Mirror.
+The result is the exact reflection M·P·M (M = diag(−1, 1, 1)). The anchor
+must go first: a pose paste holds the posed anchor about the part's current
+anchor.
 
 ### 7.4 Toast
 
@@ -301,7 +326,7 @@ Each stage leaves the game working.
 - **Native:** the node-transform matrix equals the Python pose, including the
   unit conversion.
 - **SPV (pure):** tree payload; each menu rule; the no-anchor toast; the
-  remove-anchor refusal; one node per kind; selection poses only that part and
+  remove-anchor refusal; one node per kind; selection poses every part in the state and
   locks mounts; popup values stage edits; each add selects its node; the
   State picker's anchor check; Save emits §3 and round-trips.
 - **Live (Mark):** author an anchor and a Warp pose on the BoP and see it on

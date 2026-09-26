@@ -353,6 +353,24 @@ def force_part_pose(ship, part_name: str, pose) -> None:
     _store_forced(ship, poses)
 
 
+def force_state_poses(ship, poses_by_name) -> None:
+    """SNAP every part named in `poses_by_name` ({name: pose}) to its pose
+    and every OTHER rigged part to IDENTITY (the NIF pose), dropping any
+    in-flight transition. The SPV's whole-ship preview of one state: a
+    selected {State} Transformation poses every part that has a pose for
+    that state (the caller resolves those from the effective, possibly
+    unsaved, specs). Same event-edge contract as `force_pose`.
+
+    Names need NOT be in the rig -- a part authored fresh in the SPV is
+    posed by name exactly as `force_part_pose` does (see
+    `posed_part_names`). The dict is REBUILT, not merged: a name the last
+    preview forced and this one omits reads IDENTITY again."""
+    poses = {_part_name(p): part_pose.IDENTITY for p in parts_for_ship(ship)}
+    for name, pose in poses_by_name.items():
+        poses[str(name)] = pose
+    _store_forced(ship, poses)
+
+
 def _store_forced(ship, poses) -> None:
     try:
         ship._articulation_poses = poses

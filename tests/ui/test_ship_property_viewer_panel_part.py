@@ -447,10 +447,13 @@ def test_opening_the_viewer_snaps_the_ship_to_the_ANCHOR_pose(make_panel):
         "the pins and the derived-box queries all read -- at the anchor pose")
 
 
-def test_selecting_a_state_node_snaps_that_part_to_its_authored_pose(
+def test_selecting_a_state_node_snaps_every_part_to_its_authored_pose(
         make_panel):
     """Selecting a {State} Transformation has to MOVE the part, not just set
-    a lock and a highlight -- and only that part."""
+    a lock and a highlight -- and every other part with a pose in that state
+    moves with it (Mark, 2026-09-26; REPLACES "only that part", whose
+    `left wing == IDENTITY` assertion was changed by request, not
+    weakened)."""
     from engine.appc import articulation, part_pose
     p, holder, _target = make_panel
     holder["ship"] = _RiggedShip()
@@ -467,7 +470,11 @@ def test_selecting_a_state_node_snaps_that_part_to_its_authored_pose(
     assert not part_pose.is_identity(want), "fixture check"
     poses = _poses(holder["ship"])
     assert poses["left wing01"] == want
-    assert poses["left wing"] == part_pose.IDENTITY
+    other = next(q for q in articulation.rig_for("birdofprey")
+                 if q.GetName() == "left wing")
+    other_want = part_pose.pose_from6(other.pose6_for("cruise"))
+    assert not part_pose.is_identity(other_want), "fixture check"
+    assert poses["left wing"] == other_want
 
 
 def test_closing_the_viewer_returns_the_rig_to_the_NIF_pose(make_panel):

@@ -312,21 +312,148 @@ def test_move_panel_shows_the_posed_anchor_and_a_nudge_moves_it_exactly(
     _assert_pose_close(ship._articulation_poses["left wing"], pose1)
 
 
-def test_coord_mirror_matches_the_action_row_mirror_on_a_pose(make_panel):
+def _mx(v):
+    """M.v, M = diag(-1, 1, 1): the reflection across the ship centreline."""
+    return (-v[0], v[1], v[2])
+
+
+def test_coord_mirror_reflects_the_posed_anchor_and_keeps_the_rotation(
+        make_panel):
+    """Move-panel Mirror on a State node (Mark, 2026-09-26): the POSED anchor
+    q -> (-q.x, q.y, q.z), R unchanged -- the same translate-by-dq a coord
+    edit makes (ruling 15). REPLACES the old whole-pose reflection
+    (-tx, ty, tz, rx, -ry, -rz), removed by Mark's request: on a side-mounted
+    part it mirrored the hidden translation about the ship centre too."""
+    anchor = (-0.5, 0.1, -0.05)
     warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
-    mirrored = (-0.1, 0.2, 0.3, 10.0, -20.0, -30.0)
-    p, _ship = _authored(make_panel, warp=warp)
+    p, ship = _authored(make_panel, anchor=anchor, warp=warp)
     p.dispatch_event("set_tool:transform")
     _select_node(p, "left wing", "warp")
+    q0 = part_pose.apply(part_pose.pose_from6(warp), anchor)
 
     p.dispatch_event("coord_mirror")
-    via_coord = _pose6(p, "left wing", "warp")
-    _set_pose(p, "left wing", "warp", warp)
-    p.dispatch_event("mirror_element")
-    via_row = _pose6(p, "left wing", "warp")
 
-    assert via_coord == pytest.approx(mirrored)
-    assert via_row == pytest.approx(mirrored)
+    got6 = _pose6(p, "left wing", "warp")
+    assert got6[3:] == pytest.approx(warp[3:], abs=1e-12), "R unchanged"
+    got = part_pose.pose_from6(got6)
+    assert part_pose.apply(got, anchor) == pytest.approx(_mx(q0), abs=1e-12)
+    _assert_pose_close(ship._articulation_poses["left wing"], got)
+
+
+def test_rotate_mirror_flips_the_swing_about_the_held_posed_anchor(make_panel):
+    """Rotate-panel Mirror on a State node (Mark, 2026-09-26: "Mirror just
+    flips the sign"): Euler (rx, ry, rz) -> (rx, -ry, -rz), holding the POSED
+    ANCHOR fixed exactly as every numeric rotation does (ruling 14). REPLACES
+    the old whole-pose reflection -- changed by Mark's request, not
+    weakened."""
+    anchor = (-0.5, 0.1, -0.05)
+    warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
+    p, ship = _authored(make_panel, anchor=anchor, warp=warp)
+    p.dispatch_event("set_tool:rotate")
+    _select_node(p, "left wing", "warp")
+    q0 = part_pose.apply(part_pose.pose_from6(warp), anchor)
+
+    p.dispatch_event("rotate_mirror")
+
+    got6 = _pose6(p, "left wing", "warp")
+    assert got6[3:] == pytest.approx((10.0, -20.0, -30.0), abs=1e-12)
+    got = part_pose.pose_from6(got6)
+    assert part_pose.apply(got, anchor) == pytest.approx(q0, abs=1e-12), (
+        "the hinge the part is drawn at does not move")
+    _assert_pose_close(ship._articulation_poses["left wing"], got)
+    vals = p.rotate_values()
+    assert [f["value"] for f in vals["fields"]] == pytest.approx(
+        [10.0, -20.0, -30.0])
+
+
+def test_action_row_mirror_on_a_pose_is_both_in_one_undo_step(make_panel):
+    """Action-row Mirror on a State node = rotate Mirror AND coord Mirror:
+    Euler (rx, -ry, -rz) about the held posed anchor, then q.x -> -q.x --
+    ONE undo step."""
+    anchor = (-0.5, 0.1, -0.05)
+    warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
+    p, ship = _authored(make_panel, anchor=anchor, warp=warp)
+    p.dispatch_event("set_tool:transform")
+    _select_node(p, "left wing", "warp")
+    q0 = part_pose.apply(part_pose.pose_from6(warp), anchor)
+    depth = len(p._undo_stack)
+
+    p.dispatch_event("mirror_element")
+
+    got6 = _pose6(p, "left wing", "warp")
+    assert got6[3:] == pytest.approx((10.0, -20.0, -30.0), abs=1e-12)
+    got = part_pose.pose_from6(got6)
+    assert part_pose.apply(got, anchor) == pytest.approx(_mx(q0), abs=1e-12)
+    _assert_pose_close(ship._articulation_poses["left wing"], got)
+    assert len(p._undo_stack) == depth + 1, "one undo step"
+
+    p.dispatch_event("undo")
+    assert _pose6(p, "left wing", "warp") == warp
+    _assert_pose_close(ship._articulation_poses["left wing"],
+                       part_pose.pose_from6(warp))
+
+
+_RIGHT_WING = {"name": "right wing", "parent": "Scene Root",
+               "candidate": True,
+               "bounds_min": (0.1, -0.5, -0.5), "bounds_max": (1.0, 0.5, 0.5)}
+
+
+def test_copy_paste_mirror_makes_the_exact_mirror_twin(make_panel):
+    """THE workflow Mirror exists for (Mark, 2026-09-26). Two parts whose
+    rest geometry mirrors; author the right one (a two-axis rotation AND a
+    translation), then with ONLY the existing panel actions:
+
+      anchor: right Anchor -> coord_copy -> left Anchor -> coord_paste
+              -> coord_mirror
+      pose:   right Warp -> coord_copy + rotate_copy -> left Warp
+              -> coord_paste + rotate_paste -> mirror_element
+
+    and the left part must be the exact reflection M.P_R.M, with its anchor
+    at M.a_R. The anchor goes first: a pose paste holds the posed anchor
+    about the part's CURRENT anchor (ruling 14), so the anchor must already
+    be the mirrored one."""
+    a_r = (0.5, 0.1, -0.05)
+    p_r6 = (0.03, -0.02, 0.04, 25.0, -35.0, 50.0)
+    p, ship = make_panel()
+    p._model_part_nodes.append(dict(_RIGHT_WING))
+    for name in ("right wing", "left wing"):
+        assert p.dispatch_event("part/add_anchor:" + name) is True
+        assert _add_state(p, name, "warp") is True
+    _set_anchor(p, "right wing", a_r)
+    _set_pose(p, "right wing", "warp", p_r6)
+    assert p._effective_part("left wing")["anchor"] != pytest.approx(_mx(a_r)), (
+        "fixture: the left anchor does not start mirrored")
+
+    # Anchor.
+    p.dispatch_event("set_tool:transform")
+    _select_node(p, "right wing", "anchor")
+    p.dispatch_event("coord_copy")
+    _select_node(p, "left wing", "anchor")
+    p.dispatch_event("coord_paste")
+    p.dispatch_event("coord_mirror")
+    # Pose.
+    _select_node(p, "right wing", "warp")
+    p.dispatch_event("coord_copy")
+    p.dispatch_event("rotate_copy")
+    _select_node(p, "left wing", "warp")
+    p.dispatch_event("coord_paste")
+    p.dispatch_event("rotate_paste")
+    p.dispatch_event("mirror_element")
+
+    a_l = p._effective_part("left wing")["anchor"]
+    assert a_l == pytest.approx(_mx(a_r), abs=1e-12)
+    pose_r = part_pose.pose_from6(p_r6)
+    pose_l = part_pose.pose_from6(_pose6(p, "left wing", "warp"))
+    for x in [(0.3, -0.2, 0.1), (0.9, 0.4, -0.3), a_r, (0.0, 0.0, 0.0),
+              (0.55, -0.45, 0.25)]:
+        assert part_pose.apply(pose_l, _mx(x)) == pytest.approx(
+            _mx(part_pose.apply(pose_r, x)), abs=1e-9)
+    # The right part was only read, never written.
+    assert _pose6(p, "right wing", "warp") == p_r6
+    assert p._effective_part("right wing")["anchor"] == a_r
+    # And the preview shows the twin: both parts posed in Warp.
+    _assert_pose_close(ship._articulation_poses["left wing"], pose_l)
+    _assert_pose_close(ship._articulation_poses["right wing"], pose_r)
 
 
 def test_coord_paste_refuses_across_part_kinds(make_panel):
@@ -512,31 +639,12 @@ def test_rotate_paste_holds_the_posed_anchor(make_panel):
     assert part_pose.apply(got, anchor) == pytest.approx(q0, abs=1e-9)
 
 
-def test_mirror_reflects_a_pose_across_ship_x(make_panel):
-    warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
-    mirrored = (-0.1, 0.2, 0.3, 10.0, -20.0, -30.0)
-    p, ship = _authored(make_panel, warp=warp)
-    p.dispatch_event("set_tool:rotate")
-    _select_node(p, "left wing", "warp")
-
-    p.dispatch_event("rotate_mirror")
-    assert _pose6(p, "left wing", "warp") == pytest.approx(mirrored)
-    assert ship._articulation_poses["left wing"] == part_pose.pose_from6(
-        _pose6(p, "left wing", "warp"))
-
-    # The action-row Mirror reflects the whole pose ONCE (not tx twice).
-    _set_pose(p, "left wing", "warp", warp)
-    p.dispatch_event("mirror_element")
-    assert _pose6(p, "left wing", "warp") == pytest.approx(mirrored)
-
-    # Reflecting really is a reflection: the mirrored pose draws the
-    # X-reflected point wherever the original draws a point.
-    x = (0.3, -0.2, 0.1)
-    a = part_pose.apply(part_pose.pose_from6(warp), x)
-    b = part_pose.apply(part_pose.pose_from6(mirrored), (-x[0], x[1], x[2]))
-    assert b == pytest.approx((-a[0], a[1], a[2]), abs=1e-12)
-
-    # An anchor mirrors x -> -x.
+def test_mirror_on_an_anchor_negates_x(make_panel):
+    """An anchor mirrors x -> -x under the action-row Mirror (unchanged;
+    the poses are untouched -- see
+    test_anchor_gizmo_verbs_leave_every_state_pose_byte_unchanged)."""
+    p, _ship = _authored(make_panel, anchor=(-0.5, 0.1, -0.05),
+                         warp=(0.1, 0.2, 0.3, 10.0, 20.0, 30.0))
     _select_node(p, "left wing", "anchor")
     anchor = p._effective_part("left wing")["anchor"]
     p.dispatch_event("mirror_element")
