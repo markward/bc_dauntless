@@ -1,7 +1,7 @@
 """Panel-level integration for the Model Parts pane: selecting a part (row
-or node) is exclusive with mount selection and is NOT a gizmo target (the
-part-node gizmos come later -- spec 2026-09-25 section 8 stage 4), part
-edits stage and save as `__part__` writer edits, and posing a part locks
+or node) is exclusive with mount selection, the part ROW and its Breakage
+node are NOT a gizmo target (the Anchor and State nodes are -- covered in
+test_spv_part_gizmos.py), part edits stage and save as `__part__` writer edits, and posing a part locks
 subsystem/light/emitter editing -- gated in `_dispatch_event_inner` itself,
 not only by a greyed-out DOM, so a stale action string can never slip an edit
 through. The node actions themselves are covered in test_spv_part_nodes.py.
@@ -110,10 +110,11 @@ def _select_node(p, name, kind):
         "part/select_node:" + json.dumps({"name": name, "kind": kind}))
 
 
-def test_a_part_row_or_node_is_never_a_transform_target(make_panel):
-    """No part gizmo until the part-node gizmo surface exists: selecting a
-    part row, or any of its nodes, leaves no transform target, so no gizmo
-    is drawn and no Transform/Rotate/Scale panel appears."""
+def test_a_part_row_or_breakage_node_is_never_a_transform_target(make_panel):
+    """Selecting a part row, or its Breakage node, leaves no transform
+    target, so no gizmo is drawn and no Transform/Rotate/Scale panel
+    appears. (The Anchor and State nodes ARE gizmo targets since the
+    part-node gizmos landed -- test_spv_part_gizmos.py.)"""
     p, _holder, _target = make_panel
     _open_with_parts(p)
     p.dispatch_event("part/add_anchor:head")
@@ -125,7 +126,7 @@ def test_a_part_row_or_node_is_never_a_transform_target(make_panel):
         assert p.dispatch_event("model_parts/select:head") is True
         assert p._active_transform_target() is None
         assert p._active_gizmo() is None
-        for kind in ("anchor", "warp", "breakage"):
+        for kind in ("breakage",):
             assert _select_node(p, "head", kind) is True, kind
             assert p._active_transform_target() is None
             assert p._active_gizmo() is None

@@ -23,6 +23,7 @@ import pytest
 
 from engine.appc import articulation, part_pose
 from engine.appc.math import TGMatrix3, TGPoint3
+from engine.ui import ship_property_viewer as spv
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
 
 LEAF = "birdofprey"
@@ -249,9 +250,15 @@ def _select_cannon_previewing_cruise(p):
     the cannon, and arm the transform tool -- the state of Mark's retest step
     3. Selecting the State node clears (and locks) mount selection, so the
     cannon is selected directly: these tests pin the SELECTED-pin road's
-    articulation, whatever put a pose and a selection together."""
+    articulation, whatever put a pose and a selection together.
+
+    The State node is then deselected WITHOUT dispatching (so
+    `_sync_part_pose` does not run and the forced pose stays): a selected
+    State node is itself the transform target and would win over the cannon
+    (test_spv_part_gizmos.py), putting the gizmo on the pose, not the pin."""
     p.open()
     _pose_starboard_wing(p)
+    spv.select_part_node(None, None)
     i = _cannon_index(p)
     p.selected_index = i
     p.active_tool = "transform"

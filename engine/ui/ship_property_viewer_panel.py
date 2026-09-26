@@ -246,6 +246,9 @@ class ShipPropertyViewerPanel(Panel):
         self._ring_grab_axis = (0.0, -1.0, 0.0)
         self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = [0.0, 0.0, 0.0]
+        # A part pose's grab-time pose and posed anchor (_begin_ring_drag).
+        self._ring_grab_pose = None
+        self._ring_grab_pivot = None
         self._ring_sign = 1.0
         self._gizmo_hover = -1
         # Clipboard for the transform-coord panel's Copy/Paste — a body-frame
@@ -360,6 +363,9 @@ class ShipPropertyViewerPanel(Panel):
         self._ring_grab_axis = (0.0, -1.0, 0.0)
         self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = [0.0, 0.0, 0.0]
+        # A part pose's grab-time pose and posed anchor (_begin_ring_drag).
+        self._ring_grab_pose = None
+        self._ring_grab_pivot = None
         self._ring_sign = 1.0
         self._gizmo_hover = -1
         self._coord_clipboard = None
@@ -433,6 +439,9 @@ class ShipPropertyViewerPanel(Panel):
         self._ring_grab_axis = (0.0, -1.0, 0.0)
         self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = [0.0, 0.0, 0.0]
+        # A part pose's grab-time pose and posed anchor (_begin_ring_drag).
+        self._ring_grab_pose = None
+        self._ring_grab_pivot = None
         self._ring_sign = 1.0
         self._gizmo_hover = -1
         self._coord_clipboard = None
@@ -1064,16 +1073,28 @@ class ShipPropertyViewerPanel(Panel):
     # ------------------------------------------------------------------
     def _active_transform_target(self):
         """Which node the transform gizmo/drag currently targets:
-        ("emitter", i, j), ("light", i), ("subsystem", i), or None. Emitter,
-        light, and subsystem selection are mutually exclusive by construction
+        ("part_anchor", name), ("part_pose", name, state), ("emitter", i, j),
+        ("light", i), ("subsystem", i), or None. Part-node, emitter, light,
+        and subsystem selection are mutually exclusive by construction
         (dispatch_event's selection handlers clear the others).
 
-        A model part -- its row or any of its nodes -- is NOT a transform
-        target: selecting one clears the mount selection, so this answers
-        None and no gizmo appears. The part-node gizmos (anchor Move, pose
-        Move/Rotate about the anchor) are a separate, later surface (spec
-        2026-09-25 section 8, stage 4). Every consumer that unpacks a 2-tuple
-        (`kind, i = t`) branches on `t[0] == "emitter"` first."""
+        A model part's Anchor node is a Move target (the anchor); a {State}
+        Transformation node is a Move and Rotate target (that state's pose,
+        spec 2026-09-25 sections 3 and 7.3). The part ROW and its Breakage
+        node are no transform target at all -- None, so no gizmo appears.
+        Every consumer that unpacks a 2-tuple (`kind, i = t`) branches on
+        the part kinds (`_is_part_target`) and `t[0] == "emitter"` first."""
+        from engine.appc.articulated_part import STATES
+        node = _spv.selected_part_node()
+        if node is not None:
+            name, kind = node
+            if not self._part_node_exists(name, kind):
+                return None
+            if kind == "anchor":
+                return ("part_anchor", name)
+            if kind in STATES:
+                return ("part_pose", name, kind)
+            return None          # Breakage: no gizmo
         if self._selected_emitter is not None:
             return ("emitter",) + self._selected_emitter   # ("emitter", i, j)
         if self._selected_light_index is not None:
@@ -1082,10 +1103,49 @@ class ShipPropertyViewerPanel(Panel):
             return ("subsystem", self.selected_index)
         return None
 
+    @staticmethod
+    def _is_part_target(target) -> bool:
+        """True for a part-node transform target (anchor or state pose)."""
+        return target is not None and target[0] in ("part_anchor", "part_pose")
+
+    def _part_pose6(self, name: str, state: str) -> tuple:
+        """Part `name`'s effective `state` pose as a float 6-tuple
+        (tx, ty, tz, rx, ry, rz)."""
+        return tuple(float(v) for v in self._effective_part(name)["poses"][state])
+
+    def _stage_part_pose(self, name: str, state: str, p6) -> None:
+        """Stage `p6` as part `name`'s `state` pose and re-post the preview
+        at once. A gizmo drag never goes through `dispatch_event` (whose
+        `_sync_part_pose` re-posts after every action), so without the sync
+        here the mesh would stay put while the numbers move."""
+        poses = dict(self._effective_part(name).get("poses") or {})
+        poses[state] = tuple(float(v) for v in p6)
+        self._stage_part_field(name, poses=poses)
+        if self._visible:
+            self._sync_part_pose()
+
+    def _posed_anchor(self, name: str, state: str):
+        """Where part `name`'s anchor is DRAWN in `state`: the pose applied
+        to the anchor. None without an anchor."""
+        from engine.appc import part_pose
+        anchor = self._effective_part(name).get("anchor")
+        if anchor is None:
+            return None
+        return part_pose.apply(
+            part_pose.pose_from6(self._part_pose6(name, state)),
+            tuple(float(c) for c in anchor))
+
     def _target_pos_of(self, target):
-        """Body-frame (x, y, z) of an arbitrary transform target, or None."""
+        """Body-frame (x, y, z) of an arbitrary transform target -- where its
+        gizmo sits -- or None. A part anchor sits at the anchor; a part pose
+        at the POSED anchor (the pivot its rings rotate about)."""
         if target is None:
             return None
+        if target[0] == "part_anchor":
+            anchor = self._effective_part(target[1]).get("anchor")
+            return tuple(float(c) for c in anchor) if anchor is not None else None
+        if target[0] == "part_pose":
+            return self._posed_anchor(target[1], target[2])
         if target[0] == "emitter":
             _, i, j = target
             spec = self._effective_emitter(i, j)
@@ -1097,17 +1157,33 @@ class ShipPropertyViewerPanel(Panel):
         return tuple(float(c) for c in self._effective_pos(i))
 
     def _transform_target_pos(self):
-        """Body-frame (x, y, z) of the current transform target, or None (no
-        tool target). Mirrors `transform_gizmo`'s target resolution but
-        returns the raw position tuple instead of the gizmo geometry."""
-        return self._target_pos_of(self._active_transform_target())
+        """The current transform target's editable body-frame coordinate --
+        what the Move panel shows and the coord steppers/copy/paste/mirror
+        edit -- or None (no tool target). The gizmo position
+        (`_target_pos_of`) for every kind except a part POSE, whose
+        coordinate is its translation (tx, ty, tz) while its gizmo sits at
+        the posed anchor."""
+        t = self._active_transform_target()
+        if t is not None and t[0] == "part_pose":
+            return self._part_pose6(t[1], t[2])[:3]
+        return self._target_pos_of(t)
 
     def _set_transform_target_pos(self, xyz) -> None:
-        """Stage `xyz` as the current transform target's body-frame position,
-        routing to the emitter (whole-list restage), light, or subsystem
-        staging path as appropriate."""
+        """Stage `xyz` as the current transform target's coordinate (see
+        `_transform_target_pos`), routing to the part anchor, part pose
+        translation, emitter (whole-list restage), light, or subsystem
+        staging path as appropriate. Setting an anchor never touches a pose
+        (spec 2.3, option A)."""
         t = self._active_transform_target()
         if t is None:
+            return
+        if t[0] == "part_anchor":
+            self._stage_part_field(t[1], anchor=tuple(float(c) for c in xyz))
+            return
+        if t[0] == "part_pose":
+            p6 = self._part_pose6(t[1], t[2])
+            self._stage_part_pose(t[1], t[2],
+                                  tuple(float(c) for c in xyz) + p6[3:])
             return
         if t[0] == "emitter":
             _, i, j = t
@@ -1219,7 +1295,11 @@ class ShipPropertyViewerPanel(Panel):
         depend on its shape (`Box` -> xyz axes, `Cylinder` -> radius+length,
         else -> radius). An emitter is scalar-`radius`/`length`: a point emitter
         exposes only Radius; a strip or cone exposes Radius + Length (the cone's
-        half-angle is DERIVED from radius/length, so no separate field)."""
+        half-angle is DERIVED from radius/length, so no separate field).
+        A part anchor or pose has no size at all: ("none", []), a kind no
+        other target shares, so a scale clipboard/pipette never matches it."""
+        if self._is_part_target(target):
+            return "none", []
         if target[0] == "emitter":
             _, i, j = target
             spec = self._effective_emitter(i, j)
@@ -1265,6 +1345,12 @@ class ShipPropertyViewerPanel(Panel):
                                      {"label": "Length", "value": float(fore) - float(aft)}]
         return "radius", [{"label": "Radius", "value": float(spec.get("radius", (0.25,))[0])}]
 
+    def _scale_target(self):
+        """The Scale tool's target: the current transform target, or None
+        for a part anchor/pose (no size concept -- Scale is inert there)."""
+        t = self._active_transform_target()
+        return None if self._is_part_target(t) else t
+
     def scale_values(self) -> Optional[dict]:
         """Data for the scale-tool panel: `{"kind", "fields", "has_clipboard",
         "can_paste"}` for the current transform target, or None when the scale
@@ -1273,7 +1359,7 @@ class ShipPropertyViewerPanel(Panel):
         "radius", strip/cone -> "radius_length")."""
         if self.active_tool != "scale":
             return None
-        t = self._active_transform_target()
+        t = self._scale_target()
         if t is None:
             return None
         kind, fields = self._scale_kind_and_fields(t)
@@ -1286,7 +1372,7 @@ class ShipPropertyViewerPanel(Panel):
         """Stage `value` (floored at SCALE_MIN) for size field `index` of the
         current transform target, routing to the radius or light-spec staging
         path as appropriate."""
-        t = self._active_transform_target()
+        t = self._scale_target()
         if t is None:
             return
         value = max(SCALE_MIN, float(value))
@@ -1353,11 +1439,16 @@ class ShipPropertyViewerPanel(Panel):
         forward+up orientation basis) light; ("emitter", i, j) for a strip
         emitter (rotate its single `axis`) or a cone emitter (rotate its
         forward+up basis, like a Box); None otherwise (sphere/subsystem, and
-        a point emitter, are inert)."""
+        a point emitter, are inert). A part's state pose rotates
+        (("part_pose", name, state)); its anchor has no rotation (None)."""
         t = self._active_transform_target()
         if t is None:
             return None
         kt = t[0]
+        if kt == "part_pose":
+            return t
+        if kt == "part_anchor":
+            return None
         if kt == "emitter":
             _, i, j = t
             spec = self._effective_emitter(i, j)
@@ -1375,7 +1466,23 @@ class ShipPropertyViewerPanel(Panel):
     def _mirror_target_rotation(self, t) -> None:
         """Reflect the rotate target `t`'s orientation across the ship X axis
         (starboard): negate X of the axis (cylinder/strip) or of both forward
-        and up (box/cone), then set it absolutely."""
+        and up (box/cone), then set it absolutely.
+
+        A part POSE reflects whole across ship X -- (tx, ty, tz, rx, ry, rz)
+        -> (-tx, ty, tz, rx, -ry, -rz), i.e. M.R.M and M.t with M = diag(-1,
+        1, 1) -- so the mirrored pose draws the mirror image of the part; a
+        part ANCHOR reflects x -> -x."""
+        if t[0] == "part_pose":
+            tx, ty, tz, rx, ry, rz = self._part_pose6(t[1], t[2])
+            self._stage_part_pose(t[1], t[2], (-tx, ty, tz, rx, -ry, -rz))
+            return
+        if t[0] == "part_anchor":
+            anchor = self._effective_part(t[1]).get("anchor")
+            if anchor is not None:
+                self._stage_part_field(
+                    t[1], anchor=(-float(anchor[0]), float(anchor[1]),
+                                  float(anchor[2])))
+            return
         if t[0] == "emitter":
             _, i, j = t
             spec = self._effective_emitter(i, j) or {}
@@ -1418,7 +1525,12 @@ class ShipPropertyViewerPanel(Panel):
         # Keyed by the full target tuple (("light", i) / ("emitter", i, j)) so a
         # subsystem's light readout stays independent of that same subsystem's
         # emitter readouts — a bare index i would collide.
-        acc = self._rotate_accum.get(t, [0.0, 0.0, 0.0])
+        # A part pose shows its OWN Euler angles (rx, ry, rz degrees, spec
+        # section 3), not an accumulator: the pose IS those three numbers.
+        if t[0] == "part_pose":
+            acc = list(self._part_pose6(t[1], t[2])[3:])
+        else:
+            acc = self._rotate_accum.get(t, [0.0, 0.0, 0.0])
         clip = self._rotate_clipboard
         kind = self._rotate_clipboard_kind(t)
         return {"fields": [{"label": "X", "value": acc[0]},
@@ -1435,7 +1547,11 @@ class ShipPropertyViewerPanel(Panel):
         INTENTIONALLY — both rotate a single axis, so a cylinder-light rotation
         can be copied and pasted/mirrored onto a strip emitter and vice versa
         (the mirror-a-light workflow). A cone carries a full orientation basis,
-        so it uses `cone_orientation` and only interchanges with other cones."""
+        so it uses `cone_orientation` and only interchanges with other cones.
+        A part pose's three Euler angles are `pose_euler` -- they only paste
+        onto another pose."""
+        if target[0] == "part_pose":
+            return "pose_euler"
         if target[0] == "emitter":
             spec = self._effective_emitter(target[1], target[2]) or {}
             return "cone_orientation" if spec.get("kind") == "cone" \
@@ -1455,6 +1571,13 @@ class ShipPropertyViewerPanel(Panel):
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
         ang = math.radians(delta_deg)
+        if t[0] == "part_pose":
+            # The stepper edits that Euler component directly (spec section
+            # 3): rx/ry/rz += delta, translation untouched.
+            p6 = list(self._part_pose6(t[1], t[2]))
+            p6[3 + index] += float(delta_deg)
+            self._stage_part_pose(t[1], t[2], p6)
+            return
         if t[0] == "emitter":
             # A CONE carries an oriented (forward=axis, up) basis like a Box, so
             # it rotates BOTH and re-orthonormalizes; a strip rotates its single
@@ -1580,7 +1703,13 @@ class ShipPropertyViewerPanel(Panel):
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
-        if kt == "emitter":
+        if self._is_part_target(target):
+            # The anchor, or the POSED anchor for a state pose.
+            pos = self._target_pos_of(target)
+            if pos is None:
+                return None
+            origin = world_from_body(ship, pos)
+        elif kt == "emitter":
             spec = self._effective_emitter(target[1], target[2])
             if spec is None:
                 return None
@@ -1609,7 +1738,7 @@ class ShipPropertyViewerPanel(Panel):
         target selected, and the ship resolvable with a world rotation."""
         if self.active_tool != "scale" or self.camera is None:
             return None
-        t = self._active_transform_target()
+        t = self._scale_target()
         if t is None:
             return None
         ship = self._ship_getter()
@@ -1660,6 +1789,18 @@ class ShipPropertyViewerPanel(Panel):
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
+        if t[0] == "part_pose":
+            # Rings sit at the POSED anchor -- the pivot they rotate about.
+            pos = self._target_pos_of(t)
+            if pos is None:
+                return None
+            return {
+                "origin": world_from_body(ship, pos),
+                "axes": gizmo_axes(ship.GetWorldRotation()),
+                "length": gizmo_length(self.camera),
+                "highlight": self._gizmo_hover,
+                "handle_kind": 2,
+            }
         i = t[1]
         if not (0 <= i < len(self._descriptors)):
             return None
@@ -1704,7 +1845,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = grab_param
         g = self._active_gizmo()
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
-        t = self._active_transform_target()
+        t = self._scale_target()
         if t is None:
             self._scale_grab = (0, 0.0)
             return
@@ -1784,11 +1925,32 @@ class ShipPropertyViewerPanel(Panel):
             self._ring_grab_accum = [0.0, 0.0, 0.0]
             self._ring_sign = 1.0
             return
-        i = t[1]
-        if t[0] == "emitter":
-            spec = self._effective_emitter(i, t[2]) or {}
+        if t[0] == "part_pose":
+            # A pose rotates from its GRAB-time pose about its GRAB-time
+            # posed anchor, so every drag frame recomputes from the same
+            # base instead of compounding (see _apply_ring_drag_angle).
+            from engine.appc import part_pose
+            self._ring_grab_pose = part_pose.pose_from6(
+                self._part_pose6(t[1], t[2]))
+            self._ring_grab_pivot = self._posed_anchor(t[1], t[2])
         else:
-            spec = self._effective_light(i) or {}
+            i = t[1]
+            if t[0] == "emitter":
+                spec = self._effective_emitter(i, t[2]) or {}
+            else:
+                spec = self._effective_light(i) or {}
+            self._begin_ring_drag_spec(t, spec)
+        eye, tgt = self.camera.eye(), self.camera.target
+        fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
+        wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
+        d = wa[0]*fwd[0] + wa[1]*fwd[1] + wa[2]*fwd[2]
+        # Screen-CCW should rotate about the axis toward the camera. If it feels
+        # inverted in-game, flip this comparison.
+        self._ring_sign = -1.0 if d > 0.0 else 1.0
+
+    def _begin_ring_drag_spec(self, t, spec) -> None:
+        """Capture a light/emitter rotate target's grab-start axis,
+        orientation and degree accumulators (see `_begin_ring_drag`)."""
         self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
         if t[0] == "emitter" and spec.get("kind") == "cone":
             # A cone rotates from its (forward=axis, up) basis, like a Box light;
@@ -1804,13 +1966,6 @@ class ShipPropertyViewerPanel(Panel):
         # Keyed by the full target tuple so light and emitter accumulators on
         # the same subsystem stay independent (see rotate_values).
         self._ring_grab_accum = list(self._rotate_accum.get(t, [0.0, 0.0, 0.0]))
-        eye, tgt = self.camera.eye(), self.camera.target
-        fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
-        wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
-        d = wa[0]*fwd[0] + wa[1]*fwd[1] + wa[2]*fwd[2]
-        # Screen-CCW should rotate about the axis toward the camera. If it feels
-        # inverted in-game, flip this comparison.
-        self._ring_sign = -1.0 if d > 0.0 else 1.0
 
     def _apply_ring_drag_angle(self, d_body):
         """Apply a body-frame delta angle (radians) about the grabbed ring axis
@@ -1827,6 +1982,27 @@ class ShipPropertyViewerPanel(Panel):
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
         k = self._axis_drag
+        if t[0] == "part_pose":
+            # Rotate the grab-time pose by d about body axis e_k through the
+            # grab-time posed anchor q: R' = rot(e_k, d).R_grab and
+            # t' = rot(e_k, d).(t_grab - q) + q. hinge_pose(q, e_k, d) is
+            # exactly (rot, q - rot.q), so the new pose is that hinge
+            # composed after the grab pose.
+            from engine.appc import part_pose
+            if self._ring_grab_pivot is None:
+                return
+            e_k = tuple(1.0 if a == k else 0.0 for a in range(3))
+            hinge = part_pose.hinge_pose(self._ring_grab_pivot, e_k,
+                                         math.degrees(d_body))
+            R_grab, t_grab = self._ring_grab_pose
+            cols = [part_pose.apply_vector(
+                        hinge, (R_grab[0][j], R_grab[1][j], R_grab[2][j]))
+                    for j in range(3)]
+            R_new = tuple(tuple(cols[j][i] for j in range(3)) for i in range(3))
+            t_new = part_pose.apply(hinge, t_grab)
+            self._stage_part_pose(t[1], t[2],
+                                  part_pose.pose_to6((R_new, t_new)))
+            return
         if t[0] == "emitter":
             # A CONE rotates BOTH `forward` and `up` of its grab-start
             # orientation (like a Box), then re-orthonormalizes; a strip rotates
@@ -1884,6 +2060,22 @@ class ShipPropertyViewerPanel(Panel):
         target = self._active_transform_target()
         if target is None:
             return
+        if self._is_part_target(target):
+            # Grab the COORDINATE the drag edits (the anchor, or a pose's
+            # translation) and the gizmo's world origin (the anchor, or the
+            # posed anchor) -- a pose drag adds its body-frame delta to t,
+            # which moves the posed anchor by exactly that delta.
+            pos = self._target_pos_of(target)
+            if pos is None:
+                return
+            self._axis_drag = axis
+            self._axis_grab_param = grab_param
+            self._axis_grab_pos = self._transform_target_pos()
+            ship = self._ship_getter()
+            if ship is not None and hasattr(ship, "GetWorldRotation"):
+                from engine.ui.ship_property_viewer import world_from_body
+                self._axis_grab_origin = world_from_body(ship, pos)
+            return
         if target[0] == "emitter":
             _, i, j = target
             spec = self._effective_emitter(i, j)
@@ -1930,6 +2122,10 @@ class ShipPropertyViewerPanel(Panel):
         k = self._axis_drag
         base = list(self._axis_grab_pos)
         base[k] += (param_now - self._axis_grab_param)
+        if self._is_part_target(target):
+            # Anchor -> the anchor; pose -> its translation (and the preview).
+            self._set_transform_target_pos(tuple(base))
+            return
         if target[0] == "emitter":
             _, i, j = target
             self.set_emitter_position(i, j, tuple(base))
@@ -2664,7 +2860,10 @@ class ShipPropertyViewerPanel(Panel):
         if action == "pipette":
             if self._pipette_armed:
                 self._pipette_armed = False
-            elif self._active_transform_target() is not None:
+            elif self._active_transform_target() is not None \
+                    and not self._is_part_target(self._active_transform_target()):
+                # A part node holds none of the aspects the pipette copies
+                # (a mount position, rotation, size, colour), so it never arms.
                 self._pipette_armed = True
             self._last_pushed = None
             return True
@@ -3010,7 +3209,7 @@ class ShipPropertyViewerPanel(Panel):
                 index = int(arg["index"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
-            t = self._active_transform_target()
+            t = self._scale_target()
             if t is None:
                 return False
             kind, fields = self._scale_kind_and_fields(t)
@@ -3019,7 +3218,7 @@ class ShipPropertyViewerPanel(Panel):
             self._set_scale_field(index, fields[index]["value"] + delta)
             return True
         if action == "scale_copy":
-            t = self._active_transform_target()
+            t = self._scale_target()
             # _scale_kind_and_fields is emitter-aware (Task 7): a point emitter
             # copies real ("radius", (r,)), a strip/cone copies real
             # ("radius_length", (r, l)) — no inert placeholder to clobber the
@@ -3031,7 +3230,7 @@ class ShipPropertyViewerPanel(Panel):
                 self._last_pushed = None
             return True
         if action == "scale_paste":
-            t = self._active_transform_target()
+            t = self._scale_target()
             if t is not None and self._scale_clipboard is not None:
                 kind, fields = self._scale_kind_and_fields(t)
                 if self._scale_clipboard[0] == kind:
@@ -3039,7 +3238,7 @@ class ShipPropertyViewerPanel(Panel):
                         self._set_scale_field(idx, v)
             return True
         if action == "scale_uniform":
-            t = self._active_transform_target()
+            t = self._scale_target()
             if t is not None:
                 kind, fields = self._scale_kind_and_fields(t)
                 # Only Box lights have kind "xyz"; emitters/subsystems/other
@@ -3062,7 +3261,10 @@ class ShipPropertyViewerPanel(Panel):
         if action == "rotate_copy":
             t = self._rotate_target()
             if t is not None:
-                if t[0] == "emitter":
+                if t[0] == "part_pose":
+                    self._rotate_clipboard = (
+                        "pose_euler", self._part_pose6(t[1], t[2])[3:])
+                elif t[0] == "emitter":
                     _, i, j = t
                     spec = self._effective_emitter(i, j) or {}
                     if spec.get("kind") == "cone":
@@ -3092,7 +3294,14 @@ class ShipPropertyViewerPanel(Panel):
             if (t is not None
                     and self._rotate_clipboard is not None
                     and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t)):
-                if self._rotate_clipboard[0] == "box_orientation":
+                if self._rotate_clipboard[0] == "pose_euler":
+                    # Only a part pose target has this kind: set its three
+                    # Euler angles, keep its translation.
+                    p6 = self._part_pose6(t[1], t[2])
+                    self._stage_part_pose(
+                        t[1], t[2],
+                        p6[:3] + tuple(float(a) for a in self._rotate_clipboard[1]))
+                elif self._rotate_clipboard[0] == "box_orientation":
                     # box_orientation only matches a Box LIGHT target (an emitter
                     # kind is cylinder_axis/cone_orientation), so t is
                     # ("light", i) here.
@@ -3112,7 +3321,12 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "mirror_element":
             t = self._active_transform_target()
-            if t is not None:
+            if t is not None and t[0] == "part_pose":
+                # A pose mirrors WHOLE, once: its translation is part of
+                # the reflection, so the position step below would negate
+                # tx a second time and undo it.
+                self._mirror_target_rotation(t)
+            elif t is not None:
                 pos = self._transform_target_pos()
                 if pos is not None:
                     self._set_transform_target_pos((-pos[0], pos[1], pos[2]))
