@@ -241,7 +241,8 @@ Two consequences worth knowing before reading a frame spike as a regression:
 
 1. **Load/warp burst.** 32 targetable contacts is **~17 ms in one frame** — an
    entire 60 Hz frame. A warp pays it twice: mid-warp `perceived_by()` returns
-   `()` (the player sits alone in `_WarpTransit`), giving N REMOVED, then
+   `()` (the player sits in BC's `"warp"` set, empty unless a mission
+   parked ships there), giving N REMOVED, then
    arrival gives N ADDED. Nothing bounds this today.
 2. **No range hysteresis — this is the worse one.** `sensor_detection`'s
    `HYSTERESIS` / `_latched` pair covers NEBULA concealment only; the RANGE

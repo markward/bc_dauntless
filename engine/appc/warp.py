@@ -861,16 +861,13 @@ class WarpSequence(TGSequence):
     # set (WarpSequence_GetDestinationMission 0x0061f7a0,
     # _GetDestinationEpisode 0x0061f810), set via SetEventDestination.
     #
-    # Dauntless only ever builds SET warps -- WarpSequence_Create takes a
-    # dest_module and nothing writes a mission or episode -- so both are
-    # legitimately empty here. They must still EXIST and return a real falsy
-    # value: Conditions/ConditionWarpingToMission.py:23 does
+    # WarpSequence_Create takes both from the warp button (execute_warp: the
+    # Set Course pick or the mission's SetDestination); a plain set warp
+    # leaves them None. They must EXIST and return a real falsy value then:
+    # Conditions/ConditionWarpingToMission.py:23 does
     #     if pWarpSequence and (GetDestinationMission() or GetDestinationEpisode())
     # and a missing attribute resolves to a TRUTHY _Stub, which made that
     # condition fire for every warp in the game (heatmap rank 95).
-    #
-    # When cross-mission warp is built, store the target here rather than
-    # reintroducing the stub.
     def GetDestinationMission(self):  return self._dest_mission
     def GetDestinationEpisode(self):  return self._dest_episode
 

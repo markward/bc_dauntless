@@ -507,8 +507,9 @@ def test_losing_targetability_counts_as_removal(posted):
 
 
 def test_an_empty_push_removes_everything(posted):
-    """Mid-warp the player sits alone in _WarpTransit and perceived_by returns
-    (); every contact left the list."""
+    """Mid-warp the player sits in BC's "warp" set -- with no contacts
+    unless a mission parked ships there -- so perceived_by returns (); every
+    contact left the list."""
     menu, (a, b) = _menu_and_ships()
     menu.set_contacts([_contact(a), _contact(b)])
     posted.clear()

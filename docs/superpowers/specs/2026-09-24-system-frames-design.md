@@ -158,7 +158,7 @@ the far plane follows it to 1,800,000 GU by the same derivation.
 | Set | Frame | Anchor |
 |---|---|---|
 | A mapped region (`Ona1`) | its system (`Ona`) | the region's `anchor_gu` |
-| Any unmapped set — Starbase 12, DeepSpace, a mission's own set, the warp transit set (`warp._WARP_TRANSIT_SET_NAME`, `"_WarpTransit"`), the bridge, QuickBattle arenas, comm-viewscreen sets | its **own** frame, named for the set | `(0, 0, 0)` |
+| Any unmapped set — Starbase 12, DeepSpace, a mission's own set, BC's persistent warp set (`warp._WARP_TRANSIT_SET_NAME`, `"warp"`), the bridge, QuickBattle arenas, comm-viewscreen sets | its **own** frame, named for the set | `(0, 0, 0)` |
 
 An unmapped set is a one-set world: its system position equals its set-local
 position, exactly as today.

@@ -129,7 +129,7 @@ def test_pushed_contacts_get_their_mission_affiliation():
 
 
 def test_warp_transit_empties_the_list_with_no_explicit_clear():
-    """Mid-warp the player is alone in _WarpTransit, so the list empties
+    """Mid-warp the player is alone in BC's "warp" set, so the list empties
     itself — this is the test of whether the derived model is right."""
     from engine.appc.warp import _WARP_TRANSIT_SET_NAME
     contact_index.reset()
