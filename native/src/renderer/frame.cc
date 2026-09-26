@@ -616,6 +616,16 @@ void draw_model(const assets::Model& model,
         glActiveTexture(GL_TEXTURE0);  // restore default active unit
     }
 
+    // Collision-scuff normal map (renderer/scuff_texture.h): resolved ONCE per
+    // instance, here, before any mesh binds unit 0. Its first call uploads the
+    // map, and upload_image binds the new texture to the ACTIVE unit -- done
+    // inside the mesh loop that was unit 0, straight after the mesh's base
+    // colour, so the first damaged frame drew one mesh with the normal map as
+    // its albedo (FrameTest.LazyScuffMapLoadDoesNotClobberTheBaseTexture).
+    // Only fetched when a decal is active so the undamaged path stays
+    // byte-identical; 0 => the shader draws scuffs without relief.
+    const GLuint scuff_map = decals_present ? ensure_scuff_normal_texture() : 0;
+
     // ── Sun shadow map (Task 6) ───────────────────────────────────────────
     // Bind the active sun shadow from the Task-5 state. When shadows are off
     // (active_shadow_enabled() == false), only u_shadows_enabled=0 is set and
@@ -775,11 +785,8 @@ void draw_model(const assets::Model& model,
             prog.set_int  ("u_normal_flip_g",
                 dauntless_normal_map::flip_green() ? 1 : 0);
 
-            // Collision-scuff normal map (renderer/scuff_texture.h) on unit 7
-            // (assigned once in Pipeline's constructor). Loaded lazily, bound
-            // only when a decal is active so the undamaged path stays
-            // byte-identical; 0 => the shader draws scuffs without relief.
-            GLuint scuff_map = decals_present ? ensure_scuff_normal_texture() : 0;
+            // Collision-scuff normal map on unit 7 (assigned once in
+            // Pipeline's constructor); resolved per instance above.
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_2D, scuff_map);
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
