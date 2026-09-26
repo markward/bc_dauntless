@@ -826,6 +826,12 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             self._close_add_state_picker()
             return True
+        if verb == "part/add_state":
+            # The picker's Add: the JS has already hidden the picker locally
+            # (without overlay:0), so it closes here whatever happens next --
+            # BEFORE validation, or a refused add would leave an invisible
+            # picker blocking the 3D view until ESC.
+            self._close_add_state_picker()
         try:
             data = json.loads(arg)
             name = str(data["name"])
@@ -838,8 +844,6 @@ class ShipPropertyViewerPanel(Panel):
             state = data.get("state")
             if state not in STATES:
                 return False
-            # The picker's Add: whatever happens next, the picker is done.
-            self._close_add_state_picker()
             if spec.get("anchor") is None:
                 self._show_toast(TOAST_NO_ANCHOR)
                 return True

@@ -800,3 +800,25 @@ def test_add_state_is_one_undo_step_that_drops_its_selection(make_panel):
     assert spv.selected_part_node() is None
     assert ship._articulation_poses.get("head", part_pose.IDENTITY) == \
         part_pose.IDENTITY, "back at the NIF pose"
+
+
+@pytest.mark.parametrize("bad", [
+    "part/add_state:{not json",
+    'part/add_state:{"name":"no such part","state":"warp"}',
+    'part/add_state:{"name":"left wing","state":"REd"}',
+])
+def test_an_invalid_add_state_still_closes_the_picker(make_panel, bad):
+    """The JS hides the picker locally the moment Add is clicked, without
+    overlay:0 -- so a REFUSED add_state must close it too, or an invisible
+    picker keeps blocking the 3D view until ESC."""
+    p, _ship, _target = make_panel()
+    p.dispatch_event("part/add_anchor:left wing")
+    p.dispatch_event("part/begin_add_state:left wing")
+    assert _picker(p) is not None, "fixture: picker open"
+    before = copy.deepcopy(p._pending_part)
+
+    assert p.dispatch_event(bad) is False
+
+    assert _picker(p) is None
+    assert p._viewport_input_blocked() is False
+    assert p._pending_part == before
