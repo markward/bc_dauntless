@@ -71,6 +71,7 @@ add_executable(renderer_tests
     dynamic_lights_test.cc
     debug_volume_pass_test.cc
     starmap_pass_test.cc
+    ${CMAKE_SOURCE_DIR}/native/tests/support/content_root_test.cc
 )
 
 target_link_libraries(renderer_tests
@@ -103,6 +104,7 @@ endif()
 target_include_directories(renderer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu  # reuse gl_fixture for offscreen contexts
     ${CMAKE_SOURCE_DIR}/native/src/assets/src    # model_build.h (model_parts_test.cc)
+    ${CMAKE_SOURCE_DIR}/native/tests             # support/content_root.h
 )
 
 gtest_discover_tests(renderer_tests

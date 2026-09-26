@@ -10,14 +10,10 @@
 #include <filesystem>
 #include <fstream>
 
+#include "support/content_root.h"
+#include "support/renderer_game_root.h"
+
 namespace {
-// Mirrors asset_path_test.cc's GameRootGuard: ConstantPathsResolveFromRendererCwd
-// below mutates the process-global renderer game root, and ctest runs cases in
-// one process, so it must not leak into a later test.
-struct GameRootGuard {
-    std::string saved = renderer::game_root();
-    ~GameRootGuard() { renderer::set_game_root(saved); }
-};
 }  // namespace
 
 // Locks the hull-anchor resolve used by HitVfxPass: spark origin = ship.world * body_point.
@@ -47,19 +43,13 @@ TEST(HitVfxSparkAnchor, OriginTracksWorldMatrix) {
 // actually open.
 TEST(HitVfxTextures, ConstantPathsResolveFromRendererCwd) {
     namespace fs = std::filesystem;
-    const fs::path root = fs::path(__FILE__)
-        .parent_path().parent_path().parent_path().parent_path();
+    const fs::path root = test_support::project_root();
 
-    GameRootGuard guard;
-    // The BC install no longer lives under the project root. Honour the same
-    // env var engine/paths.py reads as its second-precedence source, so this
-    // test runs against a real install wherever it is; fall back to the
-    // legacy in-project relative "game" when unset.
-    if (const char* env = std::getenv("DAUNTLESS_GAME_DIR")) {
-        renderer::set_game_root(env);
-    }
-    fs::path game_dir = renderer::game_root();
-    if (game_dir.is_relative()) game_dir = root / game_dir;
+    // The BC install no longer lives under the project root: point the
+    // renderer at the configured one (support/renderer_game_root.h).
+    test_support::RendererGameRootGuard guard;
+    guard.apply_configured();
+    const fs::path game_dir = test_support::game_root();
 
     // Skip only when the BC sprite assets are genuinely absent (judged via
     // known-good absolute locations under the configured root, NOT the

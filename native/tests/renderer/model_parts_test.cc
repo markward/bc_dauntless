@@ -24,6 +24,7 @@
 #include <renderer/model_parts.h>
 
 #include "model_build.h"
+#include "support/content_root.h"
 
 namespace {
 
@@ -189,19 +190,7 @@ assets::Mesh stub_mesh(assets::MeshCpu cpu) {
 
 TEST(ModelParts, RealBirdOfPreyExposesExactlyTheFourCandidates) {
     namespace fs = std::filesystem;
-    const fs::path root(OPEN_STBC_PROJECT_ROOT);
-
-    // Honour the same env var engine/paths.py reads as its second-precedence
-    // source (and scripts/check_tests.sh derives from it), so this runs
-    // against a real install wherever it is; fall back to the legacy
-    // in-project relative "game" when unset -- mirrors
-    // BuildVentingDescriptors.TextureFileExistsOnDisk in breach_venting_test.cc.
-    fs::path game_dir;
-    if (const char* env = std::getenv("DAUNTLESS_GAME_DIR")) {
-        game_dir = env;
-    } else {
-        game_dir = root / "game";
-    }
+    const fs::path game_dir = test_support::game_root();
     const fs::path nif = game_dir / "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif";
     if (!fs::is_regular_file(nif)) {
         GTEST_SKIP() << "no BC install / BirdOfPrey.nif under \"" << game_dir
