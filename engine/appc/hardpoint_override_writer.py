@@ -133,8 +133,11 @@ def set_setter(models, leaf, subsystem, setter, args) -> None:
 def set_part(models, leaf, name, calls) -> None:
     """Replace one articulated part's whole call list -- find-or-CREATE, full
     replace like set_region full-replaces one glow-region index. `calls` is
-    ordered [(setter, args), ...] (SetPivot, SetAxis, SetStateAngle,
-    SetDetachFraction, in any combination)."""
+    ordered [(setter, args), ...] -- the current authoring surface is
+    SetAnchor, SetTransitionSeconds, SetStatePose (one per authored state),
+    SetBreakFraction, in any combination (spec 2026-09-25 section 3). The
+    legacy SetPivot/SetAxis/SetStateAngle/SetDetachFraction are still
+    accepted and load correctly, but the writer never emits them again."""
     per_sub = models.setdefault(leaf, {})
     parts = per_sub.setdefault(_PARTS_KEY, {})
     parts[name] = [(s, tuple(a)) for (s, a) in calls]

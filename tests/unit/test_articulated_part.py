@@ -10,6 +10,7 @@ import pytest
 
 import App
 from engine.appc import articulated_part as ap
+from engine.appc import part_pose as pp
 
 STATES = ("cruise", "yellow", "red", "warp")
 
@@ -35,19 +36,22 @@ def test_the_name_IS_the_node_name():
 
 def test_an_unset_state_angle_is_zero():
     """Zero is the NIF pose, so an unauthored state means 'as modelled'
-    rather than an error."""
+    rather than an error. Read via the pose surface -- `angle_for` is a
+    legacy reader kept only for the SPV panel (spec 2026-09-25 section 7,
+    not yet rewritten); everything else reads `pose_for`/`pose6_for`."""
     p = ap.ArticulatedPartProperty_Create("left wing")
     for s in STATES:
-        assert p.angle_for(s) == 0.0
+        assert pp.is_identity(p.pose_for(s))
+        assert p.pose6_for(s) is None
 
 
 def test_state_angles_round_trip():
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetStateAngle("cruise", 45.0)
     p.SetStateAngle("red", 0.0)
-    assert p.angle_for("cruise") == 45.0
-    assert p.angle_for("red") == 0.0
-    assert p.angle_for("warp") == 0.0
+    assert not pp.is_identity(p.pose_for("cruise"))
+    assert pp.is_identity(p.pose_for("red"))
+    assert pp.is_identity(p.pose_for("warp"))       # unset -> the NIF pose
 
 
 def test_an_unknown_state_is_rejected():
@@ -58,11 +62,13 @@ def test_an_unknown_state_is_rejected():
 
 
 def test_detach_fraction_defaults_to_NOT_detachable():
-    """Absent means 'does not come off', never 'comes off at 0.0'."""
+    """Absent means 'does not come off', never 'comes off at 0.0'. Read via
+    `break_fraction`, the new alias `SetDetachFraction` writes through to
+    (spec section 3)."""
     p = ap.ArticulatedPartProperty_Create("left wing")
-    assert p.detach_fraction is None
+    assert p.break_fraction is None
     p.SetDetachFraction(0.20)
-    assert p.detach_fraction == 0.20
+    assert p.break_fraction == 0.20
 
 
 def test_a_static_detachable_part_needs_no_extra_concept():
@@ -70,36 +76,20 @@ def test_a_static_detachable_part_needs_no_extra_concept():
     BoP's 'head'. It must be expressible without a separate flag."""
     p = ap.ArticulatedPartProperty_Create("head")
     p.SetDetachFraction(0.20)
-    assert all(p.angle_for(s) == 0.0 for s in STATES)
-    assert p.detach_fraction == 0.20
+    assert all(pp.is_identity(p.pose_for(s)) for s in STATES)
+    assert p.break_fraction == 0.20
 
 
-def test_angle_range_updates_when_a_state_angle_is_re_authored():
-    """REGRESSION guard for a caching bug: `angle_range` (peak-to-peak
-    spread across states, what `articulation.ease_angle` uses to set a
-    part's ease rate) must reflect the CURRENT authored angles, not
-    whatever they were the first time it was read. Re-authoring an angle is
-    the literal subject of this whole feature -- a cache that goes stale
-    the moment someone calls `SetStateAngle` again would make the ease rate
-    silently wrong."""
-    p = ap.ArticulatedPartProperty_Create("left wing")
-    p.SetStateAngle("cruise", 45.0)
-    p.SetStateAngle("red", 0.0)
-    first = p.angle_range
-    assert first == pytest.approx(45.0)
-
-    p.SetStateAngle("warp", 90.0)
-    second = p.angle_range
-    assert second == pytest.approx(90.0)
-    assert second != first
-
-
-def test_pivot_and_axis_round_trip():
+def test_pivot_and_axis_feed_the_anchor_and_pose():
+    """`SetPivot`/`SetAxis` are legacy setters; a state angle authored
+    against them converts to an anchor and a rigid pose through the hinge
+    (spec section 6), read via the pose surface."""
     p = ap.ArticulatedPartProperty_Create("left wing")
     p.SetPivot(-0.16, 0.0, 0.05)
     p.SetAxis(0.0, 1.0, 0.0)
-    assert p.pivot == (-0.16, 0.0, 0.05)
-    assert p.axis == (0.0, 1.0, 0.0)
+    p.SetStateAngle("cruise", 45.0)
+    assert p.anchor == (-0.16, 0.0, 0.05)
+    assert not pp.is_identity(p.pose_for("cruise"))
 
 
 # ---------------------------------------------------------------------------

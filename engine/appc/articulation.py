@@ -580,12 +580,12 @@ def part_boxes_for(leaf, iid=None):
 def detachable_for(leaf):
     """{part name: hull fraction that shears it} for a leaf, or {}.
 
-    Reads `detach_fraction` straight off the registered templates -- see
-    `articulated_part.ArticulatedPartProperty.detach_fraction` (0.20 for
+    Reads `break_fraction` straight off the registered templates -- see
+    `articulated_part.ArticulatedPartProperty.break_fraction` (0.20 for
     both Bird of Prey wings; absent, never 0.0, for anything that must not
     come off, e.g. the head and the body)."""
-    return {p.GetName(): p.detach_fraction
-            for p in rig_for(leaf) if p.detach_fraction is not None}
+    return {p.GetName(): p.break_fraction
+            for p in rig_for(leaf) if p.break_fraction is not None}
 
 
 def part_transform_point(ship, point, part=None):
