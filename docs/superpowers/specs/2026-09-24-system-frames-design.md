@@ -515,8 +515,10 @@ sphere simply stays in the Ona 1 set until entering another region's sphere.
 `engine/appc/dash.py` (the player's Set Course and Warp on Heading dashes) and
 `engine/systems/handoff.py` (rules A, A′, H, N; hand-offs deferred to the
 drop-out). Rule C holds: a system-to-system course still tunnels. Headless
-end to end: `tests/integration/test_in_system_warp_e2e.py`. ⚠️ Not
-live-verified.
+end to end: `tests/integration/test_in_system_warp_e2e.py`. ⚠️ A heading
+dash hands off only if its ray crosses the owning region's sphere, which sits
+on its body's Player Start side (ruling R14); otherwise it drops out at the
+arrival range with ET_EXITED_WARP alone. ⚠️ Not live-verified.
 
 The reference spec's dash design (speed from distance, slow final approach,
 steering locked, `WarpFlash`) is the starting point for that pass. Known blocker,

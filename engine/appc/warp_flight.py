@@ -284,8 +284,10 @@ def _step_ship_target(ship, flight, dt) -> None:
 
 
 def _straight_at_target(ship, flight, dt, p, t, drop) -> None:
-    """The pre-flight integrator's arithmetic, kept verbatim in set-local
-    coordinates so an unobstructed warp is byte-for-byte today's."""
+    """The pre-flight integrator's arithmetic, kept in set-local coordinates:
+    an unobstructed ship-target warp moves along the same chord at the same
+    speed as before WarpFlight -- but not byte-for-byte, since the nose now
+    faces the chord every tick (``_face``)."""
     dx, dy, dz = t[0] - p[0], t[1] - p[1], t[2] - p[2]
     d = (dx * dx + dy * dy + dz * dz) ** 0.5
     if d <= max(drop, 1e-9):

@@ -270,8 +270,8 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
   exactly as today.
 - **Body drop-out:** a heading dash at Ona 2 stops at Ona 2's arrival range on
   its line, is handed off to Ona 2 and keeps the engaged impulse speed; a heading
-  dash at the star stops one radius above it; an AI warp stops short of a planet
-  in its path.
+  dash at the star stops one radius above it; an AI warp is routed around a
+  planet in its path and never drops out (ruling R2).
 - **Hand-off:** `system_position` identical before and after; event order
   `ET_EXITED_SET`, `ET_ENTERED_SET`, `ET_EXITED_WARP`; no flicker circling a
   sphere's edge; deferred during a dash (through Ona 2 to Ona 3: no event, no

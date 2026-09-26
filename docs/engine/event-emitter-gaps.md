@@ -545,7 +545,9 @@ engage point for `GetBool()==1`. The disengage side has THREE call sites
 that all clear `_insystem_warp_transit`, none of which currently notify
 anyone: `engine/appc/ships.py:780` (`StopInSystemWarp`, the explicit
 abort — called by AI `LostFocus`), and `engine/appc/ship_motion.py:291,
-:300, :324` inside `_step_in_system_warp` (natural transit completion).
+:300, :324` inside `_step_in_system_warp` (natural transit completion;
+since replaced by `engine/appc/warp_flight.py:step`, which ends every flight
+through `ShipClass._end_in_system_warp`).
 Posting `ET_IN_SYSTEM_WARP` with `GetBool()==0` faithfully needs all three
 covered, guarded on "was a transit active before this call" so a
 no-op `StopInSystemWarp` (nothing was warping) doesn't post a spurious

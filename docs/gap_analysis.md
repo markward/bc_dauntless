@@ -160,8 +160,9 @@ instrumentation. Not needed for Phase 1.
 
 **Audited 2026-08-09 — still open, and split in two. Do not conflate the halves:**
 
-- **In-system warp (cruise within a set) — IMPLEMENTED.** `_step_in_system_warp`
-  (`engine/appc/ship_motion.py:252`) cruises at
+- **In-system warp (cruise within a set) — IMPLEMENTED.** `warp_flight.step`
+  (`engine/appc/warp_flight.py`, called from `ship_motion`; it replaced
+  `_step_in_system_warp`) cruises at
   `IN_SYSTEM_WARP_SPEED_FACTOR × impulse MaxSpeed`, and on arrival the published
   velocity **drops back to the pre-warp `_current_speed`** — instant transit, not
   a change of impulse state. Covered by

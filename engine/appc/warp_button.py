@@ -48,9 +48,11 @@ def press_heading(button) -> None:
     """Warp on Heading (in-system-warp spec §2, rule D): the same
     ET_WARP_BUTTON_PRESSED through the same chain, with the button's course
     (destination, mission, episode and placement -- back to the button's
-    no-course default -- plus the mission latch SetDestination also writes)
-    cleared for the dispatch, so no mission handler acts on a stale course,
-    and restored exactly afterwards. What a handler sets on the course
+    no-course default) cleared for the dispatch, so no mission handler acts
+    on a stale course, and restored exactly afterwards. The mission latch
+    SetDestination also writes is not cleared -- only saved and restored with
+    the rest, so a handler's SetDestination during the dispatch cannot
+    outlive it. What a handler sets on the course
     meanwhile is discarded; what it queues stays on the button for the dash
     to take.
 
