@@ -9,7 +9,8 @@ from engine.appc.sets import SetClass_Create
 from engine.core import mission_change
 from engine.core.game import Game, _set_current_game
 from tests.helpers.mission_change_fixtures import (
-    log, _install, _world, _forget_world, warp_missionlib)
+    log, _install, _world, _forget_world)
+from tests.helpers.warp_sdk_modules import warp_missionlib
 
 
 class _Rec(TGAction):
@@ -72,15 +73,17 @@ def _mission_creating(set_name, tag="New.Initialize"):
     return _init
 
 
-def test_the_warp_changes_mission_after_the_during_queue(monkeypatch):
+def test_the_warp_changes_mission_after_the_after_during_queue(monkeypatch):
     game, player, _ = _world()
     _install("_t.Old", Terminate=lambda m: log.append("Old.Terminate"))
     _install("_t.New", Initialize=_mission_creating("QNew"))
     seq, total = _player_warp(monkeypatch, player, "QNew",
-                              _queues(during=[_Rec("D")]), mission="_t.New")
+                              _queues(during=[_Rec("D")],
+                                      after_during=[_Rec("AD")]),
+                              mission="_t.New")
     seq.Play()
     _advance_game_time(total + 1.0)
-    assert log == ["D", "Old.Terminate", "New.Initialize"]
+    assert log == ["D", "AD", "Old.Terminate", "New.Initialize"]
     assert _in_set("QNew", player)
     assert App.g_kSetManager.GetSet("Beol4") is None
     assert game.GetCurrentEpisode().GetCurrentMission()._module_name == "_t.New"
@@ -142,8 +145,9 @@ def test_a_direct_load_then_the_warp_naming_the_same_episode_loads_once(monkeypa
 
 
 def test_host_on_changed_names_the_new_mission_and_resyncs_the_view():
-    """engine.host_loop._after_mission_change: session name, every CEF panel
-    re-pushed, camera snapped -- and NOT the post-load hook, whose handlers the
+    """engine.host_loop._after_mission_change: session name, the star map
+    closed (a plotted course may name a set the next mission never loads),
+    every CEF panel re-pushed, camera snapped -- and NOT the post-load hook, whose handlers the
     carry-over kept (re-running it would register them twice)."""
     from types import SimpleNamespace
     from engine import host_loop
@@ -155,7 +159,8 @@ def test_host_on_changed_names_the_new_mission_and_resyncs_the_view():
         panel_registry=SimpleNamespace(
             invalidate_all=lambda: calls.append("invalidate")),
         post_load_hook=lambda: calls.append("post_load"))
-    host_loop._after_mission_change(controller,
-                                    snap_scene=lambda: calls.append("snap"))
+    host_loop._after_mission_change(
+        controller, snap_scene=lambda: calls.append("snap"),
+        close_star_map=lambda: calls.append("star_map"))
     assert controller.session.mission_name == "_t.New"
-    assert calls == ["invalidate", "snap"]
+    assert calls == ["star_map", "invalidate", "snap"]

@@ -141,7 +141,7 @@ change runs in transit, at the after-during point, before arrival:
 1. **End the old mission:** the SDK's `Terminate(pMission)` on the mission
    module; the episode module's `Terminate` too when the episode changes.
 2. **Clear the old world, keeping three things:** the `Game`; the player's ship
-   (in the warp transit set); the bridge set. Every other set is deleted and the
+   when it is in the warp transit set; the bridge set. Every other set is deleted and the
    mission's timers, event handlers and render instances go with it. Every item
    `reset_sdk_globals()` / `_drain_pending_swap` resets today is sorted into
    **keep** or **reset** with a stated reason — a plan task, whose table lands in
@@ -174,9 +174,9 @@ draft wrong.
 
 | Item | Carry-over change | Why |
 |---|---|---|
-| `Game`, player ship object, its subsystems/damage/AI-free state | **keep** | BC reuses the player (`MissionLib.CreatePlayerShip` reuse branch) |
+| `Game`; the player ship object, its subsystems/damage/AI-free state † | **keep** the `Game`; **keep** the player only when it is in the `"warp"` set (a warp). On a direct load (E2M6's `StartEpisode3`) its region is deleted with it in it and `Game.SetPlayer(None)` runs, so the next mission's `CreatePlayerShip` builds a new ship | BC reuses the player (`MissionLib.CreatePlayerShip` reuse branch) when one survives; BC's native unload deletes every set but the bridge (`Maelstrom.py:258-262`), so that only the warp set's occupant survives is **inferred** |
 | Bridge set(s) and bridge characters | **keep** | "specifically ignored from mission to mission" (`Maelstrom.py:258-262`) |
-| `"warp"` set, and the player's containing set | **keep** | the player is in it |
+| `"warp"` set † | **keep** — the player's containing set is NOT kept for being the player's | a warping player is in it; keeping a direct load's region (with its NPCs) had no BC basis (**inferred** from the unload rule above) |
 | Every other set | **reset** (teardown hook + `DeleteSet`) | BC's unload deletes them |
 | Game/realtime timer managers | **reset except** survivors | the warp must finish; everything else is the old mission's |
 | Game clock (`_time`) | **keep** | the warp's hold deadline and every surviving timer are on it |
@@ -198,7 +198,7 @@ draft wrong.
 | Nebula trackers, concealment latches, `_last_identify_gt` | **reset** | as swap |
 | `g_kTGActionManager._registered` | **reset except** survivors | as timers |
 | dev tutorial flag | **re-apply** | as swap |
-| Render origin, camera eye, focus solver, WarpVFX / warp_state / `ReturnControl` | **keep** | the camera is mid-flight and the warp is live |
+| Render origin, focus solver, WarpVFX / warp_state / `ReturnControl` † | **keep** the render origin; the camera is **snapped** (`director.snap` + transform buffers reset), as after a dev swap | the warp is live; never ease the camera or a drawn pose in from the previous scene |
 | Per-ship engine modules (`ship_lifecycle`, `ship_death`, `visible_damage`, `registry_texture`, `hit_feedback` throttles, …) | **keep** | keyed per ship; the player's entries must survive; deleted ships' entries go with `DeleteSet` |
 
 **Survivors.** `TGTimer` records no owner; its event's destination *is* the

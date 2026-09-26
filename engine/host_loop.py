@@ -6312,7 +6312,7 @@ class HostController:
             self.post_load_hook()
 
 
-def _after_mission_change(controller, snap_scene) -> None:
+def _after_mission_change(controller, snap_scene, close_star_map) -> None:
     """mission_change's on_changed hook (a warp's in-transit change, or a
     direct LoadEpisode/LoadMission routed through it). Deliberately NOT
     controller.post_load_hook: the carry-over keeps the bridge-officer and
@@ -6325,6 +6325,7 @@ def _after_mission_change(controller, snap_scene) -> None:
     mission = ep.GetCurrentMission() if ep is not None else None
     if controller.session is not None and mission is not None:
         controller.session.mission_name = mission._module_name
+    close_star_map()
     if controller.panel_registry is not None:
         controller.panel_registry.invalidate_all()
     snap_scene()
@@ -9180,6 +9181,14 @@ def run(mission_name: Optional[str] = None,
             star_map_panel.open(course_menu=course_menu,
                                 set_name=_player_set_name(_player))
 
+        def _close_star_map():
+            """A course plotted in the outgoing mission may name a set the
+            incoming one never loads, so the map must not survive a dev swap
+            or a mission change. invalidate() forces the closed state out to
+            CEF on the next render_all()."""
+            star_map_panel.close()
+            star_map_panel.invalidate()
+
         from engine.ui.crew_menu_panel import CrewMenuPanel
         crew_menu_panel = CrewMenuPanel(
             on_set_course=_open_star_map,
@@ -9353,7 +9362,8 @@ def run(mission_name: Optional[str] = None,
 
         from engine.core import mission_change as _mission_change
         _mission_change.configure(
-            on_changed=lambda: _after_mission_change(controller, _snap_scene))
+            on_changed=lambda: _after_mission_change(
+                controller, _snap_scene, _close_star_map))
 
         # Ship Property Viewer (dev-only) transition state. _spv_hidden_iid
         # remembers which solid hull was hidden so it can be restored, and
@@ -9856,12 +9866,7 @@ def run(mission_name: Optional[str] = None,
                     node_anim.reset(renderer=r)
                     lip_runtime.clear()
                     _letterbox_anim.reset()
-                    # A course plotted in the outgoing mission may name a set
-                    # the incoming one never loads, so the map must not
-                    # survive the swap. invalidate() forces the closed state
-                    # out to CEF on the next render_all().
-                    star_map_panel.close()
-                    star_map_panel.invalidate()
+                    _close_star_map()
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     _snap_scene()

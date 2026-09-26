@@ -3,11 +3,11 @@
 A warp that names a mission or episode other than the current one runs
 change() at its after-during point. The old mission's (and, on an episode
 change, the old episode's) Terminate runs; the world is cleared except for the
-Game, the player's ship and its containing set, the bridge set(s) and BC's
-"warp" set; the next episode or mission loads through the raw loaders. What is
-kept and what is reset is spec §2's keep/reset table -- the shared resets live
-in engine.host_loop beside reset_sdk_globals (the dev swap, which keeps
-nothing), so the two lists cannot drift.
+Game, the bridge set(s) and BC's "warp" set (and so the player, when it is
+in transit there); the next episode or mission loads through the raw loaders.
+What is kept and what is reset is spec §2's keep/reset table -- the shared
+resets live in engine.host_loop beside reset_sdk_globals (the dev swap, which
+keeps nothing), so the two lists cannot drift.
 """
 from __future__ import annotations
 
@@ -30,6 +30,18 @@ def configure(on_changed=None) -> None:
 
 def in_progress() -> bool:
     return _in_progress
+
+
+def is_running_mission(game) -> bool:
+    """Whether Game.LoadEpisode / Episode.LoadMission on `game` is a change
+    (spec §2 "One mission-change path"): a named mission is current and no
+    change is in progress. Otherwise -- boot, or the next episode's Initialize
+    inside a change -- they load raw."""
+    if _in_progress or game is None:
+        return False
+    ep = game.GetCurrentEpisode()
+    cur = ep.GetCurrentMission() if ep is not None else None
+    return cur is not None and bool(cur._module_name)
 
 
 def episode_module_for(mission_module: str) -> "str | None":
@@ -130,16 +142,21 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     from engine.appc import contact_index, warp
     from engine.appc.bridge_set import BridgeSet
 
+    # Only the bridge set(s) and "warp" are kept. BC's native unload deletes
+    # every set but the bridge (SDK Maelstrom.py:258-262); that the warp set's
+    # occupant alone survives is inferred. On a warp the player is in "warp"
+    # and carries over; on a direct load (E2M6's StartEpisode3) its region --
+    # and the player in it -- goes, and the next CreatePlayerShip builds anew.
     player = game.GetPlayer()
     player_set = player.GetContainingSet() if player is not None else None
     keep_names = {warp._WARP_TRANSIT_SET_NAME, "bridge"}
     kept_sets, doomed = [], []
     for name, pSet in list(App.g_kSetManager._sets.items()):
-        if (name in keep_names or pSet is player_set
-                or isinstance(pSet, BridgeSet)):
+        if name in keep_names or isinstance(pSet, BridgeSet):
             kept_sets.append(pSet)
         else:
             doomed.append((name, pSet))
+    player_kept = any(player_set is s for s in kept_sets)
 
     survivors = _survivor_ids(player)
     # Handlers owned by what is going away. The Mission (and a replaced
@@ -161,6 +178,8 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
                 traceback.print_exc()
         App.g_kSetManager.DeleteSet(name)
         contact_index.forget_set(pSet)
+    if player is not None and not player_kept:
+        game.SetPlayer(None)
 
     host_loop._reset_timers(keep=survivors)
     host_loop._reset_action_registry(keep=survivors)

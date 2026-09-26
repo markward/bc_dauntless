@@ -287,3 +287,22 @@ def test_on_changed_runs_after_a_successful_change_only():
         assert calls == [1]
     finally:
         mission_change.configure(on_changed=None)
+
+
+def test_a_direct_load_deletes_the_players_region_and_the_player():
+    """R9: only the bridge and "warp" sets are kept. A direct load (no warp,
+    e.g. E2M6's StartEpisode3) finds the player in a region; the region goes
+    with the player in it, and the next mission's CreatePlayerShip builds a
+    new one because Game.GetPlayer() is None by then."""
+    game, player, bridge = _world()
+    warp_set = App.g_kSetManager.GetSet("warp")
+    warp_set.RemoveObjectFromSet("player")
+    beol = App.g_kSetManager.GetSet("Beol4")
+    beol.AddObjectToSet(player, "player")
+    _install("_t.Old", Terminate=lambda m: None)
+    _install("_t.New", Initialize=lambda m: log.append(game.GetPlayer()))
+    assert mission_change.change(mission="_t.New") is True
+    assert log == [None]
+    assert App.g_kSetManager.GetSet("Beol4") is None
+    assert App.g_kSetManager.GetSet("bridge") is bridge
+    assert App.g_kSetManager.GetSet("warp") is warp_set
