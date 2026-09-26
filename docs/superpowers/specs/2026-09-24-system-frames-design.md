@@ -509,6 +509,15 @@ sphere simply stays in the Ona 1 set until entering another region's sphere.
 | **D** | Dash engage and region exit both run BC's warp gate (`Bridge/HelmMenuHandlers.py` checks plus the mission `ET_WARP_BUTTON_PRESSED` chain), so mission refusals hold. |
 | **N** | NPCs are **not** handed off. A set is an NPC's owner and loading unit; the accessor makes its physical whereabouts correct without it. |
 
+**Status (in-system warp).** Built as designed in the 2026-09-25 spec:
+`engine/systems/warp_path.py` (routed paths that keep every body's clearance),
+`engine/appc/warp_flight.py` (one in-system warp for every ship),
+`engine/appc/dash.py` (the player's Set Course and Warp on Heading dashes) and
+`engine/systems/handoff.py` (rules A, A′, H, N; hand-offs deferred to the
+drop-out). Rule C holds: a system-to-system course still tunnels. Headless
+end to end: `tests/integration/test_in_system_warp_e2e.py`. ⚠️ Not
+live-verified.
+
 The reference spec's dash design (speed from distance, slow final approach,
 steering locked, `WarpFlash`) is the starting point for that pass. Known blocker,
 recorded: `AI/PlainAI/FollowThroughWarp.py` cannot run in this engine (Python 1.5
