@@ -1407,9 +1407,11 @@ def _warp_glow_envelope(ship):
 
     Two sources, checked in order:
 
-    * a player dash (engine/appc/dash.py) in progress — `dash.is_dashing`
-      only ever returns True for the player (the dash is player-only for
-      now, spec §4), so no separate registration check is needed here;
+    * a player dash (engine/appc/dash.py) in progress, gated on
+      `warp._is_current_player` like every other player-scene warp effect:
+      the dash clock (engine/dash_vfx) is the player's, so a ship swapped
+      away from mid-dash must not read it for the frame before its dash is
+      ended (`dash.abandon`, from `_sync_player_identity`);
     * the cross-system warp tunnel, gated the way it always was: the warp
       animator must be running AND `ship` must be the ship registered as
       flying that warp. `WarpVFX` is a singleton and `WarpSequence_Create`
@@ -1424,8 +1426,8 @@ def _warp_glow_envelope(ship):
     """
     if ship is None:
         return None
-    from engine.appc import dash
-    if dash.is_dashing(ship):
+    from engine.appc import dash, warp
+    if dash.is_dashing(ship) and warp._is_current_player(ship):
         from engine import dash_vfx
         return dash_vfx.get().engine_glow()
     from engine import warp_vfx
@@ -5880,6 +5882,11 @@ def _sync_player_identity(session, on_player_change=None) -> None:
     game = Game_GetCurrentGame()
     new_player = game.GetPlayer() if game is not None else None
     if new_player is not None and new_player is not session.player:
+        if session.player is not None:
+            # The ship swapped away from is no longer ticked as the player:
+            # end its dash here, or it dashes (and glows) forever.
+            from engine.appc import dash
+            dash.abandon(session.player)
         session.player = new_player
         if on_player_change is not None:
             on_player_change(new_player)

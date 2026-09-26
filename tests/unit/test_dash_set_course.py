@@ -502,6 +502,65 @@ def test_a_player_killed_in_flight_leaves_no_dash_smear_or_glow(
     assert vfx.engine_glow() == (0.0, 0.0)
 
 
+def _swap_player(w):
+    """RecreatePlayer's shape: a new ship becomes the player; the host's
+    identity sync then sees the change."""
+    from engine import host_loop as hl
+    new = ShipClass_Create("Galaxy")
+    w.ona1.AddObjectToSet(new, "new player")
+    App.Game_GetCurrentGame().SetPlayer(new)
+    w.events.clear()                # from here: the old ship's events only
+    sess = hl.MissionSession(mission_name="t")
+    sess.player = w.player
+    hl._sync_player_identity(sess, lambda p: None)
+    assert sess.player is new
+    return new
+
+
+def test_a_player_swap_mid_flight_ends_the_old_ships_dash_at_rest(world):
+    from engine import dash_vfx
+    w = world
+    _mid_flight(w)
+    dash_vfx.get().engage(App.g_kUtopiaModule.GetGameTime())
+    _swap_player(w)
+    assert not dash.is_dashing(w.player)
+    assert w.player.IsDoingInSystemWarp() == 0
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_NOT_WARPING
+    v = w.player.GetVelocity()
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+    assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
+                      App.ET_EXITED_WARP) == []
+    dash_vfx.get().tick(App.g_kUtopiaModule.GetGameTime())
+    assert dash_vfx.get().dash_intensity() == 0.0
+
+
+def test_a_player_swap_during_the_align_hands_the_queues_back(world):
+    w = world
+    marks = _queue_all(w)
+    warp_button.press(w.button)
+    assert dash.is_dashing(w.player)
+    _swap_player(w)
+    assert not dash.is_dashing(w.player)
+    for _ in range(int(round(15.0 / TICK_DELTA))):
+        _tick(w, GameLoop())
+    assert w.flashes == []
+    _assert_queues_back(w, marks)
+
+
+def test_the_old_ship_gets_no_dash_nacelle_glow_after_a_player_swap(world):
+    """The glow envelope's dash branch is player-only, like every other
+    player-scene warp effect (warp._is_current_player)."""
+    from engine.host_loop import _warp_glow_envelope
+    w = world
+    _mid_flight(w)
+    assert _warp_glow_envelope(w.player) is not None
+    new = ShipClass_Create("Galaxy")
+    w.ona1.AddObjectToSet(new, "new player")
+    App.Game_GetCurrentGame().SetPlayer(new)
+    assert dash.is_dashing(w.player)        # identity not synced yet
+    assert _warp_glow_envelope(w.player) is None
+
+
 def test_the_dash_clears_targets_and_stands_the_ai_down_like_the_tunnel(world):
     """Ruling R12: _ClearTargetsAction's semantics."""
     import AI.Player.Stay

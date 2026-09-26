@@ -565,3 +565,32 @@ def test_warp_on_heading_during_a_dash_does_nothing(world):
     assert w.player._insystem_warp_transit is flight
     assert [k for k, _ in w.flashes] == ["engage"]
     assert w.helm.IsEnabled()
+
+
+# ── 8. a player swap mid-dash ends the old ship's heading dash ─────────────
+
+def test_a_player_swap_ends_the_old_ships_heading_dash_at_rest(world):
+    """A heading flight never ends on its own in open space: without the
+    identity sync ending it, the old ship would fly on forever."""
+    from engine import host_loop as hl
+    w = world
+    p0 = _sys(w.player)
+    _aim(w, (p0[0], p0[1], p0[2] - 1.0e6))        # straight down: no bodies
+    _press(w)
+    loop = GameLoop()
+    for _ in range(int(round(2.0 / TICK_DELTA))):
+        _tick(w, loop)
+    assert dash.is_dashing(w.player)
+    new = ShipClass_Create("Galaxy")
+    w.ona1.AddObjectToSet(new, "new player")
+    App.Game_GetCurrentGame().SetPlayer(new)
+    sess = hl.MissionSession(mission_name="t")
+    sess.player = w.player
+    w.events.clear()
+    hl._sync_player_identity(sess, lambda p: None)
+    assert not dash.is_dashing(w.player)
+    assert w.player.IsDoingInSystemWarp() == 0
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_NOT_WARPING
+    v = w.player.GetVelocity()
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+    assert _events_of(w, App.ET_EXITED_WARP) == []

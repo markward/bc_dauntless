@@ -440,6 +440,20 @@ def _cancel(player, st) -> None:
     dash_helm.sync(player)
 
 
+def abandon(ship) -> None:
+    """``ship`` stopped being the player mid-dash (RecreatePlayer, a
+    QuickBattle ship swap): cancel its dash (``_cancel`` -- no hand-off, no
+    ET_EXITED_WARP, queues back if it never engaged) and leave it at rest.
+    Nothing else would end it: the host ticks only the current player's
+    dash, and a heading flight in open space never ends on its own."""
+    st = _state(ship)
+    if st is None:
+        return
+    _cancel(ship, st)
+    ship._current_speed = 0.0
+    ship.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+
+
 def _engage(player, st, flight=None) -> None:
     """Begin the flight: the Set Course path at the end of its align, or the
     ``flight`` given (a heading dash, which has no align)."""
