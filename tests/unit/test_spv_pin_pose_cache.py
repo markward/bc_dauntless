@@ -182,7 +182,12 @@ def test_posing_a_state_MOVES_the_cached_pin(panel):
 
     assert _cannon_world(p) == pytest.approx(_raised_cannon(holder["ship"])), (
         "the cached pin must move to where the wing is now drawn")
-    assert _cannon_pin(p) == pytest.approx(_raised_cannon(holder["ship"]))
+    # Not through _cannon_pin: a State Transformation node is a Model Parts
+    # child selection, and subsystem_pins() hides every pin while one is
+    # selected (Mark, 2026-09-26) -- the cache move above is what this test
+    # is actually pinning; the render-list emptying is its own contract,
+    # covered by tests/ui/test_spv_part_nodes.py.
+    assert p.subsystem_pins() == []
 
 
 def test_leaving_the_state_node_returns_the_pin(panel):
@@ -255,10 +260,16 @@ def _select_cannon_previewing_cruise(p):
     The State node is then deselected WITHOUT dispatching (so
     `_sync_part_pose` does not run and the forced pose stays): a selected
     State node is itself the transform target and would win over the cannon
-    (test_spv_part_gizmos.py), putting the gizmo on the pose, not the pin."""
+    (test_spv_part_gizmos.py), putting the gizmo on the pose, not the pin.
+    Clearing via `select_model_part(None, [])` rather than
+    `select_part_node(None, None)` also drops `selected_model_part()` --
+    mirroring what the real `select_pin:` dispatch does as part of mutual
+    exclusion -- so `subsystem_pins()`'s "hide while a part node is
+    selected" rule (2026-09-26) does not fire on this fixture's leftover
+    state once `selected_index` is set/cleared directly below."""
     p.open()
     _pose_starboard_wing(p)
-    spv.select_part_node(None, None)
+    spv.select_model_part(None, [])
     i = _cannon_index(p)
     p.selected_index = i
     p.active_tool = "transform"

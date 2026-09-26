@@ -967,3 +967,101 @@ def test_an_invalid_add_state_still_closes_the_picker(make_panel, bad):
     assert _picker(p) is None
     assert p._viewport_input_blocked() is False
     assert p._pending_part == before
+
+
+# ── subsystem pins hide while ANY Model Parts node is selected ─────────────
+# Spec (Mark, 2026-09-26): while a part row, or one of its Anchor / {State}
+# Transformation / Breakage children, is selected there is no subsystem
+# selection -- and every pin drawn over the hologram just gets in the way of
+# animation work. `subsystem_pins()` is what host_loop feeds straight into
+# `renderer.set_subsystem_pins` every frame (see host_loop.py's SPV block),
+# so these assert on it directly rather than on some intermediate the
+# renderer never sees. The part's own gizmo, the derived part box, and the
+# pose preview are untouched by any of this -- nothing here selects/
+# deselects them.
+
+def _with_icon_ids(p):
+    """`subsystem_pins()` reads `d['icon_id']`, which this file's shared
+    `_DESCRIPTORS` fixture omits (no test before this section ever called
+    `subsystem_pins()`). Stub it in rather than touch the shared fixture."""
+    for d in p._descriptors:
+        d.setdefault("icon_id", 0)
+    return p
+
+
+def test_selecting_a_part_row_hides_all_subsystem_pins(make_panel):
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+    assert p.subsystem_pins() != [], "fixture: at least one pin exists"
+
+    assert p.dispatch_event("model_parts/select:left wing") is True
+
+    assert p.subsystem_pins() == []
+
+
+def test_selecting_the_anchor_node_hides_all_subsystem_pins(make_panel):
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+
+    assert p.dispatch_event("part/add_anchor:left wing") is True
+    assert spv.selected_part_node() == ("left wing", "anchor"), (
+        "fixture: adding a node selects it")
+
+    assert p.subsystem_pins() == []
+
+
+def test_selecting_a_state_transformation_node_hides_all_subsystem_pins(make_panel):
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+    p.dispatch_event("part/add_anchor:left wing")
+
+    assert _add_state(p, "left wing", "cruise") is True
+    assert spv.selected_part_node() == ("left wing", "cruise"), (
+        "fixture: adding a state selects it")
+
+    assert p.subsystem_pins() == []
+
+
+def test_selecting_the_breakage_node_hides_all_subsystem_pins(make_panel):
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+
+    assert p.dispatch_event("part/make_breakable:left wing") is True
+    assert spv.selected_part_node() == ("left wing", "breakage"), (
+        "fixture: make_breakable selects the breakage node")
+
+    assert p.subsystem_pins() == []
+
+
+def test_selecting_a_subsystem_after_a_part_restores_default_pin_behaviour(make_panel):
+    """Selecting a subsystem pin ends the part selection (mutual exclusion,
+    already enforced by `select_pin:`'s handler) -- and the pin behaviour it
+    gets back must be byte-identical to a panel that never touched a part at
+    all."""
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+    p.dispatch_event("model_parts/select:left wing")
+    assert p.subsystem_pins() == [], "fixture: part selected, pins hidden"
+
+    assert p.dispatch_event("select_pin:0") is True
+
+    fresh, _s2, _t2 = make_panel()
+    _with_icon_ids(fresh)
+    fresh.dispatch_event("select_pin:0")
+    assert p.subsystem_pins() == fresh.subsystem_pins()
+    assert p.subsystem_pins()[0][2] is True, "the selected pin is flagged"
+
+
+def test_deselecting_the_part_node_restores_default_pin_behaviour(make_panel):
+    """With nothing else selected, clearing the Model Parts selection must
+    restore today's no-selection behaviour: every pin, none flagged
+    selected -- byte-identical to a panel where nothing was ever selected."""
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+    baseline = p.subsystem_pins()
+    p.dispatch_event("model_parts/select:left wing")
+    assert p.subsystem_pins() == [], "fixture: part selected, pins hidden"
+
+    spv.select_model_part(None, p._model_part_nodes)
+
+    assert p.subsystem_pins() == baseline

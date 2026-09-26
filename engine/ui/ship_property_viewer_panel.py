@@ -2357,7 +2357,20 @@ class ShipPropertyViewerPanel(Panel):
         subsystem. Nothing selected -> every pin renders. Deselecting restores
         them all. (Pin PICKING still uses the full descriptor set — see
         pick_at — so clicking empty space deselects and reveals every pin
-        again.)"""
+        again.)
+
+        Model Parts node selected (a part row, or its Anchor / {State}
+        Transformation / Breakage child) and nothing subsystem/light/emitter
+        -- none. There is no subsystem selection while a part node owns the
+        selection, and every pin sitting on top of the hologram just gets in
+        the way of animation work (Mark, 2026-09-26). `selected_model_part()`
+        stays set under a child node too (only `select_part_node` changes),
+        so one check covers the row and every child kind. This check runs
+        LAST, after the subsystem/light/emitter branches above, so a caller
+        that pokes `selected_index` directly without going through the
+        `select_pin:`/`select_light:`/`select_emitter:` handlers (which
+        already clear the part selection as part of mutual exclusion) still
+        gets the subsystem-selected behaviour it asked for."""
         if self._selected_emitter is not None:
             i = self._selected_emitter[0]
             if 0 <= i < len(self._descriptors):
@@ -2374,6 +2387,8 @@ class ShipPropertyViewerPanel(Panel):
         if sel is not None and 0 <= sel < len(self._descriptors):
             d = self._descriptors[sel]
             return [(self._effective_world_pos(sel), d["icon_id"], True)]
+        if _spv.selected_model_part() is not None:
+            return []
         return [(d["world_pos"], d["icon_id"], False) for d in self._descriptors]
 
     def selected_descriptor(self) -> Optional[dict]:
