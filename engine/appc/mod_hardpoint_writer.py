@@ -99,30 +99,58 @@ def _is_create_of(node, subsystem):
     return (isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name) and node.func.value.id == "App"
-            and node.func.attr.endswith("_Create")
+            and node.func.attr.endswith("Property_Create")            # spec §4.1
             and len(node.args) >= 1
             and isinstance(node.args[0], ast.Constant) and node.args[0].value == subsystem)
 
 
+def _is_setter_call_on(stmt, var, setter):
+    """`stmt` is exactly the top-level statement `V.<setter>(...)`."""
+    return (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Attribute)
+            and stmt.value.func.attr == setter
+            and isinstance(stmt.value.func.value, ast.Name)
+            and stmt.value.func.value.id == var)
+
+
+def _contains_setter_call(node, var, setter):
+    """Whether `V.<setter>(...)` appears anywhere inside `node`, at any
+    nesting depth (an `if`/loop/function body, or as a sub-expression)."""
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == setter and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == var):
+            return True
+    return False
+
+
 def find_setter_call(tree, subsystem, setter):
-    """The LAST module-level `V.<setter>(...)` issued while V is bound to
-    `App.<X>_Create("<subsystem>")`. None when absent (loop-built, computed
-    name, inside a function, or no such call)."""
+    """The LAST module-level, top-level-statement `V.<setter>(...)` issued
+    while V is bound to `App.<X>Property_Create("<subsystem>")`. None when
+    absent (loop-built, computed name, inside a function, or no such call) --
+    and ALSO None when any later statement contains a `V.<setter>(...)` call
+    at any OTHER nesting depth (inside an `if`, a loop, a function body, or as
+    a sub-expression): such a call runs after ours at runtime and would
+    silently override an in-place rewrite of the top-level call, so the whole
+    candidacy is treated as unsafe rather than producing a save that looks
+    right in the file but does nothing in the game."""
     var, hit = None, None
     for stmt in tree.body:
         if isinstance(stmt, ast.Assign):
             names = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
             if len(stmt.targets) == 1 and names and _is_create_of(stmt.value, subsystem):
                 var, hit = names[0], None
-            elif var in names:
+                continue
+            if var in names:
                 var = None                          # rebound: later calls are not ours
-        elif (var is not None and isinstance(stmt, ast.Expr)
-              and isinstance(stmt.value, ast.Call)
-              and isinstance(stmt.value.func, ast.Attribute)
-              and stmt.value.func.attr == setter
-              and isinstance(stmt.value.func.value, ast.Name)
-              and stmt.value.func.value.id == var):
+                continue
+        if var is None:
+            continue
+        if _is_setter_call_on(stmt, var, setter):
             hit = stmt.value
+            continue
+        if _contains_setter_call(stmt, var, setter):
+            return None                              # could override us at runtime
     return hit
 
 
@@ -144,10 +172,50 @@ def _newline_of(text):
     return "\r\n" if "\r\n" in text else "\n"
 
 
+def _dedupe_last_wins(edits):
+    """Two edits for the same (subsystem, setter) 3-tuple key would each
+    independently locate and splice the SAME source span via
+    find_setter_call, producing overlapping replacements. Keep only the
+    last-issued edit per key, in its original position."""
+    last_index = {}
+    for i, edit in enumerate(edits):
+        if len(edit) == 3:
+            last_index[(edit[0], edit[1])] = i
+    keep = set(last_index.values())
+    return [edit for i, edit in enumerate(edits) if len(edit) != 3 or i in keep]
+
+
+def _check_span_is_the_call(author, start, end, var, setter):
+    """A REAL verify against the source -- not a tautology. Undoing a splice
+    with the same span it was cut from always reproduces the input, so that
+    check catches nothing; this instead re-parses the exact slice of the
+    ORIGINAL text the span claims to cover and confirms it really is
+    `var.setter(...)`."""
+    seg = author[start:end]
+    try:
+        node = ast.parse(seg, mode="eval").body
+    except SyntaxError:
+        node = None
+    ok = (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+          and node.func.attr == setter and isinstance(node.func.value, ast.Name)
+          and node.func.value.id == var)
+    if not ok:
+        raise ManagedBlockError(
+            "in-place rewrite span %r is not %s.%s(...)" % (seg, var, setter))
+
+
+def _check_no_overlapping_spans(replacements):
+    ordered = sorted(replacements)
+    for (_s1, e1, _n1), (s2, _e2, _n2) in zip(ordered, ordered[1:]):
+        if s2 < e1:
+            raise ManagedBlockError("in-place rewrite spans overlap")
+
+
 def rewrite(text, leaf, edits):
     newline = _newline_of(text)
     author, block = split_block(text)
     models = {leaf: read_block(block)}
+    edits = _dedupe_last_wins(edits)
     try:
         tree = ast.parse(author) if ("\r" not in author.replace("\r\n", "")) else None
     except SyntaxError:
@@ -159,29 +227,29 @@ def rewrite(text, leaf, edits):
             subsystem, setter, args = edit
             call = find_setter_call(tree, subsystem, setter)
             if call is not None:
+                var = call.func.value.id
                 start, end = _char_span(author, call)
-                replacements.append((start, end,
-                                     format_setter_call(call.func.value.id, setter, args)))
+                _check_span_is_the_call(author, start, end, var, setter)
+                replacements.append((start, end, format_setter_call(var, setter, args)))
                 calls = models[leaf].get(subsystem)
                 if calls:
                     models[leaf][subsystem] = [(s, a) for (s, a) in calls if s != setter]
                 continue
         _w.apply_edit(models, leaf, edit)
 
+    _check_no_overlapping_spans(replacements)
+
     new_author = author
     for start, end, new in sorted(replacements, reverse=True):
         new_author = new_author[:start] + new + new_author[end:]
 
-    # Verify: undoing exactly the replaced spans restores the author text.
-    # Ascending order: every earlier span is already reverted to its original
-    # length, so each span sits at its ORIGINAL start offset.
-    restored = new_author
-    for start, end, new in sorted(replacements):
-        restored = restored[:start] + author[start:end] + restored[start + len(new):]
-    if restored != author:
-        raise ManagedBlockError("in-place rewrite touched text outside its call spans")
+    block_text = emit_block(models[leaf], newline)
+    if block_text:
+        ast.parse(block_text)                 # spec §5.6: block parses on its own,
+                                                # whenever non-empty, even if the
+                                                # author's own text does not (py1.5/py2)
 
-    out = append_block(new_author, emit_block(models[leaf], newline), newline)
+    out = append_block(new_author, block_text, newline)
     if tree is not None:
         ast.parse(out)                        # raises SyntaxError on a bad result
     return out

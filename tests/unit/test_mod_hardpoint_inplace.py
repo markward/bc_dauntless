@@ -116,27 +116,86 @@ def test_result_parses():
 
 
 # ── Extra: non-ASCII byte/char-offset handling ──────────────────────────────
+#
+# Fix round 1, item 6: the original two non-ASCII tests never actually
+# exercised _char_span's byte->char conversion -- the multi-byte chars sat on
+# a later line, or after the rewritten call's own end_col_offset, so a
+# byte-offset bug could not have been caught by either. This test puts a
+# multi-byte character BEFORE the rewritten call on its OWN line, as an
+# earlier `;`-separated statement, so the call's col_offset (a UTF-8 BYTE
+# offset) is shifted relative to its char offset.
 
-def test_non_ascii_earlier_on_a_line_with_an_unrewritten_setter_call():
-    # 'é' is 2 UTF-8 bytes but 1 char; put it BEFORE a setter call on its own
-    # line so a byte-offset bug would misplace the span for THAT call. Only
-    # PortWarp.SetPosition is being rewritten, so this call must survive
-    # untouched and the rewritten call elsewhere must still be exactly right.
-    src = SRC.replace(
-        'PortWarp.SetRadius(1.200000)',
-        'PortWarp.SetRadius(1.200000)  # café note')  # non-ASCII before EOL, not before a call
-    out = mw.rewrite(src, "refit", [("Port Warp", "SetPosition", (1.0, 2.0, 3.0))])
-    assert "PortWarp.SetPosition(1.000000, 2.000000, 3.000000)" in out
-    assert "PortWarp.SetRadius(1.200000)  # café note" in out
-    assert _changed_lines(src, out) == [(
-        "PortWarp.SetPosition(-1.300000, -2.100000, -0.060000)   # tuned by hand",
-        "PortWarp.SetPosition(1.000000, 2.000000, 3.000000)   # tuned by hand")]
+def test_non_ascii_before_the_rewritten_call_on_the_same_line():
+    src = ('import App\n'
+           'PortWarp = App.EngineProperty_Create("Port Warp")\n'
+           'z = "é"; PortWarp.SetRadius(1.200000)\n')
+    out = mw.rewrite(src, "refit", [("Port Warp", "SetRadius", (7.0,))])
+    assert out == src.replace(
+        "PortWarp.SetRadius(1.200000)", "PortWarp.SetRadius(7.000000)")
+    assert 'z = "é"; PortWarp.SetRadius(7.000000)\n' in out
 
 
-def test_non_ascii_trailing_comment_on_the_rewritten_call_line():
-    src = SRC.replace(
-        'PortWarp.SetPosition(-1.300000, -2.100000, -0.060000)   # tuned by hand',
-        'PortWarp.SetPosition(-1.300000, -2.100000, -0.060000)   # tunéd by hand')
-    out = mw.rewrite(src, "refit", [("Port Warp", "SetPosition", (1.0, 2.0, 3.0))])
-    assert "PortWarp.SetPosition(1.000000, 2.000000, 3.000000)   # tunéd by hand" in out
-    assert mw.START_MARKER not in out
+# ── Fix round 1 (review) ────────────────────────────────────────────────────
+
+def test_shifted_span_is_rejected(monkeypatch):
+    """item 1: the verify step must be a REAL check against the source, not
+    a tautology that undoes its own splice. Shifting every span by +2 chars
+    must be caught as ManagedBlockError, not silently accepted (nor left to
+    an incidental downstream SyntaxError)."""
+    orig = mw._char_span
+
+    def shifted(text, node):
+        start, end = orig(text, node)
+        return start + 2, end + 2
+
+    monkeypatch.setattr(mw, "_char_span", shifted)
+    with pytest.raises(mw.ManagedBlockError):
+        mw.rewrite(SRC, "refit", [("Port Warp", "SetRadius", (0.5,))])
+
+
+def test_duplicate_inplace_edits_last_one_wins():
+    """item 2: two edits for the same (subsystem, setter) must collapse to
+    the last one before any span is located, not both independently splice
+    the identical source span."""
+    out = mw.rewrite(SRC, "refit", [
+        ("Port Warp", "SetRadius", (0.5,)),
+        ("Port Warp", "SetRadius", (0.75,))])
+    assert "PortWarp.SetRadius(0.750000)" in out
+    assert "PortWarp.SetRadius(0.500000)" not in out
+    assert len(_changed_lines(SRC, out)) == 1
+
+
+def test_managed_block_is_parse_checked_even_when_author_does_not_parse(monkeypatch):
+    """item 3: spec 5.6 -- the managed block must parse on its own whenever
+    non-empty, regardless of whether the author's (possibly py1.5/py2)
+    text parses under Python 3."""
+    monkeypatch.setattr(mw, "emit_block", lambda per_sub, newline="\n": "not: valid( python")
+    src = SRC + "print 'hello'\n"
+    with pytest.raises(SyntaxError):
+        mw.rewrite(src, "refit", [("Port Warp", "SetPosition", (1.0, 2.0, 3.0))])
+
+
+def test_nested_override_after_toplevel_call_falls_back_to_block():
+    """item 4: a later NON-top-level `V.<setter>(...)` (inside an `if`, loop,
+    or function body) while V is still bound overrides our rewritten
+    top-level call at runtime, so the edit must fall back to the block
+    rather than silently doing nothing."""
+    src = ('import App\n'
+           'p = App.EngineProperty_Create("A")\n'
+           'p.SetRadius(1.2)\n'
+           'if 1:\n'
+           '    p.SetRadius(3.0)\n')
+    out = mw.rewrite(src, "refit", [("A", "SetRadius", (7.0,))])
+    assert out.startswith(src)                 # author text byte-identical
+    assert mw.read_block(mw.split_block(out)[1])["A"] == [("SetRadius", (7.0,))]
+
+
+def test_non_property_create_is_not_treated_as_the_binding():
+    """item 5: _is_create_of must require the literal `...Property_Create`
+    suffix (spec 4.1), not any `..._Create`."""
+    src = ('import App\n'
+           'V = App.SomeOther_Create("A")\n'
+           'V.SetRadius(1.0)\n')
+    out = mw.rewrite(src, "x", [("A", "SetRadius", (9.0,))])
+    assert out.startswith(src)                 # not rewritten in place
+    assert mw.read_block(mw.split_block(out)[1])["A"] == [("SetRadius", (9.0,))]
