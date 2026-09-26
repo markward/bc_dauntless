@@ -7924,6 +7924,33 @@ def _drive_handover_smoother(smoother, prev_interp, cur_interp,
     smoother.begin(prev_drawn[0], prev_drawn[1])
 
 
+def _player_render_interpolated(player, *, sim_frozen,
+                                cutscene_active) -> bool:
+    """Whether the player is drawn from the 60 Hz interpolation rather than
+    its live per-render-frame pose: whenever something other than
+    _PlayerControl moves it on the sim tick -- a helm-AI / waypoint order
+    (GetAI), an active in-space cutscene (scripted, and a cutscene camera is
+    commonly locked onto it), or an in-system dash (engine/appc/dash.py: its
+    WarpFlight steps the ship on the tick). Drawn live otherwise."""
+    if player is None:
+        return False
+    from engine.appc import dash
+    ai_owned = hasattr(player, "GetAI") and player.GetAI() is not None
+    scripted = not sim_frozen and cutscene_active
+    return bool(ai_owned or scripted or dash.is_dashing(player))
+
+
+def _rebase_player_render(xform_buf, smoother, player_iid, player) -> None:
+    """The player changed region set (a dash hand-off): its set-local
+    coordinates jumped by the anchor difference. Re-seed its interpolation
+    slot at the new pose and drop any handover window, so no frame blends a
+    set-A pose with a set-B one."""
+    smoother.cancel()
+    if player_iid is not None and player is not None:
+        xform_buf.snap(player_iid, player.GetWorldLocation(),
+                       player.GetWorldRotation())
+
+
 def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
                                interpolate_player, player_iid,
                                smoother=None):
@@ -9367,6 +9394,9 @@ def run(mission_name: Optional[str] = None,
         # engine/core/handover_smoother. Inert except during a handover window.
         _handover = HandoverSmoother()
         _prev_interp_player = None      # None until the first frame completes
+        # (player, its containing set) last running frame: a hand-off is the
+        # same player in another set (_rebase_player_render).
+        _prev_player_set = (None, None)
         _prev_drawn_player_pose = None  # what was actually on screen last frame
 
         def _snap_scene():
@@ -10340,20 +10370,30 @@ def run(mission_name: Optional[str] = None,
                     # is scripted, never manually flown then, and a cutscene
                     # camera is commonly locked onto it — so its 60 Hz-stepped
                     # motion must be interpolated or the whole shot judders).
-                    _player_ai_owned = (
-                        player is not None
-                        and hasattr(player, "GetAI")
-                        and player.GetAI() is not None)
-                    _player_scripted = (
-                        player is not None
-                        and not pause.sim_frozen
-                        and _active_cutscene_camera() is not None)
-                    _interp_player = _player_ai_owned or _player_scripted
+                    # An in-system dash too: its flight steps the ship on the
+                    # tick (_player_render_interpolated).
+                    _interp_player = _player_render_interpolated(
+                        player, sim_frozen=pause.sim_frozen,
+                        cutscene_active=_active_cutscene_camera() is not None)
                     if _interp_player and _player_iid_i is not None:
                         _xform_buf.set_current(
                             _player_iid_i,
                             player.GetWorldLocation(),
                             player.GetWorldRotation())
+                    # A hand-off (the same player, another region set): the
+                    # slot and any handover window hold the old set's
+                    # coordinates -- re-seed / drop them, and never open a
+                    # window from last frame's (old-set) drawn pose.
+                    _pset = (player.GetContainingSet()
+                             if player is not None else None)
+                    if (player is not None
+                            and _prev_player_set[0] is player
+                            and _prev_player_set[1] is not None
+                            and _pset is not _prev_player_set[1]):
+                        _rebase_player_render(_xform_buf, _handover,
+                                              _player_iid_i, player)
+                        _prev_drawn_player_pose = None
+                    _prev_player_set = (player, _pset)
                     # Handover easing: the pipeline the player is drawn from
                     # flips between live (manual) and interpolated (AI /
                     # scripted), and those sit a tick apart. Open a smoothing
