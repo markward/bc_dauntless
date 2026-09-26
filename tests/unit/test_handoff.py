@@ -218,3 +218,44 @@ def test_hand_off_clears_the_players_target():
     handoff.hand_off(ship, ona2)
 
     assert ship.GetTarget() is None
+
+
+# ── 9. Fix round R11.2: a cross-frame hand_off must fail loud ───────────────
+
+def test_hand_off_raises_when_src_and_dest_are_not_the_same_frame():
+    from engine.appc.sets import SetClass_Create
+    ona1 = load_region("Ona", "Ona1")
+    arena = SetClass_Create()
+    App.g_kSetManager.AddSet(arena, "Arena")
+    ship = _make_ship((0.0, 0.0, 0.0), arena)
+
+    with pytest.raises(ValueError, match="Ona1"):
+        handoff.hand_off(ship, ona1)
+
+    # The failed rebase left the player exactly where it was.
+    assert arena.GetObject("player") is ship
+    assert ona1.GetObject("player") is None
+
+
+# ── 10. Fix round R11.3: region_at directly ─────────────────────────────────
+
+def test_region_at_returns_the_containing_sphere():
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    a1, a2 = resolve.anchor_of("Ona1"), resolve.anchor_of("Ona2")
+    # Dead centre of Ona2's own sphere, held in Ona1's set-local coordinates.
+    local = tuple(a2[i] - a1[i] for i in range(3))
+    ship = _make_ship(local, ona1)
+
+    assert handoff.region_at(ship) is ona2
+
+
+def test_region_at_returns_none_in_open_space():
+    ona1 = load_region("Ona", "Ona1")
+    load_region("Ona", "Ona2")
+    r1 = resolve.map_of("Ona").region("Ona1").radius_gu
+    # Just past Ona1's own radius (well past the margin too) and nowhere near
+    # any other loaded region's sphere -- open space.
+    ship = _make_ship((r1 + 50000.0, 0.0, 0.0), ona1)
+
+    assert handoff.region_at(ship) is None

@@ -129,13 +129,31 @@ def hand_off(player, dest) -> None:
     name = player.GetName()
     off = frames.offset_between(dest, src)
     if off is None:
-        off = (0.0, 0.0, 0.0)
+        # src and dest are in different frames -- not a hand-off this module
+        # can rebase honestly (rule A requires both regions of one system).
+        # Every real caller (tick's own rule-H gate; Task 4's dash drop-out,
+        # which never leaves the flight's originating region until it ends)
+        # only ever calls this with two sets of the SAME mapped system, so
+        # reaching here is a caller bug -- fail loud rather than silently
+        # mis-placing the player at its old raw coordinates in a new system.
+        raise ValueError(
+            "handoff.hand_off: %r and %r are not in the same frame" % (
+                getattr(dest, "GetName", lambda: dest)(),
+                getattr(src, "GetName", lambda: src)()))
     p = player.GetTranslate()
     local_dest = (p.x + off[0], p.y + off[1], p.z + off[2])
     if src is not None:
         src.RemoveObjectFromSet(name)
     dest.AddObjectToSet(player, name)
     player.SetTranslateXYZ(*local_dest)
+    # Clear the target alone -- no _stand_down_player_ai, unlike the tunnel's
+    # engage-time clear (engine/appc/warp.py:_ClearTargetsAction). Mirrors the
+    # tunnel's ARRIVAL clear instead (_ArrivalClearTargetsAction): the old
+    # set's ships have just left the target list's pool (it is derived from
+    # the player's containing set), so the same "don't retarget across a set
+    # boundary" reasoning applies, but standing the player's AI down on every
+    # impulse crossing would cancel a still-valid order (an Intercept/Orbit
+    # that crosses a region boundary mid-flight must keep running).
     from engine.appc import warp
     warp._clear_all_targets(player)
     post_exited_warp(player)
