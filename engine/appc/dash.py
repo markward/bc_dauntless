@@ -207,7 +207,7 @@ def start_heading(player, queues, button=None) -> bool:
     # player, so a failure leaves no half-built dash behind.
     flight = WarpFlight(heading=heading, speed_policy="heading",
                         exit_policy="engaged_impulse", engaged_speed=engaged,
-                        standoff_of=_heading_standoffs(player))
+                        standoff_of=_heading_standoffs(player, heading))
     st = _Dash(None, None, None, None, heading, None,
                {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
                button)
@@ -227,14 +227,24 @@ def start_heading(player, queues, button=None) -> bool:
     return True
 
 
-def _heading_standoffs(player):
-    """``standoff_of`` for the player's heading flight (rulings R1, R9): from
-    a body's centre, the distance to its owning region's arrival point (the
-    region set's "Player Start", system coordinates) -- where the tunnel
-    would frame it; else one radius above the surface (a star, a body whose
-    region is not loaded). A body whose arrival range already holds the ship
-    at engage (it starts there) uses radius + clearance instead, so the dash
-    neither ends on its first tick nor passes through the body."""
+# R14: a cut-down standoff aims this far inside the region's sphere, so the
+# drop point is not on its rim (where float rounding could put it outside).
+SPHERE_INWARD_MARGIN_GU = 100.0
+
+
+def _heading_standoffs(player, heading):
+    """``standoff_of`` for the player's heading flight (rulings R1, R9, R14):
+    from a body's centre, the distance to its owning region's arrival point
+    (the region set's "Player Start", system coordinates) -- where the
+    tunnel would frame it; else one radius above the surface (a star, a body
+    whose region is not loaded). A body whose arrival range already holds the
+    ship at engage (it starts there) uses radius + clearance instead, so the
+    dash neither ends on its first tick nor passes through the body.
+    Otherwise the arrival range is cut, when it has to be, so the drop point
+    on this heading lands inside the region's sphere (``_sphere_standoff``).
+
+    Computed once, at engage: the flight's ray never changes, so each drop
+    point measured from the centre is the same from every point along it."""
     import App
     from engine.systems import frames, resolve
     from engine.systems.warp_path import clearance_gu
@@ -254,14 +264,63 @@ def _heading_standoffs(player):
             continue
         centre = tuple(float(c) for c in b.position_gu)
         sd = math.dist(centre, tuple(arrival[1:]))
+        region = m.region(b.owner_region)
         if here is not None and sd >= math.dist(here, centre):
             sd = b.radius_gu + clearance_gu(b.radius_gu)
+        elif here is not None and region is not None:
+            sd = _sphere_standoff(here, heading, centre, b.radius_gu, sd,
+                                  tuple(region.anchor_gu), region.radius_gu)
         table[b.name] = sd
 
     def standoff_of(obstacle):
         sd = table.get(obstacle.name)
         return 2.0 * obstacle.radius_gu if sd is None else sd
     return standoff_of
+
+
+def _sphere_standoff(here, heading, centre, radius, arrival, anchor,
+                     sphere_radius) -> float:
+    """Ruling R14: the standoff for a body with the ray ``here + t*heading``
+    fixed. The arrival range if its drop point is inside the region's sphere
+    (shrunk by SPHERE_INWARD_MARGIN_GU); otherwise the LARGEST standoff below
+    it, and >= radius + clearance, whose drop point is inside -- the drop
+    point where the ray enters the shrunk sphere; otherwise (the ray misses
+    the sphere, or enters it only nearer the body than radius + clearance)
+    the arrival range, which then gets no hand-off. A body off the ray is
+    never dropped at (warp_path.drop_out), so it keeps the arrival range."""
+    from engine.systems.warp_path import clearance_gu
+    h = heading
+    v = [centre[i] - here[i] for i in range(3)]
+    along = sum(v[i] * h[i] for i in range(3))
+    lat2 = max(sum(c * c for c in v) - along * along, 0.0)
+    if lat2 >= radius * radius:
+        return arrival
+    r = sphere_radius - SPHERE_INWARD_MARGIN_GU
+    if r <= 0.0:
+        return arrival
+
+    def t_of(sd):                   # the drop point's distance along the ray
+        return along - math.sqrt(max(sd * sd - lat2, 0.0))
+
+    wv = [anchor[i] - here[i] for i in range(3)]
+    b = sum(wv[i] * h[i] for i in range(3))
+    c2 = sum(c * c for c in wv) - b * b
+    if c2 > r * r:
+        return arrival              # the ray misses the sphere
+    half = math.sqrt(r * r - c2)
+    t1, t2 = b - half, b + half
+    t_arr = t_of(arrival)
+    if t1 <= t_arr <= t2:
+        return arrival              # already inside
+    # A smaller standoff drops FURTHER along the ray; only a drop point short
+    # of the sphere (t_arr < t1) can be moved into it, to its entry t1 --
+    # and only while t1 is still before the centre.
+    if t_arr > t2 or t1 > along:
+        return arrival
+    sd = math.sqrt((along - t1) ** 2 + lat2)
+    if sd < radius + clearance_gu(radius):
+        return arrival
+    return sd
 
 
 def _log_body_fallback(dest_set) -> None:
