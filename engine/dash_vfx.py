@@ -101,3 +101,10 @@ _singleton = DashVFX()
 
 def get() -> DashVFX:
     return _singleton
+
+
+def reset() -> None:
+    """Back to no dash at all (every query 0): a dash that ended without a
+    drop-out (cancelled, the player swapped, the mission swapped) must not
+    leave the dust smear cap and nacelle glow held at 1."""
+    _singleton.__init__()

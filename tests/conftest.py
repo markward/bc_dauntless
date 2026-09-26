@@ -881,6 +881,39 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    # Swapped-module split: fixtures that re-import an SDK module
+    # (sys.modules.pop -> import -> restore the saved entry; e.g.
+    # Bridge.HelmMenuHandlers in tests/unit/test_dash_set_course.py) put the
+    # OLD module back in sys.modules but leave the parent package's attribute
+    # on the NEW one. Later code binds the attribute and runs CreateMenus on
+    # it, while the event manager resolves the SDK's string handlers through
+    # sys.modules -- a module whose globals were never set (NameError
+    # g_dCommandableFleet in every later mission test). sys.modules is the
+    # authority; re-point any package attribute that holds a DIFFERENT module
+    # of the same name.
+    try:
+        import types as _types
+        for _name, _mod in list(sys.modules.items()):
+            if _mod is None or "." not in _name:
+                continue
+            _parent_name, _, _leaf = _name.rpartition(".")
+            _parent = sys.modules.get(_parent_name)
+            _attr = getattr(_parent, _leaf, None) if _parent is not None else None
+            if (isinstance(_attr, _types.ModuleType) and _attr is not _mod
+                    and getattr(_attr, "__name__", None) == _name):
+                setattr(_parent, _leaf, _mod)
+    except Exception:
+        pass
+    # The in-system-warp dash's module globals: the Helm-menu label cache
+    # (engine.appc.dash_helm) holds a previous test's menu, and the dash VFX
+    # clock (engine.dash_vfx) holds its dash intensity.
+    try:
+        from engine.appc import dash_helm as _dash_helm
+        _dash_helm._cache = None
+        from engine import dash_vfx as _dash_vfx
+        _dash_vfx.reset()
+    except Exception:
+        pass
     # The projectile-module cache memoises import FAILURES, so one test
     # firing a tube with an unimportable script would otherwise decide every
     # later test's torpedoes for that script name.
