@@ -306,9 +306,9 @@ class ShipPropertyViewerPanel(Panel):
         # live articulated pose, so forcing the anchor pose afterwards moves
         # the hull and leaves the pins floating clear of it -- shipped twice.
         #
-        # Preview lock (Task 7): a stale forced state from whatever was open
-        # before (or left by the 'K' dev keybinding) must not carry into a
-        # freshly-opened ship -- the lock is read live from
+        # The 'K' override arm of the mount lock: a stale forced state left
+        # by the 'K' dev keybinding must not carry into a freshly-opened
+        # ship -- the lock is read live from
         # articulation.dev_override() (see _mount_lock_state_and_reason), so
         # clearing it here is the only reset this needs.
         from engine.appc import articulation as _articulation
@@ -757,6 +757,15 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             _spv.select_model_part(name, self._model_part_nodes)
             _spv.select_part_node(name, kind)
+            # Ruling 16 (spec 7.3 "anchor marker"): the Move gizmo IS the
+            # marker, and every gizmo exists only under its own tool, so an
+            # Anchor or State node activates Move -- under any other tool
+            # nothing would be drawn at the anchor at all. The one exception
+            # is Rotate on a State node: its rings already sit at the posed
+            # anchor, and posing a part is mostly rotating it.
+            if kind == "anchor" or (kind in STATES
+                                    and self.active_tool != "rotate"):
+                self.active_tool = "transform"
             # Mutually exclusive with subsystem/light/emitter selection, as
             # model_parts/select is.
             self.selected_index = None
@@ -1314,15 +1323,22 @@ class ShipPropertyViewerPanel(Panel):
 
     def transform_coords(self) -> Optional[dict]:
         """Data for the transform-coordinate panel: `{"x","y","z",
-        "has_clipboard"}` for the current transform target, or None when the
-        transform tool isn't active or nothing is selected."""
+        "has_clipboard", "can_paste"}` for the current transform target, or
+        None when the transform tool isn't active or nothing is selected.
+
+        `can_paste` is kind-aware, as in `scale_values` / `rotate_values`:
+        true only when the clipboard's kind (`_coord_clipboard_kind`) matches
+        the current target's, i.e. exactly when `coord_paste` would act."""
         if self.active_tool != "transform":
             return None
         pos = self._transform_target_pos()
         if pos is None:
             return None
+        clip = self._coord_clipboard
+        kind = self._coord_clipboard_kind(self._active_transform_target())
         return {"x": pos[0], "y": pos[1], "z": pos[2],
-                "has_clipboard": self._coord_clipboard is not None}
+                "has_clipboard": clip is not None,
+                "can_paste": clip is not None and clip[0] == kind}
 
     # ------------------------------------------------------------------
     # Scale tool (shape-aware size fields for the current transform target)
@@ -2155,7 +2171,8 @@ class ShipPropertyViewerPanel(Panel):
             # Defence in depth -- see _apply_scale_drag's identical guard.
             # This is THE bug the reviewer reproduced: without this check
             # (and _handle_gizmo_input's press-edge refusal), a subsystem
-            # selected BEFORE a Preview click stayed draggable through it.
+            # selected BEFORE the rig was forced into a pose (a 'K' press)
+            # stayed draggable through it.
             return
         k = self._axis_drag
         base = list(self._axis_grab_pos)
@@ -2693,8 +2710,8 @@ class ShipPropertyViewerPanel(Panel):
         # An axis drag is in progress — own the whole press/drag/release cycle.
         if self._axis_drag is not None:
             if not down or self._current_target_is_locked_mount():
-                # Release edge, OR the lock engaged mid-gesture (e.g. a
-                # Preview click landed between two drag frames): end the
+                # Release edge, OR the lock engaged mid-gesture (e.g. a 'K'
+                # override landed between two drag frames): end the
                 # drag without applying any further delta. No pin pick.
                 self._end_axis_drag()
                 self._lmb_down = False
@@ -2844,6 +2861,8 @@ class ShipPropertyViewerPanel(Panel):
 
     # Actions that pick TOWARD subsystem/light/emitter editing -- refused
     # outright while mount editing is locked, not just greyed in the DOM.
+    # (A select_* under a selected State node first leaves that node, which
+    # lifts its arm of the lock -- see the top of _dispatch_event_inner.)
     _MOUNT_SELECT_ACTIONS = (
         "select_pin:", "select_light:", "select_emitter:",
         "add_light:", "remove_light:", "add_emitter:", "remove_emitter:",
@@ -2894,6 +2913,17 @@ class ShipPropertyViewerPanel(Panel):
         return False
 
     def _dispatch_event_inner(self, action: str) -> bool:
+        if (action.startswith(("select_pin:", "select_light:", "select_emitter:"))
+                and self._selected_state_node() is not None):
+            # Ruling 17 (spec 7.3, "selecting anything else returns the part
+            # to the NIF pose"): a mount click leaves the State node FIRST --
+            # the post-dispatch `_sync_part_pose` returns the part to the NIF
+            # pose, and that arm of the lock lifts -- and then selects. The
+            # lock still refuses mount EDITS (set_radius, add_light, ...)
+            # while a State node is selected; it guards editing, not
+            # selecting. (The 'K' override arm can still refuse the select.)
+            _spv.select_part_node(None, None)
+            self._last_pushed = None
         if not self._mount_editing_enabled() and self._is_locked_mount_action(action):
             return False
         if action == "pipette":

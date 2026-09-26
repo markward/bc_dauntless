@@ -669,9 +669,11 @@ def selected_model_part() -> Optional[str]:
 
 def selected_part_box() -> Optional[Tuple[Vec3, Vec3]]:
     """The selected part's derived box, while the part row or its Breakage
-    node is selected (spec section 7.3). None under an Anchor node (which
-    shows an anchor marker instead) and under a State Transformation, where
-    the part is drawn posed and its NIF-pose box would sit beside it."""
+    node is selected (spec section 7.3). None under an Anchor node -- selecting
+    one activates the Move tool, whose gizmo at the anchor IS the anchor
+    marker (ruling 16; the panel's `part/select_node`) -- and under a State
+    Transformation, where the part is drawn posed and its NIF-pose box would
+    sit beside it (the Move or Rotate gizmo marks the posed anchor)."""
     if _selected_part_node is not None and _selected_part_node[1] != "breakage":
         return None
     return _selected_model_part_box

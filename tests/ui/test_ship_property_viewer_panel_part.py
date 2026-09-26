@@ -201,7 +201,12 @@ def test_leaving_a_state_node_unlocks_mount_editing(make_panel):
     _open_with_parts(p)
     _select_node(p, "left wing", "cruise")
     assert p._mount_editing_enabled() is False
-    assert p.dispatch_event("select_pin:0") is False
+    # Ruling 17 FLIPPED the old `select_pin:0 is False` here: a mount SELECT
+    # now leaves the State node (test_spv_part_nodes.py
+    # ::test_selecting_a_mount_under_a_state_node_leaves_the_pose). What the
+    # lock still refuses is an EDIT to a mount.
+    assert p.dispatch_event('set_radius:{"i":0,"value":0.9}') is False
+    assert p._pending_radius == {}
     _select_node(p, "left wing", "anchor")
     assert p._mount_editing_enabled() is True
     assert p.dispatch_event("select_pin:0") is True

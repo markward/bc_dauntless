@@ -301,7 +301,8 @@ def force_pose(ship, state: "str | None") -> None:
     position, because only one of the two halves knew about the override.
 
     So the forced pose is applied HERE, to the shared dict, at the SPV's own
-    event edges (panel open, Preview clicked) -- an explicit, named, dev-only
+    event edges (panel open, a node selected in the part tree) -- an
+    explicit, named, dev-only
     mutation on the sim side. The render sweep then reads live poses like
     everything else, and mesh and mounts agree by construction rather than by
     two code paths being kept in step.

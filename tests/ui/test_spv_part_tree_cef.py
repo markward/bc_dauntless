@@ -354,3 +354,18 @@ def test_a_quoted_part_name_survives_render_and_click_round_trip():
         "name": NAME, "seconds": 2.25}
     assert _payload_of(out["events"], "ship-property-viewer/part/set_break:") == {
         "name": NAME, "percent": 25}
+
+
+# --- ruling 18: the coord Paste button is kind-aware ------------------------
+
+def test_coord_paste_button_reads_can_paste():
+    """The Move panel's Paste greys on a wrong-kind clipboard, as the
+    rotate and scale panels' do -- it reads the payload's can_paste, never
+    has_clipboard alone."""
+    js = _read(JS)
+    start = js.index("var coords = data.transform_coords;")
+    block = js[start:js.index("coordsEl.style.display = 'block';", start)]
+    assert "pasteBtn.disabled = !coords.can_paste;" in block
+    assert ("pasteBtn.classList.toggle('spv-coords__btn--disabled', "
+            "!coords.can_paste);") in block
+    assert "coords.has_clipboard" not in block

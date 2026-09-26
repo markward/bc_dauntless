@@ -301,8 +301,51 @@ def test_selecting_a_transformation_poses_only_that_part_and_locks_mounts(
     assert warp["chosen"] is True
     assert _part_row(p, "left wing")["chosen"] is False
 
-    assert p.dispatch_event("select_pin:0") is False
-    assert p.selected_index is None
+    # An EDIT to a mount is still refused while the State node is selected:
+    # the lock guards editing, not selecting.
+    radius_before = dict(p._pending_radius)
+    assert p.dispatch_event('set_radius:{"i":0,"value":0.9}') is False
+    assert p._pending_radius == radius_before
+    assert poses["left wing"] == part_pose.pose_from6(p6), "still posed"
+
+
+@pytest.mark.parametrize("action", [
+    "select_pin:0", "select_light:0",
+    'select_emitter:{"i":0,"j":0}',
+])
+def test_selecting_a_mount_under_a_state_node_leaves_the_pose(
+        make_panel, action):
+    """Ruling 17 (spec 7.3, "selecting anything else returns the part to
+    the NIF pose"). FLIPPED from the plan's refusal: a mount click while a
+    State node is selected first drops the State node -- the part returns
+    to the NIF pose and the lock lifts -- and THEN selects the mount."""
+    ship = _RiggedShip()
+    p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
+    p6 = (0.0, 0.1, 0.0, 0.0, 30.0, 0.0)
+    spec = copy.deepcopy(p._effective_part("left wing"))
+    spec["poses"]["warp"] = p6
+    p._pending_part["left wing"] = spec
+    if action.startswith("select_emitter:"):
+        p._pending_emitter[0] = [{
+            "kind": "point", "position": (0.0, 0.5, 0.0),
+            "color": (1.0, 1.0, 1.0), "intensity": 1.0, "radius": 0.1}]
+    assert _select_node(p, "left wing", "warp") is True
+    assert p._mount_editing_enabled() is False, "fixture: locked"
+
+    assert p.dispatch_event(action) is True
+
+    assert spv.selected_part_node() is None
+    assert ship._articulation_poses["left wing"] == part_pose.IDENTITY
+    assert p._mount_editing_enabled() is True
+    parts = _parts(p)
+    assert parts["mount_editing_enabled"] is True
+    assert parts["mount_editing_reason"] is None
+    if action.startswith("select_pin:"):
+        assert p.selected_index == 0
+    elif action.startswith("select_light:"):
+        assert p._selected_light_index == 0
+    else:
+        assert p._selected_emitter == (0, 0)
 
 
 def test_selecting_anything_else_returns_to_the_nif_pose(make_panel):

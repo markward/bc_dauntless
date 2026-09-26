@@ -7136,7 +7136,8 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     before any work.
 
     THERE IS NO "forced pose" ARGUMENT HERE, deliberately. A forced pose --
-    the Ship Property Viewer's NIF pose, or a Preview click -- is applied to
+    the Ship Property Viewer's NIF pose, or a selected {State}
+    Transformation node's pose -- is applied to
     `ship._articulation_poses` at the SPV's own event edges by
     `articulation.force_pose`, so it arrives through the line below like
     every other pose. A second, render-side forcing path is what drew a Bird
@@ -7190,8 +7191,8 @@ def _sync_spv_articulation(session, spv_panel) -> None:
     SPV opens the pause menu, which sets `sim_frozen` -- so the one state in
     which the forced pose matters was exactly the state in which it never
     ran. The hologram kept drawing whatever pose was last pushed before the
-    pause, the anchor pose never took effect, and Preview could not move a
-    wing at all.
+    pause, the anchor pose never took effect, and no forced pose could move
+    a wing at all.
 
     `spv_panel` is the `ShipPropertyViewerPanel` instance (that is what is in
     scope at the call site -- `run()` shadows the module name with it), or
@@ -7204,7 +7205,8 @@ def _sync_spv_articulation(session, spv_panel) -> None:
     It pushes the ship's LIVE poses, exactly like the unfrozen path. It does
     NOT know about the forced state: the SPV writes the forced pose into
     `ship._articulation_poses` at its event edges
-    (`articulation.force_pose`, from the panel's open/Preview), so by the
+    (`articulation.force_pose` / `force_part_pose`, from the panel's open
+    and its part-node selection -- `_sync_part_pose`), so by the
     time this runs the live poses ARE the forced ones. That is the whole
     point -- mounts, pins, the derived-box queries and this sweep all read
     one dict, so they cannot disagree. Making this sweep force the pose
@@ -9598,7 +9600,7 @@ def run(mission_name: Optional[str] = None,
             # _sync_instance_transforms -- is skipped on every frame the
             # viewer is open. Leaving the forced pose in there made it dead
             # code: the hologram kept whatever pose was last pushed before
-            # the pause, and Preview could not move a wing.
+            # the pause, and no forced pose could move a wing.
             # Dev-only and SPV-only inside the helper, so a production paused
             # frame is byte-identical (one False bool, then return).
             if session is not None:

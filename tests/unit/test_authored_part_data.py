@@ -15,9 +15,9 @@ have (which accumulates nothing and so silently never detaches).
 
 Reads the new pose surface (spec 2026-09-25 section 3) -- `anchor`,
 `pose6_for`, `break_fraction`, `transition_seconds`, `authored_states` --
-never the legacy `pivot`/`axis`/`angle_for`/`detach_fraction` readers, which
-survive on `ArticulatedPartProperty` only for
-`engine/ui/ship_property_viewer_panel.py` (spec section 7, not yet rewritten).
+never the legacy `pivot`/`axis`/`angle_for`/`detach_fraction` readers. The
+Ship Property Viewer authors and reads that same surface (spec section 7),
+so it is the only one whose invariants are worth guarding here.
 """
 import math
 

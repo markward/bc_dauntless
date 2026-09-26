@@ -91,8 +91,8 @@ window.setShipPropertyViewer = function (data) {
 
     // Transform coordinate panel (top-right): visible only while
     // data.transform_coords is non-null (Transform tool active + a
-    // subsystem/light selected). Mirrors the XYZ position and the
-    // clipboard-gated Paste button.
+    // mount or part Anchor/State node selected). Mirrors the XYZ and the
+    // kind-aware Paste button (can_paste).
     var coords = data.transform_coords;
     var coordsEl = document.getElementById('spv-coords');
     if (coordsEl) {
@@ -101,8 +101,10 @@ window.setShipPropertyViewer = function (data) {
             document.getElementById('spv-coord-y').textContent = coords.y.toFixed(3);
             document.getElementById('spv-coord-z').textContent = coords.z.toFixed(3);
             var pasteBtn = document.getElementById('spv-coord-paste');
-            pasteBtn.disabled = !coords.has_clipboard;
-            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.has_clipboard);
+            // Kind-aware, like the rotate/scale panels: a clipboard of the
+            // wrong kind (part anchor / posed anchor / mount) greys Paste.
+            pasteBtn.disabled = !coords.can_paste;
+            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.can_paste);
             coordsEl.style.display = 'block';
         } else {
             coordsEl.style.display = 'none';

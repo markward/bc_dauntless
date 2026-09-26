@@ -567,9 +567,11 @@ def test_a_part_row_or_breakage_node_has_no_gizmo(make_panel):
 
 def test_scale_is_inert_on_part_nodes(make_panel):
     p, _ship = _authored(make_panel, warp=(0.1, 0.0, 0.0, 0.0, 30.0, 0.0))
-    p.dispatch_event("set_tool:scale")
     for kind in ("anchor", "warp"):
         _select_node(p, "left wing", kind)
+        # Selecting the node activates Move (ruling 16), so pick Scale AFTER
+        # it -- else the checks below would pass for want of the tool.
+        p.active_tool = "scale"
         before = copy.deepcopy(p._pending_part)
         assert p.scale_values() is None
         assert p.scale_gizmo() is None
@@ -589,3 +591,146 @@ def _payload(p):
     prefix = "setShipPropertyViewer("
     assert js.startswith(prefix) and js.endswith(");"), js
     return json.loads(js[len(prefix):-2])
+
+
+# ── final-review follow-ups (rulings 16 and 18) ─────────────────────────────
+
+class _OffsetShip(_Ship):
+    """A hull away from the world origin, turned 90 degrees about Z, so a
+    gizmo origin that forgot the body->world step would be caught."""
+
+    def GetWorldLocation(self):
+        return TGPoint3(3.0, -2.0, 1.0)
+
+    def GetWorldRotation(self):
+        m = TGMatrix3()
+        m.MakeZRotation(math.radians(90.0))
+        return m
+
+
+@pytest.mark.parametrize("tool", [None, "rotate", "scale"])
+def test_selecting_an_anchor_node_shows_the_move_gizmo_as_its_marker(
+        make_panel, tool):
+    """Ruling 16 (spec 7.3 'anchor marker'): the Move gizmo IS the marker,
+    so selecting an Anchor node activates Move from any other tool -- else
+    nothing at all is drawn at the anchor."""
+    p, ship = _authored(make_panel, anchor=(-0.4, 0.2, 0.1))
+    p.active_tool = tool
+    offset = _OffsetShip()
+    p._ship_getter = lambda: offset
+    assert _select_node(p, "left wing", "anchor") is True
+
+    assert p.active_tool == "transform"
+    g = p.transform_gizmo()
+    assert g is not None
+    assert g["origin"] == pytest.approx(
+        spv.world_from_body(offset, (-0.4, 0.2, 0.1)))
+    assert g["origin"] != pytest.approx((-0.4, 0.2, 0.1)), (
+        "fixture: world differs from body")
+
+
+@pytest.mark.parametrize("tool", [None, "scale"])
+def test_selecting_a_state_node_shows_the_move_gizmo_at_the_posed_anchor(
+        make_panel, tool):
+    warp = (0.03, -0.02, 0.04, 12.0, 25.0, -8.0)
+    anchor = (-0.16, 0.1, 0.05)
+    p, _ship = _authored(make_panel, anchor=anchor, warp=warp)
+    p.active_tool = tool
+    offset = _OffsetShip()
+    p._ship_getter = lambda: offset
+    assert _select_node(p, "left wing", "warp") is True
+
+    assert p.active_tool == "transform"
+    q = part_pose.apply(part_pose.pose_from6(warp), anchor)
+    g = p.transform_gizmo()
+    assert g is not None
+    assert g["origin"] == pytest.approx(spv.world_from_body(offset, q))
+
+
+def test_selecting_a_state_node_keeps_rotate_whose_gizmo_is_the_marker(
+        make_panel):
+    """Rotate already draws its rings at the posed anchor, so a State node
+    selected under Rotate keeps Rotate (posing a part is mostly rotating
+    it); the marker requirement is met either way."""
+    warp = (0.03, -0.02, 0.04, 12.0, 25.0, -8.0)
+    anchor = (-0.16, 0.1, 0.05)
+    p, _ship = _authored(make_panel, anchor=anchor, warp=warp)
+    p.dispatch_event("set_tool:rotate")
+    assert _select_node(p, "left wing", "warp") is True
+    assert p.active_tool == "rotate"
+    q = part_pose.apply(part_pose.pose_from6(warp), anchor)
+    assert p.rotate_gizmo()["origin"] == pytest.approx(q)
+
+
+def test_breakage_node_does_not_switch_the_tool(make_panel):
+    p, _ship = _authored(make_panel)
+    p.dispatch_event("part/make_breakable:left wing")
+    p.active_tool = "scale"
+    assert _select_node(p, "left wing", "breakage") is True
+    assert p.active_tool == "scale"
+
+
+def test_anchor_gizmo_verbs_leave_every_state_pose_byte_unchanged(make_panel):
+    """Option A (spec 2.3), the central invariant: a pose is about the body
+    ORIGIN, so paste / coord-mirror / action-row mirror on the ANCHOR never
+    rewrite a pose -- not even by a float round-trip."""
+    warp = (0.02, -0.03, 0.04, 5.0, 30.0, -10.0)
+    cruise = (-0.01, 0.05, 0.0, -7.5, 0.0, 22.0)
+    p, _ship = _authored(make_panel, anchor=(-0.5, 0.1, 0.0), warp=warp)
+    _add_state(p, "left wing", "cruise")
+    _set_pose(p, "left wing", "cruise", cruise)
+    p.dispatch_event("set_tool:transform")
+    _select_node(p, "left wing", "anchor")
+    assert p._active_transform_target() == ("part_anchor", "left wing")
+
+    def _poses_unchanged():
+        poses = p._effective_part("left wing")["poses"]
+        assert poses["warp"] == warp
+        assert poses["cruise"] == cruise
+
+    p.dispatch_event("coord_copy")
+    p.dispatch_event('coord_nudge:{"axis":0,"delta":0.2}')
+    anchor_before = p._effective_part("left wing")["anchor"]
+    p.dispatch_event("coord_paste")
+    assert p._effective_part("left wing")["anchor"] != anchor_before, (
+        "fixture: the paste really moved the anchor")
+    _poses_unchanged()
+
+    anchor_before = p._effective_part("left wing")["anchor"]
+    p.dispatch_event("coord_mirror")
+    assert p._effective_part("left wing")["anchor"] != anchor_before
+    _poses_unchanged()
+
+    anchor_before = p._effective_part("left wing")["anchor"]
+    p.dispatch_event("mirror_element")
+    assert p._effective_part("left wing")["anchor"] != anchor_before
+    _poses_unchanged()
+
+
+def test_transform_coords_can_paste_is_kind_aware(make_panel):
+    """Ruling 18: like scale_values / rotate_values, the Move panel's
+    can_paste is true only when the clipboard's kind matches the target's
+    -- the Paste button must not offer a paste the dispatcher refuses."""
+    warp = (0.1, 0.2, 0.3, 10.0, 20.0, 30.0)
+    p, _ship = _authored(make_panel, anchor=(-0.4, 0.2, 0.1), warp=warp)
+    p.dispatch_event("set_tool:transform")
+    _select_node(p, "left wing", "anchor")
+    c = p.transform_coords()
+    assert c["has_clipboard"] is False and c["can_paste"] is False
+
+    p.dispatch_event("coord_copy")
+    c = p.transform_coords()
+    assert c["has_clipboard"] is True and c["can_paste"] is True
+    assert _payload(p)["transform_coords"]["can_paste"] is True
+
+    _select_node(p, "left wing", "warp")
+    c = p.transform_coords()
+    assert c["has_clipboard"] is True and c["can_paste"] is False
+    assert _payload(p)["transform_coords"]["can_paste"] is False
+
+    # A mount target is a third kind.
+    p.dispatch_event("select_pin:0")
+    assert p._active_transform_target() == ("subsystem", 0)
+    assert p.transform_coords()["can_paste"] is False
+    p.dispatch_event("coord_copy")
+    assert p.transform_coords()["can_paste"] is True
