@@ -43,3 +43,17 @@ def test_failed_save_toasts_the_error_and_keeps_edits(monkeypatch):
     p.dispatch_event("save")
     assert p._current_toast() == "Save failed: read-only"
     assert p._pending_radius.get(0) == 3.0
+
+
+def test_resolve_failure_toasts_and_keeps_edits(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    p = _panel(monkeypatch, _OkTarget())
+
+    def _boom(ship):
+        raise RuntimeError("no mod index")
+
+    monkeypatch.setattr(mod, "resolve_override_target", _boom)
+    p.dispatch_event('set_radius:{"i":0,"value":3.0}')
+    assert p.dispatch_event("save") is True
+    assert p._current_toast() == "Save failed: no mod index"
+    assert p._pending_radius.get(0) == 3.0

@@ -3591,8 +3591,8 @@ class ShipPropertyViewerPanel(Panel):
                       for i, v in sorted(self._pending_pos.items())]
             edits += self._emitter_save_edits()
             edits += _spv.part_save_edits(self._pending_part)
-            target = resolve_override_target(ship)
             try:
+                target = resolve_override_target(ship)
                 target.write(leaf, edits)
             except Exception as e:
                 from engine import dev_mode
