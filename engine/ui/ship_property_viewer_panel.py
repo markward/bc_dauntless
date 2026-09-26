@@ -3591,15 +3591,19 @@ class ShipPropertyViewerPanel(Panel):
                       for i, v in sorted(self._pending_pos.items())]
             edits += self._emitter_save_edits()
             edits += _spv.part_save_edits(self._pending_part)
+            target = resolve_override_target(ship)
             try:
-                resolve_override_target(ship).write(leaf, edits)
+                target.write(leaf, edits)
             except Exception as e:
                 from engine import dev_mode
                 dev_mode.log_swallowed("spv light/radius save", e)
+                self._show_toast("Save failed: %s" % e)
                 # Write failed — keep the staged edits (dirty markers + Save
                 # bar stay) rather than silently discarding them.
                 self._last_pushed = None
                 return True
+            describe = getattr(target, "describe", None)
+            self._show_toast("Saved to " + describe() if describe else "Saved")
             # Keep the just-saved edits driving the in-session preview (volume
             # sphere for radius, wireframe for glow): the file write only reaches
             # the live template on the next ship build, so without this the
