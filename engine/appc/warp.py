@@ -1051,14 +1051,36 @@ def set_course_placement(button, dest_module) -> None:
     episode.
     """
     from engine.appc.tg_ui.st_widgets import DEFAULT_ARRIVAL_PLACEMENT
-    menu = region_menu_for_destination(dest_module, find_set_course_menu())
+    path = _region_menu_path(dest_module, find_set_course_menu())
+    menu = path[-1] if path else None
     button.SetPlacementName(
         menu.GetPlacementName() if menu else DEFAULT_ARRIVAL_PLACEMENT)
     # BC's "warping here starts mission X" (SortedRegionMenu.SetMissionName /
     # SetEpisodeName, 67 SDK sites). Always assigned, like the placement, so a
-    # plain course never inherits a previous one's mission (spec §1).
-    button.set_course_mission(menu.GetMissionName() if menu else "",
-                              menu.GetEpisodeName() if menu else "")
+    # plain course never inherits a previous one's mission (spec §1). Unlike
+    # the placement, a region inherits its system menu's names.
+    button.set_course_mission(_inherited_name(path, "GetMissionName"),
+                              _inherited_name(path, "GetEpisodeName"))
+
+
+def _inherited_name(path, getter):
+    """The mission (or episode) name for the innermost SortedRegionMenu in
+    `path`, inheriting the nearest ancestor region menu's name when it has
+    none of its own; "" when no menu on the path is named.
+
+    SDK missions name the SYSTEM menu (Systems/Utils.CreateSystemMenuInternal
+    builds it on sSystemRegion), but for a multi-region system the star map
+    offers only its region children, which carry no names -- so without the
+    inheritance only the region equal to sSystemRegion would start the
+    mission (E1M2 -> Episode 2 via Tevron, E2M1/E2M3/E3M2 via Vesuvi). Argued
+    from the SDK authors' intent -- they name the system, not one region;
+    BC's C++ lookup is unknown (inferred). Name by name: a region's own
+    mission wins, and it still inherits the system's episode."""
+    for menu in reversed(path):
+        name = getattr(menu, getter)()
+        if name:
+            return name
+    return ""
 
 
 def region_menu_for_destination(dest_module, course_menu):
@@ -1077,15 +1099,22 @@ def region_menu_for_destination(dest_module, course_menu):
     Recursive: a system menu can hold per-region submenus, and
     GetSystemOrRegionMenu links either level.
     """
+    path = _region_menu_path(dest_module, course_menu)
+    return path[-1] if path else None
+
+
+def _region_menu_path(dest_module, course_menu):
+    """The SortedRegionMenus from the outermost down to the one offering
+    `dest_module` (see region_menu_for_destination), or [] when none does."""
     from engine.appc.tg_ui.st_widgets import SortedRegionMenu
     if not dest_module or course_menu is None:
-        return None
+        return []
     target = str(dest_module)
 
     def _walk(node):
-        if (isinstance(node, SortedRegionMenu)
-                and node.GetRegionModule() == target):
-            return node
+        if isinstance(node, SortedRegionMenu):
+            if node.GetRegionModule() == target:
+                return [node]
         # __dict__ read, not getattr: TGObject.__getattr__ hands back a truthy
         # _Stub for any missing name, and iterating a _Stub never terminates.
         # STMenu stores children flat; TGPane stores (child, x, y) triples —
@@ -1094,9 +1123,11 @@ def region_menu_for_destination(dest_module, course_menu):
         for entry in node.__dict__.get("_children", []):
             child = entry[0] if isinstance(entry, tuple) else entry
             found = _walk(child)
-            if found is not None:
+            if found:
+                if isinstance(node, SortedRegionMenu):
+                    return [node] + found
                 return found
-        return None
+        return []
 
     return _walk(course_menu)
 

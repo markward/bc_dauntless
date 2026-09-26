@@ -44,3 +44,46 @@ def test_a_plain_pick_clears_stale_names(monkeypatch):
     b.set_player_destination("Systems.Vesuvi.Vesuvi4")
     warp.set_course_placement(b, "Systems.Vesuvi.Vesuvi4")
     assert b.get_mission_name() == "" and b.get_episode_name() == ""
+
+
+def _multi_region_menu():
+    """Systems/Utils.CreateSystemMenuInternal's shape: the SYSTEM menu is a
+    SortedRegionMenu on sSystemRegion with one SortedRegionMenu child per
+    region; missions name the SYSTEM menu (E3M2 on Vesuvi), not a region."""
+    root = STMenu("Set Course")
+    system = SortedRegionMenu("Vesuvi", "Systems.Vesuvi.Vesuvi6")
+    system.SetMissionName("Maelstrom.Episode3.E3M2.E3M2")
+    system.SetEpisodeName("Maelstrom.Episode3.Episode3")
+    for region in ("Systems.Vesuvi.Vesuvi4", "Systems.Vesuvi.Vesuvi5",
+                   "Systems.Vesuvi.Vesuvi6"):
+        system.AddChild(SortedRegionMenu(region.rsplit(".", 1)[1], region))
+    own = SortedRegionMenu("Tevron 2", "Systems.Tevron.Tevron2")
+    own.SetMissionName("Maelstrom.Episode2.E2M0.E2M0")
+    tevron = SortedRegionMenu("Tevron", "Systems.Tevron.Tevron1")
+    tevron.SetMissionName("Maelstrom.Episode1.E1M2.E1M2")
+    tevron.SetEpisodeName("Maelstrom.Episode2.Episode2")
+    tevron.AddChild(own)
+    root.AddChild(system)
+    root.AddChild(tevron)
+    return root
+
+
+def test_every_region_of_a_named_system_carries_its_names(monkeypatch):
+    monkeypatch.setattr(warp, "find_set_course_menu", _multi_region_menu)
+    for region in ("Systems.Vesuvi.Vesuvi4", "Systems.Vesuvi.Vesuvi5",
+                   "Systems.Vesuvi.Vesuvi6"):
+        b = STWarpButton("Warp")
+        b.set_player_destination(region)
+        warp.set_course_placement(b, region)
+        assert b.get_mission_name() == "Maelstrom.Episode3.E3M2.E3M2", region
+        assert b.get_episode_name() == "Maelstrom.Episode3.Episode3", region
+
+
+def test_a_regions_own_name_wins_over_its_systems(monkeypatch):
+    monkeypatch.setattr(warp, "find_set_course_menu", _multi_region_menu)
+    b = STWarpButton("Warp")
+    b.set_player_destination("Systems.Tevron.Tevron2")
+    warp.set_course_placement(b, "Systems.Tevron.Tevron2")
+    assert b.get_mission_name() == "Maelstrom.Episode2.E2M0.E2M0"
+    # No episode of its own: the system's is inherited, name by name.
+    assert b.get_episode_name() == "Maelstrom.Episode2.Episode2"
