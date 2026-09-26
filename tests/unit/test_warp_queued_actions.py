@@ -7,6 +7,7 @@ import App
 from engine.appc import warp
 from engine.appc.actions import TGAction
 from engine.appc.sets import SetClass_Create
+from tests.helpers.mission_change_fixtures import warp_missionlib
 
 log = []
 
@@ -151,7 +152,7 @@ def test_transit_waits_for_the_mission_master_sequence(monkeypatch):
     """SDK WarpSequence.WaitForQueued (player only): while
     MissionLib.g_idMasterSequenceObj names a playing TGSequence, the swap waits
     for its completion."""
-    import MissionLib
+    MissionLib = warp_missionlib()
     master = App.TGSequence_Create()
     dialogue = _Long("DIALOGUE")
     master.AddAction(dialogue)
@@ -187,7 +188,7 @@ def test_unheld_swap_lands_at_transit_end_under_the_exit_flash(monkeypatch):
     with the exit flash peaking to mask it. WarpVFX puts e == t_align +
     t_transit itself in the "exit" phase (flash 0), so the flash is read on
     the last 60 Hz frame before the swap -- the frame the swap replaces."""
-    import MissionLib
+    MissionLib = warp_missionlib()
     from engine import warp_vfx
     monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", None)
     vfx = warp_vfx.get()
@@ -234,7 +235,7 @@ def test_npc_flythrough_does_not_hold_the_shared_vfx(monkeypatch):
 def test_fallback_waits_for_the_mission_master_sequence(monkeypatch):
     """No flythrough: the swap still waits on SDK WaitForQueued (player only)
     for MissionLib's master sequence."""
-    import MissionLib
+    MissionLib = warp_missionlib()
     master = App.TGSequence_Create()
     dialogue = _Long("DIALOGUE")
     master.AddAction(dialogue)
@@ -263,7 +264,7 @@ def test_unheld_release_is_continuous(monkeypatch):
     release without a visible seam: between consecutive 60 Hz ticks the
     streak and the travel progress change by no more than one tick's normal
     change -- no freeze-then-jump at the release."""
-    import MissionLib
+    MissionLib = warp_missionlib()
     from engine import warp_vfx
     monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", None)
     vfx = warp_vfx.get()

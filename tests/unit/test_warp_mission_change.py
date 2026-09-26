@@ -9,7 +9,7 @@ from engine.appc.sets import SetClass_Create
 from engine.core import mission_change
 from engine.core.game import Game, _set_current_game
 from tests.helpers.mission_change_fixtures import (
-    log, _install, _world, _forget_world)
+    log, _install, _world, _forget_world, warp_missionlib)
 
 
 class _Rec(TGAction):
@@ -52,7 +52,7 @@ def _in_set(name, ship):
 def _player_warp(monkeypatch, player, dest_set, queues, **names):
     """A flythrough warp of the player from region "Src" to `dest_set`, which
     only the next mission creates. Returns (seq, t_align + t_transit)."""
-    import MissionLib
+    MissionLib = warp_missionlib()
     monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", None)
     warp.configure_warp_vfx(
         enabled=lambda: True, start=lambda *a, **k: None, stop=lambda: None,
