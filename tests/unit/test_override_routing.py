@@ -1,5 +1,6 @@
 import pytest
 
+from engine import mods
 import engine.appc.override_routing as r
 from engine.appc import hardpoint_override_writer as w
 
@@ -41,6 +42,7 @@ def test_file_target_persists_radius_edit(tmp_path):
 
 
 def test_resolve_returns_file_target(monkeypatch):
+    mods.configure(None)
     monkeypatch.setattr(r.importlib, "import_module", lambda name: _StatsMod)
     assert isinstance(r.resolve_override_target(_Ship("ships.Galaxy")),
                       r.HardpointOverridesFileTarget)
