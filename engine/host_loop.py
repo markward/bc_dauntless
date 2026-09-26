@@ -7947,6 +7947,32 @@ def _player_render_interpolated(player, *, sim_frozen,
     return bool(ai_owned or scripted or dash.is_dashing(player))
 
 
+def _view_rebase_offset(prev_view, cur_view):
+    """What to add to a point in `prev_view`'s coordinates to express it in
+    `cur_view`'s, when the viewed set changed within one system's frame (a
+    hand-off); None when it did not change, either is unknown, or the two
+    are in different frames (a tunnel arrival: its own snaps handle that)."""
+    if prev_view is None or cur_view is None or prev_view is cur_view:
+        return None
+    return _frames.offset_between(cur_view, prev_view)
+
+
+def _rebase_view(r, director, offset) -> None:
+    """The viewed set changed within the frame (`_view_rebase_offset`):
+    carry the cameras' remembered points into the new coordinates, and drop
+    the render-origin history -- the dust pass's eye travel, the volumetric
+    nebula's and motion blur's reprojection -- through the same reset a
+    mission swap uses, since the world eye jumps by the anchor difference
+    in one frame (a ~100k GU dust smear otherwise). Both halves, as at a
+    swap; this frame's _apply_render_origin sets the new origin."""
+    director.rebase(offset)
+    _frames.reset_render_origin()
+    try:
+        r.reset_render_origin()
+    except Exception as _e:
+        dev_mode.log_swallowed("reset_render_origin on a view rebase", _e)
+
+
 def _rebase_player_render(xform_buf, smoother, player_iid, player) -> None:
     """The player changed region set (a dash hand-off): its set-local
     coordinates jumped by the anchor difference. Re-seed its interpolation
@@ -9404,6 +9430,7 @@ def run(mission_name: Optional[str] = None,
         # (player, its containing set) last running frame: a hand-off is the
         # same player in another set (_rebase_player_render).
         _prev_player_set = (None, None)
+        _prev_view_set = None           # the viewed set last running frame
         _prev_drawn_player_pose = None  # what was actually on screen last frame
 
         def _snap_scene():
@@ -9930,6 +9957,9 @@ def run(mission_name: Optional[str] = None,
                     _handover.cancel()
                     _prev_interp_player = None
                     _prev_drawn_player_pose = None
+                    # Nor re-base across a swap: the old sets are gone.
+                    _prev_player_set = (None, None)
+                    _prev_view_set = None
             else:
                 had_pending_swap = False
 
@@ -10401,6 +10431,14 @@ def run(mission_name: Optional[str] = None,
                                               _player_iid_i, player)
                         _prev_drawn_player_pose = None
                     _prev_player_set = (player, _pset)
+                    # The viewed set changed within the frame (a hand-off):
+                    # re-base the cameras and drop the dust history before
+                    # the camera is solved below.
+                    _view_now = _frames.viewing_set()
+                    _view_off = _view_rebase_offset(_prev_view_set, _view_now)
+                    if _view_off is not None:
+                        _rebase_view(r, director, _view_off)
+                    _prev_view_set = _view_now
                     # Handover easing: the pipeline the player is drawn from
                     # flips between live (manual) and interpolated (AI /
                     # scripted), and those sit a tick apart. Open a smoothing

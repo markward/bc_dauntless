@@ -122,6 +122,14 @@ class _TrackingCamera:
         """Deactivate the ZoomTarget sub-mode."""
         self.zoom_target_active = False
 
+    def rebase(self, offset) -> None:
+        """The view coordinates moved by `offset` (a hand-off into another
+        region set): carry the sprung eye with them. The basis is a
+        direction and does not move."""
+        if self._smoothed_eye is not None:
+            self._smoothed_eye = [
+                self._smoothed_eye[i] + offset[i] for i in range(3)]
+
     def snap(self) -> None:
         """Drop both smoothing states and reset zoom to defaults.
 

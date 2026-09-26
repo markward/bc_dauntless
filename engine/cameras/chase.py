@@ -99,6 +99,14 @@ class _ChaseCamera:
         self.distance       = self.default_distance
         self.reverse_active = False
 
+    def rebase(self, offset) -> None:
+        """The view coordinates moved by `offset` (a hand-off into another
+        region set): carry the lagged eye with them, so the lag is not read
+        as a 100k GU jump and clamped (_advance_eye_lag)."""
+        if self._smoothed_eye is not None:
+            self._smoothed_eye = tuple(
+                self._smoothed_eye[i] + offset[i] for i in range(3))
+
     def enter_reverse(self) -> None:
         """V-key down: flip camera to in-front-of-ship perspective."""
         self.reverse_active = True
