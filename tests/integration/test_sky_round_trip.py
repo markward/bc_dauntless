@@ -128,10 +128,12 @@ def _assert_tunnel(sess, r):
     assert sess.celestial_instances == {}
 
 
-def test_the_sky_round_trip_ona1_ona2_ona1():
+def test_the_sky_round_trip_ona1_ona2_ona1(monkeypatch):
     ona1 = load_region("Ona", "Ona1")
     ona2 = load_region("Ona", "Ona2")
     ship = _ship_in(ona1, "player")
+    # The player's warp: an NPC's leaves the rendered set alone.
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
     App.g_kSetManager.MakeRenderedSet("Ona1")
 
     sess = host_loop.MissionSession(mission_name="t")

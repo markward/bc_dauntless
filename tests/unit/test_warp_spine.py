@@ -37,12 +37,13 @@ def test_change_rendered_set_loads_and_switches(monkeypatch):
     assert App.g_kSetManager.GetRenderedSet().GetName() == "Dest"
 
 
-def test_warp_sequence_moves_player_and_leaves_source_standing():
+def test_warp_sequence_moves_player_and_leaves_source_standing(monkeypatch):
     import types, sys
     src = _make_set("Source")
     player = App.ShipClass_Create()
     player.SetName("player")
     src.AddObjectToSet(player, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
 
     mod = types.ModuleType("FakeSys.Dest2")
     mod.Initialize = lambda: _make_set("Dest2")
@@ -133,7 +134,7 @@ def test_warp_silences_looping_weapon_sfx():
     assert bank.stopped is True  # phaser loop silenced on warp out
 
 
-def test_depart_parks_player_in_transit_and_leaves_source_standing():
+def test_depart_parks_player_in_transit_and_leaves_source_standing(monkeypatch):
     # At burst, _WarpDepartAction must: move the player into the empty transit
     # set, make it the rendered set, and drop the source system's render
     # instances (so its sun stops lighting the scene during transit) without
@@ -142,6 +143,7 @@ def test_depart_parks_player_in_transit_and_leaves_source_standing():
     player = App.ShipClass_Create()
     player.SetName("player")
     src.AddObjectToSet(player, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
     enemy = App.ShipClass_Create()
     enemy.SetName("enemy")
     src.AddObjectToSet(enemy, "enemy")
@@ -183,7 +185,7 @@ def test_depart_then_arrive_leaves_the_warp_set_standing_and_empty():
     assert dest.GetObject("player") is player                            # player arrived
 
 
-def test_warp_clears_all_targets():
+def test_warp_clears_all_targets(monkeypatch):
     # Engaging warp must drop the player's current target + subsystem lock and
     # the persistent hint — nothing to target once we leave the system.
     #
@@ -208,6 +210,7 @@ def test_warp_clears_all_targets():
     player = App.ShipClass_Create()
     player.SetName("player")
     src.AddObjectToSet(player, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
 
     enemy = App.ShipClass_Create()
     enemy.SetName("enemy")

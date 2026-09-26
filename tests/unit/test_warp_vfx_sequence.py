@@ -20,7 +20,7 @@ def test_heading_is_normalized_src_to_dst():
     assert warp._warp_heading((0.0, 0.0, 0.0), None) == (0.0, 1.0, 0.0)
 
 
-def test_flythrough_on_holds_swap_and_starts_vfx():
+def test_flythrough_on_holds_swap_and_starts_vfx(monkeypatch):
     started = {}
     warp.configure_warp_vfx(
         enabled=lambda: True,
@@ -32,6 +32,8 @@ def test_flythrough_on_holds_swap_and_starts_vfx():
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
+    # The tunnel is the player's (an NPC's warp never starts it).
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
     import types, sys
     mod = types.ModuleType("FakeSys.D"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D"))

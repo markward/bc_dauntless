@@ -247,6 +247,10 @@ class _ClearTargetsAction(TGAction):
         self._ship = ship
 
     def _do_play(self):
+        # The player's targets and AI only: ClearAI on an NPC would kill the
+        # very AI that ordered its warp.
+        if not _is_current_player(self._ship):
+            return
         _clear_all_targets(self._ship)
         try:
             _stand_down_player_ai(self._ship)
@@ -295,7 +299,10 @@ class _ArrivalClearTargetsAction(TGAction):
         self._ship = ship
 
     def _do_play(self):
-        _clear_all_targets(self._ship)
+        # Player only, like the SDK's schedule of PostWarpEnableMenu
+        # (WarpSequence.py:322).
+        if _is_current_player(self._ship):
+            _clear_all_targets(self._ship)
 
 
 class _EnableHelmMenuAction(TGAction):
@@ -313,12 +320,19 @@ class _EnableHelmMenuAction(TGAction):
     Added UNCONDITIONALLY on both branches, deliberately outside the
     `_module_is_empty` guards: a falsy destination degrades the hard-cut path
     to "nothing happened", but the menu was already disabled at engage time,
-    so a path that skips the re-enable leaves it dead for the session."""
+    so a path that skips the re-enable leaves it dead for the session.
 
-    def __init__(self):
+    Player warps only (`ship` None => unconditional): the SDK schedules
+    PostWarpEnableMenu only when the warping ship is the player
+    (WarpSequence.py:322), and an NPC's warp never disabled the menu."""
+
+    def __init__(self, ship=None):
         super().__init__()
+        self._ship = ship
 
     def _do_play(self):
+        if self._ship is not None and not _is_current_player(self._ship):
+            return
         from engine.bridge_officers import enable_helm_menu
         enable_helm_menu()
 
@@ -337,11 +351,15 @@ class _WarpVfxBeginAction(TGAction):
         self._a = (heading, t_align, t_transit, vantage, dst_vantage)
 
     def _do_play(self):
-        try:
-            import MissionLib
-            MissionLib.RemoveControl()
-        except Exception:
-            pass
+        # Control and the WarpVFX tunnel are the player's: an NPC's warp
+        # (AI/PlainAI/Warp.py) only enters the warp FSM below.
+        player = _is_current_player(self._ship)
+        if player:
+            try:
+                import MissionLib
+                MissionLib.RemoveControl()
+            except Exception:
+                pass
         # Enter BC's warp FSM. This is the state BC's own scripts read
         # (WarpSequence.py:638, HelmMenuHandlers.py:2465), and it is what makes
         # the ship non-collidable for the flight (collisions._collisions_enabled).
@@ -355,7 +373,7 @@ class _WarpVfxBeginAction(TGAction):
         # Ship motion during warp is driven by the host's _PlayerControl warp
         # speed profile — a ship-level SetSpeed here is inert for the player and
         # is intentionally omitted.
-        if _vfx_start is not None:
+        if player and _vfx_start is not None:
             try:
                 _vfx_start(*self._a)
             except Exception:
@@ -379,7 +397,8 @@ class _WarpVfxEndAction(TGAction):
         self._ship = ship
 
     def _do_play(self):
-        if _vfx_stop is not None:
+        # The WarpVFX singleton is the player's; an NPC's warp never started it.
+        if _vfx_stop is not None and _is_current_player(self._ship):
             try:
                 _vfx_stop()
             except Exception:
@@ -479,6 +498,9 @@ class ChangeRenderedSetAction(TGAction):
         super().__init__()
         self._module = module
         self._set = pSet
+        # The warping ship, when a warp built this action (_warp_swap_action):
+        # an NPC's destination is loaded but never made the rendered set.
+        self._ship = None
 
     def _do_play(self):
         import App
@@ -502,6 +524,8 @@ class ChangeRenderedSetAction(TGAction):
                     raise RuntimeError(
                         "warp: module %r Initialize() did not register set %r"
                         % (self._module, name))
+        if self._ship is not None and not _is_current_player(self._ship):
+            return
         App.g_kSetManager.MakeRenderedSet(pSet.GetName())
         if _realize_hook is not None:
             _realize_hook(pSet)
@@ -513,6 +537,17 @@ def ChangeRenderedSetAction_Create(module):
 
 def ChangeRenderedSetAction_CreateFromSet(pSet):
     return ChangeRenderedSetAction(pSet=pSet)
+
+
+def _warp_swap_action(dest_module, ship):
+    """The warp's destination swap, scoped to the warping ship: for an NPC it
+    loads the destination set without making it the rendered set. Built via
+    ChangeRenderedSetAction_Create so tests that replace that factory keep
+    seeing every swap."""
+    swap = ChangeRenderedSetAction_Create(dest_module)
+    if isinstance(swap, ChangeRenderedSetAction):
+        swap._ship = ship
+    return swap
 
 
 class _PlacePlayerAction(TGAction):
@@ -627,8 +662,9 @@ class _WarpDepartAction(TGAction):
     warp set all the same -- a mission change carries only the warp set's
     occupant, and missions script "entered warp" (E6M1 PlayerEntersWarpSet
     creates the Artrus ships there) -- but sets no WES_WARPING, which only the
-    flythrough's _WarpVfxEndAction clears, and for an NPC touches nothing the
-    player sees (no rendered-set change, no teardown, no silencing)."""
+    flythrough's _WarpVfxEndAction clears. On either branch an NPC's
+    departure touches nothing the player sees (no rendered-set change, no
+    teardown, no silencing of other ships)."""
 
     def __init__(self, source_set, ship, seq=None, hard_cut=False):
         super().__init__()
@@ -641,8 +677,10 @@ class _WarpDepartAction(TGAction):
         import App
         src = self._source
         ship = self._ship
-        # Whether this departure changes the player's scene.
-        scene = not self._hard_cut or _is_current_player(ship)
+        # Whether this departure changes the player's scene: only the
+        # player's own warp does, on either branch -- an NPC's (every AI warp
+        # takes this spine) moves the NPC alone.
+        scene = _is_current_player(ship)
         # Burst: the ship is now at warp.
         if not self._hard_cut:
             try:
@@ -731,6 +769,12 @@ class _ArriveFinalizeAction(TGAction):
         # set itself stands). Otherwise a phaser fired at the moment of warp
         # loops forever in the new system.
         _silence_ship_weapons(self._ship)
+        # The rest is the player's scene and control: an NPC arriving leaves
+        # the source set's ships, render instances and the player's input
+        # alone (the SDK returns control only for the player,
+        # WarpSequence.py:311-316).
+        if not _is_current_player(self._ship):
+            return
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
@@ -918,7 +962,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         seq.AddAction(hold, prev)
         release = _TransitReleaseAction(seq)
         seq.AddAction(release, hold)
-        swap = ChangeRenderedSetAction_Create(dest_module)
+        swap = _warp_swap_action(dest_module, ship)
         seq.AddAction(swap, release, 0.1 * t_transit)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
@@ -933,7 +977,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # defensive stop just past that tail (the manager also self-deactivates).
         from engine.warp_vfx import _T_EXIT_DECEL
         seq.AppendAction(_WarpVfxEndAction(ship), _T_EXIT_DECEL + 0.5)
-        seq.AppendAction(_EnableHelmMenuAction())
+        seq.AppendAction(_EnableHelmMenuAction(ship))
         _append_after_queue(seq)
         return seq
 
@@ -947,7 +991,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     # Same queue order as the flythrough, with no tunnel to hold: the SDK's
     # WaitForQueued (player only) still gates the swap on the master sequence.
     _add_before_queue(seq)
-    swap = ChangeRenderedSetAction_Create(dest_module)
+    swap = _warp_swap_action(dest_module, ship)
     prev = None
     if not _module_is_empty(dest_module):
         prev = _WarpDepartAction(source, ship, hard_cut=True)
@@ -964,15 +1008,22 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
-    seq.AppendAction(_EnableHelmMenuAction())
+    seq.AppendAction(_EnableHelmMenuAction(ship))
     _append_after_queue(seq)
     return seq
 
 
 def _is_current_player(ship):
+    """Whether `ship` is the player -- the gate on every player-scene effect
+    of a warp (rendered set, render teardown, WarpVFX, control, helm menu,
+    target menu). Every AI warp (AI/PlainAI/Warp.py) builds the same spine,
+    and an NPC's must move only the NPC. Falls back to the host's player
+    hook, as execute_warp does, when App has no current player."""
     import App
     try:
         player = App.Game_GetCurrentPlayer()
+        if player is None and _player_hook is not None:
+            player = _player_hook()
     except Exception:
         return False
     return player is not None and player is ship
