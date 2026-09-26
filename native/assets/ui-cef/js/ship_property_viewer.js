@@ -91,8 +91,8 @@ window.setShipPropertyViewer = function (data) {
 
     // Transform coordinate panel (top-right): visible only while
     // data.transform_coords is non-null (Transform tool active + a
-    // subsystem/light selected). Mirrors the XYZ position and the
-    // clipboard-gated Paste button.
+    // mount or part Anchor/State node selected). Mirrors the XYZ and the
+    // kind-aware Paste button (can_paste).
     var coords = data.transform_coords;
     var coordsEl = document.getElementById('spv-coords');
     if (coordsEl) {
@@ -101,8 +101,10 @@ window.setShipPropertyViewer = function (data) {
             document.getElementById('spv-coord-y').textContent = coords.y.toFixed(3);
             document.getElementById('spv-coord-z').textContent = coords.z.toFixed(3);
             var pasteBtn = document.getElementById('spv-coord-paste');
-            pasteBtn.disabled = !coords.has_clipboard;
-            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.has_clipboard);
+            // Kind-aware, like the rotate/scale panels: a clipboard of the
+            // wrong kind (part anchor / posed anchor / mount) greys Paste.
+            pasteBtn.disabled = !coords.can_paste;
+            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.can_paste);
             coordsEl.style.display = 'block';
         } else {
             coordsEl.style.display = 'none';
@@ -163,6 +165,22 @@ window.setShipPropertyViewer = function (data) {
         (typeof data.selected_index === 'number') ? data.selected_index : null,
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null,
         data.selected_emitter || null);
+
+    // Preview lock (Task 7): while data.model_parts.mount_editing_reason is
+    // set, subsystem/light/emitter editing is refused -- see
+    // _dispatch_event_inner's gate, which is the REAL refusal. This banner +
+    // the greyed subsystem list are only the visible half.
+    var mp = data.model_parts || {};
+    var locked = mp.mount_editing_enabled === false;
+    var banner = document.getElementById('spv-lock-banner');
+    if (banner) {
+        banner.style.display = locked ? 'block' : 'none';
+        banner.textContent = locked ? (mp.mount_editing_reason || '') : '';
+    }
+    var sysList = document.getElementById('spv-syslist');
+    if (sysList) sysList.classList.toggle('spv-syslist--locked', locked);
+
+    renderSPVModelParts(mp);
 
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
@@ -255,7 +273,8 @@ var spvCtxEmitterIndex = null;      // emitter index within that subsystem
 // itself already knows the overlay closed (ESC via close_overlays, or the
 // whole panel closing per Fix 2) so we don't double-fire overlay:0.
 function spvHideOverlaysNoEvent() {
-    ['spv-ctxmenu', 'spv-radius', 'spv-light', 'spv-emitter', 'spv-confirm'].forEach(function (id) {
+    ['spv-ctxmenu', 'spv-radius', 'spv-light', 'spv-emitter', 'spv-confirm',
+     'spv-part-anchor', 'spv-part-break', 'spv-part-addstate'].forEach(function (id) {
         var el = document.getElementById(id); if (el) el.style.display = 'none';
     });
 }
@@ -320,7 +339,10 @@ function spvShowMenuItems(show) {
     var map = {radius: 'spv-ctx-radius', addlight: 'spv-ctx-addlight',
                light: 'spv-ctx-light', removelight: 'spv-ctx-removelight',
                addemitter: 'spv-ctx-addemitter', editemitter: 'spv-ctx-editemitter',
-               removeemitter: 'spv-ctx-removeemitter'};
+               removeemitter: 'spv-ctx-removeemitter',
+               addanchor: 'spv-ctx-addanchor', addstate: 'spv-ctx-addstate',
+               makebreakable: 'spv-ctx-makebreakable', editanchor: 'spv-ctx-editanchor',
+               editbreak: 'spv-ctx-editbreak', removenode: 'spv-ctx-removenode'};
     Object.keys(map).forEach(function (k) {
         var el = document.getElementById(map[k]);
         if (el) el.style.display = show[k] ? 'block' : 'none';
@@ -851,6 +873,330 @@ function renderSPVSubsystemList(rows, selectedIndex, selectedLight, selectedEmit
     spvRenderRows(rows, out, selectedIndex, selectedLight, selectedEmitterKey, 0);
     body.innerHTML = out.join('');
 }
+
+// Labels for engine.appc.articulated_part.STATES -- must match STATE_LABELS
+// in ship_property_viewer_panel.py exactly (Cruising / Yellow Alert / Red
+// Alert / Warp): they are what the Add State Transformation picker offers
+// and what a State row's own label (from the payload) already says.
+var SPV_STATE_LABELS = {cruise: 'Cruising', yellow: 'Yellow Alert',
+                         red: 'Red Alert', warp: 'Warp'};
+
+// The part name (and, for a child-row menu, the child kind and its value)
+// the open #spv-ctxmenu is scoped to -- set by shipPropertyViewerPartRowMenu
+// / shipPropertyViewerPartChildMenu, read by the menu-item handlers below.
+var spvCtxPartName = null, spvCtxPartKind = null, spvCtxPartValue = null;
+
+// Model Parts pane (beneath the subsystem list): collapsed header/body,
+// 25% of the vertical space when the header has been clicked open. Renders
+// `model_parts.rows` -- a flat, depth-ordered list of part rows (candidates
+// only unless "Show all") each followed by its child nodes (Anchor, one
+// {State} Transformation per posed state, Breakage) -- as a tree using the
+// subsystem list's own row idiom (spv-sys-row / spv-sys-row--child /
+// --chosen / --dirty, `10 + depth*14`px indent). Rows carry NAMES ONLY
+// (spec section 7.3): a node's attributes are set in the part popups
+// (#spv-part-anchor, #spv-part-break), opened from the right-click menu,
+// and the Add State Transformation picker (#spv-part-addstate) is shown from
+// `model_parts.add_state_picker`.
+function renderSPVModelParts(modelParts) {
+    var pane = document.getElementById('spv-parts');
+    var body = document.getElementById('spv-parts-body');
+    if (!pane || !body) return;
+    var data = modelParts || {};
+    pane.classList.toggle('expanded', data.expanded === true);
+    var showAllCb = document.getElementById('spv-parts-showall-cb');
+    if (showAllCb) showAllCb.checked = data.show_all === true;
+
+    var rows = data.rows || [];
+    var out = [];
+    // The part a box readout belongs to: whichever row is chosen, be it the
+    // part row itself or one of its children (selecting a child never moves
+    // the box -- selected_part_box() already answers None for the wrong
+    // node kinds; this only needs the NAME to label the readout).
+    var boxOwner = null;
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i] || {};
+        if (row.chosen) boxOwner = (row.kind === 'part') ? row.name : row.part;
+        out.push(row.kind === 'part' ? spvPartRowHtml(row) : spvPartChildRowHtml(row));
+    }
+
+    // Derived-box readout for the selected part -- what severance will
+    // actually test against, so the author sees it before committing to a
+    // break fraction.
+    var box = data.selected_box;
+    if (boxOwner !== null && Array.isArray(box) && box.length === 2) {
+        out.push('<div class="spv-part-box">'
+            + escapeHtmlSPV(boxOwner) + ': min ('
+            + box[0].map(function (v) { return v.toFixed(2); }).join(', ') + ') max ('
+            + box[1].map(function (v) { return v.toFixed(2); }).join(', ') + ')</div>');
+    }
+    body.innerHTML = out.join('');
+
+    spvRenderAddStatePicker(data.add_state_picker);
+
+    // Toast (spec section 7.4): a transient message at the top of the SPV.
+    // model_parts.toast is its ONLY source -- non-null/non-empty shows it,
+    // anything else hides it.
+    var toastEl = document.getElementById('spv-toast');
+    if (toastEl) {
+        var text = data.toast;
+        if (typeof text === 'string' && text.length > 0) {
+            toastEl.textContent = text;
+            toastEl.style.display = 'block';
+        } else {
+            toastEl.style.display = 'none';
+            toastEl.textContent = '';
+        }
+    }
+}
+
+// A part row (kind "part", depth 0). The row's identity travels ONLY in
+// data-* attributes (data-part-name/-has-anchor/-missing-states/-breakable),
+// never interpolated into a JS string literal inside an on* attribute: the
+// browser HTML-decodes an attribute value BEFORE the handler text is
+// compiled, so a part named e.g. `Nacelle's Strut` would decode `&#39;` back
+// to a raw `'` and terminate a `'...'` JS string early -- every on*
+// attribute here is therefore a bare `handlerName(this)` / `(event, this)`
+// call, and the handler reads the real value back off `this.dataset`
+// (itself just an ordinary, once-decoded HTML attribute -- no JS parse step
+// in between). Clicking selects the part (model_parts/select:<name>, same
+// action the pane has always used); right-clicking opens #spv-ctxmenu with
+// Add Anchor… / Add State Transformation… / Make Breakable…, each hidden
+// per the row's own has_anchor/missing_states/breakable.
+function spvPartRowHtml(row) {
+    var safeName = escapeHtmlSPV(row.name || '');
+    var missingCsv = escapeHtmlSPV((row.missing_states || []).join(','));
+    var depth = row.depth || 0;
+    var indent = ' style="padding-left:' + (10 + depth * 14) + 'px"';
+    return '<div class="spv-sys-row'
+        + (row.chosen ? ' spv-sys-row--chosen' : '')
+        + (row.dirty === true ? ' spv-sys-row--dirty' : '') + '"' + indent
+        + ' data-part-name="' + safeName + '"'
+        + ' data-has-anchor="' + (row.has_anchor === true) + '"'
+        + ' data-missing-states="' + missingCsv + '"'
+        + ' data-breakable="' + (row.breakable === true) + '"'
+        + ' onclick="shipPropertyViewerPartRowClick(this)"'
+        + ' oncontextmenu="return shipPropertyViewerPartRowMenu(event, this)">'
+        + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+        + '<span class="spv-sys-row__name">' + safeName + '</span>'
+        + '</div>';
+}
+
+// A part's child row (kind "anchor" | "state" | "breakage", depth 1). Same
+// data-* convention as spvPartRowHtml, for the same reason. Names only: an
+// Anchor's transition seconds / a Breakage's percent rides along in
+// data-value purely so the Edit popup can pre-fill. Clicking selects the
+// node (part/select_node:{name,kind}); right-clicking opens #spv-ctxmenu
+// with Edit Anchor… / Edit Breakage… (on those rows) and Remove. A State
+// Transformation has no popup -- its attributes ARE the pose, edited with
+// the Move/Rotate gizmos.
+function spvPartChildRowHtml(row) {
+    var safeName = escapeHtmlSPV(row.part || '');
+    var kind = (row.kind === 'state') ? row.state : row.kind;
+    var safeKind = escapeHtmlSPV(kind || '');
+    var depth = row.depth || 1;
+    var indent = ' style="padding-left:' + (10 + depth * 14) + 'px"';
+    var value = (typeof row.value === 'number')
+        ? ' data-value="' + row.value + '"' : '';
+    return '<div class="spv-sys-row spv-sys-row--child'
+        + (row.chosen ? ' spv-sys-row--chosen' : '') + '"' + indent
+        + ' data-part-name="' + safeName + '"'
+        + ' data-node-kind="' + safeKind + '"' + value
+        + ' onclick="shipPropertyViewerPartNodeRowClick(this)"'
+        + ' oncontextmenu="return shipPropertyViewerPartChildMenu(event, this)">'
+        + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+        + '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.label || '') + '</span>'
+        + '</div>';
+}
+
+window.shipPropertyViewerPartRowClick = function (el) {
+    dauntlessEvent('ship-property-viewer/model_parts/select:' + el.dataset.partName);
+};
+
+window.shipPropertyViewerPartNodeRowClick = function (el) {
+    dauntlessEvent('ship-property-viewer/part/select_node:'
+        + JSON.stringify({name: el.dataset.partName, kind: el.dataset.nodeKind}));
+};
+
+// Right-click a part row: populate and show the part-node menu items,
+// hiding every subsystem/light/emitter item (spvShowMenuItems defaults any
+// key it isn't given to hidden). Every flag needed to decide which items
+// show comes off the row's own data-* attributes -- "Add State
+// Transformation…" is shown whenever there is at least one missing state;
+// whether the part has the anchor a transformation needs is the Python
+// side's call (part/begin_add_state), not something this menu pre-empts.
+window.shipPropertyViewerPartRowMenu = function (event, el) {
+    event.preventDefault(); event.stopPropagation();
+    var hasAnchor = el.dataset.hasAnchor === 'true';
+    var breakable = el.dataset.breakable === 'true';
+    var missingCsv = el.dataset.missingStates || '';
+    spvCtxPartName = el.dataset.partName; spvCtxPartKind = null; spvCtxPartValue = null;
+    spvShowMenuItems({addanchor: !hasAnchor, addstate: missingCsv.length > 0,
+                       makebreakable: !breakable});
+    spvOpenMenuAt(event);
+    return false;
+};
+
+// Right-click a child row: Edit Anchor… / Edit Breakage… on those rows,
+// Remove on every one.
+window.shipPropertyViewerPartChildMenu = function (event, el) {
+    event.preventDefault(); event.stopPropagation();
+    spvCtxPartName = el.dataset.partName; spvCtxPartKind = el.dataset.nodeKind;
+    spvCtxPartValue = parseFloat(el.dataset.value);
+    spvShowMenuItems({editanchor: spvCtxPartKind === 'anchor',
+                       editbreak: spvCtxPartKind === 'breakage', removenode: true});
+    spvOpenMenuAt(event);
+    return false;
+};
+
+window.shipPropertyViewerCtxRemoveNode = function () {
+    if (spvCtxPartName && spvCtxPartKind) {
+        dauntlessEvent('ship-property-viewer/part/remove:'
+            + JSON.stringify({name: spvCtxPartName, kind: spvCtxPartKind}));
+    }
+    spvHideOverlays();
+};
+
+// ── Part popups (spec section 7.3) ─────────────────────────────────────────
+// Same shape as #spv-radius: opening one from the menu hides only the menu
+// (the overlay the menu announced with overlay:1 stays open), and Apply /
+// Cancel close through spvHideOverlays(), which sends overlay:0. Mouse-only
+// steppers -- no keyboard->CEF forwarding exists. The popup's part name is
+// captured at open (spvPartPopupName), so a later right-click elsewhere
+// can't retarget an open popup.
+var spvPartPopupName = null, spvPartPopupMode = 'add';
+var spvPartAnchorSeconds = 2.0, spvPartBreakPercent = 20;
+
+function spvOpenPartPopup(id, title, okText) {
+    document.getElementById('spv-ctxmenu').style.display = 'none';
+    spvPartPopupName = spvCtxPartName;
+    document.getElementById(id + '-title').textContent = title;
+    document.getElementById(id + '-ok').textContent = okText;
+    document.getElementById(id).style.display = 'flex';
+}
+
+// Anchor: transition seconds, ±0.25, never below 0.25.
+function spvRenderPartAnchorValue() {
+    document.getElementById('spv-part-anchor-value').textContent =
+        spvPartAnchorSeconds.toFixed(2);
+}
+function spvOpenPartAnchor(mode, seconds) {
+    spvPartPopupMode = mode;
+    spvPartAnchorSeconds = Math.max(0.25, Math.round(seconds * 100) / 100);
+    spvRenderPartAnchorValue();
+    spvOpenPartPopup('spv-part-anchor', mode === 'add' ? 'Add Anchor' : 'Edit Anchor',
+                     mode === 'add' ? 'Add' : 'Apply');
+}
+window.shipPropertyViewerCtxAddAnchor = function () { spvOpenPartAnchor('add', 2.0); };
+window.shipPropertyViewerCtxEditAnchor = function () {
+    spvOpenPartAnchor('edit', isNaN(spvCtxPartValue) ? 2.0 : spvCtxPartValue);
+};
+window.shipPropertyViewerPartAnchorStep = function (delta) {
+    spvPartAnchorSeconds = Math.max(0.25,
+        Math.round((spvPartAnchorSeconds + delta) * 100) / 100);
+    spvRenderPartAnchorValue();
+};
+window.shipPropertyViewerPartAnchorApply = function () {
+    if (spvPartPopupName) {
+        var action = (spvPartPopupMode === 'add') ? 'part/add_anchor:' : 'part/set_transition:';
+        dauntlessEvent('ship-property-viewer/' + action
+            + JSON.stringify({name: spvPartPopupName, seconds: spvPartAnchorSeconds}));
+    }
+    spvHideOverlays();
+};
+window.shipPropertyViewerPartAnchorCancel = function () { spvHideOverlays(); };
+
+// Breakage: percent of the ship's hull strength, ±5, clamped 5..100.
+function spvRenderPartBreakValue() {
+    document.getElementById('spv-part-break-value').textContent =
+        String(spvPartBreakPercent);
+}
+function spvOpenPartBreak(mode, percent) {
+    spvPartPopupMode = mode;
+    spvPartBreakPercent = Math.min(100, Math.max(5, Math.round(percent)));
+    spvRenderPartBreakValue();
+    spvOpenPartPopup('spv-part-break', mode === 'add' ? 'Make Breakable' : 'Edit Breakage',
+                     mode === 'add' ? 'Add' : 'Apply');
+}
+window.shipPropertyViewerCtxMakeBreakable = function () { spvOpenPartBreak('add', 20); };
+window.shipPropertyViewerCtxEditBreak = function () {
+    spvOpenPartBreak('edit', isNaN(spvCtxPartValue) ? 20 : spvCtxPartValue);
+};
+window.shipPropertyViewerPartBreakStep = function (delta) {
+    spvPartBreakPercent = Math.min(100, Math.max(5, Math.round(spvPartBreakPercent + delta)));
+    spvRenderPartBreakValue();
+};
+window.shipPropertyViewerPartBreakApply = function () {
+    if (spvPartPopupName) {
+        var action = (spvPartPopupMode === 'add') ? 'part/make_breakable:' : 'part/set_break:';
+        dauntlessEvent('ship-property-viewer/' + action
+            + JSON.stringify({name: spvPartPopupName, percent: spvPartBreakPercent}));
+    }
+    spvHideOverlays();
+};
+window.shipPropertyViewerPartBreakCancel = function () { spvHideOverlays(); };
+
+// Add State Transformation… : the menu entry only ASKS. Python checks the
+// anchor (toast and nothing else if there is none) and otherwise opens the
+// picker through model_parts.add_state_picker -- holding the overlay open
+// itself -- so the menu closes through spvHideOverlays() FIRST: its
+// overlay:0 must not land after the picker has taken the overlay.
+window.shipPropertyViewerCtxAddStateBegin = function () {
+    var name = spvCtxPartName;
+    spvHideOverlays();
+    if (name) dauntlessEvent('ship-property-viewer/part/begin_add_state:' + name);
+};
+
+// The picker, driven purely by the payload: {name, states} shows it,
+// null hides it. The choice survives a re-push for the same part (and is
+// dropped if that state is no longer offered); Add stays disabled until
+// one is chosen. Add / Cancel hide it locally without overlay:0 -- Python
+// closes the picker and the overlay it holds in the same action.
+var spvAddStatePicker = null, spvAddStateChoice = null;
+
+function spvRenderAddStatePicker(picker) {
+    var el = document.getElementById('spv-part-addstate');
+    if (!el) return;
+    if (!picker || !Array.isArray(picker.states)) {
+        spvAddStatePicker = null; spvAddStateChoice = null;
+        el.style.display = 'none';
+        return;
+    }
+    var keep = spvAddStatePicker !== null && spvAddStatePicker.name === picker.name
+               && picker.states.indexOf(spvAddStateChoice) >= 0;
+    if (!keep) spvAddStateChoice = null;
+    spvAddStatePicker = picker;
+    spvRenderAddStateChoices();
+    el.style.display = 'flex';
+}
+function spvRenderAddStateChoices() {
+    var list = document.getElementById('spv-part-addstate-list');
+    var add = document.getElementById('spv-part-addstate-add');
+    var states = spvAddStatePicker ? spvAddStatePicker.states : [];
+    if (list) {
+        list.innerHTML = states.map(function (s) {
+            return '<div class="spv-part-choice'
+                 + (s === spvAddStateChoice ? ' spv-part-choice--chosen' : '') + '"'
+                 + ' data-state="' + escapeHtmlSPV(s) + '"'
+                 + ' onclick="shipPropertyViewerAddStateChoose(this)">'
+                 + escapeHtmlSPV(SPV_STATE_LABELS[s] || s) + '</div>';
+        }).join('');
+    }
+    if (add) add.disabled = (spvAddStateChoice === null);
+}
+window.shipPropertyViewerAddStateChoose = function (el) {
+    spvAddStateChoice = el.dataset.state;
+    spvRenderAddStateChoices();
+};
+window.shipPropertyViewerAddStateAdd = function () {
+    if (!spvAddStatePicker || spvAddStateChoice === null) return;
+    dauntlessEvent('ship-property-viewer/part/add_state:'
+        + JSON.stringify({name: spvAddStatePicker.name, state: spvAddStateChoice}));
+    spvRenderAddStatePicker(null);
+};
+window.shipPropertyViewerAddStateCancel = function () {
+    dauntlessEvent('ship-property-viewer/part/cancel_add_state');
+    spvRenderAddStatePicker(null);
+};
 
 function spvRowHtml(row, selectedIndex, selectedLight, selectedEmitterKey, depth) {
     var isLight = (row.kind === 'light');

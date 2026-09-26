@@ -26,6 +26,11 @@ from engine.appc.properties import read_indexed_setter_args
 
 _log = logging.getLogger(__name__)
 
+# Per-instance glow-region capacity: scenegraph::Instance::kMaxGlowRegions and
+# opaque.frag's MAX_GLOW_REGIONS. Used only to word the overflow warning; the
+# renderer enforces it (add_*_region returns -1 when full).
+MAX_GLOW_REGIONS = 12
+
 HEALTHY = "healthy"
 DISABLED = "disabled"
 DESTROYED = "destroyed"
@@ -323,8 +328,17 @@ def baked_region_ops(prop, default_pos, pod_name="") -> list:
     warning each and can never raise; an empty result simply means no glow
     VFX for this pod.
     """
+    return region_ops(baked_glow_regions(prop), default_pos, pod_name)
+
+
+def region_ops(raws, default_pos, pod_name="") -> list:
+    """`baked_region_ops` over an explicit list of raw (baked-shaped) region
+    entries rather than a property's -- the SPV refresh supplies specs saved
+    this session, which have not reached the live property yet."""
     ops = []
-    for raw in baked_glow_regions(prop):
+    for n, raw in enumerate(raws):
+        raw = dict(raw)
+        raw.setdefault("index", n)
         try:
             op = resolve_baked_region(raw, default_pos)
         except Exception:  # noqa: BLE001 - bad authored values must not raise
@@ -338,23 +352,6 @@ def baked_region_ops(prop, default_pos, pod_name="") -> list:
     return ops
 
 
-def glow_bearing_subsystem_ids(ship) -> set:
-    """id() of every subsystem that can carry a glow region: warp pods, impulse
-    engine pods, and the sensor array. None-safe; never raises."""
-    ids: set = set()
-    try:
-        for pod in warp_pods(ship.GetWarpEngineSubsystem()):
-            ids.add(id(pod))
-        for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
-            ids.add(id(pod))
-        sensor = ship.GetSensorSubsystem()
-        if sensor is not None:
-            ids.add(id(sensor))
-    except Exception:   # noqa: BLE001 - stub ships may miss getters
-        pass
-    return ids
-
-
 class ShipGlowController:
     """Per-ship: register glow regions once, push state each frame.
 
@@ -364,11 +361,17 @@ class ShipGlowController:
     `renderer` is engine.renderer (injected for testability).
     """
 
-    def __init__(self, renderer, instance_id, ship):
+    def __init__(self, renderer, instance_id, ship, regions_of=None):
+        """`regions_of(sub)`, when given, returns the raw (baked-shaped)
+        region list to register for `sub` in place of its property's baked
+        regions -- the SPV refresh passes its saved-this-session specs, which
+        do not reach the live property until the next ship build."""
         self._r = renderer
         self._iid = instance_id
         self._ship = ship
+        self._regions_of = regions_of
         self._regions = []  # dicts: sub, idx, prev, etime, boost
+        self._registered = set()  # id() of every subsystem already walked
         self._eased_frac = 0.0    # smoothed commanded throttle (0..1)
         self._last_now = None     # game-time of the previous update (for dt)
 
@@ -392,13 +395,39 @@ class ShipGlowController:
         if _sensor is not None:
             self._register_baked(_sensor, boost=False)
 
+        # EVERY other subsystem the Ship Property Viewer can show, since the
+        # SPV lets a region be authored on any of them. Only warp, impulse and
+        # sensor used to register, so a region on e.g. a disruptor cannon was
+        # saved but never reached the renderer: its glow stayed lit while the
+        # cannon was disabled or destroyed. Walked AFTER the pods above, which
+        # keep their boost/warp roles and are skipped here by identity. Same
+        # walker as the cast-light cache (host_loop._build_ship_emitter_cache).
+        try:
+            from engine.ui.ship_property_viewer import _iter_subsystems
+            subs = list(_iter_subsystems(ship))
+        except Exception as _e:  # noqa: BLE001 - glow is best-effort VFX
+            _log.warning("glow regions: could not walk subsystems: %s", _e)
+            subs = []
+        for sub in subs:
+            self._register_baked(sub, boost=False)
+
     def _register_baked(self, pod, boost: bool, warp: bool = False) -> None:
-        """Register every baked glow region on `pod`'s hardpoint property."""
+        """Register every glow region on `pod`: its property's baked regions,
+        or `regions_of(pod)` when the caller supplied one. A subsystem is
+        registered at most once, whichever role reached it first."""
+        if id(pod) in self._registered:
+            return
+        self._registered.add(id(pod))
         pos = _position_tuple(pod)
         if pos is None:
             return
-        prop = pod.GetProperty() if hasattr(pod, "GetProperty") else None
-        for op in baked_region_ops(prop, pos, getattr(pod, "GetName", str)()):
+        name = getattr(pod, "GetName", str)()
+        if self._regions_of is not None:
+            ops = region_ops(self._regions_of(pod) or [], pos, name)
+        else:
+            prop = pod.GetProperty() if hasattr(pod, "GetProperty") else None
+            ops = baked_region_ops(prop, pos, name)
+        for op in ops:
             if op[0] == "sphere":
                 idx = self._r.add_sphere_region(self._iid, op[1], op[2])
             elif op[0] == "box":
@@ -413,6 +442,12 @@ class ShipGlowController:
                 idx = self._r.add_cylinder_region(
                     self._iid, op[1], op[2], op[3], op[4])
             if idx < 0:
+                # The instance is full (kMaxGlowRegions = 12, matched by the
+                # shader's MAX_GLOW_REGIONS) or gone. Say so: now that any
+                # subsystem can carry a region, a ship can outgrow the cap.
+                _log.warning(
+                    "glow region on %s dropped: the ship already has the "
+                    "maximum of %d glow regions", name, MAX_GLOW_REGIONS)
                 continue
             self._regions.append(
                 {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,

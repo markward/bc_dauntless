@@ -573,6 +573,164 @@ def ring_drag_angle(cursor_x, cursor_y, origin, cam, viewport):
     return math.atan2(cursor_y - oy, cursor_x - ox)
 
 
+# ---------------------------------------------------------------------------
+# Model Parts pane -- lists host_io.model_nodes(iid) part candidates beneath
+# the subsystem tree; each part's rules are child NODES (Anchor, one {State}
+# Transformation per state, Breakage -- spec 2026-09-25 section 7).
+# Collapsed by default; module-level like the panel's other session-scoped
+# selection state, so a test that leaves state set would otherwise leak into
+# the next test -- reset via
+# tests/conftest.py:_reset_leakable_engine_globals (see reset_model_parts()).
+# ---------------------------------------------------------------------------
+_model_parts_expanded = False
+_selected_model_part_name: Optional[str] = None
+_selected_model_part_box: Optional[Tuple[Vec3, Vec3]] = None
+# (part_name, kind) of the selected child node, or None. `kind` is "anchor",
+# "breakage", or a state name from articulated_part.STATES.
+_selected_part_node: Optional[Tuple[str, str]] = None
+
+
+def model_parts_expanded() -> bool:
+    return _model_parts_expanded
+
+
+def set_model_parts_expanded(expanded: bool) -> None:
+    global _model_parts_expanded
+    _model_parts_expanded = bool(expanded)
+
+
+def toggle_model_parts_expanded() -> None:
+    set_model_parts_expanded(not _model_parts_expanded)
+
+
+def model_part_rows(nodes: List[dict], show_all: bool = False) -> List[dict]:
+    """The parts the Model Parts pane lists, as `{"name", "candidate"}`.
+    Only `candidate` nodes (Scene Root's children) are listed unless
+    `show_all` is set -- a real hull's node list is mostly
+    `__NDL_MultiMtl_Node` exporter plumbing that must never reach the author
+    by default. The panel builds each part's node rows from these.
+
+    Also reconciles the current selection against `nodes`: a mission swap
+    can replace the model out from under the panel, so a selection that no
+    longer names a node in the fresh list is cleared rather than left
+    dangling."""
+    global _selected_model_part_name, _selected_model_part_box, _selected_part_node
+    present = {n.get("name") for n in nodes}
+    if _selected_model_part_name is not None and _selected_model_part_name not in present:
+        _selected_model_part_name = None
+        _selected_model_part_box = None
+    if _selected_part_node is not None and _selected_part_node[0] not in present:
+        _selected_part_node = None
+    rows = []
+    for n in nodes:
+        if not show_all and not n.get("candidate", False):
+            continue
+        rows.append({"name": n.get("name"),
+                     "candidate": bool(n.get("candidate", False))})
+    return rows
+
+
+def select_model_part(name: Optional[str], nodes: List[dict]) -> None:
+    """Select the part ROW `name` and cache its bounds box for the pane's
+    derived-box readout. Clears the selection if `name` isn't in `nodes`
+    (e.g. stale click after a model swap). Selecting a row always clears the
+    child-node selection -- a row and one of its nodes are never both
+    chosen."""
+    global _selected_model_part_name, _selected_model_part_box, _selected_part_node
+    _selected_part_node = None
+    for n in nodes:
+        if n.get("name") == name:
+            _selected_model_part_name = name
+            _selected_model_part_box = (tuple(n["bounds_min"]), tuple(n["bounds_max"]))
+            return
+    _selected_model_part_name = None
+    _selected_model_part_box = None
+
+
+def select_part_node(part_name: Optional[str], kind: Optional[str]) -> None:
+    """Select child node `kind` of part `part_name`, or clear the node
+    selection when either is None. Does not touch the part-row selection:
+    the panel selects the row first (which clears any node) and then the
+    node, so the derived box stays the selected part's."""
+    global _selected_part_node
+    if part_name is None or kind is None:
+        _selected_part_node = None
+    else:
+        _selected_part_node = (str(part_name), str(kind))
+
+
+def selected_part_node() -> Optional[Tuple[str, str]]:
+    return _selected_part_node
+
+
+def selected_model_part() -> Optional[str]:
+    return _selected_model_part_name
+
+
+def selected_part_box() -> Optional[Tuple[Vec3, Vec3]]:
+    """The selected part's derived box, while the part row or its Breakage
+    node is selected (spec section 7.3). None under an Anchor node -- selecting
+    one activates the Move tool, whose gizmo at the anchor IS the anchor
+    marker (ruling 16; the panel's `part/select_node`) -- and under a State
+    Transformation, where the part is drawn posed and its NIF-pose box would
+    sit beside it (the Move or Rotate gizmo marks the posed anchor)."""
+    if _selected_part_node is not None and _selected_part_node[1] != "breakage":
+        return None
+    return _selected_model_part_box
+
+
+def reset_model_parts() -> None:
+    """Test-only reset of the module-level Model Parts state -- see
+    tests/conftest.py:_reset_leakable_engine_globals."""
+    global _model_parts_expanded, _selected_model_part_name, _selected_model_part_box
+    global _selected_part_node
+    _model_parts_expanded = False
+    _selected_model_part_name = None
+    _selected_model_part_box = None
+    _selected_part_node = None
+
+
+def part_save_edits(parts: dict) -> List[Tuple[str, str, list]]:
+    """Build `(name, "__part__", calls)` writer edits from a
+    {name: {"anchor", "transition", "poses", "break"}} staging dict, emitting
+    spec 2026-09-25 section 3's calls and never the legacy ones:
+
+      ("SetAnchor", (x, y, z))                  if an anchor is set
+      ("SetTransitionSeconds", (t,))            if an anchor is set
+      ("SetStatePose", (state,) + p6)           per pose, in STATES order
+      ("SetBreakFraction", (f,))                if the part is breakable
+
+    `break` of None emits NO `SetBreakFraction` -- absent means "this part
+    does not come off"; emitting 0.0 would shear it at once.
+
+    A staged spec with nothing left to say (every node removed) is a
+    REMOVAL and emits `(name, "__part__", [])`: the writer's `set_part`
+    stores the empty call list and `_emit_function` drops a part whose list
+    is empty, so the block is DELETED from the file. Skipping it instead
+    would leave the old block on disk, and the part's nodes would come back
+    on the next reload."""
+    from engine.appc.articulated_part import STATES
+    edits: List[Tuple[str, str, list]] = []
+    for name in sorted(parts):
+        spec = parts[name] or {}
+        calls: list = []
+        anchor = spec.get("anchor")
+        if anchor is not None:
+            calls.append(("SetAnchor", tuple(float(c) for c in anchor)))
+            calls.append(("SetTransitionSeconds",
+                          (float(spec.get("transition", 2.0)),)))
+        poses = spec.get("poses") or {}
+        for state in STATES:
+            if state in poses:
+                calls.append(("SetStatePose",
+                              (state,) + tuple(float(v) for v in poses[state])))
+        fraction = spec.get("break")
+        if fraction is not None:
+            calls.append(("SetBreakFraction", (float(fraction),)))
+        edits.append((name, "__part__", calls))
+    return edits
+
+
 def axis_drag_param(cursor_x, cursor_y, origin, axis, length, cam, viewport):
     """World distance along `axis` (from origin) of the cursor's projection
     onto the screen-projected shaft. Reuses project() only (no unprojection):

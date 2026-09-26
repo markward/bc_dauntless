@@ -47,6 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
+    "model_nodes",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
@@ -54,7 +55,8 @@ _REQUIRED_BINDINGS = frozenset({
     "transform_get_rotation_col", "transform_get_positions",
     "transform_live_count", "transform_capacity",
     "set_instance_transform_slot",
-    "set_instance_node_rotation", "clear_instance_node_overrides",
+    "set_instance_node_transform",
+    "clear_instance_node_overrides",
     "set_instance_node_hidden", "instance_model",
     # Not a function: the InstanceId type itself. set_instance_transform_slot
     # isinstance-checks against it to tell a real render instance from a test
@@ -373,6 +375,16 @@ def hull_carve_add(
                      strength, time, floor_radius, radius_modifier)
 
 
+def model_nodes(instance_id: int) -> List[dict]:
+    """Every named node of this instance's model with geometry somewhere in
+    its subtree, for the SPV's part list: [{name, parent, candidate,
+    bounds_min, bounds_max}, ...], bounds in SHIP units. `candidate` marks
+    the nodes a human would call a part. [] when headless or on a stale id."""
+    if _h is None:
+        return []
+    return _h.model_nodes(instance_id)
+
+
 def hull_split_detached(instance_id: int, min_cells: int) -> list:
     """Run hull connectivity on `instance_id`'s damage field and split every
     detached component out. Components with at least `min_cells` cells get a
@@ -685,26 +697,18 @@ def set_instance_transform_slot(iid, index: int, generation: int,
     return True
 
 
-def set_instance_node_rotation(iid, node_name: str,
-                               pivot, axis, theta: float) -> bool:
-    """Rotate `node_name` on instance `iid` about (pivot, axis) by `theta` rad.
-
-    Pivot and axis are in the node's PARENT space (model space for every BC
-    ship NIF). `theta == 0` clears the override, so a ship at rest deflection
-    leaves an EMPTY override map and renders through the static node walk.
-
-    False on headless, on a test double's plain-int iid, or when the model has
-    no node by that name — all "nothing to articulate", never "binding missing":
-    a stale build that dropped it trips validate_bindings() at boot.
-    """
+def set_instance_node_transform(iid, node_name: str, m16) -> bool:
+    """Set `node_name`'s pose on instance `iid`: a column-major 4x4 (16
+    floats) in the node's PARENT space, MODEL units, applied as M * local.
+    Identity clears the override. False headless, on a fake iid, or when the
+    model has no such node -- "nothing to articulate", never "binding
+    missing" (a stale build trips validate_bindings() at boot)."""
     if _h is None:
         return False
     if not isinstance(iid, _h.InstanceId):
         return False
-    return bool(_h.set_instance_node_rotation(
-        iid, str(node_name),
-        float(pivot[0]), float(pivot[1]), float(pivot[2]),
-        float(axis[0]), float(axis[1]), float(axis[2]), float(theta)))
+    return bool(_h.set_instance_node_transform(
+        iid, str(node_name), [float(v) for v in m16]))
 
 
 def instance_model(iid):

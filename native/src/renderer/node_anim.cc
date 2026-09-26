@@ -1,5 +1,6 @@
 #include "renderer/node_anim.h"
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <glm/gtx/quaternion.hpp>
@@ -44,6 +45,22 @@ std::vector<glm::mat4> compose_node_worlds(
             world[i] = world[node.parent_index] * local_of(static_cast<int>(i));
     }
     return world;
+}
+
+std::vector<glm::mat4> rest_corrections(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides) {
+    std::vector<glm::mat4> out(model.nodes.size(), glm::mat4(1.0f));
+    if (model.nodes.empty() || overrides.empty()) return out;
+    const glm::mat4 I(1.0f);
+    const auto posed = compose_node_worlds(model, I, overrides);
+    const auto rest  = compose_node_worlds(model, I, {});
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        if (posed[i] == rest[i]) continue;                  // chain not overridden
+        if (std::fabs(glm::determinant(posed[i])) < 1e-12f) continue;  // severed
+        out[i] = rest[i] * glm::inverse(posed[i]);
+    }
+    return out;
 }
 
 namespace {

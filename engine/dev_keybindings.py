@@ -283,28 +283,29 @@ def register_for_frame(_h, session, player) -> None:
         "Explosion light reach +%.1f (')" % _EXPL_RADIUS_STEP
     )
 
-    # 'K': freeze the BoP wing articulation at a fixed deflection, so the
-    # authored hinge pivots can be judged at rest instead of only in passing.
-    # Cycles follow-alert -> 0 (down/armed) -> 0.5 -> 1 (up/cold) -> follow.
+    # 'K': freeze the BoP wing articulation at a fixed STATE, so the authored
+    # hinge pivots can be judged at rest instead of only in passing. Cycles
+    # follow (state_for) -> cruise -> yellow -> red -> warp -> follow.
     #
-    # The 0.5 stop is the one that matters: a pivot placed wrong is most
-    # visible MID-TRAVEL, where a wing that should hinge at its root instead
-    # swings through the hull. At either end a bad pivot can still look
-    # plausible.
+    # The old 0.5 mid-travel stop is gone: with four independent authored
+    # poses instead of one 0..1 deflection, the interesting poses ARE the
+    # authored states, and mid-travel is still reachable by switching states
+    # and watching the ease run (a part's transition_seconds is a couple of seconds).
     #
     # 'K' is free in all four namespaces (see the note above): not in
     # input_map ACTIONS, not among the dev bindings, not a throttle digit or
     # F12, and not an SDK WC_ key (F6/F9).
-    def _cycle_wing_deflection() -> None:
+    def _cycle_wing_state() -> None:
         from engine.appc import articulation
-        order = (None, 0.0, 0.5, 1.0)
+        from engine.appc.articulated_part import STATES
+        order = (None,) + STATES
         cur = articulation.dev_override()
         nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else None
         articulation.set_dev_override(nxt)
-        print("[articulation] wing deflection override: %s"
-              % ("follow alert" if nxt is None else "%.2f" % nxt))
+        print("[articulation] wing state override: %s"
+              % ("follow" if nxt is None else nxt))
 
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_K, _cycle_wing_deflection,
-        "Cycle BoP wing deflection: alert / 0 / 0.5 / 1 (dev) — K",
+        _h.keys.KEY_K, _cycle_wing_state,
+        "Cycle BoP wing state: follow / cruise / yellow / red / warp (dev) — K",
     )

@@ -62,7 +62,7 @@ def _spawn_chunk(ship, ship_iid, part_name) -> None:
     from engine.appc import debris_chunk
 
     leaf = articulation.leaf_for(ship)
-    boxes = articulation.part_boxes_for(leaf)
+    boxes = articulation.part_boxes_for(leaf, ship_iid)
     box = boxes.get(part_name)
     if box is None:
         return

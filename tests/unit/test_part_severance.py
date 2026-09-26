@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from engine.appc import articulation, part_severance as ps
+from engine.appc import articulation, part_pose, part_severance as ps
 
 
 LEAF = "birdofprey"
@@ -46,11 +46,21 @@ class _Ship:
         self._hull = _Hull(hull)
         self._subs = list(subs)
         self._articulation_leaf = LEAF      # pre-cached: no SDK import in tests
-        self._articulation_deflection = 0.0
+        self._articulation_poses = {}
 
     def GetHull(self): return self._hull
     def _iter_subsystems(self): return list(self._subs)
-    def GetArticulationDeflection(self): return self._articulation_deflection
+
+
+def _pose(ship, deflection):
+    """Set `ship`'s per-part poses `deflection` of the way (0..1) along each
+    part's swing from the NIF pose to its authored "cruise" pose -- the
+    fully-deflected (up/cold) pose at 1.0 -- what `pose_for_part` reads."""
+    ship._articulation_poses = {
+        p.GetName(): part_pose.interpolate(
+            part_pose.IDENTITY, p.pose_for("cruise"), p.anchor, deflection)
+        for p in articulation.rig_for(LEAF)
+    }
 
 
 # ── Attribution ──────────────────────────────────────────────────────────────
@@ -74,7 +84,14 @@ def test_a_point_on_the_nose_resolves_to_the_head():
 
 
 def test_a_ship_with_no_authored_boxes_attributes_nothing():
-    assert ps.part_for_point("galaxy", (0.8, 0.0, -0.4)) is None
+    """"galaxy" is deliberately NOT used here any more: boxes are now DERIVED
+    (Task 5) from a realized instance's own geometry, so a leaf real enough
+    to be realized elsewhere in the suite can legitimately pick up cached
+    boxes from that -- an ACTUAL Galaxy has real named nodes, unlike the old
+    hand-authored PART_BOXES, which never had a "galaxy" entry by
+    construction. A leaf that can never resolve to a real hull is what this
+    test actually needs to pin."""
+    assert ps.part_for_point("no_such_ship", (0.8, 0.0, -0.4)) is None
 
 
 # ── Accumulation and threshold ───────────────────────────────────────────────
@@ -125,8 +142,9 @@ def test_a_part_never_severs_twice():
 
 
 def test_a_non_detachable_part_accumulates_nothing():
-    """The head is inside PART_BOXES but absent from DETACHABLE, so it can be
-    hit forever and never come off. The body must never detach either."""
+    """The head is a boxed part but has no `detach_fraction` authored on its
+    template, so it can be hit forever and never come off. The body must
+    never detach either."""
     ship = _Ship()
     for _ in range(50):
         assert ps.record_hit(ship, None, (0.0, 85.0, 0.0), 500.0) is None
@@ -186,13 +204,16 @@ def test_a_severed_wing_destroys_the_cannon_mounted_on_it():
 def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     """Attribution here is a REST-pose question, and must stay one.
 
-    the structures this compares against are never articulated: PART_BOXES are
-    authored rest-pose, and the voxel field and .dhv SDF stay baked from the
-    NIF in rest pose (a carve struck on a moved part is pulled back to rest
-    before deposit -- renderer::rest_from_posed_at). Collision spheres DO
-    articulate as of the part-aware sim-geometry plan, but nothing in this
-    path reads them. See spec 4.3.1. So the authored mount is the right thing
-    to test, at any deflection.
+    the structures this compares against are never articulated: the derived
+    per-part boxes are authored rest-pose, and the .dhv SDF stays baked from
+    the NIF in rest pose. (The per-instance carve field is the exception, and
+    needs no transform either: it is both deposited and SAMPLED in posed body
+    space -- opaque.vert builds `v_position_ws` from the override-composed
+    `world_per_node`. A `rest_from_posed_at` primitive was written for a
+    pull-back that turned out not to be wanted, reverted, and has now been
+    deleted.) Collision spheres DO articulate as of the part-aware
+    sim-geometry plan, but nothing in this path reads them. See spec 4.3.1.
+    So the authored mount is the right thing to test, at any deflection.
 
     This test exists because the implementation plan originally specified the
     opposite -- routing this through part_transform_point, so an ARTICULATED
@@ -205,7 +226,7 @@ def test_subsystem_kill_uses_the_REST_mount_even_mid_travel():
     star = _Sub("Star Cannon", (1.008, 0.450, -0.670))
     body = _Sub("Warp Core", (0.0, -0.33, 0.0))
     ship = _Ship(subs=(star, body))
-    ship._articulation_deflection = 0.5      # mid-travel: guards against a
+    _pose(ship, 0.5)                          # mid-travel: guards against a
                                               # fix that special-cases only
                                               # the endpoints
 
@@ -250,12 +271,81 @@ def test_record_hit_takes_MODEL_units_not_ship_units():
 
     # The SAME numbers read as ship units, converted a second time by
     # MODEL_TO_SHIP, land deep inside the hull -- inside the BODY box only
-    # (not ambiguous), which is not in DETACHABLE, so they must attribute
-    # to nothing.
+    # (not ambiguous), whose template authors no detach_fraction, so they
+    # must attribute to nothing.
     other = _Ship()
     ps.record_hit(other, None, (0.8, 0.0, -0.4), 100.0)
     assert ps.damage_on(other, "left wing01") == 0.0, (
         "a ship-units point must NOT be accepted as model units")
+
+
+# ── The hit must be attributed in the pose the ship is IN ────────────────────
+# `record_hit` used to test a POSED point (host_io.world_to_body inverts the
+# instance world matrix, which carries no node override -- so a hit arrives
+# where the wing is DRAWN) against the REST boxes. Survivable against the old
+# hand-drawn boxes, which deliberately swallowed the body at the wing roots;
+# not survivable against the derived ones, which are tighter. A Bird of Prey
+# at cruise took sustained wing fire and shed nothing, while the same ship at
+# red alert shed normally. `part_for_live_point` -- already the rule for
+# emitter attribution -- moves the QUERY instead of the boxes.
+
+# The starboard mirror of the measurement in `part_for_live_point`'s own
+# docstring: a rest wingtip that is drawn a quarter of a hull away once the
+# wings are up.
+WINGTIP_REST = (1.0, 0.0, -0.7)
+
+
+def _posed_wingtip(ship, part_name="left wing01"):
+    """Where WINGTIP_REST is DRAWN in `ship`'s current pose, ship units."""
+    part = next(p for p in articulation.rig_for(LEAF)
+                if p.GetName() == part_name)
+    return part_pose.apply(articulation.pose_for_part(ship, part),
+                           WINGTIP_REST)
+
+
+def test_a_hit_on_a_POSED_wingtip_still_attributes_to_that_wing():
+    """THE POINT. The hit lands where the wing IS, not where its box was
+    baked."""
+    ship = _Ship()
+    _pose(ship, 1.0)                                  # wings fully up
+    posed = _posed_wingtip(ship)
+    assert posed != WINGTIP_REST, "the fixture must actually move the point"
+    assert ps.part_for_point(LEAF, posed) is None, (
+        "guard: if the rest boxes still contained the posed point this test "
+        "would pass without the fix")
+
+    ps.record_hit(ship, None, tuple(c / ps.MODEL_TO_SHIP for c in posed), 100.0)
+    assert ps.damage_on(ship, "left wing01") == pytest.approx(100.0)
+
+
+def test_a_posed_wing_still_SHEARS_at_its_threshold():
+    """Attribution is only worth fixing if it reaches the detach. 4000 hull
+    x 0.20 = 800."""
+    ship = _Ship(hull=4000.0)
+    _pose(ship, 1.0)
+    model_pt = tuple(c / ps.MODEL_TO_SHIP for c in _posed_wingtip(ship))
+    for _ in range(7):
+        assert ps.record_hit(ship, None, model_pt, 100.0) is None
+    assert ps.record_hit(ship, None, model_pt, 100.0) == "left wing01"
+    assert ps.is_detached(ship, "left wing01")
+
+
+def test_at_rest_attribution_is_UNCHANGED():
+    """At the identity pose -- the pose the model ships in, and the one
+    combat has run in until now -- every pullback is identity, so the live-pose query must
+    give byte-identical answers to the rest-pose one."""
+    ship = _Ship()
+    _pose(ship, 0.0)
+    assert _posed_wingtip(ship) == WINGTIP_REST
+    ps.record_hit(ship, None,
+                  tuple(c / ps.MODEL_TO_SHIP for c in WINGTIP_REST), 100.0)
+    assert ps.damage_on(ship, "left wing01") == pytest.approx(100.0)
+
+    # And a body hit stays unattributed at rest, exactly as before.
+    body = _Ship()
+    ps.record_hit(body, None, (0.0, -33.0, 0.0), 100.0)
+    assert ps.damage_on(body, "left wing01") == 0.0
+    assert ps.damage_on(body, "left wing") == 0.0
 
 
 def test_the_conversion_constant_matches_BC_MODEL_SCALE():
@@ -270,12 +360,12 @@ def test_the_conversion_constant_matches_BC_MODEL_SCALE():
 def test_a_detached_part_is_not_repose_by_the_render_sync(monkeypatch):
     """REGRESSION. `_sync_ship_articulation` used to push a pose for EVERY
     rigged part whenever deflection changed, with no regard for severance.
-    `set_instance_node_rotation` and `set_instance_node_hidden` write into the
-    SAME node_overrides slot, so re-posing a severed wing overwrote the zero
-    matrix that was hiding it -- the wing snapped back onto the hull and
+    `set_instance_node_transform` and `set_instance_node_hidden` write into
+    the SAME node_overrides slot, so re-posing a severed wing overwrote the
+    zero matrix that was hiding it -- the wing snapped back onto the hull and
     animated with the good one, while its cannon stayed dead and its debris
-    chunk flew off on its own. theta == 0 at the end of travel then ERASED the
-    hide permanently.
+    chunk flew off on its own. An identity push at the end of travel then
+    ERASED the hide permanently.
 
     Fixed by skipping any part `part_severance.is_detached` reports as gone,
     mirroring the `part_transform_point` guard above."""
@@ -283,18 +373,25 @@ def test_a_detached_part_is_not_repose_by_the_render_sync(monkeypatch):
 
     calls = []
     monkeypatch.setattr(
-        host_loop.host_io, "set_instance_node_rotation",
-        lambda iid, node, pivot, axis, theta: calls.append(node) or True)
+        host_loop.host_io, "set_instance_node_transform",
+        lambda iid, node, m16: calls.append((node, tuple(m16))) or True)
 
     ship = _Ship()
-    ship._articulation_deflection = 0.5  # a deflection CHANGE: the guard is live
+    _pose(ship, 0.5)  # a non-identity pose: the guard is live
     ps.detached_parts(ship).add("left wing01")
     session = types.SimpleNamespace(ship_articulation={})
 
     host_loop._sync_ship_articulation(session, ship, iid=1)
 
-    assert calls == ["left wing"], (
-        "the severed wing must not receive a node-rotation push")
+    port = next(p for p in articulation.rig_for(LEAF)
+                if p.GetName() == "left wing")
+    want = part_pose.matrix4_model(
+        part_pose.interpolate(part_pose.IDENTITY, port.pose_for("cruise"),
+                              port.anchor, 0.5),
+        articulation.MODEL_TO_SHIP)
+    assert [c[0] for c in calls] == ["left wing"], (
+        "the severed wing must not receive a node-transform push")
+    assert calls[0][1] == pytest.approx(want, abs=1e-12)
 
 
 # ── The authored data ────────────────────────────────────────────────────────
@@ -308,7 +405,7 @@ def test_only_the_wings_are_detachable():
 def test_every_detachable_part_has_a_box():
     """A part that can shear but has no geometry would accumulate nothing and
     silently never detach."""
-    for leaf, parts in articulation.DETACHABLE.items():
-        boxes = articulation.part_boxes_for(leaf)
-        for name in parts:
-            assert name in boxes, (leaf, name)
+    parts = articulation.detachable_for(LEAF)
+    boxes = articulation.part_boxes_for(LEAF)
+    for name in parts:
+        assert name in boxes, (LEAF, name)

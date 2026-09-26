@@ -25,7 +25,7 @@ wing across a whole battle and it still comes off.
 from __future__ import annotations
 
 import engine.dev_mode as dev_mode
-from engine.appc import articulation
+from engine.appc import articulation, part_pose
 
 
 # A point inside exactly one part box resolves to that part. Otherwise the
@@ -37,8 +37,9 @@ ATTRIBUTION_MARGIN = 5.0
 # ⚠️ TWO UNIT SYSTEMS MEET IN THIS MODULE. Getting them confused is not a
 # hypothetical: it shipped, and attribution never fired once.
 #
-#   * `articulation.PART_BOXES` and subsystem `GetPosition()` are in SHIP units
-#     (what hardpoint files author: a BoP wingtip is x = 1.008).
+#   * `articulation.part_boxes_for`'s derived boxes and subsystem
+#     `GetPosition()` are in SHIP units (what hardpoint files author: a BoP
+#     wingtip is x = 1.008).
 #   * `host_io.world_to_body` returns the body frame in MODEL units -- it
 #     inverts the instance world matrix, which carries BC_MODEL_SCALE, so the
 #     SAME wingtip comes back as x = 100.8.
@@ -47,10 +48,11 @@ ATTRIBUTION_MARGIN = 5.0
 # lands nowhere near it and silently attributes to nothing, which is
 # indistinguishable from "the player missed".
 #
-# So: `part_for_point` is the SHIP-units primitive, and `record_hit` converts
-# on the way in. Anything else calling part_for_point must already hold ship
-# units -- `_destroy_subsystems_on_part` does, which is exactly why the
-# subsystem half worked while the damage half never did.
+# So: `part_for_point` and its posed twin `part_for_live_point` are the
+# SHIP-units primitives, and `record_hit` converts on the way in. Anything
+# else calling either must already hold ship units --
+# `_destroy_subsystems_on_part` does, which is exactly why the subsystem half
+# worked while the damage half never did.
 MODEL_TO_SHIP = 0.01          # = BC_MODEL_SCALE (host_loop). Multiply a
                                # MODEL-units value by this to reach SHIP units
                                # -- record_hit does exactly that, below.
@@ -71,11 +73,17 @@ def _distance_to_box(point, box) -> float:
     return total ** 0.5
 
 
-def part_for_point(leaf, point):
+def part_for_point(leaf, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to, or None.
 
     ⚠️ SHIP units, not model units -- see MODEL_TO_SHIP above. A caller holding
     a `world_to_body` result must scale it first; `record_hit` does.
+
+    `iid` is threaded through to `articulation.part_boxes_for` for the ONE
+    case that needs it: the very first time a leaf's derived boxes are asked
+    for. Once cached (per leaf, not per instance -- see that function's
+    docstring) every later caller, with or without an iid, gets the same
+    answer, so most call sites here never pass one.
 
     None means "unattributed", which is the safe answer: an unattributed hit
     behaves exactly as it did before this module existed.
@@ -85,7 +93,7 @@ def part_for_point(leaf, point):
     wing boxes overlap the body box by design (the roots are embedded). Outside
     every box, the nearest wins only by a decisive margin.
     """
-    boxes = articulation.part_boxes_for(leaf)
+    boxes = articulation.part_boxes_for(leaf, iid)
     if not boxes:
         return None
     dists = sorted((_distance_to_box(point, b), n) for n, b in boxes.items())
@@ -102,11 +110,14 @@ def part_for_point(leaf, point):
     return None
 
 
-def part_for_live_point(ship, point):
+def part_for_live_point(ship, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to IN THE SHIP'S
     LIVE POSE, or None. The posed-space twin of `part_for_point`.
 
-    ⚠️ `PART_BOXES` are authored REST pose, but every point that arrives from
+    `iid`, like `part_for_point`'s, only matters the very first time this
+    leaf's derived boxes are needed; see that function's docstring.
+
+    ⚠️ The derived per-part boxes are authored REST pose, but every point that arrives from
     the running game is POSED -- `host_io.world_to_body` inverts the instance
     world matrix, which carries no node override, so a hit or an emitter on a
     deflected wing comes back where the wing IS DRAWN, not where its box is.
@@ -119,15 +130,17 @@ def part_for_live_point(ship, point):
 
     THE QUERY MOVES, NOT THE BOXES -- the same rule §4.3 of the spec applies
     to every other consumer of a baked rest-pose structure. For each part in
-    the ship's rig the point is inverse-rotated about THAT part's hinge (same
-    pivot, same axis, negated angle -- `point_at_deflection` is linear in
-    deflection, so -deflection is exactly the inverse) and re-tested. A part
-    claims the point only when the pullback lands on ITS OWN box.
+    the ship's rig the point is pulled back through THAT part's INVERSE pose
+    (`part_pose.inverse_apply`, R^T.(x - t)) and re-tested. A part claims the
+    point only when the pullback lands on ITS OWN box. The pose used is each
+    part's CURRENT one (`articulation.pose_for_part`), not a single ship-wide
+    deflection -- different parts on the same ship can be mid-transition at
+    different poses at once.
 
     The rest-space test runs FIRST and unchanged, so a point on the body
-    attributes exactly as it always did, and at deflection 0 -- the pose the
-    model ships in and the one combat runs in -- every rotation is identity
-    and this function is byte-identical to `part_for_point`.
+    attributes exactly as it always did, and at the identity pose -- the pose
+    the model ships in and the one combat runs in -- every pullback is
+    identity and this function is byte-identical to `part_for_point`.
 
     Re-testing through `part_for_point` rather than a bare box containment is
     deliberate: it inherits the ambiguity and margin rules, so the two
@@ -139,30 +152,46 @@ def part_for_live_point(ship, point):
     BEFORE it silences emitters, so skipping one here would make the whole
     feature inert -- the only caller asks about the part that just came off.
 
-    ⚠️ `record_hit` has the SAME defect and is deliberately NOT changed here:
-    a hit on a wingtip accrues no severance damage while the wings are down,
-    because it too tests a posed point against the rest boxes. That is
-    pre-existing, out of this change's scope, and should probably adopt this
-    function later.
+    `record_hit` uses this too, as of the final review of the SPV
+    part-authoring branch -- for exactly the reason above. It previously
+    tested its posed point against the rest boxes and so accrued no severance
+    damage on an articulated wing at all.
     """
     leaf = articulation.leaf_for(ship)
-    plain = part_for_point(leaf, point)
+    plain = part_for_point(leaf, point, iid)
     if plain is not None:
         return plain
-    parts = articulation.rig_for(leaf)
-    if not parts:
-        return None
-    try:
-        deflection = float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - a prop or a test double has no rig state
-        return None
-    if deflection == 0.0:
-        return None                      # identity: `plain` already answered
-    for part in parts:
-        rest_point = articulation.point_at_deflection(part, point, -deflection)
-        if part_for_point(leaf, rest_point) == part.node:
-            return part.node
+    # Every posable part -- the rig's, plus any the SPV has posed by name
+    # (`articulation.posed_part_names`).
+    for name in articulation.posed_part_names(ship):
+        pose = articulation.pose_for_part(ship, name)
+        if part_pose.is_identity(pose):
+            continue                      # identity: `plain` already answered
+        rest_point = part_pose.inverse_apply(pose, point)
+        if part_for_point(leaf, rest_point, iid) == name:
+            return name
     return None
+
+
+def rest_point_for_live_point(ship, point, iid=None):
+    """Where a POSED body-frame point (ship units) sits in the REST pose:
+    the inverse of `articulation.part_transform_point`.
+
+    Manual Aim picks off the posed hull, but a target offset is stored REST
+    frame (see `subsystems.target_offset_world`), so its pick is pulled back
+    through this. Identity for a point on no part, a part at its identity pose, and a
+    severed part -- mirroring `part_transform_point`, so the round trip is
+    exact in every case it can arise.
+    """
+    name = part_for_live_point(ship, point, iid)
+    if name is None or is_detached(ship, name):
+        return point
+    if name not in articulation.posed_part_names(ship):
+        return point
+    pose = articulation.pose_for_part(ship, name)
+    if part_pose.is_identity(pose):
+        return point
+    return part_pose.inverse_apply(pose, point)
 
 
 def _totals(ship) -> dict:
@@ -221,6 +250,18 @@ def record_hit(ship, iid, body_point_model, absorbed_hull: float):
     care about the return value can ignore it; the detach itself is applied by
     `sever`, which this calls.
 
+    Attribution goes through `part_for_live_point`, NOT `part_for_point`:
+    `body_point_model` comes from `host_io.world_to_body`, which inverts the
+    instance world matrix and so carries no node override -- the hit arrives
+    where the wing is DRAWN, while the derived boxes are baked at rest. That
+    mismatch was survivable against the old hand-drawn boxes, which
+    deliberately swallowed the body box at the wing roots; it is not
+    survivable against the tighter derived ones. A Bird of Prey at cruise
+    (wings at 45 degrees) taking sustained wing fire attributed every hit to
+    None and never shed a wing, while the same ship at red alert shed
+    normally. At angle 0 the live query is identical to the rest one by
+    construction, so combat in the model's shipped pose is unchanged.
+
     Cheap for the overwhelming majority of ships: a hull with no authored
     detachable parts returns on a dict lookup before any geometry is touched.
     """
@@ -231,7 +272,7 @@ def record_hit(ship, iid, body_point_model, absorbed_hull: float):
     if not thresholds:
         return None
     point = tuple(c * MODEL_TO_SHIP for c in body_point_model)
-    part = part_for_point(leaf, point)
+    part = part_for_live_point(ship, point, iid)
     if part is None or part not in thresholds:
         return None
     if is_detached(ship, part):
@@ -271,7 +312,7 @@ def damage_on(ship, part_name) -> float:
     return float(_totals(ship).get(part_name, 0.0))
 
 
-def _silence_emitters_on(ship, part_name, killed) -> None:
+def _silence_emitters_on(ship, part_name, killed, iid=None) -> None:
     """Stop every particle controller that is either emitting FROM one of
     `killed`, or emitting from `ship` at a body-frame point that attributes
     to `part_name`.
@@ -294,10 +335,10 @@ def _silence_emitters_on(ship, part_name, killed) -> None:
          leg is what actually does it.
 
     `_emit_pos` is body-frame MODEL units (`host_io.world_to_body`'s native
-    output, exactly like the value `record_hit` receives) and `part_for_point`
-    is SHIP units -- see MODEL_TO_SHIP at the top of this module. Convert
-    before calling `part_for_point`, precisely as `record_hit` does; this
-    exact confusion has already shipped inert once.
+    output, exactly like the value `record_hit` receives) and
+    `part_for_live_point` is SHIP units -- see MODEL_TO_SHIP at the top of
+    this module. Convert before calling it, precisely as `record_hit` does;
+    this exact confusion has already shipped inert once.
 
     Best-effort: a VFX failure must never abort a severance that has already
     happened to the hull.
@@ -317,13 +358,13 @@ def _silence_emitters_on(ship, part_name, killed) -> None:
             if id(emit_from) in dead:
                 c.stop_emitting()
                 continue
-            if emit_from is ship and _emit_pos_on_part(c, ship, part_name):
+            if emit_from is ship and _emit_pos_on_part(c, ship, part_name, iid):
                 c.stop_emitting()
         except Exception as _e:  # noqa: BLE001
             dev_mode.log_swallowed("severed part emitter silence", _e)
 
 
-def _emit_pos_on_part(controller, ship, part_name) -> bool:
+def _emit_pos_on_part(controller, ship, part_name, iid=None) -> bool:
     """Whether `controller._emit_pos` (body-frame MODEL units, or None/an
     unreadable shape) attributes to `part_name` on `ship`.
 
@@ -349,7 +390,7 @@ def _emit_pos_on_part(controller, ship, part_name) -> bool:
     else:
         return False
     ship_point = tuple(v * MODEL_TO_SHIP for v in point)
-    return part_for_live_point(ship, ship_point) == part_name
+    return part_for_live_point(ship, ship_point, iid) == part_name
 
 
 def sever(ship, iid, part_name):
@@ -372,7 +413,8 @@ def sever(ship, iid, part_name):
     if is_detached(ship, part_name):
         return None
     detached_parts(ship).add(part_name)
-    _silence_emitters_on(ship, part_name, _destroy_subsystems_on_part(ship, part_name))
+    _silence_emitters_on(ship, part_name,
+                         _destroy_subsystems_on_part(ship, part_name, iid), iid)
     try:
         from engine.appc import part_detach_render
         part_detach_render.detach(ship, iid, part_name)
@@ -381,7 +423,7 @@ def sever(ship, iid, part_name):
     return part_name
 
 
-def _destroy_subsystems_on_part(ship, part_name) -> list:
+def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     """Destroy every subsystem whose mount lies on `part_name`, and return
     them.
 
@@ -411,7 +453,7 @@ def _destroy_subsystems_on_part(ship, part_name) -> list:
             point = (pos.GetX(), pos.GetY(), pos.GetZ())
         except Exception:  # noqa: BLE001 - not a mounted subsystem
             continue
-        if part_for_point(leaf, point) != part_name:
+        if part_for_point(leaf, point, iid) != part_name:
             continue
         try:
             sub.SetCondition(0.0)

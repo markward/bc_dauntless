@@ -283,9 +283,40 @@
            width) is mirrored by TITLEBAR_H_PT / LEFT_COL_* in
            ship_property_viewer_panel.py — keep them in sync. -->
       <div id="spv-left">
+        <!-- Preview lock banner (Task 7): shown only while
+             data.model_parts.mount_editing_reason is set -- previewing an
+             articulated pose (angles not all zero) locks subsystem/light/
+             emitter editing so a mount is never authored through the wrong
+             pose. The Python side (_dispatch_event_inner) is the real gate;
+             this + #spv-syslist's greyed-out state are the visible half. -->
+        <div id="spv-lock-banner" class="spv-lock-banner" style="display:none"></div>
         <div id="spv-syslist">
           <div class="spv-syslist__header">Subsystems</div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
+        </div>
+        <!-- Model Parts pane: collapsed by default, 25% of the vertical when
+             the header is clicked open (dauntlessEvent
+             'ship-property-viewer/model_parts/toggle'). Renders as a node
+             tree (spec 2026-09-25 section 7): each listed part CANDIDATE
+             followed by its child nodes -- Anchor, one {State}
+             Transformation per posed state, Breakage -- built by
+             renderSPVModelParts in ship_property_viewer.js from Task 6's
+             `model_parts.rows`. Rows carry names only; nodes are
+             added/edited/removed via #spv-ctxmenu (right-click) and the
+             part popups (#spv-part-anchor / -break / -addstate). "Show all" is the escape hatch for a hull whose
+             hierarchy doesn't fit the Scene-Root-children rule -- stops
+             propagation so it doesn't also toggle the pane. -->
+        <div id="spv-parts">
+          <div id="spv-parts-header"
+               onclick="dauntlessEvent('ship-property-viewer/model_parts/toggle')">
+            <span class="spv-parts-header__title">Model Parts</span>
+            <label class="spv-parts-showall" onclick="event.stopPropagation()">
+              <input type="checkbox" id="spv-parts-showall-cb"
+                     onchange="dauntlessEvent('ship-property-viewer/model_parts/toggle_show_all')">
+              Show all
+            </label>
+          </div>
+          <div id="spv-parts-body"></div>
         </div>
       </div>
       <!-- Action tools (undo / pipette / mirror). Momentary buttons stacked
@@ -462,13 +493,24 @@
         </div>
       </div>
       <div id="spv-popover" class="spv-popover"></div>
+      <!-- Toast (Task 7, spec section 7.4): a transient message at the
+           top-centre of the SPV -- e.g. the "add an anchor first" refusal
+           when Add State Transformation is used with no anchor yet. Shown
+           only while payload.model_parts.toast is a non-empty string;
+           renderSPVModelParts is the sole writer. -->
+      <div id="spv-toast" class="spv-toast" style="display:none;"></div>
       <!-- Right-click context menu on a subsystem row → "Set Radius…" opens
            the radius modal below. The Save bar surfaces staged edits
            (pending_count > 0); confirming Save opens the amend-confirm
            modal, which fires the actual 'save' event. All four overlays
            fire 'ship-property-viewer/overlay:1'/'overlay:0' so the host
            can suppress orbit-drag while they're open.
-           Spec: docs/superpowers/sdd/2026-07-25-spv-hardpoint-value-override-editing/task-5-brief.md -->
+           Spec: docs/superpowers/sdd/2026-07-25-spv-hardpoint-value-override-editing/task-5-brief.md
+           The part-node items below (Task 7, spec section 7.2) reuse this
+           SAME menu element rather than a second one -- shown for a Model
+           Parts row, every subsystem/light/emitter item above hides (and
+           vice versa): spvShowMenuItems defaults any key a caller doesn't
+           pass to hidden. -->
       <div id="spv-ctxmenu" class="spv-ctxmenu" style="display:none;">
         <div id="spv-ctx-radius" class="spv-ctxmenu__item" onclick="shipPropertyViewerCtxRadius()">Set Radius…</div>
         <div id="spv-ctx-addlight" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddLight()">Add Light Volume</div>
@@ -477,6 +519,69 @@
         <div id="spv-ctx-addemitter" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddEmitter()">Add Light Emitter…</div>
         <div id="spv-ctx-editemitter" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxEditEmitter()">Edit Emitter…</div>
         <div id="spv-ctx-removeemitter" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRemoveEmitter()">Remove Light Emitter</div>
+        <!-- Part row (spec section 7.2): the three add entries, each hidden
+             per the right-clicked row's own has_anchor/missing_states/
+             breakable. Anchor and breakage open a popup (below); the state
+             entry only asks Python (part/begin_add_state), which does the
+             anchor check and opens the picker through the payload. -->
+        <div id="spv-ctx-addanchor" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddAnchor()">Add Anchor…</div>
+        <div id="spv-ctx-addstate" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddStateBegin()">Add State Transformation…</div>
+        <div id="spv-ctx-makebreakable" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxMakeBreakable()">Make Breakable…</div>
+        <!-- Child row: Edit Anchor… (Anchor) / Edit Breakage… (Breakage),
+             then Remove on every child row. -->
+        <div id="spv-ctx-editanchor" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxEditAnchor()">Edit Anchor…</div>
+        <div id="spv-ctx-editbreak" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxEditBreak()">Edit Breakage…</div>
+        <div id="spv-ctx-removenode" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRemoveNode()">Remove</div>
+      </div>
+      <!-- Part popups (spec section 7.3): the tree rows carry names only;
+           a part's attributes are set here. Mouse-only steppers, like
+           #spv-radius (no keyboard->CEF forwarding). Anchor and Breakage
+           popups serve both Add and Edit -- the JS sets the title and the
+           primary button's text. -->
+      <div id="spv-part-anchor" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div id="spv-part-anchor-title" class="spv-modal__title">Add Anchor</div>
+          <div class="spv-stepper">
+            <span class="spv-stepper__label">Transition time</span>
+            <button class="spv-step-btn" onclick="shipPropertyViewerPartAnchorStep(-0.25)">&minus;</button>
+            <span id="spv-part-anchor-value" class="spv-stepper__val">2.00</span>
+            <span class="spv-stepper__label">s</span>
+            <button class="spv-step-btn" onclick="shipPropertyViewerPartAnchorStep(0.25)">+</button>
+          </div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerPartAnchorCancel()">Cancel</button>
+            <button id="spv-part-anchor-ok" class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerPartAnchorApply()">Add</button>
+          </div>
+        </div>
+      </div>
+      <div id="spv-part-break" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div id="spv-part-break-title" class="spv-modal__title">Make Breakable</div>
+          <div class="spv-stepper spv-part-break-stepper">
+            <span class="spv-stepper__label">Breaks off after taking</span>
+            <button class="spv-step-btn" onclick="shipPropertyViewerPartBreakStep(-5)">&minus;</button>
+            <span id="spv-part-break-value" class="spv-stepper__val">20</span>
+            <button class="spv-step-btn" onclick="shipPropertyViewerPartBreakStep(5)">+</button>
+            <span class="spv-stepper__label">% of the ship's hull strength</span>
+          </div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerPartBreakCancel()">Cancel</button>
+            <button id="spv-part-break-ok" class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerPartBreakApply()">Add</button>
+          </div>
+        </div>
+      </div>
+      <!-- Add State Transformation picker: shown/hidden purely from
+           model_parts.add_state_picker (Python opens it only once the part
+           has an anchor). The list is filled by renderSPVModelParts. -->
+      <div id="spv-part-addstate" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div class="spv-modal__title">Add State Transformation</div>
+          <div id="spv-part-addstate-list" class="spv-part-choices"></div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerAddStateCancel()">Cancel</button>
+            <button id="spv-part-addstate-add" class="spv-modal__btn spv-modal__btn--primary" disabled onclick="shipPropertyViewerAddStateAdd()">Add</button>
+          </div>
+        </div>
       </div>
       <div id="spv-radius" class="spv-modal-backdrop" style="display:none;">
         <div class="spv-modal">

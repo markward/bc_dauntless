@@ -35,7 +35,6 @@ BC_MODEL_SCALE, the same flat factor `_ship_world_matrix` applies), matching how
 `_cache_shield_hull_box` stores the hull AABB. The ship's live position,
 rotation and scale are applied on read.
 """
-import math
 
 from engine.appc.math import TGPoint3
 
@@ -50,12 +49,21 @@ _ATTR = "_hull_bound_spheres"
 _BOUND_R_ATTR = "_hull_bound_radius_unscaled"
 
 
-def cache_hull_bound_spheres(ship, spheres) -> None:
+def cache_hull_bound_spheres(ship, spheres, iid=None) -> None:
     """Store `spheres` — an iterable of ``(cx, cy, cz, radius)`` in raw model
     (NIF) units, as returned by the host's ``model_bounds()`` — on `ship`.
 
     Called once at realize time, alongside the shield hull box. Converted to
     world units at scale 1 here so readers never have to know about NIF units.
+
+    `iid` is the SAME render instance `model_bounds()` was read from --
+    passed through to `articulation.part_boxes_for`, which derives its boxes
+    from `host_io.model_nodes(iid)`. This is realistically the FIRST time
+    this ship's leaf ever supplies a real instance id, so this call is what
+    warms that per-leaf box cache for every later attribution query against
+    any ship of the same class (including ones that never have an iid to
+    offer -- see that function's docstring). None (headless, or a caller
+    with no instance) just means no tag can be derived yet.
 
     Drops `bound_radius`'s memo, which is derived from these pieces but lives
     in a different slot: writing one without the other would answer a
@@ -68,7 +76,7 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     piece behaving exactly as it did before parts existed.
 
     The tag is further restricted to parts that can actually MOVE or DETACH
-    (the union of `articulation.rig_for`'s node names and
+    (the union of `articulation.rig_for`'s part names and
     `articulation.detachable_for`'s keys) — see the comment at the tagging
     site for why.
     """
@@ -80,23 +88,29 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     # part boxes are both rest-pose and neither ever changes after load.
     leaf = articulation.leaf_for(ship)
     # A tag means "this piece can move or come off" -- not merely "nearest
-    # some named box". PART_BOXES carries boxes (e.g. "head", the body box
-    # itself) that are boxed for attribution purposes but neither rigged nor
-    # detachable, so tagging them would be a no-op forever in both readers
-    # AND in the (later) part-transform call each reader makes for a
+    # some named box". The derived boxes carry boxes (e.g. "head", the body
+    # box itself) that are boxed for attribution purposes but neither rigged
+    # nor detachable, so tagging them would be a no-op forever in both
+    # readers AND in the (later) part-transform call each reader makes for a
     # non-None tag. hull_spheres_near's per-piece cost that matters is that
     # transform, done BEFORE its distance reject -- untagging inert boxes
     # here keeps them out of that path on every narrow-phase pair, forever,
     # rather than paying a Python call per body piece for a tag that can
     # never fire.
-    movable = {p.node for p in articulation.rig_for(leaf)}
+    movable = {p.GetName() for p in articulation.rig_for(leaf)}
     movable.update(articulation.detachable_for(leaf))
     out = []
     for cx, cy, cz, r in spheres:
         if r <= 0.0:
             continue
         c = (cx * s, cy * s, cz * s)
-        part = part_for_point(leaf, c) if leaf else None
+        # `movable` empty (every unrigged hull -- Galaxy, Sovereign, Akira,
+        # ...) means the answer would be thrown away below regardless, but
+        # part_for_point still forces the first-ever derivation for this leaf
+        # (model_parts: an O(nodes^2 + nodes*vertices) C++ sweep). Skip the
+        # call outright rather than pay that spawn hitch for a tag that can
+        # never fire.
+        part = part_for_point(leaf, c, iid) if (leaf and movable) else None
         if part not in movable:
             part = None
         out.append((c, r * s, part))
@@ -143,7 +157,11 @@ def hull_spheres_world(ship) -> list:
         if part is not None:
             # Body frame, ship units, in and out. Identity at rest and for an
             # unrigged hull, so an untagged piece costs one None compare.
-            cx, cy, cz = articulation.part_transform_point(ship, (cx, cy, cz))
+            # `part` is passed through: the tag was decided once at cache
+            # time, and re-deriving it here would cost a full sorted distance
+            # scan over every box on the hull, per piece, per frame.
+            cx, cy, cz = articulation.part_transform_point(
+                ship, (cx, cy, cz), part=part)
         v = TGPoint3(cx * scale, cy * scale, cz * scale)
         v.MultMatrixLeft(R)                    # body -> world
         out.append((TGPoint3(loc.x + v.x, loc.y + v.y, loc.z + v.z), r * scale))
@@ -197,8 +215,10 @@ def hull_spheres_near(ship, center, radius) -> list:
         if part is not None:
             # BEFORE the reject below, not after: the compare happens in the
             # ship's body frame, so a moved piece tested at its REST centre
-            # would be rejected and never returned.
-            cx, cy, cz = articulation.part_transform_point(ship, (cx, cy, cz))
+            # would be rejected and never returned. `part` passed through --
+            # see hull_spheres_world.
+            cx, cy, cz = articulation.part_transform_point(
+                ship, (cx, cy, cz), part=part)
         # Body-frame piece centre at the ship's live scale.
         sx, sy, sz = cx * scale, cy * scale, cz * scale
         ex, ey, ez = sx - qx, sy - qy, sz - qz
@@ -228,8 +248,8 @@ def point_is_inside_hull(ship, point) -> bool:
 
 
 def _rig_parts_by_name(ship, cached) -> dict:
-    """{part name: articulation.Part} for `ship`, or {} when no cached piece
-    carries a tag.
+    """{part name: ArticulatedPartProperty} for `ship`, or {} when no cached
+    piece carries a tag.
 
     The empty-dict early out is what keeps every unrigged hull — and every
     rigged one whose pieces all landed on the body — off the import and the
@@ -238,70 +258,48 @@ def _rig_parts_by_name(ship, cached) -> dict:
     if not any(part is not None for _c, _r, part in cached):
         return {}
     from engine.appc import articulation
-    return {p.node: p for p in articulation.rig_for(articulation.leaf_for(ship))}
+    return {p.GetName(): p
+            for p in articulation.rig_for(articulation.leaf_for(ship))}
 
 
 def _travel_reach(part, centre) -> float:
-    """Largest |centre| the piece reaches at ANY deflection in [0, 1], with
-    `centre` the piece's REST centre in body frame, ship units.
+    """An upper bound on |centre| over EVERY position the piece can reach,
+    with `centre` the piece's REST centre in body frame, ship units.
 
-    The hinge sweeps the centre along a circular arc: a fixed circle centre
-    `A` (the pivot plus whatever part of the offset lies ALONG the axis,
-    which never moves) plus a rotating radius `w` (the part perpendicular to
-    the axis, whose length is constant). So
+    A conservative bound, not an exact maximum, because a transition can be
+    interrupted at any `u` and restarted from wherever the part is (spec
+    2026-09-25 §4.1, §10), so the reachable set is not one arc between two
+    states. With anchor `a` (the body origin when unauthored, as `tick_ship`
+    uses) and `P` ranging over IDENTITY and every authored state's pose:
 
-        |p(theta)|^2 = |A|^2 + |w|^2 + 2 * (A_perp . w(theta))
+      * the anchor only ever travels in STRAIGHT lines between positions it
+        already occupies, starting from `a` (the NIF pose), so it stays
+        inside the convex hull of its end positions {P.a}: |anchor(u)| <=
+        max |P.a|;
+      * the piece is `R(u).(centre - a) + anchor(u)`, and rotation preserves
+        |centre - a|;
 
-    which is sinusoidal in theta. Its peak — `w` swung into line with
-    `A_perp` — is the largest value on the FULL circle, but it is only
-    reachable if it falls inside the arc the part actually travels. Hence:
-    both endpoints always, plus the aligned peak when `phi`, the signed
-    angle from `w` to `A_perp` about the axis, lies between 0 and the full
-    travel angle.
+    so |x(u)| <= |centre - a| + max |P.a|. The per-pose end positions
+    max |P.centre| are included too (they are always reached, and can be the
+    larger term when the anchor is far from the piece). The larger of the two
+    encloses every reachable position.
 
-    Right-handed about the axis, matching the rest of the engine: `phi` uses
-    atan2(axis . (w x A_perp), w . A_perp), so rotating `w` by +phi about the
-    axis is what lines it up.
+    A part with no authored state never moves: |centre|.
     """
-    pivot, axis, theta = _part_rotation(part)
-    best = max(_norm(centre), _norm(_point_at(part, centre)))
-    if theta == 0.0:
-        return best
-    ax, ay, az = axis
-    vx, vy, vz = centre[0] - pivot[0], centre[1] - pivot[1], centre[2] - pivot[2]
-    along = ax * vx + ay * vy + az * vz
-    wx, wy, wz = vx - ax * along, vy - ay * along, vz - az * along
-    cx = pivot[0] + ax * along
-    cy = pivot[1] + ay * along
-    cz = pivot[2] + az * along
-    a_along = ax * cx + ay * cy + az * cz
-    px, py, pz = cx - ax * a_along, cy - ay * a_along, cz - az * a_along
-    dot = wx * px + wy * py + wz * pz
-    kx, ky, kz = wy * pz - wz * py, wz * px - wx * pz, wx * py - wy * px
-    phi = math.atan2(ax * kx + ay * ky + az * kz, dot)
-    inside = (0.0 <= phi <= theta) if theta > 0.0 else (theta <= phi <= 0.0)
-    if inside:
-        w = (wx * wx + wy * wy + wz * wz) ** 0.5
-        p = (px * px + py * py + pz * pz) ** 0.5
-        peak = (cx * cx + cy * cy + cz * cz) + w * w + 2.0 * p * w
-        best = max(best, peak ** 0.5)
-    return best
+    from engine.appc import part_pose
+    states = part.authored_states()
+    if not states:
+        return _norm(centre)
+    poses = [part_pose.IDENTITY] + [part.pose_for(s) for s in states]
+    a = part.anchor or (0.0, 0.0, 0.0)
+    ends = max(_norm(part_pose.apply(P, centre)) for P in poses)
+    arm = _norm((centre[0] - a[0], centre[1] - a[1], centre[2] - a[2]))
+    swing = arm + max(_norm(part_pose.apply(P, a)) for P in poses)
+    return max(ends, swing)
 
 
 def _norm(p) -> float:
     return (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) ** 0.5
-
-
-def _part_rotation(part):
-    """(pivot, unit axis, theta) for `part` at FULL deflection."""
-    from engine.appc import articulation
-    return articulation.rotation_for(part, 1.0)
-
-
-def _point_at(part, centre):
-    """`centre` at FULL deflection of `part` — ship state never consulted."""
-    from engine.appc import articulation
-    return articulation.point_at_deflection(part, centre, 1.0)
 
 
 def bound_radius(ship) -> float:
@@ -323,9 +321,9 @@ def bound_radius(ship) -> float:
 
     A TAGGED piece MOVES, so its rest centre is not its furthest reach. The
     radius therefore encloses such a piece AT EVERY POINT IN ITS TRAVEL:
-    `_travel_reach` maximises |centre| over the whole 0->1 arc the part's
-    hinge sweeps it through, analytically, not just at the two ends (the far
-    point of an arc can fall mid-travel — see
+    `_travel_reach` bounds |centre| over every pose the part can pass
+    through, interrupted transitions included, not just at the authored ends
+    (the far point of a swing can fall mid-travel — see
     tests/unit/test_hull_bounds_parts.py::WING_MID_TRAVEL_PT, where the
     endpoints understate by 1.3%).
 
@@ -338,8 +336,8 @@ def bound_radius(ship) -> float:
     really do reach.
 
     STILL ONE MEMO, computed once. Deliberately NOT a function of the ship's
-    live deflection: making it so would defeat the memo and put trigonometry
-    in the narrow phase, for a gate that only has to enclose.
+    live pose: making it so would defeat the memo and put pose maths in the
+    narrow phase, for a gate that only has to enclose.
 
     Memoised unscaled on the instance (pieces never change after caching) and
     multiplied by the live GetScale() per call, so a rescaled ship stays right.

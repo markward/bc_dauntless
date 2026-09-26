@@ -170,31 +170,18 @@ def _body_frame_delta(ship, hit_point):
 
 
 def _subsystem_world_position(ship, subsystem):
-    """Return the world-space position of `subsystem` on `ship`.
+    """Return the world-space position of `subsystem` on `ship` -- the
+    splash catchment centre.
 
-    Per CLAUDE.md's column-vector convention, body->world is
-    `v_world = R · v_body`. SDK `TGPoint3.MultMatrixLeft(R)` already
-    computes that in place. We construct a fresh point to avoid
-    mutating the subsystem's stored position.
-
-    Legacy fakes without `GetWorldRotation` get identity R, so
-    `world_pos = ship_pos + body_pos`.
+    Delegates to `subsystems.subsystem_world_position`, the one mount
+    formula. This used to be a private copy of it, and when articulation
+    taught the shared one to follow a moving part the copy was missed: with
+    a Bird of Prey's wings up a wingtip cannon's catchment stayed ~0.9 ship
+    units away at its rest mount, against a hit point taken off the POSED
+    hull, so a direct hit on the drawn gun reached nothing.
     """
-    ship_pos = ship.GetWorldLocation()
-    body_pos = subsystem.GetPosition()
-    if not hasattr(ship, "GetWorldRotation"):
-        return TGPoint3(
-            ship_pos.x + body_pos.x,
-            ship_pos.y + body_pos.y,
-            ship_pos.z + body_pos.z,
-        )
-    R = ship.GetWorldRotation()
-    p = TGPoint3(body_pos.x, body_pos.y, body_pos.z)
-    p.MultMatrixLeft(R)
-    p.x += ship_pos.x
-    p.y += ship_pos.y
-    p.z += ship_pos.z
-    return p
+    from engine.appc.subsystems import subsystem_world_position
+    return subsystem_world_position(subsystem, ship)
 
 
 def _splash_weight(r_sub: float, r_hit: float, d: float) -> float:

@@ -41,14 +41,23 @@ class _Sub:
 class _Ship:
     def __init__(self, subs):
         self._articulation_leaf = "birdofprey"
-        self._articulation_deflection = 0.0
+        self._articulation_poses = {}
         self._subs = list(subs)
-
-    def GetArticulationDeflection(self):
-        return self._articulation_deflection
 
     def _iter_subsystems(self):
         return list(self._subs)
+
+
+def _pose(ship, deflection):
+    """Set `ship`'s per-part poses `deflection` of the way (0..1) along each
+    part's swing from the NIF pose to its authored "cruise" pose -- the
+    fully-deflected (up/cold) pose at 1.0 -- what `pose_for_part` reads."""
+    from engine.appc import articulation, part_pose
+    ship._articulation_poses = {
+        p.GetName(): part_pose.interpolate(
+            part_pose.IDENTITY, p.pose_for("cruise"), p.anchor, deflection)
+        for p in articulation.rig_for("birdofprey")
+    }
 
 
 STAR_CANNON = (1.008, 0.450, -0.670)     # authored mount, starboard wing
@@ -206,11 +215,14 @@ WING_TIP = (-1.0, 0.0, -0.7)
 
 
 def _posed(point, node, deflection):
-    """`point` where it is DRAWN once `node` sits at `deflection`."""
-    from engine.appc import articulation
+    """`point` where it is DRAWN once `node` sits `deflection` (0..1) of the
+    way along its swing from the NIF pose to its authored "cruise" pose."""
+    from engine.appc import articulation, part_pose
     part = next(p for p in articulation.rig_for("birdofprey")
-                if p.node == node)
-    return articulation.point_at_deflection(part, point, deflection)
+                if p.GetName() == node)
+    return part_pose.apply(
+        part_pose.interpolate(part_pose.IDENTITY, part.pose_for("cruise"),
+                              part.anchor, deflection), point)
 
 
 def test_the_live_pose_fixture_point_attributes_as_this_file_assumes():
@@ -226,19 +238,19 @@ def test_the_live_pose_fixture_point_attributes_as_this_file_assumes():
 
 def test_a_posed_wingtip_attributes_to_its_wing():
     """THE BUG. `_emit_pos` is a POSED body point (host_io.world_to_body of
-    a live impact), but PART_BOXES are authored REST-pose -- so a smoke plume
+    a live impact), but the derived per-part boxes are authored REST-pose -- so a smoke plume
     on the outer half of a deflected wing was never silenced when that wing
     came off. Only inboard plumes, whose posed position still happens to land
     in the rest box, ever were."""
     ship = _Ship([])
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     posed = _posed(WING_TIP, "left wing", 1.0)
     assert ps.part_for_live_point(ship, posed) == "left wing"
 
 
 def test_a_body_point_still_attributes_as_it_does_today():
     ship = _Ship([])
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     assert (ps.part_for_live_point(ship, WARP_CORE)
             == ps.part_for_point("birdofprey", WARP_CORE))
 
@@ -248,7 +260,7 @@ def test_at_deflection_zero_it_agrees_with_part_for_point_exactly():
     one combat runs in. Swept across representative points rather than
     asserted on one, so a rule that only coincides at the origin fails."""
     ship = _Ship([])
-    ship._articulation_deflection = 0.0
+    _pose(ship, 0.0)
     points = [WING_TIP, WARP_CORE, STAR_CANNON, (0.0, 0.5, 0.0),
               (0.2, -0.2, 0.05), (-1.2843, 0.0, 0.1136), (5.0, 5.0, 5.0)]
     for p in points:
@@ -262,7 +274,7 @@ def test_an_emitter_on_a_DEFLECTED_wingtip_stops_when_that_wing_is_severed():
     the wings are down when the wing shears off."""
     particles.reset()
     ship = _Ship([])
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     posed = _posed(WING_TIP, "left wing", 1.0)
     model_point = tuple(v / ps.MODEL_TO_SHIP for v in posed)
     c = particles.AnimTSParticleController_Create()

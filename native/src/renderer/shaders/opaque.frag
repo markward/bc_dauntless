@@ -310,6 +310,11 @@ uniform vec4 u_glow_region_d[MAX_GLOW_REGIONS];  // gain (>1 brightens), unused.
 uniform vec4 u_glow_region_e[MAX_GLOW_REGIONS];  // shape_flag, half_extent.xyz
 uniform vec4 u_glow_region_f[MAX_GLOW_REGIONS];  // box forward.xyz (body space); .w unused
 uniform vec4 u_glow_region_g[MAX_GLOW_REGIONS];  // box up.xyz (body space); .w unused
+// Maps this draw's POSED body-frame position back to its REST position
+// (C_i = R_i * P_i^-1, native frame.cc draw_model). Glow regions are authored
+// in the rest frame; identity for anything not articulated. Used by the glow
+// test ONLY -- decals, scuffs and the hull carve stay posed (4be56165).
+uniform mat4 u_node_rest_fix;
 const float GLOW_FLICKER_SECS = 0.4;   // blow-out window when a region is destroyed
 const float DISABLED_FLOOR    = 0.0;   // flicker troughs reach dark while disabled
 
@@ -1339,7 +1344,17 @@ void main() {
     float nac = 1.0;
     float region_gain = 1.0;
     if (u_glow_region_count > 0) {
-        nac = glow_region_mult(p_body, n_body, u_decal_time, region_gain);  // body-frame pos + normal
+        // REST-frame position + normal: a region authored on a part keeps
+        // covering that part's surface while the part is rotated.
+        // No normalize() on n_glow: u_node_rest_fix (C_i, see rest_corrections)
+        // is assumed RIGID -- rotation and translation only, never scale -- so
+        // mat3(C_i) is orthonormal and preserves length exactly. In particular
+        // mat3(identity)*n == n exactly, which is what the unarticulated path
+        // (C_i == identity for every ship with no node overrides) relies on to
+        // render byte-identically to before this correction existed.
+        vec3 p_glow = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
+        vec3 n_glow = mat3(u_node_rest_fix) * n_body;
+        nac = glow_region_mult(p_glow, n_glow, u_decal_time, region_gain);
     }
 
     // Self-illumination (material emissive + window/light glow map) scales by

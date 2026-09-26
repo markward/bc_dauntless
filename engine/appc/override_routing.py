@@ -1,15 +1,18 @@
 """Route a ship's hardpoint override edits to the right destination.
 
-Today every (game) ship routes to the engine-owned aggregated file
-engine/appc/hardpoint_overrides.py. The seam exists so modded ships can later
-route to their own files without the SPV/UI changing.
+A mod-supplied ships/Hardpoints/<leaf>.py owns its own ship's edits; every
+other ship routes to the engine-owned aggregated file
+engine/appc/hardpoint_overrides.py (spec 2026-09-26 section 3).
 """
 from __future__ import annotations
 
 import importlib
 import os
+import shutil
 
+from engine import mods as _mods
 from engine.appc import hardpoint_override_writer as _writer
+from engine.appc import mod_hardpoint_writer as _mod_writer
 
 _PATH = os.path.join(os.path.dirname(__file__), "hardpoint_overrides.py")
 
@@ -37,9 +40,9 @@ class HardpointOverridesFileTarget:
         self.path = path
 
     def write(self, leaf, edits) -> None:
-        """edits: list of (subsystem, setter, args) 3-tuples and/or
-        (subsystem, "__region__", index, calls) / (subsystem, "__emitter__",
-        index, calls) 4-tuples.
+        """edits: list of (subsystem, setter, args) 3-tuples, (name,
+        "__part__", calls) 3-tuples, and/or (subsystem, "__region__", index,
+        calls) / (subsystem, "__emitter__", index, calls) 4-tuples.
         Reload → apply → emit → atomic."""
         import types
         with open(self.path, "r", encoding="utf-8") as fh:
@@ -48,23 +51,63 @@ class HardpointOverridesFileTarget:
         exec(compile(src, self.path, "exec"), module.__dict__)  # noqa: S102
         models = _writer.read_models(module)
         for edit in edits:
-            if len(edit) == 4 and edit[1] == "__region__":
-                subsystem, tag, index, calls = edit
-                _writer.set_region(models, leaf, subsystem, index, calls)
-            elif len(edit) == 4 and edit[1] == "__emitter__":
-                subsystem, tag, index, calls = edit
-                _writer.set_region(models, leaf, subsystem, index, calls,
-                                    prefix="SetLightEmitter")
-            else:
-                subsystem, setter, args = edit
-                _writer.set_setter(models, leaf, subsystem, setter, args)
+            _writer.apply_edit(models, leaf, edit)
         text = _writer.emit(models)          # raises on a bad emit
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.replace(tmp, self.path)
 
+    def describe(self) -> str:
+        return "hardpoint_overrides.py"
 
-def resolve_override_target(ship) -> HardpointOverridesFileTarget:
-    # future: modded ships → a target writing into the mod's files.
+
+class ModHardpointFileTarget:
+    """Writes SPV edits into a mod's own ships/Hardpoints/<leaf>.py
+    (spec 2026-09-26). Encoding and line endings are preserved: the file is
+    read as UTF-8, falling back to Latin-1 (which round-trips any byte), and
+    written back in the same encoding with newline translation off."""
+
+    def __init__(self, path: str) -> None:
+        # Resolve symlinks so .orig/.tmp/os.replace all act on the real file:
+        # os.replace onto a link would swap the link for a regular file.
+        self.path = os.path.realpath(str(path))
+
+    def describe(self) -> str:
+        return "mod file: " + self.path
+
+    def write(self, leaf, edits) -> None:
+        # Known limitation: the SDK loader decodes mod files as UTF-8 with
+        # errors="replace", so a subsystem name containing non-UTF-8 (e.g.
+        # Latin-1) bytes reaches the SPV as U+FFFD and cannot be matched in
+        # the file. Such a save fails safely -- encoding U+FFFD back to
+        # Latin-1 raises, which the SPV reports as a "Save failed" toast.
+        with open(self.path, "rb") as fh:
+            raw = fh.read()
+        try:
+            text, enc = raw.decode("utf-8"), "utf-8"
+        except UnicodeDecodeError:
+            text, enc = raw.decode("latin-1"), "latin-1"
+        new_text = _mod_writer.rewrite(text, leaf, edits)   # raises on any problem
+        orig = self.path + ".orig"
+        if not os.path.exists(orig):
+            shutil.copy2(self.path, orig)
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(new_text.encode(enc))
+            os.replace(tmp, self.path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+def resolve_override_target(ship):
+    """A mod-supplied hardpoint file owns its ship's edits; stock ships go to
+    hardpoint_overrides.py (spec 2026-09-26 section 3)."""
+    leaf = hardpoint_leaf_for_ship(ship)
+    if leaf:
+        path = _mods.sdk_override("ships/Hardpoints/%s.py" % leaf)
+        if path is not None:
+            return ModHardpointFileTarget(str(path))
     return HardpointOverridesFileTarget()

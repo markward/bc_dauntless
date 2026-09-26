@@ -5,6 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <cmath>
 
 namespace {
 // Two-node chain: root at origin, child translated +Y by 5.
@@ -421,4 +422,132 @@ TEST(ResolveOverriddenNode, AnimAndRestResolveToSameOverriddenNode) {
     glm::vec3 anim_col0 = glm::normalize(glm::vec3(anim[idx][0]));
     glm::vec3 rest_col0 = glm::normalize(glm::vec3(rest[idx][0]));
     EXPECT_GT(glm::length(anim_col0 - rest_col0), 0.1f);   // they differ (rotated)
+}
+
+// ── rest_corrections: posed body-frame point -> its REST position ──────────
+// Glow regions are authored in the NIF (rest) frame, but opaque.frag rebuilds
+// a POSED body-frame position. C_i = R_i * P_i^-1 maps it back. A real BC
+// hull is THREE levels (part -> __NDL_MultiMtl_Node -> mesh), so the fixture
+// is too: a two-level fixture has let a bug reach live play here before.
+namespace {
+
+int rc_add_node(assets::Model& m, const char* name, int parent,
+                const glm::mat4& local = glm::mat4(1.0f)) {
+    const int idx = static_cast<int>(m.nodes.size());
+    assets::Node n;
+    n.name = name;
+    n.parent_index = parent;
+    n.local_transform = local;
+    m.nodes.push_back(n);
+    if (parent >= 0) m.nodes[parent].children.push_back(idx);
+    return idx;
+}
+
+struct RcHull {
+    assets::Model model;
+    int root = -1, part = -1, ndl = -1, mesh = -1, body = -1;
+};
+
+// Scene Root -> "left wing" (offset +10 X) -> __NDL -> mesh node (offset +2 Y);
+// Scene Root -> "birdofprey" (the body, never overridden).
+RcHull rc_hull() {
+    RcHull h;
+    h.model.root_node = 0;
+    h.root = rc_add_node(h.model, "Scene Root", -1);
+    h.part = rc_add_node(h.model, "left wing", h.root,
+                         glm::translate(glm::mat4(1.0f), glm::vec3(10, 0, 0)));
+    h.ndl  = rc_add_node(h.model, "__NDL_MultiMtl_Node", h.part);
+    h.mesh = rc_add_node(h.model, "wing mesh", h.ndl,
+                         glm::translate(glm::mat4(1.0f), glm::vec3(0, 2, 0)));
+    h.body = rc_add_node(h.model, "birdofprey", h.root);
+    return h;
+}
+
+// The part's local, rotated 45 degrees about +Y (the BoP hinge axis).
+glm::mat4 rc_rotated_part_local(const RcHull& h) {
+    return h.model.nodes[h.part].local_transform *
+           glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), glm::vec3(0, 1, 0));
+}
+
+void rc_expect_mat_near(const glm::mat4& a, const glm::mat4& b) {
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            EXPECT_NEAR(a[c][r], b[c][r], 1e-5f) << "col " << c << " row " << r;
+}
+
+}  // namespace
+
+TEST(RestCorrections, MapsAPosedVertexBackToItsRestPosition) {
+    // THE POINT: a vertex drawn at P_i*v comes back to R_i*v.
+    const RcHull h = rc_hull();
+    std::unordered_map<int, glm::mat4> ov{{h.part, rc_rotated_part_local(h)}};
+    const auto posed = renderer::compose_node_worlds(h.model, glm::mat4(1.0f), ov);
+    const auto rest  = renderer::compose_node_worlds(h.model, glm::mat4(1.0f), {});
+    const auto C = renderer::rest_corrections(h.model, ov);
+    ASSERT_EQ(C.size(), h.model.nodes.size());
+
+    const glm::vec4 v(1.0f, 3.0f, -2.0f, 1.0f);
+    const glm::vec4 drawn = posed[h.mesh] * v;
+    const glm::vec4 want  = rest[h.mesh] * v;
+    const glm::vec4 got   = C[h.mesh] * drawn;
+    ASSERT_GT(glm::length(glm::vec3(drawn - want)), 0.5f)
+        << "guard: the override must actually move the vertex";
+    EXPECT_NEAR(got.x, want.x, 1e-4f);
+    EXPECT_NEAR(got.y, want.y, 1e-4f);
+    EXPECT_NEAR(got.z, want.z, 1e-4f);
+}
+
+TEST(RestCorrections, NodeOutsideTheRotatedSubtreeGetsIdentity) {
+    const RcHull h = rc_hull();
+    std::unordered_map<int, glm::mat4> ov{{h.part, rc_rotated_part_local(h)}};
+    const auto C = renderer::rest_corrections(h.model, ov);
+    rc_expect_mat_near(C[h.body], glm::mat4(1.0f));
+    rc_expect_mat_near(C[h.root], glm::mat4(1.0f));
+}
+
+TEST(RestCorrections, EmptyOverridesGiveIdentityEverywhere) {
+    const RcHull h = rc_hull();
+    const auto C = renderer::rest_corrections(h.model, {});
+    ASSERT_EQ(C.size(), h.model.nodes.size());
+    for (const auto& m : C) rc_expect_mat_near(m, glm::mat4(1.0f));
+}
+
+TEST(RestCorrections, ZeroMatrixNodeGetsIdentity) {
+    // A severed part is hidden by a ZERO override (host_bindings.cc
+    // set_instance_node_hidden). P_i is singular; the correction must be the
+    // identity, never NaN.
+    const RcHull h = rc_hull();
+    std::unordered_map<int, glm::mat4> ov{{h.part, glm::mat4(0.0f)}};
+    const auto C = renderer::rest_corrections(h.model, ov);
+    for (int i : {h.part, h.ndl, h.mesh}) {
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                ASSERT_TRUE(std::isfinite(C[i][c][r])) << "node " << i;
+        rc_expect_mat_near(C[i], glm::mat4(1.0f));
+    }
+}
+
+TEST(RestCorrections, NestedOverridesStillMapPosedToRest) {
+    // An override on the part AND on its mesh child: the correction must use
+    // the whole posed chain, not only the nearest override.
+    const RcHull h = rc_hull();
+    std::unordered_map<int, glm::mat4> ov{
+        {h.part, rc_rotated_part_local(h)},
+        {h.mesh, h.model.nodes[h.mesh].local_transform *
+                 glm::rotate(glm::mat4(1.0f), glm::radians(30.0f), glm::vec3(0, 0, 1))},
+    };
+    const auto posed = renderer::compose_node_worlds(h.model, glm::mat4(1.0f), ov);
+    const auto rest  = renderer::compose_node_worlds(h.model, glm::mat4(1.0f), {});
+    const auto C = renderer::rest_corrections(h.model, ov);
+    const glm::vec4 v(0.5f, -1.0f, 4.0f, 1.0f);
+    const glm::vec4 got  = C[h.mesh] * (posed[h.mesh] * v);
+    const glm::vec4 want = rest[h.mesh] * v;
+    EXPECT_NEAR(got.x, want.x, 1e-4f);
+    EXPECT_NEAR(got.y, want.y, 1e-4f);
+    EXPECT_NEAR(got.z, want.z, 1e-4f);
+}
+
+TEST(RestCorrections, ModelWithNoNodesGivesEmpty) {
+    assets::Model m;
+    EXPECT_TRUE(renderer::rest_corrections(m, {}).empty());
 }

@@ -1,5 +1,6 @@
 import pytest
 
+from engine import mods
 import engine.appc.override_routing as r
 from engine.appc import hardpoint_override_writer as w
 
@@ -41,6 +42,7 @@ def test_file_target_persists_radius_edit(tmp_path):
 
 
 def test_resolve_returns_file_target(monkeypatch):
+    mods.configure(None)
     monkeypatch.setattr(r.importlib, "import_module", lambda name: _StatsMod)
     assert isinstance(r.resolve_override_target(_Ship("ships.Galaxy")),
                       r.HardpointOverridesFileTarget)
@@ -94,6 +96,38 @@ def test_write_applies_emitter_edit(tmp_path):
     assert ("SetRadius", (0.25,)) in calls              # untouched
     assert ("SetLightEmitterKind", (0, "point")) in calls
     assert ("SetLightEmitterRadius", (0, 1.0)) in calls
+
+
+def test_write_applies_part_edit(tmp_path):
+    """The Task 7 SPV save path routes (name, "__part__", calls) 3-tuples
+    through here -- HardpointOverridesFileTarget.write had never seen this
+    verb before Task 7 (Task 3 only exercised w.set_part directly), so
+    without this branch the save silently mis-parsed the edit as a plain
+    (subsystem, setter, args) 3-tuple and called SetSetter with a setter
+    literally named "__part__"."""
+    f = tmp_path / "hardpoint_overrides.py"
+    f.write_text(w.emit({"birdofprey": {"Center Impulse": [("SetRadius", (0.25,))]}}),
+                 encoding="utf-8")
+    target = r.HardpointOverridesFileTarget(str(f))
+    target.write("birdofprey", [
+        ("Center Impulse", "SetRadius", (0.9,)),
+        ("left wing", "__part__", [
+            ("SetPivot", (-0.16, 0.0, 0.05)),
+            ("SetAxis", (0.0, 1.0, 0.0)),
+            ("SetStateAngle", ("cruise", 45.0)),
+            ("SetDetachFraction", (0.2,)),
+        ]),
+    ])
+    import types
+    m = types.ModuleType("x"); exec(f.read_text(encoding="utf-8"), m.__dict__)  # noqa: S102
+    models = w.read_models(m)
+    assert models["birdofprey"]["Center Impulse"] == [("SetRadius", (0.9,))]
+    assert models["birdofprey"]["__parts__"]["left wing"] == [
+        ("SetPivot", (-0.16, 0.0, 0.05)),
+        ("SetAxis", (0.0, 1.0, 0.0)),
+        ("SetStateAngle", ("cruise", 45.0)),
+        ("SetDetachFraction", (0.2,)),
+    ]
 
 
 def test_write_applies_mixed_setter_and_region(tmp_path):

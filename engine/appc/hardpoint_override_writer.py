@@ -22,11 +22,19 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
+import types
 
 # Setters whose first argument is a region index (so an edit targets one index).
 _INDEXED_PREFIX = "SetGlowRegion"
 _EMITTER_PREFIX = "SetLightEmitter"
 _INDEXED_PREFIXES = (_INDEXED_PREFIX, _EMITTER_PREFIX)
+
+# Key under which a ship's articulated parts live in its model dict, alongside
+# (never inside) its subsystem blocks -- see set_part / _emit_part.
+_PARTS_KEY = "__parts__"
+
+_NOT_SET = object()   # sentinel: distinguishes "no prior sys.modules['App']" from None
 
 
 class _Recorder:
@@ -50,14 +58,73 @@ def _make_find(per_sub):
     return find
 
 
-def read_models(module) -> dict:
-    """{leaf: {subsystem: [(setter, args), ...]}} by executing each override fn."""
-    models: dict = {}
-    for leaf, fn in module.OVERRIDES.items():
-        per_sub: dict = {}
+class _RecordingApp:
+    """Fake `App` module the generated `import App` binds to while recording.
+
+    A part block has no `find` call to hook -- it calls
+    `App.ArticulatedPartProperty_Create(name)` directly -- so the recorder
+    needs its own hook onto `App` itself. This stands in for the real App
+    shim during read_models exactly as `_Recorder` stands in for a live
+    property, so recovering a ship's parts never depends on the real App
+    module (or its side effects on a real g_kModelPropertyManager).
+
+    `DAUNTLESS_ENV` must be present here too: a part block's guard is now
+    `if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= N:`, and
+    without it read_models would skip every part block, silently dropping
+    all parts on the next save."""
+
+    DAUNTLESS_ENV = 1
+
+    class _Mgr:
+        def RegisterLocalTemplate(self, part):
+            pass
+
+    def __init__(self, parts):
+        self._parts = parts
+        self.g_kModelPropertyManager = self._Mgr()
+
+    def ArticulatedPartProperty_Create(self, name):
+        return _Recorder(self._parts.setdefault(name, []))
+
+
+def record_fn(fn) -> dict:
+    """{subsystem: [(setter, args), ...]} for ONE override-shaped function, by
+    executing it against a recording `find` and a recording `App`.
+
+    A function with articulated parts also gets a "__parts__" entry:
+    {..., "__parts__": {part_name: [(setter, args), ...]}}.
+    """
+    per_sub: dict = {}
+    parts: dict = {}
+    prev_app = sys.modules.get("App", _NOT_SET)
+    sys.modules["App"] = _RecordingApp(parts)
+    try:
         fn(_make_find(per_sub))
-        models[leaf] = per_sub
-    return models
+    finally:
+        if prev_app is _NOT_SET:
+            del sys.modules["App"]
+        else:
+            sys.modules["App"] = prev_app
+    if parts:
+        per_sub[_PARTS_KEY] = parts
+    return per_sub
+
+
+def read_models(module) -> dict:
+    """{leaf: {subsystem: [(setter, args), ...]}} by executing each override fn.
+
+    A leaf with articulated parts also gets a "__parts__" entry:
+    {leaf: {..., "__parts__": {part_name: [(setter, args), ...]}}}.
+    """
+    return dict((leaf, record_fn(fn)) for leaf, fn in module.OVERRIDES.items())
+
+
+def read_models_from_source(text) -> dict:
+    """read_models, but from emitted source text rather than an already
+    imported module -- what a round-trip (save, then re-read) actually has."""
+    module = types.ModuleType("_hardpoint_overrides_roundtrip")
+    exec(compile(text, "<hardpoint_overrides>", "exec"), module.__dict__)  # noqa: S102
+    return read_models(module)
 
 
 def _replace_key(setter, args):
@@ -77,6 +144,19 @@ def set_setter(models, leaf, subsystem, setter, args) -> None:
     calls.append((setter, tuple(args)))
 
 
+def set_part(models, leaf, name, calls) -> None:
+    """Replace one articulated part's whole call list -- find-or-CREATE, full
+    replace like set_region full-replaces one glow-region index. `calls` is
+    ordered [(setter, args), ...] -- the current authoring surface is
+    SetAnchor, SetTransitionSeconds, SetStatePose (one per authored state),
+    SetBreakFraction, in any combination (spec 2026-09-25 section 3). The
+    legacy SetPivot/SetAxis/SetStateAngle/SetDetachFraction are still
+    accepted and load correctly, but the writer never emits them again."""
+    per_sub = models.setdefault(leaf, {})
+    parts = per_sub.setdefault(_PARTS_KEY, {})
+    parts[name] = [(s, tuple(a)) for (s, a) in calls]
+
+
 def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) -> None:
     """Replace all <prefix>*(index, ...) calls for a subsystem with `calls`
     (ordered [(setter, args), ...], each args starting with `index`). Other
@@ -88,6 +168,24 @@ def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) ->
             if not (s.startswith(prefix) and a and a[0] == index)]
     kept.extend((s, tuple(a)) for (s, a) in calls)
     per_sub[subsystem] = kept
+
+
+def apply_edit(models, leaf, edit) -> None:
+    """Apply one SPV edit tuple (see HardpointOverridesFileTarget.write):
+    (subsystem, setter, args) 3-tuples, (name, "__part__", calls) 3-tuples,
+    and/or (subsystem, "__region__"/"__emitter__", index, calls) 4-tuples."""
+    if len(edit) == 4 and edit[1] == "__region__":
+        subsystem, _tag, index, calls = edit
+        set_region(models, leaf, subsystem, index, calls)
+    elif len(edit) == 4 and edit[1] == "__emitter__":
+        subsystem, _tag, index, calls = edit
+        set_region(models, leaf, subsystem, index, calls, prefix=_EMITTER_PREFIX)
+    elif len(edit) == 3 and edit[1] == "__part__":
+        name, _tag, calls = edit
+        set_part(models, leaf, name, calls)
+    else:
+        subsystem, setter, args = edit
+        set_setter(models, leaf, subsystem, setter, args)
 
 
 # ── Emission ────────────────────────────────────────────────────────────────
@@ -125,18 +223,72 @@ def _lit(v) -> str:
     return str(v)
 
 
-def _emit_function(leaf, per_sub) -> str:
-    out = ["def _%s(find):" % leaf, '    """%s."""' % leaf]
-    non_empty = [(s, c) for s, c in per_sub.items() if c]
-    if not non_empty:
+def _fmt_args(args) -> str:
+    """Render a setter's positional args as the text between its parens."""
+    return ", ".join(_lit(a) for a in args)
+
+
+def _ident_for(name) -> str:
+    """A valid Python identifier for `name`, to hold one part's property
+    instance in its emitted block. BC part names are already distinct within
+    one ship's hardpoint file, so this only needs to be a legal identifier,
+    not independently unique."""
+    ident = "".join(c if (c.isalnum() or c == "_") else "_" for c in name)
+    if not ident or ident[0].isdigit():
+        ident = "_" + ident
+    return ident.lower()
+
+
+def env_guard(level: int = 1) -> str:
+    """The Python-1.5-safe guard every Dauntless-only emitted block sits
+    under (spec 2026-09-26 section 4.3)."""
+    return 'if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= %d:' % level
+
+
+def _emit_part(lines, name, calls) -> None:
+    """Append a find-or-CREATE block for one articulated part to `lines`.
+
+    The guard sits on the versioned `App.DAUNTLESS_ENV` marker (not on a
+    borrowed function name like `ArticulatedPartProperty_Create`): stock BC
+    has never heard of this property type, so there is no instance to guard
+    on until Create succeeds, and gating on the marker lets the guard level
+    be bumped independently of any one Appc surface. It is Python-1.5-safe --
+    hasattr is a two-argument builtin -- and so is everything inside it: no
+    True/False literals, no f-strings.
+
+    hardpoint_overrides.py does not strictly need the guard (stbc.exe never
+    loads it), but emitting the identical block in both homes means the SPV
+    has exactly one part emitter to maintain, and the text can be lifted
+    straight into a mod's own hardpoint file. See spec section 2.3.
+    """
+    var = _ident_for(name)
+    lines.append('    ' + env_guard())
+    lines.append('        %s = App.ArticulatedPartProperty_Create(%s)'
+                 % (var, _lit(name)))
+    for setter, args in calls:
+        lines.append('        %s.%s(%s)' % (var, setter, _fmt_args(args)))
+    lines.append('        App.g_kModelPropertyManager.RegisterLocalTemplate(%s)' % var)
+
+
+def _emit_function(leaf, per_sub, fn_name=None) -> str:
+    out = ["def %s(find):" % (fn_name or "_" + leaf), '    """%s."""' % leaf]
+    non_empty = [(s, c) for s, c in per_sub.items() if s != _PARTS_KEY and c]
+    parts = dict((n, c) for n, c in per_sub.get(_PARTS_KEY, {}).items() if c)
+    if not non_empty and not parts:
         out.append("    return")
-    else:
-        for subsystem, calls in non_empty:
-            out.append("    p = find(%s)" % _lit(subsystem))
-            out.append("    if p is not None:")
-            for setter, args in calls:
-                out.append("        p.%s(%s)"
-                           % (setter, ", ".join(_lit(a) for a in args)))
+        return "\n".join(out)
+    if parts:
+        # One local import covers every part block below; `import App` here
+        # (not at module scope) keeps a part-free ship's function -- and
+        # read_models reading it -- free of any dependency on App at all.
+        out.append("    import App")
+    for subsystem, calls in non_empty:
+        out.append("    p = find(%s)" % _lit(subsystem))
+        out.append("    if p is not None:")
+        for setter, args in calls:
+            out.append("        p.%s(%s)" % (setter, _fmt_args(args)))
+    for name, calls in parts.items():
+        _emit_part(out, name, calls)
     return "\n".join(out)
 
 

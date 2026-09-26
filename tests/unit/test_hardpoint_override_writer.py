@@ -215,3 +215,31 @@ def test_emitter_and_glow_prefixes_coexist_on_one_subsystem():
                  prefix="SetLightEmitter")
     keys = set(s for (s, a) in models["galaxy"]["Impulse"])
     assert {"SetGlowRegionShape", "SetLightEmitterKind"} <= keys   # neither clobbers the other
+
+
+def test_record_fn_captures_setters_and_parts():
+    src = w._emit_function("x", {
+        "Port Warp": [("SetRadius", (1.5,))],
+        "__parts__": {"wing": [("SetTransitionSeconds", (2.0,))]},
+    }, fn_name="_spv")
+    ns = {}
+    exec(src, ns)
+    got = w.record_fn(ns["_spv"])
+    assert got["Port Warp"] == [("SetRadius", (1.5,))]
+    assert got["__parts__"] == {"wing": [("SetTransitionSeconds", (2.0,))]}
+
+
+def test_emit_function_default_name_unchanged():
+    assert w._emit_function("galaxy", {}).startswith("def _galaxy(find):")
+
+
+def test_apply_edit_dispatches_every_shape():
+    m = {}
+    w.apply_edit(m, "g", ("A", "SetRadius", (1.0,)))
+    w.apply_edit(m, "g", ("A", "__region__", 0, [("SetGlowRegionShape", (0, "Box"))]))
+    w.apply_edit(m, "g", ("A", "__emitter__", 0, [("SetLightEmitterKind", (0, "point"))]))
+    w.apply_edit(m, "g", ("wing", "__part__", [("SetTransitionSeconds", (2.0,))]))
+    assert ("SetRadius", (1.0,)) in m["g"]["A"]
+    assert ("SetGlowRegionShape", (0, "Box")) in m["g"]["A"]
+    assert ("SetLightEmitterKind", (0, "point")) in m["g"]["A"]
+    assert m["g"]["__parts__"]["wing"] == [("SetTransitionSeconds", (2.0,))]

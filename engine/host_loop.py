@@ -883,14 +883,8 @@ def _phaser_aim_point(ship, target):
     so they can never disagree about where the beam lands."""
     probe = getattr(type(ship), "is_using_target_offset", None)
     if callable(probe) and ship.is_using_target_offset():
-        pos = target.GetWorldLocation()
-        o = ship.GetTargetOffsetTG()
-        scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
-        o = TGPoint3(o.x * scale, o.y * scale, o.z * scale)
-        rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
-        if isinstance(rot, TGMatrix3):
-            o.MultMatrixLeft(rot)
-        return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z), None
+        from engine.appc.subsystems import target_offset_world
+        return target_offset_world(target, ship.GetTargetOffsetTG()), None
     target_sub = ship.GetTargetSubsystem() if hasattr(ship, "GetTargetSubsystem") else None
     if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
         return target_sub.GetWorldLocation(), target_sub
@@ -1402,6 +1396,35 @@ def refresh_ship_emitters(session, ship, specs_by_sub_id):
         dev_mode.log_swallowed("spv live emitter refresh", e)
 
 
+def refresh_ship_glow(session, ship, regions_by_sub_id):
+    """Re-register `ship`'s glow regions from SPV effective region specs.
+
+    Regions used to register once, at spawn, so a region authored in the
+    Ship Property Viewer did not show until the ship was rebuilt. Clears the
+    instance's regions, then builds a fresh ShipGlowController fed the SPV's
+    specs -- saved specs have not reached the live property yet (they do on
+    the next ship build), the same reason refresh_ship_emitters takes specs.
+
+    `regions_by_sub_id` maps id(subsystem) -> list of baked-shaped region
+    dicts; a subsystem absent from it gets none. No-op without a live render
+    instance. Best-effort: never raises, so it can never break Save.
+    """
+    if session is None or ship is None:
+        return
+    instances = getattr(session, "ship_instances", None)
+    iid = instances.get(ship) if instances else None
+    if iid is None:
+        return
+    try:
+        from engine.appc.subsystem_glow import ShipGlowController
+        r.clear_glow_regions(iid)
+        session.ship_glow_controllers[iid] = ShipGlowController(
+            r, iid, ship,
+            regions_of=lambda sub: regions_by_sub_id.get(id(sub), []))
+    except Exception as e:
+        dev_mode.log_swallowed("spv live glow-region refresh", e)
+
+
 def _warp_glow_envelope(ship):
     """`(drive, burst)` warp-nacelle glow envelope for `ship`, else None.
 
@@ -1531,6 +1554,52 @@ def _build_explosion_light_render_data():
     return out
 
 
+def _articulate_emitter_light(ship, iid, spec, d):
+    """Carry body-frame light dict `d` with the articulated part it sits on,
+    or return None when that part has been severed.
+
+    The part is decided from the LIGHT's own authored position (rest frame,
+    ship units -- the same frame as the derived part boxes), never from its
+    parent subsystem's mount: a light authored on a wing but parented to a
+    body subsystem must still ride, and die with, the wing. Severance
+    destroying the parent was the only thing that used to darken one.
+
+    Still body frame out: the renderer places it through the hull's matrix
+    as before. The pose is the same `_articulation_poses` value
+    `_sync_ship_articulation` pushes to the renderer this frame, so the light
+    and the drawn part cannot disagree. Decided per frame rather than cached
+    at spawn: the boxes derive from `model_nodes(iid)`, which a spawn-time
+    tag could run before, silently tagging every light None forever.
+
+    Identity -- the same dict, untouched -- for an unrigged ship, a light on
+    no part, or a part at its identity pose.
+    """
+    from engine.appc import articulation
+    names = articulation.posed_part_names(ship)
+    if not names:
+        return d
+    leaf = articulation.leaf_for(ship)
+    from engine.appc.part_severance import part_for_point, is_detached
+    name = part_for_point(leaf, tuple(spec["position"]), iid)
+    if name is None:
+        return d
+    if is_detached(ship, name):
+        return None
+    if name not in names:
+        return d
+    from engine.appc import part_pose
+    pose = articulation.pose_for_part(ship, name)
+    if part_pose.is_identity(pose):
+        return d
+    for key in ("position", "position_b"):
+        if key in d:
+            d[key] = part_pose.apply(pose, d[key])
+    for key in ("direction", "up"):
+        if key in d:
+            d[key] = part_pose.apply_vector(pose, d[key])
+    return d
+
+
 def _build_emitter_light_render_data(ship_instances, ship_emitters,
                                      player=None):
     """Body-frame dynamic lights from subsystem-attached light emitters,
@@ -1609,7 +1678,9 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
                 # lights), so the light and the hull share one pose per frame
                 # — interpolated, live or mid-handover alike. Shallow copy is
                 # enough: every value in `struct` is an immutable tuple/float.
-                d = dict(struct)
+                d = _articulate_emitter_light(ship, iid, spec, dict(struct))
+                if d is None:
+                    continue    # its part has been shot off
                 d["intensity"] = inten * fade
                 d["instance_id"] = iid
                 out.append(d)
@@ -5385,11 +5456,12 @@ class MissionSession:
     # re-bind guard — the binding itself lives on the native instance — so the
     # per-frame path can skip the boundary crossing when nothing changed.
     slot_bindings: dict[Any, tuple] = field(default_factory=dict)
-    # Last articulation deflection PUSHED per render instance id — a re-push
-    # guard only, exactly like slot_bindings. The authoritative pose lives on
-    # the ship (ShipClass._articulation_deflection); this just stops a settled
-    # hull from re-crossing into C++ every frame.
-    ship_articulation: dict[Any, float] = field(default_factory=dict)
+    # Last articulation pose PUSHED per render instance id -- a tuple of
+    # per-part pose 6-tuples, one per rigged part -- a re-push guard only,
+    # exactly like slot_bindings. The authoritative pose lives on the ship
+    # (ShipClass._articulation_poses); this just stops a settled hull from
+    # re-crossing into C++ every frame.
+    ship_articulation: dict[Any, tuple] = field(default_factory=dict)
     # Ship instance ids the render scope has HIDDEN (out of the viewed frame
     # or past the draw distance; _reconcile_runtime_instances). Consulted by
     # every other per-frame visibility writer so none re-shows them.
@@ -5446,13 +5518,23 @@ def _iter_planets_in_set(pSet) -> Iterable:
             yield obj
 
 
-def _cache_ship_hull_pieces(ship, handle, r_) -> None:
+def _cache_ship_hull_pieces(ship, handle, r_, iid=None) -> None:
     """Cache the hull's individual pieces on `ship` for shape-aware collision
     and avoidance (engine.appc.hull_bounds). GetRadius() is one sphere round
     the whole model and so cannot express a CONCAVE hull: a ship in a
     starbase's docking bay sits well inside it while touching no structure,
     and a ship with no pieces is shoved off another hull long before the
     meshes can touch.
+
+    `handle` is the MODEL handle (`model_bounds` reads geometry off it);
+    `iid`, when given, is the render INSTANCE just created from that model --
+    a DIFFERENT, incompatible opaque pybind type (model_nodes(handle) raises
+    TypeError, it does not degrade to []). Passed through to
+    `cache_hull_bound_spheres` so it can derive this leaf's per-part boxes
+    (`articulation.part_boxes_for`) from `host_io.model_nodes(iid)` the first
+    time any ship of this class realizes. Both call sites below call
+    `create_instance` right after this, so `iid` is threaded in on a second,
+    later call once it exists — see each call site.
 
     ONE helper for BOTH realize sites (realize_set_objects and
     _MissionLoader._realize_session). Live 2026-09-21 the second site had
@@ -5468,7 +5550,7 @@ def _cache_ship_hull_pieces(ship, handle, r_) -> None:
     """
     try:
         from engine.appc.hull_bounds import cache_hull_bound_spheres
-        cache_hull_bound_spheres(ship, r_.model_bounds(handle))
+        cache_hull_bound_spheres(ship, r_.model_bounds(handle), iid=iid)
     except Exception as _e:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
@@ -5532,8 +5614,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                 ship.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
-        _cache_ship_hull_pieces(ship, handle, r_)
         iid = r_.create_instance(handle)
+        _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
         # BC's authored damage-volume RESOLUTION for this hull
@@ -6568,8 +6650,8 @@ class _MissionLoader:
                     ship.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception as _e:
                     dev_mode.log_swallowed("ship.SetRadius fallback", _e)
-            _cache_ship_hull_pieces(ship, handle, r_)
             iid = r_.create_instance(handle)
+            _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
             # BC's authored damage-volume RESOLUTION for this hull
@@ -8019,44 +8101,105 @@ def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
 def _sync_ship_articulation(session, ship, iid) -> None:
     """Push `ship`'s articulated part poses (BoP wings) to its render instance.
 
-    READ-ONLY on game state: the deflection is eased on the sim tick by
-    engine.appc.articulation.tick_ship. Nothing here mutates the ship — a
+    READ-ONLY on game state: each part's pose is advanced on the sim tick by
+    engine.appc.articulation.tick_ship and read back here via
+    `articulation.pose_for_part`. Nothing here mutates the ship — a
     game-state mutation in the render path is exactly the class of bug that
     gave the player's phasers a half-second of aiming at a destroyed subsystem.
 
-    Guarded on CHANGE: the pose is re-pushed only when it actually moved, so a
-    settled ship (which is nearly all of them, nearly always) costs one dict
-    lookup and a float compare rather than a boundary crossing per node per
-    frame.
+    Guarded on CHANGE: the pose (a TUPLE of (name, 6-tuple), one per posable
+    part) is re-pushed only when it actually moved, so a settled ship (which
+    is nearly all of them, nearly always) costs one dict lookup and a tuple
+    compare rather than a boundary crossing per node per frame.
+
+    Posable = the rig's parts plus any part the Ship Property Viewer has
+    posed by NAME (`articulation.posed_part_names`) -- a part authored fresh
+    in the SPV has no rig entry yet but must still be drawn posed. The guard
+    covers every name it pushed: one released back to the NIF pose is pushed
+    once more as identity. An unrigged ship with nothing forced returns
+    before any work.
+
+    THERE IS NO "forced pose" ARGUMENT HERE, deliberately. A forced pose --
+    the Ship Property Viewer's NIF pose, or a selected {State}
+    Transformation node's pose -- is applied to
+    `ship._articulation_poses` at the SPV's own event edges by
+    `articulation.force_pose`, so it arrives through the line below like
+    every other pose. A second, render-side forcing path is what drew a Bird
+    of Prey's wings down while every cannon pin floated at its stale raised
+    position: the mesh knew about the override and the mounts did not.
     """
-    parts = articulation.parts_for_ship(ship)
-    if not parts:
-        return
-    try:
-        deflection = float(ship.GetArticulationDeflection())
-    except Exception:  # noqa: BLE001 - a prop / test double is not articulated
-        return
+    names = articulation.posed_part_names(ship)
     last = session.ship_articulation.get(iid)
-    if last is not None and last == deflection:
+    if not names and not last:
+        return                       # unrigged, nothing forced, nothing pushed
+    # A name pushed last time but gone from the dict now (a part the SPV
+    # posed by name, released back to the NIF pose) must still be pushed
+    # ONCE more, as identity -- or its node override keeps the old pose.
+    if last:
+        known = set(names)
+        names = names + tuple(n for n, _p6 in last if n not in known)
+    from engine.appc import part_pose
+    live = [articulation.pose_for_part(ship, name) for name in names]
+    pose = tuple((name, part_pose.pose_to6(p)) for name, p in zip(names, live))
+    if last is not None and last == pose:
         return
     from engine.appc import part_severance
-    for part in parts:
-        if part_severance.is_detached(ship, part.node):
+    for name, part_live in zip(names, live):
+        if part_severance.is_detached(ship, name):
             # A severed part is hidden via the SAME node_overrides slot this
-            # rotation would write (set_instance_node_hidden / _rotation share
-            # one map). Re-posing it here would overwrite the hide with a live
-            # matrix -- the wing would snap back onto the hull and animate
-            # with the rest, and a subsequent theta==0 push would erase the
-            # hide for good. See part_severance.sever / part_detach_render.
+            # transform would write (set_instance_node_hidden / _transform
+            # share one map). Re-posing it here would overwrite the hide with
+            # a live matrix -- the wing would snap back onto the hull and
+            # animate with the rest, and a subsequent identity push would
+            # erase the hide for good. See part_severance.sever /
+            # part_detach_render.
             continue
-        pivot, axis, theta = articulation.rotation_for(part, deflection)
-        # The rig is authored in SHIP units (shared with PART_BOXES and
-        # subsystem mounts); the binding works in MODEL units. This is the
-        # ONLY place the two meet.
-        pivot_model = tuple(c / articulation.MODEL_TO_SHIP for c in pivot)
-        host_io.set_instance_node_rotation(iid, part.node, pivot_model,
-                                           axis, theta)
-    session.ship_articulation[iid] = deflection
+        # The rig is authored in SHIP units (shared with articulation's
+        # derived per-part boxes and subsystem mounts); the binding works in
+        # MODEL units. `matrix4_model` is the ONLY place the two meet.
+        host_io.set_instance_node_transform(
+            iid, name,
+            part_pose.matrix4_model(part_live, articulation.MODEL_TO_SHIP))
+    # Every pushed name stays in the guard (a released SPV part as identity),
+    # so it is compared -- not re-pushed -- on every later frame.
+    session.ship_articulation[iid] = pose
+
+
+def _sync_spv_articulation(session, spv_panel) -> None:
+    """Push the Ship Property Viewer's FORCED articulation pose, every frame
+    the viewer is open -- INCLUDING the frozen ones, which is all of them.
+
+    This exists as its own sweep, called from `run()` OUTSIDE
+    `if not pause.sim_frozen:`, because the ordinary articulation push rides
+    inside `_sync_instance_transforms`, which that guard skips. Opening the
+    SPV opens the pause menu, which sets `sim_frozen` -- so the one state in
+    which the forced pose matters was exactly the state in which it never
+    ran. The hologram kept drawing whatever pose was last pushed before the
+    pause, the anchor pose never took effect, and no forced pose could move
+    a wing at all.
+
+    `spv_panel` is the `ShipPropertyViewerPanel` instance (that is what is in
+    scope at the call site -- `run()` shadows the module name with it), or
+    `_NULL_PICKER` outside --developer.
+
+    Dev-only twice over: `dev_mode.is_enabled()` AND the panel being open.
+    Production rendering is byte-identical -- an ordinary paused game takes
+    the early return on a bool that is False before anything is iterated.
+
+    It pushes the ship's LIVE poses, exactly like the unfrozen path. It does
+    NOT know about the forced state: the SPV writes the forced pose into
+    `ship._articulation_poses` at its event edges
+    (`articulation.force_pose` / `force_state_poses`, from the panel's open
+    and its part-node selection -- `_sync_part_pose`), so by the
+    time this runs the live poses ARE the forced ones. That is the whole
+    point -- mounts, pins, the derived-box queries and this sweep all read
+    one dict, so they cannot disagree. Making this sweep force the pose
+    itself is what drew the wings down while the cannon pins stayed up.
+    """
+    if not (dev_mode.is_enabled() and spv_panel.is_open()):
+        return
+    for ship, iid in session.ship_instances.items():
+        _sync_ship_articulation(session, ship, iid)
 
 
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
@@ -8106,6 +8249,12 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     coordinates, so it is pushed like any other ship, with its offset. An
     object with no offset (no view, no set, another frame) is drawn exactly
     as before.
+
+    Articulation is pushed here at the ship's LIVE pose only. The Ship
+    Property Viewer's FORCED pose is NOT applied from here: this whole
+    function sits under `run()`'s `if not pause.sim_frozen:`, and the SPV
+    freezes the sim, so it would never run on a frame the SPV cares about.
+    `_sync_spv_articulation` is the sweep for that, called unguarded.
     """
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
@@ -9128,10 +9277,20 @@ def run(mission_name: Optional[str] = None,
             def _spv_player():
                 sess = controller.session
                 return sess.player if sess is not None else None
+            def _spv_player_iid():
+                # Model Parts pane: the player's renderer InstanceId, for
+                # host_io.model_nodes(iid). None between missions/headless.
+                sess = controller.session
+                if sess is None or sess.player is None:
+                    return None
+                return sess.ship_instances.get(sess.player)
             ship_property_viewer = ShipPropertyViewerPanel(
                 ship_getter=_spv_player,
                 on_saved=lambda ship, specs: refresh_ship_emitters(
                     controller.session, ship, specs),
+                on_regions_saved=lambda ship, regions: refresh_ship_glow(
+                    controller.session, ship, regions),
+                iid_getter=_spv_player_iid,
             )
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,
@@ -10477,6 +10636,19 @@ def run(mission_name: Optional[str] = None,
                     on_player_change=_on_player_change, verbose=verbose)
                 player = session.player if session is not None else None
 
+            # --- Ship Property Viewer's FORCED articulation pose ---
+            # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The
+            # SPV opens the pause menu, which freezes the sim, so everything
+            # in that block -- including the articulation push inside
+            # _sync_instance_transforms -- is skipped on every frame the
+            # viewer is open. Leaving the forced pose in there made it dead
+            # code: the hologram kept whatever pose was last pushed before
+            # the pause, and no forced pose could move a wing.
+            # Dev-only and SPV-only inside the helper, so a production paused
+            # frame is byte-identical (one False bool, then return).
+            if session is not None:
+                _sync_spv_articulation(session, ship_property_viewer)
+
             frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
@@ -10757,6 +10929,7 @@ def run(mission_name: Optional[str] = None,
                 # selection drives the damage-radius sphere instead).
                 from engine.ui.glow_region_overlay import (
                     build_glow_region_overlay, build_emitter_overlay,
+                    build_part_box_overlay,
                 )
                 _cyls, _boxes = build_glow_region_overlay(
                     player,
@@ -10769,11 +10942,27 @@ def run(mission_name: Optional[str] = None,
                 # neither overlay drops the other's wireframes.
                 _em_spheres, _em_cyls, _em_cones = build_emitter_overlay(
                     player, ship_property_viewer)
+                # Selected MODEL PART's derived box, in magenta — what part
+                # severance actually tests against, drawn on the hull so a
+                # selection is visible at all. Merged additively into the
+                # same boxes payload for the same reason as the emitter
+                # wireframes above: a second set_debug_boxes call would
+                # replace this one and drop the glow regions.
+                #
+                # Imported under an alias: the `ship_property_viewer` name in
+                # this scope is the PANEL INSTANCE, not the module, and the
+                # Model Parts selection is module-level state (the panel
+                # reads it the same way, via its own `_spv`).
+                from engine.ui import ship_property_viewer as _spv_mod
+                _part_boxes = build_part_box_overlay(
+                    player,
+                    _spv_mod.selected_model_part(),
+                    _spv_mod.selected_part_box())
                 def _spv_shapes(shapes, key):
                     return [dict(_d, **{key: _spv_render(_d[key])})
                             for _d in shapes]
                 r.set_debug_cylinders(_spv_shapes(_cyls + _em_cyls, "center"))
-                r.set_debug_boxes(_spv_shapes(_boxes, "center"))
+                r.set_debug_boxes(_spv_shapes(_boxes + _part_boxes, "center"))
                 r.set_debug_cones(_spv_shapes(_em_cones, "apex"))
                 # Selected subsystem's damage-radius volume as a wireframe
                 # sphere at its icon (only while a subsystem is selected).

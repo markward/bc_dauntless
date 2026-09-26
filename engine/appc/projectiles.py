@@ -18,7 +18,7 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 """
 import math
 
-from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
 from engine.systems.frames import shifted as _shifted
 
@@ -84,8 +84,11 @@ class Torpedo(ObjectClass):
         self._damage_radius_factor = 0.0
         self._target_ship = None
         # Target-local aim offset stamped at fire time (BC torp+0x11C..+0x124).
-        # Rides the projectile for the wire and for SDK readers; in-flight
-        # guidance never reads it (audited §5.5 -- Guide leads the CENTRE).
+        # In-flight guidance STEERS at it (`_steer_point`, via
+        # subsystems.target_offset_world), hull centre when None. That departs
+        # from the audited §5.5 reading "Guide leads the CENTRE" on purpose:
+        # 9ce63166, after a live report that torpedoes no longer homed on the
+        # locked subsystem.
         self._target_offset = None
         self._guidance_lifetime = 4.0
         self._guidance_initial = 4.0
@@ -682,24 +685,20 @@ def _steer_point(torpedo, target, off=None):
     a steering target: the firing tube's own copy is only a fire-cone gate,
     so this is where it has to be read while the shot is in flight.
 
-    Same transform the tube's gate uses (weapon_subsystems.
-    _resolve_torpedo_aim_point): scale the local offset by the target's
-    scale, rotate it by the target's world rotation, add it to the centre.
+    Same transform the tube's gate uses: `subsystems.target_offset_world`,
+    which also carries the offset with an articulated part -- read every
+    tick, so a shot locked on a wing keeps tracking it while it moves.
 
     `off` is frames.offset_between(torpedo set, target set): the point is
     returned in the TORPEDO's set-local coordinates. None/zero (same set)
     leaves today's arithmetic untouched.
     """
-    pos = target.GetWorldLocation()
     offset = getattr(torpedo, "_target_offset", None)
     if not isinstance(offset, TGPoint3):
+        pos = target.GetWorldLocation()
         return _shifted(TGPoint3(pos.x, pos.y, pos.z), off)
-    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
-    o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
-    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
-    if isinstance(rot, TGMatrix3):
-        o.MultMatrixLeft(rot)
-    return _shifted(TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z), off)
+    from engine.appc.subsystems import target_offset_world
+    return _shifted(target_offset_world(target, offset), off)
 
 
 def _guide(torpedo, dt: float) -> None:

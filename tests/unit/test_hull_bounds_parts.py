@@ -18,10 +18,7 @@ class _Ship:
 
     def __init__(self):
         self._articulation_leaf = "birdofprey"
-        self._articulation_deflection = 0.0
-
-    def GetArticulationDeflection(self):
-        return self._articulation_deflection
+        self._articulation_poses = {}
 
     def GetWorldLocation(self):
         from engine.appc.math import TGPoint3
@@ -43,8 +40,22 @@ def _nif(spheres):
     return [(cx * inv, cy * inv, cz * inv, r * inv) for cx, cy, cz, r in spheres]
 
 
-# A point deep inside PART_BOXES["birdofprey"]["left wing"] and inside no
-# other box, so part_for_point attributes it outright rather than to None.
+def _pose(ship, deflection):
+    """Set `ship`'s per-part poses `deflection` of the way (0..1) along each
+    part's swing from the NIF pose to its authored "cruise" pose -- the
+    fully-deflected (up/cold) pose at 1.0 -- what
+    `articulation.part_transform_point` (via `pose_for_part`) reads."""
+    from engine.appc import articulation, part_pose
+    ship._articulation_poses = {
+        p.GetName(): part_pose.interpolate(
+            part_pose.IDENTITY, p.pose_for("cruise"), p.anchor, deflection)
+        for p in articulation.rig_for("birdofprey")
+    }
+
+
+# A point deep inside the derived box for "birdofprey"'s "left wing" and
+# inside no other box, so part_for_point attributes it outright rather than
+# to None.
 WING_PT = (-0.80, -0.20, -0.30)
 # Deep inside the "birdofprey" body box ONLY -- unambiguous, not an overlap
 # case. This is the brief's original literal value.
@@ -72,7 +83,7 @@ WING_PT = (-0.80, -0.20, -0.30)
 # test_a_boxed_but_INERT_part_is_not_tagged for the same idea pinned
 # explicitly against "head".
 BODY_PT = (0.0, -0.20, 0.05)
-# Deep inside PART_BOXES["birdofprey"]["head"] and inside no other box.
+# Deep inside the derived box for "birdofprey"'s "head" and inside no other box.
 # "head" is boxed (part_for_point resolves it) but neither rigged
 # (articulation.rig_for has no "head" Part) nor detachable
 # (articulation.detachable_for has no "head" key) -- the exact case the
@@ -81,9 +92,10 @@ HEAD_PT = (0.0, 0.5, 0.0)
 
 
 def test_the_fixture_points_attribute_as_this_file_assumes():
-    """Guards every other test in this file. If PART_BOXES is ever re-authored
-    these constants stop meaning what the tests below need them to mean, and
-    those tests would pass vacuously instead of failing here.
+    """Guards every other test in this file. If the derived per-part boxes
+    this file's conftest fixture seeds are ever re-authored, these constants
+    stop meaning what the tests below need them to mean, and those tests
+    would pass vacuously instead of failing here.
 
     WING_PT resolves to a MOVABLE part outright. BODY_PT and HEAD_PT both
     resolve to concrete, unambiguous part names -- NOT None -- because
@@ -182,16 +194,16 @@ def test_an_unrigged_ship_tags_nothing():
 
 def test_a_wing_piece_moves_with_its_part_at_full_deflection():
     """The piece must sit where the wing is DRAWN. `part_transform_point` is
-    the same Rodrigues hinge the renderer's node override uses, so the
+    the same pose the renderer's node matrix is built from, so the
     collision sphere and the drawn mesh agree by construction."""
     from engine.appc import articulation
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
 
-    ship._articulation_deflection = 0.0
+    _pose(ship, 0.0)
     (rest, _r) = hb.hull_spheres_world(ship)[0]
 
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     (moved, _r2) = hb.hull_spheres_world(ship)[0]
 
     expected = articulation.part_transform_point(ship, WING_PT)
@@ -206,9 +218,9 @@ def test_an_untagged_piece_never_moves():
     no part is unaffected at any deflection."""
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, 0.05)]))
-    ship._articulation_deflection = 0.0
+    _pose(ship, 0.0)
     (rest, _r) = hb.hull_spheres_world(ship)[0]
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     (same, _r2) = hb.hull_spheres_world(ship)[0]
     assert (same.x, same.y, same.z) == (rest.x, rest.y, rest.z)
 
@@ -222,7 +234,7 @@ def test_hull_spheres_near_ACCEPTS_a_piece_at_its_MOVED_position():
     from engine.appc.math import TGPoint3
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     mx, my, mz = articulation.part_transform_point(ship, WING_PT)
 
     # A tight query centred on where the wing IS, too small to reach its rest
@@ -259,9 +271,9 @@ def _reach(centre, r=_PIECE_R):
 
 
 def test_the_mid_travel_fixture_point_attributes_as_this_file_assumes():
-    """Same role as the guard at the top of this file. If PART_BOXES moves,
-    WING_MID_TRAVEL_PT stops being on the wing and the two tests below would
-    pass vacuously against an untagged piece."""
+    """Same role as the guard at the top of this file. If the derived boxes
+    move, WING_MID_TRAVEL_PT stops being on the wing and the two tests below
+    would pass vacuously against an untagged piece."""
     assert ps.part_for_point("birdofprey", WING_MID_TRAVEL_PT) == "left wing"
 
 
@@ -272,7 +284,7 @@ def test_bound_radius_encloses_a_wing_piece_at_FULL_deflection():
     really do touch is gated out of collision entirely."""
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, _PIECE_R)]))
-    ship._articulation_deflection = 1.0
+    _pose(ship, 1.0)
     (moved, r) = hb.hull_spheres_world(ship)[0]
     moved_reach = _reach((moved.x, moved.y, moved.z), r)
     assert hb.bound_radius(ship) >= moved_reach - 1e-9, (
@@ -290,7 +302,7 @@ def test_bound_radius_encloses_a_wing_piece_at_EVERY_point_of_its_travel():
     gate = hb.bound_radius(ship)
     worst = 0.0
     for step in range(201):
-        ship._articulation_deflection = step / 200.0
+        _pose(ship, step / 200.0)
         (c, r) = hb.hull_spheres_world(ship)[0]
         worst = max(worst, _reach((c.x, c.y, c.z), r))
     assert worst > _reach(WING_MID_TRAVEL_PT) + 1e-4, (
@@ -300,9 +312,88 @@ def test_bound_radius_encloses_a_wing_piece_at_EVERY_point_of_its_travel():
         "at the two ends")
 
 
+def test_bound_radius_encloses_a_piece_through_INTERRUPTED_transitions(
+        monkeypatch):
+    """A transition can be interrupted at any point and restarted from where
+    the part is (spec 2026-09-25 §4.1), so the reachable set is not one arc
+    between two authored poses. Drive the real `tick_ship` through a run of
+    mid-swing state flips and check the gate encloses every position the
+    piece is actually drawn at."""
+    from engine.appc import articulation
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_MID_TRAVEL_PT, _PIECE_R),
+                                            (*WING_PT, _PIECE_R)]))
+    gate = hb.bound_radius(ship)
+    state = {"s": "cruise"}
+    monkeypatch.setattr(articulation, "state_for", lambda _ship: state["s"])
+    ship._articulation_poses = {}
+    worst = 0.0
+    plan = ["cruise"] * 13 + ["red"] * 7 + ["warp"] * 5 + ["red"] * 11 + \
+        ["cruise"] * 30 + ["red"] * 3 + ["yellow"] * 40
+    for s in plan:
+        state["s"] = s
+        articulation.tick_ship(ship, 1.0 / 15.0)
+        for c, r in hb.hull_spheres_world(ship):
+            worst = max(worst, _reach((c.x, c.y, c.z), r))
+    assert worst > _reach(WING_PT) + 1e-4 or worst > _reach(
+        WING_MID_TRAVEL_PT) + 1e-4, "fixture check: the pieces must move"
+    assert gate >= worst - 1e-9
+
+
 def test_bound_radius_for_an_UNTAGGED_piece_is_the_old_arithmetic():
     """The overwhelming majority of pieces, and every piece on an unrigged
     hull. Travel awareness must not perturb them by so much as a float."""
     ship = _Ship()
     hb.cache_hull_bound_spheres(ship, _nif([(*BODY_PT, _PIECE_R)]))
     assert hb.bound_radius(ship) == _reach(BODY_PT)
+
+
+# ── The tag the caller already holds ─────────────────────────────────────────
+# Every cached piece carries its part tag, decided once at cache time. The
+# world/near sweeps then handed the bare POINT to `part_transform_point`,
+# which re-derived that same tag with a full sorted distance scan over every
+# box on the hull -- per piece, per sweep, per frame, for an answer already in
+# the tuple being iterated.
+
+def test_part_transform_point_uses_the_part_it_is_GIVEN():
+    """Not the one it would attribute. Pinned with a point that attributes to
+    NOTHING, so a re-derivation would return it unmoved."""
+    from engine.appc import articulation
+    from engine.appc import part_severance as _ps
+    ship = _Ship()
+    _pose(ship, 1.0)
+    assert _ps.part_for_point("birdofprey", BODY_PT) not in ("left wing",), (
+        "fixture check: this point must not attribute to the wing on its own")
+
+    wing = next(p for p in articulation.rig_for("birdofprey")
+                if p.GetName() == "left wing")
+    from engine.appc import part_pose
+    expected = part_pose.apply(articulation.pose_for_part(ship, wing), BODY_PT)
+
+    assert articulation.part_transform_point(
+        ship, BODY_PT, part="left wing") == expected
+    # ...and with no tag supplied it still attributes for itself, unchanged.
+    assert articulation.part_transform_point(ship, BODY_PT) == BODY_PT
+
+
+def test_the_sweeps_do_not_RE_DERIVE_the_tag_they_already_hold(monkeypatch):
+    """`hull_spheres_world` / `hull_spheres_near` carry the tag in the cached
+    tuple. Exploding the attribution scan proves they pass it through rather
+    than paying for it again."""
+    from engine.appc import part_severance as _ps
+
+    def _boom(*a, **k):
+        raise AssertionError("part_for_point must not be called: the caller "
+                             "already holds the tag")
+
+    ship = _Ship()
+    hb.cache_hull_bound_spheres(ship, _nif([(*WING_PT, 0.05)]))
+    _pose(ship, 1.0)
+    monkeypatch.setattr(_ps, "part_for_point", _boom)
+
+    (moved, _r) = hb.hull_spheres_world(ship)[0]
+    assert (moved.x, moved.y, moved.z) != WING_PT
+
+    from engine.appc.math import TGPoint3
+    near = hb.hull_spheres_near(ship, TGPoint3(moved.x, moved.y, moved.z), 0.1)
+    assert len(near) == 1
