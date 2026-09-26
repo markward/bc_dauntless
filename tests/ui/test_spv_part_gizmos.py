@@ -424,19 +424,27 @@ def test_copy_paste_mirror_makes_the_exact_mirror_twin(make_panel):
     assert p._effective_part("left wing")["anchor"] != pytest.approx(_mx(a_r)), (
         "fixture: the left anchor does not start mirrored")
 
-    # Anchor.
-    p.dispatch_event("set_tool:transform")
+    # Anchor. Explicit set_tool: before every coord_* step, matching the
+    # real button order Mark drives this workflow through (both orders
+    # verified to pass -- 2026-09-26 review -- but the test should read like
+    # the actual clicks).
     _select_node(p, "right wing", "anchor")
+    p.dispatch_event("set_tool:transform")
     p.dispatch_event("coord_copy")
     _select_node(p, "left wing", "anchor")
+    p.dispatch_event("set_tool:transform")
     p.dispatch_event("coord_paste")
     p.dispatch_event("coord_mirror")
     # Pose.
     _select_node(p, "right wing", "warp")
+    p.dispatch_event("set_tool:transform")
     p.dispatch_event("coord_copy")
+    p.dispatch_event("set_tool:rotate")
     p.dispatch_event("rotate_copy")
     _select_node(p, "left wing", "warp")
+    p.dispatch_event("set_tool:transform")
     p.dispatch_event("coord_paste")
+    p.dispatch_event("set_tool:rotate")
     p.dispatch_event("rotate_paste")
     p.dispatch_event("mirror_element")
 

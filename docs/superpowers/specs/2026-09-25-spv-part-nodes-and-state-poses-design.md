@@ -266,6 +266,10 @@ State node previews every part in that state, not just its own part, so a
 pair can be judged together; editing the selected pose re-posts the whole
 state, so the other parts stay posed during the edit.)
 
+While a Model Parts node (a part row, or its Anchor / {State} Transformation /
+Breakage child) is selected, subsystem pins are hidden and not pickable; an
+empty-space click clears the part selection.
+
 **Mirror on a part node** (amended 2026-09-26 by Mark: "Mirror just flips the
 sign"). A pose is (R, t) about the ship origin, so reflecting it whole
 (−tx, ty, tz, rx, −ry, −rz) — the original rule — also mirrored the hidden

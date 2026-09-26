@@ -2715,11 +2715,21 @@ class ShipPropertyViewerPanel(Panel):
 
     def pick_at(self, x: float, y: float, viewport,
                 device_scale_factor: float = 1.0) -> None:
-        """Run a pin pick at cursor (x, y) and emit select/deselect."""
+        """Run a pin pick at cursor (x, y) and emit select/deselect.
+
+        While a Model Parts node (a part row, or its Anchor / {State}
+        Transformation / Breakage child) is selected, no pin is pickable --
+        they are not drawn either (`subsystem_pins()`), so a click on the
+        hull where a hidden pin sits must not silently select that
+        subsystem and drop the pose preview. The click falls through to the
+        empty-space path, which clears the part selection (Mark,
+        2026-09-26)."""
         if self.camera is None:
             return
-        idx = pick_pin(x, y, self._descriptors, self.camera, viewport,
-                       device_scale_factor)
+        idx = None
+        if _spv.selected_model_part() is None:
+            idx = pick_pin(x, y, self._descriptors, self.camera, viewport,
+                           device_scale_factor)
         if idx is not None:
             self.dispatch_event("select_pin:%d" % idx)
         else:
@@ -3310,12 +3320,20 @@ class ShipPropertyViewerPanel(Panel):
             self._last_pushed = None
             return True
         if action == "deselect":
+            # An empty-space click also clears a Model Parts selection (part
+            # row or child node) -- ruling (b), 2026-09-26: the pose preview
+            # a State node forces returns to the NIF pose via the post-
+            # dispatch `_sync_part_pose`, and `subsystem_pins()` reverts to
+            # its default (every pin, none selected) once
+            # `selected_model_part()` is cleared.
             if (self.selected_index is None and self._selected_light_index is None
-                    and self._selected_emitter is None):
+                    and self._selected_emitter is None
+                    and _spv.selected_model_part() is None):
                 return False
             self.selected_index = None
             self._selected_light_index = None
             self._selected_emitter = None
+            _spv.select_model_part(None, self._model_part_nodes)
             self._last_pushed = None
             return True
         if action.startswith("overlay:"):

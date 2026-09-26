@@ -1053,15 +1053,91 @@ def test_selecting_a_subsystem_after_a_part_restores_default_pin_behaviour(make_
 
 
 def test_deselecting_the_part_node_restores_default_pin_behaviour(make_panel):
-    """With nothing else selected, clearing the Model Parts selection must
-    restore today's no-selection behaviour: every pin, none flagged
-    selected -- byte-identical to a panel where nothing was ever selected."""
+    """With nothing else selected, an empty-space click -- the real gesture
+    a viewport click drives (`pick_at`, same as `handle_input` calls; see
+    ruling (b), 2026-09-26) -- must restore today's no-selection behaviour:
+    every pin, none flagged selected -- byte-identical to a panel where
+    nothing was ever selected."""
     p, _ship, _target = make_panel()
     _with_icon_ids(p)
+    p.camera = spv.OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0,
+                                yaw=0.0, pitch=0.0)
     baseline = p.subsystem_pins()
     p.dispatch_event("model_parts/select:left wing")
     assert p.subsystem_pins() == [], "fixture: part selected, pins hidden"
 
-    spv.select_model_part(None, p._model_part_nodes)
+    p.pick_at(5.0, 5.0, (800, 600))   # a corner, nowhere near the one pin
 
+    assert spv.selected_model_part() is None
     assert p.subsystem_pins() == baseline
+
+
+def test_a_hidden_pin_is_not_pickable_while_a_part_node_is_selected(make_panel):
+    """Ruling (a), 2026-09-26: while a Model Parts node is selected, pin
+    PICKING hits nothing either -- a hidden pin must not be clickable, or a
+    click on the hull where it sits would silently select that subsystem
+    and drop the pose preview mid-animation. Baseline first, at the SAME
+    screen position, proves the click really would hit the pin if it were
+    still pickable."""
+    p, _ship, _target = make_panel()
+    _with_icon_ids(p)
+    cam = spv.OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0,
+                          yaw=0.0, pitch=0.0)
+    p.camera = cam
+    sx, sy, _depth, visible = spv.project(
+        _DESCRIPTORS[0]["world_pos"], cam, (800, 600))
+    assert visible, "fixture: the pin is on-screen"
+
+    p.pick_at(sx, sy, (800, 600))
+    assert p.selected_index == 0, (
+        "fixture: this screen position picks the pin when nothing else "
+        "hides it")
+    p.dispatch_event("deselect")
+
+    p.dispatch_event("part/add_anchor:left wing")
+    assert _add_state(p, "left wing", "cruise") is True
+    assert spv.selected_part_node() == ("left wing", "cruise")
+
+    p.pick_at(sx, sy, (800, 600))
+
+    assert p.selected_index is None, "the hidden pin must not be pickable"
+    assert spv.selected_part_node() is None, (
+        "falls through to the empty-space gesture, which ends the preview")
+    assert spv.selected_model_part() is None
+    pins = p.subsystem_pins()
+    assert len(pins) == 1 and pins[0][2] is False, (
+        "default behaviour is restored, same as any other empty-space click")
+
+
+def test_clicking_empty_space_while_a_state_is_previewed_returns_poses_to_identity(
+        make_panel):
+    """Ruling (b) in full, on a rig with a genuinely non-identity preview
+    pose to return FROM: the empty-space click that ends the part
+    selection also drops `ship._articulation_poses` back to identity (the
+    post-dispatch `_sync_part_pose` runs off the now-cleared node
+    selection), and `subsystem_pins()` matches a panel that never touched a
+    part."""
+    ship = _RiggedShip()
+    p, _ship, _target = make_panel(leaf=RIGGED_LEAF, ship=ship)
+    _with_icon_ids(p)
+    p.camera = spv.OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0,
+                                yaw=0.0, pitch=0.0)
+    baseline_pins = p.subsystem_pins()
+
+    p6 = (0.0, 0.1, 0.0, 0.0, 30.0, 0.0)
+    spec = copy.deepcopy(p._effective_part("left wing"))
+    spec["poses"]["warp"] = p6
+    p._pending_part["left wing"] = spec
+    assert _select_node(p, "left wing", "warp") is True
+    assert ship._articulation_poses["left wing"] == part_pose.pose_from6(p6), (
+        "fixture: genuinely posed, not identity")
+    assert p.subsystem_pins() == [], "fixture: part node selected, pins hidden"
+
+    p.pick_at(5.0, 5.0, (800, 600))   # a corner, nowhere near the one pin
+
+    assert spv.selected_part_node() is None
+    assert spv.selected_model_part() is None
+    assert all(part_pose.is_identity(v)
+               for v in ship._articulation_poses.values()), (
+        "poses return to identity")
+    assert p.subsystem_pins() == baseline_pins
