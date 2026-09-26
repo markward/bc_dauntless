@@ -1,39 +1,15 @@
 # tests/unit/test_mission_change.py
 """Mission change with carry-over (spec §2)."""
-import sys, types
+import sys
 import App
 from engine.core import mission_change
-from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.appc.sets import SetClass_Create
-
-log = []
-
-
-def _install(name, **fns):
-    m = types.ModuleType(name)
-    for k, v in fns.items():
-        setattr(m, k, v)
-    sys.modules[name] = m
-
-
-def _world():
-    App.g_kSetManager._sets.clear()
-    log.clear()
-    game = Game(); ep = Episode(); mis = Mission()
-    ep.SetCurrentMission(mis); game.SetCurrentEpisode(ep); _set_current_game(game)
-    mis._module_name = "_t.Old"; ep._module_name = "_t.EpOld"
-    ws = App.WarpSequence_GetWarpSet()
-    player = App.ShipClass_Create(); player.SetName("player")
-    ws.AddObjectToSet(player, "player"); game.SetPlayer(player)
-    bridge = SetClass_Create(); App.g_kSetManager.AddSet(bridge, "bridge")
-    old = SetClass_Create(); App.g_kSetManager.AddSet(old, "Beol4")
-    return game, player, bridge
+from tests.helpers.mission_change_fixtures import (
+    log, _install, _world, _forget_world)
 
 
 def teardown_function(_):
-    for n in ("_t.Old", "_t.New", "_t.EpOld", "_t.EpNew"):
-        sys.modules.pop(n, None)
-    _set_current_game(None)
+    _forget_world()
 
 
 def test_episode_module_for():
@@ -74,6 +50,21 @@ def test_a_failing_next_mission_leaves_the_player_parked():
     assert mission_change.change(mission="_t.New") is False
     assert App.g_kSetManager.GetSet("warp").GetObject("player") is player
     assert not mission_change.in_progress()
+
+
+def test_a_failing_clear_leaves_the_player_parked(monkeypatch):
+    """Review Focus 2: the clear raising must not escape into the warp and
+    stall the tunnel -- the change reports failure instead."""
+    from engine import host_loop
+    game, player, _ = _world()
+    _install("_t.Old", Terminate=lambda m: None)
+    _install("_t.New", Initialize=lambda m: log.append("New.Initialize"))
+    def _boom(): raise RuntimeError("bad clear")
+    monkeypatch.setattr(host_loop, "_reset_sensor_state", _boom)
+    assert mission_change.change(mission="_t.New") is False
+    assert App.g_kSetManager.GetSet("warp").GetObject("player") is player
+    assert not mission_change.in_progress()
+    assert log == []
 
 
 def test_a_change_inside_a_change_is_refused():

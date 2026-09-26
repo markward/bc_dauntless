@@ -45,8 +45,8 @@ def change(*, mission=None, episode=None) -> bool:
     """End the current mission, clear the world down to what carries over, and
     load the next episode (whose Initialize picks its mission) or mission.
     True iff a change ran. Refused (False) while a change is in progress or
-    when neither name differs from the current one. A load that raises is
-    printed and returns False, leaving the player where it is."""
+    when neither name differs from the current one. A clear or load that
+    raises is printed and returns False, leaving the player where it is."""
     global _in_progress
     if _in_progress:
         return False
@@ -67,7 +67,17 @@ def change(*, mission=None, episode=None) -> bool:
         _terminate(cur_mis)
         if ep_changes:
             _terminate(cur_ep)
-        _clear_for_next_mission(game, cur_mis, cur_ep if ep_changes else None)
+        try:
+            _clear_for_next_mission(
+                game, cur_mis, cur_ep if ep_changes else None)
+        except Exception as e:
+            # Raising out of here would stall the warp that called us with
+            # the player in the tunnel; fail like a bad load instead.
+            print("[mission_change] clearing for %r failed: %s: %s"
+                  % (episode if ep_changes else mission, type(e).__name__, e),
+                  flush=True)
+            traceback.print_exc()
+            return False
         try:
             if ep_changes:
                 game._load_episode_raw(episode)

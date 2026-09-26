@@ -395,12 +395,19 @@ class _WarpVfxEndAction(TGAction):
 
 class _MissionChangePoint(TGAction):
     """The point in transit, after the after-during queue, where a
-    cross-mission warp changes mission (spec §2). A no-op placeholder here;
-    the mission change fills it."""
+    cross-mission warp changes mission (spec §2). A name equal to the current
+    one -- or a change a direct load already made (E5M4) -- is a no-op."""
 
     def __init__(self, seq):
         super().__init__()
         self._seq = seq
+
+    def _do_play(self):
+        mission = self._seq.GetDestinationMission()
+        episode = self._seq.GetDestinationEpisode()
+        if mission or episode:
+            from engine.core import mission_change
+            mission_change.change(mission=mission, episode=episode)
 
 
 class _HoldUntilAction(TGAction):

@@ -191,7 +191,15 @@ class Episode(TGObject):
         pass
 
     def LoadMission(self, name: str, start_event=None) -> "Mission":
-        """SDK Episode.LoadMission. Loads through _load_mission_raw."""
+        """SDK Episode.LoadMission. While a mission runs this is a mission
+        change (spec §2 "One mission-change path"); otherwise -- boot, or the
+        next episode's Initialize inside a change -- a raw load."""
+        from engine.core import mission_change
+        cur = self.GetCurrentMission()
+        if (cur is not None and cur._module_name
+                and not mission_change.in_progress()):
+            mission_change.change(mission=name)
+            return self.GetCurrentMission()
         return self._load_mission_raw(name, start_event)
 
     def _load_mission_raw(self, name: str, start_event=None) -> "Mission":
@@ -332,7 +340,16 @@ class Game(TGObject):
         self._current_episode = episode
 
     def LoadEpisode(self, name: str) -> "Episode":
-        """SDK Game.LoadEpisode. Loads through _load_episode_raw."""
+        """SDK Game.LoadEpisode. While a mission runs this is a mission change
+        (E2M6's and E5M4's direct loads must not stack on the live mission);
+        otherwise a raw load."""
+        from engine.core import mission_change
+        ep = self.GetCurrentEpisode()
+        cur = ep.GetCurrentMission() if ep is not None else None
+        if (cur is not None and cur._module_name
+                and not mission_change.in_progress()):
+            mission_change.change(episode=name)
+            return self.GetCurrentEpisode()
         return self._load_episode_raw(name)
 
     def _load_episode_raw(self, name: str) -> "Episode":

@@ -6312,6 +6312,24 @@ class HostController:
             self.post_load_hook()
 
 
+def _after_mission_change(controller, snap_scene) -> None:
+    """mission_change's on_changed hook (a warp's in-transit change, or a
+    direct LoadEpisode/LoadMission routed through it). Deliberately NOT
+    controller.post_load_hook: the carry-over keeps the bridge-officer and
+    ET_WEAPON_HIT handlers that hook registers, so re-running it would
+    register them twice. Comm sets the new mission creates are realized by
+    the per-tick _realize_comm_sets sweep."""
+    from engine.core.game import Game_GetCurrentGame
+    game = Game_GetCurrentGame()
+    ep = game.GetCurrentEpisode() if game is not None else None
+    mission = ep.GetCurrentMission() if ep is not None else None
+    if controller.session is not None and mission is not None:
+        controller.session.mission_name = mission._module_name
+    if controller.panel_registry is not None:
+        controller.panel_registry.invalidate_all()
+    snap_scene()
+
+
 class _MissionLoader:
     """Bundles _init_mission + render-instance construction so HostController
     can call a single .load(name) method.
@@ -9327,6 +9345,16 @@ def run(mission_name: Optional[str] = None,
         _prev_interp_player = None      # None until the first frame completes
         _prev_drawn_player_pose = None  # what was actually on screen last frame
 
+        def _snap_scene():
+            """Never ease the camera or a drawn pose in from the previous
+            scene: after a dev swap, and after a mission change."""
+            director.snap()
+            _xform_buf.reset_all()
+
+        from engine.core import mission_change as _mission_change
+        _mission_change.configure(
+            on_changed=lambda: _after_mission_change(controller, _snap_scene))
+
         # Ship Property Viewer (dev-only) transition state. _spv_hidden_iid
         # remembers which solid hull was hidden so it can be restored, and
         # _spv_was_open detects the open→closed edge so restore/clear runs
@@ -9836,8 +9864,7 @@ def run(mission_name: Optional[str] = None,
                     star_map_panel.invalidate()
                 controller._drain_pending_swap()
                 if had_pending_swap:
-                    director.snap()
-                    _xform_buf.reset_all()
+                    _snap_scene()
                     # Same discontinuity: never blend the player in from a
                     # pose that belonged to the previous scene.
                     _handover.cancel()
@@ -10988,6 +11015,8 @@ def run(mission_name: Optional[str] = None,
         if controller.session is not None:
             controller.session.teardown(r)
     finally:
+        from engine.core import mission_change as _mission_change
+        _mission_change.configure(on_changed=None)
         shutdown_audio()
         r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()
