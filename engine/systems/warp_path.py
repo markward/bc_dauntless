@@ -18,19 +18,26 @@ Path construction (a design choice; the spec fixes only the properties):
   that plane in a disk. A path that stays outside every disk in the plane
   stays outside every sphere in 3D, because the out-of-plane offset only adds
   distance.
-* In the plane the path is the classic "tangents and arcs" route: straight
-  tangent segments between oriented circles, and arcs along the circles.
-  Blocking disks are wrapped greedily -- the first disk a segment hits is
-  inserted as a node and the tangents recomputed -- so each piece joins the
-  next with the same tangent by construction.
+* In the plane the path is the shortest "tangents and arcs" route: straight
+  tangent segments between oriented circles (every disk, both ways round)
+  and arcs along the circles, found by Dijkstra. Every segment and arc is
+  checked against every disk, so overlapping inflated disks (Vesuvi's Haven
+  and Moon 1) are never cut between; pieces join with the same tangent by
+  construction.
 * With an arrival direction the route ends on a turning circle that leaves
   it at ``end - end_dir * L`` heading along ``end_dir``, then a final straight
   of length ``L = clearance_gu(largest obstacle radius)`` (or the remaining
-  distance, if shorter) into the placement.
+  distance, if shorter) into the placement. When that turn or straight would
+  cut a disk, shorter straights, tighter circles and the other side are
+  tried, and the turn and straight are obstacle-checked like the rest.
+* The finished path is re-measured in 3D against every keep-out sphere and
+  rejected if it cuts one; ``plan_path`` documents the fallback order and
+  the flags that report it. It never silently enters a body (ruling R6).
 """
 from __future__ import annotations
 
 import bisect
+import heapq
 import math
 from typing import Callable, NamedTuple, Sequence
 
@@ -46,6 +53,8 @@ CLEARANCE_MIN_GU = 2000.0   # ... but never less than this
 # Routing slack so float rounding never lands a tangent point a hair inside
 # a clearance sphere (a thousandth of a GU, 0.175 m).
 _ROUTE_EPS_GU = 1e-3
+# Tightest turning circle tried for the arrival turn (keeps the path smooth).
+_MIN_TURN_GU = 250.0
 _EPS = 1e-9
 
 
@@ -110,7 +119,8 @@ class WarpPath:
     """
 
     def __init__(self, start: tuple, end: tuple, pieces: list,
-                 fallback_dir: tuple):
+                 fallback_dir: tuple, *, clearance_kept: bool = True,
+                 end_dir_honoured: bool = True, enters_body: bool = False):
         self._start = tuple(float(v) for v in start)
         self._end = tuple(float(v) for v in end)
         self._pieces = pieces
@@ -121,6 +131,10 @@ class WarpPath:
             total += piece[-1]
         self.length_gu = total
         self._fallback_dir = fallback_dir
+        # How the plan came out (see plan_path's fallback order).
+        self.clearance_kept = clearance_kept
+        self.end_dir_honoured = end_dir_honoured
+        self.enters_body = enters_body
 
     @property
     def end(self) -> tuple:
@@ -160,12 +174,13 @@ class WarpPath:
 
 
 # --- planar routing ----------------------------------------------------------
-# A node is (centre2, radius, orient): orient +1 travels counter-clockwise
-# (centre on the left), -1 clockwise. A point is a node of radius 0.
+# A circle is (centre2, radius, orient, disk_id): orient +1 travels
+# counter-clockwise (centre on the left), -1 clockwise. A point is a circle of
+# radius 0 with disk_id None. A disk is (centre2, radius) in the plane.
 
 def _touch(node, u):
     """Where a travel direction ``u`` touches ``node``."""
-    (cx, cy), r, s = node
+    (cx, cy), r, s = node[0], node[1], node[2]
     lx, ly = _left2(u)
     return (cx - s * r * lx, cy - s * r * ly)
 
@@ -183,58 +198,6 @@ def _tangent(n1, n2):
     return ((t * dx - k * lx) / d2, (t * dy - k * ly) / d2)
 
 
-def _seg_hit(p, q, centre, radius):
-    """Param along p->q of the closest approach if the segment enters the disk."""
-    ux, uy = q[0] - p[0], q[1] - p[1]
-    l2 = ux * ux + uy * uy
-    wx, wy = centre[0] - p[0], centre[1] - p[1]
-    t = 0.0 if l2 <= _EPS else min(max((wx * ux + wy * uy) / l2, 0.0), 1.0)
-    cx, cy = p[0] + t * ux - centre[0], p[1] + t * uy - centre[1]
-    return t if cx * cx + cy * cy < radius * radius else None
-
-
-def _route(nodes, disks):
-    """Greedily wrap every disk a tangent segment crosses. ``nodes`` is
-    ``[start, ..., goal]``; returns the node list and each leg's direction."""
-    nodes = list(nodes)
-    wrapped = set()
-    for _ in range(len(disks) + 1):
-        dirs = [_tangent(nodes[i], nodes[i + 1]) for i in range(len(nodes) - 1)]
-        if any(u is None for u in dirs):
-            return None
-        inserted = False
-        for i, u in enumerate(dirs):
-            p, q = _touch(nodes[i], u), _touch(nodes[i + 1], u)
-            hits = []
-            for j, (centre, radius) in enumerate(disks):
-                if j in wrapped:
-                    continue
-                t = _seg_hit(p, q, centre, radius)
-                if t is not None:
-                    hits.append((t, j))
-            if not hits:
-                continue
-            _t, j = min(hits)
-            centre, radius = disks[j]
-            side = (centre[0] - p[0]) * -u[1] + (centre[1] - p[1]) * u[0]
-            orient = 1 if side >= 0.0 else -1   # centre on the left -> ccw
-            trial = nodes[:i + 1] + [(centre, radius, orient)] + nodes[i + 1:]
-            trial_dirs = [_tangent(trial[k], trial[k + 1])
-                          for k in range(len(trial) - 1)]
-            wrapped.add(j)
-            if any(d is None for d in trial_dirs):
-                continue  # disks overlap; cannot wrap this one -- leave it
-            nodes = trial
-            inserted = True
-            break
-        if not inserted:
-            return nodes, dirs
-    dirs = [_tangent(nodes[i], nodes[i + 1]) for i in range(len(nodes) - 1)]
-    if any(u is None for u in dirs):
-        return None
-    return nodes, dirs
-
-
 def _sweep(orient, u_in, u_out):
     """Angle turned on a circle of orientation ``orient`` from u_in to u_out."""
     ang = math.atan2(u_out[1], u_out[0]) - math.atan2(u_in[1], u_in[0])
@@ -243,10 +206,187 @@ def _sweep(orient, u_in, u_out):
     return 0.0 if ang > 2.0 * math.pi - 1e-12 else ang
 
 
+def _tol(r):
+    return 1e-9 * max(1.0, r)
+
+
+def _seg_clear(p, q, disks, skip=()):
+    """True when segment p->q stays outside every disk not in ``skip``."""
+    ux, uy = q[0] - p[0], q[1] - p[1]
+    l2 = ux * ux + uy * uy
+    for j, (centre, radius) in enumerate(disks):
+        if j in skip:
+            continue
+        wx, wy = centre[0] - p[0], centre[1] - p[1]
+        t = 0.0 if l2 <= _EPS else min(max((wx * ux + wy * uy) / l2, 0.0), 1.0)
+        cx, cy = p[0] + t * ux - centre[0], p[1] + t * uy - centre[1]
+        if math.hypot(cx, cy) < radius - _tol(radius):
+            return False
+    return True
+
+
+def _arc_clear(node, u_in, ang, disks, skip=()):
+    """True when the arc on ``node`` from direction u_in, turning ``ang``,
+    stays outside every disk not in ``skip``."""
+    (cx, cy), r, orient = node[0], node[1], node[2]
+    if r <= _EPS or ang <= 0.0:
+        return True
+    p0 = _touch(node, u_in)
+    a0 = math.atan2(p0[1] - cy, p0[0] - cx)
+    a1 = a0 + orient * ang
+    p1 = (cx + r * math.cos(a1), cy + r * math.sin(a1))
+    for j, (centre, radius) in enumerate(disks):
+        if j in skip:
+            continue
+        qx, qy = centre[0] - cx, centre[1] - cy
+        dq = math.hypot(qx, qy)
+        within = ((orient * (math.atan2(qy, qx) - a0)) % (2.0 * math.pi)) <= ang
+        if within or dq <= _EPS:
+            nearest = abs(dq - r)
+        else:
+            nearest = min(math.hypot(centre[0] - p0[0], centre[1] - p0[1]),
+                          math.hypot(centre[0] - p1[0], centre[1] - p1[1]))
+        if nearest < radius - _tol(radius):
+            return False
+    return True
+
+
+def _shortest(start2, goal, exit_dir, final_len, disks):
+    """Shortest tangent-continuous route in the plane from the point
+    ``start2`` to ``goal`` that enters no disk.
+
+    ``goal`` is a point (radius 0) or, with ``exit_dir``, a turning circle
+    the route leaves travelling along ``exit_dir`` (then ``final_len`` more
+    of straight). Dijkstra over tangent segments between oriented circles --
+    every disk twice (both orientations) -- with arcs along the circles;
+    every segment and arc is checked against every other disk, so a route
+    through the overlap of two inflated disks cannot be produced. Returns
+    ``(nodes, dirs)`` -- the circles visited and each leg's direction -- or
+    None."""
+    circles = [(start2, 0.0, 1, None)]
+    for j, (centre, radius) in enumerate(disks):
+        if radius <= _EPS:
+            continue                   # sphere misses the plane
+        circles.append((centre, radius, 1, j))
+        circles.append((centre, radius, -1, j))
+    circles.append((goal[0], goal[1], goal[2], None))
+    gi = len(circles) - 1
+
+    segs = []                      # (from, to, u, length)
+    out = {}
+    for a in range(gi):
+        for b in range(1, gi + 1):
+            if a == b or (circles[a][3] is not None and circles[a][3] == circles[b][3]):
+                continue
+            u = _tangent(circles[a], circles[b])
+            if u is None:
+                continue
+            p, q = _touch(circles[a], u), _touch(circles[b], u)
+            skip = {circles[a][3], circles[b][3]} - {None}
+            if not _seg_clear(p, q, disks, skip):
+                continue
+            out.setdefault(a, []).append(len(segs))
+            segs.append((a, b, u, math.hypot(q[0] - p[0], q[1] - p[1])))
+
+    heap = []
+    counter = 0
+    for k in out.get(0, []):
+        heapq.heappush(heap, (segs[k][3], counter, k))
+        counter += 1
+    done = set()
+    prev = {}
+    while heap:
+        cost, _seq, k = heapq.heappop(heap)
+        if k == "goal":
+            break
+        if k in done:
+            continue
+        done.add(k)
+        c = segs[k][1]
+        node, u_in = circles[c], segs[k][2]
+        if c == gi:
+            if exit_dir is None:
+                heapq.heappush(heap, (cost, counter, "goal"))
+                prev.setdefault("goal", []).append((cost, counter, k))
+            else:
+                ang = _sweep(node[2], u_in, exit_dir)
+                if _arc_clear(node, u_in, ang, disks):
+                    total = cost + node[1] * ang + final_len
+                    heapq.heappush(heap, (total, counter, "goal"))
+                    prev.setdefault("goal", []).append((total, counter, k))
+            counter += 1
+            continue
+        own = {node[3]}
+        for k2 in out.get(c, []):
+            if k2 in done:
+                continue
+            ang = _sweep(node[2], u_in, segs[k2][2])
+            if not _arc_clear(node, u_in, ang, disks, own):
+                continue
+            total = cost + node[1] * ang + segs[k2][3]
+            heapq.heappush(heap, (total, counter, k2))
+            prev.setdefault(k2, []).append((total, counter, k))
+            counter += 1
+    else:
+        return None
+
+    def best_prev(k):
+        return min(prev[k])[2]
+
+    chain = []
+    k = best_prev("goal")
+    while True:
+        chain.append(k)
+        if segs[k][0] == 0:
+            break
+        k = best_prev(k)
+    chain.reverse()
+    nodes = [circles[segs[chain[0]][0]]] + [circles[segs[k][1]] for k in chain]
+    return nodes, [segs[k][2] for k in chain]
+
+
+def _piece_min_dist(piece, q):
+    """Exact minimum distance from point ``q`` to a line or arc piece (3D)."""
+    if piece[0] == "line":
+        _, p0, u, length = piece
+        t = min(max(_dot(_sub(q, p0), u), 0.0), length)
+        return _norm(_sub(q, _add(p0, _mul(u, t))))
+    _, c, a, b, r, length = piece
+    w = _sub(q, c)
+    x, y = _dot(w, a), _dot(w, b)
+    h2 = max(_dot(w, w) - x * x - y * y, 0.0)
+    sweep = length / r
+    rho = math.hypot(x, y)
+    if rho <= _EPS or (math.atan2(y, x) % (2.0 * math.pi)) <= sweep:
+        return math.sqrt(h2 + (rho - r) ** 2)
+    end = _add(c, _add(_mul(a, r * math.cos(sweep)), _mul(b, r * math.sin(sweep))))
+    return min(_norm(_sub(q, _add(c, _mul(a, r)))), _norm(_sub(q, end)))
+
+
+def _min_dist(pieces, q):
+    return min((_piece_min_dist(pc, q) for pc in pieces), default=math.inf)
+
+
 def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None) -> WarpPath:
     """Plan a warp from ``start`` to ``end`` clearing every obstacle by
     ``radius + clearance_gu(radius)``; straight when nothing is in the way.
-    With ``end_dir`` the path arrives travelling along it. Deterministic."""
+    With ``end_dir`` the path arrives travelling along it. Deterministic.
+
+    Never enters a body the endpoints are outside of (spec section 1, ruling
+    R6). Fallback order when the ideal route cannot be built -- each one
+    reported on the returned path's flags:
+
+    1. full clearance, arriving along ``end_dir``;
+    2. full clearance, ``end_dir`` dropped (``end_dir_honoured`` False) --
+       the caller turns the ship at the placement itself;
+    3. bodies only, with then without ``end_dir`` (``clearance_kept`` False);
+    4. the straight line (``enters_body`` True when it crosses a body) --
+       only when even (3) has no route, which needs bodies enclosing an
+       endpoint in the plane.
+
+    Clearance exemption (R5): a body whose clearance sphere holds the start
+    or the end is kept out of only halfway from its surface to that
+    endpoint; a body holding an endpoint is not an obstacle at all."""
     s3 = tuple(float(v) for v in start)
     e3 = tuple(float(v) for v in end)
     ed = _unit(tuple(float(v) for v in end_dir)) if end_dir is not None else None
@@ -275,77 +415,127 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None) -> WarpPa
     def dir3(u):
         return _add(_mul(ex, u[0]), _mul(ey, u[1]))
 
-    # Obstacle spheres -> disks in the plane. A sphere holding the start or
-    # the end cannot be cleared; it is left out rather than failing the warp.
-    disks = []
-    largest = 0.0
-    for o in sorted(obstacles, key=lambda o: (o.name, tuple(o.center))):
-        centre = tuple(float(v) for v in o.center)
-        reach = o.radius_gu + clearance_gu(o.radius_gu) + _ROUTE_EPS_GU
-        largest = max(largest, o.radius_gu)
-        if _norm(_sub(s3, centre)) < reach or _norm(_sub(e3, centre)) < reach:
-            continue
-        h = _dot(_sub(centre, s3), ez)
-        if abs(h) >= reach:
-            continue
-        disks.append((to2(centre), math.sqrt(reach * reach - h * h)))
+    # Keep-out spheres per level: (centre3, required distance, routing radius).
+    ordered = sorted(obstacles, key=lambda o: (o.name, tuple(o.center), o.radius_gu))
+    largest = max((o.radius_gu for o in ordered), default=0.0)
+
+    def keep_outs(full_clearance):
+        spheres = []
+        for o in ordered:
+            centre = tuple(float(v) for v in o.center)
+            near = min(_norm(_sub(s3, centre)), _norm(_sub(e3, centre)))
+            if near <= o.radius_gu:
+                continue                     # an endpoint is inside the body
+            need = o.radius_gu + (clearance_gu(o.radius_gu) if full_clearance else 0.0)
+            if near < need + _ROUTE_EPS_GU:  # R5: halfway to the endpoint
+                need = o.radius_gu + 0.5 * (near - o.radius_gu)
+                spheres.append((centre, need, need))
+            else:
+                spheres.append((centre, need, need + _ROUTE_EPS_GU))
+        return spheres
+
+    def disks_of(spheres):
+        disks = []
+        for centre, _need, reach in spheres:
+            h = _dot(_sub(centre, s3), ez)
+            disks.append((to2(centre), math.sqrt(reach * reach - h * h))
+                         if abs(h) < reach else ((0.0, 0.0), 0.0))
+        return disks
 
     s2, e2 = (0.0, 0.0), to2(e3)
-    start_node = (s2, 0.0, 1)
-    if ed is None:
-        goal = (e2, 0.0, 1)
-        exit_point = None
-    else:
+
+    def build(nodes, dirs, exit_point):
+        pieces = []
+
+        def add_line(p, q):
+            seg = (q[0] - p[0], q[1] - p[1])
+            length = math.hypot(*seg)
+            if length > _EPS:
+                pieces.append(("line", to3(p),
+                               dir3((seg[0] / length, seg[1] / length)), length))
+
+        def add_arc(node, u_in, u_out):
+            centre, r, orient = node[0], node[1], node[2]
+            ang = _sweep(orient, u_in, u_out)
+            if r <= _EPS or ang <= 0.0:
+                return
+            p = _touch(node, u_in)
+            a = ((p[0] - centre[0]) / r, (p[1] - centre[1]) / r)
+            pieces.append(("arc", to3(centre), dir3(a), dir3(u_in), r, r * ang))
+
+        for i, u in enumerate(dirs):
+            if i > 0:
+                add_arc(nodes[i], dirs[i - 1], u)
+            add_line(_touch(nodes[i], u), _touch(nodes[i + 1], u))
+        if exit_point is not None:
+            a2, e_dir2 = exit_point
+            add_arc(nodes[-1], dirs[-1], e_dir2)
+            add_line(a2, e2)
+        return pieces
+
+    def valid(pieces, spheres):
+        return all(_min_dist(pieces, c) >= need - _tol(need)
+                   for c, need, _reach in spheres)
+
+    def route_to_point(spheres, disks):
+        routed = _shortest(s2, (e2, 0.0, 1), None, 0.0, disks)
+        if routed is None:
+            return None
+        pieces = build(*routed, None)
+        return pieces if valid(pieces, spheres) else None
+
+    def route_along_end_dir(spheres, disks):
         e_dir2 = (_dot(ed, ex), _dot(ed, ey))
-        final_len = min(clearance_gu(largest), dist)
-        a2 = (e2[0] - e_dir2[0] * final_len, e2[1] - e_dir2[1] * final_len)
         lft = _left2(e_dir2)
-        rel = (s2[0] - a2[0], s2[1] - a2[1])
-        lateral = rel[0] * lft[0] + rel[1] * lft[1]
-        orient = 1 if lateral >= 0.0 else -1
-        rho = final_len
-        toward = orient * lateral
-        if toward > _EPS:   # keep the start outside the turning circle
-            rho = min(rho, 0.25 * (rel[0] ** 2 + rel[1] ** 2) / toward)
-        goal = ((a2[0] + orient * rho * lft[0], a2[1] + orient * rho * lft[1]),
-                rho, orient)
-        exit_point = (a2, e_dir2)
-
-    routed = _route([start_node, goal], disks)
-    if routed is None:   # no tangent at all (degenerate): straight line
-        routed = ([start_node, (e2, 0.0, 1)], [_tangent(start_node, (e2, 0.0, 1))])
-        exit_point = None
-    nodes, dirs = routed
-
-    pieces = []
-
-    def add_line(p, q):
-        seg = (q[0] - p[0], q[1] - p[1])
-        length = math.hypot(*seg)
-        if length > _EPS:
-            pieces.append(("line", to3(p), dir3((seg[0] / length, seg[1] / length)),
-                           length))
-
-    def add_arc(node, u_in, u_out):
-        centre, r, orient = node
-        ang = _sweep(orient, u_in, u_out)
-        if r <= _EPS or ang <= 0.0:
-            return
-        p = _touch(node, u_in)
-        a = ((p[0] - centre[0]) / r, (p[1] - centre[1]) / r)
-        pieces.append(("arc", to3(centre), dir3(a), dir3(u_in), r, r * ang))
-
-    for i, u in enumerate(dirs):
-        if i > 0:
-            add_arc(nodes[i], dirs[i - 1], u)
-        add_line(_touch(nodes[i], u), _touch(nodes[i + 1], u))
-    if exit_point is not None:
-        a2, e_dir2 = exit_point
-        add_arc(nodes[-1], dirs[-1], e_dir2)
-        add_line(a2, e2)
+        l0 = min(clearance_gu(largest), dist)
+        tried = set()
+        for final_len in (l0, 0.5 * l0, 0.25 * l0, 0.0):
+            a2 = (e2[0] - e_dir2[0] * final_len, e2[1] - e_dir2[1] * final_len)
+            if not _seg_clear(a2, e2, disks):
+                continue
+            lateral = (s2[0] - a2[0]) * lft[0] + (s2[1] - a2[1]) * lft[1]
+            first = 1 if lateral >= 0.0 else -1
+            for scale in (1.0, 0.5, 0.25, 0.125):
+                rho = max(l0 * scale, _MIN_TURN_GU)
+                if (final_len, rho) in tried:
+                    continue
+                tried.add((final_len, rho))
+                best = None
+                for orient in (first, -first):
+                    goal = ((a2[0] + orient * rho * lft[0], a2[1] + orient * rho * lft[1]),
+                            rho, orient)
+                    routed = _shortest(s2, goal, e_dir2, final_len, disks)
+                    if routed is None:
+                        continue
+                    pieces = build(*routed, (a2, e_dir2))
+                    if not valid(pieces, spheres):
+                        continue
+                    length = sum(pc[-1] for pc in pieces)
+                    if best is None or length < best[0]:
+                        best = (length, pieces)
+                if best is not None:
+                    return best[1]
+        return None
 
     fallback = ed or ex
-    return WarpPath(s3, e3, pieces, fallback)
+    for full_clearance in (True, False):
+        spheres = keep_outs(full_clearance)
+        disks = disks_of(spheres)
+        if ed is None and _seg_clear(s2, e2, disks):
+            return WarpPath(s3, e3, [("line", s3, ex, dist)], fallback,
+                            clearance_kept=full_clearance)
+        attempts = ((route_along_end_dir, True),) if ed is not None else ()
+        attempts += ((route_to_point, False),)
+        for attempt, honours in attempts:
+            pieces = attempt(spheres, disks)
+            if pieces is not None:
+                return WarpPath(s3, e3, pieces, fallback,
+                                clearance_kept=full_clearance,
+                                end_dir_honoured=honours or ed is None)
+    line = [("line", s3, ex, dist)]
+    return WarpPath(s3, e3, line, fallback, clearance_kept=False,
+                    end_dir_honoured=ed is None,
+                    enters_body=not valid(line, keep_outs(False)))
 
 
 # --- speed policy and drop-out -----------------------------------------------
