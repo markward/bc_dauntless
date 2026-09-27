@@ -16,8 +16,9 @@ def _smooth(t):
 
 
 # Ship-speed envelope timing (separate from the visual streak/flash envelopes).
-# The last _T_ENTER_BOOST seconds of align ramp the ship from its cruise speed
-# up to in-system warp speed (the "blast off" just before the burst flash); the
+# The last _T_ENTER_BOOST seconds before the burst (after the align turn and any
+# hold for articulated parts) ramp the ship from its cruise speed up to
+# in-system warp speed (the "blast off" just before the burst flash); the
 # _T_EXIT_DECEL seconds AFTER the transit ends ramp it back down to 0 (the glide-
 # in as the destination system appears). The manager stays active through the
 # decel tail so the host keeps driving the speed override after arrival.

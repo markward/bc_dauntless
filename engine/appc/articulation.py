@@ -497,8 +497,8 @@ def time_to_reach(ship, state: str) -> float:
 
     0.0 for an unrigged ship, or while the dev override pins the parts to a
     state of its own (they will not move toward `state`, so there is nothing
-    to wait for). The warp sequence holds its burst on this so a ship never
-    jumps while its parts are still swinging into the warp pose.
+    to wait for). The warp sequence holds its pre-burst boost on this so a
+    ship never jumps while its parts are still swinging into the warp pose.
     """
     if _dev_override is not None:
         return 0.0

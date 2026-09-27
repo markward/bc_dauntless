@@ -79,6 +79,7 @@ def _align_duration(ship, heading):
     t = 1.5 * angle / omega
     return _T_ALIGN_MIN if t < _T_ALIGN_MIN else (_T_ALIGN_MAX if t > _T_ALIGN_MAX else t)
 
+
 def _parts_warp_time(ship):
     """Earliest burst time that lets `ship`'s articulated parts finish first:
     the time until they reach their warp pose, plus one sim tick (they start
@@ -762,8 +763,9 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         t_transit = _transit_duration(src_v, dst_v)
         t_align = _align_duration(ship, heading)
         # The ship turns at its own rate over t_align, then HOLDS aligned until
-        # its articulated parts reach their warp pose; the burst lands after
-        # both. Everything tied to the jump keys off t_burst.
+        # its articulated parts reach their warp pose; only then does the
+        # pre-burst boost start (see _parts_warp_time). Everything tied to the
+        # jump keys off t_burst.
         t_burst = max(t_align, _parts_warp_time(ship))
         t_hold = t_burst - t_align
         total = t_burst + t_transit

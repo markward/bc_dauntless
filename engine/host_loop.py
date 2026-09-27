@@ -8010,8 +8010,9 @@ def run(mission_name: Optional[str] = None,
             # vantage (source system's galaxy position) anchors the procedural
             # sky; dst_vantage (destination's) lets it fly src->dst and arrive,
             # so the destination nebula envelops on exit instead of streaming past.
-            # t_hold: seconds the ship waits ALIGNED after the turn for its
-            # articulated parts to reach their warp pose before the burst.
+            # t_hold: seconds the ship waits ALIGNED after the turn so its
+            # articulated parts reach their warp pose before the pre-burst
+            # boost starts.
             _wv.get().start(heading, t_align, t_transit,
                             App.g_kUtopiaModule.GetGameTime(), vantage,
                             dst_vantage, t_hold=t_hold)
