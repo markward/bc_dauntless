@@ -3,6 +3,8 @@
 
 #include <nif/block.h>
 
+#include "support/content_root.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -782,9 +784,9 @@ TEST_F(ModelBuildTest, FlipControllerWithoutOwnImageStillAnimates) {
 // property's own image_link set AND a 16-frame controller. Every frame must
 // be wired and the material must point at the animation.
 TEST(ModelBuildRealAssets, CGSovereignBussardFlipIsWiredWithAllSixteenFrames) {
-    const fs::path root = fs::path(OPEN_STBC_PROJECT_ROOT);
-    const fs::path nif  = root / "mods/CGSovereign/data/Models/Ships/Sovereign/Sovereign.nif";
-    const fs::path tex  = root / "mods/CGSovereign/data/Models/Ships/Sovereign/High";
+    const fs::path root = test_support::mods_root();
+    const fs::path nif  = root / "CGSovereign/data/Models/Ships/Sovereign/Sovereign.nif";
+    const fs::path tex  = root / "CGSovereign/data/Models/Ships/Sovereign/High";
     if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
 
     nif::File f = nif::load(nif);

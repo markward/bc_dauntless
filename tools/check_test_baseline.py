@@ -51,6 +51,12 @@ _PYTEST_RAN = re.compile(r"(\d+ (passed|failed|error|skipped|xfailed|xpassed)|no
 _CTEST_SUMMARY = re.compile(
     r"^\s*\d+ - (.+?) \((Failed|Subprocess aborted|Timeout|Child aborted|Skipped)\)\s*$")
 _SKIP_PREFIX = "skip:"
+# A test that only exercises an OPTIONAL mod (present only on machines where
+# that mod happens to be installed) is never "pre-existing" or "fixed" in the
+# skip:/failure sense -- its skip is legitimate exactly while its declared
+# asset is absent. Form: "optional-mod:<ctest id> <path relative to the mods
+# root>", e.g. "optional-mod:ctest:Foo.Bar CGSovereign/data/x.nif".
+_OPTIONAL_MOD_PREFIX = "optional-mod:"
 
 
 def _load_baseline():
@@ -69,10 +75,59 @@ def _load_baseline():
 
 def split_baseline(known):
     """Split ledger ids into (known failures, known skips); skip ids lose the
-    'skip:' prefix so they compare directly with parse_ctest's ids."""
-    failures = {k for k in known if not k.startswith(_SKIP_PREFIX)}
-    skips = {k[len(_SKIP_PREFIX):] for k in known if k.startswith(_SKIP_PREFIX)}
+    'skip:' prefix so they compare directly with parse_ctest's ids.
+
+    'optional-mod:' lines are neither -- they are handled entirely separately
+    (parse_optional_mod_entries / diff_optional_mod_skips) because their
+    legitimacy depends on whether their declared mod asset exists, not on a
+    fixed baseline membership test.
+    """
+    failures = set()
+    skips = set()
+    for k in known:
+        if k.startswith(_OPTIONAL_MOD_PREFIX):
+            continue
+        if k.startswith(_SKIP_PREFIX):
+            skips.add(k[len(_SKIP_PREFIX):])
+        else:
+            failures.add(k)
     return failures, skips
+
+
+def parse_optional_mod_entries(known):
+    """{ctest id: path relative to the mods root} for every 'optional-mod:'
+    baseline line. The path never contains a space, so splitting off the
+    LAST space-separated token survives a parameterised ctest id that does
+    (parse_ctest already has to handle that same shape)."""
+    entries = {}
+    for k in known:
+        if not k.startswith(_OPTIONAL_MOD_PREFIX):
+            continue
+        rest = k[len(_OPTIONAL_MOD_PREFIX):]
+        ctest_id, sep, path = rest.rpartition(" ")
+        if sep and ctest_id and path:
+            entries[ctest_id] = path
+    return entries
+
+
+def diff_optional_mod_skips(skipped, entries, mods_root_path):
+    """optional-mod ctest ids that skipped even though their declared asset
+    IS present under `mods_root_path` -- a genuine regression, since the
+    ledger form exists to explain skips caused by an ABSENT optional mod, not
+    any other reason. An id whose asset is absent (the common case) is a
+    legitimate skip and never appears here; an id that ran at all (present in
+    `entries` but not in `skipped`) never appears here either -- nothing to
+    report when it works, by design of the ledger form. A mods root that
+    could not be resolved makes every skip legitimate, matching diff_skips'
+    "no content root" posture.
+    """
+    if mods_root_path is None:
+        return []
+    new = []
+    for ctest_id, rel in sorted(entries.items()):
+        if ctest_id in skipped and os.path.exists(os.path.join(mods_root_path, rel)):
+            new.append(ctest_id)
+    return new
 
 
 def parse_ctest(out):
@@ -117,6 +172,29 @@ def content_root():
         except Exception:
             return None
     return root if root and os.path.isdir(root) else None
+
+
+def _engine_mods_root():
+    sys.path.insert(0, ROOT)
+    from engine import mods
+    return mods.mods_root()
+
+
+def mods_root():
+    """Where optional-mod ledger entries resolve their paths, or None when
+    resolution itself failed. DAUNTLESS_MODS_DIR wins when set (non-empty);
+    else engine.mods.mods_root() -- the SAME rule native/tests/support/
+    content_root.h's mods_root() applies in C++, so both sides agree on one
+    answer. Unlike content_root(), the directory need not exist: an absent
+    root just means every optional-mod path is absent under it, which
+    diff_optional_mod_skips already treats as the legitimate-skip case."""
+    root = os.environ.get("DAUNTLESS_MODS_DIR", "")
+    if not root:
+        try:
+            root = str(_engine_mods_root())
+        except Exception:
+            return None
+    return root
 
 
 def _run(cmd, **kw):
@@ -166,9 +244,10 @@ def run_pytest():
     return failed, False
 
 
-def run_ctest(root):
+def run_ctest(root, mods_root_path=None):
     """Run the C++ ctest suite; return (failed ids, skipped ids, harness error).
-    (Build separately.) `root` is exported so asset-backed tests find BC."""
+    (Build separately.) `root` is exported so asset-backed tests find BC;
+    `mods_root_path` likewise for tests behind an optional mod."""
     print("== ctest ==", flush=True)
     if not os.path.isfile(os.path.join(BUILD_DIR, "CTestTestfile.cmake")):
         print("  !! no ctest configuration in build/ — run cmake first", flush=True)
@@ -176,6 +255,8 @@ def run_ctest(root):
     env = dict(os.environ)
     if root:
         env["DAUNTLESS_GAME_DIR"] = root
+    if mods_root_path:
+        env["DAUNTLESS_MODS_DIR"] = mods_root_path
     proc = _run(["ctest", "--test-dir", "build", "--output-on-failure"], env=env)
     out = proc.stdout + proc.stderr
     failed, skipped = parse_ctest(out)
@@ -200,11 +281,14 @@ def main():
     do_ctest = "--pytest-only" not in args
     do_build = "--no-build" not in args and do_ctest
 
-    known, known_skips = split_baseline(_load_baseline())
+    baseline_raw = _load_baseline()
+    known, known_skips = split_baseline(baseline_raw)
+    optional_mod_entries = parse_optional_mod_entries(baseline_raw)
     current = set()
     skipped = set()
     harness_error = False
     root = content_root() if do_ctest else None
+    mods_root_path = mods_root() if do_ctest else None
 
     if do_build and not build_native():
         return 2
@@ -213,15 +297,25 @@ def main():
         current |= f
         harness_error = harness_error or err
     if do_ctest:
-        f, skipped, err = run_ctest(root)
+        f, skipped, err = run_ctest(root, mods_root_path)
         current |= f
         harness_error = harness_error or err
 
     new_failures = sorted(current - known)
     suites_ran = {s for s, on in (("pytest", do_pytest), ("ctest", do_ctest)) if on}
     fixed_baseline = [] if harness_error else stale_baseline(known, current, suites_ran)
+    # optional-mod ids are judged entirely by diff_optional_mod_skips, never
+    # by the generic skip:/delete-me machinery -- pull them out of `skipped`
+    # first, or an absent-mod skip (legitimate) reads as an unbaselined new
+    # skip, and a present-mod skip that later starts running (also
+    # legitimate: "nothing to report") reads as a stale baseline line to
+    # delete, which the ledger form explicitly promises never happens.
+    optional_mod_ids = set(optional_mod_entries)
     new_skips, running_skips = ([], []) if harness_error else \
-        diff_skips(skipped, known_skips, root is not None)
+        diff_skips(skipped - optional_mod_ids, known_skips, root is not None)
+    new_optional_mod_skips = [] if harness_error else \
+        diff_optional_mod_skips(skipped, optional_mod_entries, mods_root_path)
+    new_skips = sorted(new_skips + new_optional_mod_skips)
     fixed_baseline += ["skip:" + t for t in running_skips]
 
     print("\n" + "=" * 70)

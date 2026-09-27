@@ -34,6 +34,24 @@ TEST(TestContentRoot, ProjectRootIsTheCheckout) {
         << test_support::project_root();
 }
 
+// resolve_mods_root() mirrors resolve_game_root() above, just with a
+// different env var and fallback leaf -- same three cases.
+TEST(TestModsRoot, UnsetEnvFallsBackToTheProjectMods) {
+    EXPECT_EQ(test_support::resolve_mods_root(nullptr, "/proj"),
+              fs::path("/proj") / "mods");
+}
+
+// engine/mods.py treats an empty DAUNTLESS_MODS_DIR as unset too.
+TEST(TestModsRoot, EmptyEnvIsTreatedAsUnset) {
+    EXPECT_EQ(test_support::resolve_mods_root("", "/proj"),
+              fs::path("/proj") / "mods");
+}
+
+TEST(TestModsRoot, SetEnvWinsOverTheProjectMods) {
+    EXPECT_EQ(test_support::resolve_mods_root("/opt/mods", "/proj"),
+              fs::path("/opt/mods"));
+}
+
 // With no env root the renderer keeps its default RELATIVE "game": the tests
 // that emulate the runtime CWD rely on exactly that to exercise
 // resolve_asset_path's relative branch.

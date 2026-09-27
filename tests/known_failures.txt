@@ -13,6 +13,16 @@
 #   otherwise invisible), and a listed skip that now runs asks to be deleted.
 #   pytest id = the node id, e.g. pytest:tests/unit/test_foo.py::test_bar
 #   ctest id  = the test name,  e.g. ctest:FrameTest.Baz
+#   A ctest SKIP whose test only exercises an OPTIONAL MOD (present only on a
+#   machine where that mod is installed) is baselined instead as
+#   "optional-mod:ctest:<name> <path relative to the mods root>" -- e.g.
+#   "optional-mod:ctest:Foo.Bar CGSovereign/data/x.nif". Unlike a plain
+#   skip:, its legitimacy is judged by whether that path exists under the
+#   resolved mods root (DAUNTLESS_MODS_DIR, else engine.mods.mods_root()):
+#   path absent + skip = legitimate, not reported; path present + skip = a
+#   NEW skip that fails the gate (something broke); ran at all = nothing
+#   reported either way -- the line documents a dependency, not a fixed
+#   expectation, so it is never asked to be deleted.
 # Blank lines and lines starting with '#' are ignored.
 
 # --- C++ (ctest) ---------------------------------------------------------------
@@ -121,3 +131,9 @@ skip:ctest:TorpedoPassTest.MixedTorpedoAndDisruptorListRendersWithoutGlError
 skip:ctest:TorpedoPassTest.PhotonStyleDescriptorRendersWithoutGlError
 skip:ctest:TorpedoPassTest.ZeroFlareDescriptorRendersWithoutGlError
 skip:ctest:VoxelDataHeader.GalaxyHeaderDecodesToConfirmedValues
+
+# --- C++ (ctest) OPTIONAL-MOD SKIPS ---------------------------------------------
+# CGSovereign is a mod overlay, not stock SDK content; the mod lives only on
+# machines that installed it. Legitimate to skip while that path is absent
+# under the resolved mods root -- see the format note above.
+optional-mod:ctest:ModelBuildRealAssets.CGSovereignBussardFlipIsWiredWithAllSixteenFrames CGSovereign/data/Models/Ships/Sovereign/Sovereign.nif

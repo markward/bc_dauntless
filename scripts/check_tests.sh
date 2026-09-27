@@ -21,4 +21,12 @@ cd "$(dirname "$0")/.."
 DAUNTLESS_GAME_DIR="$(uv run python -c 'from engine import paths; print(paths.game_root())' 2>/dev/null)" || DAUNTLESS_GAME_DIR=""
 [ -n "$DAUNTLESS_GAME_DIR" ] && export DAUNTLESS_GAME_DIR || true
 
+# Same reasoning for optional mods: a handful of asset-backed C++ tests exist
+# only to exercise a mod dropped into mods/ (e.g. CGSovereign), and their
+# search paths honour DAUNTLESS_MODS_DIR (native/tests/support/content_root.h)
+# rather than a hard-coded <project>/mods. Ask engine.mods, the single
+# authority, so ctest and the engine agree on where mods live.
+DAUNTLESS_MODS_DIR="$(uv run python -c 'from engine import mods; print(mods.mods_root())' 2>/dev/null)" || DAUNTLESS_MODS_DIR=""
+[ -n "$DAUNTLESS_MODS_DIR" ] && export DAUNTLESS_MODS_DIR || true
+
 exec uv run python tools/check_test_baseline.py "$@"
