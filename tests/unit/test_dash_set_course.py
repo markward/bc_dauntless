@@ -151,6 +151,9 @@ def test_set_course_dash_arrives_at_the_placement_in_ten_seconds(world):
     wp = w.ona2.GetObject("Player Start")
     p, q = w.player.GetWorldLocation(), wp.GetWorldLocation()
     assert (p.x, p.y, p.z) == pytest.approx((q.x, q.y, q.z), abs=1e-6)
+    # The placement's rotation is reached by the arrival turn, after the
+    # drop-out (Mark, 2026-09-27), not snapped at it.
+    _run_until(w, lambda: not dash.is_arrival_turning(w.player))
     R, Rw = w.player.GetWorldRotation(), wp.GetWorldRotation()
     for i in range(3):
         a, b = R.GetCol(i), Rw.GetCol(i)
@@ -594,3 +597,169 @@ def test_the_headless_warp_wait_completes_a_dash(world):
     assert 10.0 < took < 30.0
     assert not dash.is_dashing(w.player)
     assert w.player.GetContainingSet() is w.ona2
+
+
+# ── the arrival turn (Mark, live 2026-09-27) ────────────────────────────────
+#
+# "I would prefer the ship to exit warp and then turn to that spot at impulse
+# so it doesnt look wierd. the player can chose to shake out of it if they
+# wish by overriding the turn." The path no longer curves onto the
+# placement's forward: the ship drops out facing its travel direction, then
+# turns onto the placement's rotation at its impulse turn rate.
+
+def _rot_angle(Ra, Rb):
+    """The angle of the rotation taking Ra onto Rb (radians)."""
+    tr = sum(Ra.GetCol(i).x * Rb.GetCol(i).x + Ra.GetCol(i).y * Rb.GetCol(i).y
+             + Ra.GetCol(i).z * Rb.GetCol(i).z for i in range(3))
+    return math.acos(max(-1.0, min(1.0, (tr - 1.0) / 2.0)))
+
+
+def _vec(p):
+    return (p.x, p.y, p.z)
+
+
+def _turn_rate():
+    from engine.host_loop import _PlayerControl
+    return _PlayerControl.TURN_RATE_RAD_PER_S   # the fixture's Galaxy: no IES
+
+
+def _to_drop_out(w):
+    warp_button.press(w.button)
+    path = dash._state(w.player).path
+    travel = path.tangent_at(path.length_gu)
+    _run_until(w, lambda: not dash.is_dashing(w.player))
+    return travel
+
+
+def test_the_set_course_path_is_straight_when_unobstructed(world):
+    w = world
+    warp_button.press(w.button)
+    path = dash._state(w.player).path
+    assert [p[0] for p in path._pieces] == ["line"]
+    assert path.length_gu == pytest.approx(math.dist(path._start, path._end))
+
+
+def test_arrival_drops_out_facing_the_travel_direction(world):
+    w = world
+    wp = w.ona2.GetObject("Player Start")
+    travel = _to_drop_out(w)
+    f_wp = _vec(wp.GetWorldRotation().GetCol(1))
+    # Premise: this course arrives well off the placement's forward.
+    assert sum(a * b for a, b in zip(travel, f_wp)) < math.cos(math.radians(30))
+
+    assert w.player.GetContainingSet() is w.ona2
+    assert _vec(w.player.GetWorldLocation()) == pytest.approx(
+        _vec(wp.GetWorldLocation()), abs=1e-6)
+    assert _vec(w.player.GetVelocity()) == (0.0, 0.0, 0.0)
+    assert _vec(w.player.GetWorldRotation().GetCol(1)) == pytest.approx(
+        travel, abs=1e-6)
+    assert dash.is_arrival_turning(w.player)
+
+
+def test_then_turns_onto_the_placement_at_the_turn_rate(world):
+    w = world
+    wp = w.ona2.GetObject("Player Start")
+    _to_drop_out(w)
+    Rw = wp.GetWorldRotation()
+    pos = _vec(w.player.GetWorldLocation())
+    a0 = _rot_angle(w.player.GetWorldRotation(), Rw)
+    rate = _turn_rate()
+    angles = [a0]
+    frames_ = 0
+    while dash.is_arrival_turning(w.player):
+        dash.tick(w.player, TICK_DELTA)
+        frames_ += 1
+        angles.append(_rot_angle(w.player.GetWorldRotation(), Rw))
+        assert frames_ < 1000
+    for prev, cur in zip(angles, angles[1:]):
+        assert cur < prev + 1e-9                     # monotone, no overshoot
+        assert prev - cur <= rate * TICK_DELTA + 1e-6   # never above the rate
+    assert frames_ == math.ceil(a0 / (rate * TICK_DELTA) - 1e-9)
+    R = w.player.GetWorldRotation()
+    for i in (1, 2):
+        assert _vec(R.GetCol(i)) == pytest.approx(_vec(Rw.GetCol(i)), abs=1e-6)
+    # At rest, where it dropped out, the whole turn.
+    assert _vec(w.player.GetWorldLocation()) == pytest.approx(pos, abs=1e-9)
+    assert _vec(w.player.GetVelocity()) == (0.0, 0.0, 0.0)
+
+
+def test_a_steering_key_mid_turn_cancels_it(world):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _to_drop_out(w)
+    pc = _PlayerControl()
+    for _ in range(10):
+        pc.apply(w.player, TICK_DELTA, _Reader())
+        dash.tick(w.player, TICK_DELTA)
+    assert dash.is_arrival_turning(w.player)
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(held={pc._input_map.code("yaw_left")}))
+    assert not dash.is_arrival_turning(w.player)
+    # From here only the player turns the ship: with no key held, and the
+    # yaw rate ramped back down, nothing rotates it.
+    for _ in range(120):
+        pc.apply(w.player, TICK_DELTA, _Reader())
+        dash.tick(w.player, TICK_DELTA)
+    r0 = _vec(w.player.GetWorldRotation().GetCol(1))
+    for _ in range(30):
+        pc.apply(w.player, TICK_DELTA, _Reader())
+        dash.tick(w.player, TICK_DELTA)
+    assert _vec(w.player.GetWorldRotation().GetCol(1)) == pytest.approx(r0)
+
+
+def test_a_throttle_key_mid_turn_cancels_it(world):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _to_drop_out(w)
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA, _Reader(pressed={_Keys.KEY_5}))
+    assert not dash.is_arrival_turning(w.player)
+    assert pc.impulse_level == 5
+
+
+def test_a_scroll_throttle_nudge_mid_turn_cancels_it(world):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _to_drop_out(w)
+    pc = _PlayerControl()
+    pc.nudge_throttle(1)
+    pc.apply(w.player, TICK_DELTA, _Reader())
+    assert not dash.is_arrival_turning(w.player)
+
+
+def test_death_mid_turn_cancels_it(world):
+    w = world
+    _to_drop_out(w)
+    w.player.SetDead()
+    R0 = w.player.GetWorldRotation()
+    dash.tick(w.player, TICK_DELTA)
+    assert not dash.is_arrival_turning(w.player)
+    assert _rot_angle(w.player.GetWorldRotation(), R0) == 0.0
+
+
+def test_a_new_dash_mid_turn_cancels_it(world):
+    w = world
+    _to_drop_out(w)
+    w.button.set_player_destination("Systems.Ona.Ona1")
+    warp.set_course_placement(w.button, "Systems.Ona.Ona1")
+    warp_button.press(w.button)
+    assert dash.is_dashing(w.player)
+    assert not dash.is_arrival_turning(w.player)
+
+
+def test_a_player_swap_mid_turn_cancels_it(world):
+    w = world
+    _to_drop_out(w)
+    _swap_player(w)
+    assert not dash.is_arrival_turning(w.player)
+
+
+def test_an_ai_order_mid_turn_cancels_it(world):
+    import AI.Player.Stay
+    w = world
+    _to_drop_out(w)
+    w.player.SetAI(AI.Player.Stay.CreateAI(w.player))
+    R0 = w.player.GetWorldRotation()
+    dash.tick(w.player, TICK_DELTA)
+    assert not dash.is_arrival_turning(w.player)
+    assert _rot_angle(w.player.GetWorldRotation(), R0) == 0.0

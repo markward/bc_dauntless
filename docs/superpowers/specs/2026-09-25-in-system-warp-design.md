@@ -82,8 +82,9 @@ in progress (`IsDoingInSystemWarp`); one warp per `StopInSystemWarp` cycle;
 a small **warp flight** with four parts.
 
 **Target.** A **destination** — a ship (Intercept; tracked live, the path
-re-planned each tick toward its current position) or a fixed point with an
-arrival direction (Set Course: the placement) — or a **heading** (open-ended;
+re-planned each tick toward its current position) or a fixed point (Set
+Course: the placement; planned with no arrival direction since 2026-09-27 — the
+arrival turn in §2 faces it afterwards) — or a **heading** (open-ended;
 the heading dash).
 
 **Path.** Planned in **system coordinates** (`frames.system_position` /
@@ -153,9 +154,22 @@ one test:
 The dash: **align** (the tunnel's existing cinematic turn, onto the path's first
 direction) → **engage flash** → **~10 s** along the path → **drop-out flash** at
 the arrival placement ("Player Start", or the placement Set Course chose), at
-rest. The path is planned to **arrive along the placement's forward direction**,
-so the ship ends where and facing where the tunnel would have put it, without a
-snap. Every mission's arrival geometry holds.
+rest, **facing its travel direction**. The path is planned **without** an end
+direction (straight, or routed around bodies only where their clearance needs
+it), and the drop-out places the ship exactly on the placement's position but
+does **not** snap its rotation. Then an **arrival turn**: the ship, still at
+rest, turns onto the placement's rotation (forward `GetCol(1)`, up `GetCol(2)`)
+at its impulse turn rate — the cap `_PlayerControl` flies manual turns at — and
+the turn ends when aligned. Any steering or throttle input takes the conn back
+at once and cancels it; so do an AI order, a new dash, a warp, death, a player
+swap or a mission change. The tunnel's own arrival (`PlaceObjectByName`, which
+snaps the rotation — BC behaviour) and Warp on Heading are unchanged. Every
+mission's arrival *position* holds; its arrival *facing* is reached a moment
+later unless the player overrides it. (Mark, live 2026-09-27: "I would prefer
+the ship to exit warp and then turn to that spot at impulse so it doesnt look
+wierd. the player can chose to shake out of it if they wish by overriding the
+turn." This replaced the original design, which curved the path's end onto the
+placement's forward so the ship arrived facing it without a snap.)
 
 **Warp on Heading.** A new Helm entry beside Warp, with a project-authored label
 (BC has no string for it). It sends the same `ET_WARP_BUTTON_PRESSED` through
@@ -263,7 +277,8 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
 **In the gate (`scripts/check_tests.sh`):**
 
 - **Planner (pure):** straight line when clear; a curve clears every body by the
-  margin; a placement path ends at the placement arriving along its forward;
+  margin; the planner can still end a path along an arrival direction
+  (`end_dir`), though Set Course no longer asks it to (§2's arrival turn);
   Set Course speed gives ~10 s within the clamps; on the real Ona map,
   Ona 1 → Ona 3 routes around the sun (the straight line passes ~4,350 GU from
   the sun's centre, inside its 10,000 GU radius).

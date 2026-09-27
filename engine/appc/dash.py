@@ -4,8 +4,9 @@ A Set Course whose destination region lies in the player's own mapped
 system, and which names no mission or episode, does not take the tunnel:
 the player flies the real system on a ``WarpFlight`` (engine/appc/
 warp_flight.py) and drops out at the destination's arrival placement, at
-rest, facing where the tunnel would have left it. ``warp.execute_warp``
-forks here; everything else (rule C) keeps the tunnel.
+rest, facing its travel direction; the arrival turn then swings it onto the
+placement's rotation at its impulse turn rate (see the section at the end).
+``warp.execute_warp`` forks here; everything else (rule C) keeps the tunnel.
 
 Warp on Heading (``start_heading``) is the other dash: no destination and no
 align -- it engages at once along the nose at HEADING_DASH_GUPS and runs
@@ -185,12 +186,15 @@ def start_set_course(player, dest_set, placement_name, queues,
     end = tuple(wp_sys[1:])
     f = wp.GetWorldRotation().GetCol(1)
     forward = (f.x, f.y, f.z)
-    path = plan_path(tuple(start[1:]), end, warp_flight.obstacles_for(player),
-                     end_dir=forward)
+    # No end_dir (Mark, live 2026-09-27): the path does not curve onto the
+    # placement's forward -- the ship drops out facing its travel direction
+    # and turns onto the placement at impulse afterwards (the arrival turn).
+    path = plan_path(tuple(start[1:]), end, warp_flight.obstacles_for(player))
     if path.enters_body:
         _log_body_fallback(dest_set)
         return False
 
+    cancel_arrival_turn(player)
     st = _Dash(dest_set, placement, wp, end, forward, path,
                {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
                button)
@@ -252,6 +256,7 @@ def start_heading(player, queues, button=None) -> bool:
     st = _Dash(None, None, None, None, heading, None,
                {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
                button)
+    cancel_arrival_turn(player)
     player.__dict__["_dash"] = st
     # Ruling R12, as at a Set Course press.
     from engine.appc import warp
@@ -392,9 +397,11 @@ def _turn_to(fwd, target, up):
 
 def tick(player, dt: float) -> None:
     """Advance the align (game time), engage when it completes, and run the
-    drop-out once for a flight that has ended, whatever ended it."""
+    drop-out once for a flight that has ended, whatever ended it; after a
+    Set Course arrival, step the arrival turn."""
     st = _state(player)
     if st is None:
+        _step_arrival_turn(player, dt)
         return
     from engine.appc import ship_death
     if ship_death._out_of_action(player):
@@ -447,7 +454,9 @@ def abandon(ship) -> None:
     QuickBattle ship swap): cancel its dash (``_cancel`` -- no hand-off, no
     ET_EXITED_WARP, queues back if it never engaged) and leave it at rest.
     Nothing else would end it: the host ticks only the current player's
-    dash, and a heading flight in open space never ends on its own."""
+    dash, and a heading flight in open space never ends on its own. An
+    arrival turn in progress is dropped too."""
+    cancel_arrival_turn(ship)
     st = _state(ship)
     if st is None:
         return
@@ -465,7 +474,7 @@ def _engage(player, st, flight=None) -> None:
     if flight is None:
         turn = TGMatrix3().MakeRotation(st.angle, st.axis)
         player.SetMatrixRotation(turn.MultMatrix(st.rot0))
-        flight = WarpFlight(target=(st.end, st.forward),
+        flight = WarpFlight(target=(st.end, None),
                             speed_policy="set_course", exit_policy="rest")
         # The ship was held at the planned start through the align: fly the
         # path already planned rather than planning it a second time.
@@ -519,10 +528,12 @@ def drop_out(player, reason) -> None:
         dest = st.dest_set
         # Onto the placement before any set event fires, so handlers read
         # the arrival pose; then exact in the destination's own frame.
+        # The rotation is NOT snapped (Mark, live 2026-09-27): the ship keeps
+        # its travel direction and turns onto the placement at impulse
+        # afterwards (_begin_arrival_turn, below).
         local = frames.local_in(src, st.waypoint)
         if local is not None:
             player.SetTranslateXYZ(*local)
-        player.SetMatrixRotation(st.waypoint.GetWorldRotation())
         if dest is not src:
             handoff.hand_off(player, dest)
             q = st.waypoint.GetWorldLocation()
@@ -536,6 +547,8 @@ def drop_out(player, reason) -> None:
         else:
             handoff.post_exited_warp(player)
 
+    if st.flight.ended_reason == "arrived":
+        _begin_arrival_turn(player, st.waypoint)
     _on_drop_out_fx(player)
     warp_state.set_state(player, WarpEngineSubsystem.WES_NOT_WARPING)
     dash_helm.sync(player)
@@ -545,3 +558,98 @@ def drop_out(player, reason) -> None:
         seq = App.TGSequence_Create()
         warp.queue_after(seq, st.queues)
         seq.Play()
+
+
+# ── the arrival turn ───────────────────────────────────────────────────────
+#
+# Mark, live 2026-09-27: "I would prefer the ship to exit warp and then turn
+# to that spot at impulse so it doesnt look wierd. the player can chose to
+# shake out of it if they wish by overriding the turn." A Set Course arrival
+# drops out facing its travel direction; from the next frame the ship turns,
+# at rest, onto the placement's rotation (forward GetCol(1), up GetCol(2))
+# at its impulse turn rate -- the cap _PlayerControl flies manual turns at.
+# Any steering or throttle input (_PlayerControl.apply), an AI order, a new
+# dash, a warp, death or a player swap ends it. State on the player
+# (``_arrival_turn``), like ``_dash``.
+
+ARRIVAL_ALIGNED_RAD = math.radians(0.5)
+
+
+def is_arrival_turning(player) -> bool:
+    d = getattr(player, "__dict__", None) if player is not None else None
+    return d is not None and d.get("_arrival_turn") is not None
+
+
+def cancel_arrival_turn(player) -> None:
+    """End the arrival turn where the ship is, if one is running."""
+    d = getattr(player, "__dict__", None) if player is not None else None
+    if d is not None:
+        d.pop("_arrival_turn", None)
+
+
+def _begin_arrival_turn(player, waypoint) -> None:
+    target = waypoint.GetWorldRotation()
+    if _rotation_to(player.GetWorldRotation(), target)[1] <= \
+            ARRIVAL_ALIGNED_RAD:
+        player.SetMatrixRotation(target)
+        return
+    player.__dict__["_arrival_turn"] = (target, player.GetContainingSet())
+
+
+def _turn_rate(player) -> float:
+    """The max angular rate _PlayerControl.apply turns the player at: the
+    impulse engines' live max angular velocity, else (no authored angular
+    limits) its fallback TURN_RATE_RAD_PER_S."""
+    from engine.appc.ship_motion import _effective_motion
+    em = _effective_motion(player)
+    if em.has_angular:
+        return em.max_ang_vel
+    from engine.host_loop import _PlayerControl
+    return _PlayerControl.TURN_RATE_RAD_PER_S
+
+
+def _rotation_to(R, target):
+    """(axis, angle) of the world-frame rotation D with D . R = target."""
+    D = target.MultMatrix(R.Transpose())
+    c = max(-1.0, min(1.0, (D.m00 + D.m11 + D.m22 - 1.0) / 2.0))
+    angle = math.acos(c)
+    axis = TGPoint3(D.m21 - D.m12, D.m02 - D.m20, D.m10 - D.m01)
+    n = axis.Length()
+    if n < 1e-6 and angle > math.pi / 2.0:
+        # A half-turn: the axis is the column of (D + I)/2 with the largest
+        # diagonal (D is symmetric there).
+        k = max(range(3), key=lambda i: D.GetEntry(i, i))
+        col = D.GetCol(k)
+        v = [col.x, col.y, col.z]
+        v[k] += 1.0
+        axis = TGPoint3(*v)
+        n = axis.Length()
+    if n < 1e-12:
+        return TGPoint3(0.0, 0.0, 1.0), 0.0
+    return TGPoint3(axis.x / n, axis.y / n, axis.z / n), angle
+
+
+def _step_arrival_turn(player, dt: float) -> None:
+    turn = player.__dict__.get("_arrival_turn")
+    if turn is None:
+        return
+    target, turn_set = turn
+    from engine.appc import ship_death, warp_state
+    from engine.appc.subsystems import WarpEngineSubsystem
+    if (ship_death._out_of_action(player)
+            or player.GetContainingSet() is not turn_set
+            or (hasattr(player, "GetAI") and player.GetAI() is not None)
+            or warp_state.get_state(player)
+            != WarpEngineSubsystem.WES_NOT_WARPING):
+        cancel_arrival_turn(player)
+        return
+    R = player.GetWorldRotation()
+    axis, angle = _rotation_to(R, target)
+    step = _turn_rate(player) * dt
+    if angle <= step:
+        player.SetMatrixRotation(target)
+        cancel_arrival_turn(player)
+    elif step > 0.0:
+        player.SetMatrixRotation(
+            TGMatrix3().MakeRotation(step, axis).MultMatrix(R))
+    player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))

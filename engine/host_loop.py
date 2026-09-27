@@ -2853,6 +2853,14 @@ class _PlayerControl:
             self._sync_control_from_ship(player)
             if self._current_speed == 0.0:
                 self.impulse_level = 0
+        # A Set Course arrival turn (dash.py, Mark 2026-09-27) swings the ship
+        # onto its placement from dash.tick, which runs after this each frame;
+        # any steering or throttle input takes the conn back first, and this
+        # same tick's input then registers as normal.
+        if dash.is_arrival_turning(player) and (
+                self._manual_throttle_nudge
+                or self._detect_manual_flight_input(h)):
+            dash.cancel_arrival_turn(player)
         # Helm-AI ownership arbitration (see section comment above apply()).
         nudged = self._manual_throttle_nudge
         self._manual_throttle_nudge = False
