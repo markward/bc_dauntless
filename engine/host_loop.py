@@ -5181,13 +5181,24 @@ def _resolve_active_set(player):
 _resolve_active_lighting_set = _resolve_active_set
 
 
-def _aggregate_lights(pSet):
+def _aggregate_lights(pSet, player=None):
     """Thin wrapper over engine.appc.lights.aggregate_for_renderer that
     plugs in this module's DEFAULT_AMBIENT / DEFAULT_DIRECTIONALS. Kept
     as a private symbol so existing tests and call sites don't have to
-    juggle the defaults at every call site."""
+    juggle the defaults at every call site.
+
+    With a `player` in a MAPPED region, the key light is re-aimed from the
+    system's star and takes the star's colour at BC's authored brightness
+    (engine/systems/star_light.py). Recomputed every call, so it stays
+    correct anywhere in the system, mid-dash included. Unmapped sets and
+    player=None are exactly BC's lights."""
     from engine.appc.lights import aggregate_for_renderer
-    return aggregate_for_renderer(pSet, DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
+    from engine.systems import star_light
+    ambient, directionals = aggregate_for_renderer(
+        pSet, DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
+    if player is not None and pSet is not None:
+        directionals = star_light.for_player(pSet, player, directionals)
+    return ambient, directionals
 
 
 def _aggregate_bridge_lights():
@@ -11189,7 +11200,7 @@ def run(mission_name: Optional[str] = None,
             if not pause.sim_frozen:
                 _update_ui_for_tick(player, view_mode, session, active_set)
 
-            ambient, directionals = _aggregate_lights(active_set)
+            ambient, directionals = _aggregate_lights(active_set, player)
             if _nebula_thunder is not None and r.nebula_lightning_enabled():
                 flashes = _nebula_thunder.active_flashes()
                 if flashes:

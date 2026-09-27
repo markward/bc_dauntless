@@ -346,8 +346,17 @@ sightline fails silently by clipping one world in one system. Depth cost is
 negligible: forward-Z precision is `Δz ≈ z²/(2²⁴·n)` once `f ≫ n`, governed by
 `near`, which stays at 1.0.
 
-**Lighting and backdrops are unchanged.** Backdrops stay per-set (BC authored
-them that way); lighting resolves via the rendered set, as today.
+**Backdrops are unchanged; the key light now comes from the star.** Backdrops
+stay per-set (BC authored them that way), and lighting still resolves via the
+rendered set -- except that in a MAPPED region the key light (the brightest
+directional) points from the player's system position to the star and takes
+the star's map colour, scaled to the authored light's luminance so BC's
+brightness is kept. Every other directional and the ambient are BC's; an
+unmapped set is untouched. Recomputed every frame, so it holds anywhere in the
+system, mid-dash included (`engine/systems/star_light.py`). *Amended
+2026-09-27, Mark's call after a live finding at Ona 2: the authored light sat
+73 degrees below the visible sun, and Ona 3's near-white light lit a red
+star's system.*
 
 **Status (Plan 3).** Built as designed. `engine/systems/celestial.py:draw_list(view)`
 is the pure function this section specifies — a dataclass tuple keyed by
@@ -531,7 +540,7 @@ reference branch).
 | # | Category | Where it lands |
 |---|---|---|
 | 1 | Rendering | §4 — map only; own region's bodies also real set objects |
-| 2 | Lighting and backdrops | §4 — unchanged, per rendered set |
+| 2 | Lighting and backdrops | §4 — backdrops unchanged, per rendered set; key light from the star (direction + colour, BC brightness), other lights unchanged — amended 2026-09-27 |
 | 3 | Navigation options | galaxy map + system map; §7 |
 | 4 | Physics | §1 accessor, §5 render origin, §6 collision first |
 | 5 | AI | already global (`iter_ships`); §3 loads the whole system |
