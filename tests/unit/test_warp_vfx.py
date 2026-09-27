@@ -153,3 +153,43 @@ def test_engine_glow_fades_over_the_exit_decel():
     assert 0.0 < mid < 1.0
     w.tick(8.0)                               # tail end: cold, and inactive
     assert w.engine_glow() == (0.0, 0.0)
+
+
+# ── Hold between align and burst (articulated parts finishing) ─────────────
+#
+# The ship turns at its own rate over t_align, then HOLDS aligned for t_hold
+# while its parts finish swinging into the warp pose; everything tied to the
+# jump (burst, streak, flash, pre-burst boost, glow spike, sky travel) moves
+# to t_align + t_hold. The turn itself is unchanged.
+
+def test_the_turn_keeps_its_rate_and_the_ship_holds_before_the_burst():
+    w = WarpVFX()
+    w.start(heading=(1.0, 0.0, 0.0), t_align=2.0, t_transit=4.0, now=0.0,
+            t_hold=3.0)
+    w.tick(1.0); assert 0.0 < w.turn_fraction() < 1.0
+    w.tick(2.0); assert w.turn_fraction() == 1.0 and w.phase() == "align"
+    w.tick(4.9)
+    assert w.phase() == "align" and w.streak_intensity() == 0.0
+    assert w.flash_intensity() == 0.0
+    w.tick(5.0); assert w.phase() == "transit" and w.flash_intensity() > 0.5
+    w.tick(11.0); assert w.phase() == "exit"
+    w.tick(13.0); assert w.is_active() is False
+
+
+def test_the_pre_burst_boost_is_timed_to_the_held_burst():
+    w = WarpVFX()
+    w.start((1.0, 0.0, 0.0), t_align=2.0, t_transit=4.0, now=0.0, t_hold=3.0)
+    w.tick(3.5); assert w.ship_speed(5.0, 600.0) == 5.0      # holding at cruise
+    w.tick(4.5); assert 5.0 < w.ship_speed(5.0, 600.0) < 600.0  # last second
+    w.tick(5.5); assert w.ship_speed(5.0, 600.0) == 0.0
+
+
+def test_the_glow_spike_and_sky_travel_start_at_the_held_burst():
+    w = WarpVFX()
+    w.start((0.0, 0.0, 1.0), t_align=2.0, t_transit=4.0, now=0.0,
+            vantage=(0.0, 0.0, 0.0), t_hold=3.0)
+    w.tick(4.9)
+    drive, burst = w.engine_glow()
+    assert burst == 0.0 and drive < 1.0
+    assert w.sky_vantage(1.0) == (0.0, 0.0, 0.0)            # not moving yet
+    w.tick(5.0); assert w.engine_glow() == (1.0, 1.0)

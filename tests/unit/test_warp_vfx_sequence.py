@@ -24,7 +24,8 @@ def test_flythrough_on_holds_swap_and_starts_vfx():
     started = {}
     warp.configure_warp_vfx(
         enabled=lambda: True,
-        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None:
+        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None,
+            t_hold=0.0:
             started.update(align=t_align, transit=t_transit, heading=heading,
                            vantage=vantage, dst_vantage=dst_vantage),
         stop=lambda: None,
@@ -85,18 +86,20 @@ def test_flythrough_off_is_instant():
 
 
 def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
-    """A ship already facing its heading aligns in _T_ALIGN_MIN (0.5 s), but a
-    rig whose wings take 4.75 s to swing into the warp pose must not jump
-    mid-swing: the align window -- which schedules the burst, the Enter Warp
-    flash and the VFX -- stretches to cover the parts."""
+    """The ship turns at its own rate (t_align unchanged), then HOLDS aligned
+    until its articulated parts have reached the warp pose, then bursts. A rig
+    slower than any turn (9 s > _T_ALIGN_MAX) always needs a hold."""
+    import pytest
     from engine.appc import articulation
+    from engine.core.loop import TICK_DELTA
     monkeypatch.setattr(articulation, "time_to_reach",
-                        lambda ship, state: 4.75 if state == "warp" else 0.0)
+                        lambda ship, state: 9.0 if state == "warp" else 0.0)
     started = {}
     warp.configure_warp_vfx(
         enabled=lambda: True,
-        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None:
-            started.update(align=t_align),
+        start=lambda heading, t_align, t_transit, vantage=None,
+            dst_vantage=None, t_hold=0.0:
+            started.update(align=t_align, hold=t_hold, heading=heading),
         stop=lambda: None,
         vantage_of=lambda key: (1.0, 2.0, 3.0))
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src3")
@@ -108,9 +111,36 @@ def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
     sys.modules["FakeSys.D3"] = mod
     seq = warp.WarpSequence_Create(player, "FakeSys.D3", placement="Player Start")
     seq.Play()
-    assert started["align"] >= 4.75
+    # The turn is the ship's own: unchanged by the rig.
+    assert started["align"] == warp._align_duration(player, started["heading"])
+    burst = 9.0 + TICK_DELTA
+    assert started["align"] + started["hold"] == pytest.approx(burst)
     departs = [d for (a, d) in _scheduled(seq) if isinstance(a, warp._WarpDepartAction)]
-    assert departs and departs[0] >= 4.75
+    assert departs == [pytest.approx(burst)]
+
+
+def test_no_rig_means_no_hold(monkeypatch):
+    from engine.appc import articulation
+    monkeypatch.setattr(articulation, "time_to_reach", lambda ship, state: 0.0)
+    started = {}
+    warp.configure_warp_vfx(
+        enabled=lambda: True,
+        start=lambda heading, t_align, t_transit, vantage=None,
+            dst_vantage=None, t_hold=0.0: started.update(align=t_align, hold=t_hold),
+        stop=lambda: None,
+        vantage_of=lambda key: (1.0, 2.0, 3.0))
+    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src4")
+    player = App.ShipClass_Create(); player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    import types, sys
+    mod = types.ModuleType("FakeSys.D4"); mod.Initialize = lambda: (
+        App.g_kSetManager.AddSet(SetClass_Create(), "D4"))
+    sys.modules["FakeSys.D4"] = mod
+    seq = warp.WarpSequence_Create(player, "FakeSys.D4", placement="Player Start")
+    seq.Play()
+    assert started["hold"] == 0.0
+    departs = [d for (a, d) in _scheduled(seq) if isinstance(a, warp._WarpDepartAction)]
+    assert departs == [started["align"]]
 
 
 def _scheduled(seq):
