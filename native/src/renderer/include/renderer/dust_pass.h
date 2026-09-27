@@ -86,9 +86,13 @@ public:
     // In-system-warp dash (spec §4): at full dash intensity the cap is
     // raised to kMaxSmearLength * kDashSmearScale so the dust reads as
     // streaks at dash speed instead of vanishing under the ordinary cap
-    // (10,000 GU/s would otherwise be capped at 1.5 GU; 400 * 1.5 = 600 GU
-    // streaks). Live-tuned by eye; no correctness dependency on the value.
-    static constexpr float kDashSmearScale       = 400.0f;
+    // (10,000 GU/s would otherwise be capped at 1.5 GU). 20 * 1.5 = 30 GU.
+    // The cap MUST stay inside the dust volume's diameter (2*kVolumeRadius
+    // = 80 GU): dust.vert stretches each particle +-half the smear, so a
+    // longer streak crosses the camera plane and clips to a screen-spanning
+    // white line (the old 400x = 600 GU cap made the screen unreadable
+    // mid-dash — live finding 2026-09-27). 30 GU tuned live.
+    static constexpr float kDashSmearScale       = 20.0f;
     static constexpr float kSizeMin              = 0.02f;       // BC units
     static constexpr float kSizeMax              = 0.035f;
     // Brightness boosted ~1.6x (spec §1, "moderate").

@@ -89,6 +89,18 @@ TEST(DustDashSmearCap, FullDashScalesByKDashSmearScale) {
                         renderer::DustPass::kDashSmearScale);
 }
 
+// Live finding 2026-09-27: at 10,000 GU/s a 333 GU streak (4-8x the 80 GU
+// dust volume) crosses the camera plane and clips to a screen-spanning white
+// line. The full-dash cap is pinned at 30 GU, inside the volume diameter.
+TEST(DustDashSmearCap, FullDashCapIsThirtyGu) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(1.0f), 30.0f);
+}
+
+TEST(DustDashSmearCap, FullDashStreakStaysInsideDustVolume) {
+    EXPECT_LT(renderer::dash_smear_cap(1.0f),
+              2.0f * renderer::DustPass::kVolumeRadius);
+}
+
 TEST(DustDashSmearCap, ScalesMonotonicallyWithIntensity) {
     const float low  = renderer::dash_smear_cap(0.25f);
     const float mid  = renderer::dash_smear_cap(0.5f);

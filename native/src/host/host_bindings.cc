@@ -71,6 +71,7 @@
 #include <renderer/smaa_pass.h>
 #include <renderer/filmic_pass.h>
 #include <renderer/motion_blur_pass.h>
+#include <renderer/motion_blur_shutter.h>
 #include <renderer/render_origin.h>
 #include <renderer/dof_pass.h>
 #include <renderer/aabb.h>
@@ -1511,19 +1512,12 @@ void frame() {
             // origin followed the camera since (render_origin.h).
             const glm::mat4 prev     = renderer::render_origin::rebase_prev_viewproj(
                 g_prev_viewproj, g_prev_viewproj_origin, g_world.render_origin());
-            // Shutter-angle normalisation. The motion vector is a per-FRAME
-            // displacement, so a dipped framerate moves the camera further and
-            // smears harder -- blur measuring frames instead of time. Scaling
-            // by kMotionBlurRefDt/dt restores a fixed exposure duration.
-            // Clamped to 1.0 deliberately: above the reference rate the
-            // physically consistent scale would be > 1 and the blur would GROW
-            // relative to how it was tuned. This only ever reduces.
+            // Shutter: frame-rate normalised and faded out by the dash
+            // intensity (renderer/motion_blur_shutter.h documents both).
             // `dt` is the wall-clock frame time already computed at the top
             // of frame(); no second timestamp is tracked for this.
-            const float shutter =
-                (dt > 1e-6f)
-                    ? static_cast<float>(std::min(kMotionBlurRefDt / dt, 1.0))
-                    : 1.0f;
+            const float shutter = renderer::motion_blur_shutter(
+                dt, kMotionBlurRefDt, dauntless_dash_vfx::intensity());
             passes.emplace_back([inv_proj, cam_rot, cam_pos, prev, fw, fh, shutter]
                                 (std::uint32_t s, std::uint32_t d) {
                 g_motion_blur_pass->draw(s, d, fw, fh, inv_proj, cam_rot,
