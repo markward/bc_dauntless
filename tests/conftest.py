@@ -63,7 +63,9 @@ if sys.platform == "win32":
     if _BUILD_DIR.is_dir():
         _DLL_DIR_HANDLE = os.add_dll_directory(str(_BUILD_DIR))
 
-_PY2_OCTAL = re.compile(r'(?<![\w.])0([0-7]+)\b')
+# Not after a float exponent's sign (`7.7e-05`): that `05` is the exponent,
+# not a Python 2 octal literal. (`1e05` is already excluded by \w.)
+_PY2_OCTAL = re.compile(r'(?<![\w.])(?<![0-9.][eE][+-])0([0-7]+)\b')
 _PY2_RAISE = re.compile(r'^(\s*raise\s+\w[\w.]*)\s*,\s*(.*)', re.MULTILINE)
 _PY2_PRINT_FILE = re.compile(r'^(\s*)print\s*>>\s*(\S+)\s*,\s*(.*?)\s*$', re.MULTILINE)
 _PY2_PRINT_STMT = re.compile(r'^(\s*)print\s+(?!\()(.+?)\s*$', re.MULTILINE)
