@@ -169,9 +169,13 @@ after-warp at drop-out. The survey's audit of all 26 handlers with no
 destination: none crashes; E1M2 refuses silently, E6M1 answers "follow orders",
 E8M2 counts it as leaving Omega Draconis (game over after three) — each the
 mission's own rule, now enforced.
-No align: engage flash, then the heading dash until drop-out. Greyed out in an
-unmapped set, and whenever a mission has disabled Helm > Set Course (ruling
-R15: missions hold the player that way — E1M1, E1M2, E3M1).
+No align: engage flash, then the heading dash until drop-out. Greyed out
+whenever a mission has disabled Helm > Set Course (ruling R15: missions hold
+the player that way — E1M1, E1M2, E3M1). Offered in mapped and unmapped sets
+alike — *amended 2026-09-27, Mark's call after a live pass (greyed in
+QuickBattle's placeholder set): features are consistent everywhere.* An
+unmapped set dashes on its own `Planet`/`Sun` objects, has no regions and so
+no hand-off, and drops out at 2 × radius from a body ahead.
 
 **While dashing (either kind):**
 
@@ -282,8 +286,8 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
   unpowered or in a nebula; a mission swallowing `ET_WARP_BUTTON_PRESSED` aborts
   both; **all 26 handlers are audited** against an event with no destination.
 - **Controls:** 0 and All Stop drop out at rest; 1–9 and steering inert; Helm
-  entries disabled and restored; Warp on Heading greyed in an unmapped set
-  and while Set Course is disabled;
+  entries disabled and restored; Warp on Heading greyed while Set Course is
+  disabled (enabled in an unmapped set — amended 2026-09-27);
   Ctrl+W is gone.
 - **End to end, headless:** Ona 1 → dash → Ona 2 → dash → Ona 1. At each stop the
   draw list is the system's bodies, the player is in the right set, at the

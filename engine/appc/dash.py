@@ -227,13 +227,15 @@ def start_heading(player, queues, button=None) -> bool:
     HEADING_DASH_GUPS until a body ahead drops the flight out, keeping the
     impulse speed engaged at, or 0 / All Stop drops it out at rest.
 
+    Works in any space set, mapped or not (Mark, 2026-09-27: features are
+    consistent everywhere). An unmapped set flies on its own Planet/Sun
+    objects (warp_flight.obstacles_for) with no regions, so no hand-off.
     Returns False -- nothing started, the queues go back on ``button`` --
-    when the player is not in a mapped region (the entry is greyed there;
-    this is the guard behind it)."""
+    only when the player is in no set."""
     from engine.appc.warp_flight import WarpFlight
-    from engine.systems import frames, region_hooks
+    from engine.systems import frames
     src = frames.containing_set(player) if player is not None else None
-    if src is None or not region_hooks.is_mapped(src):
+    if src is None:
         if button is not None:
             button.put_back_queues(queues or {})
         return False

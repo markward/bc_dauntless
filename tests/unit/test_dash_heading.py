@@ -158,18 +158,57 @@ def test_the_helm_gains_warp_on_heading_right_after_warp(world):
                 == dash_helm.WARP_ON_HEADING_LABEL]) == 1
 
 
-def test_warp_on_heading_is_greyed_in_an_unmapped_set(world):
-    w = world
+def _move_player_to_unmapped(w, name="QuickBattleRegion"):
+    """QuickBattle's setup region is an unmapped placeholder set: its own
+    one-set frame, no system map."""
     other = SetClass_Create()
-    App.g_kSetManager.AddSet(other, "Unmapped")
+    App.g_kSetManager.AddSet(other, name)
     w.ona1.RemoveObjectFromSet("player")
     other.AddObjectToSet(w.player, "player")
+    w.player.SetTranslateXYZ(0.0, 0.0, 0.0)
+    w.player.UpdateNodeOnly()
+    return other
+
+
+def test_warp_on_heading_is_enabled_in_an_unmapped_set(world):
+    """Features are consistent everywhere (Mark, 2026-09-27): Warp on
+    Heading is offered in any space set, mapped or not."""
+    w = world
+    other = _move_player_to_unmapped(w)
     dash_helm.sync(w.player)
-    assert not w.entry.IsEnabled()
+    assert w.entry.IsEnabled()
     other.RemoveObjectFromSet("player")
     w.ona1.AddObjectToSet(w.player, "player")
     dash_helm.sync(w.player)
     assert w.entry.IsEnabled()
+
+
+def test_a_heading_dash_in_an_unmapped_set_drops_out_at_a_planet(world):
+    """The dash flies an unmapped set on its own Planet/Sun objects: no
+    regions, so no hand-off -- it drops out at 2*radius from the planet and
+    posts ET_EXITED_WARP, staying in the set."""
+    from engine.appc.planet import Planet_Create
+    w = world
+    other = _move_player_to_unmapped(w)
+    planet = Planet_Create(170.0, "")
+    other.AddObjectToSet(planet, "Planet")
+    planet.SetTranslateXYZ(0.0, 60000.0, 0.0)
+    planet.UpdateNodeOnly()
+    dash_helm.sync(w.player)
+    h = _aim(w, (0.0, 60000.0, 0.0))
+    w.events.clear()
+    _press(w)
+    assert dash.is_dashing(w.player)
+    _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=30.0)
+    p = _sys(w.player)
+    assert math.dist(p, (0.0, 60000.0, 0.0)) == pytest.approx(
+        2.0 * 170.0, abs=1e-3)
+    assert w.player.GetContainingSet() is other
+    assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
+                      App.ET_EXITED_WARP) == [(App.ET_EXITED_WARP, None)]
+    v = w.player.GetVelocity()
+    assert (v.x, v.y, v.z) == pytest.approx(
+        (h[0] * ENGAGED, h[1] * ENGAGED, h[2] * ENGAGED), abs=1e-9)
 
 
 def _set_course_entry(w):

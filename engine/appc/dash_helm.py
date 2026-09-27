@@ -15,8 +15,9 @@ HelmMenuHandlers.AllStop -- whose MissionLib.SetPlayerAI(Stay) would
 otherwise end the flight through SetAI with no drop-out of its own choosing.
 
 Warp on Heading: ``sync`` also adds that entry once per Helm menu, right
-after the Warp button, and -- out of a dash -- greys it while the player's
-set is unmapped or a mission has disabled Set Course (ruling R15). Its click runs ``_on_heading`` -> warp_button.press_heading.
+after the Warp button, and -- out of a dash -- greys it while a mission has
+disabled Set Course (ruling R15). It is offered in mapped and unmapped sets
+alike. Its click runs ``_on_heading`` -> warp_button.press_heading.
 
 ``sync(player)`` runs every tick (like weapon_tactical_commands.sync) and at
 dash start and drop-out. Raise-safe: it must never throw into the tick loop.
@@ -132,12 +133,6 @@ def _set_course_enabled(menu, entry_labels) -> bool:
     return True
 
 
-def _in_mapped_set(player) -> bool:
-    from engine.systems import frames, region_hooks
-    pSet = frames.containing_set(player) if player is not None else None
-    return pSet is not None and region_hooks.is_mapped(pSet)
-
-
 def sync(player) -> None:
     try:
         from engine.appc import dash
@@ -171,15 +166,15 @@ def sync(player) -> None:
                 for child in disabled:
                     child.SetEnabled()
                 del disabled[:]
-            # Out of a dash, Warp on Heading follows the player's set: a
-            # heading dash needs a mapped system to fly (spec §2, "Greyed out
-            # in an unmapped set"). And it follows Set Course (ruling R15):
+            # Out of a dash, Warp on Heading is offered in any set, mapped
+            # or not (Mark, 2026-09-27: features are consistent everywhere;
+            # an unmapped set dashes on its own Planet/Sun objects). It
+            # follows Set Course (ruling R15):
             # missions hold the player by disabling that entry (E1M1:4343,
             # E1M2:5991, E3M1:286), and "no course is available" bars a
             # heading dash as well. Checked after the restore above, so the
             # dash's own disabling never reads as a mission's bar.
-            if _in_mapped_set(player) and _set_course_enabled(
-                    menu, entry_labels):
+            if _set_course_enabled(menu, entry_labels):
                 heading.SetEnabled()
             else:
                 heading.SetDisabled()
