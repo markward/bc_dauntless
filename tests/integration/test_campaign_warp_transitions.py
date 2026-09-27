@@ -119,9 +119,11 @@ def warp_branch(request):
         except Exception:
             return None
 
-    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None):
+    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None,
+               t_hold=0.0):
         vfx.start(heading, t_align, t_transit,
-                  App.g_kUtopiaModule.GetGameTime(), vantage, dst_vantage)
+                  App.g_kUtopiaModule.GetGameTime(), vantage, dst_vantage,
+                  t_hold=t_hold)
 
     def _tick():
         if vfx.is_active():
@@ -157,7 +159,8 @@ def test_e6m5_warps_into_episode_7(monkeypatch, changes, no_logged_failures,
     if branch == "flythrough":
         real_start = warp._vfx_start
         monkeypatch.setattr(warp, "_vfx_start",
-                            lambda *a: (started.append(a), real_start(*a)))
+                            lambda *a, **k: (started.append(a),
+                                             real_start(*a, **k)))
 
     hm.warp_and_wait(btn, player, after_tick=after_tick)
 

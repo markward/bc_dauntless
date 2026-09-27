@@ -158,7 +158,9 @@ def snapshot_for_leaf(leaf) -> None:
     """
     import App
     local = getattr(App.g_kModelPropertyManager, "_local", {})
-    _BY_LEAF[leaf] = tuple(
+    # Keyed lowercase: a mod's hardpoint module may be mixed-case
+    # (`LCintrepidHP`) while articulation.rig_for looks up lowercased.
+    _BY_LEAF[str(leaf).lower()] = tuple(
         p for p in local.values() if isinstance(p, ArticulatedPartProperty))
 
 
@@ -168,7 +170,7 @@ def parts_for_leaf(leaf):
     Returns () for a leaf with no snapshot -- an unrigged ship is the
     overwhelmingly common case and must cost nothing and never raise.
     """
-    return _BY_LEAF.get(leaf, ())
+    return _BY_LEAF.get(str(leaf).lower(), ())
 
 
 def reset() -> None:

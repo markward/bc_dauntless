@@ -488,6 +488,41 @@ def tick_ship(ship, dt: float) -> None:
         transitions[name] = (pose0, state, u, duration)
 
 
+def time_to_reach(ship, state: str) -> float:
+    """Seconds until every part of `ship` has settled at its pose for
+    `state` -- the slowest part's remaining transition, by the same rule
+    `tick_ship` uses: an in-flight transition already heading to that pose
+    has `(1 - u) * duration` left; otherwise a new one would start from the
+    current pose and take `_transition_duration`.
+
+    0.0 for an unrigged ship, or while the dev override pins the parts to a
+    state of its own (they will not move toward `state`, so there is nothing
+    to wait for). The warp sequence holds its pre-burst boost on this so a
+    ship never jumps while its parts are still swinging into the warp pose.
+    """
+    if _dev_override is not None:
+        return 0.0
+    parts = rig_for(leaf_for(ship))
+    if not parts:
+        return 0.0
+    poses = getattr(ship, "_articulation_poses", None) or {}
+    transitions = getattr(ship, "_articulation_transitions", None) or {}
+    longest = 0.0
+    for part in parts:
+        name = _part_name(part)
+        target = target_pose(part, state)
+        tr = transitions.get(name)
+        if tr is not None and _poses_equal(target_pose(part, tr[1]), target):
+            left = (1.0 - tr[2]) * tr[3]
+        else:
+            current = poses.get(name, part_pose.IDENTITY)
+            if _poses_equal(current, target):
+                continue
+            left = _transition_duration(part, current, target)
+        longest = max(longest, left)
+    return longest
+
+
 def _rot_angle(R0, R1) -> float:
     """Angle (radians) of R0^T . R1."""
     tr = sum(R0[i][j] * R1[i][j] for i in range(3) for j in range(3))

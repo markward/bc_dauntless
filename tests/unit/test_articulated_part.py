@@ -177,3 +177,19 @@ def test_snapshot_ignores_non_articulated_templates():
     App.g_kModelPropertyManager.RegisterLocalTemplate(part)
     ap.snapshot_for_leaf("birdofprey")
     assert ap.parts_for_leaf("birdofprey") == (part,)
+
+
+def test_a_mixed_case_mod_leaf_is_found_by_the_articulation_lookup():
+    """A mod's hardpoint module can be mixed-case (LC Intrepid Pack's
+    `LCintrepidHP`): the snapshot is taken under the module's own spelling,
+    while `articulation.rig_for` -- what the renderer and the SPV ask --
+    lowercases the leaf. Stock leaves are all lowercase, which hid the
+    mismatch until a mod carried its own rig: the wings were saved, loaded
+    and registered, then never found."""
+    from engine.appc import articulation
+    p = ap.ArticulatedPartProperty_Create("wing left")
+    App.g_kModelPropertyManager.RegisterLocalTemplate(p)
+    ap.snapshot_for_leaf("LCintrepidHP")
+    assert articulation.rig_for("LCintrepidHP") == (p,)
+    assert ap.parts_for_leaf("LCintrepidHP") == (p,)
+    assert ap.parts_for_leaf("lcintrepidhp") == (p,)

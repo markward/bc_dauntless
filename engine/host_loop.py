@@ -8969,15 +8969,18 @@ def run(mission_name: Optional[str] = None,
                 return None
 
         def _vfx_start(heading, t_align, t_transit, vantage=None,
-                       dst_vantage=None):
+                       dst_vantage=None, t_hold=0.0):
             # WarpSequence (Task 3) computes the heading + explicit align/transit
             # times; start the per-frame manager at the current game time. The
             # vantage (source system's galaxy position) anchors the procedural
             # sky; dst_vantage (destination's) lets it fly src->dst and arrive,
             # so the destination nebula envelops on exit instead of streaming past.
+            # t_hold: seconds the ship waits ALIGNED after the turn so its
+            # articulated parts reach their warp pose before the pre-burst
+            # boost starts.
             _wv.get().start(heading, t_align, t_transit,
                             App.g_kUtopiaModule.GetGameTime(), vantage,
-                            dst_vantage)
+                            dst_vantage, t_hold=t_hold)
 
         _wp.configure_warp_vfx(
             start=_vfx_start, stop=_wv.get().stop,

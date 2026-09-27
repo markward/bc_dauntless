@@ -195,9 +195,11 @@ def test_unheld_swap_lands_at_transit_end_under_the_exit_flash(monkeypatch):
     vfx.stop()
     seen = {}
 
-    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None):
+    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None,
+               t_hold=0.0):
         vfx.start(heading, t_align, t_transit,
-                  App.g_kUtopiaModule.GetGameTime(), vantage, dst_vantage)
+                  App.g_kUtopiaModule.GetGameTime(), vantage, dst_vantage,
+                  t_hold=t_hold)
 
     def _realize(pSet):
         now = App.g_kUtopiaModule.GetGameTime()
@@ -274,11 +276,12 @@ def test_unheld_release_is_continuous(monkeypatch):
     vfx = warp_vfx.get()
     vfx.stop()
 
-    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None):
+    def _start(heading, t_align, t_transit, vantage=None, dst_vantage=None,
+               t_hold=0.0):
         # Unit src->dst vantages: sky_vantage()[0] IS the travel progress.
         vfx.start(heading, t_align, t_transit,
                   App.g_kUtopiaModule.GetGameTime(),
-                  (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+                  (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), t_hold=t_hold)
 
     ship, seq, total = _flythrough_warp("QSeam", _queues(), monkeypatch,
                                         is_player=True, start=_start)

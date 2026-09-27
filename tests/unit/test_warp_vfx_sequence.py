@@ -24,7 +24,8 @@ def test_flythrough_on_holds_swap_and_starts_vfx(monkeypatch):
     started = {}
     warp.configure_warp_vfx(
         enabled=lambda: True,
-        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None:
+        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None,
+            t_hold=0.0:
             started.update(align=t_align, transit=t_transit, heading=heading,
                            vantage=vantage, dst_vantage=dst_vantage),
         stop=lambda: None,
@@ -78,6 +79,10 @@ def test_flythrough_off_is_instant():
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src2")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
+    # The warp's player-scene effects (the VFX start among them) are gated on
+    # the ship being the current player (system-frames I3).
+    from engine.core.game import Game, _set_current_game
+    _game = Game(); _game.SetPlayer(player); _set_current_game(_game)
     import types, sys
     mod = types.ModuleType("FakeSys.D2"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D2"))
@@ -89,3 +94,80 @@ def test_flythrough_off_is_instant():
     assert App.g_kSetManager.GetSet(
         warp._WARP_TRANSIT_SET_NAME).GetObject("player") is None
     assert App.g_kSetManager.GetSet("Src2") is src   # source stands
+
+
+def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
+    """The ship turns at its own rate (t_align unchanged), then HOLDS aligned
+    until its articulated parts have reached the warp pose, then bursts. A rig
+    slower than any turn (9 s > _T_ALIGN_MAX) always needs a hold.
+
+    The pre-burst BOOST (the last _T_ENTER_BOOST s, cruise -> in-system warp
+    speed) is what the eye reads as the jump -- the camera is locked to the
+    ship, so it never visibly vanishes -- so the parts must be settled before
+    the boost STARTS, not merely before the burst (live: jumped ~0.5 s early)."""
+    import pytest
+    from engine.appc import articulation
+    from engine.core.loop import TICK_DELTA
+    monkeypatch.setattr(articulation, "time_to_reach",
+                        lambda ship, state: 9.0 if state == "warp" else 0.0)
+    started = {}
+    warp.configure_warp_vfx(
+        enabled=lambda: True,
+        start=lambda heading, t_align, t_transit, vantage=None,
+            dst_vantage=None, t_hold=0.0:
+            started.update(align=t_align, hold=t_hold, heading=heading),
+        stop=lambda: None,
+        vantage_of=lambda key: (1.0, 2.0, 3.0))
+    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src3")
+    player = App.ShipClass_Create(); player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    # The warp's player-scene effects (the VFX start among them) are gated on
+    # the ship being the current player (system-frames I3).
+    from engine.core.game import Game, _set_current_game
+    _game = Game(); _game.SetPlayer(player); _set_current_game(_game)
+    import types, sys
+    mod = types.ModuleType("FakeSys.D3"); mod.Initialize = lambda: (
+        App.g_kSetManager.AddSet(SetClass_Create(), "D3"))
+    sys.modules["FakeSys.D3"] = mod
+    seq = warp.WarpSequence_Create(player, "FakeSys.D3", placement="Player Start")
+    seq.Play()
+    # The turn is the ship's own: unchanged by the rig.
+    assert started["align"] == warp._align_duration(player, started["heading"])
+    from engine.warp_vfx import _T_ENTER_BOOST
+    burst = 9.0 + TICK_DELTA + _T_ENTER_BOOST
+    assert started["align"] + started["hold"] == pytest.approx(burst)
+    departs = [d for (a, d) in _scheduled(seq) if isinstance(a, warp._WarpDepartAction)]
+    assert departs == [pytest.approx(burst)]
+
+
+def test_no_rig_means_no_hold(monkeypatch):
+    from engine.appc import articulation
+    monkeypatch.setattr(articulation, "time_to_reach", lambda ship, state: 0.0)
+    started = {}
+    warp.configure_warp_vfx(
+        enabled=lambda: True,
+        start=lambda heading, t_align, t_transit, vantage=None,
+            dst_vantage=None, t_hold=0.0: started.update(align=t_align, hold=t_hold),
+        stop=lambda: None,
+        vantage_of=lambda key: (1.0, 2.0, 3.0))
+    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src4")
+    player = App.ShipClass_Create(); player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    # The warp's player-scene effects (the VFX start among them) are gated on
+    # the ship being the current player (system-frames I3).
+    from engine.core.game import Game, _set_current_game
+    _game = Game(); _game.SetPlayer(player); _set_current_game(_game)
+    import types, sys
+    mod = types.ModuleType("FakeSys.D4"); mod.Initialize = lambda: (
+        App.g_kSetManager.AddSet(SetClass_Create(), "D4"))
+    sys.modules["FakeSys.D4"] = mod
+    seq = warp.WarpSequence_Create(player, "FakeSys.D4", placement="Player Start")
+    seq.Play()
+    assert started["hold"] == 0.0
+    departs = [d for (a, d) in _scheduled(seq) if isinstance(a, warp._WarpDepartAction)]
+    assert departs == [started["align"]]
+
+
+def _scheduled(seq):
+    """(action, delay) for every step the sequence was built with."""
+    return [(s.action, s.delay) for s in seq._steps]

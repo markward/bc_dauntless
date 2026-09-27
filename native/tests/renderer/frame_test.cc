@@ -34,6 +34,8 @@
 
 #include <filesystem>
 
+#include "support/content_root.h"
+
 // dauntless_decals gate is declared in frame.cc; forward-declare it here.
 namespace dauntless_decals { bool enabled(); }
 
@@ -108,20 +110,11 @@ TEST(DauntlessNormalMapToggle, DefaultsOnWithUnitStrengthAndRoundTrips) {
 
 namespace {
 
-const std::filesystem::path kProjectRoot =
-    std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
+const std::filesystem::path kProjectRoot = test_support::project_root();
 
-// The BC content root is configurable (engine/paths.py) -- it does not have
-// to live under <project>/game. Honour the same DAUNTLESS_GAME_DIR env var
-// the engine resolves game_root() from: when set and non-empty, the asset
-// constants below resolve under it instead. Without this, every
-// asset-backed FrameTest SKIPs on a machine whose BC content isn't in-project.
-std::filesystem::path game_root() {
-    if (const char* env = std::getenv("DAUNTLESS_GAME_DIR")) {
-        if (*env != '\0') return std::filesystem::path(env);
-    }
-    return kProjectRoot / "game";
-}
+// BC content is configurable and need not live under <project>/game; every
+// asset constant below resolves through the shared helper.
+using test_support::game_root;
 
 const std::filesystem::path kGalaxyNif =
     game_root() / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif";
@@ -151,6 +144,19 @@ protected:
         }
         p = std::make_unique<renderer::Pipeline>();
         cache = std::make_unique<assets::AssetCache>();
+    }
+
+    // Every test owns a fresh GL context, so release the renderer's
+    // session-scoped state exactly as host_bindings.cc's shutdown() does, while
+    // this context is still current (TearDown runs before `w` is destroyed).
+    // Without it the next test in the same process binds a texture id from a
+    // dead context (GL_INVALID_OPERATION) or inherits a recycled ModelHandle's
+    // cached radius. ctest hides this by running each case in its own process.
+    void TearDown() override {
+        if (!w) return;
+        renderer::reset_damage_decal_texture();
+        renderer::reset_scuff_normal_texture();
+        renderer::reset_model_radius_cache();
     }
 };
 
@@ -2144,6 +2150,45 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     // The left block's nearest edge (body X≈-67) is 127 GU from the decal
     // center (X=60, radius=120), placing it just outside the decal radius.
     EXPECT_NEAR(L1, L0, L0 * 0.05) << "damage leaked onto the mirror (left) half";
+}
+
+// The scuff normal map loads lazily on the first draw with any decal, and
+// upload_image binds the new texture to the ACTIVE unit. The load used to run
+// inside the per-mesh loop right after unit 0 got the mesh's base colour, so
+// that one mesh drew with the scuff normal map as its albedo on the first
+// damaged frame. It only showed when the map actually loaded -- i.e. when the
+// relative project-asset root resolved from CWD -- so ctest (CWD = build dir)
+// never saw it. Pin the root absolutely so the lazy load always happens here.
+TEST_F(FrameTest, LazyScuffMapLoadDoesNotClobberTheBaseTexture) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+    scenegraph::World w;
+    auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w.set_world_transform(iid, glm::mat4(1.0f));
+    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
+                           120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
+
+    const std::string saved_root = renderer::project_asset_root();
+    renderer::set_project_asset_root(
+        (test_support::project_root() / "native" / "assets").string());
+    renderer::set_scuff_normal_texture_override(0);
+    renderer::reset_scuff_normal_texture();
+
+    render_galaxy(w, *p, lut, 65.0f);          // first damaged frame: lazy load
+    const GLenum err = glGetError();
+    const unsigned int loaded = renderer::ensure_scuff_normal_texture();
+    const double L_first = block_mean(93, 100, 25, 50);
+    const double R_first = block_mean(130, 100, 25, 50);
+    render_galaxy(w, *p, lut, 65.0f);          // map already resident
+    const double L_again = block_mean(93, 100, 25, 50);
+    const double R_again = block_mean(130, 100, 25, 50);
+    renderer::set_project_asset_root(saved_root);
+
+    ASSERT_EQ(err, GL_NO_ERROR);
+    ASSERT_NE(loaded, 0u) << "scuff map did not load -- the test proves nothing";
+    EXPECT_NEAR(L_first, L_again, 0.5) << "first damaged frame drew differently (left)";
+    EXPECT_NEAR(R_first, R_again, 0.5) << "first damaged frame drew differently (right)";
 }
 
 TEST_F(FrameTest, ScorchDecalDarkensHullVersusNoDecalAtAll) {

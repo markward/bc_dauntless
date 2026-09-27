@@ -105,8 +105,30 @@ def _align_duration(ship, heading):
     t = 1.5 * angle / omega
     return _T_ALIGN_MIN if t < _T_ALIGN_MIN else (_T_ALIGN_MAX if t > _T_ALIGN_MAX else t)
 
+
+def _parts_warp_time(ship):
+    """Earliest burst time that lets `ship`'s articulated parts finish first:
+    the time until they reach their warp pose, plus one sim tick (they start
+    moving on the tick AFTER _WarpVfxBeginAction flips the warp state), plus
+    the full pre-burst boost. The boost -- the last _T_ENTER_BOOST s, ramping
+    cruise -> in-system warp speed -- is what reads as the jump (the camera is
+    locked to the ship, so it never visibly vanishes), so it must not start
+    until the parts have settled. The ship turns at its own rate, then waits
+    aligned for this. Fail-open: 0.0 (no hold) if the rig cannot be read."""
+    try:
+        from engine.appc import articulation
+        t = articulation.time_to_reach(ship, "warp")
+    except Exception:  # noqa: BLE001 - never block a warp on a rig read
+        return 0.0
+    if t <= 0.0:
+        return 0.0
+    from engine.core.loop import TICK_DELTA
+    from engine.warp_vfx import _T_ENTER_BOOST
+    return t + TICK_DELTA + _T_ENTER_BOOST
+
+
 # Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).
-_vfx_start = None         # start(heading, t_align, t_transit, vantage, dst_vantage)
+_vfx_start = None         # start(heading, t_align, t_transit, vantage, dst_vantage, t_hold=)
 _vfx_stop = None          # stop()
 _vfx_enabled = None       # () -> bool  (toggle AND renderer AND procedural sky)
 _vfx_vantage_of = None    # (set_or_module) -> (x, y, z) | None
@@ -368,10 +390,11 @@ class _WarpVfxBeginAction(TGAction):
     by _ArriveFinalizeAction regardless)."""
 
     def __init__(self, ship, heading, t_align, t_transit, vantage=None,
-                 dst_vantage=None):
+                 dst_vantage=None, t_hold=0.0):
         super().__init__()
         self._ship = ship
         self._a = (heading, t_align, t_transit, vantage, dst_vantage)
+        self._hold = t_hold
 
     def _do_play(self):
         # Control and the WarpVFX tunnel are the player's: an NPC's warp
@@ -398,7 +421,7 @@ class _WarpVfxBeginAction(TGAction):
         # is intentionally omitted.
         if player and _vfx_start is not None:
             try:
-                _vfx_start(*self._a)
+                _vfx_start(*self._a, t_hold=self._hold)
             except Exception:
                 pass
 
@@ -454,17 +477,17 @@ class _MissionChangePoint(TGAction):
 
 class _HoldUntilAction(TGAction):
     """Completes no earlier than the start of the nominal transit's exit
-    flash (sequence start + t_align + 0.9 * t_transit), so a transit whose
+    flash (sequence start + t_burst + 0.9 * t_transit), so a transit whose
     queues finish early still lasts its full length -- the swap follows the
     release 0.1 * t_transit later, at transit end under the flash. Completes
     at once when that deadline has already passed -- a queue or the master
     sequence ran long and the streak has been held (spec §1 "Transit holds").
     Game time, via g_kTimerManager, like TGSequence's own step delays."""
 
-    def __init__(self, seq, t_align, t_transit):
+    def __init__(self, seq, t_burst, t_transit):
         super().__init__()
         self._seq = seq
-        self._span = float(t_align) + 0.9 * float(t_transit)
+        self._span = float(t_burst) + 0.9 * float(t_transit)
 
     def Play(self):
         import App
@@ -933,13 +956,20 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         heading = _warp_heading(src_v, dst_v)
         t_transit = _transit_duration(src_v, dst_v)
         t_align = _align_duration(ship, heading)
+        # The ship turns at its own rate over t_align, then HOLDS aligned until
+        # its articulated parts reach their warp pose; only then does the
+        # pre-burst boost start (see _parts_warp_time). Everything tied to the
+        # jump keys off t_burst.
+        t_burst = max(t_align, _parts_warp_time(ship))
+        t_hold = t_burst - t_align
+        total = t_burst + t_transit
         # Align start: remove control + start VFX (root @ 0). The "Enter Warp"
         # SFX is a separate root scheduled so its in-file flash (~_SFX_ENTER_
-        # FLASH_AT into the clip) lands on the BURST (= t_align), now that the
+        # FLASH_AT into the clip) lands on the BURST (= t_burst), now that the
         # align length is angle-driven (the old fixed-1.5s align kept it in sync
         # by luck). The set-swap is CHAINED behind departure, the in-transit
         # queues, _HoldUntilAction and the exit flash (no earlier than
-        # t_align + t_transit);
+        # t_burst + t_transit);
         # placement + teardown + exit SFX + VFX-end chain after the swap,
         # firing on arrival.
         # Procedural-sky vantage to fly the backdrop from during transit: the
@@ -951,12 +981,12 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # sky vantage travels src->dst and arrives, so the destination's own
         # nebula looms ahead and envelops on exit instead of streaming past.
         seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit,
-                                          sky_vantage, dst_v))
-        enter_delay = t_align - _SFX_ENTER_FLASH_AT
+                                          sky_vantage, dst_v, t_hold=t_hold))
+        enter_delay = t_burst - _SFX_ENTER_FLASH_AT
         if enter_delay < 0.0:
             enter_delay = 0.0
         seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
-        # At BURST (t_align): drop the render instances of the system being left
+        # At BURST (t_burst, after the turn and any hold for articulated parts): drop the render instances of the system being left
         # behind and park the player in BC's persistent warp set (spec §1b --
         # not necessarily empty, a mission may have parked ships there), so
         # during the held transit the source system no longer draws or lights
@@ -964,7 +994,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # see the Plan-2 note on left-behind-ship audibility).
         _add_before_queue(seq)
         depart = _WarpDepartAction(source, ship, seq)
-        seq.AddAction(depart, t_align)
+        seq.AddAction(depart, t_burst)
         # Transit is chained, not timed (spec §1 "Transit holds"): departure ->
         # SDK WaitForQueued (player only) -> the in-transit queues -> the
         # mission-change point -> no earlier than 90 % of the nominal transit ->
@@ -978,7 +1008,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
             seq.AddAction(wait, prev)
             prev = wait
         prev = _add_transit_queues(seq, prev)
-        hold = _HoldUntilAction(seq, t_align, t_transit)
+        hold = _HoldUntilAction(seq, t_burst, t_transit)
         seq.AddAction(hold, prev)
         release = _TransitReleaseAction(seq)
         seq.AddAction(release, hold)

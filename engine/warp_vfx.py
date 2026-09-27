@@ -16,8 +16,9 @@ def _smooth(t):
 
 
 # Ship-speed envelope timing (separate from the visual streak/flash envelopes).
-# The last _T_ENTER_BOOST seconds of align ramp the ship from its cruise speed
-# up to in-system warp speed (the "blast off" just before the burst flash); the
+# The last _T_ENTER_BOOST seconds before the burst (after the align turn and any
+# hold for articulated parts) ramp the ship from its cruise speed up to
+# in-system warp speed (the "blast off" just before the burst flash); the
 # _T_EXIT_DECEL seconds AFTER the transit ends ramp it back down to 0 (the glide-
 # in as the destination system appears). The manager stays active through the
 # decel tail so the host keeps driving the speed override after arrival.
@@ -42,6 +43,7 @@ class WarpVFX:
         self._vantage = None
         self._dst_vantage = None
         self._t_align = 0.0
+        self._t_burst = 0.0
         self._t_transit = 0.0
         self._t0 = 0.0
         self._e = 0.0
@@ -52,7 +54,7 @@ class WarpVFX:
         self._held = False
 
     def start(self, heading, t_align, t_transit, now, vantage=None,
-              dst_vantage=None):
+              dst_vantage=None, t_hold=0.0):
         self._heading = tuple(heading)
         # Galaxy-map position the procedural sky is projected from at warp start
         # (the source system's vantage). None when the source isn't
@@ -65,6 +67,12 @@ class WarpVFX:
         # parallax along the heading.
         self._dst_vantage = tuple(dst_vantage) if dst_vantage is not None else None
         self._t_align = max(0.01, float(t_align))
+        # The burst (the jump) lands after the turn AND any hold: the ship
+        # turns over t_align at its own rate, then waits aligned for t_hold
+        # while its articulated parts finish swinging into the warp pose.
+        # Everything tied to the jump -- streak, flash, pre-burst boost, glow
+        # spike, sky travel -- keys off _t_burst; only the turn uses _t_align.
+        self._t_burst = self._t_align + max(0.0, float(t_hold))
         self._t_transit = max(0.01, float(t_transit))
         self._t0 = float(now)
         self._e = 0.0
@@ -88,25 +96,26 @@ class WarpVFX:
         """Resume with the final 10 % of transit -- the exit flash -- still to
         play, from `now`."""
         self._held = False
-        self._t0 = float(now) - (self._t_align + _HOLD_TP * self._t_transit)
+        self._t0 = float(now) - (self._t_burst + _HOLD_TP * self._t_transit)
 
     def tick(self, now):
         if not self._active:
             return
         e = self._elapsed(now)
         if self._held:
-            e = min(e, self._t_align + _HOLD_TP * self._t_transit)
+            e = min(e, self._t_burst + _HOLD_TP * self._t_transit)
         self._e = e
-        total = self._t_align + self._t_transit
-        if e < self._t_align:
-            # ALIGN: turn ramps 0->1, no streak, engine-spool (no flash yet).
+        total = self._t_burst + self._t_transit
+        if e < self._t_burst:
+            # ALIGN (+ hold): turn ramps 0->1 over t_align then holds at 1, no
+            # streak, engine-spool (no flash yet).
             self._turn = _smooth(e / self._t_align)
             self._streak = 0.0
             self._flash = 0.0
             self._phase = "align"
         elif e < total:
             self._turn = 1.0
-            tp = (e - self._t_align) / self._t_transit   # transit progress 0..1
+            tp = (e - self._t_burst) / self._t_transit   # transit progress 0..1
             if self._held:
                 tp = min(tp, _HOLD_TP)    # exact, so no float crumb of flash
             # streak: fast ramp at burst, hold, shrink at exit. The shrink
@@ -144,10 +153,9 @@ class WarpVFX:
           exit         -> 0. THE SHIP HAS ARRIVED; IT DOES NOT MOVE.
         """
         e = self._e
-        t_align = self._t_align
-        total = t_align + self._t_transit
-        if e < t_align:
-            boost_start = t_align - _T_ENTER_BOOST
+        t_burst = self._t_burst
+        if e < t_burst:
+            boost_start = t_burst - _T_ENTER_BOOST
             if e < boost_start:
                 return nominal
             f = _smooth((e - boost_start) / _T_ENTER_BOOST)
@@ -185,10 +193,10 @@ class WarpVFX:
         SHAPES, not brightnesses: `subsystem_glow.warp_gain` maps them onto the
         shader gain applied to the warp pods' glow volumes and light emitters.
 
-          drive  spools 0->1 across align (peaking exactly at the jump), holds
+          drive  spools 0->1 across align + hold (peaking exactly at the jump), holds
                  1 through transit, fades 1->0 over the exit decel so the
                  nacelles cool down in step with the speed glide-down.
-          burst  one-shot spike: 1 at the jump (e == t_align), eased to 0 over
+          burst  one-shot spike: 1 at the jump (e == t_burst), eased to 0 over
                  _BURST_DECAY_S, and 0 everywhere else.
 
         (0.0, 0.0) while inactive, so a ship that isn't warping is untouched.
@@ -196,12 +204,12 @@ class WarpVFX:
         if not self._active:
             return (0.0, 0.0)
         e = self._e
-        t_align = self._t_align
-        total = t_align + self._t_transit
-        if e < t_align:
-            return (_smooth(e / t_align), 0.0)
+        t_burst = self._t_burst
+        total = t_burst + self._t_transit
+        if e < t_burst:
+            return (_smooth(e / t_burst), 0.0)
         if e < total:
-            te = e - t_align
+            te = e - t_burst
             burst = _smooth(1.0 - te / _BURST_DECAY_S) if te < _BURST_DECAY_S \
                 else 0.0
             return (1.0, burst)
@@ -217,7 +225,7 @@ class WarpVFX:
             # No source vantage: sit statically at the destination if mapped,
             # else blacked out.
             return self._dst_vantage
-        te = self._e - self._t_align
+        te = self._e - self._t_burst
         if te < 0.0:
             te = 0.0
         elif te > self._t_transit:
