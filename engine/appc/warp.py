@@ -79,6 +79,24 @@ def _align_duration(ship, heading):
     t = 1.5 * angle / omega
     return _T_ALIGN_MIN if t < _T_ALIGN_MIN else (_T_ALIGN_MAX if t > _T_ALIGN_MAX else t)
 
+def _parts_warp_time(ship):
+    """Seconds until `ship`'s articulated parts reach their warp pose, plus
+    one sim tick (they start moving on the tick AFTER _WarpVfxBeginAction
+    flips the warp state). The align window -- which schedules the burst,
+    the Enter Warp flash and the VFX turn -- is stretched to at least this,
+    so a ship never jumps while its wings are still swinging. Fail-open: 0.0
+    (no hold) if the rig cannot be read."""
+    try:
+        from engine.appc import articulation
+        t = articulation.time_to_reach(ship, "warp")
+    except Exception:  # noqa: BLE001 - never block a warp on a rig read
+        return 0.0
+    if t <= 0.0:
+        return 0.0
+    from engine.core.loop import TICK_DELTA
+    return t + TICK_DELTA
+
+
 # Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).
 _vfx_start = None         # start(heading, t_align, t_transit, vantage, dst_vantage)
 _vfx_stop = None          # stop()
@@ -738,7 +756,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         dst_v = _vfx_vantage_of(dest_module) if _vfx_vantage_of else None
         heading = _warp_heading(src_v, dst_v)
         t_transit = _transit_duration(src_v, dst_v)
-        t_align = _align_duration(ship, heading)
+        t_align = max(_align_duration(ship, heading), _parts_warp_time(ship))
         total = t_align + t_transit
         # Align start: remove control + start VFX (root @ 0). The "Enter Warp"
         # SFX is a separate root scheduled so its in-file flash (~_SFX_ENTER_

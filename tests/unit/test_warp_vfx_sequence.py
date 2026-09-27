@@ -82,3 +82,37 @@ def test_flythrough_off_is_instant():
     sys.modules["FakeSys.D2"] = mod
     warp.WarpSequence_Create(player, "FakeSys.D2", placement=None).Play()
     assert App.g_kSetManager.GetSet("Src2") is None   # instant swap
+
+
+def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
+    """A ship already facing its heading aligns in _T_ALIGN_MIN (0.5 s), but a
+    rig whose wings take 4.75 s to swing into the warp pose must not jump
+    mid-swing: the align window -- which schedules the burst, the Enter Warp
+    flash and the VFX -- stretches to cover the parts."""
+    from engine.appc import articulation
+    monkeypatch.setattr(articulation, "time_to_reach",
+                        lambda ship, state: 4.75 if state == "warp" else 0.0)
+    started = {}
+    warp.configure_warp_vfx(
+        enabled=lambda: True,
+        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None:
+            started.update(align=t_align),
+        stop=lambda: None,
+        vantage_of=lambda key: (1.0, 2.0, 3.0))
+    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src3")
+    player = App.ShipClass_Create(); player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    import types, sys
+    mod = types.ModuleType("FakeSys.D3"); mod.Initialize = lambda: (
+        App.g_kSetManager.AddSet(SetClass_Create(), "D3"))
+    sys.modules["FakeSys.D3"] = mod
+    seq = warp.WarpSequence_Create(player, "FakeSys.D3", placement="Player Start")
+    seq.Play()
+    assert started["align"] >= 4.75
+    departs = [d for (a, d) in _scheduled(seq) if isinstance(a, warp._WarpDepartAction)]
+    assert departs and departs[0] >= 4.75
+
+
+def _scheduled(seq):
+    """(action, delay) for every step the sequence was built with."""
+    return [(s.action, s.delay) for s in seq._steps]
