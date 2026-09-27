@@ -80,12 +80,14 @@ def _align_duration(ship, heading):
     return _T_ALIGN_MIN if t < _T_ALIGN_MIN else (_T_ALIGN_MAX if t > _T_ALIGN_MAX else t)
 
 def _parts_warp_time(ship):
-    """Seconds until `ship`'s articulated parts reach their warp pose, plus
-    one sim tick (they start moving on the tick AFTER _WarpVfxBeginAction
-    flips the warp state). The burst is held until at least this: the ship
-    turns at its own rate, then waits aligned for any part still swinging, so
-    it never jumps mid-swing. Fail-open: 0.0 (no hold) if the rig cannot be
-    read."""
+    """Earliest burst time that lets `ship`'s articulated parts finish first:
+    the time until they reach their warp pose, plus one sim tick (they start
+    moving on the tick AFTER _WarpVfxBeginAction flips the warp state), plus
+    the full pre-burst boost. The boost -- the last _T_ENTER_BOOST s, ramping
+    cruise -> in-system warp speed -- is what reads as the jump (the camera is
+    locked to the ship, so it never visibly vanishes), so it must not start
+    until the parts have settled. The ship turns at its own rate, then waits
+    aligned for this. Fail-open: 0.0 (no hold) if the rig cannot be read."""
     try:
         from engine.appc import articulation
         t = articulation.time_to_reach(ship, "warp")
@@ -94,7 +96,8 @@ def _parts_warp_time(ship):
     if t <= 0.0:
         return 0.0
     from engine.core.loop import TICK_DELTA
-    return t + TICK_DELTA
+    from engine.warp_vfx import _T_ENTER_BOOST
+    return t + TICK_DELTA + _T_ENTER_BOOST
 
 
 # Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).

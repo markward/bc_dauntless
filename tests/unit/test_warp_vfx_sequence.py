@@ -88,7 +88,12 @@ def test_flythrough_off_is_instant():
 def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
     """The ship turns at its own rate (t_align unchanged), then HOLDS aligned
     until its articulated parts have reached the warp pose, then bursts. A rig
-    slower than any turn (9 s > _T_ALIGN_MAX) always needs a hold."""
+    slower than any turn (9 s > _T_ALIGN_MAX) always needs a hold.
+
+    The pre-burst BOOST (the last _T_ENTER_BOOST s, cruise -> in-system warp
+    speed) is what the eye reads as the jump -- the camera is locked to the
+    ship, so it never visibly vanishes -- so the parts must be settled before
+    the boost STARTS, not merely before the burst (live: jumped ~0.5 s early)."""
     import pytest
     from engine.appc import articulation
     from engine.core.loop import TICK_DELTA
@@ -113,7 +118,8 @@ def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
     seq.Play()
     # The turn is the ship's own: unchanged by the rig.
     assert started["align"] == warp._align_duration(player, started["heading"])
-    burst = 9.0 + TICK_DELTA
+    from engine.warp_vfx import _T_ENTER_BOOST
+    burst = 9.0 + TICK_DELTA + _T_ENTER_BOOST
     assert started["align"] + started["hold"] == pytest.approx(burst)
     departs = [d for (a, d) in _scheduled(seq) if isinstance(a, warp._WarpDepartAction)]
     assert departs == [pytest.approx(burst)]
