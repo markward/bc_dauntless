@@ -2,6 +2,7 @@
 #pragma once
 
 #include <filesystem>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,12 @@ struct SampleFile {
     std::filesystem::path path;
     std::string nickname;
 };
+
+// gtest_discover_tests names each parameterised ctest case by the PRINTED
+// value. Without this a SampleFile prints as a raw byte dump that includes
+// pointer bytes, so the ctest name changed run to run and could never be
+// baselined in tests/known_failures.txt.
+inline void PrintTo(const SampleFile& s, std::ostream* os) { *os << s.nickname; }
 
 inline const std::vector<SampleFile>& kSampleFiles() {
     static const std::filesystem::path root{OPEN_STBC_PROJECT_ROOT};

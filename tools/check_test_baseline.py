@@ -20,8 +20,13 @@ Usage:
   uv run python tools/check_test_baseline.py --pytest-only
   uv run python tools/check_test_baseline.py --ctest-only
 
-Note: where BC game/ assets are absent, asset-dependent tests SKIP (not fail),
-so this gate is safe to run anywhere; it just verifies fewer tests.
+Skips: a gtest SKIP exits 0, so a gate that only reads failures stays green
+over tests that never ran -- 74 asset-backed C++ tests did exactly that once BC
+content moved out of the project. So when a BC content root is configured
+(DAUNTLESS_GAME_DIR, else engine/paths.game_root()), any ctest SKIP that is not
+baselined as "skip:ctest:<name>" in tests/known_failures.txt FAILS the gate,
+and a baselined skip that now runs is reported for deletion. With no content
+root, asset-backed tests legitimately skip: the count is printed, nothing fails.
 """
 import os
 import re
@@ -38,8 +43,14 @@ _PYTEST_ERRORED = re.compile(r"^ERROR (\S+)")
 # pytest always prints a counts summary ("12 passed, 1 failed in 3.2s",
 # "no tests ran in 0.1s"). Its absence means the runner never got that far.
 _PYTEST_RAN = re.compile(r"(\d+ (passed|failed|error|skipped|xfailed|xpassed)|no tests ran)")
-# ctest summary block: "\t188 - FrameTest.Name (Failed)" / "(Subprocess aborted)" / "(Timeout)"
-_CTEST_FAILED = re.compile(r"^\s*\d+ - (\S+) \((?:Failed|Subprocess aborted|Timeout|Child aborted)\)")
+# ctest summary blocks: "\t188 - FrameTest.Name (Failed)" / "(Subprocess aborted)"
+# / "(Timeout)" under "FAILED", "(Skipped)" / "(Disabled)" under "did not run".
+# The name is (.+?), not \S+: parameterised names carry spaces
+# ("AllSamples/HeaderTest.X/48-byte object <E0-47 ...>"), and \S+ made a
+# failing one invisible to the gate.
+_CTEST_SUMMARY = re.compile(
+    r"^\s*\d+ - (.+?) \((Failed|Subprocess aborted|Timeout|Child aborted|Skipped)\)\s*$")
+_SKIP_PREFIX = "skip:"
 
 
 def _load_baseline():
@@ -54,6 +65,58 @@ def _load_baseline():
                 continue
             known.add(line)
     return known
+
+
+def split_baseline(known):
+    """Split ledger ids into (known failures, known skips); skip ids lose the
+    'skip:' prefix so they compare directly with parse_ctest's ids."""
+    failures = {k for k in known if not k.startswith(_SKIP_PREFIX)}
+    skips = {k[len(_SKIP_PREFIX):] for k in known if k.startswith(_SKIP_PREFIX)}
+    return failures, skips
+
+
+def parse_ctest(out):
+    """Return (failed ids, skipped ids) from ctest's summary blocks."""
+    failed, skipped = set(), set()
+    for line in out.splitlines():
+        m = _CTEST_SUMMARY.match(line)
+        if not m:
+            continue
+        (skipped if m.group(2) == "Skipped" else failed).add("ctest:" + m.group(1))
+    return failed, skipped
+
+
+def diff_skips(skipped, known_skips, content_configured):
+    """Return (new skips, baselined skips that now run). Both are empty without
+    a content root: every asset-backed test skips then, legitimately."""
+    if not content_configured:
+        return [], []
+    return sorted(skipped - known_skips), sorted(known_skips - skipped)
+
+
+def stale_baseline(known, current, suites_ran):
+    """Baselined failures that did not fail -- judged only for suites that ran
+    (a --ctest-only run cannot say a pytest line now passes)."""
+    return sorted(k for k in known - current if k.split(":", 1)[0] in suites_ran)
+
+
+def _engine_game_root():
+    sys.path.insert(0, ROOT)
+    from engine import paths
+    return paths.game_root()
+
+
+def content_root():
+    """The BC content root the C++ tests should read, or None when there is
+    none. DAUNTLESS_GAME_DIR wins when set (non-empty); else engine/paths.
+    Either way it must be an existing directory to count as configured."""
+    root = os.environ.get("DAUNTLESS_GAME_DIR", "")
+    if not root:
+        try:
+            root = str(_engine_game_root())
+        except Exception:
+            return None
+    return root if root and os.path.isdir(root) else None
 
 
 def _run(cmd, **kw):
@@ -103,17 +166,21 @@ def run_pytest():
     return failed, False
 
 
-def run_ctest():
-    """Run the C++ ctest suite; return set of failed ids. (Build separately.)"""
+def run_ctest(root):
+    """Run the C++ ctest suite; return (failed ids, skipped ids, harness error).
+    (Build separately.) `root` is exported so asset-backed tests find BC."""
     print("== ctest ==", flush=True)
     if not os.path.isfile(os.path.join(BUILD_DIR, "CTestTestfile.cmake")):
         print("  !! no ctest configuration in build/ — run cmake first", flush=True)
-        return set(), True
-    proc = _run(["ctest", "--test-dir", "build", "--output-on-failure"])
+        return set(), set(), True
+    env = dict(os.environ)
+    if root:
+        env["DAUNTLESS_GAME_DIR"] = root
+    proc = _run(["ctest", "--test-dir", "build", "--output-on-failure"], env=env)
     out = proc.stdout + proc.stderr
-    failed = {"ctest:" + m.group(1) for m in map(_CTEST_FAILED.match, out.splitlines()) if m}
-    print("  ctest: %d failure(s)" % len(failed), flush=True)
-    return failed, False
+    failed, skipped = parse_ctest(out)
+    print("  ctest: %d failure(s), %d skipped" % (len(failed), len(skipped)), flush=True)
+    return failed, skipped, False
 
 
 def build_native():
@@ -133,9 +200,11 @@ def main():
     do_ctest = "--pytest-only" not in args
     do_build = "--no-build" not in args and do_ctest
 
-    known = _load_baseline()
+    known, known_skips = split_baseline(_load_baseline())
     current = set()
+    skipped = set()
     harness_error = False
+    root = content_root() if do_ctest else None
 
     if do_build and not build_native():
         return 2
@@ -144,12 +213,16 @@ def main():
         current |= f
         harness_error = harness_error or err
     if do_ctest:
-        f, err = run_ctest()
+        f, skipped, err = run_ctest(root)
         current |= f
         harness_error = harness_error or err
 
     new_failures = sorted(current - known)
-    fixed_baseline = sorted(known - current) if not harness_error else []
+    suites_ran = {s for s, on in (("pytest", do_pytest), ("ctest", do_ctest)) if on}
+    fixed_baseline = [] if harness_error else stale_baseline(known, current, suites_ran)
+    new_skips, running_skips = ([], []) if harness_error else \
+        diff_skips(skipped, known_skips, root is not None)
+    fixed_baseline += ["skip:" + t for t in running_skips]
 
     print("\n" + "=" * 70)
     if fixed_baseline:
@@ -157,10 +230,28 @@ def main():
         for t in fixed_baseline:
             print("  - " + t)
         print("-" * 70)
+    if do_ctest and not harness_error:
+        if root is None:
+            print("⚠ NO BC CONTENT ROOT — %d ctest test(s) SKIPPED, asset-backed "
+                  "tests did not run." % len(skipped))
+        else:
+            print("ctest: %d skipped with BC content at %s (%d baselined)."
+                  % (len(skipped), root, len(skipped & known_skips)))
+        print("-" * 70)
+    if new_skips:
+        print("NEW SKIPS (BC content IS configured, so these should have run) —")
+        print("route the test through native/tests/support/content_root.h, or")
+        print("baseline it as 'skip:<id>' in tests/known_failures.txt WITH a reason:")
+        for t in new_skips:
+            print("  ⊘ " + t)
+        print("-" * 70)
     if new_failures:
         print("NEW FAILURES (not in baseline) — these are REGRESSIONS to fix:")
         for t in new_failures:
             print("  ✗ " + t)
+        print("=" * 70)
+        return 1
+    if new_skips:
         print("=" * 70)
         return 1
     if harness_error:

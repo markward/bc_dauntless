@@ -332,7 +332,10 @@ scripts/check_tests.sh        # builds C++, runs pytest + ctest, diffs failures
 It compares every failure against `tests/known_failures.txt` and **exits
 non-zero, naming any failure not in that list** — that failure is a regression
 this tree introduced, not "pre-existing". When a baselined test starts passing
-the gate tells you to delete its line. **Never call a failure "pre-existing" by
+the gate tells you to delete its line. **Skips are gated too:** a gtest SKIP exits 0,
+so with a BC content root configured, any ctest skip not baselined as
+`skip:ctest:<name>` fails the gate (asset-backed tests find content through
+`native/tests/support/content_root.h`, never a hard-coded `<project>/game`). **Never call a failure "pre-existing" by
 eyeball; run the gate.**
 
 **Read the ledger, never a remembered count.** This paragraph used to name "the
