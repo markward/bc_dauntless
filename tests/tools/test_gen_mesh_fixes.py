@@ -115,6 +115,79 @@ def test_build_fix_refuses_mesh_without_id_shape():
         g.build_fix([_grid_shape(1, "saucer", 0, 1, False)], "r", None)
 
 
+def test_build_fix_uses_local_fit_when_global_fit_fails_but_snaps_twins():
+    # A saucer whose UVs are the usual planar-mirrored map plus a small
+    # smooth curvature term. Over the WHOLE region (y up to 10) this fails
+    # the strict 1e-4 exact-fit tolerance; over the patch's own local
+    # neighbourhood (a window of roughly one patch diagonal, ~2.2 GU here)
+    # the curvature's contribution is small enough for local-fit's 5e-3.
+    y1, n = 10.0, 10
+    target = _grid_shape(1, "saucer", -1.0, 1.0, True, y0=0.0, y1=y1, n=n)
+    target["uvs"] = [(u + 0.001 * y * y, v)
+                      for (u, v), (_, y, _) in zip(target["uvs"], target["vertices"])]
+    patch = _grid_shape(2, "idpatch", -1.0, 1.0, True, tex="Hull_ID_glow.tga",
+                         y0=y1, y1=y1 + 1.0, n=n)
+    patch["uvs"] = [(0.0, 0.0)] * len(patch["uvs"])
+
+    # Confirm the premise: the exact, whole-region fit really does fail.
+    assert g.fit_projection(target["vertices"], target["uvs"]) is None
+
+    fix, _review = g.build_fix([target, patch], "data/Models/Ships/X/X.nif", None)
+    m = fix["merges"][0]
+    assert m["method"].startswith("local-")
+    assert m["max_fit_error"] is not None
+    assert m["max_fit_error"] <= 5e-3
+
+    # Shared edge (y=y1): every patch vertex there has an exact twin in the
+    # target, and must come out with EXACTLY the twin's own UV (the snap),
+    # not the (looser) local-fit projection.
+    checked = 0
+    for i, (x, y, _z) in enumerate(patch["vertices"]):
+        if y != y1:
+            continue
+        twin = target["vertices"].index((x, y, 0.0))
+        expected = [g.to_f32(c) for c in target["uvs"][twin]]
+        assert m["uvs"][i] == expected
+        checked += 1
+    assert checked == n + 1
+
+
+def _shape(block, name, tex, vertices, uvs, triangles):
+    return {"block": block, "name": name, "textures": [tex], "vertices": vertices,
+            "normals": [(0.0, 0.0, 1.0)] * len(vertices), "uvs": uvs,
+            "triangles": triangles, "hidden": False}
+
+
+def test_build_fix_ranks_by_twin_count_before_fit_quality():
+    # Patch: 5 vertices twin the big region; 1 twins a tiny 3-vertex island
+    # that fits EXACTLY (any 3 non-degenerate points always do -- 3
+    # unknowns, 3 equations). The big region's x=z=0 for every vertex makes
+    # its design matrix rank-deficient in fx and z, so no candidate can fit
+    # it at all, regardless of the (arbitrary) UVs chosen -- guaranteeing
+    # "big region, no exact fit" without depending on any float tolerance.
+    patch_verts = [(0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 2.0, 0.0),
+                   (0.0, 3.0, 0.0), (0.0, 4.0, 0.0), (0.0, 10.0, 0.0)]
+    patch = _shape(9, "idpatch", "Hull_ID_glow.tga", patch_verts,
+                   [(0.0, 0.0)] * len(patch_verts), [])
+
+    big_verts = [(0.0, float(y), 0.0) for y in range(7)]
+    big = _shape(1, "big", "Hull_glow.tga", big_verts,
+                 [(0.5, 0.5)] * len(big_verts),
+                 [(0, 1, 2), (2, 3, 4), (4, 5, 6)])
+
+    small_verts = [(0.0, 10.0, 0.0), (2.0, 11.0, 0.0), (1.0, 9.0, 0.0)]
+    small = _shape(2, "small", "Hull_glow.tga", small_verts,
+                   [(0.1, 0.1), (0.2, 0.3), (0.4, 0.1)], [(0, 1, 2)])
+
+    # Confirm the premise underlying the construction above.
+    assert g.fit_projection(big_verts, [(0.5, 0.5)] * len(big_verts)) is None
+    assert g.fit_projection(
+        small_verts, [(0.1, 0.1), (0.2, 0.3), (0.4, 0.1)]) is not None
+
+    fix, _review = g.build_fix([patch, big, small], "r", None)
+    assert fix["merges"][0]["target"]["name"] == "big"
+
+
 def _fake_fix(rel):
     return {
         "format": 1,

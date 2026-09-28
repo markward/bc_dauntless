@@ -22,24 +22,21 @@ import struct
 import tempfile
 from pathlib import Path
 
-# Stock Federation hulls with an ID cut: 5 hulls x {High, Medium} LOD. Low
-# LODs have no ID patch (see design doc S2.1) and are out of scope.
+# Stock Federation hulls with an ID cut: 5 hulls, High LOD only. The engine
+# never loads Medium or Low meshes, so those are out of scope (Low LODs also
+# have no ID patch at all -- see design doc S2.1).
 STOCK_MESHES: tuple = (
     "data/Models/Ships/Galaxy/Galaxy.nif",
-    "data/Models/Ships/Galaxy/GalaxyMed.nif",
     "data/Models/Ships/Nebula/Nebula.nif",
-    "data/Models/Ships/Nebula/NebulaMed.nif",
     "data/Models/Ships/Sovereign/Sovereign.nif",
-    "data/Models/Ships/Sovereign/SovereignMed.nif",
     "data/Models/Ships/Akira/Akira.nif",
-    "data/Models/Ships/Akira/AkiraMed.nif",
     "data/Models/Ships/Ambassador/Ambassador.nif",
-    "data/Models/Ships/Ambassador/AmbassadorMed.nif",
 )
 
 # Per-mesh target-shape overrides, keyed by the `rel` path in STOCK_MESHES.
-# Needed where a Medium LOD's ID patch borders more than one shape (e.g.
-# Galaxy Med borders 3). Filled in by Task 5 from the review PNGs.
+# The automatic pick (highest twin count, then fit quality, then region
+# size -- see build_fix) is right for all 5 stock High meshes; this exists
+# for a future mesh whose ID patch borders more than one shape ambiguously.
 TARGET_OVERRIDES: dict = {}
 
 # FNV-1a 64-bit constants -- must match native/src/assets/src/mesh_fix.cc's
@@ -145,12 +142,16 @@ _CANDIDATES = (
 )
 
 
-def fit_projection(points, uvs):
-    """Fit a planar (u, v) = f(position) projection over `points`/`uvs`
-    pairs. Tries, in order, mirrored-xy, mirrored-xyz, unmirrored-xy,
-    unmirrored-xyz; returns the first candidate whose worst-vertex error is
-    below 1e-4 as (method, [u_coeffs, v_coeffs], max_err), or None if none
-    of the four fit."""
+# Local-fit's looser worst-vertex tolerance (design doc's "small smooth
+# perturbation" case): the whole region isn't planar, but the immediate
+# neighbourhood of the patch usually still is, closely enough for this.
+_LOCAL_FIT_TOL = 5e-3
+
+
+def _fit_candidates(points, uvs, tol):
+    """Try each of `_CANDIDATES`, in order, on `points`/`uvs` pairs; return
+    the first whose worst-vertex error is <= `tol` as (method,
+    [u_coeffs, v_coeffs], max_err), or None if none of the four fit."""
     for method, mirrored, ndim in _CANDIDATES:
         rows = []
         for (x, y, z) in points:
@@ -169,9 +170,46 @@ def fit_projection(points, uvs):
             pu = sum(r * c for r, c in zip(row, cu))
             pv = sum(r * c for r, c in zip(row, cv))
             max_err = max(max_err, abs(pu - u), abs(pv - v))
-        if max_err < 1e-4:
+        if max_err <= tol:
             return method, [cu, cv], max_err
     return None
+
+
+def fit_projection(points, uvs):
+    """Fit a planar (u, v) = f(position) projection over `points`/`uvs`
+    pairs. Tries, in order, mirrored-xy, mirrored-xyz, unmirrored-xy,
+    unmirrored-xyz; returns the first candidate whose worst-vertex error is
+    below 1e-4 as (method, [u_coeffs, v_coeffs], max_err), or None if none
+    of the four fit."""
+    return _fit_candidates(points, uvs, 1e-4)
+
+
+def _fit_local_projection(patch: dict, target_shape: dict, region_idxs: list):
+    """A local stand-in for `fit_projection`, used when the chosen region as
+    a whole isn't planar enough. Restricts the fit to the region vertices
+    that fall inside the patch's own world bounding box, expanded by one
+    patch diagonal on every side -- the patch's immediate neighbourhood --
+    and accepts a looser worst-vertex error (`_LOCAL_FIT_TOL`). Tries the
+    same four candidates in the same order as `fit_projection`. Returns
+    (method, coeffs, max_err) with `method` UNPREFIXED (the caller adds the
+    "local-" prefix), or None if fewer than 3 region vertices fall in the
+    box or none of the four candidates fits within tolerance."""
+    patch_verts = patch["vertices"]
+    mins = [min(v[k] for v in patch_verts) for k in range(3)]
+    maxs = [max(v[k] for v in patch_verts) for k in range(3)]
+    diag = _distance(mins, maxs)
+    lo = [mins[k] - diag for k in range(3)]
+    hi = [maxs[k] + diag for k in range(3)]
+
+    local_idxs = [
+        i for i in region_idxs
+        if all(lo[k] <= target_shape["vertices"][i][k] <= hi[k] for k in range(3))
+    ]
+    if len(local_idxs) < 3:
+        return None
+    points = [target_shape["vertices"][i] for i in local_idxs]
+    uvs = [target_shape["uvs"][i] for i in local_idxs]
+    return _fit_candidates(points, uvs, _LOCAL_FIT_TOL)
 
 
 def apply_projection(method: str, coeffs, point):
@@ -275,7 +313,7 @@ def build_fix(shapes: list, rel: str, target_override):
         raise ValueError("no candidate target region borders the ID patch")
 
     candidates.sort(
-        key=lambda c: (c["fit_ok"], c["num_twinned"], c["region_count"]),
+        key=lambda c: (c["num_twinned"], c["fit_ok"], c["region_count"]),
         reverse=True)
     chosen = candidates[0]
     target_shape = chosen["shape"]
@@ -303,15 +341,33 @@ def build_fix(shapes: list, rel: str, target_override):
             for v in patch["vertices"]
         ]
     else:
-        method = "seam-copy"
-        max_fit_error = None
-        known = {}
-        for i in region_idxs:
-            sv = target_shape["vertices"][i]
-            for pi, pv in enumerate(patch["vertices"]):
-                if _distance(sv, pv) < _POS_TOL:
-                    known[pi] = target_shape["uvs"][i]
-        uvs_out = [[to_f32(u), to_f32(v)] for u, v in seam_copy(patch, known)]
+        local_fit = _fit_local_projection(patch, target_shape, region_idxs)
+        if local_fit is not None:
+            local_method, coeffs, max_fit_error = local_fit
+            method = "local-" + local_method
+            uvs_out = [
+                [to_f32(c) for c in apply_projection(local_method, coeffs, v)]
+                for v in patch["vertices"]
+            ]
+            # Snap every patch vertex with an exact twin in the chosen
+            # region to the twin's own UV, so the shared seam is exact even
+            # though the local fit is only approximate off the seam.
+            for i in region_idxs:
+                sv = target_shape["vertices"][i]
+                tu, tv = target_shape["uvs"][i]
+                for pi, pv in enumerate(patch["vertices"]):
+                    if _distance(sv, pv) < _POS_TOL:
+                        uvs_out[pi] = [to_f32(tu), to_f32(tv)]
+        else:
+            method = "seam-copy"
+            max_fit_error = None
+            known = {}
+            for i in region_idxs:
+                sv = target_shape["vertices"][i]
+                for pi, pv in enumerate(patch["vertices"]):
+                    if _distance(sv, pv) < _POS_TOL:
+                        known[pi] = target_shape["uvs"][i]
+            uvs_out = [[to_f32(u), to_f32(v)] for u, v in seam_copy(patch, known)]
 
     weld = []
     for pi, pv in enumerate(patch["vertices"]):
