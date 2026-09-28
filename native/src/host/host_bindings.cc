@@ -530,6 +530,13 @@ scenegraph::ModelHandle load_model_impl(
         // Without retention every Mesh::cpu_data() returns nullopt and the
         // shield bubble collapses to zero size.
         cfg.keep_cpu_data = true;
+        // Resolved at EACH load, not captured here: the project asset root
+        // is set once at boot (host_loop), after this cache may already
+        // exist for tests, so a lambda -- not a stored path -- keeps this
+        // live if that ever changes.
+        cfg.mesh_fix_dir = [] {
+            return std::filesystem::path(renderer::project_asset_root()) / "mesh_fixes";
+        };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
     auto handle = g_cache->load(nif_path, search_paths, replacements);

@@ -32,6 +32,11 @@ public:
         // the cache substitutes upload_image / upload_mesh.
         std::function<Texture(const Image&, bool)> texture_uploader;
         std::function<Mesh(MeshCpu)>               mesh_uploader;
+
+        /// Directory holding mesh-fix files, evaluated at EACH load (resolve
+        /// at use; the project asset root can be set after the cache is
+        /// built). Empty function or empty path ⇒ no fixes.
+        std::function<std::filesystem::path()> mesh_fix_dir;
     };
 
     AssetCache();                     // equivalent to AssetCache(Config{})
