@@ -3,8 +3,12 @@
 ``ShipClass.InSystemWarp`` (the SDK entry point, AI/PlainAI/Intercept.py:214)
 and the player's dashes all record a ``WarpFlight`` on the ship's
 ``_insystem_warp_transit``; ``ship_motion`` hands every tick of it to
-``step``. The flight owns the motion only -- warp-engine state, VFX and the
-region hand-off belong to its callers.
+``step``. The flight owns the motion -- VFX and the region hand-off belong
+to its callers, and so does the dashes' warp-engine state (dash.py). An "ai"
+flight's WES_* state is managed here (``begin_ai_warp`` / ``end_ai_warp``):
+WES_WARP_INITIATED and a hold at acceptance while the ship's articulated
+parts swing to their warp pose, WES_WARPING while it flies, WES_NOT_WARPING
+at every end (Mark's option A, 2026-09-28).
 
 Coordinates. Paths are planned in SYSTEM coordinates
 (``engine.systems.warp_path`` is pure math on system-space tuples). The ship
@@ -102,6 +106,11 @@ class WarpFlight:
     _straight: bool | None = field(default=None, repr=False)
     # The target's system position last tick (its velocity, for the lead).
     _target_prev: tuple | None = field(default=None, repr=False)
+    # "ai" policy: seconds the ship waits, from acceptance, for its
+    # articulated parts to reach their warp pose (``begin_ai_warp``), and how
+    # long it has waited so far.
+    _parts_hold: float = field(default=0.0, repr=False)
+    _held: float = field(default=0.0, repr=False)
 
 
 # ── frames ────────────────────────────────────────────────────────────────
@@ -245,6 +254,48 @@ def _policy_speed(ship, flight) -> float:
     return flight._speed
 
 
+# ── the AI flight's warp state ────────────────────────────────────────────
+
+def _parts_time(ship) -> float:
+    """The parts' hold for an AI warp: the time the ship's articulated parts
+    need to reach their warp pose plus one sim tick (they start moving on the
+    tick after the state flips), as dash._parts_time. 0.0 -- no hold -- for a
+    ship with no parts to move. Fail-open."""
+    try:
+        from engine.appc import articulation
+        t = articulation.time_to_reach(ship, "warp")
+    except Exception:  # noqa: BLE001 - never block a warp on a rig read
+        return 0.0
+    if t <= 0.0:
+        return 0.0
+    from engine.core.loop import TICK_DELTA
+    return t + TICK_DELTA
+
+
+def begin_ai_warp(ship, flight) -> None:
+    """An "ai" flight was just accepted (InSystemWarp). With parts to move,
+    enter WES_WARP_INITIATED and hold (``step``) until they settle; with
+    none, WES_WARPING at once. The player's dash policies manage their own
+    state in dash.py and never come here."""
+    from engine.appc import warp_state
+    from engine.appc.subsystems import WarpEngineSubsystem
+    flight._parts_hold = _parts_time(ship)
+    warp_state.set_state(ship, WarpEngineSubsystem.WES_WARP_INITIATED
+                         if flight._parts_hold > 0.0
+                         else WarpEngineSubsystem.WES_WARPING)
+
+
+def end_ai_warp(ship, flight) -> None:
+    """An "ai" flight ended, by arrival or any abort: back to
+    WES_NOT_WARPING, so the parts return to cruise (the dash's drop-out does
+    the same; nothing is left to glide out of)."""
+    if getattr(flight, "speed_policy", None) != "ai":
+        return
+    from engine.appc import warp_state
+    from engine.appc.subsystems import WarpEngineSubsystem
+    warp_state.set_state(ship, WarpEngineSubsystem.WES_NOT_WARPING)
+
+
 # ── ending ────────────────────────────────────────────────────────────────
 
 def _finish(ship, flight, reason, system_xyz, direction) -> None:
@@ -269,28 +320,54 @@ def _finish(ship, flight, reason, system_xyz, direction) -> None:
 
 # ── the tick ──────────────────────────────────────────────────────────────
 
-def step(ship, dt: float) -> None:
-    """Advance one tick of the ship's flight (``_insystem_warp_transit``)."""
+def step(ship, dt: float) -> bool:
+    """Advance one tick of the ship's flight (``_insystem_warp_transit``).
+
+    False while an "ai" flight holds for its parts (``begin_ai_warp``): the
+    flight does not move the ship that tick, and the caller flies its normal
+    impulse orders instead -- the SDK's Intercept keeps turning it at the
+    target and skips its own speed control while InSystemWarp returns 1, so
+    it cruises on at the speed it last ordered. The tick that completes the
+    hold enters WES_WARPING and flies. True otherwise."""
     flight = ship._insystem_warp_transit
+    if flight._parts_hold > 0.0:
+        if _abort_if_target_gone(ship, flight):
+            return True
+        flight._held += dt
+        if flight._held < flight._parts_hold - 1e-9:
+            return False
+        flight._parts_hold = 0.0
+        from engine.appc import warp_state
+        from engine.appc.subsystems import WarpEngineSubsystem
+        warp_state.set_state(ship, WarpEngineSubsystem.WES_WARPING)
     if flight.target is None:
         _step_heading(ship, flight, dt)
     elif isinstance(flight.target, tuple):
         _step_destination(ship, flight, dt)
     else:
         _step_ship_target(ship, flight, dt)
+    return True
+
+
+def _abort_if_target_gone(ship, flight) -> bool:
+    """End a ship-target flight whose target is gone or has left the ship's
+    frame (they never interact); True when it did."""
+    target = flight.target
+    if target is None or isinstance(target, tuple):
+        return False
+    if (hasattr(target, "GetWorldLocation")
+            and target_local(ship, target) is not None):
+        return False
+    ship._end_in_system_warp("aborted")
+    ship._warp_consumed = True
+    return True
 
 
 def _step_ship_target(ship, flight, dt) -> None:
+    if _abort_if_target_gone(ship, flight):
+        return
     target = flight.target
-    if not hasattr(target, "GetWorldLocation"):
-        ship._end_in_system_warp("aborted")
-        ship._warp_consumed = True
-        return
     t_local = target_local(ship, target)
-    if t_local is None:                     # the target left this frame
-        ship._end_in_system_warp("aborted")
-        ship._warp_consumed = True
-        return
     if flight._obstacles is None:
         flight._obstacles = obstacles_for(ship)
     drop = float(flight.drop_distance)

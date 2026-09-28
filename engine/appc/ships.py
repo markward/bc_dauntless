@@ -780,9 +780,13 @@ class ShipClass(DamageableObject):
         cos_face = (fwd.x * diff.x + fwd.y * diff.y + fwd.z * diff.z) / d
         if cos_face < self.IN_SYSTEM_WARP_FACING_COS:
             return 0
-        self.begin_warp_flight(warp_flight.WarpFlight(
+        flight = warp_flight.WarpFlight(
             target=target, speed_policy="ai", exit_policy="keep_pre_warp",
-            drop_distance=float(distance)))
+            drop_distance=float(distance))
+        # Warp state first (WES_WARP_INITIATED + a parts hold for a rigged
+        # ship, else WES_WARPING), then the ET_IN_SYSTEM_WARP announcement.
+        warp_flight.begin_ai_warp(self, flight)
+        self.begin_warp_flight(flight)
         return 1
 
     def begin_warp_flight(self, flight) -> None:
@@ -825,6 +829,8 @@ class ShipClass(DamageableObject):
         if getattr(flight, "ended_reason", "") is None:
             flight.ended_reason = reason
         self._insystem_warp_transit = None
+        from engine.appc import warp_flight
+        warp_flight.end_ai_warp(self, flight)   # "ai" flights only
         self._post_in_system_warp(False)
 
     def IsDoingInSystemWarp(self) -> int:

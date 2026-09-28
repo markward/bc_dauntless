@@ -193,6 +193,46 @@ existing warp collision suppression and every SDK "is warping" check behave as
 they do for the tunnel. The player's steering and throttle are locked; the AI's
 rotation is already frozen.
 
+*NPC warp state + parts hold (Mark, option A, 2026-09-28).* Until then the
+"ai" flight set **no** `WES_*` state at all, so an NPC's articulated parts
+(e.g. the LC Intrepid's wings, `SetTransitionSeconds(4.75)`) stayed in cruise
+pose for the whole warp and it stayed collidable. Now an NPC signals warp and
+waits for its parts before leaving, like the player's dash:
+
+- At acceptance (`InSystemWarp` past its facing gate — `ET_IN_SYSTEM_WARP`
+  True is posted there, unchanged), `warp_flight.begin_ai_warp` measures
+  `t_parts = articulation.time_to_reach(ship, "warp") + TICK_DELTA`. Parts to
+  move: `WES_WARP_INITIATED` and a **hold**; none: `WES_WARPING` at once, no
+  hold.
+- During the hold `warp_flight.step` returns False and `ship_motion` flies the
+  ship's **own impulse orders** instead: the SDK's Intercept keeps calling
+  `TurnTowardLocation` every update (so the nose stays on a moving target at
+  the ship's normal turn rate) and skips its `SetSpeed` while `InSystemWarp`
+  returns 1, so the ship **coasts on at the impulse speed it last ordered**
+  along its nose — the heading dash's "cruise on at impulse" hold, not a stop.
+  It never translates at warp speed. `InSystemWarp` keeps returning 1 and
+  `IsDoingInSystemWarp()` is 1, so Intercept does not fight it and the SDK sees
+  a warp in progress. A target lost or gone to another frame aborts the hold.
+- The tick the hold completes: `WES_WARPING` and the flight exactly as before.
+- Every end — arrival and each abort (`StopInSystemWarp`, `SetAI`/`ClearAI`/
+  `CompleteStop`, death, target lost/left frame, the player taking the conn)
+  — goes through `_end_in_system_warp`, which (`warp_flight.end_ai_warp`)
+  returns an "ai" flight to `WES_NOT_WARPING`. No dewarp transition: the
+  flight ends where the ship drops out, with no exit glide to cover (the dash
+  does the same; the tunnel's `WES_DEWARP_ENDING` covers its exit-decel
+  glide). The parts return to cruise by the articulation rule.
+- Only the "ai" policy is managed there; the dashes (`set_course`, `heading`)
+  keep managing their own state in `dash.py`. A **player on autopilot
+  Intercept** flies an "ai" flight and so gets the NPC behaviour.
+- Consequences for every NPC, rigged or not: it is **non-collidable** for the
+  whole warp, hold included (`collisions` keys off `is_ship_warping`) — as the
+  tunnel already makes a warping NPC from its align start
+  (`WES_WARP_INITIATED`); SDK `GetWarpState` readers see it warping
+  (`WarpSequence.py:638` skips it when clearing an arrival placement, since it
+  has no warp sequence; `ConditionInRange` computes an unused radius;
+  `HelmMenuHandlers`/E6M3 read the player only); `AvoidObstacles` and the
+  science/helm menus key off `IsDoingInSystemWarp`, unchanged.
+
 **Removed:** Ctrl+W's boost (`WARP_BOOST_FACTOR`, the toggle, and `GetTargetSpeed`'s
 boost term) and the `ships.py` comment tying AI warp speed to it.
 
@@ -404,7 +444,9 @@ a boundary, and the dust streak strength tuned by eye.
 
 1. **Immediately after:** NPC in-system travel — **B** (NPC warp flashes,
    including `CreateShip(..., iWarpFlash=1)` arrivals) vs **C** (NPCs dash
-   between regions through real space, reopening rule N).
+   between regions through real space, reopening rule N). **Still open**
+   after option A (2026-09-28), which settled only the warp state and parts
+   hold of the in-region AI warp, not how NPCs travel between regions.
 2. The widening plan (system-frames Plan 4): frame-aware target list, weapons,
    perception, cameras — which also lifts the target-clear on hand-off.
 

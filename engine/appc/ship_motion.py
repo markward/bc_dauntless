@@ -175,10 +175,12 @@ def _step_ship_motion(ship, dt: float) -> None:
         return
 
     # An active in-system warp flight overrides normal setpoint motion:
-    # engine/appc/warp_flight.py flies it (routed, facing its path).
+    # engine/appc/warp_flight.py flies it (routed, facing its path) -- except
+    # while an AI flight holds for its articulated parts, when the ship flies
+    # its impulse orders below (warp_flight.step returns False).
     if getattr(ship, "_insystem_warp_transit", None) is not None:
-        warp_flight.step(ship, dt)
-        return
+        if warp_flight.step(ship, dt):
+            return
 
     sp = getattr(ship, "_speed_setpoint", None)
     av = getattr(ship, "_target_angular_velocity_setpoint", None)
