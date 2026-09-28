@@ -66,6 +66,10 @@ private:
 // Public utilities; the renderer can use these for its own internal assets
 // (lens-dirt textures, color-grading LUTs) without going through AssetCache.
 Image decode_tga(std::span<const std::uint8_t> bytes);
+/// Decode a PNG (recognised by its 8-byte signature) or, failing that, a TGA
+/// exactly as decode_tga does. PNG is the authoring format for project-owned
+/// images such as hull-name decal masks; BC content stays on decode_tga.
+Image decode_image(std::span<const std::uint8_t> bytes);
 Texture upload_image(const Image& image, bool generate_mipmaps = true);
 
 /// Rewrite a tangent-space normal map's blue channel as z = sqrt(1 - x^2 - y^2)

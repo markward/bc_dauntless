@@ -2,6 +2,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_TGA
+#define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #include <stb_image.h>
 
@@ -27,23 +28,30 @@ bool is_16bpp_tga(std::span<const std::uint8_t> bytes) {
     return bytes[16] == 16;  // bits-per-pixel field in TGA header
 }
 
-}  // namespace
+bool is_png(std::span<const std::uint8_t> bytes) {
+    static constexpr std::uint8_t kSig[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    return bytes.size() >= 8 && std::equal(kSig, kSig + 8, bytes.begin());
+}
 
-Image decode_tga(std::span<const std::uint8_t> bytes) {
-    if (is_indexed_tga(bytes)) {
-        throw UnsupportedTga("indexed (color-mapped) TGA is not supported");
-    }
-    if (is_16bpp_tga(bytes)) {
-        throw UnsupportedTga("16bpp TGA is not supported");
-    }
+// stb decode shared by both formats; the format-specific header checks run
+// before this. `what` names the format in the error message.
+Image decode_with_stb(std::span<const std::uint8_t> bytes, const char* what) {
+    // Image has no grey+alpha format, so a 2-channel source (a PNG mask saved
+    // greyscale-with-alpha) is expanded to RGBA by stb; every other channel
+    // count decodes as stored.
+    int info_w = 0, info_h = 0, stored = 0;
+    const bool known = stbi_info_from_memory(
+        bytes.data(), static_cast<int>(bytes.size()), &info_w, &info_h, &stored);
+    const int desired = (known && stored == 2) ? 4 : 0;
 
     int w = 0, h = 0, channels = 0;
     stbi_uc* data = stbi_load_from_memory(
         bytes.data(), static_cast<int>(bytes.size()),
-        &w, &h, &channels, /*desired_channels=*/0);
+        &w, &h, &channels, desired);
+    if (desired != 0) channels = desired;
     if (!data) {
         const char* reason = stbi_failure_reason();
-        throw TextureDecodeError(reason ? reason : "tga decode failed");
+        throw TextureDecodeError(reason ? reason : std::string(what) + " decode failed");
     }
 
     Image img;
@@ -65,6 +73,25 @@ Image decode_tga(std::span<const std::uint8_t> bytes) {
     img.pixels.assign(data, data + total);
     stbi_image_free(data);
     return img;
+}
+
+}  // namespace
+
+Image decode_tga(std::span<const std::uint8_t> bytes) {
+    if (is_indexed_tga(bytes)) {
+        throw UnsupportedTga("indexed (color-mapped) TGA is not supported");
+    }
+    if (is_16bpp_tga(bytes)) {
+        throw UnsupportedTga("16bpp TGA is not supported");
+    }
+    return decode_with_stb(bytes, "tga");
+}
+
+Image decode_image(std::span<const std::uint8_t> bytes) {
+    // The TGA sniffs above would misread a PNG (its 2nd byte 'P' looks like a
+    // colour-map flag), so the signature check must come first.
+    if (is_png(bytes)) return decode_with_stb(bytes, "png");
+    return decode_tga(bytes);
 }
 
 void reconstruct_normal_map_z(Image& image) {
