@@ -41,11 +41,6 @@ def _fire(ship) -> bool:
     return dispatch_passes(evt)
 
 
-def _dying(ship) -> bool:
-    return bool(implements(ship, "IsDying") and ship.IsDying()) or \
-        bool(implements(ship, "IsDead") and ship.IsDead())
-
-
 class RadiationDriver:
     def __init__(self, sample_for, rng=None):
         self._sample_for = sample_for
@@ -93,7 +88,8 @@ class RadiationDriver:
         """One fixed sim tick. `shared`: ids of ships inside an ARMED local
         MetaNebula -- their events come from NebulaTracker (Task 9)."""
         from engine.appc import warp_state
-        self._tick_outages(dt, {id(s) for s in ships if not _dying(s)})
+        from engine.appc.ship_death import _out_of_action
+        self._tick_outages(dt, {id(s) for s in ships if not _out_of_action(s)})
         m = _mult()
         period = 1.0 / EVENT_HZ
         live = set()

@@ -88,8 +88,10 @@ def target_offset_world(target, offset):
 
 def _is_offline(sub) -> bool:
     """True when a subsystem is disabled OR destroyed, OR its parent ship is
-    out of action (dying/dead — inert coast). Single source of truth for the
-    capability gates (weapons, engines, sensors, shield generator, repair).
+    out of action (dying/dead — inert coast), OR a radiation outage is live on
+    the subsystem itself or the system it belongs to. Single source of truth
+    for the capability gates (weapons, engines, sensors, shield generator,
+    repair).
     Reads predicates at use-time so repair lifting condition releases the gate
     automatically on the next call."""
     if sub is None:
