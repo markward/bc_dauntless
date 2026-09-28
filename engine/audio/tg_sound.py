@@ -200,12 +200,24 @@ class TGSound:
             if node_set is not None:
                 key = frames.frame_of(node_set).key
         active = scene_scope.active_frame()
-        # Fix round 1, review Critical #1: refuse OUTRIGHT -- nothing sent to
-        # the backend, nothing registered anywhere -- when the emitter has a
-        # real, resolved frame that differs from the already-active one. By
-        # the time this runs in production, host_loop.tick_audio has ALREADY
-        # called scene_scope.set_active_frame() for this tick's viewed frame,
-        # so "active" here is never stale. Falling through to
+        # Refuse OUTRIGHT -- nothing sent to the backend, nothing registered
+        # anywhere -- when the emitter has a real, resolved frame that
+        # differs from the frame viewed NOW. `active` is what tick_audio last
+        # saw, and tick_audio runs AFTER the frame's sim ticks, so inside a
+        # sim tick it is stale whenever that tick moved the view: a warp's
+        # arrival swaps the player into the destination and plays "Exit
+        # Warp" in the same tick, and compared against the stale transit
+        # frame that sound was refused. The next tick_audio moves the active
+        # frame to the same view this compares against, so what is allowed
+        # here survives it, and a left-behind ship's fire is still refused.
+        # With no active frame yet (tick_audio has never run) there is no
+        # scene to compare against, as before.
+        if key is not None and active is not None:
+            viewed = frames.viewing_set()
+            live = frames.frame_of(viewed) if viewed is not None else None
+            if live is not None:
+                active = live.key
+        # Falling through to
         # node_world_position()'s None (the old behaviour) only forced a
         # NON-positional source -- the sound still played, unattenuated, at
         # full volume, registered under the EMITTER's (non-active) frame,

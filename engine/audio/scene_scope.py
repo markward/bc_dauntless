@@ -59,18 +59,34 @@ def _is_live(handle) -> bool:
 
 
 def set_active_frame(key) -> None:
-    """Make `key` the active sound scene, stopping every other frame's sources."""
+    """Make `key` the active sound scene, stopping every other frame's sources.
+
+    A source ATTACHED to an object belongs to that object's CURRENT frame
+    (`attached_sources.owner_frame`), not the one it was tagged with at
+    Play: when its owner has moved into `key` -- the player crossing into
+    BC's "warp" set at a tunnel's burst, with "Enter Warp" still playing its
+    crack -- it is re-tagged under `key` and keeps playing. Only a source
+    whose owner is outside `key` (a ship left behind in the system the view
+    left) or that has no owner is stopped."""
     global _active_frame
     if key == _active_frame:
         return
     _active_frame = key
+    from engine.audio import attached_sources
+    carried = []
     for frame_key, handles in list(_by_frame.items()):
         if frame_key == key:
             continue
         for h in handles:
-            if h._pid:
-                h.Stop()
+            if not h._pid:
+                continue
+            if key is not None and attached_sources.owner_frame(h) == key:
+                carried.append(h)
+                continue
+            h.Stop()
         _by_frame[frame_key] = []
+    if carried:
+        _by_frame.setdefault(key, []).extend(carried)
 
 
 def register(handle, key) -> None:

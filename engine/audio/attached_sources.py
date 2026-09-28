@@ -125,6 +125,25 @@ def detach(handle) -> None:
         _attached.pop(handle._pid, None)
 
 
+def owner_frame(handle):
+    """The frame key of the set `handle`'s attach owner is in NOW, or None
+    when `handle` is not attached or its owner has no resolvable set.
+
+    An attached sound belongs to its owner's CURRENT frame, not the one it
+    started in: `scene_scope.set_active_frame` asks this so a sound follows
+    its owner across a set change (the player's "Enter Warp" into BC's warp
+    set) instead of being stopped with the frame the owner left."""
+    if handle is None or not handle._pid:
+        return None
+    entry = _attached.get(handle._pid)
+    if entry is None:
+        return None
+    from engine.systems import frames
+    node_set = frames.containing_set(entry.node)
+    frame = frames.frame_of(node_set) if node_set is not None else None
+    return frame.key if frame is not None else None
+
+
 def pump(dt: float) -> None:
     """Copy every attached node's world position and velocity into its source.
 
