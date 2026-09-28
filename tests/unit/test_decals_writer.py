@@ -328,3 +328,74 @@ def test_write_decals_byte_identical_round_trip_of_committed_ambassador_file(
     decals_writer.write_decals(working, placements, default_registry)
 
     assert working.read_bytes() == original_bytes
+
+
+# ── Ruling N: a FIRST save for a class must be visible to the reader ───────
+#
+# mods.replacements() / mods.current() are cached indexes, so a decals.json
+# that did not exist when they were built is invisible to
+# hull_decals.load_decals_doc (paths.game_asset) until they learn of it.
+
+def test_invalidate_replacements_rescans_the_replacements_tree(
+        tmp_path, monkeypatch):
+    root = tmp_path / "replacements"
+    monkeypatch.setattr(mods, "replacements_root", lambda: root)
+    mods.invalidate_replacements()
+    assert mods.replacements().lookup(BOP_JSON_REL) is None   # primes the cache
+    (root / BOP_DIR_REL / "Masks").mkdir(parents=True)
+    (root / BOP_JSON_REL).write_text("{}")
+    assert mods.replacements().lookup(BOP_JSON_REL) is None   # still cached
+    mods.invalidate_replacements()
+    assert mods.replacements().lookup(BOP_JSON_REL).abs_path == root / BOP_JSON_REL
+    mods.invalidate_replacements()
+
+
+def test_first_stock_save_is_found_by_load_decals_doc(tmp_path, monkeypatch):
+    root = tmp_path / "replacements"
+    monkeypatch.setattr(mods, "replacements_root", lambda: root)
+    monkeypatch.setattr(mods, "current", _empty_index)
+    monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "stock")
+    mods.invalidate_replacements()
+    assert hull_decals.load_decals_doc(BOP_DIR_REL) is None   # primes caches
+
+    written = decals_writer.save_decals(BOP_MODEL_REL, [_placement("top")], "IKS")
+
+    assert written == root / BOP_JSON_REL
+    doc = hull_decals.load_decals_doc(BOP_DIR_REL)
+    assert doc is not None and doc["default_registry"] == "IKS"
+    assert list(doc["decals"]) == ["top"]
+    mods.invalidate_replacements()
+
+
+def test_first_mod_routed_save_is_found_by_load_decals_doc(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(mods, "replacements", _empty_index)
+    monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "stock")
+    nif = tmp_path / "NifMod" / "Data" / "Models" / "Ships" / "BirdOfPrey" \
+        / "BirdOfPrey.nif"
+    index = mods.ModIndex(files={
+        mods.fold(BOP_MODEL_REL): _mf(BOP_MODEL_REL, "NifMod", nif),
+    }, mods=[])
+    monkeypatch.setattr(mods, "current", lambda: index)
+    assert hull_decals.load_decals_doc(BOP_DIR_REL) is None
+
+    written = decals_writer.save_decals(BOP_MODEL_REL, [_placement("top")], None)
+
+    assert written == nif.parent / "Masks" / "decals.json"
+    assert index.lookup(BOP_JSON_REL).mod_name == "NifMod"
+    doc = hull_decals.load_decals_doc(BOP_DIR_REL)
+    assert doc is not None and list(doc["decals"]) == ["top"]
+
+
+def test_save_decals_failure_raises_and_leaves_the_file(tmp_path, monkeypatch):
+    root = tmp_path / "replacements"
+    monkeypatch.setattr(mods, "replacements_root", lambda: root)
+    monkeypatch.setattr(mods, "current", _empty_index)
+    target = root / BOP_JSON_REL
+    target.parent.mkdir(parents=True)
+    target.write_text("{not json")
+    mods.invalidate_replacements()
+    with pytest.raises(ValueError):
+        decals_writer.save_decals(BOP_MODEL_REL, [_placement("top")], None)
+    assert target.read_text() == "{not json"
+    mods.invalidate_replacements()

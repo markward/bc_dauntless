@@ -70,6 +70,44 @@ def decals_target_path(model_rel: str) -> Path:
     return mods.replacements_root() / dir_rel / "Masks" / "decals.json"
 
 
+def save_decals(model_rel: str, placements: List["decal_editor.Placement"],
+                default_registry: Optional[str]) -> Path:
+    """The SPV's Save: `write_decals` at `decals_target_path(model_rel)`,
+    then make the file visible to the reader (Ruling N). Returns the path.
+
+    `mods.replacements()` and `mods.current()` are cached indexes, so a
+    decals.json CREATED by this save (a class's first) would stay invisible
+    to `hull_decals.load_decals_doc` until restart. After a successful write:
+    a file under the replacements root drops that index (a cheap rescan of
+    our own tree); a file in a mod that the mod index doesn't list yet is
+    registered into it under the mod that owns the model (the same exact
+    lookup `decals_target_path` routed by), rather than re-walking every
+    installed mod. `hull_decals.reset()` then clears the reader's warn-once
+    ledger so a fault in the new file is reported afresh.
+
+    Raises whatever `write_decals` raises; the indexes are left alone then.
+    """
+    from engine.appc import hull_decals
+
+    path = decals_target_path(model_rel)
+    write_decals(path, placements, default_registry)
+
+    json_rel = f"{posixpath.dirname(model_rel)}/Masks/decals.json"
+    try:
+        path.relative_to(mods.replacements_root())
+        in_replacements = True
+    except ValueError:
+        in_replacements = False
+    if in_replacements:
+        mods.invalidate_replacements()
+    elif mods.current().lookup(json_rel) is None:
+        owner = mods.current().lookup(model_rel)
+        if owner is not None:
+            mods.register_game_file(json_rel, path, owner.mod_name)
+    hull_decals.reset()
+    return path
+
+
 def write_decals(path: Path, placements: List["decal_editor.Placement"],
                   default_registry: Optional[str]) -> None:
     """Write `path`'s `decals.json`.
