@@ -37,6 +37,15 @@ LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to 
                      # field dials (gain 1.2 / floor 0.5 → peak density ≈ 0.5-0.66),
                      # so only the densest clump cores fully hide a ship.
 HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detection
+# The radial profile's sensors term is capped this far below LOCK_BREAK_T so
+# the profile only SHRINKS detection range and never breaks a lock on its own.
+# Uncapped, sensors(r) * full_concealment (Vesuvi C_V ~0.393) reached
+# LOCK_BREAK_T wherever sensors >= 0.713 -- ~120.6k-126.4k GU at Vesuvi, and
+# Belaruz 1's anchor -- leaving E3M2's Berkeley, probe and Warbirds and the
+# player mutually undetectable (final review #1). The local MetaNebula's fbm
+# term is uncapped: it still breaks locks inside BC's own cloud.
+PROFILE_LOCK_MARGIN = 0.01
+PROFILE_CONCEALMENT_CAP = LOCK_BREAK_T - PROFILE_LOCK_MARGIN
 
 # ── The stage-4 sensing toggle (INTENTIONAL divergence from stock BC) ─────────
 # ONE flag covering BOTH stage-4 sensing changes as a set. It does NOT mean
@@ -256,14 +265,16 @@ def _local_concealment(ship) -> float:
 def concealment_at(ship) -> float:
     """Concealment at *ship*: the larger of the local MetaNebula fbm density
     and the radial profile's `sensors` column scaled by its measured full
-    concealment (docs/superpowers/specs/2026-09-23-radial-system-profile-design.md)."""
+    concealment (docs/superpowers/specs/2026-09-23-radial-system-profile-design.md),
+    the profile term capped at PROFILE_CONCEALMENT_CAP (see its comment)."""
     local = _local_concealment(ship)
     from engine.systems import profile as _profile
     found = _profile.locate(ship)
     if found is None or found[0] is None:
         return local
     prof, r = found
-    return max(local, _profile.evaluate(prof, r).sensors * prof.full_concealment)
+    profile_term = _profile.evaluate(prof, r).sensors * prof.full_concealment
+    return max(local, min(profile_term, PROFILE_CONCEALMENT_CAP))
 
 
 def is_hidden_by_cloak(target) -> bool:
