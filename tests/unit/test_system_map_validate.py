@@ -910,3 +910,62 @@ def test_bc_scale_position_rule_is_region_scoped():
     )
     assert validate(m, bc_offsets={("R1", "Moon 1"): (0.0, 4000.0, 0.0),
                                    ("R2", "Moon 1"): (0.0, 1000.0, 0.0)}) == []
+
+
+# ---- profile rules --------------------------------------------------------
+
+from engine.systems.profile import Profile, ProfileRow
+from engine.systems.validate import _profile_problems
+
+
+def _pm(rows, overrides=None, regions=None):
+    return SystemMap(system="T", bodies=[Body("Sun", "Sun", 100.0, (0.0, 0.0, 0.0))],
+               regions=regions or [], overrides=overrides or {},
+               profile=Profile(rows=rows))
+
+
+def _profile_rules(m):
+    return sorted({p.rule for p in _profile_problems(m)})
+
+
+def test_ordered_profile_is_clean():
+    assert _profile_rules(_pm([ProfileRow(0.0, radiation=1.0), ProfileRow(300.0)])) == []
+
+
+def test_none_profile_is_clean():
+    m = _pm([])
+    m.profile = None
+    assert _profile_rules(m) == []
+
+
+def test_unsorted_first_nonzero_or_out_of_range_rows_are_problems():
+    assert _profile_rules(_pm([ProfileRow(10.0)])) == ["profile-rows-ordered"]
+    assert _profile_rules(_pm([ProfileRow(0.0), ProfileRow(50.0), ProfileRow(20.0)])) == ["profile-rows-ordered"]
+    assert _profile_rules(_pm([ProfileRow(0.0, dust=1.5)])) == ["profile-rows-ordered"]
+    assert _profile_rules(_pm([ProfileRow(0.0, nebula=float("nan"))])) == ["profile-rows-ordered"]
+
+
+def test_radiation_in_the_last_row_is_a_problem():
+    assert _profile_rules(_pm([ProfileRow(0.0), ProfileRow(10.0, radiation=0.1)])) == [
+        "profile-radiation-clears"]
+
+
+def test_radiation_near_the_star_is_fine():
+    assert _profile_rules(_pm([ProfileRow(0.0, radiation=1.0), ProfileRow(300.0)])) == []
+
+
+def _cloud_region(anchor_y):
+    return Region("C1", (0.0, anchor_y, 0.0), 2000.0,
+                  nebula={"spheres": [(0.0, 0.0, 0.0, 500.0)]})
+
+
+def test_override_near_clump_is_clean():
+    rows = [ProfileRow(0.0), ProfileRow(100000.0, nebula=1.0), ProfileRow(200000.0)]
+    m = _pm(rows, overrides={"profile": {"rows": []}}, regions=[_cloud_region(101000.0)])
+    assert _profile_rules(m) == []
+
+
+def test_override_far_from_clump_is_a_problem():
+    rows = [ProfileRow(0.0), ProfileRow(100000.0, nebula=1.0), ProfileRow(200000.0)]
+    m = _pm(rows, overrides={"profile": {"rows": []}}, regions=[_cloud_region(150000.0)])
+    assert _profile_rules(m) == ["profile-override-tracks-clump"]

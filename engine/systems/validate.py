@@ -16,6 +16,7 @@ import math
 from dataclasses import dataclass
 
 from .clouds import PROFILES, params_for
+from .profile import COLUMNS, clump_radius
 
 
 @dataclass
@@ -449,6 +450,42 @@ def _staged_clearance_problems(bodies, regions, bad_bodies, bad_regions,
     return problems
 
 
+def _profile_problems(m) -> list:
+    """Radial profile rules (spec: 'Validator rules'). Never raises."""
+    prof = getattr(m, "profile", None)
+    if prof is None or not getattr(prof, "rows", None):
+        return []
+    rows = prof.rows
+    out = []
+    ordered = rows[0].distance_gu == 0.0 and all(
+        a.distance_gu <= b.distance_gu for a, b in zip(rows, rows[1:]))
+    in_range = all(
+        math.isfinite(getattr(r, c)) and 0.0 <= getattr(r, c) <= 1.0
+        for r in rows for c in COLUMNS) and all(math.isfinite(r.distance_gu) for r in rows)
+    if not (ordered and in_range):
+        out.append(Problem("profile-rows-ordered",
+                           f"{m.system}: rows must be sorted, start at 0 and hold "
+                           f"finite values in 0-1"))
+    if rows[-1].radiation != 0.0:
+        out.append(Problem("profile-radiation-clears",
+                           f"{m.system}: last row radiation {rows[-1].radiation} persists "
+                           f"outward forever; it must be 0"))
+    if (getattr(m, "overrides", None) or {}).get("profile") is not None:
+        star = next((b for b in m.bodies if b.orbits is None), None)
+        peak = max(rows, key=lambda r: r.nebula)
+        for region in m.regions:
+            neb = region.nebula
+            if star is None or not neb or not neb.get("spheres"):
+                continue
+            R = clump_radius(region, star.position_gu)
+            if peak.nebula > 0.0 and abs(peak.distance_gu - R) > region.radius_gu:
+                out.append(Problem("profile-override-tracks-clump",
+                                   f"{m.system}: override nebula peak at {peak.distance_gu:.0f} GU "
+                                   f"but {region.set_name}'s clump is at {R:.0f} GU "
+                                   f"(tolerance {region.radius_gu:.0f})"))
+    return out
+
+
 def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=None,
              staged_points=None, staged_clearance_gu=None, bc_offsets=None) -> list:
     """Validate a SystemMap, returning a list of Problems (empty == valid).
@@ -877,5 +914,7 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
     if bc_offsets is not None:
         problems.extend(_bc_scale_position_problems(
             bodies, regions, bad_bodies, bad_regions, bc_offsets))
+
+    problems.extend(_profile_problems(m))
 
     return problems
