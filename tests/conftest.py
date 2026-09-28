@@ -964,6 +964,7 @@ def _reset_leakable_engine_globals():
     _hl = sys.modules.get("engine.host_loop")
     if _hl is not None:
         _hl._mapped_body_warned.clear()
+        _hl._ship_decals_warned.clear()
     try:
         import App
     except Exception:
@@ -1048,6 +1049,14 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import hull_hit_smoke as _hhs
         _hhs.reset()
+    except Exception:
+        pass
+    # Hull-name decal resolution warns once per (path, reason) -- a test that
+    # exercises a fault (malformed decals.json, missing mask, degenerate
+    # projector) would otherwise silence the same fault for every later test.
+    try:
+        from engine.appc import hull_decals as _hull_decals
+        _hull_decals.reset()
     except Exception:
         pass
     # Music: g_kMusicManager is a process-lifetime singleton and host_loop

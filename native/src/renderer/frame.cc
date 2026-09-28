@@ -303,6 +303,26 @@ unsigned int ensure_damage_decal_texture() {
     return g_decal_id;
 }
 
+// Hull-name decal masks (Material::StageSlot::Decal0) are bound on texture
+// unit 8 through this sampler object: upload_image leaves every texture
+// GL_REPEAT, and a mask must clamp so its edge texels never wrap onto the
+// opposite edge of the projector rectangle (Decal0's NIF-encoded
+// TextureStage::clamp_mode is 0 = CLAMP_S_CLAMP_T). Created lazily per GL
+// session; released by reset_decal_mask_sampler() with the other
+// session-scoped GL objects.
+GLuint g_decal_mask_sampler = 0;
+
+GLuint ensure_decal_mask_sampler() {
+    if (g_decal_mask_sampler != 0) return g_decal_mask_sampler;
+    glGenSamplers(1, &g_decal_mask_sampler);
+    glSamplerParameteri(g_decal_mask_sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(g_decal_mask_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(g_decal_mask_sampler, GL_TEXTURE_MIN_FILTER,
+                        GL_LINEAR_MIPMAP_LINEAR);
+    glSamplerParameteri(g_decal_mask_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    return g_decal_mask_sampler;
+}
+
 // Lazy per-model bounding-radius cache for dynamic-light selection. Mirrors
 // the g_decal_id/g_decal_tried lazy-load precedent above: computed once per
 // ModelHandle (compute_model_aabb walks every mesh's CPU-data verts, not
@@ -358,6 +378,14 @@ void reset_damage_decal_texture() {
 
 void reset_model_radius_cache() {
     g_model_radius_cache.clear();
+}
+
+void reset_decal_mask_sampler() {
+    if (g_decal_mask_sampler != 0) {
+        GLuint id = g_decal_mask_sampler;
+        glDeleteSamplers(1, &id);
+    }
+    g_decal_mask_sampler = 0;
 }
 
 // The original fill volume for an instance's hull, or nullptr when there is
@@ -807,11 +835,42 @@ void draw_model(const assets::Model& model,
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
             prog.set_int("u_scuff_map_ok", scuff_map != 0 ? 1 : 0);
 
+            // Unit 8 = hull-name decal mask (Decal0), clamped through the
+            // sampler object. Without a decal the black fallback keeps the
+            // sampler valid, and sampler 0 hands the unit back to the
+            // texture's own parameters so nothing inherits the clamp.
+            const int decal_tex = mat.stages[
+                static_cast<std::size_t>(assets::Material::StageSlot::Decal0)
+            ].texture_index;
+            const bool has_decal = mat.decal.enabled && decal_tex >= 0;
+            glActiveTexture(GL_TEXTURE8);
+            if (has_decal) {
+                glBindTexture(GL_TEXTURE_2D, model.textures[decal_tex].id());
+                glBindSampler(8, ensure_decal_mask_sampler());
+            } else {
+                glBindTexture(GL_TEXTURE_2D, black_fallback);
+                glBindSampler(8, 0);
+            }
+            glActiveTexture(GL_TEXTURE0);  // restore default active unit
+            prog.set_int("u_decal_mask", 8);
+            prog.set_int("u_decal_mask_enabled", has_decal ? 1 : 0);
+            if (has_decal) {
+                // p_body reconstruction: u_ship_world_inv is otherwise set only
+                // when this instance has damage decals, glow regions, carves
+                // or a hull field -- an undamaged decaled hull would project
+                // through a stale (or never-set) matrix.
+                prog.set_mat4 ("u_ship_world_inv", glm::inverse(world));
+                prog.set_mat4 ("u_decal_proj",   mat.decal.body_to_mask);
+                prog.set_vec3 ("u_decal_normal", mat.decal.normal);
+                prog.set_float("u_decal_depth",  mat.decal.depth);
+            }
+
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
         }
     }
     glBindVertexArray(0);
+    glBindSampler(8, 0);  // never leak the decal clamp to a later pass
 }
 
 FrameSubmitter::~FrameSubmitter() {

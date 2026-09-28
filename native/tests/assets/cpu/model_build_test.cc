@@ -815,3 +815,29 @@ TEST(ModelBuildRealAssets, CGSovereignBussardFlipIsWiredWithAllSixteenFrames) {
     }
     EXPECT_GE(animated_materials, 1) << "no material references the bussard flip";
 }
+
+// A registry replacement that matches nothing (stock Fed hulls once the ID
+// patch is merged away, or any NIF with no "ID" texture at all) must warn
+// exactly ONCE per (source, old_substring), not once per build call — a
+// mission that reloads a ship's model every frame would otherwise spam
+// stderr forever.
+TEST_F(ModelBuildTest, NoMatchingReplacementWarnsOnlyOnce) {
+    auto f = trivial_file_with_one_trishape();
+    auto ctx = make_ctx();
+    ctx.texture_replacements = {{"ID", "x.tga"}};
+
+    testing::internal::CaptureStderr();
+    assets::detail::build_model(f, ctx);
+    assets::detail::build_model(f, ctx);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    auto count = [](const std::string& haystack, const std::string& needle) {
+        std::size_t n = 0, pos = 0;
+        while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+            ++n;
+            pos += needle.size();
+        }
+        return n;
+    };
+    EXPECT_EQ(count(err, "no texture matching 'ID'"), 1u) << err;
+}

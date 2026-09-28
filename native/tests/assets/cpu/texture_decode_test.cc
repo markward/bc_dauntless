@@ -52,7 +52,74 @@ std::vector<std::uint8_t> make_tga_16bpp_unsupported() {
     };
 }
 
+// 2x1 RGBA PNG (written by Pillow). Pixel 0: opaque red (FF 00 00 FF).
+// Pixel 1: half-transparent blue (00 00 FF 80). Hull-name decal masks are
+// authored as PNG, so the alpha channel must survive the decode.
+std::vector<std::uint8_t> make_png_rgba_2x1() {
+    return {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0xf4, 0x22, 0x7f, 0x8a, 0x00, 0x00, 0x00,
+        0x0e, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+        0x42, 0x0d, 0x00, 0x0f, 0x7a, 0x03, 0x7e, 0x77, 0xe9, 0x7f, 0x97, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    };
+}
+
+// 2x1 grey+alpha PNG. Pixel 0: grey 200, alpha 255. Pixel 1: grey 50,
+// alpha 64. A mask saved as greyscale-with-alpha must still decode.
+std::vector<std::uint8_t> make_png_grey_alpha_2x1() {
+    return {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x04, 0x00, 0x00, 0x00, 0x5e, 0x2b, 0xb7, 0x01, 0x00, 0x00, 0x00,
+        0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x38, 0xf1, 0xdf, 0xc8,
+        0x01, 0x00, 0x06, 0xc6, 0x02, 0x3a, 0x57, 0xaa, 0xa3, 0x45, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    };
+}
+
 }  // namespace
+
+TEST(TextureDecode, DecodeImageExpandsGreyAlphaPngToRgba) {
+    auto img = assets::decode_image(make_png_grey_alpha_2x1());
+    EXPECT_EQ(img.format, assets::Image::Format::RGBA8);
+    const std::vector<std::uint8_t> expected = {200, 200, 200, 255,
+                                                50, 50, 50, 64};
+    EXPECT_EQ(img.pixels, expected);
+}
+
+TEST(TextureDecode, DecodeImageReadsPngWithAlpha) {
+    auto img = assets::decode_image(make_png_rgba_2x1());
+    EXPECT_EQ(img.width, 2u);
+    EXPECT_EQ(img.height, 1u);
+    EXPECT_EQ(img.format, assets::Image::Format::RGBA8);
+    ASSERT_EQ(img.pixels.size(), 8u);
+    const std::vector<std::uint8_t> expected = {0xFF, 0x00, 0x00, 0xFF,
+                                                0x00, 0x00, 0xFF, 0x80};
+    EXPECT_EQ(img.pixels, expected);
+}
+
+TEST(TextureDecode, DecodeImageStillReadsTga) {
+    auto img = assets::decode_image(make_tga_24bit_2x1());
+    EXPECT_EQ(img.format, assets::Image::Format::RGB8);
+    ASSERT_EQ(img.pixels.size(), 6u);
+    EXPECT_EQ(img.pixels[0], 0xFFu);
+    EXPECT_EQ(img.pixels[5], 0xFFu);
+}
+
+TEST(TextureDecode, DecodeImageKeepsTgaRejections) {
+    EXPECT_THROW(assets::decode_image(make_tga_indexed_unsupported()),
+                 assets::UnsupportedTga);
+    EXPECT_THROW(assets::decode_image(make_tga_16bpp_unsupported()),
+                 assets::UnsupportedTga);
+}
+
+TEST(TextureDecode, TruncatedPngThrowsDecodeError) {
+    auto bytes = make_png_rgba_2x1();
+    bytes.resize(20);   // signature intact, IHDR cut short
+    EXPECT_THROW(assets::decode_image(bytes), assets::TextureDecodeError);
+}
 
 TEST(TextureDecode, Tga24BitDecodesToRgb) {
     auto bytes = make_tga_24bit_2x1();

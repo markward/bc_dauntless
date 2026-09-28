@@ -33,6 +33,28 @@ struct TextureReplacement {
     std::string new_texture;
 };
 
+/// A hull-name decal placement, resolved by Python from `decals.json` (see
+/// `docs/superpowers/specs/2026-09-28-hull-name-decals-design.md` §3.1) into
+/// absolute vectors and a resolved mask path. All vectors are in the
+/// SHIP-BODY frame: model space with every NIF node transform applied and
+/// the instance's world placement/scale removed -- the same frame
+/// `opaque.frag` reconstructs as `p_body`. `origin`, `origin+u_axis` and
+/// `origin+v_axis` are the mask rectangle's (0,0), (1,0) and (0,1) corners;
+/// `normal` points outward from the hull surface the decal is projected
+/// onto; `depth` is the slab half-thickness along `normal` that bounds the
+/// projection. `shape` names the NiTriShape (`av.obj.name`) whose
+/// material(s) receive the decal -- build_model applies it to every
+/// material built from a shape with that name.
+struct DecalRequest {
+    std::string       shape;
+    glm::vec3         origin{0.0f};
+    glm::vec3         u_axis{0.0f};
+    glm::vec3         v_axis{0.0f};
+    glm::vec3         normal{0.0f, 0.0f, 1.0f};
+    float             depth = 0.0f;
+    std::filesystem::path mask;
+};
+
 struct Node {
     std::string       name;
     int               parent_index = -1;

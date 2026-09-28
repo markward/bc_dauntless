@@ -335,6 +335,13 @@ unsigned int damage_decal_texture();
 /// unlike reset_damage_decal_texture() it has no context-currency requirement.
 void reset_model_radius_cache();
 
+/// Release the lazily-created GL sampler object the opaque pass binds on
+/// texture unit 8 for hull-name decal masks (clamp-to-edge; the mask texture
+/// itself uploads with GL_REPEAT). Same contract as
+/// reset_damage_decal_texture(): call while the creating context is current,
+/// or the stale sampler id leaks into the next context.
+void reset_decal_mask_sampler();
+
 class FrameSubmitter {
 public:
     using ModelLookup = std::function<const assets::Model*(unsigned long long)>;

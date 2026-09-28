@@ -166,12 +166,17 @@ def frame() -> None:
 
 
 def load_model(nif_path: str, texture_search_path,
-               texture_replacements=None) -> int:
+               texture_replacements=None, decals=None) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
-    empty is byte-identical to the plain load."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements)
+    empty is byte-identical to the plain load.
+
+    `decals` is `engine.appc.hull_decals.decals_for(...)`'s output: a list of
+    (shape, origin, u_axis, v_axis, normal, depth, mask_abs_path) registry
+    name-decal projectors. None / empty is byte-identical to the plain
+    load."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals)
 
 
 def create_instance(model: int) -> InstanceId:

@@ -27,6 +27,10 @@ struct ModelBuildContext {
     /// Empty for the overwhelming majority of models; an empty list makes
     /// build_model byte-identical to the no-replacement path.
     std::vector<TextureReplacement>     texture_replacements;
+    /// Hull-name decal placements (see DecalRequest, model.h). Empty for the
+    /// overwhelming majority of models; an empty list makes build_model
+    /// byte-identical to the no-decal path.
+    std::vector<DecalRequest>           decals;
     /// Optional sink for each Model::textures entry's AUTHORED source basename
     /// ("body.tga", "head.tga", …), sized to model.textures.size(). Entries the
     /// loader synthesized rather than read from a NiImage (sibling _specular /
@@ -54,5 +58,14 @@ bool filename_is_normal(std::string_view fname);
 std::string sibling_normal_filename(std::string_view fname);
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx);
+
+/// Build the ship-body-frame -> mask-space affine transform for a hull-name
+/// decal: `origin` maps to mask (0,0,0), `origin+u_axis` to (1,0,0),
+/// `origin+v_axis` to (0,1,0), and a point `depth` units along the unit
+/// normal from the rectangle's plane to (0,0,depth). Exposed for direct
+/// testing; callers must have already rejected a degenerate basis
+/// (|u_axis x v_axis| < 1e-9) -- this function does not check.
+glm::mat4 decal_body_to_mask(const glm::vec3& origin, const glm::vec3& u_axis,
+                             const glm::vec3& v_axis, const glm::vec3& normal);
 
 }  // namespace assets::detail

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -507,10 +508,18 @@ void apply_texture_replacements(
                 matched.insert(tex_idx);
         }
         if (matched.empty()) {
-            std::fprintf(stderr,
-                "apply_texture_replacements: no texture matching '%s' in %s; "
-                "leaving model untouched\n",
-                rep.old_substring.c_str(), model.source.string().c_str());
+            // Warn once per (source, old_substring): a mission that reloads a
+            // ship's model every frame would otherwise spam stderr forever,
+            // and this is the EXPECTED state for stock Fed hulls once their
+            // ID patch is merged away by a mesh fix (see mesh_fix.h).
+            static std::unordered_set<std::string> warned;
+            const std::string key = model.source.string() + '|' + rep.old_substring;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_texture_replacements: no texture matching '%s' in %s; "
+                    "leaving model untouched\n",
+                    rep.old_substring.c_str(), model.source.string().c_str());
+            }
             continue;
         }
 
@@ -547,6 +556,184 @@ void apply_texture_replacements(
     }
 }
 
+// NIF TexClampMode encoding (niflib): 0 = CLAMP_S_CLAMP_T. TextureStage's
+// clamp_mode field always holds this raw NIF value (material_build.cc
+// copies el.clamp_mode verbatim from NiTexturingProperty) -- never a GL
+// enum. A decal mask always wants clamp-to-edge on both axes, so it's
+// always CLAMP_S_CLAMP_T; the renderer (Task 5) is what turns this into an
+// actual GL_CLAMP_TO_EDGE at bind time, mirroring how every OTHER stage's
+// clamp_mode is interpreted at draw time, not at build time.
+constexpr std::uint32_t kNifClampST = 0;
+
+/// True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis:
+/// `u_axis x v_axis` near zero (parallel/zero axes), `normal` near zero
+/// (glm::normalize(0) is NaN), or `normal` lying in the span(u_axis, v_axis)
+/// plane (det([u_axis v_axis n_hat]) near zero -- decal_body_to_mask's
+/// glm::inverse would return inf/NaN). The zero-normal check must run
+/// BEFORE normalizing, and the cross-product check must run before dividing
+/// by its length, so this checks in that order.
+bool decal_projector_is_degenerate(
+    const glm::vec3& u_axis, const glm::vec3& v_axis, const glm::vec3& normal)
+{
+    const glm::vec3 cross = glm::cross(u_axis, v_axis);
+    const float cross_len = glm::length(cross);
+    if (cross_len < 1e-9f) return true;
+
+    const float normal_len = glm::length(normal);
+    if (normal_len < 1e-9f) return true;
+
+    const glm::vec3 n_hat = normal / normal_len;
+    const float det = glm::dot(cross, n_hat);  // == det([u_axis v_axis n_hat])
+    return std::fabs(det) < 1e-9f * cross_len;
+}
+
+/// Attach hull-name decals (see DecalRequest, model.h) to the material(s) of
+/// their named shape. No-op when ctx.decals is empty (the overwhelming
+/// majority of models). Nothing here can throw out of a ship load: a bad
+/// shape name, a degenerate projector, a mask that fails to decode, or a
+/// material that already carries a decal each skip just that request,
+/// warning once (per the model + decal identity) so a mission that reloads
+/// a ship's model every frame never spams stderr.
+///
+/// RULING: one decal per shape material. If ANY material a request targets
+/// already has a decal (either from an earlier request in this same call,
+/// or -- defensively, since nothing populates it today -- a NIF-authored
+/// Decal0 stage) the WHOLE request is skipped; the first request to claim a
+/// material wins.
+void apply_decals(
+    Model& model,
+    const std::unordered_map<std::string, std::vector<int>>& materials_for_shape,
+    const ModelBuildContext& ctx)
+{
+    if (ctx.decals.empty()) return;
+    auto upload = ctx.texture_uploader
+        ? ctx.texture_uploader
+        : TextureUploaderFn(&assets::upload_image);
+
+    static std::unordered_set<std::string> warned;
+
+    // Snapshot each candidate material's Decal0 state BEFORE any request is
+    // applied, so "already claimed" means claimed by an earlier element of
+    // ctx.decals OR authored by the NIF itself -- never by this same
+    // request (which hasn't run yet).
+    std::vector<bool> already_claimed(model.materials.size(), false);
+    for (std::size_t i = 0; i < model.materials.size(); ++i) {
+        const auto& stage = model.materials[i].stages[
+            static_cast<std::size_t>(Material::StageSlot::Decal0)];
+        already_claimed[i] =
+            model.materials[i].decal.enabled || stage.texture_index >= 0;
+    }
+
+    for (const auto& req : ctx.decals) {
+        auto shape_it = materials_for_shape.find(req.shape);
+
+        if (shape_it == materials_for_shape.end() || shape_it->second.empty()) {
+            const std::string key =
+                model.source.string() + "|decal-shape|" + req.shape;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: no shape named '%s' in %s; skipping decal\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+        if (decal_projector_is_degenerate(req.u_axis, req.v_axis, req.normal)) {
+            const std::string key =
+                model.source.string() + "|decal-degenerate|" + req.shape;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: degenerate projector for shape '%s' in %s "
+                    "(u_axis, v_axis and normal don't span a basis); "
+                    "skipping decal\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+
+        bool conflict = false;
+        for (int mat_idx : shape_it->second) {
+            if (already_claimed[static_cast<std::size_t>(mat_idx)]) {
+                conflict = true;
+                break;
+            }
+        }
+        if (conflict) {
+            const std::string key =
+                model.source.string() + "|decal-conflict|" + req.shape;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: shape '%s' in %s already has a decal; "
+                    "skipping (first decal wins)\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+
+        Image decoded;
+        try {
+            auto bytes = read_file(req.mask);
+            decoded = decode_image(bytes);
+        } catch (const std::exception& e) {
+            const std::string key =
+                model.source.string() + "|decal-mask|" + req.mask.string();
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: failed to load mask '%s' for shape '%s' "
+                    "in %s (%s); skipping decal\n",
+                    req.mask.string().c_str(), req.shape.c_str(),
+                    model.source.string().c_str(), e.what());
+            }
+            continue;
+        }
+
+        // Premultiply RGB by alpha (spec §2): opaque.frag composites
+        // base*(1-a) + mask.rgb, and filtering premultiplied texels never
+        // pulls transparent texels' RGB into letter edges as a dark halo.
+        // RGB8 / R8 masks have implicit alpha 1 -- nothing to do (still
+        // attached: alpha-less is treated as fully opaque), but that's easy
+        // to miss until it's live, so warn once per mask path.
+        if (decoded.format == Image::Format::RGBA8) {
+            auto& px = decoded.pixels;
+            for (std::size_t i = 0; i + 3 < px.size(); i += 4) {
+                const unsigned a = px[i + 3];
+                for (std::size_t c = 0; c < 3; ++c)
+                    px[i + c] = static_cast<std::uint8_t>(
+                        (px[i + c] * a + 127u) / 255u);
+            }
+        } else {
+            const std::string key =
+                model.source.string() + "|decal-no-alpha|" + req.mask.string();
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: mask %s has no alpha channel; the whole "
+                    "decal rectangle will be painted\n",
+                    req.mask.string().c_str());
+            }
+        }
+
+        Texture tex = upload(decoded, /*generate_mipmaps=*/true);
+        const int tex_index = static_cast<int>(model.textures.size());
+        model.textures.push_back(std::move(tex));
+
+        Material::DecalProjector proj;
+        proj.enabled = true;
+        proj.body_to_mask =
+            decal_body_to_mask(req.origin, req.u_axis, req.v_axis, req.normal);
+        proj.normal = glm::normalize(req.normal);
+        proj.depth = req.depth;
+
+        for (int mat_idx : shape_it->second) {
+            Material& mat = model.materials[static_cast<std::size_t>(mat_idx)];
+            auto& stage = mat.stages[
+                static_cast<std::size_t>(Material::StageSlot::Decal0)];
+            stage.texture_index = tex_index;
+            stage.clamp_mode = kNifClampST;
+            mat.decal = proj;
+            already_claimed[static_cast<std::size_t>(mat_idx)] = true;
+        }
+    }
+}
+
 }  // namespace
 
 bool filename_is_normal(std::string_view fname) {
@@ -577,6 +764,21 @@ std::string sibling_normal_filename(std::string_view fname) {
         if (tail == "_glow") stem.resize(stem.size() - 5);
     }
     return stem + "_normal" + ext;
+}
+
+glm::mat4 decal_body_to_mask(const glm::vec3& origin, const glm::vec3& u_axis,
+                             const glm::vec3& v_axis, const glm::vec3& normal) {
+    const glm::vec3 n = glm::normalize(normal);
+    const glm::mat3 basis(u_axis, v_axis, n);  // columns: u, v, n
+    const glm::mat3 m = glm::inverse(basis);
+    const glm::vec3 t = -(m * origin);
+
+    glm::mat4 result(1.0f);
+    result[0] = glm::vec4(m[0], 0.0f);
+    result[1] = glm::vec4(m[1], 0.0f);
+    result[2] = glm::vec4(m[2], 0.0f);
+    result[3] = glm::vec4(t, 1.0f);
+    return result;
 }
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
@@ -713,6 +915,12 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     };
     std::vector<ShapeVerts> shape_verts_for_sampling;
 
+    // NiTriShape av.obj.name -> indices into model.materials, so hull-name
+    // decals (applied after this loop) can find every material built from
+    // the shape they name. A shape name is USUALLY unique, but nothing here
+    // assumes it -- apply_decals attaches to every match.
+    std::unordered_map<std::string, std::vector<int>> materials_for_shape;
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -755,6 +963,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));
+        materials_for_shape[shape->av.obj.name].push_back(mat_index);
 
         int node_index = find_parent_node_index(f, i, nodes, resolver);
 
@@ -914,6 +1123,10 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     // 6. Federation registry / hull-name texture swaps (BC ReplaceTexture).
     //    No-op when ctx.texture_replacements is empty (the common case).
     apply_texture_replacements(model, tex_result, ctx);
+
+    // 7. Hull-name decals (project feature; see DecalRequest, model.h).
+    //    No-op when ctx.decals is empty (the overwhelming majority of models).
+    apply_decals(model, materials_for_shape, ctx);
 
     return model;
 }

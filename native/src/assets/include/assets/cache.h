@@ -32,6 +32,11 @@ public:
         // the cache substitutes upload_image / upload_mesh.
         std::function<Texture(const Image&, bool)> texture_uploader;
         std::function<Mesh(MeshCpu)>               mesh_uploader;
+
+        /// Directory holding mesh-fix files, evaluated at EACH load (resolve
+        /// at use; the project asset root can be set after the cache is
+        /// built). Empty function or empty path ⇒ no fixes.
+        std::function<std::filesystem::path()> mesh_fix_dir;
     };
 
     AssetCache();                     // equivalent to AssetCache(Config{})
@@ -59,6 +64,16 @@ public:
     ModelHandle load(const std::filesystem::path& nif_path,
                      const std::vector<std::filesystem::path>& texture_search_paths,
                      const std::vector<TextureReplacement>& texture_replacements);
+
+    /// Load with hull-name decals applied on top of any registry swap (BC has
+    /// no native equivalent; see DecalRequest in model.h). The decal list is
+    /// also folded into the cache key -- like texture_replacements, an empty
+    /// list is byte-identical to the 3-argument overload, so this is a pure
+    /// addition with no behaviour change for existing callers.
+    ModelHandle load(const std::filesystem::path& nif_path,
+                     const std::vector<std::filesystem::path>& texture_search_paths,
+                     const std::vector<TextureReplacement>& texture_replacements,
+                     const std::vector<DecalRequest>& decals);
 
     void evict(const std::filesystem::path& nif_path);
     void evict_unused();
