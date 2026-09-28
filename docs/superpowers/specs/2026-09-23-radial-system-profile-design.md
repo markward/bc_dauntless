@@ -61,11 +61,11 @@ and `Vesuvi4_S.py`. **The clump is a pointer, not a body.** It:
    16 Hz `ET_ENVIRONMENT_DAMAGE` events, fbm concealment and the tuned
    `nebula_volumetric_pass` all keep working unchanged when the player is there.
 
-**Multiplayer systems are ignored.** Multi5 (×4) and Multi6 also author
-MetaNebulae (sensor density 0.5; Multi6 visibility 75 GU). They calibrate
-nothing, get no derived profile, and their local clouds keep behaving as BC
-authored them. A hand `overrides.profile` could give one a profile later;
-nothing is built for that.
+**Multiplayer systems are ignored as cloud sources.** Multi5 (×4) and Multi6
+also author MetaNebulae (sensor density 0.5; Multi6 visibility 75 GU). They
+calibrate nothing, get no derived cloud rows, and their local clouds keep
+behaving as BC authored them. Like every system they do get the **star
+radiation** term (below).
 
 **Clump positions are never written into this spec.** They are derived from the
 maps at generation time. (The first draft hard-coded 56,903 / 38,845 GU; two
@@ -149,6 +149,13 @@ on the fixed sim tick (so pause freezes it). `m` is the difficulty multiplier:
    timer expires. A shield-generator outage drops shields and so exposes the hull
    to the drain. An outage ends cleanly if the ship dies or leaves the set.
 
+**Star radiation — every system.** Radiation is `1.0` from the centre out to
+the star's surface and falls linearly to `0` at **3 star radii** (Vesuvi's
+2,000 GU remnant: 0 by 6,000 GU; Belaruz's 8,000 GU star: 0 by 24,000 GU). It is
+not a row anyone authors: the generator composes it onto every system's
+profile, derived or overridden, by taking the per-radius `max`. All 32 systems
+therefore carry a profile.
+
 Both are skipped: at easy; while the ship is dashing (`WES_WARPING` — player
 dashes run 2,000–100,000 GU/s, so sampling the profile mid-dash is meaningless);
 and for ships whose `ET_ENVIRONMENT_DAMAGE` handlers include
@@ -160,8 +167,8 @@ tick, shared with the local MetaNebula's own events.
 
 ### `asteroids`
 
-Authored in the schema; **the generator writes 0 everywhere** and nothing reads
-it. Every asteroid in BC is a full `ShipClass` (`loadspacehelper.CreateShip
+Authored in the schema; **the generator writes 0 everywhere** (only Vesuvi's hand
+profile sets values) and nothing reads it. Every asteroid in BC is a full `ShipClass` (`loadspacehelper.CreateShip
 ("Asteroidh1", …)`, genus set but never read), simulated globally and in
 all-pairs O(n²) collisions, so seeding a belt of them would be expensive and would
 die like ships. Calibrating this column and consuming it belong to a separate
@@ -186,7 +193,8 @@ class ProfileRow:
 @dataclass
 class Profile:
     rows: list[ProfileRow]          # sorted by distance_gu, first at 0.0
-    color: tuple[float, float, float]   # the clump's authored RGB, 0–1
+    color: tuple[float, float, float] | None   # the clump's authored RGB, 0–1;
+                                               # None where there is no cloud
     full_concealment: float         # C_V, generator-measured
 
 # SystemMap.profile: Profile | None  — None is clear space
@@ -197,8 +205,9 @@ class Profile:
 - Rows are sorted by `distance_gu` and the first row is at `0.0`.
 - Between rows each column interpolates linearly and independently.
 - **Beyond the last row, the last row's values persist outward forever.**
-- `profile = None` means clear space everywhere — correct for the thirty
-  systems with no campaign cloud.
+- `profile = None` means clear space everywhere. After generation no committed
+  map has `None` (the star term is everywhere); it remains valid input, and a
+  hand-built or test map may use it.
 
 `engine/systems/profile.py` holds the dataclasses' evaluation
 (`evaluate(profile, r) -> Sample`) and `star_distance(obj)`, which uses
@@ -225,18 +234,55 @@ whose `nebula` survey entry is set (today Vesuvi, Belaruz):
 | `radiation` | `1.0` if `SetupDamage` authored, else `0` (Belaruz: an authored zero) | narrow, back to 0 |
 | `asteroids` | 0 | — |
 
-The three shape constants (rise start `0.5`, floor radius `2.0`, floor
-`0.05`, band `2 × region radius`) are named constants in the generator.
-At `10129269` the band is ≈ ±7,100 GU at Vesuvi and ≈ ±4,500 GU at Belaruz.
+The shape constants (rise start `0.5`, floor radius `2.0`, floor `0.05`, band
+`2 × region radius`, star reach `3` radii) are named constants in the
+generator. At `10129269` the band is ≈ ±7,100 GU at Vesuvi and ≈ ±4,500 GU at
+Belaruz.
+
+**Composition order:** base rows (the `overrides.profile` rows if present, else
+the derived cloud rows, else none) → `max` with the star radiation term → the
+stored profile.
+
+### Vesuvi's hand profile (`overrides.profile`)
+
+Vesuvi alone is hand-authored, replacing its derived rows. The `nebula` column
+keeps the derived curve; the rest are Mark's (2026-09-28). The star term is
+composed on top, so it is not written here. Radii are absolute GU against the
+map at `10129269` (clump peak `R` = 123,500; Geki ≈ 226,000; Haven ≈ 330,000).
+
+| radius (GU) | nebula | dust | sensors | radiation | asteroids |
+|---|---|---|---|---|---|
+| 0 | 0 | 0.10 | 0.30 | 0.40 | 0.05 |
+| 61,750 | 0 | 0.10 | 0.30 | 0.40 | 0.05 |
+| 116,366 | 0.88 | 0.10 | 0.30 | 0.40 | 0.05 |
+| **123,500** | **1.00** | **1.00** | **1.00** | **1.00** | 0.05 |
+| 130,634 | 0.95 | 0.20 | 0.30 | 0.40 | 0.05 |
+| 170,000 | 0.64 | 0.20 | 0.30 | 0.40 | 0.05 |
+| 180,000 | 0.56 | 0.20 | 0.30 | 0 | 0.05 |
+| 215,000 | 0.30 | 0.20 | 0.30 | 0 | 0.05 |
+| 226,000 | 0.21 | 0.20 | 0.30 | 0 | 0.50 |
+| 247,000 | 0.05 | 0.20 | 0.30 | 0 | 0.50 |
+| 330,000 | 0.05 | 0.20 | 0.30 | 0 | 0.50 |
+| 340,000 | 0.05 | 0.20 | 0.30 | 0 | 0.05 |
+
+In words: dust never below 0.1, 0.2 beyond the cloud, spiking to 1.0 in it;
+sensors reduced system-wide (0.3 of `C_V`), 1.0 in the cloud; radiation ≥ 0.4
+from the star to 170,000 GU and gone by 180,000 GU (the Vesuvi 5 colonies are
+clear); asteroids ≥ 0.05 everywhere with a 0.5 band from Geki to Haven.
+
+Because override radii are absolute, they go stale if the layout moves again
+(the first draft's numbers did, twice). A validator rule catches that.
 
 **Validator rules** (`_profile_problems` in `validate.py`):
 
 - `profile-rows-ordered` — sorted, first at 0, every value finite and in 0–1.
-- `profile-radiation-bounded` — `radiation` is 0 at radius 0 **and** in the last
-  row (the last row persists forever, so non-zero there makes the outer system
-  lethal).
-- `profile-radiation-band` — no stretch of `radiation > 0.05` wider than
-  20,000 GU, so no system is authored without a way round.
+- `profile-radiation-clears` — `radiation` is 0 in the last row. The last row
+  persists forever, so non-zero there makes the whole outer system lethal. (Near
+  the star radiation is expected; there is no rule against it.)
+- `profile-override-tracks-clump` — where an `overrides.profile` exists for a
+  system with a surveyed cloud, the override's `nebula` peak lies within that
+  region's radius of the derived clump radius. A layout change that moves the
+  cloud fails generation instead of silently misplacing the override.
 
 ## What the runtime does with it
 
@@ -283,9 +329,13 @@ every calibration number above.
 
 ## Consequences for shipped behaviour and text
 
-- **E3M2.** Today the player warps into Vesuvi 4 and takes nothing (BC-faithful).
-  Now Vesuvi 4 drains shields (hull when they are down) and knocks random
-  systems offline for 5–20 s, from medium difficulty up.
+- **E3M2 and all of inner Vesuvi.** Today the player warps into Vesuvi 4 and
+  takes nothing (BC-faithful). Now everything inside 170,000 GU sits in
+  radiation ≥ 0.4, peaking at 1.0 at the Vesuvi 4 cloud: shields drain (hull when
+  they are down) and random systems go offline for 5–20 s, from medium up.
+- **Every star now hurts within 3 radii.** No stock mission is known to park
+  the player that close; the plan checks the committed placements before
+  landing it.
 - **Belaruz description** (`engine/systems/descriptions.json`) gets its third
   correction: there is no "ahead"; the system sits in a spherical body of dust
   and gas, thickest just beyond Belaruz 1, which blinds but does not burn. New
@@ -293,15 +343,20 @@ every calibration number above.
   `test_belaruzs_description_matches_where_its_cloud_actually_is` is rewritten
   with it. The stale "Belaruz 4 at 121,181 GU" `why` string goes with
   `overrides.cloud`.
-- **Vesuvi description**'s "route around it or accept the damage" becomes true.
+- **Vesuvi description**'s "route around it or accept the damage" is no longer
+  accurate — the inner system cannot be routed around. It gets rewritten in
+  the same change, wording approved by Mark.
 
 ## Testing
 
 - `profile.evaluate`: interpolation per column, persistence past the last row,
   `None` = clear, exact row hits.
 - Generator: each peak sits at the clump's *current* derived radius (asserted
-  from the map, never a literal); Belaruz radiation is 0; Multi systems and
-  the other thirty get `None`; `overrides.profile` replaces wholesale.
+  from the map, never a literal); Belaruz cloud radiation is 0; systems
+  without a campaign cloud get only the star term; the star term reaches 0 at
+  exactly 3 radii and is `max`-composed onto an override; `overrides.profile`
+  replaces the derived rows wholesale; Vesuvi's stored profile equals its
+  override composed with its star term.
 - Validator: each of the three rules fires and stays quiet on the committed maps.
 - Radiation: drain per shield branch; `m` = 0 / 0.5 / 1.0; skipped while dashing
   and with `IgnoreEvent`; outages with a seeded RNG — rate, 5–20 s bounds,
