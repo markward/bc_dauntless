@@ -686,6 +686,20 @@ void apply_decals(
             continue;
         }
 
+        // Premultiply RGB by alpha (spec §2): opaque.frag composites
+        // base*(1-a) + mask.rgb, and filtering premultiplied texels never
+        // pulls transparent texels' RGB into letter edges as a dark halo.
+        // RGB8 / R8 masks have implicit alpha 1 -- nothing to do.
+        if (decoded.format == Image::Format::RGBA8) {
+            auto& px = decoded.pixels;
+            for (std::size_t i = 0; i + 3 < px.size(); i += 4) {
+                const unsigned a = px[i + 3];
+                for (std::size_t c = 0; c < 3; ++c)
+                    px[i + c] = static_cast<std::uint8_t>(
+                        (px[i + c] * a + 127u) / 255u);
+            }
+        }
+
         Texture tex = upload(decoded, /*generate_mipmaps=*/true);
         const int tex_index = static_cast<int>(model.textures.size());
         model.textures.push_back(std::move(tex));

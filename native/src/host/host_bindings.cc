@@ -804,6 +804,8 @@ void shutdown() {
     renderer::reset_damage_decal_texture();
     // Same hazard for the collision-scuff normal map (renderer/scuff_texture.h).
     renderer::reset_scuff_normal_texture();
+    // And for the hull-name decal mask's clamp sampler (unit 8, frame.cc).
+    renderer::reset_decal_mask_sampler();
     g_loaded_models.clear();
     // Handle-recycling hazard: see the matching call in init(). Pure CPU
     // state (no GL), safe regardless of context currency.

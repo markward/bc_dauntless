@@ -536,3 +536,41 @@ TEST(DecalFrame, NifBlockWorldMatchesModelNodeChain) {
 
     EXPECT_LT(max_diff, 1e-3f);
 }
+
+// --- Premultiplied mask (spec §2 implementation note) ------------------
+
+// apply_decals premultiplies the decoded mask's RGB by alpha BEFORE upload,
+// so bilinear/mip filtering never drags the black RGB of transparent texels
+// into letter edges as a dark halo. opaque.frag composites
+// base.rgb * (1 - a) + mask.rgb (already premultiplied).
+TEST_F(DecalBuildTest, MaskIsPremultipliedBeforeUpload) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_png("mask.png");
+
+    std::vector<assets::Image> uploaded;
+    auto ctx = make_ctx();
+    ctx.texture_uploader = [&uploaded](const assets::Image& img, bool mips) {
+        uploaded.push_back(img);
+        return stub_texture(img, mips);
+    };
+    assets::DecalRequest req;
+    req.shape = "a";
+    req.origin = {0.0f, 0.0f, 0.0f};
+    req.u_axis = {1.0f, 0.0f, 0.0f};
+    req.v_axis = {0.0f, 1.0f, 0.0f};
+    req.normal = {0.0f, 0.0f, 1.0f};
+    req.depth = 2.0f;
+    req.mask = mask;
+    ctx.decals = {req};
+
+    auto model = assets::detail::build_model(f, ctx);
+    ASSERT_TRUE(model.materials[0].decal.enabled);
+    ASSERT_EQ(uploaded.size(), 1u);  // the synthetic shapes have no textures
+    const auto& img = uploaded.back();
+    ASSERT_EQ(img.format, assets::Image::Format::RGBA8);
+    // Pixel 0 opaque red is unchanged; pixel 1 (00 00 FF 80) becomes
+    // blue * 128/255 = 128, alpha kept.
+    const std::vector<std::uint8_t> expected = {0xFF, 0x00, 0x00, 0xFF,
+                                                0x00, 0x00, 0x80, 0x80};
+    EXPECT_EQ(img.pixels, expected);
+}
