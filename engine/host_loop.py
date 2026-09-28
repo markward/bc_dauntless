@@ -5168,9 +5168,20 @@ def _resolve_active_set(player):
 
     Considers both _lights and _backdrops when deciding whether a set
     is 'live' so backdrop-only sets (rare but legal) are picked up.
+
+    The bridge set is never the answer: this is the EXTERIOR view's set, and
+    the bridge's own lighting has its own path (_aggregate_bridge_lights).
+    Cutscenes end with ChangeRenderedSet("bridge") (E2M0.py:1924); the bridge
+    has a light but no backdrops, so honouring it blanked the space sky and
+    lit the ship with the bridge light until the next warp.
     """
     import App
+    from engine.appc.bridge_set import BridgeSet
     rendered = App.g_kSetManager.get_explicit_rendered_set()
+    if rendered is not None and (
+        isinstance(rendered, BridgeSet) or rendered.GetName() == "bridge"
+    ):
+        rendered = None
     if rendered is not None and (
         getattr(rendered, "_lights", None) or
         getattr(rendered, "_backdrops", None)
