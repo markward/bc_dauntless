@@ -141,6 +141,42 @@ def test_reposition_preserves_roll_angle():
     assert abs(r1 - r0) < 1e-6
 
 
+def test_reposition_survives_forward_fallback_placement():
+    # A bow decal: place_at_hit's normal equals ship_forward, so its
+    # up-reference came from ship_up's fallback, not forward's projection.
+    # Repositioning it onto an ordinary normal must not raise.
+    p = place_at_hit("nose", (5.0, 5.0, 5.0), FWD, FWD, UP,
+                      ship_radius=40.0, mask_aspect=1.5)
+    p2 = reposition(p, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), FWD, UP)
+    assert chirality_ok(p2)
+    assert _approx_vec(centre(p2), (0.0, 0.0, 0.0))
+
+
+def test_reposition_roll_preserved_from_fallback_onto_ordinary_normal():
+    p = place_at_hit("nose", (5.0, 5.0, 5.0), FWD, FWD, UP,
+                      ship_radius=40.0, mask_aspect=1.5)
+    p = roll(p, math.radians(20.0))
+    r0 = roll_angle(p, FWD, UP)
+
+    p2 = reposition(p, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), FWD, UP)
+    r1 = roll_angle(p2, FWD, UP)
+    assert abs(r1 - r0) < 1e-6
+
+
+def test_reposition_roll_preserved_from_ordinary_onto_fallback_normal():
+    # The reverse: an ordinary decal repositioned onto a bow hit, where the
+    # new normal equals ship_forward and triggers place_at_hit's fallback.
+    p = place_at_hit("top", (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), FWD, UP,
+                      ship_radius=100.0, mask_aspect=2.0)
+    p = roll(p, math.radians(-30.0))
+    r0 = roll_angle(p, FWD, UP)
+
+    p2 = reposition(p, (5.0, 5.0, 5.0), FWD, FWD, UP)
+    assert chirality_ok(p2)
+    r1 = roll_angle(p2, FWD, UP)
+    assert abs(r1 - r0) < 1e-6
+
+
 # ---------------------------------------------------------------------------
 # move_uv / roll / scale round-trips
 # ---------------------------------------------------------------------------
@@ -288,7 +324,7 @@ def test_json_entry_matches_committed_ambassador_key_shape():
     }
     p = from_json_entry("top", d)
     assert chirality_ok(p)
-    assert _dot(p.u_axis, p.normal) == _dot(p.u_axis, p.normal)  # no NaN
+    assert not math.isnan(_dot(p.u_axis, p.normal))
 
 
 # ---------------------------------------------------------------------------

@@ -169,9 +169,15 @@ def reposition(p: Placement, hit_point: Vec3, hit_normal: Vec3,
     normal — this function must recompute it at the new normal exactly as
     `place_at_hit` does, then re-apply the placement's *old* roll angle
     about the *new* normal so the decal doesn't silently re-level itself
-    every time the mouse re-seats it."""
+    every time the mouse re-seats it.
+
+    Both the OLD roll read and the NEW baseline use the same
+    `_projected_up` fallback (`ship_up` when forward is ~parallel to the
+    relevant normal) — a decal placed at the bow via `place_at_hit`'s
+    fallback has to be repositionable onto an ordinary normal (and back)
+    without `roll_angle` raising on the old, forward-parallel normal."""
     n = _normalize(hit_normal, "hit_normal")
-    old_roll = roll_angle(p, ship_forward)
+    old_roll = roll_angle(p, ship_forward, ship_up)
     up_s = _projected_up(ship_forward, ship_up, n)
     u_hat0, v_hat0 = _place_axes(up_s, n)
     u_hat = _rotate_about_axis(u_hat0, n, old_roll)
@@ -245,19 +251,31 @@ def width(p: Placement) -> float:
     return _mag(p.u_axis)
 
 
-def roll_angle(p: Placement, ship_forward: Vec3) -> float:
-    """Signed angle (radians) between -v_hat (the decal's own "up") and
-    `ship_forward` projected onto the plane perpendicular to the normal,
-    about the normal. Zero when the decal is unrolled (its "up" points
-    exactly along the projected ship forward)."""
+def roll_angle(p: Placement, ship_forward: Vec3,
+                ship_up: Optional[Vec3] = None) -> float:
+    """Signed angle (radians) between -v_hat (the decal's own "up") and a
+    reference "up" direction, about the normal. Zero when the decal is
+    unrolled (its "up" points exactly along the reference).
+
+    The reference is `ship_forward` projected onto the plane perpendicular
+    to the normal. If `ship_up` is given, a near-degenerate forward
+    projection falls back to `ship_up` the same way `_projected_up` does
+    (a bow/stern decal has normal ~parallel to ship_forward) — pass it
+    whenever `p` might have been created or repositioned through that
+    fallback, or this raises ValueError instead of silently reading
+    garbage. Omitting `ship_up` keeps the strict forward-only behaviour
+    for callers that know their decal isn't a fallback case."""
     n = _normalize(p.normal, "normal")
-    proj = _project_onto_plane(ship_forward, n)
-    m = _mag(proj)
-    if m < 1e-9:
-        raise ValueError(
-            "ship_forward is parallel to the decal normal: roll angle is "
-            "undefined")
-    up_ref = _scale(proj, 1.0 / m)
+    if ship_up is not None:
+        up_ref = _projected_up(ship_forward, ship_up, n)
+    else:
+        proj = _project_onto_plane(ship_forward, n)
+        m = _mag(proj)
+        if m < 1e-9:
+            raise ValueError(
+                "ship_forward is parallel to the decal normal: roll angle "
+                "is undefined (pass ship_up for the fallback reference)")
+        up_ref = _scale(proj, 1.0 / m)
     decal_up = _normalize(_scale(p.v_axis, -1.0), "v_axis")
     return _signed_angle(up_ref, decal_up, n)
 
