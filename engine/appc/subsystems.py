@@ -96,6 +96,14 @@ def _is_offline(sub) -> bool:
         return False
     if bool(sub.IsDisabled()) or bool(sub.IsDestroyed()):
         return True
+    # Radiation outage (engine/appc/radiation.py): this subsystem, or the
+    # system it belongs to. `is True`, never truthiness -- a stubbed fake
+    # would answer a truthy _Stub.
+    if getattr(sub, "_radiation_out", False) is True:
+        return True
+    parent = getattr(sub, "_parent_subsystem", None)
+    if parent is not None and getattr(parent, "_radiation_out", False) is True:
+        return True
     # implements, NOT hasattr. TGObject.__getattr__ vends a truthy _Stub for
     # any unknown name, so hasattr was vacuously True on every subsystem and
     # the guard never guarded anything -- every call fell through to
@@ -260,6 +268,7 @@ class ShipSubsystem(TGEventHandlerObject):
         self._parent_ship = None
         self._parent_subsystem = None
         self._child_subsystem = None
+        self._radiation_out = False
         self._children: list["ShipSubsystem"] = []
         self._condition = 1.0
         self._max_condition = 1.0

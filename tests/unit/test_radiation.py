@@ -136,3 +136,90 @@ def test_hull_drain_goes_through_damage_system_when_the_ship_has_one():
     ship = _Real(shields_on=False)
     _run(RadiationDriver(lambda s: Sample(radiation=1.0)), [ship], 1.0)
     assert len(calls) == 16 and calls[0] == pytest.approx(150.0 / 16.0)
+
+
+import random as _random
+
+from engine.appc.subsystems import (
+    HullSubsystem, PowerSubsystem, SensorSubsystem, ShieldSubsystem, _is_offline)
+
+
+class _SubShip(_Ship):
+    def __init__(self):
+        super().__init__(shields_on=True)
+        self.subs = [HullSubsystem("Hull"), PowerSubsystem("Power"),
+                     SensorSubsystem("Sensors"), ShieldSubsystem("Shields")]
+
+    def GetSubsystems(self):
+        return list(self.subs)
+
+
+class _AlwaysRoll(_random.Random):
+    def random(self):
+        return 0.0
+
+
+def test_outage_never_picks_hull_or_power():
+    ship = _SubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_random.Random(7))
+    for _ in range(400):
+        d.apply_chunk(ship, 1.0, 1.0)
+        d._tick_outages(1.0 / 16.0, {id(ship)})
+    hull, power = ship.subs[0], ship.subs[1]
+    assert hull._radiation_out is False and power._radiation_out is False
+
+
+def test_outage_rate_is_about_one_per_thirty_seconds_at_full_hard():
+    ship = _SubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_random.Random(1))
+    starts = 0
+    for _ in range(int(16 * 3000)):          # 3000 s of events
+        before = set(d.active_outages())
+        d.apply_chunk(ship, 1.0, 1.0)
+        starts += len(set(d.active_outages()) - before)
+        d._tick_outages(1.0 / 16.0, {id(ship)})
+    assert 70 <= starts <= 130               # expectation 100
+
+
+def test_outage_lasts_between_five_and_twenty_seconds():
+    ship = _SubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_AlwaysRoll())
+    d.apply_chunk(ship, 1.0, 1.0)
+    (sid, left), = d.active_outages().items()
+    assert 5.0 <= left <= 20.0
+
+
+def test_out_subsystem_is_offline_until_expiry():
+    ship = _SubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=0.0), rng=_AlwaysRoll())
+    d.apply_chunk(ship, 1.0, 1.0)
+    out = [s for s in ship.subs if s._radiation_out]
+    assert len(out) == 1 and _is_offline(out[0])
+    for _ in range(21 * 60):
+        d.update([ship], 1.0 / 60.0)
+    assert not out[0]._radiation_out and not _is_offline(out[0])
+
+
+def test_outage_clears_when_ship_leaves_the_ship_list():
+    ship = _SubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=0.0), rng=_AlwaysRoll())
+    d.apply_chunk(ship, 1.0, 1.0)
+    d.update([], 1.0 / 60.0)
+    assert not any(s._radiation_out for s in ship.subs)
+    assert d.active_outages() == {}
+
+
+def test_reset_clears_all_outages():
+    ship = _SubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=0.0), rng=_AlwaysRoll())
+    d.apply_chunk(ship, 1.0, 1.0)
+    d.reset()
+    assert not any(s._radiation_out for s in ship.subs)
+
+
+def test_child_of_an_out_subsystem_is_offline():
+    parent = SensorSubsystem("Parent")
+    child = SensorSubsystem("Child")
+    child._parent_subsystem = parent
+    parent._radiation_out = True
+    assert _is_offline(child)

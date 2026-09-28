@@ -22,6 +22,10 @@ HULL_PER_S = 150.0
 SHIELD_PER_S = 20.0
 DIFFICULTY_MULT = (0.0, 0.5, 1.0)
 
+OUTAGE_MEAN_INTERVAL_S = 30.0
+OUTAGE_MIN_S = 5.0
+OUTAGE_MAX_S = 20.0
+
 
 def _mult() -> float:
     from engine.core.game import Game_GetDifficulty
@@ -37,19 +41,59 @@ def _fire(ship) -> bool:
     return dispatch_passes(evt)
 
 
+def _dying(ship) -> bool:
+    return bool(implements(ship, "IsDying") and ship.IsDying()) or \
+        bool(implements(ship, "IsDead") and ship.IsDead())
+
+
 class RadiationDriver:
     def __init__(self, sample_for, rng=None):
         self._sample_for = sample_for
         self._rng = rng if rng is not None else random.Random()
         self._accum = {}     # id(ship) -> seconds banked toward the next event
+        self._outages = {}   # id(sub) -> [sub, id(ship), seconds_left]
 
     def reset(self) -> None:
         self._accum.clear()
+        for sid in list(self._outages):
+            self._end(sid)
+
+    def active_outages(self) -> dict:
+        return {sid: entry[2] for sid, entry in self._outages.items()}
+
+    def _end(self, sid) -> None:
+        sub = self._outages.pop(sid)[0]
+        sub._radiation_out = False
+
+    def _tick_outages(self, dt, ship_ids) -> None:
+        for sid in list(self._outages):
+            entry = self._outages[sid]
+            entry[2] -= dt
+            if entry[2] <= 0.0 or entry[1] not in ship_ids:
+                self._end(sid)
+
+    def _maybe_start_outage(self, ship, radiation: float, mult: float) -> None:
+        p = radiation * mult * (1.0 / EVENT_HZ) / OUTAGE_MEAN_INTERVAL_S
+        if self._rng.random() >= p:
+            return
+        from engine.appc.subsystems import HullSubsystem, PowerSubsystem
+        subs = ship.GetSubsystems() if implements(ship, "GetSubsystems") else []
+        pool = [s for s in subs
+                if s is not None
+                and not isinstance(s, (HullSubsystem, PowerSubsystem))
+                and id(s) not in self._outages]
+        if not pool:
+            return
+        sub = self._rng.choice(pool)
+        sub._radiation_out = True
+        self._outages[id(sub)] = [sub, id(ship),
+                                   self._rng.uniform(OUTAGE_MIN_S, OUTAGE_MAX_S)]
 
     def update(self, ships, dt, shared=frozenset()) -> None:
         """One fixed sim tick. `shared`: ids of ships inside an ARMED local
         MetaNebula -- their events come from NebulaTracker (Task 9)."""
         from engine.appc import warp_state
+        self._tick_outages(dt, {id(s) for s in ships if not _dying(s)})
         m = _mult()
         period = 1.0 / EVENT_HZ
         live = set()
@@ -90,3 +134,4 @@ class RadiationDriver:
                 else:
                     new = hull.GetCondition() - amount
                     hull.SetCondition(new if new > 0.0 else 0.0)
+        self._maybe_start_outage(ship, radiation, mult)
