@@ -7,15 +7,20 @@ decal working list and everything that turns it into a live renderer
 override (`host_io.set_instance_decals`) and a `decals.json` write
 (`decals_writer.save_decals`).
 
-Frames. Every `Placement` is in the SHIP-BODY frame, in UNSCALED model units
--- the frame `decals.json` and the shader's `p_body` use. The SPV works in
-the player's SET coordinates (its orbit camera, its gizmo origins), and
-`ray_trace_mesh` answers in VIEW coordinates. So a hull click goes
-cursor -> `manual_aim.cursor_ray` (set coords, the exact inverse of the SPV
-projection) -> shifted into view coords -> `ray_trace_mesh` -> the hit
-shifted back -> `world_hit_to_body` (R^T (p - loc) / scale, normal R^T n).
-The gizmo goes the other way through `body_to_world` (loc + R (scale p)),
-so a drag of `t` GU along a world gizmo axis is `t / scale` model units.
+Frames. Every `Placement` is in the SHIP-BODY frame in NIF units -- the
+frame `decals.json` and the shader's `p_body = inverse(inst.world) * pos`
+use (the committed Ambassador `top` is ~120 units wide). The render
+instance's world is `loc + R * (BC_MODEL_SCALE * GetScale() * p)`, so a GU
+is 1 / (0.01 * GetScale()) body units -- NOT 1 / GetScale().
+
+- A hull click: cursor -> `manual_aim.cursor_ray` (SET coords, the exact
+  inverse of the SPV projection) -> shifted into VIEW coords ->
+  `ray_trace_mesh` -> the VIEW-coord hit straight into the native
+  `host_io.world_to_body`, which inverts the renderer's own
+  `inst->world_linear` (Ruling O: the one matrix that cannot drift).
+- The gizmo, the other way: `body_to_world` through host_loop's own
+  `_world_matrix_from(loc, rot, instance_scale(ship))`, and a drag of `t` GU
+  along a world gizmo axis is `t / instance_scale(ship)` body units.
 """
 from __future__ import annotations
 
@@ -74,49 +79,45 @@ def png_aspect(path) -> Optional[float]:
     return w / h
 
 
-def _rotation_cols(ship):
-    """The three columns of the ship's world rotation (identity if absent)."""
+def instance_scale(ship) -> float:
+    """The render instance's uniform scale: BC_MODEL_SCALE (NIF units -> GU)
+    times the script's GetScale() -- the factor host_loop realises every ship
+    instance with (`_ship_world_matrix(ship, BC_MODEL_SCALE)`)."""
+    from engine.host_loop import BC_MODEL_SCALE
+    try:
+        s = float(ship.GetScale())
+    except Exception:
+        s = 1.0
+    return BC_MODEL_SCALE * (s if s > 1e-9 else 1.0)
+
+
+def _instance_matrix(ship) -> list:
+    """The instance's row-major world matrix, built by host_loop's own
+    `_world_matrix_from` (imported, never re-derived) in the ship's SET
+    coordinates."""
     from engine.appc.math import TGMatrix3
+    from engine.host_loop import _world_matrix_from
     rot = ship.GetWorldRotation() if hasattr(ship, "GetWorldRotation") else None
     if not isinstance(rot, TGMatrix3):
-        return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    cols = []
-    for i in range(3):
-        c = rot.GetCol(i)
-        cols.append((c.x, c.y, c.z))
-    return tuple(cols)
-
-
-def _ship_scale(ship) -> float:
-    s = float(ship.GetScale()) if hasattr(ship, "GetScale") else 1.0
-    return s if s > 1e-9 else 1.0
-
-
-def world_hit_to_body(ship, point: Vec3, normal: Vec3) -> Tuple[Vec3, Vec3]:
-    """A world (set-coordinate) hull hit -> (body point, body unit normal).
-    Body point = R^T (point - loc) / scale; normal = R^T normal (rotation
-    only, renormalised). Inverse of `body_to_world` / `body_dir_to_world`."""
-    loc = ship.GetWorldLocation()
-    d = (point[0] - loc.x, point[1] - loc.y, point[2] - loc.z)
-    cols = _rotation_cols(ship)
-    s = _ship_scale(ship)
-    pb = tuple((d[0] * c[0] + d[1] * c[1] + d[2] * c[2]) / s for c in cols)
-    nb = tuple(normal[0] * c[0] + normal[1] * c[1] + normal[2] * c[2] for c in cols)
-    m = math.sqrt(sum(v * v for v in nb)) or 1.0
-    return pb, tuple(v / m for v in nb)
-
-
-def body_dir_to_world(ship, v: Vec3) -> Vec3:
-    cols = _rotation_cols(ship)
-    return tuple(cols[0][k] * v[0] + cols[1][k] * v[1] + cols[2][k] * v[2]
-                 for k in range(3))
+        rot = TGMatrix3()
+    return _world_matrix_from(ship.GetWorldLocation(), rot, instance_scale(ship))
 
 
 def body_to_world(ship, p: Vec3) -> Vec3:
-    s = _ship_scale(ship)
-    w = body_dir_to_world(ship, (p[0] * s, p[1] * s, p[2] * s))
-    loc = ship.GetWorldLocation()
-    return (loc.x + w[0], loc.y + w[1], loc.z + w[2])
+    """Body point (NIF units) -> set-coordinate world point, through the
+    instance matrix. The inverse of what `host_io.world_to_body` does
+    natively for a hull hit."""
+    m = _instance_matrix(ship)
+    return tuple(m[4 * r] * p[0] + m[4 * r + 1] * p[1] + m[4 * r + 2] * p[2]
+                 + m[4 * r + 3] for r in range(3))
+
+
+def body_dir_to_world(ship, v: Vec3) -> Vec3:
+    """Body direction -> unit world direction (the instance's linear part,
+    renormalised, so the uniform scale drops out)."""
+    m = _instance_matrix(ship)
+    return _unit(tuple(m[4 * r] * v[0] + m[4 * r + 1] * v[1] + m[4 * r + 2] * v[2]
+                       for r in range(3)))
 
 
 def _unit(v: Vec3) -> Vec3:
@@ -210,9 +211,27 @@ class DecalsPaneMixin:
         return a if a is not None else DEFAULT_MASK_ASPECT
 
     def _decal_ship_radius(self, ship) -> float:
-        """The ship's radius in MODEL units (the placement frame)."""
+        """The ship's radius in body (NIF) units, the placement frame: the
+        model's own bounds (|aabb centre| + |half extents|, host_loop's
+        `_model_extent_from_aabb`, the same extent realize derives a missing
+        radius from) when the instance has a model; else GetRadius(), which
+        is UNSCALED GU, over BC_MODEL_SCALE -- never divided by GetScale()."""
+        from engine import host_io
+        from engine.host_loop import BC_MODEL_SCALE, _model_extent_from_aabb
+        iid = self._decal_iid()
+        if iid is not None:
+            try:
+                handle = host_io.instance_model(iid)
+                if handle:
+                    from engine import renderer
+                    c, he = renderer.model_aabb(handle)
+                    r = _model_extent_from_aabb(c, he)
+                    if r > 0.0:
+                        return r
+            except Exception:
+                pass
         r = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 0.0
-        r /= _ship_scale(ship)
+        r /= BC_MODEL_SCALE
         return r if r > 0.0 else 1.0
 
     def _decal_refresh_registries(self) -> None:
@@ -296,6 +315,10 @@ class DecalsPaneMixin:
         iid = self._decal_iid()
         if iid is None:
             return
+        if self._decal_override_iid is not None and self._decal_override_iid != iid:
+            # The instance changed under a live override (a respawn): give
+            # the old one its baked decals back before previewing on the new.
+            self._decal_clear_override()
         entries = self._decal_entries()
         key = (iid, entries)
         if not force and key == self._decal_last_push:
@@ -424,9 +447,15 @@ class DecalsPaneMixin:
             self._decal_error = None
             return True
         if verb == "decal-default":
-            if arg and decal_editor.valid_name(arg, ()) is not None:
-                return False
+            # Membership, not valid_name: a registry is a FOLDER, and a
+            # folder name may carry spaces or dots. "" clears the default.
+            if arg:
+                self._decal_refresh_registries()
+                if arg not in self._decal_registries:
+                    self._decal_error = ("No registry folder %r under Masks/" % arg)
+                    return True
             self._decal_default = arg or None
+            self._decal_error = None
             return True
         if verb == "decal-reposition":
             if self._decal_selected is None:
@@ -493,8 +522,17 @@ class DecalsPaneMixin:
         if hit is None:
             return None
         (px, py, pz), normal, _t = hit
-        hp = frames.shifted(TGPoint3(px, py, pz), off, -1.0)
-        return world_hit_to_body(ship, (hp.x, hp.y, hp.z), tuple(normal))
+        # The hit is in VIEW coordinates, which is what world_to_body takes
+        # (it subtracts the instance translation, then inverts the
+        # instance's own world_linear natively).
+        try:
+            body = host_io.world_to_body(iid, (px, py, pz), tuple(normal))
+        except Exception:
+            body = None
+        if body is None:
+            return None
+        pb, nb = body
+        return tuple(float(c) for c in pb), _unit(tuple(float(c) for c in nb))
 
     def decal_click(self, x, y, viewport) -> bool:
         """A viewport click while the Decals pane is active. Places the
@@ -590,7 +628,7 @@ class DecalsPaneMixin:
         self._decal_sync_override()
 
     def _decal_apply_axis_drag(self, param_now: float) -> None:
-        d = (param_now - self._axis_grab_param) / _ship_scale(self._ship_getter())
+        d = (param_now - self._axis_grab_param) / instance_scale(self._ship_getter())
         if self._axis_drag == 0:
             self._decal_apply(decal_editor.move_uv(self._decal_grab, d, 0.0))
         elif self._axis_drag == 1:

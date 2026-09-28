@@ -269,3 +269,21 @@ TEST_F(DecalMaskCacheTest, ReloadsAPathWhoseFileMtimeChanged) {
     cache.get(path);
     EXPECT_EQ(uploaded.size(), 2u) << "and only once per change";
 }
+
+// Fix round 1 (M3): every reload retires the superseded texture, and Mark may
+// re-export a mask hundreds of times in one session -- the retired list is
+// capped, dropping the oldest, so it cannot grow without bound.
+TEST_F(DecalMaskCacheTest, RetiredTexturesAreCapped) {
+    auto cache = make_cache();
+    const auto path = write_png("mask.png");
+    cache.get(path);
+    auto t = fs::last_write_time(path);
+    for (int i = 1; i <= 50; ++i) {
+        fs::last_write_time(path, t + std::chrono::seconds(i));
+        cache.get(path);
+    }
+    EXPECT_EQ(uploaded.size(), 51u);
+    EXPECT_EQ(cache.size(), 1u);
+    EXPECT_LE(cache.retired_count(), assets::DecalMaskCache::kMaxRetired);
+    EXPECT_GT(assets::DecalMaskCache::kMaxRetired, 0u);
+}

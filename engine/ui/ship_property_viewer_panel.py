@@ -20,7 +20,7 @@ from engine.ui.ship_property_viewer import (
     emitter_spec_to_calls,
 )
 from engine.ui import ship_property_viewer as _spv
-from engine.ui.spv_decals_pane import DecalsPaneMixin, world_hit_to_body  # noqa: F401
+from engine.ui.spv_decals_pane import DecalsPaneMixin
 
 # Fraction of the view height the ship's bounding sphere should fill when the
 # viewer first frames the ship (1.0 = sphere touches top/bottom edges).
@@ -1203,8 +1203,16 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         override, and force a CEF re-push."""
         import copy
         r, l, e, p, pt, (decals, decal_default) = snap
-        self._decal_working = list(decals) if decals is not None else None
-        self._decal_default = decal_default
+        if decals is not None:
+            self._decal_working = list(decals)
+            self._decal_default = decal_default
+        elif self._decal_working is not None:
+            # The snapshot predates the pane's LOAD (a hardpoint edit staged
+            # before Decals was entered). Loading is not an edit, so undoing
+            # past it returns the list to what was loaded -- never to None,
+            # which would leave an active pane blank and dead.
+            self._decal_working = list(self._decal_baseline)
+            self._decal_default = self._decal_baseline_default
         if self._decal_index(self._decal_selected) is None:
             self._decal_selected = None
             self._decal_reposition = False

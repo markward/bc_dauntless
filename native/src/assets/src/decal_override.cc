@@ -122,6 +122,12 @@ std::uint32_t DecalMaskCache::get(const fs::path& mask) {
     const std::uint32_t id = tex.id();
     if (it != textures_.end()) {
         retired_.push_back(std::move(it->second.texture));
+        // Bounded: drop the OLDEST retired texture. We are inside
+        // set_instance_decals, so the GL context is current (this same call
+        // just uploaded). A texture this many reloads old belongs to an
+        // override that every later push has already replaced -- the only
+        // caller is the SPV previewing ONE instance.
+        if (retired_.size() > kMaxRetired) retired_.erase(retired_.begin());
         it->second = Entry{std::move(tex), mtime};
     } else {
         textures_.emplace(key, Entry{std::move(tex), mtime});

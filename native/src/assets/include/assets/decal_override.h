@@ -56,7 +56,9 @@ DecalOverride build_decal_override(const Model& model,
 /// open shows on the next set_instance_decals). The superseded texture is
 /// RETIRED, not freed, until clear(): another instance's override may still
 /// hold its id, and freeing it would leave that override naming a dead GL
-/// texture.
+/// texture. At most kMaxRetired are kept (oldest freed first): a texture that
+/// many reloads stale is no longer named by any override the SPV -- the only
+/// caller, previewing one instance -- still has installed.
 class DecalMaskCache {
 public:
     using Uploader = std::function<Texture(const Image&, bool)>;
@@ -66,8 +68,12 @@ public:
     /// The mask's GL texture id, loading it on first use (or when its file
     /// mtime changed); 0 on failure.
     std::uint32_t get(const std::filesystem::path& mask);
+    /// Retired textures kept alive at most (see the class comment).
+    static constexpr std::size_t kMaxRetired = 8;
+
     /// Live entries, one per path (retired textures are not counted).
     std::size_t size() const noexcept { return textures_.size(); }
+    std::size_t retired_count() const noexcept { return retired_.size(); }
     void clear();
 
 private:

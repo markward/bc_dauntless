@@ -2,10 +2,15 @@
 design.md S3): the panel logic against a fake host_io that records every
 set_instance_decals / ray_trace_mesh call.
 
-The fake ship is ROTATED and SCALED on purpose: the decal maths is in the
-ship-BODY frame (unscaled model units), while ray_trace_mesh answers in world
-coordinates -- a conversion that silently assumed identity/unit scale would
-pass an axis-aligned fixture and misplace every decal on a real ship.
+The fake ship is ROTATED and SCALED on purpose, and its world is built from
+the REAL instance composition -- `host_loop._world_matrix_from(loc, rot,
+BC_MODEL_SCALE * GetScale())`, what the renderer draws and what the shader's
+`p_body = inverse(inst.world) * pos` inverts. The decal maths is in that body
+frame (NIF units: the committed Ambassador `top` is ~120 wide), so a fake that
+re-derived its own composition would only check the code against itself
+(fix round 1, C1: exactly that hid a 100x unit error). The fake
+`host_io.world_to_body` inverts the fake world's LINEAR part generically, the
+way the native binding inverts `inst->world_linear`.
 """
 import json
 import math
@@ -18,6 +23,7 @@ import pytest
 from engine import host_io, mods, paths
 from engine.appc import decals_writer, hull_decals
 from engine.appc.math import TGMatrix3, TGPoint3
+from engine.host_loop import BC_MODEL_SCALE, _world_matrix_from
 from engine.ui import decal_editor
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
 
@@ -26,8 +32,10 @@ AMB_MODEL = f"{AMB_DIR}/Ambassador.nif"
 BOP_DIR = "data/Models/Ships/BirdOfPrey"
 BOP_MODEL = f"{BOP_DIR}/BirdOfPrey.nif"
 IID = 7
-SCALE = 2.0
-RADIUS_GU = 10.0          # => 5.0 model units at SCALE 2
+SCALE = 2.0               # GetScale(); the instance scale is BC_MODEL_SCALE * this
+RADIUS_GU = 10.0          # GetRadius(): UNSCALED GU => 1000 NIF units
+AMB_COMMITTED = (Path(__file__).resolve().parents[2] / "native" / "assets"
+                 / "replacements" / AMB_DIR / "Masks" / "decals.json")
 
 
 def _png(width, height):
@@ -62,11 +70,16 @@ class _FakeShip:
         return RADIUS_GU
 
 
-def _world_from_body(ship, p, scale=SCALE):
-    v = TGPoint3(p[0] * scale, p[1] * scale, p[2] * scale)
-    v.MultMatrixLeft(ship.GetWorldRotation())
-    loc = ship.GetWorldLocation()
-    return (loc.x + v.x, loc.y + v.y, loc.z + v.z)
+def _instance_world(ship):
+    """The render instance's world matrix (row-major 4x4, flat)."""
+    return _world_matrix_from(ship.GetWorldLocation(), ship.GetWorldRotation(),
+                              BC_MODEL_SCALE * ship.GetScale())
+
+
+def _world_from_body(ship, p):
+    m = _instance_world(ship)
+    return tuple(m[4 * r] * p[0] + m[4 * r + 1] * p[1] + m[4 * r + 2] * p[2]
+                 + m[4 * r + 3] for r in range(3))
 
 
 def _world_dir_from_body(ship, n):
@@ -75,13 +88,37 @@ def _world_dir_from_body(ship, n):
     return (v.x, v.y, v.z)
 
 
+def _inverse3(a):
+    """Inverse of a 3x3 (list of rows) by cofactors -- no numpy."""
+    (a0, a1, a2), (b0, b1, b2), (c0, c1, c2) = a
+    det = (a0 * (b1 * c2 - b2 * c1) - a1 * (b0 * c2 - b2 * c0)
+           + a2 * (b0 * c1 - b1 * c0))
+    return [[(b1 * c2 - b2 * c1) / det, (a2 * c1 - a1 * c2) / det, (a1 * b2 - a2 * b1) / det],
+            [(b2 * c0 - b0 * c2) / det, (a0 * c2 - a2 * c0) / det, (a2 * b0 - a0 * b2) / det],
+            [(b0 * c1 - b1 * c0) / det, (a1 * c0 - a0 * c1) / det, (a0 * b1 - a1 * b0) / det]]
+
+
+def _fake_world_to_body(ship):
+    """host_io.world_to_body's contract (world point + world normal -> body
+    point + unit body normal), inverting the instance matrix generically."""
+    def _w2b(iid, point, normal):
+        m = _instance_world(ship)
+        lin = [[m[4 * r + c] for c in range(3)] for r in range(3)]
+        inv = _inverse3(lin)
+        d = tuple(point[r] - m[4 * r + 3] for r in range(3))
+        pb = tuple(sum(inv[r][c] * d[c] for c in range(3)) for r in range(3))
+        nb = tuple(sum(inv[r][c] * normal[c] for c in range(3)) for r in range(3))
+        k = math.sqrt(sum(v * v for v in nb))
+        return pb, tuple(v / k for v in nb)
+    return _w2b
+
+
 def _close(a, b, tol=1e-6):
     return all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
-_TOP = {"shape": "amb saucer:0", "origin": [0.0, 1.0, 2.0],
-        "u_axis": [1.0, 0.0, 0.0], "v_axis": [0.0, -0.5, 0.0],
-        "normal": [0.0, 0.0, 1.0], "depth": 0.1}
+# The COMMITTED Ambassador placement (NIF units), not a hand-sized stand-in.
+_TOP = json.loads(AMB_COMMITTED.read_text())["decals"]["top"]
 
 
 @pytest.fixture
@@ -112,8 +149,11 @@ def env(tmp_path, monkeypatch):
         traces.append((iid, origin, direction, max_dist))
         return hit["value"]
     monkeypatch.setattr(host_io, "ray_trace_mesh", _trace)
-
     ship = _FakeShip()
+    monkeypatch.setattr(host_io, "world_to_body", _fake_world_to_body(ship))
+    # No model handle headless: the radius falls back to GetRadius().
+    monkeypatch.setattr(host_io, "instance_model", lambda iid: None)
+
     model = {"rel": AMB_MODEL}
     p = ShipPropertyViewerPanel(ship_getter=lambda: ship,
                                 iid_getter=lambda: IID,
@@ -151,8 +191,8 @@ def test_entering_the_pane_forces_textured_mode_and_pushes_the_override(env):
     assert len(decals) == 1
     shape, origin, u, v, n, depth, mask = decals[0]
     assert shape == "amb saucer:0"
-    assert _close(origin, (0.0, 1.0, 2.0)) and _close(n, (0.0, 0.0, 1.0))
-    assert depth == pytest.approx(0.1)
+    assert _close(origin, _TOP["origin"]) and _close(n, _TOP["normal"])
+    assert depth == pytest.approx(_TOP["depth"])
     assert mask == str(env["masks"] / "Zhukov" / "top.png")
 
 
@@ -196,7 +236,7 @@ def test_add_then_a_hull_click_places_a_chirality_ok_decal(env):
     p.dispatch_event("decal-pane")
     assert p.dispatch_event("decal-add:bottom")
     assert _payload(p)["decals"]["adding"] is True
-    _arm_hit(env, (0.5, -1.0, -2.0), (0.0, 0.0, -1.0))
+    _arm_hit(env, (50.0, -100.0, -20.0), (0.0, 0.0, -1.0))
 
     p.decal_click(640.0, 360.0, (1280, 720))
 
@@ -204,12 +244,13 @@ def test_add_then_a_hull_click_places_a_chirality_ok_decal(env):
     assert names == ["top", "bottom"]
     bottom = p._decal_working[1]
     assert decal_editor.chirality_ok(bottom)
-    assert _close(decal_editor.centre(bottom), (0.5, -1.0, -2.0))
+    assert _close(decal_editor.centre(bottom), (50.0, -100.0, -20.0), 1e-6)
     assert _close(bottom.normal, (0.0, 0.0, -1.0))
-    # Width is 25% of the MODEL-unit radius (10 GU / scale 2 = 5).
-    assert decal_editor.width(bottom) == pytest.approx(1.25)
+    # Width is 25% of the NIF-unit radius: GetRadius() is UNSCALED GU, so
+    # 10 GU / BC_MODEL_SCALE = 1000 units, whatever GetScale() says.
+    assert decal_editor.width(bottom) == pytest.approx(250.0)
     # Zhukov/bottom.png is 200x50: height = width / 4.
-    assert math.sqrt(sum(c * c for c in bottom.v_axis)) == pytest.approx(1.25 / 4)
+    assert math.sqrt(sum(c * c for c in bottom.v_axis)) == pytest.approx(250.0 / 4)
     assert _payload(p)["decals"]["adding"] is False
     assert _payload(p)["decals"]["selected"] == "bottom"
     iid, decals = calls[-1]
@@ -246,7 +287,7 @@ def test_a_fifth_placement_is_refused(env):
     p.dispatch_event("decal-pane")
     for i, name in enumerate(("b", "c", "d")):
         p.dispatch_event("decal-add:" + name)
-        _arm_hit(env, (0.1 * i, 0.0, 1.0), (0.0, 0.0, 1.0))
+        _arm_hit(env, (10.0 * i, 0.0, 60.0), (0.0, 0.0, 1.0))
         p.decal_click(1.0, 1.0, (1280, 720))
     assert len(p._decal_working) == 4
     p.dispatch_event("decal-add:e")
@@ -258,7 +299,7 @@ def test_a_placement_without_a_mask_uses_the_placeholder(env):
     p, calls = env["p"], env["calls"]
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-add:port")
-    _arm_hit(env, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    _arm_hit(env, (150.0, 0.0, 0.0), (1.0, 0.0, 0.0))
     p.decal_click(1.0, 1.0, (1280, 720))
     assert _masks_of(calls[-1][1])[1] == _placeholder()
     port = p._decal_working[1]
@@ -335,24 +376,33 @@ def test_undo_restores_a_placement_moved_by_the_gizmo(env):
     assert p._decal_working[0] == before
 
 
-# ── gizmos (body frame, scale divided out) ─────────────────────────────────
+# ── gizmos (body frame; instance scale = BC_MODEL_SCALE * GetScale()) ────
+
+def _u_hat(pl):
+    return tuple(c / decal_editor.width(pl) for c in pl.u_axis)
+
 
 def test_the_move_gizmo_drives_move_uv_in_model_units(env):
     p = env["p"]
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-select:top")
     p.dispatch_event("set_tool:transform")
+    top = p._decal_working[0]
     g = p._active_gizmo()
     assert g is not None and g["handle_kind"] == 0
-    # The gizmo's first axis is the decal's u direction, in WORLD space.
-    assert _close(g["axes"][0], _world_dir_from_body(env["ship"], (1.0, 0.0, 0.0)))
-    assert _close(g["origin"], _world_from_body(
-        env["ship"], decal_editor.centre(p._decal_working[0])))
-    c0 = decal_editor.centre(p._decal_working[0])
+    # The gizmo sits ON the rendered hull at the decal centre, and its first
+    # axis is the decal's u direction, in WORLD space.
+    assert _close(g["origin"], _world_from_body(env["ship"], decal_editor.centre(top)),
+                  1e-6)
+    assert _close(g["axes"][0], _world_dir_from_body(env["ship"], _u_hat(top)), 1e-9)
+    c0 = decal_editor.centre(top)
     p._begin_axis_drag(0, 0.0)
     p._apply_axis_drag(1.0)                 # 1 GU along world u
     c1 = decal_editor.centre(p._decal_working[0])
-    assert _close(c1, (c0[0] + 1.0 / SCALE, c0[1], c0[2]))
+    # 1 GU = 1 / (BC_MODEL_SCALE * GetScale()) = 50 NIF units.
+    step = 1.0 / (BC_MODEL_SCALE * SCALE)
+    expect = tuple(c0[k] + step * _u_hat(top)[k] for k in range(3))
+    assert _close(c1, expect, 1e-6)
 
 
 def test_the_rotate_gizmo_rolls_about_the_normal(env):
@@ -360,17 +410,18 @@ def test_the_rotate_gizmo_rolls_about_the_normal(env):
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-select:top")
     p.dispatch_event("set_tool:rotate")
+    top = p._decal_working[0]
     g = p._active_gizmo()
     assert g is not None and g["handle_kind"] == 2
-    assert _close(g["axes"][2], _world_dir_from_body(env["ship"], (0.0, 0.0, 1.0)))
-    c0 = decal_editor.centre(p._decal_working[0])
+    n_hat = tuple(c / math.sqrt(sum(v * v for v in top.normal)) for c in top.normal)
+    assert _close(g["axes"][2], _world_dir_from_body(env["ship"], n_hat), 1e-9)
     p._begin_ring_drag(2, 0.0)
     p._apply_ring_drag_angle(math.pi / 2.0)
     pl = p._decal_working[0]
-    assert _close(decal_editor.centre(pl), c0)
+    assert pl == decal_editor.roll(top, math.pi / 2.0)
+    assert _close(decal_editor.centre(pl), decal_editor.centre(top), 1e-6)
     assert decal_editor.chirality_ok(pl)
-    u_hat = tuple(c / decal_editor.width(pl) for c in pl.u_axis)
-    assert _close(u_hat, (0.0, 1.0, 0.0), 1e-9)
+    assert abs(sum(a * b for a, b in zip(_u_hat(pl), _u_hat(top)))) < 1e-9
 
 
 def test_the_scale_gizmo_scales_uniformly(env):
@@ -380,12 +431,17 @@ def test_the_scale_gizmo_scales_uniformly(env):
     p.dispatch_event("set_tool:scale")
     assert p._active_gizmo()["handle_kind"] == 1
     from engine.ui.ship_property_viewer import gizmo_length
+    w0 = decal_editor.width(p._decal_working[0])
     L = gizmo_length(p.camera)
     p._begin_scale_drag(0, L)
     p._apply_scale_drag(2.0 * L)
     pl = p._decal_working[0]
-    assert decal_editor.width(pl) == pytest.approx(2.0)
-    assert pl.depth == pytest.approx(0.2)
+    assert decal_editor.width(pl) == pytest.approx(2.0 * w0)
+    assert pl.depth == pytest.approx(2.0 * _TOP["depth"])
+
+
+def _wrap(deg):
+    return (deg + 180.0) % 360.0 - 180.0
 
 
 def test_the_numbers_panel_nudges_width_roll_depth_and_centre(env):
@@ -393,16 +449,17 @@ def test_the_numbers_panel_nudges_width_roll_depth_and_centre(env):
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-select:top")
     n = _payload(p)["decals"]["numbers"]
-    assert n["width"] == pytest.approx(1.0)
-    assert n["depth"] == pytest.approx(0.1)
-    assert n["roll"] == pytest.approx(0.0, abs=1e-9)
-    p.dispatch_event('decal-nudge:{"field":"depth","delta":0.05}')
+    assert n["width"] == pytest.approx(119.566, abs=1e-2)
+    assert n["depth"] == pytest.approx(2.0)
+    p.dispatch_event('decal-nudge:{"field":"depth","delta":0.5}')
     p.dispatch_event('decal-nudge:{"field":"roll","delta":10}')
-    p.dispatch_event('decal-nudge:{"field":"z","delta":0.5}')
+    p.dispatch_event('decal-nudge:{"field":"z","delta":5}')
+    p.dispatch_event('decal-nudge:{"field":"width","delta":10}')
     n2 = _payload(p)["decals"]["numbers"]
-    assert n2["depth"] == pytest.approx(0.15)
-    assert n2["roll"] == pytest.approx(10.0)
-    assert n2["centre"][2] == pytest.approx(n["centre"][2] + 0.5)
+    assert n2["depth"] == pytest.approx(2.5)
+    assert _wrap(n2["roll"] - n["roll"]) == pytest.approx(10.0)
+    assert n2["centre"][2] == pytest.approx(n["centre"][2] + 5.0)
+    assert n2["width"] == pytest.approx(n["width"] + 10.0)
 
 
 def test_reposition_reseats_the_selection_at_the_next_click(env):
@@ -411,25 +468,92 @@ def test_reposition_reseats_the_selection_at_the_next_click(env):
     p.dispatch_event("decal-select:top")
     p.dispatch_event("decal-reposition")
     assert _payload(p)["decals"]["reposition"] is True
-    _arm_hit(env, (2.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    _arm_hit(env, (200.0, 0.0, 0.0), (1.0, 0.0, 0.0))
     p.decal_click(1.0, 1.0, (1280, 720))
     pl = p._decal_working[0]
-    assert _close(decal_editor.centre(pl), (2.0, 0.0, 0.0))
+    assert _close(decal_editor.centre(pl), (200.0, 0.0, 0.0), 1e-6)
     assert _close(pl.normal, (1.0, 0.0, 0.0))
     assert decal_editor.chirality_ok(pl)
     assert _payload(p)["decals"]["reposition"] is False
 
 
-# ── frame conversion ───────────────────────────────────────────────────────
+# ── frame conversion: the committed Ambassador `top` round-trips ──────────
 
-def test_world_hit_to_body_inverts_rotation_translation_and_scale(env):
-    from engine.ui.ship_property_viewer_panel import world_hit_to_body
-    ship = env["ship"]
-    b = (0.3, -1.7, 2.2)
-    nb = (0.0, 0.6, 0.8)
-    pb, nb2 = world_hit_to_body(ship, _world_from_body(ship, b),
-                                _world_dir_from_body(ship, nb))
-    assert _close(pb, b) and _close(nb2, nb)
+def test_a_click_on_the_ambassador_top_centre_round_trips_in_nif_units(env):
+    """C1: the committed `top` centre is ~(-2, 176, 50) NIF units. A world
+    click there, through the real instance composition, must come back to
+    that body point -- not to a point 100x closer to the origin."""
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-select:top")
+    top = p._decal_working[0]
+    c = decal_editor.centre(top)
+    assert math.sqrt(sum(v * v for v in c)) > 100.0, "NIF units, not GU"
+    p.dispatch_event("set_tool:transform")
+    world_c = _world_from_body(env["ship"], c)
+    assert _close(p._active_gizmo()["origin"], world_c, 1e-6)
+    p.dispatch_event("set_tool:transform")
+    p.dispatch_event("decal-reposition")
+    env["hit"]["value"] = (world_c, _world_dir_from_body(env["ship"], top.normal), 5.0)
+    p.decal_click(640.0, 360.0, (1280, 720))
+    pl = p._decal_working[0]
+    assert _close(decal_editor.centre(pl), c, 1e-6)
+    assert decal_editor.width(pl) == pytest.approx(decal_editor.width(top))
+
+
+def test_the_radius_comes_from_the_model_bounds_when_there_is_a_handle(
+        env, monkeypatch):
+    from engine import renderer
+    monkeypatch.setattr(host_io, "instance_model", lambda iid: 5)
+    monkeypatch.setattr(renderer, "model_aabb",
+                        lambda h: ((0.0, 0.0, 0.0), (300.0, 400.0, 0.0)))
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-add:port")
+    _arm_hit(env, (150.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    p.decal_click(1.0, 1.0, (1280, 720))
+    # |centre| + |half extents| = 500 NIF units -> width 125.
+    assert decal_editor.width(p._decal_working[1]) == pytest.approx(125.0)
+
+
+# ── fix round 1: undo past the load, default registry, iid change ─────────
+
+def test_undo_past_the_pane_load_keeps_the_pane_alive(env):
+    """I1: a hardpoint edit staged BEFORE the pane loaded leaves a snapshot
+    whose decal list is None; undoing it must not blank the loaded pane."""
+    p, calls = env["p"], env["calls"]
+    p._descriptors = [{"name": "Hull", "properties": {"radius": 1.0},
+                       "world_pos": (0.0, 0.0, 0.0), "parent_index": None}]
+    p.dispatch_event('set_radius:{"i":0,"value":3.0}')
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("undo")                 # undoes the radius edit
+    assert 0 not in p._pending_radius
+    assert p._decal_working is not None
+    assert [pl.name for pl in p._decal_working] == ["top"]
+    assert p.dispatch_event("decal-select:top")
+    assert len(calls[-1][1]) == 1
+
+
+def test_default_registry_must_be_an_existing_folder_and_may_have_spaces(env):
+    p = env["p"]
+    (env["masks"] / "USS Excalibur.v2").mkdir()
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-default:Nope")
+    d = _payload(p)["decals"]
+    assert d["default_registry"] == "Zhukov" and d["error"]
+    p.dispatch_event("decal-default:USS Excalibur.v2")
+    d = _payload(p)["decals"]
+    assert d["default_registry"] == "USS Excalibur.v2" and d["error"] is None
+
+
+def test_an_iid_change_clears_the_old_instance_before_pushing(env):
+    p, calls = env["p"], env["calls"]
+    iid = {"v": IID}
+    p._iid_getter = lambda: iid["v"]
+    p.dispatch_event("decal-pane")
+    iid["v"] = 9
+    p.dispatch_event("decal-delete:top")
+    assert calls[-2:] == [(IID, None), (9, [])]
 
 
 # ── save ───────────────────────────────────────────────────────────────────
@@ -465,17 +589,27 @@ def test_save_writes_into_the_mod_that_supplies_the_model(env, monkeypatch):
         abs_path=nif, mod_name="NifMod", target="game",
         rel=mods.fold(BOP_MODEL), raw_rel=BOP_MODEL)}, mods=[])
     monkeypatch.setattr(mods, "current", lambda: index)
+    # The mod ships a registry folder (with a space in its name) but no
+    # decals.json yet: the first save for the class.
+    tail_rel = f"{BOP_DIR}/Masks/IKS Rotarran/tail.png"
+    tail = nif.parent / "Masks" / "IKS Rotarran" / "tail.png"
+    tail.parent.mkdir(parents=True)
+    tail.write_bytes(_png(40, 10))
+    index.files[mods.fold(tail_rel)] = mods.ModFile(
+        abs_path=tail, mod_name="NifMod", target="game",
+        rel=mods.fold(tail_rel), raw_rel=tail_rel)
     env["model"]["rel"] = BOP_MODEL
     p.dispatch_event("decal-pane")
     assert p._decal_working == []
+    assert _payload(p)["decals"]["registries"] == ["IKS Rotarran"]
     p.dispatch_event("decal-add:tail")
-    _arm_hit(env, (0.0, -3.0, 0.5), (0.0, 0.0, 1.0))
+    _arm_hit(env, (0.0, -300.0, 50.0), (0.0, 0.0, 1.0))
     p.decal_click(1.0, 1.0, (1280, 720))
-    p.dispatch_event("decal-default:IKS")
+    p.dispatch_event("decal-default:IKS Rotarran")
     p.dispatch_event("save")
     path, pls, reg = writes[-1]
     assert path == nif.parent / "Masks" / "decals.json"
-    assert [pl.name for pl in pls] == ["tail"] and reg == "IKS"
+    assert [pl.name for pl in pls] == ["tail"] and reg == "IKS Rotarran"
 
 
 def test_a_failed_save_keeps_the_staged_edits(env, monkeypatch):
