@@ -91,11 +91,58 @@ the heading dash).
 `frames.local_in`), so a warp that carries a ship out of its region's sphere
 still aims correctly. A pure planner takes start, end (and, for a placement, the
 arrival direction) and the obstacle bodies, and returns either a straight line or
-a smooth curve that clears every obstacle by the **clearance margin**. The
-obstacles are the system map's bodies in a mapped frame, and the set's own
-`Planet`/`Sun` objects in an unmapped one. The destination's own body is an
-obstacle too — the path reaches the placement, it does not pass through the
-planet the placement looks at.
+**one smooth curve for the whole trip** that clears every obstacle by the
+**comfort margin**. The obstacles are the system map's bodies in a mapped frame,
+and the set's own `Planet`/`Sun` objects in an unmapped one. The destination's
+own body is an obstacle too — the path reaches the placement, it does not pass
+through the planet the placement looks at.
+
+*Revised 2026-09-28 (Mark, live).* The first build routed the shortest
+tangents-and-arcs path at the clearance margin; live it was "very tight around
+the body and plays out like the planetary body has repelled us magnetically".
+Mark: "set out on a heading which avoids the planet and then turn over the course
+of the entire warp in order to make it look like a path we have plotted around
+the object or objects". So:
+
+- **Straight when unobstructed:** the line is kept exactly when it clears every
+  body's comfort keep-out.
+- **Otherwise one curve, bend spread over the whole trip.** A cubic Bézier from
+  start to end whose inner control points sit at ⅓ and ⅔ of the chord, pushed
+  off it along one perpendicular: both the same side is a bow (skewed toward the
+  start or the end when the offsets differ), opposite sides an S-bend for bodies
+  either side of the line. The ship sets off angled away from the obstacle(s) and
+  bends gently and continuously to the end — no straight-then-tight-arc.
+- **Least bend wins.** For each shape and perpendicular direction the least
+  offset that clears **every** body is solved in closed form (progress along the
+  chord is linear in the curve parameter, so each sampled point's "inside a
+  body" offsets form one interval). Candidates are ranked by maximum curvature,
+  then length, then a fixed table order (deterministic), and accepted only after
+  a conservative 3D check against every body (polyline distance less the most
+  the curve can sag from it, ≤ 0.25 GU). The horizontal perpendicular is tried
+  alone first — the maps are flat, so a detour goes sideways in the map; tilted
+  directions (30°…150°) only when it has no clear candidate. Offsets are capped
+  at the chord length.
+- **Multiple bodies are the norm:** every candidate is validated against all of
+  them; tested with two on one side, two either side (S-bend), three, the real
+  Ona 1 → Ona 3 (sun), the real Vesuvi Haven/Moon 1 overlapping pair, and a
+  seeded 3D fuzz.
+- **Comfort margin:** gap to the surface `max(radius, 4,000 GU)`
+  (`COMFORT_MARGIN_MIN_GU`, `comfort_gu`). The R5 exemption carries over: a body
+  whose margin sphere holds the start or the end is kept out of only halfway to
+  that endpoint (and never less than the hard keep-out).
+- **Fallback:** no smooth curve at the comfort margin → the same search at the
+  hard **clearance margin** (`clearance_gu`, `comfort_kept` False) → the original
+  routed planner (`smooth` False). The dash never enters a body.
+- **Walked by arc length:** `point_at(s)` / `tangent_at(s)` go through an
+  arc-length table (Hermite-inverted), so the speed policy and the drop edge
+  are unchanged and the tangent is continuous.
+- **Re-plans continue the heading.** An AI flight's R8 re-plan pins the new
+  curve's first tangent to the direction the ship is flying (`start_dir`), and a
+  flight on a curve keeps it until the target has moved past the R8 threshold
+  — it is no longer dropped onto the straight chord the moment the bow can see
+  past the body (a heading jump, then flip-flop back onto a curve).
+- `end_dir` (arrive along a direction) still works through the routed planner;
+  no caller passes it since the arrival turn (2026-09-27).
 
 **Speed policy,** chosen by the caller:
 
@@ -268,7 +315,8 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
 | `DASH_MIN_GUPS` / `DASH_MAX_GUPS` | 2,000 / 100,000 | Set Course speed clamp |
 | `HEADING_DASH_GUPS` | 10,000 | heading dash speed |
 | `DROP_LOOKAHEAD_S` | 2.0 | how far ahead body drop-out looks, in travel time |
-| clearance margin | 0.25 × body radius, min 2,000 GU | a routed path's gap to a body's surface |
+| comfort margin (`COMFORT_MARGIN_MIN_GU`) | body radius, min 4,000 GU | the smooth curve's gap to a body's surface |
+| clearance margin | 0.25 × body radius, min 2,000 GU | the hard minimum gap (fallbacks) |
 | `HANDOFF_MARGIN_GU` | 1,500 | rule H exit margin (matches `LayoutTuning.region_margin_gu`) |
 | dust dash smear cap | live-tuned | streak length at full dash |
 

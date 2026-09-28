@@ -359,3 +359,58 @@ def test_stop_in_system_warp_marks_the_flight_aborted():
     ship.StopInSystemWarp()
     assert flight.ended_reason == "aborted"
     assert ship.IsDoingInSystemWarp() == 0
+
+
+# ── 11. R8 with the smooth curve: no flip-flop, no kink ────────────────────
+
+@pytest.mark.parametrize("drift", [0.0, 1.5, -1.5, 4.0])
+def test_ai_flight_round_a_body_turns_smoothly_as_its_target_drifts(drift, monkeypatch):
+    """An AI Intercept whose line to its target is blocked flies the planner's
+    whole-trip curve (Mark, 2026-09-28) and keeps flying it while the target
+    drifts: no flip-flop onto the straight chord mid-curve, every R8 re-plan
+    sets off along the heading already flown, and the body keeps the comfort
+    margin."""
+    from engine.systems import warp_path
+    from engine.systems.warp_path import comfort_gu
+    plans = []
+
+    def spy(*args, **kwargs):
+        path = warp_path.plan_path(*args, **kwargs)
+        plans.append((len(headings), path.tangent_at(0.0)))
+        return path
+
+    monkeypatch.setattr(warp_flight, "plan_path", spy)
+    pSet = _plain_set("Arena")
+    planet = Planet_Create(1000.0, "")
+    planet.SetName("Rock")
+    pSet.AddObjectToSet(planet, "Rock")
+    planet.SetTranslateXYZ(0.0, 10000.0, 0.0)
+    ship = _make_ship((0.0, 0.0, 0.0), pSet, "ship")
+    target = _make_ship((600.0, 20000.0, 0.0), pSet, "target")
+    assert ship.InSystemWarp(target, 300.0) == 1
+
+    headings, dirs, gaps, modes = [], [], [], []
+
+    def each(s):
+        p = target.GetTranslate()
+        target.SetTranslateXYZ(p.x + drift, p.y, p.z)
+        gaps.append(math.dist(_xyz(s.GetTranslate()), (0.0, 10000.0, 0.0)))
+        if s._insystem_warp_transit is None:
+            return
+        v = s.GetVelocity()
+        n = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+        headings.append(math.atan2(v.x, v.y))
+        dirs.append((v.x / n, v.y / n, v.z / n))
+        modes.append(s._insystem_warp_transit._path is None)
+
+    _fly(ship, each=each)
+
+    assert max(headings) - min(headings) > 0.3, "flight was not curved"
+    assert sum(a != b for a, b in zip(modes, modes[1:])) == 0
+    if drift:
+        assert len(plans) >= 2, "the target never moved past the R8 threshold"
+    for tick, first in plans[1:]:
+        assert first == pytest.approx(dirs[tick - 1], abs=1e-9)
+    jumps = [abs(b - a) for a, b in zip(headings, headings[1:])]
+    assert max(jumps) < math.radians(3.0)
+    assert min(gaps) >= 1000.0 + comfort_gu(1000.0) - 1.0

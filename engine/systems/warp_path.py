@@ -10,6 +10,22 @@ The tunables are the spec's starting values and are each named once, here.
 
 Path construction (a design choice; the spec fixes only the properties):
 
+* Unobstructed -- the straight line keeps every body's COMFORT keep-out
+  (``radius + comfort_gu(radius)``) -- the path is exactly that line.
+* Otherwise, and without an arrival direction, it is ONE smooth curve for
+  the whole trip (Mark, live 2026-09-28: the tangent-and-arc route hugged
+  each body "like the planetary body has repelled us magnetically"; he asked
+  to "set out on a heading which avoids the planet and then turn over the
+  course of the entire warp"). A cubic Bezier whose inner control points
+  are pushed off the chord -- a bow, or an S-bend for bodies either side --
+  chosen as the LEAST-BEND candidate that clears every body by the comfort
+  margin (``_smooth_curve`` documents the family and the choice); then by
+  the hard ``clearance_gu`` margin. Walked by arc length (``SmoothPath``).
+  A re-plan can pin the curve's first tangent (``start_dir``) so a flight
+  in progress never snaps its nose.
+* When no smooth curve clears, or an arrival direction is asked for, the
+  routed planner below runs (the pre-2026-09-28 path, kept as the
+  fallback):
 * The whole path lies in **one plane** through the start and the end. With an
   arrival direction that plane also contains it; otherwise it is the plane
   holding the start->end line and the horizontal perpendicular to it (the
@@ -49,6 +65,11 @@ HEADING_DASH_GUPS = 10000.0  # heading dash speed
 DROP_LOOKAHEAD_S = 2.0      # body drop-out looks this much travel time ahead
 CLEARANCE_FRACTION = 0.25   # routed gap to a body's surface, x its radius ...
 CLEARANCE_MIN_GU = 2000.0   # ... but never less than this
+# Comfort margin: the berth the whole-trip smooth curve gives a body's
+# surface -- its radius, but never less than this (Mark, live 2026-09-28:
+# the clearance-hugging route looked "repelled magnetically"). The hard
+# ``clearance_gu`` stays the minimum the fallbacks keep.
+COMFORT_MARGIN_MIN_GU = 4000.0
 
 # Routing slack so float rounding never lands a tangent point a hair inside
 # a clearance sphere (a thousandth of a GU, 0.175 m).
@@ -59,8 +80,38 @@ _EPS = 1e-9
 
 
 def clearance_gu(radius_gu: float) -> float:
-    """Gap a routed path keeps from a body's SURFACE, in GU."""
+    """Gap a routed path keeps from a body's SURFACE, in GU (the hard
+    minimum)."""
     return max(CLEARANCE_FRACTION * radius_gu, CLEARANCE_MIN_GU)
+
+
+def comfort_gu(radius_gu: float) -> float:
+    """Gap the smooth curve keeps from a body's SURFACE, in GU."""
+    return max(radius_gu, COMFORT_MARGIN_MIN_GU)
+
+
+def keep_out_gu(radius_gu: float, near_gu: float, comfort: bool = False):
+    """Distance from a body's CENTRE a path between two endpoints must keep,
+    where ``near_gu`` is the nearer endpoint's distance to that centre; None
+    when an endpoint is inside the body (it is then no obstacle at all).
+
+    Exemption (R5): when the margin sphere holds an endpoint the keep-out is
+    only halfway from the surface to that endpoint. The comfort keep-out is
+    never less than the hard one, so a comfortable plan also keeps the hard
+    clearance."""
+    r = float(radius_gu)
+    if near_gu <= r:
+        return None
+    halfway = r + 0.5 * (near_gu - r)
+    hard = r + clearance_gu(r)
+    if near_gu < hard + _ROUTE_EPS_GU:
+        hard = halfway
+    if not comfort:
+        return hard
+    soft = r + comfort_gu(r)
+    if near_gu < soft + _ROUTE_EPS_GU:
+        soft = halfway
+    return max(hard, soft)
 
 
 class Obstacle(NamedTuple):
@@ -120,7 +171,8 @@ class WarpPath:
 
     def __init__(self, start: tuple, end: tuple, pieces: list,
                  fallback_dir: tuple, *, clearance_kept: bool = True,
-                 end_dir_honoured: bool = True, enters_body: bool = False):
+                 end_dir_honoured: bool = True, enters_body: bool = False,
+                 comfort_kept: bool = False, smooth: bool = False):
         self._start = tuple(float(v) for v in start)
         self._end = tuple(float(v) for v in end)
         self._pieces = pieces
@@ -135,6 +187,10 @@ class WarpPath:
         self.clearance_kept = clearance_kept
         self.end_dir_honoured = end_dir_honoured
         self.enters_body = enters_body
+        # The comfort margin (comfort_gu) was kept from every body; the
+        # path is the whole-trip smooth curve (SmoothPath).
+        self.comfort_kept = comfort_kept
+        self.smooth = smooth
 
     @property
     def end(self) -> tuple:
@@ -171,6 +227,315 @@ class WarpPath:
         _, _c, a, b, r, _length = piece
         phi = ds / r
         return _add(_mul(a, -math.sin(phi)), _mul(b, math.cos(phi)))
+
+
+# --- the whole-trip smooth curve ---------------------------------------------
+# A cubic Bezier from start to end whose inner control points sit at a third
+# and two thirds of the chord, pushed off it along one perpendicular ``n``:
+#
+#     P1 = S + (D/3) ex + h*alpha*n      P2 = S + (2D/3) ex + h*beta*n
+#
+# Its point at parameter t is then exactly ``S + D t ex + h Y(t) n`` with
+# ``Y(t) = 3 t (1-t) ((1-t) alpha + t beta)``: progress along the chord is
+# LINEAR in t (so the curve never doubles back and its tangent is never
+# zero), and the sideways bulge is one scalar ``h`` times a fixed SHAPE.
+# (alpha, beta) of one sign is a bow (skewed toward the start or the end when
+# they differ); of opposite signs an S-bend, for bodies either side of the
+# line. For a shape and a direction, the offsets ``h`` that bring a sampled
+# point inside a keep-out sphere form one interval, solved in closed form, so
+# the least offset that clears EVERY body is found exactly. Among the
+# candidates the least bend wins: smallest maximum curvature, then shortest,
+# then the table order below (deterministic). A candidate is accepted only
+# after a conservative 3D check against every body (``_curve_clear``).
+
+_CURVE_SHAPES = ((1.0, 1.0), (1.0, 0.6), (0.6, 1.0), (1.0, 0.3), (0.3, 1.0),
+                 (1.0, 0.0), (0.0, 1.0), (1.0, -1.0), (1.0, -0.5),
+                 (0.5, -1.0), (1.0, -0.25), (0.25, -1.0))
+# Perpendicular directions, degrees from the horizontal perpendicular (h is
+# signed, so each covers both sides). The maps are flat: the horizontal is
+# tried alone first, so a detour goes sideways in the map rather than over a
+# pole; the tilted ones only when it has no clear candidate.
+_CURVE_TILTS_DEG = (30.0, 150.0, 60.0, 120.0, 90.0)
+_CURVE_MAX_OFFSET = 1.0     # |h| cap, x chord length (bow peak <= 0.75 D)
+_CURVE_WINDOW_SAMPLES = 16  # interval samples across each body's window
+_CURVE_PAD = 0.004          # sampled keep-out inflation, x the keep-out ...
+_CURVE_PAD_GU = 2.0         # ... plus this, so the exact check rarely rejects
+_CURVE_CHECK_TOL_GU = 0.25  # conservative check: curve-vs-polyline slack
+_CURVE_TABLE = 128          # arc-length table intervals
+_CURVE_RANK_T = tuple(i / 16.0 for i in range(17))
+# A re-plan pins its start heading only when that heading makes at least
+# this cosine with the new chord; otherwise it plans afresh (and turns).
+_PIN_MIN_COS = 0.25
+
+
+def _shape_y(t, al, be):
+    u = 1.0 - t
+    return 3.0 * t * u * (u * al + t * be)
+
+
+def _shape_dy(t, al, be):
+    u = 1.0 - t
+    return 3.0 * al * (u * u - 2.0 * t * u) + 3.0 * be * (2.0 * t * u - t * t)
+
+
+def _shape_ddy(t, al, be):
+    u = 1.0 - t
+    return 3.0 * al * (2.0 * t - 4.0 * u) + 3.0 * be * (2.0 * u - 4.0 * t)
+
+
+def _first_free(intervals, sign, cap):
+    """Least ``|h|`` on the ``sign`` side outside every open interval, or
+    None beyond ``cap``."""
+    spans = sorted((lo, hi) if sign > 0 else (-hi, -lo) for lo, hi in intervals)
+    cur = 0.0
+    for lo, hi in spans:
+        if hi <= cur:
+            continue
+        if lo >= cur:
+            break
+        cur = hi
+    return sign * cur if cur <= cap else None
+
+
+def _rank(al, be, h, dist):
+    """(max curvature, length) of a candidate, from 17 stations."""
+    kappa, speeds = 0.0, []
+    for t in _CURVE_RANK_T:
+        dy = h * _shape_dy(t, al, be) / dist
+        ddy = h * _shape_ddy(t, al, be) / (dist * dist)
+        g = 1.0 + dy * dy
+        kappa = max(kappa, abs(ddy) / (g * math.sqrt(g)))
+        speeds.append(math.sqrt(g))
+    n = len(speeds) - 1                                # Simpson
+    length = speeds[0] + speeds[-1] + sum(
+        (4.0 if i % 2 else 2.0) * speeds[i] for i in range(1, n))
+    return kappa, dist * length / (3.0 * n)
+
+
+def _curve_clear(dist, lateral, sag, bodies):
+    """Conservative exact check, in chord coordinates: every point of the
+    curve ``(D t, lateral(t))`` keeps each body's keep-out. Outside a body's
+    window ``|D t - x_c| >= need`` already. Inside it the curve is compared
+    as a polyline, less the most any chord of that step can sag from the
+    curve (``dt^2 / 8 * sag``, ``sag`` >= max|B''| -- B'' is linear in t, so
+    its max is at an end)."""
+    step = math.sqrt(8.0 * _CURVE_CHECK_TOL_GU / sag) if sag > _EPS else 1.0
+
+    def at(t):
+        ly, lz = lateral(t)
+        return (dist * t, ly, lz)
+
+    for x_c, wy, wz, need in bodies:
+        t0 = max((x_c - need) / dist, 0.0)
+        t1 = min((x_c + need) / dist, 1.0)
+        if t1 <= t0:
+            continue
+        q = (x_c, wy, wz)
+        count = max(1, int(math.ceil((t1 - t0) / step)))
+        a = at(t0)
+        for i in range(1, count + 1):
+            b = at(t0 + (t1 - t0) * i / count)
+            seg = _sub(b, a)
+            l2 = _dot(seg, seg)
+            k = 0.0 if l2 <= _EPS else min(max(_dot(_sub(q, a), seg) / l2, 0.0), 1.0)
+            if _norm(_sub(q, _add(a, _mul(seg, k)))) - _CURVE_CHECK_TOL_GU < need:
+                return False
+            a = b
+    return True
+
+
+def _rank_pinned(dist, pin, b, n2):
+    """(max curvature, length) of a pinned candidate, lateral
+    ``A(t) pin + B(t) b n2``, from 17 stations (3D curvature)."""
+    kappa, speeds = 0.0, []
+    for t in _CURVE_RANK_T:
+        da, db = _shape_dy(t, 1.0, 0.0), _shape_dy(t, 0.0, 1.0)
+        dda, ddb = _shape_ddy(t, 1.0, 0.0), _shape_ddy(t, 0.0, 1.0)
+        l1 = (da * pin[0] + db * b * n2[0], da * pin[1] + db * b * n2[1])
+        m1 = (dda * pin[0] + ddb * b * n2[0], dda * pin[1] + ddb * b * n2[1])
+        cross = (l1[0] * m1[1] - l1[1] * m1[0], -dist * m1[1], dist * m1[0])
+        speed = math.sqrt(dist * dist + l1[0] * l1[0] + l1[1] * l1[1])
+        kappa = max(kappa, _norm(cross) / speed ** 3)
+        speeds.append(speed)
+    n = len(speeds) - 1
+    length = speeds[0] + speeds[-1] + sum(
+        (4.0 if i % 2 else 2.0) * speeds[i] for i in range(1, n))
+    return kappa, length / (3.0 * n)
+
+
+def _smooth_curve(start, end, spheres, comfort, start_dir=None):
+    """The least-bend smooth curve from ``start`` to ``end`` keeping every
+    keep-out sphere ``(centre, need, _)``: its two inner control points, or
+    None when no candidate within ``_CURVE_MAX_OFFSET`` clears them all.
+    ``comfort`` says which margin the spheres carry (reporting only).
+
+    With a unit ``start_dir`` (a re-plan: the heading already flown) the
+    first control point is PINNED on it, ``P1 = S + (D/3) (ex + lat/c)`` for
+    ``start_dir = c ex + lat``, so the curve sets off exactly along it; only
+    ``P2``'s offset is searched. The caller keeps ``c`` well above zero."""
+    chord = _sub(end, start)
+    dist = _norm(chord)
+    if dist <= _EPS:
+        return None
+    ex = _mul(chord, 1.0 / dist)
+    ey = _unit(_cross((0.0, 0.0, 1.0), ex)) or _unit(_cross((1.0, 0.0, 0.0), ex))
+    ez = _cross(ex, ey)
+    bodies = []                        # (x_c, wy, wz, need) in chord axes
+    for centre, need, _reach in spheres:
+        d = _sub(centre, start)
+        x_c = _dot(d, ex)
+        if x_c + need <= 0.0 or x_c - need >= dist:
+            continue                   # no curve point can come that close
+        bodies.append((x_c, _dot(d, ey), _dot(d, ez), need))
+    pin = None
+    if start_dir is not None:
+        c = _dot(start_dir, ex)
+        k = dist / (3.0 * c)
+        pin = (k * _dot(start_dir, ey), k * _dot(start_dir, ez))
+    elif not bodies:
+        return None
+    windows = []                       # (t, dx^2, wy, wz, need') per sample
+    for x_c, wy, wz, need in bodies:
+        t0 = max((x_c - need) / dist, 0.0)
+        t1 = min((x_c + need) / dist, 1.0)
+        padded = need * (1.0 + _CURVE_PAD) + _CURVE_PAD_GU
+        for i in range(_CURVE_WINDOW_SAMPLES + 1):
+            t = t0 + (t1 - t0) * i / _CURVE_WINDOW_SAMPLES
+            if pin is not None:        # the pinned part of the bulge
+                a = _shape_y(t, 1.0, 0.0)
+                wy_t, wz_t = wy - a * pin[0], wz - a * pin[1]
+            else:
+                wy_t, wz_t = wy, wz
+            windows.append((t, (dist * t - x_c) ** 2, wy_t, wz_t, padded))
+    cap = _CURVE_MAX_OFFSET * dist
+    shapes = ((0.0, 1.0),) if pin is not None else _CURVE_SHAPES
+
+    def search(tilts):
+        found = []
+        for ti, tilt in enumerate(tilts):
+            n2 = (math.cos(math.radians(tilt)), math.sin(math.radians(tilt)))
+            bands = []                 # (t, y_lo, y_hi): bulges inside a body
+            for t, dx2, wy, wz, padded in windows:
+                c_n = wy * n2[0] + wz * n2[1]
+                perp2 = wy * wy + wz * wz - c_n * c_n
+                disc = padded * padded - dx2 - perp2
+                if disc > 0.0:
+                    r = math.sqrt(disc)
+                    bands.append((t, c_n - r, c_n + r))
+            for si, (al, be) in enumerate(shapes):
+                spans = []
+                for t, lo, hi in bands:
+                    y = _shape_y(t, al, be)
+                    if abs(y) < 1e-12:
+                        if lo < 0.0 < hi:
+                            break      # a fixed point of the shape is inside
+                        continue
+                    spans.append((lo / y, hi / y) if y > 0.0 else (hi / y, lo / y))
+                else:
+                    hs = [_first_free(spans, sign, cap) for sign in (1.0, -1.0)]
+                    if pin is not None:
+                        # b's curvature is not monotone in |b|: also offer a
+                        # few free offsets scaled to the pinned one.
+                        size = math.hypot(*pin)
+                        hs += [f * size for f in (0.0, 0.5, -0.5, 1.0, -1.0)
+                               if not any(lo < f * size < hi for lo, hi in spans)]
+                    for gi, h in enumerate(hs):
+                        if h is None:
+                            continue
+                        if pin is not None:
+                            kappa, length = _rank_pinned(dist, pin, h, n2)
+                        else:
+                            kappa, length = _rank(al, be, h, dist)
+                        found.append((kappa, length, ti, si, gi, n2, h))
+        found.sort(key=lambda c: c[:5])
+        for _k, _l, _ti, si, _gi, n2, h in found:
+            al, be = shapes[si]
+            if pin is None:
+                def lateral(t, al=al, be=be, h=h, n2=n2):
+                    y = h * _shape_y(t, al, be)
+                    return (y * n2[0], y * n2[1])
+                sag = abs(h) * max(abs(_shape_ddy(0.0, al, be)),
+                                   abs(_shape_ddy(1.0, al, be)))
+                a_lat = (h * al * n2[0], h * al * n2[1])
+            else:
+                def lateral(t, h=h, n2=n2):
+                    a, b = _shape_y(t, 1.0, 0.0), _shape_y(t, 0.0, 1.0) * h
+                    return (a * pin[0] + b * n2[0], a * pin[1] + b * n2[1])
+                sag = max(abs(_shape_ddy(e, 1.0, 0.0)) * math.hypot(*pin)
+                          + abs(_shape_ddy(e, 0.0, 1.0) * h) for e in (0.0, 1.0))
+                a_lat = pin
+            if _curve_clear(dist, lateral, sag, bodies):
+                p1 = _add(_mul(ey, a_lat[0]), _mul(ez, a_lat[1]))
+                p2 = _add(_mul(ey, h * be * n2[0]), _mul(ez, h * be * n2[1]))
+                return (_add(start, _add(_mul(ex, dist / 3.0), p1)),
+                        _add(start, _add(_mul(ex, 2.0 * dist / 3.0), p2)))
+        return None
+
+    return search((0.0,)) or search(_CURVE_TILTS_DEG)
+
+
+class SmoothPath(WarpPath):
+    """A cubic Bezier ``start, p1, p2, end``, walked by ARC LENGTH through a
+    table: ``point_at`` / ``tangent_at`` look up the parameter for ``s`` and
+    evaluate the curve itself, so every point is on the curve and the
+    tangent is its continuous derivative."""
+
+    def __init__(self, start, end, p1, p2, **flags):
+        start = tuple(float(v) for v in start)
+        end = tuple(float(v) for v in end)
+        super().__init__(start, end, [], _unit(_sub(end, start)) or (0.0, 1.0, 0.0),
+                         smooth=True, **flags)
+        self._ctrl = (start, tuple(p1), tuple(p2), end)
+        self._t_tab = [i / _CURVE_TABLE for i in range(_CURVE_TABLE + 1)]
+        self._s_tab = [0.0]
+        self._rate = [1.0 / _norm(self._velocity(0.0))]   # dt/ds at each node
+        prev = start
+        for t in self._t_tab[1:]:
+            q = self._bezier(t)
+            self._s_tab.append(self._s_tab[-1] + _norm(_sub(q, prev)))
+            self._rate.append(1.0 / _norm(self._velocity(t)))
+            prev = q
+        self.length_gu = self._s_tab[-1]
+
+    def _bezier(self, t):
+        p0, p1, p2, p3 = self._ctrl
+        u = 1.0 - t
+        a, b, c, d = u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t
+        return tuple(a * p0[i] + b * p1[i] + c * p2[i] + d * p3[i] for i in range(3))
+
+    def _velocity(self, t):
+        p0, p1, p2, p3 = self._ctrl
+        u = 1.0 - t
+        a, b, c = 3.0 * u * u, 6.0 * u * t, 3.0 * t * t
+        return tuple(a * (p1[i] - p0[i]) + b * (p2[i] - p1[i]) + c * (p3[i] - p2[i])
+                     for i in range(3))
+
+    def _param(self, s):
+        """The curve parameter at arc length ``s``: cubic Hermite through the
+        table nodes with slopes dt/ds, so the speed change across a cell
+        does not skew the walk."""
+        s = min(max(float(s), 0.0), self.length_gu)
+        i = min(max(bisect.bisect_right(self._s_tab, s) - 1, 0), _CURVE_TABLE - 1)
+        s0, s1 = self._s_tab[i], self._s_tab[i + 1]
+        h = s1 - s0
+        if h <= 0.0:
+            return self._t_tab[i]
+        u = (s - s0) / h
+        u2, u3 = u * u, u * u * u
+        return ((2.0 * u3 - 3.0 * u2 + 1.0) * self._t_tab[i]
+                + (u3 - 2.0 * u2 + u) * h * self._rate[i]
+                + (-2.0 * u3 + 3.0 * u2) * self._t_tab[i + 1]
+                + (u3 - u2) * h * self._rate[i + 1])
+
+    def point_at(self, s: float) -> tuple:
+        if s >= self.length_gu:
+            return self._end
+        if s <= 0.0:
+            return self._start
+        return self._bezier(self._param(s))
+
+    def tangent_at(self, s: float) -> tuple:
+        return _unit(self._velocity(self._param(s))) or self._fallback_dir
 
 
 # --- planar routing ----------------------------------------------------------
@@ -367,14 +732,28 @@ def _min_dist(pieces, q):
     return min((_piece_min_dist(pc, q) for pc in pieces), default=math.inf)
 
 
-def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None) -> WarpPath:
-    """Plan a warp from ``start`` to ``end`` clearing every obstacle by
-    ``radius + clearance_gu(radius)``; straight when nothing is in the way.
-    With ``end_dir`` the path arrives travelling along it. Deterministic.
+def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None,
+              start_dir=None) -> WarpPath:
+    """Plan a warp from ``start`` to ``end``; straight when the line keeps
+    every body's comfort keep-out. Deterministic.
 
     Never enters a body the endpoints are outside of (spec section 1, ruling
-    R6). Fallback order when the ideal route cannot be built -- each one
-    reported on the returned path's flags:
+    R6). Order, each outcome reported on the returned path's flags:
+
+    Without ``end_dir`` (every current caller -- Set Course dashes arrive
+    facing their travel and turn afterwards, AI flights have no arrival
+    direction):
+
+    1. comfort margin (``comfort_gu``): the straight line, else the smooth
+       curve (``smooth``, ``comfort_kept``); with ``start_dir`` the curve is
+       first pinned to leave along it (the line only if it is already
+       along it), then planned afresh;
+    2. the hard ``clearance_gu`` margin: the line, else the smooth curve
+       (``comfort_kept`` False);
+    3. the routed planner below.
+
+    With ``end_dir`` the routed planner runs directly (still supported and
+    tested; no caller passes it since 1eb145a5). Routed fallback order:
 
     1. full clearance, arriving along ``end_dir``;
     2. full clearance, ``end_dir`` dropped (``end_dir_honoured`` False) --
@@ -384,9 +763,12 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None) -> WarpPa
        only when even (3) has no route, which needs bodies enclosing an
        endpoint in the plane.
 
-    Clearance exemption (R5): a body whose clearance sphere holds the start
-    or the end is kept out of only halfway from its surface to that
-    endpoint; a body holding an endpoint is not an obstacle at all."""
+    Clearance exemption (R5, ``keep_out_gu``): a body whose margin sphere
+    holds the start or the end is kept out of only halfway from its surface
+    to that endpoint; a body holding an endpoint is not an obstacle at all.
+
+    ``start_dir`` is honoured only while it makes a cosine of at least
+    ``_PIN_MIN_COS`` with the chord; facing further away, it plans afresh."""
     s3 = tuple(float(v) for v in start)
     e3 = tuple(float(v) for v in end)
     ed = _unit(tuple(float(v) for v in end_dir)) if end_dir is not None else None
@@ -419,20 +801,44 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None) -> WarpPa
     ordered = sorted(obstacles, key=lambda o: (o.name, tuple(o.center), o.radius_gu))
     largest = max((o.radius_gu for o in ordered), default=0.0)
 
-    def keep_outs(full_clearance):
+    def valid(pieces, spheres):
+        return all(_min_dist(pieces, c) >= need - _tol(need)
+                   for c, need, _reach in spheres)
+
+    def keep_outs(full_clearance, comfort=False):
         spheres = []
         for o in ordered:
             centre = tuple(float(v) for v in o.center)
             near = min(_norm(_sub(s3, centre)), _norm(_sub(e3, centre)))
             if near <= o.radius_gu:
                 continue                     # an endpoint is inside the body
-            need = o.radius_gu + (clearance_gu(o.radius_gu) if full_clearance else 0.0)
-            if near < need + _ROUTE_EPS_GU:  # R5: halfway to the endpoint
-                need = o.radius_gu + 0.5 * (near - o.radius_gu)
+            if full_clearance:
+                need = keep_out_gu(o.radius_gu, near, comfort)
+            else:
+                need = o.radius_gu
+                if near < need + _ROUTE_EPS_GU:  # R5: halfway to the endpoint
+                    need = o.radius_gu + 0.5 * (near - o.radius_gu)
+            if near < need + _ROUTE_EPS_GU:
                 spheres.append((centre, need, need))
             else:
                 spheres.append((centre, need, need + _ROUTE_EPS_GU))
         return spheres
+
+    sd = _unit(tuple(float(v) for v in start_dir)) if start_dir is not None else None
+    if sd is not None and _dot(sd, ex) < _PIN_MIN_COS:
+        sd = None                            # facing away: plan afresh
+    if ed is None:
+        # The whole-trip smooth curve: comfort margin, then the hard one;
+        # pinned to start_dir first when there is one, then afresh.
+        line = [("line", s3, ex, dist)]
+        for pin in ((None,) if sd is None else (sd, None)):
+            for comfort in (True, False):
+                spheres = keep_outs(True, comfort)
+                if (pin is None or _dot(pin, ex) >= 1.0 - 1e-12) and valid(line, spheres):
+                    return WarpPath(s3, e3, line, ex, comfort_kept=comfort)
+                ctrl = _smooth_curve(s3, e3, spheres, comfort, start_dir=pin)
+                if ctrl is not None:
+                    return SmoothPath(s3, e3, *ctrl, comfort_kept=comfort)
 
     def disks_of(spheres):
         disks = []
@@ -472,10 +878,6 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None) -> WarpPa
             add_arc(nodes[-1], dirs[-1], e_dir2)
             add_line(a2, e2)
         return pieces
-
-    def valid(pieces, spheres):
-        return all(_min_dist(pieces, c) >= need - _tol(need)
-                   for c, need, _reach in spheres)
 
     def route_to_point(spheres, disks):
         routed = _shortest(s2, (e2, 0.0, 1), None, 0.0, disks)

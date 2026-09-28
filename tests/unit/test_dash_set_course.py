@@ -763,3 +763,54 @@ def test_an_ai_order_mid_turn_cancels_it(world):
     dash.tick(w.player, TICK_DELTA)
     assert not dash.is_arrival_turning(w.player)
     assert _rot_angle(w.player.GetWorldRotation(), R0) == 0.0
+
+
+# ── the whole-trip curve (Mark, live 2026-09-28) ────────────────────────────
+#
+# "set out on a heading which avoids the planet and then turn over the
+# course of the entire warp in order to make it look like a path we have
+# plotted around the object or objects".
+
+def test_a_course_round_the_sun_sets_off_angled_away_on_a_smooth_curve(world):
+    from engine.systems import resolve
+    from engine.systems.warp_path import comfort_gu
+    w = world
+    w.ona3 = load_region("Ona", "Ona3")
+    w.button.set_player_destination("Systems.Ona.Ona3")
+    warp.set_course_placement(w.button, "Systems.Ona.Ona3")
+    warp_button.press(w.button)
+    path = dash._state(w.player).path
+    assert path.smooth and path.comfort_kept
+
+    sun = resolve.map_of("Ona").body("Ona")
+    start, end = path.point_at(0.0), path.end
+    chord = [b - a for a, b in zip(start, end)]
+    n = math.sqrt(sum(v * v for v in chord))
+    ex = [v / n for v in chord]
+    to_sun = [c - a for c, a in zip(sun.position_gu, start)]
+    along = sum(a * b for a, b in zip(to_sun, ex))
+    lateral = [v - along * e for v, e in zip(to_sun, ex)]
+
+    # The align turn ends on the curve's first tangent -- off the chord,
+    # away from the sun ...
+    _run_until(w, lambda: _engaged(w))
+    f = _vec(w.player.GetWorldRotation().GetCol(1))
+    assert f == pytest.approx(path.tangent_at(0.0), abs=1e-6)
+    assert sum(a * b for a, b in zip(f, lateral)) < 0.0
+    assert sum(a * b for a, b in zip(f, ex)) < math.cos(math.radians(5.0))
+
+    # ... and the flight still takes ten seconds flash to flash, clear of
+    # the sun by the comfort margin.
+    from engine.appc import warp_flight
+    gaps = []
+
+    def fly():
+        p = warp_flight.to_system(w.player, _vec(w.player.GetTranslate()))
+        gaps.append(math.dist(p, sun.position_gu))
+        return not dash.is_dashing(w.player)
+
+    _run_until(w, fly)
+    span = w.flashes[1][1] - w.flashes[0][1]
+    assert abs(span - 10.0) <= TICK_DELTA + 1e-9
+    assert min(gaps) >= sun.radius_gu + comfort_gu(sun.radius_gu) - 1.0
+    assert w.player.GetContainingSet() is w.ona3

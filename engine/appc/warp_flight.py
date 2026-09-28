@@ -16,13 +16,17 @@ untouched, so a warp inside one unmapped set runs exactly the old arithmetic.
 Targets:
 
 * a ship (AI Intercept) -- tracked live. While the straight line to it keeps
-  every body's clearance the flight flies that line exactly as the old
+  every body's comfort keep-out the flight flies that line exactly as the old
   integrator did (re-aimed every tick, landing on the drop edge); otherwise
-  it follows a routed ``plan_path``, re-planned only when the target has
-  moved more than max(1,000 GU, 5 % of the remaining distance) since the last
-  plan (ruling R8: a plan can cost ~30 ms). Never drops out (ruling R2);
+  it follows ``plan_path``'s smooth curve, and keeps following it (no
+  per-tick return to the straight line) until the target has moved more
+  than max(1,000 GU, 5 % of the remaining distance) since the last plan
+  (ruling R8). Every plan after the first continues the heading already
+  flown (``start_dir``), so a re-plan never snaps the nose. Never drops out
+  (ruling R2);
 * a ``(point, end_dir)`` destination in system coordinates (Set Course) --
-  planned once, arriving along ``end_dir``;
+  planned once (``end_dir`` None since 1eb145a5: the dash arrives facing its
+  travel and turns afterwards);
 * ``None`` with a ``heading`` -- open-ended, ended by body drop-out
   (``warp_path.drop_out``) at ``standoff_of(body)`` from the body's centre.
 
@@ -39,7 +43,7 @@ from typing import Any, Callable
 from engine.appc.math import TGPoint3
 from engine.systems import frames
 from engine.systems.warp_path import (
-    HEADING_DASH_GUPS, Obstacle, clearance_gu, drop_out, plan_path,
+    HEADING_DASH_GUPS, Obstacle, drop_out, keep_out_gu, plan_path,
     set_course_speed,
 )
 
@@ -78,6 +82,9 @@ class WarpFlight:
     _s: float = field(default=0.0, repr=False)
     _plan_target: tuple | None = field(default=None, repr=False)
     _speed: float | None = field(default=None, repr=False)
+    # The direction the ship last moved in (system axes), so a re-plan
+    # continues it (plan_path's start_dir) instead of snapping the nose.
+    _last_dir: tuple | None = field(default=None, repr=False)
 
 
 # ── frames ────────────────────────────────────────────────────────────────
@@ -149,19 +156,19 @@ def obstacles_for(ship) -> list:
 # ── geometry helpers ──────────────────────────────────────────────────────
 
 def _chord_clear(p, q, obstacles) -> bool:
-    """True when the segment p->q keeps every body's routing keep-out --
-    the same keep-outs plan_path uses: radius + clearance, halved toward an
-    endpoint inside that margin (R5), none for a body holding an endpoint."""
+    """True when the segment p->q keeps every body's COMFORT keep-out -- the
+    test plan_path uses to keep a trip straight (``keep_out_gu``: radius +
+    comfort margin, halved toward an endpoint inside it (R5), none for a
+    body holding an endpoint). Agreeing with the planner means a flight is
+    straight exactly when the planner would have drawn a straight line."""
     ux, uy, uz = q[0] - p[0], q[1] - p[1], q[2] - p[2]
     l2 = ux * ux + uy * uy + uz * uz
     for o in obstacles:
         c, r = o.center, o.radius_gu
         near = min(math.dist(p, c), math.dist(q, c))
-        if near <= r:
+        need = keep_out_gu(r, near, comfort=True)
+        if need is None:
             continue
-        need = r + clearance_gu(r)
-        if near < need:
-            need = r + 0.5 * (near - r)
         wx, wy, wz = c[0] - p[0], c[1] - p[1], c[2] - p[2]
         t = 0.0 if l2 <= 0.0 else min(max((wx * ux + wy * uy + wz * uz) / l2, 0.0), 1.0)
         closest = (p[0] + t * ux, p[1] + t * uy, p[2] + t * uz)
@@ -268,15 +275,22 @@ def _step_ship_target(ship, flight, dt) -> None:
     p_local = (p.x, p.y, p.z)
     p_sys, t_sys = to_system(ship, p_local), to_system(ship, t_local)
 
-    if _chord_clear(p_sys, t_sys, flight._obstacles):
-        flight._path = None
+    # Straight at the live target only while no path is being flown: once
+    # on a curve, the ship keeps it until the target has moved past the R8
+    # threshold. (A per-tick chord test would drop it onto the straight chord
+    # the moment the bow swung wide enough to see past the body -- a heading
+    # jump, then back onto a curve as the target moved: flip-flop.)
+    if flight._path is None and _chord_clear(p_sys, t_sys, flight._obstacles):
         _straight_at_target(ship, flight, dt, p_local, t_local, drop)
         return
 
     remaining = math.dist(p_sys, t_sys)
     if (flight._path is None or math.dist(t_sys, flight._plan_target)
             > max(REPLAN_MIN_GU, REPLAN_FRACTION * remaining)):
-        flight._path = plan_path(p_sys, t_sys, flight._obstacles)
+        # The first plan chooses the heading; every later one continues the
+        # heading already flown, so the nose never jumps at a re-plan.
+        flight._path = plan_path(p_sys, t_sys, flight._obstacles,
+                                 start_dir=flight._last_dir)
         flight._plan_target = t_sys
         flight._s = 0.0
     speed = _ai_speed(ship)
@@ -299,6 +313,7 @@ def _straight_at_target(ship, flight, dt, p, t, drop) -> None:
         return
     ux, uy, uz = dx / d, dy / d, dz / d
     _face(ship, (ux, uy, uz))
+    flight._last_dir = (ux, uy, uz)
     warp_speed = _ai_speed(ship)
     remaining = d - drop
     step_gu = warp_speed * dt
@@ -330,6 +345,7 @@ def _advance_along(ship, flight, dt, speed, s_end) -> None:
     tangent = path.tangent_at(s)
     _set_local(ship, path.point_at(s))
     _face(ship, tangent)
+    flight._last_dir = tangent
     ship.SetVelocity(TGPoint3(tangent[0] * speed, tangent[1] * speed,
                               tangent[2] * speed))
 
