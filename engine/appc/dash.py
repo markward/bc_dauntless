@@ -17,6 +17,11 @@ Phases, all driven from ``tick`` once per frame:
 
 * **align** -- the ship is held where it is and swung onto the path's first
   direction over ``warp._align_duration`` (the tunnel's own turn length);
+* **parts hold** -- a ship whose articulated parts are not yet in their warp
+  pose enters ``WES_WARP_INITIATED`` at the press and does not engage until
+  they have settled (``_parts_time``): a Set Course dash holds aligned after
+  its (unslowed) turn, a heading dash cruises on at its impulse speed. No
+  parts, no hold, and no early warp state;
 * **engage** -- weapon loops silenced, ``WES_WARPING``, the flight begins,
   the button's queues start (``_on_engage_fx`` is the flash/sound hook);
 * **flight** -- the flight moves the ship (~10 s: ``set_course_speed``);
@@ -72,6 +77,39 @@ class _Dash:
         self.rot0 = None
         self.axis = None
         self.angle = 0.0
+        self.t_parts = 0.0              # the parts' hold, from t0 (_parts_time)
+        self.pending = None             # a heading flight held for the parts
+        self.cruise = 0.0               # ... and the impulse speed it holds at
+
+
+def _parts_time(player) -> float:
+    """Earliest engage time, from the press, that lets the player's
+    articulated parts finish swinging into their warp pose first: the time
+    they need, plus one sim tick (they start moving on the tick AFTER the
+    warp state flips). 0.0 -- no hold, and no early warp state -- for a ship
+    with no parts to move. The dash is at full speed from its engage (no
+    ramp, unlike the tunnel's pre-burst boost), so nothing else is added.
+    Fail-open, as warp._parts_warp_time."""
+    try:
+        from engine.appc import articulation
+        t = articulation.time_to_reach(player, "warp")
+    except Exception:  # noqa: BLE001 - never block a dash on a rig read
+        return 0.0
+    if t <= 0.0:
+        return 0.0
+    from engine.core.loop import TICK_DELTA
+    return t + TICK_DELTA
+
+
+def _begin_parts_hold(player, st) -> None:
+    """Measure the parts' hold and, when there is one, put the ship in
+    WES_WARP_INITIATED now (as the tunnel does at its align start), so the
+    parts fold during the turn / cruise rather than as the ship takes off."""
+    st.t_parts = _parts_time(player)
+    if st.t_parts > 0.0:
+        from engine.appc import warp_state
+        from engine.appc.subsystems import WarpEngineSubsystem
+        warp_state.set_state(player, WarpEngineSubsystem.WES_WARP_INITIATED)
 
 
 # ── hooks Task 6 fills (ruling R3) ─────────────────────────────────────────
@@ -204,6 +242,7 @@ def start_set_course(player, dest_set, placement_name, queues,
     st.rot0 = player.GetWorldRotation()
     st.axis, st.angle = _turn_to(st.rot0.GetCol(1), first, st.rot0.GetCol(2))
     player.__dict__["_dash"] = st
+    _begin_parts_hold(player, st)
 
     # The Helm has the conn (ruling R12): drop the targets and stand the
     # player's AI down exactly as the tunnel's _ClearTargetsAction does at
@@ -268,7 +307,13 @@ def start_heading(player, queues, button=None) -> bool:
     # (No enable_helm_menu here: unlike a Set Course press, the heading
     # press never greyed the Helm menu -- warp_button.engage.)
     from engine.appc import dash_helm
+    _begin_parts_hold(player, st)
     dash_helm.sync(player)
+    if st.t_parts > 0.0:
+        # Hold for the parts: cruise on at the engaged impulse speed until
+        # they settle (tick), then engage.
+        st.pending, st.cruise = flight, engaged
+        return True
     _engage(player, st, flight)
     return True
 
@@ -409,11 +454,19 @@ def tick(player, dt: float) -> None:
         return
     if st.flight is None:
         import App
-        s = (App.g_kUtopiaModule.GetGameTime() - st.t0) / max(st.t_align, 1e-9)
-        if s >= 1.0:
+        elapsed = App.g_kUtopiaModule.GetGameTime() - st.t0
+        if st.pending is not None:          # a heading dash's parts hold
+            if elapsed >= st.t_parts:
+                _engage(player, st, st.pending)
+            else:
+                _cruise(player, st, dt)
+            return
+        # Turn at the ship's own rate; then, if the parts are still moving,
+        # hold aligned until they settle (Mark: never slow the turn).
+        if elapsed >= st.t_align and elapsed >= st.t_parts:
             _engage(player, st)
         else:
-            _align(player, st, s)
+            _align(player, st, min(elapsed / max(st.t_align, 1e-9), 1.0))
         return
     if st.flight.ended_reason is not None or \
             player._insystem_warp_transit is not st.flight:
@@ -431,6 +484,16 @@ def _align(player, st, s) -> None:
     player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
 
 
+def _cruise(player, st, dt) -> None:
+    """A heading dash held for its parts: fly on along the heading at the
+    impulse speed it was engaged at (the controls are the dash's)."""
+    h, s = st.forward, st.cruise
+    p = player.GetTranslate()
+    player.SetTranslateXYZ(p.x + h[0] * s * dt, p.y + h[1] * s * dt,
+                           p.z + h[2] * s * dt)
+    player.SetVelocity(TGPoint3(h[0] * s, h[1] * s, h[2] * s))
+
+
 def _cancel(player, st) -> None:
     """End the dash with no drop-out: the player died (or a drop-out came
     during the align). No hand-off, no ET_EXITED_WARP, no flash, no queue
@@ -441,6 +504,8 @@ def _cancel(player, st) -> None:
     if st.flight is None:
         if st.button is not None:
             st.button.put_back_queues(st.queues)
+        if st.t_parts > 0.0:            # left WES_NOT_WARPING at the press
+            warp_state.set_state(player, WarpEngineSubsystem.WES_NOT_WARPING)
     else:
         if player._insystem_warp_transit is st.flight:
             player._end_in_system_warp("aborted")
@@ -509,6 +574,9 @@ def drop_out(player, reason) -> None:
         return
     if st.flight is None:
         _cancel(player, st)
+        if st.pending is not None:      # a heading hold was cruising
+            player._current_speed = 0.0
+            player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
         return
     del player.__dict__["_dash"]
     from engine.appc import dash_helm, warp_state

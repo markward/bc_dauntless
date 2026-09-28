@@ -249,6 +249,27 @@ QuickBattle's placeholder set): features are consistent everywhere.* An
 unmapped set dashes on its own `Planet`/`Sun` objects, has no regions and so
 no hand-off, and drops out at 2 × radius from a body ahead.
 
+**The parts hold (either kind; 2026-09-28).** A ship with articulated parts
+(e.g. a mod's warp-folding wings, `SetTransitionSeconds`) must have them settled
+in their warp pose *before* the engage, which is the visible jump. So when
+`articulation.time_to_reach(player, "warp")` is non-zero the dash enters
+`WES_WARP_INITIATED` at the press (as the tunnel does at its align start),
+which starts the parts folding. A Set Course dash turns at its normal rate —
+the turn is never slowed to absorb the wait — then holds aligned and at rest
+until `time_to_reach + TICK_DELTA` has elapsed from the press (the parts start
+on the tick after the state flips), then engages (`WES_WARPING`, flight,
+flash); parts that settle before the turn ends add no hold. A heading dash has
+no align: it cruises on at its engaged impulse speed, controls locked, for the
+same wait, then engages. Unlike the tunnel there is no `_T_ENTER_BOOST` term:
+the dash is at full speed from its first flight tick. 0 / All Stop / death /
+player swap during the hold cancel it like an align-phase cancel — queues back
+on the button, `WES_NOT_WARPING`, Helm restored (a cruising heading hold stops
+at rest) — and the parts return to cruise by the ordinary articulation rule.
+The ~10 s flash-to-flash is unchanged: the hold is all before the engage. A
+ship with no parts (`time_to_reach == 0`) is exactly as before: it stays
+`WES_NOT_WARPING` through the align and engages at its end (or, heading, at
+the press).
+
 **While dashing (either kind):**
 
 - **0** or **All Stop** drops out at rest, with the flash. All Stop is the one

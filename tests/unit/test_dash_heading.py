@@ -673,3 +673,84 @@ def test_a_player_swap_ends_the_old_ships_heading_dash_at_rest(world):
     v = w.player.GetVelocity()
     assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
     assert _events_of(w, App.ET_EXITED_WARP) == []
+
+
+# ── 9. the hold for articulated parts: cruise at impulse, then engage ──────
+
+def _parts(monkeypatch, seconds):
+    from engine.appc import articulation
+    monkeypatch.setattr(articulation, "time_to_reach",
+                        lambda ship, state: seconds if state == "warp" else 0.0)
+
+
+def _open_space(w):
+    p0 = _sys(w.player)
+    return _aim(w, (p0[0], p0[1], p0[2] - 1.0e6))  # straight down: no bodies
+
+
+def test_a_heading_dash_with_parts_cruises_then_engages(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 3.0)
+    h = _open_space(w)
+    p0 = _sys(w.player)
+    t0 = App.g_kUtopiaModule.GetGameTime()
+    _press(w)
+    assert dash.is_dashing(w.player)
+    assert w.flashes == []
+    assert w.player.IsDoingInSystemWarp() == 0
+    assert warp_state.get_state(w.player) == \
+        WarpEngineSubsystem.WES_WARP_INITIATED
+    loop = GameLoop()
+    while not w.flashes:
+        _tick(w, loop)
+        assert App.g_kUtopiaModule.GetGameTime() - t0 < 10.0
+        if not w.flashes:
+            assert warp_state.get_state(w.player) == \
+                WarpEngineSubsystem.WES_WARP_INITIATED
+            v = w.player.GetVelocity()
+            assert (v.x, v.y, v.z) == pytest.approx(
+                tuple(c * ENGAGED for c in h), abs=1e-9)
+    t_engage = w.flashes[0][1] - t0
+    assert 3.0 + TICK_DELTA - 1e-9 <= t_engage <= 3.0 + 2 * TICK_DELTA + 1e-9
+    # Cruised at the impulse speed along the nose, not at warp.
+    flown = math.dist(p0, _sys(w.player))
+    assert flown == pytest.approx(ENGAGED * t_engage, rel=0.02)
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_WARPING
+    assert w.player.IsDoingInSystemWarp() == 1
+
+
+def test_a_heading_dash_with_no_parts_engages_at_the_press(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 0.0)
+    _open_space(w)
+    t0 = App.g_kUtopiaModule.GetGameTime()
+    _press(w)
+    assert w.flashes == [("engage", t0)]
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_WARPING
+    assert w.player.IsDoingInSystemWarp() == 1
+
+
+def test_0_during_the_heading_hold_cancels_at_rest(world, monkeypatch):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _parts(monkeypatch, 3.0)
+    _open_space(w)
+    _press(w)
+    loop = GameLoop()
+    for _ in range(int(round(1.0 / TICK_DELTA))):
+        _tick(w, loop)
+    w.events.clear()
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(pressed={pc._input_map.code("full_stop")}))
+    assert not dash.is_dashing(w.player)
+    assert warp_state.get_state(w.player) == \
+        WarpEngineSubsystem.WES_NOT_WARPING
+    v = w.player.GetVelocity()
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+    for _ in range(int(round(5.0 / TICK_DELTA))):
+        _tick(w, loop)
+    assert w.flashes == []
+    assert w.player.IsDoingInSystemWarp() == 0
+    assert _events_of(w, App.ET_EXITED_WARP, App.ET_IN_SYSTEM_WARP) == []
+    assert w.entry.IsEnabled()

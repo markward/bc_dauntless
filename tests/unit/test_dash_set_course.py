@@ -814,3 +814,192 @@ def test_a_course_round_the_sun_sets_off_angled_away_on_a_smooth_curve(world):
     assert abs(span - 10.0) <= TICK_DELTA + 1e-9
     assert min(gaps) >= sun.radius_gu + comfort_gu(sun.radius_gu) - 1.0
     assert w.player.GetContainingSet() is w.ona3
+
+
+# ── the hold for articulated parts (Mark: turn at the normal rate, then
+#    PAUSE until the parts have finished folding, then jump) ──────────────
+
+def _parts(monkeypatch, seconds):
+    """A rig whose parts need ``seconds`` to reach their warp pose."""
+    from engine.appc import articulation
+    monkeypatch.setattr(articulation, "time_to_reach",
+                        lambda ship, state: seconds if state == "warp" else 0.0)
+
+
+def _fwd(ship):
+    f = ship.GetWorldRotation().GetCol(1)
+    return (f.x, f.y, f.z)
+
+
+def _press_and_trace(w, bound_s=40.0):
+    """Press Warp and tick to the engage flash, recording per tick
+    (elapsed, warp state, forward, position) BEFORE the engage."""
+    t0 = App.g_kUtopiaModule.GetGameTime()
+    warp_button.press(w.button)
+    st = dash._state(w.player)
+    trace = [(0.0, warp_state.get_state(w.player), _fwd(w.player),
+              _pos(w.player))]
+    loop = GameLoop()
+    for _ in range(int(round(bound_s / TICK_DELTA))):
+        _tick(w, loop)
+        if _engaged(w):
+            return t0, st, trace
+        trace.append((App.g_kUtopiaModule.GetGameTime() - t0,
+                      warp_state.get_state(w.player), _fwd(w.player),
+                      _pos(w.player)))
+    raise AssertionError("never engaged")
+
+
+def _pos(ship):
+    p = ship.GetTranslate()
+    return (p.x, p.y, p.z)
+
+
+def test_parts_slower_than_the_turn_hold_the_engage_until_they_settle(
+        world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 9.0)
+    t0, st, trace = _press_and_trace(w)
+    first = st.path.tangent_at(0.0)
+    # The turn is the ship's own: unchanged by the rig.
+    R_end = w.player.GetWorldRotation()
+    w.player.SetMatrixRotation(st.rot0)
+    assert st.t_align == pytest.approx(warp._align_duration(w.player, first))
+    w.player.SetMatrixRotation(R_end)
+    assert st.t_align < 9.0
+    # Engage waits for the parts (+1 tick: they start moving on the tick
+    # after the state flips), measured from the align start.
+    t_engage = w.flashes[0][1] - t0
+    assert t_engage >= 9.0 + TICK_DELTA - 1e-9
+    assert t_engage <= 9.0 + 2 * TICK_DELTA + 1e-9
+    # Warp-initiated from the press (so the parts fold during the turn) to
+    # the engage; never WES_WARPING before it.
+    assert {s for _, s, _, _ in trace} == {
+        WarpEngineSubsystem.WES_WARP_INITIATED}
+    # Held where it is the whole time -- no warp translation before engage.
+    p0 = trace[0][3]
+    for _, _, _, p in trace:
+        assert p == pytest.approx(p0, abs=1e-9)
+    # Aligned by t_align at the normal rate, then held on the heading.
+    held = [f for t, _, f, _ in trace if t >= st.t_align + 1e-9]
+    assert held
+    for f in held:
+        assert f == pytest.approx(first, abs=1e-6)
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_WARPING
+
+
+def test_the_turn_rate_is_unchanged_by_the_hold(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 9.0)
+    _, st, trace = _press_and_trace(w)
+    # Mid-turn the forward is exactly the no-rig smoothstep turn.
+    s = 0.5
+    e = s * s * (3.0 - 2.0 * s)
+    from engine.appc.math import TGMatrix3
+    mid = [f for t, _, f, _ in trace
+           if abs(t - s * st.t_align) <= TICK_DELTA / 2]
+    assert mid
+    t_mid = [t for t, _, f, _ in trace
+             if abs(t - s * st.t_align) <= TICK_DELTA / 2][0]
+    ss = t_mid / st.t_align
+    e = ss * ss * (3.0 - 2.0 * ss)
+    R = TGMatrix3().MakeRotation(st.angle * e, st.axis).MultMatrix(st.rot0)
+    f = R.GetCol(1)
+    assert mid[0] == pytest.approx((f.x, f.y, f.z), abs=1e-6)
+
+
+def test_parts_faster_than_the_turn_do_not_hold(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 0.2)
+    t0, st, trace = _press_and_trace(w)
+    assert st.t_align > 0.2 + TICK_DELTA
+    assert w.flashes[0][1] - t0 == pytest.approx(st.t_align, abs=TICK_DELTA)
+    assert {s for _, s, _, _ in trace} == {
+        WarpEngineSubsystem.WES_WARP_INITIATED}
+
+
+def test_no_parts_is_exactly_as_before(world, monkeypatch):
+    """No rig (time_to_reach == 0): the align stays WES_NOT_WARPING, the
+    engage lands at t_align, and the flash-to-flash is ~10 s."""
+    w = world
+    _parts(monkeypatch, 0.0)
+    t0, st, trace = _press_and_trace(w)
+    assert {s for _, s, _, _ in trace} == {
+        WarpEngineSubsystem.WES_NOT_WARPING}
+    assert w.flashes[0][1] - t0 == pytest.approx(st.t_align, abs=TICK_DELTA)
+    _run_until(w, lambda: not dash.is_dashing(w.player))
+    assert [k for k, _ in w.flashes] == ["engage", "drop"]
+    assert abs(w.flashes[1][1] - w.flashes[0][1] - 10.0) <= TICK_DELTA + 1e-9
+    assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
+                      App.ET_EXITED_WARP) == [
+        (App.ET_EXITED_SET, "Ona1"), (App.ET_ENTERED_SET, "Ona2"),
+        (App.ET_EXITED_WARP, None)]
+
+
+def test_the_flash_to_flash_is_ten_seconds_after_a_hold(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 9.0)
+    warp_button.press(w.button)
+    _run_until(w, lambda: not dash.is_dashing(w.player))
+    assert [k for k, _ in w.flashes] == ["engage", "drop"]
+    assert abs(w.flashes[1][1] - w.flashes[0][1] - 10.0) <= TICK_DELTA + 1e-9
+
+
+def test_full_stop_during_the_hold_cancels_like_the_align(world, monkeypatch):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _parts(monkeypatch, 9.0)
+    for key in _ENTRIES:
+        _entry(w.helm, key).SetEnabled()
+    marks = _queue_all(w)
+    warp_button.press(w.button)
+    st = dash._state(w.player)
+    loop = GameLoop()
+    while App.g_kUtopiaModule.GetGameTime() - st.t0 < st.t_align + 0.5:
+        _tick(w, loop)
+    assert dash.is_dashing(w.player) and not _engaged(w)
+    for key in _ENTRIES:
+        assert not _entry(w.helm, key).IsEnabled(), key
+    assert warp_state.get_state(w.player) == \
+        WarpEngineSubsystem.WES_WARP_INITIATED
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(pressed={pc._input_map.code("full_stop")}))
+    assert not dash.is_dashing(w.player)
+    assert warp_state.get_state(w.player) == \
+        WarpEngineSubsystem.WES_NOT_WARPING
+    for _ in range(int(round(12.0 / TICK_DELTA))):
+        _tick(w, loop)
+    _assert_queues_back(w, marks)
+    assert w.flashes == []
+    for key in _ENTRIES:
+        assert _entry(w.helm, key).IsEnabled(), key
+
+
+def test_death_during_the_hold_cancels_it(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 9.0)
+    marks = _queue_all(w)
+    warp_button.press(w.button)
+    st = dash._state(w.player)
+    loop = GameLoop()
+    while App.g_kUtopiaModule.GetGameTime() - st.t0 < st.t_align + 0.5:
+        _tick(w, loop)
+    w.player.SetDead()
+    _tick(w, loop)
+    assert not dash.is_dashing(w.player)
+    assert warp_state.get_state(w.player) == \
+        WarpEngineSubsystem.WES_NOT_WARPING
+    _assert_queues_back(w, marks)
+
+
+def test_a_player_swap_during_the_hold_cancels_it(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 9.0)
+    marks = _queue_all(w)
+    warp_button.press(w.button)
+    _swap_player(w)
+    assert not dash.is_dashing(w.player)
+    assert warp_state.get_state(w.player) == \
+        WarpEngineSubsystem.WES_NOT_WARPING
+    _assert_queues_back(w, marks)
