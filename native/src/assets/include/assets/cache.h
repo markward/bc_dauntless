@@ -24,6 +24,14 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// Dedupe-key fragment for ONE decal request: `shape=mask@<geometry>;`, where
+/// <geometry> is the raw bytes of origin, u_axis, v_axis, normal and depth,
+/// hex-encoded -- lossless, so any placement edit (the SPV's main edit, which
+/// leaves shape and mask alone) yields a distinct key. Shared by
+/// AssetCache's cache key and the host binding's load_model dedupe so the two
+/// layers can never disagree about what "the same decal" means.
+std::string decal_request_key(const DecalRequest& d);
+
 class AssetCache {
 public:
     struct Config {

@@ -583,7 +583,9 @@ scenegraph::ModelHandle load_model_impl(
         for (auto item : decals) {
             assets::DecalRequest req;
             if (parse_decal_request(item, &req)) {
-                rep_key += "|decals:" + req.shape + '=' + req.mask.string() + ';';
+                // Geometry included (lossless): an SPV placement edit keeps
+                // shape + mask, and must not dedupe onto the stale handle.
+                rep_key += "|decals:" + assets::decal_request_key(req);
                 decal_requests.push_back(std::move(req));
             } else {
                 const std::string key = nif_path + "|decal-arg|" + std::to_string(index);

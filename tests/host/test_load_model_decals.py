@@ -59,6 +59,30 @@ def test_load_model_decals_distinct_and_dedupe():
         host.shutdown()
 
 
+def test_load_model_decals_placement_geometry_is_part_of_the_key():
+    """An SPV edit moves a placement without changing its shape or mask.
+
+    The host dedupe must key on the geometry too, or every later load of
+    the class in the session returns the stale pre-edit handle.
+    """
+    _skip_unless_assets_available()
+    zhukov = hull_decals.decals_for("data/Models/Ships/Ambassador", "Zhukov")
+    assert zhukov, "expected the committed Zhukov 'top' decal to resolve"
+    shape, origin, u_axis, v_axis, normal, depth, mask = zhukov[0]
+    moved = [(shape, (origin[0] + 0.5, origin[1], origin[2]),
+              u_axis, v_axis, normal, depth, mask)] + list(zhukov[1:])
+
+    host = _init_host("decal-geometry-key-test")
+    try:
+        h = host.load_model(str(AMBASSADOR_NIF), str(AMBASSADOR_TEX), None, zhukov)
+        h_again = host.load_model(str(AMBASSADOR_NIF), str(AMBASSADOR_TEX), None, zhukov)
+        h_moved = host.load_model(str(AMBASSADOR_NIF), str(AMBASSADOR_TEX), None, moved)
+        assert h_again == h, "identical decals must dedupe to the first handle"
+        assert h_moved != h, "a moved placement must not reuse the old handle"
+    finally:
+        host.shutdown()
+
+
 def test_load_model_decals_malformed_entry_does_not_throw(capfd):
     _skip_unless_assets_available()
     host = _init_host("decal-malformed-test")

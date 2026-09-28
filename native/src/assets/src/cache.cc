@@ -52,6 +52,27 @@ ModelHandle AssetCache::load(const fs::path& nif_path,
     return load(nif_path, search_paths, {});
 }
 
+std::string decal_request_key(const DecalRequest& d) {
+    const float geom[13] = {
+        d.origin.x, d.origin.y, d.origin.z,
+        d.u_axis.x, d.u_axis.y, d.u_axis.z,
+        d.v_axis.x, d.v_axis.y, d.v_axis.z,
+        d.normal.x, d.normal.y, d.normal.z,
+        d.depth};
+    static const char kHex[] = "0123456789abcdef";
+    std::string key = d.shape;
+    key += '=';
+    key += d.mask.string();
+    key += '@';
+    const auto* bytes = reinterpret_cast<const unsigned char*>(geom);
+    for (std::size_t i = 0; i < sizeof(geom); ++i) {
+        key += kHex[bytes[i] >> 4];
+        key += kHex[bytes[i] & 0xF];
+    }
+    key += ';';
+    return key;
+}
+
 namespace {
 
 // Stable, collision-resistant suffix appended to the NIF-path cache key so a
@@ -71,19 +92,14 @@ std::string replacements_key(
     return key;
 }
 
-// Same reasoning as replacements_key: folds each decal's shape + resolved
-// mask path into the cache key so distinct registries (distinct mask paths)
-// on the same NIF land in distinct entries, while an empty list is
-// byte-identical to the no-decal key.
+// Same reasoning as replacements_key: folds each decal (shape, resolved mask
+// path AND placement geometry, see decal_request_key) into the cache key so
+// distinct registries or placements on the same NIF land in distinct
+// entries, while an empty list is byte-identical to the no-decal key.
 std::string decals_key(const std::vector<DecalRequest>& decals) {
     if (decals.empty()) return {};
     std::string key = "|decals:";
-    for (const auto& d : decals) {
-        key += d.shape;
-        key += '=';
-        key += d.mask.string();
-        key += ';';
-    }
+    for (const auto& d : decals) key += decal_request_key(d);
     return key;
 }
 

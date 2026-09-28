@@ -508,6 +508,27 @@ TEST(DecalCache, RegistriesAreSeparateEntries) {
     EXPECT_NE(zhukov_a.get(), excalibur.get());
 }
 
+// The SPV edits a placement's GEOMETRY without touching its shape or mask,
+// so the cache key must fold origin/axes/normal/depth in exactly: requests
+// that differ only in origin are distinct entries, identical ones share one.
+TEST(DecalCache, PlacementGeometryIsPartOfTheKey) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
+
+    assets::AssetCache cache(stub_config());
+    std::vector<fs::path> search{ambassador_high_path()};
+
+    const auto req = top_decal_request(zhukov_top_mask());
+    auto moved = req;
+    moved.origin.x += 0.5f;
+
+    auto a = cache.load(ambassador_nif_path(), search, {}, {req});
+    auto a_again = cache.load(ambassador_nif_path(), search, {}, {req});
+    auto b = cache.load(ambassador_nif_path(), search, {}, {moved});
+    EXPECT_EQ(a.get(), a_again.get());
+    EXPECT_NE(a.get(), b.get());
+}
+
 // Real Ambassador + the committed fixes dir + a decal -> attached.
 TEST(DecalNoMeshFixGate, AttachedWhenMeshFixApplies) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
