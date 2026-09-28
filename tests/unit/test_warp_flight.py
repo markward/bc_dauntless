@@ -406,11 +406,117 @@ def test_ai_flight_round_a_body_turns_smoothly_as_its_target_drifts(drift, monke
     _fly(ship, each=each)
 
     assert max(headings) - min(headings) > 0.3, "flight was not curved"
-    assert sum(a != b for a, b in zip(modes, modes[1:])) == 0
+    # Curved, then (once the live drop point is in clear view) straight at
+    # the live target -- never back and forth.
+    assert modes[0] is False
+    assert sum(a != b for a, b in zip(modes, modes[1:])) <= 1
     if drift:
         assert len(plans) >= 2, "the target never moved past the R8 threshold"
     for tick, first in plans[1:]:
         assert first == pytest.approx(dirs[tick - 1], abs=1e-9)
     jumps = [abs(b - a) for a, b in zip(headings, headings[1:])]
-    assert max(jumps) < math.radians(3.0)
-    assert min(gaps) >= 1000.0 + comfort_gu(1000.0) - 1.0
+    assert max(jumps) <= warp_flight.AI_WARP_TURN_RATE_RAD_S * _DT + 1e-9
+    # The curve keeps the comfort margin; the straight line it hands over to
+    # holds while it keeps the hard clearance (the hysteresis).
+    curved = [g for g, m in zip(gaps, modes) if m is False]
+    assert min(curved) >= 1000.0 + comfort_gu(1000.0) - 1.0
+    assert min(gaps) >= 1000.0 + clearance_gu(1000.0) - 1.0
+
+
+# ── 12. The drop edge is measured from the LIVE target (review of b80085ba) ─
+
+_AI_STEP_GU = 630.0 * _DT                     # one tick of AI warp travel
+
+
+def _heading_change(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    return math.acos(max(-1.0, min(1.0, dot)))
+
+
+@pytest.mark.parametrize("drift", [
+    (0.5, 0.0), (1.5, 0.0), (4.0, 0.0), (0.0, 3.0), (2.0, 2.0),
+    (0.0, -10.0), (0.0, -20.0), (-1.0, -5.0), (3.0, -8.0)])
+def test_ai_flight_round_a_body_ends_on_the_live_drop_edge(drift):
+    """Intercept relies on the drop edge (SetInSystemWarpDistance): however
+    the target moves, the flight ends within one tick's travel of ``drop``
+    from where the target IS, in bounded time, with the nose turning at most
+    AI_WARP_TURN_RATE_RAD_S (3 deg a tick at 60 Hz), keeping the hard
+    clearance throughout. Measured before the fix: 325..1163 GU for the
+    drifts, never ending for a closing target."""
+    pSet = _plain_set("Arena")
+    planet = Planet_Create(1000.0, "")
+    planet.SetName("Rock")
+    pSet.AddObjectToSet(planet, "Rock")
+    planet.SetTranslateXYZ(0.0, 10000.0, 0.0)
+    ship = _make_ship((0.0, 0.0, 0.0), pSet, "ship")
+    target = _make_ship((600.0, 20000.0, 0.0), pSet, "target")
+    drop = 295.0
+    assert ship.InSystemWarp(target, drop) == 1
+
+    flown, gaps, used = [], [], []
+
+    def each(s):
+        p = target.GetTranslate()
+        used.append(_xyz(p))                  # where this tick's step aimed
+        target.SetTranslateXYZ(p.x + drift[0], p.y + drift[1], p.z)
+        gaps.append(math.dist(_xyz(s.GetTranslate()), (0.0, 10000.0, 0.0)))
+        f = s.GetWorldRotation().GetCol(1)
+        flown.append((f.x, f.y, f.z))
+
+    _fly(ship, max_ticks=4000, each=each)
+
+    assert len(used) < 4000
+    end = _xyz(ship.GetTranslate())
+    assert abs(math.dist(end, used[-1]) - drop) <= _AI_STEP_GU + 1e-6
+    # A target whose line runs through the body (|x| < 1,000 on the way
+    # down) brings its own drop point inside the clearance: R5 then only
+    # promises the body is never entered.
+    through = drift[1] < 0.0 and any(abs(u[0]) < 1000.0 + clearance_gu(1000.0)
+                                      and abs(u[1] - 10000.0) < 3000.0 for u in used)
+    floor = 1000.0 if through else 1000.0 + clearance_gu(1000.0)
+    assert min(gaps) >= floor - 1.0
+    cap = warp_flight.AI_WARP_TURN_RATE_RAD_S * _DT
+    turns = [_heading_change(a, b) for a, b in zip(flown, flown[1:])]
+    assert max(turns) <= cap + 1e-9
+
+
+def test_a_target_crossing_the_ship_turns_the_nose_instead_of_snapping():
+    """The target sweeps past behind the ship mid-curve: the pin to the
+    heading flown is dropped (it faces away from the new chord) and the nose
+    turns at the cap rather than snapping (77-124 deg in one tick before)."""
+    pSet = _plain_set("Arena")
+    planet = Planet_Create(1000.0, "")
+    planet.SetName("Rock")
+    pSet.AddObjectToSet(planet, "Rock")
+    planet.SetTranslateXYZ(0.0, 10000.0, 0.0)
+    ship = _make_ship((0.0, 0.0, 0.0), pSet, "ship")
+    target = _make_ship((600.0, 20000.0, 0.0), pSet, "target")
+    assert ship.InSystemWarp(target, 295.0) == 1
+    flown, gaps = [], []
+    ticks = [0]
+
+    def each(s):
+        ticks[0] += 1
+        if ticks[0] == 400:                   # jump the target behind the ship
+            p = _xyz(s.GetTranslate())
+            target.SetTranslateXYZ(p[0] - 3000.0, p[1] - 12000.0, 0.0)
+        gaps.append(math.dist(_xyz(s.GetTranslate()), (0.0, 10000.0, 0.0)))
+        f = s.GetWorldRotation().GetCol(1)
+        flown.append((f.x, f.y, f.z))
+
+    _fly(ship, max_ticks=4000, each=each)
+    cap = warp_flight.AI_WARP_TURN_RATE_RAD_S * _DT
+    turns = [_heading_change(a, b) for a, b in zip(flown, flown[1:])]
+    assert max(turns) <= cap + 1e-9
+    assert min(gaps) >= 1000.0 + clearance_gu(1000.0) - 1.0
+
+
+@pytest.mark.parametrize("offset", [6999.0, 7000.0 - 1e-6, 7000.0, 7000.0 + 1e-6, 7001.0])
+def test_the_flight_and_the_planner_agree_on_a_clear_line_at_the_boundary(offset):
+    """One keep-out test for both: a line the planner draws straight is one
+    the flight flies straight, to the last tolerance."""
+    from engine.systems import warp_path
+    body = [Obstacle("B", (50000.0, offset, 0.0), 3000.0)]   # comfort reach 7,000
+    planned = warp_path.plan_path((0.0, 0.0, 0.0), (100000.0, 0.0, 0.0), body)
+    straight = not planned.smooth and planned.length_gu == pytest.approx(100000.0)
+    assert warp_flight._chord_clear((0.0, 0.0, 0.0), (100000.0, 0.0, 0.0), body) == straight

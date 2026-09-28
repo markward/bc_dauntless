@@ -15,15 +15,20 @@ untouched, so a warp inside one unmapped set runs exactly the old arithmetic.
 
 Targets:
 
-* a ship (AI Intercept) -- tracked live. While the straight line to it keeps
-  every body's comfort keep-out the flight flies that line exactly as the old
-  integrator did (re-aimed every tick, landing on the drop edge); otherwise
-  it follows ``plan_path``'s smooth curve, and keeps following it (no
-  per-tick return to the straight line) until the target has moved more
-  than max(1,000 GU, 5 % of the remaining distance) since the last plan
-  (ruling R8). Every plan after the first continues the heading already
-  flown (``start_dir``), so a re-plan never snaps the nose. Never drops out
-  (ruling R2);
+* a ship (AI Intercept) -- tracked live. Each tick the line to the target's
+  LIVE drop point is judged with the planner's own keep-out test
+  (``warp_path.line_clear``), with hysteresis: a curve hands over to the
+  straight line once that line keeps the comfort margin, and the straight
+  line holds while it keeps the hard clearance. Straight, the nose leads a
+  moving target (aims at the intercept point, when that line is clear too)
+  and the flight ends on the drop edge of the target where it IS. Curved,
+  it follows ``plan_path``'s smooth curve, re-planned only when the target
+  has moved more than max(1,000 GU, 5 % of the remaining distance) since the
+  last plan (ruling R8); a spent plan is re-planned, never "arrived at".
+  Every plan after the first is pinned to the heading flown (``start_dir``)
+  and never comes closer to a body than the ship already is; a plan the pin
+  cannot hold is pivoted onto on the spot. Off a curve the nose turns at
+  most ``AI_WARP_TURN_RATE_RAD_S``. Never drops out (ruling R2);
 * a ``(point, end_dir)`` destination in system coordinates (Set Course) --
   planned once (``end_dir`` None since 1eb145a5: the dash arrives facing its
   travel and turns afterwards);
@@ -43,7 +48,7 @@ from typing import Any, Callable
 from engine.appc.math import TGPoint3
 from engine.systems import frames
 from engine.systems.warp_path import (
-    HEADING_DASH_GUPS, Obstacle, drop_out, keep_out_gu, plan_path,
+    HEADING_DASH_GUPS, Obstacle, drop_out, line_clear, plan_path,
     set_course_speed,
 )
 
@@ -51,6 +56,13 @@ from engine.systems.warp_path import (
 # more than max(this, REPLAN_FRACTION x remaining distance) since the plan.
 REPLAN_MIN_GU = 1000.0
 REPLAN_FRACTION = 0.05
+# The most an AI warp's nose turns per second where it is not following a
+# planned curve (straight at the live target, or pivoting onto a new plan):
+# pi rad/s, 3 deg a tick at 60 Hz. A curve's own heading changes are its
+# curvature x the step (the planner keeps them gentle).
+AI_WARP_TURN_RATE_RAD_S = math.pi
+# A target "velocity" above this (a frame change, a teleport) is not led.
+_LEAD_MAX_GUPS = 1.0e6
 
 _ZERO = (0.0, 0.0, 0.0)
 
@@ -85,6 +97,11 @@ class WarpFlight:
     # The direction the ship last moved in (system axes), so a re-plan
     # continues it (plan_path's start_dir) instead of snapping the nose.
     _last_dir: tuple | None = field(default=None, repr=False)
+    # AI ship target: None before the first tick, then whether it is flying
+    # straight at the live target (True) or a planned curve (False).
+    _straight: bool | None = field(default=None, repr=False)
+    # The target's system position last tick (its velocity, for the lead).
+    _target_prev: tuple | None = field(default=None, repr=False)
 
 
 # ── frames ────────────────────────────────────────────────────────────────
@@ -155,26 +172,32 @@ def obstacles_for(ship) -> list:
 
 # ── geometry helpers ──────────────────────────────────────────────────────
 
-def _chord_clear(p, q, obstacles) -> bool:
-    """True when the segment p->q keeps every body's COMFORT keep-out -- the
-    test plan_path uses to keep a trip straight (``keep_out_gu``: radius +
-    comfort margin, halved toward an endpoint inside it (R5), none for a
-    body holding an endpoint). Agreeing with the planner means a flight is
-    straight exactly when the planner would have drawn a straight line."""
-    ux, uy, uz = q[0] - p[0], q[1] - p[1], q[2] - p[2]
-    l2 = ux * ux + uy * uy + uz * uz
-    for o in obstacles:
-        c, r = o.center, o.radius_gu
-        near = min(math.dist(p, c), math.dist(q, c))
-        need = keep_out_gu(r, near, comfort=True)
-        if need is None:
-            continue
-        wx, wy, wz = c[0] - p[0], c[1] - p[1], c[2] - p[2]
-        t = 0.0 if l2 <= 0.0 else min(max((wx * ux + wy * uy + wz * uz) / l2, 0.0), 1.0)
-        closest = (p[0] + t * ux, p[1] + t * uy, p[2] + t * uz)
-        if math.dist(closest, c) < need:
-            return False
-    return True
+def _chord_clear(p, q, obstacles, comfort=True, hold=False) -> bool:
+    """True when the segment p->q keeps every body's keep-out: the planner's
+    own test (``warp_path.line_clear`` -- same spheres, same tolerance), so a
+    flight is straight exactly when the planner would draw a straight line."""
+    return line_clear(p, q, obstacles, comfort, hold)
+
+
+def _turn_toward(a, b, max_angle):
+    """Unit direction ``b``, or -- when it is more than ``max_angle`` from
+    ``a`` -- ``a`` turned ``max_angle`` toward it. ``a`` None: ``b``."""
+    if a is None:
+        return b
+    dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    if dot >= math.cos(max_angle):
+        return b
+    w = (b[0] - a[0] * dot, b[1] - a[1] * dot, b[2] - a[2] * dot)
+    n = math.sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2])
+    if n < 1e-12:                           # dead astern: turn about up
+        w = (a[1], -a[0], 0.0)
+        n = math.hypot(a[0], a[1])
+        if n < 1e-12:
+            w, n = (0.0, a[2], -a[1]), math.hypot(a[1], a[2])
+    c, sn = math.cos(max_angle), math.sin(max_angle) / n
+    h = (a[0] * c + w[0] * sn, a[1] * c + w[1] * sn, a[2] * c + w[2] * sn)
+    k = math.sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2])
+    return (h[0] / k, h[1] / k, h[2] / k)
 
 
 def _face(ship, direction) -> None:
@@ -274,34 +297,100 @@ def _step_ship_target(ship, flight, dt) -> None:
     p = ship.GetTranslate()
     p_local = (p.x, p.y, p.z)
     p_sys, t_sys = to_system(ship, p_local), to_system(ship, t_local)
+    obstacles = flight._obstacles
 
-    # Straight at the live target only while no path is being flown: once
-    # on a curve, the ship keeps it until the target has moved past the R8
-    # threshold. (A per-tick chord test would drop it onto the straight chord
-    # the moment the bow swung wide enough to see past the body -- a heading
-    # jump, then back onto a curve as the target moved: flip-flop.)
-    if flight._path is None and _chord_clear(p_sys, t_sys, flight._obstacles):
-        _straight_at_target(ship, flight, dt, p_local, t_local, drop)
+    # Straight or curved, judged every tick against the LIVE drop point with
+    # the planner's own keep-out test, with hysteresis so the two never
+    # alternate: a curve hands over to the straight line once the line keeps
+    # the comfort margin; the straight line holds while it keeps the hard
+    # clearance. Both hold the ship's current gap (``hold``) once it moves.
+    hold = flight._last_dir is not None
+    remaining = math.dist(p_sys, t_sys)
+    if remaining > drop:
+        k = drop / remaining
+        drop_sys = tuple(t - (t - q) * k for t, q in zip(t_sys, p_sys))
+    else:
+        drop_sys = p_sys
+    comfort = flight._straight is not True
+    flight._straight = _chord_clear(p_sys, drop_sys, obstacles, comfort, hold)
+    v_t = _target_velocity(flight, t_sys, dt)
+    if flight._straight:
+        flight._path = None
+        lead = _lead_point(p_sys, t_sys, v_t, _ai_speed(ship), drop)
+        if lead is not t_sys and not _chord_clear(p_sys, lead, obstacles,
+                                                  False, hold):
+            v_t = _ZERO                     # leading would cut a body: pursue
+        _straight_at_target(ship, flight, dt, p_local, t_local, drop, v_t)
         return
 
-    remaining = math.dist(p_sys, t_sys)
     if (flight._path is None or math.dist(t_sys, flight._plan_target)
             > max(REPLAN_MIN_GU, REPLAN_FRACTION * remaining)):
-        # The first plan chooses the heading; every later one continues the
-        # heading already flown, so the nose never jumps at a re-plan.
-        flight._path = plan_path(p_sys, t_sys, flight._obstacles,
+        # The flight's first plan picks its own heading (the ship faces it
+        # at once, as the straight line does); every later plan -- R8
+        # re-plans and a straight line turning back into a curve -- is
+        # pinned to the direction the ship is flying, and holds its gap.
+        flight._path = plan_path(p_sys, t_sys, obstacles,
                                  start_dir=flight._last_dir)
         flight._plan_target = t_sys
         flight._s = 0.0
-    speed = _ai_speed(ship)
-    _advance_along(ship, flight, dt, speed, flight._path.length_gu - drop)
+    if flight._s == 0.0 and flight._last_dir is not None:
+        # A plan the pin could not hold (the target swung behind): pivot on
+        # the spot onto its first tangent at the turn rate, then fly it.
+        first = flight._path.tangent_at(0.0)
+        h = _turn_toward(flight._last_dir, first, AI_WARP_TURN_RATE_RAD_S * dt)
+        if h is not first:
+            _face(ship, h)
+            flight._last_dir = h
+            ship.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+            return
+    # A plan is never "arrived at": its end is where the target WAS. Spent
+    # before the live drop point came into clear view, it is re-planned.
+    _advance_along(ship, flight, dt, _ai_speed(ship),
+                   flight._path.length_gu - drop, arrive=False)
 
 
-def _straight_at_target(ship, flight, dt, p, t, drop) -> None:
+def _target_velocity(flight, t_sys, dt) -> tuple:
+    """The target's velocity from its last two positions (zero on the first
+    tick, or across an implausible jump -- a frame change)."""
+    prev, flight._target_prev = flight._target_prev, t_sys
+    if prev is None or dt <= 0.0:
+        return _ZERO
+    v = tuple((a - b) / dt for a, b in zip(t_sys, prev))
+    if math.sqrt(sum(c * c for c in v)) > _LEAD_MAX_GUPS:
+        return _ZERO
+    return v
+
+
+def _lead_point(p, t, v, speed, drop):
+    """Where to aim to meet a target at ``t`` moving at ``v``: its position
+    at the first time tau >= 0 with |t + v tau - p| = drop + speed tau, or
+    ``t`` itself when it is not moving or cannot be caught."""
+    if v == _ZERO:
+        return t
+    w = tuple(a - b for a, b in zip(t, p))
+    a = sum(c * c for c in v) - speed * speed
+    b = 2.0 * (sum(x * y for x, y in zip(w, v)) - speed * drop)
+    c = sum(x * x for x in w) - drop * drop
+    if abs(a) < 1e-9:
+        roots = [-c / b] if abs(b) > 1e-12 else []
+    else:
+        disc = b * b - 4.0 * a * c
+        if disc < 0.0:
+            return t
+        r = math.sqrt(disc)
+        roots = [(-b - r) / (2.0 * a), (-b + r) / (2.0 * a)]
+    tau = min((x for x in roots if x >= 0.0), default=None)
+    if tau is None:
+        return t
+    return tuple(a_ + v_ * tau for a_, v_ in zip(t, v))
+
+
+def _straight_at_target(ship, flight, dt, p, t, drop, v_t=_ZERO) -> None:
     """The pre-flight integrator's arithmetic, kept in set-local coordinates:
-    an unobstructed ship-target warp moves along the same chord at the same
-    speed as before WarpFlight -- but not byte-for-byte, since the nose now
-    faces the chord every tick (``_face``)."""
+    an unobstructed warp at a stationary target it already faces moves along
+    the same chord at the same speed as before WarpFlight. A moving target is
+    led (``v_t``); the nose turns at most ``AI_WARP_TURN_RATE_RAD_S``; the
+    flight ends on the drop edge of the LIVE target."""
     dx, dy, dz = t[0] - p[0], t[1] - p[1], t[2] - p[2]
     d = (dx * dx + dy * dy + dz * dz) ** 0.5
     if d <= max(drop, 1e-9):
@@ -311,26 +400,41 @@ def _straight_at_target(ship, flight, dt, p, t, drop) -> None:
         ship._end_in_system_warp("arrived")
         ship._warp_consumed = True
         return
-    ux, uy, uz = dx / d, dy / d, dz / d
-    _face(ship, (ux, uy, uz))
-    flight._last_dir = (ux, uy, uz)
+    u = (dx / d, dy / d, dz / d)
     warp_speed = _ai_speed(ship)
+    # Aim where the target will be met (a moving target is led, so a
+    # crossing or closing one is intercepted, not chased round), turning at
+    # the turn rate. A stationary target the nose is already on -- the old
+    # integrator's case -- gives ``u`` itself, bit for bit.
+    aim = u
+    lead = _lead_point(p, t, v_t, warp_speed, drop)
+    if lead is not t:
+        la = tuple(a - b for a, b in zip(lead, p))
+        n = math.sqrt(sum(c * c for c in la))
+        if n > 1e-9:
+            aim = (la[0] / n, la[1] / n, la[2] / n)
+    h = _turn_toward(flight._last_dir, aim, AI_WARP_TURN_RATE_RAD_S * dt)
+    _face(ship, h)
+    flight._last_dir = h
     remaining = d - drop
     step_gu = warp_speed * dt
     if step_gu >= remaining:
-        end = (t[0] - ux * drop, t[1] - uy * drop, t[2] - uz * drop)
+        # Land on the drop edge of the LIVE target.
+        end = (t[0] - u[0] * drop, t[1] - u[1] * drop, t[2] - u[2] * drop)
         ship.SetTranslateXYZ(*end)
-        _finish(ship, flight, "arrived", to_system(ship, end), (ux, uy, uz))
+        _finish(ship, flight, "arrived", to_system(ship, end), h)
     else:
-        ship.SetTranslateXYZ(p[0] + ux * step_gu, p[1] + uy * step_gu,
-                             p[2] + uz * step_gu)
-        ship.SetVelocity(TGPoint3(ux * warp_speed, uy * warp_speed,
-                                  uz * warp_speed))
+        ship.SetTranslateXYZ(p[0] + h[0] * step_gu, p[1] + h[1] * step_gu,
+                             p[2] + h[2] * step_gu)
+        ship.SetVelocity(TGPoint3(h[0] * warp_speed, h[1] * warp_speed,
+                                  h[2] * warp_speed))
 
 
-def _advance_along(ship, flight, dt, speed, s_end) -> None:
+def _advance_along(ship, flight, dt, speed, s_end, arrive=True) -> None:
     """Move ``speed * dt`` along the flight's path, ending at arc length
-    ``s_end`` (the path end, or the AI drop edge short of it)."""
+    ``s_end`` (the path end, or the AI drop edge short of it). With
+    ``arrive`` False, reaching ``s_end`` does not end the flight: the path
+    is dropped for a re-plan."""
     path = flight._path
     s_end = max(s_end, flight._s)
     s = flight._s + speed * dt
@@ -339,7 +443,13 @@ def _advance_along(ship, flight, dt, speed, s_end) -> None:
         tangent = path.tangent_at(s_end)
         _set_local(ship, end)
         _face(ship, tangent)
-        _finish(ship, flight, "arrived", end, tangent)
+        flight._last_dir = tangent
+        if arrive:
+            _finish(ship, flight, "arrived", end, tangent)
+        else:
+            flight._path = None
+            ship.SetVelocity(TGPoint3(tangent[0] * speed, tangent[1] * speed,
+                                      tangent[2] * speed))
         return
     flight._s = s
     tangent = path.tangent_at(s)

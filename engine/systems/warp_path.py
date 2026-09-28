@@ -401,6 +401,8 @@ def _smooth_curve(start, end, spheres, comfort, start_dir=None):
         padded = need * (1.0 + _CURVE_PAD) + _CURVE_PAD_GU
         for i in range(_CURVE_WINDOW_SAMPLES + 1):
             t = t0 + (t1 - t0) * i / _CURVE_WINDOW_SAMPLES
+            if t <= 0.0 or t >= 1.0:
+                continue               # the endpoints are fixed, and outside
             if pin is not None:        # the pinned part of the bulge
                 a = _shape_y(t, 1.0, 0.0)
                 wy_t, wz_t = wy - a * pin[0], wz - a * pin[1]
@@ -732,6 +734,69 @@ def _min_dist(pieces, q):
     return min((_piece_min_dist(pc, q) for pc in pieces), default=math.inf)
 
 
+_HOLD_SLACK_GU = 0.5   # a re-plan may come this much closer than it is now
+
+
+def _keep_outs(start, end, obstacles, level, hold=False):
+    """Keep-out spheres ``(centre, need, reach)`` for a trip, one per body
+    no endpoint is inside. ``level``: "comfort" or "hard" (``keep_out_gu``),
+    or "bodies" (the surface, halfway to an endpoint inside it).
+
+    ``hold`` (a re-plan from where the ship already is): the R5 halfway
+    exemption is for a trip's own start, and re-applying it at each re-plan
+    would halve the gap every time. A re-plan keeps the hard clearance, or
+    -- already inside it -- never comes more than ``_HOLD_SLACK_GU`` closer
+    than now (halfway toward an END inside it still applies: the path must
+    reach the end)."""
+    spheres = []
+    for o in obstacles:
+        centre = tuple(float(v) for v in o.center)
+        r = float(o.radius_gu)
+        ns, ne = _norm(_sub(start, centre)), _norm(_sub(end, centre))
+        near = min(ns, ne)
+        if near <= r:
+            continue                         # an endpoint is inside the body
+        if level == "bodies":
+            need = r
+            if near < need + _ROUTE_EPS_GU:  # R5: halfway to the endpoint
+                need = r + 0.5 * (near - r)
+        else:
+            need = keep_out_gu(r, near, level == "comfort")
+            if hold:
+                hard = r + clearance_gu(r)
+                floor = min(hard, ns - _HOLD_SLACK_GU)
+                if ne < hard + _ROUTE_EPS_GU:
+                    floor = min(floor, r + 0.5 * (ne - r))
+                need = max(need, floor)
+        if near < need + _ROUTE_EPS_GU:
+            spheres.append((centre, need, need))
+        else:
+            spheres.append((centre, need, need + _ROUTE_EPS_GU))
+    return spheres
+
+
+def _valid(pieces, spheres):
+    return all(_min_dist(pieces, c) >= need - _tol(need)
+               for c, need, _reach in spheres)
+
+
+def line_clear(p, q, obstacles: Sequence[Obstacle], comfort: bool = True,
+               hold: bool = False) -> bool:
+    """True when the segment p->q keeps every body's keep-out -- THE test
+    ``plan_path`` uses to keep a trip straight (same spheres, same
+    tolerance), so a flight and the planner never disagree at the boundary.
+    ``comfort`` picks the comfort or the hard margin; ``hold`` is a
+    re-plan's rule (``_keep_outs``)."""
+    a = tuple(float(v) for v in p)
+    b = tuple(float(v) for v in q)
+    d = _norm(_sub(b, a))
+    if d <= _EPS:
+        return True
+    line = [("line", a, _mul(_sub(b, a), 1.0 / d), d)]
+    return _valid(line, _keep_outs(a, b, obstacles,
+                                   "comfort" if comfort else "hard", hold))
+
+
 def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None,
               start_dir=None) -> WarpPath:
     """Plan a warp from ``start`` to ``end``; straight when the line keeps
@@ -767,8 +832,11 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None,
     holds the start or the end is kept out of only halfway from its surface
     to that endpoint; a body holding an endpoint is not an obstacle at all.
 
-    ``start_dir`` is honoured only while it makes a cosine of at least
-    ``_PIN_MIN_COS`` with the chord; facing further away, it plans afresh."""
+    ``start_dir`` marks a RE-PLAN from where a flight already is: the curve
+    is pinned to leave along it while it makes a cosine of at least
+    ``_PIN_MIN_COS`` with the chord (facing further away, it plans afresh),
+    and the start's R5 exemption becomes the hold rule (``_keep_outs``):
+    keep the hard clearance, or never come closer than now."""
     s3 = tuple(float(v) for v in start)
     e3 = tuple(float(v) for v in end)
     ed = _unit(tuple(float(v) for v in end_dir)) if end_dir is not None else None
@@ -802,29 +870,14 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None,
     largest = max((o.radius_gu for o in ordered), default=0.0)
 
     def valid(pieces, spheres):
-        return all(_min_dist(pieces, c) >= need - _tol(need)
-                   for c, need, _reach in spheres)
+        return _valid(pieces, spheres)
 
     def keep_outs(full_clearance, comfort=False):
-        spheres = []
-        for o in ordered:
-            centre = tuple(float(v) for v in o.center)
-            near = min(_norm(_sub(s3, centre)), _norm(_sub(e3, centre)))
-            if near <= o.radius_gu:
-                continue                     # an endpoint is inside the body
-            if full_clearance:
-                need = keep_out_gu(o.radius_gu, near, comfort)
-            else:
-                need = o.radius_gu
-                if near < need + _ROUTE_EPS_GU:  # R5: halfway to the endpoint
-                    need = o.radius_gu + 0.5 * (near - o.radius_gu)
-            if near < need + _ROUTE_EPS_GU:
-                spheres.append((centre, need, need))
-            else:
-                spheres.append((centre, need, need + _ROUTE_EPS_GU))
-        return spheres
+        level = ("comfort" if comfort else "hard") if full_clearance else "bodies"
+        return _keep_outs(s3, e3, ordered, level, hold)
 
     sd = _unit(tuple(float(v) for v in start_dir)) if start_dir is not None else None
+    hold = start_dir is not None             # a re-plan: never closer than now
     if sd is not None and _dot(sd, ex) < _PIN_MIN_COS:
         sd = None                            # facing away: plan afresh
     if ed is None:
@@ -834,7 +887,8 @@ def plan_path(start, end, obstacles: Sequence[Obstacle], end_dir=None,
         for pin in ((None,) if sd is None else (sd, None)):
             for comfort in (True, False):
                 spheres = keep_outs(True, comfort)
-                if (pin is None or _dot(pin, ex) >= 1.0 - 1e-12) and valid(line, spheres):
+                if ((pin is None or _dot(pin, ex) >= 1.0 - 1e-12)
+                        and _valid(line, spheres)):
                     return WarpPath(s3, e3, line, ex, comfort_kept=comfort)
                 ctrl = _smooth_curve(s3, e3, spheres, comfort, start_dir=pin)
                 if ctrl is not None:

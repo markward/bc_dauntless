@@ -529,3 +529,30 @@ def test_start_dir_facing_away_falls_back_to_a_fresh_plan():
     fresh = wp.plan_path((0, 0, 0), (100000, 0, 0), [sun])
     assert p.length_gu == fresh.length_gu
     assert p.tangent_at(0.0) == fresh.tangent_at(0.0)
+
+
+# --- a re-plan never creeps closer (review of b80085ba) -----------------------
+
+def _closest(path, centre, n=4000):
+    return min(_dist(path.point_at(path.length_gu * i / n), centre) for i in range(n + 1))
+
+
+@pytest.mark.parametrize("near", [1500.0, 2400.0, 2900.0])      # surface + 500..1900
+@pytest.mark.parametrize("start_dir", [(1.0, 0.0, 0.0), (1.0, 0.4, 0.0), (1.0, -0.4, 0.0)])
+def test_a_replan_inside_the_hard_clearance_never_goes_closer_than_now(near, start_dir):
+    """R5's halfway exemption is for a trip's own start. A re-plan (with
+    start_dir) starting inside the hard clearance must never come closer
+    than it already is -- else each re-plan halves the gap."""
+    body = wp.Obstacle("P", (0.0, 0.0, 0.0), 1000.0)            # hard reach 3,000
+    th = math.radians(200.0)
+    start = (near * math.cos(th), near * math.sin(th), 0.0)
+    p = wp.plan_path(start, (60000.0, 5000.0, 0.0), [body], start_dir=start_dir)
+    assert not p.enters_body
+    assert _closest(p, body.center) >= near - 0.5
+
+
+def test_a_replan_outside_the_hard_clearance_keeps_it():
+    body = wp.Obstacle("P", (0.0, 0.0, 0.0), 1000.0)            # hard 3,000, comfort 5,000
+    start = (-3500.0, -800.0, 0.0)                               # 3,590 from the centre
+    p = wp.plan_path(start, (60000.0, 0.0, 0.0), [body], start_dir=(1.0, 0.1, 0.0))
+    assert _closest(p, body.center) >= 1000.0 + wp.clearance_gu(1000.0) - 1e-6

@@ -136,11 +136,22 @@ the object or objects". So:
 - **Walked by arc length:** `point_at(s)` / `tangent_at(s)` go through an
   arc-length table (Hermite-inverted), so the speed policy and the drop edge
   are unchanged and the tangent is continuous.
-- **Re-plans continue the heading.** An AI flight's R8 re-plan pins the new
-  curve's first tangent to the direction the ship is flying (`start_dir`), and a
-  flight on a curve keeps it until the target has moved past the R8 threshold
-  — it is no longer dropped onto the straight chord the moment the bow can see
-  past the body (a heading jump, then flip-flop back onto a curve).
+- **AI flights (review of b80085ba).** The straight line to the target's
+  **live drop point** is judged every tick with the planner's own keep-out test
+  (`warp_path.line_clear`), with hysteresis: a curve hands over to the straight
+  line once it keeps the comfort margin; the straight line holds while it keeps
+  the hard clearance — so the two never alternate. Straight, the nose leads a
+  moving target (intercept point) and the flight ends on the drop edge of the
+  target **where it is** (Intercept relies on `SetInSystemWarpDistance`); a
+  spent plan is re-planned, never "arrived at". Every re-plan pins the new
+  curve's first tangent to the heading flown (`start_dir`) and **holds**: it
+  keeps the hard clearance, or — already inside it — never comes more than
+  0.5 GU closer than now (the R5 halfway exemption is for a trip's own start;
+  re-applied per re-plan it halved the gap each time). A plan the pin cannot
+  hold (target swung behind) is pivoted onto on the spot. Off a curve the nose
+  turns at most `AI_WARP_TURN_RATE_RAD_S` (π rad/s, 3° a tick at 60 Hz). A
+  target faster than the AI's warp that has already passed is not caught (as
+  before).
 - `end_dir` (arrive along a direction) still works through the routed planner;
   no caller passes it since the arrival turn (2026-09-27).
 
