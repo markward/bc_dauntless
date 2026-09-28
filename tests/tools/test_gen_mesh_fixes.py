@@ -113,3 +113,69 @@ def test_dumps_is_deterministic_and_float32():
 def test_build_fix_refuses_mesh_without_id_shape():
     with pytest.raises(ValueError):
         g.build_fix([_grid_shape(1, "saucer", 0, 1, False)], "r", None)
+
+
+def _fake_fix(rel):
+    return {
+        "format": 1,
+        "source": rel,
+        "generator": "test",
+        "merges": [{
+            "patch": {"block": 1, "name": "idpatch"},
+            "target": {"block": 0, "name": "saucer"},
+            "method": "planar",
+            "max_fit_error": 1e-6,
+            "uvs": [[0.1, 0.2], [0.3, 0.4]],
+            "weld": [[0, 0]],
+            "normals": None,
+        }],
+    }, {
+        "target_texture": "",
+        "uvs": [[0.1, 0.2], [0.3, 0.4]],
+        "patch_tris": [[0, 1, 0]],
+        "target_uvs": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+        "target_tris": [[0, 1, 2]],
+    }
+
+
+def test_main_survives_one_bad_mesh_and_only_writes_with_flag(
+        tmp_path, monkeypatch, capsys):
+    mesh_ok = "data/Models/Ships/Ok/Ok.nif"
+    mesh_bad = "data/Models/Ships/Bad/Bad.nif"
+
+    game_root = tmp_path / "game"
+    (game_root / "data/Models/Ships/Ok").mkdir(parents=True)
+    (game_root / "data/Models/Ships/Bad").mkdir(parents=True)
+    (game_root / mesh_ok).write_bytes(b"ok-bytes")
+    (game_root / mesh_bad).write_bytes(b"bad-bytes")
+
+    review_dir = tmp_path / "review"
+    fix_dir = tmp_path / "native_assets"
+
+    def fake_build_fix(shapes, rel, target_override):
+        if rel == mesh_bad:
+            raise ValueError("no candidate target region borders the ID patch")
+        return _fake_fix(rel)
+
+    monkeypatch.setattr(g, "STOCK_MESHES", (mesh_bad, mesh_ok))
+    monkeypatch.setattr(g, "_nif_shapes", lambda path: "shapes")
+    monkeypatch.setattr(g, "build_fix", fake_build_fix)
+
+    from engine import paths
+    monkeypatch.setattr(paths, "game_root", lambda: game_root)
+    monkeypatch.setattr(paths, "project_asset_root", lambda: fix_dir)
+
+    # Dry run: no --write.
+    g.main(["--review-dir", str(review_dir)])
+    out = capsys.readouterr().out
+    assert f"{mesh_bad}  ERROR: no candidate target region borders the ID patch" in out
+    assert mesh_ok in out and "planar" in out
+    assert (review_dir / "Ok.png").exists()
+    assert not (review_dir / "Bad.png").exists()
+    assert not fix_dir.exists()
+
+    # --write: only the surviving mesh gets a fix file.
+    g.main(["--review-dir", str(review_dir), "--write"])
+    written = list((fix_dir / "mesh_fixes").glob("*.json"))
+    assert len(written) == 1
+    assert written[0].name == g.fnv1a64_hex(b"ok-bytes") + ".json"

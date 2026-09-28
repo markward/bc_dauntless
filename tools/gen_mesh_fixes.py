@@ -11,12 +11,16 @@ This module is the pure-Python core: fitting, region grouping, and the fix
 JSON builder. All geometry comes from `_dauntless_host.nif_shapes(path)`, a
 read-only binding over the C++ NIF parser -- no numpy, no new dependency.
 
-Task 5 adds the CLI (`main()`) that walks `STOCK_MESHES`, calls `build_fix`,
-writes `native/assets/mesh_fixes/<hash>.json`, and renders review PNGs.
+The CLI (`main()`) walks `STOCK_MESHES`, calls `build_fix`, renders a review
+PNG per mesh, and -- only with `--write` -- writes
+`native/assets/mesh_fixes/<hash>.json`.
 """
+import argparse
 import json
 import math
 import struct
+import tempfile
+from pathlib import Path
 
 # Stock Federation hulls with an ID cut: 5 hulls x {High, Medium} LOD. Low
 # LODs have no ID patch (see design doc S2.1) and are out of scope.
@@ -197,7 +201,7 @@ def seam_copy(patch: dict, known: dict) -> list:
             edges.add((a, b) if a < b else (b, a))
 
     adj = [[] for _ in range(n)]
-    for a, b in edges:
+    for a, b in sorted(edges):
         d = _distance(verts[a], verts[b])
         if d < 1e-12:
             continue
@@ -361,10 +365,130 @@ def dumps(fix: dict) -> str:
     return json.dumps(fix, indent=2) + "\n"
 
 
-def main():
-    """CLI entry point -- filled in by Task 5 (walks STOCK_MESHES, writes
-    native/assets/mesh_fixes/<hash>.json, renders review PNGs)."""
-    raise NotImplementedError("tools/gen_mesh_fixes.py CLI lands in Task 5")
+def _nif_shapes(abs_path: str):
+    """Thin, lazily-imported wrapper around `_dauntless_host.nif_shapes`, so
+    importing this module never requires the compiled extension."""
+    import _dauntless_host
+    return _dauntless_host.nif_shapes(abs_path)
+
+
+def _ship_name(rel: str) -> str:
+    """The `<Ship>` segment of a `data/Models/Ships/<Ship>/...` rel path."""
+    return rel.split("/")[3]
+
+
+def _find_texture(rel: str, texture_name: str):
+    """Resolve a target shape's texture basename to an on-disk path, mod
+    replacement first. Tries the ship's own High/ folder, then the shared Fed
+    High/ folder; returns None if neither exists."""
+    from engine import paths
+
+    ship = _ship_name(rel)
+    for candidate in (
+            f"data/Models/Ships/{ship}/High/{texture_name}",
+            f"data/Models/SharedTextures/FedShips/High/{texture_name}",
+    ):
+        path = paths.game_asset(candidate)
+        if path.exists():
+            return path
+    return None
+
+
+def _render_review_png(rel: str, review: dict, out_path: Path) -> None:
+    """Render the target's own triangles in blue and the patch's rebuilt-UV
+    triangles in red, over the target texture (or a blank canvas if the
+    texture can't be found), scaled to 512x512. UV v is not flipped."""
+    from PIL import Image, ImageDraw
+
+    texture_name = review["target_texture"]
+    img = None
+    if texture_name:
+        texture_path = _find_texture(rel, texture_name)
+        if texture_path is not None:
+            img = Image.open(texture_path).convert("RGB")
+    if img is None:
+        img = Image.new("RGB", (512, 512), "white")
+    img = img.resize((512, 512))
+    draw = ImageDraw.Draw(img)
+    w, h = img.size
+
+    def draw_tris(uvs, tris, color):
+        for tri in tris:
+            pts = [(uvs[i][0] * w, uvs[i][1] * h) for i in tri]
+            draw.line([pts[0], pts[1], pts[2], pts[0]], fill=color, width=1)
+
+    draw_tris(review["target_uvs"], review["target_tris"], "blue")
+    draw_tris(review["uvs"], review["patch_tris"], "red")
+    img.save(out_path)
+
+
+def _summary_line(rel: str, file_hash: str, fix: dict) -> str:
+    m = fix["merges"][0]
+    max_err = m["max_fit_error"]
+    max_err_str = "n/a" if max_err is None else f"{max_err:.2e}"
+    return (f"{rel}  {file_hash}  {m['patch']['name']}→{m['target']['name']}  "
+            f"{m['method']}  max_err={max_err_str}  uvs={len(m['uvs'])} "
+            f"welds={len(m['weld'])}")
+
+
+def main(argv=None) -> None:
+    """CLI entry point. For each mesh in `STOCK_MESHES` (or `--only`):
+    resolve it under the stock game root, hash it, call `nif_shapes` and
+    `build_fix`, print one summary line, and render a review PNG. A mesh
+    that fails prints its error and does not abort the run. With `--write`,
+    also writes `native/assets/mesh_fixes/<hash>.json`."""
+    from engine import paths
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", action="append", default=None,
+                         help="restrict to this mesh's rel path (repeatable)")
+    parser.add_argument("--target", action="append", default=[],
+                         metavar="REL=SHAPE",
+                         help="override the merge target shape for REL "
+                              "(repeatable)")
+    parser.add_argument("--review-dir", default=None,
+                         help="where to write review PNGs (default: a "
+                              "mesh_fix_review folder under the system temp "
+                              "dir)")
+    parser.add_argument("--write", action="store_true",
+                         help="write native/assets/mesh_fixes/<hash>.json")
+    args = parser.parse_args(argv)
+
+    targets = dict(TARGET_OVERRIDES)
+    for spec in args.target:
+        rel, _, shape_name = spec.partition("=")
+        targets[rel] = shape_name
+
+    review_dir = (Path(args.review_dir) if args.review_dir is not None
+                  else Path(tempfile.gettempdir()) / "mesh_fix_review")
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    meshes = STOCK_MESHES
+    if args.only is not None:
+        meshes = [rel for rel in STOCK_MESHES if rel in args.only]
+
+    out_dir = None
+    if args.write:
+        out_dir = paths.project_asset_root() / "mesh_fixes"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    for rel in meshes:
+        try:
+            mesh_path = paths.game_root() / rel
+            file_hash = fnv1a64_hex(mesh_path.read_bytes())
+            shapes = _nif_shapes(str(mesh_path))
+            if shapes is None:
+                raise ValueError(f"could not parse {mesh_path}")
+            fix, review = build_fix(shapes, rel, targets.get(rel))
+        except Exception as exc:  # noqa: BLE001 -- one bad mesh must not abort the run
+            print(f"{rel}  ERROR: {exc}")
+            continue
+
+        print(_summary_line(rel, file_hash, fix))
+        _render_review_png(rel, review, review_dir / (Path(rel).stem + ".png"))
+
+        if args.write:
+            (out_dir / f"{file_hash}.json").write_text(dumps(fix))
 
 
 if __name__ == "__main__":
