@@ -170,6 +170,30 @@ std::string validate_merge(const nif::File& file, const MeshFixMerge& m,
     if (patch_data->has_vertex_colors != target_data->has_vertex_colors)
         return prefix + "vertex-color presence mismatch";
 
+    // Phase-1 hardening (final review, Ruling 9). None of these are reached
+    // by any stock fix -- a NIF with has_vertices == false or a mismatched
+    // array wouldn't have parsed a usable shape in the first place -- but a
+    // corrupt or hand-edited fix, or a future non-stock source, must not read
+    // out of bounds below.
+    if (!patch_data->has_vertices || !target_data->has_vertices)
+        return prefix + "shape has no vertex data";
+    if (patch_data->vertices.size() != patch_data->num_vertices)
+        return prefix + "patch vertex array size does not match num_vertices";
+    if (target_data->vertices.size() != target_data->num_vertices)
+        return prefix + "target vertex array size does not match num_vertices";
+    for (const auto& tri : patch_data->triangles) {
+        for (std::uint16_t idx : tri) {
+            if (idx >= patch_data->num_vertices)
+                return prefix + "patch triangle index out of range";
+        }
+    }
+    {
+        const std::size_t merged_tri_count =
+            static_cast<std::size_t>(target_data->num_triangles) + patch_data->num_triangles;
+        if (merged_tri_count > 65535)
+            return prefix + "merged triangle count exceeds 65535";
+    }
+
     // Rule 4.
     if (m.uvs.size() != patch_data->num_vertices)
         return prefix + "uv count does not match patch vertex count";

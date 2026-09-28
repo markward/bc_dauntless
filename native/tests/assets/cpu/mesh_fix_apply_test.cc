@@ -200,3 +200,63 @@ TEST(MeshFixApply, RefusesVertexOverflow) {
     fix.merges[0].weld.clear();
     EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
 }
+
+// Phase-1 hardening: has_vertices / vertices.size() consistency, patch
+// triangle indices in range, and a triangle-count overflow guard -- each a
+// refusal, no mutation (final review, Ruling 9). Each mutates the FILE
+// (not just the fix), so these build the fix from the already-mutated
+// synthetic (mirroring RefusesVertexOverflow above) rather than going
+// through expect_refused, which rebuilds its own untouched make().
+TEST(MeshFixApply, RefusesWhenPatchHasNoVertexData) {
+    auto s = make();
+    auto& pd = std::get<nif::NiTriShapeData>(s.f.blocks[4]);
+    pd.has_vertices = false;
+    auto fix = fix_for(s);
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
+}
+
+TEST(MeshFixApply, RefusesWhenTargetHasNoVertexData) {
+    auto s = make();
+    auto& td = std::get<nif::NiTriShapeData>(s.f.blocks[2]);
+    td.has_vertices = false;
+    auto fix = fix_for(s);
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
+}
+
+TEST(MeshFixApply, RefusesWhenPatchVertexArraySizeMismatchesCount) {
+    auto s = make();
+    auto fix = fix_for(s);  // build the fix (uvs/weld) BEFORE truncating
+    auto& pd = std::get<nif::NiTriShapeData>(s.f.blocks[4]);
+    pd.vertices.pop_back();  // 3 vertices left, num_vertices still says 4
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
+}
+
+TEST(MeshFixApply, RefusesWhenTargetVertexArraySizeMismatchesCount) {
+    auto s = make();
+    auto fix = fix_for(s);
+    auto& td = std::get<nif::NiTriShapeData>(s.f.blocks[2]);
+    td.vertices.pop_back();
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
+}
+
+TEST(MeshFixApply, RefusesPatchTriangleIndexOutOfRange) {
+    auto s = make();
+    auto& pd = std::get<nif::NiTriShapeData>(s.f.blocks[4]);
+    pd.triangles[0][0] = 99;  // patch only has 4 vertices (0..3)
+    auto fix = fix_for(s);
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
+}
+
+TEST(MeshFixApply, RefusesTriangleCountOverflow) {
+    auto s = make();
+    auto& t = std::get<nif::NiTriShapeData>(s.f.blocks[2]);
+    t.num_triangles = 65534;  // + patch's 2 triangles > 65535
+    auto fix = fix_for(s);
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
+}

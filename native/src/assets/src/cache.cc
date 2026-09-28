@@ -109,9 +109,14 @@ ModelHandle AssetCache::load(
     const fs::path& nif_path,
     const std::vector<fs::path>& search_paths,
     const std::vector<TextureReplacement>& texture_replacements) {
-    // Decided BEFORE the cache lookup, so a cache hit never re-reads or
-    // re-parses the NIF: a fix that parses changes the key, so a fixed and
-    // an unfixed load of the same nif_path land in different entries.
+    // Decided BEFORE the cache lookup, so the fix (if any) can change the
+    // cache key: a fixed and an unfixed load of the same nif_path land in
+    // different entries. This does NOT avoid re-reading the NIF on a cache
+    // hit -- read_file_bytes(nif_path) below runs on every call, hit or
+    // miss, to compute the fix lookup hash; a miss then reads it a second
+    // time via nif::load. In practice this is bounded by
+    // host_bindings.cc's g_loaded_models dedupe, which calls in here at
+    // most once per (path, registry) variant.
     std::optional<MeshFix> fix;
     std::string fix_key;
     if (impl_->config.mesh_fix_dir) {

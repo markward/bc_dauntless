@@ -6,8 +6,10 @@
 #include "support/content_root.h"
 
 #include <assets/mesh_fix.h>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <string>
 
 namespace fs = std::filesystem;
 
@@ -255,4 +257,72 @@ TEST(AssetCacheMeshFix, RealGalaxyLosesItsIdPatch) {
         return n;
     };
     EXPECT_LT(verts(*b), verts(*a));
+}
+
+// Extracts a top-level `"source": "..."` string field from raw fix-file
+// JSON text without pulling nlohmann into this test binary (parse_mesh_fix
+// itself ignores the field). Good enough for the fixed, generator-written
+// shape of every committed fix file.
+namespace {
+std::string mesh_fix_source_field(const std::string& text) {
+    auto key = text.find("\"source\"");
+    if (key == std::string::npos) return {};
+    auto colon = text.find(':', key);
+    if (colon == std::string::npos) return {};
+    auto q1 = text.find('"', colon + 1);
+    if (q1 == std::string::npos) return {};
+    auto q2 = text.find('"', q1 + 1);
+    if (q2 == std::string::npos) return {};
+    return text.substr(q1 + 1, q2 - q1 - 1);
+}
+}  // namespace
+
+// Gate: every committed fix file in native/assets/mesh_fixes must actually
+// apply cleanly against the real stock NIF it names, and its filename stem
+// must be that NIF's own content hash (so it will ever be found at
+// runtime). Catches a fix that silently stopped applying (a hull edit
+// upstream, a stray hand-edit) without needing a per-ship named test.
+TEST(AssetCacheMeshFix, EveryCommittedFixApplies) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+
+    const fs::path fixes = fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
+    std::vector<fs::path> fix_files;
+    for (const auto& entry : fs::directory_iterator(fixes))
+        if (entry.path().extension() == ".json") fix_files.push_back(entry.path());
+    std::sort(fix_files.begin(), fix_files.end());
+    ASSERT_EQ(fix_files.size(), 5u) << "expected exactly 5 committed mesh fixes (High LOD only)";
+
+    auto cfg = stub_config();
+    assets::AssetCache plain(cfg);
+    cfg.mesh_fix_dir = [fixes] { return fixes; };
+    assets::AssetCache fixed(cfg);
+
+    for (const auto& fix_path : fix_files) {
+        SCOPED_TRACE(fix_path.string());
+        const auto text = file_bytes(fix_path);
+        const auto rel = mesh_fix_source_field(text);
+        ASSERT_FALSE(rel.empty()) << "fix file has no \"source\" field";
+
+        const fs::path nif_path = test_support::game_root() / rel;
+        if (!fs::exists(nif_path)) {
+            GTEST_SKIP() << "content missing: " << nif_path.string();
+        }
+
+        const auto nif_bytes = file_bytes(nif_path);
+        EXPECT_EQ(assets::fnv1a64_hex(nif_bytes), fix_path.stem().string())
+            << "fix filename does not match the content hash of " << rel;
+
+        auto file = nif::load(nif_path);
+        std::string parse_error;
+        auto fix = assets::parse_mesh_fix(text, &parse_error);
+        ASSERT_TRUE(fix.has_value()) << "parse failed: " << parse_error;
+        EXPECT_EQ(assets::apply_mesh_fix(file, *fix), "")
+            << "committed fix was refused";
+
+        std::vector<fs::path> search{nif_path.parent_path() / "High", fed_high_path()};
+        auto a = plain.load(nif_path, search);
+        auto b = fixed.load(nif_path, search);
+        EXPECT_EQ(b->meshes.size() + 1, a->meshes.size())
+            << "fixed model should have exactly one fewer mesh (the hidden patch)";
+    }
 }

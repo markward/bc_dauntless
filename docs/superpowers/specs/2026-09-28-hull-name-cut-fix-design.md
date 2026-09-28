@@ -243,3 +243,166 @@ done, status is "merged, not live-verified".
 - Visual check of the Akira and Ambassador overlays before their fix files are
   committed.
 - CLAUDE.md reference-table row.
+
+---
+
+## 10. As built (deviations from §§2–7)
+
+Implementation surfaced several decisions §§2–7 didn't anticipate. This
+section is authoritative where it conflicts with the sections above; §§1–9
+are left as the original design record. Sourced from the SDD ledger
+(`.superpowers/sdd/2026-09-28-hull-name-cut-fix/progress.md`), Rulings 3–8
+and the 2026-09-28 Mark-decisions entry.
+
+### 10.1 Scope is High LOD only — 5 fixes, not 10
+
+§5 scoped the generator to "10 stock meshes (5 hulls × High and Medium)".
+Mark's dry-run decision narrowed this: **the engine never loads Medium or Low
+meshes** (confirmed against the loader), so a Medium-LOD fix file would never
+be looked up at runtime. Scope is the **5 High-LOD meshes only** — one fix
+file per hull: Galaxy, Nebula, Sovereign, Akira, Ambassador. `tools/
+gen_mesh_fixes.py`'s `STOCK_MESHES` and the committed `native/assets/
+mesh_fixes/*.json` both hold exactly 5 entries; `TARGET_OVERRIDES` is empty
+(no committed fix needed one).
+
+### 10.2 Akira is included, with a stock-texture caveat
+
+Mark's decision also settled the Akira, left open by §2.2 ("Akira and
+Ambassador overlays are unchecked"): included. Mark's local replacement
+texture for the Akira saucer is clean under the patch, but **the stock**
+`AkiraSaucerTopID_glow.tga` **sits over `NCC-63471`** — a different ship's
+registry baked into the base texture. The fix still erases the seam; a
+player running unmodified stock content will see that baked-in registry
+until the decal follow-up (§8) re-adds the correct one.
+
+### 10.3 Stock NIFs resolve via `game_root()`, not `game_asset()`
+
+Ruling 5: the generator, the drift-guard test, and the C++ gate test all
+resolve source NIFs as `paths.game_root() / rel` (Python) /
+`test_support::game_root() / rel` (C++) — **never** `paths.game_asset(rel)`.
+`game_asset` prefers a mod/replacement override when one exists, which would
+compute a fix against content different from what's committed and drift the
+hash. Fixes are stock-only by design (§3: "Stock meshes only"), so this is
+deliberate, not an oversight of the general paths rule. Cost if wrong: none
+observed for the 5 stock ships; a future case-sensitive filesystem would need
+a case-insensitive lookup for `Nebula.NIF` (the file is capitalized
+differently than the other four `.nif` files, and macOS/Windows are already
+case-insensitive).
+
+### 10.4 Multi-merge role refusal (not cumulative-offset support)
+
+§6 lists the all-or-nothing refusal rules; fix-round-1 review of Task 2 found
+a gap not in that list: two merges in the same fix that both touch one
+`NiTriShapeData` block (as a target used twice, a patch used twice, or one
+merge's patch being another's target) would corrupt the second merge's index
+remap, because `validate_merge` plans against the *pre-merge* vertex count.
+Ruling 3 chose the cheap fix over threading a cumulative append offset
+through repeated use: **`apply_mesh_fix` refuses the whole fix if any
+`NiTriShapeData` block appears in more than one role across its merges.**
+Every stock fix is a single merge, so this costs nothing today — a future
+mesh needing two patches merged into one target would need the fuller
+(cumulative-offset) implementation. Implemented as the `data_block_owner`
+check in `mesh_fix.cc`; covered by `MeshFixApply.RefusesWhenTwoMergesShareTargetData`.
+
+### 10.5 `normals` overrides are patch-local, not target-local
+
+Ruling 4: `MeshFixMerge::normals`, where present, is one override vector per
+patch vertex, **in the patch's own local frame** — rotated into the target
+shape's frame the same way the patch's own `NiTriShapeData` normals are
+(`n_to_target`, §3's step 1). This was the natural reading given the
+generator authors overrides from patch-local data, and every committed fix
+emits `null` (no override was needed on any of the 5 — see §2.3's "Sovereign
+may be genuinely broken" note, which turned out not to require one). A
+hand-authored override in a target-local frame would land rotated; none
+exist.
+
+### 10.6 Twin-count ranking, then fit quality
+
+§5 step 3 said "pick the region with the most shared vertices." Ruling 7(a)
+made this explicit as a two-key sort: **rank candidate target regions by
+twinned-patch-vertex count first**, breaking ties only by fit success. A
+"twin" is a patch vertex whose position and UV both coincide with a
+candidate region's vertex (`_LOCAL_FIT_TOL` = 5e-3 GU, shared with welding).
+This is `build_fix`'s candidate sort key
+`(num_twinned, fit_ok, region_count)` in `tools/gen_mesh_fixes.py`.
+
+### 10.7 The `local-fit` method
+
+§5 step 4 only described a global mirrored/unmirrored top-down fit, accepted
+below `1e-4`. The Ambassador's saucer mapping is only *nearly* planar
+(~1.7e-2 error globally — §2.2) and the `seam-copy` fallback (§5 step 5)
+collapsed its 16 body-only vertices to degenerate slivers, so Ruling 7(b)
+added a third method, tried after the global fit fails:
+
+1. **Window:** every chosen-region vertex within `_LOCAL_FIT_RADIUS_FRAC`
+   (0.05) × the patch's own world-bbox diagonal of **any** patch vertex — a
+   distance *ring* around the patch, not an expanded bounding box (a plain
+   bbox expansion was tried first and rejected; see `fix(tools): local-fit
+   window is a distance ring, not a bbox expansion`).
+2. **Fit:** least-squares plane fit restricted to that window, tried
+   mirrored then unmirrored, `xy` then `xyz`. Accepted if `max_fit_error <=
+   _LOCAL_FIT_TOL` (5e-3 GU).
+3. **Snap:** every patch vertex with an exact twin in the chosen region is
+   then snapped to that twin's own UV, so the shared seam is always exact
+   even though the fitted interior is only approximate.
+
+Ruling 8 fixed the window radius by measurement on the Ambassador: `d < 10`
+GU (≈ 0.05 × 206, the patch's diagonal) gives 34 twinned vertices and a
+mirrored-xyz fit error of 2.0e-3; `d < 50` gives 7.1e-3; the whole region
+gives 1.7e-2 (the mapping drifts away from the patch at that range). The
+Ambassador's committed fix uses `local-planar-mirrored` at `max_fit_error =
+4.37e-3` (\~4.4e-3) — inside the window's tolerance, worse than the other
+four ships' near-exact global fits, but the only one of the 5 that needed
+this method. UV error from the fit stays inside the patch interior; the seam
+itself is snap-exact by construction.
+
+### 10.8 The 5 committed fixes
+
+| Ship | Patch → target | Method | `max_fit_error` | Welds |
+|---|---|---|---|---|
+| Galaxy | `Ent-D Saucer Section:9` → `Ent-D Saucer Section:1` | `planar-mirrored` | 1.86e-7 | 13 |
+| Nebula | `Nebula Hull:11` → `Nebula Hull:7` | `planar-mirrored` | 2.23e-7 | 0 |
+| Sovereign | `top o dish:5` → `top o dish:1` | `planar-mirrored` | 4.24e-7 | 6 |
+| Akira | `Akira - Saucer:3` → `Akira - Saucer:1` | `planar-xyz` | 8.72e-8 | 6 |
+| Ambassador | `amb saucer:3` → `amb saucer:0` | `local-planar-mirrored` | 4.37e-3 | 6 |
+
+The Nebula's 0 welds is deliberate, not a miss: the Python weld-normal gate
+(`0.9999` dot product) is tighter than the C++ apply-time gate (`0.999`,
+`mesh_fix.cc`'s "weld normals differ" rule), and the Nebula's seam-vertex
+normal dots measure 0.9993–0.9997 — inside the C++ tolerance but outside the
+generator's, so no weld pair is emitted for it. The seam UVs are still
+continuous either way (rebuilt UVs match the neighbour's exactly at every
+seam vertex; welding only affects whether the *vertex* itself is shared or
+duplicated). Loosening the Python gate (e.g. to `0.9995`) is safe either way
+and was left for a live check to decide (deferred, not yet done).
+
+### 10.9 Tests as actually written (§7 update)
+
+The asset-backed real-mesh tests in `native/tests/assets/cpu/cache_test.cc`
+diverge from §7's table in one respect: §7 specified an exact arithmetic
+assertion ("saucer vertex count = old + patch − welds"). As built,
+`AssetCacheMeshFix.RealGalaxyLosesItsIdPatch` instead asserts:
+
+- `fixed->meshes.size() + 1 == plain->meshes.size()` (the patch shape is
+  hidden and skipped by `build_model`),
+- `fixed->materials.size() + 1 == plain->materials.size()` (the patch's own
+  material disappears with it),
+- `verts(fixed) < verts(plain)` (a strict *decrease*, not an exact count) —
+  welding removes duplicate seam vertices, but pinning the precise arithmetic
+  in a gtest would recouple the test to the exact weld count, which is a
+  property of the fix data, not of `apply_mesh_fix`'s contract.
+
+The final review wave (this section's own source) added a second,
+fix-file-driven test, `AssetCacheMeshFix.EveryCommittedFixApplies`, closing
+the gap that only the Galaxy fix had ever been exercised against real
+content. For every `*.json` under `native/assets/mesh_fixes/`, it: reads the
+fix file's `source` field, resolves it under `test_support::game_root()`
+(§10.3), asserts the filename stem equals `fnv1a64_hex` of the real NIF's
+bytes, asserts `apply_mesh_fix` returns `""` against a fresh `nif::load` of
+that file, and — through two `AssetCache`s (one plain, one configured with
+`mesh_fix_dir` pointing at the committed directory) — asserts the fixed
+model has exactly one fewer mesh than the plain one. It also pins the
+committed-fix count at exactly 5 (§10.1). The drift guard
+(`tests/tools/test_mesh_fixes_drift.py::test_committed_fixes_match_generator_output`)
+covers §7's last row unchanged: rerunning the generator over `STOCK_MESHES`
+must reproduce every committed fix file byte-for-byte.
