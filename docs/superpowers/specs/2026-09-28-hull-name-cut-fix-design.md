@@ -370,6 +370,23 @@ that vertex to u=0.49947 — the region's true minimum, not the ~0.5 this
 paragraph's diagnosis eyeballed. Snapped twins already lie inside the range,
 so the clamp is a no-op for them and for all 4 exact-fit ships.
 
+Even inside the region's own bounds, the Ambassador still showed a thin dark
+seam along the saucer centreline, but only within the glowing area.
+Measurement: `AmbassadorSaucer_glow.tga` is 256×256; its left half (columns
+≤127, u≤0.49609) is the saucer *underside* and has glow alpha 0 there, while
+its right half (columns ≥128, u≥0.5) is the *top*, with alpha 126–255 at the
+patch's rows. The centreline vertices' rebuilt u (0.49947–0.50094, columns
+~127.86–128.24) straddles that split, so bilinear filtering blends in
+26–36% of the alpha-0 underside texel per sample and dims the glow along the
+seam by about a third — normals and geometry were checked and are clean, so
+this is a texture-sampling artefact, not a mesh one. `gen_mesh_fixes.py`
+adds a per-mesh `UV_CLAMP_OVERRIDES` dict, threaded through `build_fix` as a
+fourth parameter the same way `TARGET_OVERRIDES` is threaded, that merges
+onto the computed region bounds before the clamp above is applied. The
+Ambassador's entry raises `u_min` to `129/256` (0.50390625) — one texel past
+the split — so both mip 0 and mip 1 sample wholly inside the alpha>0 top
+half; the region's other three bounds, and every other ship, are untouched.
+
 ### 10.8 The 5 committed fixes
 
 | Ship | Patch → target | Method | `max_fit_error` | Welds |

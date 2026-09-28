@@ -19,7 +19,9 @@ def test_committed_fixes_match_generator_output():
         if not nif.exists():
             pytest.skip("BC content not configured")
         data = nif.read_bytes()
-        fix, _ = g.build_fix(host.nif_shapes(str(nif)), rel, g.TARGET_OVERRIDES.get(rel))
+        fix, _ = g.build_fix(host.nif_shapes(str(nif)), rel,
+                             g.TARGET_OVERRIDES.get(rel),
+                             g.UV_CLAMP_OVERRIDES.get(rel))
         produced[g.fnv1a64_hex(data) + ".json"] = g.dumps(fix)
     committed = {p.name: p.read_text() for p in FIX_DIR.glob("*.json")}
     assert committed == produced

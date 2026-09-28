@@ -129,6 +129,39 @@ def test_build_fix_clamps_extrapolated_uv_into_region_bounds():
     assert m["uvs"][seam_idx] == pytest.approx([0.5, 0.7], abs=1e-6)
 
 
+def test_build_fix_uv_clamp_override_raises_u_floor_for_affected_vertices_only():
+    # Target spans x in [-2, 2] (u in [0.1, 0.9]) and the patch spans a
+    # narrower x in [-1, 1] (u in [0.1, 0.5]), both over the same y range, so
+    # the default region-bounds clamp is a no-op here -- every patch UV
+    # already sits inside [0.1, 0.9]. A u_min override of 0.3 should raise
+    # only the vertex whose computed u falls below it (x=0 -> u=0.1) and
+    # leave the ones at or above it (x=+-0.5 -> u=0.3 exactly; x=+-1 ->
+    # u=0.5) untouched.
+    target = _grid_shape(1, "saucer", -2.0, 2.0, True, y0=0.0, y1=2.0)
+    patch = _grid_shape(2, "idpatch", -1.0, 1.0, True, tex="Hull_ID_glow.tga",
+                         y0=0.0, y1=2.0)
+    patch["uvs"] = [(0.0, 0.0)] * len(patch["uvs"])
+
+    fix_default, _ = g.build_fix([target, patch], "r", None)
+    default_uvs = fix_default["merges"][0]["uvs"]
+    centre_idx = patch["vertices"].index((0.0, 1.0, 0.0))
+    edge_idx = patch["vertices"].index((1.0, 1.0, 0.0))
+    boundary_idx = patch["vertices"].index((0.5, 1.0, 0.0))
+    assert default_uvs[centre_idx][0] == pytest.approx(0.1, abs=1e-6)
+    assert default_uvs[edge_idx][0] == pytest.approx(0.5, abs=1e-6)
+
+    fix, _ = g.build_fix([target, patch], "r", None, {"u_min": 0.3})
+    uvs = fix["merges"][0]["uvs"]
+    # Below-floor vertex raised to the override.
+    assert uvs[centre_idx][0] == pytest.approx(0.3, abs=1e-6)
+    # At-floor vertex unaffected (already exactly at it).
+    assert uvs[boundary_idx][0] == pytest.approx(0.3, abs=1e-6)
+    # Above-floor vertex left untouched.
+    assert uvs[edge_idx][0] == pytest.approx(0.5, abs=1e-6)
+    # v is unaffected by a u-only override.
+    assert uvs[centre_idx][1] == pytest.approx(default_uvs[centre_idx][1], abs=1e-6)
+
+
 def test_build_fix_refuses_ambiguous_mirroring():
     # Saucer region wholly on x<=0 fits BOTH projections; a patch reaching x>0
     # cannot be resolved without guessing.
@@ -283,7 +316,7 @@ def test_main_survives_one_bad_mesh_and_only_writes_with_flag(
     review_dir = tmp_path / "review"
     fix_dir = tmp_path / "native_assets"
 
-    def fake_build_fix(shapes, rel, target_override):
+    def fake_build_fix(shapes, rel, target_override, uv_clamp_override=None):
         if rel == mesh_bad:
             raise ValueError("no candidate target region borders the ID patch")
         return _fake_fix(rel)

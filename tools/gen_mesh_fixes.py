@@ -39,6 +39,25 @@ STOCK_MESHES: tuple = (
 # for a future mesh whose ID patch borders more than one shape ambiguously.
 TARGET_OVERRIDES: dict = {}
 
+# Per-mesh overrides for build_fix's region-bounds UV clamp (see the clamp
+# comment inside build_fix), keyed by the `rel` path in STOCK_MESHES. Each
+# value merges over the computed region bounds via dict.get(key, default) --
+# only keys present here move; everything else keeps the region's own bound.
+#
+# Ambassador: AmbassadorSaucer_glow.tga is 256x256. Its left half (columns
+# <=127, u<=0.49609) is the saucer UNDERSIDE and has glow alpha 0 there; its
+# right half (columns >=128, u>=0.5) is the TOP, with alpha 126-255 at the
+# patch's rows. The patch's centreline vertices land at u=0.49947-0.50094
+# (columns ~127.86-128.24) -- straddling the alpha-0/alpha>0 split -- so
+# bilinear filtering blends in 26-36% of the alpha=0 texel per sample and
+# dims the glow along the seam by about a third (measured; see design doc
+# S10). Raising the floor to 129/256=0.50390625 -- one texel past the
+# split -- keeps both mip 0 and mip 1 sampling wholly inside the alpha>0
+# top half.
+UV_CLAMP_OVERRIDES: dict = {
+    "data/Models/Ships/Ambassador/Ambassador.nif": {"u_min": 129 / 256},
+}
+
 # FNV-1a 64-bit constants -- must match native/src/assets/src/mesh_fix.cc's
 # fnv1a64_hex exactly, since fix files are keyed by this hash.
 _FNV_OFFSET = 14695981039346656037
@@ -272,12 +291,16 @@ def seam_copy(patch: dict, known: dict) -> list:
     return list(zip(u, v))
 
 
-def build_fix(shapes: list, rel: str, target_override):
+def build_fix(shapes: list, rel: str, target_override, uv_clamp_override=None):
     """Build one fix file's contents from a NIF's shapes (as returned by
     `_dauntless_host.nif_shapes`). Returns (fix_json_dict, review_info).
     Raises ValueError if the mesh doesn't have exactly one ID-texture shape,
     no candidate target region borders it, or the target choice is
-    ambiguous under mirroring (see the design doc's ambiguity rule)."""
+    ambiguous under mirroring (see the design doc's ambiguity rule).
+
+    `uv_clamp_override`, if given, is a dict with any of "u_min", "u_max",
+    "v_min", "v_max" that overrides the corresponding region-bounds clamp
+    computed below (see UV_CLAMP_OVERRIDES)."""
     id_shapes = [s for s in shapes if any("ID" in t for t in s["textures"])]
     if len(id_shapes) != 1:
         raise ValueError(
@@ -391,6 +414,11 @@ def build_fix(shapes: list, rel: str, target_override):
     region_vs = [target_shape["uvs"][i][1] for i in region_idxs]
     u_min, u_max = min(region_us), max(region_us)
     v_min, v_max = min(region_vs), max(region_vs)
+    if uv_clamp_override:
+        u_min = uv_clamp_override.get("u_min", u_min)
+        u_max = uv_clamp_override.get("u_max", u_max)
+        v_min = uv_clamp_override.get("v_min", v_min)
+        v_max = uv_clamp_override.get("v_max", v_max)
     uvs_out = [
         [to_f32(min(max(u, u_min), u_max)), to_f32(min(max(v, v_min), v_max))]
         for u, v in uvs_out
@@ -562,7 +590,8 @@ def main(argv=None) -> None:
             shapes = _nif_shapes(str(mesh_path))
             if shapes is None:
                 raise ValueError(f"could not parse {mesh_path}")
-            fix, review = build_fix(shapes, rel, targets.get(rel))
+            fix, review = build_fix(
+                shapes, rel, targets.get(rel), UV_CLAMP_OVERRIDES.get(rel))
         except Exception as exc:  # noqa: BLE001 -- one bad mesh must not abort the run
             print(f"{rel}  ERROR: {exc}")
             continue
