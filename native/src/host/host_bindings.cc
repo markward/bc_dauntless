@@ -501,10 +501,44 @@ std::unique_ptr<renderer::Pipeline> g_pipeline;
 // static destruction order which would run after the Window is gone.
 std::unique_ptr<renderer::FrameSubmitter> g_submitter;
 
+// Parse one Python decal entry -- a 7-sequence (shape, origin3, u_axis3,
+// v_axis3, normal3, depth, mask_path), exactly `hull_decals.DecalSpec` --
+// into a native DecalRequest. Returns false (leaving *out untouched) on
+// wrong arity or a non-numeric field; never throws. Mirrors model_build.cc's
+// apply_decals tolerance: a malformed entry must not stop a ship load
+// (spec S5), so the caller skips it and warns once instead of propagating
+// a TypeError out of load_model.
+bool parse_decal_request(const py::handle& item, assets::DecalRequest* out) {
+    try {
+        auto seq = item.cast<py::sequence>();
+        if (seq.size() != 7) return false;
+
+        auto parse_vec3 = [](py::handle h) -> glm::vec3 {
+            auto v = h.cast<py::sequence>();
+            if (v.size() != 3) throw std::runtime_error("decal vector arity");
+            return glm::vec3(v[0].cast<float>(), v[1].cast<float>(), v[2].cast<float>());
+        };
+
+        assets::DecalRequest req;
+        req.shape  = seq[0].cast<std::string>();
+        req.origin = parse_vec3(seq[1]);
+        req.u_axis = parse_vec3(seq[2]);
+        req.v_axis = parse_vec3(seq[3]);
+        req.normal = parse_vec3(seq[4]);
+        req.depth  = seq[5].cast<float>();
+        req.mask   = seq[6].cast<std::string>();
+        *out = std::move(req);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 scenegraph::ModelHandle load_model_impl(
     const std::string& nif_path,
     const py::object& texture_search_path,
-    const py::object& texture_replacements) {
+    const py::object& texture_replacements,
+    const py::object& decals) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -537,10 +571,39 @@ scenegraph::ModelHandle load_model_impl(
         }
     }
 
-    // Dedupe by (nif_path, replacements): callers that load the same NIF +
-    // registry for multiple ships get the same handle and the underlying
-    // assets::AssetCache::load isn't even called a second time. Distinct
-    // registries on the same NIF correctly produce distinct handles.
+    // Hull-name decals: a list of 7-sequences (see parse_decal_request).
+    // None / empty leaves the model byte-identical, same as replacements.
+    // Malformed entries are skipped (not thrown) and warned once, keyed by
+    // nif_path + index so a mission that reloads the same bad decal list
+    // every frame doesn't spam stderr.
+    static std::unordered_set<std::string> warned_malformed_decals;
+    std::vector<assets::DecalRequest> decal_requests;
+    if (!decals.is_none()) {
+        std::size_t index = 0;
+        for (auto item : decals) {
+            assets::DecalRequest req;
+            if (parse_decal_request(item, &req)) {
+                rep_key += "|decals:" + req.shape + '=' + req.mask.string() + ';';
+                decal_requests.push_back(std::move(req));
+            } else {
+                const std::string key = nif_path + "|decal-arg|" + std::to_string(index);
+                if (warned_malformed_decals.insert(key).second) {
+                    std::fprintf(stderr,
+                        "load_model: malformed decal entry %zu for %s "
+                        "(expected a 7-sequence of shape, origin, u_axis, "
+                        "v_axis, normal, depth, mask_path); skipping\n",
+                        index, nif_path.c_str());
+                }
+            }
+            ++index;
+        }
+    }
+
+    // Dedupe by (nif_path, replacements, decals): callers that load the same
+    // NIF + registry + decal set for multiple ships get the same handle and
+    // the underlying assets::AssetCache::load isn't even called a second
+    // time. Distinct registries or decal sets on the same NIF correctly
+    // produce distinct handles.
     std::filesystem::path canonical = nif_path;
     for (std::size_t i = 0; i < g_loaded_models.size(); ++i) {
         if (g_loaded_models[i].nif_path == canonical &&
@@ -563,7 +626,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -1965,7 +2028,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("frame", &frame);
     m.def("load_model", &load_model_impl,
           py::arg("nif_path"), py::arg("texture_search_path"),
-          py::arg("texture_replacements") = py::none());
+          py::arg("texture_replacements") = py::none(),
+          py::arg("decals") = py::none());
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -2672,7 +2736,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none());
+                                            py::none(), py::none());
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the

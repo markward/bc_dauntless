@@ -174,11 +174,9 @@ def load_model(nif_path: str, texture_search_path,
 
     `decals` is `engine.appc.hull_decals.decals_for(...)`'s output: a list of
     (shape, origin, u_axis, v_axis, normal, depth, mask_abs_path) registry
-    name-decal projectors. Accepted here but NOT yet forwarded to
-    `_h.load_model` -- the native binding gains that parameter separately
-    (hull name decals Task 4); until then this keeps callers that already
-    pass a non-empty decal list from raising TypeError."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements)
+    name-decal projectors. None / empty is byte-identical to the plain
+    load."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals)
 
 
 def create_instance(model: int) -> InstanceId:
