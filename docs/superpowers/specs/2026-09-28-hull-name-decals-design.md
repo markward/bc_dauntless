@@ -35,6 +35,12 @@ Where the mask's alpha covers the hull:
 Paint is glossy and the hull is matte: the name catches the light as the ship
 turns.
 
+**Implementation note:** mask RGB is **premultiplied by alpha at load**, and
+the albedo composite is `base.rgb·(1−a) + mask.rgb_premultiplied`. That's the
+same result as the straight-alpha `mix` for opaque texels. Without it,
+bilinear and mip filtering would pull the black RGB of transparent texels
+into the letter edges as a dark halo.
+
 ## 3. Files and authoring
 
 Per ship class, beside its NIF, under `data/Models/Ships/<Class>/Masks/`.
