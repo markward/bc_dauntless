@@ -8,7 +8,7 @@ from __future__ import annotations
 import importlib
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Optional
 
 import os as _os_mod
@@ -4991,12 +4991,16 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     return handle, extent, sphere_radius
 
 
-def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
-    """Return absolute path to the ship's high-LOD NIF, or None if not found.
+def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
+    """`ship`'s script's `GetShipStats()` dict, or None on any fault (empty
+    script, import failure, missing/non-callable GetShipStats, non-dict
+    return). Shared by `_ship_nif_path` (resolves the absolute NIF) and
+    `declared_model_dir` (needs only the DECLARED, still-relative path) so
+    both use the identical script lookup.
 
-    When verbose is True, prints the specific reason for any None return
-    (script lookup, import, stats access, file-not-found) so the host's
-    diagnostic mode can surface why ships aren't getting render instances.
+    When verbose is True, prints the specific reason for any None return so
+    the host's diagnostic mode can surface why ships aren't getting render
+    instances.
     """
     try:
         script_name = ship.GetScript()
@@ -5024,10 +5028,23 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
         if verbose:
             print(f"[host_loop]   skip: {script_name}.GetShipStats() returned non-dict: {type(stats).__name__}", flush=True)
         return None
+    return stats
+
+
+def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
+    """Return absolute path to the ship's high-LOD NIF, or None if not found.
+
+    When verbose is True, prints the specific reason for any None return
+    (script lookup, import, stats access, file-not-found) so the host's
+    diagnostic mode can surface why ships aren't getting render instances.
+    """
+    stats = _ship_stats(ship, verbose=verbose)
+    if stats is None:
+        return None
     rel = stats.get("FilenameHigh")
     if not rel:
         if verbose:
-            print(f"[host_loop]   skip: {script_name}.GetShipStats() missing 'FilenameHigh' (keys: {list(stats.keys())})", flush=True)
+            print(f"[host_loop]   skip: GetShipStats() missing 'FilenameHigh' (keys: {list(stats.keys())})", flush=True)
         return None
     abs_path = _paths.game_asset(rel)
     if not abs_path.is_file():
@@ -5035,6 +5052,31 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
             print(f"[host_loop]   skip: NIF file not found at {abs_path}", flush=True)
         return None
     return str(abs_path)
+
+
+def declared_model_dir(ship) -> Optional[str]:
+    """The BC-relative dirname of `ship`'s DECLARED high-LOD model
+    (`GetShipStats()["FilenameHigh"]`), e.g.
+    "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif" -> "data/Models/Ships/BirdOfPrey".
+
+    Used to resolve a class's `Masks/` folder for hull decals beside the
+    path the ship SCRIPT declares, rather than `_ship_nif_path`'s resolved
+    absolute path -- a mod-supplied model can resolve outside `game_root()`
+    entirely (no `.relative_to(game_root())` is possible for it), but its
+    declared `FilenameHigh` string is still BC-relative and posix. Never
+    raises; any fault in the script lookup (see `_ship_stats`) or a missing
+    'FilenameHigh' returns None.
+    """
+    stats = _ship_stats(ship)
+    if stats is None:
+        return None
+    rel = stats.get("FilenameHigh")
+    if not rel:
+        return None
+    try:
+        return PurePosixPath(str(rel)).parent.as_posix()
+    except Exception:
+        return None
 
 
 # BC texture-detail tier subfolder. The original engine's texture-directory
@@ -5148,30 +5190,40 @@ def _ship_texture_replacements(ship):
 
 
 # nif_path values already warned about (Exception, not the routine
-# no-BC-relative-folder ValueError below) this process lifetime -- a ship
-# that keeps reloading every frame must not spam stderr.
+# unresolvable-declared-model-dir case below) this process lifetime -- a
+# ship that keeps reloading every frame must not spam stderr.
 _ship_decals_warned: set = set()
 
 
-def _ship_decals(nif_path, reps):
+def _ship_decals(ship, nif_path, reps):
     """Registry-mask decal list for a ship's model load
-    (`hull_decals.decals_for`), or `[]` when the NIF has no BC-relative
-    folder (a mod-overlay NIF -- see `_ship_texture_search`'s own
-    `nif_rel` computation, which this mirrors), no registry was queued, or
+    (`hull_decals.decals_for`), or `[]` when `ship`'s declared model path
+    can't be resolved (`declared_model_dir`), no registry was queued
+    (neither an "ID" swap nor a `decals.json` `default_registry`), or
     anything else about resolving the decal list fails. This must never
     abort `realize_set_objects`' loop over every other ship in the set --
     `hull_decals.decals_for` already catches its own faults (spec S5), but
-    this is the backstop for anything it doesn't (a bad relative-path
-    computation here, a future regression inside it).
+    this is the backstop for anything it doesn't (a future regression
+    inside it, or in `declared_model_dir` / `resolve_registry` here).
+
+    `nif_path` is kept only as the warn-once dedupe key; the decal
+    resolution itself uses `declared_model_dir(ship)`, not `nif_path` --
+    see that function's docstring for why (mod-model NIFs resolve outside
+    `game_root()`, but the ship's DECLARED path is still BC-relative).
+
+    The `decals.json` doc is loaded once here (`hull_decals.load_decals_doc`)
+    so `resolve_registry` can see its optional `default_registry` before a
+    registry is known; `hull_decals.decals_for` re-reads the same file for
+    the placement list. The warn-once ledger means a parse/format fault
+    only ever prints once even though the file is read twice.
     """
     from engine.appc import hull_decals
     try:
-        nif_rel_dir = Path(nif_path).parent.relative_to(
-            _paths.game_root()).as_posix()
-    except ValueError:
-        return []
-    try:
-        registry = hull_decals.registry_stem(reps or [])
+        nif_rel_dir = declared_model_dir(ship)
+        if nif_rel_dir is None:
+            return []
+        doc = hull_decals.load_decals_doc(nif_rel_dir)
+        registry = hull_decals.resolve_registry(reps or [], doc)
         return hull_decals.decals_for(nif_rel_dir, registry)
     except Exception as e:
         if nif_path not in _ship_decals_warned:
@@ -5669,7 +5721,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
             continue
         tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
-        decals = _ship_decals(nif_path, reps)
+        decals = _ship_decals(ship, nif_path, reps)
         try:
             handle = r_.load_model(nif_path, tex_search, reps,
                                     decals=decals or None)
@@ -6735,7 +6787,7 @@ class _MissionLoader:
             # is pure geometry — identical across registries — so it stays keyed
             # by nif_path.
             reps = _ship_texture_replacements(ship)
-            decals = _ship_decals(nif_path, reps)
+            decals = _ship_decals(ship, nif_path, reps)
             load_key = _ship_load_key(nif_path, reps, decals)
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:

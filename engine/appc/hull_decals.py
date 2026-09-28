@@ -125,41 +125,106 @@ def _projector_is_degenerate(
     return abs(det) <= _MIN_PROJECTOR_AREA * cross_len
 
 
-def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
-    """Resolve `<nif_rel_dir>/Masks/decals.json` for `registry` into decal
-    specs ready for `renderer.load_model(..., decals=)`.
+_MAX_DECALS = 4
 
-    `nif_rel_dir` is the ship model's own BC-relative folder (the NIF's
-    parent, relative to the game root -- see `host_loop._ship_texture_search`
-    for the same relative-path computation). `registry` is normally
-    `registry_stem(registry_texture.replacements_for(ship))`; None (no
-    queued "ID" swap) resolves nothing.
 
-    Every fault (spec S5) is caught here and skips only what it affects; a
-    missing decals.json is the common case (most classes have none) and is
-    silent. Resolution goes through `paths.game_asset`, so mod / project
-    overlays apply exactly like every other BC asset.
+def load_decals_doc(nif_rel_dir: str) -> Optional[dict]:
+    """The parsed `<nif_rel_dir>/Masks/decals.json`, or None.
+
+    None covers three cases, only two of which warn: the file doesn't exist
+    (silent -- most classes have none), it fails to parse (warn-once,
+    reason "parse"), or its "format" isn't 1 (warn-once, reason "format").
+    Resolution goes through `paths.game_asset`, so mod / project overlays
+    apply exactly like every other BC asset.
+
+    Split out of `decals_for` so `resolve_registry` can see the doc's
+    optional "default_registry" *before* a registry is known -- see
+    `host_loop._ship_decals` for how the two compose. `decals_for` also
+    calls this (re-reading the same file); the warn-once ledger means a
+    caller that already loaded the doc via this function and hit a
+    parse/format fault won't warn a second time when `decals_for` re-reads
+    it.
     """
-    if registry is None:
-        return []
-
     json_path = paths.game_asset(f"{nif_rel_dir}/Masks/decals.json")
     if not json_path.is_file():
-        return []
+        return None
 
     try:
         data = json.loads(json_path.read_text())
     except (OSError, ValueError):
         _warn_once((str(json_path), "parse"),
                     f"{json_path}: could not read/parse decals.json")
-        return []
+        return None
 
     if not isinstance(data, dict) or data.get("format") != 1:
         got = data.get("format") if isinstance(data, dict) else None
         _warn_once((str(json_path), "format"),
                     f"{json_path}: unsupported decals.json format {got!r} "
                     "(expected 1)")
+        return None
+
+    return data
+
+
+def resolve_registry(replacements, decals_doc: Optional[dict]
+                      ) -> Optional[str]:
+    """The registry to resolve `Masks/` under, from the first of:
+
+    1. The stem of the last queued `("ID", path)` ReplaceTexture
+       (`registry_stem(replacements)`, as today).
+    2. `decals_doc`'s optional `"default_registry"` string.
+    3. None, meaning no decals for this ship.
+
+    `decals_doc` is normally `load_decals_doc(nif_rel_dir)`'s result (or
+    None, e.g. no decals.json at all -- then only (1) can resolve).
+    """
+    stem = registry_stem(replacements)
+    if stem is not None:
+        return stem
+    if isinstance(decals_doc, dict):
+        default = decals_doc.get("default_registry")
+        if isinstance(default, str) and default:
+            return default
+    return None
+
+
+def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
+    """Resolve `<nif_rel_dir>/Masks/decals.json` for `registry` into decal
+    specs ready for `renderer.load_model(..., decals=)`.
+
+    `nif_rel_dir` is the ship's own BC-relative folder, taken from the
+    ship script's DECLARED model path (`host_loop.declared_model_dir`) so a
+    mod-supplied model (outside `game_root()`) still finds its own Masks/.
+    `registry` is normally `resolve_registry(...)`; None (no ID swap and no
+    `default_registry`) resolves nothing.
+
+    Every fault (spec S5) is caught here and skips only what it affects; a
+    missing decals.json is the common case (most classes have none) and is
+    silent. Resolution goes through `paths.game_asset`, so mod / project
+    overlays apply exactly like every other BC asset.
+
+    A per-model list of more than `_MAX_DECALS` (4) declared placements is
+    truncated to the first 4 (JSON object order), with one warning. A
+    `registry` for which NONE of the declared placements' masks resolve
+    short-circuits to no decals with one warning, rather than one
+    missing-mask warning per declared placement (this is the common
+    `default_registry`-names-an-unpopulated-folder case, but the check
+    itself is registry-source-agnostic). `paths.game_asset` is file-keyed
+    (mod/replacement overlays index individual files, not directories), so
+    this is a per-file existence check, not a directory check -- a
+    directory check would miss real content that resolves only through the
+    project-replacements overlay. `shape` is optional: a missing or empty
+    value passes through as `""` (native side: applies to every mesh it
+    projects onto); any other non-string value is invalid.
+    """
+    if registry is None:
         return []
+
+    data = load_decals_doc(nif_rel_dir)
+    if data is None:
+        return []
+
+    json_path = paths.game_asset(f"{nif_rel_dir}/Masks/decals.json")
 
     decals = data.get("decals")
     if not isinstance(decals, dict):
@@ -167,17 +232,39 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
                     f"{json_path}: 'decals' is missing or not an object")
         return []
 
+    items = list(decals.items())
+    if len(items) > _MAX_DECALS:
+        _warn_once((str(json_path), "too_many"),
+                    f"{json_path}: {len(items)} placements declared, "
+                    f"using the first {_MAX_DECALS}")
+        items = items[:_MAX_DECALS]
+
+    resolved = [(placement, spec,
+                 paths.game_asset(f"{nif_rel_dir}/Masks/{registry}/{placement}.png"))
+                for placement, spec in items]
+    if not any(mask_path.is_file() for _, _, mask_path in resolved):
+        registry_dir = paths.game_asset(f"{nif_rel_dir}/Masks/{registry}")
+        _warn_once((str(registry_dir), "registry_missing"),
+                    f"{registry_dir}: registry folder not found (none of "
+                    "the declared masks resolved under it)")
+        return []
+
     out: List[DecalSpec] = []
-    for placement, spec in decals.items():
-        mask_path = paths.game_asset(
-            f"{nif_rel_dir}/Masks/{registry}/{placement}.png")
+    for placement, spec, mask_path in resolved:
         if not isinstance(spec, dict):
             _warn_once((str(mask_path), "shape"),
                         f"{json_path}: placement {placement!r} is not an "
                         "object")
             continue
 
-        shape = spec.get("shape")
+        shape_raw = spec.get("shape")
+        if shape_raw is None:
+            shape = ""
+        elif isinstance(shape_raw, str):
+            shape = shape_raw
+        else:
+            shape = None  # invalid type; caught below alongside the vectors
+
         origin = _as_vec3(spec.get("origin"))
         u_axis = _as_vec3(spec.get("u_axis"))
         v_axis = _as_vec3(spec.get("v_axis"))
@@ -187,7 +274,7 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
         except (TypeError, ValueError, OverflowError):
             depth = float("nan")
 
-        if (not isinstance(shape, str) or not shape or origin is None
+        if (shape is None or origin is None
                 or u_axis is None or v_axis is None or normal is None
                 or not math.isfinite(depth) or depth <= 0.0):
             _warn_once((str(mask_path), "invalid"),
