@@ -223,3 +223,4 @@ what it affects and logs once:
 - A Ship Property Viewer placement tool.
 - Distance culling or fading: only High LOD is loaded, and the cost is one masked sample.
 - The glTF / KTX2 asset pipeline.
+- Decals on articulated shapes: the projector uses `p_body` with no `u_node_rest_fix` correction, so a decal on a moving part would slide with it. Fine for the Fed saucers this covers; a follow-up if an articulated placement is ever authored.
