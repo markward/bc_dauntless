@@ -181,6 +181,7 @@ window.setShipPropertyViewer = function (data) {
     if (sysList) sysList.classList.toggle('spv-syslist--locked', locked);
 
     renderSPVModelParts(mp);
+    renderSPVDecals(data.decals);
 
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
@@ -948,6 +949,196 @@ function renderSPVModelParts(modelParts) {
         }
     }
 }
+
+// ── Decals pane (spec 2026-09-28-spv-decal-editing-design.md S3) ──────────
+// Driven by `decals` = {active, has_model, registries, registry,
+// default_registry, placements:[{name, has_mask}], selected, adding,
+// adding_name, reposition, error, can_add, suggested_names, numbers, dirty}.
+// Python owns every rule (name validation, the 4-cap, the hull pick); this
+// only renders and fires 'ship-property-viewer/decal-*' events. Two bits of
+// state are JS-local because they never reach Python until confirmed: the
+// Add name picker being open, and the Delete confirm step. Identities travel
+// in data-* attributes, never inside on* JS string literals (see
+// spvPartRowHtml for why).
+var spvDecalPickerOpen = false;
+var spvDecalConfirmDelete = null;
+var spvLastDecals = null;
+
+function spvDecalBtn(label, handler, extraClass, dataName) {
+    return '<button class="spv-decal-btn' + (extraClass ? ' ' + extraClass : '') + '"'
+        + (dataName !== undefined ? ' data-name="' + escapeHtmlSPV(dataName) + '"' : '')
+        + ' onclick="' + handler + '(this)">' + label + '</button>';
+}
+
+function spvDecalStepper(label, field, value, small, big, unit) {
+    function b(delta, text) {
+        return '<button class="spv-step" data-field="' + field + '" data-delta="' + delta
+            + '" onclick="shipPropertyViewerDecalNudge(this)">' + text + '</button>';
+    }
+    return '<div class="spv-coords__row">'
+        + '<span class="spv-decal-num__label">' + label + '</span>'
+        + b(-big, '&minus;&minus;') + b(-small, '&minus;')
+        + '<span class="spv-coords__val">' + value.toFixed(3) + (unit || '') + '</span>'
+        + b(small, '+') + b(big, '++')
+        + '</div>';
+}
+
+function renderSPVDecals(decals) {
+    var pane = document.getElementById('spv-decals');
+    var body = document.getElementById('spv-decals-body');
+    if (!pane || !body) return;
+    var d = decals || {};
+    spvLastDecals = d;
+    pane.classList.toggle('expanded', d.active === true);
+    if (d.active !== true) {
+        spvDecalPickerOpen = false;
+        spvDecalConfirmDelete = null;
+        body.innerHTML = '';
+        return;
+    }
+    if (d.adding === true || d.can_add !== true) spvDecalPickerOpen = false;
+    var out = [];
+    if (d.has_model !== true) {
+        out.push('<div class="spv-decal-hint">This ship declares no model path.</div>');
+        body.innerHTML = out.join('');
+        return;
+    }
+
+    // Registry preview: one chip per Masks/<registry>/ folder, the class
+    // default starred. A chip (not a <select>): OSR CEF draws no native
+    // popup for a dropdown.
+    var regs = d.registries || [];
+    var chips = regs.map(function (r) {
+        return spvDecalBtn(escapeHtmlSPV(r) + (r === d.default_registry ? ' &#9733;' : ''),
+            'shipPropertyViewerDecalRegistry',
+            r === d.registry ? 'spv-decal-btn--on' : '', r);
+    }).join('');
+    out.push('<div class="spv-decal-section">Registry preview</div>');
+    out.push('<div class="spv-decal-chips">'
+        + (chips || '<span class="spv-decal-hint">No registry folders under Masks/ &mdash; '
+            + 'masks preview as the checkerboard.</span>')
+        + '</div>');
+    if (d.registry && d.registry !== d.default_registry) {
+        out.push('<div class="spv-decal-chips">'
+            + spvDecalBtn('Make ' + escapeHtmlSPV(d.registry) + ' the class default',
+                'shipPropertyViewerDecalDefault', '', d.registry) + '</div>');
+    }
+
+    // Placements.
+    out.push('<div class="spv-decal-section">Placements ('
+        + (d.placements || []).length + '/4)</div>');
+    (d.placements || []).forEach(function (p) {
+        var chosen = p.name === d.selected;
+        out.push('<div class="spv-sys-row' + (chosen ? ' spv-sys-row--chosen' : '') + '"'
+            + ' data-name="' + escapeHtmlSPV(p.name) + '"'
+            + ' onclick="shipPropertyViewerDecalSelect(this)">'
+            + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+            + '<span class="spv-sys-row__name">' + escapeHtmlSPV(p.name) + '</span>'
+            + (p.has_mask ? '' : '<span class="spv-decal-nomask">no mask</span>')
+            + '</div>');
+    });
+
+    // Actions.
+    var acts = [];
+    if (d.adding === true) {
+        out.push('<div class="spv-decal-hint">Click the hull to place &ldquo;'
+            + escapeHtmlSPV(d.adding_name || '') + '&rdquo;.</div>');
+        acts.push(spvDecalBtn('Cancel', 'shipPropertyViewerDecalAddCancel'));
+    } else if (d.can_add === true) {
+        acts.push(spvDecalBtn('Add&hellip;', 'shipPropertyViewerDecalAddOpen',
+            spvDecalPickerOpen ? 'spv-decal-btn--on' : ''));
+    }
+    if (d.selected) {
+        acts.push(spvDecalBtn('Reposition', 'shipPropertyViewerDecalReposition',
+            d.reposition === true ? 'spv-decal-btn--on' : ''));
+        acts.push(spvDecalBtn('Delete', 'shipPropertyViewerDecalDeleteAsk', '', d.selected));
+    }
+    out.push('<div class="spv-decal-chips">' + acts.join('') + '</div>');
+    if (d.reposition === true) {
+        out.push('<div class="spv-decal-hint">Click the hull to re-seat &ldquo;'
+            + escapeHtmlSPV(d.selected || '') + '&rdquo;.</div>');
+    }
+    if (spvDecalConfirmDelete !== null && spvDecalConfirmDelete === d.selected) {
+        out.push('<div class="spv-decal-hint">Delete &ldquo;' + escapeHtmlSPV(spvDecalConfirmDelete)
+            + '&rdquo;?</div><div class="spv-decal-chips">'
+            + spvDecalBtn('Delete', 'shipPropertyViewerDecalDeleteYes', 'spv-decal-btn--danger',
+                spvDecalConfirmDelete)
+            + spvDecalBtn('Keep', 'shipPropertyViewerDecalDeleteNo') + '</div>');
+    } else {
+        spvDecalConfirmDelete = null;
+    }
+    if (spvDecalPickerOpen) {
+        var names = d.suggested_names || [];
+        out.push('<div class="spv-decal-section">Name (the mask file: &lt;registry&gt;/&lt;name&gt;.png)</div>');
+        out.push('<div class="spv-decal-chips">' + names.map(function (n) {
+            return spvDecalBtn(escapeHtmlSPV(n), 'shipPropertyViewerDecalAddName', '', n);
+        }).join('') + spvDecalBtn('Cancel', 'shipPropertyViewerDecalAddClose') + '</div>');
+    }
+    if (typeof d.error === 'string' && d.error.length > 0) {
+        out.push('<div class="spv-decal-error">' + escapeHtmlSPV(d.error) + '</div>');
+    }
+
+    // Numbers panel for the selection (body frame, model units).
+    var n = d.numbers;
+    if (n) {
+        var s = n.step || 0.01;
+        out.push('<div class="spv-decal-section">Selected: ' + escapeHtmlSPV(d.selected || '') + '</div>');
+        out.push(spvDecalStepper('X', 'x', n.centre[0], s, s * 10));
+        out.push(spvDecalStepper('Y', 'y', n.centre[1], s, s * 10));
+        out.push(spvDecalStepper('Z', 'z', n.centre[2], s, s * 10));
+        out.push(spvDecalStepper('Width', 'width', n.width, s, s * 10));
+        out.push(spvDecalStepper('Roll', 'roll', n.roll, 1, 15, '&deg;'));
+        out.push(spvDecalStepper('Depth', 'depth', n.depth, s * 0.2, s * 2));
+    }
+    body.innerHTML = out.join('');
+}
+
+function spvDecalRerender() { renderSPVDecals(spvLastDecals); }
+
+window.shipPropertyViewerDecalRegistry = function (el) {
+    dauntlessEvent('ship-property-viewer/decal-registry:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalDefault = function (el) {
+    dauntlessEvent('ship-property-viewer/decal-default:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalSelect = function (el) {
+    spvDecalConfirmDelete = null;
+    dauntlessEvent('ship-property-viewer/decal-select:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalAddOpen = function () {
+    spvDecalPickerOpen = !spvDecalPickerOpen;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalAddClose = function () {
+    spvDecalPickerOpen = false;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalAddName = function (el) {
+    spvDecalPickerOpen = false;
+    dauntlessEvent('ship-property-viewer/decal-add:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalAddCancel = function () {
+    dauntlessEvent('ship-property-viewer/decal-add-cancel');
+};
+window.shipPropertyViewerDecalReposition = function () {
+    dauntlessEvent('ship-property-viewer/decal-reposition');
+};
+window.shipPropertyViewerDecalDeleteAsk = function (el) {
+    spvDecalConfirmDelete = el.dataset.name;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalDeleteYes = function (el) {
+    spvDecalConfirmDelete = null;
+    dauntlessEvent('ship-property-viewer/decal-delete:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalDeleteNo = function () {
+    spvDecalConfirmDelete = null;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalNudge = function (el) {
+    dauntlessEvent('ship-property-viewer/decal-nudge:' + JSON.stringify(
+        {field: el.dataset.field, delta: parseFloat(el.dataset.delta)}));
+};
 
 // A part row (kind "part", depth 0). The row's identity travels ONLY in
 // data-* attributes (data-part-name/-has-anchor/-missing-states/-breakable),

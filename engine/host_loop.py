@@ -5067,6 +5067,23 @@ def declared_model_dir(ship) -> Optional[str]:
     raises; any fault in the script lookup (see `_ship_stats`) or a missing
     'FilenameHigh' returns None.
     """
+    rel = declared_model_rel(ship)
+    if rel is None:
+        return None
+    try:
+        return PurePosixPath(rel).parent.as_posix()
+    except Exception:
+        return None
+
+
+def declared_model_rel(ship) -> Optional[str]:
+    """`ship`'s DECLARED high-LOD model file (`GetShipStats()["FilenameHigh"]`)
+    as a posix, game-root-relative path, e.g.
+    "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif" -- what the SPV Decals pane
+    hands `decals_writer.decals_target_path` (which needs the FILE: a mod
+    owns a class only if it supplies the model itself). Backslashes (a
+    Windows-authored script) become forward slashes. Never raises; None on
+    any script-lookup fault or a missing 'FilenameHigh'."""
     stats = _ship_stats(ship)
     if stats is None:
         return None
@@ -5074,7 +5091,7 @@ def declared_model_dir(ship) -> Optional[str]:
     if not rel:
         return None
     try:
-        return PurePosixPath(str(rel)).parent.as_posix()
+        return str(rel).replace("\\", "/")
     except Exception:
         return None
 
@@ -6459,6 +6476,11 @@ class HostController:
         # Set by the host loop after PanelRegistry is constructed so that
         # _drain_pending_swap can invalidate all panel caches on swap.
         self.panel_registry: Any = None
+        # Zero-arg callables run at the START of _drain_pending_swap, before
+        # the outgoing session (and its renderer instances) is torn down --
+        # e.g. the SPV dropping its live decal override while the instance
+        # it is keyed on still exists. A raising hook is logged, never fatal.
+        self.pre_swap_hooks: list = []
 
     def swap_mission(self, mission_name: str) -> None:
         self.pending_swap = mission_name
@@ -6468,6 +6490,12 @@ class HostController:
             return
         name = self.pending_swap
         self.pending_swap = None
+        for hook in list(self.pre_swap_hooks):
+            try:
+                hook()
+            except Exception as e:
+                print(f"[host] pre-swap hook {hook!r} raised "
+                      f"{type(e).__name__}: {e}", flush=True)
         if self.session is not None:
             self.session.teardown(self.renderer)
         from engine.appc import ship_lifecycle
@@ -9457,7 +9485,12 @@ def run(mission_name: Optional[str] = None,
                 on_regions_saved=lambda ship, regions: refresh_ship_glow(
                     controller.session, ship, regions),
                 iid_getter=_spv_player_iid,
+                # Decals pane: where the class's Masks/ lives and a Save routes.
+                model_rel_getter=declared_model_rel,
             )
+            # The Decals pane's live override is keyed on the player's
+            # instance; drop it before a swap destroys that instance.
+            controller.pre_swap_hooks.append(ship_property_viewer.on_mission_swap)
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,
             )

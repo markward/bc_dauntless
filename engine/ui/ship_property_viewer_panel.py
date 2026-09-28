@@ -20,6 +20,7 @@ from engine.ui.ship_property_viewer import (
     emitter_spec_to_calls,
 )
 from engine.ui import ship_property_viewer as _spv
+from engine.ui.spv_decals_pane import DecalsPaneMixin, world_hit_to_body  # noqa: F401
 
 # Fraction of the view height the ship's bounding sphere should fill when the
 # viewer first frames the ship (1.0 = sphere touches top/bottom edges).
@@ -99,19 +100,27 @@ TOAST_ANCHOR_IN_USE = ("Remove the transformations first — they swing around "
                        "the anchor")
 
 
-class ShipPropertyViewerPanel(Panel):
+class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     # Actions the dispatch_event undo wrapper does not snapshot around:
     # "undo" itself, "save"/"cancel" (which clear/discard state wholesale
-    # rather than mutate it), and any "overlay:" chrome toggle.
-    _NO_UNDO_ACTIONS = ("undo", "save", "cancel")
+    # rather than mutate it), any "overlay:" chrome toggle, and "decal-pane"
+    # (entering the pane LOADS the decal working list -- not an edit).
+    _NO_UNDO_ACTIONS = ("undo", "save", "cancel", "decal-pane")
 
     def __init__(self, ship_getter: Callable[[], object],
                  on_saved: Optional[Callable[[object, dict], None]] = None,
                  iid_getter: Optional[Callable[[], Optional[int]]] = None,
                  on_regions_saved: Optional[Callable[[object, dict], None]] = None,
+                 model_rel_getter: Optional[Callable[[object], Optional[str]]] = None,
                  ) -> None:
         super().__init__()
         self._ship_getter = ship_getter
+        # Decals pane: ship -> its DECLARED High model path, posix and
+        # game-root-relative (GetShipStats()["FilenameHigh"], wired to
+        # host_loop.declared_model_rel). Where the class's Masks/ lives and
+        # where a Save routes. Construction-time config, like iid_getter;
+        # unwired (tests, headless) the pane has no model and edits nothing.
+        self._model_rel_getter = model_rel_getter
         # Optional caller hook invoked after a successful Save with
         # (ship, regions_by_sub_id): the effective glow-region list per
         # subsystem, so the host can re-register them without a mission
@@ -292,6 +301,9 @@ class ShipPropertyViewerPanel(Panel):
         self._saved_emitter = {}
         self._saved_pos = {}
         self._saved_part = {}
+        # Decals pane (engine/ui/spv_decals_pane.py). Session state: reset
+        # every open/close, like the staged-edit dicts above.
+        self._decal_reset_state()
 
     @property
     def name(self) -> str:
@@ -344,6 +356,8 @@ class ShipPropertyViewerPanel(Panel):
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
+        self._decal_clear_override()
+        self._decal_reset_state()
         self._expanded_groups = set()
         self._pending_radius = {}
         self._pending_light = {}
@@ -408,6 +422,10 @@ class ShipPropertyViewerPanel(Panel):
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
+        # The SPV instance goes back to its baked decals; unsaved decal edits
+        # are discarded with every other staged edit.
+        self._decal_clear_override()
+        self._decal_reset_state()
         self._expanded_groups = set()
         self._pending_radius = {}
         self._pending_light = {}
@@ -1166,19 +1184,31 @@ class ShipPropertyViewerPanel(Panel):
     # Undo (pending-only; no redo; cleared on Save)
     # ------------------------------------------------------------------
     def _snapshot_pending(self):
-        """Deep copy of the five staged-edit dicts — one undo unit."""
+        """Deep copy of the five staged-edit dicts plus the decal working
+        list and staged default registry — one undo unit. (Placements are
+        frozen dataclasses, so a tuple of them is already a copy.)"""
         import copy
+        decals = (tuple(self._decal_working)
+                  if self._decal_working is not None else None)
         return (copy.deepcopy(self._pending_radius),
                 copy.deepcopy(self._pending_light),
                 copy.deepcopy(self._pending_emitter),
                 copy.deepcopy(self._pending_pos),
-                copy.deepcopy(self._pending_part))
+                copy.deepcopy(self._pending_part),
+                (decals, self._decal_default))
 
     def _restore_pending(self, snap) -> None:
-        """Replace the five staged-edit dicts from a snapshot, drop a now-stale
-        emitter selection, and force a CEF re-push."""
+        """Replace the five staged-edit dicts and the decal list from a
+        snapshot, drop a now-stale emitter/decal selection, re-push the decal
+        override, and force a CEF re-push."""
         import copy
-        r, l, e, p, pt = snap
+        r, l, e, p, pt, (decals, decal_default) = snap
+        self._decal_working = list(decals) if decals is not None else None
+        self._decal_default = decal_default
+        if self._decal_index(self._decal_selected) is None:
+            self._decal_selected = None
+            self._decal_reposition = False
+        self._decal_sync_override()
         self._pending_radius = copy.deepcopy(r)
         self._pending_light = copy.deepcopy(l)
         self._pending_emitter = copy.deepcopy(e)
@@ -2003,7 +2033,10 @@ class ShipPropertyViewerPanel(Panel):
         """The gizmo for the active tool: `transform_gizmo` under Transform,
         `scale_gizmo` under Scale, `rotate_gizmo` under Rotate, else None.
         Shared by `_handle_gizmo_input` so hover/grab/drag geometry follows the
-        current tool."""
+        current tool. A selected decal in the active Decals pane wins."""
+        dg = self._decal_gizmo()
+        if dg is not None:
+            return dg
         if self.active_tool == "transform":
             return self.transform_gizmo()
         if self.active_tool == "scale":
@@ -2017,6 +2050,8 @@ class ShipPropertyViewerPanel(Panel):
         origin and the grabbed size value so `_apply_scale_drag` multiplies
         from a stable anchor. For xyz (Box) targets the axis picks the field;
         every other shape is uniform and scales field 0 (the radius)."""
+        if self._decal_begin_drag(axis, grab_param):
+            return
         self._drag_undo_before = self._snapshot_pending()
         self._axis_drag = axis
         self._axis_grab_param = grab_param
@@ -2074,6 +2109,9 @@ class ShipPropertyViewerPanel(Panel):
         drag past the origin can't invert or divide-by-zero."""
         if self._axis_drag is None:
             return
+        if self._decal_grab is not None:
+            self._decal_apply_scale_drag(t_now)
+            return
         if self._current_target_is_locked_mount():
             # Defence in depth: _handle_gizmo_input already refuses to BEGIN
             # this drag on a locked mount, but a mount's radius edit must
@@ -2095,14 +2133,19 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_drag = ring
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
         self._ring_grab_angle = grab_angle
-        t = self._rotate_target()
-        if t is None:
+        # A selected decal rolls from its grab-time placement (_decal_grab)
+        # and needs only the screen sign computed below.
+        decal = self._decal_begin_drag(ring, 0.0)
+        t = None if decal else self._rotate_target()
+        if t is None and not decal:
             self._ring_grab_axis = (0.0, -1.0, 0.0)
             self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             self._ring_grab_accum = [0.0, 0.0, 0.0]
             self._ring_sign = 1.0
             return
-        if t[0] == "part_pose":
+        if decal:
+            pass
+        elif t[0] == "part_pose":
             # A pose rotates from its GRAB-time pose about its GRAB-time
             # posed anchor, so every drag frame recomputes from the same
             # base instead of compounding (see _apply_ring_drag_angle).
@@ -2150,6 +2193,9 @@ class ShipPropertyViewerPanel(Panel):
         drag + tests. Shape-aware: a Cylinder rotates its `axis`; a Box
         rotates BOTH `forward` and `up` of the grab-start orientation, then
         re-orthonormalizes."""
+        if self._decal_grab is not None and self._axis_drag is not None:
+            self._decal_apply_ring_drag(d_body)
+            return
         t = self._rotate_target()
         if t is None or self._axis_drag is None:
             return
@@ -2233,6 +2279,8 @@ class ShipPropertyViewerPanel(Panel):
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
         body position and world origin so the drag mapping stays stable."""
+        if self._decal_begin_drag(axis, grab_param):
+            return
         self._drag_undo_before = self._snapshot_pending()
         target = self._active_transform_target()
         if target is None:
@@ -2287,6 +2335,9 @@ class ShipPropertyViewerPanel(Panel):
     def _apply_axis_drag(self, param_now: float) -> None:
         """Move the selected node to grab_pos with the grabbed axis component
         advanced by (param_now - grab_param)."""
+        if self._decal_grab is not None and self._axis_drag is not None:
+            self._decal_apply_axis_drag(param_now)
+            return
         target = self._active_transform_target()
         if self._axis_drag is None or target is None:
             return
@@ -2316,6 +2367,7 @@ class ShipPropertyViewerPanel(Panel):
 
     def _end_axis_drag(self) -> None:
         self._axis_drag = None
+        self._decal_grab = None
         if self._drag_undo_before is not None:
             if self._drag_undo_before != self._snapshot_pending():
                 self._undo_stack.append(self._drag_undo_before)
@@ -2370,7 +2422,12 @@ class ShipPropertyViewerPanel(Panel):
         that pokes `selected_index` directly without going through the
         `select_pin:`/`select_light:`/`select_emitter:` handlers (which
         already clear the part selection as part of mutual exclusion) still
-        gets the subsystem-selected behaviour it asked for."""
+        gets the subsystem-selected behaviour it asked for.
+
+        Decals pane active -- none: the hull is being clicked for decal
+        placement, and pins on it would only hide what is being placed."""
+        if self._decals_active:
+            return []
         if self._selected_emitter is not None:
             i = self._selected_emitter[0]
             if 0 <= i < len(self._descriptors):
@@ -2444,7 +2501,8 @@ class ShipPropertyViewerPanel(Panel):
                     tuple(sorted((k, tuple(v)) for k, v in self._rotate_accum.items())),
                     len(self._undo_stack),
                     self._pipette_armed,
-                    self._active_transform_target() is not None)
+                    self._active_transform_target() is not None,
+                    self._decal_state_key())
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -2482,10 +2540,12 @@ class ShipPropertyViewerPanel(Panel):
             "show_hull": self.show_hull_texture,
             "pending_count": (len(set(self._pending_radius) | set(self._pending_light)
                                   | set(self._pending_pos) | set(self._pending_emitter))
-                              + len(self._pending_part)),
+                              + len(self._pending_part)
+                              + (1 if self._decal_dirty() else 0)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "model_parts": self._model_parts_payload(),
+            "decals": self._decals_payload(),
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
@@ -2517,6 +2577,10 @@ class ShipPropertyViewerPanel(Panel):
                 counts[name] = 0
                 order.append(name)
             counts[name] += 1
+        if self._decal_dirty():
+            counts["Decals"] = counts.get("Decals", 0) + self._decal_change_count()
+            if "Decals" not in order:
+                order.append("Decals")
         return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
@@ -2726,6 +2790,10 @@ class ShipPropertyViewerPanel(Panel):
         2026-09-26)."""
         if self.camera is None:
             return
+        if self.decal_click(x, y, viewport):
+            # The Decals pane owns hull clicks (Add / Reposition); no pin is
+            # drawn or pickable while it is active.
+            return
         idx = None
         if _spv.selected_model_part() is None:
             idx = pick_pin(x, y, self._descriptors, self.camera, viewport,
@@ -2750,6 +2818,7 @@ class ShipPropertyViewerPanel(Panel):
         Degrades to a no-op if any required binding is missing (headless)."""
         if self.camera is None:
             return
+        self._decal_refresh_tick()
         if self._viewport_input_blocked():
             return
         try:
@@ -2911,7 +2980,8 @@ class ShipPropertyViewerPanel(Panel):
             if self.active_tool == "rotate":
                 ring = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
                                        self.camera, fb_size(), dsf)
-                if ring is None:
+                if ring is None or (self._decal_target() is not None
+                                    and not self._decal_grab_allowed(ring)):
                     return False
                 self._begin_ring_drag(
                     ring, ring_drag_angle(x, y, g["origin"], self.camera,
@@ -2920,7 +2990,8 @@ class ShipPropertyViewerPanel(Panel):
             else:
                 axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
                                        self.camera, fb_size(), dsf)
-                if axis is None:
+                if axis is None or (self._decal_target() is not None
+                                    and not self._decal_grab_allowed(axis)):
                     return False
                 t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
                                          g["length"], self.camera, fb_size())
@@ -3008,6 +3079,14 @@ class ShipPropertyViewerPanel(Panel):
             result = self._dispatch_event_inner(action)
             if before != self._snapshot_pending():
                 self._undo_stack.append(before)
+        # Selecting a mount or a model part takes the gizmo off a decal.
+        if result and action.startswith(("select_pin:", "select_light:",
+                                         "select_emitter:",
+                                         "model_parts/select:")):
+            self._decal_selected = None
+            self._decal_reposition = False
+        # Any action may have changed the decal working list or registry.
+        self._decal_sync_override()
         # Every action -- a node select, an undo, a node removed from under
         # its selection -- may change which pose the rig should be drawn in.
         if self._visible:
@@ -3166,6 +3245,8 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action.startswith("part/"):
             return self._dispatch_part_action(action)
+        if action.startswith("decal-"):
+            return self._dispatch_decal_action(action)
         if action.startswith("select_pin:"):
             try:
                 idx = int(action.split(":", 1)[1])
@@ -3571,9 +3652,22 @@ class ShipPropertyViewerPanel(Panel):
                     self._mirror_target_rotation(rt)
             return True
         if action == "save":
-            if (not self._pending_radius and not self._pending_light
-                    and not self._pending_pos and not self._pending_emitter
-                    and not self._pending_part):
+            hardpoints_pending = bool(
+                self._pending_radius or self._pending_light
+                or self._pending_pos or self._pending_emitter
+                or self._pending_part)
+            if self._decal_dirty():
+                # decals.json first; a failure keeps EVERY staged edit (and
+                # its toast) so nothing is half-saved behind the player.
+                if not self._decal_save():
+                    self._last_pushed = None
+                    return True
+                if not hardpoints_pending:
+                    self._undo_stack.clear()
+                    self._drag_undo_before = None
+                    self._last_pushed = None
+                    return True
+            if not hardpoints_pending:
                 return True
             ship = self._ship_getter()
             leaf = hardpoint_leaf_for_ship(ship)

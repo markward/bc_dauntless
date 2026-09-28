@@ -235,6 +235,22 @@ TEST_F(DecalMaskCacheTest, ClearReleasesEverything) {
     EXPECT_EQ(cache.size(), 0u);
 }
 
+// The SPV previews a placement with no registry PNG through this committed
+// project asset. It must load through the SAME cache path a real mask does
+// (decode_image, premultiplied): a 64x32 checker at 50% alpha.
+TEST_F(DecalMaskCacheTest, TheCommittedPlaceholderLoadsAsA64x32HalfAlphaMask) {
+    auto cache = make_cache();
+    const fs::path placeholder = fs::path(OPEN_STBC_PROJECT_ROOT) /
+        "native" / "assets" / "textures" / "decal_placeholder.png";
+    cache.get(placeholder);
+    ASSERT_EQ(uploaded.size(), 1u) << placeholder;
+    const auto& img = uploaded[0];
+    EXPECT_EQ(img.width, 64u);
+    EXPECT_EQ(img.height, 32u);
+    ASSERT_EQ(img.format, assets::Image::Format::RGBA8);
+    EXPECT_EQ(img.pixels[3], 128u);
+}
+
 // Ruling K: Mark re-exports a mask from Gimp while the SPV is open, and the
 // next set_instance_decals must show it -- a path whose file mtime changed
 // since it was cached is decoded and uploaded again; an unchanged one is not.

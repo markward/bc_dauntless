@@ -318,6 +318,21 @@
           </div>
           <div id="spv-parts-body"></div>
         </div>
+        <!-- Decals pane (spec 2026-09-28-spv-decal-editing-design.md S3):
+             collapsed by default; clicking the header ENTERS the pane
+             ('ship-property-viewer/decal-pane'), which forces the textured
+             hull (the hologram cannot show decals) and live-previews the
+             working list through set_instance_decals. Clicking it again
+             leaves. Body built by renderSPVDecals from `decals`. Mouse-only:
+             keyboard -> CEF does not exist, so a new placement's name is
+             CHOSEN from `decals.suggested_names`, never typed. -->
+        <div id="spv-decals">
+          <div id="spv-decals-header"
+               onclick="dauntlessEvent('ship-property-viewer/decal-pane')">
+            <span class="spv-parts-header__title">Decals</span>
+          </div>
+          <div id="spv-decals-body"></div>
+        </div>
       </div>
       <!-- Action tools (undo / pipette / mirror). Momentary buttons stacked
            above #spv-transform-tools. Undo/Mirror disable without a target;

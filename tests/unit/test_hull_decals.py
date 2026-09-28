@@ -371,6 +371,27 @@ def test_declared_model_dir_none_on_missing_filename_high(fake_ship_module):
     assert declared_model_dir(ship) is None
 
 
+def test_declared_model_rel_is_the_posix_file_path(fake_ship_module):
+    """The SPV Decals pane routes a save by the declared MODEL FILE
+    (decals_target_path), not just its directory."""
+    from engine.host_loop import declared_model_rel
+
+    ship = fake_ship_module(
+        "test_hull_decals.fake_ambassador_rel",
+        "data\\Models\\Ships\\Ambassador\\Ambassador.nif")
+
+    assert declared_model_rel(ship) == "data/Models/Ships/Ambassador/Ambassador.nif"
+
+
+def test_declared_model_rel_none_on_script_lookup_failure():
+    from engine.host_loop import declared_model_rel
+
+    ship = types.SimpleNamespace(
+        GetScript=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    assert declared_model_rel(ship) is None
+
+
 # ── resolve_registry ─────────────────────────────────────────────────────
 
 def test_resolve_registry_uses_script_id_stem_when_present():
