@@ -6,7 +6,7 @@ the spec's fit (a + b / i); sparseness raises the fbm floor as i falls.
 """
 from __future__ import annotations
 
-from engine.appc.nebula import MetaNebula
+from engine.appc.nebula import DEFAULT_FBM_DIALS
 from engine.appc.nebula_density import seed_for
 
 SPIKE_RADIUS_GU = 3000.0
@@ -24,7 +24,7 @@ def synthetic_volume(player):
     if i < MIN_NEBULA:
         return None
     loc = player.GetWorldLocation()
-    freq, gain, floor = MetaNebula().GetFbmDials()
+    freq, gain, floor = DEFAULT_FBM_DIALS
     return {
         "spheres": [(loc.x, loc.y, loc.z, SPIKE_RADIUS_GU)],
         "rgb": tuple(prof.color),

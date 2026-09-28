@@ -6,6 +6,11 @@ WarpPressed-style gating (and GetClassObjectList(CT_NEBULA)) works.
 """
 from App import Nebula
 
+# freq, gain, density_floor (tunable): every MetaNebula's default fbm dials.
+# A constant so readers of the defaults (profile_render, profile_builder) need
+# not construct a MetaNebula, a TGObject the id registry holds forever.
+DEFAULT_FBM_DIALS = (0.02, 1.5, 0.30)
+
 
 class MetaNebula(Nebula):
     def __init__(self, r=0.0, g=0.0, b=0.0, visibility=0.0, sensor_density=0.0,
@@ -18,7 +23,7 @@ class MetaNebula(Nebula):
         self._external_tex = external_tex
         self._spheres = []          # list of (x, y, z, radius)
         self._damage = (0.0, 0.0)   # (hull, shields) — stored, unused
-        self._fbm = (0.02, 1.5, 0.30)  # freq, gain, density_floor (tunable)
+        self._fbm = DEFAULT_FBM_DIALS
         self._seed = None               # lazily derived from first sphere
 
     def AddNebulaSphere(self, x, y, z, radius):

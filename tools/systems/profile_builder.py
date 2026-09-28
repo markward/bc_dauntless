@@ -7,7 +7,7 @@ the first draft's literals wrong within two days).
 """
 from __future__ import annotations
 
-from engine.appc.nebula import MetaNebula
+from engine.appc.nebula import DEFAULT_FBM_DIALS
 from engine.appc.nebula_density import density, seed_for
 from engine.systems.profile import COLUMNS, Profile, ProfileRow, clump_radius, evaluate
 
@@ -34,7 +34,7 @@ def core_concealment(spheres) -> float:
     radius, with the runtime's own default dials and seed, drift_t = 0.
     Measured, not guessed -- this is what concealment_at would read there."""
     cx, cy, cz, radius = spheres[0]
-    freq, gain, floor = MetaNebula().GetFbmDials()
+    freq, gain, floor = DEFAULT_FBM_DIALS
     seed = seed_for(cx, cy, cz)
     steps = [(-0.5 + i / 4.0) * radius for i in range(5)]
     total = 0.0
