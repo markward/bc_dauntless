@@ -327,17 +327,13 @@ def test_a_reversing_ship_drops_out_still_reversing(world):
         (-2.0 * h[0], -2.0 * h[1], -2.0 * h[2]), abs=1e-9)
 
 
-def test_xi_entrades_4_from_xi_entrades_1_drops_inside_its_sphere(world):
-    """Ruling R14. XiEntrades4's sphere is centred near its Player Start
-    (~29,000 GU from the body), so from Xi Entrades 1 -- the far side -- the
-    arrival range itself lands outside the sphere. The standoff is cut to
-    the largest one whose drop point is inside it: handed off.
-
-    Aimed 1,000 GU off the centre toward the anchor's side (still through
-    the 2,400 GU body). Dead centre is R14's no-solution case by ~160 GU:
-    radius + clearance (4,400) there lands 32,760 GU from the anchor, just
-    outside the 32,700 GU sphere."""
-    from engine.systems.warp_path import clearance_gu
+def test_xi_entrades_4_from_xi_entrades_1_drops_at_its_arrival_range(world):
+    """Mark 2026-09-28 (R14 retired). XiEntrades4's sphere is centred near
+    its Player Start (~29,000 GU from the body), so from Xi Entrades 1 -- the
+    far side -- the arrival range lands outside the sphere. The dash still
+    stops at the plain arrival range, dead centre, and IS handed off: the
+    region contains every point within reach of the body it owns."""
+    from engine.systems import handoff
     w = world
     xe1 = load_region("XiEntrades", "XiEntrades1")
     xe4 = load_region("XiEntrades", "XiEntrades4")
@@ -350,28 +346,15 @@ def test_xi_entrades_4_from_xi_entrades_1_drops_inside_its_sphere(world):
     region = m.region("XiEntrades4")
     centre = tuple(body.position_gu)
     arrival = math.dist(centre, _sys(xe4.GetObject("Player Start")))
-    here = _sys(w.player)
-    hc = [centre[i] - here[i] for i in range(3)]
-    n = math.sqrt(sum(c * c for c in hc))
-    hc = [c / n for c in hc]
-    a = [region.anchor_gu[i] - centre[i] for i in range(3)]
-    k = sum(a[i] * hc[i] for i in range(3))
-    perp = [a[i] - k * hc[i] for i in range(3)]
-    n = math.sqrt(sum(c * c for c in perp))
-    aim = tuple(centre[i] + 1000.0 * perp[i] / n for i in range(3))
-    h = _aim(w, aim)
+    assert handoff.arrival_range(body) == pytest.approx(arrival)
+    h = _aim(w, centre)
     _press(w)
     w.events.clear()
     _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=60.0)
     p = _sys(w.player)
-    # On the line, short of the arrival range, clear of the body, inside
-    # the sphere.
-    rel = [p[i] - here[i] for i in range(3)]
-    along = sum(rel[i] * h[i] for i in range(3))
-    assert rel == pytest.approx([along * c for c in h], abs=1e-3)
-    d = math.dist(p, centre)
-    assert body.radius_gu + clearance_gu(body.radius_gu) <= d < arrival
-    assert math.dist(p, region.anchor_gu) <= region.radius_gu
+    assert p == pytest.approx(
+        tuple(centre[i] - h[i] * arrival for i in range(3)), abs=1e-3)
+    assert math.dist(p, region.anchor_gu) > region.radius_gu   # off-sphere
     assert w.player.GetContainingSet() is xe4
     assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
                       App.ET_EXITED_WARP) == [
@@ -431,13 +414,15 @@ def _start_beyond_ona2(w, angle_deg):
     return centre, _aim(w, centre)
 
 
-def test_ona2_approached_from_the_far_side_drops_inside_its_sphere(world):
-    """R14: from 133 deg off Ona2's anchor side the arrival range (4,058 GU)
-    lands outside the sphere; a shorter standoff, still >= radius +
-    clearance, lands inside it and the dash is handed off."""
-    from engine.systems.warp_path import clearance_gu
+@pytest.mark.parametrize("angle_deg", [133.0, 180.0])
+def test_ona2_from_the_far_side_drops_at_its_arrival_range_and_hands_off(
+        world, angle_deg):
+    """Mark 2026-09-28 (R14 retired): from the side away from Ona2's anchor
+    the arrival range (4,058 GU) lands outside the sphere, yet the dash stops
+    exactly there and IS handed off -- within reach of Ona 2 is inside its
+    region."""
     w = world
-    centre, h = _start_beyond_ona2(w, 133.0)
+    centre, h = _start_beyond_ona2(w, angle_deg)
     region = resolve.map_of("Ona").region("Ona2")
     arrival = math.dist(centre, _sys(w.ona2.GetObject("Player Start")))
     at_arrival = tuple(centre[i] - h[i] * arrival for i in range(3))
@@ -446,46 +431,12 @@ def test_ona2_approached_from_the_far_side_drops_inside_its_sphere(world):
     w.events.clear()
     _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=20.0)
     p = _sys(w.player)
-    d = math.dist(p, centre)
-    assert 1800.0 + clearance_gu(1800.0) <= d < arrival
-    assert math.dist(p, region.anchor_gu) <= region.radius_gu - 100.0 + 1e-6
+    assert p == pytest.approx(at_arrival, abs=1e-3)
     assert w.player.GetContainingSet() is w.ona2
     assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
                       App.ET_EXITED_WARP) == [
         (App.ET_EXITED_SET, "Ona1"), (App.ET_ENTERED_SET, "Ona2"),
         (App.ET_EXITED_WARP, None)]
-
-
-def test_ona2_dead_astern_of_its_sphere_keeps_the_arrival_range(world):
-    """R14's no-solution case: straight in from the side opposite Ona2's
-    anchor, every standoff from radius + clearance up to the arrival range
-    drops outside the sphere, so the arrival range is kept -- no hand-off,
-    ET_EXITED_WARP only."""
-    w = world
-    centre, h = _start_beyond_ona2(w, 180.0)
-    arrival = math.dist(centre, _sys(w.ona2.GetObject("Player Start")))
-    _press(w)
-    w.events.clear()
-    _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=20.0)
-    p = _sys(w.player)
-    assert math.dist(p, centre) == pytest.approx(arrival, abs=1e-3)
-    assert w.player.GetContainingSet() is w.ona1
-    assert _events_of(w, App.ET_EXITED_SET, App.ET_ENTERED_SET,
-                      App.ET_EXITED_WARP) == [(App.ET_EXITED_WARP, None)]
-
-
-def test_sphere_standoff_keeps_the_arrival_range_when_the_ray_misses_the_sphere():
-    """A ray through the body but grazing past the (shrunk) sphere: no
-    standoff in range drops inside it, so the arrival range stands."""
-    # Body R 1,000 at the origin; sphere of radius 1,200 centred 1,000 off to
-    # +y; the ray comes along -x -> +x at y = -900 (inside the body, outside
-    # the sphere shrunk by the 100 GU margin: the nearest point is 1,900
-    # from its centre).
-    sd = dash._sphere_standoff(
-        here=(-50000.0, -900.0, 0.0), heading=(1.0, 0.0, 0.0),
-        centre=(0.0, 0.0, 0.0), radius=1000.0, arrival=5000.0,
-        anchor=(0.0, 1000.0, 0.0), sphere_radius=1200.0)
-    assert sd == 5000.0
 
 
 # ── 3. a heading dash at the sun stops one radius above it ─────────────────

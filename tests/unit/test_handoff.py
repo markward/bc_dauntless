@@ -259,3 +259,131 @@ def test_region_at_returns_none_in_open_space():
     ship = _make_ship((r1 + 50000.0, 0.0, 0.0), ona1)
 
     assert handoff.region_at(ship) is None
+
+
+# ── 11. Mark 2026-09-28: arriving near a planet from ANY side enters ──────
+#
+# A region contains the player inside its sphere OR within reach(body) =
+# arrival_range(body) + HANDOFF_MARGIN_GU of any body it owns. Ona 2's sphere
+# sits on its Player Start side of the planet (anchor == Player Start, 4,058
+# GU from the centre; radius 7,358), so the far side of the planet is outside
+# the sphere but inside the planet's reach (5,558).
+
+def _ona2_far_side(dist_gu):
+    """System point `dist_gu` from Ona 2's centre, directly AWAY from
+    Ona2's anchor (the side the sphere does not cover)."""
+    m = resolve.map_of("Ona")
+    centre = m.body("Ona 2").position_gu
+    anchor = m.region("Ona2").anchor_gu
+    a = [anchor[i] - centre[i] for i in range(3)]
+    n = math.sqrt(sum(c * c for c in a))
+    return tuple(centre[i] - dist_gu * a[i] / n for i in range(3))
+
+
+def _local_in_ona1(system_point):
+    a1 = resolve.anchor_of("Ona1")
+    return tuple(system_point[i] - a1[i] for i in range(3))
+
+
+def _local_in_ona2(system_point):
+    a2 = resolve.anchor_of("Ona2")
+    return tuple(system_point[i] - a2[i] for i in range(3))
+
+
+def test_arrival_range_is_the_distance_from_the_body_to_the_player_start():
+    load_region("Ona", "Ona2")
+    body = resolve.map_of("Ona").body("Ona 2")
+    ps = frames.system_position(
+        App.g_kSetManager.GetSet("Ona2").GetObject("Player Start"))
+    assert handoff.arrival_range(body) == pytest.approx(
+        math.dist(body.position_gu, ps[1:]))
+    assert handoff.region_reach(body) == pytest.approx(
+        handoff.arrival_range(body) + _MARGIN)
+
+
+def test_reach_falls_back_to_two_radii_when_the_region_is_not_loaded():
+    body = resolve.map_of("Ona").body("Ona 2")      # Ona2 never loaded
+    assert handoff.arrival_range(body) is None
+    assert handoff.region_reach(body) == pytest.approx(
+        2.0 * body.radius_gu + _MARGIN)
+
+
+def test_impulse_approach_from_the_far_side_hands_off_within_reach():
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    region = resolve.map_of("Ona").region("Ona2")
+    body = resolve.map_of("Ona").body("Ona 2")
+    p = _ona2_far_side(5000.0)
+    assert math.dist(p, region.anchor_gu) > region.radius_gu     # off-sphere
+    assert 5000.0 <= handoff.region_reach(body)
+    ship = _make_ship(_local_in_ona1(p), ona1)
+    App.Game_SetCurrentPlayer(ship)
+
+    assert handoff.tick(ship) is ona2
+    assert frames.system_position(ship)[1:] == pytest.approx(p, abs=1e-6)
+
+
+def test_a_point_outside_both_sphere_and_reach_does_not_hand_off():
+    ona1 = load_region("Ona", "Ona1")
+    load_region("Ona", "Ona2")
+    body = resolve.map_of("Ona").body("Ona 2")
+    p = _ona2_far_side(handoff.region_reach(body) + 10.0)
+    ship = _make_ship(_local_in_ona1(p), ona1)
+    App.Game_SetCurrentPlayer(ship)
+
+    assert handoff.region_at(ship) is None
+    assert handoff.tick(ship) is None
+    assert ona1.GetObject("player") is ship
+
+
+def test_rule_h_holds_the_region_until_beyond_reach_plus_margin(monkeypatch):
+    """Inside Ona2 on the far side of its planet, with another region
+    claiming the point (region_at forced to Ona1): the player stays while
+    within reach + margin of Ona 2 -- circling the reach edge never
+    flickers -- and leaves only once beyond it (and beyond the sphere +
+    margin, which the far side already is)."""
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    region = resolve.map_of("Ona").region("Ona2")
+    reach = handoff.region_reach(resolve.map_of("Ona").body("Ona 2"))
+    ship = _make_ship(_local_in_ona2(_ona2_far_side(1000.0)), ona2)
+    App.Game_SetCurrentPlayer(ship)
+    monkeypatch.setattr(handoff, "region_at", lambda _p: ona1)
+
+    for d in (reach - 10.0, reach + 10.0, reach + _MARGIN - 10.0, reach):
+        ship.SetTranslateXYZ(*_local_in_ona2(_ona2_far_side(d)))
+        assert handoff.tick(ship) is None
+        assert ona2.GetObject("player") is ship
+
+    p = _ona2_far_side(reach + _MARGIN + 10.0)
+    assert math.dist(p, region.anchor_gu) > region.radius_gu + _MARGIN
+    ship.SetTranslateXYZ(*_local_in_ona2(p))
+    assert handoff.tick(ship) is ona1
+
+
+def test_overlapping_regions_prefer_the_nearest_owned_body_or_sphere():
+    """Synthetic map: two regions whose containments both hold the point.
+    The one whose nearest shape centre (sphere anchor or owned body) is
+    closer wins, whichever order the regions are listed in."""
+    from engine.systems.map import Body, Region, SystemMap
+    m = SystemMap(system="Synth", bodies=[
+        Body(name="A b", display_name="A b", radius_gu=1000.0,
+             position_gu=(0.0, 0.0, 0.0), owner_region="SynthA"),
+        Body(name="B b", display_name="B b", radius_gu=1000.0,
+             position_gu=(6000.0, 0.0, 0.0), owner_region="SynthB"),
+    ], regions=[
+        Region(set_name="SynthA", anchor_gu=(-9000.0, 0.0, 0.0),
+               radius_gu=20000.0),
+        Region(set_name="SynthB", anchor_gu=(50000.0, 0.0, 0.0),
+               radius_gu=100.0),
+    ])
+    # Unloaded sets: reach = 2 * 1000 + margin = 3500. The point is 3400
+    # from B's body (in its reach) and inside A's big sphere; A's nearest
+    # centre is its body, 2600 away -- closer than B's 3400.
+    p = (2600.0, 0.0, 0.0)
+    assert handoff.nearest_region(m, p, ["SynthA", "SynthB"]) == "SynthA"
+    assert handoff.nearest_region(m, p, ["SynthB", "SynthA"]) == "SynthA"
+    q = (4000.0, 0.0, 0.0)          # 4000 from A's body, 2000 from B's
+    assert handoff.nearest_region(m, q, ["SynthA", "SynthB"]) == "SynthB"
+    assert handoff.nearest_region(m, (0.0, 90000.0, 0.0),
+                                  ["SynthA", "SynthB"]) is None

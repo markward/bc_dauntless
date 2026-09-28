@@ -181,8 +181,16 @@ that distance, the warp ends at the **standoff**:
 
 - a body that owns a region: the distance from the body's centre to **that
   region's arrival point** (its Player Start in system coordinates), measured on
-  the line of approach — so you arrive inside the region's sphere at BC's own
-  framing range, and the hand-off (§3) makes you part of it;
+  the line of approach — so you arrive at BC's own framing range, and the
+  hand-off (§3) makes you part of that region **from any direction**: the
+  arrival range is always inside the body's reach (§3). The arrival range is
+  one function, `handoff.arrival_range`, read by both the drop-out and the
+  hand-off so they cannot drift. (Starting inside a body's arrival range — R9
+  — the standoff is radius + `clearance_gu` instead.) *Ruling R14 — cutting
+  the standoff short so the drop point landed inside the region's sphere — is
+  retired (Mark, 2026-09-28): the sphere sits on its Player Start side of the
+  body, so R14 only half-worked (dead astern it had no solution and the
+  player stopped beside the planet with no hand-off);*
 - a body that owns no region (the star; an unmapped set's bodies): one body
   radius above the surface.
 
@@ -338,13 +346,28 @@ widening plan lifts this.
 
 **When:**
 
-- **At impulse:** the moment the player's system position enters another
-  region's sphere. **Rule H:** the player stays in the current set until beyond
-  its radius + `HANDOFF_MARGIN_GU` **and** inside another region's sphere. There
-  is still no "space set" — in the open you stay in the region you left.
+- **Containment (Mark, 2026-09-28: arriving near a planet from ANY direction
+  counts as entering its region).** A region contains the player's system
+  position when it is inside the region's sphere (`anchor_gu`, `radius_gu`)
+  **or** within `reach(body) = arrival_range(body) + HANDOFF_MARGIN_GU` of the
+  centre of any body the region owns (map `Body.owner_region`), where
+  `arrival_range` is the distance from the body's centre to the region's
+  Player Start in system coordinates (`handoff.arrival_range`, shared with §1's
+  body drop-out) — or `2 × radius + HANDOFF_MARGIN_GU` when that region's set
+  is not loaded. The sphere alone sits on its Player Start side of the body,
+  so an approach from the far side used to stop beside the planet but outside
+  its region: no banner, no arrival beats. Where two regions both contain a
+  point, the one whose nearest shape centre (sphere anchor or owned body) is
+  closest wins, ties to the lower set name.
+- **At impulse:** the moment the player's system position is contained by
+  another region. **Rule H:** the player stays in the current set until beyond
+  its radius + `HANDOFF_MARGIN_GU` of its sphere **and** beyond
+  reach + `HANDOFF_MARGIN_GU` of every body it owns, **and** inside another
+  region (by the containment above). There is still no "space set" — in the
+  open you stay in the region you left.
 - **During a dash: deferred to drop-out.** Passing through a sphere mid-dash does
-  nothing; at drop-out the player is handed off to whichever region's sphere they
-  are in. Arrival means where you stop, not what you fly through — otherwise an
+  nothing; at drop-out the player is handed off to whichever region contains
+  them. Arrival means where you stop, not what you fly through — otherwise an
   Ona 1 → Ona 3 crossing that grazed Ona 2's sphere would flash "Entering Ona 2"
   and could fire Ona 2's arrival beats (24 missions key `ET_ENTERED_SET` on the
   set name).
@@ -432,7 +455,9 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
   planet in its path and never drops out (ruling R2).
 - **Hand-off:** `system_position` identical before and after; event order
   `ET_EXITED_SET`, `ET_ENTERED_SET`, `ET_EXITED_WARP`; no flicker circling a
-  sphere's edge; deferred during a dash (through Ona 2 to Ona 3: no event, no
+  sphere's or a reach's edge; an approach from a planet's far side (outside its
+  region's sphere, within its reach) hands off; overlapping containments pick
+  the nearest; deferred during a dash (through Ona 2 to Ona 3: no event, no
   banner); an NPC is never handed off; target cleared.
 - **Rule C:** a Set Course to another system still runs the tunnel; E6M1's
   in-tunnel ships exist on arrival.

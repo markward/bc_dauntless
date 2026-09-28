@@ -190,8 +190,8 @@ def _segment_distance(a, b, c):
 
 def test_warp_on_heading_at_ona2_hands_off_at_its_arrival_range(world):
     """The geometry of tests/unit/test_dash_heading.py's hand-off case: from
-    Ona 1's Player Start straight at Ona 2's centre, whose region sphere the
-    ray passes through (ruling R14)."""
+    Ona 1's Player Start straight at Ona 2's centre: the dash stops at the
+    arrival range, inside Ona 2's reach (Mark 2026-09-28), and hands off."""
     w = world
     centre = tuple(float(c) for c in _body("Ona 2").position_gu)
     p = _sys(w.player)

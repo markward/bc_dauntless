@@ -16,10 +16,19 @@ but a defensive gate costs nothing and matches every other player-only
 effect in this tree (engine.appc.warp._is_current_player,
 engine.appc.articulation._is_player).
 
+Containment (Mark, 2026-09-28: arriving near a planet from ANY direction
+counts as entering its region). A region contains the player inside its
+sphere OR within region_reach(body) = arrival_range(body) + HANDOFF_MARGIN_GU
+of any body it owns. The sphere alone sits on its Player Start side of the
+planet, so an approach from the far side used to stop beside the planet but
+outside its region. Where two regions both contain a point, the one whose
+nearest shape centre (anchor or owned body) is closest wins.
+
 Rule H (hysteresis). The player stays in its current set until beyond its
-radius + HANDOFF_MARGIN_GU -- not the instant it crosses the bare radius --
-so a position sitting exactly on a sphere's edge cannot flicker in and out
-every tick.
+radius + HANDOFF_MARGIN_GU of the sphere AND beyond reach + HANDOFF_MARGIN_GU
+of every body it owns -- not the instant it crosses either bare edge -- so a
+position sitting exactly on a sphere's or a reach's edge cannot flicker in
+and out every tick.
 
 Deferred during a dash (spec section 3): a player dash (a WarpFlight whose
 speed_policy is "set_course" or "heading") never hands off mid-flight; the
@@ -41,6 +50,39 @@ HANDOFF_MARGIN_GU = 1500.0
 _DASH_POLICIES = ("set_course", "heading")
 
 
+_ARRIVAL_PLACEMENT = "Player Start"
+
+
+def arrival_range(body) -> float | None:
+    """From ``body``'s centre, the distance to its owning region's arrival
+    point -- the region set's "Player Start", in system coordinates -- where
+    the tunnel frames it. None when the body has no owning region or that
+    region's set (or its Player Start) is not loaded. The ONE definition:
+    the heading dash's body drop-out (engine.appc.dash._heading_standoffs)
+    and the hand-off's reach (``region_reach``) both read it, so the point a
+    dash stops at and the point that counts as arrived cannot drift apart."""
+    if not getattr(body, "owner_region", None):
+        return None
+    import App
+    pSet = App.g_kSetManager.GetSet(body.owner_region)
+    wp = pSet.GetObject(_ARRIVAL_PLACEMENT) if pSet is not None else None
+    arrival = frames.system_position(wp) if wp is not None else None
+    if arrival is None:
+        return None
+    return math.dist(tuple(float(c) for c in body.position_gu),
+                     tuple(arrival[1:]))
+
+
+def region_reach(body) -> float:
+    """How near ``body``'s centre counts as inside its owning region (Mark,
+    2026-09-28: arriving near a planet from ANY side enters its region):
+    arrival_range + HANDOFF_MARGIN_GU, else 2 * radius + HANDOFF_MARGIN_GU
+    when the arrival range is unknown."""
+    ar = arrival_range(body)
+    base = ar if ar is not None else 2.0 * body.radius_gu
+    return base + HANDOFF_MARGIN_GU
+
+
 def _is_current_player(ship) -> bool:
     """True when `ship` is the game's current player. Best-effort: False
     headlessly or whenever the game is not resolvable -- the same idiom as
@@ -59,11 +101,48 @@ def _is_dashing(player) -> bool:
             and getattr(flight, "speed_policy", None) in _DASH_POLICIES)
 
 
+def _shape_distance(m, region, pos, margin=0.0) -> float | None:
+    """How near ``pos`` is to ``region``, or None when the region does not
+    contain it. It contains it inside its sphere (anchor_gu, radius_gu) OR
+    within ``region_reach`` of the centre of any body it owns (map
+    Body.owner_region) -- each shape widened by ``margin``. The distance is
+    to the nearest of those shape centres (the anchor, every owned body),
+    the tie-break when two regions both contain the point."""
+    shapes = [(tuple(region.anchor_gu), region.radius_gu)]
+    for b in m.bodies:
+        if b.owner_region == region.set_name:
+            shapes.append((tuple(float(c) for c in b.position_gu),
+                           region_reach(b)))
+    inside, nearest = False, None
+    for centre, reach in shapes:
+        d = math.dist(pos, centre)
+        inside = inside or d <= reach + margin
+        nearest = d if nearest is None else min(nearest, d)
+    return nearest if inside else None
+
+
+def nearest_region(m, pos, names):
+    """Of the region set ``names`` in map ``m``, the name of the one that
+    contains system point ``pos`` (``_shape_distance``) -- or None. When
+    several do, the one whose nearest shape centre (sphere anchor or owned
+    body) is closest wins; an exact tie goes to the lower set name, so the
+    choice never depends on map order."""
+    best = None
+    for name in names:
+        region = m.region(name)
+        if region is None:
+            continue
+        d = _shape_distance(m, region, pos)
+        if d is not None and (best is None or (d, name) < best):
+            best = (d, name)
+    return best[1] if best is not None else None
+
+
 def region_at(player):
-    """The loaded, mapped region set of the player's system whose sphere
-    (anchor_gu, radius_gu) contains its system position -- or None when it
-    is in no such sphere (open space) or in no mapped system at all. When
-    two loaded regions' spheres both contain it, the nearer anchor wins."""
+    """The loaded, mapped region set of the player's system that contains
+    its system position (``nearest_region``: inside the region's sphere, or
+    within reach of a body it owns) -- or None when it is in no region (open
+    space) or in no mapped system at all."""
     pSet = frames.containing_set(player)
     f = frames.frame_of(pSet)
     if f is None or f.key[0] != "system":
@@ -72,28 +151,24 @@ def region_at(player):
     pos = frames.system_position(player)
     if m is None or pos is None:
         return None
-    _, x, y, z = pos
     import App
-    best, best_d = None, None
+    loaded = {}
     for name in resolve.regions_of(f.key[1]):
         candidate = App.g_kSetManager.GetSet(name)
-        if candidate is None or not region_hooks.is_mapped(candidate):
-            continue
-        region = m.region(name)
-        if region is None:
-            continue
-        d = math.dist((x, y, z), region.anchor_gu)
-        if d <= region.radius_gu and (best is None or d < best_d):
-            best, best_d = candidate, d
-    return best
+        if candidate is not None and region_hooks.is_mapped(candidate):
+            loaded[name] = candidate
+    name = nearest_region(m, tuple(pos[1:]), list(loaded))
+    return loaded.get(name) if name is not None else None
 
 
 def tick(player):
-    """Hand the player off into whichever region's sphere now contains it,
-    and return the new set -- else None. No-op when: `player` is None or is
+    """Hand the player off into whichever region now contains it, and
+    return the new set -- else None. No-op when: `player` is None or is
     not the current player (rule N); its set is unmapped; it is dashing
-    (`_is_dashing`); it is still within its current set's radius +
-    HANDOFF_MARGIN_GU (rule H); or no other region's sphere contains it."""
+    (`_is_dashing`); its current region still contains it with every shape
+    widened by HANDOFF_MARGIN_GU -- within radius + margin of its sphere or
+    reach + margin of a body it owns (rule H); or no other region contains
+    it."""
     if player is None or not _is_current_player(player):
         return None
     src = frames.containing_set(player)
@@ -106,12 +181,10 @@ def tick(player):
     pos = frames.system_position(player)
     if m is None or pos is None:
         return None
-    _, x, y, z = pos
     current = m.region(src.GetName())
-    if current is not None:
-        d_cur = math.dist((x, y, z), current.anchor_gu)
-        if d_cur <= current.radius_gu + HANDOFF_MARGIN_GU:
-            return None
+    if current is not None and _shape_distance(
+            m, current, tuple(pos[1:]), HANDOFF_MARGIN_GU) is not None:
+        return None
     dest = region_at(player)
     if dest is None or dest is src:
         return None
