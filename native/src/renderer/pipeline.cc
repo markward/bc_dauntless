@@ -77,9 +77,15 @@ Pipeline::Pipeline() {
     // otherwise leave it at unit 0 with the base texture. Harmless for two
     // sampler2Ds, but the predecessor was a samplerBuffer and two sampler
     // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
+    // Same for the hull-decal masks: u_decal_mask0..3 live on units 8..11
+    // (draw_model binds the textures there once per model, frame.cc).
     for (Shader* sh : {opaque_.get(), skinned_.get()}) {
         sh->use();
         sh->set_int("u_scuff_map", 7);
+        sh->set_int("u_decal_mask0", 8);
+        sh->set_int("u_decal_mask1", 9);
+        sh->set_int("u_decal_mask2", 10);
+        sh->set_int("u_decal_mask3", 11);
     }
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);

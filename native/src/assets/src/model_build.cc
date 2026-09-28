@@ -556,6 +556,8 @@ void apply_texture_replacements(
     }
 }
 
+}  // namespace
+
 /// True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis:
 /// `u_axis x v_axis` near zero (parallel/zero axes), `normal` near zero
 /// (glm::normalize(0) is NaN), or `normal` lying in the span(u_axis, v_axis)
@@ -577,6 +579,19 @@ bool decal_projector_is_degenerate(
     const float det = glm::dot(cross, n_hat);  // == det([u_axis v_axis n_hat])
     return std::fabs(det) < 1e-9f * cross_len;
 }
+
+void premultiply_decal_mask(Image& image)
+{
+    if (image.format != Image::Format::RGBA8) return;
+    auto& px = image.pixels;
+    for (std::size_t i = 0; i + 3 < px.size(); i += 4) {
+        const unsigned a = px[i + 3];
+        for (std::size_t c = 0; c < 3; ++c)
+            px[i + c] = static_cast<std::uint8_t>((px[i + c] * a + 127u) / 255u);
+    }
+}
+
+namespace {
 
 /// Build Model::decals (see ModelDecal, model.h) from ctx.decals, in request
 /// order. No-op when ctx.decals is empty (the overwhelming majority of
@@ -659,13 +674,7 @@ void apply_decals(Model& model, const ModelBuildContext& ctx)
         // attached: alpha-less is treated as fully opaque), but that's easy
         // to miss until it's live, so warn once per mask path.
         if (decoded.format == Image::Format::RGBA8) {
-            auto& px = decoded.pixels;
-            for (std::size_t i = 0; i + 3 < px.size(); i += 4) {
-                const unsigned a = px[i + 3];
-                for (std::size_t c = 0; c < 3; ++c)
-                    px[i + c] = static_cast<std::uint8_t>(
-                        (px[i + c] * a + 127u) / 255u);
-            }
+            premultiply_decal_mask(decoded);
         } else {
             if (warn_once(model.source.string() + "|decal-no-alpha|" + req.mask.string())) {
                 std::fprintf(stderr,

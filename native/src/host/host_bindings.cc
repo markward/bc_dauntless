@@ -88,6 +88,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
+#include <assets/decal_override.h>
 #include <assets/mesh_fix.h>
 #include <assets/model_compose.h>
 #include <assets/texture.h>
@@ -470,6 +471,10 @@ struct LoadedModel {
 };
 
 std::unique_ptr<assets::AssetCache> g_cache;
+// Hull-decal mask textures for set_instance_decals overrides, loaded once per
+// path. Owns GL textures: cleared in shutdown() while the context is current
+// (after every override that borrows its ids is dropped), and again in init().
+assets::DecalMaskCache g_decal_mask_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
 
 // Bridge-node animation store: the active non-skinned node clips (doors, chairs).
@@ -723,6 +728,11 @@ void reset_frame_state() {
     // binding like any other and can be called with the host down, so zero it
     // here with the rest.
     renderer::letterbox::set_covered(0.0f);
+
+    // Per-instance decal overrides (set_instance_decals). Keyed by full
+    // InstanceId and borrowing g_decal_mask_cache's texture ids: a new
+    // session's world recycles ids from scratch, so none may survive.
+    renderer::clear_instance_decal_overrides();
 }
 
 void init(int width, int height, const std::string& title) {
@@ -744,6 +754,8 @@ void init(int width, int height, const std::string& title) {
     g_bridge_node_ids.clear();
     // Everything frame() consumes and Python can push: see reset_frame_state().
     reset_frame_state();
+    // Empty after any shutdown(); cleared here too so the two ends agree.
+    g_decal_mask_cache.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
@@ -808,6 +820,10 @@ void shutdown() {
     renderer::reset_scuff_normal_texture();
     // And for the hull-name decal mask's clamp sampler (unit 8, frame.cc).
     renderer::reset_decal_mask_sampler();
+    // set_instance_decals masks: drop the overrides that borrow their ids
+    // first, then release the textures while this context is current.
+    renderer::clear_instance_decal_overrides();
+    g_decal_mask_cache.clear();
     g_loaded_models.clear();
     // Handle-recycling hazard: see the matching call in init(). Pure CPU
     // state (no GL), safe regardless of context currency.
@@ -2008,6 +2024,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["hologram_ship_active"]   = g_hologram_ship.active;
               d["hologram_only_mode"]     = g_hologram_only_mode;
               d["spv_hull_mode"]          = g_spv_hull_mode;
+              d["instance_decal_overrides"] = renderer::instance_decal_override_count();
               d["target_reticle_visible"] = g_target_reticle.visible;
               d["starmap_enabled"]        = g_starmap_scene.enabled;
               d["viewscreen_enabled"]     = g_viewscreen_enabled;
@@ -2080,6 +2097,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // skipping it would leak the GL texture for the rest of the
                   // process's life every time a damaged ship is destroyed.
                   if (g_instance_field_cache) g_instance_field_cache->forget(id);
+                  // Its set_instance_decals override (keyed on the full id,
+                  // so unreachable anyway -- but not leaked).
+                  renderer::clear_instance_decal_override(id);
               }
           },
           py::arg("id"));
@@ -2519,6 +2539,74 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "every named node in this instance's model that has geometry "
           "somewhere in its subtree, bounds in SHIP units. `candidate` marks "
           "the nodes a human would call a part (renderer::model_parts).");
+
+    // ── Per-instance decal override (SPV live preview) ───────────────────
+    // Spec 2026-09-28-spv-decal-editing-design.md §2.5. Never throws: a bad
+    // entry is skipped (warned once), an unknown id / a host that is down is
+    // a no-op, and every per-decal fault (unknown shape, degenerate
+    // projector, unloadable mask) skips that decal inside
+    // build_decal_override.
+    m.def("set_instance_decals",
+          [](scenegraph::InstanceId id, const py::object& decals) {
+              if (decals.is_none()) {
+                  renderer::clear_instance_decal_override(id);
+                  return;
+              }
+              if (!g_window) return;  // mask upload needs the GL context
+              const scenegraph::Instance* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale / unknown id
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr) return;
+
+              static std::unordered_set<std::string> warned_malformed;
+              std::vector<assets::DecalRequest> requests;
+              std::size_t index = 0;
+              try {
+                  for (auto item : decals) {
+                      assets::DecalRequest req;
+                      if (parse_decal_request(item, &req)) {
+                          requests.push_back(std::move(req));
+                      } else if (warned_malformed.insert(
+                                     model->source.string() + "|" +
+                                     std::to_string(index)).second) {
+                          std::fprintf(stderr,
+                              "set_instance_decals: malformed decal entry %zu "
+                              "for %s (expected a 7-sequence of shape, origin, "
+                              "u_axis, v_axis, normal, depth, mask_path); "
+                              "skipping\n",
+                              index, model->source.string().c_str());
+                      }
+                      ++index;
+                  }
+              } catch (const std::exception&) {
+                  // `decals` itself is not iterable: nothing to draw.
+                  std::fprintf(stderr,
+                      "set_instance_decals: decals must be a list or None; "
+                      "ignoring\n");
+                  return;
+              }
+              renderer::set_instance_decal_override(
+                  id, assets::build_decal_override(
+                          *model, requests,
+                          [](const std::filesystem::path& p) {
+                              return g_decal_mask_cache.get(p);
+                          }));
+          },
+          py::arg("instance_id"), py::arg("decals"),
+          "Replace this instance's baked hull decals for drawing with `decals` "
+          "(the load_model decal entry shape: (shape_or_empty, origin, "
+          "u_axis, v_axis, normal, depth, mask_path), body frame, at most 4), "
+          "or None to go back to the baked list. An empty list draws none. "
+          "Masks load once per path. Never raises.");
+    m.def("instance_decal_override_size",
+          [](scenegraph::InstanceId id) -> std::optional<std::size_t> {
+              const auto* ov = renderer::instance_decal_override(id);
+              if (ov == nullptr) return std::nullopt;
+              return ov->decals.size();
+          },
+          py::arg("instance_id"),
+          "Number of decals this instance's set_instance_decals override "
+          "draws, or None when it draws its baked list.");
 
     // ── Part articulation (BoP wings) ────────────────────────────────────
     // Python owns the POSE (engine/appc/articulation.py, advanced on the sim

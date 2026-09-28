@@ -326,25 +326,50 @@ GLuint ensure_decal_mask_sampler() {
 // kHullDecalUnit0 + i (units 0..7 are taken by the opaque pass).
 constexpr int kHullDecalUnit0 = 8;
 
-// Bind hull decals for ONE mesh draw: decal i's mask on unit 8+i through the
-// clamp sampler, plus the projector uniform arrays and this mesh's enable
-// mask (`mesh_mask` ANDed with the list size). Units past the list get the
-// black fallback and sampler 0, so every declared sampler stays valid and
-// nothing inherits the clamp. `decals` is the model's list today; a
-// per-instance override list goes through the same helper. `textures`
-// resolves ModelDecal::texture_index; a decal whose index is out of range is
-// disabled rather than bound. u_ship_world_inv (p_body reconstruction) is
-// otherwise set only for damaged / glowing / carved instances, so it is set
-// here whenever any decal is enabled.
-void bind_hull_decals(const Shader& prog,
-                      const std::vector<assets::ModelDecal>& decals,
-                      std::uint8_t mesh_mask,
-                      const std::vector<assets::Texture>& textures,
-                      GLuint black_fallback,
-                      const glm::mat4& world) {
+// The black fallback texture id currently bound on ALL FOUR decal units
+// (8..11), or 0 when unknown / something else is bound there. Lets an
+// undecaled draw_model skip rebinding units that already hold the fallback
+// -- the overwhelmingly common case. Forgotten whenever that texture may
+// have gone away (the FrameSubmitter that owns it is destroyed; the
+// session's GL objects are reset). A stale value can only ever leave a unit
+// holding NO texture while every u_decal_enabled_mask bit is 0, and
+// opaque.frag samples no decal mask then.
+GLuint g_decal_units_fallback = 0;
+
+// Per-instance decal overrides (set_instance_decal_override), keyed by the
+// full InstanceId (index + generation).
+std::unordered_map<std::uint64_t, assets::DecalOverride> g_decal_overrides;
+
+std::uint64_t decal_override_key(scenegraph::InstanceId id) {
+    return (static_cast<std::uint64_t>(id.index) << 32) | id.generation;
+}
+
+// Bind ONE draw_model's hull-decal list: decal i's mask on unit 8+i through
+// the clamp sampler, plus the projector uniform arrays, the list size and
+// u_ship_world_inv (p_body reconstruction; otherwise set only for damaged /
+// glowing / carved instances). Units past the list get the black fallback
+// and sampler 0, so every declared sampler stays valid and nothing inherits
+// the clamp; the units u_decal_mask0..3 name are fixed once, in Pipeline's
+// constructor. Returns the bits of the list that have a mask bound; each
+// mesh then ANDs its own enable mask with it (u_decal_enabled_mask, set per
+// mesh by the caller).
+//
+// The baked Model::decals and a per-instance override (DecalOverride) both
+// come through here -- only the texture lookup differs: `texture_id` maps a
+// ModelDecal::texture_index to a GL id, 0 for "none" (that decal is then
+// disabled rather than bound). An empty list whose units already hold the
+// fallback costs no GL call at all.
+template <class TextureId>
+int bind_hull_decal_list(const Shader& prog,
+                         const std::vector<assets::ModelDecal>& decals,
+                         const TextureId& texture_id,
+                         GLuint black_fallback,
+                         const glm::mat4& world) {
     const int n = std::min<int>(static_cast<int>(decals.size()),
                                 assets::kMaxDecals);
-    int enabled = static_cast<int>(mesh_mask) & ((1 << n) - 1);
+    if (n == 0 && black_fallback != 0 && g_decal_units_fallback == black_fallback)
+        return 0;
+    int available = 0;
     glm::mat4 proj[assets::kMaxDecals];
     glm::vec3 normal[assets::kMaxDecals];
     float     depth[assets::kMaxDecals] = {};
@@ -352,12 +377,8 @@ void bind_hull_decals(const Shader& prog,
         GLuint tex = 0;
         if (i < n) {
             const auto& d = decals[static_cast<std::size_t>(i)];
-            if (d.texture_index >= 0 &&
-                d.texture_index < static_cast<int>(textures.size())) {
-                tex = textures[static_cast<std::size_t>(d.texture_index)].id();
-            } else {
-                enabled &= ~(1 << i);
-            }
+            tex = texture_id(d.texture_index);
+            if (tex != 0) available |= 1 << i;
             proj[i] = d.body_to_mask;
             normal[i] = d.normal;
             depth[i] = d.depth;
@@ -365,24 +386,22 @@ void bind_hull_decals(const Shader& prog,
             proj[i] = glm::mat4(1.0f);
             normal[i] = glm::vec3(0.0f, 0.0f, 1.0f);
         }
-        const bool bound = (enabled & (1 << i)) != 0;
+        const bool bound = (available & (1 << i)) != 0;
         glActiveTexture(GL_TEXTURE0 + kHullDecalUnit0 + i);
         glBindTexture(GL_TEXTURE_2D, bound ? tex : black_fallback);
         glBindSampler(kHullDecalUnit0 + i, bound ? ensure_decal_mask_sampler() : 0);
-        static const char* const kMaskUniform[assets::kMaxDecals] = {
-            "u_decal_mask0", "u_decal_mask1", "u_decal_mask2", "u_decal_mask3"};
-        prog.set_int(kMaskUniform[i], kHullDecalUnit0 + i);
     }
     glActiveTexture(GL_TEXTURE0);  // restore default active unit
+    g_decal_units_fallback = (available == 0) ? black_fallback : 0;
     prog.set_int("u_hull_decal_count", n);
-    prog.set_int("u_decal_enabled_mask", enabled);
-    if (enabled != 0) {
+    if (available != 0) {
         prog.set_mat4("u_ship_world_inv", glm::inverse(world));
         prog.set_mat4_array("u_decal_proj", proj, assets::kMaxDecals);
         prog.set_vec3_array("u_decal_normal", normal, assets::kMaxDecals);
         glUniform1fv(glGetUniformLocation(prog.program(), "u_decal_depth"),
                      assets::kMaxDecals, depth);
     }
+    return available;
 }
 
 // Lazy per-model bounding-radius cache for dynamic-light selection. Mirrors
@@ -448,7 +467,26 @@ void reset_decal_mask_sampler() {
         glDeleteSamplers(1, &id);
     }
     g_decal_mask_sampler = 0;
+    g_decal_units_fallback = 0;  // the next context's units hold nothing yet
 }
+
+void set_instance_decal_override(scenegraph::InstanceId id,
+                                 assets::DecalOverride ov) {
+    g_decal_overrides[decal_override_key(id)] = std::move(ov);
+}
+
+void clear_instance_decal_override(scenegraph::InstanceId id) {
+    g_decal_overrides.erase(decal_override_key(id));
+}
+
+void clear_instance_decal_overrides() { g_decal_overrides.clear(); }
+
+const assets::DecalOverride* instance_decal_override(scenegraph::InstanceId id) {
+    auto it = g_decal_overrides.find(decal_override_key(id));
+    return it != g_decal_overrides.end() ? &it->second : nullptr;
+}
+
+std::size_t instance_decal_override_count() { return g_decal_overrides.size(); }
 
 // The original fill volume for an instance's hull, or nullptr when there is
 // nothing to gate with. Skipped for undamaged instances so the common case never
@@ -484,7 +522,8 @@ void draw_model(const assets::Model& model,
                 const voxel::VoxelVolume* carve_fill,
                 bool carve_invert,
                 const InstanceFieldCache::Entry* hull_field,
-                const std::unordered_map<int, glm::mat4>* node_overrides) {
+                const std::unordered_map<int, glm::mat4>* node_overrides,
+                const assets::DecalOverride* decal_override) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -790,6 +829,21 @@ void draw_model(const assets::Model& model,
         articulated ? rest_corrections(model, *node_overrides)
                     : std::vector<glm::mat4>{};
 
+    // Units 8..11 = hull-name decal masks: bound once for the whole model
+    // (a per-instance override replaces the baked Model::decals), then each
+    // mesh below sets only its own enable mask.
+    const int decals_available = decal_override != nullptr
+        ? bind_hull_decal_list(prog, decal_override->decals,
+              [&](int t) -> GLuint {
+                  return (t >= 0 && t < static_cast<int>(decal_override->texture_ids.size()))
+                      ? decal_override->texture_ids[static_cast<std::size_t>(t)] : 0u;
+              }, black_fallback, world)
+        : bind_hull_decal_list(prog, model.decals,
+              [&](int t) -> GLuint {
+                  return (t >= 0 && t < static_cast<int>(model.textures.size()))
+                      ? model.textures[static_cast<std::size_t>(t)].id() : 0u;
+              }, black_fallback, world);
+
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const auto& node = model.nodes[i];
         for (int mesh_idx : node.meshes) {
@@ -897,10 +951,15 @@ void draw_model(const assets::Model& model,
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
             prog.set_int("u_scuff_map_ok", scuff_map != 0 ? 1 : 0);
 
-            // Units 8..11 = hull-name decal masks (Model::decals), gated per
-            // mesh by its shape-derived enable mask.
-            bind_hull_decals(prog, model.decals, mesh.decal_mask(),
-                             model.textures, black_fallback, world);
+            // This mesh's shape-derived decal enable mask (an override
+            // carries its own, one per Model::meshes entry).
+            std::uint8_t mesh_decals = mesh.decal_mask();
+            if (decal_override != nullptr) {
+                const auto m = static_cast<std::size_t>(mesh_idx);
+                mesh_decals = m < decal_override->mesh_masks.size()
+                    ? decal_override->mesh_masks[m] : std::uint8_t{0};
+            }
+            prog.set_int("u_decal_enabled_mask", mesh_decals & decals_available);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
@@ -919,6 +978,8 @@ FrameSubmitter::~FrameSubmitter() {
         white_texture_ = 0;
     }
     if (black_texture_ != 0) {
+        // Deleting it unbinds it from units 8..11: forget that they held it.
+        if (g_decal_units_fallback == black_texture_) g_decal_units_fallback = 0;
         GLuint t = black_texture_;
         glDeleteTextures(1, &t);
         black_texture_ = 0;
@@ -1031,7 +1092,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                           lights, light_count,
                           carve_fill_entry(carve_cache, m, inst.carve),
                           /*carve_invert=*/false, field_entry,
-                          &inst.node_overrides);
+                          &inst.node_overrides,
+                          instance_decal_override(inst.id));
     });
 }
 
@@ -1099,7 +1161,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           lights, light_count,
                           carve_fill_entry(carve_cache, m, inst.carve),
                           /*carve_invert=*/false, field_entry,
-                          &inst.node_overrides);
+                          &inst.node_overrides,
+                          instance_decal_override(inst.id));
     });
 }
 
@@ -1163,7 +1226,8 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
                    lights, /*dyn_light_count=*/0,
                    carve_fill_entry(carve_cache, m, inst->carve),
                    /*carve_invert=*/true, field_entry,
-                   &inst->node_overrides);
+                   &inst->node_overrides,
+                   instance_decal_override(inst->id));
     }
 
     // Back to the GL default (0xFF), NOT 0x00: glClear(GL_STENCIL_BUFFER_BIT)
@@ -1243,7 +1307,8 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
                lights, light_count,
                carve_fill_entry(carve_cache, m, inst->carve),
                /*carve_invert=*/false, field_entry,
-               &inst->node_overrides);
+               &inst->node_overrides,
+               instance_decal_override(inst->id));
 }
 
 // ── Shadow depth pre-pass ──────────────────────────────────────────────────

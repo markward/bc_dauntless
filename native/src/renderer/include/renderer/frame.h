@@ -13,6 +13,8 @@
 
 #include <scenegraph/instance.h>
 
+#include <assets/decal_override.h>
+
 #include <renderer/shadow_light.h>
 // draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
 // constants, so the forward declaration below is not enough on its own.
@@ -305,7 +307,11 @@ void draw_model(const assets::Model& model,
                 // pass already consumes. nullptr or an empty map takes the
                 // static node walk, which compose_node_worlds reproduces
                 // byte-for-byte -- so an unarticulated hull is unchanged.
-                const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
+                const std::unordered_map<int, glm::mat4>* node_overrides = nullptr,
+                // Per-instance hull-decal override (set_instance_decal_override):
+                // when non-null its list REPLACES model.decals for this draw,
+                // with its own per-mesh enable masks. nullptr = the baked list.
+                const assets::DecalOverride* decal_override = nullptr);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
@@ -341,6 +347,25 @@ void reset_model_radius_cache();
 /// reset_damage_decal_texture(): call while the creating context is current,
 /// or the stale sampler id leaks into the next context.
 void reset_decal_mask_sampler();
+
+/// Per-instance hull-decal override (set_instance_decals, spec 2026-09-28-
+/// spv-decal-editing-design.md §2.5): while set, `ov` REPLACES the instance's
+/// model's baked Model::decals in every opaque draw of that instance (an empty
+/// list draws no decal). Keyed by the FULL InstanceId, so a recycled index
+/// never inherits it. `ov.texture_ids` are borrowed, not owned: the caller
+/// (the host's DecalMaskCache) must keep them alive while the override is
+/// set, and clear the override before releasing them. Pure CPU state.
+void set_instance_decal_override(scenegraph::InstanceId id,
+                                 assets::DecalOverride ov);
+/// Drop one instance's override (its draws go back to Model::decals). No-op
+/// for an id that has none. The host calls this from destroy_instance.
+void clear_instance_decal_override(scenegraph::InstanceId id);
+/// Drop every override. The host calls this from init() AND shutdown().
+void clear_instance_decal_overrides();
+/// The instance's override, or nullptr when it draws its baked list.
+const assets::DecalOverride* instance_decal_override(scenegraph::InstanceId id);
+/// Number of instances with an override (host introspection / tests).
+std::size_t instance_decal_override_count();
 
 class FrameSubmitter {
 public:

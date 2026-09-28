@@ -59,6 +59,18 @@ std::string sibling_normal_filename(std::string_view fname);
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx);
 
+/// True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis
+/// (decal_body_to_mask would produce inf/NaN). Shared by apply_decals and
+/// build_decal_override (decal_override.h) so both reject the same inputs.
+bool decal_projector_is_degenerate(
+    const glm::vec3& u_axis, const glm::vec3& v_axis, const glm::vec3& normal);
+
+/// Premultiply an RGBA8 hull-decal mask's RGB by its alpha in place (spec §2:
+/// opaque.frag composites base*(1-a) + mask.rgb). RGB8 / R8 are untouched --
+/// implicit alpha 1. The ONE premultiply both the baked path (apply_decals)
+/// and the per-instance mask cache (DecalMaskCache) use.
+void premultiply_decal_mask(Image& image);
+
 /// Build the ship-body-frame -> mask-space affine transform for a hull-name
 /// decal: `origin` maps to mask (0,0,0), `origin+u_axis` to (1,0,0),
 /// `origin+v_axis` to (0,1,0), and a point `depth` units along the unit

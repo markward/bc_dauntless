@@ -18,6 +18,7 @@
 #include <scenegraph/world.h>
 
 #include <assets/cache.h>
+#include <assets/decal_override.h>
 #include <assets/model.h>
 
 // skinned_bridge_test.cc defines STB_IMAGE_WRITE_IMPLEMENTATION in this
@@ -195,7 +196,15 @@ protected:
         auto iid = world.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(model.get()));
         world.set_world_transform(iid, glm::mat4(1.0f));
+        return render_world_top_down(world, box, from_below, fov_y_rad);
+    }
 
+    // render_top_down for a caller-built world (every instance at its own
+    // transform), through the same submit_opaque path.
+    std::vector<std::uint8_t> render_world_top_down(
+            const scenegraph::World& world, const renderer::Aabb& box,
+            bool from_below = false,
+            float fov_y_rad = scenegraph::Camera{}.fov_y_rad) {
         const float half = std::max(box.half_extents.x, box.half_extents.y);
         const float dist = box.half_extents.z +
                            1.2f * half / std::tan(fov_y_rad * 0.5f);
@@ -502,4 +511,86 @@ TEST_F(DecalRenderTest, ShapeRestrictsTheDecalToThatShapesMeshes) {
     EXPECT_GT(c_saucer.red, 200);
     EXPECT_LT(c_saucer.red + 200, c_all.red);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// ── Per-instance override (set_instance_decals, spec §2.5) ─────────────────
+
+// The plain Ambassador has no baked decals; an override on ONE instance
+// paints it, a second instance of the same model in the same world stays
+// plain, and clearing the override restores the plain hull.
+TEST_F(DecalRenderTest, InstanceOverridePaintsOnlyThatInstanceAndClears) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto plain = cache->load(ambassador_nif(), ambassador_search());
+    ASSERT_TRUE(plain->decals.empty());
+
+    scenegraph::World world;
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(plain.get());
+    const auto a = world.create_instance(handle);
+    const auto b = world.create_instance(handle);
+    world.set_world_transform(a, glm::mat4(1.0f));
+    world.set_world_transform(b, glm::mat4(1.0f));
+
+    assets::DecalMaskCache masks;
+    renderer::set_instance_decal_override(a, assets::build_decal_override(
+        *plain,
+        {whole_hull(box, false, write_mask("red.png", red, red), "amb saucer:0")},
+        [&](const fs::path& p) { return masks.get(p); }));
+
+    // Only A visible: painted. Only B visible: plain.
+    world.set_visible(b, false);
+    const Counts a_on = count_pixels(render_world_top_down(world, box));
+    world.set_visible(b, true);
+    world.set_visible(a, false);
+    const Counts b_only = count_pixels(render_world_top_down(world, box));
+    world.set_visible(a, true);
+    world.set_visible(b, false);
+    renderer::clear_instance_decal_override(a);
+    const Counts a_cleared = count_pixels(render_world_top_down(world, box));
+    std::fprintf(stderr,
+        "[DecalRender] override: A=%d, second instance B=%d, A cleared=%d\n",
+        a_on.red, b_only.red, a_cleared.red);
+
+    EXPECT_GT(a_on.red, 200);
+    EXPECT_LT(b_only.red, 10);
+    EXPECT_LT(a_cleared.red, 10);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    for (int unit = 8; unit < 12; ++unit) {
+        GLint sampler = -1;
+        glActiveTexture(GL_TEXTURE0 + unit);
+        glGetIntegerv(GL_SAMPLER_BINDING, &sampler);
+        EXPECT_EQ(sampler, 0) << "unit " << unit;
+    }
+    glActiveTexture(GL_TEXTURE0);
+    renderer::clear_instance_decal_overrides();
+    masks.clear();
+}
+
+// The override REPLACES the baked list: an empty override on a model with a
+// baked red decal draws no decal; clearing it brings the baked one back.
+TEST_F(DecalRenderTest, InstanceOverrideReplacesTheBakedList) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto baked = cache->load(ambassador_nif(), ambassador_search(), {},
+        {whole_hull(box, false, write_mask("red.png", red, red), "amb saucer:0")});
+    ASSERT_EQ(baked->decals.size(), 1u);
+
+    scenegraph::World world;
+    const auto a = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(baked.get()));
+    world.set_world_transform(a, glm::mat4(1.0f));
+
+    renderer::set_instance_decal_override(
+        a, assets::build_decal_override(*baked, {}, {}));
+    const Counts overridden = count_pixels(render_world_top_down(world, box));
+    renderer::clear_instance_decal_override(a);
+    const Counts restored = count_pixels(render_world_top_down(world, box));
+    std::fprintf(stderr,
+        "[DecalRender] empty override on baked: %d, cleared: %d\n",
+        overridden.red, restored.red);
+
+    EXPECT_LT(overridden.red, 10);
+    EXPECT_GT(restored.red, 200);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    renderer::clear_instance_decal_overrides();
 }

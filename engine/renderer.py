@@ -70,6 +70,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
+    "set_instance_decals",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
@@ -206,6 +207,15 @@ def spawn_test_character(nif_path: str):
 
 def set_visible(iid: InstanceId, visible: bool) -> None:
     _h.set_visible(iid, visible)
+
+
+def set_instance_decals(iid: InstanceId, decals) -> None:
+    """Replace one instance's baked hull decals for drawing (the SPV's live
+    decal preview). `decals` is a list of load_model-shaped entries
+    (shape_or_empty, origin, u_axis, v_axis, normal, depth, mask_path), body
+    frame, at most 4 -- an empty list draws none -- or None to go back to the
+    baked list. Bad entries are skipped natively; never raises."""
+    _h.set_instance_decals(iid, decals)
 
 
 def set_emissive_scale(iid: InstanceId, scale: float) -> None:

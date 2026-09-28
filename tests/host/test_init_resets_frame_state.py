@@ -98,6 +98,10 @@ CLEAN = {
     "hologram_ship_active": False,
     "hologram_only_mode": False,
     "spv_hull_mode": False,
+    # set_instance_decals overrides (the SPV decal preview). Python cannot
+    # set one with the host down -- it needs a live instance -- so this row
+    # pins the clear itself rather than a between-sessions push.
+    "instance_decal_overrides": 0,
     "target_reticle_visible": False,
     "starmap_enabled": False,
     "viewscreen_enabled": False,
