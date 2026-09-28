@@ -82,7 +82,7 @@ class RadiationDriver:
                 cur = shields.GetCurrentShields(face) - per_face
                 shields.SetCurrentShields(face, cur if cur > 0.0 else 0.0)
         else:
-            hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+            hull = ship.GetHull() if implements(ship, "GetHull") else None
             amount = HULL_PER_S * radiation * mult * dt
             if hull is not None and amount > 0.0:
                 if implements(ship, "DamageSystem"):
