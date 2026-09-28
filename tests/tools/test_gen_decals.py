@@ -82,10 +82,19 @@ def test_build_decal_centres_and_scales_on_bc_lettering(monkeypatch):
     # single corner triangle.
     grid_tris = [(0, 3, 4), (0, 4, 1), (1, 4, 5), (1, 5, 2),
                  (3, 6, 7), (3, 7, 4), (4, 7, 8), (4, 8, 5)]
+    # Patch/target normals are (0,0,-1), NOT the geometrically "obvious"
+    # (0,0,1): with this s/t -> world mapping (s along +x, t along +y) and
+    # the tie-broken "identity" orientation (see below), raw s_axis x t_axis
+    # already points +z, so a (0,0,1) input never triggers fit_plane_st's
+    # own agree-with-vertex-normals flip and (U x V).normal comes out
+    # POSITIVE -- mirrored per the chirality guard (build_decal step 6.5).
+    # (0,0,-1) forces the flip, landing on the real Ambassador's own sign
+    # (negative) without changing anything else this test checks (U, V,
+    # origin, scale are independent of the "normals" argument's sign).
     patch = {"block": 2, "name": "idpatch", "textures": ["X_ID_glow.tga"], "vertices": pts,
-             "normals": [(0.0, 0.0, 1.0)] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
+             "normals": [(0.0, 0.0, -1.0)] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
     target = {"block": 1, "name": "saucer", "textures": ["X_glow.tga"], "vertices": [(0.0, 0.0, 5.0)],
-              "normals": [(0.0, 0.0, 1.0)], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
+              "normals": [(0.0, 0.0, -1.0)], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
     from PIL import Image
     base = Image.new("RGBA", (100, 100), (100, 100, 100, 255))
     ref = base.copy()
@@ -114,13 +123,106 @@ def test_build_decal_centres_and_scales_on_bc_lettering(monkeypatch):
     assert ulen * (u1 - u0) == pytest.approx((s1 - s0) * 200.0, rel=1e-4)
     # 128x64 mask keeps square pixels: |U| / |V| == 2
     assert ulen / vlen == pytest.approx(2.0, rel=1e-6)
-    # V runs down the image = +t direction here; normal faces +z like the patch normals.
+    # V runs down the image = +t direction here; normal faces -z (flipped
+    # from the raw s_axis x t_axis to both agree with the patch's own
+    # vertex normals AND pass the chirality guard -- see the normals
+    # comment above).
     # Ruling D: both BC's lettering here and the mask's are SOLID filled
     # rectangles filling their own whole (footprint-gated, isolation-
     # cleaned) bbox, so they're symmetric under all 4 orientations -- every
     # orientation scores IoU=1.0, a tie resolved to "identity" -- so U/V
     # keep their un-flipped sign, exactly as before Ruling D.
-    assert V[1] > 0 and d["normal"] == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
+    assert V[1] > 0 and d["normal"] == pytest.approx([0.0, 0.0, -1.0], abs=1e-6)
+
+
+# --- _run_decals: overwrite warning (Controller Ruling G item 5) -------
+
+def _fake_decal_cfg():
+    return {
+        "Ambassador": {
+            "nif": "data/Models/Ships/Ambassador/Ambassador.nif",
+            "id_texture": "data/Models/Ships/Ambassador/High/AmbassadorSaucerID_glow.tga",
+            "reference_registry": "data/Models/Ships/Ambassador/High/Zhukov.tga",
+            "reference_mask": "data/Models/Ships/Ambassador/Masks/Zhukov/top.png",
+            "target_shape": "amb saucer:0",
+            "placement": "top",
+        },
+    }
+
+
+def test_run_decals_warns_when_overwriting_hand_edited_json(tmp_path, monkeypatch, capsys):
+    import PIL.Image
+    from engine import paths
+
+    game_root = tmp_path / "game"
+    (game_root / "data/Models/Ships/Ambassador").mkdir(parents=True)
+    fix_dir = tmp_path / "native_assets"
+
+    monkeypatch.setattr(g, "DECAL_CLASSES", _fake_decal_cfg())
+    monkeypatch.setattr(g, "_nif_shapes", lambda path: ["shapes"])
+    monkeypatch.setattr(PIL.Image, "open", lambda path: object())
+
+    fake_decal = {"shape": "amb saucer:0", "origin": [0.0, 0.0, 0.0],
+                  "u_axis": [1.0, 0.0, 0.0], "v_axis": [0.0, 1.0, 0.0],
+                  "normal": [0.0, 0.0, 1.0], "depth": 2.0}
+
+    def fake_build_decal(shapes, cfg, ref, base, mask, diagnostics=None):
+        if diagnostics is not None:
+            diagnostics["orientation"] = "identity"
+            diagnostics["scores"] = {}
+        return fake_decal
+
+    monkeypatch.setattr(g, "build_decal", fake_build_decal)
+    monkeypatch.setattr(paths, "game_root", lambda: game_root)
+    monkeypatch.setattr(paths, "game_asset", lambda rel: game_root / rel)
+    monkeypatch.setattr(paths, "project_asset_root", lambda: fix_dir)
+
+    out_path = (fix_dir / "replacements" /
+                "data/Models/Ships/Ambassador/Masks/decals.json")
+    out_path.parent.mkdir(parents=True)
+    out_path.write_text("HAND EDITED")
+
+    g._run_decals()
+
+    out = capsys.readouterr().out
+    assert f"overwriting hand-editable {out_path}" in out
+    assert out_path.read_text() != "HAND EDITED"
+
+
+# --- Chirality guard (Controller Ruling G item 6) -----------------------
+
+def test_build_decal_raises_on_mirrored_orientation():
+    # Same shape as test_build_decal_centres_and_scales_on_bc_lettering, but
+    # its (u x v) . normal is POSITIVE -- outward-facing normal (0,0,1)
+    # agrees with the raw s_axis x t_axis, so the chosen ("identity")
+    # orientation reads backwards from outside the hull. The real committed
+    # Ambassador decal is negative (~-7.1e3) and must keep passing; this is
+    # the forced-mirror counterexample.
+    pts, sts = [], []
+    for x in (-50, 50, 150):
+        for y in (0, 30, 60):
+            pts.append((float(x), float(y), 5.0))
+            sts.append((0.1 + x / 200.0, 0.2 + y / 100.0))
+    grid_tris = [(0, 3, 4), (0, 4, 1), (1, 4, 5), (1, 5, 2),
+                 (3, 6, 7), (3, 7, 4), (4, 7, 8), (4, 8, 5)]
+    patch = {"block": 2, "name": "idpatch", "textures": ["X_ID_glow.tga"], "vertices": pts,
+             "normals": [(0.0, 0.0, 1.0)] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
+    target = {"block": 1, "name": "saucer", "textures": ["X_glow.tga"], "vertices": [(0.0, 0.0, 5.0)],
+              "normals": [(0.0, 0.0, 1.0)], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
+    from PIL import Image
+    base = Image.new("RGBA", (100, 100), (100, 100, 100, 255))
+    ref = base.copy()
+    for x in range(20, 61):
+        for y in range(30, 51):
+            ref.putpixel((x, y), (0, 0, 0, 255))
+    mask = Image.new("RGBA", (128, 64), (0, 0, 0, 0))
+    for x in range(32, 97):
+        for y in range(16, 49):
+            mask.putpixel((x, y), (0, 0, 0, 255))
+    cfg = {"target_shape": "saucer", "placement": "top"}
+
+    with pytest.raises(ValueError, match="saucer"):
+        g.build_decal([target, patch], cfg, ref, base, mask)
 
 
 def test_decals_json_is_deterministic():
@@ -212,10 +314,20 @@ def test_build_decal_derives_orientation_from_asymmetric_lettering(true_orientat
             sts.append((0.1 + x / 100.0, 0.2 + y / 100.0))
     grid_tris = [(0, 3, 4), (0, 4, 1), (1, 4, 5), (1, 5, 2),
                  (3, 6, 7), (3, 7, 4), (4, 7, 8), (4, 8, 5)]
+    # Rotations (identity, rot180) preserve (u x v)'s sign; reflections
+    # (flip_u, flip_v) invert it -- so whichever pair `true_orientation`
+    # falls in needs the OPPOSITE vertex-normal sign to land on the
+    # non-mirrored side of build_decal's chirality guard (step 6.5). This is
+    # exactly the same "pick the sign the guard requires" fix as
+    # test_build_decal_centres_and_scales_on_bc_lettering's -- the "normals"
+    # argument only flips fit_plane_st's OWN normal, which this test never
+    # asserts on, so nothing else here changes.
+    patch_normal = ((0.0, 0.0, -1.0) if true_orientation in ("identity", "rot180")
+                     else (0.0, 0.0, 1.0))
     patch = {"block": 2, "name": "idpatch", "textures": ["X_ID_glow.tga"], "vertices": pts,
-             "normals": [(0.0, 0.0, 1.0)] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
+             "normals": [patch_normal] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
     target = {"block": 1, "name": "saucer", "textures": ["X_glow.tga"], "vertices": [(0.0, 0.0, 5.0)],
-              "normals": [(0.0, 0.0, 1.0)], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
+              "normals": [patch_normal], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
 
     from PIL import Image
     base = Image.new("RGBA", (ref_w, ref_h), (100, 100, 100, 255))

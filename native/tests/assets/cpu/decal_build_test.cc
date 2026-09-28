@@ -94,6 +94,27 @@ protected:
         return path;
     }
 
+    // 2x1 24-bit uncompressed TGA -- same bytes as texture_decode_test.cc's
+    // make_tga_24bit_2x1() -- decodes to RGB8 with NO alpha channel, so it
+    // exercises apply_decals' no-alpha warning path.
+    fs::path write_tga_no_alpha(const std::string& name) {
+        const std::vector<std::uint8_t> bytes = {
+            0, 0, 2,
+            0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+            2, 0, 1, 0,
+            24,
+            0,
+            0x00, 0x00, 0xFF,
+            0xFF, 0x00, 0x00,
+        };
+        auto path = tmp_dir / name;
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        return path;
+    }
+
     // Root NiNode -> two NiTriShapes named "a" and "b", each with a minimal
     // triangle. Identity link ids (no block_ids), matching model_build_test's
     // synthetic-file convention.
@@ -399,12 +420,39 @@ assets::DecalRequest top_decal_request(const fs::path& mask) {
 
 }  // namespace
 
+// --- Mesh-fix gate (Controller Ruling G item 1) -----------------------
+//
+// A decal is only ever attached on top of a SUCCESSFULLY PATCHED mesh: the
+// merged saucer no longer carries BC's own "ID" patch geometry, so painting
+// a decal on top of it is the only name drawn. On an unpatched load (no
+// mesh_fix_dir configured, no fix file matched, or a fix that parsed but
+// was refused) BC's own ID-patch shape is still there and would paint its
+// own name -- attaching our decal too would draw the name twice.
+
+namespace {
+std::string decal_file_bytes(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    std::ostringstream ss; ss << in.rdbuf(); return ss.str();
+}
+fs::path committed_mesh_fixes_dir() {
+    return fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
+}
+fs::path decal_temp_fix_dir(const char* tag) {
+    auto d = fs::temp_directory_path() / (std::string("dauntless_decal_gate_") + tag);
+    fs::remove_all(d); fs::create_directories(d); return d;
+}
+}  // namespace
+
+// All three DecalCache/DecalMeshFixGate tests below now configure
+// mesh_fix_dir to the committed fixes tree so decals actually attach.
 TEST(DecalCache, RegistriesAreSeparateEntries) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
     ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
     ASSERT_TRUE(fs::exists(excalibur_top_mask())) << excalibur_top_mask();
 
-    assets::AssetCache cache(stub_config());
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [] { return committed_mesh_fixes_dir(); };
+    assets::AssetCache cache(cfg);
     std::vector<fs::path> search{ambassador_high_path()};
 
     auto zhukov_a = cache.load(ambassador_nif_path(), search, {},
@@ -416,6 +464,58 @@ TEST(DecalCache, RegistriesAreSeparateEntries) {
     auto excalibur = cache.load(ambassador_nif_path(), search, {},
                                  {top_decal_request(excalibur_top_mask())});
     EXPECT_NE(zhukov_a.get(), excalibur.get());
+}
+
+// (a) real Ambassador + the committed fixes dir + a decal -> attached.
+TEST(DecalMeshFixGate, AttachedWhenMeshFixApplies) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
+
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [] { return committed_mesh_fixes_dir(); };
+    assets::AssetCache cache(cfg);
+    auto model = cache.load(ambassador_nif_path(), {ambassador_high_path()}, {},
+                             {top_decal_request(zhukov_top_mask())});
+
+    int decaled = 0;
+    for (const auto& m : model->materials) decaled += m.decal.enabled ? 1 : 0;
+    EXPECT_GT(decaled, 0) << "decal should attach when the mesh fix applies";
+}
+
+// (b) real Ambassador with NO mesh_fix_dir + a decal -> not attached, one
+// warning naming the nif and the reason.
+TEST(DecalMeshFixGate, NotAttachedWithoutMeshFixDirConfigured) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
+
+    assets::AssetCache cache(stub_config());  // no mesh_fix_dir at all
+    testing::internal::CaptureStderr();
+    auto model = cache.load(ambassador_nif_path(), {ambassador_high_path()}, {},
+                             {top_decal_request(zhukov_top_mask())});
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    for (const auto& m : model->materials) EXPECT_FALSE(m.decal.enabled);
+    EXPECT_NE(err.find("hull decals skipped for"), std::string::npos) << err;
+    EXPECT_NE(err.find("no mesh fix applied"), std::string::npos) << err;
+}
+
+// (c) a fix that is refused -> not attached.
+TEST(DecalMeshFixGate, NotAttachedWhenMeshFixIsRefused) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
+
+    auto dir = decal_temp_fix_dir("refused");
+    std::ofstream(dir / (assets::fnv1a64_hex(decal_file_bytes(ambassador_nif_path())) + ".json"))
+        << R"({"format":1,"merges":[{"patch":{"block":0,"name":"nope"},
+              "target":{"block":1,"name":"nope"},"uvs":[],"weld":[],"normals":null}]})";
+
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [dir] { return dir; };
+    assets::AssetCache cache(cfg);
+    auto model = cache.load(ambassador_nif_path(), {ambassador_high_path()}, {},
+                             {top_decal_request(zhukov_top_mask())});
+
+    for (const auto& m : model->materials) EXPECT_FALSE(m.decal.enabled);
 }
 
 // --- Frame agreement: decals.json's frame IS the renderer's model frame ---
@@ -573,4 +673,35 @@ TEST_F(DecalBuildTest, MaskIsPremultipliedBeforeUpload) {
     const std::vector<std::uint8_t> expected = {0xFF, 0x00, 0x00, 0xFF,
                                                 0x00, 0x00, 0x80, 0x80};
     EXPECT_EQ(img.pixels, expected);
+}
+
+// --- No-alpha mask (Controller Ruling G item 4) -------------------------
+
+// An RGB8/R8 mask has no alpha channel to sample -- apply_decals treats it
+// as fully opaque (the whole rectangle painted) but must warn once, since a
+// silently-opaque decal that was meant to be a soft-edged cutout is easy to
+// miss until it's live.
+TEST_F(DecalBuildTest, MaskWithoutAlphaWarnsButStillAttaches) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_tga_no_alpha("mask.tga");
+
+    auto ctx = make_ctx();
+    assets::DecalRequest req;
+    req.shape = "a";
+    req.origin = {0.0f, 0.0f, 0.0f};
+    req.u_axis = {1.0f, 0.0f, 0.0f};
+    req.v_axis = {0.0f, 1.0f, 0.0f};
+    req.normal = {0.0f, 0.0f, 1.0f};
+    req.depth = 2.0f;
+    req.mask = mask;
+    ctx.decals = {req};
+
+    testing::internal::CaptureStderr();
+    auto model = assets::detail::build_model(f, ctx);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    ASSERT_TRUE(model.materials[0].decal.enabled)
+        << "a mask with no alpha is still attached (treated as opaque)";
+    EXPECT_NE(err.find("no alpha channel"), std::string::npos) << err;
+    EXPECT_NE(err.find(mask.string()), std::string::npos) << err;
 }

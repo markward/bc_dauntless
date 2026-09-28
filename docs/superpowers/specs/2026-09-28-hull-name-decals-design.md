@@ -45,8 +45,21 @@ into the letter edges as a dark halo.
 
 Per ship class, beside its NIF, under `data/Models/Ships/<Class>/Masks/`.
 These are resolved through the normal game / mod / project-replacement
-overlay (`paths.game_asset`), so a mod can ship its own. The stock
-Ambassador's live in the project replacements tree:
+overlay (`paths.game_asset`), which is a precedence chain, not an
+additive union: **project replacements outrank mods** for any path both
+supply, so a mod cannot override the stock Ambassador's own
+`Masks/Zhukov/top.png` or `decals.json`. A mod CAN still add value on top
+of a stock-folder class: it may ship a new registry folder
+(`Masks/<NewRegistry>/top.png`) for a placement `decals.json` already
+declares, and that resolves normally since the project tree has no
+same-path file to shadow it with. What a mod CANNOT do is put decals on
+its own NIF: this whole feature is gated on the mesh-fix cache key, which
+is keyed by the **stock NIF's content hash** (`native/assets/mesh_fixes/
+<hash>.json`) — a mod-folder NIF (different bytes, a different file
+entirely) never matches a committed fix, the fix never "applies", and
+`AssetCache::load` (`native/src/assets/src/cache.cc`) skips decals
+whenever no fix applied, warning once. The stock Ambassador's masks live
+in the project replacements tree:
 `native/assets/replacements/data/Models/Ships/Ambassador/Masks/`.
 
 ```
@@ -140,15 +153,25 @@ Every registry of the class reuses this placement.
 
 ## 4. Runtime flow
 
-1. **Python** (`engine/appc/registry_texture.py` and `engine/host_loop.py`):
-   - The `("ID", path)` queue is unchanged.
-   - When a ship's instance is built (the `replacements_for` call sites), a
-     new `decals_for(ship, nif_path)` returns
-     `[(shape, origin, u_axis, v_axis, normal, depth, mask_abs_path), …]`.
-   - To build that list, it takes the **last** queued `"ID"` path's stem as
-     the registry, reads `decals.json` and resolves the masks through
-     `paths.game_asset` (checking that each exists).
-   - The list is passed to `renderer.load_model(..., decals=…)`.
+1. **Python** (`engine/appc/hull_decals.py` and `engine/host_loop.py`):
+   - `engine/appc/registry_texture.py` is **unchanged**: the `("ID", path)`
+     queue and `replacements_for(ship)` are exactly what they were before
+     this feature.
+   - The actual new entry point is
+     `hull_decals.decals_for(nif_rel_dir, registry) ->
+     [(shape, origin, u_axis, v_axis, normal, depth, mask_abs_path), …]` --
+     it takes the NIF's own BC-relative folder and an already-resolved
+     registry name, not a ship or a nif_path.
+   - `host_loop._ship_decals(nif_path, reps)` is the glue between the two:
+     it derives `nif_rel_dir` from `nif_path` (relative to `game_root()`,
+     `[]` if that fails -- a mod-overlay NIF outside the BC tree), takes the
+     **last** queued `"ID"` path's stem as the registry via
+     `hull_decals.registry_stem(reps)`, and calls `decals_for`. Both of its
+     call sites (`realize_set_objects` and
+     `_reconcile_runtime_instances`) pass the result to
+     `renderer.load_model(..., decals=…)`.
+   - `decals_for` itself reads `decals.json` and resolves each declared
+     placement's mask through `paths.game_asset` (checking that it exists).
 2. **Host binding** (`load_model_impl`):
    - It accepts the decal list, and the host dedupe key includes it.
 3. **Asset cache and build:**
@@ -193,27 +216,77 @@ what it affects and logs once:
 | declared placement with no `<Registry>/<p>.png` | that decal skipped, one line |
 | mask fails to decode | that decal skipped, one warning |
 | `shape` names no shape in the model | that decal skipped, one warning |
-| degenerate projector (`u_axis`/`v_axis` parallel or zero) | that decal skipped, one warning |
+| degenerate projector: **zero** `normal`, or `normal` **in-plane** with `u_axis`/`v_axis` (as well as `u_axis`/`v_axis` themselves parallel or zero) | that decal skipped, one warning |
+| a second decal targets a shape another decal already claimed | that decal skipped, one warning ("first decal wins") |
+| a malformed placement entry (missing/non-numeric field, including a JSON integer too large for `float()`) | that placement skipped, one warning |
+| mask decodes with no alpha channel (RGB8/R8) | still attached (treated as fully opaque), one warning |
+| no mesh fix applied to this load (no `mesh_fix_dir` configured, no fix file matched, or a matched fix was refused) | **all** decals for this load skipped, one warning per NIF path -- BC's own un-merged "ID" patch geometry is still present and would otherwise paint a second name |
 
 ## 6. Testing
 
-- **Python:**
-  - stem → folder resolution, including a mod overlay;
-  - "last ID path wins";
-  - `decals.json` parse and each §5 skip;
-  - the generator's fit on a synthetic patch with known s/t (the corners come back exact);
-  - on the real Ambassador, the generated rectangle's centre lies inside the old patch's footprint and its `normal` points outward.
-- **C++:**
-  - `build_model` with a decal sets `Decal0` and the projector on the named shape's materials only;
-  - separate cache entries per registry;
-  - each bad input is skipped without throwing;
-  - the projector matrix maps `origin`, `origin+u_axis` and `origin+v_axis` to (0,0), (1,0), (0,1).
-- **Renderer (headless GL, `FrameTest`-style):** a model with a decal renders
-  - the mask colour inside the rectangle;
-  - the base colour outside it;
-  - a higher specular response under the mask than beside it.
+This section lists what is actually covered, by file, not an aspirational
+plan -- two gaps called out explicitly below are real and unclosed.
+
+- **Python** (`tests/unit/test_hull_decals.py`,
+  `tests/host/test_hull_decals_e2e.py`,
+  `tests/host/test_hull_decals_realize.py`,
+  `tests/host/test_load_model_decals.py`,
+  `tests/tools/test_gen_decals.py`):
+  - `registry_stem`: file-stem extraction, "last ID path wins", no-`"ID"`-entry;
+  - `decals_for`: the happy path, `decals.json` parse and every §5 skip
+    (missing file, malformed JSON, wrong `format`, a placement with no PNG,
+    degenerate projector -- zero cross, zero normal, in-plane normal --, and
+    a malformed vector/depth field including an over-long JSON integer);
+  - `host_loop._ship_decals`: swallows an unexpected exception from
+    `decals_for` itself (warn-once, `[]`), and -- at the real seam, through
+    `realize_set_objects` with a capturing fake renderer -- resolves the
+    real Ambassador's Zhukov `top` decal end to end;
+  - `_ship_load_key` differs by decal list, dedupes identical ones;
+  - the host binding (`_dauntless_host.load_model`): distinct handles per
+    registry, dedupe on repeat, `decals=None` stays a distinct variant, and
+    a malformed decal tuple from Python is skipped rather than raising;
+  - the generator (`tools/gen_mesh_fixes.py`): `fit_plane_st`'s exact
+    inversion on a synthetic patch, `build_decal`'s centring/scaling and
+    its derived-not-assumed orientation (parametrized over all 4 Ruling D
+    orientations against an asymmetric bracket), the chirality guard
+    raising on a forced-mirrored fixture, and `_run_decals`' overwrite
+    warning.
+  - **Gap: no automated mod-overlay resolution test.** Every Python test
+    above drives `paths.game_asset` either for real (against the project
+    replacements tree) or via a monkeypatch that bypasses overlay
+    precedence entirely -- nothing proves a mod-supplied `Masks/` file
+    actually wins or loses against the project-replacement tree the way §3
+    describes. Unverified by test; live-only.
+- **C++** (`native/tests/assets/cpu/decal_build_test.cc`):
+  - `build_model` with a decal sets `Decal0` and the projector on the named
+    shape's materials only, and each bad input (unknown shape, degenerate
+    projector, missing mask file, a second decal on an already-claimed
+    shape) is skipped without throwing;
+  - the projector matrix (`decal_body_to_mask`) maps `origin`,
+    `origin+u_axis` and `origin+v_axis` to (0,0), (1,0), (0,1), including a
+    mirrored-basis case;
+  - the mask is premultiplied before upload, and a mask with no alpha
+    channel still attaches (treated as opaque) but warns once;
+  - separate cache entries per registry (`DecalCache`);
+  - the mesh-fix gate (`DecalMeshFixGate`): attaches on the real Ambassador
+    with the committed fix, does NOT attach with no `mesh_fix_dir`
+    configured (one warning asserted), does NOT attach when a matched fix
+    is refused;
+  - `DecalFrame`: the authored frame in `decals.json` agrees with the
+    renderer's actual draw-time frame for the same real vertex.
+- **Renderer** (`native/tests/renderer/decal_render_test.cc`, headless GL):
+  a model with a decal renders the mask colour inside the projected
+  rectangle (vs. under 10 red-dominant pixels on the plain hull, over 200
+  with the decal) and the mask's row 0 lands at the top of the screen, not
+  the bottom.
+  - **Gap: no automated specular test.** Nothing in this suite renders and
+    measures the `kDecalPaintSpecular` response under vs. beside the mask
+    -- that check (§2's "a higher specular response under the mask") is
+    live-only, verified by Mark, not by a headless GL assertion.
 - **Live (Mark):**
-  - QuickBattle Ambassador (Zhukov): the name sits where BC drew it, glossy, with windows glowing through;
+  - QuickBattle Ambassador (Zhukov): the name sits where BC drew it,
+    glossy, with windows glowing through -- this is also where the §2
+    specular claim gets its only verification;
   - `E3M1`'s USS Excalibur: the second registry through the same placement.
 
 ## 7. Out of scope

@@ -100,6 +100,12 @@ protected:
         p = std::make_unique<renderer::Pipeline>();
         assets::AssetCache::Config cfg;
         cfg.keep_cpu_data = true;  // compute_model_aabb reads CPU vertices
+        // Decals only attach on top of a mesh the committed Ambassador
+        // fix actually patched (cache.cc's gate) -- without this, both
+        // tests below would silently draw the plain hull.
+        cfg.mesh_fix_dir = [] {
+            return fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
+        };
         cache = std::make_unique<assets::AssetCache>(cfg);
 
         auto base = fs::temp_directory_path() / "decal-render";

@@ -5147,11 +5147,22 @@ def _ship_texture_replacements(ship):
     return reps or None
 
 
+# nif_path values already warned about (Exception, not the routine
+# no-BC-relative-folder ValueError below) this process lifetime -- a ship
+# that keeps reloading every frame must not spam stderr.
+_ship_decals_warned: set = set()
+
+
 def _ship_decals(nif_path, reps):
     """Registry-mask decal list for a ship's model load
     (`hull_decals.decals_for`), or `[]` when the NIF has no BC-relative
     folder (a mod-overlay NIF -- see `_ship_texture_search`'s own
-    `nif_rel` computation, which this mirrors) or no registry was queued.
+    `nif_rel` computation, which this mirrors), no registry was queued, or
+    anything else about resolving the decal list fails. This must never
+    abort `realize_set_objects`' loop over every other ship in the set --
+    `hull_decals.decals_for` already catches its own faults (spec S5), but
+    this is the backstop for anything it doesn't (a bad relative-path
+    computation here, a future regression inside it).
     """
     from engine.appc import hull_decals
     try:
@@ -5159,8 +5170,15 @@ def _ship_decals(nif_path, reps):
             _paths.game_root()).as_posix()
     except ValueError:
         return []
-    registry = hull_decals.registry_stem(reps or [])
-    return hull_decals.decals_for(nif_rel_dir, registry)
+    try:
+        registry = hull_decals.registry_stem(reps or [])
+        return hull_decals.decals_for(nif_rel_dir, registry)
+    except Exception as e:
+        if nif_path not in _ship_decals_warned:
+            _ship_decals_warned.add(nif_path)
+            print(f"[host_loop] _ship_decals({nif_path!r}) raised "
+                  f"{type(e).__name__}: {e}; skipping decals", flush=True)
+        return []
 
 
 def _ship_load_key(nif_path, reps, decals=None):

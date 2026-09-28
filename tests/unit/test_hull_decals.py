@@ -199,6 +199,45 @@ def test_decals_for_skips_zero_normal(asset_root, capsys):
     assert len(out_lines) == 1
 
 
+# ── decals_for: over-long JSON integers must never raise ───────────────
+
+def test_decals_for_skips_placement_with_overlong_integer_depth(
+        asset_root, capsys):
+    # A JSON integer with no size limit (400 nines) parses fine via
+    # json.loads, but float() of it raises OverflowError -- must be caught
+    # and skip just this placement, not blow up the whole ship load.
+    placement = _valid_placement()
+    placement["depth"] = int("9" * 400)
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": placement},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "top")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert specs == []
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
+def test_decals_for_skips_placement_with_overlong_integer_vector_component(
+        asset_root, capsys):
+    placement = _valid_placement()
+    placement["origin"] = [int("9" * 400), 2.0, 3.0]
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": placement},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "top")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert specs == []
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
 def test_decals_for_skips_inplane_normal(asset_root, capsys):
     # normal lies in span(u_axis, v_axis) (u_axis=(1,0,0), v_axis=(0,1,0),
     # normal=(1,1,0) has z=0) -- det([u v n_hat]) == 0, degenerate even
@@ -241,3 +280,28 @@ def test_ship_load_key_differs_by_decals():
     assert key_zhukov != key_excalibur
     assert key_zhukov == key_zhukov_again
     assert key_no_decals == _ship_load_key(nif, reps)
+
+
+# ── _ship_decals: must never abort the realize loop ─────────────────────
+
+def test_ship_decals_swallows_unexpected_exception(monkeypatch, capsys):
+    # Even a fault hull_decals.decals_for itself failed to catch (a bug in
+    # a future edit, or a third-party import raising inside it) must not
+    # propagate out of _ship_decals and abort realize_set_objects' loop
+    # over every other ship in the set.
+    from engine import host_loop as hl
+    from engine.appc import hull_decals as hd
+
+    def _boom(nif_rel_dir, registry):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(hd, "decals_for", _boom)
+
+    nif_path = str(paths.game_root() / "data/Models/Ships/Ambassador" /
+                    "Ambassador.nif")
+    result = hl._ship_decals(nif_path, [("ID", "/abs/Zhukov.tga")])
+
+    assert result == []
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+    assert "RuntimeError" in out_lines[0] or "boom" in out_lines[0]

@@ -964,6 +964,7 @@ def _reset_leakable_engine_globals():
     _hl = sys.modules.get("engine.host_loop")
     if _hl is not None:
         _hl._mapped_body_warned.clear()
+        _hl._ship_decals_warned.clear()
     try:
         import App
     except Exception:

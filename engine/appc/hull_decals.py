@@ -72,7 +72,10 @@ def _as_vec3(value) -> Optional[Tuple[float, float, float]]:
         return None
     try:
         out = (float(value[0]), float(value[1]), float(value[2]))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: a JSON integer has no size limit (json.loads keeps
+        # an arbitrary-precision int), but float() of one too large to
+        # represent raises rather than returning inf.
         return None
     if not all(math.isfinite(c) for c in out):
         return None
@@ -181,7 +184,7 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
         normal = _as_vec3(spec.get("normal"))
         try:
             depth = float(spec.get("depth"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             depth = float("nan")
 
         if (not isinstance(shape, str) or not shape or origin is None

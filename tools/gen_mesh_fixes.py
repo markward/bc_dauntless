@@ -803,6 +803,12 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img,
        (ties -> identity). rot180 negates both `U` and `V`; flip_u negates
        only `U`; flip_v negates only `V` -- applied AFTER step 5, so `U`/`V`
        keep the same magnitude either way.
+    6.5. **Chirality guard.** With `U`/`V` now oriented, raise `ValueError`
+       (naming the target shape and the orientation scores) if
+       `(U x V) . normal >= 0` -- that reads the mask mirrored when viewed
+       from outside the hull. The real committed Ambassador `top` decal
+       measures `(U x V) . normal ~= -7.1e3`, comfortably on the passing
+       side.
     7. `origin = P(sc, tc) - uc * U - vc * V` (`U`, `V` now oriented), which
        puts the mask lettering centre on BC's -- `uc`, `vc` are unchanged by
        the orientation: they're a property of the mask's OWN full-image
@@ -872,6 +878,25 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img,
         u_vec = [-c for c in u_vec]
     if orientation in ("rot180", "flip_v"):
         v_vec = [-c for c in v_vec]
+
+    # Chirality guard (Ruling D's four orientations are half rotations, half
+    # reflections -- a reflection can flip which way the decal reads). If
+    # (U x V) . normal is >= 0, the mask's "u right, v down" reads MIRRORED
+    # when viewed from outside the hull (the same convention the real
+    # committed Ambassador decal satisfies at ~-7.1e3). Raise rather than
+    # silently write backwards artwork.
+    cross_uv = (
+        u_vec[1] * v_vec[2] - u_vec[2] * v_vec[1],
+        u_vec[2] * v_vec[0] - u_vec[0] * v_vec[2],
+        u_vec[0] * v_vec[1] - u_vec[1] * v_vec[0],
+    )
+    chirality = sum(cross_uv[k] * fit["normal"][k] for k in range(3))
+    if chirality >= 0.0:
+        scores_str = " ".join(f"{o}={s:.3f}" for o, s in scores.items())
+        raise ValueError(
+            f"build_decal: decal for {target_name!r} would read mirrored "
+            f"from outside the hull ((u x v) . normal = {chirality:.3g} >= "
+            f"0); orientation={orientation} scores=[{scores_str}]")
 
     p_centre = eval_plane(sc, tc)
     origin = [p_centre[k] - uc * u_vec[k] - vc * v_vec[k] for k in range(3)]
@@ -987,6 +1012,11 @@ def _run_decals() -> None:
         masks_dir = Path(cfg["nif"]).parent / "Masks"
         out_path = paths.project_asset_root() / "replacements" / masks_dir / "decals.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        if out_path.exists():
+            # decals.json is hand-editable after this generator writes it
+            # once (spec S3.3) -- overwriting silently would throw away any
+            # manual tweak, so this must be loud every time it happens.
+            print(f"overwriting hand-editable {out_path}")
         out_path.write_text(decals_json(entries))
         scores_str = " ".join(f"{o}={s:.3f}" for o, s in diagnostics["scores"].items())
         print(f"{cls_name}  {cfg['placement']}  orientation={diagnostics['orientation']} "
@@ -1018,7 +1048,10 @@ def main(argv=None) -> None:
                          help="write native/assets/mesh_fixes/<hash>.json")
     parser.add_argument("--decals", action="store_true",
                          help="generate each DECAL_CLASSES entry's "
-                              "Masks/decals.json (independent of --write)")
+                              "Masks/decals.json (independent of --write). "
+                              "decals.json is hand-editable after the first "
+                              "write -- this OVERWRITES any hand edit, "
+                              "printing a warning when it does")
     args = parser.parse_args(argv)
 
     if args.decals:

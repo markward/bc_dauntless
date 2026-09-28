@@ -689,7 +689,9 @@ void apply_decals(
         // Premultiply RGB by alpha (spec §2): opaque.frag composites
         // base*(1-a) + mask.rgb, and filtering premultiplied texels never
         // pulls transparent texels' RGB into letter edges as a dark halo.
-        // RGB8 / R8 masks have implicit alpha 1 -- nothing to do.
+        // RGB8 / R8 masks have implicit alpha 1 -- nothing to do (still
+        // attached: alpha-less is treated as fully opaque), but that's easy
+        // to miss until it's live, so warn once per mask path.
         if (decoded.format == Image::Format::RGBA8) {
             auto& px = decoded.pixels;
             for (std::size_t i = 0; i + 3 < px.size(); i += 4) {
@@ -697,6 +699,15 @@ void apply_decals(
                 for (std::size_t c = 0; c < 3; ++c)
                     px[i + c] = static_cast<std::uint8_t>(
                         (px[i + c] * a + 127u) / 255u);
+            }
+        } else {
+            const std::string key =
+                model.source.string() + "|decal-no-alpha|" + req.mask.string();
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: mask %s has no alpha channel; the whole "
+                    "decal rectangle will be painted\n",
+                    req.mask.string().c_str());
             }
         }
 
