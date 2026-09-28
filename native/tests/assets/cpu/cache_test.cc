@@ -224,3 +224,35 @@ TEST(AssetCacheMeshFix, OneCacheKeysFixedAndUnfixedLoadsApart) {
     auto c = cache.load(galaxy_path(), fed_high_path());  // same fix dir again
     EXPECT_EQ(b.get(), c.get());
 }
+
+// Real-asset proof: the committed Galaxy fix (Task 5) actually merges the ID
+// patch shape into the saucer -- one fewer mesh, one fewer material, and
+// fewer total vertices than the welded seam once had (welding removes the
+// duplicate seam verts the patch and target used to carry separately).
+TEST(AssetCacheMeshFix, RealGalaxyLosesItsIdPatch) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    const fs::path fixes = fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
+    ASSERT_TRUE(fs::exists(fixes / (assets::fnv1a64_hex(file_bytes(galaxy_path())) + ".json")))
+        << "committed Galaxy fix missing";
+    auto cfg = stub_config();
+    cfg.keep_cpu_data = true;
+    assets::AssetCache plain(cfg);
+    cfg.mesh_fix_dir = [fixes] { return fixes; };
+    assets::AssetCache fixed(cfg);
+    auto a = plain.load(galaxy_path(), fed_high_path());
+    auto b = fixed.load(galaxy_path(), fed_high_path());
+
+    // One mesh fewer: the ID patch shape is hidden and skipped.
+    EXPECT_EQ(b->meshes.size() + 1, a->meshes.size());
+    // No surviving texture was loaded from an "ID" source. Use the model's
+    // texture-source bookkeeping if it exposes one; otherwise count materials
+    // (the patch's material is gone).
+    EXPECT_EQ(b->materials.size() + 1, a->materials.size());
+    // Total vertices = old total − welded seam vertices.
+    auto verts = [](const assets::Model& m) {
+        std::size_t n = 0;
+        for (const auto& mesh : m.meshes) if (auto c = mesh.cpu_data()) n += c->vertices.size();
+        return n;
+    };
+    EXPECT_LT(verts(*b), verts(*a));
+}

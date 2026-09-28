@@ -507,10 +507,18 @@ void apply_texture_replacements(
                 matched.insert(tex_idx);
         }
         if (matched.empty()) {
-            std::fprintf(stderr,
-                "apply_texture_replacements: no texture matching '%s' in %s; "
-                "leaving model untouched\n",
-                rep.old_substring.c_str(), model.source.string().c_str());
+            // Warn once per (source, old_substring): a mission that reloads a
+            // ship's model every frame would otherwise spam stderr forever,
+            // and this is the EXPECTED state for stock Fed hulls once their
+            // ID patch is merged away by a mesh fix (see mesh_fix.h).
+            static std::unordered_set<std::string> warned;
+            const std::string key = model.source.string() + '|' + rep.old_substring;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_texture_replacements: no texture matching '%s' in %s; "
+                    "leaving model untouched\n",
+                    rep.old_substring.c_str(), model.source.string().c_str());
+            }
             continue;
         }
 
