@@ -841,8 +841,16 @@ def dispatch_passes(event) -> bool:
     chain ran to the end. A handler that returns without CallNextHandler
     stops the chain -- BC's way of cancelling an event's default effect
     (E3M2 CoreDamage; MissionLib.IgnoreEvent). No handlers = passes.
-    TGPythonInstanceWrapper destinations have no chain-stop concept, so they always report passed."""
+    TGPythonInstanceWrapper destinations have no chain-stop concept, so they always report passed.
+
+    The event is released from the id registry once its synchronous dispatch
+    ends: it is dead afterwards, and radiation fires ~270 of these a second
+    near Vesuvi, each otherwise strongly held forever (final review #4)."""
     import App
+    from engine.core.ids import unregister
     event._chain_passed = True
-    App.g_kEventManager.AddEvent(event)
+    try:
+        App.g_kEventManager.AddEvent(event)
+    finally:
+        unregister(event.GetObjID())
     return event._chain_passed is True

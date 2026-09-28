@@ -88,3 +88,31 @@ def test_nested_repost_outer_stops_reports_false():
     # The outer dispatch should report False (B stopped it on first call),
     # even though the nested dispatch completed successfully
     assert dispatch_passes(_event(obj)) is False
+
+
+def test_dispatched_events_do_not_accumulate_in_the_id_registry():
+    # Final review #4: radiation fires ~270 events/s near Vesuvi; each one
+    # stayed strongly held in ids._registry forever.
+    from engine.core import ids
+    dest = TGEventHandlerObject()
+    dispatch_passes(_event(dest))                 # warm any lazy registrations
+    before = len(ids._registry)
+    for _ in range(200):
+        dispatch_passes(_event(dest))
+    assert len(ids._registry) == before
+
+
+def test_dispatched_event_is_released_even_when_a_handler_raises():
+    import pytest
+    from engine.core import ids
+
+    def boom(o, e):
+        raise RuntimeError("handler failure")
+
+    obj = TGEventHandlerObject()
+    obj.AddPythonFuncHandlerForInstance(
+        App.ET_ENVIRONMENT_DAMAGE, _install("_chain_boom", boom))
+    evt = _event(obj)
+    with pytest.raises(RuntimeError):
+        dispatch_passes(evt)
+    assert ids.get_object_by_id(evt.GetObjID()) is None
