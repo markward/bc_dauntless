@@ -241,6 +241,7 @@ bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
 std::unique_ptr<renderer::BackdropPass> g_backdrop_pass;
 std::vector<renderer::SunDescriptor> g_suns;
 std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
+float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-1
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::vector<renderer::NebulaVolume> g_nebulae;
@@ -598,6 +599,7 @@ void reset_frame_state() {
     g_sky_dirty = true;
     g_suns.clear();
     g_dust_planets.clear();
+    g_dust_profile = 0.0f;
     g_nebula_godrays.clear();
     g_nebulae.clear();
     g_nebula_wake.clear();
@@ -1043,7 +1045,8 @@ void frame() {
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir(),
                                 g_world.render_origin(),
-                                dauntless_dash_vfx::intensity());
+                                dauntless_dash_vfx::intensity(),
+                                g_dust_profile);
         }
         if (!g_nebulae.empty()) {
             DAUNTLESS_FRAME_SCOPE("space.nebula");
@@ -3006,6 +3009,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("planets"),
           "Set planet centres+radii used by the dust pass for proximity "
           "density scaling, applied each frame().");
+
+    m.def("set_dust_profile",
+          [](float dust) { g_dust_profile = dust; },
+          py::arg("dust"),
+          "Radial-profile dust column at the camera (0-1), applied each frame().");
 
     m.def("set_nebulae",
           [](const std::vector<py::dict>& descs) {

@@ -4884,11 +4884,23 @@ def _render_nebulae(nebulae, view, pSet):
     return out
 
 
-def _push_environment_feeds(r, active_set, warp_streaking):
-    """Push the per-frame environment feeds -- suns, dust planets, nebulae,
-    nebula godrays, hull discharges, the nebula wake, lens flares -- every
-    world position in RENDER space, so after _apply_render_origin. Returns
-    (suns, planets, lens_flares) for the tick-0 verbose log.
+def _push_dust_profile(r, player, warp_streaking) -> None:
+    """The radial profile's dust column at the player (the dust volume is
+    camera-anchored and the camera stays within a few hundred GU of the
+    player; the profile varies over thousands). Zero in the warp tunnel."""
+    dust = 0.0
+    if player is not None and not warp_streaking:
+        from engine.systems import profile as _profile
+        dust = _profile.sample_for_object(player).dust
+    r.set_dust_profile(dust)
+
+
+def _push_environment_feeds(r, active_set, warp_streaking, player=None):
+    """Push the per-frame environment feeds -- suns, dust planets, the
+    profile dust density, nebulae, nebula godrays, hull discharges, the
+    nebula wake, lens flares -- every world position in RENDER space, so
+    after _apply_render_origin. Returns (suns, planets, lens_flares) for the
+    tick-0 verbose log.
 
     Coordinates in: suns, flares and dust planets are the viewed set's (view
     coordinates); nebulae and the wake belong to `active_set` (the player's
@@ -4905,6 +4917,7 @@ def _push_environment_feeds(r, active_set, warp_streaking):
     planets = _with_render_positions(_aggregate_dust_planets(view),
                                      "position", to_view_render)
     r.set_dust_planets(planets)
+    _push_dust_profile(r, player, warp_streaking)
 
     nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
     r.set_nebulae(_render_nebulae(nebulae, view, active_set))
@@ -11402,7 +11415,7 @@ def run(mission_name: Optional[str] = None,
             # Suns, dust planets, nebulae, godrays, discharges, the wake and
             # lens flares -- in render space (the origin was set above).
             suns, planets, lens_flares = _push_environment_feeds(
-                r, active_set, _warp_streaking)
+                r, active_set, _warp_streaking, player=player)
 
             _push_cloak_refraction(r, session, player)
 

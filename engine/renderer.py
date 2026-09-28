@@ -66,7 +66,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
-    "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
+    "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
@@ -434,6 +434,12 @@ def set_dust_planets(planets: list) -> None:
     density scaling. Each entry is a dict {position: (x,y,z), radius: r}
     in game units. Applied each frame()."""
     _h.set_dust_planets(planets)
+
+
+def set_dust_profile(dust: float) -> None:
+    """Radial-profile `dust` column at the camera (0-1): lifts the dust
+    pass's density only (never tint, never drift). Applied each frame()."""
+    _h.set_dust_profile(dust)
 
 
 def letterbox_set(covered: float) -> None:
