@@ -1809,6 +1809,12 @@ class ShieldSubsystem(PoweredSubsystem):
         it in-game before adopting it.
         """
         f = int(face)
+        # NUM_SHIELDS (6) is one past the last face, yet E3M2's CoreDamage
+        # (E3M2.py:1389) passes it on every ET_ENVIRONMENT_DAMAGE with shields
+        # up -- indexing it crashed the host loop. BC's answer is unmeasured;
+        # the SDK author means "overall shields", so read the whole generator.
+        if f == self.NUM_SHIELDS:
+            return self.GetShieldPercentage() if self.IsOn() else 0.0
         mx = self._max_shields[f]
         if mx == 0.0:
             return 0.0
