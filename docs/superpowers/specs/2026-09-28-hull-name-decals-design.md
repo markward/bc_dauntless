@@ -115,7 +115,15 @@ each hull with masks (the Ambassador), for the `top` placement:
    `Zhukov/top.png`.
 4. **Fit.** Place the mask so its lettering-box centre lands on BC's
    lettering-box centre, with **uniform** scale matching BC's lettering
-   width. Mask orientation follows the ID texture's s/t axes.
+   width.
+
+   **Orientation is derived, not assumed.** BC's `Zhukov.tga` stores the
+   lettering rotated 180° relative to the mask as authored. The generator
+   scores the mask in the four aspect-preserving orientations (identity,
+   rotated 180°, flipped in u, flipped in v) by the overlap (IoU) of its
+   lettering with BC's lettering, both resampled into BC's lettering box,
+   and uses the best. Isolated stray differing texels (fewer than 2 differing
+   8-neighbours) are dropped from BC's lettering first.
 5. **To ship-body space.** Map the mask rectangle's corners through the
    inverse of the plane fit to get `origin`, `u_axis` and `v_axis`.
    `normal` is the plane normal, oriented outward (same side as the patch's

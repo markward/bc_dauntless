@@ -114,7 +114,12 @@ def test_build_decal_centres_and_scales_on_bc_lettering(monkeypatch):
     assert ulen * (u1 - u0) == pytest.approx((s1 - s0) * 200.0, rel=1e-4)
     # 128x64 mask keeps square pixels: |U| / |V| == 2
     assert ulen / vlen == pytest.approx(2.0, rel=1e-6)
-    # V runs down the image = +t direction here; normal faces +z like the patch normals
+    # V runs down the image = +t direction here; normal faces +z like the patch normals.
+    # Ruling D: both BC's lettering here and the mask's are SOLID filled
+    # rectangles filling their own whole (footprint-gated, isolation-
+    # cleaned) bbox, so they're symmetric under all 4 orientations -- every
+    # orientation scores IoU=1.0, a tie resolved to "identity" -- so U/V
+    # keep their un-flipped sign, exactly as before Ruling D.
     assert V[1] > 0 and d["normal"] == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
 
 
@@ -132,3 +137,118 @@ def test_build_decal_refuses_missing_target_shape():
     img = Image.new("RGBA", (4, 4))
     with pytest.raises(ValueError):
         g.build_decal([patch], {"target_shape": "nope", "placement": "top"}, img, img, img)
+
+
+# --- Ruling D: orientation is derived, not assumed --------------------------
+
+def test_drop_isolated_texels_removes_lone_pixel_keeps_block():
+    texels = {(0, 0)} | {(5, 5), (6, 5), (5, 6), (6, 6)}   # lone pixel + 2x2 block
+    kept = g.drop_isolated_texels(texels)
+    assert (0, 0) not in kept
+    assert {(5, 5), (6, 5), (5, 6), (6, 6)} <= kept
+
+
+def test_choose_orientation_ties_go_to_identity():
+    # A solid NxN square is symmetric under all 4 orientations -- a perfect
+    # 4-way tie, resolved to "identity" (first in orientation order).
+    n = 4
+    square = {(x, y) for x in range(n) for y in range(n)}
+    bounds = (0, 0, n - 1, n - 1)
+    orientation, scores = g.choose_orientation(square, bounds, square, bounds)
+    assert orientation == "identity"
+    assert scores == pytest.approx(
+        {"identity": 1.0, "rot180": 1.0, "flip_u": 1.0, "flip_v": 1.0})
+
+
+def _l_bracket(n=6):
+    # A 2-texel-thick "bracket" (vertical stroke + horizontal foot) in an
+    # n x n local grid: thick enough that every one of its own texels has
+    # >= 2 differing 8-neighbours (drop_isolated_texels leaves it whole),
+    # and asymmetric under all 4 orientations (touches all 4 edges, so
+    # every orientation's alpha/lettering bbox is still the full n x n
+    # grid -- no bbox ambiguity to confound the orientation score).
+    return {(c, r) for c in range(n) for r in range(n) if c in (0, 1) or r in (n - 2, n - 1)}
+
+
+def _transform_cells(cells, n, orientation):
+    out = set()
+    for c, r in cells:
+        if orientation == "identity":
+            out.add((c, r))
+        elif orientation == "rot180":
+            out.add((n - 1 - c, n - 1 - r))
+        elif orientation == "flip_u":
+            out.add((n - 1 - c, r))
+        elif orientation == "flip_v":
+            out.add((c, n - 1 - r))
+        else:
+            raise ValueError(orientation)
+    return out
+
+
+@pytest.mark.parametrize("true_orientation", ["identity", "rot180", "flip_u", "flip_v"])
+def test_build_decal_derives_orientation_from_asymmetric_lettering(true_orientation):
+    n = 6
+    bc_local = _l_bracket(n)
+    # BC's lettering sits at absolute ref/base texels (10+c, 10+r).
+    bx0, by0 = 10, 10
+    ref_w = ref_h = 40
+
+    # A wide patch, structurally like test_build_decal_centres_and_scales_
+    # on_bc_lettering's, whose s/t domain comfortably contains BC's
+    # lettering box (s, t in [0.25, 0.4]). Unlike that fixture, s and t
+    # share the SAME world scale (both /100, so s_axis/t_axis both have
+    # magnitude 100): the mask here is square (n x n) and its bbox is
+    # square in (s, t)-fraction space too, so an anisotropic scale would
+    # make BC's *world-space* footprint non-square, and only U -- never V,
+    # which is only aspect-matched to the mask, not independently fit to
+    # BC's own t-extent (see build_decal's docstring step 5) -- would land
+    # a corner exactly. Isotropic scale keeps both axes exact, so this test
+    # can pin the corner in both.
+    pts, sts = [], []
+    for x in (-50, 50, 150):
+        for y in (0, 30, 60):
+            pts.append((float(x), float(y), 5.0))
+            sts.append((0.1 + x / 100.0, 0.2 + y / 100.0))
+    grid_tris = [(0, 3, 4), (0, 4, 1), (1, 4, 5), (1, 5, 2),
+                 (3, 6, 7), (3, 7, 4), (4, 7, 8), (4, 8, 5)]
+    patch = {"block": 2, "name": "idpatch", "textures": ["X_ID_glow.tga"], "vertices": pts,
+             "normals": [(0.0, 0.0, 1.0)] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
+    target = {"block": 1, "name": "saucer", "textures": ["X_glow.tga"], "vertices": [(0.0, 0.0, 5.0)],
+              "normals": [(0.0, 0.0, 1.0)], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
+
+    from PIL import Image
+    base = Image.new("RGBA", (ref_w, ref_h), (100, 100, 100, 255))
+    ref = base.copy()
+    for c, r in bc_local:
+        ref.putpixel((bx0 + c, by0 + r), (0, 0, 0, 255))
+
+    # The mask shows the bracket TRANSFORMED by true_orientation -- i.e.
+    # applying true_orientation to the mask reproduces BC's bracket, so
+    # true_orientation is the one the generator must pick.
+    mask_local = _transform_cells(bc_local, n, true_orientation)
+    mask = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    for c, r in mask_local:
+        mask.putpixel((c, r), (0, 0, 0, 255))
+
+    cfg = {"target_shape": "saucer", "placement": "top"}
+    diagnostics = {}
+    d = g.build_decal([target, patch], cfg, ref, base, mask, diagnostics=diagnostics)
+
+    assert diagnostics["orientation"] == true_orientation
+    assert diagnostics["scores"][true_orientation] == pytest.approx(1.0)
+
+    # The mask's corresponding corner texel lands on BC's own corner texel,
+    # via the fitted plane (x=(s-0.1)*100, y=(t-0.2)*100, z=5) -- not just
+    # the box centre, so this actually pins orientation, not merely scale.
+    bc_corner = (0, 0)                          # in bc_local by construction
+    s_corner = (bx0 + bc_corner[0] + 0.5) / ref_w
+    t_corner = (by0 + bc_corner[1] + 0.5) / ref_h
+    expected_world = [(s_corner - 0.1) * 100.0, (t_corner - 0.2) * 100.0, 5.0]
+
+    mask_corner = next(iter(_transform_cells({bc_corner}, n, true_orientation)))
+    u_frac = (mask_corner[0] + 0.5) / n
+    v_frac = (mask_corner[1] + 0.5) / n
+    O, U, V = d["origin"], d["u_axis"], d["v_axis"]
+    world_from_decal = [O[k] + u_frac * U[k] + v_frac * V[k] for k in range(3)]
+    assert world_from_decal == pytest.approx(expected_world, abs=1e-3)

@@ -571,26 +571,37 @@ def fit_plane_st(points, sts, normals=None) -> dict:
             "normal": normal, "st_origin": st_origin}
 
 
-def _changed_bbox(w: int, h: int, changed) -> tuple:
-    """Shared bbox-over-pixel-edges helper for `lettering_bbox`/`alpha_bbox`:
-    `changed(x, y) -> bool` over every pixel, normalised box spanning pixel
-    edges. Raises ValueError if no pixel matches."""
-    min_x = min_y = max_x = max_y = None
-    for y in range(h):
-        for x in range(w):
-            if not changed(x, y):
-                continue
-            if min_x is None or x < min_x:
-                min_x = x
-            if max_x is None or x > max_x:
-                max_x = x
-            if min_y is None or y < min_y:
-                min_y = y
-            if max_y is None or y > max_y:
-                max_y = y
-    if min_x is None:
-        raise ValueError("no matching pixels")
+def _texel_bounds(texels: set) -> tuple:
+    """Integer inclusive `(min_x, min_y, max_x, max_y)` over a texel set.
+    Raises ValueError if `texels` is empty."""
+    if not texels:
+        raise ValueError("no matching texels")
+    xs = [x for x, _ in texels]
+    ys = [y for _, y in texels]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _bbox_from_texels(texels: set, w: int, h: int) -> tuple:
+    """Normalised bounding box, over pixel edges, of a texel set in a
+    `w` x `h` grid. Raises ValueError if `texels` is empty."""
+    min_x, min_y, max_x, max_y = _texel_bounds(texels)
     return (min_x / w, min_y / h, (max_x + 1) / w, (max_y + 1) / h)
+
+
+def drop_isolated_texels(texels: set) -> set:
+    """Drop any texel with fewer than 2 differing 8-neighbours also present
+    in `texels` (spec S3.3 step 4: an isolated stray differing texel --
+    e.g. compression/export noise -- is not lettering). A solid block or a
+    stroke at least 2 texels wide survives untouched; a lone texel, or a
+    diagonal pair (which only gives each other 1 neighbour), does not."""
+    kept = set()
+    for x, y in texels:
+        neighbours = sum(
+            1 for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+            if (dx, dy) != (0, 0) and (x + dx, y + dy) in texels)
+        if neighbours >= 2:
+            kept.add((x, y))
+    return kept
 
 
 def _footprint_contains(footprint, x: int, y: int) -> bool:
@@ -642,13 +653,12 @@ def uv_footprint(patch: dict, width: int, height: int) -> set:
     return dilated
 
 
-def lettering_bbox(ref_rgba, base_rgba, footprint=None) -> tuple:
-    """Normalised (s0, t0, s1, t1) bounding box, over pixel edges, of the
-    pixels where `ref_rgba` differs from `base_rgba` by more than 24 in any
-    RGB channel or in alpha (the literal brief rule -- no alpha-visibility
-    gate: in BC's "_glow" textures alpha is the GLOW MASK, not opacity, and
-    alpha 0 is still drawn as unlit hull, so a real letter can sit over
-    alpha-0 pixels).
+def _diff_texels(ref_rgba, base_rgba, footprint=None) -> set:
+    """The set of (x, y) texels where `ref_rgba` differs from `base_rgba`
+    by more than 24 in any RGB channel or in alpha (the literal brief rule
+    -- no alpha-visibility gate: in BC's "_glow" textures alpha is the GLOW
+    MASK, not opacity, and alpha 0 is still drawn as unlit hull, so a real
+    letter can sit over alpha-0 pixels).
 
     `footprint`, if given (see `uv_footprint`), restricts the search to
     texels inside it -- this is how real BC content excludes leftover/
@@ -658,28 +668,112 @@ def lettering_bbox(ref_rgba, base_rgba, footprint=None) -> tuple:
     base = base_rgba.convert("RGBA")
     w, h = ref.size
     rp, bp = ref.load(), base.load()
+    texels = set()
+    for y in range(h):
+        for x in range(w):
+            if footprint is not None and not _footprint_contains(footprint, x, y):
+                continue
+            r1, g1, b1, a1 = rp[x, y]
+            r2, g2, b2, a2 = bp[x, y]
+            if (max(abs(r1 - r2), abs(g1 - g2), abs(b1 - b2)) > 24
+                    or abs(a1 - a2) > 24):
+                texels.add((x, y))
+    return texels
 
-    def changed(x, y):
-        if footprint is not None and not _footprint_contains(footprint, x, y):
-            return False
-        r1, g1, b1, a1 = rp[x, y]
-        r2, g2, b2, a2 = bp[x, y]
-        return (max(abs(r1 - r2), abs(g1 - g2), abs(b1 - b2)) > 24
-                or abs(a1 - a2) > 24)
 
-    return _changed_bbox(w, h, changed)
+def lettering_bbox(ref_rgba, base_rgba, footprint=None) -> tuple:
+    """Normalised (s0, t0, s1, t1) bounding box, over pixel edges, of
+    `_diff_texels(ref_rgba, base_rgba, footprint)`. No isolated-texel
+    filtering here -- that's `drop_isolated_texels`, applied by `build_decal`
+    on top of this same texel set where BC's own lettering box is derived
+    (spec S3.3 step 2), not baked into this general-purpose function."""
+    w, h = ref_rgba.size
+    return _bbox_from_texels(_diff_texels(ref_rgba, base_rgba, footprint), w, h)
+
+
+def _alpha_texels(mask_rgba) -> set:
+    """The set of (x, y) texels of `mask_rgba` whose alpha is greater than
+    8."""
+    mask = mask_rgba.convert("RGBA")
+    w, h = mask.size
+    mp = mask.load()
+    return {(x, y) for y in range(h) for x in range(w) if mp[x, y][3] > 8}
 
 
 def alpha_bbox(mask_rgba) -> tuple:
     """Normalised (u0, v0, u1, v1) bounding box, over pixel edges, of the
     pixels of `mask_rgba` whose alpha is greater than 8."""
-    mask = mask_rgba.convert("RGBA")
-    w, h = mask.size
-    mp = mask.load()
-    return _changed_bbox(w, h, lambda x, y: mp[x, y][3] > 8)
+    w, h = mask_rgba.size
+    return _bbox_from_texels(_alpha_texels(mask_rgba), w, h)
 
 
-def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dict:
+# The 4 aspect-preserving orientations a mask can be authored in relative to
+# BC's own lettering (spec S3.3 step 4). Order matters: ties in
+# `choose_orientation` resolve to the first (= "identity") of a tie.
+_ORIENTATIONS = ("identity", "rot180", "flip_u", "flip_v")
+
+
+def _orient_fraction(orientation: str, fu: float, fv: float) -> tuple:
+    """Map a fractional (fu, fv) in [0, 1]x[0, 1] through one of the 4
+    orientations. Every orientation here is its own inverse, so this same
+    function both "applies" an orientation to sample-space coordinates and
+    "un-applies" it."""
+    if orientation == "identity":
+        return fu, fv
+    if orientation == "rot180":
+        return 1.0 - fu, 1.0 - fv
+    if orientation == "flip_u":
+        return 1.0 - fu, fv
+    if orientation == "flip_v":
+        return fu, 1.0 - fv
+    raise ValueError(f"unknown orientation {orientation!r}")
+
+
+def _iou(a: set, b: set) -> float:
+    """Intersection-over-union of two texel sets; 1.0 if both are empty."""
+    if not a and not b:
+        return 1.0
+    union = len(a | b)
+    return (len(a & b) / union) if union else 0.0
+
+
+def choose_orientation(bc_texels: set, bc_bounds: tuple,
+                        mask_texels: set, mask_bounds: tuple) -> tuple:
+    """Pick the orientation (see `_ORIENTATIONS`) under which `mask_texels`
+    (e.g. a mask's own alpha>8 lettering, in the mask's full-image texel
+    coordinates) best overlaps `bc_texels` (BC's own cleaned lettering, in
+    the ID texture's full-image texel coordinates), both restricted to
+    their own bounds (`_texel_bounds`-shaped 4-tuples) and resampled
+    (nearest-neighbour, by fractional position within each bbox) into a
+    common grid the size of `bc_bounds`. Returns `(name, scores)` where
+    `scores` maps every orientation name to its IoU; ties -- including a
+    lettering shape symmetric under all 4 -- go to `"identity"`."""
+    bx0, by0, bx1, by1 = bc_bounds
+    mx0, my0, mx1, my1 = mask_bounds
+    bw, bh = bx1 - bx0 + 1, by1 - by0 + 1
+    mw, mh = mx1 - mx0 + 1, my1 - my0 + 1
+    bc_local = {(x - bx0, y - by0) for x, y in bc_texels
+                if bx0 <= x <= bx1 and by0 <= y <= by1}
+
+    scores = {}
+    for orientation in _ORIENTATIONS:
+        resampled = set()
+        for j in range(bh):
+            for i in range(bw):
+                fu, fv = (i + 0.5) / bw, (j + 0.5) / bh
+                su, sv = _orient_fraction(orientation, fu, fv)
+                sx = mx0 + min(mw - 1, int(su * mw))
+                sy = my0 + min(mh - 1, int(sv * mh))
+                if (sx, sy) in mask_texels:
+                    resampled.add((i, j))
+        scores[orientation] = _iou(bc_local, resampled)
+
+    best = max(_ORIENTATIONS, key=lambda o: scores[o])
+    return best, scores
+
+
+def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img,
+                 diagnostics: dict = None) -> dict:
     """Build one `decals.json` "decals" entry (spec S3.3):
 
     1. The patch is the only shape with a texture basename containing 'ID'.
@@ -689,23 +783,37 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dic
        `P(s, t) = fit["origin"] + (s - st0) * s_axis + (t - t0) * t_axis`
        (`fit_plane_st`'s own affine map -- see its docstring for why the
        intercept isn't simply `fit["origin"]` at s=0, t=0).
-    3. BC's box `(s0, t0, s1, t1)` comes from `lettering_bbox` on
-       (`ref_img`, `base_img`), restricted to `uv_footprint(patch, ...)` --
-       the patch's own UV region, in `base_img`'s texel space (ref and base
-       are the same texture, lettered vs. blank) -- so stray diffs outside
-       the ID patch's own UVs never widen the box (Ruling C). The mask box
-       `(u0, v0, u1, v1)` comes from `alpha_bbox` on `mask_img`. Centres:
-       `sc, tc` and `uc, vc`.
+    3. BC's box `(s0, t0, s1, t1)` comes from the footprint-gated
+       (`uv_footprint(patch, ...)`) differing texels between (`ref_img`,
+       `base_img`), with `drop_isolated_texels` removing any stray texel
+       with fewer than 2 differing 8-neighbours (Ruling D) before taking the
+       bbox -- so a lone compression-noise texel can't widen the box. The
+       mask box `(u0, v0, u1, v1)` comes from `alpha_bbox` on `mask_img`.
+       Centres: `sc, tc` and `uc, vc`.
     4. `U = s_axis * (s1 - s0) / (u1 - u0)`, the ship-body vector for one
        full mask width. Uniform scale: the mask lettering width equals BC's
        lettering width.
     5. `V = normalise(t_axis - (t_axis . U^) U^) * |U| * (mask_h / mask_w)`.
        It's perpendicular to U, in the same sense as `t_axis`, and keeps the
        mask's pixels square.
-    6. `origin = P(sc, tc) - uc * U - vc * V`, which puts the mask
-       lettering centre on BC's.
-    7. Return `{"shape", "origin", "u_axis", "v_axis", "normal", "depth"}`,
-       all floats passed through `to_f32`.
+    6. **Orientation is derived, not assumed (Ruling D).**
+       `choose_orientation` scores the mask's own alpha>8 lettering against
+       BC's cleaned lettering (from step 3) in the 4 aspect-preserving
+       orientations (identity, rot180, flip_u, flip_v) and picks the best
+       (ties -> identity). rot180 negates both `U` and `V`; flip_u negates
+       only `U`; flip_v negates only `V` -- applied AFTER step 5, so `U`/`V`
+       keep the same magnitude either way.
+    7. `origin = P(sc, tc) - uc * U - vc * V` (`U`, `V` now oriented), which
+       puts the mask lettering centre on BC's -- `uc`, `vc` are unchanged by
+       the orientation: they're a property of the mask's OWN full-image
+       pixel space, and this same closed form re-derives the one unknown
+       (`origin`) correctly for any `U`, `V` by construction (verified
+       against ground truth in
+       `test_build_decal_derives_orientation_from_asymmetric_lettering`).
+    8. Return `{"shape", "origin", "u_axis", "v_axis", "normal", "depth"}`,
+       all floats passed through `to_f32`. If `diagnostics` is given (a
+       dict), it's filled in-place with `"orientation"` and `"scores"` for
+       CLI logging -- never part of the written JSON.
     """
     id_shapes = [s for s in shapes if any("ID" in t for t in s["textures"])]
     if len(id_shapes) != 1:
@@ -727,9 +835,16 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dic
         return [origin0[k] + (s - st0) * s_axis[k] + (t - tt0) * t_axis[k]
                 for k in range(3)]
 
+    ref_w, ref_h = ref_img.size
     footprint = uv_footprint(patch, base_img.size[0], base_img.size[1])
-    s0, t0, s1, t1 = lettering_bbox(ref_img, base_img, footprint=footprint)
-    u0, v0, u1, v1 = alpha_bbox(mask_img)
+    bc_texels = drop_isolated_texels(_diff_texels(ref_img, base_img, footprint))
+    bc_bounds = _texel_bounds(bc_texels)
+    s0, t0, s1, t1 = _bbox_from_texels(bc_texels, ref_w, ref_h)
+
+    mask_texels = _alpha_texels(mask_img)
+    mask_bounds = _texel_bounds(mask_texels)
+    u0, v0, u1, v1 = _bbox_from_texels(mask_texels, *mask_img.size)
+
     sc, tc = (s0 + s1) / 2.0, (t0 + t1) / 2.0
     uc, vc = (u0 + u1) / 2.0, (v0 + v1) / 2.0
 
@@ -748,6 +863,15 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dic
     mask_w, mask_h = mask_img.size
     v_len = u_len * (mask_h / mask_w)
     v_vec = [c / t_perp_len * v_len for c in t_perp]
+
+    orientation, scores = choose_orientation(bc_texels, bc_bounds, mask_texels, mask_bounds)
+    if diagnostics is not None:
+        diagnostics["orientation"] = orientation
+        diagnostics["scores"] = scores
+    if orientation in ("rot180", "flip_u"):
+        u_vec = [-c for c in u_vec]
+    if orientation in ("rot180", "flip_v"):
+        v_vec = [-c for c in v_vec]
 
     p_centre = eval_plane(sc, tc)
     origin = [p_centre[k] - uc * u_vec[k] - vc * v_vec[k] for k in range(3)]
@@ -852,7 +976,9 @@ def _run_decals() -> None:
             ref_img = Image.open(paths.game_root() / cfg["reference_registry"])
             base_img = Image.open(paths.game_root() / cfg["id_texture"])
             mask_img = Image.open(paths.game_asset(cfg["reference_mask"]))
-            decal = build_decal(shapes, cfg, ref_img, base_img, mask_img)
+            diagnostics = {}
+            decal = build_decal(shapes, cfg, ref_img, base_img, mask_img,
+                                 diagnostics=diagnostics)
         except Exception as exc:  # noqa: BLE001 -- one bad class must not abort the run
             print(f"{cls_name}  ERROR: {exc}")
             continue
@@ -862,7 +988,9 @@ def _run_decals() -> None:
         out_path = paths.project_asset_root() / "replacements" / masks_dir / "decals.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(decals_json(entries))
-        print(f"{cls_name}  {cfg['placement']}  -> {out_path}")
+        scores_str = " ".join(f"{o}={s:.3f}" for o, s in diagnostics["scores"].items())
+        print(f"{cls_name}  {cfg['placement']}  orientation={diagnostics['orientation']} "
+              f"scores=[{scores_str}]  -> {out_path}")
 
 
 def main(argv=None) -> None:
