@@ -8,7 +8,12 @@
 // loaded NIF by content hash, not by filename.
 #pragma once
 
+#include <nif/file.h>
+
+#include <glm/glm.hpp>
+
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -47,5 +52,14 @@ std::string fnv1a64_hex(std::string_view bytes);
 // Parse a fix file's JSON text. On failure returns nullopt and sets *error
 // (if non-null) to a human-readable message.
 std::optional<MeshFix> parse_mesh_fix(std::string_view json_text, std::string* error);
+
+// World transform (position + rotation + uniform scale, composed T*R*S up
+// the parent chain from file.blocks[0]) of the block at `block_index`.
+// Identity for a block with no NiNode ancestors.
+glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index);
+
+// Apply every merge in `fix` to `file`, or none of them. Returns "" on
+// success, otherwise the reason and leaves `file` unchanged.
+std::string apply_mesh_fix(nif::File& file, const MeshFix& fix);
 
 }  // namespace assets
