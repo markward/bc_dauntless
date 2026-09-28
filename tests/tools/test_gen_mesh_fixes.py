@@ -124,16 +124,18 @@ def test_build_fix_refuses_mesh_without_id_shape():
 def test_build_fix_uses_local_fit_ring_when_whole_region_fails_but_snaps_twins():
     # The patch is a single 5-vertex border row at y=10 (its own world-bbox
     # diagonal is therefore exactly 2.0, x=-1..1 -- so the ring radius is a
-    # known 0.05*2.0=0.1 GU). The target region has 6 rows at y=10, 9.95,
-    # 9.5, 9.0, 8.5, 8.0: only the first two (0 and 0.05 GU from the patch)
-    # are inside the 0.1 ring; the other four (0.5-2.0 GU away) sit OUTSIDE
-    # the ring but still inside a one-diagonal-expanded bounding box
-    # (0-2.0 GU on every side) -- i.e. this specifically distinguishes the
-    # ring rule from the old bbox-expansion rule, not just "near vs far".
-    # UVs are the usual planar-mirrored map plus k*(distance from the patch
-    # edge)^2, k=0.05: negligible within the ring (d<=0.05GU) but enough,
-    # spread over 6 distinct rows, to break a single affine fit over the
-    # whole window.
+    # known 0.05*2.0=0.1 GU). The target region has 8 rows: y=10, 9.97,
+    # 9.94, 9.91 (0, 0.03, 0.06, 0.09 GU from the patch -- all INSIDE the
+    # 0.1 ring, and crucially FOUR distinct distances, not two: a fit
+    # linear in y can pass through two rows exactly, so an earlier version
+    # of this test used only two and the seam came out exact even with the
+    # snap deleted -- see the design doc's fix-round-1 note); plus y=9.5,
+    # 9.0, 8.5, 8.0 (0.5-2.0 GU away -- outside the ring but still inside a
+    # one-diagonal-expanded bounding box, so this also still distinguishes
+    # the ring rule from the old bbox-expansion rule). UVs are the usual
+    # planar-mirrored map plus k*(distance from the patch edge)^2, k=0.05:
+    # small but genuinely UNFITTABLE-exactly within the ring (four distinct
+    # curvature values), and large over the whole region.
     k = 0.05
 
     def uv(x, y):
@@ -142,7 +144,7 @@ def test_build_fix_uses_local_fit_ring_when_whole_region_fails_but_snaps_twins()
         return (0.1 + 0.4 * fx + k * d * d, 0.2 + 0.5 * y)
 
     xs = (-1.0, -0.5, 0.0, 0.5, 1.0)
-    ys = (10.0, 9.95, 9.5, 9.0, 8.5, 8.0)
+    ys = (10.0, 9.97, 9.94, 9.91, 9.5, 9.0, 8.5, 8.0)
     verts = [(x, y, 0.0) for y in ys for x in xs]
     uvs = [uv(x, y) for (x, y, _z) in verts]
     # A chain of overlapping triangles sharing consecutive vertices --
@@ -167,8 +169,9 @@ def test_build_fix_uses_local_fit_ring_when_whole_region_fails_but_snaps_twins()
     assert m["max_fit_error"] <= 5e-3
 
     # Every patch vertex is an exact twin (the border row) and must come out
-    # with EXACTLY the twin's own UV (the snap), not the local-fit's
-    # (merely close) projected value.
+    # with EXACTLY the twin's own UV (the snap). Without the snap, the
+    # local fit's own (merely close, ~4.5e-5 off here) projected value
+    # would land here instead, and this equality would fail.
     for i, (x, y, _z) in enumerate(patch_verts):
         twin = verts.index((x, y, 0.0))
         expected = [g.to_f32(c) for c in uvs[twin]]
