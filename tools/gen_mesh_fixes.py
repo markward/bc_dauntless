@@ -476,6 +476,245 @@ def dumps(fix: dict) -> str:
     return json.dumps(fix, indent=2) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Hull name decals (spec: docs/superpowers/specs/2026-09-28-hull-name-decals-
+# design.md). Generates each class's Masks/decals.json: where BC's merged-
+# back ID-patch lettering sat on the hull, and where Mark's mask artwork
+# should be placed to land in the same spot at the same scale.
+# ---------------------------------------------------------------------------
+
+# Per stock class with masks authored (Masks/<Registry>/<placement>.png):
+# the NIF to read shapes from, the blank ID texture and a reference
+# registry texture (to diff for BC's own lettering box), the reference mask
+# artwork (to diff for Mark's own lettering box), which merged shape carries
+# the decal, and which placement this entry generates.
+DECAL_CLASSES: dict = {
+    "Ambassador": {
+        "nif": "data/Models/Ships/Ambassador/Ambassador.nif",
+        "id_texture": "data/Models/Ships/Ambassador/High/AmbassadorSaucerID_glow.tga",
+        "reference_registry": "data/Models/Ships/Ambassador/High/Zhukov.tga",
+        "reference_mask": "data/Models/Ships/Ambassador/Masks/Zhukov/top.png",
+        "target_shape": "amb saucer:0",
+        "placement": "top",
+    },
+}
+
+
+def fit_plane_st(points, sts, normals=None) -> dict:
+    """Fit an affine map from a patch's own (s, t) UVs to its ship-body
+    positions: `p = a0 + s * s_axis + t * t_axis`, one least-squares solve
+    per position coordinate (reusing `_solve_normal_equations`) over rows
+    `[1, s, t]`.
+
+    `normal` is `normalise(s_axis x t_axis)`, flipped to agree with the mean
+    of `normals` when given (undefined orientation otherwise -- the raw
+    cross product's sign, whatever that happens to be).
+
+    The returned `origin` is NOT `a0` (p at s=0, t=0): it is the point on
+    the fitted plane nearest the ship-body origin -- a stable anchor that
+    does not depend on the arbitrary zero of the patch's own UV space.
+    `st_origin` is the (s, t) coordinate of that same point, solved from
+    `s_axis`/`t_axis`'s Gram matrix, so that for any (s, t):
+
+        p(s, t) == origin + (s - st_origin[0]) * s_axis + (t - st_origin[1]) * t_axis
+
+    is exactly the original affine map (`build_decal` relies on this).
+    """
+    if len(points) < 3:
+        raise ValueError("fit_plane_st needs at least 3 points")
+    rows = [[1.0, s, t] for s, t in sts]
+    coeffs = []
+    for k in range(3):
+        target = [p[k] for p in points]
+        c = _solve_normal_equations(rows, target)
+        if c is None:
+            raise ValueError("fit_plane_st: degenerate (s, t) sample")
+        coeffs.append(c)
+    a0 = [coeffs[k][0] for k in range(3)]
+    s_axis = [coeffs[k][1] for k in range(3)]
+    t_axis = [coeffs[k][2] for k in range(3)]
+
+    cross = (
+        s_axis[1] * t_axis[2] - s_axis[2] * t_axis[1],
+        s_axis[2] * t_axis[0] - s_axis[0] * t_axis[2],
+        s_axis[0] * t_axis[1] - s_axis[1] * t_axis[0],
+    )
+    mag = math.sqrt(sum(c * c for c in cross))
+    if mag < 1e-12:
+        raise ValueError("fit_plane_st: s_axis and t_axis are parallel")
+    normal = [c / mag for c in cross]
+    if normals:
+        mean_n = [sum(nv[k] for nv in normals) / len(normals) for k in range(3)]
+        if sum(normal[k] * mean_n[k] for k in range(3)) < 0.0:
+            normal = [-c for c in normal]
+
+    # origin: the point on the plane nearest the ship-body origin, i.e. the
+    # projection of (0, 0, 0) onto the plane through a0 with this normal.
+    d = sum(a0[k] * normal[k] for k in range(3))
+    origin = [d * normal[k] for k in range(3)]
+
+    # st_origin: solve origin - a0 == s * s_axis + t * t_axis via the 2x2
+    # Gram-matrix normal equations (exact -- origin lies in the plane
+    # spanned by s_axis/t_axis by construction).
+    delta = [origin[k] - a0[k] for k in range(3)]
+    ss = sum(c * c for c in s_axis)
+    st = sum(s_axis[k] * t_axis[k] for k in range(3))
+    tt = sum(c * c for c in t_axis)
+    bs = sum(s_axis[k] * delta[k] for k in range(3))
+    bt = sum(t_axis[k] * delta[k] for k in range(3))
+    det = ss * tt - st * st
+    if abs(det) < 1e-12:
+        raise ValueError("fit_plane_st: s_axis and t_axis are not independent")
+    st_origin = [(bs * tt - bt * st) / det, (ss * bt - st * bs) / det]
+
+    return {"origin": origin, "s_axis": s_axis, "t_axis": t_axis,
+            "normal": normal, "st_origin": st_origin}
+
+
+def _changed_bbox(w: int, h: int, changed) -> tuple:
+    """Shared bbox-over-pixel-edges helper for `lettering_bbox`/`alpha_bbox`:
+    `changed(x, y) -> bool` over every pixel, normalised box spanning pixel
+    edges. Raises ValueError if no pixel matches."""
+    min_x = min_y = max_x = max_y = None
+    for y in range(h):
+        for x in range(w):
+            if not changed(x, y):
+                continue
+            if min_x is None or x < min_x:
+                min_x = x
+            if max_x is None or x > max_x:
+                max_x = x
+            if min_y is None or y < min_y:
+                min_y = y
+            if max_y is None or y > max_y:
+                max_y = y
+    if min_x is None:
+        raise ValueError("no matching pixels")
+    return (min_x / w, min_y / h, (max_x + 1) / w, (max_y + 1) / h)
+
+
+def lettering_bbox(ref_rgba, base_rgba) -> tuple:
+    """Normalised (s0, t0, s1, t1) bounding box, over pixel edges, of the
+    pixels where `ref_rgba` differs from `base_rgba` by more than 24 in any
+    RGB channel or in alpha, restricted to pixels visible in at least one of
+    the two images (`max(alpha) > 8`).
+
+    The visibility gate matters on real BC glow textures: a fully
+    transparent (alpha 0 in both images) pixel's RGB is "don't care" and
+    routinely holds leftover/export noise that differs between two
+    otherwise-identical glow maps without any visible effect -- BC's own
+    "_glow" ID textures carry exactly this on a border column, which
+    inflates the box if counted. On fully opaque input (every caller's
+    synthetic test fixture) the gate is a no-op."""
+    ref = ref_rgba.convert("RGBA")
+    base = base_rgba.convert("RGBA")
+    w, h = ref.size
+    rp, bp = ref.load(), base.load()
+
+    def changed(x, y):
+        r1, g1, b1, a1 = rp[x, y]
+        r2, g2, b2, a2 = bp[x, y]
+        if max(a1, a2) <= 8:
+            return False
+        return (max(abs(r1 - r2), abs(g1 - g2), abs(b1 - b2)) > 24
+                or abs(a1 - a2) > 24)
+
+    return _changed_bbox(w, h, changed)
+
+
+def alpha_bbox(mask_rgba) -> tuple:
+    """Normalised (u0, v0, u1, v1) bounding box, over pixel edges, of the
+    pixels of `mask_rgba` whose alpha is greater than 8."""
+    mask = mask_rgba.convert("RGBA")
+    w, h = mask.size
+    mp = mask.load()
+    return _changed_bbox(w, h, lambda x, y: mp[x, y][3] > 8)
+
+
+def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dict:
+    """Build one `decals.json` "decals" entry (spec S3.3):
+
+    1. The patch is the only shape with a texture basename containing 'ID'.
+       Raise ValueError if there isn't exactly one, or if `cls_cfg
+       ["target_shape"]` names no shape among `shapes`.
+    2. Fit on the patch's `vertices`/`uvs` with its `normals`:
+       `P(s, t) = fit["origin"] + (s - st0) * s_axis + (t - t0) * t_axis`
+       (`fit_plane_st`'s own affine map -- see its docstring for why the
+       intercept isn't simply `fit["origin"]` at s=0, t=0).
+    3. BC's box `(s0, t0, s1, t1)` comes from `lettering_bbox` on
+       (`ref_img`, `base_img`); the mask box `(u0, v0, u1, v1)` from
+       `alpha_bbox` on `mask_img`. Centres: `sc, tc` and `uc, vc`.
+    4. `U = s_axis * (s1 - s0) / (u1 - u0)`, the ship-body vector for one
+       full mask width. Uniform scale: the mask lettering width equals BC's
+       lettering width.
+    5. `V = normalise(t_axis - (t_axis . U^) U^) * |U| * (mask_h / mask_w)`.
+       It's perpendicular to U, in the same sense as `t_axis`, and keeps the
+       mask's pixels square.
+    6. `origin = P(sc, tc) - uc * U - vc * V`, which puts the mask
+       lettering centre on BC's.
+    7. Return `{"shape", "origin", "u_axis", "v_axis", "normal", "depth"}`,
+       all floats passed through `to_f32`.
+    """
+    id_shapes = [s for s in shapes if any("ID" in t for t in s["textures"])]
+    if len(id_shapes) != 1:
+        raise ValueError(
+            "expected exactly one shape with an 'ID' texture, found "
+            f"{len(id_shapes)}")
+    patch = id_shapes[0]
+
+    target_name = cls_cfg["target_shape"]
+    target = next((s for s in shapes if s["name"] == target_name), None)
+    if target is None:
+        raise ValueError(f"no shape named {target_name!r}")
+
+    fit = fit_plane_st(patch["vertices"], patch["uvs"], patch["normals"])
+    origin0, s_axis, t_axis = fit["origin"], fit["s_axis"], fit["t_axis"]
+    st0, tt0 = fit["st_origin"]
+
+    def eval_plane(s, t):
+        return [origin0[k] + (s - st0) * s_axis[k] + (t - tt0) * t_axis[k]
+                for k in range(3)]
+
+    s0, t0, s1, t1 = lettering_bbox(ref_img, base_img)
+    u0, v0, u1, v1 = alpha_bbox(mask_img)
+    sc, tc = (s0 + s1) / 2.0, (t0 + t1) / 2.0
+    uc, vc = (u0 + u1) / 2.0, (v0 + v1) / 2.0
+
+    s_scale = (s1 - s0) / (u1 - u0)
+    u_vec = [c * s_scale for c in s_axis]
+    u_len = math.sqrt(sum(c * c for c in u_vec))
+    if u_len < 1e-12:
+        raise ValueError("build_decal: degenerate u_axis")
+    u_hat = [c / u_len for c in u_vec]
+
+    t_dot_u = sum(t_axis[k] * u_hat[k] for k in range(3))
+    t_perp = [t_axis[k] - t_dot_u * u_hat[k] for k in range(3)]
+    t_perp_len = math.sqrt(sum(c * c for c in t_perp))
+    if t_perp_len < 1e-12:
+        raise ValueError("build_decal: s_axis and t_axis are not independent")
+    mask_w, mask_h = mask_img.size
+    v_len = u_len * (mask_h / mask_w)
+    v_vec = [c / t_perp_len * v_len for c in t_perp]
+
+    p_centre = eval_plane(sc, tc)
+    origin = [p_centre[k] - uc * u_vec[k] - vc * v_vec[k] for k in range(3)]
+
+    return {
+        "shape": target_name,
+        "origin": [to_f32(c) for c in origin],
+        "u_axis": [to_f32(c) for c in u_vec],
+        "v_axis": [to_f32(c) for c in v_vec],
+        "normal": [to_f32(c) for c in fit["normal"]],
+        "depth": to_f32(cls_cfg.get("depth", 2.0)),
+    }
+
+
+def decals_json(entries: dict) -> str:
+    """Deterministic `decals.json` rendering: 2-space indent, trailing
+    newline."""
+    return json.dumps({"format": 1, "decals": entries}, indent=2) + "\n"
+
+
 def _nif_shapes(abs_path: str):
     """Thin, lazily-imported wrapper around `_dauntless_host.nif_shapes`, so
     importing this module never requires the compiled extension."""
@@ -542,12 +781,45 @@ def _summary_line(rel: str, file_hash: str, fix: dict) -> str:
             f"welds={len(m['weld'])}")
 
 
+def _run_decals() -> None:
+    """For each `DECAL_CLASSES` entry: load its NIF's shapes, its two BC
+    textures (stock root) and its reference mask (project replacement, mod-
+    overlaid), build one decal, and write that class's
+    `Masks/decals.json` under the project replacements tree. A class that
+    fails prints its error and does not abort the run."""
+    from PIL import Image
+    from engine import paths
+
+    for cls_name, cfg in DECAL_CLASSES.items():
+        try:
+            nif_path = paths.game_root() / cfg["nif"]
+            shapes = _nif_shapes(str(nif_path))
+            if shapes is None:
+                raise ValueError(f"could not parse {nif_path}")
+            ref_img = Image.open(paths.game_root() / cfg["reference_registry"])
+            base_img = Image.open(paths.game_root() / cfg["id_texture"])
+            mask_img = Image.open(paths.game_asset(cfg["reference_mask"]))
+            decal = build_decal(shapes, cfg, ref_img, base_img, mask_img)
+        except Exception as exc:  # noqa: BLE001 -- one bad class must not abort the run
+            print(f"{cls_name}  ERROR: {exc}")
+            continue
+
+        entries = {cfg["placement"]: decal}
+        masks_dir = Path(cfg["nif"]).parent / "Masks"
+        out_path = paths.project_asset_root() / "replacements" / masks_dir / "decals.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(decals_json(entries))
+        print(f"{cls_name}  {cfg['placement']}  -> {out_path}")
+
+
 def main(argv=None) -> None:
     """CLI entry point. For each mesh in `STOCK_MESHES` (or `--only`):
     resolve it under the stock game root, hash it, call `nif_shapes` and
     `build_fix`, print one summary line, and render a review PNG. A mesh
     that fails prints its error and does not abort the run. With `--write`,
-    also writes `native/assets/mesh_fixes/<hash>.json`."""
+    also writes `native/assets/mesh_fixes/<hash>.json`. With `--decals`
+    (independent of `--write`), also generates every `DECAL_CLASSES`
+    entry's `Masks/decals.json` (see `_run_decals`)."""
     from engine import paths
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -563,7 +835,13 @@ def main(argv=None) -> None:
                               "dir)")
     parser.add_argument("--write", action="store_true",
                          help="write native/assets/mesh_fixes/<hash>.json")
+    parser.add_argument("--decals", action="store_true",
+                         help="generate each DECAL_CLASSES entry's "
+                              "Masks/decals.json (independent of --write)")
     args = parser.parse_args(argv)
+
+    if args.decals:
+        _run_decals()
 
     targets = dict(TARGET_OVERRIDES)
     for spec in args.target:
