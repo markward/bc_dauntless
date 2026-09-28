@@ -37,7 +37,9 @@ struct MeshFixMerge {
     MeshFixShapeRef target;
     std::vector<std::array<float, 2>> uvs;                     // one per patch vertex
     std::vector<std::pair<std::uint32_t, std::uint32_t>> weld;  // (patch v, target v)
-    std::optional<std::vector<std::array<float, 3>>> normals;   // patch-local, one per patch vertex
+    // patch-local, one per patch vertex; rotated into the target shape's
+    // frame the same way as the patch's own NiTriShapeData normals.
+    std::optional<std::vector<std::array<float, 3>>> normals;
 };
 
 // Top-level fix-file contents.

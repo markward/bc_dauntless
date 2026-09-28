@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 
 namespace assets {
@@ -306,6 +307,28 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
         std::string err = validate_merge(file, fix.merges[i], i, &plans[i]);
         if (!err.empty()) return err;
     }
+
+    // Cross-merge check: a NiTriShapeData block may play only one role
+    // (target or patch) across the whole fix. Threading a cumulative
+    // append offset through repeat use is out of scope (fix round 1) — a
+    // second merge onto an already-grown target, or reusing a patch, would
+    // silently misindex the second merge's triangles into vertices that
+    // don't exist yet at validation time. Covers all three shapes: same
+    // target twice, same patch twice, and one merge's patch being
+    // another's target.
+    std::unordered_map<std::size_t, std::size_t> data_block_owner;  // data idx -> first merge idx
+    for (std::size_t i = 0; i < plans.size(); ++i) {
+        for (std::size_t data_idx : {plans[i].target_data_idx, plans[i].patch_data_idx}) {
+            auto [it, inserted] = data_block_owner.try_emplace(data_idx, i);
+            if (!inserted) {
+                return "merge " + std::to_string(i) + ": data block " +
+                       std::to_string(data_idx) + " is also used by merge " +
+                       std::to_string(it->second) +
+                       " (each NiTriShapeData may appear in only one merge)";
+            }
+        }
+    }
+
     for (std::size_t i = 0; i < fix.merges.size(); ++i) {
         apply_merge(file, fix.merges[i], plans[i]);
     }

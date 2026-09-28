@@ -51,6 +51,39 @@ assets::MeshFix fix_for(const Synthetic&) {
 const nif::NiTriShapeData& data(const Synthetic& s, std::size_t i) {
     return std::get<nif::NiTriShapeData>(s.f.blocks[i]);
 }
+
+// make() plus a second patch shape ("id2", block 5, data block 6) welded
+// onto the SAME target ("saucer", block 1) as the first patch, for the
+// shared-target-data refusal test.
+Synthetic make_shared_target() {
+    Synthetic s;
+    nif::NiNode root; root.av.obj.name = "root"; root.child_links = {2, 4, 6};
+    nif::NiTriShape target; target.av.obj.name = "saucer"; target.data_link = 3;
+    nif::NiTriShape patchA; patchA.av.obj.name = "id";  patchA.data_link = 5;
+    nif::NiTriShape patchB; patchB.av.obj.name = "id2"; patchB.data_link = 7;
+    s.f.blocks = {root, target, quad(0,1,0,0.5f), patchA, quad(1,2,0,1),
+                  patchB, quad(2,3,0,1)};
+    s.f.block_ids = {1, 2, 3, 4, 5, 6, 7};
+    s.f.root = nif::BlockHandle{&s.f.blocks.front()};
+    return s;
+}
+
+// Two entirely independent target/patch pairs (no shared data blocks), for
+// the cross-merge-atomicity test: merge 0 is valid, merge 1 fails for an
+// unrelated reason (name mismatch).
+Synthetic make_two_independent() {
+    Synthetic s;
+    nif::NiNode root; root.av.obj.name = "root"; root.child_links = {2, 4, 6, 8};
+    nif::NiTriShape target1; target1.av.obj.name = "saucer1"; target1.data_link = 3;
+    nif::NiTriShape patch1;  patch1.av.obj.name  = "id1";     patch1.data_link  = 5;
+    nif::NiTriShape target2; target2.av.obj.name = "saucer2"; target2.data_link = 7;
+    nif::NiTriShape patch2;  patch2.av.obj.name  = "id2";     patch2.data_link  = 9;
+    s.f.blocks = {root, target1, quad(0,1,0,0.5f), patch1, quad(1,2,0,1),
+                        target2, quad(10,11,0,0.5f), patch2, quad(11,12,0,1)};
+    s.f.block_ids = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    s.f.root = nif::BlockHandle{&s.f.blocks.front()};
+    return s;
+}
 }  // namespace
 
 TEST(MeshFixApply, MergesWeldsAndHidesPatch) {
@@ -115,6 +148,45 @@ TEST(MeshFixApply, RefusalsLeaveFileUntouched) {
     { auto x = f; x.merges[0].weld = {{0, 9}};           expect_refused(x, "weld out of range"); }
     { auto x = f; x.merges[0].weld = {{0, 0}};           expect_refused(x, "weld positions differ"); }
     { auto x = f; x.merges[0].uvs[0] = {0.9f, 0};        expect_refused(x, "weld uv differs"); }
+}
+
+// Two merges welding onto the SAME target data block must be refused as a
+// whole (a per-merge-only check would let both apply and corrupt the
+// second merge's index remap — see fix-round-1 finding). Neither patch is
+// hidden and the shared target is untouched.
+TEST(MeshFixApply, RefusesWhenTwoMergesShareTargetData) {
+    auto s = make_shared_target();
+    auto fix = fix_for(s);
+    assets::MeshFixMerge m2;
+    m2.patch = {5, "id2"}; m2.target = {1, "saucer"};
+    m2.uvs = {{0,0},{1,0},{1,1},{0,1}};
+    fix.merges.push_back(m2);
+
+    auto before = data(s, 2);
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_EQ(data(s, 2).num_vertices, before.num_vertices);
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);  // patch A
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[5]).av.flags & 0x0001u);  // patch B
+}
+
+// Two fully independent merges: the first is valid, the second fails on an
+// unrelated rule (name mismatch). The whole fix is still all-or-nothing —
+// the first merge must NOT have applied.
+TEST(MeshFixApply, SecondMergeFailureLeavesFirstUnapplied) {
+    auto s = make_two_independent();
+    assets::MeshFixMerge m1;
+    m1.patch = {3, "id1"}; m1.target = {1, "saucer1"};
+    m1.uvs = {{0,0},{1,0},{1,1},{0,1}};
+    assets::MeshFixMerge m2;
+    m2.patch = {7, "id2_typo"};  // wrong name -> rule 1 refusal
+    m2.target = {5, "saucer2"};
+    m2.uvs = {{0,0},{1,0},{1,1},{0,1}};
+    assets::MeshFix fix; fix.merges = {m1, m2};
+
+    auto before = data(s, 2);
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_EQ(data(s, 2).num_vertices, before.num_vertices);
+    EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);
 }
 
 TEST(MeshFixApply, RefusesVertexOverflow) {
