@@ -1050,6 +1050,14 @@ def _reset_leakable_engine_globals():
         _hhs.reset()
     except Exception:
         pass
+    # Hull-name decal resolution warns once per (path, reason) -- a test that
+    # exercises a fault (malformed decals.json, missing mask, degenerate
+    # projector) would otherwise silence the same fault for every later test.
+    try:
+        from engine.appc import hull_decals as _hull_decals
+        _hull_decals.reset()
+    except Exception:
+        pass
     # Music: g_kMusicManager is a process-lifetime singleton and host_loop
     # lazily installs a MusicPlayer backend into it on the first audio tick.
     # Both survive across tests, so a mission that loaded tracks leaves them

@@ -39,7 +39,7 @@ class _FakeRenderer:
         self.carves = {}           # iid -> damage recorded on that instance
         self.create_calls = 0
 
-    def load_model(self, path, search, texture_replacements=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None):
         return 100
 
     def model_aabb(self, h):

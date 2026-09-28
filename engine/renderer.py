@@ -166,11 +166,18 @@ def frame() -> None:
 
 
 def load_model(nif_path: str, texture_search_path,
-               texture_replacements=None) -> int:
+               texture_replacements=None, decals=None) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
-    empty is byte-identical to the plain load."""
+    empty is byte-identical to the plain load.
+
+    `decals` is `engine.appc.hull_decals.decals_for(...)`'s output: a list of
+    (shape, origin, u_axis, v_axis, normal, depth, mask_abs_path) registry
+    name-decal projectors. Accepted here but NOT yet forwarded to
+    `_h.load_model` -- the native binding gains that parameter separately
+    (hull name decals Task 4); until then this keeps callers that already
+    pass a non-empty decal list from raising TypeError."""
     return _h.load_model(nif_path, texture_search_path, texture_replacements)
 
 

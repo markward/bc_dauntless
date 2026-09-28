@@ -22,7 +22,7 @@ class _FakeRenderer:
         self.create_calls = 0
         self.destroyed = []
 
-    def load_model(self, path, search, texture_replacements=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None):
         self.load_calls += 1
         return 100
 

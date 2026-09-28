@@ -5147,14 +5147,35 @@ def _ship_texture_replacements(ship):
     return reps or None
 
 
-def _ship_load_key(nif_path, reps):
+def _ship_decals(nif_path, reps):
+    """Registry-mask decal list for a ship's model load
+    (`hull_decals.decals_for`), or `[]` when the NIF has no BC-relative
+    folder (a mod-overlay NIF -- see `_ship_texture_search`'s own
+    `nif_rel` computation, which this mirrors) or no registry was queued.
+    """
+    from engine.appc import hull_decals
+    try:
+        nif_rel_dir = Path(nif_path).parent.relative_to(
+            _paths.game_root()).as_posix()
+    except ValueError:
+        return []
+    registry = hull_decals.registry_stem(reps or [])
+    return hull_decals.decals_for(nif_rel_dir, registry)
+
+
+def _ship_load_key(nif_path, reps, decals=None):
     """Model-cache key for a ship load. Bare NIF path when no registry swap
-    (byte-identical to the legacy key, so non-fed ships + planets are
-    unaffected); NIF path + a stable registry suffix otherwise, so two hulls of
-    the same class with DIFFERENT registries don't collapse onto one handle."""
-    if not reps:
-        return nif_path
-    return nif_path + "|" + ";".join(f"{old}={new}" for old, new in reps)
+    and no decals (byte-identical to the legacy key, so non-fed ships +
+    planets are unaffected); NIF path + a stable registry suffix / decal-mask
+    suffix otherwise, so two hulls of the same class with DIFFERENT
+    registries -- or different decal masks -- don't collapse onto one handle.
+    """
+    key = nif_path
+    if reps:
+        key += "|" + ";".join(f"{old}={new}" for old, new in reps)
+    if decals:
+        key += "|decals:" + ";".join(spec[6] for spec in decals)
+    return key
 
 
 def _resolve_active_set(player):
@@ -5630,8 +5651,10 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
             continue
         tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
+        decals = _ship_decals(nif_path, reps)
         try:
-            handle = r_.load_model(nif_path, tex_search, reps)
+            handle = r_.load_model(nif_path, tex_search, reps,
+                                    decals=decals or None)
         except Exception as e:
             if verbose:
                 print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
@@ -6694,11 +6717,13 @@ class _MissionLoader:
             # is pure geometry — identical across registries — so it stays keyed
             # by nif_path.
             reps = _ship_texture_replacements(ship)
-            load_key = _ship_load_key(nif_path, reps)
+            decals = _ship_decals(nif_path, reps)
+            load_key = _ship_load_key(nif_path, reps, decals)
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
-                    handle = r_.load_model(nif_path, tex_search, reps)
+                    handle = r_.load_model(nif_path, tex_search, reps,
+                                            decals=decals or None)
                 except Exception as e:
                     if self._verbose:
                         print(f"[host_loop]   skip ship: load_model({nif_path}) raised: "
