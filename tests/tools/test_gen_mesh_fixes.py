@@ -80,15 +80,53 @@ def test_build_fix_merges_patch_with_exact_uvs_and_welds():
     assert m["target"] == {"block": 1, "name": "saucer"}
     assert "mirrored" in m["method"]
     assert len(m["uvs"]) == len(patch["vertices"])
-    # Patch vertex at x=1,y=2 continues the saucer mapping: u=0.1+0.4*|1|, v=0.2+0.5*2.
+    # Patch vertex at x=1,y=2 continues the saucer mapping: u=0.1+0.4*|1|,
+    # v=0.2+0.5*2=1.2 -- but the saucer region's own v only spans [0.2, 0.7]
+    # (y in [0, 1]), so the extrapolated v is clamped to that region's max.
     idx = patch["vertices"].index((1.0, 2.0, 0.0))
-    assert m["uvs"][idx] == pytest.approx([0.5, 1.2], abs=1e-6)
+    assert m["uvs"][idx] == pytest.approx([0.5, 0.7], abs=1e-6)
     # Mirror side: the x=-1 vertex gets the same u.
     idx_neg = patch["vertices"].index((-1.0, 2.0, 0.0))
     assert m["uvs"][idx_neg][0] == pytest.approx(0.5, abs=1e-6)
     # Shared y=1 edge: patch x∈{-1,-.5,0,.5,1} vs saucer x∈{-2,-1,0,1,2} → 3 coincide.
     assert len(m["weld"]) == 3
     assert m["normals"] is None
+
+
+def test_build_fix_clamps_extrapolated_uv_into_region_bounds():
+    # Target region UV bounds: u in [0.1, 0.9] (x in [-2, 2], mirrored),
+    # v in [0.2, 0.7] (y in [0, 1]).
+    target = _grid_shape(1, "saucer", -2.0, 2.0, True)
+    # The patch shares the y=1 edge with the target (x in [-1, 1]) but
+    # extends far past it to y=5 -- a linear extrapolation whose v value at
+    # y=5 (0.2 + 0.5*5 = 2.7) lands far outside the region's own v range,
+    # and is NOT a twin of any region vertex (the region only reaches y=1),
+    # so the seam-snap in the local-fit path can't save it -- and this case
+    # doesn't even take that path, since the whole-region fit is exact here.
+    patch = _grid_shape(2, "idpatch", -1.0, 1.0, True, tex="Hull_ID_glow.tga",
+                         y0=1.0, y1=5.0)
+    patch["uvs"] = [(0.0, 0.0)] * len(patch["uvs"])   # the ID texture's own UVs
+
+    fix, _review = g.build_fix([target, patch], "r", None)
+    m = fix["merges"][0]
+    # Confirm the premise: this is the exact global fit, not local-fit --
+    # the clamp must work on that path too, not just the local-fit one.
+    assert not m["method"].startswith("local-")
+
+    region_us = [u for u, _v in target["uvs"]]
+    region_vs = [v for _u, v in target["uvs"]]
+    u_min, u_max = min(region_us), max(region_us)
+    v_min, v_max = min(region_vs), max(region_vs)
+
+    far_idx = patch["vertices"].index((1.0, 5.0, 0.0))
+    u_far, v_far = m["uvs"][far_idx]
+    assert v_far == pytest.approx(v_max, abs=1e-6)
+    assert u_min - 1e-6 <= u_far <= u_max + 1e-6
+
+    # The shared y=1 seam vertex is a twin and must stay exact, unaffected
+    # by the clamp.
+    seam_idx = patch["vertices"].index((1.0, 1.0, 0.0))
+    assert m["uvs"][seam_idx] == pytest.approx([0.5, 0.7], abs=1e-6)
 
 
 def test_build_fix_refuses_ambiguous_mirroring():

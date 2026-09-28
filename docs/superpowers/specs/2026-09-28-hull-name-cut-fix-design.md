@@ -356,6 +356,20 @@ four ships' near-exact global fits, but the only one of the 5 that needed
 this method. UV error from the fit stays inside the patch interior; the seam
 itself is snap-exact by construction.
 
+Even a fit that passes its tolerance is only constrained AT the vertices it
+was fitted against — nothing stops it extrapolating past them for a patch
+vertex further out than the region reaches. `AmbassadorSaucer_glow.tga`
+packs unrelated content on the other side of the saucer region's own UV
+footprint (a texture half-split at u≈0.5), and the Ambassador's local fit put
+one hub-end centreline vertex at u=0.48952, just outside — below — the
+chosen region's own u range, sampling that unrelated content and drawing a
+thin dark radial line on the live-verified hull. `build_fix` now clamps
+every patch vertex's UV into `[min, max]` of the chosen region's own
+vertices (computed before the float32 round, after any fit method), fixing
+that vertex to u=0.49947 — the region's true minimum, not the ~0.5 this
+paragraph's diagnosis eyeballed. Snapped twins already lie inside the range,
+so the clamp is a no-op for them and for all 4 exact-fit ships.
+
 ### 10.8 The 5 committed fixes
 
 | Ship | Patch → target | Method | `max_fit_error` | Welds |

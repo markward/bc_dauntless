@@ -375,6 +375,27 @@ def build_fix(shapes: list, rel: str, target_override):
                         known[pi] = target_shape["uvs"][i]
             uvs_out = [[to_f32(u), to_f32(v)] for u, v in seam_copy(patch, known)]
 
+    # Clamp every patch vertex's UV into the chosen region's own UV range.
+    # A fit (exact or local) is only constrained AT the region's vertices --
+    # nothing stops it extrapolating past them for a patch vertex that
+    # reaches further than the region does, and BC's saucer textures pack
+    # unrelated content on the other side of the region's UV footprint (see
+    # design doc S10 -- a mirrored fit for the Ambassador put one hub-end
+    # centreline vertex at u=0.48952, just below the saucer region's u=0.50
+    # minimum, sampling the texture's other half and drawing a stray dark
+    # line). Region bounds come from the same target-shape UVs the fit was
+    # built from, so this is a no-op whenever the fit already stays inside
+    # them (every exact-fit stock mesh). Snapped twins (local-fit's seam
+    # vertices) already lie inside the range by construction.
+    region_us = [target_shape["uvs"][i][0] for i in region_idxs]
+    region_vs = [target_shape["uvs"][i][1] for i in region_idxs]
+    u_min, u_max = min(region_us), max(region_us)
+    v_min, v_max = min(region_vs), max(region_vs)
+    uvs_out = [
+        [to_f32(min(max(u, u_min), u_max)), to_f32(min(max(v, v_min), v_max))]
+        for u, v in uvs_out
+    ]
+
     weld = []
     for pi, pv in enumerate(patch["vertices"]):
         best = None
