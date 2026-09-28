@@ -384,11 +384,27 @@ def clear_undetectable_player_lock(player) -> None:
 
     Clearing the target also silences the weapons: FireWeapons no-ops with no
     target.
+
+    ONLY applies to things that can actually hide or leave sensor range —
+    ships. Celestial bodies (Planet/Sun) and placements/nav points
+    (PlacementObject/Waypoint) have no sensor signature to lose and cannot
+    "leave range" the way a ship can, so this rule must never drop them.
+    Live-reported 2026-09-28: Bridge/HelmMenuHandlers.py's OrbitPlanet sets
+    the player's target to the planet the instant Orbit is chosen, before the
+    AI.Player.OrbitPlanet AI has flown the ship anywhere near it — on a
+    mapped region the player can easily start tens of thousands of GU past
+    sensor range, so this predicate dropped the lock before the ship ever
+    got close, and nothing ever re-set it, leaving the camera stuck off
+    Tracking mode for the rest of the orbit.
     """
     if player is None:
         return
     target = player.GetTarget()
     if target is None:
+        return
+    from engine.appc.placement import PlacementObject
+    from engine.appc.planet import Planet
+    if isinstance(target, (Planet, PlacementObject)):
         return
     if not can_detect(player, target):
         player.SetTarget(None)
