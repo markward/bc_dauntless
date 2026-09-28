@@ -25,7 +25,8 @@ def _fire(event_type, nebula, ship):
     evt.SetEventType(event_type)
     evt.SetSource(nebula)
     evt.SetDestination(ship)
-    App.g_kEventManager.AddEvent(evt)
+    from engine.appc.events import dispatch_passes
+    return dispatch_passes(evt)
 
 
 def _ignores_env_damage(ship):
@@ -115,11 +116,30 @@ class NebulaTracker:
         self._sensor_saved = {}
         # {id(nebula): seconds banked toward the next ET_ENVIRONMENT_DAMAGE}.
         self._env_accum = {}
+        # {id(nebula): bool} -- whether that nebula raises ET_ENVIRONMENT_DAMAGE
+        # (SetupDamage armed it). The radial profile's RadiationDriver rides
+        # this tracker's events for ships inside an armed local nebula instead
+        # of firing its own (one ET_ENVIRONMENT_DAMAGE stream per ship).
+        self._armed = {}
+        # callable(ship, passed: bool) -- notified whenever this tracker fires
+        # ET_ENVIRONMENT_DAMAGE, after the event's handler chain has run.
+        self.env_listeners = []
 
     def reset(self):
         self._inside.clear()
         self._sensor_saved.clear()
         self._env_accum.clear()
+        self._armed.clear()
+
+    def ships_in_armed_nebula(self) -> set:
+        """ids of ships currently inside a nebula that raises
+        ET_ENVIRONMENT_DAMAGE -- the profile's radiation rides those events
+        instead of firing its own (one stream per ship)."""
+        out = set()
+        for key, ships in self._inside.items():
+            if self._armed.get(key):
+                out |= ships
+        return out
 
     def _scale_sensor(self, ship, density):
         """Scale ship's sensor range by clamp(density, 0, 1). Save base on first scale.
@@ -177,6 +197,7 @@ class NebulaTracker:
             density = nebula.GetSensorDensity()
             # ET_ENVIRONMENT_DAMAGE at 16 Hz to every occupant, damage or not.
             armed = hull_dmg > 0.0 or shield_dmg > 0.0
+            self._armed[key] = armed
             accum = self._env_accum.get(key, 0.0) + dt
             fire_env = armed and accum >= 1.0 / ENV_DAMAGE_EVENT_HZ
             if fire_env:
@@ -193,7 +214,9 @@ class NebulaTracker:
                             # Present when the nebula was created: the one hit.
                             _apply_creation_hit(ship, hull_dmg, shield_dmg)
                     if fire_env:
-                        _fire(App.ET_ENVIRONMENT_DAMAGE, nebula, ship)
+                        passed = _fire(App.ET_ENVIRONMENT_DAMAGE, nebula, ship)
+                        for listener in self.env_listeners:
+                            listener(ship, passed)
             # Exits: ships that were inside last tick but are not now.
             exited_ids = prev - now
             if exited_ids:

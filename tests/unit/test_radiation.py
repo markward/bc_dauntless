@@ -223,3 +223,51 @@ def test_child_of_an_out_subsystem_is_offline():
     child._parent_subsystem = parent
     parent._radiation_out = True
     assert _is_offline(child)
+
+
+from engine.appc.nebula_runtime import NebulaTracker
+
+
+def _armed_set_with(ship_pos):
+    s = App.SetClass_Create()
+    n = App.MetaNebula_Create(0.6, 0.35, 0.72, 145.0, 10.5, "i.tga", "e.tga")
+    n.SetupDamage(150.0, 20.0)
+    n.AddNebulaSphere(0.0, 0.0, 0.0, 1500.0)
+    s.AddObjectToSet(n, "neb")
+    return s
+
+
+class _PosShip(_Ship):
+    def GetWorldLocation(self):
+        return App.TGPoint3(0.0, 0.0, 0.0)
+
+
+def test_ship_inside_armed_local_nebula_gets_no_profile_events():
+    ship = _PosShip()
+    seen = []
+    mod = types.ModuleType("_rad_count2")
+    mod.h = lambda o, e: (seen.append(e), o.CallNextHandler(e))
+    sys.modules["_rad_count2"] = mod
+    ship.AddPythonFuncHandlerForInstance(App.ET_ENVIRONMENT_DAMAGE, "_rad_count2.h")
+    s = _armed_set_with((0.0, 0.0, 0.0))
+    tracker = NebulaTracker()
+    d = RadiationDriver(lambda sh: Sample(radiation=1.0))
+    tracker.env_listeners.append(d.on_local_event)
+    for _ in range(61):
+        tracker.update(s, [ship], 1.0 / 60.0)
+        d.update([ship], 1.0 / 60.0, shared=tracker.ships_in_armed_nebula())
+    assert len(seen) == 16                    # the tracker's stream only
+
+
+def test_local_nebula_events_carry_the_profile_drain():
+    ship = _PosShip(shields_on=False)
+    s = _armed_set_with((0.0, 0.0, 0.0))
+    tracker = NebulaTracker()
+    d = RadiationDriver(lambda sh: Sample(radiation=1.0))
+    tracker.env_listeners.append(d.on_local_event)
+    tracker.update(s, [ship], 1.0 / 60.0)     # first sighting: BC's one-off hit
+    after_creation = ship.GetHull().GetCondition()
+    for _ in range(61):
+        tracker.update(s, [ship], 1.0 / 60.0)
+        d.update([ship], 1.0 / 60.0, shared=tracker.ships_in_armed_nebula())
+    assert after_creation - ship.GetHull().GetCondition() == pytest.approx(150.0, abs=15.0)

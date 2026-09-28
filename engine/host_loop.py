@@ -4404,6 +4404,7 @@ def _reset_system_loader_state() -> None:
 
 def _reset_sensor_state() -> None:
     """Nebula trackers, concealment latches, the identification clock."""
+    global _last_identify_gt, _radiation_driver
     # Clear the nebula tracker so stale membership state from the prior set
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
@@ -4414,12 +4415,13 @@ def _reset_sensor_state() -> None:
         _hull_discharge.reset()
     if _nebula_wake is not None:
         _nebula_wake.reset()
+    if _radiation_driver is not None:
+        _radiation_driver.reset()
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
     reset_concealment_state()
     # Force the next tick to re-run sensor identification for the new mission.
-    global _last_identify_gt
     _last_identify_gt = None
 
 
@@ -4689,6 +4691,7 @@ _warp_hidden = False
 # first tick that contains a nebula.
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
+_radiation_driver = None  # RadiationDriver | None
 # Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
 # until the first sweep; reset on mission swap so a new mission re-identifies.
 _last_identify_gt = None  # float | None
@@ -10449,6 +10452,21 @@ def run(mission_name: Optional[str] = None,
                         _neb_set.GetClassObjectList(App.CT_SHIP),
                         TICK_DT,
                     )
+
+                    # Radial-profile radiation (engine/appc/radiation.py):
+                    # drain + outages via 16 Hz ET_ENVIRONMENT_DAMAGE. Ships
+                    # inside an armed local nebula ride the tracker's events.
+                    global _radiation_driver
+                    if _radiation_driver is None:
+                        from engine.appc.radiation import RadiationDriver
+                        from engine.systems import profile as _profile
+                        _radiation_driver = RadiationDriver(_profile.sample_for_object)
+                        _nebula_tracker.env_listeners.append(
+                            _radiation_driver.on_local_event)
+                    _radiation_driver.update(
+                        _neb_set.GetClassObjectList(App.CT_SHIP), TICK_DT,
+                        shared=_nebula_tracker.ships_in_armed_nebula())
+
                     # Shared nebula-state locals used by ALL nebula drivers
                     # (thunder, hull-discharge, wake).  Computed once here so
                     # each per-toggle block can read them without duplication.

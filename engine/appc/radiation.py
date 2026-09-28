@@ -111,6 +111,17 @@ class RadiationDriver:
             if sid not in live:
                 del self._accum[sid]
 
+    def on_local_event(self, ship, passed) -> None:
+        """NebulaTracker listener: a local armed nebula fired this ship's
+        environment event; land the profile's chunk on it if it passed."""
+        from engine.appc import warp_state
+        m = _mult()
+        if not passed or m <= 0.0 or warp_state.is_ship_warping(ship):
+            return
+        r = self._sample_for(ship).radiation
+        if r > 0.0:
+            self.apply_chunk(ship, r, m)
+
     def apply_chunk(self, ship, radiation: float, mult: float) -> None:
         """1/16 s of drain: shields per face while up, else the hull."""
         from engine.appc.nebula_runtime import _shields_up
