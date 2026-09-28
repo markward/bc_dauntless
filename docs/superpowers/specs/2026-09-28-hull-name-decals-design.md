@@ -27,7 +27,7 @@ Where the mask's alpha covers the hull:
 | Channel | Behaviour |
 |---|---|
 | Albedo | **replaced**: `base.rgb = mix(base.rgb, mask.rgb, mask.a)` |
-| Glow / window map | **unchanged**: a lit window under a letter still glows |
+| Glow / window map | **RGB also replaced, same as albedo; alpha (the emissive mask) unchanged**: BC's `_glow` textures are one image — RGB is albedo, alpha is an 8-bit emissive map, and BC's emitted glow is `texture.rgb × texture.a`. The mask overrides that texture's RGB everywhere it's sampled, not only at the albedo fetch, so black lettering over a lit window emits nothing (the window's own RGB no longer shines through the letters) and coloured lettering emits its own colour × the emissive map — exactly as a name painted into BC's own texture would. |
 | Material emissive | unchanged formula; it's modulated by the (now mask-coloured) base, as today |
 | Normal map | unchanged |
 | Specular | **paint sheen**: `+ mask.a × kDecalPaintSpecular (0.8) × paint_spec_acc`, computed even when the material has no specular map, using the material's own specular power |

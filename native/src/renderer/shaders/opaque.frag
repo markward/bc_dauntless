@@ -1146,7 +1146,13 @@ void main() {
     vec4 base = texture(u_base_color, v_uv);
 
     // Hull-name decal: replace albedo under the mask (premultiplied RGB).
+    // decal_premult_rgb is the same premultiplied m.rgb, kept alive for the
+    // glow-map composite below (the letters must black out an emissive
+    // window band the same way they black out the albedo, and colour the
+    // glow when the mask itself carries colour) -- see
+    // docs/superpowers/specs/2026-09-28-hull-name-decals-design.md.
     float decal_a = 0.0;
+    vec3 decal_premult_rgb = vec3(0.0);
     if (u_decal_mask_enabled != 0) {
         vec4 q = u_decal_proj * vec4(p_body, 1.0);
         if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0 &&
@@ -1156,6 +1162,7 @@ void main() {
             vec4 m = textureGrad(u_decal_mask, q.xy, gx, gy);
             base.rgb = base.rgb * (1.0 - m.a) + m.rgb;
             decal_a = m.a;
+            decal_premult_rgb = m.rgb;
         }
     }
 
@@ -1353,6 +1360,17 @@ void main() {
     }
 
     vec4 glow = texture(u_glow_map, v_uv);
+    // The hull-name decal overrides the SAME texture's RGB wherever it is
+    // sampled, not just the albedo fetch: BC's _glow textures are one image
+    // (RGB = albedo, alpha = the emissive mask), so a letter painted into
+    // that texture would replace RGB under both terms and leave alpha (the
+    // "is this pixel lit" map) alone. Composite with the identical
+    // premultiplied m.rgb/decal_a as the albedo line above, BEFORE any
+    // further processing (hue rotation) of glow.rgb, so the lettering's
+    // colour passes through the same pipeline as the hull's own glow.
+    // decal_a == 0 (no decal on this material/fragment) leaves this an
+    // exact no-op: glow.rgb*(1-0) + 0 == glow.rgb.
+    glow.rgb = glow.rgb * (1.0 - decal_a) + decal_premult_rgb;
     float gf = clamp(glow_flicker, 0.0, FLICKER_MAX);
     vec3 spec = (u_specular_enabled != 0)
         ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
