@@ -168,20 +168,39 @@ def _warp_heading(src_vantage, dst_vantage):
     return (0.0, 1.0, 0.0) if m < 1e-6 else (dx / m, dy / m, dz / m)
 
 
-class _WarpSoundAction(TGAction):
-    """Play a registered 2D/3D SFX by name (enter/exit warp). Fail-open: a
-    missing sound / absent manager never blocks the warp chain."""
+def _play_attached(name, ship):
+    """Play the registered sound ``name`` attached to ``ship``'s node, as BC
+    does both warp sounds (WarpSequence.py:79-89, 285-297:
+    ``pWarpSoundAction.SetNode(pShip.GetNode())``); the playing handle, or
+    None. Both are loaded LS_3D, so an unattached play is pinned where it
+    started -- inaudible by the crack once the ship has left at warp speed.
+    Fail-open: a missing sound / absent manager never blocks a warp."""
+    try:
+        import App
+        snd = App.g_kSoundManager.GetSound(name)
+        if snd is None:
+            return None
+        getter = getattr(ship, "GetNode", None)
+        node = getter() if getter is not None else None
+        if node is None:
+            snd.DetachFromNode()    # never ride a previous caller's node
+            return snd.Play()
+        return snd.Play(attach_node=node)
+    except Exception:
+        return None
 
-    def __init__(self, name):
+
+class _WarpSoundAction(TGAction):
+    """Play "Enter Warp" / "Exit Warp" attached to the warping ship (player or
+    NPC, as BC). Fail-open (``_play_attached``)."""
+
+    def __init__(self, name, ship):
         super().__init__()
         self._name = name
+        self._ship = ship
 
     def _do_play(self):
-        try:
-            import App
-            App.g_kSoundManager.PlaySound(self._name)
-        except Exception:
-            pass
+        _play_attached(self._name, self._ship)
 
 
 def _clear_all_targets(ship) -> None:
@@ -985,7 +1004,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         enter_delay = t_burst - _SFX_ENTER_FLASH_AT
         if enter_delay < 0.0:
             enter_delay = 0.0
-        seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
+        seq.AddAction(_WarpSoundAction("Enter Warp", ship), enter_delay)
         # At BURST (t_burst, after the turn and any hold for articulated parts): drop the render instances of the system being left
         # behind and park the player in BC's persistent warp set (spec §1b --
         # not necessarily empty, a mission may have parked ships there), so
@@ -1022,7 +1041,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # you come out of warp, not _T_EXIT_DECEL seconds later.
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
         seq.AppendAction(_ArrivalExitedWarpAction(ship))
-        seq.AppendAction(_WarpSoundAction("Exit Warp"))
+        seq.AppendAction(_WarpSoundAction("Exit Warp", ship))
         # The manager keeps running for _T_EXIT_DECEL seconds after arrival to
         # glide the ship from in-system warp speed down to 0; schedule the
         # defensive stop just past that tail (the manager also self-deactivates).

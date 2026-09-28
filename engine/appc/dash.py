@@ -9,7 +9,8 @@ placement's rotation at its impulse turn rate (see the section at the end).
 ``warp.execute_warp`` forks here; everything else (rule C) keeps the tunnel.
 
 Warp on Heading (``start_heading``) is the other dash: no destination and no
-align -- it engages at once along the nose at HEADING_DASH_GUPS and runs
+align -- it cruises through the "Enter Warp" pre-roll (and any parts hold),
+then engages along the nose at HEADING_DASH_GUPS and runs
 until a body ahead drops it out (at the body's region-arrival range, keeping
 the impulse speed engaged at) or 0 / All Stop drops it out at rest.
 
@@ -22,6 +23,11 @@ Phases, all driven from ``tick`` once per frame:
   they have settled (``_parts_time``): a Set Course dash holds aligned after
   its (unslowed) turn, a heading dash cruises on at its impulse speed. No
   parts, no hold, and no early warp state;
+* **sound pre-roll** -- "Enter Warp" starts, attached to the ship,
+  ``warp._SFX_ENTER_FLASH_AT`` s before the engage so its crack lands on it
+  (BC WarpSequence.py:79-89 starts it at fEntryDelayTime - 1.5); the engage
+  is therefore never sooner than that after the press (``_Dash.t_engage``).
+  A heading dash cruises through it as through a parts hold;
 * **engage** -- weapon loops silenced, ``WES_WARPING``, the flight begins,
   the button's queues start (``_on_engage_fx`` is the flash/sound hook);
 * **flight** -- the flight moves the ship (~10 s: ``set_course_speed``);
@@ -78,8 +84,11 @@ class _Dash:
         self.axis = None
         self.angle = 0.0
         self.t_parts = 0.0              # the parts' hold, from t0 (_parts_time)
-        self.pending = None             # a heading flight held for the parts
+        self.pending = None             # a heading flight held before engage
         self.cruise = 0.0               # ... and the impulse speed it holds at
+        self.t_engage = 0.0             # from t0: align, parts, sound pre-roll
+        self.enter_started = False      # "Enter Warp" has been started
+        self.enter_sound = None         # ... and its playing handle
 
 
 def _parts_time(player) -> float:
@@ -104,51 +113,70 @@ def _parts_time(player) -> float:
 def _begin_parts_hold(player, st) -> None:
     """Measure the parts' hold and, when there is one, put the ship in
     WES_WARP_INITIATED now (as the tunnel does at its align start), so the
-    parts fold during the turn / cruise rather than as the ship takes off."""
+    parts fold during the turn / cruise rather than as the ship takes off.
+    Then fix the engage time: the later of the align, the parts and the
+    "Enter Warp" pre-roll; and start that sound now if it is due at once."""
+    from engine.appc import warp
     st.t_parts = _parts_time(player)
     if st.t_parts > 0.0:
         from engine.appc import warp_state
         from engine.appc.subsystems import WarpEngineSubsystem
         warp_state.set_state(player, WarpEngineSubsystem.WES_WARP_INITIATED)
+    st.t_engage = max(st.t_align, st.t_parts, warp._SFX_ENTER_FLASH_AT)
+    _maybe_start_enter_warp(player, st, 0.0)
+
+
+def _maybe_start_enter_warp(player, st, elapsed) -> None:
+    """Start "Enter Warp" once ``elapsed`` reaches the engage less its crack."""
+    from engine.appc import warp
+    if not st.enter_started and \
+            elapsed >= st.t_engage - warp._SFX_ENTER_FLASH_AT:
+        st.enter_started = True
+        st.enter_sound = _start_enter_warp(player)
 
 
 # ── hooks Task 6 fills (ruling R3) ─────────────────────────────────────────
 #
 # Weapon-loop silencing already happened at engage (warp._silence_ship_
 # weapons, called from _engage() -- ruling R3 says Task 6 must not duplicate
-# it). These two hooks own only the screen flash / dust-smear / nacelle-glow
-# clock (engine.dash_vfx) and the departure/arrival sound, exactly as the
-# tunnel's own _WarpSoundAction plays "Enter Warp" / "Exit Warp". Gated on
+# it). These hooks own only the screen flash / dust-smear / nacelle-glow
+# clock (engine.dash_vfx) and the departure/arrival sounds, played attached
+# to the ship as the tunnel's _WarpSoundAction and BC's WarpSequence.py do
+# (warp._play_attached): the dash leaves at 10,000+ GU/s, so an unattached
+# LS_3D play is left behind before its crack. Gated on
 # warp._is_current_player like every other player-scene effect in warp.py --
 # the dash is player-only today (spec §4 "NPCs: Player only for now"), so
 # this is a defensive match to that convention rather than a live branch.
 
+def _start_enter_warp(player):
+    """"Enter Warp" on the player's ship, _SFX_ENTER_FLASH_AT before the
+    engage (_maybe_start_enter_warp); its playing handle, or None."""
+    from engine.appc import warp
+    if not warp._is_current_player(player):
+        return None
+    return warp._play_attached("Enter Warp", player)
+
+
 def _on_engage_fx(player) -> None:
-    """Engage flash + "Enter Warp" (Task 6)."""
+    """Engage flash (Task 6). "Enter Warp" is already playing: it started
+    its pre-roll before the engage (_start_enter_warp)."""
     from engine.appc import warp
     if not warp._is_current_player(player):
         return
     import App
     from engine import dash_vfx
     dash_vfx.get().engage(App.g_kUtopiaModule.GetGameTime())
-    try:
-        App.g_kSoundManager.PlaySound("Enter Warp")
-    except Exception:
-        pass
 
 
 def _on_drop_out_fx(player) -> None:
-    """Drop-out flash + "Exit Warp" (Task 6)."""
+    """Drop-out flash + "Exit Warp", attached to the player (Task 6)."""
     from engine.appc import warp
     if not warp._is_current_player(player):
         return
     import App
     from engine import dash_vfx
     dash_vfx.get().drop_out(App.g_kUtopiaModule.GetGameTime())
-    try:
-        App.g_kSoundManager.PlaySound("Exit Warp")
-    except Exception:
-        pass
+    warp._play_attached("Exit Warp", player)
 
 
 def _on_cancel_fx() -> None:
@@ -242,7 +270,6 @@ def start_set_course(player, dest_set, placement_name, queues,
     st.rot0 = player.GetWorldRotation()
     st.axis, st.angle = _turn_to(st.rot0.GetCol(1), first, st.rot0.GetCol(2))
     player.__dict__["_dash"] = st
-    _begin_parts_hold(player, st)
 
     # The Helm has the conn (ruling R12): drop the targets and stand the
     # player's AI down exactly as the tunnel's _ClearTargetsAction does at
@@ -255,6 +282,7 @@ def start_set_course(player, dest_set, placement_name, queues,
     player._speed_setpoint = None
     player._target_angular_velocity_setpoint = None
     player.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    _begin_parts_hold(player, st)
 
     # warp_button.engage greyed the whole Helm menu (WarpPressed's
     # SetDisabled); a dash disables only its entries (dash_helm).
@@ -266,7 +294,8 @@ def start_set_course(player, dest_set, placement_name, queues,
 
 
 def start_heading(player, queues, button=None) -> bool:
-    """Warp on Heading: engage at once (no align) along the nose at
+    """Warp on Heading: no align; cruise through the "Enter Warp" pre-roll
+    (and any parts hold), then engage along the nose at
     HEADING_DASH_GUPS until a body ahead drops the flight out, keeping the
     impulse speed engaged at, or 0 / All Stop drops it out at rest.
 
@@ -309,12 +338,9 @@ def start_heading(player, queues, button=None) -> bool:
     from engine.appc import dash_helm
     _begin_parts_hold(player, st)
     dash_helm.sync(player)
-    if st.t_parts > 0.0:
-        # Hold for the parts: cruise on at the engaged impulse speed until
-        # they settle (tick), then engage.
-        st.pending, st.cruise = flight, engaged
-        return True
-    _engage(player, st, flight)
+    # Hold for the "Enter Warp" pre-roll and any parts: cruise on at the
+    # engaged impulse speed until the engage time (tick), then engage.
+    st.pending, st.cruise = flight, engaged
     return True
 
 
@@ -455,15 +481,17 @@ def tick(player, dt: float) -> None:
     if st.flight is None:
         import App
         elapsed = App.g_kUtopiaModule.GetGameTime() - st.t0
-        if st.pending is not None:          # a heading dash's parts hold
-            if elapsed >= st.t_parts:
+        _maybe_start_enter_warp(player, st, elapsed)
+        if st.pending is not None:          # a heading dash's hold
+            if elapsed >= st.t_engage:
                 _engage(player, st, st.pending)
             else:
                 _cruise(player, st, dt)
             return
-        # Turn at the ship's own rate; then, if the parts are still moving,
-        # hold aligned until they settle (Mark: never slow the turn).
-        if elapsed >= st.t_align and elapsed >= st.t_parts:
+        # Turn at the ship's own rate; then, if the parts are still moving
+        # or "Enter Warp" has not reached its crack, hold aligned (Mark:
+        # never slow the turn).
+        if elapsed >= st.t_engage:
             _engage(player, st)
         else:
             _align(player, st, min(elapsed / max(st.t_align, 1e-9), 1.0))
@@ -501,6 +529,11 @@ def _cancel(player, st) -> None:
     from engine.appc import dash_helm, warp_state
     from engine.appc.subsystems import WarpEngineSubsystem
     del player.__dict__["_dash"]
+    if st.enter_sound is not None:      # its crack must not play on
+        try:
+            st.enter_sound.Stop()
+        except Exception:
+            pass
     if st.flight is None:
         if st.button is not None:
             st.button.put_back_queues(st.queues)

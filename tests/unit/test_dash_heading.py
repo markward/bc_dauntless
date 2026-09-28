@@ -48,6 +48,16 @@ def _heading_entry(menu):
     return None
 
 
+class _Handle:
+    """A playing-sound handle: records its Stop()."""
+
+    def __init__(self):
+        self.stopped = False
+
+    def Stop(self):
+        self.stopped = True
+
+
 class World:
     pass
 
@@ -92,6 +102,14 @@ def world(monkeypatch):
         ("engage", App.g_kUtopiaModule.GetGameTime())))
     monkeypatch.setattr(dash, "_on_drop_out_fx", lambda p: w.flashes.append(
         ("drop", App.g_kUtopiaModule.GetGameTime())))
+    # Every ship-attached warp sound: (name, ship, game time, handle).
+    w.sounds = []
+
+    def _play(name, ship):
+        h = _Handle()
+        w.sounds.append((name, ship, App.g_kUtopiaModule.GetGameTime(), h))
+        return h
+    monkeypatch.setattr(warp, "_play_attached", _play)
     yield w
     for n in ("_t_heading",):
         sys.modules.pop(n, None)
@@ -112,6 +130,12 @@ def _run_until(w, pred, bound_s=40.0):
             return loop
         _tick(w, loop)
     raise AssertionError("condition not reached in %.0f s" % bound_s)
+
+
+def _until_engaged(w):
+    """Through the "Enter Warp" pre-roll (warp._SFX_ENTER_FLASH_AT) to the
+    engage."""
+    return _run_until(w, lambda: bool(w.flashes), bound_s=5.0)
 
 
 def _sys(obj):
@@ -259,6 +283,7 @@ def test_a_heading_dash_at_ona2_drops_out_at_its_arrival_range(world):
     h = _aim(w, centre)
     _press(w)
     assert dash.is_dashing(w.player)
+    _until_engaged(w)
     assert w.player._insystem_warp_transit.speed_policy == "heading"
     w.events.clear()
     _run_until(w, lambda: not dash.is_dashing(w.player), bound_s=20.0)
@@ -532,7 +557,8 @@ def test_a_heading_dash_into_open_space_runs_and_stops_at_rest_on_0(world):
     p0 = _sys(w.player)
     _aim(w, (p0[0], p0[1], p0[2] - 1.0e6))        # straight down: no bodies
     _press(w)
-    loop = GameLoop()
+    loop = _until_engaged(w)
+    p0 = _sys(w.player)
     for _ in range(int(round(30.0 / TICK_DELTA))):
         _tick(w, loop)
     assert dash.is_dashing(w.player)
@@ -596,6 +622,8 @@ def test_the_chain_sees_no_destination_and_the_course_is_restored(world):
     assert b.get_episode_name() == "Episode2"
     assert b.GetPlacementName() == placement
     assert dash.is_dashing(w.player)
+    assert w.played == []                    # "before" plays at the engage
+    _until_engaged(w)
     assert w.player._insystem_warp_transit.speed_policy == "heading"
     assert App.g_kSetManager.GetSet("warp") is None
     assert w.played == [("before", True)]
@@ -637,7 +665,7 @@ def test_warp_on_heading_during_a_dash_does_nothing(world):
     w = world
     _aim(w, tuple(_body("Ona 2").position_gu))
     _press(w)
-    _tick(w, GameLoop())
+    _until_engaged(w)
     flight = w.player._insystem_warp_transit
     assert not w.entry.IsEnabled()           # greyed while dashing
     warp_button.press_heading(w.button)
@@ -719,17 +747,6 @@ def test_a_heading_dash_with_parts_cruises_then_engages(world, monkeypatch):
     assert w.player.IsDoingInSystemWarp() == 1
 
 
-def test_a_heading_dash_with_no_parts_engages_at_the_press(world, monkeypatch):
-    w = world
-    _parts(monkeypatch, 0.0)
-    _open_space(w)
-    t0 = App.g_kUtopiaModule.GetGameTime()
-    _press(w)
-    assert w.flashes == [("engage", t0)]
-    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_WARPING
-    assert w.player.IsDoingInSystemWarp() == 1
-
-
 def test_0_during_the_heading_hold_cancels_at_rest(world, monkeypatch):
     from engine.host_loop import _PlayerControl
     w = world
@@ -754,3 +771,80 @@ def test_0_during_the_heading_hold_cancels_at_rest(world, monkeypatch):
     assert w.player.IsDoingInSystemWarp() == 0
     assert _events_of(w, App.ET_EXITED_WARP, App.ET_IN_SYSTEM_WARP) == []
     assert w.entry.IsEnabled()
+
+
+# ── 10. "Enter Warp" leads the engage by its crack ────────────────────────
+
+PREROLL = warp._SFX_ENTER_FLASH_AT
+
+
+def _enter_sounds(w):
+    return [s for s in w.sounds if s[0] == "Enter Warp"]
+
+
+def test_a_heading_dash_cruises_through_the_preroll_then_engages(
+        world, monkeypatch):
+    """No parts: "Enter Warp" on the player at the press; the ship cruises on
+    at its impulse speed (no early warp state) and engages PREROLL s later."""
+    w = world
+    _parts(monkeypatch, 0.0)
+    h = _open_space(w)
+    p0 = _sys(w.player)
+    t0 = App.g_kUtopiaModule.GetGameTime()
+    _press(w)
+    [(_, ship, t_sound, handle)] = _enter_sounds(w)
+    assert ship is w.player and t_sound == t0
+    assert w.flashes == []
+    loop = GameLoop()
+    while not w.flashes:
+        assert warp_state.get_state(w.player) == \
+            WarpEngineSubsystem.WES_NOT_WARPING
+        _tick(w, loop)
+        assert App.g_kUtopiaModule.GetGameTime() - t0 < 5.0
+        if not w.flashes:
+            v = w.player.GetVelocity()
+            assert (v.x, v.y, v.z) == pytest.approx(
+                tuple(c * ENGAGED for c in h), abs=1e-9)
+    t_engage = w.flashes[0][1] - t0
+    assert abs(t_engage - PREROLL) <= TICK_DELTA + 1e-9
+    assert math.dist(p0, _sys(w.player)) == pytest.approx(
+        ENGAGED * t_engage, rel=0.02)
+    assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_WARPING
+    assert not handle.stopped
+
+
+def test_a_heading_parts_hold_leads_the_engage_by_the_preroll(
+        world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 3.0)
+    _open_space(w)
+    _press(w)
+    assert _enter_sounds(w) == []
+    loop = GameLoop()
+    for _ in range(int(round(10.0 / TICK_DELTA))):
+        if w.flashes:
+            break
+        _tick(w, loop)
+    [(_, ship, t_sound, _)] = _enter_sounds(w)
+    assert ship is w.player
+    assert abs(w.flashes[0][1] - t_sound - PREROLL) <= TICK_DELTA + 1e-9
+
+
+def test_0_during_the_heading_preroll_stops_enter_warp(world, monkeypatch):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _parts(monkeypatch, 0.0)
+    _open_space(w)
+    _press(w)
+    loop = GameLoop()
+    for _ in range(int(round(0.5 / TICK_DELTA))):
+        _tick(w, loop)
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(pressed={pc._input_map.code("full_stop")}))
+    assert not dash.is_dashing(w.player)
+    [(_, _, _, handle)] = _enter_sounds(w)
+    assert handle.stopped
+    for _ in range(int(round(3.0 / TICK_DELTA))):
+        _tick(w, loop)
+    assert w.flashes == []

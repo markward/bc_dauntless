@@ -203,6 +203,8 @@ def test_warp_on_heading_at_ona2_hands_off_at_its_arrival_range(world):
 
     warp_button.press_heading(w.button)
     assert dash.is_dashing(w.player)
+    # Cruising through the "Enter Warp" pre-roll, then the heading flight.
+    _run(w, lambda: w.player._insystem_warp_transit is not None, bound_s=5.0)
     assert w.player._insystem_warp_transit.speed_policy == "heading"
     _run(w, lambda: not dash.is_dashing(w.player), bound_s=20.0)
 

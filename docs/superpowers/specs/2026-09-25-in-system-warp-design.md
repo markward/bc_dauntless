@@ -374,8 +374,23 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
 - **Flash:** the tunnel's existing screen flash on engage and drop-out. The
   tunnel's "jump burst" is not used.
 - **Nacelle glow:** the existing warp glow spools during align/engage and holds.
-- **Sound:** "Enter Warp" timed to the engage flash, "Exit Warp" at drop-out;
-  weapon loops silenced while dashing, as the tunnel does.
+- **Sound:** "Enter Warp" and "Exit Warp" are played **attached to the ship**
+  (`warp._play_attached` → `TGSound.Play(attach_node=ship.GetNode())`), as BC
+  attaches both (`WarpSequence.py:79-89, 285-297`:
+  `pWarpSoundAction.SetNode(pShip.GetNode())`). Both are loaded `LS_3D`
+  (`LoadTacticalSounds.py:79-80`), so an unattached play is pinned where it
+  started, and the dash is thousands of GU away by the crack — Mark, live: the
+  wind-down was heard, the crack was not. "Enter Warp" has a **1.5 s pre-roll**
+  (`warp._SFX_ENTER_FLASH_AT`, where its crack sits in the clip): it starts that
+  long before the engage, as BC starts it at `fEntryDelayTime - 1.5`, so the
+  crack lands on the engage flash. The engage is therefore never sooner than
+  1.5 s after the press — engage = max(align, parts hold, 1.5 s). A Set Course
+  dash holds aligned for any remainder; a heading dash cruises at its impulse
+  speed through it (the parts-hold mechanism), then engages. A stop, death or
+  player swap before the engage cancels as during the align, and stops "Enter
+  Warp" if it has started. "Exit Warp" at drop-out. The tunnel's
+  `_WarpSoundAction` attaches both sounds to the warping ship too, player or
+  NPC. Weapon loops silenced while dashing, as the tunnel does.
 - **Camera:** the chase camera stays on the ship, with the tunnel's align turn-in.
   No cinematic cut.
 

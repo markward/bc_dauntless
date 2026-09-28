@@ -155,24 +155,49 @@ def _reset_dash_vfx_singleton():
     dash_vfx.get().__init__()
 
 
-def test_on_engage_fx_starts_the_clock_and_plays_enter_warp(monkeypatch):
+def _record_attached(monkeypatch):
+    """Record warp._play_attached(name, ship) -- the ship-attached play both
+    warp sounds go through (BC WarpSequence.py: SetNode(pShip.GetNode()))."""
+    from engine.appc import warp
+    played = []
+
+    def _play(name, ship):
+        played.append((name, ship))
+        return ("handle", name)
+    monkeypatch.setattr(warp, "_play_attached", _play)
+    return played
+
+
+def test_on_engage_fx_starts_the_clock_and_plays_no_sound(monkeypatch):
+    """"Enter Warp" is not played at the engage: it started 1.5 s earlier
+    (_start_enter_warp) so its crack lands on the engage."""
     import App
     from engine import dash_vfx
     from engine.appc import dash, warp
 
     monkeypatch.setattr(warp, "_is_current_player", lambda ship: True)
     monkeypatch.setattr(App.g_kUtopiaModule, "GetGameTime", lambda: 42.0)
-    played = []
+    played = _record_attached(monkeypatch)
     monkeypatch.setattr(App.g_kSoundManager, "PlaySound",
                         lambda name, *a, **k: played.append(name))
 
     dash._on_engage_fx(_Ship())
 
-    assert played == ["Enter Warp"]
+    assert played == []
     d = dash_vfx.get()
     d.tick(42.0)
     assert d.dash_intensity() == 0.0     # just engaged: ramp starts at 0
     assert d.flash_intensity() == 1.0    # the engage flash fires immediately
+
+
+def test_start_enter_warp_plays_it_attached_to_the_player(monkeypatch):
+    from engine.appc import dash, warp
+
+    monkeypatch.setattr(warp, "_is_current_player", lambda ship: True)
+    played = _record_attached(monkeypatch)
+    ship = _Ship()
+    assert dash._start_enter_warp(ship) == ("handle", "Enter Warp")
+    assert played == [("Enter Warp", ship)]
 
 
 def test_on_drop_out_fx_ends_the_clock_and_plays_exit_warp(monkeypatch):
@@ -182,14 +207,13 @@ def test_on_drop_out_fx_ends_the_clock_and_plays_exit_warp(monkeypatch):
 
     monkeypatch.setattr(warp, "_is_current_player", lambda ship: True)
     monkeypatch.setattr(App.g_kUtopiaModule, "GetGameTime", lambda: 50.0)
-    played = []
-    monkeypatch.setattr(App.g_kSoundManager, "PlaySound",
-                        lambda name, *a, **k: played.append(name))
+    played = _record_attached(monkeypatch)
 
     dash_vfx.get().engage(40.0)
-    dash._on_drop_out_fx(_Ship())
+    ship = _Ship()
+    dash._on_drop_out_fx(ship)
 
-    assert played == ["Exit Warp"]
+    assert played == [("Exit Warp", ship)]
     d = dash_vfx.get()
     d.tick(50.0)
     assert d.dash_intensity() == 1.0     # just dropped out: ramp starts at 1
@@ -205,11 +229,12 @@ def test_fx_hooks_are_gated_on_is_current_player(monkeypatch):
     from engine.appc import dash, warp
 
     monkeypatch.setattr(warp, "_is_current_player", lambda ship: False)
-    played = []
+    played = _record_attached(monkeypatch)
     monkeypatch.setattr(App.g_kSoundManager, "PlaySound",
                         lambda name, *a, **k: played.append(name))
 
     dash._on_engage_fx(_Ship())
+    assert dash._start_enter_warp(_Ship()) is None
     dash._on_drop_out_fx(_Ship())
 
     assert played == []

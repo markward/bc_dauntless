@@ -51,6 +51,16 @@ def _entry(menu, key):
 _ENTRIES = ("Warp", "Set Course", "Orbit Planet", "Intercept", "Dock")
 
 
+class _Handle:
+    """A playing-sound handle: records its Stop()."""
+
+    def __init__(self):
+        self.stopped = False
+
+    def Stop(self):
+        self.stopped = True
+
+
 class World:
     pass
 
@@ -100,6 +110,14 @@ def world(monkeypatch):
         ("engage", App.g_kUtopiaModule.GetGameTime())))
     monkeypatch.setattr(dash, "_on_drop_out_fx", lambda p: w.flashes.append(
         ("drop", App.g_kUtopiaModule.GetGameTime())))
+    # Every ship-attached warp sound: (name, ship, game time, handle).
+    w.sounds = []
+
+    def _play(name, ship):
+        h = _Handle()
+        w.sounds.append((name, ship, App.g_kUtopiaModule.GetGameTime(), h))
+        return h
+    monkeypatch.setattr(warp, "_play_attached", _play)
     w.sets_seen = set()
     yield w
     App.g_kSetManager._sets.clear()
@@ -1003,3 +1021,90 @@ def test_a_player_swap_during_the_hold_cancels_it(world, monkeypatch):
     assert warp_state.get_state(w.player) == \
         WarpEngineSubsystem.WES_NOT_WARPING
     _assert_queues_back(w, marks)
+
+
+# ── "Enter Warp" leads the engage by its crack (BC WarpSequence.py:79-89:
+#    attached to the ship, started fEntryDelayTime - 1.5) ─────────────────
+
+PREROLL = warp._SFX_ENTER_FLASH_AT
+
+
+def _enter_sounds(w):
+    return [s for s in w.sounds if s[0] == "Enter Warp"]
+
+
+def test_enter_warp_starts_its_preroll_before_the_engage_attached(
+        world, monkeypatch):
+    """No parts, an align >= the pre-roll: the engage is unchanged (t_align)
+    and "Enter Warp" starts on the player PREROLL s before it."""
+    w = world
+    _parts(monkeypatch, 0.0)
+    t0, st, _ = _press_and_trace(w)
+    assert st.t_align >= PREROLL
+    t_engage = w.flashes[0][1]
+    assert t_engage - t0 == pytest.approx(st.t_align, abs=TICK_DELTA)
+    [(_, ship, t_sound, h)] = _enter_sounds(w)
+    assert ship is w.player
+    assert abs(t_engage - t_sound - PREROLL) <= TICK_DELTA + 1e-9
+    assert not h.stopped
+
+
+def test_a_short_align_waits_for_the_preroll(world, monkeypatch):
+    """An align shorter than the pre-roll: "Enter Warp" at the press, the
+    engage PREROLL s later, held aligned at rest in between."""
+    w = world
+    _parts(monkeypatch, 0.0)
+    monkeypatch.setattr(warp, "_align_duration", lambda ship, h: 0.5)
+    t0, st, trace = _press_and_trace(w)
+    [(_, ship, t_sound, _)] = _enter_sounds(w)
+    assert ship is w.player
+    assert t_sound == t0
+    assert abs(w.flashes[0][1] - t0 - PREROLL) <= TICK_DELTA + 1e-9
+    p0 = trace[0][3]
+    for _, s, _, p in trace:
+        assert s == WarpEngineSubsystem.WES_NOT_WARPING
+        assert p == pytest.approx(p0, abs=1e-9)
+
+
+def test_a_parts_hold_leads_the_engage_by_the_preroll(world, monkeypatch):
+    w = world
+    _parts(monkeypatch, 9.0)
+    t0, _, _ = _press_and_trace(w)
+    [(_, _, t_sound, _)] = _enter_sounds(w)
+    assert abs(w.flashes[0][1] - t_sound - PREROLL) <= TICK_DELTA + 1e-9
+
+
+def test_a_stop_during_the_preroll_stops_enter_warp(world, monkeypatch):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _parts(monkeypatch, 9.0)
+    warp_button.press(w.button)
+    loop = GameLoop()
+    for _ in range(int(round(12.0 / TICK_DELTA))):
+        if _enter_sounds(w):
+            break
+        _tick(w, loop)
+    _tick(w, loop)
+    assert dash.is_dashing(w.player) and not _engaged(w)
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(pressed={pc._input_map.code("full_stop")}))
+    assert not dash.is_dashing(w.player)
+    [(_, _, _, h)] = _enter_sounds(w)
+    assert h.stopped
+
+
+def test_a_stop_before_the_preroll_plays_no_enter_warp(world, monkeypatch):
+    from engine.host_loop import _PlayerControl
+    w = world
+    _parts(monkeypatch, 9.0)
+    warp_button.press(w.button)
+    loop = GameLoop()
+    for _ in range(int(round(2.0 / TICK_DELTA))):
+        _tick(w, loop)
+    pc = _PlayerControl()
+    pc.apply(w.player, TICK_DELTA,
+             _Reader(pressed={pc._input_map.code("full_stop")}))
+    for _ in range(int(round(12.0 / TICK_DELTA))):
+        _tick(w, loop)
+    assert w.sounds == []
