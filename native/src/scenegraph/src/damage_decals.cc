@@ -6,12 +6,12 @@
 
 namespace scenegraph {
 
-glm::vec3 world_to_body(const glm::mat4& ship_world, const glm::vec3& p_world) {
-    return glm::vec3(glm::inverse(ship_world) * glm::vec4(p_world, 1.0f));
+glm::vec3 relative_to_body(const glm::mat3& linear, const glm::vec3& p_rel) {
+    return glm::inverse(linear) * p_rel;
 }
 
-glm::vec3 world_dir_to_body(const glm::mat4& ship_world, const glm::vec3& dir_world) {
-    glm::vec3 b = glm::mat3(glm::inverse(ship_world)) * dir_world;
+glm::vec3 dir_to_body(const glm::mat3& linear, const glm::vec3& dir_world) {
+    glm::vec3 b = glm::inverse(linear) * dir_world;
     float len = glm::length(b);
     return len > 0.0f ? b / len : b;
 }

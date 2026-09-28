@@ -13,6 +13,7 @@ from engine.appc.objects import PhysicsObjectClass
 from engine.appc.ships import ShipClass
 from engine.appc.collisions import resolve_collisions
 from engine.appc.ship_motion import _step_ship_motion
+from tests.helpers.one_set import share_one_set
 
 
 def _reset_app_state():
@@ -60,6 +61,7 @@ def test_static_dock_does_not_move_under_setpoint_or_collision():
     dock_pos, dock_rot = _pos(dock), _rot_cols(dock)
 
     _step_ship_motion(dock, 1.0)         # integrator must not move it
+    share_one_set(dock, intruder)        # only one set's objects meet
     resolve_collisions([dock, intruder]) # collision must not move it
 
     assert _pos(dock) == pytest.approx(dock_pos)
@@ -86,6 +88,7 @@ def test_docked_player_is_not_shoved_out_of_its_drydock():
     drydock.EnableCollisionsWith(player, 0)  # mission: disable while docked
 
     player_pos = _pos(player)
+    share_one_set(player, drydock)             # only one set's objects meet
     hits = resolve_collisions([player, drydock])
 
     assert hits == []                         # pair skipped
@@ -111,5 +114,6 @@ def test_reenabling_collisions_after_undock_restores_the_bump():
     drydock.EnableCollisionsWith(player, 0)
     drydock.EnableCollisionsWith(player, 1)   # re-enabled
 
+    share_one_set(player, drydock)             # only one set's objects meet
     hits = resolve_collisions([player, drydock])
     assert hits != []                          # collides again

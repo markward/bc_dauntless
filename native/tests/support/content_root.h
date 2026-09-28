@@ -41,4 +41,22 @@ inline std::filesystem::path game_root() {
     return resolve_game_root(std::getenv(kGameDirEnv), project_root());
 }
 
+// Mirrors engine.mods.mods_root(): the same env rule as game_root() above,
+// falling back to <project>/mods rather than <project>/game. A test whose
+// asset lives inside an OPTIONAL mod (present only where that mod is
+// installed) resolves its search path through this, never a hard-coded
+// "mods/<name>/..." under the project root -- the mod need not live inside
+// the checkout, same reasoning as game_root().
+inline constexpr const char* kModsDirEnv = "DAUNTLESS_MODS_DIR";
+
+inline std::filesystem::path resolve_mods_root(
+        const char* env, const std::filesystem::path& project_root) {
+    if (env != nullptr && *env != '\0') return std::filesystem::path(env);
+    return project_root / "mods";
+}
+
+inline std::filesystem::path mods_root() {
+    return resolve_mods_root(std::getenv(kModsDirEnv), project_root());
+}
+
 }  // namespace test_support

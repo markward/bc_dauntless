@@ -13,6 +13,8 @@ def _make_target_ahead(player, distance=100.0):
             self._pos = pos
         def GetWorldLocation(self):  return self._pos
         def IsDead(self):            return 0
+        # The shooter's set (interim cross-set weapon guard, Ruling 5).
+        def GetContainingSet(self):  return player.GetContainingSet()
     from engine.appc.math import TGPoint3
     p = player.GetWorldLocation()
     return _Target(TGPoint3(p.x, p.y + distance, p.z))
@@ -65,6 +67,8 @@ def test_target_directly_behind_fires_no_forward_banks(galaxy_red):
             p = ship.GetWorldLocation()
             return TGPoint3(p.x, p.y - 100.0, p.z)
         def IsDead(self): return 0
+        # The shooter's set, so the ARC is what refuses (Ruling 5 weapon guard).
+        def GetContainingSet(self): return ship.GetContainingSet()
     for i in range(sys_.GetNumWeapons()):
         bank = sys_.GetWeapon(i)
         bank._charge_level = bank._max_charge

@@ -37,12 +37,13 @@ def test_change_rendered_set_loads_and_switches(monkeypatch):
     assert App.g_kSetManager.GetRenderedSet().GetName() == "Dest"
 
 
-def test_warp_sequence_moves_player_and_terminates_source():
+def test_warp_sequence_moves_player_and_leaves_source_standing(monkeypatch):
     import types, sys
     src = _make_set("Source")
     player = App.ShipClass_Create()
     player.SetName("player")
     src.AddObjectToSet(player, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
 
     mod = types.ModuleType("FakeSys.Dest2")
     mod.Initialize = lambda: _make_set("Dest2")
@@ -51,7 +52,8 @@ def test_warp_sequence_moves_player_and_terminates_source():
     seq = warp.WarpSequence_Create(player, "FakeSys.Dest2", 5.0, "Player Start")
     seq.Play()
 
-    assert App.g_kSetManager.GetSet("Source") is None          # source terminated
+    assert App.g_kSetManager.GetSet("Source") is src           # source stands
+    assert src.GetObject("player") is None                     # but empty of us
     dest = App.g_kSetManager.GetSet("Dest2")
     assert dest.GetObject("player") is player                  # player moved in
     assert App.g_kSetManager.GetRenderedSet().GetName() == "Dest2"
@@ -132,31 +134,35 @@ def test_warp_silences_looping_weapon_sfx():
     assert bank.stopped is True  # phaser loop silenced on warp out
 
 
-def test_depart_tears_down_source_and_parks_player_in_transit():
+def test_depart_parks_player_in_transit_and_leaves_source_standing(monkeypatch):
     # At burst, _WarpDepartAction must: move the player into the empty transit
-    # set, make it the rendered set, and delete the source system (so its ships
-    # stop firing and its sun stops lighting the scene during transit).
+    # set, make it the rendered set, and drop the source system's render
+    # instances (so its sun stops lighting the scene during transit) without
+    # deleting the source set itself.
     src = _make_set("SrcDepart")
     player = App.ShipClass_Create()
     player.SetName("player")
     src.AddObjectToSet(player, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
     enemy = App.ShipClass_Create()
     enemy.SetName("enemy")
     src.AddObjectToSet(enemy, "enemy")
 
     warp._WarpDepartAction(src, player).Play()
 
-    assert App.g_kSetManager.GetSet("SrcDepart") is None       # source torn down
+    assert App.g_kSetManager.GetSet("SrcDepart") is src        # source stands
+    assert src.GetObject("enemy") is enemy                     # and keeps its ships
     transit = App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME)
     assert transit is not None                                 # transit set made
     assert transit.GetObject("player") is player               # player parked here
     assert App.g_kSetManager.GetRenderedSet() is transit       # and it's rendered
 
 
-def test_depart_then_arrive_cleans_transit_set():
+def test_depart_then_arrive_leaves_the_warp_set_standing_and_empty():
     # The full flythrough chain: after the destination swap + placement, the
-    # arrive-finalize must delete the now-empty transit set and not double-tear
-    # the already-gone source.
+    # arrive-finalize must NOT delete the (persistent, BC-owned) warp set --
+    # only the player leaves it, empty or not depending on what a mission
+    # parked there -- and must not double-tear the already-gone source.
     import types, sys
     src = _make_set("SrcFull")
     player = App.ShipClass_Create()
@@ -172,12 +178,14 @@ def test_depart_then_arrive_cleans_transit_set():
     warp._PlacePlayerAction(player, "DestFull", "Player Start").Play()
     warp._ArriveFinalizeAction(src, player).Play()
 
-    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is None  # transit cleaned
+    transit = App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME)
+    assert transit is not None                                    # warp set stands
+    assert transit.GetObject("player") is None                    # player left it
     dest = App.g_kSetManager.GetSet("DestFull")
     assert dest.GetObject("player") is player                            # player arrived
 
 
-def test_warp_clears_all_targets():
+def test_warp_clears_all_targets(monkeypatch):
     # Engaging warp must drop the player's current target + subsystem lock and
     # the persistent hint — nothing to target once we leave the system.
     #
@@ -202,6 +210,7 @@ def test_warp_clears_all_targets():
     player = App.ShipClass_Create()
     player.SetName("player")
     src.AddObjectToSet(player, "player")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
 
     enemy = App.ShipClass_Create()
     enemy.SetName("enemy")

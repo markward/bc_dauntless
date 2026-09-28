@@ -305,10 +305,47 @@ def _descriptor_for(c, resolve_attach):
     }
 
 
-def snapshot_descriptors(resolve_attach=None):
+def _controller_set(c):
+    """The set a controller's WORLD-space emit position is local to: the
+    emit-from object's own set when it is a real object, else the set its
+    effect is attached to -- the SDK's pSet.GetEffectRoot() (SetEffectRoot)
+    or an object's GetNode() handle (_ObjectNodeRef). None when neither says.
+    """
+    from engine.systems import frames
+    from engine.appc.objects import _ObjectNodeRef
+    from engine.appc.sets import SetEffectRoot
+    s = frames.containing_set(c._emit_from)
+    if s is not None:
+        return s
+    node = c._attach_node
+    if isinstance(node, SetEffectRoot):
+        return node.GetSet()
+    if isinstance(node, _ObjectNodeRef):
+        return frames.containing_set(node._owner())
+    return None
+
+
+def snapshot_descriptors(resolve_attach=None, to_view=None):
     """Build one render descriptor per active controller. `resolve_attach`
-    maps an emit-from object -> {'instance_id', 'velocity'} or None."""
-    return [_descriptor_for(c, resolve_attach) for c in _active]
+    maps an emit-from object -> {'instance_id', 'velocity'} or None.
+
+    `to_view(pSet, (x, y, z)) -> (x, y, z) | None` (the host passes
+    frames.to_render bound to the viewed set) re-expresses every
+    WORLD-anchored descriptor -- no instance_id -- from its controller's set
+    into the renderer's space (the viewed set's coordinates minus the render
+    origin); None drops it (another frame, or no known set).
+    Instance-attached descriptors are body-frame and resolved through the
+    instance's own transform in the pass, so they pass through untouched."""
+    out = []
+    for c in _active:
+        d = _descriptor_for(c, resolve_attach)
+        if to_view is not None and d["instance_id"] is None:
+            pos = to_view(_controller_set(c), d["emit_pos"])
+            if pos is None:
+                continue
+            d["emit_pos"] = pos
+        out.append(d)
+    return out
 
 
 class EffectAction:

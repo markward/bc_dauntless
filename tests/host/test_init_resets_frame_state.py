@@ -66,6 +66,7 @@ def _dirty_every_reachable_global(h):
                           axis_y=(0.0, 1.0, 0.0), axis_z=(0.0, 0.0, 1.0),
                           length=25.0, highlight=-1, handle_kind=0)
     h.letterbox_set(0.5)
+    h.set_render_origin(1.0e6, -2.0, 3.0)
 
 
 # The exact keys frame_state_debug() reports, with the value that means
@@ -106,6 +107,10 @@ CLEAN = {
     "letterbox_covered": 0.0,
     "sky_dirty": True,
     "prev_input_edges": 0,
+    "render_origin": (0.0, 0.0, 0.0),
+    # Fresh passes after init: no origin-dependent history carried over.
+    "dust_motion_history": False,
+    "nebula_history": False,
 }
 
 

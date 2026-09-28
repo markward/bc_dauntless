@@ -27,6 +27,14 @@ class Pipeline;
 glm::vec3 hit_vfx_anchor_point(const HitVfxDescriptor& v,
                                const glm::mat4* instance_world);
 
+/// Per-spark 2-float jitters (one per `spark_count`) that pick each spark's
+/// direction inside its cone. Seeded from the hit's BODY-frame point, which is
+/// stable in the hit ship's own frame: `instance_world` is RENDER space, and
+/// its translation moves with the floating origin every frame the camera
+/// does, so a seed taken from it would re-roll every spark each frame.
+std::vector<glm::vec2> hit_vfx_spark_jitters(const HitVfxDescriptor& v,
+                                             const glm::mat4& instance_world);
+
 class HitVfxPass {
 public:
     HitVfxPass();

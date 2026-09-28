@@ -14,6 +14,8 @@ uniform vec4  u_spheres[8];      // xyz centre, w radius (GU)
 uniform vec3  u_rgb;             // nebula tint / self-glow colour
 uniform vec3  u_fbm;             // freq, gain, floor
 uniform vec3  u_seed;
+uniform vec3  u_noise_origin;    // floating render origin: noise is sampled at
+                                 // the WORLD point p + origin (render_origin.h)
 uniform float u_time;
 
 uniform int   u_dir_light_count;
@@ -71,9 +73,10 @@ float bound_falloff(vec3 p){
 }
 float density(vec3 p){
     float b=bound_falloff(p); if(b<=0.0) return 0.0;
-    float n=fbm(vec3(p.x*u_fbm.x+u_seed.x+u_time*0.01,
-                     p.y*u_fbm.x+u_seed.y,
-                     p.z*u_fbm.x+u_seed.z));
+    vec3 w=p+u_noise_origin;
+    float n=fbm(vec3(w.x*u_fbm.x+u_seed.x+u_time*0.01,
+                     w.y*u_fbm.x+u_seed.y,
+                     w.z*u_fbm.x+u_seed.z));
     return b*clamp(n*u_fbm.y - u_fbm.z, 0.0, 1.0);
 }
 
@@ -139,7 +142,7 @@ void main(){
             // (≈0.4x the density freq, so it varies clump-to-clump not within)
             // shifts the nebula tint warm↔cool. Visual only — no gameplay/parity
             // coupling. u_color_var dials 0 (uniform) → 1 (full variety).
-            float cvar = vnoise(p*(u_fbm.x*0.4) + u_seed.yzx + 13.0);
+            float cvar = vnoise((p+u_noise_origin)*(u_fbm.x*0.4) + u_seed.yzx + 13.0);
             vec3 tintmul = mix(vec3(0.70,0.92,1.30), vec3(1.30,1.02,0.70),
                                clamp(cvar,0.0,1.0));
             vec3 base = u_rgb * mix(vec3(1.0), tintmul, u_color_var);

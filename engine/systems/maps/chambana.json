@@ -1,0 +1,96 @@
+{
+  "system": "Chambana",
+  "bodies": [
+    {
+      "name": "Chambana",
+      "display_name": "Chambana",
+      "radius_gu": 14000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "red_orange",
+        "color": [
+          0.94,
+          0.54,
+          0.24
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Chambana 1",
+      "display_name": "Chambana 1",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        0.0,
+        134000.0,
+        0.0
+      ],
+      "orbits": "Chambana",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Chambana1"
+    },
+    {
+      "name": "Chambana 2",
+      "display_name": "Chambana 2",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        160766.69003424267,
+        -175493.7929826401,
+        0.0
+      ],
+      "orbits": "Chambana",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Chambana2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Chambana1",
+      "anchor_gu": [
+        -7609.521640000002,
+        121637.2525,
+        -9754.553220000002
+      ],
+      "radius_gu": 26189.815718302947,
+      "body_names": [
+        "Chambana 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Chambana2",
+      "anchor_gu": [
+        153157.16839424268,
+        -187856.5404826401,
+        -9754.55322
+      ],
+      "radius_gu": 21389.815718302943,
+      "body_names": [
+        "Chambana 2"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

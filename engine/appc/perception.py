@@ -143,8 +143,10 @@ def perceived_by(observer) -> tuple:
     """Every ship in *observer*'s system, resolved for this frame.
 
     Empty when there is no observer or it is in no set — which is also what
-    makes warp self-correcting: mid-warp the player sits alone in the
-    _WarpTransit set, so the list empties without anyone clearing it.
+    makes warp self-correcting: mid-warp the player's containing set is BC's
+    persistent "warp" set (spec §1b), so this returns whatever ships that set
+    holds -- empty unless a mission parked some there -- with no explicit
+    clear needed either way.
     """
     from engine.appc import sensor_detection as sd
     from engine.appc.sensor_detection import can_detect, effective_sensor_range

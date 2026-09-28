@@ -82,7 +82,7 @@ def _galaxy(find):
         p.SetGlowRegionPosition(0, 0.0, -0.247236337851871, -0.5)
         p.SetGlowRegionScale(0, 0.5335676748872048, 0.19850541821587558, 0.1565580972394518)
         p.SetLightEmitterKind(0, "cone")
-        p.SetLightEmitterPosition(0, 0.0, -0.7324181551442901, -0.5178831373759387)
+        p.SetLightEmitterPosition(0, 0.0, -1.0266956413418447, -0.5178831373759387)
         p.SetLightEmitterRadius(0, 2.5919160204046374)
         p.SetLightEmitterColor(0, 0.510321208791358, 0.7494499495146087, 1.0)
         p.SetLightEmitterIntensity(0, 2.75)

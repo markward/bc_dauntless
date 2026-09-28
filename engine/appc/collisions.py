@@ -10,9 +10,10 @@ collidable.
 Spec: docs/superpowers/specs/2026-06-11-collision-response-design.md
 """
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from engine.appc.math import TGPoint3
+from engine.systems.frames import shifted as _shifted
 from engine.appc.warp_state import is_ship_warping
 
 # -- Tuning constants (single home; see spec §9) --
@@ -103,6 +104,19 @@ class _Body:
     angular: TGPoint3    # WORLD-frame angular velocity (rad/s); zero for
                          # immovables. Body-frame at rest in ShipClass -- see
                          # _resolve_body for the rotation into world space.
+
+
+# b_offset for a pair in ONE set: B is already in A's coordinates.
+_NO_OFFSET = (0.0, 0.0, 0.0)
+
+
+# A pair across two regions of one star system (system-frames spec §1) is
+# compared in A's set-local coordinates: B's positions are read with sign=+1
+# (B-local -> A-local, frames.offset_between's convention), and a point handed
+# back to B's own side -- a ray trace against B's mesh, a hit point on B's
+# hull, A's location queried against B's pieces -- with sign=-1. A zero offset
+# returns the point itself, so a same-set pair runs exactly today's arithmetic.
+# The helper is frames.shifted, imported above as _shifted.
 
 
 def _overlay_vec(obj):
@@ -218,7 +232,7 @@ def _ke_damage(inv_sum: float, v_rel: float) -> float:
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel
 
 
-def _deepest_piece_overlap(obj_a, obj_b):
+def _deepest_piece_overlap(obj_a, obj_b, b_offset=_NO_OFFSET):
     """Narrow-phase the pair against their authored hull pieces.
 
     Returns:
@@ -233,6 +247,9 @@ def _deepest_piece_overlap(obj_a, obj_b):
         overlapping pair, i.e. the one whose surfaces interpenetrate furthest.
         Deepest rather than first so the contact normal describes the dominant
         contact when several pieces meet at once.
+
+    `b_offset` puts B in A's set-local coordinates (see _shifted); every
+    returned centre, B's included, is in A's frame.
     """
     from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
     # "No pieces" and "no pieces NEAR" are different answers — the first falls
@@ -245,14 +262,18 @@ def _deepest_piece_overlap(obj_a, obj_b):
     # is transformed into world space. GetRadius is the AABB corner distance,
     # comfortably larger than any real reach, so the cull cannot drop a pair
     # the loop below would have found.
-    pieces_a = hull_spheres_near(obj_a, obj_b.GetWorldLocation(),
+    # B's location into A's frame for A's cull; A's into B's for B's cull.
+    pieces_a = hull_spheres_near(obj_a, _shifted(obj_b.GetWorldLocation(), b_offset),
                                  float(obj_b.GetRadius()))
     if not pieces_a:
         return ()
-    pieces_b = hull_spheres_near(obj_b, obj_a.GetWorldLocation(),
+    pieces_b = hull_spheres_near(obj_b, _shifted(obj_a.GetWorldLocation(), b_offset, -1.0),
                                  float(obj_a.GetRadius()))
     if not pieces_b:
         return ()
+    if b_offset != _NO_OFFSET:
+        # B's pieces come back in B's frame; compare them in A's.
+        pieces_b = [(_shifted(cb, b_offset), rb) for cb, rb in pieces_b]
 
     best = None
     best_pen = 0.0
@@ -291,7 +312,8 @@ def _contact_point_velocity(body: "_Body", cx: float, cy: float, cz: float):
 def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
                    inv_sum: float, dt: float, ship_instances=None,
                    scuff_radius: float | None = None,
-                   boundary_b=None, reach: float = 0.0) -> None:
+                   boundary_b=None, reach: float = 0.0,
+                   b_offset=_NO_OFFSET) -> None:
     """Abrasion damage for a contact that is not closing.
 
     Physically this is friction work: force times sliding distance. We have no
@@ -309,6 +331,10 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     `scuff_radius` is the decal's visual size in GU; None (the default) is
     passed straight through to `apply_hit`'s `decal_radius`, which then falls
     back to the weapon radius -- NOT a radius-0 decal.
+
+    Every position here -- the contact, `boundary_b`, and `b.center` -- is in
+    A's set-local frame (the caller passes B's A-frame view). `b_offset` is
+    only used to hand B's trace back to B's own frame.
     """
     if not (dt > 0.0):
         return
@@ -357,14 +383,16 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
                   hit_tangent=tan_a, decal_radius=scuff_radius, decal_dent=0.0,
                   bypass_shields=True)
     if b.is_movable:
-        pt_b, n_b = _trace_own_hull(ship_instances, b, boundary_b, n_ba, reach)
+        pt_b, n_b = _trace_own_hull(ship_instances, b,
+                                    _shifted(boundary_b, b_offset, -1.0), n_ba, reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_radius, decal_dent=0.0,
                   bypass_shields=True)
 
 
-def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
+def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
+                  b_offset=_NO_OFFSET):
     """Resolve one body pair. On an approaching overlap: inject a
     mass-weighted impulse into each movable body's overlay, de-penetrate
     positions, and apply KE damage via combat.apply_hit. Returns the
@@ -372,7 +400,17 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
 
     The `v_rel < 0` (approaching) gate is the debounce: once the impulse
     reverses relative velocity, later frames read receding and do nothing
-    while the spheres still overlap (spec §5)."""
+    while the spheres still overlap (spec §5).
+
+    `b_offset` is frames.offset_between(set of a, set of b): the pair maths
+    runs in A's set-local coordinates, so every read of B's position adds it
+    and everything handed back to B's own side (its hull trace, its hit
+    point) subtracts it. The RETURNED contact is in A's frame; each
+    ET_OBJECT_COLLISION event carries the point in its DESTINATION's own
+    frame (see _emit_object_collision). Zero (the same set) takes today's
+    path on the same objects."""
+    if b_offset != _NO_OFFSET:
+        b = replace(b, center=_shifted(b.center, b_offset))   # B, seen from A
     dx = b.center.x - a.center.x
     dy = b.center.y - a.center.y
     dz = b.center.z - a.center.z
@@ -398,7 +436,7 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
     # side lacking them (planets, asteroids, anything unrealized) falls back to
     # the broad-phase answer: we cannot descend a hierarchy only one side has,
     # and failing open there would switch collisions off for most of the game.
-    narrowed = _deepest_piece_overlap(a.obj, b.obj)
+    narrowed = _deepest_piece_overlap(a.obj, b.obj, b_offset)
     if narrowed is not None:
         if not narrowed:
             return None  # pieces exist on both sides and none of them touch
@@ -472,7 +510,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         # by rotation never even got that, since omega was absent from the
         # velocity entirely.
         _grind_contact(a, b, cx, cy, cz, nx, ny, nz, inv_sum, dt,
-                       ship_instances, scuff_r, boundary_b, trace_reach)
+                       ship_instances, scuff_r, boundary_b, trace_reach,
+                       b_offset)
         return None
 
     # Mass-weighted impulse magnitude.
@@ -495,6 +534,9 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         p = a.obj.GetTranslate()
         a.obj.SetTranslateXYZ(p.x - nx * s, p.y - ny * s, p.z - nz * s)
     if b.is_movable:
+        # B is read and written in its OWN set's coordinates: the push is a
+        # displacement, and (p + off + n*s) - off == p + n*s, so the offset
+        # cancels exactly rather than being added and rounded back out.
         s = pen * b.inv_mass / inv_sum
         p = b.obj.GetTranslate()
         b.obj.SetTranslateXYZ(p.x + nx * s, p.y + ny * s, p.z + nz * s)
@@ -517,7 +559,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
                   hit_tangent=tan_a, decal_radius=scuff_r, decal_dent=1.0,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
     if b.is_movable:
-        pt_b, n_b = _trace_own_hull(ship_instances, b, boundary_b, n_ba, trace_reach)
+        pt_b, n_b = _trace_own_hull(ship_instances, b,
+                                    _shifted(boundary_b, b_offset, -1.0), n_ba, trace_reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
@@ -539,12 +582,13 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
     # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
     _emit_cloaked_collision(a.obj, b.obj)
 
-    _emit_object_collision(a.obj, b.obj, contact, abs(j))
+    _emit_object_collision(a.obj, b.obj, contact, abs(j), b_offset)
 
     return (a.obj, b.obj, contact, v_rel)
 
 
-def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
+def _emit_object_collision(obj_a, obj_b, contact, force,
+                           b_offset=_NO_OFFSET) -> None:
     """Post ET_OBJECT_COLLISION — one event per object, source/destination
     swapped.
 
@@ -561,19 +605,26 @@ def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
     event applies BC's two-most-separated reduction on whatever it is given, so
     this stays correct if that ever yields a real manifold.
 
+    `contact` is in A's set-local frame. Each event's point is in its
+    DESTINATION's own set-local coordinates -- Effects.CollisionEffect places
+    an explosion at GetPoint(i) in the destination's GetContainingSet() -- so
+    B's event gets the contact shifted back by `b_offset` (identity when zero,
+    so a same-set pair posts the one contact to both).
+
     Raise-safe, like _emit_cloaked_collision above: a failure here must not
     abort collision response, which has already mutated positions and applied
     damage by this point.
     """
     import App
     from engine import dev_mode
-    for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
+    for dest, source, point in ((obj_a, obj_b, contact),
+                                (obj_b, obj_a, _shifted(contact, b_offset, -1.0))):
         try:
             evt = App.CollisionEvent_Create()
             evt.SetEventType(App.ET_OBJECT_COLLISION)
             evt.SetSource(source)
             evt.SetDestination(dest)
-            evt.SetPoints([contact])
+            evt.SetPoints([point])
             evt.SetCollisionForce(force)
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
@@ -665,6 +716,7 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     hoisting the reads to a single batch changes only the number of boundary
     crossings, not the values observed."""
     from engine.appc.transform_store import get_store
+    from engine.systems import frames
     objects = list(objects)
     # Only store-backed objects (ObjectClass allocates `_xform` in __init__)
     # go through the bulk fetch. A DebrisChunk keeps its own TGPoint3 and
@@ -677,16 +729,33 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     positions = get_store().get_positions([o._xform for o in stored])
     by_id = {id(o): TGPoint3(*p) for o, p in zip(stored, positions)}
     bodies = [_resolve_body(o, by_id.get(id(o))) for o in objects]
+    sets = [frames.containing_set(o) for o in objects]
+    # offset_between resolved once per distinct (set_a, set_b) per call, not
+    # once per object PAIR (~2 us each, and pairs grow quadratically with the
+    # collidables Plan 3 adds) -- the projectiles.update_all per-call cache.
+    offsets: dict = {}
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
             a_obj, b_obj = bodies[i].obj, bodies[k].obj
+            # Different frames never interact: a planet left standing in the
+            # set you warped out of is not where your ship is, whatever the
+            # numbers say. One frame (the same set, or two regions of one
+            # system) compares in A's set-local coordinates.
+            key = (sets[i], sets[k])
+            if key in offsets:
+                b_offset = offsets[key]
+            else:
+                b_offset = offsets[key] = frames.offset_between(*key)
+            if b_offset is None:
+                continue
             # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
             # either side disabling the other exempts the pair.
             if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
                     or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
                 continue
-            hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt)
+            hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt,
+                                b_offset=b_offset)
             if hit is not None:
                 hits.append(hit)
     return hits

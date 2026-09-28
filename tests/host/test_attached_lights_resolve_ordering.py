@@ -33,6 +33,19 @@ def test_resolve_runs_inside_xform_sync_after_the_store_sweep():
     assert resolve > sweep, "resolve must run AFTER the store sweep"
 
 
+def test_render_origin_resolves_after_the_sweep_and_before_the_lights():
+    """The floating render origin's one subtraction (World::resolve_render_space)
+    rebuilds every instance's float `world` from its double translation. It
+    must follow the store sweep (which fills that translation) and precede the
+    attached-light resolve and every pass (which read `world`)."""
+    body = _frame_body()
+    sweep = body.find("sync_instance_transforms_from_store();")
+    origin = body.find("g_world.resolve_render_space(g_render_origin);")
+    lights = body.find("renderer::resolve_attached_dynamic_lights(g_world, g_dynamic_lights);")
+    assert origin >= 0, "resolve_render_space not called in xform_sync scope"
+    assert sweep < origin < lights
+
+
 def test_resolve_is_not_called_from_the_set_dynamic_lights_binding():
     src = _SRC.read_text()
     start = src.find('m.def("set_dynamic_lights"')

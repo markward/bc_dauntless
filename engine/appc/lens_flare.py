@@ -50,8 +50,17 @@ def LensFlare_Create(pSet) -> LensFlare:
     return flare
 
 
-def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
+from engine.systems import frames as _frames
+
+
+def aggregate_lens_flares_for_renderer(game_root, pSets, *,
+                                       view=_frames.UNSCOPED) -> list:
     """Return list[dict] for all built LensFlares across pSets.
+
+    With `view` (the render call site passes frames.viewing_set()), only
+    flares whose set is in the viewed frame are kept, the source position
+    expressed in the viewed set's coordinates; view=None means nothing is
+    viewed, so nothing is kept.
 
     Resolves texture paths against the game root. Drops:
       - flares whose Build() was never called
@@ -62,7 +71,12 @@ def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
     degenerate or excessive meshes upstream.
     """
     out = []
+    if view is None:
+        return out
+    scoped = view is not _frames.UNSCOPED
     for pSet in pSets:
+        if scoped and _frames.offset_between(view, pSet) is None:
+            continue
         for flare in getattr(pSet, "_lens_flares", []):
             if not flare._built:
                 continue
@@ -73,6 +87,9 @@ def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
                 loc = src.GetWorldLocation()
             except Exception:
                 continue
+            pos = (loc.x, loc.y, loc.z)
+            if scoped:
+                pos = _frames.in_view(view, pSet, *pos)
             try:
                 radius = float(src.GetRadius())
             except Exception:
@@ -94,7 +111,7 @@ def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
             if not elements_out:
                 continue
             out.append({
-                "source_world_pos": (loc.x, loc.y, loc.z),
+                "source_world_pos": pos,
                 "source_radius":    radius,
                 "elements":         elements_out,
             })

@@ -204,7 +204,11 @@ def _mark_dead(ship) -> None:
         except Exception as _e:
             dev_mode.log_swallowed("deactivate AI tree on death", _e)
         ship._ai = None
-        ship._insystem_warp_transit = None
+    # Any in-system warp dies with the ship -- through _end_in_system_warp so
+    # a player dash still runs its drop-out (ruling R10). Outside the AI
+    # branch: a dashing player has no AI.
+    if ship.__dict__.get("_insystem_warp_transit") is not None:
+        ship._end_in_system_warp("aborted")
     _broadcast_destroyed(ship)
 
 

@@ -189,6 +189,7 @@ def test_explosion_lights_survive_a_camera_far_beyond_the_dyn_light_cull():
     """
     import engine.host_loop as host_loop
     from engine.appc import explosion_lights
+    from tests.helpers.viewed_set import viewed_set, release_viewed_set
 
     class _P:
         def __init__(self, x):
@@ -200,6 +201,10 @@ def test_explosion_lights_survive_a_camera_far_beyond_the_dyn_light_cull():
 
         def GetWorldLocation(self):
             return self._p
+
+        def GetContainingSet(self):
+            # In the viewed set: the feed carries only the viewed frame.
+            return viewed_set()
 
     explosion_lights.reset()
     try:
@@ -220,3 +225,4 @@ def test_explosion_lights_survive_a_camera_far_beyond_the_dyn_light_cull():
     finally:
         explosion_lights.reset()
         host_loop._note_camera_eye(None)
+        release_viewed_set()

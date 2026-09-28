@@ -120,6 +120,18 @@ void compose_world_matrix(const TransformStore::Transform& t, double scale,
     out[15] = 1.0f;
 }
 
+void compose_world_linear_translation(const TransformStore::Transform& t,
+                                      double scale, glm::mat3& linear,
+                                      glm::dvec3& translation) {
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            // Row-major store, column-major glm: linear[col][row].
+            linear[col][row] = static_cast<float>(t.rot[row * 3 + col] * scale);
+        }
+    }
+    translation = glm::dvec3(t.pos[0], t.pos[1], t.pos[2]);
+}
+
 TransformStore& transform_store() {
     static TransformStore store;
     return store;

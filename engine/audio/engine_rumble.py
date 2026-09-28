@@ -84,8 +84,11 @@ def set_muted(muted: bool) -> None:
     (guide §11) now reproduces it faithfully for space-to-space set changes
     (e.g. warp). BC has no per-source mute call; this function is OUR
     stopgap, predating scene_scope. It is NOT yet made redundant by
-    scene_scope: host_loop drives scene_scope off `ship_iter.active_set()`,
-    which tracks the player ship's own containing (space) set and does not
+    scene_scope: host_loop.tick_audio drives scene_scope off the VIEWED
+    frame, `frames.frame_of(frames.viewing_set())`. viewing_set() is the
+    explicit rendered set only when that is a space scene (an in-space
+    cutscene), else the player ship's own containing (space) set -- the
+    bridge and interior rooms never become the viewed set -- so it does not
     change when the camera toggles to/from the bridge (the ship never leaves
     its space set just because the player is looking at the bridge). So the
     bridge-view case this function covers is still live. Kept because other

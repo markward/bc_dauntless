@@ -45,8 +45,11 @@ def test_world_to_body_round_trips_under_translation():
                  0.0, 0.0, 0.0, 1.0]
         _host.set_world_transform(iid, world)
 
+        # The point is INSTANCE-RELATIVE: world minus the instance's
+        # translation, formed in double (the floating render origin).
+        tx, ty, tz = _host.instance_translation(iid)
         res = _host.world_to_body(
-            instance_id=iid, world_point=(110.0, 0.0, 0.0),
+            instance_id=iid, world_point=(110.0 - tx, 0.0 - ty, 0.0 - tz),
             world_normal=(1.0, 0.0, 0.0))
         assert res is not None
         body_pt, body_nrm = res

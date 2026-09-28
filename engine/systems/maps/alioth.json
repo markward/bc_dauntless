@@ -1,0 +1,287 @@
+{
+  "system": "Alioth",
+  "bodies": [
+    {
+      "name": "Alioth",
+      "display_name": "Alioth",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "yellow",
+        "color": [
+          1.0,
+          0.85,
+          0.4
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Alioth 1",
+      "display_name": "Alioth 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -130000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth1"
+    },
+    {
+      "name": "Alioth 2",
+      "display_name": "Alioth 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -234000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth2"
+    },
+    {
+      "name": "Alioth 3",
+      "display_name": "Alioth 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        338000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth3"
+    },
+    {
+      "name": "Alioth 4",
+      "display_name": "Alioth 4",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -442000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RedPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth4"
+    },
+    {
+      "name": "Alioth 5",
+      "display_name": "Alioth 5",
+      "radius_gu": 5400.0,
+      "position_gu": [
+        -546000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth5"
+    },
+    {
+      "name": "Alioth 6",
+      "display_name": "Alioth 6",
+      "radius_gu": 360.0,
+      "position_gu": [
+        -440153.7056714465,
+        478293.5452038775,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth6"
+    },
+    {
+      "name": "Alioth 7",
+      "display_name": "Alioth 7",
+      "radius_gu": 5400.0,
+      "position_gu": [
+        754000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth7"
+    },
+    {
+      "name": "Alioth 8",
+      "display_name": "Alioth 8",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -858000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Alioth",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SnowPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Alioth8"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Alioth1",
+      "anchor_gu": [
+        -130000.0,
+        -15000.000000000002,
+        0.0
+      ],
+      "radius_gu": 18300.0,
+      "body_names": [
+        "Alioth 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Alioth2",
+      "anchor_gu": [
+        -234000.0,
+        -15000.000000000002,
+        0.0
+      ],
+      "radius_gu": 18300.0,
+      "body_names": [
+        "Alioth 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Alioth3",
+      "anchor_gu": [
+        338000.0,
+        -15000.000000000002,
+        0.0
+      ],
+      "radius_gu": 18300.0,
+      "body_names": [
+        "Alioth 3"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Alioth4",
+      "anchor_gu": [
+        -442000.0,
+        -15000.000000000002,
+        0.0
+      ],
+      "radius_gu": 18300.0,
+      "body_names": [
+        "Alioth 4"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Alioth5",
+      "anchor_gu": [
+        -546000.0,
+        -15000.0,
+        0.0
+      ],
+      "radius_gu": 21900.0,
+      "body_names": [
+        "Alioth 5"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Alioth6",
+      "anchor_gu": [
+        -440153.7056714465,
+        477293.5452038775,
+        0.0
+      ],
+      "radius_gu": 4000.0,
+      "body_names": [
+        "Alioth 6"
+      ],
+      "nebula": null,
+      "bc_scale": true
+    },
+    {
+      "set_name": "Alioth7",
+      "anchor_gu": [
+        754000.0,
+        -15000.0,
+        0.0
+      ],
+      "radius_gu": 21900.0,
+      "body_names": [
+        "Alioth 7"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Alioth8",
+      "anchor_gu": [
+        -857000.0,
+        -10000.0,
+        0.0
+      ],
+      "radius_gu": 13349.875621120891,
+      "body_names": [
+        "Alioth 8"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {
+    "notes": {
+      "Alioth6": "Standoff clamped to the MIN floor (1.5 radii). Anchor position and region radius look reasonable at this system's scale (no absurd value) -- left as generated, no override applied."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

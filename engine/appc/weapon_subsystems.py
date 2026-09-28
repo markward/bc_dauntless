@@ -2011,17 +2011,38 @@ def _target_tractorable(target) -> bool:
     return target is not None
 
 
+def _same_set(a, b) -> bool:
+    """True iff `a` and `b` stand in the SAME set (identity). A setless
+    object on either side shares a set with nothing. Interim weapon guard --
+    see _target_within_range_gu."""
+    from engine.systems import frames
+    set_a = frames.containing_set(a)
+    return set_a is not None and set_a is frames.containing_set(b)
+
+
 def _target_within_range_gu(ship, target, max_range_gu: float) -> bool:
     """True iff `target` is within `max_range_gu` game units of `ship`.
 
     Shared fire-range gate for energy-weapon aggregators.  Legacy fixture
     support: if either object lacks GetWorldLocation, returns True so
     non-positional tests keep their previous behaviour.
+
+    INTERIM GUARD (system-frames Plan 2, controller Ruling 5): a target whose
+    containing set is not the SAME set as the firing ship's -- including a
+    setless object on either side -- is out of range. The distance below is
+    a raw set-local compare, meaningless across sets, and a cross-set beam is
+    no longer drawn, so without this a bank could damage a ship in another
+    set whose raw numbers happen to coincide. This is a stopgap until
+    frame-aware weapon engagement lands (design spec §6 widening list); it
+    makes a ship unable to phaser/tractor a target in a sibling region even
+    when physically close. Same-set behaviour is unchanged.
     """
     if ship is None or target is None:
         return False
     if not hasattr(ship, "GetWorldLocation") or not hasattr(target, "GetWorldLocation"):
         return True
+    if not _same_set(ship, target):
+        return False
     sp = ship.GetWorldLocation()
     tp = target.GetWorldLocation()
     dx, dy, dz = tp.x - sp.x, tp.y - sp.y, tp.z - sp.z

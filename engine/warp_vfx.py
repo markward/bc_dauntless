@@ -30,6 +30,11 @@ _T_EXIT_DECEL = 2.0
 # off, not a sustained brightening (that's what `drive` is for).
 _BURST_DECAY_S = 0.4
 
+# Transit progress a held warp freezes at: the end of the streak plateau and
+# the start of the exit flash (streak 1, flash 0). release() resumes from
+# exactly here, so an unheld warp passes through without a seam.
+_HOLD_TP = 0.9
+
 
 class WarpVFX:
     def __init__(self):
@@ -46,6 +51,7 @@ class WarpVFX:
         self._streak = 0.0
         self._flash = 0.0
         self._phase = "align"
+        self._held = False
 
     def start(self, heading, t_align, t_transit, now, vantage=None,
               dst_vantage=None, t_hold=0.0):
@@ -75,14 +81,29 @@ class WarpVFX:
         self._streak = 0.0
         self._flash = 0.0
         self._phase = "align"
+        self._held = False
 
     def _elapsed(self, now):
         return now - self._t0
+
+    def hold(self):
+        """Freeze transit at the streak plateau (streak 1, flash 0) until
+        release(): the warp's swap is waiting on queued actions / the mission's
+        master sequence (spec §1 "Transit holds"), and the streak simply holds."""
+        self._held = True
+
+    def release(self, now):
+        """Resume with the final 10 % of transit -- the exit flash -- still to
+        play, from `now`."""
+        self._held = False
+        self._t0 = float(now) - (self._t_burst + _HOLD_TP * self._t_transit)
 
     def tick(self, now):
         if not self._active:
             return
         e = self._elapsed(now)
+        if self._held:
+            e = min(e, self._t_burst + _HOLD_TP * self._t_transit)
         self._e = e
         total = self._t_burst + self._t_transit
         if e < self._t_burst:
@@ -95,11 +116,16 @@ class WarpVFX:
         elif e < total:
             self._turn = 1.0
             tp = (e - self._t_burst) / self._t_transit   # transit progress 0..1
-            # streak: fast ramp at burst, hold, shrink at exit.
-            self._streak = min(_smooth(tp / 0.12), _smooth((1.0 - tp) / 0.15))
+            if self._held:
+                tp = min(tp, _HOLD_TP)    # exact, so no float crumb of flash
+            # streak: fast ramp at burst, hold, shrink at exit. The shrink
+            # starts with the exit flash (_HOLD_TP), so a held plateau is a
+            # full streak.
+            self._streak = min(_smooth(tp / 0.12),
+                               _smooth((1.0 - tp) / (1.0 - _HOLD_TP)))
             # flash: burst boom (decays over first 10% of transit) + exit boom.
             burst = max(0.0, 1.0 - tp / 0.10)
-            exit_ = max(0.0, (tp - 0.90) / 0.10)
+            exit_ = max(0.0, (tp - _HOLD_TP) / (1.0 - _HOLD_TP))
             self._flash = min(1.0, burst + exit_)
             self._phase = "transit"
         else:
@@ -221,11 +247,13 @@ class WarpVFX:
 
     def stop(self):
         self._active = False
+        self._held = False
         self._turn = 0.0
         self._streak = 0.0
         self._flash = 0.0
 
     def is_active(self):        return self._active
+    def is_held(self):          return self._held
     def phase(self):            return self._phase
     def turn_fraction(self):    return self._turn
     def streak_intensity(self): return self._streak

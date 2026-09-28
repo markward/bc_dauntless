@@ -56,7 +56,11 @@ def _asymmetric_rotation() -> TGMatrix3:
 
 
 def _probe_body(iid, point):
-    body, _normal = _h.world_to_body(iid, point, (0.0, 0.0, 1.0))
+    # world_to_body takes an INSTANCE-RELATIVE point (world minus the
+    # instance's double translation) -- the floating render origin.
+    t = _h.instance_translation(iid)
+    rel = tuple(point[i] - t[i] for i in range(3))
+    body, _normal = _h.world_to_body(iid, rel, (0.0, 0.0, 1.0))
     return body
 
 

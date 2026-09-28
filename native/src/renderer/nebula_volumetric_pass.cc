@@ -4,6 +4,7 @@
 #include "renderer/nebula_pass.h"   // NebulaVolume
 #include "renderer/frame.h"          // Lighting
 #include "renderer/pipeline.h"
+#include "renderer/render_origin.h"
 
 #include <scenegraph/camera.h>
 
@@ -89,7 +90,8 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
                                   std::uint32_t hdr_depth_tex,
                                   const glm::mat4& inv_view_proj,
                                   const glm::vec3& eye,
-                                  float time) {
+                                  float time,
+                                  const glm::dvec3& origin) {
     // Stock-BC byte-identity: nothing to draw => zero GL work.
     if (volumes.empty()) return;
     if (!initialized_) initialize_gl();
@@ -136,7 +138,13 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     // proj*view is reconstructed from inv_view_proj; we only need the previous
     // one for the reprojection, which is stored in prev_view_proj_.
     const glm::mat4 view_proj = glm::inverse(inv_view_proj);
-    const float eye_delta = glm::length(eye - prev_eye_);
+    // The WORLD eye's travel, and last frame's matrix in THIS frame's render
+    // space: the floating origin moves with the camera (render_origin.h).
+    const float eye_delta = glm::length(
+        render_origin::eye_travel(eye, prev_eye_, origin, prev_origin_));
+    const glm::mat4 prev_view_proj =
+        render_origin::rebase_prev_viewproj(prev_view_proj_, prev_origin_,
+                                            origin);
     const bool temporal_ok = have_history_ && (eye_delta <= kMaxEyeDeltaGu);
 
     // ── PASS A: raymarch into the half-res target (overwrite, no blend) ─────
@@ -169,6 +177,9 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     march.set_vec3("u_rgb", v0.rgb);
     march.set_vec3("u_fbm", v0.fbm);
     march.set_vec3("u_seed", v0.seed);
+    // The fbm is sampled at the WORLD point, p + origin, so the cloud stays
+    // put while the origin follows the camera.
+    march.set_vec3("u_noise_origin", glm::vec3(origin));
 
     // Up to 4 directional lights.
     int nlights = std::clamp(lighting.directional_count, 0,
@@ -201,7 +212,7 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
                                          std::fmod(time * 17.0f, 64.0f)));
     march.set_float("u_dither_amount", kDitherAmount);
     march.set_float("u_temporal_weight", temporal_ok ? kTemporalWeight : 0.0f);
-    march.set_mat4("u_prev_view_proj", prev_view_proj_);
+    march.set_mat4("u_prev_view_proj", prev_view_proj);
     march.set_vec2("u_half_texel",
                    glm::vec2(1.0f / static_cast<float>(hw),
                              1.0f / static_cast<float>(hh)));
@@ -253,6 +264,7 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     // ── Update temporal history for next frame ─────────────────────────────
     prev_view_proj_ = view_proj;
     prev_eye_ = eye;
+    prev_origin_ = origin;
     have_history_ = true;
 
     // ─── RESTORE CANONICAL GL STATE ──────────────────────────────────────────

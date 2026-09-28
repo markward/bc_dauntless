@@ -37,6 +37,7 @@ import App
 import pytest
 
 from engine.appc.math import TGPoint3
+from tests.helpers.one_set import share_one_set
 
 
 def _pt(x, y=0.0, z=0.0):
@@ -144,6 +145,7 @@ def _colliding_pair():
     b.SetTranslateXYZ(12.0, 0.0, 0.0)
     a.SetVelocity(TGPoint3(5.0, 0.0, 0.0))     # closing
     b.SetVelocity(TGPoint3(-5.0, 0.0, 0.0))
+    share_one_set(a, b)     # only objects in one FRAME meet (engine.systems.frames)
     return a, b
 
 

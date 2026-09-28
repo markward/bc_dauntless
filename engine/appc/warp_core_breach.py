@@ -64,7 +64,9 @@ def detonate(ship, ship_instances=None) -> None:
 
     try:
         from engine.appc import shockwaves
-        shockwaves.spawn(centre, BREACH_RADIUS_GU, shockwaves.SHOCKWAVE_LIFETIME)
+        from engine.systems import frames
+        shockwaves.spawn(centre, BREACH_RADIUS_GU, shockwaves.SHOCKWAVE_LIFETIME,
+                         pSet=frames.containing_set(ship))
     except Exception as _e:
         dev_mode.log_swallowed("spawn warp core shockwave", _e)
 

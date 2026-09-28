@@ -127,6 +127,15 @@ _last_carve_time: dict = {}  # id(ship) -> last emit game-time
 _pending_carve_strength: dict = {}  # id(ship) -> strength accumulated since last emit
 
 
+def _mesh_xyz(ship, p):
+    """`p` (a TGPoint3 in `ship`'s own set coordinates) as the tuple the
+    mesh queries take: the renderer's VIEW coordinates, where the ship's
+    instance translation lives. Same set as the view: p's own numbers."""
+    from engine.systems import frames
+    q = frames.shifted(p, frames.view_offset(frames.containing_set(ship)))
+    return (q.x, q.y, q.z)
+
+
 def _vis_dmg_mod(ship, attr: str) -> float:
     """Per-ship visible-damage multiplier (SetVisibleDamage{Radius,Strength}Modifier,
     from loadspacehelper hardpoint stats), default 1.0. Guards the TGObject
@@ -278,7 +287,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 # ShieldGlowColor — see shield_register's default_color.
                 host_io.shield_hit(
                     iid,
-                    (anchor.x, anchor.y, anchor.z),
+                    _mesh_xyz(ship, anchor),
                     (0.0, 0.0, 0.0, 0.0),
                     # Scaled by how much the shields actually took, so a nearly
                     # drained arc fades out instead of flashing like a full one.
@@ -346,7 +355,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 vis_r = float(decal_radius) if decal_radius is not None else float(radius)
                 host_io.damage_decal_add(
                     iid,
-                    (point.x, point.y, point.z),
+                    _mesh_xyz(ship, point),
                     (normal.x, normal.y, normal.z),
                     vis_r * damage_decals.decal_radius_scale(wclass),
                     damage_decals.decal_intensity(absorbed_hull),
@@ -394,7 +403,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     # it larger).
                     host_io.hull_carve_add(
                         iid,
-                        (point.x, point.y, point.z),
+                        _mesh_xyz(ship, point),
                         (normal.x, normal.y, normal.z),
                         hull_carve.carve_influ_gu(radius),
                         strength,
@@ -419,7 +428,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             if iid is not None:
                 from engine.appc import part_severance
                 conv = host_io.world_to_body(
-                    iid, (point.x, point.y, point.z), (0.0, 0.0, 1.0))
+                    iid, _mesh_xyz(ship, point), (0.0, 0.0, 1.0))
                 if conv is not None:
                     part_severance.record_hit(ship, iid, conv[0], absorbed_hull)
 
@@ -509,7 +518,7 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
         if instance_id is not None:
             conv = host_io.world_to_body(
                 instance_id,
-                (point.x, point.y, point.z),
+                _mesh_xyz(ship, point),
                 (normal.x, normal.y, normal.z))
             if conv is not None:
                 body_point, body_normal = conv
@@ -518,11 +527,13 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
     # body_point is None unless the world->body conversion succeeded;
     # force spark_count=0 in every no-anchor path so the renderer never
     # anchors a burst at the default (0,0,0) body origin.
+    from engine.systems import frames
     hit_vfx.spawn(
         point, normal=normal, severity=severity,
         instance_id=instance_id, body_point=body_point,
         body_normal=body_normal, weapon_kind=weapon_kind,
-        spark_count=(spark_count if body_point is not None else 0))
+        spark_count=(spark_count if body_point is not None else 0),
+        pSet=frames.containing_set(ship))
 
 
 def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
@@ -557,7 +568,7 @@ def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
         anchor = shield_point if shield_point is not None else point
         host_io.shield_hit(
             iid,
-            (anchor.x, anchor.y, anchor.z),
+            _mesh_xyz(ship, anchor),
             (0.0, 0.0, 0.0, 0.0),
             shield_impact_intensity(weapon_type),
             float(radius),

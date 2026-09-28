@@ -100,9 +100,11 @@ class STTargetMenu(STTopLevelMenu):
     `contact_for`. Keeping only the ships would force every reader to run a
     second perception query, which is the duplication this model removes.
 
-    This is why warp needs no target-list code: mid-warp the player is alone in
-    the _WarpTransit set, so the pushed list is empty and the menu empties
-    itself; on arrival it fills from the destination set.
+    This is why warp needs no target-list code: mid-warp the player's
+    containing set is BC's persistent "warp" set (spec §1b), so the pushed
+    list is whatever that set holds -- empty unless a mission parked ships
+    there -- and the menu follows it like any other set; on arrival it fills
+    from the destination set.
 
     THE LISTING NARROWED ON THIS BRANCH. Before, `_contacts` carried only the
     `IsTargetable()` filter, so `GetObjectEntry` / `GetSubmenuW` /

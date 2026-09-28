@@ -13,6 +13,7 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
 from engine.host_loop import _build_tractor_beam_render_data
+from tests.helpers.viewed_set import viewed  # noqa: F401  (fixture)
 
 
 def _make_emitter(name):
@@ -56,9 +57,12 @@ def _target():
     return t
 
 
-def test_firing_tractor_yields_beam_pair():
+def test_firing_tractor_yields_beam_pair(viewed):
     ship, parent = _ship_with_tractor()
     target = _target()
+    # The beam feed carries only the viewed frame.
+    viewed.AddObjectToSet(ship, "Source")
+    viewed.AddObjectToSet(target, "Target")
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, None)
     out = _build_tractor_beam_render_data([ship, target])

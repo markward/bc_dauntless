@@ -24,6 +24,7 @@ See docs/engine/damagetool-and-hull-damage-gaps.md.
 import engine.dev_mode as dev_mode
 from engine import host_io
 from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.hit_feedback import _mesh_xyz
 
 # Pending requests linger at most this long (game seconds) waiting for the
 # ship's render instance to be realized, then drop — so a headless run, a culled
@@ -141,7 +142,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
 
     if entry.get("kind") == "capsule":
         p0, p1 = entry["p0"], entry["p1"]
-        host_io.hull_carve_capsule(iid, (p0.x, p0.y, p0.z), (p1.x, p1.y, p1.z),
+        host_io.hull_carve_capsule(iid, _mesh_xyz(ship, p0), _mesh_xyz(ship, p1),
                                    entry["radius"])
         from engine.appc import hull_breakup
         hull_breakup.after_carve(ship, iid, ship_instances)
@@ -158,7 +159,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         # _mesh_probe. Take BOTH the point and normal when the trace
         # succeeds; keep the authored point + radial-normal guess otherwise
         # (headless / no instance -- the existing scuff tests exercise this).
-        mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal)
+        mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal, ship)
         if mesh_normal is not None:
             normal = mesh_normal
         if mesh_pt is not None:
@@ -168,7 +169,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         from engine.appc import damage_decals
         host_io.damage_decal_add(
             iid,
-            (world_pt.x, world_pt.y, world_pt.z),
+            _mesh_xyz(ship, world_pt),
             (normal.x, normal.y, normal.z),
             entry["radius"], entry["intensity"],
             damage_decals.WEAPON_CLASS_SCUFF,
@@ -197,7 +198,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     # `floor` still guarantees the wreck's visible size.
     host_io.hull_carve_add(
         iid,
-        (world_pt.x, world_pt.y, world_pt.z),
+        _mesh_xyz(ship, world_pt),
         (normal.x, normal.y, normal.z),
         influ,
         strength,
@@ -221,7 +222,7 @@ def _resolve(entry, ship, iid=None):
     if entry["kind"] == "world":
         world_pt = TGPoint3(px, py, pz)
         radial = _outward_normal(world_pt, loc, ship)
-        mesh = _mesh_normal(iid, world_pt, radial)
+        mesh = _mesh_normal(iid, world_pt, radial, ship)
         return world_pt, (radial if mesh is None else mesh)
 
     # Body frame: world = loc + R . (x, y, z); NO scale (BC stores authored
@@ -239,7 +240,7 @@ def _resolve(entry, ship, iid=None):
     return world_pt, normal
 
 
-def _mesh_probe(iid, world_pt, radial):
+def _mesh_probe(iid, world_pt, radial, ship=None):
     """Ray-trace the true hull surface near `world_pt`, along `radial`.
 
     Returns `(surface_point, surface_normal)` as TGPoint3s, or `(None, None)`
@@ -252,10 +253,15 @@ def _mesh_probe(iid, world_pt, radial):
     """
     if iid is None or radial is None:
         return None, None
+    # `world_pt` is in the ship's own set coordinates; the trace speaks the
+    # renderer's view coordinates. In, and the surface point back out.
+    from engine.systems import frames
+    to_view = frames.view_offset(frames.containing_set(ship))
+    q = frames.shifted(world_pt, to_view)
     try:
-        origin = (world_pt.x + radial.x * NORMAL_PROBE_MARGIN_GU,
-                  world_pt.y + radial.y * NORMAL_PROBE_MARGIN_GU,
-                  world_pt.z + radial.z * NORMAL_PROBE_MARGIN_GU)
+        origin = (q.x + radial.x * NORMAL_PROBE_MARGIN_GU,
+                  q.y + radial.y * NORMAL_PROBE_MARGIN_GU,
+                  q.z + radial.z * NORMAL_PROBE_MARGIN_GU)
         hit = host_io.ray_trace_mesh(
             iid, origin, (-radial.x, -radial.y, -radial.z),
             NORMAL_PROBE_MARGIN_GU * 2.0)
@@ -268,10 +274,11 @@ def _mesh_probe(iid, world_pt, radial):
     normal = TGPoint3(float(nx), float(ny), float(nz))
     if normal.Unitize() <= 1e-6:
         return None, None
-    return TGPoint3(float(px), float(py), float(pz)), normal
+    return (frames.shifted(TGPoint3(float(px), float(py), float(pz)),
+                           to_view, -1.0), normal)
 
 
-def _mesh_normal(iid, world_pt, radial):
+def _mesh_normal(iid, world_pt, radial, ship=None):
     """The TRUE hull surface normal at `world_pt`, or None if unobtainable.
 
     WHY THIS MATTERS MORE THAN IT LOOKS. The shader's carve is an OBLATE built
@@ -302,7 +309,7 @@ def _mesh_normal(iid, world_pt, radial):
     Thin wrapper over `_mesh_probe` -- kept so existing carve callers and
     tests need no change; the point half of the probe is unused here.
     """
-    return _mesh_probe(iid, world_pt, radial)[1]
+    return _mesh_probe(iid, world_pt, radial, ship)[1]
 
 
 def _outward_normal(world_pt, loc, ship):

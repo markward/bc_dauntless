@@ -70,6 +70,14 @@ class DebrisChunk:
         # takes to clear. Emptied by tick() once the pair is clear, so a
         # later re-contact counts.
         self._collision_disabled_ids = frozenset()
+        # The set the piece's coordinates are expressed in: its parent's, at
+        # the moment of severance. Collision pairing is gated on FRAME
+        # (engine.systems.frames), so a chunk with no set would strike
+        # nothing. Stamped by spawn(); None for a parent in no set.
+        self._containing_set = None
+        # True while tick() has hidden the instance because the chunk's set is
+        # outside the viewed frame; visibility is pushed only on a change.
+        self._frame_hidden = False
 
     @property
     def origin_ship(self):
@@ -87,6 +95,7 @@ class DebrisChunk:
     def IsImmobile(self): return False
     def GetObjID(self): return self._obj_id
     def GetHull(self): return None   # no hull: apply_hit is a no-op on us
+    def GetContainingSet(self): return self._containing_set
 
     def _mesh_origin(self):
         """Where the shared model's origin goes so the piece's centroid
@@ -156,6 +165,9 @@ def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
     # carry no ObjID at all.
     if getattr(type(origin_ship), "GetObjID", None) is not None:
         chunk._collision_disabled_ids = frozenset((origin_ship.GetObjID(),))
+    from engine.core.ids import implements
+    if implements(origin_ship, "GetContainingSet"):
+        chunk._containing_set = origin_ship.GetContainingSet()
     _live.append(chunk)
     return chunk
 
@@ -189,19 +201,37 @@ def _integrate_rotation(chunk, dt):
 def tick(dt, renderer):
     """Integrate every live chunk and push its transform. Applies cap
     eviction first so the renderer instance is destroyed here, not left
-    dangling."""
+    dangling.
+
+    The pushed transform is in the VIEWED set's coordinates (frames.in_view
+    from the chunk's own set): a chunk outlives a warp, so after an in-system
+    region change it is drawn where it is, and a chunk in another frame -- or
+    with nothing viewed -- is hidden until its frame is viewed again. Same set:
+    the numbers are unchanged and no visibility call is made."""
     while len(_live) > kMaxLiveChunks:
         old = _live.pop(0)
         _destroy(old, renderer)
     from engine.host_loop import _world_matrix_from, BC_MODEL_SCALE
+    from engine.systems import frames
+    view = frames.viewing_set()
     for c in _live:
         v = c._vel
         c._loc = TGPoint3(c._loc.x + v.x * dt, c._loc.y + v.y * dt, c._loc.z + v.z * dt)
         _integrate_rotation(c, dt)
         c._release_parent_mask_if_clear()
         try:
+            o = c._mesh_origin()
+            pos = frames.in_view(view, c._containing_set, o.x, o.y, o.z)
+            if pos is None:
+                if not c._frame_hidden:
+                    renderer.set_visible(c.iid, False)
+                    c._frame_hidden = True
+                continue
+            if c._frame_hidden:
+                renderer.set_visible(c.iid, True)
+                c._frame_hidden = False
             renderer.set_world_transform(
-                c.iid, _world_matrix_from(c._mesh_origin(), c._rot,
+                c.iid, _world_matrix_from(TGPoint3(*pos), c._rot,
                                           BC_MODEL_SCALE * c.scale))
         except Exception as _e:
             dev_mode.log_swallowed("debris chunk transform push", _e)

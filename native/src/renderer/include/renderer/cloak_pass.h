@@ -13,6 +13,14 @@ namespace scenegraph { class World; struct Camera; }
 
 namespace renderer {
 
+// The position phases of the cloak shimmer (cloak_refraction.vert's vertex
+// ripple, .frag's refraction wobble): sin(t + dot(p, k)). The pass adds
+// render_origin::phase_offset(origin, k) as a uniform so the phase belongs to
+// the WORLD point, not the render-space one that moves with the camera. These
+// k MUST equal the shader literals (guarded by render_origin_math_test).
+inline const glm::vec3 kCloakRipplePhaseK{0.15f, 0.11f, 0.13f};
+inline const glm::vec3 kCloakShimmerPhaseK{0.2f, 0.2f, 0.2f};
+
 class Pipeline;
 struct Lighting;
 
@@ -63,7 +71,8 @@ public:
                 float time,
                 const Lighting& lighting,
                 float ambient_scale,
-                float game_time = 0.0f);
+                float game_time = 0.0f,
+                const glm::dvec3& render_origin = glm::dvec3(0.0));
 
     void set_strength(float s)          { strength_ = s; }
     void set_dispersion(float d)        { dispersion_ = d; }

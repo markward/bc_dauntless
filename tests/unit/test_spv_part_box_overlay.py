@@ -141,7 +141,12 @@ def test_the_overlay_MERGES_into_the_one_debug_box_call():
     assert len(calls) == 1, (
         "expected exactly one set_debug_boxes call in run(); %d would mean "
         "one overlay drops the other's boxes" % len(calls))
-    # ...and the single call must be additive, not a bare name.
-    assert isinstance(calls[0].args[0], ast.BinOp), (
+    # ...and the single call must be additive, not a bare name. The boxes are
+    # converted to render coordinates on the way (system-frames render
+    # origin), so the sum may be wrapped in that one conversion call.
+    arg = calls[0].args[0]
+    if isinstance(arg, ast.Call) and arg.args:
+        arg = arg.args[0]
+    assert isinstance(arg, ast.BinOp), (
         "the part box must be MERGED into the glow-region boxes, not replace "
         "them or be pushed separately")

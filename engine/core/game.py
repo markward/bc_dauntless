@@ -22,6 +22,10 @@ class Mission(TGEventHandlerObject):
         self._tractor_group = None
         self._script: str = ""
         self._database = None
+        # The module this mission was loaded from ("Maelstrom.Episode7.E7M1.
+        # E7M1"); "" until a loader sets it. mission_change reads it to decide
+        # whether a warp's mission differs and to find the Terminate to call.
+        self._module_name: str = ""
 
     def SetDatabase(self, db):
         """Load (or store) this mission's localization database and return it.
@@ -111,6 +115,9 @@ class Episode(TGObject):
         # leak across a swap.
         self._goals: list[str] = []
         self._disabled_goals: set[str] = set()
+        # Module this episode was loaded from; "" until a loader sets it
+        # (see Mission._module_name).
+        self._module_name: str = ""
 
     def GetCurrentMission(self) -> Mission | None:
         return self._current_mission
@@ -184,6 +191,16 @@ class Episode(TGObject):
         pass
 
     def LoadMission(self, name: str, start_event=None) -> "Mission":
+        """SDK Episode.LoadMission. While a mission runs this is a mission
+        change (spec §2 "One mission-change path"); otherwise -- boot, or the
+        next episode's Initialize inside a change -- a raw load."""
+        from engine.core import mission_change
+        if mission_change.is_running_mission(Game_GetCurrentGame()):
+            mission_change.change(mission=name)
+            return self.GetCurrentMission()
+        return self._load_mission_raw(name, start_event)
+
+    def _load_mission_raw(self, name: str, start_event=None) -> "Mission":
         """Load and initialize a mission, then post its start event.
 
         SDK chain: QuickBattleEpisode.Initialize calls
@@ -199,6 +216,7 @@ class Episode(TGObject):
         module = importlib.import_module(name)
 
         mission = Mission()
+        mission._module_name = name
         self.SetCurrentMission(mission)
 
         if hasattr(module, "PreLoadAssets"):
@@ -320,6 +338,16 @@ class Game(TGObject):
         self._current_episode = episode
 
     def LoadEpisode(self, name: str) -> "Episode":
+        """SDK Game.LoadEpisode. While a mission runs this is a mission change
+        (E2M6's and E5M4's direct loads must not stack on the live mission);
+        otherwise a raw load."""
+        from engine.core import mission_change
+        if mission_change.is_running_mission(self):
+            mission_change.change(episode=name)
+            return self.GetCurrentEpisode()
+        return self._load_episode_raw(name)
+
+    def _load_episode_raw(self, name: str) -> "Episode":
         """Load and initialize an episode.
 
         SDK chain: QuickBattleGame.Initialize calls
@@ -333,6 +361,7 @@ class Game(TGObject):
         module = importlib.import_module(name)
 
         episode = Episode()
+        episode._module_name = name
         self.SetCurrentEpisode(episode)
 
         module.Initialize(episode)

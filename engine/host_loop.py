@@ -38,6 +38,14 @@ from engine.appc.character_position_zoom import (
 
 import math as _math
 
+# ── Scene frustum ────────────────────────────────────────────────────────────
+# The exterior scene camera and the bridge viewscreen share one frustum.
+# Re-exported, not defined here: engine/cameras owns the pair because
+# cameras/dof.py's MAX_FOCUS_GU is derived from the far plane, and the rest of
+# the rationale (how the far plane is derived, and why the bridge/SPV/comm
+# cameras keep their own) lives beside the definition in engine/cameras.
+from engine.cameras import SCENE_NEAR_GU, SCENE_FAR_GU  # noqa: E402,F401
+
 # ── Audio integration ────────────────────────────────────────────────────────
 try:
     import _dauntless_host as _host_mod
@@ -87,6 +95,7 @@ from engine.appc import bridge_set as _bridge_set
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.appc.sensor_detection import can_detect, clear_undetectable_player_lock
 from engine import units as _units
+from engine.systems import frames as _frames
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
@@ -99,7 +108,7 @@ from engine.appc.subsystems import (
     _resolve_bank_aim_world,
     impulse_online_fraction,
 )
-from engine.appc.weapon_subsystems import _target_undetectable
+from engine.appc.weapon_subsystems import _target_undetectable, _same_set
 
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 
@@ -223,15 +232,16 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     if _audio_mod is None:
         return
     from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
-    from engine.appc.ship_iter import active_set
-    # Guide §11: only the rendered set is audible — stop the outgoing set's
+    from engine.systems import frames
+    # Guide §11: only the viewed FRAME is audible — stop every other frame's
     # sources before anything else touches this tick's audio state.
-    # Caveat: active_set() is NOT App.g_kSetManager.GetRenderedSet() — it is
-    # the player's own containing (space) set, which does not change on a
+    # frames.viewing_set() is NOT App.g_kSetManager.GetRenderedSet() — it
+    # falls back to the player's own containing (space) set whenever the
+    # explicit rendered set isn't a space scene, so it does not change on a
     # bridge<->space camera toggle. See scene_scope's module docstring
     # ("Current wiring note") for what this gate does and does not cover.
-    act = active_set()
-    scene_scope.set_rendered_set(act.GetName() if act is not None else None)
+    viewed = frames.viewing_set()
+    scene_scope.set_active_frame(frames.frame_of(viewed).key if viewed is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt)
@@ -725,7 +735,10 @@ def _push_cloak_refraction(r, session, player) -> None:
         r.set_cloak_ships([])
         return
     cloak_list = []
+    scope_hidden = getattr(session, "scope_hidden", ())
     for ship, iid in list(ships.items()):
+        if iid in scope_hidden:
+            continue          # hidden by the render scope: no hull, no shell
         getter = getattr(ship, "GetCloakingSubsystem", None)
         if getter is None:
             continue
@@ -879,8 +892,14 @@ def _phaser_aim_point(ship, target):
 
 
 def _advance_combat(ships, dt: float, ship_instances=None,
-                     ship_emitters=None, player=None) -> None:
+                     ship_emitters=None, player=None,
+                     push_render_data: bool = True) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
+
+    `push_render_data=False` leaves the renderer push to the caller
+    (_push_combat_render_data): run() makes it after the camera is solved
+    and the render origin set, so the feeds are built in this frame's
+    render space. Standalone callers (tests, tools) keep the push here.
 
     Walks the active torpedo registry, advances motion, routes hits
     through combat.apply_hit (which calls hit_feedback.dispatch and
@@ -1003,6 +1022,19 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 if flush_dwell is None and not can_detect(ship, target):
                     bank.StopFiring()
                     continue
+                # INTERIM cross-set guard (system-frames Plan 2, Ruling 5):
+                # everything below -- _phaser_aim_point, the emitter strip, the
+                # distance falloff, the hit trace -- is a raw set-local compare,
+                # so a bank left firing at a target in ANOTHER set (or a setless
+                # one) would deal damage wherever raw numbers coincide, invisibly
+                # (the beam builder already drops cross-frame beams). No damage,
+                # no feedback; stop the bank, and drop any banked dwell. Stopgap
+                # until frame-aware weapon engagement lands (spec §6 widening
+                # list). Same-set pairs are untouched.
+                if not _same_set(ship, target):
+                    if flush_dwell is None:
+                        bank.StopFiring()
+                    continue
                 target_pos, target_sub = _phaser_aim_point(ship, target)
                 emitter_pos = bank._strip_emit_position(target_pos)
                 # Distance: emit point → target (drives damage falloff).
@@ -1099,15 +1131,22 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         from engine.appc import tractor as _tractor
         _tractor.advance_tractors(ships_list, dt)
 
+    if push_render_data:
+        _push_combat_render_data(ships_list, ship_instances=ship_instances,
+                                 ship_emitters=ship_emitters, player=player)
+
+
+def _push_combat_render_data(ships_list, *, ship_instances=None,
+                             ship_emitters=None, player=None) -> None:
+    """Build and push the per-frame combat VFX feeds (torpedoes, dynamic
+    lights, shockwaves, hit VFX, particles, phaser and tractor beams), every
+    world position in RENDER space (frames.to_render) -- so it runs after
+    the render origin is set for the frame (_apply_render_origin)."""
     # Per-frame VFX descriptor lists route through the host_io façade, which
     # no-ops when the native module is absent (headless). The hit/damage
     # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
     # _build_* helpers and the combat/carve advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
-    # Manual enter/exit rather than a `with`, to keep this block's indentation
-    # (and its blame) unchanged. try/finally so an exception in any _build_*
-    # still closes the scope -- a leaked scope corrupts every later phase in
-    # the report, which is worse than the exception itself.
     with frame_profiler.scope("cb.render_data"):
         host_io.set_torpedoes(_build_torpedo_render_data())
         host_io.set_dynamic_lights(_budgeted_dynamic_lights(
@@ -1115,8 +1154,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
             _build_dynamic_light_render_data(),
             _build_emitter_light_render_data(ship_instances, ship_emitters,
                                              player=player)))
-        from engine.appc import shockwaves as _shockwaves
-        host_io.set_shockwaves(_shockwaves.render_data())
+        host_io.set_shockwaves(_build_shockwave_render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
         host_io.set_phaser_beams(_build_phaser_beam_render_data(
@@ -1179,12 +1217,23 @@ def _build_torpedo_render_data():
     families: the C++ binding (Task 3) reads every key unconditionally, so a
     photon torpedo emits neutral-default bolt fields and a disruptor emits
     empty quad textures/colors (_resolve_game_texture("") already guards
-    falsy input back to "")."""
+    falsy input back to "").
+
+    Only torpedoes in the viewed frame are sent, in RENDER space
+    (frames.to_render: the viewed set's coordinates minus the render origin)
+    -- a left-behind set's torpedoes stay out of the scene you are in. No
+    viewed set: no scene, nothing sent."""
     out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     for t in projectiles._active:
-        pos = t.GetTranslate()
+        p = t.GetTranslate()
+        pos = _frames.to_render(view, _frames.containing_set(t), p.x, p.y, p.z)
+        if pos is None:
+            continue
         out.append({
-            "position":      (pos.x, pos.y, pos.z),
+            "position":      pos,
             "core_texture":  _resolve_game_texture(t._core_texture),
             "core_color":    _dim_color(_color_tuple(t._core_color),
                                         TORPEDO_BRIGHTNESS),
@@ -1227,8 +1276,14 @@ def _build_dynamic_light_render_data():
     (radius base = max(glow_size_a, glow_size_b)) alongside native's
     map_torpedo_params in torpedo_anim.h — a re-pin from RE Q1/Q2 must
     update both sites.
+
+    Frame-scoped like _build_torpedo_render_data; the camera-distance fade
+    judges the CONVERTED position, since the eye is in the viewed set's frame.
     """
     out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     for t in projectiles._active:
         if t._is_disruptor:
             continue
@@ -1237,12 +1292,17 @@ def _build_dynamic_light_render_data():
         if radius <= 0:
             continue
         t_pos = t.GetTranslate()
-        pos = (t_pos.x, t_pos.y, t_pos.z)
+        pos = _frames.in_view(view, _frames.containing_set(t),
+                              t_pos.x, t_pos.y, t_pos.z)
+        if pos is None:
+            continue
         fade = _camera_distance_fade(pos)
         if fade is None:
             continue        # beyond the cull distance — not built at all
         out.append({
-            "position":  pos,
+            # The fade judged the VIEW position (the eye is in view
+            # coordinates); the renderer takes it in render space.
+            "position":  _frames.view_to_render(pos),
             "color":     _color_tuple(t._glow_color)[:3],
             "radius":    radius,
             "intensity": _TORPEDO_LIGHT_INTENSITY * fade,
@@ -1368,13 +1428,20 @@ def refresh_ship_glow(session, ship, regions_by_sub_id):
 def _warp_glow_envelope(ship):
     """`(drive, burst)` warp-nacelle glow envelope for `ship`, else None.
 
-    Two conditions, and the second is the one that is easy to get wrong: the
-    warp animator must be running AND `ship` must be the ship registered as
-    flying that warp. `WarpVFX` is a singleton and `WarpSequence_Create` takes
-    the flythrough branch for ANY ship with no player check (see
-    engine/appc/warp_state.py), so "a warp is happening" is not "this ship is
-    warping" — without the registration test an NPC warping out would light up
-    the player's nacelles.
+    Two sources, checked in order:
+
+    * a player dash (engine/appc/dash.py) in progress, gated on
+      `warp._is_current_player` like every other player-scene warp effect:
+      the dash clock (engine/dash_vfx) is the player's, so a ship swapped
+      away from mid-dash must not read it for the frame before its dash is
+      ended (`dash.abandon`, from `_sync_player_identity`);
+    * the cross-system warp tunnel, gated the way it always was: the warp
+      animator must be running AND `ship` must be the ship registered as
+      flying that warp. `WarpVFX` is a singleton and `WarpSequence_Create`
+      takes the flythrough branch for ANY ship with no player check (see
+      engine/appc/warp_state.py), so "a warp is happening" is not "this ship
+      is warping" — without the registration test an NPC warping out would
+      light up the player's nacelles.
 
     Read (not latched) by both consumers — the glow volumes via
     `ShipGlowController.update` and the emitter lights via
@@ -1382,12 +1449,24 @@ def _warp_glow_envelope(ship):
     """
     if ship is None:
         return None
+    from engine.appc import dash, warp
+    if dash.is_dashing(ship) and warp._is_current_player(ship):
+        from engine import dash_vfx
+        return dash_vfx.get().engine_glow()
     from engine import warp_vfx
     from engine.appc import warp_state
     w = warp_vfx.get()
     if not w.is_active() or not warp_state.is_flythrough(ship):
         return None
     return w.engine_glow()
+
+
+def _combined_flash_intensity(tunnel_flash: float, dash_flash: float) -> float:
+    """Neither the tunnel's screen flash nor the dash's should zero the
+    other -- the two never overlap in play, but a flat `set_warp_flash_
+    intensity(0.0)` push from whichever isn't running would stomp the other's
+    value if it ran second. Use whichever is brighter this frame (spec §4)."""
+    return max(tunnel_flash, dash_flash)
 
 
 # ── Dynamic-light budget ─────────────────────────────────────────────────
@@ -1457,7 +1536,22 @@ def _build_explosion_light_render_data():
     # per instance (select_dynamic_lights) -- a genuinely irrelevant one
     # scores ~0 and is never selected. The camera distance was the wrong
     # question to ask of this light.
-    return [dict(entry) for entry in _explosion_lights.render_data()]
+    #
+    # Each entry carries the set its blast was born in ("set"): it is dropped
+    # outside the viewed frame, converted into the viewed set's coordinates
+    # inside it, and the key itself never reaches the renderer.
+    out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
+    for entry in _explosion_lights.render_data():
+        pos = _frames.to_render(view, entry["set"], *entry["position"])
+        if pos is None:
+            continue
+        d = {k: v for k, v in entry.items() if k != "set"}
+        d["position"] = pos
+        out.append(d)
+    return out
 
 
 def _articulate_emitter_light(ship, iid, spec, d):
@@ -1536,6 +1630,9 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         return out          # Cinematic Lighting off — cast no emitter lights.
     from engine.appc.subsystem_glow import commanded_impulse_frac
 
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     now = App.g_kUtopiaModule.GetGameTime()
     # Warp-nacelle brightening is player-only and only during a cross-system
     # warp; computed once per frame rather than per ship.
@@ -1557,7 +1654,14 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         # is the point: a gated-out ship skips every emitter below. The LIVE
         # location is fine here: a one-tick error on the ~86 GU cull band is
         # invisible, and it is the only pose read left in this producer.
-        fade = _camera_distance_fade((loc.x, loc.y, loc.z))
+        # The eye is in the viewed set's coordinates, so the hull position is
+        # converted into them first; a ship outside the viewed frame casts
+        # nothing into the scene.
+        hull = _frames.in_view(view, _frames.containing_set(ship),
+                               loc.x, loc.y, loc.z)
+        if hull is None:
+            continue
+        fade = _camera_distance_fade(hull)
         if fade is None:
             continue
         _wg = warp_glow if ship is player else None
@@ -1586,13 +1690,43 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
     return out
 
 
-def _build_hit_vfx_render_data():
+def _build_shockwave_render_data():
+    """Warp-core breach shockwaves in the viewed frame, centred in the viewed
+    set's coordinates. A breach in a left-behind set stays out of the scene;
+    the birth set ("set") never reaches the renderer."""
+    from engine.appc import shockwaves as _shockwaves
     out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
+    for entry in _shockwaves.render_data():
+        pos = _frames.to_render(view, entry["set"], *entry["world_center"])
+        if pos is None:
+            continue
+        d = {k: v for k, v in entry.items() if k != "set"}
+        d["world_center"] = pos
+        out.append(d)
+    return out
+
+
+def _build_hit_vfx_render_data():
+    """Impact flashes/sparks in the viewed frame, their world position in the
+    viewed set's coordinates. Off-screen combat in a left-behind set spawns
+    these too; they carry their ship's set ("set") so they can be dropped.
+    The body-frame spark anchor needs no conversion: it resolves through the
+    instance's own transform in C++."""
+    out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
     for entry in hit_vfx.snapshot():
-        pos = entry["position"]
+        p = entry["position"]
+        pos = _frames.to_render(view, entry.get("set"), p.x, p.y, p.z)
+        if pos is None:
+            continue
         n = entry["normal"]
         out.append({
-            "position":    (pos.x, pos.y, pos.z),
+            "position":    pos,
             "normal":      (n.x, n.y, n.z) if n is not None else (0.0, 0.0, 0.0),
             "severity":    entry["severity"],
             "age":         entry["age"],
@@ -1624,7 +1758,16 @@ def _build_particle_render_data(ship_instances=None):
     `ship_instances` is the session's ship→instance-id map (same dict
     used by set_hit_vfx). When None, emitters render unattached at their
     world emit_pos (instance_id will be None in every descriptor).
+
+    World-anchored descriptors (no instance) are frame-scoped: kept only in
+    the viewed frame, their emit_pos in the viewed set's coordinates -- an
+    effect on a left-behind set's (unrealized) ship stays out of the scene.
+    Instance-attached ones are body-frame; the pass resolves them through
+    inst->world. No viewed set: nothing is sent.
     """
+    view = _frames.viewing_set()
+    if view is None:
+        return []
 
     def _resolve_emit_attach(emit_from):
         """Map a controller's emit-from object to its renderer instance id +
@@ -1643,7 +1786,9 @@ def _build_particle_render_data(ship_instances=None):
         except Exception:
             return None
 
-    return particles.snapshot_descriptors(resolve_attach=_resolve_emit_attach)
+    return particles.snapshot_descriptors(
+        resolve_attach=_resolve_emit_attach,
+        to_view=lambda pSet, p: _frames.to_render(view, pSet, *p))
 
 
 # Tunable scale applied to SDK-declared beam radii (PhaserWidth /
@@ -1712,6 +1857,9 @@ DYN_LIGHT_CULL_GU       = 15.0 / _units.GU_TO_KM   # 85.71 GU
 # of latency on a 13 km threshold is imperceptible. Only the main space camera
 # writes here — see _note_camera_eye.
 _last_camera_eye = None
+# The set that was VIEWED when _last_camera_eye was noted: the eye is in that
+# set's coordinates, so it means nothing under another view (_cull_centre).
+_last_camera_eye_view = None
 
 
 def _note_camera_eye(eye) -> None:
@@ -1724,8 +1872,54 @@ def _note_camera_eye(eye) -> None:
     the next real frame's lights against a camera that was never looking at
     the scene.
     """
-    global _last_camera_eye
+    global _last_camera_eye, _last_camera_eye_view
     _last_camera_eye = tuple(eye) if eye is not None else None
+    _last_camera_eye_view = (_frames.viewing_set()
+                             if _last_camera_eye is not None else None)
+
+
+def _apply_render_origin(r, eye) -> None:
+    """Set this frame's floating render origin: the exterior camera eye, in
+    the VIEWED set's coordinates (system-frames spec §5). Called once per
+    running frame, right after the camera is solved and BEFORE any
+    Space-pass feed is built, so every feed below subtracts the same origin
+    native subtracts from the instances at the next frame(). A frozen frame
+    (pause, the Ship Property Viewer) keeps the last origin: the feeds pushed
+    under it stay valid, and the frozen camera is pushed relative to it."""
+    _frames.set_render_origin(eye)
+    r.set_render_origin(*_frames.render_origin())
+
+
+def _push_space_camera(r, eye, target, up, fov_y_rad, near, far) -> None:
+    """Push a SPACE-pass camera (exterior, Ship Property Viewer) given in
+    VIEW coordinates: eye and target minus the render origin. `up` is a
+    direction. The bridge interior camera, the comm feed and the star map
+    are not Space and never come through here."""
+    r.set_camera(eye=_frames.view_to_render(tuple(eye)),
+                 target=_frames.view_to_render(tuple(target)),
+                 up=tuple(up), fov_y_rad=fov_y_rad, near=near, far=far)
+
+
+def _view_pose_of(pose_of, view):
+    """A camera pose provider whose locations are in `view`'s coordinates.
+
+    The camera is solved in the VIEWED set's coordinates, like the scene it
+    looks at: a subject in another set of the viewed frame (the player
+    followed through a sibling-region cutscene) is moved by
+    offset_between(view, its set) before the camera math sees it. Same set,
+    no view, no set, another frame: the pose `pose_of` (or the live pose)
+    returns, untouched."""
+    def _pose(obj):
+        if pose_of is not None:
+            loc, rot = pose_of(obj)
+        else:
+            loc, rot = obj.GetWorldLocation(), obj.GetWorldRotation()
+        if view is None:
+            return loc, rot
+        pSet = _frames.containing_set(obj)
+        off = _frames.offset_between(view, pSet) if pSet is not None else None
+        return _frames.shifted(loc, off), rot
+    return _pose
 
 
 def _camera_distance_fade(position):
@@ -1807,29 +2001,44 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     The beam endpoint comes from _beam_endpoint: the shield bubble while a
     facing is live, otherwise the mesh-trace hull surface (which needs
     `ship_instances`), otherwise the target's centre.
+
+    Each endpoint is in its OWN object's set-local coordinates: "emitter" in
+    the firing ship's set, "target" in the target's set (the aim point is
+    read off the target). A pair in two regions of one star system meets in
+    the TARGET's coordinates for the geometry (the bubble and the mesh trace
+    are the target's); a pair in two frames draws no beam. Same set: every
+    shift is the identity, so the arithmetic is exactly the one-set path.
     """
     target = bank._target
     if target is None:
         return []
+    ship_set = _frames.containing_set(ship)
+    target_set = _frames.containing_set(target)
+    # target-local -> ship-local; identity for one set (including "no set").
+    to_ship = (0.0, 0.0, 0.0) if ship_set is target_set else \
+        _frames.offset_between(ship_set, target_set)
+    if to_ship is None:
+        return []
     target_pos, target_sub = _phaser_aim_point(ship, target)
     # Strip emit point for curved phaser banks; point emitters (tractors,
     # Length 0) collapse this to the emitter mount world position.
-    emitter_pos = bank._strip_emit_position(target_pos)
-    dx = target_pos.x - emitter_pos.x
-    dy = target_pos.y - emitter_pos.y
-    dz = target_pos.z - emitter_pos.z
+    emitter_pos = bank._strip_emit_position(_frames.shifted(target_pos, to_ship))
+    emitter_t = _frames.shifted(emitter_pos, to_ship, -1.0)   # in target's set
+    dx = target_pos.x - emitter_t.x
+    dy = target_pos.y - emitter_t.y
+    dz = target_pos.z - emitter_t.z
     raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
     beam_length = raw_length
     beam_end = target_pos
     if raw_length > 1e-6:
         aim_unit = TGPoint3(dx / raw_length, dy / raw_length, dz / raw_length)
         beam_end = _beam_endpoint(
-            target=target, emitter_pos=emitter_pos, aim_unit=aim_unit,
+            target=target, emitter_pos=emitter_t, aim_unit=aim_unit,
             raw_length=raw_length, ship_instances=ship_instances,
             fallback=beam_end)
-        cdx = beam_end.x - emitter_pos.x
-        cdy = beam_end.y - emitter_pos.y
-        cdz = beam_end.z - emitter_pos.z
+        cdx = beam_end.x - emitter_t.x
+        cdy = beam_end.y - emitter_t.y
+        cdz = beam_end.z - emitter_t.z
         beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
     tile_per_unit = bank.GetLengthTextureTilePerUnit()
     u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
@@ -1865,14 +2074,44 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     ]
 
 
+def _ships_in_view(ships):
+    """(ship, its set, view) for each ship in the viewed frame -- the beam
+    builders' scope. A left-behind set's ships keep firing off-screen; their
+    beams stay out of the scene you are in. Nothing viewed: nothing yields."""
+    view = _frames.viewing_set()
+    if view is None:
+        return
+    for ship in ships:
+        pSet = _frames.containing_set(ship)
+        if _frames.offset_between(view, pSet) is not None:
+            yield ship, pSet, view
+
+
+def _beam_pair_in_view(pair, view, ship_set, target):
+    """The descriptor pair with each endpoint in RENDER space (the viewed
+    set's coordinates minus the render origin) -- "emitter" from the firing
+    ship's set, "target" from the target's (see _beam_descriptor_pair) -- or
+    [] when either end is outside the viewed frame. Same set at origin zero:
+    the tuples untouched."""
+    target_set = _frames.containing_set(target)
+    for d in pair:
+        e = _frames.to_render(view, ship_set, *d["emitter"])
+        t = _frames.to_render(view, target_set, *d["target"])
+        if e is None or t is None:
+            return []
+        d["emitter"], d["target"] = e, t
+    return pair
+
+
 def _build_phaser_beam_render_data(ships, ship_instances=None):
     """Snapshot active phaser beams for the renderer.
 
-    Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields the
-    outer-shell + inner-core descriptor pair via _beam_descriptor_pair.
+    Walks the PhaserSystem of every ship in the viewed frame; for each bank
+    IsFiring()=1, yields the outer-shell + inner-core descriptor pair via
+    _beam_descriptor_pair, endpoints in the viewed set's coordinates.
     """
     out = []
-    for ship in ships:
+    for ship, pSet, view in _ships_in_view(ships):
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
         if sys_ is None:
             continue
@@ -1880,7 +2119,9 @@ def _build_phaser_beam_render_data(ships, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            for d in _beam_descriptor_pair(ship, bank, ship_instances):
+            for d in _beam_pair_in_view(
+                    _beam_descriptor_pair(ship, bank, ship_instances),
+                    view, pSet, bank._target):
                 c = d["color"]
                 d["color"] = (c[0] * PHASER_BEAM_BRIGHTNESS,
                               c[1] * PHASER_BEAM_BRIGHTNESS,
@@ -1914,9 +2155,10 @@ def _build_tractor_beam_render_data(ships, ship_instances=None):
     Tractor beams keep the emitter taper-in and normal body width, but flare the
     TARGET end out to TRACTOR_BEAM_END_WIDTH_SCALE × the body radius (the shader
     reads end_width_scale to make the target-end taper widen instead of pinch).
+    Frame-scoped exactly like the phaser builder (_ships_in_view).
     """
     out = []
-    for ship in ships:
+    for ship, pSet, view in _ships_in_view(ships):
         sys_ = (ship.GetTractorBeamSystem()
                 if hasattr(ship, "GetTractorBeamSystem") else None)
         if sys_ is None:
@@ -1925,7 +2167,9 @@ def _build_tractor_beam_render_data(ships, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            for d in _beam_descriptor_pair(ship, bank, ship_instances):
+            for d in _beam_pair_in_view(
+                    _beam_descriptor_pair(ship, bank, ship_instances),
+                    view, pSet, bank._target):
                 d["end_width_scale"] = TRACTOR_BEAM_END_WIDTH_SCALE
                 c = d["color"]
                 d["color"] = (c[0] * TRACTOR_BEAM_BRIGHTNESS,
@@ -2210,8 +2454,9 @@ DEFAULT_DIRECTIONALS: list = [
     ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
 ]
 
-# In-warp lighting (streak phase). The system the player left is torn down, so
-# its sun is gone; the only light is the warp tunnel rushing toward the ship.
+# In-warp lighting (streak phase). The system the player left has its render
+# instances torn down (the set itself stands), so its sun no longer lights the
+# scene; the only light is the warp tunnel rushing toward the ship.
 # A bright cool key from AHEAD (down travel_dir) lights the front of the hull as
 # if by the tunnel, with a dim cool back-fill so the rear isn't black, over a low
 # cool ambient. Direction is a deliberate cinematic vector (the warp heading),
@@ -2229,10 +2474,14 @@ _WARP_SKY_RATE: float = 15.0
 
 
 # Last authored starbox seen while NOT in warp transit, kept so a transit with
-# the procedural sky off has something to draw. The source set is deleted at
-# burst (warp._WarpDepartAction), so by transit time there is no set left to
-# aggregate authored backdrops from -- without this the transit renders black.
-# Reset by tests/conftest.py.
+# the procedural sky off has something to draw. The source set STANDS at burst
+# (warp._WarpDepartAction drops only its render instances) -- but the player
+# has been moved into BC's persistent "warp" set (spec §1b), which becomes
+# both the explicit rendered set and the set containing the player, so
+# `_resolve_active_set` resolves to it. That set has no authored backdrops of
+# its own (a mission may park ships there, but never lighting/backdrop data),
+# so by transit time there is nothing left to aggregate from -- without this
+# the transit renders black. Reset by tests/conftest.py.
 _last_static_backdrops: list = []
 
 
@@ -2321,12 +2570,6 @@ class _PlayerControl:
     # Reverse magnitude as a fraction of MaxSpeed (BC convention: ¼ impulse).
     REVERSE_FRACTION = 0.25
 
-    # Ctrl+I "in-system warp" boost: forward target speed is multiplied by
-    # this factor while the toggle is on. Lets us reach distant astro
-    # objects (suns ~63 km out) in seconds without piping through BC's
-    # full WarpSequence machinery. Forward only — no reverse boost.
-    WARP_BOOST_FACTOR = 100.0
-
     def __init__(self, input_map=None):
         # Single source of truth for action → physical key.  Defaults to a
         # fresh InputMap (stock keys, no file) so headless tests that build
@@ -2340,7 +2583,6 @@ class _PlayerControl:
         self._current_pitch_rate = 0.0
         self._current_yaw_rate   = 0.0
         self._current_roll_rate  = 0.0
-        self._warp_boost = False
         self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
         # Set by the warp sequence (host) during a warp: forces the ship's speed
         # (0 = hold during align, >0 = burst forward during transit) along its
@@ -2355,6 +2597,9 @@ class _PlayerControl:
         # (manual→AI: seed the ship-side integrator; AI→manual: resume from
         # the ship's actual motion with no velocity snap).
         self._ai_owned = False
+        # True while a dash owns the ship (see apply()); the first apply()
+        # after its drop-out re-syncs from the ship.
+        self._dash_owned = False
         # Scroll-wheel throttle nudges arrive outside apply() (see
         # _route_scroll_wheel); latch them so a nudge while an AI owns the
         # ship counts as manual input and cancels the AI next apply().
@@ -2398,9 +2643,6 @@ class _PlayerControl:
         authored MaxSpeed; with a pod shot out it targets correspondingly less,
         which is exactly the cap _effective_motion enforces, so command and cap
         agree by construction.
-
-        Forward speed is additionally multiplied by WARP_BOOST_FACTOR when
-        the in-system warp toggle is on (Ctrl+I); reverse is unaffected.
         """
         ies = self._get_ies(player)
         # The AUTHORED value decides whether this ship has real limits at all;
@@ -2408,13 +2650,12 @@ class _PlayerControl:
         # "fallback ship".
         authored_max = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
         effective_max = ies.GetMaxSpeed() if ies is not None else 0.0
-        boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
         if authored_max > 0.0:
             if self.impulse_level >= 0:
-                return (self.impulse_level / 9.0) * effective_max * boost
+                return (self.impulse_level / 9.0) * effective_max
             return -self.REVERSE_FRACTION * effective_max
         if self.impulse_level >= 0:
-            return self.impulse_level * self.IMPULSE_UNIT * boost
+            return self.impulse_level * self.IMPULSE_UNIT
         return self.impulse_level * self.IMPULSE_UNIT
 
     def GetCurrentSpeed(self) -> float:
@@ -2550,7 +2791,9 @@ class _PlayerControl:
         player._target_angular_velocity_setpoint = None
         # Taking the conn also aborts any AI-initiated in-system-warp
         # transit (BC: touching the helm cancels the autopilot's warp).
-        player._insystem_warp_transit = None
+        # Through _end_in_system_warp so the end is announced (ruling R10).
+        if getattr(player, "_insystem_warp_transit", None) is not None:
+            player._end_in_system_warp("aborted")
 
     def _cancel_player_ai(self, player) -> None:
         """Clear the player's helm AI (BC: manual input overrides the current
@@ -2592,6 +2835,32 @@ class _PlayerControl:
                                        p.z + fwd.z * s * dt)
                 player.SetVelocity(TGPoint3(fwd.x * s, fwd.y * s, fwd.z * s))
             return
+        # A dash (engine/appc/dash.py) owns the ship from the press to the
+        # drop-out: steering, throttle and every other key are inert, read
+        # nothing -- except full stop, which drops out at rest.
+        from engine.appc import dash
+        if dash.is_dashing(player):
+            self._dash_owned = True
+            self._manual_throttle_nudge = False
+            if h.key_pressed(self._input_map.code("full_stop")):
+                dash.drop_out(player, "stopped")
+            return
+        if self._dash_owned:
+            # Dropped out: resume from the ship's actual motion (at rest, or
+            # the speed the dash left it with), not the pre-dash throttle.
+            self._dash_owned = False
+            self._ai_owned = False
+            self._sync_control_from_ship(player)
+            if self._current_speed == 0.0:
+                self.impulse_level = 0
+        # A Set Course arrival turn (dash.py, Mark 2026-09-27) swings the ship
+        # onto its placement from dash.tick, which runs after this each frame;
+        # any steering or throttle input takes the conn back first, and this
+        # same tick's input then registers as normal.
+        if dash.is_arrival_turning(player) and (
+                self._manual_throttle_nudge
+                or self._detect_manual_flight_input(h)):
+            dash.cancel_arrival_turn(player)
         # Helm-AI ownership arbitration (see section comment above apply()).
         nudged = self._manual_throttle_nudge
         self._manual_throttle_nudge = False
@@ -2627,28 +2896,6 @@ class _PlayerControl:
         _super_held = h.key_state(h.keys.KEY_LEFT_SUPER) if hasattr(h.keys, "KEY_LEFT_SUPER") else False
         _ctrl_held = _ctrl_held_either(h)
         _alt_is_held = _alt_held(h)
-        # Ctrl+W → toggle in-system warp boost (moved off Ctrl+I: this branch
-        # makes the SDK's Ctrl+I = ET_INPUT_INTERCEPT live, so Ctrl+I now
-        # means both at once; Mark's call, Finding 4 — Ctrl+W is unbound in
-        # the SDK). Snap _current_speed to the new target so the boost
-        # engages instantly rather than ramping over many seconds at the
-        # IES's normal MaxAccel.
-        if (
-            _ctrl_held
-            and hasattr(h.keys, "KEY_W")
-            and h.key_pressed(h.keys.KEY_W)
-        ):
-            self._warp_boost = not self._warp_boost
-            # While drifting (all engines offline) _current_speed is frozen and
-            # _drift_velocity drives motion; don't snap it — drift-exit re-seeds
-            # it from the drift magnitude. The boost flag still flips so it
-            # takes effect once an engine is repaired.
-            if self._drift_velocity is None:
-                self._current_speed = self.GetTargetSpeed(player)
-            print(
-                f"[host_loop] in-system warp {'ON' if self._warp_boost else 'OFF'}",
-                flush=True,
-            )
         if h.key_pressed(self._input_map.code("reverse")) and not (_super_held or _ctrl_held):
             self.impulse_level = self.REVERSE_LEVEL
         elif h.key_pressed(self._input_map.code("full_stop")):
@@ -3148,6 +3395,36 @@ class _NullPicker:
 
 
 _NULL_PICKER = _NullPicker()
+
+
+def _developer_family_entry():
+    """The synthetic "Developer" mission-picker family: in-repo preview
+    missions that don't live under sdk/. Split out of _get_mission_registry
+    so tests can assert a mission is registered without booting main()."""
+    from engine.missions import FamilyEntry, EpisodeEntry, MissionEntry
+    return FamilyEntry(
+        dir_name="Developer", display_name="Developer",
+        episodes=[EpisodeEntry(
+            dir_name=".", display_name="Developer",
+            missions=[MissionEntry(
+                module_name="engine.dev_missions.damage_preview",
+                dir_name="Damage Preview",
+                display_name="Damage Preview",
+            ), MissionEntry(
+                module_name="engine.dev_missions.combat_stress",
+                dir_name="Combat Stress",
+                display_name="Combat Stress",
+            ), MissionEntry(
+                module_name="engine.dev_missions.collision_sim",
+                dir_name="Collision Sim",
+                display_name="Collision Sim",
+            ), MissionEntry(
+                module_name="engine.dev_missions.system_preview",
+                dir_name="System Preview",
+                display_name="System Preview",
+            )],
+        )],
+    )
 
 
 def _register_ai_inspector(registry):
@@ -3853,14 +4130,8 @@ def reset_sdk_globals() -> None:
     from engine.appc import top_window
 
     App.g_kTimerManager._time = 0.0
-    App.g_kTimerManager._timers.clear()
     App.g_kRealtimeTimerManager._time = 0.0
-    App.g_kRealtimeTimerManager._timers.clear()
-    # Deferred-completion timers just died with the managers above; drop the
-    # matching skip-candidate registry so Backspace can't "skip" stale actions
-    # from the prior mission.
-    from engine.appc import actions as _appc_actions
-    _appc_actions.reset_deferred_playing()
+    _reset_timers()
     # Drop the object→render-instance mirror; the instances themselves are
     # torn down with the set, and the next mission's realize loops repopulate.
     render_instances.reset()
@@ -3875,12 +4146,6 @@ def reset_sdk_globals() -> None:
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
     top_window.reset_for_tests()
-    # Clear the global crew-speech channel so a line still "live" at swap
-    # time can't suppress the next mission's first SpeakLine. The subtitle
-    # crew slot itself is cleared transitively by reset_for_tests (it
-    # rebuilds _SubtitleWindow).
-    from engine.appc import crew_speech
-    crew_speech.bus().reset()
     # (The target menu needs no unhooking on swap: membership is derived
     # every frame from the player's containing set, so there is no
     # subscription that could dangle on a recreated set.)
@@ -3892,57 +4157,16 @@ def reset_sdk_globals() -> None:
     # the process.
     from engine.appc import contact_index
     contact_index.reset()
-    # ObjectGroup._live: clear for parity with the per-test reset
-    # (tests/conftest.py). Game.GetPlayerGroup() returns None in this engine
-    # (engine/core/game.py:~446) -- there is no persistent Game-level player
-    # group surviving a swap to justify leaving a prior mission's groups
-    # registered -- so a stale group with an SDK instance handler must not go
-    # on hearing the next mission's set adds. Registration is self-healing:
-    # ObjectGroup.SetEventFlag re-adds `self` to `_live`, so any group that
-    # re-arms its flags after this reset (AddFleetCommandHandlers does, at
-    # registration) is live again.
-    from engine.appc.objects import ObjectGroup
-    ObjectGroup._live.clear()
-    # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
-    # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
-    # time (which can be minutes) while the new mission's clock restarts at
-    # 0.0 above -- run_update_tooltip's `now - last < period` throttle then
-    # reads as deeply negative and stays "not yet due" for however long it
-    # takes real game time to climb back past the old value, silently
-    # freezing the Helm/XO tooltip rows for the whole stretch. Clearing the
-    # owner too so a stale reference from the old mission's crew menu can't
-    # be mistaken for the new mission's focused officer.
-    _tooltip_dispatch_state["last"] = -1e9
-    from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
-    CharacterClass_SetCurrentToolTipOwner(None)
+    _reset_session_scratch()
     # Drop the resolved projectile-module cache. It memoises import FAILURES
     # too (so an unimportable mod projectile is not retried every shot), and a
     # swap reloads the SDK tree — a failure cached against the old tree must
     # not decide the next mission's torpedoes.
     from engine.appc.weapon_subsystems import _reset_projectile_module_cache
     _reset_projectile_module_cache()
-    # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
-    # away mid-briefing (while its bridge viewscreen shows a comm character),
-    # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
-    # ViewscreenOn() then sees the viewscreen as already in use and enters a
-    # 2-second retry loop that never completes — the comm character (e.g. Liu
-    # in E1M1) never speaks or renders. ResetViewscreen() clears the flag
-    # (first thing it does) and re-enables the Hail/Contact menus; call it
-    # before _sets.clear() so its CallWaiting() still sees the live bridge.
-    # Best-effort, matching the surrounding reset discipline.
-    try:
-        import MissionLib
-        MissionLib.ResetViewscreen()
-        # Drop any master action sequence carried over from the previous
-        # mission. QueueActionToPlay stores the master's id in
-        # g_idMasterSequenceObj and appends every subsequent queued action onto
-        # it; a stalled/leftover master from the prior mission would otherwise
-        # swallow the next mission's queued cutscene/comm sequences. Completed
-        # masters already invalidate their id (TGSequence.Completed), so this is
-        # a belt-and-suspenders reset for a master left mid-play at swap time.
-        MissionLib.g_idMasterSequenceObj = App.NULL_ID
-    except Exception as _e:
-        dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
+    # MissionLib's viewscreen flag + master sequence; before _sets.clear()
+    # (see the helper).
+    _reset_missionlib_state()
     # Re-apply the identifier-centric ShowPointerArrow/HidePointerArrows
     # override (engine/ui/ui_attention.py). MissionLib the module is never
     # reloaded/re-imported by a mission swap — it stays cached in
@@ -3957,6 +4181,15 @@ def reset_sdk_globals() -> None:
     except Exception as _e:
         dev_mode.log_swallowed("ui_attention.install on swap", _e)
     App.g_kSetManager._sets.clear()
+    _reset_system_loader_state()
+    # A new mission starts at render origin zero, both halves: the first
+    # frame may be frozen (no _apply_render_origin), and its camera is then
+    # pushed relative to Python's origin -- native must agree.
+    _frames.reset_render_origin()
+    try:
+        r.reset_render_origin()
+    except Exception as _e:
+        dev_mode.log_swallowed("reset_render_origin on swap", _e)
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
     App._reset_target_menu_singleton()
@@ -4023,6 +4256,154 @@ def reset_sdk_globals() -> None:
         crew_menu_hotkeys.rewire()
     except Exception as _e:
         dev_mode.log_swallowed("crew_menu_hotkeys.rewire after TCW reset", _e)
+    _reset_sensor_state()
+    # Drop the named-action registry. g_kTGActionManager is a process-lifetime
+    # singleton (App.py) and RegisterAction appends to a per-name LIST, so
+    # without this every action ever registered is retained forever — and the
+    # no-argument KillActions() form (E6M1.py:894, E6M2.py:1043, ...) would
+    # Abort() a previous mission's actions, which is not inert (TGSequence.Abort
+    # unregisters the object id, TGSoundAction.Abort stops audio). Clear only:
+    # the LIST semantics are correct (E1M1 registers six sequences under
+    # "CharacterIntros" and the skip must kill all six) — only the lifetime was
+    # wrong, and pruning on registration would drop the not-yet-started
+    # sequences this feature exists to kill.
+    _reset_action_registry()
+    # Re-apply the dev-only PlayedTutorial force after the clear. This function
+    # runs once at start-of-mission and again on every swap, so it is the one
+    # seam that covers every load path: _init_mission,
+    # MissionController._drain_pending_swap and MissionController.load_quickbattle
+    # all route through reset_sdk_globals(). (mission_change's carry-over
+    # re-applies it too.)
+    from engine import dev_tutorial_flag
+    dev_tutorial_flag.apply_played_tutorial_flag()
+
+
+# ── Shared resets ────────────────────────────────────────────────────────────
+# Called by reset_sdk_globals (dev swap / boot: everything goes) and by
+# engine.core.mission_change (a warp's carry-over change: the Game, the player,
+# the bridge and the warp set stay -- spec §2's keep/reset table). One body
+# each, so the two paths cannot drift.
+
+def _reset_timers(keep=None) -> None:
+    """Drop the game- and realtime-manager timers and the deferred-playing
+    registry. `keep` (a set of object ids) spares every timer whose event is
+    addressed to one of those objects -- TGTimer records no owner; its event's
+    destination IS the owner (a TGSequence for its step delays, the action
+    itself for a _complete_after deferral). None drops everything. Clocks are
+    the caller's business."""
+    import App
+    for mgr in (App.g_kTimerManager, App.g_kRealtimeTimerManager):
+        if keep is None:
+            mgr._timers.clear()
+            continue
+        for obj_id, timer in list(mgr._timers.items()):
+            ev = timer.GetEvent()
+            dest = ev.GetDestination() if ev is not None else None
+            if dest is None or id(dest) not in keep:
+                del mgr._timers[obj_id]
+    # Deferred-completion timers just died with the managers above; drop the
+    # matching skip-candidate registry so Backspace can't "skip" stale actions
+    # from the prior mission.
+    from engine.appc import actions as _appc_actions
+    if keep is None:
+        _appc_actions.reset_deferred_playing()
+    else:
+        for action in list(_appc_actions._deferred_playing):
+            if id(action) not in keep:
+                _appc_actions._deferred_playing.discard(action)
+
+
+def _reset_action_registry(keep=None) -> None:
+    """Drop g_kTGActionManager's named actions (all, or all but the actions
+    whose id is in `keep`; a name left with none is dropped)."""
+    import App
+    _action_mgr = getattr(App, "g_kTGActionManager", None)
+    registered = getattr(_action_mgr, "_registered", None)
+    if not isinstance(registered, dict):
+        return
+    if keep is None:
+        registered.clear()
+        return
+    for name, actions in list(registered.items()):
+        kept = [a for a in actions if id(a) in keep]
+        if kept:
+            registered[name] = kept
+        else:
+            del registered[name]
+
+
+def _reset_session_scratch() -> None:
+    """The crew-speech channel, live ObjectGroups and the tooltip throttle."""
+    # Clear the global crew-speech channel so a line still "live" at swap
+    # time can't suppress the next mission's first SpeakLine. The subtitle
+    # crew slot itself is cleared transitively by reset_for_tests (it
+    # rebuilds _SubtitleWindow).
+    from engine.appc import crew_speech
+    crew_speech.bus().reset()
+    # ObjectGroup._live: clear for parity with the per-test reset
+    # (tests/conftest.py). Game.GetPlayerGroup() returns None in this engine
+    # (engine/core/game.py:~446) -- there is no persistent Game-level player
+    # group surviving a swap to justify leaving a prior mission's groups
+    # registered -- so a stale group with an SDK instance handler must not go
+    # on hearing the next mission's set adds. Registration is self-healing:
+    # ObjectGroup.SetEventFlag re-adds `self` to `_live`, so any group that
+    # re-arms its flags after this reset (AddFleetCommandHandlers does, at
+    # registration) is live again.
+    from engine.appc.objects import ObjectGroup
+    ObjectGroup._live.clear()
+    # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
+    # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
+    # time (which can be minutes) while the new mission's clock restarts at
+    # 0.0 above -- run_update_tooltip's `now - last < period` throttle then
+    # reads as deeply negative and stays "not yet due" for however long it
+    # takes real game time to climb back past the old value, silently
+    # freezing the Helm/XO tooltip rows for the whole stretch. Clearing the
+    # owner too so a stale reference from the old mission's crew menu can't
+    # be mistaken for the new mission's focused officer.
+    _tooltip_dispatch_state["last"] = -1e9
+    from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
+    CharacterClass_SetCurrentToolTipOwner(None)
+
+
+def _reset_missionlib_state() -> None:
+    """MissionLib's viewscreen-in-use flag and master action sequence."""
+    import App
+    # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
+    # away mid-briefing (while its bridge viewscreen shows a comm character),
+    # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
+    # ViewscreenOn() then sees the viewscreen as already in use and enters a
+    # 2-second retry loop that never completes — the comm character (e.g. Liu
+    # in E1M1) never speaks or renders. ResetViewscreen() clears the flag
+    # (first thing it does) and re-enables the Hail/Contact menus; call it
+    # before _sets.clear() so its CallWaiting() still sees the live bridge.
+    # Best-effort, matching the surrounding reset discipline.
+    try:
+        import MissionLib
+        MissionLib.ResetViewscreen()
+        # Drop any master action sequence carried over from the previous
+        # mission. QueueActionToPlay stores the master's id in
+        # g_idMasterSequenceObj and appends every subsequent queued action onto
+        # it; a stalled/leftover master from the prior mission would otherwise
+        # swallow the next mission's queued cutscene/comm sequences. Completed
+        # masters already invalidate their id (TGSequence.Completed), so this is
+        # a belt-and-suspenders reset for a master left mid-play at swap time.
+        MissionLib.g_idMasterSequenceObj = App.NULL_ID
+    except Exception as _e:
+        dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
+
+
+def _reset_system_loader_state() -> None:
+    """The loaded-star-system latch and the unmapped-body warnings."""
+    try:
+        from engine.systems import system_loader
+        system_loader.reset()
+    except Exception as _e:
+        dev_mode.log_swallowed("system_loader.reset on swap", _e)
+    _mapped_body_warned.clear()
+
+
+def _reset_sensor_state() -> None:
+    """Nebula trackers, concealment latches, the identification clock."""
     # Clear the nebula tracker so stale membership state from the prior set
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
@@ -4040,26 +4421,6 @@ def reset_sdk_globals() -> None:
     # Force the next tick to re-run sensor identification for the new mission.
     global _last_identify_gt
     _last_identify_gt = None
-    # Drop the named-action registry. g_kTGActionManager is a process-lifetime
-    # singleton (App.py) and RegisterAction appends to a per-name LIST, so
-    # without this every action ever registered is retained forever — and the
-    # no-argument KillActions() form (E6M1.py:894, E6M2.py:1043, ...) would
-    # Abort() a previous mission's actions, which is not inert (TGSequence.Abort
-    # unregisters the object id, TGSoundAction.Abort stops audio). Clear only:
-    # the LIST semantics are correct (E1M1 registers six sequences under
-    # "CharacterIntros" and the skip must kill all six) — only the lifetime was
-    # wrong, and pruning on registration would drop the not-yet-started
-    # sequences this feature exists to kill.
-    _action_mgr = getattr(App, "g_kTGActionManager", None)
-    if isinstance(getattr(_action_mgr, "_registered", None), dict):
-        _action_mgr._registered.clear()
-    # Re-apply the dev-only PlayedTutorial force after the clear. This function
-    # runs once at start-of-mission and again on every swap, so it is the one
-    # seam that covers every load path: _init_mission,
-    # MissionController._drain_pending_swap and MissionController.load_quickbattle
-    # all route through reset_sdk_globals().
-    from engine import dev_tutorial_flag
-    dev_tutorial_flag.apply_played_tutorial_flag()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
@@ -4150,6 +4511,11 @@ def _init_mission(mission_module_name: str):
 
     mission = Mission()
     episode = Episode()
+    # The dev loader skips the Game -> Episode cascade, so the episode's module
+    # is derived from the mission's (None -> "": no episode to change from).
+    from engine.core import mission_change
+    mission._module_name = mission_module_name
+    episode._module_name = mission_change.episode_module_for(mission_module_name) or ""
     episode.SetCurrentMission(mission)
     game = Game()
     game.SetCurrentEpisode(episode)
@@ -4229,29 +4595,36 @@ def _post_dev_player_arrival() -> None:
 
 
 def _live_sets() -> list:
-    """The set(s) whose astro bodies belong in the world scene: just the active
-    space set (the one the player occupies) when determinable, else every set
-    (legacy fallback). Mirrors iter_ships' active-set filtering so the player at
-    Serris 3 doesn't see other systems' planets/suns bleed into the scene."""
-    from engine.appc.ship_iter import active_set
-    act = active_set()
-    if act is not None:
-        return [act]
-    import App
-    return list(App.g_kSetManager._sets.values())
+    """The set whose astro bodies belong in the world scene: the VIEWED set
+    (frames.viewing_set() -- an in-space cutscene's rendered set, else the
+    player's), or nothing when no set is viewed.
+
+    Exactly one set, never its siblings: every loaded region of a star system
+    has its own Sun object, and apply_map puts each one at the SAME map star.
+    Drawing the whole viewed frame's suns would draw that star once per loaded
+    region, coincident. Ships and the dust feed take the whole frame; suns,
+    flares and a set's own (unmapped) planets take only this."""
+    view = _frames.viewing_set()
+    return [view] if view is not None else []
 
 
 def _iter_planets(*, verbose: bool = False) -> Iterable:
-    """Walk every Planet (non-Sun) in the active set (see _live_sets)."""
+    """Walk every Planet (non-Sun) the world scene realizes as an instance:
+    those of the viewed set (see _live_sets) when that set is NOT mapped. A
+    mapped set's planets are drawn from the system map (celestial.draw_list),
+    never as instances of their Planet objects."""
     from engine.appc.planet import Planet, Sun
+    from engine.systems import region_hooks
     for pSet in _live_sets():
+        if region_hooks.is_mapped(pSet):
+            continue
         for obj in _iter_set_objects(pSet):
             if isinstance(obj, Planet) and not isinstance(obj, Sun):
                 yield obj
 
 
 def _iter_suns() -> Iterable:
-    """Walk every Sun in the active set (see _live_sets)."""
+    """Walk every Sun in the viewed set (see _live_sets)."""
     from engine.appc.planet import Sun
     for pSet in _live_sets():
         for obj in _iter_set_objects(pSet):
@@ -4383,13 +4756,22 @@ def _warp_clear_turn():
     _warp_turn_start_R = None
 
 
-def _aggregate_planets(pSets):
+def _aggregate_planets(pSets, *, view=_frames.UNSCOPED):
     """Return list[dict] {position, radius} for Planet objects across pSets,
     feeding the dust pass's proximity density scaling. Planets with
-    radius <= 0 are dropped (they cannot define an influence sphere)."""
+    radius <= 0 are dropped (they cannot define an influence sphere).
+
+    With `view` (the render call site passes frames.viewing_set()), only
+    planets in the viewed frame are kept, positioned in the viewed set's
+    coordinates; view=None means nothing is viewed, so nothing is kept."""
     from engine.appc.planet import Planet, Sun
     out = []
+    if view is None:
+        return out
+    scoped = view is not _frames.UNSCOPED
     for pSet in pSets:
+        if scoped and _frames.offset_between(view, pSet) is None:
+            continue
         for obj in getattr(pSet, "_objects", {}).values():
             # Sun subclasses Planet; suns are fed via the separate sun list,
             # so exclude them here (planets are density-only).
@@ -4399,8 +4781,11 @@ def _aggregate_planets(pSets):
             if radius <= 0:
                 continue
             loc = obj.GetWorldLocation()
+            pos = (loc.x, loc.y, loc.z)
+            if scoped:
+                pos = _frames.in_view(view, pSet, *pos)
             out.append({
-                "position": (loc.x, loc.y, loc.z),
+                "position": pos,
                 "radius": float(radius),
             })
     return out
@@ -4435,16 +4820,133 @@ def _aggregate_nebulae(pSet):
 
 
 def _aggregate_lens_flares() -> list:
-    """Collect lens-flare descriptors in BC native world units."""
+    """Collect lens-flare descriptors in BC native world units.
+
+    Only the viewed set's flares, like the suns (_live_sets): every loaded
+    region's flare is sourced on its own Sun, and every one of those Suns sits
+    at the same map star, so taking the whole viewed frame would draw one
+    coincident flare per loaded region."""
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
-    import App
     return aggregate_lens_flares_for_renderer(
-        _paths.game_root(), list(App.g_kSetManager._sets.values()))
+        _paths.game_root(), _live_sets(), view=_frames.viewing_set())
+
+
+def _aggregate_dust_planets(view) -> list:
+    """The dust pass's planet feed ({position, radius}, view coordinates).
+
+    A MAPPED viewed frame takes the system map's bodies (celestial.draw_list):
+    its sets' Planet objects are never realized, the map is what is drawn, and
+    it holds every body of the system -- not only those of loaded regions. An
+    unmapped frame is unchanged: its sets' Planet objects (_aggregate_planets).
+    """
+    from engine.systems import celestial, region_hooks
+    if view is not None and region_hooks.is_mapped(view):
+        return [{"position": b.position, "radius": float(b.radius_gu)}
+                for b in celestial.draw_list(view) if b.radius_gu > 0]
+    import App
+    return _aggregate_planets(list(App.g_kSetManager._sets.values()),
+                              view=view)
+
+
+def _with_render_positions(descs, key, to_render):
+    """Copies of `descs` with `key` moved into render space by `to_render`
+    (point -> point | None); a descriptor whose point is None is dropped.
+    Every other field rides through untouched."""
+    out = []
+    for d in descs:
+        p = to_render(d[key])
+        if p is None:
+            continue
+        d = dict(d)
+        d[key] = p
+        out.append(d)
+    return out
+
+
+def _render_nebulae(nebulae, view, pSet):
+    """_aggregate_nebulae's descriptors with every sphere centre in render
+    space (the radius rides along); a sphere outside the viewed frame is
+    dropped, and a nebula left with none is not drawn."""
+    out = []
+    for d in nebulae:
+        spheres = []
+        for (x, y, z, radius) in d["spheres"]:
+            c = _frames.to_render(view, pSet, x, y, z)
+            if c is not None:
+                spheres.append((c[0], c[1], c[2], radius))
+        if spheres:
+            d = dict(d)
+            d["spheres"] = spheres
+            out.append(d)
+    return out
+
+
+def _push_environment_feeds(r, active_set, warp_streaking):
+    """Push the per-frame environment feeds -- suns, dust planets, nebulae,
+    nebula godrays, hull discharges, the nebula wake, lens flares -- every
+    world position in RENDER space, so after _apply_render_origin. Returns
+    (suns, planets, lens_flares) for the tick-0 verbose log.
+
+    Coordinates in: suns, flares and dust planets are the viewed set's (view
+    coordinates); nebulae and the wake belong to `active_set` (the player's
+    set, where the nebula tracker runs); hull discharges are anchored on the
+    player's instance surface points, which the renderer reports in view
+    coordinates."""
+    view = _frames.viewing_set()
+    to_view_render = _frames.view_to_render
+
+    suns = [] if warp_streaking else _aggregate_suns()
+    suns = _with_render_positions(suns, "position", to_view_render)
+    r.set_suns(suns)
+
+    planets = _with_render_positions(_aggregate_dust_planets(view),
+                                     "position", to_view_render)
+    r.set_dust_planets(planets)
+
+    nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
+    r.set_nebulae(_render_nebulae(nebulae, view, active_set))
+
+    godrays = []
+    if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
+        godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
+                   for f in _nebula_thunder.active_flashes()]
+    r.set_nebula_godrays(godrays)
+
+    discharges = []
+    if (_hull_discharge is not None
+            and r.nebula_lightning_enabled()
+            and not warp_streaking):
+        discharges = _with_render_positions(
+            _hull_discharge.active_discharges(), "world_pos", to_view_render)
+    r.set_hull_discharges(discharges)
+
+    wake_pts = []
+    if (_nebula_wake is not None and r.volumetric_nebulae_enabled()
+            and not warp_streaking):
+        wake_pts = _with_render_positions(
+            _nebula_wake.trail_points(), "pos",
+            lambda p: _frames.to_render(view, active_set, *p))
+    r.set_nebula_wake(wake_pts)
+
+    # The image-based Modern Lens Flares and the classic per-sun billboard
+    # flares are mutually exclusive: when the modern flare is on, suppress
+    # the billboards so only the screen-space flare renders.
+    lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
+    lens_flares = _with_render_positions(lens_flares, "source_world_pos",
+                                         to_view_render)
+    r.set_lens_flares(lens_flares)
+    return suns, planets, lens_flares
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
     """Return absolute path to the planet's NIF, or None if unavailable."""
-    rel = planet.GetModelPath()
+    return _planet_model_path(planet.GetModelPath(), verbose=verbose)
+
+
+def _planet_model_path(rel, *, verbose: bool = False) -> Optional[str]:
+    """Absolute path of a planet/moon NIF from its relative game-asset path
+    (a Planet's GetModelPath(), a map body's appearance.model), or None when
+    it is empty or missing. The ONE resolver for both planet sources."""
     if not rel:
         if verbose:
             print(f"[host_loop]   skip planet: GetModelPath() returned empty", flush=True)
@@ -4455,6 +4957,38 @@ def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
             print(f"[host_loop]   skip planet: NIF not found at {abs_path}", flush=True)
         return None
     return str(abs_path)
+
+
+def _load_planet_model(r_, nif_path: str, *, cache=None,
+                       verbose: bool = False) -> Optional[tuple]:
+    """(handle, extent, sphere_radius) for a planet/moon NIF, or None when
+    load_model raises. Shared by every planet realize path: the mission load,
+    realize_set_objects, and the map-drawn bodies.
+
+    `cache` is the HostController (its nif_to_handle / nif_to_extent /
+    nif_to_sphere_radius survive mission swaps); None loads uncached, as
+    realize_set_objects always has."""
+    handle = cache.nif_to_handle.get(nif_path) if cache is not None else None
+    if handle is not None:
+        extent = cache.nif_to_extent.get(nif_path, 1.0)
+        return handle, extent, cache.nif_to_sphere_radius.get(nif_path, extent)
+    planet_tex_search = [str(p) for p in
+                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
+    try:
+        handle = r_.load_model(nif_path, planet_tex_search)
+    except Exception as e:
+        if verbose:
+            print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
+                  f"{type(e).__name__}: {e}", flush=True)
+        return None
+    center, half_extents = r_.model_aabb(handle)
+    extent = _model_extent_from_aabb(center, half_extents)
+    sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
+    if cache is not None:
+        cache.nif_to_handle[nif_path] = handle
+        cache.nif_to_extent[nif_path] = extent
+        cache.nif_to_sphere_radius[nif_path] = sphere_radius
+    return handle, extent, sphere_radius
 
 
 def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
@@ -4634,9 +5168,20 @@ def _resolve_active_set(player):
 
     Considers both _lights and _backdrops when deciding whether a set
     is 'live' so backdrop-only sets (rare but legal) are picked up.
+
+    The bridge set is never the answer: this is the EXTERIOR view's set, and
+    the bridge's own lighting has its own path (_aggregate_bridge_lights).
+    Cutscenes end with ChangeRenderedSet("bridge") (E2M0.py:1924); the bridge
+    has a light but no backdrops, so honouring it blanked the space sky and
+    lit the ship with the bridge light until the next warp.
     """
     import App
+    from engine.appc.bridge_set import BridgeSet
     rendered = App.g_kSetManager.get_explicit_rendered_set()
+    if rendered is not None and (
+        isinstance(rendered, BridgeSet) or rendered.GetName() == "bridge"
+    ):
+        rendered = None
     if rendered is not None and (
         getattr(rendered, "_lights", None) or
         getattr(rendered, "_backdrops", None)
@@ -4655,13 +5200,24 @@ def _resolve_active_set(player):
 _resolve_active_lighting_set = _resolve_active_set
 
 
-def _aggregate_lights(pSet):
+def _aggregate_lights(pSet, player=None):
     """Thin wrapper over engine.appc.lights.aggregate_for_renderer that
     plugs in this module's DEFAULT_AMBIENT / DEFAULT_DIRECTIONALS. Kept
     as a private symbol so existing tests and call sites don't have to
-    juggle the defaults at every call site."""
+    juggle the defaults at every call site.
+
+    With a `player` in a MAPPED region, the key light is re-aimed from the
+    system's star and takes the star's colour at BC's authored brightness
+    (engine/systems/star_light.py). Recomputed every call, so it stays
+    correct anywhere in the system, mid-dash included. Unmapped sets and
+    player=None are exactly BC's lights."""
     from engine.appc.lights import aggregate_for_renderer
-    return aggregate_for_renderer(pSet, DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
+    from engine.systems import star_light
+    ambient, directionals = aggregate_for_renderer(
+        pSet, DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
+    if player is not None and pSet is not None:
+        directionals = star_light.for_player(pSet, player, directionals)
+    return ambient, directionals
 
 
 def _aggregate_bridge_lights():
@@ -4936,6 +5492,21 @@ class MissionSession:
     # (ShipClass._articulation_poses); this just stops a settled hull from
     # re-crossing into C++ every frame.
     ship_articulation: dict[Any, tuple] = field(default_factory=dict)
+    # Ship instance ids the render scope has HIDDEN (out of the viewed frame
+    # or past the draw distance; _reconcile_runtime_instances). Consulted by
+    # every other per-frame visibility writer so none re-shows them.
+    scope_hidden: set = field(default_factory=set)
+    # The system map's planets and moons (system-frames Plan 3 Task 4),
+    # diffed each tick against celestial.draw_list(viewing_set()) by
+    # _reconcile_celestial_instances. celestial_instances: body key -> iid;
+    # celestial_placed: body key -> the CelestialBody last pushed, in
+    # draw-list order (a body whose model failed to load is placed with no
+    # instance, so it is warned about once per entry into view, not per tick).
+    celestial_instances: dict[Any, Any] = field(default_factory=dict)
+    celestial_placed: dict[Any, Any] = field(default_factory=dict)
+    # key -> natural scale of its instance (radius_gu / model sphere radius),
+    # so a reposition re-pushes the matrix without re-reading the model.
+    celestial_scale: dict[Any, float] = field(default_factory=dict)
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
@@ -4943,10 +5514,16 @@ class MissionSession:
             renderer.destroy_instance(iid)
         for iid in list(self.planet_instances.values()):
             renderer.destroy_instance(iid)
+        for iid in list(self.celestial_instances.values()):
+            renderer.destroy_instance(iid)
+        self.celestial_instances.clear()
+        self.celestial_placed.clear()
+        self.celestial_scale.clear()
         self.ship_instances.clear()
         self.ship_glow_controllers.clear()
         self.ship_emitters.clear()
         self.ship_articulation.clear()
+        self.scope_hidden.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
         # The bindings themselves died with the instances above; drop the
@@ -5008,8 +5585,23 @@ def _cache_ship_hull_pieces(ship, handle, r_, iid=None) -> None:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
 
-def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> None:
+def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
+                        include_planets: bool = True,
+                        ships: Optional[Iterable] = None) -> None:
     """Build render instances for ONE set's ships/planets mid-mission.
+
+    `ships`, when given, restricts the ship pass to those ships (all of which
+    are in `pSet`): `_reconcile_runtime_instances` passes only the ships inside
+    the draw distance, so a far ship is never loaded just to be destroyed.
+
+    A MAPPED set's Planet objects are never realized: the system map draws
+    every body of a mapped frame (celestial.draw_list), so an instance of the
+    set's own Planet would draw it twice.
+
+    `include_planets=False` realizes the ships only, and skips the unmapped-
+    realize alarm with them: the alarm guards the planet-radius cache, which a
+    ships-only realize never fills. Used by `_reconcile_runtime_instances`'s
+    no-player fallback for every set that is not being viewed.
 
     Mirrors the ship/planet instance-building loops in `_MissionLoader.load`,
     filtered to a single set and made idempotent: any object already present in
@@ -5024,9 +5616,13 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
     nif_to_handle cache (it has no controller here); it loads per object, which
     is correct — the renderer dedupes identical NIFs internally.
     """
+    if include_planets:
+        from engine.systems import region_hooks
+        region_hooks.check_realized(pSet)
+
     r_ = renderer
 
-    for ship in _iter_ships_in_set(pSet):
+    for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
         nif_path = _ship_nif_path(ship, verbose=verbose)
@@ -5106,24 +5702,21 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 print(f"[host_loop]   realize: shield register skipped for ship: "
                       f"{type(e).__name__}: {e}", flush=True)
 
-    planet_tex_search = [str(p) for p in
-                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
+    if not include_planets:
+        return
+    from engine.systems import region_hooks
+    if region_hooks.is_mapped(pSet):
+        return
     for planet in _iter_planets_in_set(pSet):
         if planet in session.planet_instances:
             continue
         nif_path = _planet_nif_path(planet, verbose=verbose)
         if nif_path is None:
             continue
-        try:
-            handle = r_.load_model(nif_path, planet_tex_search)
-        except Exception as e:
-            if verbose:
-                print(f"[host_loop]   realize: skip planet: load_model({nif_path}) "
-                      f"raised: {type(e).__name__}: {e}", flush=True)
+        loaded = _load_planet_model(r_, nif_path, verbose=verbose)
+        if loaded is None:
             continue
-        center, half_extents = r_.model_aabb(handle)
-        extent = _model_extent_from_aabb(center, half_extents)
-        sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
+        handle, extent, sphere_radius = loaded
         if planet.GetRadius() <= 0.0:
             try:
                 planet.SetRadius(extent * BC_MODEL_SCALE)
@@ -5142,9 +5735,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
 def teardown_set_objects(session, pSet, renderer) -> None:
     """Destroy render instances for this set's REMAINING objects and forget them.
 
-    The warp spine moves the player out of the source set before terminating it,
-    so the player is no longer enumerated here and survives. Objects outside
-    `pSet` are never touched."""
+    The warp spine moves the player out of the source set before tearing down
+    its render instances, so the player is no longer enumerated here and
+    survives. Objects outside `pSet` are never touched."""
     for ship in list(_iter_ships_in_set(pSet)):
         iid = session.ship_instances.pop(ship, None)
         if iid is not None:
@@ -5155,6 +5748,7 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # look already-posed, or a re-realized BoP would render its wings
             # at the static pose until its deflection next CHANGED.
             session.ship_articulation.pop(iid, None)
+            session.scope_hidden.discard(iid)
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
@@ -5164,6 +5758,71 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             renderer.destroy_instance(iid)
             session.planet_natural_scale.pop(planet, None)
             session.slot_bindings.pop(planet, None)
+
+
+def _ensure_system_loaded(session) -> None:
+    """Ask system_loader to load the CURRENT player's system's regions.
+
+    Reads Game_GetCurrentGame().GetPlayer() -- the same accessor
+    _reconcile_runtime_instances uses for its own player-identity check --
+    never session.player. On a RecreatePlayer tick (QuickBattle's
+    StartSimulation2, a reinforcement spawn that replaces the player)
+    session.player is still the OLD ship until _reconcile_runtime_instances
+    (which runs right after this call) updates it; reading session.player
+    here would resolve last tick's set, one tick late, instead of the set
+    the live player is actually in THIS tick.
+
+    Best-effort plumbing, not gameplay logic: no game, no player, and any
+    exception from the loader are all silent no-ops so a broken region map
+    or missing player never breaks the tick.
+    """
+    if session is None:
+        return
+    try:
+        game = Game_GetCurrentGame()
+        player = game.GetPlayer() if game is not None else None
+        if player is not None:
+            from engine.systems import system_loader
+            system_loader.ensure_loaded(player)
+    except Exception as exc:  # noqa: BLE001 - best-effort per-tick plumbing
+        dev_mode.log_swallowed("system_loader.ensure_loaded", exc)
+
+
+def _cull_centre(view, player):
+    """Where the ship draw-distance cull is measured from, in `view`'s
+    coordinates, or None when there is nothing trustworthy to measure from.
+
+    The camera eye, when it was noted while THIS set was viewed. An eye noted
+    under another view is in that set's coordinates (a cutscene cut, a warp
+    to another region or system): it is dropped -- reset, so the dynamic-light
+    fade does not misjudge it either -- and the player's position in view
+    coordinates stands in, as it does on the first tick after a load (no eye
+    yet). No usable eye and no player in the viewed frame -> None."""
+    global _last_camera_eye, _last_camera_eye_view
+    if _last_camera_eye is not None and _last_camera_eye_view is view:
+        return _last_camera_eye
+    _last_camera_eye = None
+    _last_camera_eye_view = None
+    if player is None:
+        return None
+    return _frames.local_in(view, player)
+
+
+def _set_scope_visible(session, renderer, ship, visible: bool) -> None:
+    """Show or hide `ship`'s instance for the render scope, calling the
+    renderer only on a change. `session.scope_hidden` is the record the other
+    per-frame visibility writers (warp hide, cloak, bridge view) consult, so
+    none of them re-shows a ship the scope hides."""
+    iid = session.ship_instances.get(ship)
+    if iid is None:
+        return
+    hidden = session.scope_hidden
+    if visible and iid in hidden:
+        hidden.discard(iid)
+        renderer.set_visible(iid, True)
+    elif not visible and iid not in hidden:
+        hidden.add(iid)
+        renderer.set_visible(iid, False)
 
 
 def _reconcile_runtime_instances(session, renderer, *,
@@ -5214,46 +5873,319 @@ def _reconcile_runtime_instances(session, renderer, *,
                 and not registry_texture.has_replacements(_p)):
             registry_texture.apply_class_default(_p)
 
-    # ADDITIONS: realize un-realized ships in the ACTIVE set only. BC keeps one
-    # space set live at a time; realizing every set here would re-bleed other
-    # systems' ships (the Serris2 Cardassians, the Vesuvi6 Facility, Starbase 12)
-    # into the player's scene the tick after load. Idempotent — realize_set_objects
-    # skips ships already in session.ship_instances. When no active set is
-    # determinable (no player yet) fall back to the legacy all-sets reconcile.
-    from engine.appc.ship_iter import active_set as _active_set
-    act = _active_set()
-    if act is not None:
-        live_ships = set(_iter_ships_in_set(act))
-        if any(ship not in session.ship_instances for ship in live_ships):
-            realize_set_objects(session, act, renderer, verbose=verbose)
+    # SCOPE (system-frames Plan 3 Task 3, Ruling 4). Entering a star system
+    # loads all its regions (system_loader); a ship in Ona2 is as much in the
+    # scene as one in Ona1, drawn at its position in the viewed set's
+    # coordinates (_sync_instance_transforms). So:
+    #   * KEPT: every ship in the PLAYER's frame or the VIEWED frame keeps its
+    #     instance. A set in neither (a left-behind system, Starbase 12 once a
+    #     cutscene there ends) is torn down below -- that is what keeps other
+    #     systems' ships (the Serris2 Cardassians, the Vesuvi6 Facility) out.
+    #   * VISIBLE: in the viewed frame AND within SHIP_DRAW_DISTANCE_GU of the
+    #     cull centre (_cull_centre), with render_scope's hysteresis. Culling
+    #     HIDES, never destroys: a destroyed instance loses its hull carve and
+    #     decals. The player is never distance-culled, only hidden while a
+    #     cutscene shows another frame.
+    #   * REALIZED: a kept ship is realized only once it would be visible, so
+    #     loading a system never loads every model in it.
+    # With no usable cull centre (no eye for this view and no player in its
+    # frame) no visibility decision is made this tick, and only the viewed
+    # set's own ships are realized -- never every sibling region's.
+    # Planets come only from the viewed set, and only when it is unmapped
+    # (realize_set_objects). Idempotent: realize skips realized ships.
+    #
+    # When no set is viewed at all (no player, no explicit space rendered set)
+    # fall back to the legacy all-sets reconcile -- for SHIPS; planets only
+    # for the explicit rendered set. Since warp departure stopped deleting the
+    # set you left, every left-behind region holds torn-down ships and would
+    # otherwise leave ghost planets of unrelated systems in the scene.
+    view = _frames.viewing_set()
+    if view is not None:
+        from engine.systems import render_scope
+        game = Game_GetCurrentGame()
+        cur_player = game.GetPlayer() if game is not None else None
+        p_set = _frames.containing_set(cur_player)
+        centre = _cull_centre(view, cur_player)
+        hidden = session.scope_hidden
+        live_ships = set()
+        for pSet in App.g_kSetManager._sets.values():
+            v_off = _frames.offset_between(view, pSet)
+            in_player_frame = (p_set is not None and
+                               _frames.offset_between(p_set, pSet) is not None)
+            if v_off is None and not in_player_frame:
+                continue
+            to_realize = []
+            decisions = []          # (ship, visible) to apply after realize
+            for ship in _iter_ships_in_set(pSet):
+                iid = session.ship_instances.get(ship)
+                if ship is cur_player:
+                    visible = v_off is not None
+                elif v_off is None:
+                    visible = False
+                elif centre is None:
+                    visible = None              # no decision this tick
+                else:
+                    loc = ship.GetWorldLocation()
+                    visible = render_scope.within_draw_distance(
+                        (loc.x + v_off[0], loc.y + v_off[1], loc.z + v_off[2]),
+                        centre, shown=iid is not None and iid not in hidden)
+                if iid is None:
+                    if (ship is cur_player or visible
+                            or (visible is None and pSet is view)):
+                        to_realize.append(ship)
+                        if visible is False:    # the player, off-frame
+                            decisions.append((ship, False))
+                    continue
+                live_ships.add(ship)
+                if visible is not None:
+                    decisions.append((ship, visible))
+            if to_realize:
+                realize_set_objects(session, pSet, renderer, verbose=verbose,
+                                    include_planets=pSet is view,
+                                    ships=to_realize)
+                live_ships.update(s_ for s_ in to_realize
+                                  if s_ in session.ship_instances)
+            for ship, visible in decisions:
+                _set_scope_visible(session, renderer, ship, visible)
     else:
+        viewed = App.g_kSetManager.get_explicit_rendered_set()
         live_ships = set()
         for pSet in App.g_kSetManager._sets.values():
             set_ships = list(_iter_ships_in_set(pSet))
             live_ships.update(set_ships)
             if any(ship not in session.ship_instances for ship in set_ships):
-                realize_set_objects(session, pSet, renderer, verbose=verbose)
+                realize_set_objects(session, pSet, renderer, verbose=verbose,
+                                    include_planets=pSet is viewed)
 
-    # REMOVALS: any realized ship not in the live (active-set) roster is destroyed
-    # and forgotten — covers both despawns and ships left behind when the player
-    # warps to another set.
+    # REMOVALS: any realized ship not in the live (kept) roster is destroyed
+    # and forgotten — covers despawns and ships whose set left both the
+    # player's and the viewed frame. A ship merely out of range is HIDDEN
+    # above, never removed here.
     for ship in list(session.ship_instances.keys()):
         if ship not in live_ships:
             iid = session.ship_instances.pop(ship, None)
             if iid is not None:
                 renderer.destroy_instance(iid)
-                # ship_glow_controllers is keyed by instance id.
+                # The per-instance records keyed by the dead iid (the same
+                # set teardown_set_objects drops): a recycled iid must not
+                # inherit them.
                 session.ship_glow_controllers.pop(iid, None)
+                session.ship_articulation.pop(iid, None)
+                session.ship_emitters.pop(iid, None)
+                session.scope_hidden.discard(iid)
                 # The transform-slot binding died with the instance.
                 session.slot_bindings.pop(ship, None)
 
     # PLAYER/CAMERA: detect a player identity change (covers RecreatePlayer).
+    _sync_player_identity(session, on_player_change)
+
+
+def _sync_player_identity(session, on_player_change=None) -> None:
+    """Point session.player at the game's current player, firing
+    `on_player_change` once when the identity changed (RecreatePlayer's
+    destroy+recreate). A no-op when unchanged, and when there is no game or no
+    player yet.
+
+    The scene reconcile's player tail, split out because the reconcile runs
+    AFTER the sim: the host loop also calls this ahead of the sim, so on a
+    RecreatePlayer tick input, weapons, combat and the warp FSM drive the new
+    ship rather than the destroyed one (system-frames Plan 3, Ruling 11;
+    order guarded by tests/host/test_scene_reconcile_ordering.py)."""
     game = Game_GetCurrentGame()
     new_player = game.GetPlayer() if game is not None else None
     if new_player is not None and new_player is not session.player:
+        if session.player is not None:
+            # The ship swapped away from is no longer ticked as the player:
+            # end its dash here, or it dashes (and glows) forever.
+            from engine.appc import dash
+            dash.abandon(session.player)
         session.player = new_player
         if on_player_change is not None:
             on_player_change(new_player)
+
+
+# _ChaseCamera.set_ship_radius's floor clamp (engine/cameras/chase.py) --
+# the value the chase/tracking cameras are left with when seeded from an
+# unrealized ship's GetRadius() == 0.
+_UNKNOWN_SHIP_RADIUS = 1e-6
+
+
+def _reconcile_camera_radius(director, player) -> None:
+    """Keep the chase/tracking cameras' ship-radius framing in sync with the
+    player's actual GetRadius(), once it is known.
+
+    QuickBattle's RecreatePlayer creates the new player ship in the
+    preload-done event, before ShipClass realization sets its radius (this
+    module's `if ship.GetRadius() <= 0.0: ship.SetRadius(...)`), which runs
+    later in the same frame's scene reconcile. _sync_player_identity's
+    on_player_change callback (Ruling 11, pre-sim) therefore seeds the
+    cameras from a radius of 0, which _ChaseCamera.set_ship_radius clamps to
+    _UNKNOWN_SHIP_RADIUS -- putting the eye at the ship's centre, with
+    nothing left to correct it once the ship is realized.
+
+    Call every frame, after the scene reconcile: a no-op while the radius is
+    still 0 or already matches the cameras' cached value (a ship whose
+    radius was already known at the swap is untouched -- no extra snap).
+    Once the real radius appears, re-seed both cameras and snap exactly
+    once for that identity change (the "was it the unknown floor" check IS
+    the once -- a later frame's radius already matches and short-circuits
+    above)."""
+    if player is None:
+        return
+    radius = player.GetRadius()
+    if radius <= 0.0 or radius == director.chase.ship_radius:
+        return
+    was_unknown = director.chase.ship_radius <= _UNKNOWN_SHIP_RADIUS
+    director.chase.set_ship_radius(radius)
+    director.tracking.set_ship_radius(radius)
+    if was_unknown:
+        director.snap()
+
+
+def _celestial_matrix(body, natural_scale: float) -> list:
+    # Identity rotation: the system map carries no orientation, so a stock
+    # planet's scripted rotation is not reproduced on a map body.
+    from engine.appc.math import TGMatrix3, TGPoint3
+    return _world_matrix_from(TGPoint3(*body.position), TGMatrix3(),
+                              natural_scale)
+
+
+def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
+                                   verbose: bool = False) -> None:
+    """Make the celestial render instances equal the draw list of the viewed
+    frame (system-frames Plan 3 Task 4). The draw list is the ONLY source of
+    a mapped system's planets and moons -- realize_set_objects skips a mapped
+    set's Planet objects.
+
+      * new key      -> create (scale radius_gu / model bound-sphere radius)
+                        and push its matrix with set_world_transform: a static
+                        body, never bound to a transform-store slot,
+      * vanished key -> destroy,
+      * moved key    -> re-push (the view moved to a sibling region),
+      * no change    -> one tuple compare, zero renderer calls.
+
+    A body whose model does not resolve or load is skipped with a warning and
+    remembered in celestial_placed, so it is not retried (or re-warned) while
+    it stays in the draw list. Once the view leaves the system and comes back
+    it is tried again -- and, still failing, warned again: one warning per
+    entry into view, not per mission."""
+    from engine.systems import celestial
+    drawn = celestial.draw_list(_frames.viewing_set())
+    placed = session.celestial_placed
+    if tuple(placed.values()) == drawn:
+        return
+    instances = session.celestial_instances
+    want = {b.key for b in drawn}
+    for key in [k for k in placed if k not in want]:
+        session.celestial_scale.pop(key, None)
+        iid = instances.pop(key, None)
+        if iid is not None:
+            renderer.destroy_instance(iid)
+    new_placed = {}
+    for body in drawn:
+        new_placed[body.key] = body
+        old = placed.get(body.key)
+        if old == body:
+            continue
+        iid = instances.get(body.key)
+        if iid is not None:
+            renderer.set_world_transform(
+                iid, _celestial_matrix(body, session.celestial_scale[body.key]))
+            continue
+        if old is not None:
+            continue            # its model failed once; already warned
+        nif_path = _planet_model_path(body.model, verbose=verbose)
+        loaded = (_load_planet_model(renderer, nif_path, cache=nif_cache,
+                                     verbose=verbose)
+                  if nif_path is not None else None)
+        if loaded is None:
+            print(f"[systems] map body not drawn, no model: "
+                  f"{'/'.join(str(k) for k in body.key)} ({body.model!r})",
+                  flush=True)
+            continue
+        handle, _extent, sphere_radius = loaded
+        # BC's render_scale divisor: the model's bound-sphere radius, so the
+        # body draws at exactly radius_gu (as realize_set_objects' planets).
+        scale = (body.radius_gu / sphere_radius) if sphere_radius > 0.0 else 1.0
+        iid = renderer.create_instance(handle)
+        instances[body.key] = iid
+        session.celestial_scale[body.key] = scale
+        renderer.set_world_transform(iid, _celestial_matrix(body, scale))
+    session.celestial_placed = new_placed
+
+
+# Mapped bodies a script has moved or resized, already warned about this
+# mission: (set name, body name). Cleared on mission swap (and by the test
+# suite's autouse reset).
+_mapped_body_warned: set = set()
+
+
+def _check_mapped_bodies_untouched(view) -> None:
+    """Warn -- once per body per mission -- when a script has moved or
+    resized one of the viewed mapped set's own Planet objects away from its
+    map body (spec §4: logged loudly, not arbitrated). Changes nothing: the
+    map keeps drawing the body where the map puts it."""
+    from engine.systems import region_hooks, resolve
+    if view is None or not region_hooks.is_mapped(view):
+        return
+    set_name = view.GetName()
+    system = resolve.system_of(set_name)
+    m = resolve.map_of(system) if system is not None else None
+    region = m.region(set_name) if m is not None else None
+    if region is None:
+        return
+    from engine.appc.planet import Planet, Sun
+    from engine.systems.apply_map import _region_body
+    for name in region.body_names:
+        if (set_name, name) in _mapped_body_warned:
+            continue
+        obj = view.GetObject(name)
+        if not isinstance(obj, Planet) or isinstance(obj, Sun):
+            continue
+        body = _region_body(m, name, region.set_name)
+        if body is None:
+            continue
+        want = tuple(p - a for p, a in zip(body.position_gu, region.anchor_gu))
+        loc = obj.GetWorldLocation()
+        got = (loc.x, loc.y, loc.z)
+        radius = float(obj.GetRadius())
+        if (max(abs(g - w) for g, w in zip(got, want)) <= 1e-3
+                and abs(radius - float(body.radius_gu)) <= 1e-3):
+            continue
+        _mapped_body_warned.add((set_name, name))
+        print(f"[systems] mapped body moved by a script: {set_name}/{name} "
+              f"at {got} r={radius:g}, map has {want} r={body.radius_gu:g} "
+              f"-- drawn where the map puts it", flush=True)
+
+
+def _reconcile_scene(session, renderer, *, nif_cache=None,
+                     on_player_change=None, verbose: bool = False) -> None:
+    """The frame's scene reconcile: load the player's system, then make the
+    render instances match the VIEWED frame -- ship scope (keep / cull /
+    hide), the map's bodies, and the mapped-body tripwire.
+
+    Every piece reads frames.viewing_set(), so the host loop runs this AFTER
+    the frame's sim section (which may warp the player or change the rendered
+    set) and immediately before _sync_instance_transforms, the camera and
+    _apply_render_origin -- all of which read the same view. Run before the
+    sim, a frame that changed the view pushed map bodies in the OLD view's
+    coordinates (Ona1 <-> Ona2 is ~50,000 GU) and culled against a stale view
+    (system-frames Plan 3 final review I2; order guarded by
+    tests/host/test_scene_reconcile_ordering.py).
+
+    Order inside: _ensure_system_loaded first, so a region set it creates is
+    realized by the scope reconcile in the same pass. The scope reconcile is
+    the FIRST visibility writer of the frame -- warp hide, the SPV hull hide,
+    bridge-player visibility and the cloak push all AND with scope_hidden,
+    and the scope only writes on a change."""
+    _ensure_system_loaded(session)
+    if session is None:
+        return
+    _reconcile_runtime_instances(
+        session, renderer, on_player_change=on_player_change, verbose=verbose)
+    _reconcile_celestial_instances(
+        session, renderer, nif_cache=nif_cache, verbose=verbose)
+    _check_mapped_bodies_untouched(_frames.viewing_set())
 
 
 def _fire_pending_preload_done() -> None:
@@ -5471,8 +6403,14 @@ class HostController:
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
+        # All three emission throttles are keyed by id(ship), and id() is a
+        # RECYCLED address: a dead ship's entry is inherited by whatever lands
+        # at that address next, which silently suppresses the new ship's first
+        # decal or carve. Clearing the carve pair and not the decal one was an
+        # omission, not a distinction.
         hit_feedback._last_carve_time.clear()
         hit_feedback._pending_carve_strength.clear()
+        hit_feedback._last_decal_emit.clear()
         from engine.appc import hull_hit_smoke
         hull_hit_smoke.reset()
         from engine.appc import damage_geometry
@@ -5501,6 +6439,14 @@ class HostController:
         try:
             from engine import warp_vfx as _wv
             _wv.get().stop()
+        except Exception:
+            pass
+        # Likewise the in-system dash's VFX clock: a dash torn down by the
+        # swap never drops out, so its intensity would hold at 1 (dust smear
+        # cap, nacelle glow) into the next mission.
+        try:
+            from engine import dash_vfx as _dvx
+            _dvx.reset()
         except Exception:
             pass
         try:
@@ -5536,6 +6482,25 @@ class HostController:
             return
         if self.post_load_hook is not None:
             self.post_load_hook()
+
+
+def _after_mission_change(controller, snap_scene, close_star_map) -> None:
+    """mission_change's on_changed hook (a warp's in-transit change, or a
+    direct LoadEpisode/LoadMission routed through it). Deliberately NOT
+    controller.post_load_hook: the carry-over keeps the bridge-officer and
+    ET_WEAPON_HIT handlers that hook registers, so re-running it would
+    register them twice. Comm sets the new mission creates are realized by
+    the per-tick _realize_comm_sets sweep."""
+    from engine.core.game import Game_GetCurrentGame
+    game = Game_GetCurrentGame()
+    ep = game.GetCurrentEpisode() if game is not None else None
+    mission = ep.GetCurrentMission() if ep is not None else None
+    if controller.session is not None and mission is not None:
+        controller.session.mission_name = mission._module_name
+    close_star_map()
+    if controller.panel_registry is not None:
+        controller.panel_registry.invalidate_all()
+    snap_scene()
 
 
 class _MissionLoader:
@@ -5816,28 +6781,27 @@ class _MissionLoader:
                     print(f"[host_loop]   shield register skipped for ship: "
                           f"{type(e).__name__}: {e}", flush=True)
 
-        planet_tex_search = [str(p) for p in
-                             _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
+        # Alarm for a mapped-frame set realized without the map (spec §2).
+        # realize_set_objects (the mid-mission/warp path) checks per-set at
+        # its own single-set entry; this is the mission-LOAD path, which has
+        # no single pSet argument -- _iter_planets below pulls from
+        # _live_sets() internally, so check every distinct set that supplies
+        # BEFORE those planets are instanced (once per set, not per object;
+        # planet_natural_scale below is exactly the cache apply_to_set's
+        # docstring says must not be populated pre-map).
+        from engine.systems import region_hooks
+        for _pSet in _live_sets():
+            region_hooks.check_realized(_pSet)
+
         for planet in _iter_planets(verbose=self._verbose):
             nif_path = _planet_nif_path(planet, verbose=self._verbose)
             if nif_path is None:
                 continue
-            handle = self._c.nif_to_handle.get(nif_path)
-            if handle is None:
-                try:
-                    handle = r_.load_model(nif_path, planet_tex_search)
-                except Exception as e:
-                    if self._verbose:
-                        print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
-                              f"{type(e).__name__}: {e}", flush=True)
-                    continue
-                self._c.nif_to_handle[nif_path] = handle
-                center, half_extents = r_.model_aabb(handle)
-                self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
-                self._c.nif_to_sphere_radius[nif_path] = \
-                    _model_sphere_radius_from_aabb(center, half_extents)
-            extent = self._c.nif_to_extent.get(nif_path, 1.0)
-            sphere_radius = self._c.nif_to_sphere_radius.get(nif_path, extent)
+            loaded = _load_planet_model(r_, nif_path, cache=self._c,
+                                        verbose=self._verbose)
+            if loaded is None:
+                continue
+            handle, extent, sphere_radius = loaded
             if planet.GetRadius() <= 0.0:
                 try:
                     planet.SetRadius(extent * BC_MODEL_SCALE)
@@ -5996,8 +6960,8 @@ def _player_forward_speed_gups(player, rot) -> float:
 # behind the target on the ship->target axis, looking at the target's
 # subsystem aim point, FOV unchanged from the exterior view (never narrowed).
 # Lengths in game units.
-VS_NEAR: float = 1.0
-VS_FAR: float = 5000.0
+VS_NEAR: float = SCENE_NEAR_GU
+VS_FAR: float = SCENE_FAR_GU
 
 
 def _viewscreen_scene_feed(player, forward_fov):
@@ -6045,11 +7009,37 @@ def _viewscreen_scene_feed(player, forward_fov):
     tc = _TrackingCamera()
     tc.set_ship_radius(max(player.GetRadius(), 1e-6))
     tc.enter_zoom_target()
+    # Solved in the VIEWED set's coordinates, like the exterior camera: the
+    # player and the watched object are each moved into them (_view_pose_of).
+    pose_of = _view_pose_of(None, _frames.viewing_set())
     # Subsystem-aware aim only when watching the player's OWN target; a mission
     # ViewscreenWatchObject on a different object frames that object's centre.
-    aim = target_aim_point(player) if tgt is player.GetTarget() else None
-    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None, aim_point=aim)
+    aim = (target_aim_point(player, pose_of=pose_of)
+           if tgt is player.GetTarget() else None)
+    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None,
+                                  aim_point=aim, pose_of=pose_of)
     return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
+
+
+def _push_target_reticle(r, player) -> None:
+    """Feed the target reticle pass (a SPACE-pass overlay drawn with the
+    exterior camera): the payload's target centre and sub-target point in
+    render space. A target outside the viewed frame is not drawn."""
+    from dataclasses import replace
+    payload = build_target_reticle(player)
+    if payload.visible:
+        view = _frames.viewing_set()
+        tset = _frames.containing_set(player.GetTarget())
+        centre = _frames.to_render(view, tset, *payload.ship_center)
+        if centre is None:
+            payload = replace(payload, visible=False)
+        else:
+            sub = payload.subtarget_pos
+            payload = replace(
+                payload, ship_center=centre,
+                subtarget_pos=(_frames.to_render(view, tset, *sub)
+                               if sub is not None else None))
+    r.set_target_reticle(payload)
 
 
 def _select_viewscreen_source(r, comm_feed, scene_feed):
@@ -6066,7 +7056,12 @@ def _select_viewscreen_source(r, comm_feed, scene_feed):
         return "comm"
     r.clear_viewscreen_comm_source()
     if scene_feed is not None:
-        r.set_viewscreen_scene_source(*scene_feed)
+        # The VZT camera is a SPACE camera: solved in view coordinates
+        # (_viewscreen_scene_feed), pushed relative to the render origin.
+        eye, look_at, *rest = scene_feed
+        r.set_viewscreen_scene_source(_frames.view_to_render(tuple(eye)),
+                                      _frames.view_to_render(tuple(look_at)),
+                                      *rest)
         return "scene"
     r.clear_viewscreen_scene_source()
     return "forward"
@@ -6954,14 +7949,18 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
         controller._vs_off_texture_sent = off_path
 
 
-def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
+def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open,
+                                    scope_hidden=False) -> None:
     """Hide the player ship while in bridge view so it doesn't appear on its
     own viewscreen feed (and the centre-mounted forward cam doesn't clip its
     hull). No-op while the Ship Property Viewer owns the frame (it manages
-    visibility itself). Idempotent — safe to call every frame."""
+    visibility itself). Idempotent — safe to call every frame.
+
+    `scope_hidden`: the render scope hides the player while a cutscene shows
+    another frame (_reconcile_runtime_instances); this must not re-show it."""
     if spv_open or player_iid is None:
         return
-    r.set_visible(player_iid, not is_bridge)
+    r.set_visible(player_iid, not is_bridge and not scope_hidden)
 
 
 def _ensure_target_menu() -> None:
@@ -7080,6 +8079,59 @@ def _drive_handover_smoother(smoother, prev_interp, cur_interp,
     if bool(cur_interp) == bool(prev_interp):
         return
     smoother.begin(prev_drawn[0], prev_drawn[1])
+
+
+def _player_render_interpolated(player, *, sim_frozen,
+                                cutscene_active) -> bool:
+    """Whether the player is drawn from the 60 Hz interpolation rather than
+    its live per-render-frame pose: whenever something other than
+    _PlayerControl moves it on the sim tick -- a helm-AI / waypoint order
+    (GetAI), an active in-space cutscene (scripted, and a cutscene camera is
+    commonly locked onto it), or an in-system dash (engine/appc/dash.py: its
+    WarpFlight steps the ship on the tick). Drawn live otherwise."""
+    if player is None:
+        return False
+    from engine.appc import dash
+    ai_owned = hasattr(player, "GetAI") and player.GetAI() is not None
+    scripted = not sim_frozen and cutscene_active
+    return bool(ai_owned or scripted or dash.is_dashing(player))
+
+
+def _view_rebase_offset(prev_view, cur_view):
+    """What to add to a point in `prev_view`'s coordinates to express it in
+    `cur_view`'s, when the viewed set changed within one system's frame (a
+    hand-off); None when it did not change, either is unknown, or the two
+    are in different frames (a tunnel arrival: its own snaps handle that)."""
+    if prev_view is None or cur_view is None or prev_view is cur_view:
+        return None
+    return _frames.offset_between(cur_view, prev_view)
+
+
+def _rebase_view(r, director, offset) -> None:
+    """The viewed set changed within the frame (`_view_rebase_offset`):
+    carry the cameras' remembered points into the new coordinates, and drop
+    the render-origin history -- the dust pass's eye travel, the volumetric
+    nebula's and motion blur's reprojection -- through the same reset a
+    mission swap uses, since the world eye jumps by the anchor difference
+    in one frame (a ~100k GU dust smear otherwise). Both halves, as at a
+    swap; this frame's _apply_render_origin sets the new origin."""
+    director.rebase(offset)
+    _frames.reset_render_origin()
+    try:
+        r.reset_render_origin()
+    except Exception as _e:
+        dev_mode.log_swallowed("reset_render_origin on a view rebase", _e)
+
+
+def _rebase_player_render(xform_buf, smoother, player_iid, player) -> None:
+    """The player changed region set (a dash hand-off): its set-local
+    coordinates jumped by the anchor difference. Re-seed its interpolation
+    slot at the new pose and drop any handover window, so no frame blends a
+    set-A pose with a set-B one."""
+    smoother.cancel()
+    if player_iid is not None and player is not None:
+        xform_buf.snap(player_iid, player.GetWorldLocation(),
+                       player.GetWorldRotation())
 
 
 def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
@@ -7256,6 +8308,16 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     `model_scale` is BC_MODEL_SCALE; non-player ships additionally
     multiply by their live GetScale().
 
+    View coordinates (system-frames Plan 3 Task 3): ships of every set in the
+    viewed frame are realized, so a ship's pushed position is its set-local
+    position plus offset_between(view, its set) -- zero in the viewed set, so
+    those numbers are untouched. The player is store-bound only when its set
+    IS the viewed set; in a sibling region (a cutscene rendered at Ona2 while
+    the player is in Ona1) the store's set-local pose would be in the wrong
+    coordinates, so it is pushed like any other ship, with its offset. An
+    object with no offset (no view, no set, another frame) is drawn exactly
+    as before.
+
     Articulation is pushed here at the ship's LIVE pose only. The Ship
     Property Viewer's FORCED pose is NOT applied from here: this whole
     function sits under `run()`'s `if not pause.sim_frozen:`, and the SPV
@@ -7265,6 +8327,17 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
     _player_iid = session.ship_instances.get(player)
+    _view = _frames.viewing_set()
+    _offsets = {}
+
+    def _view_offset(obj):
+        """offset_between(view, obj's set) when non-zero, else None."""
+        pSet = _frames.containing_set(obj)
+        if pSet not in _offsets:
+            off = (_frames.offset_between(_view, pSet)
+                   if _view is not None and pSet is not None else None)
+            _offsets[pSet] = off if off is not None and any(off) else None
+        return _offsets[pSet]
     # Warp blackout: once we jump to lightspeed (streak > 0) the whole local
     # scene is left behind — hide every non-player ship/station + planet so the
     # transit is just the player in the dust tunnel. _apply re-runs while
@@ -7311,7 +8384,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             r.set_emissive_scale(iid, _hd_boost)
         else:
             r.set_emissive_scale(iid, 1.0)
-        if iid == _player_iid:
+        _off = _view_offset(ship)
+        if iid == _player_iid and _off is None:
             if player_interp_pose is not None:
                 # The player is ALWAYS drawn from the pose the camera resolved
                 # (`pose_of`), so the two cannot disagree — that shared pose is
@@ -7352,7 +8426,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         if session.slot_bindings:
             _unbind_store_transform(session, ship, iid)
         if _warp_apply_vis:
-            r.set_visible(iid, not _warp_hide)
+            r.set_visible(iid, not _warp_hide
+                          and iid not in session.scope_hidden)
         # NOTE: scale is read live, not interpolated — the
         # buffer only stores loc+rot. Fine for steady scale;
         # a mid-animation GetScale() change applies the
@@ -7365,6 +8440,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             iid, ship.GetWorldLocation(), ship.GetWorldRotation())
         _sampled = xform_buf.sample(iid, interp_alpha)
         _iloc, _irot = _sampled
+        if _off is not None:
+            _iloc = _frames.shifted(_iloc, _off)
         r.set_world_transform(
             iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
     xform_buf.prune(_live_ship_iids)
@@ -7383,6 +8460,12 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         # instead of two transform reads and a 16-float push.
         _apply_live_world_transform(r, session, planet, iid, ns)
         if _warp_apply_vis:
+            r.set_visible(iid, not _warp_hide)
+    # The map's planets and moons (_reconcile_celestial_instances) take the
+    # same warp hide. They have no scope_hidden: nothing else ever hides one,
+    # so the stop-frame restore is simply visible.
+    if _warp_apply_vis:
+        for iid in session.celestial_instances.values():
             r.set_visible(iid, not _warp_hide)
 
 
@@ -7467,66 +8550,16 @@ def _drive_star_map(star_map_panel, framebuffer_size, cef_view_h) -> None:
 def engage_warp(button, controller) -> None:
     """Helm "Warp" click -> run the warp spine. Module scope so it is testable.
 
-    Bails when the button holds no destination. That guard is not defensive
-    tidiness: the two side effects below grey the Helm menu and drop any open
-    bridge menu, and the matching re-enable is scheduled INSIDE the warp
-    sequence (_EnableHelmMenuAction). execute_warp does nothing without a
-    destination, so a course-less click greyed the Helm menu with nothing left
-    to un-grey it — the menu was gone for the rest of the session.
-
-    STWarpButton.IsEnabled() now reports false without a destination, so the
-    click should never arrive; this is the second line, because the cost of
-    being wrong is an unrecoverable UI rather than a missed warp.
-
-    BC's WarpPressed has no such check — it did not need one, because the
-    engine kept its Warp button disabled until a course was set.
+    Thin wrapper over engine.appc.warp_button.engage — that module is now the
+    single body shared by this direct call and the ET_WARP_BUTTON_PRESSED
+    engine step (warp_button.engine_warp_step), see spec §1. `controller` is
+    unused: the player fallback it used to supply
+    (`controller.session.player`) is now `engine.appc.warp._player_hook`,
+    configured in `run()` by the same `configure_warp_hooks(current_player=...)`
+    call that wires the render hooks — confirmed still wired there.
     """
-    from engine.appc import warp as _w
-    from engine.appc import warp_gates as _wg
-    import App
-
-    if not button or not button.GetDestination():
-        if dev_mode.is_enabled():
-            print("[warp] ignored: no course set", flush=True)
-        return
-
-    player = App.Game_GetCurrentPlayer()
-    if player is None and controller is not None and controller.session is not None:
-        player = controller.session.player
-    result = _wg.warp_gate(player)
-    if not result.allowed:
-        if dev_mode.is_enabled():
-            print("[warp] gated: %s (line=%s)"
-                  % (result.reason or "unknown",
-                     result.deny_line or "-"), flush=True)
-        if result.deny_line is not None:
-            _wg.speak_deny(player, result.deny_line)
-        return
-    # Clear Helm's "ReadyToWarp" the way SDK WarpPressed does
-    # (HelmMenuHandlers.py:871-872). announce_course_set put it there;
-    # bypassing WarpPressed meant nothing ever took it away, so the Helm box
-    # advertised a pending warp for the rest of the session. Before
-    # execute_warp, matching BC's order.
-    try:
-        from engine.bridge_officers import announce_warp_engaged
-        announce_warp_engaged()
-    except Exception as _e:
-        dev_mode.log_swallowed("announce warp engaged", _e)
-    # WarpPressed's other two menu side effects, in its order
-    # (HelmMenuHandlers.py:862-864): grey out the Helm menu for the duration
-    # of the warp, then drop any open bridge menu and turn its officers back.
-    # Both were missing -- verified live: the Helm menu stayed clickable
-    # mid-warp and an open menu stayed open. The matching re-enable is
-    # scheduled inside the warp sequence (_EnableHelmMenuAction); without it
-    # the menu never comes back -- see the destination guard above.
-    try:
-        from engine import bridge_officers
-        from engine.appc.top_window import drop_menus_turn_back
-        bridge_officers.disable_helm_menu()
-        drop_menus_turn_back()
-    except Exception as _e:
-        dev_mode.log_swallowed("warp menu side effects", _e)
-    _w.execute_warp(button)
+    from engine.appc import warp_button
+    warp_button.engage(button)
 
 
 def record_course_selection(module) -> None:
@@ -7942,9 +8975,9 @@ def run(mission_name: Optional[str] = None,
 
         # Warp spine render hooks (Stage 1 hard cut): the warp sequence loads
         # the destination set then calls realize; on arrival it tears down the
-        # source set. Bound here to the live session+renderer. Unset hooks make
-        # those steps headless no-ops, so this wiring is what gives the spine a
-        # renderer.
+        # source set's render instances (the set itself stands). Bound here to
+        # the live session+renderer. Unset hooks make those steps headless
+        # no-ops, so this wiring is what gives the spine a renderer.
         from engine.appc import warp as _warp
         def _warp_realize(pSet):
             if controller.session is not None:
@@ -8041,6 +9074,12 @@ def run(mission_name: Optional[str] = None,
             dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             if dist <= 1e-6:
                 return False
+            # from/to are in the starbase's own set coordinates; the trace
+            # speaks the renderer's view coordinates.
+            _off = _frames.view_offset(_frames.containing_set(starbase))
+            if _off is not None:
+                from_pt = (from_pt[0] + _off[0], from_pt[1] + _off[1],
+                           from_pt[2] + _off[2])
             try:
                 hit = host_io.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
             except Exception:
@@ -8054,19 +9093,12 @@ def run(mission_name: Optional[str] = None,
         # it captured nothing from here.
         on_course_set = record_course_selection
 
-        # Helm "Warp" button click -> engage the warp spine directly. Stage 1
-        # deliberately bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed
-        # path: WarpPressed does camera/cinematic + control work whose engine
-        # support is deferred to Stages 2-3, and it runs live before our spine
-        # could (a raise there is swallowed at the CEF boundary). Calling the
-        # spine directly loads the destination set, moves the player, and
-        # terminates the source. execute_warp reads the button's destination.
-        # Helm "Warp" button click -> engage the warp spine directly.
-        # Module scope (see engage_warp) so the destination guard and the
-        # menu side effects are reachable from a test; `controller` is the
-        # only thing it captured.
-        def on_warp_engage(button):
-            engage_warp(button, controller)
+        # Helm "Warp" button click -> send ET_WARP_BUTTON_PRESSED (spec §1,
+        # engine/appc/warp_button.py). Mission handlers registered on the
+        # button run newest-first; the engine step at the bottom of the chain
+        # replaces SDK WarpPressed and calls warp_button.engage.
+        from engine.appc import warp_button
+        on_warp_engage = warp_button.press
 
         # Register the bridge cutscene controller BEFORE the initial mission
         # load so that TGAnimActions created during Initialize()/Briefing()
@@ -8284,27 +9316,7 @@ def run(mission_name: Optional[str] = None,
                     # don't live under sdk/. The single "." episode is collapsed
                     # by the picker so the mission rows sit directly under
                     # "Developer".
-                    from engine.missions import (
-                        FamilyEntry, EpisodeEntry, MissionEntry)
-                    reg.families.append(FamilyEntry(
-                        dir_name="Developer", display_name="Developer",
-                        episodes=[EpisodeEntry(
-                            dir_name=".", display_name="Developer",
-                            missions=[MissionEntry(
-                                module_name="engine.dev_missions.damage_preview",
-                                dir_name="Damage Preview",
-                                display_name="Damage Preview",
-                            ), MissionEntry(
-                                module_name="engine.dev_missions.combat_stress",
-                                dir_name="Combat Stress",
-                                display_name="Combat Stress",
-                            ), MissionEntry(
-                                module_name="engine.dev_missions.collision_sim",
-                                dir_name="Collision Sim",
-                                display_name="Collision Sim",
-                            )],
-                        )],
-                    ))
+                    reg.families.append(_developer_family_entry())
                     _picker_registry_cache[0] = reg
                 return _picker_registry_cache[0]
 
@@ -8474,6 +9486,14 @@ def run(mission_name: Optional[str] = None,
             star_map_panel.open(course_menu=course_menu,
                                 set_name=_player_set_name(_player))
 
+        def _close_star_map():
+            """A course plotted in the outgoing mission may name a set the
+            incoming one never loads, so the map must not survive a dev swap
+            or a mission change. invalidate() forces the closed state out to
+            CEF on the next render_all()."""
+            star_map_panel.close()
+            star_map_panel.invalidate()
+
         from engine.ui.crew_menu_panel import CrewMenuPanel
         crew_menu_panel = CrewMenuPanel(
             on_set_course=_open_star_map,
@@ -8637,7 +9657,22 @@ def run(mission_name: Optional[str] = None,
         # engine/core/handover_smoother. Inert except during a handover window.
         _handover = HandoverSmoother()
         _prev_interp_player = None      # None until the first frame completes
+        # (player, its containing set) last running frame: a hand-off is the
+        # same player in another set (_rebase_player_render).
+        _prev_player_set = (None, None)
+        _prev_view_set = None           # the viewed set last running frame
         _prev_drawn_player_pose = None  # what was actually on screen last frame
+
+        def _snap_scene():
+            """Never ease the camera or a drawn pose in from the previous
+            scene: after a dev swap, and after a mission change."""
+            director.snap()
+            _xform_buf.reset_all()
+
+        from engine.core import mission_change as _mission_change
+        _mission_change.configure(
+            on_changed=lambda: _after_mission_change(
+                controller, _snap_scene, _close_star_map))
 
         # Ship Property Viewer (dev-only) transition state. _spv_hidden_iid
         # remembers which solid hull was hidden so it can be restored, and
@@ -8899,6 +9934,9 @@ def run(mission_name: Optional[str] = None,
                 # cheap every tick and self-heals the per-bridge-load rebuild.
                 if _player is not None:
                     weapon_tactical_commands.sync(_player)
+                    # The Helm entries a dash greys, and its All Stop handler.
+                    from engine.appc import dash_helm
+                    dash_helm.sync(_player)
                 # Drop the player's weapon lock the instant its target stops
                 # being detectable — cloaked, out of sensor range, lost in a
                 # nebula, or the player's own sensors dead/unpowered. You can't
@@ -9140,21 +10178,18 @@ def run(mission_name: Optional[str] = None,
                     node_anim.reset(renderer=r)
                     lip_runtime.clear()
                     _letterbox_anim.reset()
-                    # A course plotted in the outgoing mission may name a set
-                    # the incoming one never loads, so the map must not
-                    # survive the swap. invalidate() forces the closed state
-                    # out to CEF on the next render_all().
-                    star_map_panel.close()
-                    star_map_panel.invalidate()
+                    _close_star_map()
                 controller._drain_pending_swap()
                 if had_pending_swap:
-                    director.snap()
-                    _xform_buf.reset_all()
+                    _snap_scene()
                     # Same discontinuity: never blend the player in from a
                     # pose that belonged to the previous scene.
                     _handover.cancel()
                     _prev_interp_player = None
                     _prev_drawn_player_pose = None
+                    # Nor re-base across a swap: the old sets are gone.
+                    _prev_player_set = (None, None)
+                    _prev_view_set = None
             else:
                 had_pending_swap = False
 
@@ -9176,27 +10211,23 @@ def run(mission_name: Optional[str] = None,
             # Capture the player ship at combat start; revert to it on End
             # Combat (so a mid-combat ship swap is temporary).
             _sync_quickbattle_player_revert(controller)
-            # Per-tick realization reconciliation: realize ships created at
-            # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
-            # tear down ships removed from the set. Also retargets the camera if
-            # the player object identity changed (RecreatePlayer destroy+
-            # recreate). Runs BEFORE reading session.player below so the new
-            # player is followed this same frame. No-op for steady-state
-            # missions (all ships present at load) — see
-            # _reconcile_runtime_instances. Verbose mirrors loader verbosity.
+            # The camera follows session.player; _sync_player_identity (just
+            # below, and again in the scene reconcile after the sim) calls
+            # this when the player's identity changed
+            # (RecreatePlayer's destroy+recreate). Snap so the new player
+            # doesn't lerp from the destroyed ship's pose, and re-seed the
+            # director's ship-radius distances.
+            def _on_player_change(new_player, _d=director, _xb=_xform_buf):
+                _r = new_player.GetRadius()
+                _d.chase.set_ship_radius(_r)
+                _d.tracking.set_ship_radius(_r)
+                _d.snap()
+                _xb.reset_all()
+            # Sync the player BEFORE the sim reads it: the preload-done event
+            # above may have just run RecreatePlayer, and the scene reconcile
+            # that would otherwise catch it runs after the sim (Ruling 11).
             if session is not None:
-                def _on_player_change(new_player, _d=director, _xb=_xform_buf):
-                    # The camera follows session.player (re-read below). Snap so
-                    # the new player doesn't lerp from the destroyed ship's pose,
-                    # and re-seed the director's ship-radius distances.
-                    _r = new_player.GetRadius()
-                    _d.chase.set_ship_radius(_r)
-                    _d.tracking.set_ship_radius(_r)
-                    _d.snap()
-                    _xb.reset_all()
-                _reconcile_runtime_instances(
-                    session, controller.renderer,
-                    on_player_change=_on_player_change, verbose=verbose)
+                _sync_player_identity(session, _on_player_change)
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 _r = player.GetRadius()
@@ -9253,6 +10284,9 @@ def run(mission_name: Optional[str] = None,
                     if _cmd_held or _ctrl_held:
                         _h.cef_reload()
 
+            # This frame's ships, when the sim runs; None on a frozen frame
+            # (the render section keys the combat feed push off it).
+            _ships_this_tick = None
             # Everything below is SIMULATION — ship/camera input, firing,
             # weapons, combat, sensors, nebula — so it gates on sim_frozen,
             # not on the menu. The DevTools keys above deliberately sit in the
@@ -9380,6 +10414,9 @@ def run(mission_name: Optional[str] = None,
                         ship_instances=(session.ship_instances if session is not None else None),
                         ship_emitters=(session.ship_emitters if session is not None else None),
                         player=player,
+                        # Pushed after the camera, once the render origin is
+                        # set (_push_combat_render_data below).
+                        push_render_data=False,
                     )
 
                 # Sensor contact identification → drives the SDK bridge Hail /
@@ -9462,15 +10499,21 @@ def run(mission_name: Optional[str] = None,
                             # sample, not just the central subsystem mounts.
                             _piid = (session.ship_instances.get(player)
                                      if session is not None else None)
+                            # VIEW coordinates, both sources: the discharge
+                            # feed is pushed through frames.view_to_render.
                             if _piid is not None:
                                 hull_pts = r.instance_surface_points(_piid)
                             if not hull_pts:
                                 # Fallback: subsystem mounts (central, but better
                                 # than nothing) when no surface sample is available.
                                 from engine.appc.subsystems import subsystem_world_position
+                                _hview = _frames.viewing_set()
                                 for sub in player.GetSubsystems():
                                     wp = subsystem_world_position(sub, player)
-                                    hull_pts.append((wp.x, wp.y, wp.z))
+                                    _hp = _frames.in_view(_hview, pset,
+                                                          wp.x, wp.y, wp.z)
+                                    hull_pts.append(_hp if _hp is not None
+                                                    else (wp.x, wp.y, wp.z))
                         _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
 
                     # Nebula ship wake: record the player's path while in a nebula.
@@ -9521,6 +10564,52 @@ def run(mission_name: Optional[str] = None,
                         ship_instances=(session.ship_instances if session is not None else None),
                     )
 
+                # The player's dash (engine/appc/dash.py): its align, its
+                # engage, and the drop-out of a flight that ended this frame
+                # -- before the hand-off tick, so a drop-out's own hand-off
+                # lands first.
+                if player is not None:
+                    from engine.appc import dash
+                    dash.tick(player, _player_dt)
+
+                # The impulse region hand-off (in-system-warp spec section 3,
+                # rule H): the player crosses into another region's sphere
+                # under its own power. Runs after collisions (this frame's
+                # last mover of the player) and before the scene reconcile,
+                # which reads the player's containing set to decide what the
+                # render scope shows this frame. A no-op while the player is
+                # dashing (handoff._is_dashing) -- Task 4's drop-out calls
+                # handoff.hand_off directly once the flight ends.
+                if player is not None:
+                    from engine.systems import handoff
+                    handoff.tick(player)
+
+                # The scene reconcile (_reconcile_scene): load the player's
+                # system, realize / tear down / cull / hide ships for the
+                # render scope, and diff the viewed frame's map bodies. It
+                # reads frames.viewing_set(), so it runs HERE -- after every
+                # part of the frame's sim that can change the view (the timers
+                # in loop.tick, input and clicks that engage a warp, combat,
+                # the warp FSM, collisions) and immediately before
+                # _sync_instance_transforms, the camera and
+                # _apply_render_origin, which read the same view. Before the
+                # sim, a frame that changed the view drew map bodies in the
+                # OLD view's coordinates. INVARIANT: it is the FIRST visibility
+                # writer of the frame -- warp hide (in _sync_instance_
+                # transforms), SPV, bridge player and cloak all run after it
+                # and AND their conditions with scope_hidden, and the scope
+                # only writes on a change. Order guarded by
+                # tests/host/test_scene_reconcile_ordering.py.
+                _reconcile_scene(
+                    session, controller.renderer, nif_cache=controller,
+                    on_player_change=_on_player_change, verbose=verbose)
+                # It may have retargeted session.player (RecreatePlayer).
+                player = session.player if session is not None else None
+                # The reconcile above may have just realized a player ship
+                # RecreatePlayer created with an unknown (0) radius -- catch
+                # up the cameras now that GetRadius() is real.
+                _reconcile_camera_radius(director, player)
+
                 # Sync transforms for known instances.
                 #
                 # Player ship: pushed live (it is integrated per render
@@ -9552,20 +10641,38 @@ def run(mission_name: Optional[str] = None,
                     # is scripted, never manually flown then, and a cutscene
                     # camera is commonly locked onto it — so its 60 Hz-stepped
                     # motion must be interpolated or the whole shot judders).
-                    _player_ai_owned = (
-                        player is not None
-                        and hasattr(player, "GetAI")
-                        and player.GetAI() is not None)
-                    _player_scripted = (
-                        player is not None
-                        and not pause.sim_frozen
-                        and _active_cutscene_camera() is not None)
-                    _interp_player = _player_ai_owned or _player_scripted
+                    # An in-system dash too: its flight steps the ship on the
+                    # tick (_player_render_interpolated).
+                    _interp_player = _player_render_interpolated(
+                        player, sim_frozen=pause.sim_frozen,
+                        cutscene_active=_active_cutscene_camera() is not None)
                     if _interp_player and _player_iid_i is not None:
                         _xform_buf.set_current(
                             _player_iid_i,
                             player.GetWorldLocation(),
                             player.GetWorldRotation())
+                    # A hand-off (the same player, another region set): the
+                    # slot and any handover window hold the old set's
+                    # coordinates -- re-seed / drop them, and never open a
+                    # window from last frame's (old-set) drawn pose.
+                    _pset = (player.GetContainingSet()
+                             if player is not None else None)
+                    if (player is not None
+                            and _prev_player_set[0] is player
+                            and _prev_player_set[1] is not None
+                            and _pset is not _prev_player_set[1]):
+                        _rebase_player_render(_xform_buf, _handover,
+                                              _player_iid_i, player)
+                        _prev_drawn_player_pose = None
+                    _prev_player_set = (player, _pset)
+                    # The viewed set changed within the frame (a hand-off):
+                    # re-base the cameras and drop the dust history before
+                    # the camera is solved below.
+                    _view_now = _frames.viewing_set()
+                    _view_off = _view_rebase_offset(_prev_view_set, _view_now)
+                    if _view_off is not None:
+                        _rebase_view(r, director, _view_off)
+                    _prev_view_set = _view_now
                     # Handover easing: the pipeline the player is drawn from
                     # flips between live (manual) and interpolated (AI /
                     # scripted), and those sit a tick apart. Open a smoothing
@@ -9595,6 +10702,18 @@ def run(mission_name: Optional[str] = None,
                         player_control=player_control,
                         player_interp_pose=_player_interp_pose,
                         player_is_interpolated=_interp_player)
+            else:
+                # Frozen frame (pause, DevTools): no sim ran, so nothing
+                # changed the view; reconcile as every frame always has, still
+                # ahead of the SPV / bridge-player / cloak visibility writers.
+                _reconcile_scene(
+                    session, controller.renderer, nif_cache=controller,
+                    on_player_change=_on_player_change, verbose=verbose)
+                player = session.player if session is not None else None
+                # Same catch-up as the live branch above -- a frozen frame
+                # (e.g. the pause menu opened the same tick RecreatePlayer
+                # ran) must not leave the cameras on an unknown radius.
+                _reconcile_camera_radius(director, player)
 
             # --- Ship Property Viewer's FORCED articulation pose ---
             # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The
@@ -9644,14 +10763,19 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
+                # The camera is solved in the VIEWED set's coordinates, like
+                # the scene: a subject in another set of the viewed frame (the
+                # player through a sibling-region cutscene) is moved into them
+                # first (_view_pose_of). Same set: _pose_of's own poses.
+                _cam_pose_of = _view_pose_of(_pose_of, _frames.viewing_set())
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
-                    player=player, dt=_player_dt, pose_of=_pose_of)
+                    player=player, dt=_player_dt, pose_of=_cam_pose_of)
                 # Cutscene camera (computed above) drives the main-scene pose,
                 # converting the mode's forward DIRECTION to a look-at POINT.
                 if _cc is not None:
                     eye, target, up_vec = _cutscene_pose(
-                        _cc[1], _player_dt, _pose_of)
+                        _cc[1], _player_dt, _cam_pose_of)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
@@ -9792,6 +10916,20 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
 
+            # --- The floating render origin (system-frames spec §5) ---
+            # The exterior eye, in the VIEWED set's coordinates, set once per
+            # running frame now that the camera is solved and BEFORE any
+            # Space-pass feed is built; the combat feeds the sim produced
+            # above are built here for that reason. A frozen frame keeps the
+            # last origin and pushes no new combat feeds (as before).
+            if _ships_this_tick is not None:
+                _apply_render_origin(r, eye)
+                _push_combat_render_data(
+                    _ships_this_tick,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                    ship_emitters=(session.ship_emitters if session is not None else None),
+                    player=player)
+
             frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---
             # When the viewer is open the world is already frozen (the
@@ -9813,35 +10951,57 @@ def run(mission_name: Optional[str] = None,
                 # world-space bounding sphere so it fills the view. The
                 # subsystem-centroid fit in open() is only a fallback (it
                 # underestimates the hull extent and leaves the ship small).
+                # The viewer works in the PLAYER's set coordinates (its pins,
+                # overlays, orbit camera and picking all read the player's
+                # own poses); only what reaches the renderer is converted --
+                # into view coordinates, then render space (_spv_render).
+                _spv_view = _frames.viewing_set()
+                _spv_set = _frames.containing_set(player)
+
+                def _spv_in_view(p, _v=_spv_view, _s=_spv_set):
+                    q = _frames.in_view(_v, _s, p[0], p[1], p[2])
+                    return q if q is not None else tuple(p)
+
+                def _spv_render(p):
+                    return _frames.view_to_render(_spv_in_view(p))
+
                 if not _spv_was_open and _player_iid_spv is not None:
                     _bounds = r.get_instance_bounds(_player_iid_spv)
                     if _bounds is not None:
+                        # The bounds come back in VIEW coordinates.
                         _bx, _by, _bz, _br = _bounds
-                        ship_property_viewer.frame_to_bounds((_bx, _by, _bz), _br)
+                        _boff = (_frames.offset_between(_spv_set, _spv_view)
+                                 if _spv_view is not None else None)
+                        _bc = _frames.shifted(TGPoint3(_bx, _by, _bz), _boff)
+                        ship_property_viewer.frame_to_bounds(
+                            (_bc.x, _bc.y, _bc.z), _br)
                 # Take over the frame: solid background, no space scene / bridge.
                 r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
                 # Render mode: hologram (default) vs real hull textures.
                 r.set_spv_hull_mode(ship_property_viewer.show_hull_texture)
                 _cam = ship_property_viewer.camera
-                r.set_camera(eye=_cam.eye(), target=_cam.target,
-                             up=_cam.up(), fov_y_rad=_cam.fov_y_rad,
-                             near=_cam.near, far=_cam.far)
+                _push_space_camera(r, _spv_in_view(_cam.eye()),
+                                   _spv_in_view(_cam.target), _cam.up(),
+                                   _cam.fov_y_rad, _cam.near, _cam.far)
                 if _player_iid_spv is not None:
                     r.set_visible(_player_iid_spv, False)
                     r.set_hologram_ship(_player_iid_spv)
                 # Selection-scoped pins: only the selected subsystem's pin
                 # renders while one is selected; all render when deselected.
-                r.set_subsystem_pins(ship_property_viewer.subsystem_pins())
+                r.set_subsystem_pins([
+                    (_spv_render(_pos), _icon, _hi) for (_pos, _icon, _hi)
+                    in ship_property_viewer.subsystem_pins()])
                 # Selection-scoped phaser overlay: the SELECTED bank's emitter
                 # strip, plus its firing arc only when the Weapon Arcs toggle is
                 # on (arc scoped to the selected weapon). Nothing when unselected.
                 from engine.ui.phaser_overlay import build_phaser_overlay
-                r.set_spv_overlay_beams(
-                    build_phaser_overlay(
+                r.set_spv_overlay_beams([
+                    dict(_b, emitter=_spv_render(_b["emitter"]),
+                         target=_spv_render(_b["target"]))
+                    for _b in build_phaser_overlay(
                         player,
                         ship_property_viewer.selected_name(),
-                        show_all_arcs=ship_property_viewer.show_weapon_arcs)
-                )
+                        show_all_arcs=ship_property_viewer.show_weapon_arcs)])
                 # Glow regions as orange wireframe cylinders (debug volume
                 # pass): the toggle shows every subsystem's; with it off, the
                 # selected LIGHT node reveals its own (the subsystem pin's
@@ -9877,19 +11037,23 @@ def run(mission_name: Optional[str] = None,
                     player,
                     _spv_mod.selected_model_part(),
                     _spv_mod.selected_part_box())
-                r.set_debug_cylinders(_cyls + _em_cyls)
-                r.set_debug_boxes(_boxes + _part_boxes)
-                r.set_debug_cones(_em_cones)
+                def _spv_shapes(shapes, key):
+                    return [dict(_d, **{key: _spv_render(_d[key])})
+                            for _d in shapes]
+                r.set_debug_cylinders(_spv_shapes(_cyls + _em_cyls, "center"))
+                r.set_debug_boxes(_spv_shapes(_boxes + _part_boxes, "center"))
+                r.set_debug_cones(_spv_shapes(_em_cones, "apex"))
                 # Selected subsystem's damage-radius volume as a wireframe
                 # sphere at its icon (only while a subsystem is selected).
                 _sphere = ship_property_viewer.selected_subsystem_sphere()
-                r.set_debug_spheres(([_sphere] if _sphere else []) + _em_spheres)
+                r.set_debug_spheres(_spv_shapes(
+                    ([_sphere] if _sphere else []) + _em_spheres, "center"))
                 # Transform gizmo: three body-frame drag axes at the
                 # selected subsystem/light, only while the Transform tool
                 # is active and something is selected.
                 _gizmo = ship_property_viewer._active_gizmo()
                 if _gizmo is not None:
-                    ox, oy, oz = _gizmo["origin"]
+                    ox, oy, oz = _spv_render(_gizmo["origin"])
                     ax, ay, az = _gizmo["axes"]
                     r.set_transform_gizmo((ox, oy, oz), ax, ay, az,
                                           _gizmo["length"], _gizmo["highlight"],
@@ -9917,12 +11081,13 @@ def run(mission_name: Optional[str] = None,
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
-                r.set_camera(eye=eye, target=target, up=up_vec,
-                             fov_y_rad=director.effective_fov_y_rad,
-                             near=1.0, far=5000.0)
-                # Manual Aim reads this camera on the NEXT sim tick to
-                # unproject the cursor. Data only -- no mutation here.
-                manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad, 1.0, 5000.0)
+                _push_space_camera(r, eye, target, up_vec,
+                                   director.effective_fov_y_rad,
+                                   SCENE_NEAR_GU, SCENE_FAR_GU)
+                # Data only -- no mutation here. near/far are positional
+                # and NOT interchangeable; see note_camera's docstring.
+                manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad,
+                                       SCENE_NEAR_GU, SCENE_FAR_GU)
                 # Feed the dynamic-light distance gate. Read by next frame's
                 # _advance_combat, which runs upstream of this solve.
                 _note_camera_eye(eye)
@@ -9975,10 +11140,12 @@ def run(mission_name: Optional[str] = None,
                         has_player=player is not None,
                         reticle_hidden=_reticle_top.reticle_hidden(),
                         cinematic_active=_reticle_top.is_cinematic_active()):
-                    r.set_target_reticle(build_target_reticle(player))
+                    _push_target_reticle(r, player)
+                    # Mirrors the exterior camera set above; the label
+                    # projection must use the same frustum as the box.
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.effective_fov_y_rad,
-                                        near=1.0, far=5000.0)
+                                        near=SCENE_NEAR_GU, far=SCENE_FAR_GU)
                     r.set_reticle_text(build_reticle_text(
                         player, _rcam, (_CEF_VIEW_W, _CEF_VIEW_H)))
                 else:
@@ -10074,7 +11241,9 @@ def run(mission_name: Optional[str] = None,
             # cutscene exterior empty — the ship you're watching is invisible.
             _apply_bridge_player_visibility(
                 r, _player_iid_vs,
-                is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open)
+                is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open,
+                scope_hidden=(session is not None
+                              and _player_iid_vs in session.scope_hidden))
 
             # Audio listener (skipped while paused — silence the rumble).
             if not pause.sim_frozen:
@@ -10096,7 +11265,7 @@ def run(mission_name: Optional[str] = None,
             if not pause.sim_frozen:
                 _update_ui_for_tick(player, view_mode, session, active_set)
 
-            ambient, directionals = _aggregate_lights(active_set)
+            ambient, directionals = _aggregate_lights(active_set, player)
             if _nebula_thunder is not None and r.nebula_lightning_enabled():
                 flashes = _nebula_thunder.active_flashes()
                 if flashes:
@@ -10145,12 +11314,24 @@ def run(mission_name: Optional[str] = None,
             # sensation comes from the DUST streaking along travel_dir — the
             # backdrops and local suns/planets aggregate normally (off-parity:
             # non-warp rendering is byte-identical when is_active() is False).
+            # The player's in-system-warp DASH (engine/dash_vfx.py, spec §4)
+            # ticks on the same game clock, independently of whether the
+            # tunnel is running -- the two are mutually exclusive in play,
+            # but neither's push may zero the other's channel out from under
+            # it, hence _combined_flash_intensity below.
+            from engine import dash_vfx as _dvx
+            _dv = _dvx.get()
+            _dv.tick(App.g_kUtopiaModule.GetGameTime())
+            r.set_dash_intensity(_dv.dash_intensity())
+            _dash_flash = _dv.flash_intensity()
+
             from engine import warp_vfx as _wv
             _w = _wv.get()
             if _w.is_active():
                 _w.tick(App.g_kUtopiaModule.GetGameTime())
                 r.set_warp_streak_intensity(_w.streak_intensity())
-                r.set_warp_flash_intensity(_w.flash_intensity())
+                r.set_warp_flash_intensity(
+                    _combined_flash_intensity(_w.flash_intensity(), _dash_flash))
                 r.set_warp_travel_dir(_w.travel_dir())
                 # Cinematic turn onto the warp heading — but NOT during the exit
                 # decel: after arrival the placement owns the ship's orientation,
@@ -10167,7 +11348,8 @@ def run(mission_name: Optional[str] = None,
                     player_control._warp_speed_override = _w.ship_speed(_nom, _wsp)
             else:
                 r.set_warp_streak_intensity(0.0)
-                r.set_warp_flash_intensity(0.0)
+                r.set_warp_flash_intensity(
+                    _combined_flash_intensity(0.0, _dash_flash))
                 _warp_clear_turn()
                 player_control._warp_speed_override = None
 
@@ -10185,13 +11367,11 @@ def run(mission_name: Optional[str] = None,
                 backdrops = _aggregate_backdrops(active_set)
                 # Procedural sky off: `backdrops` IS the authored starbox, so
                 # remember it for the next transit to hold static. The source
-                # set is deleted at burst, so this is the last chance to see it.
+                # set's render instances are torn down at burst (the set
+                # itself stands), so this is the last chance to see it.
                 if not r.procedural_sky_enabled():
                     _note_static_backdrops(backdrops)
             r.set_backdrops(backdrops)
-
-            suns = [] if _warp_streaking else _aggregate_suns()
-            r.set_suns(suns)
 
             # In-warp lighting: the system's sun is gone (torn down at burst), so
             # replace the earlier set_lighting() with a cool warp-tunnel key from
@@ -10201,37 +11381,10 @@ def run(mission_name: Optional[str] = None,
                     _w.travel_dir(), _w.streak_intensity())
                 r.set_lighting(_wamb, _wdirs)
 
-            planets = _aggregate_planets(
-                list(App.g_kSetManager._sets.values()))
-            r.set_dust_planets(planets)
-
-            nebulae = [] if _warp_streaking else _aggregate_nebulae(active_set)
-            r.set_nebulae(nebulae)
-
-            godrays = []
-            if _nebula_thunder is not None and not _warp_streaking and r.nebula_lightning_enabled():
-                godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
-                           for f in _nebula_thunder.active_flashes()]
-            r.set_nebula_godrays(godrays)
-
-            discharges = []
-            if (_hull_discharge is not None
-                    and r.nebula_lightning_enabled()
-                    and not _warp_streaking):
-                discharges = _hull_discharge.active_discharges()
-            r.set_hull_discharges(discharges)
-
-            wake_pts = []
-            if (_nebula_wake is not None and r.volumetric_nebulae_enabled()
-                    and not _warp_streaking):
-                wake_pts = _nebula_wake.trail_points()
-            r.set_nebula_wake(wake_pts)
-
-            # The image-based Modern Lens Flares and the classic per-sun billboard
-            # flares are mutually exclusive: when the modern flare is on, suppress
-            # the billboards so only the screen-space flare renders.
-            lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
-            r.set_lens_flares(lens_flares)
+            # Suns, dust planets, nebulae, godrays, discharges, the wake and
+            # lens flares -- in render space (the origin was set above).
+            suns, planets, lens_flares = _push_environment_feeds(
+                r, active_set, _warp_streaking)
 
             _push_cloak_refraction(r, session, player)
 
@@ -10271,6 +11424,24 @@ def run(mission_name: Optional[str] = None,
         if controller.session is not None:
             controller.session.teardown(r)
     finally:
+        from engine.core import mission_change as _mission_change
+        _mission_change.configure(on_changed=None)
+        # The warp hooks close over this controller too; left installed they
+        # outlive it (a stale starbase line-of-sight hook refused every later
+        # warp near Starbase 12).
+        from engine.appc import warp as _warp_hooks, warp_gates as _gate_hooks
+        _warp_hooks.configure_warp_hooks(realize=None, teardown=None)
+        _warp_hooks.configure_warp_vfx(start=None, stop=None, enabled=None,
+                                       vantage_of=None)
+        _gate_hooks.configure_gate_hooks(ray_collide=None)
+        # Likewise the bridge controllers registered "for the lifetime of
+        # run()": a leaked walk controller makes a later headless MoveTo wait
+        # on a renderer that is gone, stalling any sequence behind it.
+        from engine import (bridge_camera_watch, bridge_character_anim,
+                            bridge_character_walk, bridge_cutscene)
+        for _mod in (bridge_cutscene, bridge_character_anim,
+                     bridge_character_walk, bridge_camera_watch):
+            _mod.clear_controller()
         shutdown_audio()
         r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()

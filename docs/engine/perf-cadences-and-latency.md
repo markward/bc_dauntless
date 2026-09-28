@@ -68,8 +68,37 @@ missing a change.
 reads `0.0 # 0.25`. Against the `fPredictionTime` lookahead a 0.25 s stale
 decision is 1.7% of the horizon.
 
-Measured **not** to degrade separation at realistic radii, but the value is
-**pinned by a test** — re-run the separation probes before changing it.
+**It does cost separation, for some phases — and the phase depends on object
+creation order.** Each ship's first evasion reschedule is offset by
+`ai_optimized._phase_factor`, a hash of `ship.GetObjID()`; object ids come off
+one process-wide counter (`engine.core.ids._counter`), so which phases a crowd
+lands on is set by how many objects were created before it. Measured over a
+sweep of 41 pinned counter bases (same crowd, SDK-exact `0.0` vs `0.25`):
+
+| | fast/slow closest-approach ratio |
+|---|---|
+| min | 0.696 |
+| median | 0.991 |
+| max | 1.014 |
+
+The `0.0` run is identical at every phase; only the `0.25` run varies. The
+minimum closest approach at `0.25` was **45.4 GU** against a combined radius
+of **40 GU** — the margin shrinks by up to ~30% for unlucky phases, but no
+phase produced an overlap. A single slow/fast pair at whatever phase the test
+order happened to give (the old guard) failed its `fast > 0.75 × slow` check
+for 2 of the 41 phases.
+
+The value is **pinned by a test** that runs a subset of that sweep —
+`tests/integration/test_avoid_cadence_still_clears.py::test_the_cadence_pays_for_itself_and_costs_no_separation`
+(no overlap and the scan saving at every phase; median ratio ≥ 0.75). Its
+docstring and `PHASE_SWEEP_BASES` hold the full numbers. Re-run it before
+changing the value. The sweep is one synthetic converging crowd, ticked
+headlessly through `tick_all_ai` with the default `AI_MAX_SLEEP_TICKS` in
+effect in both arms; it varies only the avoidance delay. It is not the live
+measurement of the two cadences together that the section below says is still
+missing — see
+[Cadences 3 and 4 COMPOUND](#️-cadences-3-and-4-compound--and-the-combination-is-unmeasured)
+below.
 
 ### ⚠️ Until 2026-08-28 this described a configuration nobody ran
 

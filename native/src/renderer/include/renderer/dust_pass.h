@@ -62,6 +62,32 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
                               glm::vec3 camera_pos,
                               float radius);
 
+/// Smear-length cap for the given 0..1 dash intensity (in-system-warp spec
+/// §4: the player's Set Course / heading dash raises the dust pass's smear
+/// cap so the dust stretches into streaks along the real travel direction).
+/// 0 => `DustPass::kMaxSmearLength` (off-parity); 1 =>
+/// `kMaxSmearLength * DustPass::kDashSmearScale`. Pure — testable without a
+/// GL context; `DustPass::render` calls this internally.
+float dash_smear_cap(float dash_intensity);
+
+/// Density factor for the given 0..1 dash intensity (in-system-warp spec
+/// §4: while dashing, dust draws at a reduced fraction of the location's
+/// normal density instead of streaking at full count). 0 =>
+/// 1.0 (off-parity, byte-identical draw count); 1 =>
+/// `DustPass::kDashDustDensity`. Linear in between. Pure — testable without
+/// a GL context.
+float dash_density_factor(float dash_intensity);
+
+/// Final per-frame dust draw count: `kParticleCount * density_mult`
+/// (the location's normal count, from `compute_dust_influence`), clamped to
+/// `particle_count_cap` (the seeded instance buffer size), then scaled by
+/// `dash_density_factor(dash_intensity)` — so a dash shows 20% of what THIS
+/// position would otherwise show, not 20% of the unmultiplied base count.
+/// Pure — testable without a GL context; `DustPass::render` calls this
+/// internally.
+int dust_draw_count(float density_mult, float dash_intensity,
+                    int particle_count_cap);
+
 class DustPass {
 public:
     // Tunable constants. Documented in the spec as the dials for visual
@@ -75,6 +101,16 @@ public:
     // Hard cap on streak length so high-velocity camera motion (warp
     // exits, fast chase) doesn't stretch dust into screen-spanning lines.
     static constexpr float kMaxSmearLength       = 1.5f;        // BC units
+    // In-system-warp dash (spec §4): at full dash intensity the cap is
+    // raised to kMaxSmearLength * kDashSmearScale so the dust reads as
+    // streaks at dash speed instead of vanishing under the ordinary cap
+    // (10,000 GU/s would otherwise be capped at 1.5 GU). 20 * 1.5 = 30 GU.
+    // The cap MUST stay inside the dust volume's diameter (2*kVolumeRadius
+    // = 80 GU): dust.vert stretches each particle +-half the smear, so a
+    // longer streak crosses the camera plane and clips to a screen-spanning
+    // white line (the old 400x = 600 GU cap made the screen unreadable
+    // mid-dash — live finding 2026-09-27). 30 GU tuned live.
+    static constexpr float kDashSmearScale       = 20.0f;
     static constexpr float kSizeMin              = 0.02f;       // BC units
     static constexpr float kSizeMax              = 0.035f;
     // Brightness boosted ~1.6x (spec §1, "moderate").
@@ -104,6 +140,10 @@ public:
     // along the travel axis during warp, recycling via the toroidal wrap.
     // Speed (GU/s) scaled by streak intensity. Tunable.
     static constexpr float kWarpDriftSpeed       = 75.0f; // GU/s at streak 1
+    // Mark 2026-09-28: 20% of the location's normal dust while dashing
+    // (in-system-warp spec §4) — a dash reduces per-frame dust draw count
+    // to this fraction instead of drawing full density at streak speed.
+    static constexpr float kDashDustDensity      = 0.2f;
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
     static constexpr std::uint32_t kSeed         = 0xD057C0DEu;
 
@@ -115,16 +155,36 @@ public:
     /// Render the dust pass. Caller is responsible for the scene depth
     /// buffer being populated (so ships/planets occlude dust correctly).
     /// `dt_seconds` is the host-loop frame delta used for velocity.
+    /// `render_origin` is the floating render origin `camera`, `suns` and
+    /// `planets` are relative to (renderer/render_origin.h): the smear
+    /// velocity and the toroidal wrap are keyed to the WORLD eye
+    /// (eye + origin), so the field stays put in the world while the origin
+    /// follows the camera. Zero: byte-identical to before.
+    /// `dash_intensity` (0..1) raises the smear cap (dash_smear_cap, above)
+    /// during a player Set Course / heading dash — separate from
+    /// `warp_streak`, which drives the tunnel's own drift/prism mode and is
+    /// left untouched by a dash (0 there throughout).
     void render(const scenegraph::Camera& camera,
                 float dt_seconds,
                 Pipeline& pipeline,
                 const std::vector<SunDescriptor>& suns,
                 const std::vector<glm::vec4>& planets,
                 float warp_streak = 0.0f,
-                glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f),
+                const glm::dvec3& render_origin = glm::dvec3(0.0),
+                float dash_intensity = 0.0f);
 
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }
+
+    /// Forget the previous eye and the render origin it was in: the next
+    /// frame draws no velocity smear. For a discontinuity in the origin (a
+    /// mission swap resetting it to zero), which is not camera travel.
+    void reset_motion_history() {
+        have_prev_ = false;
+        prev_origin_ = glm::dvec3(0.0);
+    }
+    bool has_motion_history() const { return have_prev_; }
 
     /// Reseed the per-instance buffer with `count` particles (clamped to
     /// [0, 50000]). Used by the deferred dynamic-density work; safe to
@@ -135,6 +195,7 @@ private:
     bool       enabled_      = true;
     bool       initialized_  = false;   // GL objects created lazily on first render
     glm::vec3  prev_eye_     = glm::vec3(0.0f);
+    glm::dvec3 prev_origin_  = glm::dvec3(0.0);   // the render origin prev_eye_ was in
     bool       have_prev_    = false;
     int        particle_count_ = kSeededCount;
     // Accumulated solar-wind drift distance (GU), wrapped to [0, 2*kVolumeRadius)

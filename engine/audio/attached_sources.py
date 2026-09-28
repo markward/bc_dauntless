@@ -40,7 +40,8 @@ SPEED_OF_SOUND_GU = _audio.speed_of_sound() if _audio is not None else 343.3
 
 
 def node_world_position(node) -> Optional[tuple[float, float, float]]:
-    """World (x, y, z) for a node ref, or None when it cannot be resolved.
+    """The node's position in the VIEWING set's local coordinates, or None
+    when it cannot be resolved.
 
     Coordinates MUST be real numbers. `TGObject.__getattr__` hands back a
     chainable `_Stub` for any unimplemented attribute; a stub coerces to 0.0,
@@ -51,6 +52,20 @@ def node_world_position(node) -> Optional[tuple[float, float, float]]:
     falling through to a positional source at the backend's (0, 0, 0)
     default. This guard is the same one `TGSoundAction._node_position`
     documents — both call here now.
+
+    Frame translation (system-frames plan 2 task 6): once a real position is
+    in hand, it is expressed in `frames.viewing_set()`'s local coordinates
+    via the node's own containing set -- `frames.local_in`'s shape, but
+    computed against the already-vetted (x, y, z) above rather than a second,
+    unguarded `GetWorldLocation()` call inside `frames.py` (which has no
+    stub-rejection of its own). Same-frame numbers pass through unchanged
+    (byte-identical to before frames existed). When the viewing set or the
+    node's containing set can't be determined at all (no game-world context,
+    or a node -- a test double, an object never added to any set -- with no
+    frame concept), this falls back to the raw coordinates: "no information"
+    is not "a different frame". Only a node that resolves to a REAL,
+    DIFFERENT frame from the one being viewed returns None, so the source is
+    silent/stopped rather than playing at wrong coordinates.
     """
     if node is None:
         return None
@@ -72,7 +87,17 @@ def node_world_position(node) -> Optional[tuple[float, float, float]]:
     # could return.
     if not all(isinstance(c, (int, float)) for c in (x, y, z)):
         return None
-    return (float(x), float(y), float(z))
+    x, y, z = float(x), float(y), float(z)
+
+    from engine.systems import frames
+    view = frames.viewing_set()
+    node_set = frames.containing_set(node)
+    if view is None or node_set is None:
+        return (x, y, z)
+    off = frames.offset_between(view, node_set)
+    if off is None:
+        return None
+    return (x + off[0], y + off[1], z + off[2])
 
 
 class _Entry:
@@ -98,6 +123,25 @@ def attach(handle, node) -> None:
 def detach(handle) -> None:
     if handle is not None and handle._pid:
         _attached.pop(handle._pid, None)
+
+
+def owner_frame(handle):
+    """The frame key of the set `handle`'s attach owner is in NOW, or None
+    when `handle` is not attached or its owner has no resolvable set.
+
+    An attached sound belongs to its owner's CURRENT frame, not the one it
+    started in: `scene_scope.set_active_frame` asks this so a sound follows
+    its owner across a set change (the player's "Enter Warp" into BC's warp
+    set) instead of being stopped with the frame the owner left."""
+    if handle is None or not handle._pid:
+        return None
+    entry = _attached.get(handle._pid)
+    if entry is None:
+        return None
+    from engine.systems import frames
+    node_set = frames.containing_set(entry.node)
+    frame = frames.frame_of(node_set) if node_set is not None else None
+    return frame.key if frame is not None else None
 
 
 def pump(dt: float) -> None:

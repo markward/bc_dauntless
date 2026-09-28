@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "dauntless/transform_store.h"
 
+#include <glm/glm.hpp>
+
 using dauntless::TransformStore;
 
 TEST(TransformStoreTest, NewSlotIsIdentityAtOrigin) {
@@ -170,4 +172,53 @@ TEST(ComposeWorldMatrixTest, DoesNotReflectTheXColumn) {
     EXPECT_FLOAT_EQ(m[5], 3.0f);
     EXPECT_FLOAT_EQ(m[10], 3.0f);
     s.free(i, g);
+}
+
+// ── compose_world_linear_translation ─────────────────────────────────────────
+// The floating-render-origin composer: the SAME rotation·scale as
+// compose_world_matrix, but the translation is handed back in DOUBLE, never
+// narrowed. The narrowing happens later, once per frame, AFTER the render
+// origin has been subtracted (World::resolve_render_space) — so a ship 1e6 GU
+// out keeps its quarter-GU.
+
+TEST(ComposeWorldLinearTranslationTest, TranslationSurvivesInDoubleExactly) {
+    TransformStore::Transform t{};
+    t.pos[0] = 1e6 + 0.25; t.pos[1] = -3e5; t.pos[2] = 7.5;
+    glm::mat3 linear(0.0f);
+    glm::dvec3 translation(0.0);
+    dauntless::compose_world_linear_translation(t, 1.0, linear, translation);
+    EXPECT_EQ(translation.x, 1e6 + 0.25);
+    EXPECT_EQ(translation.y, -3e5);
+    EXPECT_EQ(translation.z, 7.5);
+
+    // 1e6 + 0.25 happens to be a float too (ulp at 1e6 is 0.0625). 1e6 + 0.3
+    // is not — the value a float translation would have silently moved.
+    t.pos[0] = 1e6 + 0.3;
+    ASSERT_NE(static_cast<double>(static_cast<float>(t.pos[0])), t.pos[0]);
+    dauntless::compose_world_linear_translation(t, 1.0, linear, translation);
+    EXPECT_EQ(translation.x, 1e6 + 0.3);
+}
+
+TEST(ComposeWorldLinearTranslationTest, LinearEqualsComposeWorldMatrixUpperLeft) {
+    TransformStore::Transform t{};
+    t.pos[0] = 12.0; t.pos[1] = 34.0; t.pos[2] = 56.0;
+    const double r[9] = {0.11, 0.22, 0.33,
+                         0.44, 0.55, 0.66,
+                         0.77, 0.88, 0.99};
+    for (int i = 0; i < 9; ++i) t.rot[i] = r[i];
+    t.rot[0] = -1.0849511149181894;   // the one-ULP double-vs-float scale case
+    const double scale = 1890.541938400889;
+
+    float m[16];
+    dauntless::compose_world_matrix(t, scale, m);
+    glm::mat3 linear(0.0f);
+    glm::dvec3 translation(0.0);
+    dauntless::compose_world_linear_translation(t, scale, linear, translation);
+
+    // compose_world_matrix is ROW-major; glm is column-major: linear[col][row].
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            EXPECT_EQ(linear[col][row], m[row * 4 + col])
+                << "row " << row << " col " << col;
+    EXPECT_EQ(translation, glm::dvec3(12.0, 34.0, 56.0));
 }

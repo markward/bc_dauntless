@@ -62,6 +62,12 @@ public:
     ///
     /// The currently-bound framebuffer and viewport are captured on entry and
     /// restored on exit, so the caller's HDR target keeps receiving draws.
+    ///
+    /// `render_origin` is the floating origin the camera and spheres are
+    /// relative to (renderer/render_origin.h): the fbm is sampled at the
+    /// WORLD point (p + origin) so the cloud does not slide with the camera,
+    /// and the temporal history is rebased and gated on the world eye's
+    /// travel. Zero: byte-identical to before.
     void render(const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 const std::vector<NebulaVolume>& volumes,
@@ -70,7 +76,16 @@ public:
                 std::uint32_t hdr_depth_tex,
                 const glm::mat4& inv_view_proj,
                 const glm::vec3& eye,
-                float time);
+                float time,
+                const glm::dvec3& render_origin = glm::dvec3(0.0));
+
+    /// Drop the temporal history (and the origin it was in): the next frame
+    /// marches fresh instead of reprojecting across an origin discontinuity.
+    void reset_history() {
+        have_history_ = false;
+        prev_origin_ = glm::dvec3(0.0);
+    }
+    bool has_history() const { return have_history_; }
 
 private:
     void initialize_gl();
@@ -95,6 +110,7 @@ private:
     bool         have_history_ = false;   // false on first frame / after reset
     glm::mat4    prev_view_proj_ = glm::mat4(1.0f);
     glm::vec3    prev_eye_ = glm::vec3(0.0f);
+    glm::dvec3   prev_origin_ = glm::dvec3(0.0);   // the origin prev_* were in
 };
 
 }  // namespace renderer

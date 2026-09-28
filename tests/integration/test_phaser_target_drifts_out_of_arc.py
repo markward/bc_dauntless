@@ -37,6 +37,7 @@ def test_drift_astern_auto_stops_all_forward_banks(galaxy_red):
         bank._charge_level = bank._max_charge
 
     target = _target_with_shields(at_y=50.0)
+    target._containing_set = ship.GetContainingSet()  # same set: Ruling 5 weapon guard
     ship.SetTarget(target)
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):

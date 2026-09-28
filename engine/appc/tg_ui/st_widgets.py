@@ -113,6 +113,12 @@ class STWarpButton(STButton):
         self._mission_name = ""
         self._episode_name = ""
         self._mission_destination = None
+        # BC's five warp-button queues (SDK App.py:8723-8738). Missions fill them
+        # from their ET_WARP_BUTTON_PRESSED handlers (E6M5:2672 queues the
+        # Episode 7 cutscene BeforeDuring; E4M5:1646 AddActionAfterWarp(seq, 0.0)).
+        # The C++ that merged them into the warp is not in the SDK; where each
+        # plays is spec §1's table (inferred from WarpSequence.SetupSequence).
+        self._queues = {k: [] for k in ("before", "before_during", "during", "after_during", "after")}
 
     def SetWarpTime(self, t) -> None:     self._warp_time = float(t)
     def GetWarpTime(self) -> float:       return self._warp_time
@@ -169,6 +175,12 @@ class STWarpButton(STButton):
     # writers apart.
     def set_player_destination(self, dest) -> None:
         self._destination = dest
+        # A player pick never inherits a mission's SetDestination mission name
+        # (E3M2.py:2124 et al.) or the previous course's Set Course menu
+        # mission/episode. set_course_placement re-applies the NEW menu's
+        # names right after this call; a plain course leaves both cleared.
+        self._mission_name = ""
+        self._episode_name = ""
 
     def get_mission_destination(self):
         return self._mission_destination
@@ -178,6 +190,15 @@ class STWarpButton(STButton):
 
     def get_episode_name(self) -> str:
         return self._episode_name
+
+    # engine-only: the Set Course menu's own mission/episode markers
+    # (SortedRegionMenu.SetMissionName/SetEpisodeName) carried onto the button
+    # by warp.set_course_placement — the same carry BC's SortedRegionMenu
+    # course buttons did directly, before the CEF Set Course modal replaced
+    # them (see set_course_placement's docstring).
+    def set_course_mission(self, mission_name, episode_name) -> None:
+        self._mission_name = str(mission_name or "")
+        self._episode_name = str(episode_name or "")
 
     # Where THIS course drops the player out of warp. Real published surface
     # (sdk/.../App.py:8738 STWarpButton_SetPlacementName). The button is the
@@ -189,6 +210,47 @@ class STWarpButton(STButton):
 
     def GetPlacementName(self) -> str:
         return self._placement_name
+
+    def AddActionBeforeWarp(self, action):         self._queues["before"].append((action, 0.0))
+    def AddActionBeforeDuringWarp(self, action):   self._queues["before_during"].append((action, 0.0))
+    def AddActionDuringWarp(self, action):         self._queues["during"].append((action, 0.0))
+    def AddActionAfterDuringWarp(self, action):    self._queues["after_during"].append((action, 0.0))
+    def AddActionAfterWarp(self, action, delay=0.0):
+        self._queues["after"].append((action, float(delay)))
+
+    def ClearBDASequences(self):
+        for v in self._queues.values():
+            v.clear()
+
+    # engine-only: the warp that is built consumes the queues.
+    def take_queues(self):
+        taken = {k: list(v) for k, v in self._queues.items()}
+        self.ClearBDASequences()
+        return taken
+
+    # engine-only: a warp that was taken but never started (a dash cancelled
+    # during its align) hands its queues back, ahead of anything queued
+    # since, so the next warp plays them.
+    def put_back_queues(self, queues):
+        for k, v in queues.items():
+            self._queues.setdefault(k, [])[:0] = list(v)
+
+    # ── ET_WARP_BUTTON_PRESSED chain (spec §1) ──────────────────────────────
+    def AddPythonFuncHandlerForInstance(self, event_type, qualified_name) -> None:
+        import App
+        from engine.appc import warp_button
+        # SDK WarpPressed is replaced by the engine step (spec §1).
+        if (event_type == App.ET_WARP_BUTTON_PRESSED
+                and warp_button.is_warp_replaced(qualified_name)):
+            return
+        super().AddPythonFuncHandlerForInstance(event_type, qualified_name)
+
+    def ProcessEvent(self, event) -> None:
+        import App
+        from engine.appc import warp_button
+        if event.GetEventType() == App.ET_WARP_BUTTON_PRESSED:
+            warp_button.ensure_engine_step(self)
+        super().ProcessEvent(event)
 
 
 class SortedRegionMenu(STMenu):

@@ -122,6 +122,19 @@ glm::vec3 rotate_jitter(const glm::vec3& base, const glm::vec3& cam_up,
 
 }  // namespace
 
+std::vector<glm::vec2> hit_vfx_spark_jitters(const HitVfxDescriptor& v,
+                                             const glm::mat4& /*instance_world*/) {
+    // Body frame when anchored (always, for a spark burst: Python zeroes
+    // spark_count without an anchor), else the frozen world_pos. Never the
+    // render-space anchor point, which moves with the floating origin.
+    const glm::vec3 seed = v.has_body_anchor ? v.body_point : v.world_pos;
+    std::vector<glm::vec2> out;
+    out.reserve(static_cast<std::size_t>(std::max(0, v.spark_count)));
+    for (int i = 0; i < v.spark_count; ++i) out.push_back(hash3(seed, i));
+    return out;
+}
+
+
 HitVfxPass::HitVfxPass() = default;
 
 HitVfxPass::~HitVfxPass() {
@@ -287,8 +300,10 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                 // Damped speed at current age; used to scale the streak tail
                 // so fast-moving sparks look longer than nearly-stopped ones.
                 const float spark_speed = kSparkSpeed * std::exp(-kSparkDamping * age);
+                const std::vector<glm::vec2> jitters =
+                    hit_vfx_spark_jitters(v, inst->world);
                 for (int i = 0; i < v.spark_count; ++i) {
-                    const glm::vec2 jitter = hash3(origin, i);
+                    const glm::vec2 jitter = jitters[static_cast<std::size_t>(i)];
                     const glm::vec3 dir =
                         rotate_jitter(base, cam_up, cam_right, jitter, cone);
                     const glm::vec3 pos = origin + dir * travel;

@@ -250,6 +250,7 @@ class SetClass(TGEventHandlerObject):
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc.objects import ObjectGroup
             ObjectGroup.broadcast_membership(obj, entered=False)
+            self._clear_containing_set(obj)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
@@ -262,7 +263,21 @@ class SetClass(TGEventHandlerObject):
             from engine.appc.objects import ObjectGroup, broadcast_object_deleted
             ObjectGroup.broadcast_membership(obj, entered=False)
             broadcast_object_deleted(obj)
+            self._clear_containing_set(obj)
         self._objects.pop(name, None)
+
+    def _clear_containing_set(self, obj) -> None:
+        """Stop `obj` reporting THIS set once it has left it, so
+        engine.systems.frames gives it no frame (never a stale one) --
+        Plan 2's frame equality would otherwise let a removed object keep
+        interacting with everything still in this set.
+
+        Checked, not unconditional: a synchronous handler on the removal
+        broadcast above (subscribe callback, ET_EXITED_SET handler, ...) may
+        already have re-added `obj` to a DIFFERENT set before we get here --
+        that new containing set must win, not be stomped back to None."""
+        if hasattr(obj, "_containing_set") and obj._containing_set is self:
+            obj._containing_set = None
 
     def _broadcast_set_transition(self, obj, *, entered: bool) -> None:
         """Post ET_ENTERED_SET / ET_EXITED_SET for a ship joining/leaving this
@@ -275,15 +290,13 @@ class SetClass(TGEventHandlerObject):
         name as a CString because ExitSet reads pEvent.GetCString() (the object's
         containing-set may already point at its next set by dispatch time).
 
-        The internal warp-transit set (an engine artifact BC has no equivalent
-        for) is suppressed so a warp doesn't inject a spurious region entry/exit
-        between the real source and destination sets.
+        The warp transit set ("warp") is BC's own persistent set, not an
+        engine-only artifact (spec §1b) — entering/leaving it broadcasts like
+        any other set so missions' PlayerEntersWarpSet (ET_ENTERED_SET)
+        handlers run.
         """
         from engine.appc.ships import ShipClass
         if not isinstance(obj, ShipClass):
-            return
-        from engine.appc.warp import _WARP_TRANSIT_SET_NAME
-        if self._name == _WARP_TRANSIT_SET_NAME:
             return
         import App
         if entered:

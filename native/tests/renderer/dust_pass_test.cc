@@ -5,6 +5,8 @@
 
 #include <glm/glm.hpp>
 
+#include <cmath>
+
 TEST(DustPassGen, DeterministicSeedProducesIdenticalBuffers) {
     auto a = renderer::generate_dust_particles(12345u, 100, 40.0f);
     auto b = renderer::generate_dust_particles(12345u, 100, 40.0f);
@@ -76,6 +78,119 @@ TEST(DustPassWrap, ZeroCameraOffsetIsIdentityInsideSphere) {
     EXPECT_FLOAT_EQ(local.x, inside.x);
     EXPECT_FLOAT_EQ(local.y, inside.y);
     EXPECT_FLOAT_EQ(local.z, inside.z);
+}
+
+TEST(DustDashSmearCap, ZeroIsOffParity) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(0.0f),
+                    renderer::DustPass::kMaxSmearLength);
+}
+
+TEST(DustDashSmearCap, FullDashScalesByKDashSmearScale) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(1.0f),
+                    renderer::DustPass::kMaxSmearLength *
+                        renderer::DustPass::kDashSmearScale);
+}
+
+// Live finding 2026-09-27: at 10,000 GU/s a 333 GU streak (4-8x the 80 GU
+// dust volume) crosses the camera plane and clips to a screen-spanning white
+// line. The full-dash cap is pinned at 30 GU, inside the volume diameter.
+TEST(DustDashSmearCap, FullDashCapIsThirtyGu) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(1.0f), 30.0f);
+}
+
+TEST(DustDashSmearCap, FullDashStreakStaysInsideDustVolume) {
+    EXPECT_LT(renderer::dash_smear_cap(1.0f),
+              2.0f * renderer::DustPass::kVolumeRadius);
+}
+
+TEST(DustDashSmearCap, ScalesMonotonicallyWithIntensity) {
+    const float low  = renderer::dash_smear_cap(0.25f);
+    const float mid  = renderer::dash_smear_cap(0.5f);
+    const float high = renderer::dash_smear_cap(0.75f);
+    EXPECT_GT(low, renderer::DustPass::kMaxSmearLength);
+    EXPECT_GT(mid, low);
+    EXPECT_GT(high, mid);
+    EXPECT_LT(high, renderer::DustPass::kMaxSmearLength *
+                        renderer::DustPass::kDashSmearScale);
+}
+
+TEST(DustDashSmearCap, ClampsOutOfRangeIntensity) {
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(-1.0f),
+                    renderer::DustPass::kMaxSmearLength);
+    EXPECT_FLOAT_EQ(renderer::dash_smear_cap(2.0f),
+                    renderer::DustPass::kMaxSmearLength *
+                        renderer::DustPass::kDashSmearScale);
+}
+
+TEST(DustDashDensityFactor, ZeroIsOffParity) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(0.0f), 1.0f);
+}
+
+TEST(DustDashDensityFactor, FullDashIsTwentyPercent) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(1.0f),
+                    renderer::DustPass::kDashDustDensity);
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(1.0f), 0.2f);
+}
+
+TEST(DustDashDensityFactor, HalfDashIsSixtyPercent) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(0.5f), 0.6f);
+}
+
+TEST(DustDashDensityFactor, ClampsOutOfRangeIntensity) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(-1.0f), 1.0f);
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(2.0f),
+                    renderer::DustPass::kDashDustDensity);
+}
+
+TEST(DustDrawCount, ZeroDashIsByteIdenticalToBase) {
+    // No location multiplier, no dash: draw count is exactly kParticleCount.
+    EXPECT_EQ(renderer::dust_draw_count(1.0f, 0.0f, renderer::DustPass::kSeededCount),
+              renderer::DustPass::kParticleCount);
+}
+
+TEST(DustDrawCount, ZeroDashPreservesLocationMultiplier) {
+    // Sun-peak density (10x) with no dash: unaffected by the new factor.
+    const int expected = static_cast<int>(
+        renderer::DustPass::kParticleCount * renderer::DustPass::kSunPeakMult);
+    EXPECT_EQ(renderer::dust_draw_count(renderer::DustPass::kSunPeakMult, 0.0f,
+                                        renderer::DustPass::kSeededCount),
+              expected);
+}
+
+TEST(DustDrawCount, FullDashIsTwentyPercentOfBaseline) {
+    // Baseline (density_mult 1.0): kParticleCount * 0.2.
+    const int expected = static_cast<int>(
+        std::lround(renderer::DustPass::kParticleCount * 0.2f));
+    EXPECT_EQ(renderer::dust_draw_count(1.0f, 1.0f, renderer::DustPass::kSeededCount),
+              expected);
+}
+
+TEST(DustDrawCount, FullDashIsTwentyPercentOfLocationDensity) {
+    // Sun-peak density (10x) fully dashed: 20% of what THIS position would
+    // otherwise show, not 20% of the unmultiplied base count.
+    const int base = static_cast<int>(
+        std::lround(renderer::DustPass::kParticleCount * renderer::DustPass::kSunPeakMult));
+    const int expected = static_cast<int>(std::lround(base * 0.2f));
+    EXPECT_EQ(renderer::dust_draw_count(renderer::DustPass::kSunPeakMult, 1.0f,
+                                        renderer::DustPass::kSeededCount),
+              expected);
+}
+
+TEST(DustDrawCount, NeverGoesBelowZero) {
+    EXPECT_GE(renderer::dust_draw_count(0.0f, 1.0f, renderer::DustPass::kSeededCount), 0);
+}
+
+TEST(DustDrawCount, ZeroBaseStaysZeroUnderDash) {
+    EXPECT_EQ(renderer::dust_draw_count(0.0f, 1.0f, renderer::DustPass::kSeededCount), 0);
+}
+
+TEST(DustDrawCount, RespectsParticleCountCap) {
+    // Cap below what density_mult alone would produce; dash factor applies
+    // AFTER the cap.
+    const int cap = 50;
+    const int expected = static_cast<int>(std::lround(cap * 0.2f));
+    EXPECT_EQ(renderer::dust_draw_count(renderer::DustPass::kSunPeakMult, 1.0f, cap),
+              expected);
 }
 
 TEST(DustInfluence, NoBodiesIsBaseline) {
@@ -256,6 +371,17 @@ TEST_F(DustPassGLTest, DisabledPassDoesNothing) {
     cam.target = {0, 0, 0};
     cam.aspect = 1.0f;
     pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {});
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(DustPassGLTest, DashIntensityRendersWithNoGLError) {
+    renderer::DustPass pass;
+    scenegraph::Camera cam;
+    cam.eye = {0, 0, 100};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+    pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {}, 0.0f,
+               glm::vec3(0.0f, 1.0f, 0.0f), glm::dvec3(0.0), 1.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

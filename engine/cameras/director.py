@@ -125,6 +125,22 @@ class _CameraDirector:
         self._opted_out_target = None
         self._release_ghost()
 
+    def rebase(self, offset) -> None:
+        """The view coordinates moved by `offset` (the player handed off
+        into another region set of the same system): re-base every point
+        either camera remembers from earlier frames, so nothing reads the
+        coordinate change as motion."""
+        from engine.appc.math import TGPoint3
+        self.chase.rebase(offset)
+        self.tracking.rebase(offset)
+
+        def _shift(p):
+            return TGPoint3(p.x + offset[0], p.y + offset[1], p.z + offset[2])
+        if self._ghost is not None:
+            self._ghost._loc = _shift(self._ghost._loc)
+        if self._ghost_aim is not None:
+            self._ghost_aim = _shift(self._ghost_aim)
+
     def _release_ghost(self) -> None:
         self._ghost = None
         self._ghost_aim = None

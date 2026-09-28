@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 namespace dauntless {
 
 // Thrown when a handle's generation no longer matches its slot.
@@ -107,6 +109,17 @@ private:
 // draws every hull mirror-imaged.
 void compose_world_matrix(const TransformStore::Transform& t, double scale,
                           float out[16]);
+
+// The floating-render-origin composer: the SAME rotation·scale as
+// compose_world_matrix (multiplied in double, rounded to float once — `linear`
+// equals compose_world_matrix's upper-left 3x3 element for element, stored
+// column-major as glm is), but the translation is handed back in DOUBLE and
+// never narrowed here. It is narrowed once per frame, AFTER the render origin
+// has been subtracted (scenegraph::World::resolve_render_space), so an object
+// 1e6 GU from the system origin keeps its sub-1/16-GU position.
+void compose_world_linear_translation(const TransformStore::Transform& t,
+                                      double scale, glm::mat3& linear,
+                                      glm::dvec3& translation);
 
 // The process-wide store.
 TransformStore& transform_store();

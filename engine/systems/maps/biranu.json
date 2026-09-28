@@ -1,0 +1,134 @@
+{
+  "system": "Biranu",
+  "bodies": [
+    {
+      "name": "Biranu",
+      "display_name": "Biranu",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Biranu 1",
+      "display_name": "Biranu 1",
+      "radius_gu": 3400.0,
+      "position_gu": [
+        57243.340223994615,
+        -114486.68044798923,
+        0.0
+      ],
+      "orbits": "Biranu",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Biranu1"
+    },
+    {
+      "name": "Biranu 1 Moon",
+      "display_name": "Biranu 1 Moon",
+      "radius_gu": 2200.0,
+      "position_gu": [
+        47143.23451893339,
+        -113856.2975594782,
+        -9085.729588781634
+      ],
+      "orbits": "Biranu 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SlimeGreenPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Biranu1"
+    },
+    {
+      "name": "Osa",
+      "display_name": "Osa",
+      "radius_gu": 3200.0,
+      "position_gu": [
+        -23865.995542849858,
+        -230769.17960756517,
+        0.0
+      ],
+      "orbits": "Biranu",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/SulfurPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Biranu2"
+    },
+    {
+      "name": "Moon",
+      "display_name": "Moon",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        -26411.288533975272,
+        -218434.6073409644,
+        -2284.6904799843946
+      ],
+      "orbits": "Osa",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/moon.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Biranu2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Biranu1",
+      "anchor_gu": [
+        48303.079921464,
+        -118331.93758373371,
+        -8418.186454390818
+      ],
+      "radius_gu": 17767.793901748963,
+      "body_names": [
+        "Biranu 1",
+        "Biranu 1 Moon"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Biranu2",
+      "anchor_gu": [
+        -20137.693788412565,
+        -224097.38329426476,
+        -1179.7231999921974
+      ],
+      "radius_gu": 12433.35935069029,
+      "body_names": [
+        "Osa",
+        "Moon"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

@@ -1,0 +1,158 @@
+{
+  "system": "Yiles",
+  "bodies": [
+    {
+      "name": "Yiles",
+      "display_name": "Yiles",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "red_orange",
+        "color": [
+          0.94,
+          0.54,
+          0.24
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Yiles 1",
+      "display_name": "Yiles 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        78951.14843080095,
+        100750.76258499303,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Yiles1"
+    },
+    {
+      "name": "Yiles 2",
+      "display_name": "Yiles 2",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        143098.95653082672,
+        -182610.75718529988,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/gasgiant.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Yiles2"
+    },
+    {
+      "name": "Yiles 3",
+      "display_name": "Yiles 3",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        207246.7646308525,
+        -264470.7517856067,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Yiles3"
+    },
+    {
+      "name": "Yiles 4",
+      "display_name": "Yiles 4",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        -271394.5727308783,
+        -346330.7463859136,
+        0.0
+      ],
+      "orbits": "Yiles",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Yiles4"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Yiles1",
+      "anchor_gu": [
+        75207.42162080095,
+        98154.65082499303,
+        0.0
+      ],
+      "radius_gu": 7855.7970431443855,
+      "body_names": [
+        "Yiles 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Yiles2",
+      "anchor_gu": [
+        139355.22972082673,
+        -185206.86894529988,
+        0.0
+      ],
+      "radius_gu": 7855.797043144374,
+      "body_names": [
+        "Yiles 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Yiles3",
+      "anchor_gu": [
+        203503.0378208525,
+        -267066.8635456067,
+        0.0
+      ],
+      "radius_gu": 7855.797043144374,
+      "body_names": [
+        "Yiles 3"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Yiles4",
+      "anchor_gu": [
+        -275138.29954087833,
+        -348926.8581459136,
+        0.0
+      ],
+      "radius_gu": 7855.797043144398,
+      "body_names": [
+        "Yiles 4"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

@@ -93,6 +93,21 @@ _last_cam: Optional[AimCamera] = None
 
 
 def note_camera(eye, target, up, fov_y_rad, near, far) -> None:
+    """Park the render-side gameplay camera for the next sim tick's pick.
+
+    ARGUMENT ORDER IS LOAD-BEARING, and the two floats are NOT
+    interchangeable even though both are lengths in GU:
+
+    - `near` is stored and never read. cursor_ray builds its direction from
+      eye/target/up/fov_y_rad alone, so there is no term for `near` to enter.
+    - `far` IS read, exactly once, as the pick ray's max_dist in update().
+
+    So passing them the wrong way round is not a small error in the aim: it
+    sets max_dist to the near plane, every pick truncates at 1 GU, and Manual
+    Aim misses every hull at every range while still reporting itself live.
+    Nothing raises. Pass host_loop's SCENE_NEAR_GU, SCENE_FAR_GU in that
+    order, and the same pair handed to the matching r.set_camera.
+    """
     global _last_cam
     _last_cam = AimCamera(eye, target, up, fov_y_rad, near, far)
 
@@ -169,7 +184,14 @@ def update(*, player, tcw, ship_instances, is_exterior: bool,
     if hit is None:
         return _revert(player)
     (px, py, pz), _normal, _t = hit
-    dx, dy, dz = combat._body_frame_delta(target, TGPoint3(px, py, pz))
+    # The cursor ray and the hit are in VIEW coordinates (the camera's, the
+    # renderer's); the offset is taken against the target's own pose, so the
+    # hit goes back into the target's set coordinates first.
+    from engine.systems import frames
+    hit_pt = frames.shifted(TGPoint3(px, py, pz),
+                            frames.view_offset(frames.containing_set(target)),
+                            -1.0)
+    dx, dy, dz = combat._body_frame_delta(target, hit_pt)
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     if scale <= 1e-9:
         scale = 1.0

@@ -20,7 +20,7 @@ def test_heading_is_normalized_src_to_dst():
     assert warp._warp_heading((0.0, 0.0, 0.0), None) == (0.0, 1.0, 0.0)
 
 
-def test_flythrough_on_holds_swap_and_starts_vfx():
+def test_flythrough_on_holds_swap_and_starts_vfx(monkeypatch):
     started = {}
     warp.configure_warp_vfx(
         enabled=lambda: True,
@@ -33,6 +33,8 @@ def test_flythrough_on_holds_swap_and_starts_vfx():
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
+    # The tunnel is the player's (an NPC's warp never starts it).
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player)
     import types, sys
     mod = types.ModuleType("FakeSys.D"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D"))
@@ -77,12 +79,21 @@ def test_flythrough_off_is_instant():
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src2")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
+    # The warp's player-scene effects (the VFX start among them) are gated on
+    # the ship being the current player (system-frames I3).
+    from engine.core.game import Game, _set_current_game
+    _game = Game(); _game.SetPlayer(player); _set_current_game(_game)
     import types, sys
     mod = types.ModuleType("FakeSys.D2"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D2"))
     sys.modules["FakeSys.D2"] = mod
     warp.WarpSequence_Create(player, "FakeSys.D2", placement=None).Play()
-    assert App.g_kSetManager.GetSet("Src2") is None   # instant swap
+    assert App.g_kSetManager.GetSet("D2").GetObject("player") is player
+    # The hard cut passes through BC's persistent warp set too (a mission
+    # change carries only its occupant), but does not leave the player there.
+    assert App.g_kSetManager.GetSet(
+        warp._WARP_TRANSIT_SET_NAME).GetObject("player") is None
+    assert App.g_kSetManager.GetSet("Src2") is src   # source stands
 
 
 def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
@@ -110,6 +121,10 @@ def test_burst_waits_for_the_parts_to_reach_their_warp_pose(monkeypatch):
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src3")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
+    # The warp's player-scene effects (the VFX start among them) are gated on
+    # the ship being the current player (system-frames I3).
+    from engine.core.game import Game, _set_current_game
+    _game = Game(); _game.SetPlayer(player); _set_current_game(_game)
     import types, sys
     mod = types.ModuleType("FakeSys.D3"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D3"))
@@ -138,6 +153,10 @@ def test_no_rig_means_no_hold(monkeypatch):
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src4")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
+    # The warp's player-scene effects (the VFX start among them) are gated on
+    # the ship being the current player (system-frames I3).
+    from engine.core.game import Game, _set_current_game
+    _game = Game(); _game.SetPlayer(player); _set_current_game(_game)
     import types, sys
     mod = types.ModuleType("FakeSys.D4"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D4"))

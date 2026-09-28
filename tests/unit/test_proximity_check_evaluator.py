@@ -12,6 +12,17 @@ from engine.appc.ai import ProximityCheck
 from engine.appc.ships import ShipClass
 
 
+def _share_a_set(*objs):
+    """Put every object in ONE real set. ProximityCheck rejects a setless
+    object on either side (system-frames Plan 2 Ruling 6), so doubles that
+    exercise the distance/trigger logic must share a set like real ships do."""
+    from engine.appc.sets import SetClass_Create
+    s = SetClass_Create()
+    for i, o in enumerate(objs):
+        s.AddObjectToSet(o, "obj%d" % i)
+    return s
+
+
 def test_evaluate_fires_event_when_object_enters_radius():
     """Watched object initially outside radius. After moving it inside
     and calling Evaluate, an event of the configured type is emitted to
@@ -24,6 +35,7 @@ def test_evaluate_fires_event_when_object_enters_radius():
 
     target = ShipClass()
     target.SetTranslateXYZ(500.0, 0.0, 0.0)  # outside
+    _share_a_set(anchor, target)
     pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
 
     fired = []
@@ -114,6 +126,72 @@ def test_evaluate_fires_once_the_object_joins_the_anchors_set():
     assert fired == [1]
 
 
+def test_evaluate_never_fires_for_a_watched_object_removed_from_its_set():
+    """Controller Ruling 4 (system-frames Task 7 fix round 1): a watched
+    object that has been removed from its set (ship_death, DeleteObjectFromSet)
+    now reports GetContainingSet() -> None (engine.appc.sets.SetClass fix).
+    `_shares_set_with_anchor`'s "permissive when unknowable" fallback must not
+    let that object through just because its set is None -- a setless object
+    interacts with nothing, including an anchor that is still very much in a
+    set, at raw-coordinate distances that mean nothing across sets."""
+    from engine.appc.sets import SetClass_Create
+
+    starbase12 = SetClass_Create()
+    pCheck = ProximityCheck(event_type=999)
+    pCheck.SetRadius(690.0)
+    anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
+    starbase12.AddObjectToSet(anchor, "Starbase 12")
+
+    target = ShipClass(); target.SetTranslateXYZ(50.0, 0.0, 0.0)  # well inside
+    starbase12.AddObjectToSet(target, "Doomed")
+    pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
+    starbase12.RemoveObjectFromSet("Doomed")
+    assert target.GetContainingSet() is None
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda evt: fired.append(1)
+    try:
+        for _ in range(10):
+            pCheck.Evaluate(anchor)
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+    assert fired == []
+
+
+def test_evaluate_never_fires_once_the_anchor_is_removed_from_its_set():
+    """Controller Ruling 6 (system-frames Plan 2 final review, I1): the
+    mirror of the case above. The ANCHOR died -- SetClass.RemoveObjectFromSet
+    cleared its containing set -- while the watched ship sits in a DIFFERENT
+    set, 50 GU away by raw set-local numbers. A setless anchor interacts with
+    nothing: the check must never fire, not wave the ship through at a
+    raw-coordinate distance that means nothing across sets."""
+    from engine.appc.sets import SetClass_Create
+
+    set_x = SetClass_Create()
+    set_y = SetClass_Create()
+    pCheck = ProximityCheck(event_type=999)
+    pCheck.SetRadius(690.0)
+    anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
+    set_x.AddObjectToSet(anchor, "Anchor")
+    target = ShipClass(); target.SetTranslateXYZ(50.0, 0.0, 0.0)
+    set_y.AddObjectToSet(target, "Watched")
+    pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
+    set_x.RemoveObjectFromSet("Anchor")
+    assert anchor.GetContainingSet() is None
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = (
+        lambda evt: fired.append(1) if evt.GetEventType() == 999 else None)
+    try:
+        for _ in range(10):
+            pCheck.Evaluate(anchor)
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+    assert fired == []
+
+
 def test_check_proximity_force_still_fires_when_already_inside():
     """The explicit immediate-check path (force=True, used by CheckProximity)
     fires for an already-inside object. Under level triggering `force` no
@@ -124,6 +202,7 @@ def test_check_proximity_force_still_fires_when_already_inside():
     pCheck.SetRadius(100.0)
     anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
     target = ShipClass(); target.SetTranslateXYZ(50.0, 0.0, 0.0)  # inside
+    _share_a_set(anchor, target)
     pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
 
     fired = []
@@ -159,6 +238,7 @@ def test_evaluate_keeps_firing_while_the_object_matches():
     pCheck.SetRadius(100.0)
     anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
     target = ShipClass(); target.SetTranslateXYZ(500.0, 0.0, 0.0)  # outside
+    _share_a_set(anchor, target)
     pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
 
     fired = []
@@ -182,6 +262,7 @@ def test_evaluate_stops_firing_when_the_object_stops_matching():
     pCheck.SetRadius(100.0)
     anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
     target = ShipClass(); target.SetTranslateXYZ(50.0, 0.0, 0.0)   # inside
+    _share_a_set(anchor, target)
     pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
 
     fired = []
@@ -209,6 +290,7 @@ def test_condition_in_range_rearm_idiom_stops_the_repeat():
     pCheck.SetRadius(100.0)
     anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
     target = ShipClass(); target.SetTranslateXYZ(500.0, 0.0, 0.0)  # outside
+    _share_a_set(anchor, target)
     pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
 
     fired = []
@@ -262,6 +344,7 @@ def test_evaluate_event_destination_is_the_watched_object():
     pCheck.SetRadius(100.0)
     anchor = ShipClass(); anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
     target = ShipClass(); target.SetTranslateXYZ(500.0, 0.0, 0.0)  # outside
+    _share_a_set(anchor, target)
     pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
 
     captured = []

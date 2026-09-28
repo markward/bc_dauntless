@@ -1,22 +1,48 @@
 """Warp Stage 1 — the hard-cut warp spine.
 
 WarpSequence_Create builds a TGSequence that (1) loads + switches to the
-destination set, (2) moves the player into it at the placement, (3) terminates
-the source set and restores player control. Renderer realize/teardown is reached
-via module-level hooks the host registers; unset hooks make those steps no-ops
-(headless set/placement logic still runs). See
-docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
+destination set, (2) moves the player into it at the placement, (3) drops the
+source set's render instances and restores player control. The source set
+itself is never deleted -- it stands, ready to be re-realized on return.
+Renderer realize/teardown is reached via module-level hooks the host
+registers; unset hooks make those steps no-ops (headless set/placement logic
+still runs). See docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
 """
 import math
 
 from engine.appc.actions import TGAction, TGSequence
 
-# Name of the temporary empty set the player occupies WHILE in warp transit.
-# The source system is torn down at burst and the player is parked here (no
-# lights, no backdrops, no other ships) until the destination swap lands — so
-# during transit nothing from the system left behind keeps simulating, firing,
-# or lighting the scene. Mirrors BC's "warp set" (project_warp_mechanism_sdk).
-_WARP_TRANSIT_SET_NAME = "_WarpTransit"
+# Name of the set the player occupies WHILE in warp transit. At burst the
+# player is pulled out of the source set into this one (no lights, no
+# backdrops, no other ships unless a mission put them there) until the
+# destination swap lands, and the source set's RENDER INSTANCES are dropped --
+# the set itself stands, it is not deleted. So during transit nothing from the
+# system left behind keeps drawing or lighting the scene, but its objects
+# still simulate and the set is there to return to.
+#
+# This is BC's own persistent "warp" set (spec §1b), not an engine-only
+# artifact: E6M5/E7M6 load placements into it and queue cutscenes there,
+# E6M1-E6M5's PlayerEntersWarpSet handler (ET_ENTERED_SET) creates ships in it
+# during the tunnel, and 12 missions test GetName() == "warp" as their
+# in-transit guard. It is created on first use and never deleted by the
+# tunnel itself -- only MissionLib.DeleteShipsFromWarpSetExceptForMe (a
+# mission's own housekeeping) or a mission change clears it.
+_WARP_TRANSIT_SET_NAME = "warp"
+
+
+def WarpSequence_GetWarpSet():
+    """BC's warp set: one set named "warp", created on first use and kept.
+    E6M5/E7M6 load placements into it (Warp_P.LoadPlacements("warp")) and
+    E6M1-E6M5 create ships there on ET_ENTERED_SET; MissionLib.
+    DeleteShipsFromWarpSetExceptForMe clears it. Persistent by design
+    (spec §1b, HelmMenuHandlers.py:407)."""
+    import App
+    from engine.appc.sets import SetClass_Create
+    s = App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME)
+    if s is None:
+        s = SetClass_Create()
+        App.g_kSetManager.AddSet(s, _WARP_TRANSIT_SET_NAME)
+    return s
 
 # Host-registered render hooks: fn(pSet) -> None. None => skip (headless).
 _realize_hook = None
@@ -142,29 +168,50 @@ def _warp_heading(src_vantage, dst_vantage):
     return (0.0, 1.0, 0.0) if m < 1e-6 else (dx / m, dy / m, dz / m)
 
 
-class _WarpSoundAction(TGAction):
-    """Play a registered 2D/3D SFX by name (enter/exit warp). Fail-open: a
-    missing sound / absent manager never blocks the warp chain."""
+def _play_attached(name, ship):
+    """Play the registered sound ``name`` attached to ``ship``'s node, as BC
+    does both warp sounds (WarpSequence.py:79-89, 285-297:
+    ``pWarpSoundAction.SetNode(pShip.GetNode())``); the playing handle, or
+    None. Both are loaded LS_3D, so an unattached play is pinned where it
+    started -- inaudible by the crack once the ship has left at warp speed.
+    Fail-open: a missing sound / absent manager never blocks a warp."""
+    try:
+        import App
+        snd = App.g_kSoundManager.GetSound(name)
+        if snd is None:
+            return None
+        getter = getattr(ship, "GetNode", None)
+        node = getter() if getter is not None else None
+        if node is None:
+            snd.DetachFromNode()    # never ride a previous caller's node
+            return snd.Play()
+        return snd.Play(attach_node=node)
+    except Exception:
+        return None
 
-    def __init__(self, name):
+
+class _WarpSoundAction(TGAction):
+    """Play "Enter Warp" / "Exit Warp" attached to the warping ship (player or
+    NPC, as BC). Fail-open (``_play_attached``)."""
+
+    def __init__(self, name, ship):
         super().__init__()
         self._name = name
+        self._ship = ship
 
     def _do_play(self):
-        try:
-            import App
-            App.g_kSoundManager.PlaySound(self._name)
-        except Exception:
-            pass
+        _play_attached(self._name, self._ship)
 
 
 def _clear_all_targets(ship) -> None:
     """Drop the player's target + subsystem lock the instant warp engages.
 
-    The target LIST needs no clearing: mid-warp the player is alone in the
-    _WarpTransit set, so the derived membership is empty by construction and
-    repopulates from the destination on arrival. Fail-open: a failure here
-    never blocks the warp.
+    The target LIST needs no clearing: it is derived from the player's
+    containing set, which mid-warp is BC's persistent "warp" set (spec §1b) --
+    empty unless a mission has parked ships there (E6M1's Artrus ships), in
+    which case the list lists them, as BC's would. Either way it repopulates
+    from the destination on arrival. Fail-open: a failure here never blocks
+    the warp.
 
     ⚠️ THIS IS THE ENGAGE-TIME CLEAR, AND IT DOES NOT STICK ON ITS OWN. It is
     ours, not BC's -- BC clears on ARRIVAL (PostWarpEnableMenu). Read
@@ -241,6 +288,10 @@ class _ClearTargetsAction(TGAction):
         self._ship = ship
 
     def _do_play(self):
+        # The player's targets and AI only: ClearAI on an NPC would kill the
+        # very AI that ordered its warp.
+        if not _is_current_player(self._ship):
+            return
         _clear_all_targets(self._ship)
         try:
             _stand_down_player_ai(self._ship)
@@ -271,7 +322,7 @@ class _ArrivalClearTargetsAction(TGAction):
     and pushes it back via `AutoTargetChange`, which is gated only on the
     "Target At Will" button that `CreateTacticalMenu` builds SetChosen(1) — on
     by default. The player then arrived in the new system still targeting a
-    ship left behind in the torn-down source set: the reticle and tracking
+    ship left behind in the source set: the reticle and tracking
     camera stayed welded to it while the target list, being derived from the
     current set, could not list it, so it could be neither selected nor cycled
     away from.
@@ -289,12 +340,38 @@ class _ArrivalClearTargetsAction(TGAction):
         self._ship = ship
 
     def _do_play(self):
-        _clear_all_targets(self._ship)
+        # Player only, like the SDK's schedule of PostWarpEnableMenu
+        # (WarpSequence.py:322).
+        if _is_current_player(self._ship):
+            _clear_all_targets(self._ship)
+
+
+class _ArrivalExitedWarpAction(TGAction):
+    """Post ET_EXITED_WARP (source = destination = the player) on the
+    player's arrival -- ruling R16. Nine SDK hooks listen for it (E1M2
+    FirstHavenHail, E2M6 PlayerEntersBiranu, E8M2 Briefing, ...), written
+    for tunnel arrivals; the in-system dash posts it at every drop-out
+    through the same `handoff.post_exited_warp`. Appended AFTER the
+    placement and the arrival target clear, so a handler reads the arrival
+    set and pose, and a target it picks is not cleared under it. Where BC's
+    C++ posts it within its warp chain is inferred from those hooks.
+
+    Player only, like every arrival beat here: the SDK hooks test the event
+    against the player."""
+
+    def __init__(self, ship):
+        super().__init__()
+        self._ship = ship
+
+    def _do_play(self):
+        if _is_current_player(self._ship):
+            from engine.systems import handoff
+            handoff.post_exited_warp(self._ship)
 
 
 class _EnableHelmMenuAction(TGAction):
     """Restore the Helm menu on arrival — the counterpart to the
-    `disable_helm_menu()` that `on_warp_engage` performs at engage time.
+    `disable_helm_menu()` that `warp_button.engage` performs at engage time.
 
     BC's equivalent is PostWarpEnableMenu (Bridge/HelmMenuHandlers.py:918),
     which stock BC schedules into its own warp sequence at
@@ -307,12 +384,19 @@ class _EnableHelmMenuAction(TGAction):
     Added UNCONDITIONALLY on both branches, deliberately outside the
     `_module_is_empty` guards: a falsy destination degrades the hard-cut path
     to "nothing happened", but the menu was already disabled at engage time,
-    so a path that skips the re-enable leaves it dead for the session."""
+    so a path that skips the re-enable leaves it dead for the session.
 
-    def __init__(self):
+    Player warps only (`ship` None => unconditional): the SDK schedules
+    PostWarpEnableMenu only when the warping ship is the player
+    (WarpSequence.py:322), and an NPC's warp never disabled the menu."""
+
+    def __init__(self, ship=None):
         super().__init__()
+        self._ship = ship
 
     def _do_play(self):
+        if self._ship is not None and not _is_current_player(self._ship):
+            return
         from engine.bridge_officers import enable_helm_menu
         enable_helm_menu()
 
@@ -332,11 +416,15 @@ class _WarpVfxBeginAction(TGAction):
         self._hold = t_hold
 
     def _do_play(self):
-        try:
-            import MissionLib
-            MissionLib.RemoveControl()
-        except Exception:
-            pass
+        # Control and the WarpVFX tunnel are the player's: an NPC's warp
+        # (AI/PlainAI/Warp.py) only enters the warp FSM below.
+        player = _is_current_player(self._ship)
+        if player:
+            try:
+                import MissionLib
+                MissionLib.RemoveControl()
+            except Exception:
+                pass
         # Enter BC's warp FSM. This is the state BC's own scripts read
         # (WarpSequence.py:638, HelmMenuHandlers.py:2465), and it is what makes
         # the ship non-collidable for the flight (collisions._collisions_enabled).
@@ -350,7 +438,7 @@ class _WarpVfxBeginAction(TGAction):
         # Ship motion during warp is driven by the host's _PlayerControl warp
         # speed profile — a ship-level SetSpeed here is inert for the player and
         # is intentionally omitted.
-        if _vfx_start is not None:
+        if player and _vfx_start is not None:
             try:
                 _vfx_start(*self._a, t_hold=self._hold)
             except Exception:
@@ -374,7 +462,8 @@ class _WarpVfxEndAction(TGAction):
         self._ship = ship
 
     def _do_play(self):
-        if _vfx_stop is not None:
+        # The WarpVFX singleton is the player's; an NPC's warp never started it.
+        if _vfx_stop is not None and _is_current_player(self._ship):
             try:
                 _vfx_stop()
             except Exception:
@@ -384,6 +473,69 @@ class _WarpVfxEndAction(TGAction):
         try:
             from engine.appc import warp_state
             warp_state.end_flythrough(self._ship)
+        except Exception:
+            pass
+
+
+class _MissionChangePoint(TGAction):
+    """The point in transit, after the after-during queue, where a
+    cross-mission warp changes mission (spec §2). A name equal to the current
+    one -- or a change a direct load already made (E5M4) -- is a no-op."""
+
+    def __init__(self, seq):
+        super().__init__()
+        self._seq = seq
+
+    def _do_play(self):
+        mission = self._seq.GetDestinationMission()
+        episode = self._seq.GetDestinationEpisode()
+        if mission or episode:
+            from engine.core import mission_change
+            mission_change.change(mission=mission, episode=episode)
+
+
+class _HoldUntilAction(TGAction):
+    """Completes no earlier than the start of the nominal transit's exit
+    flash (sequence start + t_burst + 0.9 * t_transit), so a transit whose
+    queues finish early still lasts its full length -- the swap follows the
+    release 0.1 * t_transit later, at transit end under the flash. Completes
+    at once when that deadline has already passed -- a queue or the master
+    sequence ran long and the streak has been held (spec §1 "Transit holds").
+    Game time, via g_kTimerManager, like TGSequence's own step delays."""
+
+    def __init__(self, seq, t_burst, t_transit):
+        super().__init__()
+        self._seq = seq
+        self._span = float(t_burst) + 0.9 * float(t_transit)
+
+    def Play(self):
+        import App
+        self._playing = True
+        start = self._seq._t_start
+        now = App.g_kUtopiaModule.GetGameTime()
+        # A sequence never Play()ed has no start: fail open to an early swap.
+        remaining = 0.0 if start is None else start + self._span - now
+        # <= 0 completes inline; otherwise a game-time timer (Abort cancels).
+        self._complete_after(remaining, mgr=App.g_kTimerManager)
+
+
+class _TransitReleaseAction(TGAction):
+    """End the transit hold: the WarpVFX resumes with its exit flash to play.
+    Releases iff _WarpDepartAction took the hold (seq._vfx_held). Fail-open,
+    like _WarpVfxBeginAction -- never blocks the swap."""
+
+    def __init__(self, seq):
+        super().__init__()
+        self._seq = seq
+
+    def _do_play(self):
+        if not self._seq._vfx_held:
+            return
+        self._seq._vfx_held = False
+        try:
+            import App
+            from engine import warp_vfx
+            warp_vfx.get().release(App.g_kUtopiaModule.GetGameTime())
         except Exception:
             pass
 
@@ -411,6 +563,9 @@ class ChangeRenderedSetAction(TGAction):
         super().__init__()
         self._module = module
         self._set = pSet
+        # The warping ship, when a warp built this action (_warp_swap_action):
+        # an NPC's destination is loaded but never made the rendered set.
+        self._ship = None
 
     def _do_play(self):
         import App
@@ -434,6 +589,8 @@ class ChangeRenderedSetAction(TGAction):
                     raise RuntimeError(
                         "warp: module %r Initialize() did not register set %r"
                         % (self._module, name))
+        if self._ship is not None and not _is_current_player(self._ship):
+            return
         App.g_kSetManager.MakeRenderedSet(pSet.GetName())
         if _realize_hook is not None:
             _realize_hook(pSet)
@@ -445,6 +602,17 @@ def ChangeRenderedSetAction_Create(module):
 
 def ChangeRenderedSetAction_CreateFromSet(pSet):
     return ChangeRenderedSetAction(pSet=pSet)
+
+
+def _warp_swap_action(dest_module, ship):
+    """The warp's destination swap, scoped to the warping ship: for an NPC it
+    loads the destination set without making it the rendered set. Built via
+    ChangeRenderedSetAction_Create so tests that replace that factory keep
+    seeing every swap."""
+    swap = ChangeRenderedSetAction_Create(dest_module)
+    if isinstance(swap, ChangeRenderedSetAction):
+        swap._ship = ship
+    return swap
 
 
 class _PlacePlayerAction(TGAction):
@@ -538,74 +706,108 @@ def _silence_ship_weapons(ship):
 
 
 class _WarpDepartAction(TGAction):
-    """Fires at BURST (transit start): tear down the system being left behind.
+    """Fires at BURST (transit start): drop the render instances of the system
+    being left behind. The set itself is NOT deleted -- BC never deletes a set
+    on warp.
 
-    Silences every source-set ship's weapon loops, moves the player into a fresh
-    empty transit set, makes that the rendered set (so lighting + backdrops fall
-    to neutral — the source sun stops lighting the scene), and deletes the source
-    set (render teardown + DeleteSet — its ships stop running AI/combat, so the
-    firing the player could hear during transit goes silent). The held
-    destination swap still lands at transit-end.
+    Silences every source-set ship's weapon loops, moves the player into BC's
+    persistent warp set (get-or-create; never recreated, so a mission's own
+    placements/ships already parked there survive), makes that the rendered
+    set (so lighting + backdrops fall to neutral — the source sun stops
+    lighting the scene), and tears down the source set's render instances
+    only (its objects keep existing and the set stands, ready to be
+    re-realized on return). The held destination swap still lands at
+    transit-end.
 
-    Fail-open: each step is guarded, and _ArriveFinalizeAction tears the source
-    down on arrival anyway (idempotent) if departure didn't complete."""
+    Fail-open: each step is guarded, and _ArriveFinalizeAction repeats the
+    render teardown on arrival anyway (idempotent) if departure didn't
+    complete.
 
-    def __init__(self, source_set, ship):
+    `hard_cut`: the no-flythrough warp's departure. It parks the ship in the
+    warp set all the same -- a mission change carries only the warp set's
+    occupant, and missions script "entered warp" (E6M1 PlayerEntersWarpSet
+    creates the Artrus ships there) -- but sets no WES_WARPING, which only the
+    flythrough's _WarpVfxEndAction clears. On either branch an NPC's
+    departure touches nothing the player sees (no rendered-set change, no
+    teardown, no silencing of other ships)."""
+
+    def __init__(self, source_set, ship, seq=None, hard_cut=False):
         super().__init__()
         self._source = source_set
         self._ship = ship
+        self._seq = seq     # records whether we took the WarpVFX hold
+        self._hard_cut = hard_cut
 
     def _do_play(self):
         import App
-        from engine.appc.sets import SetClass_Create
         src = self._source
         ship = self._ship
+        # Whether this departure changes the player's scene: only the
+        # player's own warp does, on either branch -- an NPC's (every AI warp
+        # takes this spine) moves the NPC alone.
+        scene = _is_current_player(ship)
         # Burst: the ship is now at warp.
-        try:
-            from engine.appc import warp_state
-            from engine.appc.subsystems import WarpEngineSubsystem
-            warp_state.set_state(ship, WarpEngineSubsystem.WES_WARPING)
-        except Exception:
-            pass
+        if not self._hard_cut:
+            try:
+                from engine.appc import warp_state
+                from engine.appc.subsystems import WarpEngineSubsystem
+                warp_state.set_state(ship, WarpEngineSubsystem.WES_WARPING)
+            except Exception:
+                pass
         # 1. Silence looping weapon SFX on every source-set ship (incl. the
-        #    player) before the set is deleted — otherwise a bank firing at the
-        #    moment of warp loops on into transit / the new system.
-        if src is not None:
+        #    player) before its render instances are torn down — otherwise a
+        #    bank firing at the moment of warp loops on into transit / the new
+        #    system.
+        if scene and src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
-        # 2. Park the player in a fresh empty transit set and render that, so the
-        #    lighting/backdrop aggregation (which keys off the rendered/player
-        #    set) yields neutral defaults instead of the source system's sun.
+        # 2. Park the player in BC's persistent warp set and render that, so
+        #    the lighting/backdrop aggregation (which keys off the
+        #    rendered/player set) yields neutral defaults instead of the
+        #    source system's sun. The warp set is get-or-create -- it is
+        #    never recreated, so a mission's placements/ships already parked
+        #    there (spec §1b) survive departure.
         try:
-            if App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME) is not None:
-                App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
-            transit = SetClass_Create()
-            App.g_kSetManager.AddSet(transit, _WARP_TRANSIT_SET_NAME)
+            transit = WarpSequence_GetWarpSet()
             if ship is not None:
                 for s in list(App.g_kSetManager._sets.values()):
                     if s.GetObject(ship.GetName()) is ship:
                         s.RemoveObjectFromSet(ship.GetName())
                 transit.AddObjectToSet(ship, ship.GetName())
-            App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
+            if scene:
+                App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
         except Exception:
             pass
-        # 3. Tear the source system down (render teardown + DeleteSet). Guarded:
-        #    a failure here leaves it for _ArriveFinalizeAction to finish.
-        if src is not None:
+        # The streak holds at its plateau until _TransitReleaseAction: the
+        # swap now waits on the queues and the master sequence (spec §1).
+        # Player only -- the WarpVFX singleton is the player's tunnel, and an
+        # NPC warp must not freeze it. Only with a sequence, whose
+        # _TransitReleaseAction is what lets go again.
+        if self._seq is not None and _is_current_player(ship):
             try:
-                name = src.GetName()
-                if _teardown_hook is not None:
-                    _teardown_hook(src)
-                App.g_kSetManager.DeleteSet(name)
+                from engine import warp_vfx
+                warp_vfx.get().hold()
+                self._seq._vfx_held = True
+            except Exception:
+                pass
+        # 3. Drop the source set's RENDER instances. The set itself stands:
+        #    departure is not a lifetime operation. BC's region modules delete
+        #    a set only in Terminate(), which nothing calls; the bound is the
+        #    mission change (host_loop's _sets.clear()). Returning to this set
+        #    re-realizes it through _realize_hook.
+        if scene and src is not None and _teardown_hook is not None:
+            try:
+                _teardown_hook(src)
             except Exception:
                 pass
 
 
 class _ArriveFinalizeAction(TGAction):
-    """Silence weapon-fire loops, terminate the source set (render teardown +
-    DeleteSet) if it still exists, clean up the warp-transit set, and return
-    player control. Idempotent w.r.t. the source set so it is safe whether or not
-    _WarpDepartAction already tore it down."""
+    """Silence weapon-fire loops, drop the source set's render instances (if
+    departure did not already), and return player control. Neither the
+    source set nor the (persistent) warp set is deleted here. Idempotent
+    w.r.t. the render teardown so it is safe whether or not
+    _WarpDepartAction already ran it."""
 
     def __init__(self, source_set, ship=None):
         super().__init__()
@@ -628,26 +830,30 @@ class _ArriveFinalizeAction(TGAction):
             pass
         # Silence looping weapon SFX before we leave: the warping ship (which
         # has already moved to the destination) plus every ship left behind in
-        # the source set (about to be torn down). Otherwise a phaser fired at
-        # the moment of warp loops forever in the new system.
+        # the source set, whose RENDER INSTANCES are about to be torn down (the
+        # set itself stands). Otherwise a phaser fired at the moment of warp
+        # loops forever in the new system.
         _silence_ship_weapons(self._ship)
+        # The rest is the player's scene and control: an NPC arriving leaves
+        # the source set's ships, render instances and the player's input
+        # alone (the SDK returns control only for the player,
+        # WarpSequence.py:311-316).
+        if not _is_current_player(self._ship):
+            return
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
-        # Terminate the source set — but ONLY if it still exists (the flythrough
-        # path tears it down earlier in _WarpDepartAction; this is the fallback
-        # for the instant path and for a departure that failed open).
+        # Drop the source set's render instances if departure did not (the
+        # instant path has no departure). The set itself stands -- see
+        # _WarpDepartAction step 3.
         if src is not None and App.g_kSetManager.GetSet(src.GetName()) is src:
             if App.g_kSetManager.get_explicit_rendered_set() is not src:
                 if _teardown_hook is not None:
                     _teardown_hook(src)
-                App.g_kSetManager.DeleteSet(src.GetName())
-        # Clean up the temporary warp-transit set (flythrough only; no-op on the
-        # instant path). The player has been moved into the destination by
-        # _PlacePlayerAction, so the transit set is now empty.
-        transit = App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME)
-        if transit is not None and App.g_kSetManager.get_explicit_rendered_set() is not transit:
-            App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
+        # The warp set itself is never deleted here -- it is BC's persistent
+        # "warp" set (spec §1b): a mission's placements/ships parked there
+        # survive arrival, and only MissionLib.DeleteShipsFromWarpSetExceptForMe
+        # or a mission change clears it.
         # Undo SDK WarpPressed's RemoveControl (no-op if MissionLib absent).
         try:
             import MissionLib
@@ -657,15 +863,22 @@ class _ArriveFinalizeAction(TGAction):
 
 
 class WarpSequence(TGSequence):
-    def __init__(self, ship, dest_module, warp_time, placement):
+    def __init__(self, ship, dest_module, warp_time, placement, mission=None, episode=None, queues=None):
         super().__init__()
         self._ship = ship
         self._dest_module = dest_module
         self._warp_time = float(warp_time)
         self._placement = placement
-        # No cross-mission warp path exists yet; see the accessors below.
-        self._dest_mission = None
-        self._dest_episode = None
+        # Mission and episode names are carried from the warp button's
+        # SetDestination call, which records the button's mission/episode
+        # context so that cross-mission warps later have the context they need.
+        self._dest_mission = mission or None
+        self._dest_episode = episode or None
+        # The five action queues from the button (BC SDK App.py:8723-8738),
+        # played at their points by WarpSequence_Create (spec §1).
+        self._queues = queues or {k: [] for k in ("before", "before_during", "during", "after_during", "after")}
+        self._t_start = None    # game time of Play(); _HoldUntilAction's origin
+        self._vfx_held = False  # _WarpDepartAction held the WarpVFX
 
     def GetShip(self):          return self._ship
     def GetDestination(self):   return self._dest_module
@@ -684,6 +897,9 @@ class WarpSequence(TGSequence):
         engine = self._warp_engine()
         if engine is not None:
             engine.SetWarpSequence(self)
+        # _HoldUntilAction measures the nominal transit from here.
+        import App
+        self._t_start = App.g_kUtopiaModule.GetGameTime()
         super().Play()
 
     def Completed(self) -> None:
@@ -710,16 +926,13 @@ class WarpSequence(TGSequence):
     # set (WarpSequence_GetDestinationMission 0x0061f7a0,
     # _GetDestinationEpisode 0x0061f810), set via SetEventDestination.
     #
-    # Dauntless only ever builds SET warps -- WarpSequence_Create takes a
-    # dest_module and nothing writes a mission or episode -- so both are
-    # legitimately empty here. They must still EXIST and return a real falsy
-    # value: Conditions/ConditionWarpingToMission.py:23 does
+    # WarpSequence_Create takes both from the warp button (execute_warp: the
+    # Set Course pick or the mission's SetDestination); a plain set warp
+    # leaves them None. They must EXIST and return a real falsy value then:
+    # Conditions/ConditionWarpingToMission.py:23 does
     #     if pWarpSequence and (GetDestinationMission() or GetDestinationEpisode())
     # and a missing attribute resolves to a TRUTHY _Stub, which made that
     # condition fire for every warp in the game (heatmap rank 95).
-    #
-    # When cross-mission warp is built, store the target here rather than
-    # reintroducing the stub.
     def GetDestinationMission(self):  return self._dest_mission
     def GetDestinationEpisode(self):  return self._dest_episode
 
@@ -737,9 +950,9 @@ def WarpSequence_Cast(obj):
     return obj if isinstance(obj, WarpSequence) else None
 
 
-def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Start"):
+def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Start", mission=None, episode=None, queues=None):
     import App
-    seq = WarpSequence(ship, dest_module, warp_time, placement)
+    seq = WarpSequence(ship, dest_module, warp_time, placement, mission=mission, episode=episode, queues=queues)
     dest_name = _set_name_from_module(dest_module)
     # Capture the source set NOW (before the player is moved).
     source = None
@@ -749,9 +962,9 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
             break
     # Stage 2 timed flythrough: only when the flythrough is live (toggle AND
     # renderer AND procedural sky, via the host predicate) AND there's a real
-    # destination to fly to. The set swap is HELD by a game-time delay = the
-    # transit duration, so it lands when the transit ends (masked by the exit
-    # flash); the begin/end actions drive the WarpVFX manager. Fail-open: the
+    # destination to fly to. The set swap is HELD until the transit ends AND
+    # the in-transit queues / master sequence finish (spec §1 "Transit
+    # holds"); the begin/end actions drive the WarpVFX manager. Fail-open: the
     # begin/end hook calls are try/excepted, so a VFX failure never blocks the
     # swap chain.
     flythrough = (bool(_vfx_enabled and _vfx_enabled())
@@ -773,9 +986,11 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # SFX is a separate root scheduled so its in-file flash (~_SFX_ENTER_
         # FLASH_AT into the clip) lands on the BURST (= t_burst), now that the
         # align length is angle-driven (the old fixed-1.5s align kept it in sync
-        # by luck). The set-swap is a root HELD by total = t_burst + t_transit so
-        # it lands when the transit ends (masked by the exit flash); placement +
-        # teardown + exit SFX + VFX-end chain after the swap, firing on arrival.
+        # by luck). The set-swap is CHAINED behind departure, the in-transit
+        # queues, _HoldUntilAction and the exit flash (no earlier than
+        # t_burst + t_transit);
+        # placement + teardown + exit SFX + VFX-end chain after the swap,
+        # firing on arrival.
         # Procedural-sky vantage to fly the backdrop from during transit: the
         # source system's galaxy position (fall back to the destination's when
         # the source is unmapped). None => the sky stays blacked out.
@@ -789,13 +1004,35 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         enter_delay = t_burst - _SFX_ENTER_FLASH_AT
         if enter_delay < 0.0:
             enter_delay = 0.0
-        seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
-        # At BURST (t_burst): tear down the system being left behind and park the
-        # player in an empty transit set, so during the held transit nothing from
-        # the source system keeps firing or lighting the scene.
-        seq.AddAction(_WarpDepartAction(source, ship), t_burst)
-        swap = ChangeRenderedSetAction_Create(dest_module)
-        seq.AddAction(swap, total)
+        seq.AddAction(_WarpSoundAction("Enter Warp", ship), enter_delay)
+        # At BURST (t_burst, after the turn and any hold for articulated parts): drop the render instances of the system being left
+        # behind and park the player in BC's persistent warp set (spec §1b --
+        # not necessarily empty, a mission may have parked ships there), so
+        # during the held transit the source system no longer draws or lights
+        # the scene (the set itself stands, and its ships keep simulating --
+        # see the Plan-2 note on left-behind-ship audibility).
+        _add_before_queue(seq)
+        depart = _WarpDepartAction(source, ship, seq)
+        seq.AddAction(depart, t_burst)
+        # Transit is chained, not timed (spec §1 "Transit holds"): departure ->
+        # SDK WaitForQueued (player only) -> the in-transit queues -> the
+        # mission-change point -> no earlier than 90 % of the nominal transit ->
+        # release the streak (the exit flash plays) -> swap 0.1 * t_transit
+        # later, at transit end under the flash. The SDK's own WaitForQueued
+        # holds for MissionLib's master dialogue sequence; where BC's C++ puts
+        # it in the chain is inferred.
+        prev = depart
+        if _is_current_player(ship):
+            wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
+            seq.AddAction(wait, prev)
+            prev = wait
+        prev = _add_transit_queues(seq, prev)
+        hold = _HoldUntilAction(seq, t_burst, t_transit)
+        seq.AddAction(hold, prev)
+        release = _TransitReleaseAction(seq)
+        seq.AddAction(release, hold)
+        swap = _warp_swap_action(dest_module, ship)
+        seq.AddAction(swap, release, 0.1 * t_transit)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         # BC's PostWarpEnableMenu clear — the player is in the destination set
@@ -803,13 +1040,15 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # than at the end of the tail below: the reticle must drop the instant
         # you come out of warp, not _T_EXIT_DECEL seconds later.
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
-        seq.AppendAction(_WarpSoundAction("Exit Warp"))
+        seq.AppendAction(_ArrivalExitedWarpAction(ship))
+        seq.AppendAction(_WarpSoundAction("Exit Warp", ship))
         # The manager keeps running for _T_EXIT_DECEL seconds after arrival to
         # glide the ship from in-system warp speed down to 0; schedule the
         # defensive stop just past that tail (the manager also self-deactivates).
         from engine.warp_vfx import _T_EXIT_DECEL
         seq.AppendAction(_WarpVfxEndAction(ship), _T_EXIT_DECEL + 0.5)
-        seq.AppendAction(_EnableHelmMenuAction())
+        seq.AppendAction(_EnableHelmMenuAction(ship))
+        _append_after_queue(seq)
         return seq
 
     # Falsy destination => no set change/placement/teardown: the whole warp
@@ -819,13 +1058,96 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     # only cleared when a real warp actually happens (real destination).
     if not _module_is_empty(dest_module):
         seq.AddAction(_ClearTargetsAction(ship))
-    seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
+    # Same queue order as the flythrough, with no tunnel to hold: the SDK's
+    # WaitForQueued (player only) still gates the swap on the master sequence.
+    _add_before_queue(seq)
+    swap = _warp_swap_action(dest_module, ship)
+    prev = None
+    if not _module_is_empty(dest_module):
+        prev = _WarpDepartAction(source, ship, hard_cut=True)
+        seq.AddAction(prev)
+    if _is_current_player(ship):
+        wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
+        if prev is None:
+            seq.AddAction(wait)
+        else:
+            seq.AddAction(wait, prev)
+        prev = wait
+    seq.AddAction(swap, _add_transit_queues(seq, prev))
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
-    seq.AppendAction(_EnableHelmMenuAction())
+        seq.AppendAction(_ArrivalExitedWarpAction(ship))
+    seq.AppendAction(_EnableHelmMenuAction(ship))
+    _append_after_queue(seq)
     return seq
+
+
+def _is_current_player(ship):
+    """Whether `ship` is the player -- the gate on every player-scene effect
+    of a warp (rendered set, render teardown, WarpVFX, control, helm menu,
+    target menu). Every AI warp (AI/PlainAI/Warp.py) builds the same spine,
+    and an NPC's must move only the NPC. Falls back to the host's player
+    hook, as execute_warp does, when App has no current player."""
+    import App
+    try:
+        player = App.Game_GetCurrentPlayer()
+        if player is None and _player_hook is not None:
+            player = _player_hook()
+    except Exception:
+        return False
+    return player is not None and player is ship
+
+
+def queue_before(seq, queues):
+    """The button's "before" queue: roots, at their delays from the start.
+    Shared by the tunnel and the dash (engine/appc/dash.py)."""
+    for action, delay in queues.get("before", ()):
+        seq.AddAction(action, delay)
+
+
+def queue_transit(seq, queues, prev):
+    """Chain before-during -> during -> after-during after `prev` (None =>
+    the first is a root). Returns the last action added, or `prev` when the
+    three queues are empty. Shared by the tunnel and the dash."""
+    for key in ("before_during", "during", "after_during"):
+        for action, delay in queues.get(key, ()):
+            if prev is None:
+                seq.AddAction(action, delay)
+            else:
+                seq.AddAction(action, prev, delay)
+            prev = action
+    return prev
+
+
+def queue_after(seq, queues):
+    """The button's "after" queue, appended at their delays. Shared by the
+    tunnel and the dash."""
+    for action, delay in queues.get("after", ()):
+        seq.AppendAction(action, delay)
+
+
+def _add_before_queue(seq):
+    """The button's "before" queue: roots, at their delays from the start."""
+    queue_before(seq, seq._queues)
+
+
+def _add_transit_queues(seq, prev):
+    """Chain before-during -> during -> after-during -> _MissionChangePoint
+    after `prev` (None => the first is a root). Returns the last action."""
+    prev = queue_transit(seq, seq._queues, prev)
+    point = _MissionChangePoint(seq)
+    if prev is None:
+        seq.AddAction(point)
+    else:
+        seq.AddAction(point, prev)
+    return point
+
+
+def _append_after_queue(seq):
+    """The button's "after" queue: after control returns, at their delays."""
+    queue_after(seq, seq._queues)
 
 
 def find_set_course_menu():
@@ -858,50 +1180,83 @@ def find_set_course_menu():
 
 
 def set_course_placement(button, dest_module) -> None:
-    """Record on the warp button where `dest_module` should drop the player out.
+    """Record on the warp button where `dest_module` should drop the player out,
+    and which mission (if any) that course starts.
 
     Called when a course is plotted. In stock BC the SortedRegionMenu's own
     course button carried this across; our CEF Set Course modal replaced those
     buttons, so the engine performs the same carry here.
 
-    Always assigns — including the default — because one warp button serves
+    Always assigns — including the defaults — because one warp button serves
     every course in the game. Plotting an un-overridden system after an
-    overridden one must not inherit the previous arrival point.
+    overridden one must not inherit the previous arrival point, mission, or
+    episode.
     """
+    from engine.appc.tg_ui.st_widgets import DEFAULT_ARRIVAL_PLACEMENT
+    path = _region_menu_path(dest_module, find_set_course_menu())
+    menu = path[-1] if path else None
     button.SetPlacementName(
-        placement_name_for_destination(dest_module, find_set_course_menu()))
+        menu.GetPlacementName() if menu else DEFAULT_ARRIVAL_PLACEMENT)
+    # BC's "warping here starts mission X" (SortedRegionMenu.SetMissionName /
+    # SetEpisodeName, 67 SDK sites). Always assigned, like the placement, so a
+    # plain course never inherits a previous one's mission (spec §1). Unlike
+    # the placement, a region inherits its system menu's names.
+    button.set_course_mission(_inherited_name(path, "GetMissionName"),
+                              _inherited_name(path, "GetEpisodeName"))
 
 
-def placement_name_for_destination(dest_module, course_menu):
-    """The arrival placement a mission has linked to `dest_module`, or the
-    default when it has not linked one.
+def _inherited_name(path, getter):
+    """The mission (or episode) name for the innermost SortedRegionMenu in
+    `path`, inheriting the nearest ancestor region menu's name when it has
+    none of its own; "" when no menu on the path is named.
 
-    BC keeps this on the menu, not on the destination: MissionLib.
-    LinkMenuToPlacement resolves a system (or a region inside it) to its
-    SortedRegionMenu and calls SetPlacementName on it. So the lookup is
-    "find the region menu that offers this destination module, and ask it" —
-    a walk of the LIVE Set Course subtree, deliberately not a module->name
+    SDK missions name the SYSTEM menu (Systems/Utils.CreateSystemMenuInternal
+    builds it on sSystemRegion), but for a multi-region system the star map
+    offers only its region children, which carry no names -- so without the
+    inheritance only the region equal to sSystemRegion would start the
+    mission (E1M2 -> Episode 2 via Tevron, E2M1/E2M3/E3M2 via Vesuvi). Argued
+    from the SDK authors' intent -- they name the system, not one region;
+    BC's C++ lookup is unknown (inferred). Name by name: a region's own
+    mission wins, and it still inherits the system's episode."""
+    for menu in reversed(path):
+        name = getattr(menu, getter)()
+        if name:
+            return name
+    return ""
+
+
+def region_menu_for_destination(dest_module, course_menu):
+    """The live SortedRegionMenu offering `dest_module`, or None when the Set
+    Course subtree has no such entry (or doesn't exist yet).
+
+    BC keeps the mission's arrival/mission/episode overrides on the menu, not
+    on the destination: MissionLib.LinkMenuToPlacement resolves a system (or a
+    region inside it) to its SortedRegionMenu and calls SetPlacementName on
+    it, and SetMissionName/SetEpisodeName follow the same pattern. So the
+    lookup is "find the region menu that offers this destination module" — a
+    walk of the LIVE Set Course subtree, deliberately not a module->menu
     registry, because a registry outlives the mission that filled it and the
     menu tree is rebuilt per mission (see the SDK's own ClearSetCourseMenu).
 
     Recursive: a system menu can hold per-region submenus, and
     GetSystemOrRegionMenu links either level.
-
-    Fail-soft. Every caller is on the warp path, where the sane degradation is
-    BC's own default arrival rather than an exception — the same reason
-    WarpSequence_Create's `placement` argument has a default at all.
     """
-    from engine.appc.tg_ui.st_widgets import (
-        DEFAULT_ARRIVAL_PLACEMENT, SortedRegionMenu,
-    )
+    path = _region_menu_path(dest_module, course_menu)
+    return path[-1] if path else None
+
+
+def _region_menu_path(dest_module, course_menu):
+    """The SortedRegionMenus from the outermost down to the one offering
+    `dest_module` (see region_menu_for_destination), or [] when none does."""
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu
     if not dest_module or course_menu is None:
-        return DEFAULT_ARRIVAL_PLACEMENT
+        return []
     target = str(dest_module)
 
     def _walk(node):
-        if (isinstance(node, SortedRegionMenu)
-                and node.GetRegionModule() == target):
-            return node.GetPlacementName()
+        if isinstance(node, SortedRegionMenu):
+            if node.GetRegionModule() == target:
+                return [node]
         # __dict__ read, not getattr: TGObject.__getattr__ hands back a truthy
         # _Stub for any missing name, and iterating a _Stub never terminates.
         # STMenu stores children flat; TGPane stores (child, x, y) triples —
@@ -910,16 +1265,34 @@ def placement_name_for_destination(dest_module, course_menu):
         for entry in node.__dict__.get("_children", []):
             child = entry[0] if isinstance(entry, tuple) else entry
             found = _walk(child)
-            if found is not None:
+            if found:
+                if isinstance(node, SortedRegionMenu):
+                    return [node] + found
                 return found
-        return None
+        return []
 
-    return _walk(course_menu) or DEFAULT_ARRIVAL_PLACEMENT
+    return _walk(course_menu)
+
+
+def placement_name_for_destination(dest_module, course_menu):
+    """The arrival placement a mission has linked to `dest_module`, or the
+    default when it has not linked one.
+
+    Fail-soft. Every caller is on the warp path, where the sane degradation is
+    BC's own default arrival rather than an exception — the same reason
+    WarpSequence_Create's `placement` argument has a default at all.
+    """
+    from engine.appc.tg_ui.st_widgets import DEFAULT_ARRIVAL_PLACEMENT
+    menu = region_menu_for_destination(dest_module, course_menu)
+    return menu.GetPlacementName() if menu else DEFAULT_ARRIVAL_PLACEMENT
 
 
 def execute_warp(button, event=None):
-    """ET_WARP_BUTTON_PRESSED handler (registered second, after SDK WarpPressed)
-    — builds and plays the warp spine for the button's destination."""
+    """Builds and plays the warp spine for the button's destination.
+
+    Called by `engine.appc.warp_button.engage` — the last step of the
+    ET_WARP_BUTTON_PRESSED chain (spec §1), which stands in for SDK
+    WarpPressed rather than being registered as a handler alongside it."""
     import App
     dest = button.GetDestination()
     if not dest:
@@ -935,4 +1308,18 @@ def execute_warp(button, event=None):
     # visibly E1M1's, dropping the player 93 km from the Starbase 12 nav point
     # instead of the scripted 312 km.
     placement = button.GetPlacementName()
-    WarpSequence_Create(player, dest, button.GetWarpTime(), placement).Play()
+    mission = button.get_mission_name() or None
+    episode = button.get_episode_name() or None
+    queues = button.take_queues()
+    # Same-system Set Course: the dash, not the tunnel (in-system-warp spec
+    # §2; rule C keeps the tunnel for anything else). start_set_course
+    # returns False when it cannot dash, and the tunnel runs as before.
+    from engine.appc import dash
+    if dash.is_same_system_dash(player, dest, mission, episode) and \
+            dash.start_set_course(
+                player, App.g_kSetManager.GetSet(_set_name_from_module(dest)),
+                placement, queues, button=button):
+        return
+    WarpSequence_Create(player, dest, button.GetWarpTime(), placement,
+                        mission=mission, episode=episode,
+                        queues=queues).Play()

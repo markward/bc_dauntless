@@ -28,6 +28,13 @@ class TransformBuffer:
         if iid not in self._prev:
             self._prev[iid] = (loc, rot)
 
+    def snap(self, iid, loc, rot) -> None:
+        """Set BOTH snapshots to (loc, rot): a discontinuity for this one
+        instance (the player handed off into another region set's
+        coordinates), which must not be interpolated across."""
+        self._prev[iid] = (loc, rot)
+        self._cur[iid] = (loc, rot)
+
     def reset_all(self) -> None:
         """Forget all snapshots (mission swap / scene discontinuity)."""
         self._prev.clear()

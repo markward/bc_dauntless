@@ -12,6 +12,8 @@ uniform float u_visibility;     // GU falloff
 uniform float u_max_fog;        // ceiling on fog alpha (default 0.92)
 uniform float u_noise_amount;   // overlay modulation 0..1 (default 0.35)
 uniform float u_noise_scale;    // world->uv frequency (default 0.004)
+uniform vec3  u_noise_origin;   // floating render origin: the overlay is
+                                // sampled at the WORLD point (p + origin)
 
 void main() {
     // View ray from the eye toward this back-surface fragment.
@@ -32,7 +34,7 @@ void main() {
 
     // World-projected noise breakup (cheap planar projection of the entry point).
     vec3  p  = u_eye + dir * entry;
-    float n  = texture(u_overlay, p.xy * u_noise_scale).a;
+    float n  = texture(u_overlay, (p + u_noise_origin).xy * u_noise_scale).a;
     fog *= (1.0 - u_noise_amount) + u_noise_amount * n;
     fog  = clamp(fog, 0.0, u_max_fog);
 

@@ -4,6 +4,7 @@
 #include "renderer/pipeline.h"
 
 #include <renderer/node_anim.h>
+#include <renderer/render_origin.h>
 
 #include <assets/flip_frame.h>
 #include <assets/material.h>
@@ -62,7 +63,8 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
                                  float time,
                                  const Lighting& lighting,
                                  float ambient_scale,
-                                 float game_time) {
+                                 float game_time,
+                                 const glm::dvec3& origin) {
     if (ships.empty()) return;
     ensure_fallbacks();
 
@@ -91,6 +93,11 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
     shader.set_float("u_dispersion",      dispersion_);
     shader.set_vec3 ("u_tint",            tint_);
     shader.set_float("u_time",            time);
+    // The shimmer phases belong to the WORLD point (render_origin.h).
+    shader.set_float("u_ripple_phase_origin",
+                     render_origin::phase_offset(origin, kCloakRipplePhaseK));
+    shader.set_float("u_shimmer_phase_origin",
+                     render_origin::phase_offset(origin, kCloakShimmerPhaseK));
     shader.set_float("u_opacity_floor",   opacity_floor_);
     shader.set_float("u_opacity_ceiling", opacity_ceiling_);
     shader.set_float("u_shimmer_amp",     shimmer_amp_);

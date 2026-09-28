@@ -127,6 +127,86 @@ def test_stale_baseline_only_judges_suites_that_ran():
         == ["pytest:tests/x.py::t"]
 
 
+# --- optional-mod skips --------------------------------------------------------
+#
+# A test that only exists to exercise an OPTIONAL mod (present only where that
+# mod happens to be installed) must not be baselined as an ordinary
+# "skip:ctest:<name>" -- that line would be a lie the moment someone runs the
+# gate with the mod installed, since the skip:/delete-me machinery expects a
+# baselined skip to eventually start running. "optional-mod:ctest:<name>
+# <path relative to the mods root>" instead ties the skip's legitimacy to
+# whether that one path exists.
+
+def test_split_baseline_ignores_optional_mod_entries():
+    failures, skips = gate.split_baseline({
+        "pytest:tests/x.py::t", "skip:ctest:C.d",
+        "optional-mod:ctest:E.f CGSovereign/data/x.nif",
+    })
+    assert failures == {"pytest:tests/x.py::t"}
+    assert skips == {"ctest:C.d"}
+
+
+def test_parse_optional_mod_entries_extracts_id_and_path():
+    entries = gate.parse_optional_mod_entries({
+        "skip:ctest:C.d",
+        "optional-mod:ctest:E.f CGSovereign/data/x.nif",
+    })
+    assert entries == {"ctest:E.f": "CGSovereign/data/x.nif"}
+
+
+def test_optional_mod_skip_with_absent_path_is_not_reported(tmp_path):
+    # mod absent + skip -> not reported
+    entries = {"ctest:E.f": "CGSovereign/data/x.nif"}
+    new = gate.diff_optional_mod_skips({"ctest:E.f"}, entries, str(tmp_path))
+    assert new == []
+
+
+def test_optional_mod_skip_with_present_path_is_new_skip(tmp_path):
+    # mod present + skip -> new skip
+    (tmp_path / "CGSovereign" / "data").mkdir(parents=True)
+    (tmp_path / "CGSovereign" / "data" / "x.nif").write_text("stub")
+    entries = {"ctest:E.f": "CGSovereign/data/x.nif"}
+    new = gate.diff_optional_mod_skips({"ctest:E.f"}, entries, str(tmp_path))
+    assert new == ["ctest:E.f"]
+
+
+def test_optional_mod_present_path_that_ran_is_not_reported(tmp_path):
+    # mod present + ran -> nothing (no "delete this line" nag either)
+    (tmp_path / "CGSovereign" / "data").mkdir(parents=True)
+    (tmp_path / "CGSovereign" / "data" / "x.nif").write_text("stub")
+    entries = {"ctest:E.f": "CGSovereign/data/x.nif"}
+    new = gate.diff_optional_mod_skips(set(), entries, str(tmp_path))
+    assert new == []
+
+
+def test_optional_mod_skip_with_no_mods_root_is_not_reported():
+    entries = {"ctest:E.f": "CGSovereign/data/x.nif"}
+    new = gate.diff_optional_mod_skips({"ctest:E.f"}, entries, None)
+    assert new == []
+
+
+# --- mods root ------------------------------------------------------------
+
+def test_mods_root_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAUNTLESS_MODS_DIR", str(tmp_path))
+    assert gate.mods_root() == str(tmp_path)
+
+
+def test_mods_root_empty_env_falls_back_to_engine_mods(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAUNTLESS_MODS_DIR", "")
+    monkeypatch.setattr(gate, "_engine_mods_root", lambda: tmp_path)
+    assert gate.mods_root() == str(tmp_path)
+
+
+def test_mods_root_engine_failure_returns_none(monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_MODS_DIR", raising=False)
+
+    def boom():
+        raise RuntimeError("no mods")
+
+    monkeypatch.setattr(gate, "_engine_mods_root", boom)
+    assert gate.mods_root() is None
+
 # --- in-process pass ----------------------------------------------------------
 # ctest runs each case in its own process from the build dir. That hid a real
 # renderer bug (the scuff map's lazy load clobbering a mesh's base texture only

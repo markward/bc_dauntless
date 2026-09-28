@@ -1,0 +1,96 @@
+{
+  "system": "Voltair",
+  "bodies": [
+    {
+      "name": "Voltair",
+      "display_name": "Voltair",
+      "radius_gu": 5000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "red",
+        "color": [
+          0.91,
+          0.35,
+          0.24
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Voltair 1",
+      "display_name": "Voltair 1",
+      "radius_gu": 3000.0,
+      "position_gu": [
+        125000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Voltair",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Voltair1"
+    },
+    {
+      "name": "Voltair 2",
+      "display_name": "Voltair 2",
+      "radius_gu": 6000.0,
+      "position_gu": [
+        229000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Voltair",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/DryPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Voltair2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Voltair1",
+      "anchor_gu": [
+        134673.89656,
+        -17265.31754,
+        0.0
+      ],
+      "radius_gu": 24290.79241492395,
+      "body_names": [
+        "Voltair 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Voltair2",
+      "anchor_gu": [
+        238673.89656,
+        -17265.31754,
+        0.0
+      ],
+      "radius_gu": 27290.79241492395,
+      "body_names": [
+        "Voltair 2"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

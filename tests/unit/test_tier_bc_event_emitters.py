@@ -347,6 +347,10 @@ def _real_tractor_rig():
 
     target = ShipClass_Create("Target")
     target.SetWorldLocation(TGPoint3(0, 50, 0))   # dead ahead, in range, no shields
+    # One set (direct attribute: no ET_ENTERED_SET into `posted`): the interim
+    # cross-set weapon guard (system-frames Plan 2 Ruling 5) puts a setless
+    # target out of tractor range.
+    ship._containing_set = target._containing_set = App.SetClass_Create()
     return ship, sys_, emitter, target
 
 
@@ -503,8 +507,9 @@ def test_losing_targetability_counts_as_removal(posted):
 
 
 def test_an_empty_push_removes_everything(posted):
-    """Mid-warp the player sits alone in _WarpTransit and perceived_by returns
-    (); every contact left the list."""
+    """Mid-warp the player sits in BC's "warp" set -- with no contacts
+    unless a mission parked ships there -- so perceived_by returns (); every
+    contact left the list."""
     menu, (a, b) = _menu_and_ships()
     menu.set_contacts([_contact(a), _contact(b)])
     posted.clear()

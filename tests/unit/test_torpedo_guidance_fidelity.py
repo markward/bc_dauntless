@@ -1,9 +1,10 @@
 from engine.appc.projectiles import Torpedo
 from engine.appc.math import TGPoint3
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
+from tests.helpers.one_set import InSet, share_one_set
 
 
-class FakeShip:
+class FakeShip(InSet):
     def __init__(self, pos, vel=(0, 0, 0), dead=False, detectable=True):
         self._pos = TGPoint3(*pos); self._vel = TGPoint3(*vel)
         self._dead = dead; self.detectable = detectable
@@ -16,6 +17,10 @@ def _torp(pos=(0, 0, 0), vel=(0, 10, 0), target=None):
     t = Torpedo()
     t.SetTranslateXYZ(*pos); t._velocity = TGPoint3(*vel)
     t._target_ship = target
+    if target is not None:           # homing is same-set only
+        if target.GetContainingSet() is None:
+            share_one_set(target)
+        t._containing_set = target.GetContainingSet()
     t.SetGuidanceLifetime(4.0); t.SetMaxAngularAccel(0.125)
     return t
 

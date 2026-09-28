@@ -8,6 +8,7 @@ import pytest
 from engine.appc.objects import DamageableObject
 from engine.appc import warp_core_breach, subsystem_cascade, ship_death
 from engine.appc.math import TGMatrix3, TGPoint3
+from tests.helpers.one_set import share_one_set
 
 
 class _Sub:
@@ -81,6 +82,7 @@ def test_critical_death_splashes_neighbour_breach_is_vfx_only(monkeypatch):
 
     import engine.appc.ship_iter as ship_iter
     monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: [src, nbr])
+    share_one_set(src, nbr)     # splash reaches only its own FRAME (engine.systems.frames)
 
     import engine.appc.combat as combat
     hits = []

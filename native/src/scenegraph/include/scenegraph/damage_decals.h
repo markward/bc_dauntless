@@ -41,13 +41,16 @@ struct DamageDecal {
     float         dent = 0.0f;
 };
 
-/// Transform a world-space point into a ship's body frame.
-/// Column-vector convention (CLAUDE.md): body = inverse(ship_world) * p.
-glm::vec3 world_to_body(const glm::mat4& ship_world, const glm::vec3& p_world);
+/// Transform an INSTANCE-RELATIVE point (world point minus the instance's
+/// translation, formed in double by the caller) into the ship's body frame.
+/// Only rotation·scale (Instance::world_linear) is inverted — a large
+/// translation never meets a float inverse (the floating render origin).
+/// Column-vector convention (CLAUDE.md): body = inverse(linear) * p_rel.
+glm::vec3 relative_to_body(const glm::mat3& linear, const glm::vec3& p_rel);
 
 /// Transform a world-space direction into the ship's body frame and
-/// renormalise. Returns the input length-0 vector unchanged.
-glm::vec3 world_dir_to_body(const glm::mat4& ship_world, const glm::vec3& dir_world);
+/// renormalise. Translation-free by nature. Returns a length-0 input unchanged.
+glm::vec3 dir_to_body(const glm::mat3& linear, const glm::vec3& dir_world);
 
 /// Unit tangent on the surface with normal `normal`, as close as possible to
 /// `hint`: the hint projected onto the tangent plane and renormalised. A zero

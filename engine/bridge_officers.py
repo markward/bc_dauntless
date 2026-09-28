@@ -182,7 +182,9 @@ def disable_helm_menu() -> None:
     """Grey out the Helm menu for the duration of a warp.
 
     BC does this in WarpPressed (HelmMenuHandlers.py:862) right after the
-    gating passes. Our `on_warp_engage` bypasses WarpPressed, so nothing did:
+    gating passes. `engine.appc.warp_button.engage` -- the engine step that
+    runs at the bottom of the ET_WARP_BUTTON_PRESSED chain in place of
+    WarpPressed (spec §1) -- calls this. Before that existed, nothing did:
     live, the Helm menu stayed fully clickable while the warp played.
 
     MUST be paired with `enable_helm_menu` — see its docstring. Best-effort:
@@ -236,13 +238,15 @@ def announce_warp_engaged() -> None:
     routes through HelmCharacterHandlers.SetCourse, which sets the Helm status
     to "ReadyToWarp"; stock BC clears it again in
     Bridge/HelmMenuHandlers.py:WarpPressed (:871-872) when the warp button is
-    pressed.  Our CEF modal replaced BC's SortedRegionMenu and `on_warp_engage`
-    (host_loop.py:6749) deliberately bypasses WarpPressed — see the comment
-    there, which defers its camera/cinematic/control work to later stages.
-    `engine/appc/warp_gates.py` reproduces WarpPressed's *gating*; nothing
-    reproduced this side effect, so the Helm box advertised a pending warp for
-    the rest of the session (observed live at Starbase 12 after a completed
-    warp).
+    pressed.  Our CEF modal replaced BC's SortedRegionMenu, and
+    `engine.appc.warp_button.engine_warp_step` -- the engine step that runs at
+    the bottom of the ET_WARP_BUTTON_PRESSED chain -- deliberately does not run
+    SDK WarpPressed itself (spec §1: its pre-warp camera cutscene would fight
+    the flythrough). `engine/appc/warp_gates.py` reproduces WarpPressed's
+    *gating*; this function is what reproduces this particular side effect --
+    before it existed, nothing did, so the Helm box advertised a pending warp
+    for the rest of the session (observed live at Starbase 12 after a
+    completed warp).
 
     Deliberately NOT reproducing two other things WarpPressed does in the same
     block:
@@ -254,8 +258,9 @@ def announce_warp_engaged() -> None:
       voice *and* subtitle, so it is worth landing separately and verifying on
       its own rather than riding along with a status fix.
 
-    Safe to call with no bridge set: `on_warp_engage` runs on a CEF click and a
-    raise at that boundary is swallowed, which would silently drop the warp.
+    Safe to call with no bridge set: `warp_button.engage` runs off a
+    CEF-click-triggered event dispatch and a raise there is swallowed, which
+    would silently drop the warp.
     """
     import App
     bridge = App.g_kSetManager.GetSet("bridge")

@@ -1,0 +1,135 @@
+{
+  "_about": [
+    "Player-facing system descriptions for the Set Course star map. HAND-AUTHORED:",
+    "no tool writes this file, and nothing regenerates it. Keys are the system ids",
+    "in engine/appc/sector_model.json.",
+    "",
+    "Each entry is grounded in something real -- the bodies our system maps place,",
+    "the colonies and stations BC's own missions put there, or BC's shipped",
+    "Systems.TGL notes where those are accurate. Where it carries story, that story",
+    "is BC's: the Kessok Solarformer, the Vesuvi event, Matan's crimes against the",
+    "Kessok people. Nothing here invents plot the game does not support.",
+    "",
+    "'summary' is one line for a compact readout. 'detail' is the full entry.",
+    "Keep both in Starfleet's voice -- a navigational database, not a travelogue."
+  ],
+
+  "vesuvi": {
+    "summary": "Site of the Vesuvi event. A dead star and two surviving colonies.",
+    "detail": "Where it began. The star's core destabilised with the Icarus Two on approach, and what is left of it now lights a system full of its own debris. The Federation station at Geki took the event badly and still carries the damage -- Starfleet is still here, studying the thing that killed the star it was sent to watch. Haven and Geki colonies remain inhabited and dependent on supply runs. The dust is hazardous to shields and hull; route around it or accept the damage."
+  },
+  "belaruz": {
+    "summary": "A living system crossing a nebula. The cloud is weather, not wreckage.",
+    "detail": "Not a casualty. Belaruz is moving through a body of interstellar dust, and the star is brighter for it -- feeding on infalling material as the system ploughs forward. The dense part has fallen inward, closer to the star than any of the three planets, and the thin body of the cloud stretches out ahead of it. Cold material, unlike Vesuvi's. It will blind your sensors but it will not burn you."
+  },
+  "omegadraconis": {
+    "summary": "Kessok space. A Solarformer was turned on this system's star.",
+    "detail": "The Kessok colony here is the reason the Maelstrom ends where it does. Matan's people brought a Solarformer to this system and aimed it at the star -- terraforming equipment used as a weapon, against the species who built it. Five worlds, the third of them inhabited. What happens here decides whether Vesuvi was the first of many or the last."
+  },
+
+  "tauceti": {
+    "summary": "Starbase 12 and the fleet yards. The nearest thing to home.",
+    "detail": "Starfleet's anchor in this region: Starbase 12 in open space, and the drydock in orbit of Tau Ceti Prime. Every assignment in the Maelstrom starts here and most end here, which is the only reason the yards are ever empty. If the Maelstrom has a border, Tau Ceti is standing on it."
+  },
+  "deepspace": {
+    "summary": "Open space. No star, no bodies, no cover.",
+    "detail": "A charted position between systems with nothing in it. Useful precisely because nothing here can hide anything."
+  },
+
+  "albirea": {
+    "summary": "Red star, three worlds. The second keeps a moon.",
+    "detail": "An unremarkable red star with three planets, the second of which holds a single moon -- the only natural satellite charted in the inner Maelstrom. Quiet until it wasn't; the system saw action in the Cardassian push."
+  },
+  "alioth": {
+    "summary": "Eight worlds around a yellow star. The sixth is the one that matters.",
+    "detail": "The largest yellow-star system in the region, eight planets deep. Most of it is empty rock. Alioth 6 is the exception -- big, hailable, and the reason anyone comes this far out."
+  },
+  "artrus": {
+    "summary": "Blue-white star, three worlds. Contested.",
+    "detail": "Hard blue-white light and three planets under it. Artrus 3 has changed hands more than once; Starfleet and Cardassian patrols have both called this system theirs within the same year."
+  },
+  "ascella": {
+    "summary": "Red-orange star, five worlds, none of them settled.",
+    "detail": "Five planets around an ageing red-orange star, none habitable, none claimed. The third is far enough out to be useful to anyone who does not want to be found."
+  },
+  "beol": {
+    "summary": "Blue-white star, four worlds, seven moons between them.",
+    "detail": "The moon-richest system charted here: Beol 1 alone keeps three, and Ohmine, Kerry and Legare are large enough to have earned names rather than numbers. Beol 4 is where the shuttles run."
+  },
+  "biranu": {
+    "summary": "Two worlds. Osa is the inhabited one.",
+    "detail": "A small system with a facility at Osa and a single other world beside it. Both planets keep a moon. Cardassian interest here has never been adequately explained."
+  },
+  "cebalrai": {
+    "summary": "Red star, three worlds. Scenic, and otherwise unremarkable.",
+    "detail": "Three planets under a red sun, and the best view in the Maelstrom from the first of them -- the one thing BC's own surveyors bothered to write down about the place. Traffic passes through; little stops."
+  },
+  "chambana": {
+    "summary": "Two worlds, one very large. Cardassian shipyards.",
+    "detail": "A red-orange star with two planets, the first of them among the largest charted here. The shipyards in this system are the reason it appears in fleet orders at all."
+  },
+  "geble": {
+    "summary": "Yellow star, four worlds, three moons.",
+    "detail": "Ordinary by Maelstrom standards: a yellow star, four planets, nothing that wants anything. Geble 3 and 4 both keep moons, and both have seen rescue traffic."
+  },
+  "itari": {
+    "summary": "Eight worlds. Charted, never visited.",
+    "detail": "The largest system in the region -- eight main planets, four of them with moons, the third a giant. No mission has ever had cause to come here, which in the Maelstrom counts as a recommendation."
+  },
+  "nepenthe": {
+    "summary": "Three worlds and an asteroid field.",
+    "detail": "A white star, three planets, and a field of debris around the first that makes approach slower than it looks on the chart. Freighter traffic uses it as cover, which is not always innocent."
+  },
+  "ona": {
+    "summary": "Red star, three worlds. A staging point.",
+    "detail": "Three planets under a red sun, evenly spaced and largely empty. Ona 3 sits where a fleet would wait if it wanted to reach Savoy quickly, and more than once a fleet has."
+  },
+  "poseidon": {
+    "summary": "Two worlds. Cloaked mines have been reported here.",
+    "detail": "A pair of planets and nothing else. The second has been mined with cloaked devices at least once; assume the charts are optimistic and approach at yellow alert."
+  },
+  "prendel": {
+    "summary": "Five worlds. The third hides something.",
+    "detail": "Five planets around a yellow star. Prendel 3 is the large one, with two moons and -- as of the survey that nearly did not come back -- a base sitting out past the second of them. The system rewards a careful sensor sweep."
+  },
+  "riha": {
+    "summary": "One world. Three separate operations have turned on it.",
+    "detail": "A single charted planet under a white star, and an outsized place in fleet history for it. Whatever keeps drawing traffic to Riha, it is not the scenery."
+  },
+  "savoy": {
+    "summary": "Three worlds. The most fought-over system in the Maelstrom.",
+    "detail": "Three planets, a yellow star, and more engagements than any other system on this chart. Transports run to Savoy 1, Cardassian strike groups come through Savoy 3, and the traffic between them has been the shape of the war here."
+  },
+  "serris": {
+    "summary": "Red star, three worlds, four moons.",
+    "detail": "Three planets, each with at least one moon, under a red sun. Serris 3 keeps two -- one of them barely large enough to chart. Cardassian capital ships have used the system as a waypoint."
+  },
+  "tevron": {
+    "summary": "Two worlds, three moons. Where the Zhukov arrived.",
+    "detail": "A modest yellow star with two planets and three moons between them. Tevron 2 is the one on the flight plans; the system's significance is entirely who has turned up in it."
+  },
+  "tezle": {
+    "summary": "Blue-white star, two worlds. A strike force assembled here.",
+    "detail": "Two planets under hard blue-white light. Tezle 1 and 2 are close enough together to hold a formation across both, which is exactly what was done here when the fleet needed somewhere to gather."
+  },
+  "voltair": {
+    "summary": "Two worlds, one enormous. A Cardassian hybrid was built here.",
+    "detail": "A small red star with two planets, the second of them vast. Voltair 1 is where the Cardassian hybrid programme was found, and where it ended."
+  },
+  "xientrades": {
+    "summary": "Five worlds around a large red-orange star.",
+    "detail": "The biggest star charted in the Maelstrom, red-orange and slow-burning, with five planets strung out behind it. The fifth is far enough from the rest to fight over without anyone else noticing."
+  },
+  "yiles": {
+    "summary": "Four worlds, evenly spaced, under a red-orange star.",
+    "detail": "Four planets of near-identical size around a red-orange star -- a tidy, unremarkable system that has served mainly as somewhere to pass through on the way to Tezle."
+  },
+
+  "multi1": {"summary": "Multiplayer. A single asteroid field.", "detail": "Combat arena: one asteroid field, no other cover."},
+  "multi2": {"summary": "Multiplayer. Planets to the point of absurdity.", "detail": "Combat arena packed with planets. Atmospheres reveal cloaked ships."},
+  "multi3": {"summary": "Multiplayer. Deep space, no cover.", "detail": "Combat arena in open space. Nothing to hide behind."},
+  "multi4": {"summary": "Multiplayer. A dense stellar cluster.", "detail": "Combat arena among close-packed stars. Coronae damage ships that fly too near."},
+  "multi5": {"summary": "Multiplayer. A large nebula.", "detail": "Combat arena inside a nebula. Visibility drops to 25 km and sensor range halves."},
+  "multi6": {"summary": "Multiplayer. Dark blue nebula over an asteroid field.", "detail": "Combat arena in a blue nebula around asteroids. Visibility under 20 km, sensors halved, and radiation drains shields."},
+  "multi7": {"summary": "Multiplayer. A star ringed by planets and a belt.", "detail": "Combat arena: a central star, surrounding planets, and an asteroid belt."}
+}

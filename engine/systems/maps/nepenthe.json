@@ -1,0 +1,127 @@
+{
+  "system": "Nepenthe",
+  "bodies": [
+    {
+      "name": "Nepenthe",
+      "display_name": "Nepenthe",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.95,
+          0.8
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Nepenthe 1",
+      "display_name": "Nepenthe 1",
+      "radius_gu": 1800.0,
+      "position_gu": [
+        0.0,
+        130000.0,
+        0.0
+      ],
+      "orbits": "Nepenthe",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/gasgiant.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Nepenthe1"
+    },
+    {
+      "name": "Nepenthe 2",
+      "display_name": "Nepenthe 2",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        234000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Nepenthe",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Nepenthe2"
+    },
+    {
+      "name": "Nepenthe 3",
+      "display_name": "Nepenthe 3",
+      "radius_gu": 5400.0,
+      "position_gu": [
+        -338000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Nepenthe",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PinkGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Nepenthe3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Nepenthe1",
+      "anchor_gu": [
+        3220.8097700000003,
+        120605.0177,
+        -79.68677000000002
+      ],
+      "radius_gu": 13232.052052479077,
+      "body_names": [
+        "Nepenthe 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Nepenthe2",
+      "anchor_gu": [
+        234000.0,
+        -10000.0,
+        0.0
+      ],
+      "radius_gu": 13900.0,
+      "body_names": [
+        "Nepenthe 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Nepenthe3",
+      "anchor_gu": [
+        -338000.0,
+        -10000.0,
+        0.0
+      ],
+      "radius_gu": 16900.0,
+      "body_names": [
+        "Nepenthe 3"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

@@ -13,6 +13,7 @@ import pytest
 from engine import host_io
 from engine.appc.math import TGPoint3
 from engine.host_loop import _advance_combat
+from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +22,7 @@ def clear_torpedo_registry():
     projectiles._active.clear()
     yield
     projectiles._active.clear()
+    release_viewed_set()
 
 
 def _capture_setter(name, calls):
@@ -52,6 +54,7 @@ def test_advance_combat_publishes_torpedo_descriptors_via_host_io():
 
     t = Torpedo()
     t.SetTranslateXYZ(1.0, 2.0, 3.0)
+    place_in_viewed_set(t)   # the render feeds carry only the viewed frame
     t._velocity = TGPoint3(0.0, 0.0, 0.0)
     t._ttl = 30.0
     t._age = 0.0
@@ -99,6 +102,7 @@ def test_advance_combat_publishes_dynamic_light_descriptors_via_host_io():
         "data/Textures/Tactical/TorpedoFlares.tga", glow_color, 8, 0.7, 0.4,
     )
     t.SetTranslateXYZ(1.0, 2.0, 3.0)
+    place_in_viewed_set(t)   # the render feeds carry only the viewed frame
     t._velocity = TGPoint3(0.0, 0.0, 0.0)
     register(t)
 

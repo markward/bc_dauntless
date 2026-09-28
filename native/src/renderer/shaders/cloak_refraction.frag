@@ -36,6 +36,8 @@ uniform vec3  u_dir_light_dir_ws[MAX_DIR_LIGHTS];  // direction TOWARD the light
 uniform vec3  u_dir_light_color[MAX_DIR_LIGHTS];   // colour × dimmer
 uniform vec2  u_viewport;        // framebuffer size in pixels
 uniform float u_time;
+// World phase of the render origin for the wobble below (see the .vert).
+uniform float u_shimmer_phase_origin;
 uniform float u_frac;            // 0..1 cloak progress (0 = visible, 1 = cloaked)
 uniform float u_strength;        // max screen-space refraction offset (UV units)
 uniform float u_dispersion;      // chromatic split fraction (prism strength)
@@ -70,7 +72,8 @@ void main() {
     float amt = u_strength * u_frac * normal_factor;
     // Animated shimmer rides on top of the static offset.
     float wob = u_shimmer_amp * u_frac
-              * sin(u_time * u_shimmer_speed + dot(v_world_pos, vec3(0.2)));
+              * sin(u_time * u_shimmer_speed
+                    + dot(v_world_pos, vec3(0.2, 0.2, 0.2)) + u_shimmer_phase_origin);
     amt += wob;
 
     // Per-channel offsets split white light into spectral fringes.

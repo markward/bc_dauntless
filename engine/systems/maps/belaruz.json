@@ -1,0 +1,235 @@
+{
+  "system": "Belaruz",
+  "bodies": [
+    {
+      "name": "Belaruz",
+      "display_name": "Belaruz",
+      "radius_gu": 8000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "white",
+        "color": [
+          1.0,
+          0.97,
+          0.93
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Belaruz 2",
+      "display_name": "Belaruz 2",
+      "radius_gu": 2400.0,
+      "position_gu": [
+        232000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Belaruz",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueRockyPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Belaruz2"
+    },
+    {
+      "name": "Belaruz 3",
+      "display_name": "Belaruz 3",
+      "radius_gu": 7200.0,
+      "position_gu": [
+        336000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Belaruz",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/PurplePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Belaruz3"
+    },
+    {
+      "name": "Belaruz 4",
+      "display_name": "Belaruz 4",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        440000.0,
+        0.0,
+        0.0
+      ],
+      "orbits": "Belaruz",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/AquaPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Belaruz4"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Belaruz1",
+      "anchor_gu": [
+        0.0,
+        128000.0,
+        0.0
+      ],
+      "radius_gu": 2229.5978859987417,
+      "body_names": [],
+      "nebula": {
+        "color": [
+          0.39215686274509803,
+          0.38823529411764707,
+          0.5725490196078431
+        ],
+        "spheres": [
+          [
+            -17.139893,
+            844.691284,
+            -30.296316,
+            900.0
+          ]
+        ],
+        "visibility_gu": 200.0,
+        "sensor_density": 6.5,
+        "damage_hull_per_s": 0.0,
+        "damage_shield_per_s": 0.0,
+        "extra_nebulae": 0
+      }
+    },
+    {
+      "set_name": "Belaruz2",
+      "anchor_gu": [
+        224425.61714,
+        -11153.355870000001,
+        -9754.553220000002
+      ],
+      "radius_gu": 20540.911375118187,
+      "body_names": [
+        "Belaruz 2"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Belaruz3",
+      "anchor_gu": [
+        328425.61714,
+        -11153.355870000001,
+        -9754.553220000002
+      ],
+      "radius_gu": 25340.911375118187,
+      "body_names": [
+        "Belaruz 3"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Belaruz4",
+      "anchor_gu": [
+        439632.37105,
+        8646.98959,
+        -992.32652
+      ],
+      "radius_gu": 13811.50342574356,
+      "body_names": [
+        "Belaruz 4"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {
+    "star": {
+      "star_class": "white",
+      "color": [
+        1.0,
+        0.97,
+        0.93
+      ],
+      "radius_gu": 8000.0,
+      "why": "Belaruz is not a casualty. A living system crossing a dust cloud, the star brighter for the material falling into it. Belaruz 1 carries the brightest directional in the game, pure white at full strength, which a dead star cannot produce."
+    },
+    "cloud": {
+      "name": "Kacheeti Nebula",
+      "display_name": "Kacheeti Nebula",
+      "kind": "nebula_field",
+      "geometry": {
+        "near_gu": 20000.0,
+        "far_gu": 220000.0,
+        "radius_gu": 160000.0
+      },
+      "why": "Belaruz is crossing a body of dust rather than having shed one, so the shape is directional, not centred on the star. The axis is derived from BC's authored pocket; near/far/radius are asserted -- sized to reach past Belaruz 4 at 121,181 GU so the outer system sits in thin material, as the system description claims. Retune freely."
+    }
+  },
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": [
+    {
+      "name": "Kacheeti Nebula",
+      "display_name": "Kacheeti Nebula",
+      "kind": "nebula_field",
+      "color": [
+        0.39215686274509803,
+        0.38823529411764707,
+        0.5725490196078431
+      ],
+      "volumes": [
+        {
+          "shape": "sphere",
+          "geometry": {
+            "center_gu": [
+              -17.139893,
+              128844.691284,
+              -30.296316
+            ],
+            "radius_gu": 900.0
+          },
+          "profile": "nebula",
+          "params": {
+            "visibility_gu": 200.0,
+            "sensor_density": 6.5,
+            "damage_hull_per_s": 0.0,
+            "damage_shield_per_s": 0.0
+          },
+          "origin_region": "Belaruz1"
+        },
+        {
+          "shape": "lobe",
+          "geometry": {
+            "near_gu": 20000.0,
+            "far_gu": 220000.0,
+            "radius_gu": 160000.0,
+            "axis": [
+              -0.00013302754039536867,
+              0.9999999635068384,
+              -0.00023513824739284278
+            ]
+          },
+          "profile": "mist",
+          "params": {
+            "visibility_gu": 0.0,
+            "sensor_density": 0.0,
+            "damage_hull_per_s": 0.0,
+            "damage_shield_per_s": 0.0
+          },
+          "origin_region": null
+        }
+      ],
+      "regions": [
+        "Belaruz1"
+      ]
+    }
+  ]
+}

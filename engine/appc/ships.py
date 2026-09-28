@@ -132,9 +132,9 @@ class ShipClass(DamageableObject):
         self._target_angular_velocity_setpoint = None
         self._current_speed: float = 0.0
         self._current_angular_velocity: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
-        # Active in-system-warp transit: (target, drop_distance) while the
-        # ship is cruising toward a warp drop point, else None. Written by
-        # InSystemWarp, advanced per tick by ship_motion._step_in_system_warp,
+        # Active in-system warp: a warp_flight.WarpFlight while the ship is
+        # warping, else None. Written by begin_warp_flight (InSystemWarp and
+        # the player's dashes), advanced per tick by warp_flight.step,
         # aborted by StopInSystemWarp / SetAI / ClearAI. Eager-init (real
         # attr, not the truthy TGObject __getattr__ _Stub) — the integrator
         # branches on it every tick.
@@ -150,7 +150,10 @@ class ShipClass(DamageableObject):
         # trigger; HelmCharacterHandlers.AIDone).
         old = self._ai
         self._ai = ai
-        self._insystem_warp_transit = None
+        # Through _end_in_system_warp, never a bare None: a player dash ended
+        # here must still post ET_IN_SYSTEM_WARP False and record why, so
+        # engine/appc/dash.py runs its drop-out (ruling R10).
+        self._end_in_system_warp("aborted")
         if old is not None and old is not ai:
             self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
@@ -165,7 +168,7 @@ class ShipClass(DamageableObject):
         # ended tree via ET_AI_DONE, like SetAI above.
         old = self._ai
         self._ai = None
-        self._insystem_warp_transit = None
+        self._end_in_system_warp("aborted")     # see SetAI
         if old is not None:
             self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
@@ -334,7 +337,7 @@ class ShipClass(DamageableObject):
         # Zero-speed setpoint (model-forward dir) so the integrator holds at 0.
         self._speed_setpoint = (0.0, TGPoint3(0.0, 1.0, 0.0), 0)
         self._target_angular_velocity_setpoint = TGPoint3(0.0, 0.0, 0.0)
-        self._insystem_warp_transit = None
+        self._end_in_system_warp("stopped")     # see SetAI
 
     # ── Pure-math kinematic helpers ──────────────────────────────────────────
     # No state read/written beyond the explicit arg list (GetPredictedPosition)
@@ -701,10 +704,8 @@ class ShipClass(DamageableObject):
         return self.TurnDirectionsToDirections(forward, target_forward,
                                               up, target_up)
 
-    # In-system warp transit speed = this factor × the ship's impulse
-    # MaxSpeed — deliberately the same 100× as the player's Ctrl+I boost
-    # (_PlayerControl.WARP_BOOST_FACTOR) so AI-ordered warps and manual
-    # boosts cross a system at the same rate. BC's microwarp is a visible
+    # AI in-system warp speed = this factor × the ship's AUTHORED impulse
+    # MaxSpeed (warp_flight._ai_speed). BC's microwarp is a visible
     # multi-second cruise, never an instant teleport.
     IN_SYSTEM_WARP_SPEED_FACTOR = 100.0
     # Base speed for ships without a populated IES (bare test rigs) —
@@ -721,11 +722,15 @@ class ShipClass(DamageableObject):
 
         Multi-frame transit model: when the ship is beyond `distance` of the
         target AND its nose is on the target (IN_SYSTEM_WARP_FACING_COS),
-        record a transit (target, drop_distance) and return 1. The per-tick
-        integrator (ship_motion._step_in_system_warp) then cruises the ship
-        in a straight line at IN_SYSTEM_WARP_SPEED_FACTOR × MaxSpeed until
-        it reaches (target − unit_dir · distance), where the transit ends
-        and `_warp_consumed` latches. While a transit is active this returns
+        begin a WarpFlight (engine/appc/warp_flight.py) toward it and return
+        1. Each tick warp_flight.step cruises the ship at
+        IN_SYSTEM_WARP_SPEED_FACTOR × authored MaxSpeed -- straight while the
+        line keeps every body's clearance, routed around bodies otherwise
+        (BC's contract: AI/Preprocessors.py:1690 skips AvoidObstacles during
+        the warp "because the in-system warp check already does that") --
+        until it is `distance` from the target, where the flight ends and
+        `_warp_consumed` latches. Positions are compared through the frames
+        (a target in another region of the system is reachable). While a transit is active this returns
         1 without re-engaging (SDK bWarping semantics — Intercept skips its
         normal speed control during the warp).
 
@@ -754,12 +759,15 @@ class ShipClass(DamageableObject):
             # Already warped since the last StopInSystemWarp — the AI body
             # drives normal motion now.
             return 0
+        from engine.appc import warp_flight
+        target_loc = warp_flight.target_local(self, target)
+        if target_loc is None:
+            return 0                    # another frame: never interacts
         ship_loc = self.GetWorldLocation()
-        target_loc = target.GetWorldLocation()
         diff = TGPoint3(
-            target_loc.x - ship_loc.x,
-            target_loc.y - ship_loc.y,
-            target_loc.z - ship_loc.z,
+            target_loc[0] - ship_loc.x,
+            target_loc[1] - ship_loc.y,
+            target_loc[2] - ship_loc.z,
         )
         d = diff.Length()
         if d <= distance:
@@ -772,9 +780,20 @@ class ShipClass(DamageableObject):
         cos_face = (fwd.x * diff.x + fwd.y * diff.y + fwd.z * diff.z) / d
         if cos_face < self.IN_SYSTEM_WARP_FACING_COS:
             return 0
-        self._insystem_warp_transit = (target, float(distance))
-        self._post_in_system_warp(True)
+        flight = warp_flight.WarpFlight(
+            target=target, speed_policy="ai", exit_policy="keep_pre_warp",
+            drop_distance=float(distance))
+        # Warp state first (WES_WARP_INITIATED + a parts hold for a rigged
+        # ship, else WES_WARPING), then the ET_IN_SYSTEM_WARP announcement.
+        warp_flight.begin_ai_warp(self, flight)
+        self.begin_warp_flight(flight)
         return 1
+
+    def begin_warp_flight(self, flight) -> None:
+        """Engine-only: start ``flight`` (a warp_flight.WarpFlight) and
+        announce it. ship_motion advances it every tick."""
+        self._insystem_warp_transit = flight
+        self._post_in_system_warp(True)
 
     def _post_in_system_warp(self, active: bool) -> None:
         """Announce an in-system-warp transition.
@@ -792,20 +811,26 @@ class ShipClass(DamageableObject):
         evt.SetBool(1 if active else 0)
         App.g_kEventManager.AddEvent(evt)
 
-    def _end_in_system_warp(self) -> None:
+    def _end_in_system_warp(self, reason: str = "aborted") -> None:
         """Clear an in-flight transit and announce the stop — at most once.
 
-        Guarded on a transit actually being active, because there are four
+        Guarded on a transit actually being active, because there are several
         ways in and an unguarded post would lie: AI LostFocus calls
         StopInSystemWarp unconditionally (usually cancelling nothing), and
-        _step_in_system_warp has three separate exits.
+        warp_flight.step has several exits. `reason` becomes the flight's
+        `ended_reason` unless the flight already recorded one.
 
         Callers own `_warp_consumed`: StopInSystemWarp drops it so a fresh
         warp can fire, arrival sets it so boundary drift cannot re-warp.
         """
-        if self._insystem_warp_transit is None:
+        flight = self._insystem_warp_transit
+        if flight is None:
             return
+        if getattr(flight, "ended_reason", "") is None:
+            flight.ended_reason = reason
         self._insystem_warp_transit = None
+        from engine.appc import warp_flight
+        warp_flight.end_ai_warp(self, flight)   # "ai" flights only
         self._post_in_system_warp(False)
 
     def IsDoingInSystemWarp(self) -> int:

@@ -129,7 +129,7 @@ def test_pushed_contacts_get_their_mission_affiliation():
 
 
 def test_warp_transit_empties_the_list_with_no_explicit_clear():
-    """Mid-warp the player is alone in _WarpTransit, so the list empties
+    """Mid-warp the player is alone in BC's "warp" set, so the list empties
     itself — this is the test of whether the derived model is right."""
     from engine.appc.warp import _WARP_TRANSIT_SET_NAME
     contact_index.reset()
@@ -149,3 +149,33 @@ def test_warp_transit_empties_the_list_with_no_explicit_clear():
     _pump(menu, player)
 
     assert menu.GetNumChildren() == 0
+
+
+def test_warp_transit_lists_a_mission_ship_already_parked_there():
+    """The warp set is BC's own persistent "warp" set (spec §1b), not always
+    empty: E6M1 parks Artrus ships there before the player arrives. Mid-warp
+    the target list must derive from whatever the warp set holds, same as any
+    other set -- not assume the tunnel is always empty."""
+    from engine.appc.warp import _WARP_TRANSIT_SET_NAME
+    contact_index.reset()
+    menu = _menu()
+    deep_space = SetClass()
+    transit = SetClass()
+    transit.SetName(_WARP_TRANSIT_SET_NAME)
+    player = _ship("player")
+    artrus = _ship("Artrus 1")
+
+    deep_space.AddObjectToSet(player, "player")
+    _pump(menu, player)
+    assert menu.GetNumChildren() == 0
+
+    # A mission's ship is already parked in the warp set before the player
+    # arrives (E6M1's PlayerEntersWarpSet pattern).
+    transit.AddObjectToSet(artrus, "Artrus 1")
+
+    deep_space.RemoveObjectFromSet("player")
+    transit.AddObjectToSet(player, "player")
+    _pump(menu, player)
+
+    assert menu.GetNumChildren() == 1
+    assert menu.GetObjectEntry(artrus) is not None

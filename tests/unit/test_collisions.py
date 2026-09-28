@@ -3,6 +3,7 @@ import pytest
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass
 from engine.appc.planet import Planet_Create
+from tests.helpers.one_set import share_one_set
 
 
 def _reset_app_state():
@@ -222,6 +223,7 @@ def test_resolve_collisions_returns_one_hit_per_overlapping_pair():
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
     c = _ship(50.0, 1000.0, 0.0)   # isolated
+    share_one_set(a, b, c)
     hits = resolve_collisions([a, b, c])
     assert len(hits) == 1
 
@@ -233,6 +235,7 @@ def test_overlap_persistence_applies_damage_once(monkeypatch):
     from engine.appc.collisions import resolve_collisions
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
+    share_one_set(a, b)
     resolve_collisions([a, b])   # approaching: 2 hits
     n_after_first = len(calls)
     # After the first resolve, de-penetration separates the pair to exactly
@@ -471,6 +474,7 @@ def test_resolve_collisions_skips_disabled_pair_either_direction():
 
     # Disable from a's side only; skip must still be symmetric.
     a.EnableCollisionsWith(b, 0)
+    share_one_set(a, b)        # else the set gate, not the mask, skips them
     hits = resolve_collisions([a, b])
     assert hits == []
     assert a.__dict__.get("_collision_velocity") is None
@@ -487,6 +491,7 @@ def test_resolve_collisions_disabled_pair_leaves_other_pairs_colliding():
     b = _ship(1.6, 100.0, 0.0, radius=2.0)
     c = _ship(3.2, 100.0, -10.0, radius=2.0)
     a.EnableCollisionsWith(b, 0)               # only a<->b disabled
+    share_one_set(a, b, c)
     hits = resolve_collisions([a, b, c])
     pairs = {frozenset((id(x), id(y))) for (x, y, *_rest) in hits}
     assert frozenset((id(a), id(b))) not in pairs   # skipped
@@ -562,6 +567,7 @@ def test_warping_ship_is_excluded_from_pair_resolution():
     a = _warping_ship(0.0, 1000.0, 10.0, radius=5.0,
                       state=WarpEngineSubsystem.WES_WARPING)
     b = _ship(4.0, 1000.0, -10.0, radius=5.0)
+    share_one_set(a, b)
     live = [o for o in (a, b) if _collisions_enabled(o)]
     assert live == [b]
     assert resolve_collisions(live) == []

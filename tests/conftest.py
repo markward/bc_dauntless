@@ -511,12 +511,13 @@ class _SDKLoader(importlib.abc.Loader):
                     setattr(sys.modules[parent], attr, module)
                 except (AttributeError, TypeError):
                     pass
-        # Second pass: engine-owned ship-data overrides (glow regions, stats
-        # overlays) applied after the SDK module registers its own data. Fires
-        # on reload too, so loadspacehelper's ClearLocalTemplates() -> reload()
-        # window is covered. Keep in sync with the twin in tools/mission_harness.py.
+        # Second pass: engine-owned overrides -- ship data, and the system map
+        # on region modules -- applied after the SDK module registers its own
+        # data. Fires on reload too, so loadspacehelper's ClearLocalTemplates()
+        # -> reload() window is covered. Keep in sync with the twin in
+        # tools/mission_harness.py.
         _qual = self.also_register_as or module.__name__
-        if _qual.startswith("ships."):
+        if _qual.startswith(("ships.", "Systems.")):
             try:
                 from engine.appc import sdk_overrides
                 sdk_overrides.on_sdk_module_exec(module, _qual)
@@ -882,6 +883,39 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    # Swapped-module split: fixtures that re-import an SDK module
+    # (sys.modules.pop -> import -> restore the saved entry; e.g.
+    # Bridge.HelmMenuHandlers in tests/unit/test_dash_set_course.py) put the
+    # OLD module back in sys.modules but leave the parent package's attribute
+    # on the NEW one. Later code binds the attribute and runs CreateMenus on
+    # it, while the event manager resolves the SDK's string handlers through
+    # sys.modules -- a module whose globals were never set (NameError
+    # g_dCommandableFleet in every later mission test). sys.modules is the
+    # authority; re-point any package attribute that holds a DIFFERENT module
+    # of the same name.
+    try:
+        import types as _types
+        for _name, _mod in list(sys.modules.items()):
+            if _mod is None or "." not in _name:
+                continue
+            _parent_name, _, _leaf = _name.rpartition(".")
+            _parent = sys.modules.get(_parent_name)
+            _attr = getattr(_parent, _leaf, None) if _parent is not None else None
+            if (isinstance(_attr, _types.ModuleType) and _attr is not _mod
+                    and getattr(_attr, "__name__", None) == _name):
+                setattr(_parent, _leaf, _mod)
+    except Exception:
+        pass
+    # The in-system-warp dash's module globals: the Helm-menu label cache
+    # (engine.appc.dash_helm) holds a previous test's menu, and the dash VFX
+    # clock (engine.dash_vfx) holds its dash intensity.
+    try:
+        from engine.appc import dash_helm as _dash_helm
+        _dash_helm._cache = None
+        from engine import dash_vfx as _dash_vfx
+        _dash_vfx.reset()
+    except Exception:
+        pass
     # The projectile-module cache memoises import FAILURES, so one test
     # firing a tube with an unimportable script would otherwise decide every
     # later test's torpedoes for that script name.
@@ -910,6 +944,26 @@ def _reset_leakable_engine_globals():
     # computed on the panel from `articulation.dev_override()`, which the
     # `_articulation.reset()` above already clears. The module-level copy
     # that used to need one here was dead and has been deleted.)
+    try:
+        from engine.systems import region_hooks as _rh
+        _rh.reset()
+    except Exception:
+        pass
+    try:
+        from engine.systems import system_loader as _sysload
+        _sysload.reset()
+    except Exception:
+        pass
+    try:
+        from engine.systems import frames as _frames
+        _frames.reset_render_origin()
+    except Exception:
+        pass
+    # host_loop's mapped-body detector warns once per body per mission; only
+    # touch it if host_loop is already imported (it is heavy to import).
+    _hl = sys.modules.get("engine.host_loop")
+    if _hl is not None:
+        _hl._mapped_body_warned.clear()
     try:
         import App
     except Exception:
@@ -945,6 +999,21 @@ def _reset_leakable_engine_globals():
     try:
         import engine.host_loop as _hl
         _hl._note_static_backdrops([])
+    except Exception:
+        pass
+    # Hit-feedback emission throttles. All three are keyed by id(ship) and
+    # id() is a RECYCLED address, so a dead ship's entry is inherited by a
+    # LATER test's ship that happens to land there. Every decal test pins the
+    # clock to the same instant, so an inherited entry makes `now - last == 0`
+    # and the decal is throttled away -- the test fails, alone it passes, and
+    # the culprit is whichever earlier test allocated. Diagnosed 2026-09-25
+    # from test_decal_emission.py::test_dent_weight_reaches_the_decal, which
+    # flaked only in full-suite runs.
+    try:
+        from engine.appc import hit_feedback as _hf
+        _hf._last_decal_emit.clear()
+        _hf._last_carve_time.clear()
+        _hf._pending_carve_strength.clear()
     except Exception:
         pass
     # Camera shake: the Modern VFX row flips a module global, so a test that
@@ -1142,11 +1211,12 @@ def _reset_leakable_engine_globals():
         _td._real_bridge_handlers = None
     except Exception:
         pass
-    # scene_scope (guide §11 one-active-scene rule): _rendered is a scalar, not
-    # a container, so it needs its own reset_for_tests() rather than a plain
-    # .clear() -- same leak class as attached_sources/_attached and
-    # hum_allocator/_humming just above (a test that calls set_rendered_set
-    # would otherwise leak the active scene name into a later, unrelated test).
+    # scene_scope (guide §11 one-active-scene rule): _active_frame is a
+    # scalar, not a container, so it needs its own reset_for_tests() rather
+    # than a plain .clear() -- same leak class as attached_sources/_attached
+    # and hum_allocator/_humming just above (a test that calls
+    # set_active_frame would otherwise leak the active frame key into a
+    # later, unrelated test).
     try:
         _m = sys.modules.get("engine.audio.scene_scope")
         if _m is not None:

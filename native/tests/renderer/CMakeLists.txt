@@ -4,6 +4,8 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
+    render_origin_precision_test.cc
+    render_origin_math_test.cc
     test_cone_light_frame.cc
     explosion_light_frame_test.cc
     skinned_program_test.cc
@@ -15,6 +17,7 @@ add_executable(renderer_tests
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
+    motion_blur_shutter_test.cc
     letterbox_pass_test.cc
     aabb_test.cc
     model_parts_test.cc

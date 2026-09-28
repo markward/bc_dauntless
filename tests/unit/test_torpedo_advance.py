@@ -4,12 +4,14 @@ turns toward the target up to max_angular_accel × dt.
 Collision: sphere_hit against any ship except source; first hit wins.
 """
 import pytest
+
+from tests.helpers.one_set import InSet, one_set_for, share_one_set
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.projectiles import Torpedo, register, update_all, _active, _guide
 from engine.appc.subsystems import ShipSubsystem
 
 
-class _RotShip:
+class _RotShip(InSet):
     def __init__(self, loc, rot):
         self._loc, self._rot = loc, rot
     def GetWorldLocation(self): return self._loc
@@ -34,6 +36,7 @@ def test_guide_homes_on_center_mass_ignoring_subsystem_lock():
     t._velocity = TGPoint3(-10.0, 0.0, 0.0)
     t._max_angular_accel = 1000.0              # ample turn authority
     t._target_ship = ship
+    share_one_set(t, ship)                     # homing is same-set only
 
     _guide(t, dt=0.05)
     speed = t._velocity.Length()
@@ -62,7 +65,7 @@ def _torp_at(x, y, z, vx, vy, vz, ttl=30.0, age=0.0, src=None):
     return t
 
 
-class _FakeShip:
+class _FakeShip(InSet):
     def __init__(self, x, y, z, radius=10.0, dead=False):
         self._loc = TGPoint3(x, y, z)
         self._r = radius
@@ -195,3 +198,10 @@ def test_torpedo_uses_host_ray_trace_mesh_when_supplied(monkeypatch):
     assert hit_normal.x == pytest.approx(0.0)
     assert hit_normal.y == pytest.approx(0.0)
     assert hit_normal.z == pytest.approx(-1.0)
+
+
+@pytest.fixture(autouse=True)
+def _doubles_share_one_set(monkeypatch):
+    """A torpedo only meets ships in its own FRAME (engine.systems.frames);
+    the doubles all stand in one set, and a torpedo joins its shooter's."""
+    one_set_for(_FakeShip, monkeypatch=monkeypatch)

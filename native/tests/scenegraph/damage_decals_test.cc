@@ -105,21 +105,37 @@ TEST(DamageDecalRing, TickReclaimsColdHeatGlowButKeepsScorch) {
     EXPECT_EQ(first_active(ring)->weapon_class, WeaponClass::Scorch);
 }
 
-TEST(WorldToBody, InvertsTranslationAndRotation) {
-    glm::mat4 ship = glm::translate(glm::mat4(1.0f), glm::vec3(10, 0, 0));
-    ship = glm::rotate(ship, glm::radians(90.0f), glm::vec3(0, 0, 1));
-    glm::vec3 world_pt(10, 1, 0);             // ship origin + 1 along world-Y
-    glm::vec3 body = scenegraph::world_to_body(ship, world_pt);
-    // World-Y maps back to +X in body after undoing the +90 deg Z rotation.
-    EXPECT_NEAR(body.x, 1.0f, 1e-4f);
-    EXPECT_NEAR(body.y, 0.0f, 1e-4f);
-    EXPECT_NEAR(body.z, 0.0f, 1e-4f);
+TEST(RelativeToBody, InvertsRotationAndScaleOfAnInstanceRelativePoint) {
+    // The point arrives RELATIVE TO THE INSTANCE'S TRANSLATION (the floating
+    // render origin: no large translation is ever inverted in float), so only
+    // rotation·scale is undone.
+    const glm::mat3 lin =
+        glm::mat3(glm::rotate(glm::mat4(1.0f), glm::radians(90.0f),
+                              glm::vec3(0, 0, 1))) * 2.0f;
+    glm::vec3 body = scenegraph::relative_to_body(lin, glm::vec3(0, 2, 0));
+    // World-Y maps back to +X in body after undoing the +90 deg Z rotation
+    // and the x2 scale.
+    EXPECT_NEAR(body.x, 1.0f, 1e-5f);
+    EXPECT_NEAR(body.y, 0.0f, 1e-5f);
+    EXPECT_NEAR(body.z, 0.0f, 1e-5f);
 }
 
-TEST(WorldDirToBody, NormalisesResult) {
-    glm::mat4 ship = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f),
-                                 glm::vec3(0, 0, 1));
-    glm::vec3 body = scenegraph::world_dir_to_body(ship, glm::vec3(0, 2, 0));
+TEST(RelativeToBody, AMillionGUOutKeepsSubUlpOffsets) {
+    // A game-scale hull (x0.01) 1e6 GU out: the caller subtracts the
+    // translation in double, so a 0.004 GU offset -- far below float's
+    // 1/16 GU at 1e6 -- still lands at 0.4 model units.
+    const double tx = 1e6 + 0.3;
+    const double hit_x = tx + 0.004;
+    const glm::vec3 rel(static_cast<float>(hit_x - tx), 0.0f, 0.0f);
+    glm::vec3 body = scenegraph::relative_to_body(glm::mat3(0.01f), rel);
+    EXPECT_NEAR(body.x, 0.4f, 1e-4f);
+}
+
+TEST(DirToBody, NormalisesResult) {
+    const glm::mat3 lin =
+        glm::mat3(glm::rotate(glm::mat4(1.0f), glm::radians(90.0f),
+                              glm::vec3(0, 0, 1))) * 3.0f;
+    glm::vec3 body = scenegraph::dir_to_body(lin, glm::vec3(0, 2, 0));
     EXPECT_NEAR(glm::length(body), 1.0f, 1e-4f);
     // Direction must be correct, not just unit length: world +Y maps to
     // body +X after undoing the +90 deg Z rotation. (A hardcoded unit
@@ -127,6 +143,11 @@ TEST(WorldDirToBody, NormalisesResult) {
     EXPECT_NEAR(body.x, 1.0f, 1e-4f);
     EXPECT_NEAR(body.y, 0.0f, 1e-4f);
     EXPECT_NEAR(body.z, 0.0f, 1e-4f);
+}
+
+TEST(DirToBody, ZeroStaysZero) {
+    EXPECT_EQ(scenegraph::dir_to_body(glm::mat3(2.0f), glm::vec3(0.0f)),
+              glm::vec3(0.0f));
 }
 
 TEST(DamageDecalRing, HeatGlowDoesNotMergeSoEachGlowCoolsIndependently) {

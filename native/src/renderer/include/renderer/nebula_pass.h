@@ -41,10 +41,13 @@ public:
     /// Draw all volumes. Caller guarantees the scene depth buffer is
     /// populated; the fog is depth-TESTED sphere geometry so hulls occlude
     /// it (no depth sampling). Early-outs when `volumes` is empty or the
-    /// pass is disabled.
+    /// pass is disabled. `render_origin`: the floating origin the camera and
+    /// volumes are relative to -- the fog overlay is sampled at the WORLD
+    /// point so it does not slide with the camera (renderer/render_origin.h).
     void render(const scenegraph::Camera& camera,
                 Pipeline& pipeline,
-                const std::vector<NebulaVolume>& volumes);
+                const std::vector<NebulaVolume>& volumes,
+                const glm::dvec3& render_origin = glm::dvec3(0.0));
 
     void  set_enabled(bool enabled) { enabled_ = enabled; }
     bool  enabled() const { return enabled_; }

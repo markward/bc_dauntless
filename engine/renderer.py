@@ -65,6 +65,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
+    "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_project_asset_root",
     "set_glow_region_gain",
@@ -232,6 +233,21 @@ def set_camera(eye: Tuple[float, float, float],
     _h.set_camera(eye, target, up, fov_y_rad, near, far)
 
 
+def set_render_origin(x: float, y: float, z: float) -> None:
+    """The floating render origin, in VIEW coordinates (doubles). Native
+    subtracts it from every Space-pass instance's translation at the next
+    frame(); the Space camera and every world-space feed must then be in the
+    same render space (engine.systems.frames.to_render)."""
+    _h.set_render_origin(float(x), float(y), float(z))
+
+
+def reset_render_origin() -> None:
+    """Back to render origin (0,0,0) for a new mission, and drop the passes'
+    memory of the old origin (dust smear, nebula history, motion blur), so
+    the jump is not read as camera travel."""
+    _h.reset_render_origin()
+
+
 def set_lighting(ambient: Tuple[float, float, float],
                  directionals: list) -> None:
     """Configure the renderer's lighting state for subsequent frame()s.
@@ -373,6 +389,13 @@ def set_warp_travel_dir(direction) -> None:
     """Set the world-space travel direction (x, y, z) for the warp flythrough."""
     x, y, z = direction
     _h.set_warp_travel_dir(float(x), float(y), float(z))
+
+
+def set_dash_intensity(intensity: float) -> None:
+    """Set the 0..1 intensity for the player's in-system-warp dash (raises
+    the dust pass's smear cap; separate from the warp flythrough's streak
+    channel -- a dash never uses `u_warp_streak`'s drift/prism mode)."""
+    _h.set_dash_intensity(float(intensity))
 
 
 def volumetric_nebulae_enabled() -> bool:
@@ -803,8 +826,16 @@ def shield_hit(instance_id: InstanceId,
                rgba: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
                intensity: float = 1.0) -> None:
     """Push a shield-hit flash for the given ship at a world-space point.
-    rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor."""
-    _h.shield_hit(instance_id, point, rgba, intensity)
+    rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor.
+
+    The native binding takes the point RELATIVE TO THE INSTANCE'S
+    TRANSLATION (the floating render origin); it is formed here in doubles.
+    A stale instance drops the hit. The subtraction is host_io's, shared."""
+    from engine.host_io import _instance_relative
+    rel = _instance_relative(instance_id, point, host=_h)
+    if rel is None:
+        return
+    _h.shield_hit(instance_id, rel, rgba, intensity)
 
 
 # ── Bridge view ─────────────────────────────────────────────────────────────

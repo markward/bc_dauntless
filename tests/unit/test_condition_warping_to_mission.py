@@ -8,16 +8,17 @@ Gap C2 (docs/engine/aieditor-ai-surface-and-gaps.md §4). The condition reads::
 
 -- Conditions/ConditionWarpingToMission.py:23.
 
-Our ``WarpSequence`` (engine/appc/warp.py:530) defined neither accessor, and a
+Our ``WarpSequence`` (engine/appc/warp.py) defined neither accessor, and a
 missing attribute resolves to a **truthy** ``_Stub``. So the condition reported
 "warping to a new mission" for *every* warp sequence that existed -- an inverted
 failure, not a silent-off one. Live-confirmed at ``docs/stub_heatmap.md`` rank
 95 (136 hits, 58/233 runs). Consumer: ``AI/Compound/FollowThroughWarp.py``,
 registered by ``AI/Setup.py:135``.
 
-Dauntless never constructs a cross-mission warp sequence today -- every
-``WarpSequence_Create`` carries a *set* destination -- so the correct answer for
-all of them is false.
+A cross-mission warp now exists -- the warp button carries the mission or
+episode a Set Course pick (or a mission's SetDestination) names into
+``WarpSequence_Create`` -- but a warp with only a *set* destination, which is
+what these tests build, must still answer false.
 """
 import pytest
 

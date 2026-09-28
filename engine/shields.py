@@ -85,11 +85,19 @@ def _point_tuple(p):
 
 def fire_debug_hit(host, instance_id, world_point):
     """Push a synthetic hit at world_point. Color (0,0,0,0) signals the
-    renderer to use the ship's registered default ShieldGlowColor."""
+    renderer to use the ship's registered default ShieldGlowColor.
+
+    The native shield_hit takes a point RELATIVE TO THE INSTANCE'S
+    TRANSLATION (the floating render origin), formed here in Python doubles;
+    a stale instance drops the hit. The subtraction is host_io's, shared."""
     from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
+    from engine.host_io import _instance_relative
+    rel = _instance_relative(instance_id, _point_tuple(world_point), host=host)
+    if rel is None:
+        return
     host.shield_hit(
         instance_id=instance_id,
-        point=_point_tuple(world_point),
+        point=rel,
         rgba=(0.0, 0.0, 0.0, 0.0),
         intensity=SHIELD_IMPACT_INTENSITY,
     )

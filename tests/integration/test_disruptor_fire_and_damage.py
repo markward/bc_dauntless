@@ -25,6 +25,7 @@ from unittest.mock import patch
 from engine.appc import projectiles
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass_Create
+from tests.helpers.one_set import share_one_set
 from engine.appc.subsystems import HullSubsystem, PulseWeapon, PulseWeaponSystem
 from engine.appc.properties import PulseWeaponProperty, WeaponSystemProperty
 from engine.host_loop import _advance_combat, _advance_weapons
@@ -94,6 +95,7 @@ def test_held_disruptor_fire_damages_target_through_apply_hit():
     projectiles._active.clear()
     ship, parent = _build_ship(num_cannons=1)
     target = _build_target(at_y=40.0)
+    share_one_set(ship, target)   # a bolt only strikes a ship in its own set
     ship.SetTarget(target)
 
     hull_before = target._hull.GetCondition()
@@ -121,6 +123,7 @@ def test_held_trigger_refires_via_advance_combat_hook():
     projectiles._active.clear()
     ship, parent = _build_ship(num_cannons=1)
     target = _build_target(at_y=40.0)
+    share_one_set(ship, target)   # a bolt only strikes a ship in its own set
     ship.SetTarget(target)
 
     spawn_count = {"n": 0}

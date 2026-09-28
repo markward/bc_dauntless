@@ -241,7 +241,8 @@ Two consequences worth knowing before reading a frame spike as a regression:
 
 1. **Load/warp burst.** 32 targetable contacts is **~17 ms in one frame** — an
    entire 60 Hz frame. A warp pays it twice: mid-warp `perceived_by()` returns
-   `()` (the player sits alone in `_WarpTransit`), giving N REMOVED, then
+   `()` (the player sits in BC's `"warp"` set, empty unless a mission
+   parked ships there), giving N REMOVED, then
    arrival gives N ADDED. Nothing bounds this today.
 2. **No range hysteresis — this is the worse one.** `sensor_detection`'s
    `HYSTERESIS` / `_latched` pair covers NEBULA concealment only; the RANGE
@@ -544,7 +545,9 @@ engage point for `GetBool()==1`. The disengage side has THREE call sites
 that all clear `_insystem_warp_transit`, none of which currently notify
 anyone: `engine/appc/ships.py:780` (`StopInSystemWarp`, the explicit
 abort — called by AI `LostFocus`), and `engine/appc/ship_motion.py:291,
-:300, :324` inside `_step_in_system_warp` (natural transit completion).
+:300, :324` inside `_step_in_system_warp` (natural transit completion;
+since replaced by `engine/appc/warp_flight.py:step`, which ends every flight
+through `ShipClass._end_in_system_warp`).
 Posting `ET_IN_SYSTEM_WARP` with `GetBool()==0` faithfully needs all three
 covered, guarded on "was a transit active before this call" so a
 no-op `StopInSystemWarp` (nothing was warping) doesn't post a spurious

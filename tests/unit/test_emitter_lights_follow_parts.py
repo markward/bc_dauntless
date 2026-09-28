@@ -21,6 +21,16 @@ from engine.appc import part_severance as ps
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.properties import SubsystemProperty
 from engine.host_loop import _build_emitter_light_render_data
+from tests.helpers.viewed_set import release_viewed_set, viewed_set
+
+
+@pytest.fixture(autouse=True)
+def _viewed():
+    # The emitter-light feed carries only ships in the viewed frame
+    # (system-frames): give the stand-in ship a set to be viewed in.
+    viewed_set()
+    yield
+    release_viewed_set()
 
 IID = 42
 STAR_TIP = (1.0, 0.45, -0.67)       # on 'left wing01' (starboard), rest pose
@@ -63,6 +73,9 @@ class _Ship:
 
     def GetWorldLocation(self):
         return TGPoint3(0.0, 0.0, 0.0)
+
+    def GetContainingSet(self):
+        return viewed_set()
 
     def GetWorldRotation(self):
         raise AssertionError("lights are body-frame; the renderer places them")

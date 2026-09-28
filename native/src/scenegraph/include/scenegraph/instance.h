@@ -31,7 +31,21 @@ enum class Pass : std::uint8_t { Space = 0, Bridge = 1, Comm = 2 };
 
 struct Instance {
     ModelHandle model_handle = 0;
+
+    /// RENDER-space world matrix — what every pass reads. Written ONLY by
+    /// World (resolve_render_space / the set_world_transform family) as
+    /// [world_linear | float(world_translation_d − origin)], where origin is
+    /// the render origin for a Space-pass instance and zero for Bridge/Comm.
+    /// Never assign it directly: the next resolve_render_space rebuilds it
+    /// from the two fields below and would silently undo the write.
     glm::mat4 world{1.0f};
+
+    /// The pose's source of truth, split so the large part never meets a
+    /// float before the render origin has been subtracted from it.
+    /// world_linear: rotation·scale (float — bounded, precision is fine).
+    /// world_translation_d: VIEW-space translation, in double.
+    glm::mat3  world_linear{1.0f};
+    glm::dvec3 world_translation_d{0.0};
 
     /// Transform-store binding (dauntless::TransformStore slot + uniform
     /// scale). When xform_index >= 0 the host recomposes `world` from the

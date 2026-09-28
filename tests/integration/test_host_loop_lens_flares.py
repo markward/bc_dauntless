@@ -20,8 +20,13 @@ def test_aggregate_lens_flares_pulls_from_active_sets():
     pLens.AddFlare(8, "data/textures/rays.tga", 0.0, 0.2)
     pLens.Build()
     App.g_kSetManager._sets["Tau Ceti"] = pSet
+    # The flare feed carries only the viewed frame.
+    App.g_kSetManager.MakeRenderedSet("Tau Ceti")
 
-    out = _aggregate_lens_flares()
+    try:
+        out = _aggregate_lens_flares()
+    finally:
+        App.g_kSetManager.ClearRenderedSet()
     assert len(out) == 1
     f = out[0]
     # ASTRO_SCALE may be applied; assert structure rather than exact numbers.

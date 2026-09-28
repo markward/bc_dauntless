@@ -78,7 +78,7 @@ def _spawn_chunk(ship, ship_iid, part_name) -> None:
         if name != part_name:
             host_io.set_instance_node_hidden(chunk_iid, name, True)
 
-    _copy_render_state(ship, chunk_iid)
+    shown = _copy_render_state(ship, chunk_iid)
 
     (lo, hi) = box
     centre = tuple((lo[i] + hi[i]) * 0.5 for i in range(3))
@@ -100,8 +100,12 @@ def _spawn_chunk(ship, ship_iid, part_name) -> None:
     # `cells` / `parent_occupied_cells` are used by spawn() only as a ratio, so
     # a volume fraction expressed against a nominal 1000 reproduces the mass
     # split without inventing a voxel count the part does not have.
-    debris_chunk.spawn(chunk_iid, ship, int(max(1.0, frac * 1000.0)),
-                       centre, radius, parent_mass, 1000)
+    chunk = debris_chunk.spawn(chunk_iid, ship, int(max(1.0, frac * 1000.0)),
+                               centre, radius, parent_mass, 1000)
+    if not shown and chunk is not None:
+        # debris_chunk.tick re-shows a chunk only when this flag says it hid
+        # it; a chunk born hidden must carry it too.
+        chunk._frame_hidden = True
 
 
 def _copy_render_state(ship, chunk_iid) -> None:
@@ -122,6 +126,10 @@ def _copy_render_state(ship, chunk_iid) -> None:
         collisions.tick_collisions, so a collision-triggered severance would
         otherwise draw its first frame at the world origin, in MODEL units,
         at scale 1 -- 100x too big, sitting at the centre of the map.
+        It is pushed in the VIEWED set's coordinates (frames.in_view from the
+        ship's set), exactly as debris_chunk.tick pushes every later frame; a
+        ship outside the viewed frame (or nothing viewed) gives a chunk that
+        starts hidden, and this returns False so the caller can mark it.
       * rim_eligible / rim_strength -- every ship hull is rim-eligible
         (host_loop sets this at ship-instance creation, never at the
         model-default false); the chunk must match or it reads as a
@@ -137,19 +145,30 @@ def _copy_render_state(ship, chunk_iid) -> None:
     any comm/viewscreen set.
     """
     from engine import renderer
+    from engine.appc.math import TGPoint3
     from engine.host_loop import _world_matrix_from, BC_MODEL_SCALE
+    from engine.systems import frames
 
     try:
         py_scale = float(ship.GetScale())
     except Exception:  # noqa: BLE001
         py_scale = 1.0
-    world = _world_matrix_from(ship.GetWorldLocation(), ship.GetWorldRotation(),
-                               BC_MODEL_SCALE * py_scale)
-    renderer.set_world_transform(chunk_iid, world)
-    renderer.set_visible(chunk_iid, True)
+    loc = ship.GetWorldLocation()
+    pos = frames.in_view(frames.viewing_set(), frames.containing_set(ship),
+                         loc.x, loc.y, loc.z)
+    if pos is None:
+        renderer.set_visible(chunk_iid, False)
+        shown = False
+    else:
+        world = _world_matrix_from(TGPoint3(*pos), ship.GetWorldRotation(),
+                                   BC_MODEL_SCALE * py_scale)
+        renderer.set_world_transform(chunk_iid, world)
+        renderer.set_visible(chunk_iid, True)
+        shown = True
     renderer.set_rim_eligible(chunk_iid, True)
     renderer.set_rim_strength(chunk_iid, _rim_strength_for(ship))
     renderer.set_emissive_scale(chunk_iid, 1.0)
+    return shown
 
 
 def _rim_strength_for(ship) -> float:

@@ -62,10 +62,82 @@ BOUNDARY_HYSTERESIS_FRACTION = 0.05
 _humming: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
-def _roster():
-    """Ships in the ACTIVE (rendered) set. Seam for tests."""
-    from engine.appc.ship_iter import iter_active_ships
-    return list(iter_active_ships())
+def _roster(listener_pos=None):
+    """Ships in the VIEWED FRAME (system-frames plan 2 task 6 fix round 1) --
+    every set sharing `frames.viewing_set()`'s frame, not the single
+    `active_set()` SetClass. A sibling region of the same star system
+    (Ona1/Ona2) shares one frame and must contribute hum candidates from
+    BOTH sets regardless of which is rendered; a genuinely different frame
+    (a left-behind system, or a space cutscene rendered somewhere the
+    player's own ship is NOT) must not.
+
+    This is also what keeps `_start_hum` from ever hitting `TGSound.Play`'s
+    cross-frame refusal (see that function's own docstring) for a roster
+    winner: a ship this function returns is, by construction, in a set whose
+    frame equals `frames.viewing_set()`'s -- and `tick_audio` calls
+    `scene_scope.set_active_frame(frames.frame_of(frames.viewing_set())...)`
+    with that exact same `viewing_set()` value earlier in the SAME tick, so
+    "the roster's frame" and "the active frame" a Play() call would gate on
+    can never disagree. Before this fix, the roster was scoped to
+    `active_set()` (always the PLAYER's own set) regardless of what was
+    actually rendered, so a space cutscene pointed at another frame kept
+    offering the player as a candidate every tick, `_start_hum` kept calling
+    `Play()`, and `Play()` kept refusing it -- a real, wasted backend call
+    every tick for the whole cutscene (see
+    tests/audio/test_hum_allocator.py::
+    test_player_hum_does_not_spin_during_a_cross_frame_cutscene, which
+    proves ZERO such calls now, not merely that `_humming` stays empty).
+
+    Falls back to iterating every set when no view can be determined at all
+    (no player, no explicit rendered set) -- the same fallback
+    `iter_active_ships` already had, preserved for load-time/headless-test
+    boots with no game world yet
+    (test_real_roster_finds_ship_via_iter_active_ships pins this). Seam for
+    tests.
+
+    With `listener_pos` (view coordinates), ships beyond the render draw
+    distance of it are dropped (system-frames Plan 3 Task 3): a whole star
+    system's regions are loaded at once, so the viewed frame routinely holds
+    ships tens of thousands of GU away. See `_audible`."""
+    import App
+    from engine.appc.ships import ShipClass
+    from engine.appc.ship_iter import iter_set_objects
+    from engine.systems import frames
+    view = frames.viewing_set()
+    if view is None:
+        sets = list(App.g_kSetManager._sets.values())
+    else:
+        sets = [pSet for pSet in App.g_kSetManager._sets.values()
+                if frames.offset_between(view, pSet) is not None]
+    out = []
+    for pSet in sets:
+        for obj in iter_set_objects(pSet):
+            if isinstance(obj, ShipClass):
+                out.append(obj)
+    if listener_pos is not None:
+        out = [s for s, _d in _audible(out, listener_pos)]
+    return out
+
+
+def _audible(ships, listener_pos):
+    """[(ship, dist_sq)] for the ships within the render draw distance
+    (engine.systems.render_scope.SHIP_DRAW_DISTANCE_GU) of the listener --
+    THE one hum range gate, shared by `_roster` and `update`.
+
+    The draw distance, not HUM_MAX_DISTANCE: past 35 GU the clamped hum gain
+    only floors (ref/max = 0.125), it never reaches zero, so BC-range ships
+    keep humming faintly. The gate drops only ships the scene does not draw
+    -- a sibling region's, tens of thousands of GU away -- which would
+    otherwise take a top-4 slot from across the system. Ours, not recovered
+    BC behaviour (see the module docstring's note on BC's proximity query)."""
+    from engine.systems.render_scope import SHIP_DRAW_DISTANCE_GU
+    limit_sq = SHIP_DRAW_DISTANCE_GU * SHIP_DRAW_DISTANCE_GU
+    out = []
+    for s in ships:
+        d = _distance_sq(s, listener_pos)
+        if d <= limit_sq:
+            out.append((s, d))
+    return out
 
 
 def _distance_sq(ship, listener_pos) -> float:
@@ -119,17 +191,21 @@ def update(listener_pos) -> None:
     humming — see the module docstring's divergence note — so a stable-ish
     formation at the #4/#5 cutoff doesn't stop/restart every frame.
     """
-    candidates = [(s, _distance_sq(s, listener_pos))
-                  for s in _roster() if _engine_sound_name_for(s)]
+    candidates = [(s, d) for s, d in _audible(_roster(), listener_pos)
+                  if _engine_sound_name_for(s)]
     # Liveness (`_PlayingSound.is_live`), not mere dict-key presence or a
     # bare `_pid` truthiness check (review Critical #1): a humming ship's
     # source can go dead two ways this registry cannot see on its own --
-    # (a) a scene switch (scene_scope.set_rendered_set) can Stop() it
+    # (a) a scene switch (scene_scope.set_active_frame) can Stop() it
     # directly, out from under this registry, in the SAME tick BEFORE this
-    # call runs (host_loop.tick_audio's ordering); the player ship is always
-    # a roster member of the newly-active set (active_set() IS the player's
-    # own containing set), so on every warp the player's own hum handle is
-    # dead by the time we get here. (b) `AudioSystem::play`'s pool-saturation
+    # call runs (host_loop.tick_audio's ordering). On an ordinary warp the
+    # player's own ship stays a roster member of the newly-active frame
+    # (`_roster()` is scoped to `frames.viewing_set()`'s frame, and the
+    # player's own containing set defines that frame absent an in-space
+    # cutscene pointed elsewhere -- see `_roster`'s own docstring for the
+    # cutscene case, which this fix keeps the player OUT of the roster for
+    # instead), so on every warp the player's own hum handle is dead by the
+    # time we get here. (b) `AudioSystem::play`'s pool-saturation
     # eviction can steal ANY playing source -- including a looping hum -- by
     # erasing it from the C++ `sources_` map without ever zeroing this
     # handle's Python-side `_pid`; a `_pid`-only check (the bug this

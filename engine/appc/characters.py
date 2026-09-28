@@ -181,6 +181,18 @@ class STMenu(ObjectClass):
         elif isinstance(child, STMenu):
             self._submenus[child.GetLabel()] = child
 
+    def InsertChildAfter(self, child, after) -> None:
+        """Engine-only (the SDK has no insert; BC menus only ever AddChild):
+        add ``child`` directly after ``after``, or at the end when ``after``
+        is not a child. dash_helm places "Warp on Heading" beside Warp."""
+        self.AddChild(child)
+        self._children.remove(child)
+        for i, c in enumerate(self._children):
+            if c is after:
+                self._children.insert(i + 1, child)
+                return
+        self._children.append(child)
+
     def GetButtonW(self, label) -> "STButton | None":
         # Faithful to Appc: return the existing button or None. The SDK relies
         # on None-when-absent as an EXISTENCE CHECK in many places — e.g.

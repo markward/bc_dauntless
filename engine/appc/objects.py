@@ -50,6 +50,16 @@ class _ObjectNodeRef(_NodeStub):
         owner = self._owner()
         return None if owner is None else owner.GetWorldLocation()
 
+    def GetContainingSet(self):
+        # Forwarded so a positional sound AttachToNode()'d to this ref (the
+        # SDK's only positioning mechanism -- see attached_sources' module
+        # docstring) can be tagged/positioned by its owner's real frame
+        # (engine.systems.frames), not the chainable _NodeStub fallback --
+        # see engine.core.ids.implements, which requires the method to be
+        # defined here, not reachable only via __getattr__.
+        owner = self._owner()
+        return None if owner is None else owner.GetContainingSet()
+
     def __repr__(self):
         owner = self._owner()
         return "<_ObjectNodeRef %r>" % (owner.GetName() if owner else None)
@@ -345,7 +355,8 @@ class ObjectClass(TGEventHandlerObject):
         position instead of the hull.
 
         Prefers the render instance's baked hull surface points (already
-        world-transformed — the same sample the nebula hull discharges use);
+        world-transformed, reported in view coordinates and moved back into
+        this object's set — the same sample the nebula hull discharges use);
         headless or instance-less objects fall back to a uniform random point
         on the bounding sphere (GetRadius() is already world-scale), and a
         radius-less object degrades to its world location."""
@@ -358,8 +369,13 @@ class ObjectClass(TGEventHandlerObject):
             except Exception:
                 pts = []
             if pts:
+                # The renderer reports VIEW coordinates; BC gets the point in
+                # this object's own set (Plan 2's rule).
+                from engine.systems import frames
                 x, y, z = pts[random.randrange(len(pts))]
-                return TGPoint3(float(x), float(y), float(z))
+                return frames.shifted(
+                    TGPoint3(float(x), float(y), float(z)),
+                    frames.view_offset(frames.containing_set(self)), -1.0)
         center = self.GetWorldLocation()
         radius = self.GetRadius()
         if radius <= 0.0:

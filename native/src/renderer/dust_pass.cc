@@ -4,6 +4,7 @@
 #include "renderer/pipeline.h"
 
 #include <renderer/asset_path.h>
+#include <renderer/render_origin.h>
 
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
@@ -73,6 +74,32 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
     local.y = glsl_mod(local.y + radius, two_r) - radius;
     local.z = glsl_mod(local.z + radius, two_r) - radius;
     return local;
+}
+
+float dash_smear_cap(float dash_intensity) {
+    if (dash_intensity < 0.0f) dash_intensity = 0.0f;
+    if (dash_intensity > 1.0f) dash_intensity = 1.0f;
+    return DustPass::kMaxSmearLength *
+           (1.0f + dash_intensity * (DustPass::kDashSmearScale - 1.0f));
+}
+
+float dash_density_factor(float dash_intensity) {
+    if (dash_intensity < 0.0f) dash_intensity = 0.0f;
+    if (dash_intensity > 1.0f) dash_intensity = 1.0f;
+    return 1.0f - (1.0f - DustPass::kDashDustDensity) * dash_intensity;
+}
+
+int dust_draw_count(float density_mult, float dash_intensity,
+                    int particle_count_cap) {
+    int count = static_cast<int>(
+        std::lround(static_cast<float>(DustPass::kParticleCount) * density_mult));
+    if (count < 0) count = 0;
+    if (count > particle_count_cap) count = particle_count_cap;
+
+    const float factor = dash_density_factor(dash_intensity);
+    count = static_cast<int>(std::lround(static_cast<float>(count) * factor));
+    if (count < 0) count = 0;
+    return count;
 }
 
 namespace {
@@ -171,11 +198,14 @@ void DustPass::render(const scenegraph::Camera& camera,
                       const std::vector<SunDescriptor>& suns,
                       const std::vector<glm::vec4>& planets,
                       float warp_streak,
-                      glm::vec3 warp_travel) {
+                      glm::vec3 warp_travel,
+                      const glm::dvec3& origin,
+                      float dash_intensity) {
     if (!enabled_ || particle_count_ <= 0) {
         // Still update prev_eye_ tracking so we don't get a phantom huge
         // velocity on the frame after re-enabling.
         prev_eye_ = camera.eye;
+        prev_origin_ = origin;
         have_prev_ = true;
         return;
     }
@@ -184,17 +214,23 @@ void DustPass::render(const scenegraph::Camera& camera,
 
     // Camera velocity in world units / second. First frame and abnormal
     // dt suppress the streak entirely.
+    // The WORLD eye's travel: under the floating origin the render-space eye
+    // barely moves, the origin carries it (render_origin.h).
     glm::vec3 velocity(0.0f);
     if (have_prev_ && dt_seconds > 0.0f && dt_seconds < kVelocityClampSeconds) {
-        velocity = (camera.eye - prev_eye_) / dt_seconds;
+        velocity = render_origin::eye_travel(camera.eye, prev_eye_,
+                                             origin, prev_origin_)
+                   / dt_seconds;
     }
     prev_eye_ = camera.eye;
+    prev_origin_ = origin;
     have_prev_ = true;
 
     glm::vec3 smear = -velocity * kSmearSeconds;
     const float smear_len = glm::length(smear);
-    if (smear_len > kMaxSmearLength) {
-        smear *= (kMaxSmearLength / smear_len);
+    const float smear_cap = dash_smear_cap(dash_intensity);
+    if (smear_len > smear_cap) {
+        smear *= (smear_cap / smear_len);
     }
 
     auto& shader = pipeline.dust_shader();
@@ -234,7 +270,14 @@ void DustPass::render(const scenegraph::Camera& camera,
     }
     const glm::vec3 sun_drift = inf.sun_dir * sun_drift_phase_;
 
-    shader.set_vec3 ("u_sun_drift", sun_drift);
+    // The wrap is keyed to the WORLD eye (eye + origin): the shader folds
+    // u_sun_drift INTO the wrap, so subtracting the origin's phase there
+    // makes the field world-anchored with no shader change. Origin zero:
+    // phase zero, byte-identical.
+    const glm::vec3 origin_phase =
+        render_origin::wrap_phase(origin, 2.0 * kVolumeRadius);
+
+    shader.set_vec3 ("u_sun_drift", sun_drift - origin_phase);
     shader.set_float("u_sun_tint",  inf.sun_tint);
 
     // Warp fly-past drift: while warping, advance an accumulator along the
@@ -254,10 +297,8 @@ void DustPass::render(const scenegraph::Camera& camera,
     shader.set_vec3 ("u_warp_travel", warp_travel);
     shader.set_vec3 ("u_warp_drift",  warp_drift);
 
-    int draw_count = static_cast<int>(
-        std::lround(static_cast<float>(kParticleCount) * inf.density_mult));
-    if (draw_count < 0) draw_count = 0;
-    if (draw_count > particle_count_) draw_count = particle_count_;
+    int draw_count = dust_draw_count(inf.density_mult, dash_intensity,
+                                     particle_count_);
 
     glBindVertexArray(vao_);
     glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr,

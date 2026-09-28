@@ -147,7 +147,7 @@ def test_abort_with_nothing_warping_does_not_post(posted):
 
 
 def test_natural_completion_posts_false_exactly_once(posted):
-    """The transit clears itself inside _step_in_system_warp. The stop must
+    """The transit clears itself inside warp_flight.step. The stop must
     fire once on arrival, not once per tick of the transit."""
     ship, target = _make_ship(), _make_ship(0.0, 1000.0, 0.0)
     ship.InSystemWarp(target, 295.0)

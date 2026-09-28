@@ -362,6 +362,9 @@ def test_click_tractor_command_engages_via_dispatcher():
     tractor = _attach_tractor(ship)
     tgt = ShipClass_Create("Enemy")
     tgt.SetWorldLocation(TGPoint3(0, 40, 0))
+    # One set: the interim cross-set weapon guard (system-frames Plan 2
+    # Ruling 5) puts a setless target out of tractor range.
+    ship._containing_set = tgt._containing_set = App.SetClass_Create()
     ship._target = tgt
     _tcw, menu = _make_tactical_menu()
     _with_current_player(ship)

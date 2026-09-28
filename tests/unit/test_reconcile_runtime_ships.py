@@ -292,3 +292,150 @@ def test_reconcile_no_player_change_does_not_call_callback(monkeypatch):
 
     _set_current_game(None)
     App.g_kSetManager.DeleteAllSets()
+
+
+# ── The no-player fallback never realizes an unviewed set's planets ─────────
+# Since warp departure stopped deleting the set you left, every left-behind
+# region holds torn-down (unrealized) ships, so each one qualified for the
+# fallback's realize -- which also instanced its planets, and no reconcile
+# pass ever removes a planet instance. Planets come only from the set being
+# VIEWED (the explicit rendered set); ships keep the legacy all-sets walk.
+
+def _add_planet(s, name):
+    from engine.appc.planet import Planet_Create
+    planet = Planet_Create(1800.0, "")
+    s.AddObjectToSet(planet, name)
+    return planet
+
+
+def _force_planet_nif(monkeypatch, hl):
+    monkeypatch.setattr(hl, "_planet_nif_path", lambda planet, **k: "fake.nif")
+
+
+def test_fallback_realizes_no_planet_of_a_set_that_is_not_viewed(monkeypatch):
+    from engine import host_loop as hl
+    _force_nif(monkeypatch, hl)
+    _force_planet_nif(monkeypatch, hl)
+    App.g_kSetManager.DeleteAllSets()
+    ona = _make_set("Ona1")                    # left behind by a warp
+    left_planet = _add_planet(ona, "Ona 1")
+    left_ship = _add_ship(ona, "Left Behind")  # its instance was torn down
+    _make_set("XiEntrades4")
+    App.g_kSetManager.MakeRenderedSet("XiEntrades4")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
+
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    hl._reconcile_runtime_instances(sess, r)
+
+    assert left_planet not in sess.planet_instances
+    # A rendered space set IS a viewed set (frames.viewing_set), so ships
+    # come only from its frame (system-frames Plan 3 Task 3): the left-behind
+    # set is another frame. The legacy all-sets ship walk now runs only when
+    # nothing is viewed at all -- see the next test.
+    assert left_ship not in sess.ship_instances
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_fallback_with_no_rendered_set_realizes_no_planet(monkeypatch):
+    from engine import host_loop as hl
+    _force_nif(monkeypatch, hl)
+    _force_planet_nif(monkeypatch, hl)
+    App.g_kSetManager.DeleteAllSets()
+    App.g_kSetManager.ClearRenderedSet()
+    ona = _make_set("Ona1")
+    planet = _add_planet(ona, "Ona 1")
+    left_ship = _add_ship(ona, "Left Behind")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
+
+    sess = hl.MissionSession(mission_name="t")
+    hl._reconcile_runtime_instances(sess, _FakeRenderer())
+
+    assert planet not in sess.planet_instances
+    # Nothing viewed: ships keep the legacy all-sets walk (the next tick with
+    # a player tears down whatever is not in the viewed frame).
+    assert left_ship in sess.ship_instances
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_fallback_at_load_still_realizes_the_viewed_set_in_full(monkeypatch):
+    """The fallback's purpose: before a player exists (QuickBattle's is created
+    late), the set on screen is realized -- ships AND planets."""
+    from engine import host_loop as hl
+    _force_nif(monkeypatch, hl)
+    _force_planet_nif(monkeypatch, hl)
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("QBSet")
+    App.g_kSetManager.MakeRenderedSet("QBSet")
+    planet = _add_planet(s, "Planet")
+    ship = _add_ship(s, "Enemy")
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
+
+    sess = hl.MissionSession(mission_name="t")
+    hl._reconcile_runtime_instances(sess, _FakeRenderer())
+
+    assert ship in sess.ship_instances
+    assert planet in sess.planet_instances
+    App.g_kSetManager.DeleteAllSets()
+
+
+# ── Player identity is synced BEFORE the sim, not only in the scene reconcile ─
+# The scene reconcile runs after the sim (Plan 3 I2), so on a RecreatePlayer
+# tick every pre-sim consumer (input, weapons, combat, warp) would read the
+# destroyed ship for one frame. _sync_player_identity is the reconcile's
+# player tail, split out so the host loop can also run it ahead of the sim.
+
+def test_sync_player_identity_retargets_once_to_the_new_player():
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    old = _add_ship(s, "old")
+    new = _add_ship(s, "new")
+    game = Game()
+    game.SetPlayer(new)
+    _set_current_game(game)
+    sess = hl.MissionSession(mission_name="t")
+    sess.player = old
+
+    retargeted = []
+    hl._sync_player_identity(sess, lambda p: retargeted.append(p))
+    hl._sync_player_identity(sess, lambda p: retargeted.append(p))
+
+    assert sess.player is new
+    assert retargeted == [new]
+
+    _set_current_game(None)
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_sync_player_identity_is_a_no_op_without_a_game_or_a_player():
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    old = _add_ship(s, "old")
+    sess = hl.MissionSession(mission_name="t")
+    sess.player = old
+    fired = []
+
+    _set_current_game(None)
+    hl._sync_player_identity(sess, fired.append)
+    _set_current_game(Game())
+    hl._sync_player_identity(sess, fired.append)
+
+    assert sess.player is old
+    assert fired == []
+
+    _set_current_game(None)
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_the_scene_reconcile_uses_the_same_player_sync():
+    """One implementation, two call sites: the reconcile's tail must not
+    drift from the pre-sim sync."""
+    import inspect
+    from engine import host_loop as hl
+    src = inspect.getsource(hl._reconcile_runtime_instances)
+    assert "_sync_player_identity(" in src
+    assert "session.player = " not in src

@@ -1,0 +1,203 @@
+{
+  "system": "Serris",
+  "bodies": [
+    {
+      "name": "Serris",
+      "display_name": "Serris",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "red",
+        "color": [
+          0.91,
+          0.35,
+          0.24
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Serris 1",
+      "display_name": "Serris 1",
+      "radius_gu": 3000.0,
+      "position_gu": [
+        36604.0943997569,
+        -124740.29129825569,
+        0.0
+      ],
+      "orbits": "Serris",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/dryplanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris1"
+    },
+    {
+      "name": "Serris 1 Moon",
+      "display_name": "Serris 1 Moon",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        34774.34288541056,
+        -136468.94371325686,
+        -1758.0449151926343
+      ],
+      "orbits": "Serris 1",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris1"
+    },
+    {
+      "name": "Serris 2",
+      "display_name": "Serris 2",
+      "radius_gu": 3600.0,
+      "position_gu": [
+        65887.36991956242,
+        -224532.52433686025,
+        0.0
+      ],
+      "orbits": "Serris",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris2"
+    },
+    {
+      "name": "Serris 2 Moon",
+      "display_name": "Serris 2 Moon",
+      "radius_gu": 1400.0,
+      "position_gu": [
+        62957.65815246091,
+        -238216.52769021282,
+        -3394.8256490050267
+      ],
+      "orbits": "Serris 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris2"
+    },
+    {
+      "name": "Serris 3",
+      "display_name": "Serris 3",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        95170.64543936793,
+        -324324.75737546483,
+        0.0
+      ],
+      "orbits": "Serris",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/GreenPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris3"
+    },
+    {
+      "name": "Serris 3 Moon 1",
+      "display_name": "Serris 3 Moon 1",
+      "radius_gu": 140.0,
+      "position_gu": [
+        91827.45259750127,
+        -331548.7544725011,
+        798.0774173619257
+      ],
+      "orbits": "Serris 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BrownPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris3"
+    },
+    {
+      "name": "Serris 3 Moon 2",
+      "display_name": "Serris 3 Moon 2",
+      "radius_gu": 400.0,
+      "position_gu": [
+        87090.45591260608,
+        -331727.0673277347,
+        957.258889817531
+      ],
+      "orbits": "Serris 3",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/IcePlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Serris3"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Serris1",
+      "anchor_gu": [
+        38132.93352258373,
+        -138325.26560575626,
+        703.8638924036828
+      ],
+      "radius_gu": 18188.838532832728,
+      "body_names": [
+        "Serris 1",
+        "Serris 1 Moon"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Serris2",
+      "anchor_gu": [
+        58560.493776011666,
+        -232922.87990353655,
+        -4943.203234502514
+      ],
+      "radius_gu": 17286.732079429057,
+      "body_names": [
+        "Serris 2",
+        "Serris 2 Moon"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Serris3",
+      "anchor_gu": [
+        85781.49646649176,
+        -333721.2528385669,
+        1023.4411123931523
+      ],
+      "radius_gu": 16822.825418562526,
+      "body_names": [
+        "Serris 3",
+        "Serris 3 Moon 1",
+        "Serris 3 Moon 2"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

@@ -14,6 +14,7 @@ import pytest
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.properties import SubsystemProperty
 from engine.appc import light_emitters
+from tests.helpers.viewed_set import viewed_set, release_viewed_set
 from engine.host_loop import (
     _build_emitter_light_render_data,
     _build_ship_emitter_cache,
@@ -70,6 +71,13 @@ class _Sub:
         return self._disabled
 
 
+@pytest.fixture(autouse=True)
+def _bind_viewed_set():
+    viewed_set()
+    yield
+    release_viewed_set()
+
+
 class _Ship:
     """Fake ship: only the getters the producer/cache-build actually touch."""
 
@@ -79,6 +87,10 @@ class _Ship:
 
     def GetWorldLocation(self):
         return self._loc
+
+    def GetContainingSet(self):
+        # In the viewed set: emitter lights are cast only in the viewed frame.
+        return viewed_set()
 
     def GetWorldRotation(self):
         raise AssertionError(

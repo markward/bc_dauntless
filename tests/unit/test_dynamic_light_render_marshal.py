@@ -10,6 +10,7 @@ import pytest
 
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
+from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
 from engine.host_loop import (
     _build_dynamic_light_render_data, _color_tuple,
     _TORPEDO_LIGHT_RADIUS_SCALE, _TORPEDO_LIGHT_INTENSITY,
@@ -27,6 +28,7 @@ def clear_torpedo_registry():
     projectiles._active.clear()
     yield
     projectiles._active.clear()
+    release_viewed_set()
 
 
 def _make_photon():
@@ -40,6 +42,7 @@ def _make_photon():
     )
     t.SetTranslateXYZ(5.0, 6.0, 7.0)
     t._velocity = App.TGPoint3(3.0, 4.0, 0.0)
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     return t, core_color, glow_color
 
@@ -49,6 +52,7 @@ def _make_disruptor():
     shell = _color(0.172549, 1.0, 0.172549)
     core = _color(0.639216, 1.0, 0.639216)
     t.CreateDisruptorModel(shell, core, 2.0, 0.2)
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     return t, shell, core
 
@@ -92,6 +96,7 @@ def test_mixed_registry_emits_one_light_for_the_photon_only():
 def test_torpedo_with_no_create_call_is_skipped():
     t = Torpedo()
     t.SetTranslateXYZ(1.0, 1.0, 1.0)
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     out = _build_dynamic_light_render_data()
     assert out == []

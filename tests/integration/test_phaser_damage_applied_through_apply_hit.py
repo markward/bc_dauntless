@@ -38,6 +38,7 @@ def test_held_fire_decreases_target_shield(galaxy_red):
         bank._charge_level = bank._max_charge
 
     target = _target_with_shields()
+    target._containing_set = ship.GetContainingSet()  # same set: Ruling 5 weapon guard
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)
@@ -61,6 +62,7 @@ def test_target_drifts_out_of_arc_bank_auto_stops(galaxy_red):
         bank._charge_level = bank._max_charge
 
     target = _target_with_shields()
+    target._containing_set = ship.GetContainingSet()  # same set: Ruling 5 weapon guard
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)
@@ -94,6 +96,7 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch
         bank._charge_level = bank._max_charge
 
     target = _target_with_shields()
+    target._containing_set = ship.GetContainingSet()  # same set: Ruling 5 weapon guard
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)
@@ -137,6 +140,9 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
         bank._charge_level = bank._max_charge
 
     target = _target_with_shields()
+    # In the shooter's (viewed) set, as target_ship_at places its targets: the
+    # beam's target end is drawn from the target's own set.
+    target._containing_set = ship.GetContainingSet()
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)
@@ -201,6 +207,7 @@ def test_a_beam_resting_on_a_bare_hull_flashes_every_frame(galaxy_red):
     for i in range(sys_.GetNumWeapons()):
         sys_.GetWeapon(i)._charge_level = sys_.GetWeapon(i)._max_charge
     target = _target_with_shields(shields_strength=0.0)   # bare hull
+    target._containing_set = ship.GetContainingSet()  # same set: Ruling 5 weapon guard
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)
@@ -219,6 +226,7 @@ def test_a_beam_resting_on_a_raised_shield_splashes_every_frame(galaxy_red):
     for i in range(sys_.GetNumWeapons()):
         sys_.GetWeapon(i)._charge_level = sys_.GetWeapon(i)._max_charge
     target = _target_with_shields()                       # shields up
+    target._containing_set = ship.GetContainingSet()  # same set: Ruling 5 weapon guard
     p = ship.GetWorldLocation()
     target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
     ship.SetTarget(target)

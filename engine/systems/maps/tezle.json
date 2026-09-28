@@ -1,0 +1,115 @@
+{
+  "system": "Tezle",
+  "bodies": [
+    {
+      "name": "Tezle",
+      "display_name": "Tezle",
+      "radius_gu": 10000.0,
+      "position_gu": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "orbits": null,
+      "appearance": {
+        "kind": "nif",
+        "model": "",
+        "star_class": "blue_white",
+        "color": [
+          0.74,
+          0.84,
+          1.0
+        ]
+      },
+      "owner_region": null
+    },
+    {
+      "name": "Tezle 1",
+      "display_name": "Tezle 1",
+      "radius_gu": 2000.0,
+      "position_gu": [
+        -123793.06069791925,
+        39689.773532249805,
+        0.0
+      ],
+      "orbits": "Tezle",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/BlueWhiteGasPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Tezle1"
+    },
+    {
+      "name": "Tezle 2",
+      "display_name": "Tezle 2",
+      "radius_gu": 2500.0,
+      "position_gu": [
+        222827.50925625465,
+        -71441.59235804966,
+        0.0
+      ],
+      "orbits": "Tezle",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/RootBeerPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Tezle2"
+    },
+    {
+      "name": "Moon",
+      "display_name": "Moon",
+      "radius_gu": 1600.0,
+      "position_gu": [
+        226285.276766287,
+        -77359.44671534086,
+        -7281.6786287541045
+      ],
+      "orbits": "Tezle 2",
+      "appearance": {
+        "kind": "nif",
+        "model": "data/models/environment/TanPlanet.nif",
+        "star_class": "",
+        "color": null
+      },
+      "owner_region": "Tezle2"
+    }
+  ],
+  "regions": [
+    {
+      "set_name": "Tezle1",
+      "anchor_gu": [
+        -123890.64794791925,
+        44176.772132249804,
+        -20.817279999999997
+      ],
+      "radius_gu": 7988.107960701382,
+      "body_names": [
+        "Tezle 1"
+      ],
+      "nebula": null
+    },
+    {
+      "set_name": "Tezle2",
+      "anchor_gu": [
+        233608.45470127082,
+        -69389.29578669526,
+        -1491.4472243770524
+      ],
+      "radius_gu": 15375.138313235359,
+      "body_names": [
+        "Tezle 2",
+        "Moon"
+      ],
+      "nebula": null
+    }
+  ],
+  "overrides": {},
+  "generated": {
+    "tool": "gen_system_maps"
+  },
+  "clouds": []
+}

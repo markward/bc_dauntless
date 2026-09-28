@@ -4,7 +4,7 @@ Multi-frame transit model: InSystemWarp engages a warp only when the ship is
 beyond the drop distance AND its nose is on the target
 (IN_SYSTEM_WARP_FACING_COS); the ship then cruises toward
 (target − unit_dir · distance) at IN_SYSTEM_WARP_SPEED_FACTOR × MaxSpeed,
-advanced per tick by ship_motion._step_in_system_warp — never a same-tick
+advanced per tick by warp_flight.step (from ship_motion) — never a same-tick
 teleport. While the transit runs InSystemWarp returns 1 (SDK bWarping);
 on arrival `_warp_consumed` latches (one warp per StopInSystemWarp cycle).
 """

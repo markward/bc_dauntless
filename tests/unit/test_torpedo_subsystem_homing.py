@@ -18,9 +18,10 @@ import pytest
 
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc import projectiles
+from tests.helpers.one_set import InSet, share_one_set
 
 
-class _FakeTarget:
+class _FakeTarget(InSet):
     """A ship 100 GU ahead whose local +Z is world +Z (identity rotation)."""
     def __init__(self, x=0.0, y=100.0, z=0.0, scale=1.0):
         self._loc = TGPoint3(x, y, z)
@@ -42,6 +43,7 @@ def _torpedo_flying_at(target, offset=None, speed=20.0):
     t.SetTranslateXYZ(0.0, 0.0, 0.0)
     t._velocity = TGPoint3(0.0, speed, 0.0)
     t._target_ship = target
+    share_one_set(t, target)            # homing is same-set only
     t._guidance_lifetime = 10.0
     t._guidance_initial = 10.0
     t._age = 0.0

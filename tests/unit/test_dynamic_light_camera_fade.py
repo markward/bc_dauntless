@@ -20,6 +20,8 @@ from engine.appc.properties import SubsystemProperty
 from engine.appc import light_emitters
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
+from tests.helpers.viewed_set import (
+    place_in_viewed_set, release_viewed_set, viewed_set)
 from engine.host_loop import (
     DYN_LIGHT_CULL_GU,
     DYN_LIGHT_FADE_START_GU,
@@ -40,9 +42,11 @@ def clean_camera_and_registry():
     """Each test owns the camera eye and the torpedo registry outright."""
     projectiles._active.clear()
     _note_camera_eye(None)
+    viewed_set()
     yield
     projectiles._active.clear()
     _note_camera_eye(None)
+    release_viewed_set()
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +175,10 @@ class _Ship:
     def GetWorldLocation(self):
         return self._loc
 
+    def GetContainingSet(self):
+        # In the viewed set: emitter lights are cast only in the viewed frame.
+        return viewed_set()
+
     def GetWorldRotation(self):
         return self._rot
 
@@ -250,6 +258,7 @@ def _photon_at(position):
         "data/Textures/Tactical/TorpedoFlares.tga", _color(1.0, 0.25, 0.0), 8, 0.7, 0.4,
     )
     t.SetTranslateXYZ(*position)
+    place_in_viewed_set(t)   # the render feed carries only the viewed frame
     register(t)
     return t
 
