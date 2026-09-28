@@ -555,6 +555,90 @@ void apply_texture_replacements(
     }
 }
 
+/// Attach hull-name decals (see DecalRequest, model.h) to the material(s) of
+/// their named shape. No-op when ctx.decals is empty (the overwhelming
+/// majority of models). Nothing here can throw out of a ship load: a bad
+/// shape name, a degenerate projector, or a mask that fails to decode each
+/// skip just that decal, warning once (per the model + decal identity) so a
+/// mission that reloads a ship's model every frame never spams stderr.
+void apply_decals(
+    Model& model,
+    const std::unordered_map<std::string, std::vector<int>>& materials_for_shape,
+    const ModelBuildContext& ctx)
+{
+    if (ctx.decals.empty()) return;
+    auto upload = ctx.texture_uploader
+        ? ctx.texture_uploader
+        : TextureUploaderFn(&assets::upload_image);
+
+    static std::unordered_set<std::string> warned;
+
+    for (const auto& req : ctx.decals) {
+        auto shape_it = materials_for_shape.find(req.shape);
+        const glm::vec3 cross = glm::cross(req.u_axis, req.v_axis);
+        const bool degenerate = glm::length(cross) < 1e-9f;
+
+        if (shape_it == materials_for_shape.end() || shape_it->second.empty()) {
+            const std::string key =
+                model.source.string() + "|decal-shape|" + req.shape;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: no shape named '%s' in %s; skipping decal\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+        if (degenerate) {
+            const std::string key =
+                model.source.string() + "|decal-degenerate|" + req.shape;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: degenerate projector for shape '%s' in %s "
+                    "(u_axis x v_axis ~ 0); skipping decal\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+
+        Image decoded;
+        try {
+            auto bytes = read_file(req.mask);
+            decoded = decode_image(bytes);
+        } catch (const std::exception& e) {
+            const std::string key =
+                model.source.string() + "|decal-mask|" + req.mask.string();
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: failed to load mask '%s' for shape '%s' "
+                    "in %s (%s); skipping decal\n",
+                    req.mask.string().c_str(), req.shape.c_str(),
+                    model.source.string().c_str(), e.what());
+            }
+            continue;
+        }
+
+        Texture tex = upload(decoded, /*generate_mipmaps=*/true);
+        const int tex_index = static_cast<int>(model.textures.size());
+        model.textures.push_back(std::move(tex));
+
+        Material::DecalProjector proj;
+        proj.enabled = true;
+        proj.body_to_mask =
+            decal_body_to_mask(req.origin, req.u_axis, req.v_axis, req.normal);
+        proj.normal = glm::normalize(req.normal);
+        proj.depth = req.depth;
+
+        for (int mat_idx : shape_it->second) {
+            Material& mat = model.materials[static_cast<std::size_t>(mat_idx)];
+            auto& stage = mat.stages[
+                static_cast<std::size_t>(Material::StageSlot::Decal0)];
+            stage.texture_index = tex_index;
+            stage.clamp_mode = GL_CLAMP_TO_EDGE;
+            mat.decal = proj;
+        }
+    }
+}
+
 }  // namespace
 
 bool filename_is_normal(std::string_view fname) {
@@ -585,6 +669,21 @@ std::string sibling_normal_filename(std::string_view fname) {
         if (tail == "_glow") stem.resize(stem.size() - 5);
     }
     return stem + "_normal" + ext;
+}
+
+glm::mat4 decal_body_to_mask(const glm::vec3& origin, const glm::vec3& u_axis,
+                             const glm::vec3& v_axis, const glm::vec3& normal) {
+    const glm::vec3 n = glm::normalize(normal);
+    const glm::mat3 basis(u_axis, v_axis, n);  // columns: u, v, n
+    const glm::mat3 m = glm::inverse(basis);
+    const glm::vec3 t = -(m * origin);
+
+    glm::mat4 result(1.0f);
+    result[0] = glm::vec4(m[0], 0.0f);
+    result[1] = glm::vec4(m[1], 0.0f);
+    result[2] = glm::vec4(m[2], 0.0f);
+    result[3] = glm::vec4(t, 1.0f);
+    return result;
 }
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
@@ -721,6 +820,12 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     };
     std::vector<ShapeVerts> shape_verts_for_sampling;
 
+    // NiTriShape av.obj.name -> indices into model.materials, so hull-name
+    // decals (applied after this loop) can find every material built from
+    // the shape they name. A shape name is USUALLY unique, but nothing here
+    // assumes it -- apply_decals attaches to every match.
+    std::unordered_map<std::string, std::vector<int>> materials_for_shape;
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -763,6 +868,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));
+        materials_for_shape[shape->av.obj.name].push_back(mat_index);
 
         int node_index = find_parent_node_index(f, i, nodes, resolver);
 
@@ -922,6 +1028,10 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     // 6. Federation registry / hull-name texture swaps (BC ReplaceTexture).
     //    No-op when ctx.texture_replacements is empty (the common case).
     apply_texture_replacements(model, tex_result, ctx);
+
+    // 7. Hull-name decals (project feature; see DecalRequest, model.h).
+    //    No-op when ctx.decals is empty (the overwhelming majority of models).
+    apply_decals(model, materials_for_shape, ctx);
 
     return model;
 }

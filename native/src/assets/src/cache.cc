@@ -71,6 +71,22 @@ std::string replacements_key(
     return key;
 }
 
+// Same reasoning as replacements_key: folds each decal's shape + resolved
+// mask path into the cache key so distinct registries (distinct mask paths)
+// on the same NIF land in distinct entries, while an empty list is
+// byte-identical to the no-decal key.
+std::string decals_key(const std::vector<DecalRequest>& decals) {
+    if (decals.empty()) return {};
+    std::string key = "|decals:";
+    for (const auto& d : decals) {
+        key += d.shape;
+        key += '=';
+        key += d.mask.string();
+        key += ';';
+    }
+    return key;
+}
+
 std::string read_file_bytes(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     std::ostringstream ss;
@@ -109,6 +125,14 @@ ModelHandle AssetCache::load(
     const fs::path& nif_path,
     const std::vector<fs::path>& search_paths,
     const std::vector<TextureReplacement>& texture_replacements) {
+    return load(nif_path, search_paths, texture_replacements, {});
+}
+
+ModelHandle AssetCache::load(
+    const fs::path& nif_path,
+    const std::vector<fs::path>& search_paths,
+    const std::vector<TextureReplacement>& texture_replacements,
+    const std::vector<DecalRequest>& decals) {
     // Decided BEFORE the cache lookup, so the fix (if any) can change the
     // cache key: a fixed and an unfixed load of the same nif_path land in
     // different entries. This does NOT avoid re-reading the NIF on a cache
@@ -131,7 +155,8 @@ ModelHandle AssetCache::load(
     }
 
     auto canon = fs::weakly_canonical(nif_path).string()
-                 + replacements_key(texture_replacements) + fix_key;
+                 + replacements_key(texture_replacements) + decals_key(decals)
+                 + fix_key;
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
         if (auto live = it->second.live.lock()) {
@@ -166,6 +191,7 @@ ModelHandle AssetCache::load(
     ctx.mesh_uploader         = impl_->config.mesh_uploader;
     ctx.keep_cpu_data         = impl_->config.keep_cpu_data;
     ctx.texture_replacements  = texture_replacements;
+    ctx.decals                = decals;
 
     auto model = std::make_shared<const Model>(detail::build_model(file, ctx));
 
