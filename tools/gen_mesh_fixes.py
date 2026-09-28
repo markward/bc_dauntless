@@ -184,28 +184,34 @@ def fit_projection(points, uvs):
     return _fit_candidates(points, uvs, 1e-4)
 
 
+# The local-fit window's radius, as a fraction of the patch's own world-bbox
+# diagonal -- a ring around the patch's footprint, not its (potentially huge,
+# e.g. Ambassador's ~207 GU) bounding box.
+_LOCAL_FIT_RADIUS_FRAC = 0.05
+
+
 def _fit_local_projection(patch: dict, target_shape: dict, region_idxs: list):
     """A local stand-in for `fit_projection`, used when the chosen region as
     a whole isn't planar enough. Restricts the fit to the region vertices
-    that fall inside the patch's own world bounding box, expanded by one
-    patch diagonal on every side -- the patch's immediate neighbourhood --
-    and accepts a looser worst-vertex error (`_LOCAL_FIT_TOL`). Tries the
-    same four candidates in the same order as `fit_projection`. Returns
-    (method, coeffs, max_err) with `method` UNPREFIXED (the caller adds the
-    "local-" prefix), or None if fewer than 3 region vertices fall in the
-    box or none of the four candidates fits within tolerance."""
+    whose distance to ANY patch vertex is under `_LOCAL_FIT_RADIUS_FRAC` of
+    the patch's own world-bbox diagonal -- the patch's immediate
+    neighbourhood -- and accepts a looser worst-vertex error
+    (`_LOCAL_FIT_TOL`). Tries the same four candidates in the same order as
+    `fit_projection`. Returns (method, coeffs, max_err) with `method`
+    UNPREFIXED (the caller adds the "local-" prefix), or None if fewer than
+    4 region vertices fall within the radius or none of the four candidates
+    fits within tolerance."""
     patch_verts = patch["vertices"]
     mins = [min(v[k] for v in patch_verts) for k in range(3)]
     maxs = [max(v[k] for v in patch_verts) for k in range(3)]
-    diag = _distance(mins, maxs)
-    lo = [mins[k] - diag for k in range(3)]
-    hi = [maxs[k] + diag for k in range(3)]
+    radius = _LOCAL_FIT_RADIUS_FRAC * _distance(mins, maxs)
 
     local_idxs = [
         i for i in region_idxs
-        if all(lo[k] <= target_shape["vertices"][i][k] <= hi[k] for k in range(3))
+        if any(_distance(target_shape["vertices"][i], pv) < radius
+               for pv in patch_verts)
     ]
-    if len(local_idxs) < 3:
+    if len(local_idxs) < 4:
         return None
     points = [target_shape["vertices"][i] for i in local_idxs]
     uvs = [target_shape["uvs"][i] for i in local_idxs]

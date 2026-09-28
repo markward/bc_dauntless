@@ -26,6 +26,12 @@ def _grid_shape(block, name, x0, x1, mirrored, tex="Hull_glow.tga", n=4, y0=0.0,
             "triangles": tris, "hidden": False}
 
 
+def _shape(block, name, tex, vertices, uvs, triangles):
+    return {"block": block, "name": name, "textures": [tex], "vertices": vertices,
+            "normals": [(0.0, 0.0, 1.0)] * len(vertices), "uvs": uvs,
+            "triangles": triangles, "hidden": False}
+
+
 def test_fnv_known_vectors():
     assert g.fnv1a64_hex(b"") == "cbf29ce484222325"
     assert g.fnv1a64_hex(b"foobar") == "85944171f73967e8"
@@ -115,22 +121,44 @@ def test_build_fix_refuses_mesh_without_id_shape():
         g.build_fix([_grid_shape(1, "saucer", 0, 1, False)], "r", None)
 
 
-def test_build_fix_uses_local_fit_when_global_fit_fails_but_snaps_twins():
-    # A saucer whose UVs are the usual planar-mirrored map plus a small
-    # smooth curvature term. Over the WHOLE region (y up to 10) this fails
-    # the strict 1e-4 exact-fit tolerance; over the patch's own local
-    # neighbourhood (a window of roughly one patch diagonal, ~2.2 GU here)
-    # the curvature's contribution is small enough for local-fit's 5e-3.
-    y1, n = 10.0, 10
-    target = _grid_shape(1, "saucer", -1.0, 1.0, True, y0=0.0, y1=y1, n=n)
-    target["uvs"] = [(u + 0.001 * y * y, v)
-                      for (u, v), (_, y, _) in zip(target["uvs"], target["vertices"])]
-    patch = _grid_shape(2, "idpatch", -1.0, 1.0, True, tex="Hull_ID_glow.tga",
-                         y0=y1, y1=y1 + 1.0, n=n)
-    patch["uvs"] = [(0.0, 0.0)] * len(patch["uvs"])
+def test_build_fix_uses_local_fit_ring_when_whole_region_fails_but_snaps_twins():
+    # The patch is a single 5-vertex border row at y=10 (its own world-bbox
+    # diagonal is therefore exactly 2.0, x=-1..1 -- so the ring radius is a
+    # known 0.05*2.0=0.1 GU). The target region has 6 rows at y=10, 9.95,
+    # 9.5, 9.0, 8.5, 8.0: only the first two (0 and 0.05 GU from the patch)
+    # are inside the 0.1 ring; the other four (0.5-2.0 GU away) sit OUTSIDE
+    # the ring but still inside a one-diagonal-expanded bounding box
+    # (0-2.0 GU on every side) -- i.e. this specifically distinguishes the
+    # ring rule from the old bbox-expansion rule, not just "near vs far".
+    # UVs are the usual planar-mirrored map plus k*(distance from the patch
+    # edge)^2, k=0.05: negligible within the ring (d<=0.05GU) but enough,
+    # spread over 6 distinct rows, to break a single affine fit over the
+    # whole window.
+    k = 0.05
 
-    # Confirm the premise: the exact, whole-region fit really does fail.
-    assert g.fit_projection(target["vertices"], target["uvs"]) is None
+    def uv(x, y):
+        fx = abs(x)
+        d = 10.0 - y
+        return (0.1 + 0.4 * fx + k * d * d, 0.2 + 0.5 * y)
+
+    xs = (-1.0, -0.5, 0.0, 0.5, 1.0)
+    ys = (10.0, 9.95, 9.5, 9.0, 8.5, 8.0)
+    verts = [(x, y, 0.0) for y in ys for x in xs]
+    uvs = [uv(x, y) for (x, y, _z) in verts]
+    # A chain of overlapping triangles sharing consecutive vertices --
+    # enough for regions() to union everything into one connected component.
+    triangles = [(i, i + 1, i + 2) for i in range(len(verts) - 2)]
+    target = _shape(1, "saucer", "Hull_glow.tga", verts, uvs, triangles)
+
+    patch_verts = [(x, 10.0, 0.0) for x in xs]
+    patch = _shape(2, "idpatch", "Hull_ID_glow.tga", patch_verts,
+                    [(0.0, 0.0)] * len(patch_verts), [])
+
+    # Confirm the premise: the whole region fails even the LOOSER 5e-3
+    # tolerance (not just the strict 1e-4 exact-fit one), so this genuinely
+    # exercises the ring window and not a lucky whole-region fit.
+    assert g.fit_projection(verts, uvs) is None
+    assert g._fit_candidates(verts, uvs, 5e-3) is None
 
     fix, _review = g.build_fix([target, patch], "data/Models/Ships/X/X.nif", None)
     m = fix["merges"][0]
@@ -138,24 +166,13 @@ def test_build_fix_uses_local_fit_when_global_fit_fails_but_snaps_twins():
     assert m["max_fit_error"] is not None
     assert m["max_fit_error"] <= 5e-3
 
-    # Shared edge (y=y1): every patch vertex there has an exact twin in the
-    # target, and must come out with EXACTLY the twin's own UV (the snap),
-    # not the (looser) local-fit projection.
-    checked = 0
-    for i, (x, y, _z) in enumerate(patch["vertices"]):
-        if y != y1:
-            continue
-        twin = target["vertices"].index((x, y, 0.0))
-        expected = [g.to_f32(c) for c in target["uvs"][twin]]
+    # Every patch vertex is an exact twin (the border row) and must come out
+    # with EXACTLY the twin's own UV (the snap), not the local-fit's
+    # (merely close) projected value.
+    for i, (x, y, _z) in enumerate(patch_verts):
+        twin = verts.index((x, y, 0.0))
+        expected = [g.to_f32(c) for c in uvs[twin]]
         assert m["uvs"][i] == expected
-        checked += 1
-    assert checked == n + 1
-
-
-def _shape(block, name, tex, vertices, uvs, triangles):
-    return {"block": block, "name": name, "textures": [tex], "vertices": vertices,
-            "normals": [(0.0, 0.0, 1.0)] * len(vertices), "uvs": uvs,
-            "triangles": triangles, "hidden": False}
 
 
 def test_build_fix_ranks_by_twin_count_before_fit_quality():
