@@ -43,7 +43,7 @@ def _isolate():
     _reset_app_state()
 
 # Above any impulse speed (hardpoint MaxSpeed tops out at 20 GU/s) and below
-# BC's fixed 75 GU/s in-system warp: a velocity over this is the warp cruise.
+# the fixed in-system warp speed: a velocity over this is the warp cruise.
 _WARP_FLOOR_GUPS = 50.0
 
 

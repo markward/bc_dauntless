@@ -161,7 +161,7 @@ the object or objects". So:
 |---|---|
 | Player, Set Course | path length ÷ `DASH_TRIP_S` (10 s), clamped to [`DASH_MIN_GUPS`, `DASH_MAX_GUPS`] |
 | Player, heading | `HEADING_DASH_GUPS` (10,000 GU/s) |
-| AI Intercept | 100 × authored impulse max — **unchanged** (superseded 2026-09-28: BC's fixed 75 GU/s for every ship, measured in stbc-oracle `warp_*`; Mark: "helps us differentiate intercept from warping") |
+| AI Intercept | 100 × authored impulse max — **unchanged** (superseded 2026-09-28: one fixed speed for every ship as BC, whose measured 75 GU/s (stbc-oracle `warp_*`) Mark raised to **400 GU/s** because our regions are larger; no flash for NPC in-system warp) |
 
 "Flash to flash" is engage to drop-out; the Set Course align turn happens before
 the engage flash and is not part of the 10 s.

@@ -3,7 +3,7 @@
 Multi-frame transit model: InSystemWarp engages a warp only when the ship is
 beyond the drop distance AND its nose is on the target
 (IN_SYSTEM_WARP_FACING_COS); the ship then cruises toward
-(target − unit_dir · distance) at IN_SYSTEM_WARP_SPEED_GUPS (BC's fixed 75),
+(target − unit_dir · distance) at IN_SYSTEM_WARP_SPEED_GUPS (one fixed speed, as BC),
 advanced per tick by warp_flight.step (from ship_motion) — never a same-tick
 teleport. While the transit runs InSystemWarp returns 1 (SDK bWarping);
 on arrival `_warp_consumed` latches (one warp per StopInSystemWarp cycle).
@@ -104,7 +104,7 @@ def test_in_system_warp_transit_arrives_at_radius_edge():
 
 
 def test_in_system_warp_transit_takes_multiple_ticks():
-    """The cruise is finite-speed: every ship flies at BC's fixed 75 GU/s,
+    """The cruise is finite-speed: every ship flies at the fixed 400 GU/s,
     so 705 GU takes several ticks — after one
     tick the ship must NOT yet be at the drop edge, and the mid-transit
     velocity must be published (camera smear / SPEED read it)."""
@@ -118,7 +118,7 @@ def test_in_system_warp_transit_takes_multiple_ticks():
     assert 0.0 < p.y < 705.0
     assert ship.IsDoingInSystemWarp() == 1
     v = ship.GetVelocity()
-    assert v.y == pytest.approx(75.0)
+    assert v.y == pytest.approx(400.0)
 
 
 def test_in_system_warp_mid_transit_recall_reports_warping():
@@ -201,12 +201,11 @@ def test_set_ai_aborts_transit():
 
 
 @pytest.mark.parametrize("authored_max", [None, 3.7, 6.3, 20.0])
-def test_in_system_warp_cruises_at_bcs_fixed_75_gups(authored_max):
+def test_in_system_warp_cruises_at_one_fixed_speed_for_every_ship(authored_max):
     """BC's in-system warp is one fixed speed for every ship: measured 74.95
     GU/s on a Galaxy (MaxSpeed 6.3) and 74.92 on a Kessok Heavy (3.7) in
     stbc-oracle's warp_* captures (bible 7.3). Never scaled by the ship's
-    impulse -- so a slow ship's intercept is not slower, and in-system warp
-    stays well under the ~470 GU/s where a flash would read as warp."""
+    impulse. Ours is 400 (Mark, 2026-09-28) to suit our larger regions."""
     ship = ShipClass()
     if authored_max is not None:
         from engine.appc.subsystems import ImpulseEngineSubsystem
@@ -218,4 +217,4 @@ def test_in_system_warp_cruises_at_bcs_fixed_75_gups(authored_max):
     target.SetTranslateXYZ(0.0, 5000.0, 0.0)
     assert ship.InSystemWarp(target, 295.0) == 1
     _step_ship_motion(ship, _DT)
-    assert ship.GetVelocity().y == pytest.approx(75.0)
+    assert ship.GetVelocity().y == pytest.approx(400.0)

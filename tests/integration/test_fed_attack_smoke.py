@@ -81,11 +81,11 @@ def test_fed_attack_create_ai_drives_combat(game_context):
     # control while warping (SDK bWarping) — the setpoint arrives on the
     # first AI update after the transit completes.
     from engine.appc.ship_motion import _step_ship_motion
-    for i in range(1, 21):   # 205 GU of warp at 75 GU/s is ~2.7 s
+    for i in range(1, 11):
         tick_ai(builder, game_time=0.01 + i * 0.25)
         for _ in range(15):                      # 0.25 s of motion per AI tick
             _step_ship_motion(ours, 1.0 / 60.0)
 
     assert ours._speed_setpoint is not None, (
-        "after 20 ticks, FedAttack should have written a speed setpoint"
+        "after 10 ticks, FedAttack should have written a speed setpoint"
     )

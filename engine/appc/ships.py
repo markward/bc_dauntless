@@ -707,10 +707,12 @@ class ShipClass(DamageableObject):
     # AI in-system warp speed (warp_flight._ai_speed): ONE fixed speed for
     # every ship, as BC -- measured 74.95 GU/s on a Galaxy (MaxSpeed 6.3) and
     # 74.92 on a Kessok Heavy (3.7), stbc-oracle warp_* captures (bible 7.3).
-    # A visible multi-second cruise, never a teleport, and well under the
-    # ~470 GU/s (c scaled by the systems' ~1:3,600 distances) where motion
-    # reads as warp: an intercept is not a warp, so it gets no flash.
-    IN_SYSTEM_WARP_SPEED_GUPS = 75.0
+    # Ours is 400, not 75 (Mark, 2026-09-28): our regions put bodies several
+    # times farther out than BC's sets (E1M2's Haven ~3,300 GU from the start
+    # vs BC's ~440), so BC's speed would make a trip to a planet ~20x longer
+    # than BC's; 400 keeps the trips near BC's feel. No flash: an intercept
+    # is not a warp.
+    IN_SYSTEM_WARP_SPEED_GUPS = 400.0
     # The ship must be pointing at the target (within ~10°) before the warp
     # engages — BC ships visibly turn onto the warp vector first, and the
     # caller (SDK Intercept.Update) keeps steering via TurnTowardLocation

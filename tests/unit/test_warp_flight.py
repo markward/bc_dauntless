@@ -118,8 +118,8 @@ def test_setless_ship_keeps_todays_arrival_speed_and_exit():
     assert ship.InSystemWarp(target, 295.0) == 1
     assert isinstance(ship._insystem_warp_transit, WarpFlight)
     _step_ship_motion(ship, _DT)
-    # BC's fixed in-system warp speed, whatever the ship's impulse.
-    assert ship.GetVelocity().y == pytest.approx(75.0)
+    # The fixed in-system warp speed, whatever the ship's impulse.
+    assert ship.GetVelocity().y == pytest.approx(400.0)
     _fly(ship)
 
     assert _xyz(ship.GetTranslate()) == pytest.approx((0.0, 705.0, 0.0))
@@ -253,7 +253,8 @@ def test_unobstructed_same_set_warp_is_byte_for_byte_the_old_trajectory():
     d = TGPoint3(*(g - s for g, s in zip(goal, start)))
     ship.AlignToVectors(d, TGPoint3(0.0, 0.0, 1.0))
 
-    expected, v_end = _old_straight_line(start, goal, 295.0, 75.0, 4.2)
+    expected, v_end = _old_straight_line(start, goal, 295.0,
+                                         ShipClass.IN_SYSTEM_WARP_SPEED_GUPS, 4.2)
     assert ship.InSystemWarp(target, 295.0) == 1
     got = []
     _fly(ship, each=lambda s: got.append(_xyz(s.GetTranslate())))
@@ -363,8 +364,8 @@ def test_stop_in_system_warp_marks_the_flight_aborted():
 
 # ── 11. R8 with the smooth curve: no flip-flop, no kink ────────────────────
 
-# The drifting-target scenarios below were drawn for a 630 GU/s warp. At BC's
-# fixed 75 GU/s the same geometry needs the target's per-tick drift scaled
+# The drifting-target scenarios below were drawn for a 630 GU/s warp. At the
+# fixed warp speed the same geometry needs the target's per-tick drift scaled
 # down, and the tick budgets up, by this ratio -- otherwise a target drifting
 # faster than the warp can never be caught (20 GU a tick = 1,200 GU/s; real
 # targets move at impulse, <= ~20 GU/s).

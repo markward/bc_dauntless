@@ -230,7 +230,7 @@ def _set_local(ship, system_xyz) -> None:
 
 
 def _ai_speed(ship) -> float:
-    """BC's fixed in-system warp speed, the same for every ship
+    """The fixed in-system warp speed, the same for every ship as in BC
     (ShipClass.IN_SYSTEM_WARP_SPEED_GUPS); ``ship`` is unused."""
     from engine.appc.ships import ShipClass
     return ShipClass.IN_SYSTEM_WARP_SPEED_GUPS

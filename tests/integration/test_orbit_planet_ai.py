@@ -104,8 +104,8 @@ def test_orbit_ai_out_of_range_fires_only_on_arrival():
 
     # Full loop (AI + motion): the ship starts facing +Y, the planet is at
     # -Y — a 180° turn precedes the warp, then the transit flies ~4700 GU,
-    # ~63 s at BC's fixed 75 GU/s. 90 s covers both comfortably.
-    GameLoop().advance(90 * 60)
+    # ~12 s at the fixed 400 GU/s. 30 s covers both comfortably.
+    GameLoop().advance(30 * 60)
     assert cap.events
     assert cap.events[0].GetSource() is ship
     assert cap.events[0].GetDestination() is haven

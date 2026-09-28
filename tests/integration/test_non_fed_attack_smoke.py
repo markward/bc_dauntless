@@ -80,7 +80,7 @@ def test_non_fed_attack_create_ai_smoke(game_context):
     )
     assert builder._activation_failed is False
 
-    # 20 more ticks — by now some PlainAI body should have written a
+    # 10 more ticks — by now some PlainAI body should have written a
     # speed setpoint (the ship is engaging). Step the motion integrator
     # alongside the AI, as the real loop does: Intercept's first decision
     # engages an in-system-warp transit (target 500 GU out > the 295 GU
@@ -88,11 +88,11 @@ def test_non_fed_attack_create_ai_smoke(game_context):
     # (SDK bWarping) — the setpoint arrives on the first AI update after
     # the transit completes.
     from engine.appc.ship_motion import _step_ship_motion
-    for i in range(1, 21):   # 205 GU of warp at 75 GU/s is ~2.7 s
+    for i in range(1, 11):
         tick_ai(builder, game_time=0.01 + i * 0.25)
         for _ in range(15):                      # 0.25 s of motion per AI tick
             _step_ship_motion(ours, 1.0 / 60.0)
 
     assert ours._speed_setpoint is not None, (
-        "after 20 ticks, NonFedAttack should have written a speed setpoint"
+        "after 10 ticks, NonFedAttack should have written a speed setpoint"
     )
