@@ -114,6 +114,42 @@ def test_player_identity_is_synced_before_the_sim_reads_the_player():
         assert sync < _at(src, call), call
 
 
+def test_camera_radius_reseed_runs_after_reconcile_and_before_camera_compute():
+    """_reconcile_camera_radius (the RecreatePlayer camera-radius fix) must
+    run after EVERY _reconcile_scene call -- the reconcile is what realizes
+    a just-created player ship and gives it a real GetRadius() -- and before
+    _compute_camera, the single call site (shared by both the live and the
+    frozen branch) that reads the cameras' seeded ship-radius framing."""
+    src = _run_source()
+    reconciles = []
+    start = 0
+    while True:
+        i = src.find("_reconcile_scene(", start)
+        if i < 0:
+            break
+        reconciles.append(i)
+        start = i + 1
+    assert len(reconciles) == 2, "expected one call in each of the live/frozen branches"
+
+    compute = _at(src, "_compute_camera(")
+
+    helper_calls = []
+    start = 0
+    while True:
+        i = src.find("_reconcile_camera_radius(", start)
+        if i < 0:
+            break
+        helper_calls.append(i)
+        start = i + 1
+    assert len(helper_calls) == 2, "expected one call in each of the live/frozen branches"
+
+    for h in helper_calls:
+        assert any(r < h for r in reconciles), (
+            "_reconcile_camera_radius must run after a _reconcile_scene call")
+        assert h < compute, (
+            "_reconcile_camera_radius must run before _compute_camera")
+
+
 def test_the_dash_tick_runs_after_collisions_and_before_the_hand_off():
     """The dash's drop-out (engine/appc/dash.py) reads the frame's final
     player pose and does its own hand-off, so it runs after the last mover

@@ -5993,6 +5993,44 @@ def _sync_player_identity(session, on_player_change=None) -> None:
             on_player_change(new_player)
 
 
+# _ChaseCamera.set_ship_radius's floor clamp (engine/cameras/chase.py) --
+# the value the chase/tracking cameras are left with when seeded from an
+# unrealized ship's GetRadius() == 0.
+_UNKNOWN_SHIP_RADIUS = 1e-6
+
+
+def _reconcile_camera_radius(director, player) -> None:
+    """Keep the chase/tracking cameras' ship-radius framing in sync with the
+    player's actual GetRadius(), once it is known.
+
+    QuickBattle's RecreatePlayer creates the new player ship in the
+    preload-done event, before ShipClass realization sets its radius (this
+    module's `if ship.GetRadius() <= 0.0: ship.SetRadius(...)`), which runs
+    later in the same frame's scene reconcile. _sync_player_identity's
+    on_player_change callback (Ruling 11, pre-sim) therefore seeds the
+    cameras from a radius of 0, which _ChaseCamera.set_ship_radius clamps to
+    _UNKNOWN_SHIP_RADIUS -- putting the eye at the ship's centre, with
+    nothing left to correct it once the ship is realized.
+
+    Call every frame, after the scene reconcile: a no-op while the radius is
+    still 0 or already matches the cameras' cached value (a ship whose
+    radius was already known at the swap is untouched -- no extra snap).
+    Once the real radius appears, re-seed both cameras and snap exactly
+    once for that identity change (the "was it the unknown floor" check IS
+    the once -- a later frame's radius already matches and short-circuits
+    above)."""
+    if player is None:
+        return
+    radius = player.GetRadius()
+    if radius <= 0.0 or radius == director.chase.ship_radius:
+        return
+    was_unknown = director.chase.ship_radius <= _UNKNOWN_SHIP_RADIUS
+    director.chase.set_ship_radius(radius)
+    director.tracking.set_ship_radius(radius)
+    if was_unknown:
+        director.snap()
+
+
 def _celestial_matrix(body, natural_scale: float) -> list:
     # Identity rotation: the system map carries no orientation, so a stock
     # planet's scripted rotation is not reproduced on a map body.
@@ -10556,6 +10594,10 @@ def run(mission_name: Optional[str] = None,
                     on_player_change=_on_player_change, verbose=verbose)
                 # It may have retargeted session.player (RecreatePlayer).
                 player = session.player if session is not None else None
+                # The reconcile above may have just realized a player ship
+                # RecreatePlayer created with an unknown (0) radius -- catch
+                # up the cameras now that GetRadius() is real.
+                _reconcile_camera_radius(director, player)
 
                 # Sync transforms for known instances.
                 #
@@ -10657,6 +10699,10 @@ def run(mission_name: Optional[str] = None,
                     session, controller.renderer, nif_cache=controller,
                     on_player_change=_on_player_change, verbose=verbose)
                 player = session.player if session is not None else None
+                # Same catch-up as the live branch above -- a frozen frame
+                # (e.g. the pause menu opened the same tick RecreatePlayer
+                # ran) must not leave the cameras on an unknown radius.
+                _reconcile_camera_radius(director, player)
 
             # --- Ship Property Viewer's FORCED articulation pose ---
             # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The

@@ -27,7 +27,7 @@ class _FakeRenderer:
         self._next = 1
         self.live = set()
 
-    def load_model(self, path, search):
+    def load_model(self, path, search, reps=None):
         return 100
 
     def model_aabb(self, h):
@@ -460,3 +460,58 @@ def test_player_ship_reverts_through_real_end_combat(monkeypatch):
     player_after_revert = Game_GetCurrentGame().GetPlayer()
     assert player_after_revert is not None
     assert player_after_revert is not player_after_end   # revert recreated the player
+
+
+def test_chase_camera_radius_catches_up_after_recreate_player(monkeypatch):
+    """Live regression: starting a QuickBattle placed the chase camera in
+    the centre of the player ship (Mark, live). Root cause: RecreatePlayer's
+    preload-done handler (StartSimulation2) creates the new player ship
+    BEFORE ShipClass realization sets its radius -- that happens later, in
+    the post-sim scene reconcile (`_reconcile_scene` -> realize_set_objects,
+    `if ship.GetRadius() <= 0.0: ship.SetRadius(...)`). The pre-sim identity
+    sync (Ruling 11, system-frames) therefore seeds the chase/tracking
+    cameras from a radius of 0.
+
+    Drives the real pipeline end to end -- the QuickBattle cascade, the
+    preload-done RecreatePlayer, the pre-sim `_sync_player_identity` (which
+    seeds the camera at the unrealized radius), the post-sim
+    `_reconcile_scene` (which realizes the ship) -- and asserts
+    `_reconcile_camera_radius` catches the camera up to the real radius."""
+    import App
+    from engine.cameras.director import _CameraDirector
+    from engine.core.game import Game_GetCurrentGame
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.session = controller.loader.load_quickbattle()
+    session = controller.session
+
+    director = _CameraDirector()
+
+    def _on_player_change(new_player, _d=director):
+        _r = new_player.GetRadius()
+        _d.chase.set_ship_radius(_r)
+        _d.tracking.set_ship_radius(_r)
+        _d.snap()
+
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()  # StartSimulation2 -> RecreatePlayer
+
+    new_player = Game_GetCurrentGame().GetPlayer()
+    assert new_player is not None
+    assert new_player.GetRadius() <= 0.0  # precondition: not yet realized
+
+    # Pre-sim identity sync (Ruling 11) -- seeds the cameras at radius 0.
+    hl._sync_player_identity(session, _on_player_change)
+    assert director.chase.ship_radius == hl._UNKNOWN_SHIP_RADIUS
+
+    # Post-sim scene reconcile -- realizes the ship, setting its real radius.
+    hl._reconcile_scene(session, controller.renderer,
+                        on_player_change=_on_player_change)
+    assert session.player is new_player
+    assert session.player.GetRadius() > 0.0
+
+    # The fix: the camera catches up to the realized radius.
+    hl._reconcile_camera_radius(director, session.player)
+    assert director.chase.ship_radius == session.player.GetRadius()
+    assert director.tracking.zoom_min > 0.0
