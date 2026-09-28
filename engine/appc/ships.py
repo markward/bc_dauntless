@@ -704,13 +704,13 @@ class ShipClass(DamageableObject):
         return self.TurnDirectionsToDirections(forward, target_forward,
                                               up, target_up)
 
-    # AI in-system warp speed = this factor × the ship's AUTHORED impulse
-    # MaxSpeed (warp_flight._ai_speed). BC's microwarp is a visible
-    # multi-second cruise, never an instant teleport.
-    IN_SYSTEM_WARP_SPEED_FACTOR = 100.0
-    # Base speed for ships without a populated IES (bare test rigs) —
-    # parallels _PlayerControl.IMPULSE_UNIT legacy fallback.
-    IN_SYSTEM_WARP_FALLBACK_BASE = 50.0
+    # AI in-system warp speed (warp_flight._ai_speed): ONE fixed speed for
+    # every ship, as BC -- measured 74.95 GU/s on a Galaxy (MaxSpeed 6.3) and
+    # 74.92 on a Kessok Heavy (3.7), stbc-oracle warp_* captures (bible 7.3).
+    # A visible multi-second cruise, never a teleport, and well under the
+    # ~470 GU/s (c scaled by the systems' ~1:3,600 distances) where motion
+    # reads as warp: an intercept is not a warp, so it gets no flash.
+    IN_SYSTEM_WARP_SPEED_GUPS = 75.0
     # The ship must be pointing at the target (within ~10°) before the warp
     # engages — BC ships visibly turn onto the warp vector first, and the
     # caller (SDK Intercept.Update) keeps steering via TurnTowardLocation
@@ -724,7 +724,7 @@ class ShipClass(DamageableObject):
         target AND its nose is on the target (IN_SYSTEM_WARP_FACING_COS),
         begin a WarpFlight (engine/appc/warp_flight.py) toward it and return
         1. Each tick warp_flight.step cruises the ship at
-        IN_SYSTEM_WARP_SPEED_FACTOR × authored MaxSpeed -- straight while the
+        IN_SYSTEM_WARP_SPEED_GUPS -- straight while the
         line keeps every body's clearance, routed around bodies otherwise
         (BC's contract: AI/Preprocessors.py:1690 skips AvoidObstacles during
         the warp "because the in-system warp check already does that") --

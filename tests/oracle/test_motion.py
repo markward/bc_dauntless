@@ -133,7 +133,7 @@ def test_m6_direct_angular_command_is_uncapped(oracle):
 # ── §7.3 in-system warp ────────────────────────────────────────────────────────────
 
 @bible_xfail("W1", "in-system warp is a step to exactly 75.0 GU/s for every ship, duration = distance / 75, exit at MaxSpeed",
-             "cruises at 100 × MaxSpeed (Kessok 370 GU/s) and exits at the pre-warp speed")
+             "cruises at 75 GU/s (since 2026-09-28) but exits at the pre-warp speed, not MaxSpeed")
 def test_w1_in_system_warp_speed_and_exit(oracle):
     """W1 — `warp_kessok_rest_{600,2000}`: 7.25 s for 550 GU; drop-out at the
     requested stop distance (asked 50, 54–61 measured); exit at 3.62."""

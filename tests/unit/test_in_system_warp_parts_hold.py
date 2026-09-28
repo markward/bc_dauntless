@@ -23,8 +23,7 @@ from engine.core.loop import TICK_DELTA
 
 _DT = TICK_DELTA
 _WES = WarpEngineSubsystem
-_WARP_SPEED = (ShipClass.IN_SYSTEM_WARP_SPEED_FACTOR
-               * ShipClass.IN_SYSTEM_WARP_FALLBACK_BASE)
+_WARP_SPEED = ShipClass.IN_SYSTEM_WARP_SPEED_GUPS
 
 
 def _state(ship):
@@ -45,7 +44,7 @@ def _parts_need(monkeypatch, seconds):
                         lambda ship, state: seconds if state == "warp" else 0.0)
 
 
-def _run_until_done(ship, max_ticks=2000):
+def _run_until_done(ship, max_ticks=200_000):
     for _ in range(max_ticks):
         if ship._insystem_warp_transit is None:
             return
@@ -211,7 +210,7 @@ def test_npc_parts_reach_their_warp_pose_before_it_leaves(monkeypatch):
     assert ship.InSystemWarp(target, 100.0) == 1
     assert articulation.state_for(ship) == "warp"
     left_at = None
-    for _ in range(2000):
+    for _ in range(20_000):
         if ship._insystem_warp_transit is None:
             break
         # The loop's order: the parts tick, then the ship moves.

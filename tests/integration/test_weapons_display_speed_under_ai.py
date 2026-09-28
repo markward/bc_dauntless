@@ -42,6 +42,10 @@ def _isolate():
     yield
     _reset_app_state()
 
+# Above any impulse speed (hardpoint MaxSpeed tops out at 20 GU/s) and below
+# BC's fixed 75 GU/s in-system warp: a velocity over this is the warp cruise.
+_WARP_FLOOR_GUPS = 50.0
+
 
 def _vmag(ship) -> float:
     v = ship.GetVelocity()
@@ -139,7 +143,7 @@ def test_speed_label_tracks_in_system_warp_transit():
     _assert_label_tracks_velocity(trace)
     # The warp cruise publishes a large velocity — the label must show it.
     peak_tick = max(trace, key=lambda t: t[2])
-    assert peak_tick[2] > 100.0, (
+    assert peak_tick[2] > _WARP_FLOOR_GUPS, (
         "no warp-cruise velocity ever published:\n" + _format_trace(trace))
     assert _kph_from_label(peak_tick[4]) > 0, (
         "label read 0 kph during warp cruise:\n" + _format_trace(trace))
@@ -242,7 +246,7 @@ def test_e1m2_far_helm_click_turn_warp_orbit_label():
 
     _assert_label_tracks_velocity(trace)
     peak_tick = max(trace, key=lambda t: t[2])
-    assert peak_tick[2] > 100.0, (
+    assert peak_tick[2] > _WARP_FLOOR_GUPS, (
         "no in-system-warp velocity ever published on the real E1M2 player:\n"
         + _format_trace(trace))
     moving = [t for t in trace if t[2] * GUPS_TO_KPH >= 1.0]
@@ -323,7 +327,7 @@ def test_qb_boot_swap_to_e1m2_orbit_label(monkeypatch):
 
     _assert_label_tracks_velocity(trace)
     peak = max(t[2] for t in trace)
-    assert peak > 100.0, (
+    assert peak > _WARP_FLOOR_GUPS, (
         "no warp velocity after QB->E1M2 swap:\n" + _format_trace(trace))
     moving = [t for t in trace if t[2] * GUPS_TO_KPH >= 1.0]
     assert moving and all(_kph_from_label(t[4]) > 0 for t in moving), (

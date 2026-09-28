@@ -230,16 +230,10 @@ def _set_local(ship, system_xyz) -> None:
 
 
 def _ai_speed(ship) -> float:
-    """100 x the AUTHORED impulse max: the warp engines cruise, so a shot-out
-    impulse pod must not slow the transit (the authored figure is a ship-size
-    proxy). Unchanged from the pre-flight integrator."""
+    """BC's fixed in-system warp speed, the same for every ship
+    (ShipClass.IN_SYSTEM_WARP_SPEED_GUPS); ``ship`` is unused."""
     from engine.appc.ships import ShipClass
-    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
-    ies = getter() if getter is not None else None
-    base = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
-    if base <= 0.0:
-        base = ShipClass.IN_SYSTEM_WARP_FALLBACK_BASE
-    return ShipClass.IN_SYSTEM_WARP_SPEED_FACTOR * base
+    return ShipClass.IN_SYSTEM_WARP_SPEED_GUPS
 
 
 def _policy_speed(ship, flight) -> float:

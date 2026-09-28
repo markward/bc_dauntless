@@ -77,7 +77,7 @@ def test_intercept_warp_brings_hostile_to_warp_radius():
     (default fInSystemWarpDistance = 295) — but as a real transit, not a
     teleport: the hostile starts facing +Y with the player dead astern, so
     it must first turn onto the target (the warp's facing gate), then
-    cruise the transit at 100 × MaxSpeed. Assert both halves: no
+    cruise the transit at BC's fixed 75 GU/s. Assert both halves: no
     first-tick teleport, arrival within a few seconds."""
     player, hostile, pai = _setup_intercept_scene()
     loop = GameLoop()
@@ -86,10 +86,10 @@ def test_intercept_warp_brings_hostile_to_warp_radius():
     assert dist > 1000.0, (
         f"warp must be a multi-tick transit, not a teleport; distance={dist}"
     )
-    # Turn (~2.5 s at 1.5 rad/s) + transit (~0.4 s at 12000 GU/s): 10 s is
-    # a comfortable ceiling.
+    # Turn (~2.5 s at 1.5 rad/s) + transit (~63 s: 4700 GU at 75 GU/s):
+    # 90 s is a comfortable ceiling.
     arrived_at = None
-    for tick in range(TICK_RATE * 10):
+    for tick in range(TICK_RATE * 90):
         loop.tick()
         if _hostile_player_distance(player, hostile) <= 296.0:
             arrived_at = tick
@@ -106,13 +106,13 @@ def test_intercept_eventually_reaches_intercept_distance():
     player. fInterceptDistance default is 60."""
     player, hostile, pai = _setup_intercept_scene()
     loop = GameLoop()
-    max_ticks = TICK_RATE * 60  # 60 simulated seconds is the ceiling
+    max_ticks = TICK_RATE * 120  # 120 simulated seconds is the ceiling
     for _ in range(max_ticks):
         loop.tick()
         if pai._status == ArtificialIntelligence.US_DONE:
             break
     assert pai._status == ArtificialIntelligence.US_DONE, (
-        "Intercept never completed within 60s of simulated time"
+        "Intercept never completed within 120s of simulated time"
     )
     final_dist = _hostile_player_distance(player, hostile)
     # fInterceptDistance default = 60; ship radius for a fresh ShipClass

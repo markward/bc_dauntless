@@ -74,7 +74,7 @@ def _xyz(p):
     return (p.x, p.y, p.z)
 
 
-def _fly(ship, max_ticks=5000, each=None):
+def _fly(ship, max_ticks=200_000, each=None):
     """Advance the integrator until the flight ends; `each(ship)` per tick."""
     for _ in range(max_ticks):
         if ship._insystem_warp_transit is None:
@@ -92,7 +92,7 @@ def _old_straight_line(ship_xyz, target_xyz, drop, warp_speed, current_speed):
     px, py, pz = ship_xyz
     tx, ty, tz = target_xyz
     positions = []
-    for _ in range(5000):
+    for _ in range(200_000):
         dx, dy, dz = tx - px, ty - py, tz - pz
         d = (dx * dx + dy * dy + dz * dz) ** 0.5
         ux, uy, uz = dx / d, dy / d, dz / d
@@ -118,8 +118,8 @@ def test_setless_ship_keeps_todays_arrival_speed_and_exit():
     assert ship.InSystemWarp(target, 295.0) == 1
     assert isinstance(ship._insystem_warp_transit, WarpFlight)
     _step_ship_motion(ship, _DT)
-    # 100 x authored impulse max (6.3) -- unchanged.
-    assert ship.GetVelocity().y == pytest.approx(630.0)
+    # BC's fixed in-system warp speed, whatever the ship's impulse.
+    assert ship.GetVelocity().y == pytest.approx(75.0)
     _fly(ship)
 
     assert _xyz(ship.GetTranslate()) == pytest.approx((0.0, 705.0, 0.0))
@@ -245,7 +245,7 @@ def test_routed_flight_posts_true_once_and_false_once(posted):
 def test_unobstructed_same_set_warp_is_byte_for_byte_the_old_trajectory():
     pSet = _plain_set("Arena")
     start = (12.5, -40.25, 3.0)
-    goal = (310.0, 9000.0, -77.0)
+    goal = (310.0, 3000.0, -77.0)
     ship = _make_ship(start, pSet, "ship")
     ship._current_speed = 4.2
     target = _make_ship(goal, pSet, "target")
@@ -253,7 +253,7 @@ def test_unobstructed_same_set_warp_is_byte_for_byte_the_old_trajectory():
     d = TGPoint3(*(g - s for g, s in zip(goal, start)))
     ship.AlignToVectors(d, TGPoint3(0.0, 0.0, 1.0))
 
-    expected, v_end = _old_straight_line(start, goal, 295.0, 630.0, 4.2)
+    expected, v_end = _old_straight_line(start, goal, 295.0, 75.0, 4.2)
     assert ship.InSystemWarp(target, 295.0) == 1
     got = []
     _fly(ship, each=lambda s: got.append(_xyz(s.GetTranslate())))
@@ -363,6 +363,13 @@ def test_stop_in_system_warp_marks_the_flight_aborted():
 
 # ── 11. R8 with the smooth curve: no flip-flop, no kink ────────────────────
 
+# The drifting-target scenarios below were drawn for a 630 GU/s warp. At BC's
+# fixed 75 GU/s the same geometry needs the target's per-tick drift scaled
+# down, and the tick budgets up, by this ratio -- otherwise a target drifting
+# faster than the warp can never be caught (20 GU a tick = 1,200 GU/s; real
+# targets move at impulse, <= ~20 GU/s).
+_SCALE = ShipClass.IN_SYSTEM_WARP_SPEED_GUPS / 630.0
+
 @pytest.mark.parametrize("drift", [0.0, 1.5, -1.5, 4.0])
 def test_ai_flight_round_a_body_turns_smoothly_as_its_target_drifts(drift, monkeypatch):
     """An AI Intercept whose line to its target is blocked flies the planner's
@@ -393,7 +400,7 @@ def test_ai_flight_round_a_body_turns_smoothly_as_its_target_drifts(drift, monke
 
     def each(s):
         p = target.GetTranslate()
-        target.SetTranslateXYZ(p.x + drift, p.y, p.z)
+        target.SetTranslateXYZ(p.x + drift * _SCALE, p.y, p.z)
         gaps.append(math.dist(_xyz(s.GetTranslate()), (0.0, 10000.0, 0.0)))
         if s._insystem_warp_transit is None:
             return
@@ -425,7 +432,7 @@ def test_ai_flight_round_a_body_turns_smoothly_as_its_target_drifts(drift, monke
 
 # ── 12. The drop edge is measured from the LIVE target (review of b80085ba) ─
 
-_AI_STEP_GU = 630.0 * _DT                     # one tick of AI warp travel
+_AI_STEP_GU = ShipClass.IN_SYSTEM_WARP_SPEED_GUPS * _DT   # one tick of AI warp travel
 
 
 def _heading_change(a, b):
@@ -458,14 +465,16 @@ def test_ai_flight_round_a_body_ends_on_the_live_drop_edge(drift):
     def each(s):
         p = target.GetTranslate()
         used.append(_xyz(p))                  # where this tick's step aimed
-        target.SetTranslateXYZ(p.x + drift[0], p.y + drift[1], p.z)
+        target.SetTranslateXYZ(p.x + drift[0] * _SCALE,
+                               p.y + drift[1] * _SCALE, p.z)
         gaps.append(math.dist(_xyz(s.GetTranslate()), (0.0, 10000.0, 0.0)))
         f = s.GetWorldRotation().GetCol(1)
         flown.append((f.x, f.y, f.z))
 
-    _fly(ship, max_ticks=4000, each=each)
+    budget = int(4000 / _SCALE)
+    _fly(ship, max_ticks=budget, each=each)
 
-    assert len(used) < 4000
+    assert len(used) < budget
     end = _xyz(ship.GetTranslate())
     assert abs(math.dist(end, used[-1]) - drop) <= _AI_STEP_GU + 1e-6
     # A target whose line runs through the body (|x| < 1,000 on the way
@@ -497,14 +506,14 @@ def test_a_target_crossing_the_ship_turns_the_nose_instead_of_snapping():
 
     def each(s):
         ticks[0] += 1
-        if ticks[0] == 400:                   # jump the target behind the ship
+        if ticks[0] == int(400 / _SCALE):     # jump the target behind the ship
             p = _xyz(s.GetTranslate())
             target.SetTranslateXYZ(p[0] - 3000.0, p[1] - 12000.0, 0.0)
         gaps.append(math.dist(_xyz(s.GetTranslate()), (0.0, 10000.0, 0.0)))
         f = s.GetWorldRotation().GetCol(1)
         flown.append((f.x, f.y, f.z))
 
-    _fly(ship, max_ticks=4000, each=each)
+    _fly(ship, max_ticks=int(4000 / _SCALE), each=each)
     cap = warp_flight.AI_WARP_TURN_RATE_RAD_S * _DT
     turns = [_heading_change(a, b) for a, b in zip(flown, flown[1:])]
     assert max(turns) <= cap + 1e-9
