@@ -40,6 +40,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(pybind11)
 
+# nlohmann/json for the mesh-fix files (native/assets/mesh_fixes/*.json).
+# Release tarball rather than the full git history.
+FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 
 # OpenAL Soft for audio output. Library-only build; no examples or utils.
 # CMAKE_POLICY_VERSION_MINIMUM=3.5 is required because CMake 4.x removed

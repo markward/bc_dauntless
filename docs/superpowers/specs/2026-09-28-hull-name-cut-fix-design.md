@@ -94,7 +94,7 @@ from it only in the lettering (about 5% of pixels, alpha identical).
 ```
 nif::load(path) ──► apply_mesh_fix(file, fix) ──► build_model(file, ctx)
                          ▲
-    sha256(nif bytes) ──►  native/assets/mesh_fixes/<sha256>.json  (absent ⇒ no-op)
+    fnv1a64(nif bytes) ──►  native/assets/mesh_fixes/<fnv1a64>.json  (absent ⇒ no-op)
 ```
 
 - **Hook point:** `AssetCache::load` (`native/src/assets/src/cache.cc`), between
@@ -127,7 +127,7 @@ nif::load(path) ──► apply_mesh_fix(file, fix) ──► build_model(file, 
 
 ## 4. The fix file
 
-`native/assets/mesh_fixes/<nif-sha256>.json`, one per patched mesh:
+`native/assets/mesh_fixes/<nif-fnv1a64>.json`, one per patched mesh:
 
 ```json
 {
@@ -234,8 +234,8 @@ done, status is "merged, not live-verified".
 
 ## 9. Open items for the plan
 
-- Which SHA-256 and JSON implementations the native tree already uses. Reuse them
-  and don't vendor new ones unless none exist.
+- Resolved: FNV-1a 64 (the tree's existing content hash, used by the `.dhv`
+  cache) and nlohmann/json via FetchContent (no JSON parser existed).
 - Where fix files resolve from at runtime: the project asset root
   (`set_project_asset_root`), never the BC install.
 - Medium-LOD target choices (Galaxy Med borders 3 shapes): decided per mesh from
