@@ -89,11 +89,12 @@ A fit through two points, scoped to the campaign (Multi6's 75 GU would land far
 above 1). It is the weakest evidence here and says nothing reliable about
 shape between and beyond the samples.
 
-**Runtime: the visible nebula at system scale.** The render pass receives, per
-frame: the `nebula` value at the camera, the system's cloud colour (the clump's
-authored RGB, e.g. Vesuvi 155/90/185, Belaruz 100/99/146), the outward radial
-unit vector in render space, and `d nebula / dr` at the camera, so the effect
-can thicken toward the side of the view the cloud lies on. How it looks and
+**Runtime: the visible nebula at system scale.** The first cut is a
+developer-only spike: one synthetic volume around the player fed to the
+**existing** nebula passes, using the `nebula` value at the player and the
+system's cloud colour (the clump's authored RGB, e.g. Vesuvi 155/90/185,
+Belaruz 100/99/146). A directional term (thicker toward the side the cloud lies
+on) is added only if the live check asks for it. How it looks and
 what it costs are **unknown and settled by a live spike** (see *Unknowns*).
 Visibility has no gameplay effect: nothing but the faithful nebula pass reads it.
 
@@ -146,8 +147,11 @@ on the fixed sim tick (so pause freezes it). `m` is the difficulty multiplier:
    `r · m / 30 s` (≈ one per 30 s at Vesuvi's peak on hard, ≈ 60 s on medium).
    Each picks a random subsystem **other than the hull and the power plant** and
    holds it forced-off for a uniform 5–20 s; turning it on is refused until the
-   timer expires. A shield-generator outage drops shields and so exposes the hull
-   to the drain. An outage ends cleanly if the ship dies or leaves the set.
+   timer expires — implemented as a flag read by `subsystems._is_offline`, the
+   single capability gate for weapons, engines, sensors, shields and repair (a
+   child bank of an out system reads offline too), so a power toggle cannot
+   undo it. A shield-generator outage drops shields and so exposes the hull to
+   the drain. An outage ends cleanly if the ship dies or leaves the set.
 
 **Star radiation — every system.** Radiation is `1.0` from the centre out to
 the star's surface and falls linearly to `0` at **3 star radii** (Vesuvi's
@@ -156,14 +160,21 @@ not a row anyone authors: the generator composes it onto every system's
 profile, derived or overridden, by taking the per-radius `max`. All 32 systems
 therefore carry a profile.
 
-Both are skipped: at easy; while the ship is dashing (`WES_WARPING` — player
-dashes run 2,000–100,000 GU/s, so sampling the profile mid-dash is meaningless);
-and for ships whose `ET_ENVIRONMENT_DAMAGE` handlers include
-`MissionLib.IgnoreEvent` (Vesuvi 4's asteroids, E3M2's probe).
+Both are skipped at easy and while the ship is dashing (`WES_WARPING` — player
+dashes run 2,000–100,000 GU/s, so sampling the profile mid-dash is meaningless).
 
-While `radiation > 0` the ship receives `ET_ENVIRONMENT_DAMAGE` at 16 Hz, so the
-SDK's CoreDamage reactions ("raise shields") fire. At most one per ship per
-tick, shared with the local MetaNebula's own events.
+**The event is the damage.** Each 16 Hz `ET_ENVIRONMENT_DAMAGE` carries 1/16 s
+of drain and one outage roll, and lands **only if the destination's handler
+chain runs to the end**. A handler that returns without `CallNextHandler`
+cancels it — BC's own mechanism: `MissionLib.IgnoreEvent` (Vesuvi 4's
+asteroids, E3M2's probe) and E3M2's `CoreDamage`, which returns early during
+the stellar-core cutscene with the comment "Take no environment damage". No SDK
+handler reads the event's source (checked 2026-09-28).
+
+While `radiation > 0` the ship receives these events, so the SDK's CoreDamage
+reactions ("raise shields") fire. A ship inside an armed local MetaNebula gets
+**one** stream: the local nebula's events carry the profile's chunk, and the
+profile fires none of its own.
 
 ### `asteroids`
 
@@ -293,8 +304,9 @@ Because override radii are absolute, they go stale if the layout moves again
 | dust density | `r.set_dust_profile(dust)` from `_push_environment_feeds`, `max` in `compute_dust_influence` | render frame |
 | nebula look | a render pass fed from `_push_environment_feeds` | render frame — **last phase, behind a live spike** |
 
-The plan must first check whether any SDK `ET_ENVIRONMENT_DAMAGE` handler reads
-the event's source, since profile events have no nebula object to be the source.
+Profile events carry no source (there is no nebula object). No SDK handler reads
+it: E3M2's `CoreDamage` is the only SDK handler for this event (checked
+2026-09-28).
 
 ## What comes out of the tree
 
