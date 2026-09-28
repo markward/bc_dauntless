@@ -125,3 +125,73 @@ def test_stale_baseline_only_judges_suites_that_ran():
     assert gate.stale_baseline(known, set(), suites_ran={"ctest"}) == ["ctest:A.b"]
     assert gate.stale_baseline(known, {"ctest:A.b"}, suites_ran={"ctest", "pytest"}) \
         == ["pytest:tests/x.py::t"]
+
+
+# --- in-process pass ----------------------------------------------------------
+# ctest runs each case in its own process from the build dir. That hid a real
+# renderer bug (the scuff map's lazy load clobbering a mesh's base texture only
+# loaded from the project-root CWD) and a fixture leaking GL state across
+# cases. The gate also runs every gtest binary once, whole, from the root.
+
+_GTEST_OUT = """\
+[==========] Running 4 tests from 2 test suites.
+[ RUN      ] FrameTest.Scorch
+frame_test.cc:12: Failure
+[  FAILED  ] FrameTest.Scorch (139 ms)
+[ RUN      ] AllSamples/HeaderTest.Recognized/Galaxy
+[  FAILED  ] AllSamples/HeaderTest.Recognized/Galaxy, where GetParam() = Galaxy (0 ms)
+[ RUN      ] FrameTest.Fine
+[       OK ] FrameTest.Fine (3 ms)
+[==========] 4 tests from 2 test suites ran. (200 ms total)
+[  PASSED  ] 2 tests.
+[  FAILED  ] 2 tests, listed below:
+[  FAILED  ] FrameTest.Scorch
+[  FAILED  ] AllSamples/HeaderTest.Recognized/Galaxy, where GetParam() = Galaxy
+
+ 2 FAILED TESTS
+"""
+
+
+def test_parse_gtest_collects_each_failed_case_once():
+    failed, completed = gate.parse_gtest(_GTEST_OUT)
+    assert failed == {"inproc:FrameTest.Scorch",
+                      "inproc:AllSamples/HeaderTest.Recognized/Galaxy"}
+    assert completed
+
+
+def test_parse_gtest_without_closing_summary_did_not_complete():
+    # A segfault mid-binary leaves no "[==========] N tests ... ran." line.
+    failed, completed = gate.parse_gtest(
+        "[==========] Running 3 tests from 1 test suite.\n[ RUN      ] A.b\n")
+    assert failed == set()
+    assert not completed
+
+
+_CTEST_JSON = """{
+  "tests": [
+    {"name": "A.one", "command": ["/b/nif_tests", "--gtest_filter=A.one"]},
+    {"name": "A.two", "command": ["/b/nif_tests", "--gtest_filter=A.two"]},
+    {"name": "R.one", "command": ["/b/renderer_tests", "--gtest_filter=R.one"],
+     "properties": [{"name": "ENVIRONMENT", "value": ["GALLIUM_DRIVER=llvmpipe"]},
+                    {"name": "WORKING_DIRECTORY", "value": "/b"}]},
+    {"name": "scan", "command": ["/b/scan_nifs", "some/dir"]},
+    {"name": "NoCommand"}
+  ]
+}"""
+
+
+def test_gtest_binaries_from_ctest_json_dedupes_and_keeps_environment():
+    # A plain add_test() tool (scan_nifs) is not gtest: it prints no gtest
+    # summary, so running it "whole" would read as a crash. Only commands
+    # gtest_discover_tests generated (they carry --gtest_filter=) count.
+    assert gate.gtest_binaries(_CTEST_JSON) == [
+        ("/b/nif_tests", {}),
+        ("/b/renderer_tests", {"GALLIUM_DRIVER": "llvmpipe"}),
+    ]
+
+
+def test_stale_baseline_judges_inproc_lines_only_when_that_pass_ran():
+    known = {"inproc:A.b", "ctest:C.d"}
+    assert gate.stale_baseline(known, set(), suites_ran={"ctest"}) == ["ctest:C.d"]
+    assert gate.stale_baseline(known, set(), suites_ran={"ctest", "inproc"}) \
+        == ["ctest:C.d", "inproc:A.b"]

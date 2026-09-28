@@ -335,7 +335,10 @@ this tree introduced, not "pre-existing". When a baselined test starts passing
 the gate tells you to delete its line. **Skips are gated too:** a gtest SKIP exits 0,
 so with a BC content root configured, any ctest skip not baselined as
 `skip:ctest:<name>` fails the gate (asset-backed tests find content through
-`native/tests/support/content_root.h`, never a hard-coded `<project>/game`). **Never call a failure "pre-existing" by
+`native/tests/support/content_root.h`, never a hard-coded `<project>/game`). **And an in-process pass:** after ctest the gate runs each gtest
+binary once, whole, from the project root (failures report as `inproc:<name>`),
+because ctest's one-process-per-case from the build dir hid a real renderer bug
+and a GL-state leak between fixtures. **Never call a failure "pre-existing" by
 eyeball; run the gate.**
 
 **Read the ledger, never a remembered count.** This paragraph used to name "the
