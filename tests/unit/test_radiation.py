@@ -271,3 +271,40 @@ def test_local_nebula_events_carry_the_profile_drain():
         tracker.update(s, [ship], 1.0 / 60.0)
         d.update([ship], 1.0 / 60.0, shared=tracker.ships_in_armed_nebula())
     assert after_creation - ship.GetHull().GetCondition() == pytest.approx(150.0, abs=15.0)
+
+
+# ── Final review #2: radiation respects invincibility ─────────────────────────
+# E3M2's "Derelict Warbird" is SetInvincible(TRUE) at 1% hull; combat.apply_hit
+# gates on IsImmuneToDamage, and radiation must too.
+
+class _ImmuneSubShip(_SubShip):
+    def IsImmuneToDamage(self):
+        return True
+
+
+def test_immune_ship_takes_no_shield_drain_and_no_outage():
+    ship = _ImmuneSubShip()
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_AlwaysRoll())
+    d.apply_chunk(ship, 1.0, 1.0)
+    assert ship.GetShieldSubsystem().GetCurrentShields(0) == 500.0
+    assert d.active_outages() == {}
+    assert not any(s._radiation_out for s in ship.subs)
+
+
+def test_immune_ship_with_shields_down_takes_no_hull_drain():
+    ship = _ImmuneSubShip()
+    ship._shield = _Faces(500.0, on=False)
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_AlwaysRoll())
+    _run(d, [ship], 1.0)
+    assert ship.GetHull().GetCondition() == 1000.0
+    assert d.active_outages() == {}
+
+
+def test_a_ship_reporting_not_immune_still_drains():
+    class _Mortal(_SubShip):
+        def IsImmuneToDamage(self):
+            return False
+    ship = _Mortal()
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_AlwaysRoll())
+    d.apply_chunk(ship, 1.0, 1.0)
+    assert ship.GetShieldSubsystem().GetCurrentShields(0) < 500.0

@@ -123,7 +123,12 @@ class RadiationDriver:
             self.apply_chunk(ship, r, m)
 
     def apply_chunk(self, ship, radiation: float, mult: float) -> None:
-        """1/16 s of drain: shields per face while up, else the hull."""
+        """1/16 s of drain: shields per face while up, else the hull.
+        An immune ship (SetInvincible / SetHurtable -- E3M2's Derelict
+        Warbird) takes neither drain nor an outage roll, matching
+        combat.apply_hit's IsImmuneToDamage gate."""
+        if implements(ship, "IsImmuneToDamage") and bool(ship.IsImmuneToDamage()):
+            return
         from engine.appc.nebula_runtime import _shields_up
         dt = 1.0 / EVENT_HZ
         shields = _shields_up(ship)
