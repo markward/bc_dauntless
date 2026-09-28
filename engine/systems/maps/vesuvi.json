@@ -184,9 +184,240 @@
       "star_class": "remnant_hot",
       "radius_gu": 2000.0,
       "why": "The star's core was destabilised by a Kessok Solarformer (BC's own opening: 'the star... its core is destabilising!'). What remains is a hot remnant: small, luminous, blue-white. BC's own lighting agrees -- Vesuvi 5's authored directional is (0.6, 0.6, 0.8). Radius stays 2000 GU so the system's geometry does not move."
+    },
+    "profile": {
+      "why": "Mark 2026-09-28: dust >= 0.1 (0.2 beyond the cloud), sensors reduced system-wide, radiation >= 0.4 to ~170k, asteroid band Geki->Haven. Nebula keeps the derived curve. Absolute GU against the layout at 10129269; profile-override-tracks-clump fails generation if the cloud moves.",
+      "rows": [
+        {
+          "distance_gu": 0.0,
+          "nebula": 0.0,
+          "dust": 0.1,
+          "sensors": 0.3,
+          "radiation": 0.4,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 61750.0,
+          "nebula": 0.0,
+          "dust": 0.1,
+          "sensors": 0.3,
+          "radiation": 0.4,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 116366.0,
+          "nebula": 0.88,
+          "dust": 0.1,
+          "sensors": 0.3,
+          "radiation": 0.4,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 123500.0,
+          "nebula": 1.0,
+          "dust": 1.0,
+          "sensors": 1.0,
+          "radiation": 1.0,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 130634.0,
+          "nebula": 0.95,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.4,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 170000.0,
+          "nebula": 0.64,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.4,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 180000.0,
+          "nebula": 0.56,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.0,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 215000.0,
+          "nebula": 0.3,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.0,
+          "asteroids": 0.05
+        },
+        {
+          "distance_gu": 226000.0,
+          "nebula": 0.21,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.0,
+          "asteroids": 0.5
+        },
+        {
+          "distance_gu": 247000.0,
+          "nebula": 0.05,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.0,
+          "asteroids": 0.5
+        },
+        {
+          "distance_gu": 330000.0,
+          "nebula": 0.05,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.0,
+          "asteroids": 0.5
+        },
+        {
+          "distance_gu": 340000.0,
+          "nebula": 0.05,
+          "dust": 0.2,
+          "sensors": 0.3,
+          "radiation": 0.0,
+          "asteroids": 0.05
+        }
+      ]
     }
   },
   "generated": {
     "tool": "gen_system_maps"
+  },
+  "profile": {
+    "rows": [
+      {
+        "distance_gu": 0.0,
+        "nebula": 0.0,
+        "dust": 0.1,
+        "sensors": 0.3,
+        "radiation": 1.0,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 2000.0,
+        "nebula": 0.0,
+        "dust": 0.1,
+        "sensors": 0.3,
+        "radiation": 1.0,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 4400.0,
+        "nebula": 0.0,
+        "dust": 0.1,
+        "sensors": 0.3,
+        "radiation": 0.4,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 6000.0,
+        "nebula": 0.0,
+        "dust": 0.1,
+        "sensors": 0.3,
+        "radiation": 0.4,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 61750.0,
+        "nebula": 0.0,
+        "dust": 0.1,
+        "sensors": 0.3,
+        "radiation": 0.4,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 116366.0,
+        "nebula": 0.88,
+        "dust": 0.1,
+        "sensors": 0.3,
+        "radiation": 0.4,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 123500.0,
+        "nebula": 1.0,
+        "dust": 1.0,
+        "sensors": 1.0,
+        "radiation": 1.0,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 130634.0,
+        "nebula": 0.95,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.4,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 170000.0,
+        "nebula": 0.64,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.4,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 180000.0,
+        "nebula": 0.56,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.0,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 215000.0,
+        "nebula": 0.3,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.0,
+        "asteroids": 0.05
+      },
+      {
+        "distance_gu": 226000.0,
+        "nebula": 0.21,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.0,
+        "asteroids": 0.5
+      },
+      {
+        "distance_gu": 247000.0,
+        "nebula": 0.05,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.0,
+        "asteroids": 0.5
+      },
+      {
+        "distance_gu": 330000.0,
+        "nebula": 0.05,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.0,
+        "asteroids": 0.5
+      },
+      {
+        "distance_gu": 340000.0,
+        "nebula": 0.05,
+        "dust": 0.2,
+        "sensors": 0.3,
+        "radiation": 0.0,
+        "asteroids": 0.05
+      }
+    ],
+    "color": [
+      0.6078431372549019,
+      0.35294117647058826,
+      0.7254901960784313
+    ],
+    "full_concealment": 0.39264259190842216
   }
 }

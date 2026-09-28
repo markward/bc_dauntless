@@ -29,6 +29,15 @@ def test_exact_row_hit_returns_that_row():
     assert P.evaluate(prof, 50.0).nebula == pytest.approx(0.4)
 
 
+def test_exact_row_hit_is_bit_exact_even_across_float_noisy_columns():
+    """1.0 -> 0.2 hits the classic `1.0 - 0.8 != 0.2` float trap if evaluate()
+    computes the upper endpoint via a t=1.0 lerp instead of returning that
+    row's own stored value. Reached in practice by compose_max() re-sampling
+    a profile at its own breakpoints (tools/systems/profile_builder.py)."""
+    prof = _p((0.0, 1.0), (7134.0, 0.2))
+    assert P.evaluate(prof, 7134.0).nebula == 0.2
+
+
 def test_last_row_persists_outward_forever():
     prof = _p((0.0, 0.0), (100.0, 0.05, 0.2))
     s = P.evaluate(prof, 1.0e9)

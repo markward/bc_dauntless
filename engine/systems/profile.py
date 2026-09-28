@@ -53,6 +53,12 @@ def evaluate(profile, r: float) -> Sample:
     if r <= rows[0].distance_gu:
         return _sample(rows[0])
     for a, b in zip(rows, rows[1:]):
+        if r == b.distance_gu:
+            # An exact hit on a breakpoint returns that row's own stored
+            # value rather than a t=1.0 lerp -- `a + (b - a) * 1.0` is not
+            # bit-exact in IEEE754 (e.g. 1.0 + (0.2 - 1.0) == 0.19999999999999996),
+            # and compose_max() re-samples a profile at its own breakpoints.
+            return _sample(b)
         if r <= b.distance_gu:
             span = b.distance_gu - a.distance_gu
             t = 0.0 if span <= 0.0 else (r - a.distance_gu) / span

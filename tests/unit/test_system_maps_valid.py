@@ -383,3 +383,68 @@ def test_the_cli_enforces_bc_scale_position(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "bc-scale-position" in out
     assert rc == 1
+
+
+def test_every_committed_map_carries_a_profile_with_star_radiation():
+    from engine.systems.profile import evaluate
+    for name in available():
+        m = load(name)
+        assert m.profile is not None, name
+        star = [b for b in m.bodies if b.orbits is None][0]
+        assert evaluate(m.profile, star.radius_gu).radiation == 1.0, name
+        assert evaluate(m.profile, 3.0 * star.radius_gu + 1.0).radiation < 1.0, name
+
+
+def test_no_region_sits_inside_its_stars_radiation():
+    """Star radiation reaches 3 star radii; every region must clear it."""
+    import math
+    for name in available():
+        m = load(name)
+        star = [b for b in m.bodies if b.orbits is None][0]
+        for r in m.regions:
+            d = math.dist(r.anchor_gu, star.position_gu) - r.radius_gu
+            assert d > 3.0 * star.radius_gu, (name, r.set_name)
+
+
+def test_multi_systems_have_no_cloud_rows():
+    from engine.systems.profile import evaluate
+    for name in available():
+        if not name.startswith("multi"):
+            continue
+        m = load(name)
+        star = [b for b in m.bodies if b.orbits is None][0]
+        for row in m.profile.rows:
+            assert (row.nebula, row.dust, row.sensors, row.asteroids) == (0, 0, 0, 0), name
+        assert m.profile.color is None
+
+
+def test_belaruz_profile_peaks_at_its_clump_and_does_not_burn():
+    from engine.systems.profile import clump_radius, evaluate
+    m = load("belaruz")
+    star = [b for b in m.bodies if b.orbits is None][0]
+    R = clump_radius(m.region("Belaruz1"), star.position_gu)
+    s = evaluate(m.profile, R)
+    assert s.nebula == pytest.approx(6.5 / 10.5, abs=1e-3)
+    assert s.radiation == 0.0
+
+
+def test_vesuvi_profile_is_its_override_composed_with_the_star():
+    from engine.systems.profile import evaluate
+    from tools.systems.profile_builder import override_rows, star_rows, compose_max
+    from engine.systems.profile import Profile
+    m = load("vesuvi")
+    star = [b for b in m.bodies if b.orbits is None][0]
+    expected = Profile(rows=compose_max(override_rows(m.overrides["profile"]),
+                                        star_rows(star.radius_gu)))
+    for r in (0.0, 3000.0, 6000.0, 100000.0, 123500.0, 175000.0, 250000.0, 335000.0, 1e7):
+        assert evaluate(m.profile, r) == evaluate(expected, r), r
+    s = evaluate(m.profile, 150000.0)
+    assert s.radiation >= 0.4 and s.dust >= 0.2 and s.asteroids >= 0.05
+    assert evaluate(m.profile, 280000.0).asteroids == pytest.approx(0.5)
+    assert evaluate(m.profile, 229620.0).radiation == 0.0   # Vesuvi 5 colonies clear
+
+
+def test_vesuvi_4_sphere_constant_matches_the_survey():
+    from tools.systems.profile_builder import VESUVI_4_SPHERES
+    assert [tuple(s) for s in load("vesuvi").region("Vesuvi4").nebula["spheres"]] == \
+        [tuple(s) for s in VESUVI_4_SPHERES]

@@ -22,9 +22,17 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import App  # noqa: E402,F401  -- must load before engine.appc.nebula (see
+# profile_builder's import below): App.py itself imports engine.appc.nebula
+# partway through its own body, so importing engine.appc.nebula FIRST leaves
+# that module mid-init when App.py's own "from engine.appc.nebula import
+# MetaNebula" runs, raising ImportError. Every other entry point avoids this
+# by chance (something upstream already imported App); this script has no
+# such upstream import, so it has to do it explicitly.
 from engine.systems.map import available, load, save  # noqa: E402
 from engine.systems.validate import validate  # noqa: E402
 from tools.systems.layout import LayoutTuning, ambiguities, layout  # noqa: E402
+from tools.systems.profile_builder import build_profile  # noqa: E402
 from tools.systems.survey import (  # noqa: E402
     bc_offsets, bc_radii, staged_points, survey_system, system_names,
 )
@@ -65,6 +73,15 @@ def star_from(m):
     return (getattr(m, "overrides", None) or {}).get("star")
 
 
+def profile_from(m):
+    """The map's hand profile (overrides.profile) as a dict, or None.
+    Replaces the derived cloud rows wholesale; the star term still composes
+    on top (tools/systems/profile_builder.build_profile)."""
+    if m is None:
+        return None
+    return (getattr(m, "overrides", None) or {}).get("profile")
+
+
 def generate(system: str):
     """Survey, lay out, and carry the existing map's overrides forward.
 
@@ -79,6 +96,9 @@ def generate(system: str):
     fresh = layout(surveyed,
                     pins=pins_from(old) if old is not None else None,
                     star=star_from(old) if old is not None else None)
+    fresh.profile = build_profile(
+        fresh, profile_from(old),
+        campaign=not system.lower().startswith("multi"))
     _merge_overrides(fresh, old)
     return fresh, ambiguities(surveyed)
 
