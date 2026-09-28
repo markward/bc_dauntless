@@ -593,29 +593,77 @@ def _changed_bbox(w: int, h: int, changed) -> tuple:
     return (min_x / w, min_y / h, (max_x + 1) / w, (max_y + 1) / h)
 
 
-def lettering_bbox(ref_rgba, base_rgba) -> tuple:
+def _footprint_contains(footprint, x: int, y: int) -> bool:
+    """`footprint` is either a set/frozenset of (x, y) texel coordinates, or
+    a 2D boolean grid indexable as `footprint[y][x]`."""
+    if isinstance(footprint, (set, frozenset)):
+        return (x, y) in footprint
+    return bool(footprint[y][x])
+
+
+def uv_footprint(patch: dict, width: int, height: int) -> set:
+    """Rasterise `patch`'s triangles, through its own `uvs`, into a
+    `width` x `height` texel grid: for each triangle, every texel whose
+    CENTRE lies inside it (barycentric test, either winding) is covered.
+    The covered set is then dilated by one texel (8-neighbourhood) so a
+    texel straddling a triangle edge -- including BC's own lettering sitting
+    right up against the ID patch's own UV edge -- still counts. UV v maps
+    directly to row (not flipped), matching `_render_review_png`'s
+    convention. Returns a set of (x, y) texel coordinates; degenerate
+    (zero-area) triangles contribute nothing."""
+    uvs = patch["uvs"]
+    covered = set()
+    for tri in patch["triangles"]:
+        (x0, y0), (x1, y1), (x2, y2) = (
+            (uvs[i][0] * width, uvs[i][1] * height) for i in tri)
+        area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+        if abs(area) < 1e-12:
+            continue
+        min_x = max(0, int(math.floor(min(x0, x1, x2))))
+        max_x = min(width - 1, int(math.ceil(max(x0, x1, x2))))
+        min_y = max(0, int(math.floor(min(y0, y1, y2))))
+        max_y = min(height - 1, int(math.ceil(max(y0, y1, y2))))
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                px, py = x + 0.5, y + 0.5
+                w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) / area
+                w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) / area
+                w2 = 1.0 - w0 - w1
+                if w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0:
+                    covered.add((x, y))
+
+    dilated = set(covered)
+    for x, y in covered:
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height:
+                    dilated.add((nx, ny))
+    return dilated
+
+
+def lettering_bbox(ref_rgba, base_rgba, footprint=None) -> tuple:
     """Normalised (s0, t0, s1, t1) bounding box, over pixel edges, of the
     pixels where `ref_rgba` differs from `base_rgba` by more than 24 in any
-    RGB channel or in alpha, restricted to pixels visible in at least one of
-    the two images (`max(alpha) > 8`).
+    RGB channel or in alpha (the literal brief rule -- no alpha-visibility
+    gate: in BC's "_glow" textures alpha is the GLOW MASK, not opacity, and
+    alpha 0 is still drawn as unlit hull, so a real letter can sit over
+    alpha-0 pixels).
 
-    The visibility gate matters on real BC glow textures: a fully
-    transparent (alpha 0 in both images) pixel's RGB is "don't care" and
-    routinely holds leftover/export noise that differs between two
-    otherwise-identical glow maps without any visible effect -- BC's own
-    "_glow" ID textures carry exactly this on a border column, which
-    inflates the box if counted. On fully opaque input (every caller's
-    synthetic test fixture) the gate is a no-op."""
+    `footprint`, if given (see `uv_footprint`), restricts the search to
+    texels inside it -- this is how real BC content excludes leftover/
+    export RGB noise in fully-unrelated regions of the texture without
+    silently dropping real lettering over alpha-0 pixels."""
     ref = ref_rgba.convert("RGBA")
     base = base_rgba.convert("RGBA")
     w, h = ref.size
     rp, bp = ref.load(), base.load()
 
     def changed(x, y):
+        if footprint is not None and not _footprint_contains(footprint, x, y):
+            return False
         r1, g1, b1, a1 = rp[x, y]
         r2, g2, b2, a2 = bp[x, y]
-        if max(a1, a2) <= 8:
-            return False
         return (max(abs(r1 - r2), abs(g1 - g2), abs(b1 - b2)) > 24
                 or abs(a1 - a2) > 24)
 
@@ -642,8 +690,12 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dic
        (`fit_plane_st`'s own affine map -- see its docstring for why the
        intercept isn't simply `fit["origin"]` at s=0, t=0).
     3. BC's box `(s0, t0, s1, t1)` comes from `lettering_bbox` on
-       (`ref_img`, `base_img`); the mask box `(u0, v0, u1, v1)` from
-       `alpha_bbox` on `mask_img`. Centres: `sc, tc` and `uc, vc`.
+       (`ref_img`, `base_img`), restricted to `uv_footprint(patch, ...)` --
+       the patch's own UV region, in `base_img`'s texel space (ref and base
+       are the same texture, lettered vs. blank) -- so stray diffs outside
+       the ID patch's own UVs never widen the box (Ruling C). The mask box
+       `(u0, v0, u1, v1)` comes from `alpha_bbox` on `mask_img`. Centres:
+       `sc, tc` and `uc, vc`.
     4. `U = s_axis * (s1 - s0) / (u1 - u0)`, the ship-body vector for one
        full mask width. Uniform scale: the mask lettering width equals BC's
        lettering width.
@@ -675,7 +727,8 @@ def build_decal(shapes: list, cls_cfg: dict, ref_img, base_img, mask_img) -> dic
         return [origin0[k] + (s - st0) * s_axis[k] + (t - tt0) * t_axis[k]
                 for k in range(3)]
 
-    s0, t0, s1, t1 = lettering_bbox(ref_img, base_img)
+    footprint = uv_footprint(patch, base_img.size[0], base_img.size[1])
+    s0, t0, s1, t1 = lettering_bbox(ref_img, base_img, footprint=footprint)
     u0, v0, u1, v1 = alpha_bbox(mask_img)
     sc, tc = (s0 + s1) / 2.0, (t0 + t1) / 2.0
     uc, vc = (u0 + u1) / 2.0, (v0 + v1) / 2.0

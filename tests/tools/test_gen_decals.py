@@ -33,10 +33,57 @@ def test_lettering_and_alpha_bboxes():
     assert g.alpha_bbox(m) == pytest.approx((0.2, 0.2, 0.8, 0.8))
 
 
+def test_lettering_bbox_footprint_gate_ignores_outside_texels():
+    # Ruling C: a differing texel outside the footprint is ignored; one
+    # inside still counts.
+    from PIL import Image
+    base = Image.new("RGBA", (10, 10), (100, 100, 100, 255))
+    ref = base.copy()
+    ref.putpixel((2, 3), (0, 0, 0, 255))   # inside the footprint below
+    ref.putpixel((8, 8), (0, 0, 0, 255))   # outside it
+    footprint = {(x, y) for x in range(0, 5) for y in range(0, 5)}
+    assert g.lettering_bbox(ref, base, footprint=footprint) == pytest.approx(
+        (0.2, 0.3, 0.3, 0.4))
+    # without a footprint both differing texels are picked up
+    assert g.lettering_bbox(ref, base) == pytest.approx((0.2, 0.3, 0.9, 0.9))
+
+
+def test_lettering_bbox_counts_change_under_zero_alpha():
+    # Ruling C: alpha in BC's "_glow" textures is a glow MASK, not opacity --
+    # a=0 is drawn (unlit hull), so a changed pixel there must still count.
+    # This is exactly the case an alpha-visibility gate gets wrong.
+    from PIL import Image
+    base = Image.new("RGBA", (10, 10), (100, 100, 100, 0))
+    ref = base.copy()
+    ref.putpixel((4, 4), (0, 0, 0, 0))     # RGB differs, alpha stays 0 both sides
+    assert g.lettering_bbox(ref, base) == pytest.approx((0.4, 0.4, 0.5, 0.5))
+
+
+def test_uv_footprint_covers_triangle_interior_and_dilated_edge():
+    patch = {"uvs": [(0.1, 0.1), (0.6, 0.1), (0.1, 0.6)], "triangles": [(0, 1, 2)]}
+    fp = g.uv_footprint(patch, 10, 10)
+    assert (3, 3) in fp        # well inside the triangle
+    assert (9, 9) not in fp    # far outside it
+
+
 def test_build_decal_centres_and_scales_on_bc_lettering(monkeypatch):
-    pts, sts = _plane_patch()
+    # A wider x domain than _plane_patch()'s (still z=5, s = 0.1 + x/200,
+    # t = 0.2 + y/100) so the patch's own UVs -- and so its uv_footprint --
+    # fully contain BC's lettering box (s in [0.2, 0.6]) once Ruling C gates
+    # lettering_bbox by that footprint; _plane_patch()'s own s only reaches
+    # 0.35, which would clip the letters short of x=60.
+    pts, sts = [], []
+    for x in (-50, 50, 150):
+        for y in (0, 30, 60):
+            pts.append((float(x), float(y), 5.0))
+            sts.append((0.1 + x / 200.0, 0.2 + y / 100.0))
+    # Full triangulation of the 3x3 (x, y) grid -- uv_footprint needs the
+    # patch's triangles to actually cover the lettering region, not just a
+    # single corner triangle.
+    grid_tris = [(0, 3, 4), (0, 4, 1), (1, 4, 5), (1, 5, 2),
+                 (3, 6, 7), (3, 7, 4), (4, 7, 8), (4, 8, 5)]
     patch = {"block": 2, "name": "idpatch", "textures": ["X_ID_glow.tga"], "vertices": pts,
-             "normals": [(0.0, 0.0, 1.0)] * len(pts), "uvs": sts, "triangles": [(0, 1, 4)], "hidden": False}
+             "normals": [(0.0, 0.0, 1.0)] * len(pts), "uvs": sts, "triangles": grid_tris, "hidden": False}
     target = {"block": 1, "name": "saucer", "textures": ["X_glow.tga"], "vertices": [(0.0, 0.0, 5.0)],
               "normals": [(0.0, 0.0, 1.0)], "uvs": [(0.0, 0.0)], "triangles": [], "hidden": False}
     from PIL import Image
