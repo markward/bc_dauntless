@@ -65,19 +65,6 @@ def star_from(m):
     return (getattr(m, "overrides", None) or {}).get("star")
 
 
-def cloud_from(m):
-    """The map's declared cloud override as a dict, or None.
-
-    Mirrors star_from() exactly: only two systems (Belaruz, Vesuvi) carry
-    a nebula at all, and `overrides.cloud` is the only place a system-scale
-    shell/lobe shape and name can be hand-declared -- see layout()'s `cloud`
-    argument, which this feeds the same way star_from() feeds `star`.
-    """
-    if m is None:
-        return None
-    return (getattr(m, "overrides", None) or {}).get("cloud")
-
-
 def generate(system: str):
     """Survey, lay out, and carry the existing map's overrides forward.
 
@@ -89,13 +76,11 @@ def generate(system: str):
     """
     surveyed = survey_system(system)
     old = load(system) if system.lower() in available() else None
-    cloud = cloud_from(old) if old is not None else None
     fresh = layout(surveyed,
                     pins=pins_from(old) if old is not None else None,
-                    star=star_from(old) if old is not None else None,
-                    cloud=cloud)
+                    star=star_from(old) if old is not None else None)
     _merge_overrides(fresh, old)
-    return fresh, ambiguities(surveyed, cloud=cloud)
+    return fresh, ambiguities(surveyed)
 
 
 def main(argv=None) -> int:

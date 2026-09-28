@@ -548,7 +548,7 @@ reference branch).
 | 7 | Mission scripting and triggers | active in every loaded set; §2 maps sets missions create outside the player's system too |
 | 8 | Audio | §6, early — emitter's frame |
 | 9 | Persistence | out of scope |
-| 10 | Nebulae and anomalies | part of the system map (`clouds`), under §4 when drawn |
+| 10 | Nebulae and anomalies | system clouds are the radial profile (2026-09-23-radial-system-profile-design.md); under §4 when drawn |
 
 ## Decisions this reverses
 

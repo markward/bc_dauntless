@@ -27,8 +27,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 
-from engine.systems import clouds as cloud_profiles
-from engine.systems.map import Appearance, Body, Cloud, Region, SystemMap, Volume
+from engine.systems.map import Appearance, Body, Region, SystemMap
 
 _GOLDEN_ANGLE = 2.399963229728653
 
@@ -369,108 +368,13 @@ def _max_star_intrusion(m: SystemMap, star, t: LayoutTuning) -> float:
         ])
 
 
-def _build_cloud_large_volume(kind: str, cloud: dict, members: list,
-                              pocket_volumes: list) -> Volume | None:
-    """The system-scale volume for a cloud with a declared `kind`. Ships
-    inert (profile "mist", all-zero params) until that profile is tuned.
-
-    `members` are the map's own placed Regions that carry a nebula -- anchors
-    are FINAL by the time this runs (built after _place()'s region loop).
-    `pocket_volumes` is this cloud's own pocket Volume list; only the
-    "nebula_field" branch below ever reads it (to derive the lobe's axis
-    from the first pocket's centre) -- a debris shell's radius comes
-    straight from the member regions and never touches it, and a
-    "nebula_field" override on a nebula authored with NO spheres (a
-    MetaNebula_Create with no AddNebulaSphere call after it, per
-    survey._nebula) has no pocket to point an axis at, so it emits no large
-    volume rather than raising IndexError on an empty list.
-    """
-    mist = cloud_profiles.params_for("mist")
-    if kind == "debris_shell":
-        radius = max(_norm(r.anchor_gu) + r.radius_gu for r in members)
-        return Volume(
-            shape="sphere",
-            geometry={"center_gu": (0.0, 0.0, 0.0), "radius_gu": radius},
-            profile="mist", params=mist, origin_region=None)
-    if kind == "nebula_field":
-        if not pocket_volumes:
-            return None
-        geometry = dict(cloud.get("geometry", {}))
-        geometry["axis"] = list(_unit(pocket_volumes[0].geometry["center_gu"]))
-        return Volume(shape="lobe", geometry=geometry, profile="mist",
-                      params=mist, origin_region=None)
-    return None
-
-
-def _build_clouds(m: SystemMap, cloud: dict | None) -> list:
-    """The clouds a placed map carries, built from the regions' own
-    (already-anchored) nebulae plus an optional per-system override.
-
-    Only ever called from _place(), after its region loop, so every anchor
-    here is final -- the pocket volumes below add the anchor to BC's
-    set-local sphere, which is the entire reason a system-scale cloud can
-    exist without a second source of truth (see the pinning test). No
-    override -> pocket volumes only: losing BC's authored nebula because
-    nobody declared a kind would be the worst failure mode here.
-    """
-    members = [r for r in m.regions if r.nebula is not None]
-    if not members:
-        return []
-
-    volumes = []
-    for region in members:
-        # BC's own damage choice, not the override: the profile must be
-        # derivable from data that cannot disagree with BC.
-        profile = "debris" if region.nebula["damage_hull_per_s"] > 0 else "nebula"
-        for sphere in region.nebula["spheres"]:
-            # params_for() called PER SPHERE, not hoisted above this loop:
-            # each Volume gets its OWN params dict. Hoisting it made every
-            # pocket of a multi-sphere region alias one shared dict, so an
-            # in-place mutation of one pocket's params (a later pass over
-            # cloud.volumes) would silently apply to every sibling too.
-            params = cloud_profiles.params_for(profile)
-            x, y, z, radius = sphere
-            volumes.append(Volume(
-                shape="sphere",
-                geometry={"center_gu": _add(region.anchor_gu, (x, y, z)),
-                          "radius_gu": radius},
-                profile=profile, params=params, origin_region=region.set_name))
-
-    if cloud is not None:
-        name, display_name, kind = cloud["name"], cloud["display_name"], cloud["kind"]
-    else:
-        name, display_name, kind = members[0].set_name, members[0].set_name, ""
-
-    result = Cloud(
-        name=name, display_name=display_name, kind=kind,
-        color=members[0].nebula["color"], volumes=volumes,
-        regions=[r.set_name for r in members])
-
-    if cloud is not None:
-        # The pocket centre is only ever needed by the "nebula_field" branch
-        # (to derive the lobe's axis) -- NOT evaluated for "debris_shell",
-        # and not evaluated at all when a nebula carries no spheres (a
-        # MetaNebula_Create with no valid AddNebulaSphere call following it,
-        # per survey._nebula). volumes[0] would previously raise IndexError
-        # in that case even for "debris_shell", which never reads it.
-        large = _build_cloud_large_volume(kind, cloud, members, volumes)
-        if large is not None:
-            result.volumes = result.volumes + [large]
-
-    return [result]
-
-
-def _first_orbit_push(s, t: LayoutTuning, pins, star=None, cloud=None) -> tuple[float, SystemMap]:
+def _first_orbit_push(s, t: LayoutTuning, pins, star=None) -> tuple[float, SystemMap]:
     """The corrective distance added to the first orbit, and the resulting map.
 
     `star` is the per-system star override dict (or None), threaded straight
     through to `_sun_radius`'s replacement, `_star_radius`, and to `_place`'s
     appearance choice -- it never changes the PUSH LOGIC itself, only the
-    sun_radius the logic starts from. `cloud` is threaded the same way, straight
-    through to `_place`'s cloud-building step -- the clouds built by the
-    baseline and probe placements below are discarded along with the rest of
-    those maps; only the FINAL placement's clouds survive, and their shell/lobe
-    geometry is derived from that final placement's (possibly pushed) anchors.
+    sun_radius the logic starts from.
 
     All 7 known offenders are the INNERMOST region of their system, and every
     orbit is `first_orbit + orbit_step_gu * i` -- so raising the first orbit
@@ -505,7 +409,7 @@ def _first_orbit_push(s, t: LayoutTuning, pins, star=None, cloud=None) -> tuple[
     """
     sun_radius = _star_radius(s, t, star)
     base_first_orbit = sun_radius + t.first_orbit_clearance_gu
-    m = _place(s, t, {}, base_first_orbit, sun_radius, star, cloud)
+    m = _place(s, t, {}, base_first_orbit, sun_radius, star)
     star_body = next(b for b in m.bodies if b.orbits is None)
     if _max_star_intrusion(m, star_body, t) <= 0.0:
         push = 0.0
@@ -513,7 +417,7 @@ def _first_orbit_push(s, t: LayoutTuning, pins, star=None, cloud=None) -> tuple[
         worst = max(m.regions, key=lambda r: (
             r.radius_gu + star_body.radius_gu + t.star_clearance_gu
             - _norm(_sub(r.anchor_gu, star_body.position_gu))))
-        probe = _place(s, t, {}, base_first_orbit + 1.0, sun_radius, star, cloud)
+        probe = _place(s, t, {}, base_first_orbit + 1.0, sun_radius, star)
         probe_anchor = next(r.anchor_gu for r in probe.regions if r.set_name == worst.set_name)
         direction = _sub(probe_anchor, worst.anchor_gu)  # exact anchor shift per 1 GU of first_orbit
 
@@ -528,7 +432,7 @@ def _first_orbit_push(s, t: LayoutTuning, pins, star=None, cloud=None) -> tuple[
         push = (-a_dot_u + math.sqrt(max(discriminant, 0.0))) / u_sq
 
     # Final placement: pins applied, at the (possibly pushed) first orbit.
-    m = _place(s, t, pins, base_first_orbit + push, sun_radius, star, cloud)
+    m = _place(s, t, pins, base_first_orbit + push, sun_radius, star)
     star_body = next(b for b in m.bodies if b.orbits is None)
     residual = _max_star_intrusion(m, star_body, t)
     if residual > 1e-6:
@@ -540,7 +444,7 @@ def _first_orbit_push(s, t: LayoutTuning, pins, star=None, cloud=None) -> tuple[
     return push, m
 
 
-def ambiguities(s, tuning: LayoutTuning | None = None, cloud: dict | None = None) -> list:
+def ambiguities(s, tuning: LayoutTuning | None = None) -> list:
     t = tuning or LayoutTuning()
     notes = []
     for region in s.regions:
@@ -589,19 +493,6 @@ def ambiguities(s, tuning: LayoutTuning | None = None, cloud: dict | None = None
                 f"{region.set_name}: builds "
                 f"{region.nebula['extra_nebulae']} additional nebula(e) beyond "
                 f"the first -- only the first is placed, the rest are dropped")
-
-    # An override that declares a `kind` neither construction rule recognises
-    # silently degrades to a pockets-only cloud (see _build_cloud_large_volume
-    # -- an unrecognised kind returns None and the caller just skips the large
-    # volume). Losing the entire system-scale shell/lobe to a typo must not
-    # be silent, same as construction rule 5's "no override" case already
-    # isn't silent about keeping only the pockets.
-    if (cloud is not None and any(r.nebula is not None for r in s.regions)
-            and cloud.get("kind") not in ("debris_shell", "nebula_field")):
-        notes.append(
-            f"{s.name}: cloud kind {cloud.get('kind')!r} is not "
-            f"'debris_shell' or 'nebula_field' -- no system-scale volume "
-            f"will be built, the cloud ships with its BC pockets only")
 
     # A system whose regions disagree about the sun's texture takes the most
     # common one (see _star_appearance) -- that pick must never be silent.
@@ -774,7 +665,7 @@ def _staged_shift(region, local_bodies, t: LayoutTuning):
 
 
 def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
-           star=None, cloud=None) -> SystemMap:
+           star=None) -> SystemMap:
     """Place bodies and regions given an already-decided first-orbit distance
     and sun radius. Pure function of its arguments -- called twice by
     _first_orbit_push() when a corrective push is needed, so it must not read
@@ -782,13 +673,6 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
 
     `star` is the per-system star override dict (or None); it only changes
     the sun Body's appearance, never the placement geometry.
-
-    `cloud` is the per-system cloud override dict (overrides.cloud, or None).
-    Clouds are built LAST, after the region loop below, so every region's
-    anchor_gu used here is final for THIS call -- when _first_orbit_push()
-    calls _place() more than once, each call's clouds are anchored to that
-    call's own (possibly pre-push) placement, and only the final call's map
-    is the one the caller keeps.
     """
     m = SystemMap(system=s.name, generated={"tool": "gen_system_maps"})
 
@@ -874,16 +758,11 @@ def _place(s, t: LayoutTuning, pins, first_orbit: float, sun_radius: float,
             radius_gu=max(reach, region.content_extent_gu) + t.region_margin_gu,
             body_names=placed, nebula=region.nebula, bc_scale=bc_scale))
 
-    # Built here, after every region's anchor above is final -- never earlier,
-    # and never re-derived anywhere else.
-    m.clouds = _build_clouds(m, cloud)
-
     return m
 
 
-def layout(s, tuning: LayoutTuning | None = None, pins=None, star=None,
-           cloud=None) -> SystemMap:
+def layout(s, tuning: LayoutTuning | None = None, pins=None, star=None) -> SystemMap:
     t = tuning or LayoutTuning()
     pins = pins or {}
-    _push, m = _first_orbit_push(s, t, pins, star, cloud)
+    _push, m = _first_orbit_push(s, t, pins, star)
     return m

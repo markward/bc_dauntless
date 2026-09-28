@@ -355,7 +355,7 @@ outcome blocks the picture, which is what this slice is for.
 - **The dash.** In-system warp. §5.
 - **Distance-based render streaming.** Every resident region's bodies are
   realized; nothing is dropped by distance yet.
-- **Clouds.** `SystemMap.clouds` is checked in and stays unread.
+- **Clouds.** System clouds are the radial profile (2026-09-23-radial-system-profile-design.md).
 
 ## Unknowns to measure, not guess
 

@@ -171,164 +171,20 @@ def test_belaruz_and_vesuvi_carry_the_stars_their_descriptions_claim():
 
 
 def test_belaruzs_description_matches_where_its_cloud_actually_is():
-    """The star half above was pinned; the CLOUD half was not, and that is
-    why nothing failed when the committed lobe contradicted the text.
-
-    The description used to say the cloud "can be entered out past the first
-    planet; the three inner worlds are clear of it". BC anchors the dense
-    pocket at Belaruz 1, INSIDE the orbit of every planet, so both halves of
-    that sentence were false against the map committed alongside it.
-
-    Both clauses of the sentence that replaced it are pinned here:
-
-    1. "the dense part has fallen inward, closer to the star than any of the
-       three planets" -- the pocket's distance from the star against every
-       planet's.
-    2. "the thin body of the cloud stretches out ahead of it" -- the lobe
-       extends beyond the pocket along the lobe's OWN axis, which is by
-       construction the direction from the star to that pocket
-       (tools/systems/layout.py:_build_cloud_large_volume).
-    """
+    """The description says the dense part of Belaruz's cloud has fallen
+    inward, closer to the star than any of its three planets. BC anchors the
+    profile's clump at Belaruz 1, INSIDE the orbit of every planet."""
     import math
-    from engine.systems.descriptions import for_system
+    from engine.systems.profile import clump_radius
 
     m = load("belaruz")
     star = [b for b in m.bodies if b.orbits is None][0]
     planets = [b for b in m.bodies if b.orbits is not None]
     assert len(planets) == 3, "the description says 'three planets'"
 
-    cloud = m.clouds[0]
-    pocket = [v for v in cloud.volumes if v.origin_region is not None][0]
-    pocket_distance = math.dist(pocket.geometry["center_gu"], star.position_gu)
-    distances = [math.dist(b.position_gu, star.position_gu) for b in planets]
-
-    # The dense part has fallen INWARD -- closer to the star than any planet.
-    assert pocket_distance < min(distances), (
-        f"pocket at {pocket_distance:.0f} GU vs innermost planet at "
-        f"{min(distances):.0f} GU")
-
-    # Clause 2: the thin body stretches out AHEAD of the dense pocket. The
-    # lobe's axis is the star -> pocket direction, so the pocket's axial
-    # projection is its distance from the star (perp = 0 by construction);
-    # the lobe must still be going when the pocket's far edge has passed.
-    #
-    # Deliberately NOT asserted: that all three planets fall inside the lobe.
-    # Measured against the committed map, only Belaruz 4 does. The lobe's
-    # spine runs from the star toward the pocket (~+Y) and BC's orbital
-    # angles scatter the planets around the star, so Belaruz 2 projects to
-    # t = -47,211 (behind near_gu) and Belaruz 3 to t = 7,908 (short of it)
-    # under the capsule model validate.py:_pocket_inside_large uses. That
-    # discrepancy is a KNOWN OPEN DESIGN QUESTION about the lobe's shape --
-    # whether it should envelop the whole system -- not an error in the
-    # text, which no longer claims it does. Pinning containment here would
-    # pin a fact the geometry does not support.
-    lobe = [v for v in cloud.volumes if v.origin_region is None][0]
-    axis = lobe.geometry["axis"]
-    axis_len = math.sqrt(sum(a * a for a in axis))
-    unit = [a / axis_len for a in axis]
-    rel = [p - o for p, o in zip(pocket.geometry["center_gu"], star.position_gu)]
-    pocket_t = sum(r * u for r, u in zip(rel, unit))
-    assert lobe.geometry["far_gu"] > pocket_t + pocket.geometry["radius_gu"], (
-        f"lobe ends at {lobe.geometry['far_gu']:.0f} GU along its axis but the "
-        f"pocket's far edge is at {pocket_t + pocket.geometry['radius_gu']:.0f}")
-
-    detail = for_system("belaruz")["detail"]
-    assert "past the first planet" not in detail
-    assert "clear of it" not in detail
-    assert "whole system sits in thin material" not in detail
-    assert "closer to the star than any of the three planets" in detail
-    assert "stretches out ahead of it" in detail
-
-
-def test_the_two_cloud_systems_carry_their_clouds():
-    vesuvi = load("vesuvi")
-    assert len(vesuvi.clouds) == 1
-    cloud = vesuvi.clouds[0]
-    assert cloud.kind == "debris_shell"
-    assert sorted(cloud.regions) == ["Vesuvi4"]
-    pocket = [v for v in cloud.volumes if v.origin_region == "Vesuvi4"][0]
-    assert pocket.profile == "debris"
-    assert pocket.params["damage_hull_per_s"] == pytest.approx(150.0)
-    shell = [v for v in cloud.volumes if v.origin_region is None][0]
-    assert shell.shape == "sphere"
-    # The shell radius is DERIVED, not authored: the greatest
-    # |anchor| + radius_gu across the cloud's member regions, so the shell
-    # reaches exactly as far as the wreckage does
-    # (tools/systems/layout.py:_build_cloud_large_volume). Assert that
-    # relationship, computed from this map. The literal that stood here,
-    # 61567.4 at rel=1e-3, matched neither the derived value
-    # (61566.8173...) nor the design note's 61567.0 -- a magic number
-    # loose enough to pass while agreeing with nothing.
-    import math
-    assert shell.geometry["radius_gu"] == pytest.approx(
-        max(math.dist(vesuvi.region(n).anchor_gu, (0.0, 0.0, 0.0))
-            + vesuvi.region(n).radius_gu for n in cloud.regions))
-
-    belaruz = load("belaruz")
-    cloud = belaruz.clouds[0]
-    assert cloud.kind == "nebula_field"
-    pocket = [v for v in cloud.volumes if v.origin_region == "Belaruz1"][0]
-    assert pocket.profile == "nebula"
-    assert pocket.params["damage_hull_per_s"] == 0.0
-    assert [v for v in cloud.volumes if v.origin_region is None][0].shape == "lobe"
-
-
-def test_no_other_system_grew_a_cloud():
-    for name in available():
-        if name in ("vesuvi", "belaruz"):
-            continue
-        assert load(name).clouds == [], name
-
-
-def test_ambiguities_itself_reports_a_bogus_cloud_kind():
-    """Documents ambiguities()'s own behaviour (a Task 4 deliverable, not new
-    here): given a cloud override with an unrecognised `kind`, it reports it.
-
-    This is NOT a substitute for
-    test_a_bogus_cloud_kind_reaches_the_generators_ambiguities_output below --
-    it calls ambiguities() directly, so it cannot detect a regression in
-    gen_system_maps.py's call site (generate()'s `ambiguities(surveyed,
-    cloud=cloud)`). Reverting that kwarg back to `ambiguities(surveyed)`
-    leaves this test green. Kept only as a small, fast pin on
-    ambiguities()'s own contract."""
-    from tools.gen_system_maps import cloud_from
-    from tools.systems.layout import ambiguities
-    from tools.systems.survey import survey_system
-    from engine.systems.map import SystemMap
-
-    bogus = SystemMap(system="Vesuvi", overrides={"cloud": {
-        "name": "x", "display_name": "x", "kind": "not_a_real_kind"}})
-    surveyed = survey_system("Vesuvi")
-    notes = ambiguities(surveyed, cloud=cloud_from(bogus))
-    assert any("not_a_real_kind" in n for n in notes)
-
-
-def test_a_bogus_cloud_kind_reaches_the_generators_ambiguities_output(monkeypatch, capsys):
-    """The requirement: a bogus `kind` in a map's `overrides.cloud` must
-    surface in the GENERATOR's `--list-ambiguities` output. Drives the real
-    `main() -> generate() -> ambiguities(surveyed, cloud=cloud)` path, not a
-    direct ambiguities() call -- so reverting generate()'s cloud kwarg
-    (tools/gen_system_maps.py) makes this test fail, unlike the test above.
-
-    Patches gen_system_maps.load (not the checked-in vesuvi.json) so the
-    "existing map" generate() reads back carries a bogus cloud kind; --check
-    keeps this from writing anything."""
-    import tools.gen_system_maps as gen_system_maps
-    real_load = gen_system_maps.load
-
-    def bogus_load(system):
-        m = real_load(system)
-        if system.lower() == "vesuvi":
-            m.overrides = dict(m.overrides)
-            m.overrides["cloud"] = dict(m.overrides["cloud"])
-            m.overrides["cloud"]["kind"] = "not_a_real_kind"
-        return m
-
-    monkeypatch.setattr(gen_system_maps, "load", bogus_load)
-    rc = gen_system_maps.main(["--system", "Vesuvi", "--list-ambiguities", "--check"])
-    out = capsys.readouterr().out
-    assert "not_a_real_kind" in out
-    assert rc == 0
+    region = m.region("Belaruz1")
+    pocket = clump_radius(region, star.position_gu)
+    assert all(math.dist(p.position_gu, star.position_gu) > pocket for p in planets)
 
 
 def test_planets_orbit_at_the_doubled_scale():

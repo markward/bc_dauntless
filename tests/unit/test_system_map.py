@@ -93,37 +93,6 @@ def test_star_colour_and_nebula_survive_the_round_trip():
     assert back.regions[0].nebula["spheres"][0] == (0.0, 1500.0, 0.0, 1500.0)
 
 
-def test_a_map_with_no_clouds_key_still_loads():
-    """Thirty checked-in maps predate clouds. They must not need regenerating
-    to stay readable."""
-    text = json.dumps({"system": "Ona", "bodies": [], "regions": []})
-    assert map.from_json(text).clouds == []
-
-
-def test_clouds_round_trip_through_json():
-    m = map.SystemMap(system="Vesuvi", clouds=[map.Cloud(
-        name="Vesuvi Debris", display_name="Vesuvi Debris Field",
-        kind="debris_shell", color=(0.6, 0.35, 0.72),
-        volumes=[map.Volume(shape="sphere",
-                            geometry={"center_gu": [0.0, 0.0, 0.0],
-                                      "radius_gu": 61567.0},
-                            profile="mist",
-                            params={"visibility_gu": 0.0})],
-        regions=["Vesuvi1", "Vesuvi4"])])
-    back = map.from_json(map.to_json(m))
-    assert back.clouds[0].kind == "debris_shell"
-    assert back.clouds[0].color == (0.6, 0.35, 0.72)      # tuple, not list
-    assert back.clouds[0].volumes[0].geometry["radius_gu"] == 61567.0
-    assert back.clouds[0].volumes[0].origin_region is None
-
-
-def test_cloud_lookup_by_name():
-    m = map.SystemMap(system="Vesuvi", clouds=[
-        map.Cloud(name="Vesuvi Debris", display_name="d", kind="debris_shell")])
-    assert m.cloud("Vesuvi Debris").kind == "debris_shell"
-    assert m.cloud("nope") is None
-
-
 def test_bcs_nebula_numbers_survive_the_round_trip():
     """The survey reads BC's authored visibility, sensor density and damage off
     MetaNebula_Create and SetupDamage. Dropping them on load would leave the map
