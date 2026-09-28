@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <voxel/source_cache.h>
 #include <filesystem>
+#include "support/content_root.h"
 
 TEST(SourceCache, DerivesVoxSiblingPath) {
     namespace fs = std::filesystem;
@@ -12,8 +13,7 @@ TEST(SourceCache, DerivesVoxSiblingPath) {
 
 TEST(SourceCache, GalaxyDecodesFromVoxSibling) {
     namespace fs = std::filesystem;
-    fs::path hull = fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+    fs::path hull = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy.nif";
     if (!fs::exists(hull)) GTEST_SKIP() << "BC asset absent";
     voxel::SourceVolumeCache cache;
     const voxel::VoxelVolume& v = cache.get_for_hull(hull);
@@ -26,8 +26,7 @@ TEST(SourceCache, GalaxyDecodesFromVoxSibling) {
 
 TEST(SourceCache, GalaxyPlanePaletteFromVoxSibling) {
     namespace fs = std::filesystem;
-    fs::path hull = fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+    fs::path hull = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy.nif";
     if (!fs::exists(hull)) GTEST_SKIP() << "BC asset absent";
     voxel::SourceVolumeCache cache;
     const std::vector<glm::vec4>& planes = cache.planes_for_hull(hull);

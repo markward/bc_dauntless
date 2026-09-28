@@ -5,6 +5,7 @@
 #include <nif/file.h>
 #include <nif/block.h>
 #include <filesystem>
+#include "support/content_root.h"
 
 static const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
     const nif::NiBinaryVoxelData* vd=nullptr;
@@ -16,7 +17,7 @@ static const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
 // values below are the verified gate (planeIndex = leaf field 2 @ tail offset 7750);
 // un-skip once build_plane_index resolves the head tree.
 TEST(PlaneIndex, DISABLED_GalaxyAnchors) {
-    auto p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)/"game/data/Models/Ships/Galaxy/Galaxy_vox.nif";
+    auto p = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy_vox.nif";
     if (!std::filesystem::exists(p)) GTEST_SKIP() << "asset absent";
     auto f = nif::load(p);
     const auto* vd = find_vox(f); ASSERT_NE(vd,nullptr);

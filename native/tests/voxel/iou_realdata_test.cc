@@ -26,6 +26,7 @@
 #include <nif/block.h>
 #include <filesystem>
 #include <cstdio>
+#include "support/content_root.h"
 
 namespace {
 
@@ -39,11 +40,11 @@ const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
 
 TEST(IouRealdata, GalaxyDecodeVsVoxelizeFloor) {
     // Locate assets.
-    const std::filesystem::path root = OPEN_STBC_PROJECT_ROOT;
+    const std::filesystem::path game = test_support::game_root();
     const std::filesystem::path vox_path =
-        root / "game/data/Models/Ships/Galaxy/Galaxy_vox.nif";
+        game / "data/Models/Ships/Galaxy/Galaxy_vox.nif";
     const std::filesystem::path hull_path =
-        root / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+        game / "data/Models/Ships/Galaxy/Galaxy.nif";
 
     if (!std::filesystem::exists(vox_path))
         GTEST_SKIP() << "BC asset absent: " << vox_path;

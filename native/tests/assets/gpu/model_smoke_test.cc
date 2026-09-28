@@ -6,15 +6,16 @@
 #include "gl_fixture.h"
 
 #include <filesystem>
+#include "support/content_root.h"
 
 namespace fs = std::filesystem;
 
 class ModelSmokeTest : public assets_test::GLContext {};
 
 TEST_F(ModelSmokeTest, LoadsGalaxyEndToEnd) {
-    fs::path root = OPEN_STBC_PROJECT_ROOT;
-    fs::path galaxy   = root / "game/data/Models/Ships/Galaxy/Galaxy.nif";
-    fs::path fed_high = root / "game/data/Models/SharedTextures/FedShips/High";
+    fs::path game = test_support::game_root();
+    fs::path galaxy   = game / "data/Models/Ships/Galaxy/Galaxy.nif";
+    fs::path fed_high = game / "data/Models/SharedTextures/FedShips/High";
     if (!fs::exists(galaxy) || !fs::exists(fed_high))
         GTEST_SKIP() << "game/ not installed";
 
@@ -68,9 +69,9 @@ TEST_F(ModelSmokeTest, LoadsGalaxyEndToEnd) {
 class GalaxyRegressionFixture : public assets_test::GLContext {};
 
 TEST_F(GalaxyRegressionFixture, MaterialCountAndBaseTextureIdentity) {
-    fs::path root = OPEN_STBC_PROJECT_ROOT;
-    fs::path galaxy   = root / "game/data/Models/Ships/Galaxy/Galaxy.nif";
-    fs::path fed_high = root / "game/data/Models/SharedTextures/FedShips/High";
+    fs::path game = test_support::game_root();
+    fs::path galaxy   = game / "data/Models/Ships/Galaxy/Galaxy.nif";
+    fs::path fed_high = game / "data/Models/SharedTextures/FedShips/High";
     if (!fs::exists(galaxy) || !fs::exists(fed_high))
         GTEST_SKIP() << "game/ not installed";
 
@@ -133,9 +134,9 @@ TEST_F(GalaxyRegressionFixture, MaterialCountAndBaseTextureIdentity) {
 class DBridgeIntegration : public assets_test::GLContext {};
 
 TEST_F(DBridgeIntegration, MaterialLightmapPassDistribution) {
-    fs::path root = OPEN_STBC_PROJECT_ROOT;
-    fs::path nif = root / "game/data/Models/Sets/DBridge/Dbridge.NIF";
-    fs::path tex = root / "game/data/Models/Sets/DBridge/High";
+    fs::path game = test_support::game_root();
+    fs::path nif = game / "data/Models/Sets/DBridge/Dbridge.NIF";
+    fs::path tex = game / "data/Models/Sets/DBridge/High";
     if (!fs::is_regular_file(nif) || !fs::is_directory(tex)) {
         GTEST_SKIP() << "BC bridge asset not available";
     }

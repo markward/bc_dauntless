@@ -3,30 +3,26 @@
 #include <nif/file.h>
 
 #include <filesystem>
+#include "support/content_root.h"
 
 namespace fs = std::filesystem;
 
 namespace {
 
 fs::path galaxy_path() {
-    return fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+    return test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy.nif";
 }
 fs::path fed_high_path() {
-    return fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/SharedTextures/FedShips/High";
+    return test_support::game_root() / "data/Models/SharedTextures/FedShips/High";
 }
 fs::path fed_medium_path() {
-    return fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/SharedTextures/FedShips/Medium";
+    return test_support::game_root() / "data/Models/SharedTextures/FedShips/Medium";
 }
 fs::path dauntless_tga_path() {
-    return fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/SharedTextures/FedShips/High/Dauntless.tga";
+    return test_support::game_root() / "data/Models/SharedTextures/FedShips/High/Dauntless.tga";
 }
 fs::path venture_tga_path() {
-    return fs::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/SharedTextures/FedShips/High/Venture.tga";
+    return test_support::game_root() / "data/Models/SharedTextures/FedShips/High/Venture.tga";
 }
 bool game_data_present() {
     return fs::exists(galaxy_path());

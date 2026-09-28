@@ -24,6 +24,8 @@
 #include <fstream>
 #include <memory>
 #include <vector>
+#include "support/content_root.h"
+#include "support/renderer_game_root.h"
 
 namespace {
 
@@ -62,8 +64,8 @@ TEST_F(ParticlePassTest, RendersWithoutGlError) {
 
     // The texture path is relative to the project root (the renderer's CWD).
     // Use an absolute path here to be CWD-independent in the test harness.
-    const fs::path tex_path = project_root()
-        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    const fs::path tex_path = test_support::game_root()
+        / "data" / "Textures" / "Effects" / "ExplosionB.tga";
 
     if (!fs::is_regular_file(tex_path)) {
         GTEST_SKIP() << "BC asset absent: " << tex_path;
@@ -119,8 +121,8 @@ TEST_F(ParticlePassTest, RendersWithoutGlError) {
 TEST_F(ParticlePassTest, StreakAndDampingRenderWithoutGlError) {
     namespace fs = std::filesystem;
 
-    const fs::path tex_path = project_root()
-        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    const fs::path tex_path = test_support::game_root()
+        / "data" / "Textures" / "Effects" / "ExplosionB.tga";
 
     if (!fs::is_regular_file(tex_path)) {
         GTEST_SKIP() << "BC asset absent: " << tex_path;
@@ -222,9 +224,12 @@ TEST_F(ParticlePassTest, SdkTexturePathLoadsRealAsset) {
     const std::string resolved = renderer::resolve_asset_path(sdk_path);
     EXPECT_EQ(resolved, "game/data/Textures/Effects/ExplosionB.tga");
 
-    // Verify the resolved path is openable from the project root.
-    // (Tests run with CWD = build/, so derive the absolute path via __FILE__.)
-    const fs::path abs_resolved = project_root() / resolved;
+    // Verify the asset is on disk under the configured BC root, and point the
+    // renderer at that root so part (b) resolves the real file too.
+    test_support::RendererGameRootGuard guard;
+    guard.apply_configured();
+    const fs::path abs_resolved =
+        test_support::game_root() / "data" / "Textures" / "Effects" / "ExplosionB.tga";
     {
         std::ifstream probe(abs_resolved, std::ios::binary);
         if (!probe) {
@@ -298,8 +303,8 @@ int count_textures_at_max_level(int wanted) {
 
 TEST_F(ParticlePassTest, AtlasEmitterClampsMipChainAndPlainEmitterRestoresIt) {
     namespace fs = std::filesystem;
-    const fs::path tex_path = project_root()
-        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    const fs::path tex_path = test_support::game_root()
+        / "data" / "Textures" / "Effects" / "ExplosionB.tga";
     if (!fs::is_regular_file(tex_path)) {
         GTEST_SKIP() << "BC asset absent: " << tex_path;
     }
@@ -360,8 +365,8 @@ TEST_F(ParticlePassTest, RollUniformExistsInSharedProgram) {
 // frame's last particle roll and every impact flash spins.
 TEST_F(ParticlePassTest, HitVfxPassResetsRollLeftByParticlePass) {
     namespace fs = std::filesystem;
-    const fs::path tex_path = project_root()
-        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    const fs::path tex_path = test_support::game_root()
+        / "data" / "Textures" / "Effects" / "ExplosionB.tga";
     if (!fs::is_regular_file(tex_path)) {
         GTEST_SKIP() << "BC asset absent: " << tex_path;
     }
@@ -402,7 +407,7 @@ TEST_F(ParticlePassTest, HitVfxPassResetsRollLeftByParticlePass) {
     // HitVfxPass opens its sprites by CWD-relative path (the renderer runs from
     // the project root), and bails before touching any uniform if they fail to
     // load — so emulate that CWD, as hit_vfx_pass_test.cc does.
-    if (!fs::is_regular_file(project_root() / "game" / "data" / "Textures"
+    if (!fs::is_regular_file(test_support::game_root() / "data" / "Textures"
                              / "Tactical" / "TorpedoFlares.tga")) {
         GTEST_SKIP() << "hit-VFX flash sprite absent";
     }
@@ -410,6 +415,8 @@ TEST_F(ParticlePassTest, HitVfxPassResetsRollLeftByParticlePass) {
     hv.world_pos = {0.0f, 0.0f, 0.0f};
     hv.age       = 0.0f;
     std::vector<renderer::HitVfxDescriptor> hits{hv};
+    test_support::RendererGameRootGuard guard;
+    guard.apply_configured();
     const fs::path prev_cwd = fs::current_path();
     fs::current_path(project_root());
     hit_pass.render(hits, world, camera, *pipeline);
@@ -430,7 +437,7 @@ TEST_F(ParticlePassTest, HitVfxPassResetsRollLeftByParticlePass) {
 // GL_TEXTURE_MAX_LEVEL still reads back correctly. Only pixels show it.
 TEST_F(ParticlePassTest, ParticlesSampleTheirTextureAndAreNotBlack) {
     namespace fs = std::filesystem;
-    const fs::path tex_path = project_root() / "game" / "data" / "rough.tga";
+    const fs::path tex_path = test_support::game_root() / "data" / "rough.tga";
     if (!fs::is_regular_file(tex_path)) {
         GTEST_SKIP() << "BC asset absent: " << tex_path;
     }

@@ -30,15 +30,14 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "support/content_root.h"
 
 namespace {
 
 namespace fs = std::filesystem;
 
-const fs::path kRoot = fs::path(__FILE__)
-    .parent_path().parent_path().parent_path().parent_path();
-const fs::path kChars = kRoot / "game" / "data" / "Models" / "Characters";
-const fs::path kAnims = kRoot / "game" / "data" / "Animations";
+const fs::path kChars = test_support::game_root() / "data" / "Models" / "Characters";
+const fs::path kAnims = test_support::game_root() / "data" / "Animations";
 
 class ChannelBinderAssets : public ::testing::Test {
 protected:

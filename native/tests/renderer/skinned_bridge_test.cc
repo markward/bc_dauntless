@@ -42,16 +42,15 @@
 #include <filesystem>
 #include <memory>
 #include <vector>
+#include "support/content_root.h"
 
 namespace {
 
-const std::filesystem::path kProjectRoot =
-    std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
 const std::filesystem::path kBodyNif =
-    kProjectRoot / "game" / "data" / "Models" / "Characters" / "Bodies"
+    test_support::game_root() / "data" / "Models" / "Characters" / "Bodies"
                  / "BodyMaleL" / "BodyMaleL.NIF";
 const std::filesystem::path kBodyTex =
-    kProjectRoot / "game" / "data" / "Models" / "Characters" / "Bodies"
+    test_support::game_root() / "data" / "Models" / "Characters" / "Bodies"
                  / "BodyMaleL";
 
 constexpr int kW = 256;
@@ -257,10 +256,10 @@ TEST_F(SkinnedBridgeTest, DISABLED_DumpPosedOfficerPNG) {
         [&](unsigned long long h) { return reinterpret_cast<const assets::Model*>(h); };
     for (const Cfg& cfg : cfgs) {
         const std::filesystem::path bodyp =
-            kProjectRoot / "game" / "data" / "Models" / "Characters" / "Bodies"
+            test_support::game_root() / "data" / "Models" / "Characters" / "Bodies"
                          / cfg.body / (std::string(cfg.body) + ".NIF");
         const std::filesystem::path clipp =
-            kProjectRoot / "game" / "data" / "animations" / (std::string(cfg.clip) + ".nif");
+            test_support::game_root() / "data" / "animations" / (std::string(cfg.clip) + ".nif");
         if (!std::filesystem::is_regular_file(bodyp)) continue;
         assets::AssetCache lc;
         assets::ModelHandle mh = lc.load(bodyp, bodyp.parent_path());
@@ -305,15 +304,15 @@ TEST_F(SkinnedBridgeTest, DISABLED_DumpPosedOfficerPNG) {
     // skin-coloured head contorts (the "brown skeleton").
     {
         const std::filesystem::path body =
-            kProjectRoot / "game/data/Models/Characters/Bodies/BodyMaleS/BodyMaleS.NIF";
+            test_support::game_root() / "data/Models/Characters/Bodies/BodyMaleS/BodyMaleS.NIF";
         const std::filesystem::path head =
-            kProjectRoot / "game/data/Models/Characters/Heads/HeadBrex/brex_head_no_mouth.nif";
+            test_support::game_root() / "data/Models/Characters/Heads/HeadBrex/brex_head_no_mouth.nif";
         const std::filesystem::path clipp =
-            kProjectRoot / "game/data/animations/db_EtoL1_s.nif";
+            test_support::game_root() / "data/animations/db_EtoL1_s.nif";
         const std::filesystem::path body_tex =
-            kProjectRoot / "game/data/Models/Characters/Bodies/BodyMaleM/FedGold_body.tga";
+            test_support::game_root() / "data/Models/Characters/Bodies/BodyMaleM/FedGold_body.tga";
         const std::filesystem::path head_tex =
-            kProjectRoot / "game/data/Models/Characters/Heads/HeadBrex/brex_head.tga";
+            test_support::game_root() / "data/Models/Characters/Heads/HeadBrex/brex_head.tga";
         if (std::filesystem::is_regular_file(head)) {
             assets::Model composed = assets::compose_officer_model(
                 body, body_tex, head, head_tex, "Bip01 Head");

@@ -14,11 +14,19 @@ Exit codes:
   1  NEW failure(s) not in the baseline  -> regression(s) to fix
   2  harness/setup error (could not run a suite)
 
+In-process pass: ctest runs every case in its own process from the build dir,
+which hides cross-test state leaks AND anything that only loads from the
+project-root CWD the game runs from -- together they once hid a real renderer
+bug. So after ctest the gate runs each gtest binary ONCE, whole, from the
+project root, and reports its failures as "inproc:<name>" (baselineable like
+any other id). Skip with --no-inproc.
+
 Usage:
   uv run python tools/check_test_baseline.py            # build C++, run both
   uv run python tools/check_test_baseline.py --no-build # skip cmake build
   uv run python tools/check_test_baseline.py --pytest-only
   uv run python tools/check_test_baseline.py --ctest-only
+  uv run python tools/check_test_baseline.py --no-inproc   # ctest, but skip the in-process pass
 
 Skips: a gtest SKIP exits 0, so a gate that only reads failures stays green
 over tests that never ran -- 74 asset-backed C++ tests did exactly that once BC
@@ -28,6 +36,7 @@ baselined as "skip:ctest:<name>" in tests/known_failures.txt FAILS the gate,
 and a baselined skip that now runs is reported for deletion. With no content
 root, asset-backed tests legitimately skip: the count is printed, nothing fails.
 """
+import json
 import os
 import re
 import subprocess
@@ -57,6 +66,11 @@ _SKIP_PREFIX = "skip:"
 # asset is absent. Form: "optional-mod:<ctest id> <path relative to the mods
 # root>", e.g. "optional-mod:ctest:Foo.Bar CGSovereign/data/x.nif".
 _OPTIONAL_MOD_PREFIX = "optional-mod:"
+
+# gtest's per-case result line; the summary list repeats it without the timing.
+_GTEST_FAILED = re.compile(r"^\[  FAILED  \] (\S+?)(?:, where GetParam\(\) = .*)? \(\d+ ms\)$")
+_GTEST_DONE = re.compile(r"^\[==========\] \d+ tests? from \d+ test suites? ran\.")
+INPROC_TIMEOUT_S = 900
 
 
 def _load_baseline():
@@ -139,6 +153,36 @@ def parse_ctest(out):
             continue
         (skipped if m.group(2) == "Skipped" else failed).add("ctest:" + m.group(1))
     return failed, skipped
+
+
+def parse_gtest(out):
+    """Return (failed 'inproc:' ids, completed) for one gtest binary's output.
+    `completed` is False when gtest never printed its closing summary -- the
+    binary crashed or hung part-way, and its unrun tests cannot count as passes."""
+    failed = {"inproc:" + m.group(1) for m in map(_GTEST_FAILED.match, out.splitlines()) if m}
+    completed = any(_GTEST_DONE.match(l) for l in out.splitlines())
+    return failed, completed
+
+
+def gtest_binaries(ctest_json):
+    """Unique gtest (executable, extra env) pairs from `ctest --show-only=json-v1`, in
+    first-seen order. The env is each test's ENVIRONMENT property (e.g. the
+    renderer tests' GALLIUM_DRIVER), taken from the binary's first test."""
+    seen = {}
+    for t in json.loads(ctest_json).get("tests", []):
+        cmd = t.get("command")
+        # Only gtest_discover_tests cases (they carry --gtest_filter=); a plain
+        # add_test() tool prints no gtest summary and would read as a crash.
+        if not cmd or cmd[0] in seen or not any(a.startswith("--gtest_filter=") for a in cmd[1:]):
+            continue
+        env = {}
+        for prop in t.get("properties", []):
+            if prop.get("name") == "ENVIRONMENT":
+                for kv in prop.get("value", []):
+                    k, _, v = kv.partition("=")
+                    env[k] = v
+        seen[cmd[0]] = env
+    return list(seen.items())
 
 
 def diff_skips(skipped, known_skips, content_configured):
@@ -264,6 +308,37 @@ def run_ctest(root, mods_root_path=None):
     return failed, skipped, False
 
 
+def run_inproc(root):
+    """Run each gtest binary once, whole, from the project root; return
+    (failed 'inproc:' ids, harness error)."""
+    print("== in-process (each gtest binary once, CWD = project root) ==", flush=True)
+    listing = _run(["ctest", "--test-dir", "build", "--show-only=json-v1"])
+    if listing.returncode != 0:
+        print("  !! could not list ctest tests", flush=True)
+        return set(), True
+    failed = set()
+    for exe, extra in gtest_binaries(listing.stdout):
+        env = dict(os.environ)
+        env.update(extra)
+        if root:
+            env["DAUNTLESS_GAME_DIR"] = root
+        name = os.path.basename(exe)
+        try:
+            proc = subprocess.run([exe], cwd=ROOT, env=env, text=True,
+                                  capture_output=True, timeout=INPROC_TIMEOUT_S)
+            out = proc.stdout + proc.stderr
+        except subprocess.TimeoutExpired:
+            out = ""
+        f, completed = parse_gtest(out)
+        if not completed:
+            # A crash/hang takes every later test with it; name the binary.
+            f.add("inproc:%s(did-not-complete)" % name)
+        print("  %-24s %d failure(s)%s" % (name, len(f), "" if completed else "  !! did not complete"),
+              flush=True)
+        failed |= f
+    return failed, False
+
+
 def build_native():
     print("== build (cmake --build build -j) ==", flush=True)
     proc = _run(["cmake", "--build", "build", "-j"])
@@ -280,6 +355,7 @@ def main():
     do_pytest = "--ctest-only" not in args
     do_ctest = "--pytest-only" not in args
     do_build = "--no-build" not in args and do_ctest
+    do_inproc = do_ctest and "--no-inproc" not in args
 
     baseline_raw = _load_baseline()
     known, known_skips = split_baseline(baseline_raw)
@@ -300,9 +376,14 @@ def main():
         f, skipped, err = run_ctest(root, mods_root_path)
         current |= f
         harness_error = harness_error or err
+    if do_inproc:
+        f, err = run_inproc(root)
+        current |= f
+        harness_error = harness_error or err
 
     new_failures = sorted(current - known)
-    suites_ran = {s for s, on in (("pytest", do_pytest), ("ctest", do_ctest)) if on}
+    suites_ran = {s for s, on in (("pytest", do_pytest), ("ctest", do_ctest),
+                                   ("inproc", do_inproc)) if on}
     fixed_baseline = [] if harness_error else stale_baseline(known, current, suites_ran)
     # optional-mod ids are judged entirely by diff_optional_mod_skips, never
     # by the generic skip:/delete-me machinery -- pull them out of `skipped`

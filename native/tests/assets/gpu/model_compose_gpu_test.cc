@@ -12,6 +12,7 @@
 #include <iterator>
 #include <set>
 #include <vector>
+#include "support/content_root.h"
 
 namespace fs = std::filesystem;
 
@@ -24,11 +25,11 @@ namespace fs = std::filesystem;
 class ModelComposeGpuTest : public assets_test::GLContext {};
 
 TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
-    const fs::path body_dir = root / "game/data/Models/Characters/Bodies/BodyMaleL";
+    const fs::path game = test_support::game_root();
+    const fs::path body_dir = game / "data/Models/Characters/Bodies/BodyMaleL";
     const fs::path body_nif = body_dir / "BodyMaleL.NIF";
     // Picard head is a stable, present head NIF; skin lives beside it.
-    const fs::path head_dir = root / "game/data/Models/Characters/Heads/HeadPicard";
+    const fs::path head_dir = game / "data/Models/Characters/Heads/HeadPicard";
     const fs::path head_nif = head_dir / "Picard_head.NIF";
 
     if (!fs::exists(body_nif) || !fs::exists(head_nif))
@@ -114,13 +115,13 @@ TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
 // "head.tga") with head_tex "picard_head.tga", then assert the targeted
 // materials' Base texture_index points into the NEWLY-appended texture range.
 TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path game = test_support::game_root();
     const fs::path body_dir =
-        root / "game/data/Models/Characters/Bodies/BodyMaleM";
+        game / "data/Models/Characters/Bodies/BodyMaleM";
     const fs::path body_nif = body_dir / "BodyMaleM.NIF";
     const fs::path body_tex = body_dir / "FedRed_body.tga";  // != NIF "body.tga"
     const fs::path head_dir =
-        root / "game/data/Models/Characters/Heads/HeadPicard";
+        game / "data/Models/Characters/Heads/HeadPicard";
     const fs::path head_nif = head_dir / "Picard_head.NIF";
     const fs::path head_tex = head_dir / "picard_head.tga";  // != NIF "head.tga"
 
@@ -205,12 +206,12 @@ TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
 // Brex). compose_officer_model must resolve the SDK-registered name to the
 // on-disk spelling so those characters keep their blink frame.
 TEST_F(ModelComposeGpuTest, FaceTextureEyesClosedSpellingFallback) {
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path game = test_support::game_root();
     const fs::path body_dir =
-        root / "game/data/Models/Characters/Bodies/BodyMaleL";
+        game / "data/Models/Characters/Bodies/BodyMaleL";
     const fs::path body_nif = body_dir / "BodyMaleL.NIF";
     const fs::path head_dir =
-        root / "game/data/Models/Characters/Heads/HeadLiu";
+        game / "data/Models/Characters/Heads/HeadLiu";
     const fs::path head_nif = head_dir / "liu_head.NIF";
 
     if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
@@ -240,12 +241,12 @@ TEST_F(ModelComposeGpuTest, FaceTextureEyesClosedSpellingFallback) {
 // the "_head"-infix fallback so the slot still loads (and the boot log stays
 // quiet). A genuinely bogus name must still skip gracefully.
 TEST_F(ModelComposeGpuTest, FaceTextureHeadInfixFallback) {
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path game = test_support::game_root();
     const fs::path body_dir =
-        root / "game/data/Models/Characters/Bodies/BodyMaleL";
+        game / "data/Models/Characters/Bodies/BodyMaleL";
     const fs::path body_nif = body_dir / "BodyMaleL.NIF";
     const fs::path head_dir =
-        root / "game/data/Models/Characters/Heads/HeadFelix";
+        game / "data/Models/Characters/Heads/HeadFelix";
     const fs::path head_nif = head_dir / "Felix_head.NIF";
 
     if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
@@ -287,9 +288,9 @@ TEST_F(ModelComposeGpuTest, FaceTextureHeadInfixFallback) {
 // like the grafted face. Overriding every body material with bodyTex instead
 // makes the hands sample the uniform (solid black on a Starfleet skin).
 TEST_F(ModelComposeGpuTest, HandsTakeTheHeadSkinSheetNotTheUniform) {
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
-    const fs::path body_dir = root / "game/data/Models/Characters/Bodies/BodyFemS";
-    const fs::path head_dir = root / "game/data/Models/Characters/Heads/HeadSaffi";
+    const fs::path game = test_support::game_root();
+    const fs::path body_dir = game / "data/Models/Characters/Bodies/BodyFemS";
+    const fs::path head_dir = game / "data/Models/Characters/Heads/HeadSaffi";
     const fs::path body_nif = body_dir / "BodyFemS.NIF";
     const fs::path head_nif = head_dir / "saffi_head.NIF";
     const fs::path body_tex = body_dir / "FedFemRed_body.tga";
@@ -347,9 +348,9 @@ TEST_F(ModelComposeGpuTest, HandsTakeTheHeadSkinSheetNotTheUniform) {
 // side must still show more than one distinct Base texture. Overriding every
 // grafted head material with headTex collapses the horns onto the face sheet.
 TEST_F(ModelComposeGpuTest, NonSlotHeadTexturesSurviveTheSkinOverride) {
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
-    const fs::path body_dir = root / "game/data/Models/Characters/Bodies/BodyKessok";
-    const fs::path head_dir = root / "game/data/Models/Characters/Heads/HeadKessok";
+    const fs::path game = test_support::game_root();
+    const fs::path body_dir = game / "data/Models/Characters/Bodies/BodyKessok";
+    const fs::path head_dir = game / "data/Models/Characters/Heads/HeadKessok";
     const fs::path body_nif = body_dir / "BodyKessok.NIF";
     const fs::path head_nif = head_dir / "kessok_head.NIF";
     const fs::path body_tex = body_dir / "kessok_body.tga";

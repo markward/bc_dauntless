@@ -7,6 +7,7 @@
 #   scripts/check_tests.sh --no-build     # skip the cmake build step
 #   scripts/check_tests.sh --pytest-only  # skip ctest
 #   scripts/check_tests.sh --ctest-only   # skip pytest
+#   scripts/check_tests.sh --no-inproc    # skip the one-process-per-binary C++ pass
 #
 # Exit 0 = no new failures; 1 = regression(s); 2 = harness error.
 set -euo pipefail

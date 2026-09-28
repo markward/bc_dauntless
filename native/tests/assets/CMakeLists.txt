@@ -53,7 +53,7 @@ target_include_directories(assets_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/native/src/assets/src
-        ${CMAKE_SOURCE_DIR}/native/tests            # support/content_root.h
+        ${CMAKE_SOURCE_DIR}/native/tests             # support/content_root.h
 )
 
 # Bake the project root path so sample-file tests can find game/ assets.
