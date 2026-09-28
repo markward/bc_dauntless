@@ -122,7 +122,13 @@ class NebulaTracker:
         self._env_accum.clear()
 
     def _scale_sensor(self, ship, density):
-        """Scale ship's sensor range by clamp(density, 0, 1). Save base on first scale."""
+        """Scale ship's sensor range by clamp(density, 0, 1). Save base on first scale.
+
+        NOT BC behaviour: the clamp is our guess, and BC's campaign densities
+        (10.5, 6.5) clamp to 1.0, so this is a no-op there. BC's "sensor
+        scale" is unmeasured — see
+        docs/superpowers/deferred/2026-09-28-nebula-sensor-scale-unmeasured.md.
+        """
         sensor = ship.GetSensorSubsystem() if hasattr(ship, "GetSensorSubsystem") else None
         if sensor is None:
             return
