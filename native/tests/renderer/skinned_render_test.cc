@@ -44,17 +44,16 @@
 #include <array>
 #include <filesystem>
 #include <vector>
+#include "support/content_root.h"
 
 namespace {
 
-const std::filesystem::path kProjectRoot =
-    std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
 const std::filesystem::path kBodyNif =
-    kProjectRoot / "game" / "data" / "Models" / "Characters" / "Bodies"
+    test_support::game_root() / "data" / "Models" / "Characters" / "Bodies"
                  / "BodyMaleL" / "BodyMaleL.NIF";
 // BodyMaleL's textures (head.tga / body.tga) live alongside the NIF.
 const std::filesystem::path kBodyTex =
-    kProjectRoot / "game" / "data" / "Models" / "Characters" / "Bodies"
+    test_support::game_root() / "data" / "Models" / "Characters" / "Bodies"
                  / "BodyMaleL";
 
 constexpr int kW = 256;

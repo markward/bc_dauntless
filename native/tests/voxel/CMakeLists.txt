@@ -19,6 +19,8 @@ add_executable(voxel_tests
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE
     OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
+target_include_directories(voxel_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/native/tests)  # support/content_root.h
 
 # Block parsers in libnif.a self-register via static initializers. Without
 # force-load the linker drops object files not otherwise referenced and the

@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <variant>
+#include "support/content_root.h"
 
 namespace {
 
@@ -19,8 +20,7 @@ const nif::NiNode* find_first_ninode(const nif::File& f) {
 }  // namespace
 
 TEST(NiNodeParser, GalaxyRootNiNodeParses) {
-    auto path = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
-                / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+    auto path = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy.nif";
     if (!std::filesystem::exists(path)) GTEST_SKIP() << path;
     auto f = nif::load(path);
     ASSERT_FALSE(f.blocks.empty()) << "Walker stopped before parsing any blocks";
@@ -40,8 +40,7 @@ TEST(NiNodeParser, GalaxyRootNiNodeParses) {
 }
 
 TEST(NiNodeParser, GalaxyParsesAtLeastOneBlock) {
-    auto path = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
-                / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+    auto path = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy.nif";
     if (!std::filesystem::exists(path)) GTEST_SKIP() << path;
     auto f = nif::load(path);
     EXPECT_GE(f.blocks.size(), 1u);

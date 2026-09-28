@@ -50,29 +50,25 @@
 #include <memory>
 #include <vector>
 
+#include "support/content_root.h"
+
 namespace {
 
-std::filesystem::path project_root() {
-    return std::filesystem::path(__FILE__)
-        .parent_path()   // native/tests/renderer
-        .parent_path()   // native/tests
-        .parent_path()   // native
-        .parent_path();  // project root
-}
 
+// `root` is the BC game root (test_support::game_root()).
 renderer::TorpedoDescriptor make_photon_descriptor(const std::filesystem::path& root) {
     renderer::TorpedoDescriptor d;
     d.world_pos = glm::vec3(0.0f, 0.0f, 0.0f);
-    d.core_texture   = (root / "game" / "data" / "Textures" / "Tactical" / "TorpedoCore.tga").string();
+    d.core_texture   = (root / "data" / "Textures" / "Tactical" / "TorpedoCore.tga").string();
     d.core_color     = glm::vec4(1.0f);
     d.core_size_a    = 0.2f;
     d.core_size_b    = 1.2f;
-    d.glow_texture   = (root / "game" / "data" / "Textures" / "Tactical" / "TorpedoGlow.tga").string();
+    d.glow_texture   = (root / "data" / "Textures" / "Tactical" / "TorpedoGlow.tga").string();
     d.glow_color     = glm::vec4(1.0f);
     d.glow_size_a    = 3.0f;
     d.glow_size_b    = 0.3f;
     d.glow_size_c    = 0.6f;
-    d.flares_texture = (root / "game" / "data" / "Textures" / "Tactical" / "TorpedoFlares.tga").string();
+    d.flares_texture = (root / "data" / "Textures" / "Tactical" / "TorpedoFlares.tga").string();
     d.flares_color   = glm::vec4(1.0f);
     d.num_flares     = 8;
     d.flares_size_a  = 0.7f;
@@ -123,7 +119,7 @@ protected:
 
 TEST_F(TorpedoPassTest, PhotonStyleDescriptorRendersWithoutGlError) {
     namespace fs = std::filesystem;
-    const fs::path root = project_root();
+    const fs::path root = test_support::game_root();
     renderer::TorpedoDescriptor d = make_photon_descriptor(root);
     if (!fs::is_regular_file(d.core_texture) || !fs::is_regular_file(d.glow_texture) ||
         !fs::is_regular_file(d.flares_texture)) {
@@ -144,7 +140,7 @@ TEST_F(TorpedoPassTest, PhotonStyleDescriptorRendersWithoutGlError) {
 
 TEST_F(TorpedoPassTest, ZeroFlareDescriptorRendersWithoutGlError) {
     namespace fs = std::filesystem;
-    const fs::path root = project_root();
+    const fs::path root = test_support::game_root();
     renderer::TorpedoDescriptor d = make_photon_descriptor(root);
     d.num_flares = 0;
     if (!fs::is_regular_file(d.core_texture) || !fs::is_regular_file(d.glow_texture)) {
@@ -195,7 +191,7 @@ TEST_F(TorpedoPassTest, DisruptorDescriptorRendersWithoutGlError) {
 // program thrash bug corrupting either family's draw.
 TEST_F(TorpedoPassTest, MixedTorpedoAndDisruptorListRendersWithoutGlError) {
     namespace fs = std::filesystem;
-    const fs::path root = project_root();
+    const fs::path root = test_support::game_root();
     renderer::TorpedoDescriptor torpedo = make_photon_descriptor(root);
     if (!fs::is_regular_file(torpedo.core_texture) ||
         !fs::is_regular_file(torpedo.glow_texture) ||

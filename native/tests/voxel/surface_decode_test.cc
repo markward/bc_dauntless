@@ -5,6 +5,7 @@
 #include <nif/block.h>
 #include <filesystem>
 #include <cmath>
+#include "support/content_root.h"
 
 static const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
     const nif::NiBinaryVoxelData* vd = nullptr;
@@ -14,8 +15,7 @@ static const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
 }
 
 TEST(SurfaceDecode, GalaxyPaletteAndBytes2) {
-    auto p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
-             / "game/data/Models/Ships/Galaxy/Galaxy_vox.nif";
+    auto p = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy_vox.nif";
     if (!std::filesystem::exists(p)) GTEST_SKIP() << "asset absent";
     auto f = nif::load(p);
     const auto* vd = find_vox(f);
@@ -34,7 +34,7 @@ TEST(SurfaceDecode, GalaxyPaletteAndBytes2) {
 }
 
 TEST(SurfaceDecode, ShuttleDegenerateReturnsEmpty) {
-    auto p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)/"game/data/Models/Ships/Shuttle/Shuttle_vox.nif";
+    auto p = test_support::game_root() / "data/Models/Ships/Shuttle/Shuttle_vox.nif";
     if (!std::filesystem::exists(p)) GTEST_SKIP() << "asset absent";
     auto f = nif::load(p);
     const auto* vd = find_vox(f); ASSERT_NE(vd,nullptr);

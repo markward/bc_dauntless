@@ -5,15 +5,16 @@
 #include <nif/scene_camera.h>
 
 #include <filesystem>
+#include "support/content_root.h"
 
 namespace {
 std::filesystem::path asset(const char* rel) {
-    return std::filesystem::path(OPEN_STBC_PROJECT_ROOT) / rel;
+    return test_support::game_root() / rel;
 }
 }  // namespace
 
 TEST(FindFirstCamera, StarbaseControlHasCamera) {
-    auto path = asset("game/data/Models/Sets/StarbaseControl/starbasecontrolRM.NIF");
+    auto path = asset("data/Models/Sets/StarbaseControl/starbasecontrolRM.NIF");
     if (!std::filesystem::exists(path)) GTEST_SKIP() << path;
     auto f = nif::load(path);
     auto cam = nif::find_first_camera(f);
@@ -25,14 +26,14 @@ TEST(FindFirstCamera, StarbaseControlHasCamera) {
 }
 
 TEST(FindFirstCamera, DBridgeHasNoCamera) {
-    auto path = asset("game/data/Models/Sets/DBridge/DBridge.NIF");
+    auto path = asset("data/Models/Sets/DBridge/DBridge.NIF");
     if (!std::filesystem::exists(path)) GTEST_SKIP() << path;
     auto f = nif::load(path);
     EXPECT_FALSE(nif::find_first_camera(f).has_value());
 }
 
 TEST(FindFirstCamera, EBridgeHasNoCamera) {
-    auto path = asset("game/data/Models/Sets/EBridge/EBridge.NIF");
+    auto path = asset("data/Models/Sets/EBridge/EBridge.NIF");
     if (!std::filesystem::exists(path)) GTEST_SKIP() << path;
     auto f = nif::load(path);
     EXPECT_FALSE(nif::find_first_camera(f).has_value());

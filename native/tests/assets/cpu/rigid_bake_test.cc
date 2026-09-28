@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include "support/content_root.h"
 
 // A rigid BC body part's vertices must be baked into BIND-MODEL space so the
 // GPU palette (world_pose * inverse_bind) poses them. Proof: for a rigid shape
@@ -33,8 +34,8 @@ assets::Mesh stub_mesh(assets::MeshCpu cpu) {
 
 TEST(RigidBake, RigidVertsAreInBindModelSpace) {
     namespace fs = std::filesystem;
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
-    const fs::path nif = root / "game" / "data" / "Models" / "Characters"
+    const fs::path game = test_support::game_root();
+    const fs::path nif = game / "data" / "Models" / "Characters"
         / "Bodies" / "BodyMaleL" / "BodyMaleL.NIF";
     if (!fs::exists(nif)) GTEST_SKIP() << "asset missing: " << nif;
 

@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <set>
+#include "support/content_root.h"
 
 using assets::detail::fill_skin_weights;
 
@@ -87,8 +88,8 @@ assets::Mesh stub_mesh(assets::MeshCpu cpu) {
 
 TEST(FillSkinWeightsAsset, BodyMaleLHasNonTrivialWeights) {
     namespace fs = std::filesystem;
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
-    const fs::path nif = root / "game" / "data" / "Models" / "Characters"
+    const fs::path game = test_support::game_root();
+    const fs::path nif = game / "data" / "Models" / "Characters"
         / "Bodies" / "BodyMaleL" / "BodyMaleL.NIF";
     if (!fs::exists(nif)) GTEST_SKIP() << "BodyMaleL.NIF not present at " << nif;
 
@@ -131,8 +132,8 @@ TEST(FillSkinWeightsAsset, BodyMaleLHasNonTrivialWeights) {
 // bone index. SP1 bound them all to bone 0, which this test rejects.
 TEST(RigidRebindAsset, RigidShapesBindToParentBoneNotAlwaysZero) {
     namespace fs = std::filesystem;
-    const fs::path root = OPEN_STBC_PROJECT_ROOT;
-    const fs::path nif = root / "game" / "data" / "Models" / "Characters"
+    const fs::path game = test_support::game_root();
+    const fs::path nif = game / "data" / "Models" / "Characters"
         / "Bodies" / "BodyMaleL" / "BodyMaleL.NIF";
     if (!fs::exists(nif)) GTEST_SKIP() << "BodyMaleL.NIF not present at " << nif;
 

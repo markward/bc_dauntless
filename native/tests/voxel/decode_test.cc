@@ -3,6 +3,7 @@
 #include <nif/file.h>
 #include <nif/block.h>
 #include <filesystem>
+#include "support/content_root.h"
 
 static const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
     const nif::NiBinaryVoxelData* vd = nullptr;
@@ -12,8 +13,7 @@ static const nif::NiBinaryVoxelData* find_vox(const nif::File& f) {
 }
 
 TEST(DecodeFillField, GalaxyMatchesGoldenStats) {
-    std::filesystem::path p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/Ships/Galaxy/Galaxy_vox.nif";
+    std::filesystem::path p = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy_vox.nif";
     if (!std::filesystem::exists(p)) GTEST_SKIP() << "BC asset absent";
     auto f = nif::load(p);
     const auto* vd = find_vox(f);
@@ -34,8 +34,7 @@ TEST(DecodeFillField, GalaxyMatchesGoldenStats) {
 }
 
 TEST(DecodeFillField, ShuttleDegenerateIsEmpty) {
-    std::filesystem::path p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/Ships/Shuttle/Shuttle_vox.nif";
+    std::filesystem::path p = test_support::game_root() / "data/Models/Ships/Shuttle/Shuttle_vox.nif";
     if (!std::filesystem::exists(p)) GTEST_SKIP() << "BC asset absent";
     auto f = nif::load(p);
     const auto* vd = find_vox(f);

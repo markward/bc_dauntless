@@ -11,6 +11,7 @@
 #include <process.h>
 #else
 #include <unistd.h>
+#include "support/content_root.h"
 #endif
 
 namespace fs = std::filesystem;
@@ -658,9 +659,9 @@ TEST(ModelBuildFilenames, SiblingNormalAppendsAndStripsGlow) {
 
 TEST(ModelBuildNormalDiscovery, WarbirdBottomWingGetsBumpFromSiblingOnDisk) {
     // game/ is gitignored; skip cleanly when the BC install is absent.
-    const fs::path root = fs::path(OPEN_STBC_PROJECT_ROOT);
-    const fs::path nif  = root / "game/data/Models/Ships/Warbird/Warbird.nif";
-    const fs::path tex  = root / "game/data/Models/Ships/Warbird/High";
+    const fs::path game = test_support::game_root();
+    const fs::path nif  = game / "data/Models/Ships/Warbird/Warbird.nif";
+    const fs::path tex  = game / "data/Models/Ships/Warbird/High";
     const fs::path map  = tex / "WarBirdBottomWing_normal.tga";
     if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
     if (!fs::is_regular_file(map)) GTEST_SKIP() << "asset missing: " << map;
@@ -670,7 +671,7 @@ TEST(ModelBuildNormalDiscovery, WarbirdBottomWingGetsBumpFromSiblingOnDisk) {
     assets::PathResolver resolver;
     assets::detail::ModelBuildContext ctx;
     ctx.resolver = &resolver;
-    ctx.texture_search_paths = {tex, root / "game/data/Models/Ships/Warbird"};
+    ctx.texture_search_paths = {tex, game / "data/Models/Ships/Warbird"};
     ctx.texture_uploader = stub_texture;
     ctx.mesh_uploader = stub_mesh;
 
@@ -688,9 +689,9 @@ TEST(ModelBuildNormalDiscovery, WarbirdBottomWingGetsBumpFromSiblingOnDisk) {
 TEST(ModelBuildNormalDiscovery, ShipWithoutNormalSiblingsLeavesEveryBumpEmpty) {
     // The Galaxy ships no _normal maps. Every material must leave Bump at -1
     // so frame.cc writes u_normal_enabled = 0 and shading is unchanged.
-    const fs::path root = fs::path(OPEN_STBC_PROJECT_ROOT);
-    const fs::path nif  = root / "game/data/Models/Ships/Galaxy/Galaxy.nif";
-    const fs::path tex  = root / "game/data/Models/SharedTextures/FedShips/High";
+    const fs::path game = test_support::game_root();
+    const fs::path nif  = game / "data/Models/Ships/Galaxy/Galaxy.nif";
+    const fs::path tex  = game / "data/Models/SharedTextures/FedShips/High";
     if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
 
     nif::File f = nif::load(nif);

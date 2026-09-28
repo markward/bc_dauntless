@@ -8,11 +8,11 @@
 #include <nif/file.h>
 
 #include <filesystem>
+#include "support/content_root.h"
 
 TEST(VoxelDataHeader, GalaxyHeaderDecodesToConfirmedValues) {
     std::filesystem::path p =
-        std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
-        / "game/data/Models/Ships/Galaxy/Galaxy_vox.nif";
+        test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy_vox.nif";
     if (!std::filesystem::exists(p))
         GTEST_SKIP() << "BC asset absent: " << p;
 

@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <assets/animation.h>
 #include <filesystem>
+#include "support/content_root.h"
+#include <string>
 
 // SP2: assemble_officer requires a GL context (it uploads), so test the
 // underlying contract at the asset layer: the placement clip loads non-empty
@@ -8,7 +10,8 @@
 // composed.animations = load_animation_clips(placement).
 TEST(OfficerClipLoad, PlacementClipLoadsNonEmpty) {
     namespace fs = std::filesystem;
-    const char* clip = "game/data/animations/db_stand_t_l.nif";
+    const std::string clip =
+        (test_support::game_root() / "data/animations/db_stand_t_l.nif").string();
     if (!fs::exists(clip)) GTEST_SKIP() << "asset missing: " << clip;
     auto clips = assets::load_animation_clips(clip);
     ASSERT_FALSE(clips.empty());

@@ -6,6 +6,7 @@
 #include <nif/file.h>
 #include <nif/block.h>
 #include <filesystem>
+#include "support/content_root.h"
 
 TEST(QEF, ThreeOrthogonalPlanesGiveCorner) {
     // three axis planes through the point (2,3,4)
@@ -47,7 +48,7 @@ TEST(DualContour, SyntheticBoxProducesSurface) {
 }
 
 TEST(DualContour, GalaxyExtractsRecognizableHull) {
-    auto path = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)/"game/data/Models/Ships/Galaxy/Galaxy_vox.nif";
+    auto path = test_support::game_root() / "data/Models/Ships/Galaxy/Galaxy_vox.nif";
     if (!std::filesystem::exists(path)) GTEST_SKIP() << "asset absent";
     auto f = nif::load(path);
     const nif::NiBinaryVoxelData* vd=nullptr;
