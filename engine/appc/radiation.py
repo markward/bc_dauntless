@@ -41,6 +41,26 @@ def _fire(ship) -> bool:
     return dispatch_passes(evt)
 
 
+def _shields_absorbing(ship):
+    """The generator that takes this chunk, or None when the hull does.
+
+    The hull is exposed when the shields are off, the generator is offline
+    (disabled, destroyed, or in a radiation outage -- subsystems._is_offline),
+    or every face is at 0. Radiation-local on purpose: nebula_runtime's
+    _shields_up keeps BC's measured creation-hit rule (IsOn only)."""
+    from engine.appc.nebula_runtime import _shields_up
+    from engine.appc.subsystems import _is_offline
+    shields = _shields_up(ship)
+    if shields is None:
+        return None
+    if implements(shields, "IsDisabled") and _is_offline(shields):
+        return None
+    for face in range(shields.NUM_SHIELDS):
+        if shields.GetCurrentShields(face) > 0.0:
+            return shields
+    return None
+
+
 class RadiationDriver:
     def __init__(self, sample_for, rng=None):
         self._sample_for = sample_for
@@ -123,15 +143,15 @@ class RadiationDriver:
             self.apply_chunk(ship, r, m)
 
     def apply_chunk(self, ship, radiation: float, mult: float) -> None:
-        """1/16 s of drain: shields per face while up, else the hull.
+        """1/16 s of drain: shields per face while they can absorb it, else
+        the hull (see _shields_absorbing).
         An immune ship (SetInvincible / SetHurtable -- E3M2's Derelict
         Warbird) takes neither drain nor an outage roll, matching
         combat.apply_hit's IsImmuneToDamage gate."""
         if implements(ship, "IsImmuneToDamage") and bool(ship.IsImmuneToDamage()):
             return
-        from engine.appc.nebula_runtime import _shields_up
         dt = 1.0 / EVENT_HZ
-        shields = _shields_up(ship)
+        shields = _shields_absorbing(ship)
         if shields is not None:
             per_face = SHIELD_PER_S * radiation * mult * dt
             for face in range(shields.NUM_SHIELDS):

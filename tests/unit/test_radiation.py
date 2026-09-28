@@ -308,3 +308,40 @@ def test_a_ship_reporting_not_immune_still_drains():
     d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_AlwaysRoll())
     d.apply_chunk(ship, 1.0, 1.0)
     assert ship.GetShieldSubsystem().GetCurrentShields(0) < 500.0
+
+
+# ── Final review #3: the hull is exposed when the generator cannot shield ──────
+
+def _real_shields(face_value):
+    gen = ShieldSubsystem("Shields")
+    for f in range(gen.NUM_SHIELDS):
+        gen.SetMaxShields(f, 500.0)
+        gen.SetCurrentShields(f, face_value)
+    return gen
+
+
+def test_hull_drains_while_the_shield_generator_is_in_radiation_outage():
+    ship = _Ship()
+    ship._shield = _real_shields(500.0)
+    ship._shield._radiation_out = True
+    assert ship._shield.IsOn()                       # on, but offline
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_random.Random(3))
+    d.apply_chunk(ship, 1.0, 1.0)
+    assert ship.GetHull().GetCondition() == pytest.approx(1000.0 - 150.0 / 16.0)
+    assert ship._shield.GetCurrentShields(0) == 500.0
+
+
+def test_hull_drains_when_every_face_is_depleted_though_shields_are_on():
+    ship = _Ship(shield=0.0, shields_on=True)
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_random.Random(3))
+    d.apply_chunk(ship, 1.0, 1.0)
+    assert ship.GetHull().GetCondition() == pytest.approx(1000.0 - 150.0 / 16.0)
+
+
+def test_shields_drain_when_on_online_and_charged():
+    ship = _Ship()
+    ship._shield = _real_shields(500.0)
+    d = RadiationDriver(lambda s: Sample(radiation=1.0), rng=_random.Random(3))
+    d.apply_chunk(ship, 1.0, 1.0)
+    assert ship._shield.GetCurrentShields(0) == pytest.approx(500.0 - 20.0 / 16.0)
+    assert ship.GetHull().GetCondition() == 1000.0
