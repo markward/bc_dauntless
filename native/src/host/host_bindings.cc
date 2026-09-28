@@ -86,6 +86,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
+#include <assets/mesh_fix.h>
 #include <assets/model_compose.h>
 #include <assets/texture.h>
 #include <nif/file.h>
@@ -1719,6 +1720,112 @@ py::object parse_set_camera_impl(const std::string& nif_abs_path) {
     return d;
 }
 
+namespace {
+
+/// Block-array index whose `file.block_ids` entry equals `link_id`, or
+/// npos. Mirrors mesh_fix.cc's local index_of (not exported); nif_shapes
+/// needs its own copy to resolve property/image links.
+std::size_t nif_shapes_index_of(const nif::File& file, std::uint32_t link_id) {
+    for (std::size_t i = 0; i < file.block_ids.size(); ++i)
+        if (file.block_ids[i] == link_id) return i;
+    return std::string::npos;
+}
+
+/// The part of `path` after the last '/' or '\\'.
+std::string nif_shapes_basename(const std::string& path) {
+    auto pos = path.find_last_of("/\\");
+    return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+/// Append the basename of the NiImage `img_link` resolves to, if any, to
+/// `out` -- only for external (on-disk) images; embedded images have no
+/// filename to report.
+void nif_shapes_collect_image(const nif::File& file, std::uint32_t img_link,
+                               std::vector<std::string>* out) {
+    std::size_t idx = nif_shapes_index_of(file, img_link);
+    if (idx == std::string::npos || idx >= file.blocks.size()) return;
+    const auto* img = std::get_if<nif::NiImage>(&file.blocks[idx]);
+    if (!img || img->use_external == 0 || img->file_name.empty()) return;
+    out->push_back(nif_shapes_basename(img->file_name));
+}
+
+}  // namespace
+
+// Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
+// one dict per NiTriShape, in block order, with world-space vertices/normals,
+// UV set 0, triangles, texture basenames and the hidden flag. Parse-only, no
+// GL context, and applies no mesh fix -- callers see the raw stock geometry.
+py::object nif_shapes_impl(const std::string& nif_abs_path) {
+    std::filesystem::path path = nif_abs_path;
+    if (!std::filesystem::exists(path)) return py::none();
+    nif::File f;
+    try {
+        f = nif::load(path);
+    } catch (const std::exception&) {
+        return py::none();
+    }
+
+    py::list out;
+    for (std::size_t i = 0; i < f.blocks.size(); ++i) {
+        const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
+        if (!shape) continue;
+
+        py::dict d;
+        d["block"] = static_cast<int>(i);
+        d["name"] = shape->av.obj.name;
+
+        std::vector<std::string> textures;
+        for (std::uint32_t link : shape->av.property_links) {
+            std::size_t idx = nif_shapes_index_of(f, link);
+            if (idx == std::string::npos || idx >= f.blocks.size()) continue;
+            const auto& b = f.blocks[idx];
+            if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
+                nif_shapes_collect_image(f, tp->image_link, &textures);
+            } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
+                for (const auto& elem : mtp->elements) {
+                    if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &textures);
+                }
+            }
+        }
+        d["textures"] = textures;
+
+        const nif::NiTriShapeData* data = nullptr;
+        std::size_t data_idx = nif_shapes_index_of(f, shape->data_link);
+        if (data_idx != std::string::npos && data_idx < f.blocks.size())
+            data = std::get_if<nif::NiTriShapeData>(&f.blocks[data_idx]);
+
+        py::list vertices, normals, uvs, triangles;
+        if (data) {
+            const glm::mat4 world = assets::nif_block_world(f, i);
+            const glm::mat3 normal_mat = glm::mat3(world);
+            for (const auto& v : data->vertices) {
+                const glm::vec4 wp = world * glm::vec4(v.x, v.y, v.z, 1.0f);
+                vertices.append(py::make_tuple(wp.x, wp.y, wp.z));
+            }
+            for (const auto& n : data->normals) {
+                const glm::vec3 wn = glm::normalize(normal_mat * glm::vec3(n.x, n.y, n.z));
+                normals.append(py::make_tuple(wn.x, wn.y, wn.z));
+            }
+            if (!data->uv_sets.empty()) {
+                for (const auto& uv : data->uv_sets[0]) {
+                    uvs.append(py::make_tuple(uv.u, uv.v));
+                }
+            }
+            for (const auto& t : data->triangles) {
+                triangles.append(py::make_tuple(t[0], t[1], t[2]));
+            }
+        }
+        d["vertices"] = vertices;
+        d["normals"] = normals;
+        d["uvs"] = uvs;
+        d["triangles"] = triangles;
+        d["hidden"] = (shape->av.flags & 0x0001u) != 0;
+
+        out.append(d);
+    }
+    return out;
+}
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -1824,6 +1931,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
+    m.def("nif_shapes", &nif_shapes_impl,
+          py::arg("abs_path"),
+          "Every NiTriShape in a NIF, in block order: block index, name, "
+          "texture basenames, world-space vertices/normals, UV set 0, "
+          "triangles, hidden flag. None if the file is missing or fails to "
+          "parse. Parse-only, no GL context; applies no mesh fix. Feeds "
+          "tools/gen_mesh_fixes.py.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def(py::init<>())
