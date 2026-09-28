@@ -624,6 +624,7 @@ class TGEventHandlerObject(TGObject):
         names = self._handlers.get(event.GetEventType(), [])
         if not names:
             return
+        event._chain_passed = False
         frame = [list(reversed(names)), 0, event]   # [chain, next_index, event]
         self._dispatch_stack.append(frame)
         try:
@@ -634,6 +635,7 @@ class TGEventHandlerObject(TGObject):
     def _invoke_next_handler(self, frame) -> None:
         chain, index, event = frame[0], frame[1], frame[2]
         if index >= len(chain):
+            event._chain_passed = True
             return
         frame[1] = index + 1
         fn = _resolve_handler(chain[index])
@@ -832,3 +834,14 @@ class TGEventManager(TGObject):
             file=sys.stderr,
         )
         traceback.print_exc(file=sys.stderr)
+
+
+def dispatch_passes(event) -> bool:
+    """Post `event` and report whether its destination's instance-handler
+    chain ran to the end. A handler that returns without CallNextHandler
+    stops the chain -- BC's way of cancelling an event's default effect
+    (E3M2 CoreDamage; MissionLib.IgnoreEvent). No handlers = passes."""
+    import App
+    event._chain_passed = True
+    App.g_kEventManager.AddEvent(event)
+    return event._chain_passed is True
