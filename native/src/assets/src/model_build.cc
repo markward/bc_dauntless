@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -555,12 +556,50 @@ void apply_texture_replacements(
     }
 }
 
+// NIF TexClampMode encoding (niflib): 0 = CLAMP_S_CLAMP_T. TextureStage's
+// clamp_mode field always holds this raw NIF value (material_build.cc
+// copies el.clamp_mode verbatim from NiTexturingProperty) -- never a GL
+// enum. A decal mask always wants clamp-to-edge on both axes, so it's
+// always CLAMP_S_CLAMP_T; the renderer (Task 5) is what turns this into an
+// actual GL_CLAMP_TO_EDGE at bind time, mirroring how every OTHER stage's
+// clamp_mode is interpreted at draw time, not at build time.
+constexpr std::uint32_t kNifClampST = 0;
+
+/// True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis:
+/// `u_axis x v_axis` near zero (parallel/zero axes), `normal` near zero
+/// (glm::normalize(0) is NaN), or `normal` lying in the span(u_axis, v_axis)
+/// plane (det([u_axis v_axis n_hat]) near zero -- decal_body_to_mask's
+/// glm::inverse would return inf/NaN). The zero-normal check must run
+/// BEFORE normalizing, and the cross-product check must run before dividing
+/// by its length, so this checks in that order.
+bool decal_projector_is_degenerate(
+    const glm::vec3& u_axis, const glm::vec3& v_axis, const glm::vec3& normal)
+{
+    const glm::vec3 cross = glm::cross(u_axis, v_axis);
+    const float cross_len = glm::length(cross);
+    if (cross_len < 1e-9f) return true;
+
+    const float normal_len = glm::length(normal);
+    if (normal_len < 1e-9f) return true;
+
+    const glm::vec3 n_hat = normal / normal_len;
+    const float det = glm::dot(cross, n_hat);  // == det([u_axis v_axis n_hat])
+    return std::fabs(det) < 1e-9f * cross_len;
+}
+
 /// Attach hull-name decals (see DecalRequest, model.h) to the material(s) of
 /// their named shape. No-op when ctx.decals is empty (the overwhelming
 /// majority of models). Nothing here can throw out of a ship load: a bad
-/// shape name, a degenerate projector, or a mask that fails to decode each
-/// skip just that decal, warning once (per the model + decal identity) so a
-/// mission that reloads a ship's model every frame never spams stderr.
+/// shape name, a degenerate projector, a mask that fails to decode, or a
+/// material that already carries a decal each skip just that request,
+/// warning once (per the model + decal identity) so a mission that reloads
+/// a ship's model every frame never spams stderr.
+///
+/// RULING: one decal per shape material. If ANY material a request targets
+/// already has a decal (either from an earlier request in this same call,
+/// or -- defensively, since nothing populates it today -- a NIF-authored
+/// Decal0 stage) the WHOLE request is skipped; the first request to claim a
+/// material wins.
 void apply_decals(
     Model& model,
     const std::unordered_map<std::string, std::vector<int>>& materials_for_shape,
@@ -573,10 +612,20 @@ void apply_decals(
 
     static std::unordered_set<std::string> warned;
 
+    // Snapshot each candidate material's Decal0 state BEFORE any request is
+    // applied, so "already claimed" means claimed by an earlier element of
+    // ctx.decals OR authored by the NIF itself -- never by this same
+    // request (which hasn't run yet).
+    std::vector<bool> already_claimed(model.materials.size(), false);
+    for (std::size_t i = 0; i < model.materials.size(); ++i) {
+        const auto& stage = model.materials[i].stages[
+            static_cast<std::size_t>(Material::StageSlot::Decal0)];
+        already_claimed[i] =
+            model.materials[i].decal.enabled || stage.texture_index >= 0;
+    }
+
     for (const auto& req : ctx.decals) {
         auto shape_it = materials_for_shape.find(req.shape);
-        const glm::vec3 cross = glm::cross(req.u_axis, req.v_axis);
-        const bool degenerate = glm::length(cross) < 1e-9f;
 
         if (shape_it == materials_for_shape.end() || shape_it->second.empty()) {
             const std::string key =
@@ -588,13 +637,33 @@ void apply_decals(
             }
             continue;
         }
-        if (degenerate) {
+        if (decal_projector_is_degenerate(req.u_axis, req.v_axis, req.normal)) {
             const std::string key =
                 model.source.string() + "|decal-degenerate|" + req.shape;
             if (warned.insert(key).second) {
                 std::fprintf(stderr,
                     "apply_decals: degenerate projector for shape '%s' in %s "
-                    "(u_axis x v_axis ~ 0); skipping decal\n",
+                    "(u_axis, v_axis and normal don't span a basis); "
+                    "skipping decal\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+
+        bool conflict = false;
+        for (int mat_idx : shape_it->second) {
+            if (already_claimed[static_cast<std::size_t>(mat_idx)]) {
+                conflict = true;
+                break;
+            }
+        }
+        if (conflict) {
+            const std::string key =
+                model.source.string() + "|decal-conflict|" + req.shape;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_decals: shape '%s' in %s already has a decal; "
+                    "skipping (first decal wins)\n",
                     req.shape.c_str(), model.source.string().c_str());
             }
             continue;
@@ -633,8 +702,9 @@ void apply_decals(
             auto& stage = mat.stages[
                 static_cast<std::size_t>(Material::StageSlot::Decal0)];
             stage.texture_index = tex_index;
-            stage.clamp_mode = GL_CLAMP_TO_EDGE;
+            stage.clamp_mode = kNifClampST;
             mat.decal = proj;
+            already_claimed[static_cast<std::size_t>(mat_idx)] = true;
         }
     }
 }

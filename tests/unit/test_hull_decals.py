@@ -180,6 +180,44 @@ def test_decals_for_skips_degenerate_projector(asset_root, capsys):
     assert len(out_lines) == 1
 
 
+def test_decals_for_skips_zero_normal(asset_root, capsys):
+    # u_axis x v_axis is perfectly healthy; normal alone is degenerate. A
+    # naive check that only looks at u_axis x v_axis would miss this and
+    # divide-by-zero normalizing `normal` downstream.
+    placement = _valid_placement()
+    placement["normal"] = [0.0, 0.0, 0.0]
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": placement},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "top")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert specs == []
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
+def test_decals_for_skips_inplane_normal(asset_root, capsys):
+    # normal lies in span(u_axis, v_axis) (u_axis=(1,0,0), v_axis=(0,1,0),
+    # normal=(1,1,0) has z=0) -- det([u v n_hat]) == 0, degenerate even
+    # though u_axis x v_axis and normal are each individually non-zero.
+    placement = _valid_placement()
+    placement["normal"] = [1.0, 1.0, 0.0]
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": placement},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "top")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert specs == []
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
 # ── _ship_load_key ───────────────────────────────────────────────────────
 
 def test_ship_load_key_differs_by_decals():

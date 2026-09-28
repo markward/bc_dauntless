@@ -86,6 +86,42 @@ def _cross(a: Tuple[float, float, float], b: Tuple[float, float, float]
             a[0] * b[1] - a[1] * b[0])
 
 
+def _dot(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _length(a: Tuple[float, float, float]) -> float:
+    return math.sqrt(_dot(a, a))
+
+
+def _projector_is_degenerate(
+        u_axis: Tuple[float, float, float],
+        v_axis: Tuple[float, float, float],
+        normal: Tuple[float, float, float]) -> bool:
+    """True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis:
+    `u_axis x v_axis` near zero (parallel/zero axes), `normal` near zero
+    (normalizing it would divide by zero), or `normal` lying in the
+    span(u_axis, v_axis) plane (det([u_axis v_axis normal_hat]) near zero --
+    the native decal_body_to_mask's matrix inverse would return inf/NaN).
+    Mirrors model_build.cc's decal_projector_is_degenerate exactly, so a
+    hand-edited decals.json that would build a bad projector natively is
+    already rejected here.
+    """
+    cross = _cross(u_axis, v_axis)
+    cross_len = _length(cross)
+    if cross_len <= _MIN_PROJECTOR_AREA:
+        return True
+
+    normal_len = _length(normal)
+    if normal_len <= _MIN_PROJECTOR_AREA:
+        return True
+
+    normal_hat = (normal[0] / normal_len, normal[1] / normal_len,
+                  normal[2] / normal_len)
+    det = _dot(cross, normal_hat)  # == det([u_axis v_axis normal_hat])
+    return abs(det) <= _MIN_PROJECTOR_AREA * cross_len
+
+
 def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
     """Resolve `<nif_rel_dir>/Masks/decals.json` for `registry` into decal
     specs ready for `renderer.load_model(..., decals=)`.
@@ -156,12 +192,11 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
                         "invalid shape/vector/depth")
             continue
 
-        cx, cy, cz = _cross(u_axis, v_axis)
-        if math.sqrt(cx * cx + cy * cy + cz * cz) <= _MIN_PROJECTOR_AREA:
+        if _projector_is_degenerate(u_axis, v_axis, normal):
             _warn_once((str(mask_path), "degenerate"),
                         f"{json_path}: placement {placement!r} has a "
                         "degenerate projector (u_axis/v_axis parallel or "
-                        "zero)")
+                        "zero, or normal doesn't leave their plane)")
             continue
 
         if not mask_path.is_file():

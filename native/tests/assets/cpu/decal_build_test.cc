@@ -66,13 +66,6 @@ std::vector<std::uint8_t> png_2x1_rgba() {
     };
 }
 
-std::string file_bytes(const fs::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
 class DecalBuildTest : public ::testing::Test {
 protected:
     fs::path tmp_dir;
@@ -234,9 +227,84 @@ TEST_F(DecalBuildTest, AttachesToNamedShapeOnly) {
     // Shape "a" was declared first, so it's materials[0]; "b" is materials[1].
     EXPECT_GE(decal_stage(model, 0).texture_index, 0);
     EXPECT_TRUE(model.materials[0].decal.enabled);
+    // clamp_mode holds the NIF TexClampMode encoding (0 == CLAMP_S_CLAMP_T),
+    // NOT a GL enum -- GL_CLAMP_TO_EDGE (0x812F) would fail this. Task 5
+    // applies the actual GL wrap mode at bind time.
+    EXPECT_EQ(decal_stage(model, 0).clamp_mode, 0u);
 
     EXPECT_EQ(decal_stage(model, 1).texture_index, -1);
     EXPECT_FALSE(model.materials[1].decal.enabled);
+}
+
+TEST_F(DecalBuildTest, ZeroNormalIsSkippedWithoutThrowing) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_png("mask.png");
+
+    auto ctx = make_ctx();
+    assets::DecalRequest req;
+    req.shape = "a";
+    req.origin = {0.0f, 0.0f, 0.0f};
+    req.u_axis = {1.0f, 0.0f, 0.0f};
+    req.v_axis = {0.0f, 1.0f, 0.0f};
+    req.normal = {0.0f, 0.0f, 0.0f};  // zero -> normalize() would be NaN
+    req.mask = mask;
+    ctx.decals = {req};
+
+    assets::Model model;
+    ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
+    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+}
+
+TEST_F(DecalBuildTest, InPlaneNormalIsSkippedWithoutThrowing) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_png("mask.png");
+
+    auto ctx = make_ctx();
+    assets::DecalRequest req;
+    req.shape = "a";
+    req.origin = {0.0f, 0.0f, 0.0f};
+    req.u_axis = {1.0f, 0.0f, 0.0f};
+    req.v_axis = {0.0f, 1.0f, 0.0f};
+    // Lies in span(u_axis, v_axis) -> det([u v n]) == 0 -> inverse() would
+    // be inf/NaN even though u_axis x v_axis is perfectly healthy.
+    req.normal = {1.0f, 1.0f, 0.0f};
+    req.mask = mask;
+    ctx.decals = {req};
+
+    assets::Model model;
+    ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
+    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+}
+
+// Ruling: one decal per shape material, first request wins. A second
+// request targeting an already-decaled material is skipped (with a
+// warning), not silently overwriting the first.
+TEST_F(DecalBuildTest, SecondDecalOnSameShapeIsSkippedFirstWins) {
+    auto f = file_with_two_named_shapes();
+    auto mask1 = write_png("mask1.png");
+    auto mask2 = write_png("mask2.png");
+
+    auto ctx = make_ctx();
+    assets::DecalRequest req1;
+    req1.shape = "a";
+    req1.origin = {0.0f, 0.0f, 0.0f};
+    req1.u_axis = {1.0f, 0.0f, 0.0f};
+    req1.v_axis = {0.0f, 1.0f, 0.0f};
+    req1.normal = {0.0f, 0.0f, 1.0f};
+    req1.mask = mask1;
+
+    assets::DecalRequest req2 = req1;
+    req2.mask = mask2;
+
+    ctx.decals = {req1, req2};
+
+    auto model = assets::detail::build_model(f, ctx);
+    ASSERT_EQ(model.materials.size(), 2u);
+    EXPECT_TRUE(model.materials[0].decal.enabled);
+    EXPECT_GE(decal_stage(model, 0).texture_index, 0);
+    // Only the first decal's texture was ever uploaded -- a second upload
+    // (from the wrongly-applied second request) would make this 2.
+    EXPECT_EQ(model.textures.size(), 1u);
 }
 
 TEST_F(DecalBuildTest, UnknownShapeIsSkippedWithoutThrowing) {
@@ -365,26 +433,21 @@ std::size_t find_shape_block(const nif::File& f, const std::string& name) {
     return f.blocks.size();
 }
 
-// Block-array index of the NiNode whose (resolved) child_links contains
-// `child_block_idx`, or f.blocks.size() if none does. Mirrors
-// model_build.cc's find_parent_node_index / mesh_fix.cc's parent_of.
-std::size_t find_parent_node_block(
-    const nif::File& f, std::size_t child_block_idx,
-    const assets::detail::LinkResolver& resolver) {
-    for (std::size_t i = 0; i < f.blocks.size(); ++i) {
-        const auto* node = std::get_if<nif::NiNode>(&f.blocks[i]);
-        if (!node) continue;
-        for (auto link : node->child_links) {
-            if (resolver.resolve(link) == child_block_idx) return i;
-        }
-    }
-    return f.blocks.size();
-}
-
 }  // namespace
 
+// Proves decals.json's authored frame (nif_block_world on the shape's own
+// NIF block, applied to a RAW NiTriShapeData vertex) agrees with the
+// renderer's actual draw-time frame for that same vertex: mesh_build.cc
+// bakes the NiTriShape's own `av` transform into the CPU vertex
+// (mesh_build.cc:56-65), and frame.cc then multiplies by the composed
+// Model::nodes chain UP TO the mesh's node (frame.cc:680-689) -- never the
+// shape's own block. A test that only composed the node chain (no real
+// vertex) would pass vacuously whenever the shape's own `av` happens to be
+// identity; going through real vertices catches a baked-transform bug that
+// vacuous test cannot.
 TEST(DecalFrame, NifBlockWorldMatchesModelNodeChain) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    if (!fs::exists(zhukov_top_mask())) GTEST_SKIP() << "Zhukov/top.png not installed";
 
     nif::File f = nif::load(ambassador_nif_path());
     const std::string kShapeName = "amb saucer:0";
@@ -392,66 +455,84 @@ TEST(DecalFrame, NifBlockWorldMatchesModelNodeChain) {
     const std::size_t shape_block = find_shape_block(f, kShapeName);
     ASSERT_LT(shape_block, f.blocks.size()) << "shape not found in Ambassador.nif";
 
-    assets::detail::LinkResolver resolver(f);
-    const std::size_t node_block =
-        find_parent_node_block(f, shape_block, resolver);
-    ASSERT_LT(node_block, f.blocks.size()) << "shape has no parent NiNode";
-    const std::string node_name =
-        std::get<nif::NiNode>(f.blocks[node_block]).av.obj.name;
+    // Raw (untransformed) NiTriShapeData vertices for that same shape --
+    // build_mesh_cpu writes mesh.vertices[i] from data.vertices[i] with no
+    // reindexing, so index i means the same vertex on both sides.
+    const auto& shape_var = std::get<nif::NiTriShape>(f.blocks[shape_block]);
+    assets::detail::LinkResolver link_resolver(f);
+    const auto data_idx = link_resolver.resolve(shape_var.data_link);
+    ASSERT_NE(data_idx, assets::detail::LinkResolver::kInvalidIndex);
+    ASSERT_LT(data_idx, f.blocks.size());
+    const auto* data = std::get_if<nif::NiTriShapeData>(&f.blocks[data_idx]);
+    ASSERT_NE(data, nullptr);
+    ASSERT_TRUE(data->has_vertices);
+    ASSERT_FALSE(data->vertices.empty());
 
-    // Build the model the normal way (no decals) and find the Node whose
-    // name matches the shape's parent NiNode -- the frame decals.json is
-    // authored in reaches the renderer only through this Node's local
-    // transform chain (Model::nodes), never the shape's own block index.
+    // Build WITH keep_cpu_data (to read the vertices back) and a decal
+    // targeting this shape (so the right Mesh can be found unambiguously
+    // via Material::decal.enabled, rather than re-deriving build_model's
+    // shape-selection/skip logic here).
     assets::PathResolver path_resolver;
     assets::detail::ModelBuildContext ctx;
     ctx.resolver = &path_resolver;
     ctx.texture_search_paths = {ambassador_high_path()};
     ctx.texture_uploader = stub_texture;
     ctx.mesh_uploader = stub_mesh;
+    ctx.keep_cpu_data = true;
+    ctx.decals = {top_decal_request(zhukov_top_mask())};
     auto model = assets::detail::build_model(f, ctx);
 
-    int model_node_index = -1;
-    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
-        if (model.nodes[i].name == node_name) {
-            model_node_index = static_cast<int>(i);
+    int decal_material = -1;
+    for (std::size_t i = 0; i < model.materials.size(); ++i) {
+        if (model.materials[i].decal.enabled) {
+            decal_material = static_cast<int>(i);
             break;
         }
     }
-    ASSERT_GE(model_node_index, 0) << "no Model::nodes entry named " << node_name;
+    ASSERT_GE(decal_material, 0) << "decal was not attached to any material";
 
-    // Compose model.nodes local transforms root -> model_node_index, exactly
-    // as frame.cc's world_per_node walk does (minus the instance `world`
-    // factor, which is the whole point -- ship-body frame has it removed).
-    glm::mat4 composed(1.0f);
+    const assets::Mesh* mesh = nullptr;
+    for (const auto& m : model.meshes) {
+        if (m.material_index() == decal_material) { mesh = &m; break; }
+    }
+    ASSERT_NE(mesh, nullptr);
+    ASSERT_TRUE(mesh->cpu_data().has_value());
+    const auto& cpu = *mesh->cpu_data();
+    ASSERT_EQ(cpu.vertices.size(), data->vertices.size());
+
+    // Compose model.nodes local transforms root -> mesh's node, exactly as
+    // frame.cc:680-689's world_per_node walk does (minus the instance
+    // `world` factor -- ship-body frame has it removed by construction).
+    glm::mat4 chain(1.0f);
     {
-        std::vector<int> chain;
-        for (int i = model_node_index; i >= 0; i = model.nodes[i].parent_index)
-            chain.push_back(i);
-        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
-            composed = composed * model.nodes[*it].local_transform;
+        std::vector<int> path;
+        for (int i = mesh->node_index(); i >= 0; i = model.nodes[i].parent_index)
+            path.push_back(i);
+        for (auto it = path.rbegin(); it != path.rend(); ++it)
+            chain = chain * model.nodes[*it].local_transform;
     }
 
-    const glm::mat4 expected = assets::nif_block_world(f, shape_block);
+    const glm::mat4 expected_chain = assets::nif_block_world(f, shape_block);
 
+    // Sample several vertices spread across the shape.
     float max_diff = 0.0f;
-    for (int c = 0; c < 4; ++c)
-        for (int r = 0; r < 4; ++r)
-            max_diff = std::max(max_diff, std::abs(composed[c][r] - expected[c][r]));
+    std::size_t sampled = 0;
+    const std::size_t n = cpu.vertices.size();
+    const std::size_t stride = std::max<std::size_t>(1, n / 8);
+    for (std::size_t i = 0; i < n; i += stride) {
+        const glm::vec3 actual =
+            glm::vec3(chain * glm::vec4(cpu.vertices[i].position, 1.0f));
+        const auto& raw = data->vertices[i];
+        const glm::vec3 expected = glm::vec3(
+            expected_chain * glm::vec4(raw.x, raw.y, raw.z, 1.0f));
+        max_diff = std::max(max_diff, glm::length(actual - expected));
+        ++sampled;
+    }
 
     // Recorded for the task report regardless of pass/fail.
-    std::fprintf(stderr, "[DecalFrame] max component difference = %g\n",
-                 static_cast<double>(max_diff));
+    std::fprintf(stderr,
+        "[DecalFrame] max vertex difference = %g (sampled %zu of %zu vertices)\n",
+        static_cast<double>(max_diff), sampled, n);
 
-    EXPECT_LT(max_diff, 1e-4f)
-        << "composed (node chain only):\n"
-        << composed[0][0] << " " << composed[1][0] << " " << composed[2][0] << " " << composed[3][0] << "\n"
-        << composed[0][1] << " " << composed[1][1] << " " << composed[2][1] << " " << composed[3][1] << "\n"
-        << composed[0][2] << " " << composed[1][2] << " " << composed[2][2] << " " << composed[3][2] << "\n"
-        << composed[0][3] << " " << composed[1][3] << " " << composed[2][3] << " " << composed[3][3] << "\n"
-        << "expected (nif_block_world of shape block):\n"
-        << expected[0][0] << " " << expected[1][0] << " " << expected[2][0] << " " << expected[3][0] << "\n"
-        << expected[0][1] << " " << expected[1][1] << " " << expected[2][1] << " " << expected[3][1] << "\n"
-        << expected[0][2] << " " << expected[1][2] << " " << expected[2][2] << " " << expected[3][2] << "\n"
-        << expected[0][3] << " " << expected[1][3] << " " << expected[2][3] << " " << expected[3][3] << "\n";
+    EXPECT_LT(max_diff, 1e-3f);
 }
