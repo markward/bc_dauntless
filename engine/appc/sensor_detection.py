@@ -217,8 +217,8 @@ def effective_sensor_range(ship) -> float:
     return base * sensors.GetConditionPercentage() * sensors.GetNormalPowerPercentage()
 
 
-def concealment_at(ship) -> float:
-    """Max nebula density [0, 1] at *ship*'s position across the ship's set.
+def _local_concealment(ship) -> float:
+    """Max local MetaNebula density [0, 1] at *ship*'s position across the ship's set.
 
     Returns 0.0 if the ship is in no set or no nebulae are present. Sampled
     on demand using the current game time as drift_t so the CPU field matches
@@ -251,6 +251,19 @@ def concealment_at(ship) -> float:
         if d > best:
             best = d
     return best
+
+
+def concealment_at(ship) -> float:
+    """Concealment at *ship*: the larger of the local MetaNebula fbm density
+    and the radial profile's `sensors` column scaled by its measured full
+    concealment (docs/superpowers/specs/2026-09-23-radial-system-profile-design.md)."""
+    local = _local_concealment(ship)
+    from engine.systems import profile as _profile
+    found = _profile.locate(ship)
+    if found is None or found[0] is None:
+        return local
+    prof, r = found
+    return max(local, _profile.evaluate(prof, r).sensors * prof.full_concealment)
 
 
 def is_hidden_by_cloak(target) -> bool:
