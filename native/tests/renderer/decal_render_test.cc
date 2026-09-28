@@ -1,8 +1,9 @@
 // native/tests/renderer/decal_render_test.cc
 //
 // Hull-name decals, draw side (spec 2026-09-28-hull-name-decals-design.md
-// §2 and §4 step 4-5): the opaque pass binds a material's Decal0 mask on
-// texture unit 8 and opaque.frag replaces the albedo under it. Rendered
+// §2; per-model list: 2026-09-28-spv-decal-editing-design.md §2.4): the
+// opaque pass binds up to four Model::decals masks on texture units 8..11 and
+// opaque.frag composites them over the albedo in list order. Rendered
 // through the REAL submit path on the real Ambassador, because shader
 // errors only surface at runtime.
 #include <gtest/gtest.h>
@@ -130,9 +131,9 @@ protected:
         p = std::make_unique<renderer::Pipeline>();
         assets::AssetCache::Config cfg;
         cfg.keep_cpu_data = true;  // compute_model_aabb reads CPU vertices
-        // Decals only attach on top of a mesh the committed Ambassador
-        // fix actually patched (cache.cc's gate) -- without this, both
-        // tests below would silently draw the plain hull.
+        // The committed Ambassador mesh fix is applied (as in game) so the
+        // real-placement figures below stay comparable with the pre-list
+        // baselines. Decals no longer depend on it.
         cfg.mesh_fix_dir = [] {
             return fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
         };
@@ -182,20 +183,27 @@ protected:
     }
 
     // Render `model` from straight above (looking down -z, up = +y, so
-    // screen right = +x and screen up = +y) and read back the frame.
+    // screen right = +x and screen up = +y) -- or, with `from_below`, from
+    // straight below looking up +z -- and read back the frame. A narrow
+    // `fov_y_rad` approaches an orthographic view, so a surface facing away
+    // from the camera axis can't peek out at the silhouette.
     std::vector<std::uint8_t> render_top_down(const assets::ModelHandle& model,
-                                              const renderer::Aabb& box) {
+                                              const renderer::Aabb& box,
+                                              bool from_below = false,
+                                              float fov_y_rad = scenegraph::Camera{}.fov_y_rad) {
         scenegraph::World world;
         auto iid = world.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(model.get()));
         world.set_world_transform(iid, glm::mat4(1.0f));
 
         const float half = std::max(box.half_extents.x, box.half_extents.y);
+        const float dist = box.half_extents.z +
+                           1.2f * half / std::tan(fov_y_rad * 0.5f);
         scenegraph::Camera cam;
+        cam.fov_y_rad = fov_y_rad;
         cam.target = glm::vec3(box.center.x, box.center.y, 0.0f);
         cam.eye = glm::vec3(box.center.x, box.center.y,
-                            box.center.z + box.half_extents.z +
-                                1.2f * half / std::tan(cam.fov_y_rad * 0.5f));
+                            from_below ? box.center.z - dist : box.center.z + dist);
         cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
         cam.aspect = 1.0f;
 
@@ -213,6 +221,25 @@ protected:
         std::vector<std::uint8_t> px(static_cast<std::size_t>(kSize) * kSize * 4);
         glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         return px;
+    }
+
+    // A whole-hull (x, y) footprint projected along `normal` = +z (from
+    // the top face of the box) or -z (from the bottom face), `shape`
+    // optional ("" = every mesh).
+    assets::DecalRequest whole_hull(const renderer::Aabb& box, bool from_below,
+                                    const fs::path& mask,
+                                    const std::string& shape = "") {
+        const glm::vec3 lo = box.center - box.half_extents;
+        const glm::vec3 hi = box.center + box.half_extents;
+        assets::DecalRequest req;
+        req.shape = shape;
+        req.origin = {lo.x, lo.y, from_below ? lo.z : hi.z};
+        req.u_axis = {hi.x - lo.x, 0.0f, 0.0f};
+        req.v_axis = {0.0f, hi.y - lo.y, 0.0f};
+        req.normal = {0.0f, 0.0f, from_below ? -1.0f : 1.0f};
+        req.depth = hi.z - lo.z;
+        req.mask = mask;
+        return req;
     }
 
     renderer::Aabb plain_aabb() {
@@ -259,9 +286,7 @@ TEST_F(DecalRenderTest, SolidRedMaskCoversTheSaucer) {
     auto plain = cache->load(ambassador_nif(), ambassador_search());
     auto decal = cache->load(ambassador_nif(), ambassador_search(), {}, {req});
     ASSERT_NE(plain.get(), decal.get());
-    int decaled = 0;
-    for (const auto& m : decal->materials) decaled += m.decal.enabled ? 1 : 0;
-    ASSERT_GT(decaled, 0) << "decal was not attached to any material";
+    ASSERT_EQ(decal->decals.size(), 1u) << "decal was not attached";
 
     const Counts without = count_pixels(render_top_down(plain, box));
     const Counts with = count_pixels(render_top_down(decal, box));
@@ -330,9 +355,7 @@ TEST_F(DecalRenderTest, BlackLetteringSuppressesGlow) {
     auto plain = cache->load(ambassador_nif(), ambassador_search());
     auto decal = cache->load(ambassador_nif(), ambassador_search(), {}, {req});
     ASSERT_NE(plain.get(), decal.get());
-    int decaled = 0;
-    for (const auto& m : decal->materials) decaled += m.decal.enabled ? 1 : 0;
-    ASSERT_GT(decaled, 0) << "decal was not attached to any material";
+    ASSERT_EQ(decal->decals.size(), 1u) << "decal was not attached";
 
     const auto before = render_top_down(plain, box);
     const auto after  = render_top_down(decal, box);
@@ -377,8 +400,9 @@ TEST_F(DecalRenderTest, RedLetteringTintsGlow) {
 }
 
 // The real content: Zhukov's actual black lettering mask at its committed
-// placement. Before the fix this changed only 18 pixels against the plain
-// render; the name was invisible in-game.
+// placement. Before the glow fix this changed only 18 pixels against the
+// plain render; the name was invisible in-game. LEGACY REGRESSION for the
+// per-model list: the per-material Decal0 path measured 224 here.
 TEST_F(DecalRenderTest, RealZhukovMaskIsVisibleOverTheGlowBand) {
     // The Zhukov mask ships as a PROJECT replacement asset (engine.mods'
     // native/assets/replacements overlay, resolved in Python via
@@ -397,15 +421,85 @@ TEST_F(DecalRenderTest, RealZhukovMaskIsVisibleOverTheGlowBand) {
     auto plain = cache->load(ambassador_nif(), ambassador_search());
     auto decal = cache->load(ambassador_nif(), ambassador_search(), {}, {req});
     ASSERT_NE(plain.get(), decal.get());
-    int decaled = 0;
-    for (const auto& m : decal->materials) decaled += m.decal.enabled ? 1 : 0;
-    ASSERT_GT(decaled, 0) << "decal was not attached to any material";
+    ASSERT_EQ(decal->decals.size(), 1u) << "decal was not attached";
 
     const auto plain_px = render_top_down(plain, box);
     const auto decal_px = render_top_down(decal, box);
     const int changed = count_changed_pixels(plain_px, decal_px, 30);
-    std::fprintf(stderr, "[DecalRender] real Zhukov mask changed pixels: %d\n", changed);
+    std::fprintf(stderr, "[DecalRender] real Zhukov mask changed pixels: %d"
+                         " (per-material baseline 224)\n", changed);
 
     EXPECT_GT(changed, 150);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// Two decals on one model, both unrestricted (no shape): an opaque red one
+// projected from above (normal +z) and an opaque blue one from below
+// (normal -z) over the same (x, y) footprint. The facing test keeps each on
+// its own side: from above only red shows, from below only blue.
+TEST_F(DecalRenderTest, TwoDecalsFromOppositeSidesStayOnTheirSide) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    const std::uint8_t blue[3] = {0, 0, 255};
+
+    auto plain = cache->load(ambassador_nif(), ambassador_search());
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {whole_hull(box, /*from_below=*/false, write_mask("red.png", red, red)),
+         whole_hull(box, /*from_below=*/true, write_mask("blue.png", blue, blue))});
+    ASSERT_EQ(decal->decals.size(), 2u);
+
+    // Near-orthographic: under the default 60-degree perspective, faces whose
+    // normals tilt slightly AWAY from the camera still show at the saucer
+    // rim, and the facing test (correctly) paints them with the far-side
+    // decal -- MEASURED 28 such blue pixels from above and 24 red from below.
+    constexpr float kNarrowFov = 0.1f;
+    const Counts plain_top = count_pixels(render_top_down(plain, box, false, kNarrowFov));
+    const Counts plain_bot = count_pixels(render_top_down(plain, box, true, kNarrowFov));
+    const Counts top = count_pixels(render_top_down(decal, box, false, kNarrowFov));
+    const Counts bot = count_pixels(render_top_down(decal, box, true, kNarrowFov));
+    std::fprintf(stderr,
+        "[DecalRender] two decals: top red=%d blue=%d (plain %d/%d); "
+        "bottom red=%d blue=%d (plain %d/%d)\n",
+        top.red, top.blue, plain_top.red, plain_top.blue,
+        bot.red, bot.blue, plain_bot.red, plain_bot.blue);
+
+    EXPECT_GT(top.red, 200);
+    EXPECT_LE(top.blue, plain_top.blue + 10);
+    EXPECT_GT(bot.blue, 200);
+    EXPECT_LE(bot.red, plain_bot.red + 10);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+
+    // None of the four clamp-sampler units may outlive the pass.
+    for (int unit = 8; unit < 12; ++unit) {
+        GLint sampler = -1;
+        glActiveTexture(GL_TEXTURE0 + unit);
+        glGetIntegerv(GL_SAMPLER_BINDING, &sampler);
+        EXPECT_EQ(sampler, 0) << "unit " << unit;
+    }
+    glActiveTexture(GL_TEXTURE0);
+}
+
+// `shape` restricts a decal to that shape's meshes: the same whole-hull red
+// projection limited to the saucer paints strictly fewer pixels than the
+// unrestricted one (which also reaches the engineering hull and nacelles),
+// and still paints the saucer.
+TEST_F(DecalRenderTest, ShapeRestrictsTheDecalToThatShapesMeshes) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    const fs::path mask = write_mask("red.png", red, red);
+
+    auto all = cache->load(ambassador_nif(), ambassador_search(), {},
+                           {whole_hull(box, false, mask)});
+    auto saucer = cache->load(ambassador_nif(), ambassador_search(), {},
+                              {whole_hull(box, false, mask, "amb saucer:0")});
+    ASSERT_NE(all.get(), saucer.get());
+
+    const Counts c_all = count_pixels(render_top_down(all, box));
+    const Counts c_saucer = count_pixels(render_top_down(saucer, box));
+    std::fprintf(stderr, "[DecalRender] shape restriction: all=%d saucer-only=%d\n",
+                 c_all.red, c_saucer.red);
+
+    EXPECT_GT(c_saucer.red, 200);
+    EXPECT_LT(c_saucer.red + 200, c_all.red);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }

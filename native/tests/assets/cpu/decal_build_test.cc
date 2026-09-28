@@ -155,11 +155,25 @@ protected:
         return ctx;
     }
 
-    static const assets::Material::TextureStage& decal_stage(
-        const assets::Model& m, std::size_t material_index) {
-        return m.materials[material_index]
-            .stages[static_cast<std::size_t>(
-                assets::Material::StageSlot::Decal0)];
+    // A valid request on `shape` ("" = every mesh) using `mask`.
+    static assets::DecalRequest request(const std::string& shape,
+                                        const fs::path& mask) {
+        assets::DecalRequest req;
+        req.shape = shape;
+        req.origin = {0.0f, 0.0f, 0.0f};
+        req.u_axis = {1.0f, 0.0f, 0.0f};
+        req.v_axis = {0.0f, 1.0f, 0.0f};
+        req.normal = {0.0f, 0.0f, 1.0f};
+        req.depth = 2.0f;
+        req.mask = mask;
+        return req;
+    }
+
+    // Index of the mesh built from the shape named `name` (-1 if none).
+    static int mesh_for_shape(const assets::Model& m, const std::string& name) {
+        for (std::size_t i = 0; i < m.meshes.size(); ++i)
+            if (m.meshes[i].shape_name() == name) return static_cast<int>(i);
+        return -1;
     }
 };
 
@@ -232,29 +246,73 @@ TEST_F(DecalBuildTest, AttachesToNamedShapeOnly) {
     auto mask = write_png("mask.png");
 
     auto ctx = make_ctx();
-    assets::DecalRequest req;
-    req.shape = "a";
-    req.origin = {0.0f, 0.0f, 0.0f};
-    req.u_axis = {1.0f, 0.0f, 0.0f};
-    req.v_axis = {0.0f, 1.0f, 0.0f};
-    req.normal = {0.0f, 0.0f, 1.0f};
-    req.depth = 2.0f;
-    req.mask = mask;
-    ctx.decals = {req};
+    ctx.decals = {request("a", mask)};
 
     auto model = assets::detail::build_model(f, ctx);
-    ASSERT_EQ(model.materials.size(), 2u);
+    ASSERT_EQ(model.decals.size(), 1u);
+    const auto& d = model.decals[0];
+    ASSERT_GE(d.texture_index, 0);
+    ASSERT_LT(d.texture_index, static_cast<int>(model.textures.size()));
+    EXPECT_FLOAT_EQ(d.depth, 2.0f);
+    EXPECT_NEAR(glm::length(d.normal), 1.0f, 1e-5f);
 
-    // Shape "a" was declared first, so it's materials[0]; "b" is materials[1].
-    EXPECT_GE(decal_stage(model, 0).texture_index, 0);
-    EXPECT_TRUE(model.materials[0].decal.enabled);
-    // clamp_mode holds the NIF TexClampMode encoding (0 == CLAMP_S_CLAMP_T),
-    // NOT a GL enum -- GL_CLAMP_TO_EDGE (0x812F) would fail this. Task 5
-    // applies the actual GL wrap mode at bind time.
-    EXPECT_EQ(decal_stage(model, 0).clamp_mode, 0u);
+    const int a = mesh_for_shape(model, "a");
+    const int b = mesh_for_shape(model, "b");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    EXPECT_NE(model.meshes[a].decal_mask() & 0x1, 0);
+    EXPECT_EQ(model.meshes[b].decal_mask() & 0x1, 0);
+}
 
-    EXPECT_EQ(decal_stage(model, 1).texture_index, -1);
-    EXPECT_FALSE(model.materials[1].decal.enabled);
+// (a) Two requests: `top` restricted to shape "a", `bottom` with no shape.
+// Both attach, in request order; bit 0 is set only on "a"'s mesh, bit 1 on
+// every mesh.
+TEST_F(DecalBuildTest, ShapeIsOptionalAndSetsPerMeshBits) {
+    auto f = file_with_two_named_shapes();
+    auto top = write_png("top.png");
+    auto bottom = write_png("bottom.png");
+
+    auto ctx = make_ctx();
+    auto bottom_req = request("", bottom);
+    bottom_req.normal = {0.0f, 0.0f, -1.0f};
+    ctx.decals = {request("a", top), bottom_req};
+
+    auto model = assets::detail::build_model(f, ctx);
+    ASSERT_EQ(model.decals.size(), 2u);
+    EXPECT_NEAR(model.decals[0].normal.z, 1.0f, 1e-5f);
+    EXPECT_NEAR(model.decals[1].normal.z, -1.0f, 1e-5f);
+    EXPECT_NE(model.decals[0].texture_index, model.decals[1].texture_index);
+
+    const int a = mesh_for_shape(model, "a");
+    const int b = mesh_for_shape(model, "b");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    EXPECT_NE(model.meshes[a].decal_mask() & 0x1, 0);
+    EXPECT_EQ(model.meshes[b].decal_mask() & 0x1, 0);
+    EXPECT_NE(model.meshes[a].decal_mask() & 0x2, 0);
+    EXPECT_NE(model.meshes[b].decal_mask() & 0x2, 0);
+}
+
+// (b) More than kMaxDecals placements: the first four are kept, the rest
+// dropped with exactly one warning.
+TEST_F(DecalBuildTest, FiveRequestsKeepFourWithOneWarning) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_png("mask.png");
+
+    auto ctx = make_ctx();
+    ctx.decals.assign(5, request("", mask));
+
+    testing::internal::CaptureStderr();
+    auto model = assets::detail::build_model(f, ctx);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(assets::kMaxDecals, 4);
+    EXPECT_EQ(model.decals.size(), 4u);
+    std::size_t warnings = 0;
+    for (auto pos = err.find("more than 4 decals"); pos != std::string::npos;
+         pos = err.find("more than 4 decals", pos + 1))
+        ++warnings;
+    EXPECT_EQ(warnings, 1u) << err;
 }
 
 TEST_F(DecalBuildTest, ZeroNormalIsSkippedWithoutThrowing) {
@@ -273,7 +331,7 @@ TEST_F(DecalBuildTest, ZeroNormalIsSkippedWithoutThrowing) {
 
     assets::Model model;
     ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
-    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+    EXPECT_TRUE(model.decals.empty());
 }
 
 TEST_F(DecalBuildTest, InPlaneNormalIsSkippedWithoutThrowing) {
@@ -294,38 +352,26 @@ TEST_F(DecalBuildTest, InPlaneNormalIsSkippedWithoutThrowing) {
 
     assets::Model model;
     ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
-    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+    EXPECT_TRUE(model.decals.empty());
 }
 
-// Ruling: one decal per shape material, first request wins. A second
-// request targeting an already-decaled material is skipped (with a
-// warning), not silently overwriting the first.
-TEST_F(DecalBuildTest, SecondDecalOnSameShapeIsSkippedFirstWins) {
+// Two decals may now share a shape (the old one-decal-per-material ruling
+// went with the per-material Decal0 stage): both attach, each with its own
+// uploaded mask.
+TEST_F(DecalBuildTest, TwoDecalsOnSameShapeBothAttach) {
     auto f = file_with_two_named_shapes();
     auto mask1 = write_png("mask1.png");
     auto mask2 = write_png("mask2.png");
 
     auto ctx = make_ctx();
-    assets::DecalRequest req1;
-    req1.shape = "a";
-    req1.origin = {0.0f, 0.0f, 0.0f};
-    req1.u_axis = {1.0f, 0.0f, 0.0f};
-    req1.v_axis = {0.0f, 1.0f, 0.0f};
-    req1.normal = {0.0f, 0.0f, 1.0f};
-    req1.mask = mask1;
-
-    assets::DecalRequest req2 = req1;
-    req2.mask = mask2;
-
-    ctx.decals = {req1, req2};
+    ctx.decals = {request("a", mask1), request("a", mask2)};
 
     auto model = assets::detail::build_model(f, ctx);
-    ASSERT_EQ(model.materials.size(), 2u);
-    EXPECT_TRUE(model.materials[0].decal.enabled);
-    EXPECT_GE(decal_stage(model, 0).texture_index, 0);
-    // Only the first decal's texture was ever uploaded -- a second upload
-    // (from the wrongly-applied second request) would make this 2.
-    EXPECT_EQ(model.textures.size(), 1u);
+    ASSERT_EQ(model.decals.size(), 2u);
+    EXPECT_EQ(model.textures.size(), 2u);
+    const int a = mesh_for_shape(model, "a");
+    ASSERT_GE(a, 0);
+    EXPECT_EQ(model.meshes[a].decal_mask() & 0x3, 0x3);
 }
 
 TEST_F(DecalBuildTest, UnknownShapeIsSkippedWithoutThrowing) {
@@ -344,7 +390,7 @@ TEST_F(DecalBuildTest, UnknownShapeIsSkippedWithoutThrowing) {
 
     assets::Model model;
     ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
-    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+    EXPECT_TRUE(model.decals.empty());
 }
 
 TEST_F(DecalBuildTest, MissingMaskFileIsSkippedWithoutThrowing) {
@@ -362,7 +408,7 @@ TEST_F(DecalBuildTest, MissingMaskFileIsSkippedWithoutThrowing) {
 
     assets::Model model;
     ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
-    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+    EXPECT_TRUE(model.decals.empty());
 }
 
 TEST_F(DecalBuildTest, DegenerateProjectorIsSkippedWithoutThrowing) {
@@ -381,7 +427,7 @@ TEST_F(DecalBuildTest, DegenerateProjectorIsSkippedWithoutThrowing) {
 
     assets::Model model;
     ASSERT_NO_THROW(model = assets::detail::build_model(f, ctx));
-    for (const auto& mat : model.materials) EXPECT_FALSE(mat.decal.enabled);
+    EXPECT_TRUE(model.decals.empty());
 }
 
 // --- AssetCache: distinct registries -> distinct cache entries ---------
@@ -420,14 +466,12 @@ assets::DecalRequest top_decal_request(const fs::path& mask) {
 
 }  // namespace
 
-// --- Mesh-fix gate (Controller Ruling G item 1) -----------------------
+// --- No mesh-fix gate --------------------------------------------------
 //
-// A decal is only ever attached on top of a SUCCESSFULLY PATCHED mesh: the
-// merged saucer no longer carries BC's own "ID" patch geometry, so painting
-// a decal on top of it is the only name drawn. On an unpatched load (no
-// mesh_fix_dir configured, no fix file matched, or a fix that parsed but
-// was refused) BC's own ID-patch shape is still there and would paint its
-// own name -- attaching our decal too would draw the name twice.
+// Decals used to attach only on top of a mesh the fix had patched. That gate
+// is gone (spec 2026-09-28-spv-decal-editing-design.md §2.1): decals are an
+// independent per-class feature, attached whenever requested. Mesh fixes
+// still apply exactly as before.
 
 namespace {
 std::string decal_file_bytes(const fs::path& p) {
@@ -443,8 +487,6 @@ fs::path decal_temp_fix_dir(const char* tag) {
 }
 }  // namespace
 
-// All three DecalCache/DecalMeshFixGate tests below now configure
-// mesh_fix_dir to the committed fixes tree so decals actually attach.
 TEST(DecalCache, RegistriesAreSeparateEntries) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
     ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
@@ -466,8 +508,8 @@ TEST(DecalCache, RegistriesAreSeparateEntries) {
     EXPECT_NE(zhukov_a.get(), excalibur.get());
 }
 
-// (a) real Ambassador + the committed fixes dir + a decal -> attached.
-TEST(DecalMeshFixGate, AttachedWhenMeshFixApplies) {
+// Real Ambassador + the committed fixes dir + a decal -> attached.
+TEST(DecalNoMeshFixGate, AttachedWhenMeshFixApplies) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
     ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
 
@@ -476,15 +518,12 @@ TEST(DecalMeshFixGate, AttachedWhenMeshFixApplies) {
     assets::AssetCache cache(cfg);
     auto model = cache.load(ambassador_nif_path(), {ambassador_high_path()}, {},
                              {top_decal_request(zhukov_top_mask())});
-
-    int decaled = 0;
-    for (const auto& m : model->materials) decaled += m.decal.enabled ? 1 : 0;
-    EXPECT_GT(decaled, 0) << "decal should attach when the mesh fix applies";
+    EXPECT_EQ(model->decals.size(), 1u);
 }
 
-// (b) real Ambassador with NO mesh_fix_dir + a decal -> not attached, one
-// warning naming the nif and the reason.
-TEST(DecalMeshFixGate, NotAttachedWithoutMeshFixDirConfigured) {
+// (c) No mesh_fix_dir configured at all -> the decal STILL attaches, and no
+// "hull decals skipped" warning.
+TEST(DecalNoMeshFixGate, AttachedWithoutMeshFixDirConfigured) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
     ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
 
@@ -494,13 +533,13 @@ TEST(DecalMeshFixGate, NotAttachedWithoutMeshFixDirConfigured) {
                              {top_decal_request(zhukov_top_mask())});
     const std::string err = testing::internal::GetCapturedStderr();
 
-    for (const auto& m : model->materials) EXPECT_FALSE(m.decal.enabled);
-    EXPECT_NE(err.find("hull decals skipped for"), std::string::npos) << err;
-    EXPECT_NE(err.find("no mesh fix applied"), std::string::npos) << err;
+    EXPECT_EQ(model->decals.size(), 1u);
+    EXPECT_EQ(err.find("hull decals skipped"), std::string::npos) << err;
 }
 
-// (c) a fix that is refused -> not attached.
-TEST(DecalMeshFixGate, NotAttachedWhenMeshFixIsRefused) {
+// A fix that is refused -> the mesh loads unpatched, and the decal still
+// attaches.
+TEST(DecalNoMeshFixGate, AttachedWhenMeshFixIsRefused) {
     if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
     ASSERT_TRUE(fs::exists(zhukov_top_mask())) << zhukov_top_mask();
 
@@ -515,7 +554,7 @@ TEST(DecalMeshFixGate, NotAttachedWhenMeshFixIsRefused) {
     auto model = cache.load(ambassador_nif_path(), {ambassador_high_path()}, {},
                              {top_decal_request(zhukov_top_mask())});
 
-    for (const auto& m : model->materials) EXPECT_FALSE(m.decal.enabled);
+    EXPECT_EQ(model->decals.size(), 1u);
 }
 
 // --- Frame agreement: decals.json's frame IS the renderer's model frame ---
@@ -568,10 +607,8 @@ TEST(DecalFrame, NifBlockWorldMatchesModelNodeChain) {
     ASSERT_TRUE(data->has_vertices);
     ASSERT_FALSE(data->vertices.empty());
 
-    // Build WITH keep_cpu_data (to read the vertices back) and a decal
-    // targeting this shape (so the right Mesh can be found unambiguously
-    // via Material::decal.enabled, rather than re-deriving build_model's
-    // shape-selection/skip logic here).
+    // Build WITH keep_cpu_data (to read the vertices back) and find the
+    // mesh built from this shape by its recorded shape name.
     assets::PathResolver path_resolver;
     assets::detail::ModelBuildContext ctx;
     ctx.resolver = &path_resolver;
@@ -581,19 +618,11 @@ TEST(DecalFrame, NifBlockWorldMatchesModelNodeChain) {
     ctx.keep_cpu_data = true;
     ctx.decals = {top_decal_request(zhukov_top_mask())};
     auto model = assets::detail::build_model(f, ctx);
-
-    int decal_material = -1;
-    for (std::size_t i = 0; i < model.materials.size(); ++i) {
-        if (model.materials[i].decal.enabled) {
-            decal_material = static_cast<int>(i);
-            break;
-        }
-    }
-    ASSERT_GE(decal_material, 0) << "decal was not attached to any material";
+    ASSERT_EQ(model.decals.size(), 1u) << "decal was not attached";
 
     const assets::Mesh* mesh = nullptr;
     for (const auto& m : model.meshes) {
-        if (m.material_index() == decal_material) { mesh = &m; break; }
+        if (m.shape_name() == kShapeName) { mesh = &m; break; }
     }
     ASSERT_NE(mesh, nullptr);
     ASSERT_TRUE(mesh->cpu_data().has_value());
@@ -664,7 +693,7 @@ TEST_F(DecalBuildTest, MaskIsPremultipliedBeforeUpload) {
     ctx.decals = {req};
 
     auto model = assets::detail::build_model(f, ctx);
-    ASSERT_TRUE(model.materials[0].decal.enabled);
+    ASSERT_EQ(model.decals.size(), 1u);
     ASSERT_EQ(uploaded.size(), 1u);  // the synthetic shapes have no textures
     const auto& img = uploaded.back();
     ASSERT_EQ(img.format, assets::Image::Format::RGBA8);
@@ -700,7 +729,7 @@ TEST_F(DecalBuildTest, MaskWithoutAlphaWarnsButStillAttaches) {
     auto model = assets::detail::build_model(f, ctx);
     const std::string err = testing::internal::GetCapturedStderr();
 
-    ASSERT_TRUE(model.materials[0].decal.enabled)
+    ASSERT_EQ(model.decals.size(), 1u)
         << "a mask with no alpha is still attached (treated as opaque)";
     EXPECT_NE(err.find("no alpha channel"), std::string::npos) << err;
     EXPECT_NE(err.find(mask.string()), std::string::npos) << err;

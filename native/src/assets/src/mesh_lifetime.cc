@@ -17,6 +17,8 @@ Mesh::Mesh(Mesh&& o) noexcept
     , index_count_(std::exchange(o.index_count_, 0))
     , material_index_(std::exchange(o.material_index_, -1))
     , node_index_(std::exchange(o.node_index_, -1))
+    , shape_name_(std::move(o.shape_name_))
+    , decal_mask_(std::exchange(o.decal_mask_, std::uint8_t{0x0F}))
     , cpu_data_(std::move(o.cpu_data_))
     , lod_chain_(std::move(o.lod_chain_)) {}
 
@@ -31,7 +33,9 @@ Mesh& Mesh::operator=(Mesh&& o) noexcept {
         index_count_    = std::exchange(o.index_count_, 0);
         material_index_ = std::exchange(o.material_index_, -1);
         node_index_     = std::exchange(o.node_index_, -1);
-        cpu_data_       = std::move(o.cpu_data_);
+        shape_name_     = std::move(o.shape_name_);
+        decal_mask_     = std::exchange(o.decal_mask_, std::uint8_t{0x0F});
+        cpu_data_      = std::move(o.cpu_data_);
         lod_chain_      = std::move(o.lod_chain_);
     }
     return *this;

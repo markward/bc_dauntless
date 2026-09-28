@@ -111,17 +111,48 @@ uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal ta
 uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
 uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
 
-// ── Hull-name decal (docs/superpowers/specs/2026-09-28-hull-name-decals-design.md) ──
-// A registry mask projected onto the hull in ship-body space. The mask RGB
-// is PREMULTIPLIED by alpha at load (model_build.cc apply_decals), so the
-// albedo composite is base*(1-a) + m.rgb. Paint is glossy on a matte hull:
-// it gets its own specular term even when the material has no specular map.
-uniform sampler2D u_decal_mask;           // unit 8, clamp-to-edge sampler object
-uniform int   u_decal_mask_enabled;       // 0 = no decal on this material
-uniform mat4  u_decal_proj;               // p_body -> (u, v, w); v = 0 is image row 0 (top)
-uniform vec3  u_decal_normal;             // body-frame unit outward normal
-uniform float u_decal_depth;              // |w| bound, model units
+// ── Hull-name decals (docs/superpowers/specs/2026-09-28-hull-name-decals-design.md,
+//    per-model list: 2026-09-28-spv-decal-editing-design.md §2.4) ──
+// Up to four registry masks projected onto the hull in ship-body space,
+// composited in list order. Each mask's RGB is PREMULTIPLIED by alpha at
+// load (model_build.cc apply_decals), so each composite is base*(1-a) + m.rgb.
+// Paint is glossy on a matte hull: it gets its own specular term even when
+// the material has no specular map. Four NAMED samplers, not an array:
+// GLSL 4.10 only indexes sampler arrays with constant expressions.
+#define MAX_HULL_DECALS 4
+uniform sampler2D u_decal_mask0;          // units 8..11, clamp-to-edge sampler object
+uniform sampler2D u_decal_mask1;
+uniform sampler2D u_decal_mask2;
+uniform sampler2D u_decal_mask3;
+uniform int   u_hull_decal_count;         // model's decal list size, 0..4
+uniform int   u_decal_enabled_mask;       // bit i => decal i paints THIS mesh; 0 = none
+uniform mat4  u_decal_proj[MAX_HULL_DECALS];   // p_body -> (u, v, w); v = 0 is image row 0 (top)
+uniform vec3  u_decal_normal[MAX_HULL_DECALS]; // body-frame unit outward normal
+uniform float u_decal_depth[MAX_HULL_DECALS];  // |w| bound, model units
 const float kDecalPaintSpecular = 0.8;
+
+// Composite hull decal `i` (mask sampler `mask`) over the running albedo,
+// and fold it into the running decal coverage (cover_a, premultiplied
+// cover_rgb) the glow composite and paint specular read later. Both use the
+// associative "over" operator, so N decals in order equal one decal of the
+// combined coverage -- and a single decal reproduces the pre-list math
+// exactly (cover_a == m.a, cover_rgb == m.rgb). dpdx/dpdy are p_body's
+// screen derivatives, taken by the caller OUTSIDE all branches.
+void apply_hull_decal(int i, sampler2D mask, vec3 p_body, vec3 n_body,
+                      vec3 dpdx, vec3 dpdy, inout vec3 base_rgb,
+                      inout float cover_a, inout vec3 cover_rgb) {
+    if (i >= u_hull_decal_count || ((u_decal_enabled_mask >> i) & 1) == 0) return;
+    vec4 q = u_decal_proj[i] * vec4(p_body, 1.0);
+    if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0 &&
+        abs(q.z) <= u_decal_depth[i] && dot(n_body, u_decal_normal[i]) > 0.0) {
+        vec2 gx = (mat3(u_decal_proj[i]) * dpdx).xy;
+        vec2 gy = (mat3(u_decal_proj[i]) * dpdy).xy;
+        vec4 m = textureGrad(mask, q.xy, gx, gy);
+        base_rgb  = base_rgb  * (1.0 - m.a) + m.rgb;
+        cover_rgb = cover_rgb * (1.0 - m.a) + m.rgb;
+        cover_a   = cover_a   * (1.0 - m.a) + m.a;
+    }
+}
 
 // ── Collision scuffs (class 2): a splatted normal map, pre-lighting ───────
 // Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §4
@@ -1145,25 +1176,24 @@ void main() {
     vec3 dpdy_d = dFdy(p_body);
     vec4 base = texture(u_base_color, v_uv);
 
-    // Hull-name decal: replace albedo under the mask (premultiplied RGB).
-    // decal_premult_rgb is the same premultiplied m.rgb, kept alive for the
-    // glow-map composite below (the letters must black out an emissive
-    // window band the same way they black out the albedo, and colour the
-    // glow when the mask itself carries colour) -- see
+    // Hull-name decals: replace albedo under each mask, in list order
+    // (premultiplied RGB). decal_a / decal_premult_rgb are the combined
+    // coverage, kept alive for the glow-map composite below (the letters must
+    // black out an emissive window band the same way they black out the
+    // albedo, and colour the glow when the mask itself carries colour) and
+    // the paint specular -- see
     // docs/superpowers/specs/2026-09-28-hull-name-decals-design.md.
     float decal_a = 0.0;
     vec3 decal_premult_rgb = vec3(0.0);
-    if (u_decal_mask_enabled != 0) {
-        vec4 q = u_decal_proj * vec4(p_body, 1.0);
-        if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0 &&
-            abs(q.z) <= u_decal_depth && dot(n_body, u_decal_normal) > 0.0) {
-            vec2 gx = (mat3(u_decal_proj) * dpdx_d).xy;
-            vec2 gy = (mat3(u_decal_proj) * dpdy_d).xy;
-            vec4 m = textureGrad(u_decal_mask, q.xy, gx, gy);
-            base.rgb = base.rgb * (1.0 - m.a) + m.rgb;
-            decal_a = m.a;
-            decal_premult_rgb = m.rgb;
-        }
+    if (u_decal_enabled_mask != 0) {
+        apply_hull_decal(0, u_decal_mask0, p_body, n_body, dpdx_d, dpdy_d,
+                         base.rgb, decal_a, decal_premult_rgb);
+        apply_hull_decal(1, u_decal_mask1, p_body, n_body, dpdx_d, dpdy_d,
+                         base.rgb, decal_a, decal_premult_rgb);
+        apply_hull_decal(2, u_decal_mask2, p_body, n_body, dpdx_d, dpdy_d,
+                         base.rgb, decal_a, decal_premult_rgb);
+        apply_hull_decal(3, u_decal_mask3, p_body, n_body, dpdx_d, dpdy_d,
+                         base.rgb, decal_a, decal_premult_rgb);
     }
 
     // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
@@ -1360,12 +1390,13 @@ void main() {
     }
 
     vec4 glow = texture(u_glow_map, v_uv);
-    // The hull-name decal overrides the SAME texture's RGB wherever it is
+    // The hull-name decals override the SAME texture's RGB wherever it is
     // sampled, not just the albedo fetch: BC's _glow textures are one image
     // (RGB = albedo, alpha = the emissive mask), so a letter painted into
     // that texture would replace RGB under both terms and leave alpha (the
     // "is this pixel lit" map) alone. Composite with the identical
-    // premultiplied m.rgb/decal_a as the albedo line above, BEFORE any
+    // combined premultiplied coverage as the albedo composite above (one
+    // decal: exactly its m.rgb/m.a), BEFORE any
     // further processing (hue rotation) of glow.rgb, so the lettering's
     // colour passes through the same pipeline as the hull's own glow.
     // decal_a == 0 (no decal on this material/fragment) leaves this an

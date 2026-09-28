@@ -13,6 +13,7 @@
 #include <renderer/node_anim.h>
 #include <renderer/scuff_texture.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -303,13 +304,11 @@ unsigned int ensure_damage_decal_texture() {
     return g_decal_id;
 }
 
-// Hull-name decal masks (Material::StageSlot::Decal0) are bound on texture
-// unit 8 through this sampler object: upload_image leaves every texture
-// GL_REPEAT, and a mask must clamp so its edge texels never wrap onto the
-// opposite edge of the projector rectangle (Decal0's NIF-encoded
-// TextureStage::clamp_mode is 0 = CLAMP_S_CLAMP_T). Created lazily per GL
-// session; released by reset_decal_mask_sampler() with the other
-// session-scoped GL objects.
+// Hull-name decal masks (Model::decals) are bound on texture units 8..11
+// through this sampler object: upload_image leaves every texture GL_REPEAT,
+// and a mask must clamp so its edge texels never wrap onto the opposite edge
+// of the projector rectangle. Created lazily per GL session; released by
+// reset_decal_mask_sampler() with the other session-scoped GL objects.
 GLuint g_decal_mask_sampler = 0;
 
 GLuint ensure_decal_mask_sampler() {
@@ -321,6 +320,69 @@ GLuint ensure_decal_mask_sampler() {
                         GL_LINEAR_MIPMAP_LINEAR);
     glSamplerParameteri(g_decal_mask_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     return g_decal_mask_sampler;
+}
+
+// First texture unit of the hull-decal masks; decal i binds on unit
+// kHullDecalUnit0 + i (units 0..7 are taken by the opaque pass).
+constexpr int kHullDecalUnit0 = 8;
+
+// Bind hull decals for ONE mesh draw: decal i's mask on unit 8+i through the
+// clamp sampler, plus the projector uniform arrays and this mesh's enable
+// mask (`mesh_mask` ANDed with the list size). Units past the list get the
+// black fallback and sampler 0, so every declared sampler stays valid and
+// nothing inherits the clamp. `decals` is the model's list today; a
+// per-instance override list goes through the same helper. `textures`
+// resolves ModelDecal::texture_index; a decal whose index is out of range is
+// disabled rather than bound. u_ship_world_inv (p_body reconstruction) is
+// otherwise set only for damaged / glowing / carved instances, so it is set
+// here whenever any decal is enabled.
+void bind_hull_decals(const Shader& prog,
+                      const std::vector<assets::ModelDecal>& decals,
+                      std::uint8_t mesh_mask,
+                      const std::vector<assets::Texture>& textures,
+                      GLuint black_fallback,
+                      const glm::mat4& world) {
+    const int n = std::min<int>(static_cast<int>(decals.size()),
+                                assets::kMaxDecals);
+    int enabled = static_cast<int>(mesh_mask) & ((1 << n) - 1);
+    glm::mat4 proj[assets::kMaxDecals];
+    glm::vec3 normal[assets::kMaxDecals];
+    float     depth[assets::kMaxDecals] = {};
+    for (int i = 0; i < assets::kMaxDecals; ++i) {
+        GLuint tex = 0;
+        if (i < n) {
+            const auto& d = decals[static_cast<std::size_t>(i)];
+            if (d.texture_index >= 0 &&
+                d.texture_index < static_cast<int>(textures.size())) {
+                tex = textures[static_cast<std::size_t>(d.texture_index)].id();
+            } else {
+                enabled &= ~(1 << i);
+            }
+            proj[i] = d.body_to_mask;
+            normal[i] = d.normal;
+            depth[i] = d.depth;
+        } else {
+            proj[i] = glm::mat4(1.0f);
+            normal[i] = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        const bool bound = (enabled & (1 << i)) != 0;
+        glActiveTexture(GL_TEXTURE0 + kHullDecalUnit0 + i);
+        glBindTexture(GL_TEXTURE_2D, bound ? tex : black_fallback);
+        glBindSampler(kHullDecalUnit0 + i, bound ? ensure_decal_mask_sampler() : 0);
+        static const char* const kMaskUniform[assets::kMaxDecals] = {
+            "u_decal_mask0", "u_decal_mask1", "u_decal_mask2", "u_decal_mask3"};
+        prog.set_int(kMaskUniform[i], kHullDecalUnit0 + i);
+    }
+    glActiveTexture(GL_TEXTURE0);  // restore default active unit
+    prog.set_int("u_hull_decal_count", n);
+    prog.set_int("u_decal_enabled_mask", enabled);
+    if (enabled != 0) {
+        prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+        prog.set_mat4_array("u_decal_proj", proj, assets::kMaxDecals);
+        prog.set_vec3_array("u_decal_normal", normal, assets::kMaxDecals);
+        glUniform1fv(glGetUniformLocation(prog.program(), "u_decal_depth"),
+                     assets::kMaxDecals, depth);
+    }
 }
 
 // Lazy per-model bounding-radius cache for dynamic-light selection. Mirrors
@@ -835,42 +897,19 @@ void draw_model(const assets::Model& model,
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
             prog.set_int("u_scuff_map_ok", scuff_map != 0 ? 1 : 0);
 
-            // Unit 8 = hull-name decal mask (Decal0), clamped through the
-            // sampler object. Without a decal the black fallback keeps the
-            // sampler valid, and sampler 0 hands the unit back to the
-            // texture's own parameters so nothing inherits the clamp.
-            const int decal_tex = mat.stages[
-                static_cast<std::size_t>(assets::Material::StageSlot::Decal0)
-            ].texture_index;
-            const bool has_decal = mat.decal.enabled && decal_tex >= 0;
-            glActiveTexture(GL_TEXTURE8);
-            if (has_decal) {
-                glBindTexture(GL_TEXTURE_2D, model.textures[decal_tex].id());
-                glBindSampler(8, ensure_decal_mask_sampler());
-            } else {
-                glBindTexture(GL_TEXTURE_2D, black_fallback);
-                glBindSampler(8, 0);
-            }
-            glActiveTexture(GL_TEXTURE0);  // restore default active unit
-            prog.set_int("u_decal_mask", 8);
-            prog.set_int("u_decal_mask_enabled", has_decal ? 1 : 0);
-            if (has_decal) {
-                // p_body reconstruction: u_ship_world_inv is otherwise set only
-                // when this instance has damage decals, glow regions, carves
-                // or a hull field -- an undamaged decaled hull would project
-                // through a stale (or never-set) matrix.
-                prog.set_mat4 ("u_ship_world_inv", glm::inverse(world));
-                prog.set_mat4 ("u_decal_proj",   mat.decal.body_to_mask);
-                prog.set_vec3 ("u_decal_normal", mat.decal.normal);
-                prog.set_float("u_decal_depth",  mat.decal.depth);
-            }
+            // Units 8..11 = hull-name decal masks (Model::decals), gated per
+            // mesh by its shape-derived enable mask.
+            bind_hull_decals(prog, model.decals, mesh.decal_mask(),
+                             model.textures, black_fallback, world);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
         }
     }
     glBindVertexArray(0);
-    glBindSampler(8, 0);  // never leak the decal clamp to a later pass
+    // Never leak the decal clamp to a later pass.
+    for (int i = 0; i < assets::kMaxDecals; ++i)
+        glBindSampler(kHullDecalUnit0 + i, 0);
 }
 
 FrameSubmitter::~FrameSubmitter() {

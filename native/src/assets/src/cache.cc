@@ -27,18 +27,6 @@ struct AssetCache::Impl {
         std::vector<fs::path>        search_paths;
     };
     std::unordered_map<std::string, Entry> entries;
-
-    // Memoizes whether a given (mesh_fix_dir, fix hash) pair's fix actually
-    // APPLIES against the real nif content it was matched to -- not just
-    // that a fix file matched and parsed. Keyed by "<dir>|fix:<hash>" (the
-    // same fix_key computed below, prefixed with the directory so two
-    // directories that happen to hold a same-named-but-different fix file
-    // don't share a memo entry). Populated lazily: the first load that
-    // needs the answer pays for one real nif::load + apply_mesh_fix trial;
-    // every later load of the same (dir, fix) reads the cached bool instead
-    // of repeating it, which is what keeps a cache HIT free of any
-    // additional parsing.
-    std::unordered_map<std::string, bool> fix_apply_ok;
 };
 
 AssetCache::AssetCache() : AssetCache(Config{}) {}
@@ -99,11 +87,6 @@ std::string decals_key(const std::vector<DecalRequest>& decals) {
     return key;
 }
 
-// The "no decals requested / no decals attached" sentinel `effective_decals`
-// binds to as a const&, so ungating a load never copies its (usually empty)
-// vector.
-const std::vector<DecalRequest> kNoDecals;
-
 std::string read_file_bytes(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     std::ostringstream ss;
@@ -160,64 +143,22 @@ ModelHandle AssetCache::load(
     // most once per (path, registry) variant.
     std::optional<MeshFix> fix;
     std::string fix_key;
-    fs::path fix_dir;
     if (impl_->config.mesh_fix_dir) {
-        fix_dir = impl_->config.mesh_fix_dir();
-        if (!fix_dir.empty()) {
+        auto dir = impl_->config.mesh_fix_dir();
+        if (!dir.empty()) {
             auto nif_bytes = read_file_bytes(nif_path);
-            if (auto found = find_mesh_fix(fix_dir, nif_path, nif_bytes)) {
+            if (auto found = find_mesh_fix(dir, nif_path, nif_bytes)) {
                 fix_key = "|fix:" + found->second;
                 fix     = std::move(found->first);
             }
         }
     }
 
-    // Decals attach ONLY on top of a mesh the fix actually patched
-    // (Controller Ruling G item 1): a refit copy with a mismatched hash, a
-    // missing mesh_fix_dir, or a fix that parsed but was refused all still
-    // carry BC's own "ID" patch geometry, so a decal on top would paint the
-    // name twice. Whether the matched-and-parsed `fix` (if any) actually
-    // applies is memoized per (dir, fix hash) in impl_->fix_apply_ok so a
-    // cache HIT never pays for a trial nif::load -- only the first load of
-    // a given fix does, and that trial's already-patched (or refused, still
-    // unpatched) File is reused below instead of loading nif_path twice.
-    bool fix_applied = false;
-    std::optional<nif::File> preloaded;
-    if (fix) {
-        const std::string apply_key = fix_dir.string() + fix_key;
-        auto memo = impl_->fix_apply_ok.find(apply_key);
-        if (memo != impl_->fix_apply_ok.end()) {
-            fix_applied = memo->second;
-        } else {
-            auto trial = nif::load(nif_path);
-            auto reason = apply_mesh_fix(trial, *fix);
-            fix_applied = reason.empty();
-            impl_->fix_apply_ok[apply_key] = fix_applied;
-            if (!fix_applied) {
-                static std::unordered_set<std::string> apply_warned;
-                // fix_key is "|fix:<hash>"; strip the prefix for the message.
-                auto hash = fix_key.substr(5);
-                if (apply_warned.insert(hash).second) {
-                    std::cerr << "mesh fix " << hash << ".json for " << nif_path.string()
-                               << " refused: " << reason << "; loading unpatched\n";
-                }
-            }
-            preloaded = std::move(trial);
-        }
-    }
-
-    const std::vector<DecalRequest>& effective_decals =
-        fix_applied ? decals : kNoDecals;
-    if (!decals.empty() && !fix_applied) {
-        static std::unordered_set<std::string> decal_warned;
-        if (decal_warned.insert(nif_path.string()).second) {
-            std::cerr << "hull decals skipped for " << nif_path.string()
-                       << ": no mesh fix applied (non-stock mesh)\n";
-        }
-    }
-
+    // Decals attach whether or not a fix applied (spec
+    // 2026-09-28-spv-decal-editing-design.md §2.1): they are an independent
+    // per-class feature, not a follow-on to the "ID" patch merge.
     auto canon = fs::weakly_canonical(nif_path).string()
-                 + replacements_key(texture_replacements) + decals_key(effective_decals)
+                 + replacements_key(texture_replacements) + decals_key(decals)
                  + fix_key;
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
@@ -231,15 +172,19 @@ ModelHandle AssetCache::load(
         }
     }
 
-    // preloaded already carries the fix applied (fix_applied == true) or is
-    // the untouched trial load (fix_applied == false, reason already
-    // warned above) -- either way it must NOT be re-patched here.
-    nif::File file = preloaded ? std::move(*preloaded) : nif::load(nif_path);
-    if (fix && !preloaded) {
-        // fix_applied came from the memo, already known true: apply now for
-        // this build. (Ignoring the return: a memoized "true" cannot refuse
-        // again against the same content.)
-        apply_mesh_fix(file, *fix);
+    auto file = nif::load(nif_path);
+
+    if (fix) {
+        static std::unordered_set<std::string> apply_warned;
+        auto reason = apply_mesh_fix(file, *fix);
+        if (!reason.empty()) {
+            // fix_key is "|fix:<hash>"; strip the prefix for the message.
+            auto hash = fix_key.substr(5);
+            if (apply_warned.insert(hash).second) {
+                std::cerr << "mesh fix " << hash << ".json for " << nif_path.string()
+                           << " refused: " << reason << "; loading unpatched\n";
+            }
+        }
     }
 
     detail::ModelBuildContext ctx;
@@ -249,7 +194,7 @@ ModelHandle AssetCache::load(
     ctx.mesh_uploader         = impl_->config.mesh_uploader;
     ctx.keep_cpu_data         = impl_->config.keep_cpu_data;
     ctx.texture_replacements  = texture_replacements;
-    ctx.decals                = effective_decals;
+    ctx.decals                = decals;
 
     auto model = std::make_shared<const Model>(detail::build_model(file, ctx));
 

@@ -27,6 +27,9 @@ struct Material {
     ///   Gloss — populated when a NiImage filename ends in "_specular"
     ///           or "_spec". Standalone per-texel specular mask; does
     ///           NOT dual-bind with Base.
+    ///
+    /// Decal0..2 mirror the NIF NiTexturingProperty decal slots only; they
+    /// are NOT project hull-name decals, which live on Model::decals.
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
         Count
@@ -41,25 +44,6 @@ struct Material {
     };
 
     std::array<TextureStage, static_cast<std::size_t>(StageSlot::Count)> stages{};
-
-    /// Hull-name decal projector (see DecalRequest in model.h and
-    /// docs/superpowers/specs/2026-09-28-hull-name-decals-design.md).
-    /// `enabled` is false unless build_model attached a decal mask to
-    /// stages[Decal0] on THIS material. `body_to_mask` maps a ship-body-frame
-    /// point (the renderer's `p_body`) to (u, v, w, 1), where u/v are mask
-    /// texture coordinates and w is the signed distance along `normal` from
-    /// the decal rectangle's plane -- built by decal_body_to_mask
-    /// (model_build.h). `normal` is unit-length, ship-body frame; a fragment
-    /// whose body-space normal doesn't agree with it (dot <= 0) is outside
-    /// the decal by construction. `depth` bounds |w| so the projection
-    /// doesn't reach the far side of the hull.
-    struct DecalProjector {
-        bool      enabled = false;
-        glm::mat4 body_to_mask{1.0f};
-        glm::vec3 normal{0.0f, 0.0f, 1.0f};
-        float     depth = 0.0f;
-    };
-    DecalProjector decal;
 
     /// True when the Base-stage source texture's filename matches BC's
     /// baked-lightmap authoring convention (" lm.tga" or "_lm.tga",

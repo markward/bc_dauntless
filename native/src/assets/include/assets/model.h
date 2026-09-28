@@ -42,9 +42,10 @@ struct TextureReplacement {
 /// `origin+v_axis` are the mask rectangle's (0,0), (1,0) and (0,1) corners;
 /// `normal` points outward from the hull surface the decal is projected
 /// onto; `depth` is the slab half-thickness along `normal` that bounds the
-/// projection. `shape` names the NiTriShape (`av.obj.name`) whose
-/// material(s) receive the decal -- build_model applies it to every
-/// material built from a shape with that name.
+/// projection. `shape` optionally names the NiTriShape (`av.obj.name`) the
+/// decal is restricted to: build_model enables it only on meshes built from
+/// a shape with that name. EMPTY `shape` => every mesh (still subject to the
+/// shader's facing test and depth slab).
 struct DecalRequest {
     std::string       shape;
     glm::vec3         origin{0.0f};
@@ -53,6 +54,26 @@ struct DecalRequest {
     glm::vec3         normal{0.0f, 0.0f, 1.0f};
     float             depth = 0.0f;
     std::filesystem::path mask;
+};
+
+/// Most hull decals one model carries. The shader binds their masks on
+/// texture units 8..11 (units 0..7 are taken).
+inline constexpr int kMaxDecals = 4;
+
+/// One attached hull decal (spec 2026-09-28-spv-decal-editing-design.md
+/// §2.4), built by build_model from a DecalRequest. `body_to_mask` maps a
+/// ship-body-frame point (the shader's `p_body`) to (u, v, w, 1): u/v are
+/// mask texture coordinates, w the signed distance along `normal` from the
+/// decal plane (decal_body_to_mask, model_build.h). `normal` is unit-length,
+/// body frame; a fragment whose body normal disagrees (dot <= 0) is outside.
+/// `depth` bounds |w|. `texture_index` indexes Model::textures -- the mask,
+/// RGB premultiplied by alpha at load. Which meshes a decal may paint is
+/// Mesh::decal_mask() bit i, for decals[i].
+struct ModelDecal {
+    glm::mat4 body_to_mask{1.0f};
+    glm::vec3 normal{0.0f, 0.0f, 1.0f};
+    float     depth = 0.0f;
+    int       texture_index = -1;
 };
 
 struct Node {
@@ -84,6 +105,10 @@ struct Model {
     Skeleton                      skeleton;
     std::vector<AnimationClip>    animations;
     std::vector<TextureAnimation> texture_animations;
+    /// Hull decals, in request order, at most kMaxDecals. Composited in this
+    /// order by opaque.frag. Per-mesh enablement is Mesh::decal_mask(); each
+    /// mesh records its source shape as Mesh::shape_name().
+    std::vector<ModelDecal>       decals;
     /// A small (~96) sample of MODEL-SPACE hull surface points, already
     /// transformed out of node-local space (node->model bake applied at load).
     /// Spread across all mesh shapes for whole-hull VFX anchoring (electrical
