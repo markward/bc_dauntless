@@ -5,6 +5,8 @@
 
 #include <glm/glm.hpp>
 
+#include <cmath>
+
 TEST(DustPassGen, DeterministicSeedProducesIdenticalBuffers) {
     auto a = renderer::generate_dust_particles(12345u, 100, 40.0f);
     auto b = renderer::generate_dust_particles(12345u, 100, 40.0f);
@@ -118,6 +120,77 @@ TEST(DustDashSmearCap, ClampsOutOfRangeIntensity) {
     EXPECT_FLOAT_EQ(renderer::dash_smear_cap(2.0f),
                     renderer::DustPass::kMaxSmearLength *
                         renderer::DustPass::kDashSmearScale);
+}
+
+TEST(DustDashDensityFactor, ZeroIsOffParity) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(0.0f), 1.0f);
+}
+
+TEST(DustDashDensityFactor, FullDashIsTwentyPercent) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(1.0f),
+                    renderer::DustPass::kDashDustDensity);
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(1.0f), 0.2f);
+}
+
+TEST(DustDashDensityFactor, HalfDashIsSixtyPercent) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(0.5f), 0.6f);
+}
+
+TEST(DustDashDensityFactor, ClampsOutOfRangeIntensity) {
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(-1.0f), 1.0f);
+    EXPECT_FLOAT_EQ(renderer::dash_density_factor(2.0f),
+                    renderer::DustPass::kDashDustDensity);
+}
+
+TEST(DustDrawCount, ZeroDashIsByteIdenticalToBase) {
+    // No location multiplier, no dash: draw count is exactly kParticleCount.
+    EXPECT_EQ(renderer::dust_draw_count(1.0f, 0.0f, renderer::DustPass::kSeededCount),
+              renderer::DustPass::kParticleCount);
+}
+
+TEST(DustDrawCount, ZeroDashPreservesLocationMultiplier) {
+    // Sun-peak density (10x) with no dash: unaffected by the new factor.
+    const int expected = static_cast<int>(
+        renderer::DustPass::kParticleCount * renderer::DustPass::kSunPeakMult);
+    EXPECT_EQ(renderer::dust_draw_count(renderer::DustPass::kSunPeakMult, 0.0f,
+                                        renderer::DustPass::kSeededCount),
+              expected);
+}
+
+TEST(DustDrawCount, FullDashIsTwentyPercentOfBaseline) {
+    // Baseline (density_mult 1.0): kParticleCount * 0.2.
+    const int expected = static_cast<int>(
+        std::lround(renderer::DustPass::kParticleCount * 0.2f));
+    EXPECT_EQ(renderer::dust_draw_count(1.0f, 1.0f, renderer::DustPass::kSeededCount),
+              expected);
+}
+
+TEST(DustDrawCount, FullDashIsTwentyPercentOfLocationDensity) {
+    // Sun-peak density (10x) fully dashed: 20% of what THIS position would
+    // otherwise show, not 20% of the unmultiplied base count.
+    const int base = static_cast<int>(
+        std::lround(renderer::DustPass::kParticleCount * renderer::DustPass::kSunPeakMult));
+    const int expected = static_cast<int>(std::lround(base * 0.2f));
+    EXPECT_EQ(renderer::dust_draw_count(renderer::DustPass::kSunPeakMult, 1.0f,
+                                        renderer::DustPass::kSeededCount),
+              expected);
+}
+
+TEST(DustDrawCount, NeverGoesBelowZero) {
+    EXPECT_GE(renderer::dust_draw_count(0.0f, 1.0f, renderer::DustPass::kSeededCount), 0);
+}
+
+TEST(DustDrawCount, ZeroBaseStaysZeroUnderDash) {
+    EXPECT_EQ(renderer::dust_draw_count(0.0f, 1.0f, renderer::DustPass::kSeededCount), 0);
+}
+
+TEST(DustDrawCount, RespectsParticleCountCap) {
+    // Cap below what density_mult alone would produce; dash factor applies
+    // AFTER the cap.
+    const int cap = 50;
+    const int expected = static_cast<int>(std::lround(cap * 0.2f));
+    EXPECT_EQ(renderer::dust_draw_count(renderer::DustPass::kSunPeakMult, 1.0f, cap),
+              expected);
 }
 
 TEST(DustInfluence, NoBodiesIsBaseline) {

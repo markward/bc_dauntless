@@ -371,6 +371,10 @@ the set must already be the new one when `ET_EXITED_WARP` fires.
   dust stretches along the real travel direction. The tunnel's `u_warp_streak`
   drift/prism mode is **not** used. The raised cap is a live-tuned constant; the
   origin-aware motion-blur pass gets the same treatment if the live pass wants it.
+  The per-frame dust draw count is also scaled down to 20% of the location's
+  normal count while dashing (`dash_density_factor`, `kDashDustDensity` in
+  `dust_pass.h`), applied after the sun/planet proximity multiplier — fewer,
+  longer streaks rather than a dense smear.
 - **Flash:** the tunnel's existing screen flash on engage and drop-out. The
   tunnel's "jump burst" is not used.
 - **Nacelle glow:** the existing warp glow spools during align/engage and holds.

@@ -70,6 +70,24 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
 /// GL context; `DustPass::render` calls this internally.
 float dash_smear_cap(float dash_intensity);
 
+/// Density factor for the given 0..1 dash intensity (in-system-warp spec
+/// §4: while dashing, dust draws at a reduced fraction of the location's
+/// normal density instead of streaking at full count). 0 =>
+/// 1.0 (off-parity, byte-identical draw count); 1 =>
+/// `DustPass::kDashDustDensity`. Linear in between. Pure — testable without
+/// a GL context.
+float dash_density_factor(float dash_intensity);
+
+/// Final per-frame dust draw count: `kParticleCount * density_mult`
+/// (the location's normal count, from `compute_dust_influence`), clamped to
+/// `particle_count_cap` (the seeded instance buffer size), then scaled by
+/// `dash_density_factor(dash_intensity)` — so a dash shows 20% of what THIS
+/// position would otherwise show, not 20% of the unmultiplied base count.
+/// Pure — testable without a GL context; `DustPass::render` calls this
+/// internally.
+int dust_draw_count(float density_mult, float dash_intensity,
+                    int particle_count_cap);
+
 class DustPass {
 public:
     // Tunable constants. Documented in the spec as the dials for visual
@@ -122,6 +140,10 @@ public:
     // along the travel axis during warp, recycling via the toroidal wrap.
     // Speed (GU/s) scaled by streak intensity. Tunable.
     static constexpr float kWarpDriftSpeed       = 75.0f; // GU/s at streak 1
+    // Mark 2026-09-28: 20% of the location's normal dust while dashing
+    // (in-system-warp spec §4) — a dash reduces per-frame dust draw count
+    // to this fraction instead of drawing full density at streak speed.
+    static constexpr float kDashDustDensity      = 0.2f;
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
     static constexpr std::uint32_t kSeed         = 0xD057C0DEu;
 

@@ -83,6 +83,25 @@ float dash_smear_cap(float dash_intensity) {
            (1.0f + dash_intensity * (DustPass::kDashSmearScale - 1.0f));
 }
 
+float dash_density_factor(float dash_intensity) {
+    if (dash_intensity < 0.0f) dash_intensity = 0.0f;
+    if (dash_intensity > 1.0f) dash_intensity = 1.0f;
+    return 1.0f - (1.0f - DustPass::kDashDustDensity) * dash_intensity;
+}
+
+int dust_draw_count(float density_mult, float dash_intensity,
+                    int particle_count_cap) {
+    int count = static_cast<int>(
+        std::lround(static_cast<float>(DustPass::kParticleCount) * density_mult));
+    if (count < 0) count = 0;
+    if (count > particle_count_cap) count = particle_count_cap;
+
+    const float factor = dash_density_factor(dash_intensity);
+    count = static_cast<int>(std::lround(static_cast<float>(count) * factor));
+    if (count < 0) count = 0;
+    return count;
+}
+
 namespace {
 
 // Closeness ramp: 1 at/inside the body surface, smoothly 0 by
@@ -278,10 +297,8 @@ void DustPass::render(const scenegraph::Camera& camera,
     shader.set_vec3 ("u_warp_travel", warp_travel);
     shader.set_vec3 ("u_warp_drift",  warp_drift);
 
-    int draw_count = static_cast<int>(
-        std::lround(static_cast<float>(kParticleCount) * inf.density_mult));
-    if (draw_count < 0) draw_count = 0;
-    if (draw_count > particle_count_) draw_count = particle_count_;
+    int draw_count = dust_draw_count(inf.density_mult, dash_intensity,
+                                     particle_count_);
 
     glBindVertexArray(vao_);
     glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr,
