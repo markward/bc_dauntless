@@ -4920,6 +4920,11 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     _push_dust_profile(r, player, warp_streaking)
 
     nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
+    if dev_mode.is_enabled() and player is not None and not warp_streaking:
+        from engine.systems.profile_render import synthetic_volume
+        extra = synthetic_volume(player)
+        if extra is not None:
+            nebulae = nebulae + [extra]
     r.set_nebulae(_render_nebulae(nebulae, view, active_set))
 
     godrays = []
