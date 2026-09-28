@@ -5,17 +5,17 @@ design.md S2.6).
 Masks are PNGs Mark authors externally -- the SPV never writes images, only
 the placement geometry in `decals.json`. Two responsibilities:
 
-- `decals_target_path`: where a class's `decals.json` lives -- the mod's own
-  `.../Masks/decals.json` when a mod supplies that class's model, else the
-  project replacements tree (mirrors `engine.appc.override_routing`'s
-  stock/mod split, but keyed on the MODEL FILE rather than a hardpoint leaf).
+- `decals_target_path`: where a class's `decals.json` lives -- save where
+  the reader reads (see its own docstring for the three-step precedence).
 - `write_decals`: the atomic writer, format 1, preserving any unknown
-  top-level key already in the file.
+  top-level key already in the file, and refusing to touch a file that
+  doesn't already parse as a JSON object.
 """
 from __future__ import annotations
 
 import json
 import os
+import posixpath
 from pathlib import Path
 from typing import List, Optional
 
@@ -27,24 +27,47 @@ from engine.ui import decal_editor
 _KNOWN_KEYS = ("format", "default_registry", "decals")
 
 
-def decals_target_path(nif_rel_dir: str) -> Path:
-    """Where `nif_rel_dir`'s `Masks/decals.json` should be written.
+def decals_target_path(model_rel: str) -> Path:
+    """Where `model_rel`'s `Masks/decals.json` should be written.
 
-    `nif_rel_dir` is the ship's declared model directory, e.g.
-    "data/Models/Ships/Ambassador" (see `host_loop.declared_model_dir`).
+    `model_rel` is the ship's declared High model as a posix path relative
+    to the game root, e.g. "data/Models/Ships/Ambassador/Ambassador.nif"
+    (`GetShipStats()["FilenameHigh"]`, the same string
+    `host_loop.declared_model_dir` derives its directory from). This
+    function needs the file, not just the directory, for step 2 below.
 
-    If an installed mod supplies any file under `nif_rel_dir/` -- checked via
-    `engine.mods`' own directory index, the same one the renderer's asset
-    overlay uses -- that mod owns the class's model, so its own
-    `.../Masks/decals.json` is the target. Otherwise the class is stock (or
-    supplied only by the project replacements overlay, which is not a mod)
-    and the target is the project replacements tree, mirroring
-    `tools/gen_mesh_fixes.py`'s own `--decals` output location.
+    **Save where the reader reads.** `hull_decals.load_decals_doc` resolves
+    `<dir>/Masks/decals.json` via `paths.game_asset`, which checks the
+    project replacements overlay first, then installed mods. Routing here
+    follows the same three steps, in order, so a save can never land
+    somewhere the reader would not find it:
+
+    1. If `<dir>/Masks/decals.json` already exists -- in the replacements
+       overlay OR in a mod -- that exact file is the target.
+       `mods.game_override` is precisely this check (replacements first,
+       then mods, target "game" only).
+    2. Else, if a mod supplies the MODEL FILE itself -- an exact
+       `mods.current().lookup(model_rel)`, not a directory match -- that
+       mod owns the class, so its own `.../Masks/decals.json` is the
+       target, even though the file doesn't exist there yet. A mod that
+       ships only a texture alongside the model must NOT capture routing:
+       only the model file itself, looked up exactly, decides ownership.
+    3. Else the class is stock, and the target is the project replacements
+       tree, mirroring `tools/gen_mesh_fixes.py`'s own `--decals` output
+       location.
     """
-    dirs = mods.current().dirs_for(nif_rel_dir)
-    if dirs:
-        return dirs[0] / "Masks" / "decals.json"
-    return mods.replacements_root() / nif_rel_dir / "Masks" / "decals.json"
+    dir_rel = posixpath.dirname(model_rel)
+    json_rel = f"{dir_rel}/Masks/decals.json"
+
+    existing = mods.game_override(json_rel)
+    if existing is not None:
+        return existing
+
+    mf = mods.current().lookup(model_rel)
+    if mf is not None and mf.target == "game":  # paths-guard: kind label
+        return mf.abs_path.parent / "Masks" / "decals.json"
+
+    return mods.replacements_root() / dir_rel / "Masks" / "decals.json"
 
 
 def write_decals(path: Path, placements: List["decal_editor.Placement"],
@@ -60,9 +83,16 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
     original order, after them.
 
     Write is atomic: `path` + ".tmp" is written first, then `os.replace`d
-    onto `path`. Missing parent directories (a new class's first-ever
-    `Masks/` folder) are created. Raises on any failure -- the SPV reports it
-    as a toast; this never swallows.
+    onto `path` (the `.tmp` is unlinked again if `os.replace` itself fails).
+    Missing parent directories (a new class's first-ever `Masks/` folder)
+    are created. Raises on any failure -- the SPV reports it as a toast;
+    this never swallows.
+
+    A missing `path` is fine (nothing to preserve). An EXISTING `path` that
+    fails to parse, or that parses to something other than a JSON object,
+    raises `ValueError` naming `path` and does NOT touch the file -- the SPV
+    keeps its staged edits and lets the player fix or replace the file by
+    hand rather than silently clobbering whatever is wrong with it.
     """
     path = Path(path)
 
@@ -70,10 +100,15 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
     if path.is_file():
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                existing = loaded
-        except (OSError, ValueError):
-            existing = {}
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"{path}: existing decals.json could not be read/parsed "
+                f"({exc}) -- refusing to overwrite it") from exc
+        if not isinstance(loaded, dict):
+            raise ValueError(
+                f"{path}: existing decals.json is not a JSON object -- "
+                "refusing to overwrite it")
+        existing = loaded
 
     doc = {"format": 1}
     if default_registry:
@@ -89,4 +124,8 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()

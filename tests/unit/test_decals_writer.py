@@ -39,40 +39,121 @@ def _clean():
     hull_decals.reset()
 
 
-# ── decals_target_path: stock routing ───────────────────────────────────
+# ── decals_target_path: routing (Ruling L -- save where the reader reads)
+#
+# decals_target_path(model_rel) takes the ship's declared High model as a
+# posix rel path (e.g. "data/Models/Ships/Ambassador/Ambassador.nif"), not a
+# bare directory -- Task 6 doesn't exist yet, so there are no other callers
+# to update.
 
-def test_decals_target_path_stock_routes_to_project_replacements(
+def _mf(raw_rel, mod_name, abs_path):
+    return mods.ModFile(abs_path=abs_path, mod_name=mod_name, target="game",
+                         rel=mods.fold(raw_rel), raw_rel=raw_rel)
+
+
+def _empty_index():
+    return mods.ModIndex(files={}, mods=[])
+
+
+AMBASSADOR_MODEL_REL = f"{NIF_REL_DIR}/Ambassador.nif"
+BOP_DIR_REL = "data/Models/Ships/BirdOfPrey"
+BOP_MODEL_REL = f"{BOP_DIR_REL}/BirdOfPrey.nif"
+BOP_JSON_REL = f"{BOP_DIR_REL}/Masks/decals.json"
+BOP_TEXTURE_REL = f"{BOP_DIR_REL}/High/bop_wing.tga"
+
+
+def test_decals_target_path_falls_back_to_replacements_root_when_nothing_supplies_it(
         tmp_path, monkeypatch):
-    monkeypatch.setattr(paths, "project_asset_root", lambda: tmp_path)
-    # No mod supplies this ship's model.
-    monkeypatch.setattr(mods, "current",
-                         lambda: mods.ModIndex(files={}, mods=[]))
+    # No existing decals.json anywhere, and no mod supplies the model.
+    monkeypatch.setattr(mods, "replacements", _empty_index)
+    monkeypatch.setattr(mods, "current", _empty_index)
+    monkeypatch.setattr(mods, "replacements_root", lambda: tmp_path / "replacements")
 
-    result = decals_writer.decals_target_path(NIF_REL_DIR)
+    result = decals_writer.decals_target_path(AMBASSADOR_MODEL_REL)
 
     assert result == (tmp_path / "replacements" / NIF_REL_DIR
                        / "Masks" / "decals.json")
 
 
-# ── decals_target_path: mod routing ─────────────────────────────────────
+def test_decals_target_path_mod_supplying_nif_wins_over_texture_only_mod(
+        tmp_path, monkeypatch):
+    # Two mods touch the same directory; only one supplies the NIF itself.
+    monkeypatch.setattr(mods, "replacements", _empty_index)
 
-def test_decals_target_path_mod_routes_to_mod_folder(tmp_path, monkeypatch):
-    mod_model_dir = tmp_path / "mods" / "BirdOfPreyMod" / "Data" / "Models" \
-        / "Ships" / "BirdOfPrey"
-    raw_rel = "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif"
-    mf = mods.ModFile(
-        abs_path=mod_model_dir / "BirdOfPrey.nif",
-        mod_name="BirdOfPreyMod",
-        target="game",
-        rel=mods.fold(raw_rel),
-        raw_rel=raw_rel,
-    )
-    fake_index = mods.ModIndex(files={mf.rel: mf}, mods=[])
-    monkeypatch.setattr(mods, "current", lambda: fake_index)
+    nif_mod_path = tmp_path / "NifMod" / "Data" / "Models" / "Ships" \
+        / "BirdOfPrey" / "BirdOfPrey.nif"
+    texture_mod_path = tmp_path / "TextureMod" / "Data" / "Models" / "Ships" \
+        / "BirdOfPrey" / "High" / "bop_wing.tga"
+    index = mods.ModIndex(files={
+        mods.fold(BOP_TEXTURE_REL): _mf(BOP_TEXTURE_REL, "TextureMod", texture_mod_path),
+        mods.fold(BOP_MODEL_REL): _mf(BOP_MODEL_REL, "NifMod", nif_mod_path),
+    }, mods=[])
+    monkeypatch.setattr(mods, "current", lambda: index)
 
-    result = decals_writer.decals_target_path("data/Models/Ships/BirdOfPrey")
+    result = decals_writer.decals_target_path(BOP_MODEL_REL)
 
-    assert result == mod_model_dir / "Masks" / "decals.json"
+    assert result == nif_mod_path.parent / "Masks" / "decals.json"
+
+
+def test_decals_target_path_texture_only_mod_does_not_capture_routing(
+        tmp_path, monkeypatch):
+    # Only a texture-supplying mod exists -- it must NOT be mistaken for the
+    # NIF owner; routing falls through to the replacements root.
+    monkeypatch.setattr(mods, "replacements", _empty_index)
+    monkeypatch.setattr(mods, "replacements_root", lambda: tmp_path / "replacements")
+
+    texture_mod_path = tmp_path / "TextureMod" / "Data" / "Models" / "Ships" \
+        / "BirdOfPrey" / "High" / "bop_wing.tga"
+    index = mods.ModIndex(files={
+        mods.fold(BOP_TEXTURE_REL): _mf(BOP_TEXTURE_REL, "TextureMod", texture_mod_path),
+    }, mods=[])
+    monkeypatch.setattr(mods, "current", lambda: index)
+
+    result = decals_writer.decals_target_path(BOP_MODEL_REL)
+
+    assert result == tmp_path / "replacements" / BOP_DIR_REL / "Masks" / "decals.json"
+
+
+def test_decals_target_path_existing_replacements_file_wins_over_mod_supplying_nif(
+        tmp_path, monkeypatch):
+    # A decals.json already exists in the replacements overlay; a mod also
+    # supplies the NIF. The existing replacements file must win, because
+    # that's the exact file hull_decals.load_decals_doc would read.
+    repl_path = tmp_path / "replacements_tree" / "decals.json"
+    repl_index = mods.ModIndex(
+        files={mods.fold(BOP_JSON_REL): _mf(BOP_JSON_REL, "replacements", repl_path)},
+        mods=[])
+    monkeypatch.setattr(mods, "replacements", lambda: repl_index)
+
+    nif_mod_path = tmp_path / "NifMod" / "Data" / "Models" / "Ships" \
+        / "BirdOfPrey" / "BirdOfPrey.nif"
+    index = mods.ModIndex(
+        files={mods.fold(BOP_MODEL_REL): _mf(BOP_MODEL_REL, "NifMod", nif_mod_path)},
+        mods=[])
+    monkeypatch.setattr(mods, "current", lambda: index)
+
+    result = decals_writer.decals_target_path(BOP_MODEL_REL)
+
+    assert result == repl_path
+
+
+def test_decals_target_path_existing_mod_decals_json_written_in_place(
+        tmp_path, monkeypatch):
+    # No replacements file, but a mod already carries its own decals.json --
+    # that exact file must be the target, even though nothing there supplies
+    # the NIF itself (an artist-only mod editing masks post-hoc).
+    monkeypatch.setattr(mods, "replacements", _empty_index)
+
+    existing_path = tmp_path / "SomeMod" / "Data" / "Models" / "Ships" \
+        / "BirdOfPrey" / "Masks" / "decals.json"
+    index = mods.ModIndex(
+        files={mods.fold(BOP_JSON_REL): _mf(BOP_JSON_REL, "SomeMod", existing_path)},
+        mods=[])
+    monkeypatch.setattr(mods, "current", lambda: index)
+
+    result = decals_writer.decals_target_path(BOP_MODEL_REL)
+
+    assert result == existing_path
 
 
 # ── write_decals: atomic write ──────────────────────────────────────────
@@ -98,6 +179,53 @@ def test_write_decals_writes_atomically(tmp_path, monkeypatch):
 
 def test_write_decals_creates_parent_dirs(tmp_path):
     path = tmp_path / "new" / "Masks" / "decals.json"
+    decals_writer.write_decals(path, [_placement()], None)
+    assert path.is_file()
+
+
+def test_write_decals_cleans_up_tmp_file_if_replace_fails(tmp_path, monkeypatch):
+    path = tmp_path / "decals.json"
+
+    def _boom(src, dst):
+        raise OSError("boom")
+
+    monkeypatch.setattr(decals_writer.os, "replace", _boom)
+
+    with pytest.raises(OSError):
+        decals_writer.write_decals(path, [_placement()], None)
+
+    assert not (tmp_path / "decals.json.tmp").exists()
+    assert not path.exists()
+
+
+# ── write_decals: refuses to overwrite a corrupt existing file (Ruling M) ─
+
+def test_write_decals_raises_on_unparseable_existing_file(tmp_path):
+    path = tmp_path / "decals.json"
+    path.write_text("{ not valid json")
+    original_bytes = path.read_bytes()
+
+    with pytest.raises(ValueError) as exc_info:
+        decals_writer.write_decals(path, [_placement()], None)
+
+    assert str(path) in str(exc_info.value)
+    assert path.read_bytes() == original_bytes
+
+
+def test_write_decals_raises_when_existing_file_is_not_a_json_object(tmp_path):
+    path = tmp_path / "decals.json"
+    path.write_text(json.dumps([1, 2, 3]))
+    original_bytes = path.read_bytes()
+
+    with pytest.raises(ValueError) as exc_info:
+        decals_writer.write_decals(path, [_placement()], None)
+
+    assert str(path) in str(exc_info.value)
+    assert path.read_bytes() == original_bytes
+
+
+def test_write_decals_missing_existing_file_is_still_fine(tmp_path):
+    path = tmp_path / "does_not_exist_yet" / "decals.json"
     decals_writer.write_decals(path, [_placement()], None)
     assert path.is_file()
 
