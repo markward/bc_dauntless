@@ -2597,7 +2597,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(the load_model decal entry shape: (shape_or_empty, origin, "
           "u_axis, v_axis, normal, depth, mask_path), body frame, at most 4), "
           "or None to go back to the baked list. An empty list draws none. "
-          "Masks load once per path. Never raises.");
+          "Masks load once per path, and again when the file mtime changes. "
+          "Never raises.");
     m.def("instance_decal_override_size",
           [](scenegraph::InstanceId id) -> std::optional<std::size_t> {
               const auto* ov = renderer::instance_decal_override(id);

@@ -11,6 +11,7 @@
 #include <assets/decal_override.h>
 #include <assets/model.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -232,4 +233,23 @@ TEST_F(DecalMaskCacheTest, ClearReleasesEverything) {
     EXPECT_EQ(cache.size(), 2u);
     cache.clear();
     EXPECT_EQ(cache.size(), 0u);
+}
+
+// Ruling K: Mark re-exports a mask from Gimp while the SPV is open, and the
+// next set_instance_decals must show it -- a path whose file mtime changed
+// since it was cached is decoded and uploaded again; an unchanged one is not.
+TEST_F(DecalMaskCacheTest, ReloadsAPathWhoseFileMtimeChanged) {
+    auto cache = make_cache();
+    const auto path = write_png("mask.png");
+    cache.get(path);
+    cache.get(path);
+    ASSERT_EQ(uploaded.size(), 1u);
+
+    fs::last_write_time(path, fs::last_write_time(path) + std::chrono::seconds(5));
+    cache.get(path);
+    EXPECT_EQ(uploaded.size(), 2u) << "a re-exported mask must reload";
+    EXPECT_EQ(cache.size(), 1u) << "still one live entry per path";
+
+    cache.get(path);
+    EXPECT_EQ(uploaded.size(), 2u) << "and only once per change";
 }

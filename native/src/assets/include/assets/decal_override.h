@@ -50,20 +50,34 @@ DecalOverride build_decal_override(const Model& model,
 /// textures -- clear() (or destruction) must run while the creating GL
 /// context is current. A load failure returns 0, warns once per path and is
 /// NOT cached, so a mask authored after the first attempt loads on the next.
+///
+/// A cached path whose file mtime has changed since it loaded is decoded and
+/// uploaded again (Ruling K: a mask re-exported from Gimp while the SPV is
+/// open shows on the next set_instance_decals). The superseded texture is
+/// RETIRED, not freed, until clear(): another instance's override may still
+/// hold its id, and freeing it would leave that override naming a dead GL
+/// texture.
 class DecalMaskCache {
 public:
     using Uploader = std::function<Texture(const Image&, bool)>;
     /// Empty uploader => upload_image.
     explicit DecalMaskCache(Uploader upload = {});
 
-    /// The mask's GL texture id, loading it on first use; 0 on failure.
+    /// The mask's GL texture id, loading it on first use (or when its file
+    /// mtime changed); 0 on failure.
     std::uint32_t get(const std::filesystem::path& mask);
+    /// Live entries, one per path (retired textures are not counted).
     std::size_t size() const noexcept { return textures_.size(); }
     void clear();
 
 private:
+    struct Entry {
+        Texture texture;
+        std::filesystem::file_time_type mtime;
+    };
     Uploader upload_;
-    std::unordered_map<std::string, Texture> textures_;
+    std::unordered_map<std::string, Entry> textures_;
+    std::vector<Texture> retired_;
 };
 
 }  // namespace assets

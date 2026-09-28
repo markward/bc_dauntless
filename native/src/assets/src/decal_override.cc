@@ -97,7 +97,13 @@ DecalMaskCache::DecalMaskCache(Uploader upload) : upload_(std::move(upload)) {}
 
 std::uint32_t DecalMaskCache::get(const fs::path& mask) {
     const std::string key = mask.string();
-    if (auto it = textures_.find(key); it != textures_.end()) return it->second.id();
+    std::error_code ec;
+    const auto mtime = fs::last_write_time(mask, ec);
+    auto it = textures_.find(key);
+    if (it != textures_.end()) {
+        // A vanished file (ec set) keeps serving the texture it last loaded.
+        if (ec || it->second.mtime == mtime) return it->second.texture.id();
+    }
     Image image;
     try {
         image = decode_image(read_bytes(mask));
@@ -107,16 +113,25 @@ std::uint32_t DecalMaskCache::get(const fs::path& mask) {
                 "set_instance_decals: failed to load mask '%s' (%s); "
                 "skipping decal\n", key.c_str(), e.what());
         }
-        return 0;
+        // Mid-export (Gimp writing the file): keep the previous texture.
+        return it != textures_.end() ? it->second.texture.id() : 0u;
     }
     detail::premultiply_decal_mask(image);
     Texture tex = upload_ ? upload_(image, /*generate_mipmaps=*/true)
                           : upload_image(image, /*generate_mipmaps=*/true);
     const std::uint32_t id = tex.id();
-    textures_.emplace(key, std::move(tex));
+    if (it != textures_.end()) {
+        retired_.push_back(std::move(it->second.texture));
+        it->second = Entry{std::move(tex), mtime};
+    } else {
+        textures_.emplace(key, Entry{std::move(tex), mtime});
+    }
     return id;
 }
 
-void DecalMaskCache::clear() { textures_.clear(); }
+void DecalMaskCache::clear() {
+    textures_.clear();
+    retired_.clear();
+}
 
 }  // namespace assets
