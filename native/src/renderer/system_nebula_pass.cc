@@ -197,24 +197,30 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     if (!draw_haze && volumes.empty()) return;
     if (!initialized_) initialize_gl();
 
-    // ── Local MetaNebula clumps: one sphere per volume (its first), at most
-    // 8. Extinction per GU per unit clump density is 1/visibility (spec).
+    // ── Local MetaNebula clumps: at most kMaxClumps volumes, each a union of
+    // up to kSpheresPerClump spheres (unused slots padded with radius 0, which
+    // the shader skips). Extinction per GU per unit clump density is
+    // 1/visibility (spec). Must match system_nebula.frag's array sizes.
     constexpr int kMaxClumps = 8;
+    constexpr int kSpheresPerClump = 4;
     std::vector<glm::vec4> clump_sphere;
     std::vector<glm::vec3> clump_rgb;
     std::vector<glm::vec3> clump_fbm;
     std::vector<glm::vec3> clump_seed;
     std::vector<float>     clump_ext;
     for (const NebulaVolume& v : volumes) {
-        if (static_cast<int>(clump_sphere.size()) >= kMaxClumps) break;
+        if (static_cast<int>(clump_rgb.size()) >= kMaxClumps) break;
         if (v.spheres.empty()) continue;   // intentional: no sphere, no clump to draw
-        clump_sphere.push_back(v.spheres.front());
+        for (int k = 0; k < kSpheresPerClump; ++k) {
+            clump_sphere.push_back(k < static_cast<int>(v.spheres.size())
+                                       ? v.spheres[k] : glm::vec4(0.0f));
+        }
         clump_rgb.push_back(v.rgb);
         clump_fbm.push_back(v.fbm);
         clump_seed.push_back(v.seed);
         clump_ext.push_back(1.0f / std::max(v.visibility, 1.0f));
     }
-    const int clump_count = static_cast<int>(clump_sphere.size());
+    const int clump_count = static_cast<int>(clump_rgb.size());
 
     // ── Capture the currently-bound framebuffer + viewport ─────────────────
     // The caller (render_space) has the HDR target bound; everything below
@@ -297,7 +303,8 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     // profile, are the entire density of) the near field.
     march.set_int("u_clump_count", clump_count);
     if (clump_count > 0) {
-        march.set_vec4_array("u_clump_sphere", clump_sphere.data(), clump_count);
+        march.set_vec4_array("u_clump_sphere", clump_sphere.data(),
+                             clump_count * kSpheresPerClump);
         march.set_vec3_array("u_clump_rgb", clump_rgb.data(), clump_count);
         march.set_vec3_array("u_clump_fbm", clump_fbm.data(), clump_count);
         march.set_vec3_array("u_clump_seed", clump_seed.data(), clump_count);

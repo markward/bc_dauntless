@@ -157,7 +157,9 @@ TEST_F(SystemNebulaPassTest, ClumpDensityDriftsWithTime) {
     // isolating the drift term from ordinary spatial variation.
     v.spheres = {glm::vec4(0.0f, 5000.0f, 0.0f, 3000.0f)};
     v.rgb = glm::vec3(0.5f, 0.6f, 0.9f);
-    v.visibility = 500.0f;
+    // Optically THIN (tau ~0.1 over the 6,000 GU chord), so alpha tracks the
+    // sampled density: a saturated clump reads the same whatever it samples.
+    v.visibility = 30000.0f;
     v.fbm = glm::vec3(0.001f, 3.0f, 0.2f);
     v.seed = glm::vec3(1.0f, 2.0f, 3.0f);
     renderer::Lighting lighting;
@@ -342,12 +344,15 @@ scenegraph::Camera looking_down_y(float near_gu = 1.0f) {
     return cam;
 }
 
+// `size` 68 gives a 17x17 quarter-res march whose centre texel's ray is
+// EXACTLY the view axis (64 -> 16x16 has no centre texel): needed when the
+// thing under test subtends less than one low-res texel.
 glm::vec4 render_centre(renderer::Pipeline& pipeline, renderer::SystemNebulaPass& pass,
                         const scenegraph::Camera& cam,
                         const std::vector<renderer::NebulaVolume>& vols,
-                        double clear_depth = 1.0) {
+                        double clear_depth = 1.0, int size = 64) {
     renderer::HdrTarget target;
-    target.resize(64, 64);
+    target.resize(size, size);
     target.bind();
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClearDepth(clear_depth);
@@ -358,18 +363,26 @@ glm::vec4 render_centre(renderer::Pipeline& pipeline, renderer::SystemNebulaPass
                 target.depth_texture(), inv_vp, cam.eye, 0.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
     float px[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_FLOAT, px);
+    glReadPixels(size / 2, size / 2, 1, 1, GL_RGBA, GL_FLOAT, px);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     return glm::vec4(px[0], px[1], px[2], px[3]);
 }
 
-// Floor-only lighting: lit = floor * rgb * (1 - T) per channel, so
-// colour / alpha is floor * clump rgb (up to the march's quadrature; a lit
-// clump is ~30x brighter, so 25% cleanly separates the two).
+// Window-space depth of the point `dist` GU down the camera's view axis.
+double depth_at(const scenegraph::Camera& cam, float dist) {
+    const glm::vec3 fwd = glm::normalize(cam.target - cam.eye);
+    const glm::vec4 c = cam.proj_matrix() * cam.view_matrix()
+                        * glm::vec4(cam.eye + fwd * dist, 1.0f);
+    return 0.5 * (c.z / c.w) + 0.5;
+}
+
+// Floor-only lighting: the clump sub-march is energy-conserving, so
+// lit = floor * rgb * (1 - T) per channel and colour / alpha is exactly
+// floor * clump rgb (2%: half-float target).
 void expect_floor_only(const glm::vec4& px, const renderer::NebulaVolume& v, float floor) {
     ASSERT_GT(px.a, 0.01f) << "clump drew nothing";
     for (int c = 0; c < 3; ++c)
-        EXPECT_NEAR(px[c] / px.a, floor * v.rgb[c], 0.25f * floor * v.rgb[c])
+        EXPECT_NEAR(px[c] / px.a, floor * v.rgb[c], 0.02f * floor * v.rgb[c])
             << "channel " << c;
 }
 
@@ -449,4 +462,38 @@ TEST(SystemNebulaDrawPlan, WakeDrawsAfterEitherBranchUnderTheVolumetricGate) {
     p = plan_nebula_draws(true, true, true, true, false);
     EXPECT_TRUE(p.system);
     EXPECT_FALSE(p.wake);
+}
+
+// Every MetaNebula volume is a union of up to 4 spheres (as gameplay
+// concealment, nebula_density._sphere_union_falloff, reads it) -- not just
+// its first.
+TEST_F(SystemNebulaPassTest, ClumpSecondSphereOnTheRayRenders) {
+    renderer::NebulaVolume v = test_clump();
+    v.spheres = {glm::vec4(40000.0f, 5000.0f, 0.0f, 3000.0f),   // off the ray
+                 glm::vec4(0.0f, 5000.0f, 0.0f, 3000.0f)};      // on it
+    renderer::SystemNebulaPass pass;
+    const glm::vec4 px = render_centre(*pipeline, pass, looking_down_y(), {v});
+    EXPECT_GT(px.a, 0.05f) << "the clump's second sphere drew nothing";
+}
+
+// Clumps get their own sub-march over the ray-sphere interval: a 200 GU
+// clump 60,000 GU out (twice the 30,000 GU near range, where the haze march
+// ends) still renders.
+TEST_F(SystemNebulaPassTest, SmallClumpBeyondTheNearRangeRenders) {
+    renderer::NebulaVolume v = test_clump();
+    v.spheres = {glm::vec4(0.0f, 60000.0f, 0.0f, 200.0f)};
+    v.visibility = 145.0f;   // BC-scale extinction (Vesuvi 4)
+    renderer::SystemNebulaPass pass;
+    ASSERT_LT(pass.dials().near_range, 60000.0f);
+    const glm::vec4 px = render_centre(*pipeline, pass, looking_down_y(), {v}, 1.0, 68);
+    EXPECT_GT(px.a, 0.05f) << "a small clump beyond the near range vanished";
+}
+
+// ...and the sub-march stops at scene depth: a hull in front hides it.
+TEST_F(SystemNebulaPassTest, ClumpBehindAHullIsHidden) {
+    const auto v = test_clump();   // spans 2,000..8,000 GU down the axis
+    const auto cam = looking_down_y(100.0f);
+    renderer::SystemNebulaPass pass;
+    const glm::vec4 px = render_centre(*pipeline, pass, cam, {v}, depth_at(cam, 1000.0f));
+    EXPECT_LT(px.a, 1e-3f) << "clump drew through a nearer hull";
 }

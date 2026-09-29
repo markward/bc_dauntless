@@ -36,11 +36,14 @@ struct Lighting;
 /// system-scale transmittances reach ~1e-16, so the shader recovers a finite
 /// segment as exp(-(tau_a - tau_b)) and never divides by a stored T.
 ///
-/// `volumes` (local MetaNebula clumps) are density bumps in the same near
-/// field: each contributes its own sphere (the volume's first, up to 8),
-/// colour, fbm dials, seed and extinction (1/visibility per GU). They march
-/// even with no bound profile -- a clump-only system skips the far-field
-/// table lookups entirely and marches the near field for the clumps alone.
+/// `volumes` (local MetaNebula clumps, at most 8) are density bumps, each a
+/// union of up to 4 of the volume's spheres (the union gameplay concealment
+/// reads) with its own colour, fbm dials, seed and extinction (1/visibility
+/// per GU). Each clump gets its own 16-step sub-march over its ray-sphere
+/// interval -- not limited to the haze's geometric steps or the near range,
+/// stopped at scene depth -- and is composited into the haze march at its
+/// interval's midpoint, nearest first. Clumps march even with no bound
+/// profile (or no star); a clump-only run skips the haze entirely.
 
 /// Live-tunable look dials (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md
 /// Task 7). Replaces the pass's former file-top constants (kNearRangeGu,
