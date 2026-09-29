@@ -37,6 +37,20 @@ LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to 
                      # field dials (gain 1.2 / floor 0.5 → peak density ≈ 0.5-0.66),
                      # so only the densest clump cores fully hide a ship.
 HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detection
+# The radial profile's sensors term is capped this far below LOCK_BREAK_T so
+# the profile only SHRINKS detection range and never breaks a lock on its own.
+# Uncapped, sensors(r) * full_concealment (Vesuvi C_V ~0.393) reached
+# LOCK_BREAK_T wherever sensors >= 0.713 -- ~120.6k-126.4k GU at Vesuvi, and
+# Belaruz 1's anchor -- leaving E3M2's Berkeley, probe and Warbirds and the
+# player mutually undetectable (final review #1). The local MetaNebula's fbm
+# term is uncapped: it still breaks locks inside BC's own cloud.
+# Capped below the RE-ACQUIRE line (LOCK_BREAK_T - HYSTERESIS = 0.20), not just
+# below lock-break: above 0.20 the profile could keep a lock the local cloud
+# broke from ever re-acquiring while the target stayed in the band. 0.19 was
+# Mark's call 2026-09-29 (live: the cap made no visible difference, so choose
+# by that principle). Live-tunable under --developer (dev_nebula_dials).
+PROFILE_LOCK_MARGIN = 0.01
+PROFILE_CONCEALMENT_CAP = LOCK_BREAK_T - HYSTERESIS - PROFILE_LOCK_MARGIN
 
 # ── The stage-4 sensing toggle (INTENTIONAL divergence from stock BC) ─────────
 # ONE flag covering BOTH stage-4 sensing changes as a set. It does NOT mean
@@ -217,8 +231,8 @@ def effective_sensor_range(ship) -> float:
     return base * sensors.GetConditionPercentage() * sensors.GetNormalPowerPercentage()
 
 
-def concealment_at(ship) -> float:
-    """Max nebula density [0, 1] at *ship*'s position across the ship's set.
+def _local_concealment(ship) -> float:
+    """Max local MetaNebula density [0, 1] at *ship*'s position across the ship's set.
 
     Returns 0.0 if the ship is in no set or no nebulae are present. Sampled
     on demand using the current game time as drift_t so the CPU field matches
@@ -251,6 +265,31 @@ def concealment_at(ship) -> float:
         if d > best:
             best = d
     return best
+
+
+def concealment_at(ship) -> float:
+    """Concealment at *ship*: the larger of the local MetaNebula fbm density
+    and the radial profile's `sensors` column scaled by its measured full
+    concealment (docs/superpowers/specs/2026-09-23-radial-system-profile-design.md),
+    the profile term capped at PROFILE_CONCEALMENT_CAP (see its comment)."""
+    local = _local_concealment(ship)
+    from engine.systems import profile as _profile
+    found = _profile.locate(ship)
+    if found is None or found[0] is None:
+        return local
+    prof, r = found
+    profile_term = _profile.evaluate(prof, r).sensors * prof.full_concealment
+    return max(local, min(profile_term, _profile_concealment_cap()))
+
+
+def _profile_concealment_cap() -> float:
+    """PROFILE_CONCEALMENT_CAP, or the live developer dial under --developer
+    (engine/dev_nebula_dials.py, selected with / and stepped with L / O)."""
+    import engine.dev_mode as dev_mode
+    if dev_mode.is_enabled():
+        from engine import dev_nebula_dials
+        return dev_nebula_dials.conceal_cap()
+    return PROFILE_CONCEALMENT_CAP
 
 
 def is_hidden_by_cloak(target) -> bool:

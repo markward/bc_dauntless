@@ -1,7 +1,7 @@
 # System-scale clouds — the first thing a system owns that a region does not (design)
 
 **Date:** 2026-09-23
-**Status:** design note, for approval. Not implemented.
+**Status:** **Superseded** by `2026-09-23-radial-system-profile-design.md` (revised 2026-09-28). It was implemented (`engine/systems/clouds.py`, `SystemMap.clouds`); that code is removed by the radial profile work.
 **Extends:** `docs/superpowers/specs/2026-09-22-in-system-navigation-design.md`
 **Area:** `engine/systems/map.py`, `engine/systems/validate.py`,
 `tools/systems/survey.py`, `tools/systems/layout.py`, `tools/gen_system_maps.py`

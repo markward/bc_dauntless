@@ -624,16 +624,18 @@ class TGEventHandlerObject(TGObject):
         names = self._handlers.get(event.GetEventType(), [])
         if not names:
             return
-        frame = [list(reversed(names)), 0, event]   # [chain, next_index, event]
+        frame = [list(reversed(names)), 0, event, False]   # [chain, next_index, event, passed]
         self._dispatch_stack.append(frame)
         try:
             self._invoke_next_handler(frame)
         finally:
             self._dispatch_stack.pop()
+            event._chain_passed = frame[3]
 
     def _invoke_next_handler(self, frame) -> None:
         chain, index, event = frame[0], frame[1], frame[2]
         if index >= len(chain):
+            frame[3] = True
             return
         frame[1] = index + 1
         fn = _resolve_handler(chain[index])
@@ -832,3 +834,23 @@ class TGEventManager(TGObject):
             file=sys.stderr,
         )
         traceback.print_exc(file=sys.stderr)
+
+
+def dispatch_passes(event) -> bool:
+    """Post `event` and report whether its destination's instance-handler
+    chain ran to the end. A handler that returns without CallNextHandler
+    stops the chain -- BC's way of cancelling an event's default effect
+    (E3M2 CoreDamage; MissionLib.IgnoreEvent). No handlers = passes.
+    TGPythonInstanceWrapper destinations have no chain-stop concept, so they always report passed.
+
+    The event is released from the id registry once its synchronous dispatch
+    ends: it is dead afterwards, and radiation fires ~270 of these a second
+    near Vesuvi, each otherwise strongly held forever (final review #4)."""
+    import App
+    from engine.core.ids import unregister
+    event._chain_passed = True
+    try:
+        App.g_kEventManager.AddEvent(event)
+    finally:
+        unregister(event.GetObjID())
+    return event._chain_passed is True

@@ -324,6 +324,26 @@ TEST(DustInfluence, TintRampIsBoundedAndMonotonic) {
     EXPECT_GT(mid, 0.0f);  EXPECT_LT(mid, 1.0f);
 }
 
+TEST(DustInfluence, ProfileDustLiftsDensityLinearlyToTheCeiling) {
+    const std::vector<renderer::SunDescriptor> suns;
+    const std::vector<glm::vec4> planets;
+    const glm::vec3 cam(0.0f);
+    EXPECT_FLOAT_EQ(renderer::compute_dust_influence(cam, suns, planets, 0.0f).density_mult, 1.0f);
+    EXPECT_FLOAT_EQ(renderer::compute_dust_influence(cam, suns, planets, 0.5f).density_mult, 5.5f);
+    EXPECT_FLOAT_EQ(renderer::compute_dust_influence(cam, suns, planets, 1.0f).density_mult,
+                    static_cast<float>(renderer::DustPass::kMaxDensityMult));
+}
+
+TEST(DustInfluence, ProfileDustNeverLowersABodyBoostAndNeverTints) {
+    std::vector<glm::vec4> planets{glm::vec4(0.0f, 0.0f, 0.0f, 10.0f)};
+    const std::vector<renderer::SunDescriptor> suns;
+    const glm::vec3 cam(0.0f, 10.0f, 0.0f);               // on the planet surface
+    const auto base = renderer::compute_dust_influence(cam, suns, planets, 0.0f);
+    const auto with = renderer::compute_dust_influence(cam, suns, planets, 0.1f);
+    EXPECT_FLOAT_EQ(with.density_mult, base.density_mult);
+    EXPECT_FLOAT_EQ(with.sun_tint, base.sun_tint);
+}
+
 // --- GL-context smoke tests below ----------------------------------------
 
 #include <renderer/pipeline.h>

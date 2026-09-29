@@ -32,10 +32,14 @@ struct DustInfluence {
 /// strongest body: a sun in range wins over any planet (spec §2-3 "sun
 /// precedence"). Tint and the outward drift direction use the nearest
 /// (greatest-closeness) sun.
+/// `profile_dust` is the radial-profile `dust` column at the camera, 0-1;
+/// lifts density only: max(body boost, 1 + (kMaxDensityMult-1)*dust). Never
+/// affects tint or drift direction.
 DustInfluence compute_dust_influence(
     const glm::vec3& camera_pos,
     const std::vector<SunDescriptor>& suns,
-    const std::vector<glm::vec4>& planets);
+    const std::vector<glm::vec4>& planets,
+    float profile_dust = 0.0f);
 
 class Pipeline;
 
@@ -172,7 +176,8 @@ public:
                 float warp_streak = 0.0f,
                 glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f),
                 const glm::dvec3& render_origin = glm::dvec3(0.0),
-                float dash_intensity = 0.0f);
+                float dash_intensity = 0.0f,
+                float profile_dust = 0.0f);
 
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }

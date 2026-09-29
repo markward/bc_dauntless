@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .clouds import PROFILES, params_for
+from .profile import COLUMNS, clump_radius
 
 
 @dataclass
@@ -95,250 +95,20 @@ def _resolve(by_name: dict, name: str, owner: str | None = None):
     return candidates[0]
 
 
-def _looks_like_volume(v) -> bool:
-    """True if v carries every attribute a Volume must have.
-
-    A cloud's `volumes` list is exactly as exposed to malformed input as the
-    map's own bodies/regions -- a stray `None` in the list (a dropped item
-    during regeneration) must be reported, not raise AttributeError the
-    first time `.geometry` is touched.
-    """
-    return v is not None and all(
-        hasattr(v, attr)
-        for attr in ("shape", "geometry", "profile", "params", "origin_region"))
-
-
-def _volume_geometry_ok(v) -> bool:
-    """True if v.geometry is well-formed for its own shape.
-
-    Mirrors `_is_point3`'s job for bodies/regions: every rule below that
-    does arithmetic on a volume's geometry (matching a pocket against its
-    region, testing a pocket against the cloud's large volume) is unguarded,
-    so a non-dict geometry, a 2-element center_gu, or a non-numeric radius
-    must be caught HERE, before any of that arithmetic runs.
-    """
-    g = getattr(v, "geometry", None)
-    if not isinstance(g, dict):
-        return False
-    if v.shape == "sphere":
-        return _is_point3(g.get("center_gu")) and _is_number(g.get("radius_gu"))
-    if v.shape == "lobe":
-        return (_is_point3(g.get("axis"))
-                and _is_number(g.get("near_gu"))
-                and _is_number(g.get("far_gu"))
-                and _is_number(g.get("radius_gu")))
-    return False
-
-
-def _volume_extent(v) -> float:
-    """A single number to compare candidate "large" volumes by size.
-
-    Only ever called on a geometry-OK volume with origin_region is None.
-    A sphere's extent is its radius; a lobe carries no radius that alone
-    bounds it (see _pocket_inside_large), so its reach from the star is
-    `far_gu` -- the furthest distance along its axis the volume extends.
-    """
-    g = v.geometry
-    if v.shape == "sphere":
-        return float(g.get("radius_gu", 0.0))
-    if v.shape == "lobe":
-        return float(g.get("far_gu", 0.0))
-    return 0.0
-
-
-_PARAM_KEYS = ("visibility_gu", "sensor_density",
-               "damage_hull_per_s", "damage_shield_per_s")
-
-
-def _pocket_param_details(v, region) -> list:
-    """Why pocket volume `v`'s params disagree with its region's own survey.
-
-    This is the INDEPENDENT half of cloud-profile-matches-params. A pocket's
-    params are written by tools/systems/layout.py from
-    clouds.params_for(profile), so comparing them back against that same
-    table is a tautology: it cannot fail for a generated map. The region's
-    `nebula` dict is the other end of the survey -- BC's own four numbers,
-    read out of the set's static-placement script -- and that is what a
-    pocket must agree with.
-
-    The concrete failure this catches, with real BC data: Multi6_S.py
-    authors MetaNebula_Create(..., 75.0, 0.5, ...) + SetupDamage(1.0). If
-    such a set became a region, layout would classify it `debris` (hull > 0)
-    and stamp Vesuvi's 145 / 10.5 / 150 / 20 onto its pocket -- a 150x
-    hull-damage error the table comparison calls clean.
-
-    Returns a list of human-readable reasons; empty means agreement. Never
-    raises: a missing region, a region with no nebula, and a non-numeric
-    number on either side are all REPORTED, per validate()'s contract.
-    """
-    if region is None:
-        return [f"origin_region {v.origin_region!r} names no region in this map, "
-                f"so its params cannot be checked against BC's authored numbers"]
-    nebula = region.nebula
-    if not isinstance(nebula, dict):
-        return [f"region {region.set_name!r} carries no nebula ({nebula!r}), so "
-                f"this pocket has no authored numbers to agree with"]
-    params = v.params
-    if not isinstance(params, dict):
-        return [f"params {params!r} is not a dict"]
-    if set(params) != set(_PARAM_KEYS):
-        return [f"params keys {sorted(params)} -- expected exactly "
-                f"{sorted(_PARAM_KEYS)}"]
-
-    details = []
-
-    # The pocket's profile NAME, tied to the same authored number layout
-    # derives it from (tools/systems/layout.py:_build_clouds: `debris` when
-    # damage_hull_per_s > 0, `nebula` otherwise). Comparing params against
-    # the region checks the numbers but leaves the label free, so without
-    # this a pocket relabelled "mist" while keeping BC's 145/10.5/150/20
-    # validates clean -- a check the old table comparison did have, because
-    # a "mist" label demanded mist's four zeros.
-    hull = nebula.get("damage_hull_per_s")
-    if _is_number(hull):
-        want_profile = "debris" if hull > 0 else "nebula"
-        if v.profile != want_profile:
-            details.append(
-                f"profile is {v.profile!r}, but region {region.set_name!r} "
-                f"authored damage_hull_per_s {hull!r}, which makes it "
-                f"{want_profile!r}")
-
-    for key in _PARAM_KEYS:
-        authored = nebula.get(key)
-        if key == "damage_shield_per_s" and authored is None:
-            # BC called SetupDamage with a SINGLE argument: it authored no
-            # shield rate at all. None is not zero (see survey._nebula) --
-            # there is nothing to compare here, so skip the key rather than
-            # inventing a 0.0 to compare against.
-            continue
-        have = params.get(key)
-        if not _is_number(authored) or not _is_number(have):
-            details.append(
-                f"{key}: pocket has {have!r}, region {region.set_name!r} "
-                f"authored {authored!r} -- both must be numbers")
-        elif not math.isclose(float(have), float(authored),
-                              rel_tol=1e-9, abs_tol=0.0):
-            details.append(
-                f"{key}: pocket has {have!r} but region {region.set_name!r} "
-                f"authored {authored!r}")
-    return details
-
-
-def _sphere_entries(region) -> list:
-    """The region's own authored nebula spheres as (sx, sy, sz, sr) tuples,
-    filtering out anything malformed. `spheres` may arrive as a tuple as
-    readily as a list -- there is nothing in the data model that requires
-    a list specifically, so accepting either costs nothing and a bare
-    tuple is not itself a problem worth reporting.
-    """
-    spheres = region.nebula.get("spheres") if isinstance(region.nebula, dict) else None
-    if not isinstance(spheres, (list, tuple)):
-        return []
-    return [tuple(s) for s in spheres
-            if isinstance(s, (list, tuple)) and len(s) == 4
-            and all(_is_number(x) for x in s)]
-
-
-def _match_pockets_to_region(pockets, region) -> tuple:
-    """Bijection between pocket volumes and the region's authored spheres.
-
-    Each sphere is consumed by AT MOST ONE pocket -- matched by radius
-    (within 1e-6 relative) and then checked at region.anchor_gu + that
-    sphere's offset, same as before. Without consumption, two spheres of
-    equal radius at different positions let a pocket sitting on EITHER one
-    "match" every time the loop re-scans the full sphere list, so a second
-    pocket duplicated onto the first sphere would silently pass and the
-    second sphere would never be reported missing -- the exact drift this
-    rule exists to catch, on both ends: a duplicated pocket AND a dropped
-    sphere.
-
-    Returns (unmatched_pockets, unmatched_spheres).
-    """
-    if not _is_point3(region.anchor_gu):
-        return list(pockets), []
-    remaining = _sphere_entries(region)
-    unmatched_pockets = []
-    for v in pockets:
-        center = v.geometry.get("center_gu")
-        radius = v.geometry.get("radius_gu")
-        match_index = None
-        for i, (sx, sy, sz, sr) in enumerate(remaining):
-            if not math.isclose(radius, sr, rel_tol=1e-6):
-                continue
-            expected = tuple(a + o for a, o in zip(region.anchor_gu, (sx, sy, sz)))
-            tolerance = 1e-6 * max(1.0, _dist(expected, (0.0, 0.0, 0.0)))
-            if _dist(center, expected) <= tolerance:
-                match_index = i
-                break
-        if match_index is None:
-            unmatched_pockets.append(v)
-        else:
-            remaining.pop(match_index)
-    return unmatched_pockets, remaining
-
-
-def _pocket_inside_large(v, large, origin) -> bool:
-    """True if pocket volume v lies inside the cloud's large volume.
-
-    Only ever called with both v and large already geometry-OK, so no
-    further type guards are needed here.
-
-    A sphere large volume: the ordinary contains-a-sphere test -- centre
-    distance plus the pocket's own radius against the large radius.
-
-    A lobe carries no explicit centre. By construction (see
-    tools/systems/layout.py:_build_cloud_large_volume) its spine is the ray
-    from the system's star (`origin`, the map's own star body -- (0, 0, 0)
-    when the map has none) outward along `axis`, spanning [near_gu, far_gu],
-    with `radius_gu` as a CONSTANT lateral radius the whole way: a
-    capsule/cylinder around that ray, not a taper. That is the simplest
-    shape consistent with the three authored numbers -- no taper rate is
-    stored anywhere -- and it is the choice documented in the design brief
-    as a decision, not a recovered fact: both real lobes in the checked-in
-    maps clear it by a wide margin (the axial band and the lateral radius
-    are each an order of magnitude bigger than the pocket they contain), so
-    a tighter model would still pass them; a materially looser one would
-    risk missing a real drift.
-    """
-    pocket_center = v.geometry.get("center_gu")
-    pocket_radius = v.geometry.get("radius_gu")
-    if large.shape == "sphere":
-        center = large.geometry.get("center_gu")
-        radius = large.geometry.get("radius_gu")
-        return _dist(pocket_center, center) + pocket_radius <= radius + 1e-6
-    if large.shape == "lobe":
-        axis = large.geometry.get("axis")
-        near = large.geometry.get("near_gu")
-        far = large.geometry.get("far_gu")
-        radius = large.geometry.get("radius_gu")
-        axis_len = math.sqrt(sum(a * a for a in axis))
-        if axis_len == 0.0:
-            return True   # degenerate axis -- can't judge, don't false-flag
-        unit_axis = tuple(a / axis_len for a in axis)
-        rel = tuple(p - o for p, o in zip(pocket_center, origin))
-        t = sum(r * u for r, u in zip(rel, unit_axis))
-        proj = tuple(t * u for u in unit_axis)
-        perp = math.sqrt(sum((r - p) ** 2 for r, p in zip(rel, proj)))
-        return (near - pocket_radius <= t <= far + pocket_radius
-                and perp + pocket_radius <= radius + 1e-6)
-    return True   # unknown shape -- geometry_ok already excludes this
-
-
 def _sequence_field(m, name: str, problems: list) -> list:
     """`m.<name>` as a list, reporting rather than raising on anything else.
 
-    The three list fields are the outermost thing validate() touches, and
-    every loop over them was unguarded: `m.clouds = None` raised TypeError
-    out of `for cl in m.clouds` before a single rule ran, and `m.bodies` /
-    `m.regions` carried the identical pattern. "validate() never raises" is
-    a named hard constraint of this file, so the entry points to it need the
-    same guard-before-use treatment `_is_point3` gives a coordinate.
+    The two list fields are the outermost thing validate() touches, and
+    every loop over them was unguarded: `m.bodies = None` / `m.regions = None`
+    raised TypeError out of `for x in m.<field>` before a single rule ran.
+    "validate() never raises" is a named hard constraint of this file, so the
+    entry points to it need the same guard-before-use treatment `_is_point3`
+    gives a coordinate.
 
     A str is rejected even though it is iterable: iterating it yields
     characters, which then raise AttributeError on `.name` -- a different
     crash from the same fault. A tuple is accepted; it is a perfectly good
-    sequence and not a fault worth reporting (same reasoning as
-    `_sphere_entries` accepting a tuple of spheres).
+    sequence and not a fault worth reporting.
     """
     value = getattr(m, name, None)
     if isinstance(value, (list, tuple)):
@@ -449,6 +219,42 @@ def _staged_clearance_problems(bodies, regions, bad_bodies, bad_regions,
     return problems
 
 
+def _profile_problems(m) -> list:
+    """Radial profile rules (spec: 'Validator rules'). Never raises."""
+    prof = getattr(m, "profile", None)
+    if prof is None or not getattr(prof, "rows", None):
+        return []
+    rows = prof.rows
+    out = []
+    ordered = rows[0].distance_gu == 0.0 and all(
+        a.distance_gu <= b.distance_gu for a, b in zip(rows, rows[1:]))
+    in_range = all(
+        math.isfinite(getattr(r, c)) and 0.0 <= getattr(r, c) <= 1.0
+        for r in rows for c in COLUMNS) and all(math.isfinite(r.distance_gu) for r in rows)
+    if not (ordered and in_range):
+        out.append(Problem("profile-rows-ordered",
+                           f"{m.system}: rows must be sorted, start at 0 and hold "
+                           f"finite values in 0-1"))
+    if rows[-1].radiation != 0.0:
+        out.append(Problem("profile-radiation-clears",
+                           f"{m.system}: last row radiation {rows[-1].radiation} persists "
+                           f"outward forever; it must be 0"))
+    if (getattr(m, "overrides", None) or {}).get("profile") is not None:
+        star = next((b for b in m.bodies if b.orbits is None), None)
+        peak = max(rows, key=lambda r: r.nebula)
+        for region in m.regions:
+            neb = region.nebula
+            if star is None or not neb or not neb.get("spheres"):
+                continue
+            R = clump_radius(region, star.position_gu)
+            if peak.nebula > 0.0 and abs(peak.distance_gu - R) > region.radius_gu:
+                out.append(Problem("profile-override-tracks-clump",
+                                   f"{m.system}: override nebula peak at {peak.distance_gu:.0f} GU "
+                                   f"but {region.set_name}'s clump is at {R:.0f} GU "
+                                   f"(tolerance {region.radius_gu:.0f})"))
+    return out
+
+
 def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=None,
              staged_points=None, staged_clearance_gu=None, bc_offsets=None) -> list:
     """Validate a SystemMap, returning a list of Problems (empty == valid).
@@ -475,8 +281,6 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
     problems = []
     bodies = _sequence_field(m, "bodies", problems)
     regions = _sequence_field(m, "regions", problems)
-    clouds = _sequence_field(m, "clouds", problems)
-
     by_name: dict = {}
     for b in bodies:
         by_name.setdefault(b.name, []).append(b)
@@ -681,191 +485,6 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
                 "orbit-target",
                 f"body {b.name!r} orbits {b.orbits!r}, which is not in this map"))
 
-    # ---- cloud rules ---------------------------------------------------
-    # cloud-volume-agrees-with-region, cloud-region-membership,
-    # cloud-pocket-inside-cloud, cloud-profile-matches-params.
-    #
-    # A cloud rides alongside a map's bodies and regions and its own
-    # geometry is exactly as exposed to malformed input as theirs, so it
-    # gets the same guard-before-arithmetic treatment: a structurally
-    # broken cloud/volume is reported under malformed-geometry or
-    # cloud-region-membership, and every geometric rule below just skips
-    # whatever it cannot trust rather than touching it.
-    #
-    # `star` and `bad_bodies` were already computed above for
-    # region-reaches-star; a lobe's spine originates at the system's star,
-    # which every checked-in map places at (0, 0, 0) -- falling back to the
-    # literal origin when a map has no star at all (two systems build a
-    # MetaNebula and author no star), matching the star-less branch above.
-    star_origin = (0.0, 0.0, 0.0)
-    if star is not None and id(star) not in bad_bodies and _is_point3(star.position_gu):
-        star_origin = star.position_gu
-
-    regions_by_name = {r.set_name: r for r in regions}
-    region_cloud_count: dict = {}
-    pockets_by_region: dict = {}   # region set_name -> [pocket Volume, ...]
-
-    for cl in clouds:
-        cloud_name = getattr(cl, "name", "?")
-
-        regions_list = getattr(cl, "regions", None)
-        if not isinstance(regions_list, list):
-            problems.append(Problem(
-                "cloud-region-membership",
-                f"cloud {cloud_name!r} has a malformed regions field "
-                f"{regions_list!r} -- must be a list of region names"))
-            regions_list = []
-        for name in regions_list:
-            if not isinstance(name, str) or name not in regions_by_name:
-                problems.append(Problem(
-                    "cloud-region-membership",
-                    f"cloud {cloud_name!r} names region {name!r}, which "
-                    f"does not exist in system {m.system!r}"))
-                continue
-            region_cloud_count[name] = region_cloud_count.get(name, 0) + 1
-
-        volumes_list = getattr(cl, "volumes", None)
-        if not isinstance(volumes_list, list):
-            problems.append(Problem(
-                "malformed-geometry",
-                f"cloud {cloud_name!r} has a malformed volumes field "
-                f"{volumes_list!r} -- must be a list of volumes"))
-            volumes_list = []
-
-        large = None            # (extent, Volume) -- the biggest origin_region=None volume
-        good_volumes = []       # volumes with trustworthy geometry
-        for v in volumes_list:
-            if not _looks_like_volume(v):
-                problems.append(Problem(
-                    "malformed-geometry",
-                    f"cloud {cloud_name!r} has a malformed volume entry {v!r}"))
-                continue
-
-            geometry_ok = _volume_geometry_ok(v)
-            if not geometry_ok:
-                problems.append(Problem(
-                    "malformed-geometry",
-                    f"cloud {cloud_name!r} volume (shape {v.shape!r}, "
-                    f"origin_region {v.origin_region!r}) has malformed "
-                    f"geometry {v.geometry!r}"))
-
-            # cloud-profile-matches-params, in two halves.
-            #
-            # The profile NAME must always be one we know -- "fog" is a
-            # typo whichever kind of volume carries it.
-            try:
-                want_params = params_for(v.profile)
-            except (KeyError, TypeError):
-                want_params = None
-                problems.append(Problem(
-                    "cloud-profile-matches-params",
-                    f"cloud {cloud_name!r} volume has unknown profile "
-                    f"{v.profile!r} -- known profiles are {sorted(PROFILES)}"))
-
-            # The NUMBERS are compared against whichever independent source
-            # the volume has. A pocket has one: the region it was derived
-            # from, whose `nebula` holds BC's own authored four. The large
-            # volume has none -- no region, no BC original -- so the profile
-            # table is the only thing it can be held to, and holding it
-            # there is what stops `mist`'s zeros being quietly tuned.
-            if isinstance(v.origin_region, str):
-                for detail in _pocket_param_details(
-                        v, regions_by_name.get(v.origin_region)):
-                    problems.append(Problem(
-                        "cloud-profile-matches-params",
-                        f"cloud {cloud_name!r} pocket for region "
-                        f"{v.origin_region!r} -- {detail}"))
-            elif want_params is not None and v.params != want_params:
-                problems.append(Problem(
-                    "cloud-profile-matches-params",
-                    f"cloud {cloud_name!r} volume with profile "
-                    f"{v.profile!r} has params {v.params!r}, expected "
-                    f"{want_params!r}"))
-
-            if not geometry_ok:
-                continue
-            if isinstance(v.origin_region, str):
-                # A pocket is always a sphere -- BC's own authored nebula
-                # spheres are the only thing a pocket ever represents (see
-                # tools/systems/layout.py:_build_clouds). Both downstream
-                # checks (agrees-with-region, inside-the-large-volume) read
-                # geometry["center_gu"] on the pocket side unconditionally,
-                # which a lobe's geometry does not carry -- that must be
-                # reported here, before either check ever runs, not left to
-                # surface as a TypeError out of `zip(None, ...)`.
-                if v.shape != "sphere":
-                    problems.append(Problem(
-                        "malformed-geometry",
-                        f"cloud {cloud_name!r} pocket volume for region "
-                        f"{v.origin_region!r} has shape {v.shape!r} -- a "
-                        f"pocket must be a sphere"))
-                else:
-                    pockets_by_region.setdefault(v.origin_region, []).append(v)
-                    good_volumes.append(v)
-            elif v.origin_region is None:
-                extent = _volume_extent(v)
-                if large is None or extent > large[0]:
-                    large = (extent, v)
-                good_volumes.append(v)
-            else:
-                # A malformed origin_region type (not None, not a string) --
-                # the same failure class the `regions` field guard above
-                # reports, just on a single volume's back-reference instead
-                # of the cloud's own listing. Silently accepting it would
-                # bless a regeneration bug that writes an int or a list
-                # there instead of a region name.
-                problems.append(Problem(
-                    "cloud-region-membership",
-                    f"cloud {cloud_name!r} volume has a malformed "
-                    f"origin_region {v.origin_region!r} -- must be null or "
-                    f"a region name string"))
-
-        # cloud-pocket-inside-cloud: skipped when the cloud has no large
-        # volume. That is a legitimate state -- a system whose override
-        # declares no `kind` still gets a cloud carrying BC's authored
-        # pockets, deliberately, so BC's data is never silently lost.
-        if large is not None:
-            _, large_volume = large
-            for v in good_volumes:
-                if not isinstance(v.origin_region, str):
-                    continue
-                if not _pocket_inside_large(v, large_volume, star_origin):
-                    problems.append(Problem(
-                        "cloud-pocket-inside-cloud",
-                        f"cloud {cloud_name!r} pocket for region "
-                        f"{v.origin_region!r} is not inside the cloud's "
-                        f"large volume"))
-
-    for r in regions:
-        if r.nebula is not None:
-            count = region_cloud_count.get(r.set_name, 0)
-            if count != 1:
-                problems.append(Problem(
-                    "cloud-region-membership",
-                    f"region {r.set_name!r} carries a nebula but is listed "
-                    f"by {count} cloud(s) -- expected exactly 1"))
-
-            # cloud-volume-agrees-with-region, the bijection half: matched
-            # GLOBALLY across every cloud's pockets for this region (not
-            # per-cloud), so a pocket and its region are compared exactly
-            # once no matter which cloud carries it. A sphere consumed by
-            # no pocket (BC's data silently dropped) and a pocket matching
-            # no remaining sphere (drifted, or a duplicate piled onto a
-            # sphere another pocket already claimed) are both reported.
-            unmatched_pockets, unmatched_spheres = _match_pockets_to_region(
-                pockets_by_region.get(r.set_name, []), r)
-            for v in unmatched_pockets:
-                problems.append(Problem(
-                    "cloud-volume-agrees-with-region",
-                    f"pocket volume for region {r.set_name!r} does not sit "
-                    f"at region.anchor_gu + any of its authored sphere "
-                    f"offsets"))
-            for sphere in unmatched_spheres:
-                problems.append(Problem(
-                    "cloud-volume-agrees-with-region",
-                    f"region {r.set_name!r} authored a nebula sphere "
-                    f"{sphere!r} with no matching cloud pocket volume"))
-
     if bc_radii is not None and radius_scale is not None:
         problems.extend(_radius_ratio_problems(
             m, bc_radii, radius_scale, _bc_scale_regions(regions, bad_regions)))
@@ -877,5 +496,7 @@ def validate(m, *, sdk_set_names=None, pins=None, bc_radii=None, radius_scale=No
     if bc_offsets is not None:
         problems.extend(_bc_scale_position_problems(
             bodies, regions, bad_bodies, bad_regions, bc_offsets))
+
+    problems.extend(_profile_problems(m))
 
     return problems

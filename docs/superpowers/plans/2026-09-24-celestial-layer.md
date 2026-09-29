@@ -620,8 +620,8 @@ git commit -m "feat(dev): System Preview mission — stand in a region and see i
 BC's own creation path, and `DeleteSet` suppression on the departure path only →
 Task 4. Celestial gathering, the shift, suns scoped to one region, `iter_ships`
 untouched → Task 5. **Deliberately not covered**, per the spec: the hand-off,
-the dash, distance-based streaming, and clouds — `SystemMap.clouds` stays
-unread, and is superseded anyway by the radial-profile design.
+the dash, distance-based streaming, and clouds — system clouds are the radial
+profile (2026-09-23-radial-system-profile-design.md).
 
 **Type consistency.** `for_set` returns `(SystemMap, Region)` in Tasks 1, 3 and
 5. `residency.enter` returns the system name or `None` in Tasks 4 and 6.

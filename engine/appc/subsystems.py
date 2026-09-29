@@ -88,13 +88,23 @@ def target_offset_world(target, offset):
 
 def _is_offline(sub) -> bool:
     """True when a subsystem is disabled OR destroyed, OR its parent ship is
-    out of action (dying/dead — inert coast). Single source of truth for the
-    capability gates (weapons, engines, sensors, shield generator, repair).
+    out of action (dying/dead — inert coast), OR a radiation outage is live on
+    the subsystem itself or the system it belongs to. Single source of truth
+    for the capability gates (weapons, engines, sensors, shield generator,
+    repair).
     Reads predicates at use-time so repair lifting condition releases the gate
     automatically on the next call."""
     if sub is None:
         return False
     if bool(sub.IsDisabled()) or bool(sub.IsDestroyed()):
+        return True
+    # Radiation outage (engine/appc/radiation.py): this subsystem, or the
+    # system it belongs to. `is True`, never truthiness -- a stubbed fake
+    # would answer a truthy _Stub.
+    if getattr(sub, "_radiation_out", False) is True:
+        return True
+    parent = getattr(sub, "_parent_subsystem", None)
+    if parent is not None and getattr(parent, "_radiation_out", False) is True:
         return True
     # implements, NOT hasattr. TGObject.__getattr__ vends a truthy _Stub for
     # any unknown name, so hasattr was vacuously True on every subsystem and
@@ -260,6 +270,7 @@ class ShipSubsystem(TGEventHandlerObject):
         self._parent_ship = None
         self._parent_subsystem = None
         self._child_subsystem = None
+        self._radiation_out = False
         self._children: list["ShipSubsystem"] = []
         self._condition = 1.0
         self._max_condition = 1.0
@@ -1798,6 +1809,12 @@ class ShieldSubsystem(PoweredSubsystem):
         it in-game before adopting it.
         """
         f = int(face)
+        # NUM_SHIELDS (6) is one past the last face, yet E3M2's CoreDamage
+        # (E3M2.py:1389) passes it on every ET_ENVIRONMENT_DAMAGE with shields
+        # up -- indexing it crashed the host loop. BC's answer is unmeasured;
+        # the SDK author means "overall shields", so read the whole generator.
+        if f == self.NUM_SHIELDS:
+            return self.GetShieldPercentage() if self.IsOn() else 0.0
         mx = self._max_shields[f]
         if mx == 0.0:
             return 0.0

@@ -31,7 +31,8 @@ def unregister(obj_id: int) -> None:
     (notably MissionLib.QueueActionToPlay) stores a TGSequence's id and relies
     on that id becoming invalid once the sequence completes, so the next lookup
     returns null and a fresh master sequence is started. See
-    engine/appc/actions.py TGSequence for the sole current caller.
+    engine/appc/actions.py TGSequence. engine/appc/events.py dispatch_passes
+    also releases each event it dispatches once that dispatch has ended.
     """
     _registry.pop(obj_id, None)
     _weak_registry.pop(obj_id, None)

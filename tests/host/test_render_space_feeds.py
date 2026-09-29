@@ -298,6 +298,35 @@ def test_every_environment_feed_is_in_render_space(far_scene, monkeypatch):
     assert sphere[3] == 300.0, "a radius is not a position"
 
 
+def test_nebula_feed_is_byte_identical_regardless_of_developer_mode(far_scene, monkeypatch):
+    """The faithful/volumetric `set_nebulae` feed must be production
+    byte-identical whether or not developer mode is on -- the system-scale
+    nebula profile is a wholly separate pass (set_system_nebula_profile /
+    set_system_nebula_star), never folded into this one."""
+    from engine import dev_mode
+    from engine.appc.nebula import MetaNebula_Create
+    pSet, player = far_scene
+    neb = MetaNebula_Create(0.5, 0.5, 0.5, 10.0, 1.0, "", "")
+    neb.AddNebulaSphere(FAR + 100.0, 0.0, 0.0, 300.0)
+    pSet.AddObjectToSet(neb, "Neb")
+
+    def _pushed(dev_enabled):
+        monkeypatch.setattr(dev_mode, "is_enabled", lambda: dev_enabled)
+        r = _Recorder()
+        host_loop._apply_render_origin(r, EYE)
+        host_loop._push_environment_feeds(r, pSet, warp_streaking=False,
+                                          player=player)
+        return r.named("set_nebulae")
+
+    off = _pushed(False)
+    on = _pushed(True)
+    assert off == on
+
+    expected = host_loop._render_nebulae(host_loop._aggregate_nebulae(pSet),
+                                         frames.viewing_set(), pSet)
+    assert off == [((expected,), {})]
+
+
 def test_the_target_reticle_is_in_render_space(far_scene):
     pSet, player = far_scene
     target = _ship(pSet, "Target", _plus(P, (0.0, 200.0, 0.0)))

@@ -159,77 +159,83 @@
       ],
       "radius_gu": 8000.0,
       "why": "Belaruz is not a casualty. A living system crossing a dust cloud, the star brighter for the material falling into it. Belaruz 1 carries the brightest directional in the game, pure white at full strength, which a dead star cannot produce."
-    },
-    "cloud": {
-      "name": "Kacheeti Nebula",
-      "display_name": "Kacheeti Nebula",
-      "kind": "nebula_field",
-      "geometry": {
-        "near_gu": 20000.0,
-        "far_gu": 220000.0,
-        "radius_gu": 160000.0
-      },
-      "why": "Belaruz is crossing a body of dust rather than having shed one, so the shape is directional, not centred on the star. The axis is derived from BC's authored pocket; near/far/radius are asserted -- sized to reach past Belaruz 4 at 121,181 GU so the outer system sits in thin material, as the system description claims. Retune freely."
     }
   },
   "generated": {
     "tool": "gen_system_maps"
   },
-  "clouds": [
-    {
-      "name": "Kacheeti Nebula",
-      "display_name": "Kacheeti Nebula",
-      "kind": "nebula_field",
-      "color": [
-        0.39215686274509803,
-        0.38823529411764707,
-        0.5725490196078431
-      ],
-      "volumes": [
-        {
-          "shape": "sphere",
-          "geometry": {
-            "center_gu": [
-              -17.139893,
-              128844.691284,
-              -30.296316
-            ],
-            "radius_gu": 900.0
-          },
-          "profile": "nebula",
-          "params": {
-            "visibility_gu": 200.0,
-            "sensor_density": 6.5,
-            "damage_hull_per_s": 0.0,
-            "damage_shield_per_s": 0.0
-          },
-          "origin_region": "Belaruz1"
-        },
-        {
-          "shape": "lobe",
-          "geometry": {
-            "near_gu": 20000.0,
-            "far_gu": 220000.0,
-            "radius_gu": 160000.0,
-            "axis": [
-              -0.00013302754039536867,
-              0.9999999635068384,
-              -0.00023513824739284278
-            ]
-          },
-          "profile": "mist",
-          "params": {
-            "visibility_gu": 0.0,
-            "sensor_density": 0.0,
-            "damage_hull_per_s": 0.0,
-            "damage_shield_per_s": 0.0
-          },
-          "origin_region": null
-        }
-      ],
-      "regions": [
-        "Belaruz1"
-      ]
-    }
-  ]
+  "profile": {
+    "rows": [
+      {
+        "distance_gu": 0.0,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 1.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 8000.0,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 1.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 24000.0,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 64422.347992975156,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 124385.50021395282,
+        "nebula": 0.5761982878524371,
+        "dust": 0.5761982878524371,
+        "sensors": 0.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 128844.69598595031,
+        "nebula": 0.6190476190476191,
+        "dust": 0.6190476190476191,
+        "sensors": 1.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 133303.8917579478,
+        "nebula": 0.5993534072098335,
+        "dust": 0.5993534072098335,
+        "sensors": 0.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 257689.39197190062,
+        "nebula": 0.050000000000000044,
+        "dust": 0.050000000000000044,
+        "sensors": 0.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      }
+    ],
+    "color": [
+      0.39215686274509803,
+      0.38823529411764707,
+      0.5725490196078431
+    ],
+    "full_concealment": 0.39264259190842216
+  }
 }

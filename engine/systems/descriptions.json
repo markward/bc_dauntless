@@ -16,11 +16,11 @@
 
   "vesuvi": {
     "summary": "Site of the Vesuvi event. A dead star and two surviving colonies.",
-    "detail": "Where it began. The star's core destabilised with the Icarus Two on approach, and what is left of it now lights a system full of its own debris. The Federation station at Geki took the event badly and still carries the damage -- Starfleet is still here, studying the thing that killed the star it was sent to watch. Haven and Geki colonies remain inhabited and dependent on supply runs. The dust is hazardous to shields and hull; route around it or accept the damage."
+    "detail": "Where it began. The star's core destabilised with the Icarus Two on approach, and what is left of it now lights a system full of its own debris. The Federation station at Geki took the event badly and still carries the damage -- Starfleet is still here, studying the thing that killed the star it was sent to watch. Haven and Geki colonies remain inhabited and dependent on supply runs. The inner system is still hot: radiation drains shields and knocks systems offline anywhere inside the debris, worst at its heart. Raise shields and keep moving."
   },
   "belaruz": {
     "summary": "A living system crossing a nebula. The cloud is weather, not wreckage.",
-    "detail": "Not a casualty. Belaruz is moving through a body of interstellar dust, and the star is brighter for it -- feeding on infalling material as the system ploughs forward. The dense part has fallen inward, closer to the star than any of the three planets, and the thin body of the cloud stretches out ahead of it. Cold material, unlike Vesuvi's. It will blind your sensors but it will not burn you."
+    "detail": "Not a casualty. Belaruz sits inside a body of interstellar dust and gas, and the star is brighter for it -- feeding on the infalling material. The cloud surrounds the whole system: it is thickest in a shell just beyond Belaruz 1, closer to the star than any of the three planets, and thins to a haze everywhere else. Cold material, unlike Vesuvi's. It will blind your sensors but it will not burn you."
   },
   "omegadraconis": {
     "summary": "Kessok space. A Solarformer was turned on this system's star.",

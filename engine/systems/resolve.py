@@ -23,7 +23,7 @@ result (a top-level field, an element of `m.bodies`/`m.regions`, or even
 list they're called on, so a shallow copy doesn't stop them handing back
 the still-cached instance) would silently corrupt the index for every later
 caller in the process. A deep copy closes all of that at once, at the cost
-of copying a whole system's bodies/regions/clouds on every call -- accepted
+of copying a whole system's bodies/regions on every call -- accepted
 deliberately, because the per-frame path (Task 5, drawing every body every
 tick) is meant to call anchor_of() instead, which returns an immutable
 tuple and never touches for_set()'s copy machinery.

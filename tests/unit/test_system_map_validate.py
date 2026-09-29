@@ -7,8 +7,7 @@ against (see the design doc's "pins"), or a spawn point inside a planet.
 """
 import pytest
 
-from engine.systems import clouds as cloud_profiles
-from engine.systems.map import Appearance, Body, Cloud, Region, SystemMap, Volume, available, load
+from engine.systems.map import Appearance, Body, Region, SystemMap, available, load
 from engine.systems.validate import Problem, validate
 
 
@@ -40,47 +39,6 @@ def _slugs(problems):
 
 def _rules(problems):
     return [p.rule for p in problems]
-
-
-def _cloud_map() -> SystemMap:
-    """A valid map with ONE cloud: a pocket volume owned by region "Ona1"
-    (mirroring BC's own authored nebula sphere, anchor + offset) plus a
-    system-scale sphere "large" volume centred on the star, exactly the
-    shape tools/systems/layout.py:_build_clouds produces for a
-    "debris_shell" override.
-    """
-    m = _valid()
-    m.region("Ona1").nebula = {
-        "color": (0.5, 0.5, 0.5),
-        "spheres": [(0.0, 1000.0, 0.0, 800.0)],
-        "visibility_gu": 145.0,
-        "sensor_density": 10.5,
-        "damage_hull_per_s": 150.0,
-        "damage_shield_per_s": 20.0,
-        "extra_nebulae": 0,
-    }
-    pocket = Volume(
-        shape="sphere",
-        geometry={"center_gu": (0.0, 19000.0, 0.0), "radius_gu": 800.0},
-        profile="debris",
-        params=cloud_profiles.params_for("debris"),
-        origin_region="Ona1",
-    )
-    large = Volume(
-        shape="sphere",
-        geometry={"center_gu": (0.0, 0.0, 0.0), "radius_gu": 25000.0},
-        profile="mist",
-        params=cloud_profiles.params_for("mist"),
-        origin_region=None,
-    )
-    m.clouds = [Cloud(
-        name="Ona Debris", display_name="Ona Debris", kind="debris_shell",
-        color=(0.5, 0.5, 0.5), volumes=[pocket, large], regions=["Ona1"])]
-    return m
-
-
-def test_a_cloud_map_is_itself_valid():
-    assert validate(_cloud_map()) == []
 
 
 def test_a_valid_map_has_no_problems():
@@ -327,88 +285,29 @@ def test_region_reaches_star_is_skipped_when_a_map_has_no_star():
     assert "region-reaches-star" not in _slugs(validate(m))
 
 
-def test_a_pocket_that_drifted_from_its_region_is_caught():
-    m = _cloud_map()
-    m.clouds[0].volumes[0].geometry["center_gu"] = (1.0, 2.0, 3.0)
-    assert "cloud-volume-agrees-with-region" in _rules(validate(m))
-
-
-def test_a_cloud_naming_a_region_that_does_not_exist_is_caught():
-    m = _cloud_map()
-    m.clouds[0].regions = ["Nowhere1"]
-    assert "cloud-region-membership" in _rules(validate(m))
-
-
-def test_a_region_with_a_nebula_and_no_cloud_is_caught():
-    """The failure this rule exists for: a cloud silently dropped during
-    regeneration, leaving BC's nebula stranded on the region."""
-    m = _cloud_map()
-    m.clouds = []
-    assert "cloud-region-membership" in _rules(validate(m))
-
-
-def test_a_pocket_outside_its_own_shell_is_caught():
-    m = _cloud_map()
-    shell = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
-    shell.geometry["radius_gu"] = 1.0
-    assert "cloud-pocket-inside-cloud" in _rules(validate(m))
-
-
-def test_tuned_bc_params_are_caught():
-    """BC's numbers are not ours to change."""
-    m = _cloud_map()
-    pocket = [v for v in m.clouds[0].volumes if v.origin_region][0]
-    pocket.params["damage_hull_per_s"] = 5.0
-    assert "cloud-profile-matches-params" in _rules(validate(m))
-
-
-def test_an_unknown_profile_is_a_problem_not_a_crash():
-    m = _cloud_map()
-    m.clouds[0].volumes[0].profile = "fog"
-    assert "cloud-profile-matches-params" in _rules(validate(m))
-
-
-@pytest.mark.parametrize("wreck", [
-    lambda c: setattr(c.volumes[0], "geometry", None),
-    lambda c: c.volumes[0].geometry.__setitem__("center_gu", (1.0, 2.0)),
-    lambda c: c.volumes[0].geometry.__setitem__("radius_gu", "big"),
-    lambda c: setattr(c, "volumes", [None]),
-    lambda c: setattr(c, "regions", None),
-])
-def test_a_malformed_cloud_is_reported_never_raised(wreck):
-    """validate()'s contract. Callers are a CLI printing every problem and a
-    test naming every problem; a traceback serves neither."""
-    m = _cloud_map()
-    wreck(m.clouds[0])
-    problems = validate(m)          # must not raise
-    assert any(p.rule.startswith("cloud-") or p.rule == "malformed-geometry"
-               for p in problems)
-
-
-@pytest.mark.parametrize("field", ["bodies", "regions", "clouds"])
+@pytest.mark.parametrize("field", ["bodies", "regions"])
 @pytest.mark.parametrize("junk", [None, 7, "bodies"])
 def test_a_map_whose_list_field_is_not_a_list_is_reported_never_raised(field, junk):
     """The last remaining way to make validate() raise.
 
-    `m.clouds = None` reached `for cl in m.clouds` and raised TypeError; so
-    did `m.bodies` and `m.regions`, which have carried the same unguarded
-    pattern since the file was written. A string is included because it IS
-    iterable -- `for b in m.bodies` over "bodies" yields characters and then
-    raises AttributeError on `.name`, which is a different crash from the
-    same fault and must also be reported."""
-    m = _cloud_map()
+    `m.bodies` and `m.regions` both raised TypeError when replaced with a
+    non-list, from the same unguarded `for x in m.<field>` pattern. A string
+    is included because it IS iterable -- `for b in m.bodies` over "bodies"
+    yields characters and then raises AttributeError on `.name`, which is a
+    different crash from the same fault and must also be reported."""
+    m = _valid()
     setattr(m, field, junk)
     problems = validate(m)          # must not raise
     assert any(p.rule == "malformed-geometry" and field in p.detail
                for p in problems), _rules(problems)
 
 
-@pytest.mark.parametrize("field", ["bodies", "regions", "clouds"])
+@pytest.mark.parametrize("field", ["bodies", "regions"])
 def test_a_list_field_may_be_a_tuple(field):
-    """A tuple is a perfectly good sequence of bodies/regions/clouds and is
+    """A tuple is a perfectly good sequence of bodies/regions and is
     not itself a problem worth reporting -- same reasoning as
     _sphere_entries accepting a tuple of spheres."""
-    m = _cloud_map()
+    m = _valid()
     setattr(m, field, tuple(getattr(m, field)))
     assert validate(m) == []
 
@@ -428,25 +327,14 @@ _TOO_BIG_FOR_FLOAT = int("9" * 401)
     # from validate()'s never-raises contract.)
     lambda raw: raw["bodies"][1]["position_gu"].__setitem__(0, _TOO_BIG_FOR_FLOAT),
     lambda raw: raw["regions"][0]["anchor_gu"].__setitem__(0, _TOO_BIG_FOR_FLOAT),
-    lambda raw: raw["regions"][0]["nebula"].__setitem__(
-        "damage_hull_per_s", _TOO_BIG_FOR_FLOAT),
-    lambda raw: raw["regions"][0]["nebula"]["spheres"][0].__setitem__(
-        3, _TOO_BIG_FOR_FLOAT),
-    lambda raw: raw["clouds"][0]["volumes"][0]["params"].__setitem__(
-        "damage_hull_per_s", _TOO_BIG_FOR_FLOAT),
-    lambda raw: raw["clouds"][0]["volumes"][0]["geometry"].__setitem__(
-        "radius_gu", _TOO_BIG_FOR_FLOAT),
-    lambda raw: raw["clouds"][0]["volumes"][1]["geometry"]["center_gu"].__setitem__(
-        0, _TOO_BIG_FOR_FLOAT),
 ])
 def test_an_int_too_large_for_a_float_is_reported_never_raised(tmp_path, wreck):
     """A number `_is_number` accepts but `float()` cannot convert.
 
     `_is_number` admits ANY int, and float(int) raises OverflowError above
     roughly 1.8e308. Every numeric guard in validate.py is therefore only as
-    strong as the arithmetic downstream of it: `_dist` reaches math.sqrt and
-    `_pocket_param_details` reaches math.isclose(float(...)), and both raise
-    on such a value where the rule is supposed to REPORT.
+    strong as the arithmetic downstream of it: `_dist` reaches math.sqrt,
+    which raises on such a value where the rule is supposed to REPORT.
 
     Driven from an actual JSON file, because that is the reachable path --
     JSON integers are unbounded, so a map on disk can carry one and nothing
@@ -455,7 +343,7 @@ def test_an_int_too_large_for_a_float_is_reported_never_raised(tmp_path, wreck):
     import json
     from engine.systems.map import from_json, to_json
 
-    raw = json.loads(to_json(_cloud_map()))
+    raw = json.loads(to_json(_valid()))
     wreck(raw)
     path = tmp_path / "wrecked.json"
     path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
@@ -469,279 +357,6 @@ def test_an_int_too_large_for_a_float_is_reported_never_raised(tmp_path, wreck):
 def test_the_real_maps_validate_clean():
     for name in available():
         assert validate(load(name)) == [], name
-
-
-# ---- fix round 1 --------------------------------------------------------
-
-def test_a_lobe_shaped_pocket_is_reported_never_raised():
-    """Finding 1 (Critical). A pocket (origin_region set) is always a
-    sphere -- BC's authored nebula spheres are the only thing a pocket ever
-    represents. A lobe pocket's geometry carries no center_gu, which both
-    downstream checks read unconditionally; that must be REPORTED here,
-    not left to raise TypeError out of zip(None, ...) deep inside them."""
-    m = _cloud_map()
-    pocket = m.clouds[0].volumes[0]
-    pocket.shape = "lobe"
-    pocket.geometry = {"axis": (0.0, 1.0, 0.0), "near_gu": 100.0,
-                        "far_gu": 200.0, "radius_gu": 777.0}
-    problems = validate(m)          # must not raise
-    assert "malformed-geometry" in _rules(problems)
-
-
-def test_a_non_string_origin_region_is_reported_not_silently_accepted():
-    """Finding 2 (Important). origin_region must be null or a region-name
-    string; anything else (an int, a list -- a regeneration bug) must be
-    reported, not fall through the isinstance/elif chain unreported."""
-    m = _cloud_map()
-    m.clouds[0].volumes[0].origin_region = 5
-    problems = validate(m)
-    assert "cloud-region-membership" in _rules(problems)
-
-
-def _lobe_cloud_map() -> SystemMap:
-    """A valid map with a LOBE-shaped large volume, mirroring the shape
-    tools/systems/layout.py:_build_clouds produces for a "nebula_field"
-    override (axis derived from the pocket's own centre, as Belaruz's real
-    map does). Exists because _cloud_map()'s large volume is a sphere, so
-    the lobe branch of _pocket_inside_large was never exercised by any
-    test before this fix round -- a `return True` stub there passed the
-    whole suite.
-    """
-    m = _valid()
-    m.region("Ona1").nebula = {
-        "color": (0.5, 0.5, 0.5),
-        "spheres": [(0.0, 1000.0, 0.0, 800.0)],
-        "visibility_gu": 200.0,
-        "sensor_density": 6.5,
-        "damage_hull_per_s": 0.0,
-        "damage_shield_per_s": 0.0,
-        "extra_nebulae": 0,
-    }
-    pocket = Volume(
-        shape="sphere",
-        geometry={"center_gu": (0.0, 19000.0, 0.0), "radius_gu": 800.0},
-        profile="nebula",
-        params=cloud_profiles.params_for("nebula"),
-        origin_region="Ona1",
-    )
-    large = Volume(
-        shape="lobe",
-        geometry={"axis": (0.0, 1.0, 0.0), "near_gu": 5000.0,
-                  "far_gu": 40000.0, "radius_gu": 5000.0},
-        profile="mist",
-        params=cloud_profiles.params_for("mist"),
-        origin_region=None,
-    )
-    m.clouds = [Cloud(
-        name="Ona Nebula", display_name="Ona Nebula", kind="nebula_field",
-        color=(0.5, 0.5, 0.5), volumes=[pocket, large], regions=["Ona1"])]
-    return m
-
-
-def test_a_lobe_cloud_map_is_itself_valid():
-    assert validate(_lobe_cloud_map()) == []
-
-
-def test_a_pocket_pushed_past_the_lobes_far_end_is_caught():
-    """Finding 3 (Important), axial case. The pocket's position and its
-    region's authored sphere are moved TOGETHER so cloud-volume-agrees-
-    with-region stays clean -- isolating the axial failure this test is
-    actually checking."""
-    m = _lobe_cloud_map()
-    pocket = m.clouds[0].volumes[0]
-    pocket.geometry["center_gu"] = (0.0, 48000.0, 0.0)   # t=48000 > far(40000)+radius(800)
-    m.region("Ona1").nebula["spheres"] = [(0.0, 30000.0, 0.0, 800.0)]
-    problems = _rules(validate(m))
-    assert "cloud-pocket-inside-cloud" in problems
-    assert "cloud-volume-agrees-with-region" not in problems
-
-
-def test_a_pocket_pushed_off_the_lobes_axis_is_caught():
-    """Finding 3 (Important), perpendicular case. Same isolation trick as
-    the axial test above, but offset sideways instead of further out."""
-    m = _lobe_cloud_map()
-    pocket = m.clouds[0].volumes[0]
-    pocket.geometry["center_gu"] = (6000.0, 19000.0, 0.0)   # perp=6000 > radius(5000)
-    m.region("Ona1").nebula["spheres"] = [(6000.0, 1000.0, 0.0, 800.0)]
-    problems = _rules(validate(m))
-    assert "cloud-pocket-inside-cloud" in problems
-    assert "cloud-volume-agrees-with-region" not in problems
-
-
-def test_a_region_listed_by_two_clouds_is_caught():
-    """Finding 4 (Important). The != 1 check also covers 2+, not just 0 --
-    a region duplicated into two clouds -- which nothing exercised before
-    this fix round."""
-    m = _cloud_map()
-    duplicate = Cloud(name="Duplicate Cloud", display_name="Duplicate Cloud",
-                       kind="debris_shell", color=(0.5, 0.5, 0.5),
-                       volumes=[], regions=["Ona1"])
-    m.clouds.append(duplicate)
-    assert "cloud-region-membership" in _rules(validate(m))
-
-
-def test_two_equal_radius_pockets_on_one_sphere_leave_the_other_sphere_unmatched():
-    """Finding 5 (promoted Minor). Two spheres of EQUAL radius at different
-    positions: without consuming a sphere once matched, a duplicate pocket
-    parked on sphere A would independently "match" A every time (the old,
-    non-bijective algorithm always rescans the full list), and sphere B
-    would never be reported missing."""
-    m = _cloud_map()
-    m.region("Ona1").nebula["spheres"] = [
-        (0.0, 1000.0, 0.0, 800.0),   # sphere A -- both pockets target this
-        (0.0, 4000.0, 0.0, 800.0),   # sphere B -- same radius, no pocket claims it
-    ]
-    original = m.clouds[0].volumes[0]
-    duplicate = Volume(
-        shape="sphere", geometry=dict(original.geometry),
-        profile=original.profile, params=dict(original.params),
-        origin_region=original.origin_region)
-    m.clouds[0].volumes.insert(1, duplicate)
-    assert "cloud-volume-agrees-with-region" in _rules(validate(m))
-
-
-def test_a_region_with_two_spheres_and_only_one_pocket_is_caught():
-    """Finding 5 (promoted Minor), the cardinality half: a region with TWO
-    authored spheres but only one pocket volume must report the dropped
-    sphere, not validate clean because the one pocket present happens to
-    match one of the two."""
-    m = _cloud_map()
-    m.region("Ona1").nebula["spheres"] = [
-        (0.0, 1000.0, 0.0, 800.0),
-        (0.0, 4000.0, 0.0, 500.0),
-    ]
-    assert "cloud-volume-agrees-with-region" in _rules(validate(m))
-
-
-def test_sphere_list_may_be_a_tuple_not_just_a_list():
-    """Trivial fold-in: region.nebula["spheres"] being a tuple rather than
-    a list is not itself a problem worth reporting."""
-    m = _cloud_map()
-    m.region("Ona1").nebula["spheres"] = tuple(m.region("Ona1").nebula["spheres"])
-    assert validate(m) == []
-
-
-def test_a_pocket_whose_params_disagree_with_its_regions_survey_is_caught():
-    """cloud-profile-matches-params must compare a pocket against its own
-    REGION's authored numbers, not against the same profile table that
-    stamped them.
-
-    layout.py sets a pocket's params from clouds.params_for(profile); a rule
-    that then compares those params against clouds.PROFILES can never fail
-    for a generated map. The genuinely independent source is the region's
-    own surveyed nebula.
-
-    The numbers below are real BC data: Multi6_S.py authors
-    MetaNebula_Create(..., 75.0, 0.5, ...) + SetupDamage(1.0). If such a set
-    ever became a region, layout would classify it `debris` (hull > 0) and
-    stamp Vesuvi's 145 / 10.5 / 150 / 20 onto it -- a 150x hull-damage error
-    that a table-only comparison validates clean.
-    """
-    m = _cloud_map()
-    m.region("Ona1").nebula.update({
-        "visibility_gu": 75.0,
-        "sensor_density": 0.5,
-        "damage_hull_per_s": 1.0,
-        "damage_shield_per_s": None,
-    })
-    problems = validate(m)
-    assert "cloud-profile-matches-params" in _rules(problems)
-    assert any("damage_hull_per_s" in p.detail for p in problems
-               if p.rule == "cloud-profile-matches-params")
-
-
-def test_an_absent_shield_rate_is_skipped_not_compared_against_zero():
-    """`damage_shield_per_s` is None when BC called SetupDamage with a single
-    argument: no shield rate was authored, so there is nothing to compare.
-    None is not zero -- survey._nebula draws that distinction deliberately --
-    so the key is skipped, and the other three are still compared."""
-    m = _cloud_map()
-    m.region("Ona1").nebula["damage_shield_per_s"] = None
-    assert validate(m) == []
-
-
-def test_the_large_volume_is_still_checked_against_the_profile_table():
-    """The large volume has no region, so the table is the only source it
-    can be compared against -- that half of the rule is unchanged."""
-    m = _cloud_map()
-    large = [v for v in m.clouds[0].volumes if v.origin_region is None][0]
-    large.params["visibility_gu"] = 900.0
-    assert "cloud-profile-matches-params" in _rules(validate(m))
-
-
-def test_a_pocket_whose_region_has_no_nebula_is_reported_not_raised():
-    m = _cloud_map()
-    m.region("Ona1").nebula = None
-    problems = validate(m)      # must not raise
-    assert "cloud-profile-matches-params" in _rules(problems)
-
-
-def test_a_pocket_whose_region_is_missing_is_reported_not_raised():
-    m = _cloud_map()
-    m.clouds[0].volumes[0].origin_region = "Nowhere1"
-    problems = validate(m)      # must not raise
-    assert "cloud-profile-matches-params" in _rules(problems)
-
-
-def test_a_pocket_whose_regions_numbers_are_non_numeric_is_reported_not_raised():
-    m = _cloud_map()
-    m.region("Ona1").nebula["sensor_density"] = "thick"
-    problems = validate(m)      # must not raise
-    assert "cloud-profile-matches-params" in _rules(problems)
-
-
-def test_a_pockets_profile_name_must_match_its_regions_damage():
-    """The half the region comparison alone does not cover.
-
-    Comparing params against the region checks the NUMBERS. It does not tie
-    the pocket's `profile` STRING to anything, so relabelling a pocket
-    "mist" while leaving BC's 145/10.5/150/20 in place validated clean --
-    a check the old table comparison did have, because a "mist" label
-    demanded mist's four zeros.
-
-    The rule mirrors tools/systems/layout.py:_build_clouds, which derives
-    the profile from BC's own damage choice: `debris` when the region's
-    damage_hull_per_s > 0, `nebula` otherwise.
-    """
-    m = _cloud_map()                       # region authors hull 150 -> debris
-    m.clouds[0].volumes[0].profile = "mist"
-    problems = validate(m)
-    assert "cloud-profile-matches-params" in _rules(problems)
-    assert any("profile" in p.detail for p in problems
-               if p.rule == "cloud-profile-matches-params")
-
-
-def test_a_harmless_pocket_may_not_be_labelled_debris():
-    """The other direction: a region BC authored no damage for is `nebula`,
-    and labelling its pocket `debris` must be caught even though the two
-    profiles differ on every number (so the params check would catch it too
-    -- here the params are moved with the label to isolate the NAME)."""
-    m = _cloud_map()
-    m.region("Ona1").nebula["damage_hull_per_s"] = 0.0
-    m.region("Ona1").nebula["damage_shield_per_s"] = 0.0
-    m.region("Ona1").nebula["visibility_gu"] = 200.0
-    m.region("Ona1").nebula["sensor_density"] = 6.5
-    m.clouds[0].volumes[0].params = cloud_profiles.params_for("nebula")
-    # Numbers now agree with the region; only the LABEL is wrong.
-    assert m.clouds[0].volumes[0].profile == "debris"
-    problems = validate(m)
-    assert "cloud-profile-matches-params" in _rules(problems)
-    assert any("profile" in p.detail for p in problems
-               if p.rule == "cloud-profile-matches-params")
-
-
-def test_a_correctly_labelled_harmless_pocket_is_clean():
-    """The positive case of the rule above -- relabelling in step with the
-    region's authored damage is exactly what layout.py does, and must not
-    be reported."""
-    m = _cloud_map()
-    m.region("Ona1").nebula.update({
-        "visibility_gu": 200.0, "sensor_density": 6.5,
-        "damage_hull_per_s": 0.0, "damage_shield_per_s": 0.0,
-    })
-    m.clouds[0].volumes[0].profile = "nebula"
-    m.clouds[0].volumes[0].params = cloud_profiles.params_for("nebula")
-    assert validate(m) == []
 
 
 # ---- radius-ratio ---------------------------------------------------------
@@ -910,3 +525,62 @@ def test_bc_scale_position_rule_is_region_scoped():
     )
     assert validate(m, bc_offsets={("R1", "Moon 1"): (0.0, 4000.0, 0.0),
                                    ("R2", "Moon 1"): (0.0, 1000.0, 0.0)}) == []
+
+
+# ---- profile rules --------------------------------------------------------
+
+from engine.systems.profile import Profile, ProfileRow
+from engine.systems.validate import _profile_problems
+
+
+def _pm(rows, overrides=None, regions=None):
+    return SystemMap(system="T", bodies=[Body("Sun", "Sun", 100.0, (0.0, 0.0, 0.0))],
+               regions=regions or [], overrides=overrides or {},
+               profile=Profile(rows=rows))
+
+
+def _profile_rules(m):
+    return sorted({p.rule for p in _profile_problems(m)})
+
+
+def test_ordered_profile_is_clean():
+    assert _profile_rules(_pm([ProfileRow(0.0, radiation=1.0), ProfileRow(300.0)])) == []
+
+
+def test_none_profile_is_clean():
+    m = _pm([])
+    m.profile = None
+    assert _profile_rules(m) == []
+
+
+def test_unsorted_first_nonzero_or_out_of_range_rows_are_problems():
+    assert _profile_rules(_pm([ProfileRow(10.0)])) == ["profile-rows-ordered"]
+    assert _profile_rules(_pm([ProfileRow(0.0), ProfileRow(50.0), ProfileRow(20.0)])) == ["profile-rows-ordered"]
+    assert _profile_rules(_pm([ProfileRow(0.0, dust=1.5)])) == ["profile-rows-ordered"]
+    assert _profile_rules(_pm([ProfileRow(0.0, nebula=float("nan"))])) == ["profile-rows-ordered"]
+
+
+def test_radiation_in_the_last_row_is_a_problem():
+    assert _profile_rules(_pm([ProfileRow(0.0), ProfileRow(10.0, radiation=0.1)])) == [
+        "profile-radiation-clears"]
+
+
+def test_radiation_near_the_star_is_fine():
+    assert _profile_rules(_pm([ProfileRow(0.0, radiation=1.0), ProfileRow(300.0)])) == []
+
+
+def _cloud_region(anchor_y):
+    return Region("C1", (0.0, anchor_y, 0.0), 2000.0,
+                  nebula={"spheres": [(0.0, 0.0, 0.0, 500.0)]})
+
+
+def test_override_near_clump_is_clean():
+    rows = [ProfileRow(0.0), ProfileRow(100000.0, nebula=1.0), ProfileRow(200000.0)]
+    m = _pm(rows, overrides={"profile": {"rows": []}}, regions=[_cloud_region(101000.0)])
+    assert _profile_rules(m) == []
+
+
+def test_override_far_from_clump_is_a_problem():
+    rows = [ProfileRow(0.0), ProfileRow(100000.0, nebula=1.0), ProfileRow(200000.0)]
+    m = _pm(rows, overrides={"profile": {"rows": []}}, regions=[_cloud_region(150000.0)])
+    assert _profile_rules(m) == ["profile-override-tracks-clump"]

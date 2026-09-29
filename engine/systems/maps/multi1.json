@@ -29,5 +29,34 @@
   "generated": {
     "tool": "gen_system_maps"
   },
-  "clouds": []
+  "profile": {
+    "rows": [
+      {
+        "distance_gu": 0.0,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 1.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 2000.0,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 1.0,
+        "asteroids": 0.0
+      },
+      {
+        "distance_gu": 6000.0,
+        "nebula": 0.0,
+        "dust": 0.0,
+        "sensors": 0.0,
+        "radiation": 0.0,
+        "asteroids": 0.0
+      }
+    ],
+    "color": null,
+    "full_concealment": 0.39264259190842216
+  }
 }

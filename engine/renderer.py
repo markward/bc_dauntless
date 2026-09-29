@@ -66,7 +66,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
-    "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
+    "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
@@ -75,6 +75,9 @@ _REQUIRED_BINDINGS = frozenset({
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
     "set_subsystem_pins", "set_suns",
+    "set_system_nebula_profile", "set_system_nebula_star",
+    "set_system_nebula_flashes",
+    "system_nebula_set_dials", "system_nebula_dials",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -451,6 +454,12 @@ def set_dust_planets(planets: list) -> None:
     _h.set_dust_planets(planets)
 
 
+def set_dust_profile(dust: float) -> None:
+    """Radial-profile `dust` column at the camera (0-1): lifts the dust
+    pass's density only (never tint, never drift). Applied each frame()."""
+    _h.set_dust_profile(dust)
+
+
 def letterbox_set(covered: float) -> None:
     """Set the cutscene letterbox TOTAL covered fraction (BC's fCoveredArea;
     0.125 => 6.25% per bar). Clamped native-side to [0, 1]. The bars draw over
@@ -465,6 +474,45 @@ def set_nebulae(nebulae: list) -> None:
     "fbm": (freq, gain, floor), "seed": (sx, sy, sz)}.
     Empty list = no nebula (pass early-outs)."""
     _h.set_nebulae(nebulae)
+
+
+def set_system_nebula_profile(profile: dict | None) -> None:
+    """Set (dict) or clear (None) the system-scale nebula profile: keys r,
+    nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, star_rgb
+    (3-tuples), optional g, floor, scatter, far_gu. Builds and uploads the
+    far-field table (CPU, ~1-2s) -- push once per system, never per frame.
+    Drawn only under --developer with Volumetric Nebulae on
+    (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md)."""
+    _h.set_system_nebula_profile(profile)
+
+
+def set_system_nebula_star(pos: tuple | None) -> None:
+    """The system nebula's star centre in RENDER space (relative to the
+    floating origin), applied each frame(); None when the viewed set has no
+    sun (the pass then lights clumps by the emissive floor only)."""
+    _h.set_system_nebula_star(pos)
+
+
+def set_system_nebula_flashes(flashes: list) -> None:
+    """Lightning flashes that light the system-scale nebula's haze and clumps.
+    Same shape as set_nebula_godrays: each {"dir": (x,y,z) render-space unit
+    vector TOWARD the flash, "intensity": float, "color": (r,g,b)}; up to 4.
+    Empty list = none (the pass renders exactly as without the feature)."""
+    _h.set_system_nebula_flashes(flashes)
+
+
+def system_nebula_set_dials(dials: dict) -> None:
+    """Set the system-scale nebula's live look dials (developer tuning --
+    engine/dev_nebula_dials.py): optional keys lane_size, lane_contrast, g,
+    floor, near_range; any key omitted resets that dial to
+    the native struct default. A g or floor change rebuilds the far-field
+    table (~1-2s) when a profile is already uploaded."""
+    _h.system_nebula_set_dials(dials)
+
+
+def system_nebula_dials() -> dict:
+    """Current system-scale nebula look dials (empty before init)."""
+    return _h.system_nebula_dials()
 
 
 def set_nebula_wake(points: list) -> None:

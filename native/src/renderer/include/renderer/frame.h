@@ -100,6 +100,11 @@ struct LensFlareElement {
 struct LensFlareDescriptor {
     glm::vec3                       source_world_pos;
     std::vector<LensFlareElement>   elements;
+    // Eye->star transmittance from the system-scale nebula pass (spec
+    // 2026-09-29, "The sun and its flares"): the billboard flare's
+    // visibility is one depth read that can't see fog, so it takes the
+    // exact ray transmittance as a brightness multiplier. 1.0 = untouched.
+    float                            brightness = 1.0f;
 };
 
 /// Projectile render descriptor, covering BOTH BC projectile families

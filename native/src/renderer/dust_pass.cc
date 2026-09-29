@@ -11,6 +11,7 @@
 
 #include <glad/glad.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -125,7 +126,8 @@ float body_closeness(const glm::vec3& camera_pos,
 DustInfluence compute_dust_influence(
     const glm::vec3& camera_pos,
     const std::vector<SunDescriptor>& suns,
-    const std::vector<glm::vec4>& planets) {
+    const std::vector<glm::vec4>& planets,
+    float profile_dust) {
     DustInfluence out;
 
     // Nearest (greatest-closeness) sun drives drift + tint + sun density.
@@ -171,6 +173,13 @@ DustInfluence compute_dust_influence(
         if (len > 1e-4f) out.sun_dir = outward / len;
     }
 
+    // Radial system profile (spec 2026-09-23-radial-system-profile): the
+    // `dust` column lifts density only -- never tint, never drift.
+    const float profile_mult =
+        1.0f + std::clamp(profile_dust, 0.0f, 1.0f) *
+                   (static_cast<float>(DustPass::kMaxDensityMult) - 1.0f);
+    out.density_mult = std::max(out.density_mult, profile_mult);
+
     return out;
 }
 
@@ -200,7 +209,8 @@ void DustPass::render(const scenegraph::Camera& camera,
                       float warp_streak,
                       glm::vec3 warp_travel,
                       const glm::dvec3& origin,
-                      float dash_intensity) {
+                      float dash_intensity,
+                      float profile_dust) {
     if (!enabled_ || particle_count_ <= 0) {
         // Still update prev_eye_ tracking so we don't get a phantom huge
         // velocity on the frame after re-enabling.
@@ -255,7 +265,8 @@ void DustPass::render(const scenegraph::Camera& camera,
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);                    // billboards face the camera
 
-    const DustInfluence inf = compute_dust_influence(camera.eye, suns, planets);
+    const DustInfluence inf = compute_dust_influence(camera.eye, suns, planets,
+                                                     profile_dust);
 
     // Solar-wind drift: advance the accumulated drift distance by the
     // proximity-scaled speed, wrapped to the 2R period so it stays precise

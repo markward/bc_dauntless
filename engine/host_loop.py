@@ -23,6 +23,7 @@ from engine.appc.ship_iter import (
 )
 import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
+import engine.dev_nebula_dials as dev_nebula_dials
 from engine.core import frame_profiler
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
@@ -4435,6 +4436,7 @@ def _reset_system_loader_state() -> None:
 
 def _reset_sensor_state() -> None:
     """Nebula trackers, concealment latches, the identification clock."""
+    global _last_identify_gt, _radiation_driver, _system_nebula_pushed_for
     # Clear the nebula tracker so stale membership state from the prior set
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
@@ -4445,12 +4447,18 @@ def _reset_sensor_state() -> None:
         _hull_discharge.reset()
     if _nebula_wake is not None:
         _nebula_wake.reset()
+    if _radiation_driver is not None:
+        _radiation_driver.reset()
+    # The native pass keeps its old far-field table across a mission swap --
+    # mark our latch UNKNOWN (not None) so the next _push_system_nebula call
+    # is forced to either clear it (unmapped/gate-closed) or rebuild it fresh
+    # (mapped, even into the same system name as before the swap).
+    _system_nebula_pushed_for = _SYSTEM_NEBULA_UNKNOWN
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
     reset_concealment_state()
     # Force the next tick to re-run sensor identification for the new mission.
-    global _last_identify_gt
     _last_identify_gt = None
 
 
@@ -4720,6 +4728,27 @@ _warp_hidden = False
 # first tick that contains a nebula.
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
+_radiation_driver = None  # RadiationDriver | None
+# Sentinel meaning "native pass state is unknown" -- distinct from None (which
+# means "we know the native pass holds nothing, e.g. after we pushed a clear").
+# Used by _reset_sensor_state on mission swap: the native SystemNebulaPass
+# retains its table across a swap, so simply forgetting our own latch to None
+# would suppress the very clear push a subsequent unmapped/gate-closed frame
+# is meant to send (`if _system_nebula_pushed_for is not None` would already
+# be false). The sentinel is `is not None` (forces one clear push if the next
+# mapped system doesn't resolve) and never `==` any system name (forces a
+# fresh profile push even into the SAME system name as before the swap).
+_SYSTEM_NEBULA_UNKNOWN = object()
+
+# System name whose radial-profile table the SystemNebulaPass currently holds,
+# or None once we know it holds nothing, or _SYSTEM_NEBULA_UNKNOWN right after
+# a mission swap (_reset_sensor_state) until the next _push_system_nebula call
+# resolves it one way or the other. Also reset to None whenever the
+# developer/volumetric gate closes, so re-opening it re-pushes.
+_system_nebula_pushed_for = None  # str | None | _SYSTEM_NEBULA_UNKNOWN
+# The veil (engine.dev_nebula_dials) the held profile's k_sys was solved
+# for: a veil-dial change re-solves k_sys and forces a re-push.
+_system_nebula_pushed_veil = None  # float | None
 # Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
 # until the first sweep; reset on mission swap so a new mission re-identifies.
 _last_identify_gt = None  # float | None
@@ -4912,11 +4941,164 @@ def _render_nebulae(nebulae, view, pSet):
     return out
 
 
-def _push_environment_feeds(r, active_set, warp_streaking):
-    """Push the per-frame environment feeds -- suns, dust planets, nebulae,
-    nebula godrays, hull discharges, the nebula wake, lens flares -- every
-    world position in RENDER space, so after _apply_render_origin. Returns
-    (suns, planets, lens_flares) for the tick-0 verbose log.
+def _push_dust_profile(r, player, warp_streaking) -> None:
+    """The radial profile's dust column at the player (the dust volume is
+    camera-anchored and the camera stays within a few hundred GU of the
+    player; the profile varies over thousands). Zero in the warp tunnel."""
+    dust = 0.0
+    if player is not None and not warp_streaking:
+        from engine.systems import profile as _profile
+        dust = _profile.sample_for_object(player).dust
+    r.set_dust_profile(dust)
+
+
+def _system_nebula_gate(r) -> bool:
+    """The one gate for everything that feeds or follows the developer-only
+    SystemNebulaPass (the profile/star push AND the flare veil): developer
+    mode AND the Volumetric Nebulae setting, matching the native pass's own
+    gate. Developer mode is tested FIRST so production short-circuits
+    without a single renderer call."""
+    return dev_mode.is_enabled() and r.volumetric_nebulae_enabled()
+
+
+def _push_system_nebula(r, player, suns, warp_streaking) -> None:
+    """Feed the developer-only SystemNebulaPass: the mapped system's radial
+    profile once per system (or veil-dial) change -- the pass builds its
+    far-field table from it, ~1.6s -- and, every frame the gate is open, the
+    star's render position, or None when the viewed set has no sun (the pass
+    then lights clumps by the emissive floor only and draws no star-centred
+    haze). The pushed profile carries the live dev dials' g/floor (the pass
+    syncs its dials from it, so omitting them would revert tuned values) and
+    a k_sys solved for the live veil dial.
+
+    Production (no --developer) returns before any renderer call: the pass
+    never runs there and was never fed, so there is nothing to clear -- even
+    after a mission swap leaves the latch UNKNOWN. With --developer, closing
+    the setting drops any held profile with a single None push."""
+    global _system_nebula_pushed_for, _system_nebula_pushed_veil
+    if not dev_mode.is_enabled():
+        return
+    if not _system_nebula_gate(r):
+        if _system_nebula_pushed_for is not None:
+            r.set_system_nebula_profile(None)
+            _system_nebula_pushed_for = None
+        return
+    from engine.systems import frames, resolve
+    from engine.systems import profile as _profile
+    m = None
+    if player is not None and not warp_streaking:
+        pos = frames.system_position(player)
+        if pos is not None and pos[0][0] == "system":
+            m = resolve.map_of(pos[0][1])
+    star = (next((b for b in m.bodies if b.orbits is None), None)
+            if m is not None else None)
+    veil = dev_nebula_dials.veil()
+    if m is None or m.profile is None or star is None:
+        if _system_nebula_pushed_for is not None:
+            r.set_system_nebula_profile(None)
+            _system_nebula_pushed_for = None
+    elif (_system_nebula_pushed_for != m.system
+            or _system_nebula_pushed_veil != veil):
+        colour = m.profile.color or (0.0, 0.0, 0.0)
+        star_rgb = (tuple(star.appearance.color) if star.appearance.color
+                    else (1.0, 1.0, 1.0))
+        dials = dev_nebula_dials.current()
+        r.set_system_nebula_profile({
+            "r": [row.distance_gu for row in m.profile.rows],
+            "nebula": [row.nebula for row in m.profile.rows],
+            "k_sys": _profile.k_sys(m, veil),
+            "star_radius": star.radius_gu,
+            "cloud_rgb": tuple(colour),
+            "star_rgb": star_rgb,
+            "far_gu": SCENE_FAR_GU,
+            "g": dials["g"],
+            "floor": dials["floor"],
+        })
+        _system_nebula_pushed_for = m.system
+        _system_nebula_pushed_veil = veil
+    r.set_system_nebula_star(tuple(suns[0]["position"]) if suns else None)
+
+
+def _veil_flares(r, flares, player):
+    """Billboard flares see no fog (their visibility is one depth read), so
+    under the system nebula pass they take the exact eye->star transmittance
+    (spec 2026-09-29, "The sun and its flares") for the same live veil dial
+    the haze's k_sys was solved for. Same gate as the pass itself
+    (_system_nebula_gate), so a developer run with the setting off does not
+    dim the flare while no haze is drawn."""
+    if not _system_nebula_gate(r) or player is None or not flares:
+        return flares
+    from engine.systems import profile as _profile
+    t = _profile.star_transmittance(player, dev_nebula_dials.veil())
+    return [dict(f, brightness=t) for f in flares]
+
+
+def _push_nebula_godrays(r, player, suns, warp_streaking) -> None:
+    """The lightning flashes, to the god-ray pass (as ever) and -- under the
+    system-nebula gate, developer-only -- to SystemNebulaPass, which lights
+    the haze and clumps from them (the new pass scatters only the star, so
+    without this a flash never lit the gas). The developer gate closed or a
+    warp streak pushes [] there; production never calls it at all, and does
+    not even ask the volumetric setting."""
+    flashes = []
+    if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
+        flashes = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
+                   for f in _nebula_thunder.active_flashes()]
+    godrays = list(flashes)
+    if dev_mode.is_enabled():
+        system_open = _system_nebula_gate(r) and not warp_streaking
+        r.set_system_nebula_flashes(flashes if system_open else [])
+        if system_open and suns and player is not None:
+            star = _star_godray(player, suns[0]["position"])
+            if star is not None:
+                godrays.append(star)
+    r.set_nebula_godrays(godrays)
+
+
+def _star_godray(player, star_render_pos):
+    """The star as a steady god-ray source (developer, system-nebula gate):
+    toward the star from the render origin (the camera sits at ~0), at
+    profile_fx.star_godray_intensity(godray_gain dial, the profile at the
+    player, the eye->star transmittance), in the map star's colour. None
+    when there is no light to cast (clear space, a fully veiled star) or the
+    star sits on the origin. Never a cloud-lighting flash: the haze already
+    forward-scatters the star."""
+    from engine.systems import profile as _profile
+    from engine.systems import profile_fx as _profile_fx
+    intensity = _profile_fx.star_godray_intensity(
+        dev_nebula_dials.godray_gain(),
+        _profile.sample_for_object(player),
+        _profile.star_transmittance(player, dev_nebula_dials.veil()))
+    x, y, z = star_render_pos
+    length = _math.sqrt(x * x + y * y + z * z)
+    if intensity <= 0.0 or length <= 1e-6:
+        return None
+    star = _map_star(player)
+    colour = (tuple(star.appearance.color)
+              if star is not None and star.appearance.color else (1.0, 1.0, 1.0))
+    return {"dir": (x / length, y / length, z / length),
+            "intensity": intensity, "color": colour}
+
+
+def _map_star(player):
+    """The mapped system's star body the player is in, or None (unmapped set,
+    no system position, a map with no root body)."""
+    from engine.systems import frames, resolve
+    pos = frames.system_position(player)
+    if pos is None or pos[0][0] != "system":
+        return None
+    m = resolve.map_of(pos[0][1])
+    if m is None:
+        return None
+    return next((b for b in m.bodies if b.orbits is None), None)
+
+
+def _push_environment_feeds(r, active_set, warp_streaking, player=None):
+    """Push the per-frame environment feeds -- suns, dust planets, the
+    profile dust density, nebulae, nebula godrays, hull discharges, the
+    nebula wake, lens flares -- every world position in RENDER space, so
+    after _apply_render_origin. Returns (suns, planets, lens_flares) for the
+    tick-0 verbose log.
 
     Coordinates in: suns, flares and dust planets are the viewed set's (view
     coordinates); nebulae and the wake belong to `active_set` (the player's
@@ -4929,19 +5111,17 @@ def _push_environment_feeds(r, active_set, warp_streaking):
     suns = [] if warp_streaking else _aggregate_suns()
     suns = _with_render_positions(suns, "position", to_view_render)
     r.set_suns(suns)
+    _push_system_nebula(r, player, suns, warp_streaking)
 
     planets = _with_render_positions(_aggregate_dust_planets(view),
                                      "position", to_view_render)
     r.set_dust_planets(planets)
+    _push_dust_profile(r, player, warp_streaking)
 
     nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
     r.set_nebulae(_render_nebulae(nebulae, view, active_set))
 
-    godrays = []
-    if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
-        godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
-                   for f in _nebula_thunder.active_flashes()]
-    r.set_nebula_godrays(godrays)
+    _push_nebula_godrays(r, player, suns, warp_streaking)
 
     discharges = []
     if (_hull_discharge is not None
@@ -4965,6 +5145,7 @@ def _push_environment_feeds(r, active_set, warp_streaking):
     lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
     lens_flares = _with_render_positions(lens_flares, "source_world_pos",
                                          to_view_render)
+    lens_flares = _veil_flares(r, lens_flares, player)
     r.set_lens_flares(lens_flares)
     return suns, planets, lens_flares
 
@@ -9474,6 +9655,14 @@ def run(mission_name: Optional[str] = None,
             # (DAUNTLESS_STUB_TELEMETRY=0 force-disables). See
             # docs/superpowers/specs/2026-07-10-stub-telemetry-accumulation-design.md.
             dev_mode.enable_stub_telemetry()
+
+            # System-scale nebula look-dial tuning keys (Task 7 of
+            # docs/superpowers/specs/2026-09-29-system-nebula-render-design.md).
+            # Registered once at boot, not per-frame: the dials persist
+            # across the session rather than resetting every tick like
+            # dev_keybindings.register_for_frame's re-bound handlers.
+            if _h is not None:
+                dev_nebula_dials.register(_h)
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
@@ -10621,6 +10810,21 @@ def run(mission_name: Optional[str] = None,
                         _neb_set.GetClassObjectList(App.CT_SHIP),
                         TICK_DT,
                     )
+
+                    # Radial-profile radiation (engine/appc/radiation.py):
+                    # drain + outages via 16 Hz ET_ENVIRONMENT_DAMAGE. Ships
+                    # inside an armed local nebula ride the tracker's events.
+                    global _radiation_driver
+                    if _radiation_driver is None:
+                        from engine.appc.radiation import RadiationDriver
+                        from engine.systems import profile as _profile
+                        _radiation_driver = RadiationDriver(_profile.sample_for_object)
+                        _nebula_tracker.env_listeners.append(
+                            _radiation_driver.on_local_event)
+                    _radiation_driver.update(
+                        _neb_set.GetClassObjectList(App.CT_SHIP), TICK_DT,
+                        shared=_nebula_tracker.ships_in_armed_nebula())
+
                     # Shared nebula-state locals used by ALL nebula drivers
                     # (thunder, hull-discharge, wake).  Computed once here so
                     # each per-toggle block can read them without duplication.
@@ -10631,8 +10835,20 @@ def run(mission_name: Optional[str] = None,
                     )
                     _gt = App.g_kUtopiaModule.GetGameTime()
 
+                    # The radial profile at the player: hull sparks follow its
+                    # radiation, the impulse wake its gas (engine/systems/profile_fx).
+                    from engine.systems import profile as _profile
+                    from engine.systems import profile_fx as _profile_fx
+                    from engine.appc import warp_state as _warp_state
+                    _prof_sample = (_profile.sample_for_object(player)
+                                    if player is not None else _profile.CLEAR)
+                    _warping = (player is not None
+                                and _warp_state.is_ship_warping(player))
+
                     # Nebula lightning: tick the thunder driver while the player
-                    # is in a nebula.  Visual/audio only; gated by the toggle.
+                    # is in a clump or the profile's thick cloud
+                    # (profile_fx.lightning_active).  Visual/audio only; gated
+                    # by the toggle.
                     # Lazy construct (mirrors _nebula_tracker).
                     global _nebula_thunder
                     if r.nebula_lightning_enabled():
@@ -10641,7 +10857,10 @@ def run(mission_name: Optional[str] = None,
                             _nebula_thunder = NebulaThunderDriver()
                         fwd = player.GetWorldForwardTG() if player is not None else None
                         fwd_t = (fwd.x, fwd.y, fwd.z) if fwd is not None else (0.0, 1.0, 0.0)
-                        _nebula_thunder.update(in_neb, TICK_DT, _gt, fwd_t)
+                        _nebula_thunder.update(
+                            _profile_fx.lightning_active(
+                                in_neb, _prof_sample, _warping),
+                            TICK_DT, _gt, fwd_t)
                         for name in _nebula_thunder.pop_due_audio(_gt):
                             try:
                                 from engine.audio.tg_sound import TGSoundManager
@@ -10656,7 +10875,7 @@ def run(mission_name: Optional[str] = None,
                         if _hull_discharge is None:
                             from engine.appc.hull_discharge import HullDischargeDriver
                             _hull_discharge = HullDischargeDriver()
-                        dmg_rate = 0.0
+                        clump_rate = 0.0
                         hull_pts = []
                         if in_neb and player is not None:
                             pset = player.GetContainingSet()
@@ -10664,8 +10883,12 @@ def run(mission_name: Optional[str] = None,
                                 for obj in pset.GetClassObjectList(App.CT_NEBULA):
                                     neb = App.MetaNebula_Cast(obj)
                                     if neb is not None and neb.IsObjectInNebula(player):
-                                        dmg_rate = neb.GetDamage()[0]
+                                        clump_rate = neb.GetDamage()[0]
                                         break
+                        sparking, dmg_rate = _profile_fx.discharge_inputs(
+                            in_neb, clump_rate, _prof_sample, _warping)
+                        if sparking and player is not None:
+                            pset = player.GetContainingSet()
                             # Anchor sparks across the WHOLE hull (saucer rim,
                             # nacelles, pylons) via the model's surface-point
                             # sample, not just the central subsystem mounts.
@@ -10686,7 +10909,7 @@ def run(mission_name: Optional[str] = None,
                                                           wp.x, wp.y, wp.z)
                                     hull_pts.append(_hp if _hp is not None
                                                     else (wp.x, wp.y, wp.z))
-                        _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
+                        _hull_discharge.update(sparking, dmg_rate, TICK_DT, hull_pts, _gt)
 
                     # Nebula ship wake: record the player's path while in a nebula.
                     # Gated by Volumetric Nebulae ONLY (spec §7: "no cloud → no
@@ -10697,10 +10920,11 @@ def run(mission_name: Optional[str] = None,
                             from engine.appc.nebula_wake import NebulaWakeTracker
                             _nebula_wake = NebulaWakeTracker()
                         _emitters = []
-                        if in_neb and player is not None:
+                        _waking = _profile_fx.wake_active(in_neb, _prof_sample, _warping)
+                        if _waking and player is not None:
                             from engine.appc.subsystems import active_impulse_emitters
                             _emitters = active_impulse_emitters(player)
-                        _nebula_wake.update(in_neb, _emitters, _gt)
+                        _nebula_wake.update(_waking, _emitters, _gt)
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
@@ -11559,7 +11783,7 @@ def run(mission_name: Optional[str] = None,
             # Suns, dust planets, nebulae, godrays, discharges, the wake and
             # lens flares -- in render space (the origin was set above).
             suns, planets, lens_flares = _push_environment_feeds(
-                r, active_set, _warp_streaking)
+                r, active_set, _warp_streaking, player=player)
 
             _push_cloak_refraction(r, session, player)
 

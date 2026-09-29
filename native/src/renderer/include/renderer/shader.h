@@ -48,6 +48,10 @@ public:
                        const int* data,
                        int count) const;
 
+    void set_float_array(const std::string& name,
+                         const float* data,
+                         int count) const;
+
 private:
     unsigned program_ = 0;
 };

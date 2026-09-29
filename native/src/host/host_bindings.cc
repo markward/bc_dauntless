@@ -35,6 +35,8 @@
 #include <renderer/dust_pass.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
+#include <renderer/nebula_atmosphere.h>
+#include <renderer/system_nebula_pass.h>
 #include <renderer/nebula_godray_pass.h>
 #include <renderer/shield_pass.h>
 #include <renderer/lens_flare_pass.h>
@@ -243,12 +245,16 @@ bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
 std::unique_ptr<renderer::BackdropPass> g_backdrop_pass;
 std::vector<renderer::SunDescriptor> g_suns;
 std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
+float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-1
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
 std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
+// System-scale nebula (star-centred atmosphere). DEVELOPER-ONLY: frame()
+// runs it only under --developer with Volumetric Nebulae on.
+std::unique_ptr<renderer::SystemNebulaPass> g_system_nebula_pass;
 std::vector<renderer::GodrayFlash> g_nebula_godrays;
 std::unique_ptr<renderer::NebulaGodrayPass> g_nebula_godray_pass;
 std::unique_ptr<renderer::ShieldPass> g_shield_pass;
@@ -678,6 +684,7 @@ void reset_frame_state() {
     g_sky_dirty = true;
     g_suns.clear();
     g_dust_planets.clear();
+    g_dust_profile = 0.0f;
     g_nebula_godrays.clear();
     g_nebulae.clear();
     g_nebula_wake.clear();
@@ -763,6 +770,7 @@ void init(int width, int height, const std::string& title) {
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
+    g_system_nebula_pass = std::make_unique<renderer::SystemNebulaPass>();
     g_nebula_godray_pass = std::make_unique<renderer::NebulaGodrayPass>();
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
@@ -841,6 +849,7 @@ void shutdown() {
     g_dust_pass.reset();
     g_nebula_pass.reset();
     g_nebula_volumetric_pass.reset();
+    g_system_nebula_pass.reset();
     g_nebula_godray_pass.reset();
     g_shield_pass.reset();
     g_lens_flare_pass.reset();
@@ -1137,9 +1146,26 @@ void frame() {
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir(),
                                 g_world.render_origin(),
-                                dauntless_dash_vfx::intensity());
+                                dauntless_dash_vfx::intensity(),
+                                g_dust_profile);
         }
-        if (!g_nebulae.empty()) {
+        // System-scale nebula: developer-only. Without --developer (or with
+        // Volumetric Nebulae off) the legacy branch runs exactly as before.
+        const renderer::NebulaDrawPlan neb_plan = renderer::plan_nebula_draws(
+            dauntless_volumetric_nebulae::enabled(),
+            dauntless::is_developer_mode() && g_system_nebula_pass != nullptr,
+            g_system_nebula_pass && g_system_nebula_pass->has_profile(),
+            !g_nebulae.empty(), !g_nebula_wake.empty());
+        if (neb_plan.system) {
+            DAUNTLESS_FRAME_SCOPE("space.system_nebula");
+            const glm::mat4 inv_vp =
+                glm::inverse(cam.proj_matrix() * cam.view_matrix());
+            g_system_nebula_pass->render(
+                cam, *g_pipeline, g_nebulae, g_lighting,
+                target.color_texture(), target.depth_texture(),
+                inv_vp, cam.eye, static_cast<float>(now),
+                g_world.render_origin());
+        } else if (neb_plan.legacy) {
             DAUNTLESS_FRAME_SCOPE("space.nebula");
             if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass) {
                 // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
@@ -1155,13 +1181,12 @@ void frame() {
                 g_nebula_pass->render(cam, *g_pipeline, g_nebulae,  // V1 faithful
                                       g_world.render_origin());
             }
-            // Decoupled additive wake trail (Plan B #1) — drawn over the cloud
-            // so the soft-glow billboards add on top of the nebula density.
-            if (dauntless_volumetric_nebulae::enabled() && g_nebula_wake_pass
-                    && !g_nebula_wake.empty())
-                g_nebula_wake_pass->render(cam, *g_pipeline, g_nebula_wake,
-                                           static_cast<float>(now));
         }
+        // Decoupled additive wake trail (Plan B #1) -- drawn over whichever
+        // cloud branch ran, so it survives under the system nebula pass too.
+        if (neb_plan.wake && g_nebula_wake_pass)
+            g_nebula_wake_pass->render(cam, *g_pipeline, g_nebula_wake,
+                                       static_cast<float>(now));
         if (dauntless_nebula_lightning::enabled()
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
             g_nebula_godray_pass->render(cam, *g_pipeline, g_nebula_godrays,
@@ -2146,6 +2171,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_dust_pass) g_dust_pass->reset_motion_history();
               if (g_nebula_volumetric_pass)
                   g_nebula_volumetric_pass->reset_history();
+              if (g_system_nebula_pass)
+                  g_system_nebula_pass->reset_history();
               g_have_prev_viewproj = false;
           },
           "Reset the floating render origin to (0,0,0) for a new mission, and "
@@ -3289,6 +3316,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set planet centres+radii used by the dust pass for proximity "
           "density scaling, applied each frame().");
 
+    m.def("set_dust_profile",
+          [](float dust) { g_dust_profile = dust; },
+          py::arg("dust"),
+          "Radial-profile dust column at the camera (0-1), applied each frame().");
+
     m.def("set_nebulae",
           [](const std::vector<py::dict>& descs) {
               g_nebulae.clear();
@@ -3315,6 +3347,137 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("nebulae"),
           "Set the active set's MetaNebula volumes, applied each frame().");
+
+    m.def("set_system_nebula_profile",
+          [](py::object desc) {
+              if (desc.is_none()) {
+                  if (g_system_nebula_pass) g_system_nebula_pass->clear_profile();
+                  return;
+              }
+              const py::dict d = desc.cast<py::dict>();
+              renderer::atmosphere::RadialProfile p;
+              p.r = d["r"].cast<std::vector<float>>();
+              p.nebula = d["nebula"].cast<std::vector<float>>();
+              if (p.r.empty() || p.r.size() != p.nebula.size())
+                  throw py::value_error(
+                      "set_system_nebula_profile: 'r' and 'nebula' must be "
+                      "non-empty and the same length");
+              p.k_sys = d["k_sys"].cast<float>();
+              p.star_radius = d["star_radius"].cast<float>();
+              auto rgb3 = [&](const char* key) {
+                  auto t = d[key].cast<std::tuple<float, float, float>>();
+                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+              };
+              p.cloud_rgb = rgb3("cloud_rgb");
+              p.star_rgb = rgb3("star_rgb");
+              renderer::atmosphere::LookParams look;
+              if (d.contains("g"))       look.g = d["g"].cast<float>();
+              if (d.contains("floor"))   look.floor = d["floor"].cast<float>();
+              if (d.contains("scatter")) look.scatter = d["scatter"].cast<float>();
+              if (d.contains("far_gu"))  look.far_gu = d["far_gu"].cast<float>();
+              // Validated above even with the host down; the upload needs GL.
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->set_profile(p, look);
+          },
+          py::arg("profile"),
+          "Set (dict) or clear (None) the system-scale nebula profile: keys "
+          "r, nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, "
+          "star_rgb (3-tuples), optional g, floor, scatter, far_gu. Builds "
+          "and uploads the far-field table (CPU, ~1-2 s). Drawn only under "
+          "--developer with Volumetric Nebulae on.");
+    m.def("set_system_nebula_star",
+          [](py::object pos) {
+              if (!g_system_nebula_pass) return;
+              if (pos.is_none()) {
+                  g_system_nebula_pass->clear_star();
+                  return;
+              }
+              const auto t = pos.cast<std::tuple<float, float, float>>();
+              g_system_nebula_pass->set_star(glm::vec3(
+                  std::get<0>(t), std::get<1>(t), std::get<2>(t)));
+          },
+          py::arg("pos"),
+          "The system nebula's star centre in RENDER space (relative to the "
+          "floating origin), applied each frame(); None when the viewed set "
+          "has no sun (no forward scatter, no star-centred haze).");
+    m.def("system_nebula_has_star",
+          []() {
+              return g_system_nebula_pass ? g_system_nebula_pass->has_star()
+                                          : false;
+          },
+          "True when the system-scale nebula pass holds a star position.");
+    m.def("system_nebula_has_profile",
+          []() {
+              return g_system_nebula_pass ? g_system_nebula_pass->has_profile()
+                                          : false;
+          },
+          "True when a system-scale nebula profile is uploaded.");
+
+    m.def("set_system_nebula_flashes",
+          [](const std::vector<py::dict>& descs) {
+              std::vector<renderer::GodrayFlash> flashes;
+              flashes.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::GodrayFlash g;
+                  auto dir = d["dir"].cast<std::tuple<float,float,float>>();
+                  g.dir = glm::vec3(std::get<0>(dir), std::get<1>(dir), std::get<2>(dir));
+                  g.intensity = d["intensity"].cast<float>();
+                  auto c = d["color"].cast<std::tuple<float,float,float>>();
+                  g.color = glm::vec3(std::get<0>(c), std::get<1>(c), std::get<2>(c));
+                  flashes.push_back(g);
+              }
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->set_flashes(flashes);
+          },
+          py::arg("flashes"),
+          "Lightning flashes that light the system-scale nebula (haze and "
+          "clumps): the set_nebula_godrays dict shape -- dir (render-space "
+          "unit vector TOWARD the flash), intensity, color. Up to 4; extras "
+          "dropped. Cleared with the profile. Developer-only pass.");
+    m.def("system_nebula_flash_count",
+          []() {
+              return g_system_nebula_pass ? g_system_nebula_pass->flash_count()
+                                          : 0;
+          },
+          "Number of lightning flashes the system-scale nebula pass holds.");
+
+    m.def("system_nebula_set_dials",
+          [](py::dict d) {
+              if (!g_system_nebula_pass) return;
+              renderer::SystemNebulaPass::Dials dials;
+              if (d.contains("lane_size"))
+                  dials.lane_size = d["lane_size"].cast<float>();
+              if (d.contains("lane_contrast"))
+                  dials.lane_contrast = d["lane_contrast"].cast<float>();
+              if (d.contains("g"))
+                  dials.g = d["g"].cast<float>();
+              if (d.contains("floor"))
+                  dials.floor = d["floor"].cast<float>();
+              if (d.contains("near_range"))
+                  dials.near_range = d["near_range"].cast<float>();
+              g_system_nebula_pass->set_dials(dials);
+          },
+          py::arg("dials"),
+          "Set the system-scale nebula's live look dials: optional keys "
+          "lane_size, lane_contrast, g, floor, near_range -- any "
+          "key omitted resets that dial to the struct default. A change to "
+          "g or floor rebuilds the far-field table (~1-2s) when a profile is "
+          "already uploaded; lane_size/lane_contrast/near_range never "
+          "rebuild. Developer-only tuning: engine/dev_nebula_dials.py.");
+    m.def("system_nebula_dials",
+          []() -> py::dict {
+              py::dict out;
+              if (!g_system_nebula_pass) return out;
+              const auto& d = g_system_nebula_pass->dials();
+              out["lane_size"] = d.lane_size;
+              out["lane_contrast"] = d.lane_contrast;
+              out["g"] = d.g;
+              out["floor"] = d.floor;
+              out["near_range"] = d.near_range;
+              return out;
+          },
+          "Current system-scale nebula look dials as a dict (empty before "
+          "init).");
 
     m.def("set_nebula_wake",
           [](const std::vector<py::dict>& pts) {
@@ -3369,11 +3532,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       e.amp          = ed["amp"].cast<float>();
                       f.elements.push_back(std::move(e));
                   }
+                  if (d.contains("brightness"))
+                      f.brightness = d["brightness"].cast<float>();
                   g_lens_flares.push_back(std::move(f));
               }
           },
           py::arg("flares"),
           "Set the active lens-flare list, applied each frame().");
+
+    // Introspection for tests/host/test_lens_flare_brightness_binding.py:
+    // set_lens_flares has no other way to prove the optional "brightness"
+    // key was parsed and stored rather than silently ignored (pybind
+    // doesn't reject unread dict keys). Read-only, touches no GL.
+    m.def("lens_flares_brightness_debug",
+          []() {
+              std::vector<float> out;
+              out.reserve(g_lens_flares.size());
+              for (const auto& f : g_lens_flares) out.push_back(f.brightness);
+              return out;
+          },
+          "Current per-flare brightness values, in set_lens_flares order.");
 
     m.def("set_torpedoes",
           [](const std::vector<py::dict>& descs) {
@@ -5436,6 +5614,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_PERIOD")     = GLFW_KEY_PERIOD;
     keys.attr("KEY_SEMICOLON")  = GLFW_KEY_SEMICOLON;
     keys.attr("KEY_APOSTROPHE") = GLFW_KEY_APOSTROPHE;
+    // Dev system-nebula look-dial tuning (engine/dev_nebula_dials.py). Free
+    // in input_map.ACTIONS, the dev-keybinding registry, the directly-read
+    // set, the SDK-routed F6/F9, AND every App.WC_* key BC's own
+    // DefaultKeyboardBinding.py binds -- see test_dev_key_collisions.py's
+    // "namespace 5" check. (An earlier cut used J/N/M/U/B/P here, which
+    // collided with BC's own WC_J/N/M/U/B bindings; removed.)
+    keys.attr("KEY_L") = GLFW_KEY_L;
+    keys.attr("KEY_O") = GLFW_KEY_O;
+    keys.attr("KEY_SLASH") = GLFW_KEY_SLASH;
+    keys.attr("KEY_PAUSE") = GLFW_KEY_PAUSE;
+    keys.attr("KEY_KP_0")        = GLFW_KEY_KP_0;
+    keys.attr("KEY_KP_DECIMAL")  = GLFW_KEY_KP_DECIMAL;
+    keys.attr("KEY_KP_MULTIPLY") = GLFW_KEY_KP_MULTIPLY;
+    keys.attr("KEY_KP_DIVIDE")   = GLFW_KEY_KP_DIVIDE;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

@@ -7,7 +7,6 @@ not a snapshot of it.
 """
 import pytest
 
-from engine.systems import clouds
 from tools.systems import survey
 from tools.systems.survey import survey_system, system_names
 
@@ -272,20 +271,15 @@ def test_the_real_vesuvi_and_belaruz_scripts_parse_as_expected():
     assert belaruz1.nebula["visibility_gu"] == pytest.approx(200.0)
 
 
-def test_the_bc_profiles_match_what_the_sdk_actually_says():
-    """engine/systems/clouds.py claims debris and nebula are BC's numbers,
-    verbatim. This is the only test that can prove it: it reads the real game
-    scripts and compares. If it fails, either someone tuned a constant that is
-    not ours to tune, or the survey parser drifted."""
-    vesuvi4 = [r for r in survey_system("Vesuvi").regions
-               if r.set_name == "Vesuvi4"][0]
-    belaruz1 = [r for r in survey_system("Belaruz").regions
-                if r.set_name == "Belaruz1"][0]
-    for region, profile in ((vesuvi4, "debris"), (belaruz1, "nebula")):
-        expected = clouds.params_for(profile)
-        for key in expected:
-            assert region.nebula[key] == pytest.approx(expected[key]), \
-                f"{profile}.{key} does not match {region.set_name}"
+def test_the_campaign_nebulae_match_what_the_sdk_actually_says():
+    """The radial profile is calibrated on these four numbers per cloud
+    (spec: 'The columns'). If the survey drifts, the calibration drifts."""
+    v4 = next(r for r in survey_system("Vesuvi").regions if r.set_name == "Vesuvi4").nebula
+    b1 = next(r for r in survey_system("Belaruz").regions if r.set_name == "Belaruz1").nebula
+    assert (v4["visibility_gu"], v4["sensor_density"]) == (145.0, 10.5)
+    assert (v4["damage_hull_per_s"], v4["damage_shield_per_s"]) == (150.0, 20.0)
+    assert (b1["visibility_gu"], b1["sensor_density"]) == (200.0, 6.5)
+    assert (b1["damage_hull_per_s"], b1["damage_shield_per_s"]) == (0.0, 0.0)
 
 
 # ── The key directional light, and BC's own menu listing ────────────────────

@@ -19,6 +19,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from engine.systems.profile import Profile, ProfileRow
+
 
 @dataclass
 class Appearance:
@@ -54,32 +56,13 @@ class Region:
 
 
 @dataclass
-class Volume:
-    shape: str                      # "sphere" | "lobe"
-    geometry: dict = field(default_factory=dict)
-    profile: str = ""               # "debris" | "nebula" | "mist"
-    params: dict = field(default_factory=dict)
-    origin_region: str | None = None
-
-
-@dataclass
-class Cloud:
-    name: str
-    display_name: str
-    kind: str                       # "debris_shell" | "nebula_field"
-    color: tuple = (0.0, 0.0, 0.0)
-    volumes: list = field(default_factory=list)
-    regions: list = field(default_factory=list)
-
-
-@dataclass
 class SystemMap:
     system: str
     bodies: list = field(default_factory=list)
     regions: list = field(default_factory=list)
     overrides: dict = field(default_factory=dict)
     generated: dict = field(default_factory=dict)
-    clouds: list = field(default_factory=list)
+    profile: Profile | None = None
 
     def body(self, name: str):
         for b in self.bodies:
@@ -93,18 +76,14 @@ class SystemMap:
                 return r
         return None
 
-    def cloud(self, name: str):
-        for c in self.clouds:
-            if c.name == name:
-                return c
-        return None
-
 
 def to_json(m: SystemMap) -> str:
     raw = asdict(m)
     for region in raw["regions"]:
         if not region["bc_scale"]:
             del region["bc_scale"]
+    if raw["profile"] is None:
+        del raw["profile"]
     return json.dumps(raw, indent=2, sort_keys=False) + "\n"
 
 
@@ -124,24 +103,14 @@ def _nebula_from_json(raw: dict | None) -> dict | None:
     return out
 
 
-def _volume_from_json(raw: dict) -> Volume:
-    return Volume(
-        shape=raw["shape"],
-        geometry=dict(raw.get("geometry", {})),
-        profile=raw.get("profile", ""),
-        params=dict(raw.get("params", {})),
-        origin_region=raw.get("origin_region"),
-    )
-
-
-def _cloud_from_json(raw: dict) -> Cloud:
-    return Cloud(
-        name=raw["name"],
-        display_name=raw["display_name"],
-        kind=raw["kind"],
-        color=tuple(raw.get("color", (0.0, 0.0, 0.0))),
-        volumes=[_volume_from_json(v) for v in raw.get("volumes", [])],
-        regions=list(raw.get("regions", [])),
+def _profile_from_json(raw: dict | None) -> Profile | None:
+    if raw is None:
+        return None
+    color = raw.get("color")
+    return Profile(
+        rows=[ProfileRow(**row) for row in raw.get("rows", [])],
+        color=None if color is None else tuple(color),
+        full_concealment=float(raw.get("full_concealment", 0.0)),
     )
 
 
@@ -170,14 +139,13 @@ def from_json(text: str) -> SystemMap:
         )
         for r in raw.get("regions", [])
     ]
-    clouds = [_cloud_from_json(c) for c in raw.get("clouds", [])]
     return SystemMap(
         system=raw["system"],
         bodies=bodies,
         regions=regions,
         overrides=raw.get("overrides", {}),
         generated=raw.get("generated", {}),
-        clouds=clouds,
+        profile=_profile_from_json(raw.get("profile")),
     )
 
 

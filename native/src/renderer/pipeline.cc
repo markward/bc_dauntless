@@ -21,6 +21,7 @@
 #include "embedded_nebula_volumetric_vs.h"
 #include "embedded_nebula_volumetric_fs.h"
 #include "embedded_nebula_upsample_fs.h"
+#include "embedded_system_nebula_fs.h"
 #include "embedded_nebula_godray_vs.h"
 #include "embedded_nebula_godray_fs.h"
 #include "embedded_shield_vs.h"
@@ -96,6 +97,8 @@ Pipeline::Pipeline() {
     nebula_volumetric_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::nebula_volumetric_fs);
     // The upsample reuses the fullscreen-triangle vertex shader (outputs v_uv).
     nebula_upsample_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::nebula_upsample_fs);
+    // System-scale nebula haze: same fullscreen-triangle vertex shader.
+    system_nebula_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::system_nebula_fs);
     nebula_godray_ = std::make_unique<Shader>(shader_src::nebula_godray_vs, shader_src::nebula_godray_fs);
     shield_ = std::make_unique<Shader>(shader_src::shield_vs, shader_src::shield_fs);
     lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
