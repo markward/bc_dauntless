@@ -1218,3 +1218,31 @@ def test_a_part_pose_shows_each_states_own_values(make_panel):
     red -> (Rotate X +10) -> red -> warp -> red: warp shows warp's values,
     and red keeps its edit."""
     assert _scenario_pose_states(make_panel) == EXPECTED_POSE_STATES
+
+
+# Box -> Box rotate paste (fix round 1) -----------------------------------------
+
+def _scenario_box_to_box_rotate_paste(make_panel):
+    """Light 3 (Box A, forward (0.6, 0.8, 0)) copies; light 1, re-shaped as
+    a second Box B with a different basis (saved this session, so nothing
+    is pending before the paste), pastes: (returned, B's staged (forward,
+    up), undo entries)."""
+    p = make_panel()
+    p._saved_light[1] = _region(
+        shape="Box", position=(0.2, -0.4, 0.1), scale=(0.3, 0.3, 0.3),
+        orientation=((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)))
+    _select(p, "light_box")
+    _use_tool(p, "rotate")
+    assert p.dispatch_event("rotate_copy") is True
+    assert p.dispatch_event("select_light:1") is True
+    n = len(p._undo_stack)
+    ok = p.dispatch_event("rotate_paste")
+    return (ok, _r(p._pending_light[1]["orientation"]),
+            len(p._undo_stack) - n)
+
+
+def test_box_to_box_rotate_paste(make_panel):
+    """The `box_orientation` branch of rotate_paste: B takes A's
+    re-orthonormalised forward and up (not swapped), one undo entry."""
+    assert _scenario_box_to_box_rotate_paste(make_panel) == (
+        True, ((0.6, 0.8, 0.0), (0.0, 0.0, 1.0)), 1)
