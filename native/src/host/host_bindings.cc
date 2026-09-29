@@ -1056,11 +1056,13 @@ void frame() {
                                 g_dust_profile);
         }
         // System-scale nebula: developer-only. Without --developer (or with
-        // Volumetric Nebulae off) the branch below runs exactly as before.
-        const bool sys_neb = dauntless_volumetric_nebulae::enabled()
-            && dauntless::is_developer_mode() && g_system_nebula_pass
-            && (g_system_nebula_pass->has_profile() || !g_nebulae.empty());
-        if (sys_neb) {
+        // Volumetric Nebulae off) the legacy branch runs exactly as before.
+        const renderer::NebulaDrawPlan neb_plan = renderer::plan_nebula_draws(
+            dauntless_volumetric_nebulae::enabled(),
+            dauntless::is_developer_mode() && g_system_nebula_pass != nullptr,
+            g_system_nebula_pass && g_system_nebula_pass->has_profile(),
+            !g_nebulae.empty(), !g_nebula_wake.empty());
+        if (neb_plan.system) {
             DAUNTLESS_FRAME_SCOPE("space.system_nebula");
             const glm::mat4 inv_vp =
                 glm::inverse(cam.proj_matrix() * cam.view_matrix());
@@ -1069,7 +1071,7 @@ void frame() {
                 target.color_texture(), target.depth_texture(),
                 inv_vp, cam.eye, static_cast<float>(now),
                 g_world.render_origin());
-        } else if (!g_nebulae.empty()) {
+        } else if (neb_plan.legacy) {
             DAUNTLESS_FRAME_SCOPE("space.nebula");
             if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass) {
                 // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
@@ -1085,13 +1087,12 @@ void frame() {
                 g_nebula_pass->render(cam, *g_pipeline, g_nebulae,  // V1 faithful
                                       g_world.render_origin());
             }
-            // Decoupled additive wake trail (Plan B #1) — drawn over the cloud
-            // so the soft-glow billboards add on top of the nebula density.
-            if (dauntless_volumetric_nebulae::enabled() && g_nebula_wake_pass
-                    && !g_nebula_wake.empty())
-                g_nebula_wake_pass->render(cam, *g_pipeline, g_nebula_wake,
-                                           static_cast<float>(now));
         }
+        // Decoupled additive wake trail (Plan B #1) -- drawn over whichever
+        // cloud branch ran, so it survives under the system nebula pass too.
+        if (neb_plan.wake && g_nebula_wake_pass)
+            g_nebula_wake_pass->render(cam, *g_pipeline, g_nebula_wake,
+                                       static_cast<float>(now));
         if (dauntless_nebula_lightning::enabled()
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
             g_nebula_godray_pass->render(cam, *g_pipeline, g_nebula_godrays,

@@ -56,6 +56,18 @@ struct SystemNebulaDials {
     float near_range    = 30000.0f;
 };
 
+/// Which nebula draws frame() makes this frame (host_bindings.cc).
+struct NebulaDrawPlan {
+    bool system = false;   // SystemNebulaPass
+    bool legacy = false;   // NebulaVolumetricPass / faithful NebulaPass
+    bool wake   = false;   // NebulaWakePass, over whichever branch drew
+};
+
+/// frame()'s nebula decision, pure so it is testable without a host.
+NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool developer,
+                                 bool has_profile, bool have_volumes,
+                                 bool have_wake);
+
 class SystemNebulaPass {
 public:
     using Dials = SystemNebulaDials;

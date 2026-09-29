@@ -417,3 +417,36 @@ TEST_F(SystemNebulaPassTest, ProfileWithoutAStarDrawsNoHaze) {
     const glm::vec4 px = render_centre(*pipeline, pass, cam, {});
     EXPECT_EQ(px.a, 0.0f);
 }
+
+// frame()'s nebula block, as a pure decision (no GL). The wake trail used to
+// draw only inside the legacy branch, so under the system pass it vanished.
+TEST(SystemNebulaDrawPlan, WakeDrawsAfterEitherBranchUnderTheVolumetricGate) {
+    using renderer::plan_nebula_draws;
+    // developer + volumetric + profile: the system pass, and the wake over it
+    auto p = plan_nebula_draws(/*volumetric=*/true, /*developer=*/true,
+                               /*has_profile=*/true, /*have_volumes=*/false,
+                               /*have_wake=*/true);
+    EXPECT_TRUE(p.system);
+    EXPECT_FALSE(p.legacy);
+    EXPECT_TRUE(p.wake) << "wake missing under the system nebula pass";
+
+    // production (no --developer): the legacy branch, wake exactly as before
+    p = plan_nebula_draws(true, false, true, true, true);
+    EXPECT_FALSE(p.system);
+    EXPECT_TRUE(p.legacy);
+    EXPECT_TRUE(p.wake);
+    // ...and no volumes => no branch => no wake (byte-identical production)
+    p = plan_nebula_draws(true, false, true, false, true);
+    EXPECT_FALSE(p.system);
+    EXPECT_FALSE(p.legacy);
+    EXPECT_FALSE(p.wake);
+    // setting off: faithful pass, never the wake
+    p = plan_nebula_draws(false, true, true, true, true);
+    EXPECT_FALSE(p.system);
+    EXPECT_TRUE(p.legacy);
+    EXPECT_FALSE(p.wake);
+    // nothing to wake
+    p = plan_nebula_draws(true, true, true, true, false);
+    EXPECT_TRUE(p.system);
+    EXPECT_FALSE(p.wake);
+}
