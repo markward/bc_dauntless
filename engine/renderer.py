@@ -74,6 +74,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
     "set_subsystem_pins", "set_suns",
+    "set_system_nebula_profile", "set_system_nebula_star",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -456,6 +457,22 @@ def set_nebulae(nebulae: list) -> None:
     "fbm": (freq, gain, floor), "seed": (sx, sy, sz)}.
     Empty list = no nebula (pass early-outs)."""
     _h.set_nebulae(nebulae)
+
+
+def set_system_nebula_profile(profile: dict | None) -> None:
+    """Set (dict) or clear (None) the system-scale nebula profile: keys r,
+    nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, star_rgb
+    (3-tuples), optional g, floor, scatter, far_gu. Builds and uploads the
+    far-field table (CPU, ~1-2s) -- push once per system, never per frame.
+    Drawn only under --developer with Volumetric Nebulae on
+    (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md)."""
+    _h.set_system_nebula_profile(profile)
+
+
+def set_system_nebula_star(pos: tuple) -> None:
+    """The system nebula's star centre in RENDER space (relative to the
+    floating origin), applied each frame()."""
+    _h.set_system_nebula_star(pos)
 
 
 def set_nebula_wake(points: list) -> None:

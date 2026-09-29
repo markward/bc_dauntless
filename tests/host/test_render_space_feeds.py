@@ -298,30 +298,33 @@ def test_every_environment_feed_is_in_render_space(far_scene, monkeypatch):
     assert sphere[3] == 300.0, "a radius is not a position"
 
 
-def test_dev_mode_off_leaves_the_nebula_feed_untouched_by_a_player(far_scene, monkeypatch):
-    """The Task 13 spike volume must never reach production: with dev mode
-    off, a synthetic_volume() that WOULD add a nebula changes nothing pushed
-    to set_nebulae."""
+def test_nebula_feed_is_byte_identical_regardless_of_developer_mode(far_scene, monkeypatch):
+    """The faithful/volumetric `set_nebulae` feed must be production
+    byte-identical whether or not developer mode is on -- the system-scale
+    nebula profile is a wholly separate pass (set_system_nebula_profile /
+    set_system_nebula_star), never folded into this one."""
     from engine import dev_mode
-    from engine.systems import profile_render
-    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
-    monkeypatch.setattr(profile_render, "synthetic_volume",
-                        lambda player: {"spheres": [(0.0, 0.0, 0.0, 3000.0)],
-                                        "rgb": (1.0, 0.0, 0.0), "visibility": 1.0,
-                                        "external_tex": "", "internal_tex": "",
-                                        "fbm": (0.02, 1.5, 0.3), "seed": (0, 0, 0)})
+    from engine.appc.nebula import MetaNebula_Create
     pSet, player = far_scene
+    neb = MetaNebula_Create(0.5, 0.5, 0.5, 10.0, 1.0, "", "")
+    neb.AddNebulaSphere(FAR + 100.0, 0.0, 0.0, 300.0)
+    pSet.AddObjectToSet(neb, "Neb")
 
-    r_no_player = _Recorder()
-    host_loop._apply_render_origin(r_no_player, EYE)
-    host_loop._push_environment_feeds(r_no_player, pSet, warp_streaking=False)
+    def _pushed(dev_enabled):
+        monkeypatch.setattr(dev_mode, "is_enabled", lambda: dev_enabled)
+        r = _Recorder()
+        host_loop._apply_render_origin(r, EYE)
+        host_loop._push_environment_feeds(r, pSet, warp_streaking=False,
+                                          player=player)
+        return r.named("set_nebulae")
 
-    r_with_player = _Recorder()
-    host_loop._apply_render_origin(r_with_player, EYE)
-    host_loop._push_environment_feeds(r_with_player, pSet, warp_streaking=False,
-                                      player=player)
+    off = _pushed(False)
+    on = _pushed(True)
+    assert off == on
 
-    assert r_with_player.named("set_nebulae") == r_no_player.named("set_nebulae")
+    expected = host_loop._render_nebulae(host_loop._aggregate_nebulae(pSet),
+                                         frames.viewing_set(), pSet)
+    assert off == [((expected,), {})]
 
 
 def test_the_target_reticle_is_in_render_space(far_scene):

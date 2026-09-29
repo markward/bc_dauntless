@@ -4404,7 +4404,7 @@ def _reset_system_loader_state() -> None:
 
 def _reset_sensor_state() -> None:
     """Nebula trackers, concealment latches, the identification clock."""
-    global _last_identify_gt, _radiation_driver
+    global _last_identify_gt, _radiation_driver, _system_nebula_pushed_for
     # Clear the nebula tracker so stale membership state from the prior set
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
@@ -4417,6 +4417,9 @@ def _reset_sensor_state() -> None:
         _nebula_wake.reset()
     if _radiation_driver is not None:
         _radiation_driver.reset()
+    # The native pass keeps its old far-field table across a mission swap
+    # otherwise -- force the next tick to rebuild (or clear) it.
+    _system_nebula_pushed_for = None
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -4692,6 +4695,10 @@ _warp_hidden = False
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
 _radiation_driver = None  # RadiationDriver | None
+# System name whose radial-profile table the SystemNebulaPass currently holds,
+# or None. Reset on mission swap (_reset_sensor_state) and whenever the
+# developer/volumetric gate closes, so re-opening it re-pushes.
+_system_nebula_pushed_for = None  # str | None
 # Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
 # until the first sweep; reset on mission swap so a new mission re-identifies.
 _last_identify_gt = None  # float | None
@@ -4895,6 +4902,51 @@ def _push_dust_profile(r, player, warp_streaking) -> None:
     r.set_dust_profile(dust)
 
 
+def _push_system_nebula(r, player, suns, warp_streaking) -> None:
+    """Feed the developer-only SystemNebulaPass: the mapped system's radial
+    profile once per system change (the pass builds its far-field table from
+    it -- ~1.6s, so never more than once per system), and the star's render
+    position every frame the gate is open, so clump-only lighting still tracks
+    the star with no profile present. Gated on developer mode AND the
+    Volumetric Nebulae toggle, matching the native pass's own gate: a closed
+    gate must never build a table in production, and drops any held profile
+    with a single None push."""
+    global _system_nebula_pushed_for
+    if not (dev_mode.is_enabled() and r.volumetric_nebulae_enabled()):
+        if _system_nebula_pushed_for is not None:
+            r.set_system_nebula_profile(None)
+            _system_nebula_pushed_for = None
+        return
+    from engine.systems import frames, resolve
+    from engine.systems import profile as _profile
+    m = None
+    if player is not None and not warp_streaking:
+        pos = frames.system_position(player)
+        if pos is not None and pos[0][0] == "system":
+            m = resolve.map_of(pos[0][1])
+    if m is None or m.profile is None:
+        if _system_nebula_pushed_for is not None:
+            r.set_system_nebula_profile(None)
+            _system_nebula_pushed_for = None
+    elif _system_nebula_pushed_for != m.system:
+        star = next(b for b in m.bodies if b.orbits is None)
+        colour = m.profile.color or (0.0, 0.0, 0.0)
+        star_rgb = (tuple(star.appearance.color) if star.appearance.color
+                    else (1.0, 1.0, 1.0))
+        r.set_system_nebula_profile({
+            "r": [row.distance_gu for row in m.profile.rows],
+            "nebula": [row.nebula for row in m.profile.rows],
+            "k_sys": _profile.k_sys(m),
+            "star_radius": star.radius_gu,
+            "cloud_rgb": tuple(colour),
+            "star_rgb": star_rgb,
+            "far_gu": SCENE_FAR_GU,
+        })
+        _system_nebula_pushed_for = m.system
+    if suns:
+        r.set_system_nebula_star(tuple(suns[0]["position"]))
+
+
 def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     """Push the per-frame environment feeds -- suns, dust planets, the
     profile dust density, nebulae, nebula godrays, hull discharges, the
@@ -4913,6 +4965,7 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     suns = [] if warp_streaking else _aggregate_suns()
     suns = _with_render_positions(suns, "position", to_view_render)
     r.set_suns(suns)
+    _push_system_nebula(r, player, suns, warp_streaking)
 
     planets = _with_render_positions(_aggregate_dust_planets(view),
                                      "position", to_view_render)
@@ -4920,11 +4973,6 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     _push_dust_profile(r, player, warp_streaking)
 
     nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
-    if dev_mode.is_enabled() and player is not None and not warp_streaking:
-        from engine.systems.profile_render import synthetic_volume
-        extra = synthetic_volume(player)
-        if extra is not None:
-            nebulae = nebulae + [extra]
     r.set_nebulae(_render_nebulae(nebulae, view, active_set))
 
     godrays = []
