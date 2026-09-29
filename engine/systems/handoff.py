@@ -219,6 +219,14 @@ def hand_off(player, dest) -> None:
         src.RemoveObjectFromSet(name)
     dest.AddObjectToSet(player, name)
     player.SetTranslateXYZ(*local_dest)
+    # A hand-off is the in-system warp arrival: the rendered set follows the
+    # player exactly as a tunnel arrival resets it. Left on `src`,
+    # _resolve_active_set ran radiation, the nebula tracker and lighting on the
+    # set the player had LEFT (live: Haven -> dust cloud, no radiation). Only
+    # when it WAS src -- a cutscene's or the bridge's rendered set stays put.
+    import App
+    if src is not None and App.g_kSetManager.get_explicit_rendered_set() is src:
+        App.g_kSetManager.MakeRenderedSet(dest.GetName())
     # Clear the target alone -- no _stand_down_player_ai, unlike the tunnel's
     # engage-time clear (engine/appc/warp.py:_ClearTargetsAction). Mirrors the
     # tunnel's ARRIVAL clear instead (_ArrivalClearTargetsAction): the old

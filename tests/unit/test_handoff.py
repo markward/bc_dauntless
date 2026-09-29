@@ -387,3 +387,40 @@ def test_overlapping_regions_prefer_the_nearest_owned_body_or_sphere():
     assert handoff.nearest_region(m, q, ["SynthA", "SynthB"]) == "SynthB"
     assert handoff.nearest_region(m, (0.0, 90000.0, 0.0),
                                   ["SynthA", "SynthB"]) is None
+
+
+# ── Rendered set follows the hand-off (live bug 2026-09-29) ─────────────────
+# An in-system warp Haven -> dust cloud left the explicit rendered set on
+# Vesuvi5, so _resolve_active_set (radiation, the nebula tracker, lighting)
+# ran on the set the player had LEFT: no radiation until a tunnel warp reset it.
+
+def test_hand_off_moves_the_rendered_set_when_it_was_the_players_set():
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    ship = _make_ship((10.0, 20.0, 30.0), ona1)
+    App.g_kSetManager.MakeRenderedSet(ona1.GetName())
+
+    handoff.hand_off(ship, ona2)
+
+    assert App.g_kSetManager.get_explicit_rendered_set() is ona2
+
+
+def test_hand_off_leaves_an_unrelated_rendered_set_alone():
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    ship = _make_ship((10.0, 20.0, 30.0), ona1)
+    App.g_kSetManager.MakeRenderedSet("bridge")
+
+    handoff.hand_off(ship, ona2)
+
+    assert App.g_kSetManager._rendered_set_name == "bridge"
+
+
+def test_hand_off_with_no_rendered_set_sets_none():
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    ship = _make_ship((10.0, 20.0, 30.0), ona1)
+
+    handoff.hand_off(ship, ona2)
+
+    assert App.g_kSetManager._rendered_set_name is None
