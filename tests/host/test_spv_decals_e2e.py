@@ -18,6 +18,7 @@ and `hull_decals.decals_for` + `load_model` -- runs through the real
 tests/host/test_hull_decals_e2e.py).
 """
 import json
+import math
 import os
 import shutil
 
@@ -80,6 +81,37 @@ class _FakeShip:
 
     def GetRadius(self):
         return 10.0
+
+
+class _OffsetShip:
+    """A ship in a set that is NOT the viewed one (the in-system-warp case):
+    its world location is in its OWN set coordinates, and the renderer holds
+    its instance at that point plus the set's view offset."""
+
+    LOC = (1234.5, -2345.25, 345.75)
+
+    def __init__(self, containing_set):
+        self._set = containing_set
+
+    def GetContainingSet(self):
+        return self._set
+
+    def GetWorldLocation(self):
+        return TGPoint3(*self.LOC)
+
+    def GetWorldRotation(self):
+        return TGMatrix3()
+
+    def GetScale(self):
+        return 1.0
+
+    def GetRadius(self):
+        return 10.0
+
+
+# A large offset on every axis, so an unshifted (set-coordinate) trace
+# misses the hull outright rather than grazing it.
+VIEW_OFFSET = (40000.0, -25000.0, 9000.0)
 
 
 @pytest.fixture(autouse=True)
@@ -176,5 +208,72 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
         handle2 = host.load_model(str(AMBASSADOR_NIF), str(AMBASSADOR_TEX),
                                   None, resolved)
         assert handle2 is not None
+    finally:
+        host.shutdown()
+
+
+def test_a_hull_click_lands_on_the_hull_under_a_view_offset(monkeypatch):
+    """The in-system-warp case: the SPV works in the ship's OWN set
+    coordinates, but the renderer holds its instance in VIEW coordinates
+    (set point + view offset). A real cursor ray (manual_aim.cursor_ray from
+    the SPV camera, set coords) must be shifted into view coords before the
+    REAL native ray_trace_mesh, and the hit handed to the REAL native
+    world_to_body, so the placement lands on the hull point under the
+    cursor. Nothing on that path is faked except the frames lookup that
+    says which offset the ship's set has."""
+    _skip_unless_assets_available()
+    committed_decals = hull_decals.decals_for(AMB_DIR, "Zhukov")
+    host = _init_host("spv-decal-e2e-offset")
+    try:
+        model = host.load_model(str(AMBASSADOR_NIF), str(AMBASSADOR_TEX),
+                                None, committed_decals)
+        iid = host.create_instance(model)
+        ship_set = object()
+        ship = _OffsetShip(ship_set)
+        set_mat = _world_matrix_from(ship.GetWorldLocation(), ship.GetWorldRotation(),
+                                     BC_MODEL_SCALE * ship.GetScale())
+        view_mat = list(set_mat)
+        for r in range(3):                       # what host_loop pushes
+            view_mat[4 * r + 3] += VIEW_OFFSET[r]
+        host.set_world_transform(iid, view_mat)
+
+        from engine.systems import frames
+        monkeypatch.setattr(
+            frames, "view_offset",
+            lambda s: VIEW_OFFSET if s is ship_set else None)
+
+        import engine.ui.ship_property_viewer_panel as spv_mod
+        from engine.ui import decal_editor
+        from engine.ui.ship_property_viewer import OrbitCamera
+        monkeypatch.setattr(spv_mod, "build_descriptors", lambda s: [])
+        p = ShipPropertyViewerPanel(ship_getter=lambda: ship,
+                                    iid_getter=lambda: iid,
+                                    model_rel_getter=lambda s: AMB_MODEL)
+        p.open()
+        p.dispatch_event("decal-pane")
+        top = p._decal_working[0]
+        want = decal_editor.centre(top)          # on the saucer's dorsal face
+        # Aim the SPV camera (SET coordinates) straight down at that point.
+        target = tuple(set_mat[4 * r] * want[0] + set_mat[4 * r + 1] * want[1]
+                       + set_mat[4 * r + 2] * want[2] + set_mat[4 * r + 3]
+                       for r in range(3))
+        p.camera = OrbitCamera(target=target, distance=4.0,
+                               yaw=0.0, pitch=math.pi / 2.0 - 0.05)
+
+        p.dispatch_event("decal-select:top")
+        p.dispatch_event("decal-reposition")
+        p.decal_click(320.0, 240.0, (640, 480))   # the viewport centre
+
+        assert p._decal_error is None, p._decal_error
+        pl = p._decal_working[0]
+        got = decal_editor.centre(pl)
+        # The ray is ~3 deg off vertical, so x/y land within a few units of
+        # the aimed point wherever the surface sits in z, and the hit is on
+        # the dorsal face (normal up). An unshifted trace misses outright
+        # (MISS_HINT) -- verified by mutating the pane's frames.shifted.
+        assert abs(got[0] - want[0]) < 5.0 and abs(got[1] - want[1]) < 5.0, got
+        assert abs(got[2] - want[2]) < 20.0, got
+        assert pl.normal[2] > 0.8, pl.normal
+        assert decal_editor.chirality_ok(pl)
     finally:
         host.shutdown()
