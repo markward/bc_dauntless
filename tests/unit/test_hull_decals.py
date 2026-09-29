@@ -284,6 +284,36 @@ def test_ship_load_key_differs_by_decals():
     assert key_no_decals == _ship_load_key(nif, reps)
 
 
+def test_ship_load_key_differs_by_decal_geometry():
+    """HostController.nif_to_handle survives mission swaps, so a placement
+    edited + saved in the SPV must not hand the next load the stale handle
+    with the OLD placement baked in (spec S3: "on the ship's next load, the
+    baked list matches")."""
+    from engine.host_loop import _ship_load_key
+
+    nif = "data/Models/Ships/Ambassador/Ambassador.nif"
+    mask = "/abs/Masks/Zhukov/top.png"
+    before = ("amb saucer:0", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+              (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 2.0, mask)
+    moved = ("amb saucer:0", (0.0, 5.0, 0.0), (1.0, 0.0, 0.0),
+             (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 2.0, mask)
+    deeper = ("amb saucer:0", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+              (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 2.5, mask)
+    unshaped = ("", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 2.0, mask)
+
+    key = _ship_load_key(nif, [], [before])
+    assert key != _ship_load_key(nif, [], [moved])
+    assert key != _ship_load_key(nif, [], [deeper])
+    assert key != _ship_load_key(nif, [], [unshaped])
+    assert key == _ship_load_key(nif, [], [tuple(before)])
+    assert key == _ship_load_key(nif, [], list([before]))
+    hash(key)
+    # No decals keeps the legacy bare-path key.
+    assert _ship_load_key(nif, [], None) == nif
+    assert _ship_load_key(nif, [], []) == nif
+
+
 # ── _ship_decals: must never abort the realize loop ─────────────────────
 
 def _fake_ship(script_name, filename_high):

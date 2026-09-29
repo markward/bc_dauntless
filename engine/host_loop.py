@@ -5253,15 +5253,27 @@ def _ship_decals(ship, nif_path, reps):
 def _ship_load_key(nif_path, reps, decals=None):
     """Model-cache key for a ship load. Bare NIF path when no registry swap
     and no decals (byte-identical to the legacy key, so non-fed ships +
-    planets are unaffected); NIF path + a stable registry suffix / decal-mask
-    suffix otherwise, so two hulls of the same class with DIFFERENT
-    registries -- or different decal masks -- don't collapse onto one handle.
+    planets are unaffected); NIF path + a stable registry suffix otherwise,
+    so two hulls of the same class with DIFFERENT registries don't collapse
+    onto one handle.
+
+    With decals the key becomes a hashable tuple `(str_key, "decals",
+    specs)` carrying EVERY element of every spec -- shape, origin, axes,
+    normal, depth AND mask path, floats included -- not just the mask.
+    `HostController.nif_to_handle` survives mission swaps, so a key blind to
+    geometry would hand a ship reloaded after an SPV placement edit + save
+    the stale handle with the OLD placement baked in (SPV decal-editing
+    spec S3: "on the ship's next load, the baked list matches"). The native
+    AssetCache key folds the same geometry in (cache.cc decals_key).
     """
     key = nif_path
     if reps:
         key += "|" + ";".join(f"{old}={new}" for old, new in reps)
     if decals:
-        key += "|decals:" + ";".join(spec[6] for spec in decals)
+        return (key, "decals",
+                tuple(tuple(tuple(e) if isinstance(e, (list, tuple)) else e
+                            for e in spec)
+                      for spec in decals))
     return key
 
 
@@ -6428,7 +6440,8 @@ class HostController:
     def __init__(self) -> None:
         self.renderer: Any = None
         self.loader: Any = None
-        self.nif_to_handle: dict[str, int] = {}
+        # Keys: a NIF path, or _ship_load_key's tuple for a decaled ship.
+        self.nif_to_handle: dict[Any, int] = {}
         # Outer model-space extent per NIF path; survives mission swaps so
         # repeated loads of the same ship don't re-query model_aabb.
         self.nif_to_extent: dict[str, float] = {}
