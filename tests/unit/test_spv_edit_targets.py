@@ -83,3 +83,39 @@ def test_locked_follows_mount_editing_for_mounts_only(make_panel, monkeypatch):
             assert p.dispatch_event(_SELECT[case]) is True
         assert p._edit_target().locked is locked, case
         assert p._current_target_is_locked_mount() is locked, case
+
+
+# Scale tool (plan Task 3) ----------------------------------------------------
+
+def test_scale_kind_matches_characterised_scale_payload(make_panel):
+    """`scale_kind()` is the (kind, fields) tuple `scale_values` has always
+    been built from -- pinned against the characterisation suite's record."""
+    from tests.ui.test_spv_edit_target_characterisation import (
+        EXPECTED_PAYLOADS, _r)
+    p = make_panel()
+    for case in ("subsystem", "light_sphere", "light_cylinder", "light_box",
+                 "emitter_point", "emitter_strip", "emitter_cone"):
+        assert p.dispatch_event(_SELECT[case]) is True
+        kind, fields = p._edit_target().scale_kind()
+        want = EXPECTED_PAYLOADS[case][2]
+        assert isinstance(fields, list), case
+        assert (kind, _r(fields)) == (want["kind"], want["fields"]), case
+
+
+def test_part_targets_have_no_scale(make_panel):
+    p = make_panel()
+    for case in ("part_anchor", "part_pose"):
+        assert p.dispatch_event(_SELECT[case]) is True
+        t = p._edit_target()
+        assert t.scale_spec() is None, case
+        assert t.scale_kind() == ("none", []), case
+
+
+def test_scale_spec_and_get_scale_on_a_box_light(make_panel):
+    p = make_panel()
+    assert p.dispatch_event(_SELECT["light_box"]) is True
+    t = p._edit_target()
+    assert t.scale_spec()["kind"] == "xyz"
+    assert t.get_scale() == (0.3, 0.5, 0.2)
+    t.set_scale_field(1, 0.9)
+    assert t.get_scale() == (0.3, 0.9, 0.2)

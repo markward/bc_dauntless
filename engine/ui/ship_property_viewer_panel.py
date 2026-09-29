@@ -1475,71 +1475,23 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     # Scale tool (shape-aware size fields for the current transform target)
     # ------------------------------------------------------------------
     def _scale_kind_and_fields(self, target):
-        """Shape-aware size fields for `target` (see `_active_transform_target`).
-        A subsystem is always a sphere (`radius`); a light volume's fields
-        depend on its shape (`Box` -> xyz axes, `Cylinder` -> radius+length,
-        else -> radius). An emitter is scalar-`radius`/`length`: a point emitter
-        exposes only Radius; a strip or cone exposes Radius + Length (the cone's
-        half-angle is DERIVED from radius/length, so no separate field).
-        A part anchor or pose has no size at all: ("none", []), a kind no
-        other target shares, so a scale clipboard/pipette never matches it."""
-        if self._is_part_target(target):
-            return "none", []
-        if target[0] == "emitter":
-            _, i, j = target
-            spec = self._effective_emitter(i, j)
-            if not spec:
-                return "radius", [{"label": "Radius", "value": 0.0}]
-            kind = spec.get("kind", "point")
-            if kind == "point":
-                return "radius", [{"label": "Radius", "value": float(spec["radius"])}]
-            if kind == "cone":
-                # A cone now has TWO base radii (X = radius, Y = radius_y) plus a
-                # Length, so it exposes a 3-field kind (mirrors the Box light's
-                # xyz). A circular/legacy cone reports Radius Y == Radius X.
-                return "radius_xy_length", [
-                    {"label": "Radius X", "value": float(spec["radius"])},
-                    {"label": "Radius Y",
-                     "value": float(spec.get("radius_y", spec["radius"]))},
-                    {"label": "Length", "value": float(spec["length"])}]
-            # strip exposes Radius + Length.
-            return "radius_length", [
-                {"label": "Radius", "value": float(spec["radius"])},
-                {"label": "Length", "value": float(spec["length"])}]
-        kt, i = target
-        if kt == "subsystem":
-            r = self._effective_radius(i, self._descriptors[i].get("properties", {}).get("radius"))
-            try:
-                r = float(r)
-            except (TypeError, ValueError):
-                r = 0.0
-            return "radius", [{"label": "Radius", "value": r}]
-        spec = self._effective_light(i)
-        if not spec:
-            return "radius", [{"label": "Radius", "value": 0.0}]
-        shape = spec.get("shape", "Sphere")
-        if shape == "Box":
-            sx, sy, sz = spec.get("scale", (0.25, 0.25, 0.25))
-            return "xyz", [{"label": "X", "value": float(sx)},
-                           {"label": "Y", "value": float(sy)},
-                           {"label": "Z", "value": float(sz)}]
-        if shape == "Cylinder":
-            r = spec.get("radius", (0.25,))[0]
-            aft, fore = spec.get("extent", (0.0, 2.0))
-            return "radius_length", [{"label": "Radius", "value": float(r)},
-                                     {"label": "Length", "value": float(fore) - float(aft)}]
-        return "radius", [{"label": "Radius", "value": float(spec.get("radius", (0.25,))[0])}]
+        """Shape-aware size fields for the explicit `target` key (see
+        `_active_transform_target`): `EditTarget.scale_kind` of its adapter.
+        Kept for the Pipette, which still speaks in target keys (plan Task 5)."""
+        from engine.ui.spv_edit_targets import edit_target_for_key
+        return edit_target_for_key(self, target).scale_kind()
 
-    def _scale_target(self):
-        """The Scale tool's target: the current transform target, or None
-        for a part anchor/pose (no size concept -- Scale is inert there)."""
-        t = self._active_transform_target()
-        return None if self._is_part_target(t) else t
+    def _scale_edit_target(self):
+        """The Scale tool's `EditTarget`: the current transform target's
+        adapter, or None when nothing is selected or it has no size (a part
+        anchor/pose -- `scale_spec()` is None, so Scale is inert there)."""
+        t = self._edit_target()
+        return t if t is not None and t.scale_spec() is not None else None
 
     def scale_values(self) -> Optional[dict]:
         """Data for the scale-tool panel: `{"kind", "fields", "has_clipboard",
         "can_paste"}` for the current transform target, or None when the scale
-        tool isn't active or nothing is selected. `_scale_kind_and_fields` is
+        tool isn't active or nothing is selected. `EditTarget.scale_spec` is
         shape-aware for subsystems, light volumes, AND emitters (point ->
         "radius", strip/cone -> "radius_length")."""
         if self.active_tool != "scale":
@@ -1547,10 +1499,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         decal = self._decal_scale_values()
         if decal is not None:
             return decal
-        t = self._scale_target()
+        t = self._scale_edit_target()
         if t is None:
             return None
-        kind, fields = self._scale_kind_and_fields(t)
+        spec = t.scale_spec()
+        kind, fields = spec["kind"], spec["fields"]
         clip = self._scale_clipboard
         return {"kind": kind, "fields": fields,
                 "has_clipboard": clip is not None,
@@ -1558,66 +1511,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
 
     def _set_scale_field(self, index, value) -> None:
         """Stage `value` (floored at SCALE_MIN) for size field `index` of the
-        current transform target, routing to the radius or light-spec staging
-        path as appropriate."""
-        t = self._scale_target()
-        if t is None:
-            return
-        value = max(SCALE_MIN, float(value))
-        kind, fields = self._scale_kind_and_fields(t)
-        if not (0 <= index < len(fields)):
-            return
-        if t[0] == "emitter":
-            # Emitter spec uses SCALAR radius/length floats (NOT the light's
-            # tuple/extent form). Field 0 -> radius, field 1 -> length; restage
-            # the whole compacted list to keep indices dense.
-            _, i, j = t
-            lst = list(self._effective_emitters(i))
-            if not (0 <= j < len(lst)):
-                return
-            spec = dict(lst[j])
-            if spec.get("kind") == "cone":
-                # 3 fields: 0 -> Radius X (radius), 1 -> Radius Y (radius_y),
-                # 2 -> Length. index is bounds-checked against the 3-field kind.
-                spec[("radius", "radius_y", "length")[index]] = value
-            else:  # strip / point: field 0 -> radius, field 1 -> length
-                spec["radius" if index == 0 else "length"] = value
-            lst[j] = spec
-            self._pending_emitter[i] = lst
-            self._last_pushed = None
-            return
-        kt, i = t
-        if kt == "subsystem":
-            self._pending_radius[i] = value
-            self._last_pushed = None
-            return
-        spec = dict(self._effective_light(i) or {})
-        if not spec:
-            return
-        shape = spec.get("shape", "Sphere")
-        if shape == "Box":
-            sc = list(spec.get("scale", (0.25, 0.25, 0.25)))
-            sc[index] = value
-            spec["scale"] = tuple(sc)
-        elif shape == "Cylinder":
-            if index == 0:
-                spec["radius"] = (value,)
-            else:
-                # Length scales the extent about the anchor (pos = offset 0,
-                # where the gizmo sits), NOT by holding the aft end fixed —
-                # so a pos-centred cylinder grows symmetrically instead of
-                # sliding off one end. Proportional scale keeps offset 0 fixed.
-                aft, fore = spec.get("extent", (0.0, 2.0))
-                length = fore - aft
-                if abs(length) > 1e-9:
-                    r = value / length
-                    spec["extent"] = (aft * r, fore * r)
-                else:
-                    spec["extent"] = (-value / 2.0, value / 2.0)
-        else:
-            spec["radius"] = (value,)
-        self._pending_light[i] = spec
-        self._last_pushed = None
+        current transform target (`EditTarget.set_scale_field`). Kept for the
+        Pipette (plan Task 5)."""
+        t = self._scale_edit_target()
+        if t is not None:
+            t.set_scale_field(index, value)
 
     # ------------------------------------------------------------------
     # Rotate tool (Cylinder light-volume axis only)
@@ -1913,36 +1811,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         target selected, and the ship resolvable with a world rotation."""
         if self.active_tool != "scale" or self.camera is None:
             return None
-        t = self._scale_target()
+        t = self._scale_edit_target()
         if t is None:
             return None
-        ship = self._ship_getter()
-        if ship is None or not hasattr(ship, "GetWorldRotation"):
+        frame = t.scale_gizmo_frame()     # per-kind origin + axes, or None
+        if frame is None:
             return None
-        from engine.ui.ship_property_viewer import (
-            gizmo_axes, gizmo_length, world_from_body)
-        kt = t[0]
-        i = t[1]
-        # Defensive guards mirroring transform_gizmo (this runs every input
-        # frame via _active_gizmo): a stale/removed node or out-of-range index
-        # must degrade to None, never crash on a missing spec.
-        if not (0 <= i < len(self._descriptors)):
-            return None
-        if kt == "emitter":
-            spec = self._effective_emitter(i, t[2])
-            if spec is None:
-                return None
-            origin = world_from_body(ship, spec["position"])
-        elif kt == "light":
-            light = self._effective_light(i)
-            if light is None:
-                return None
-            origin = world_from_body(ship, light["position"])
-        else:
-            origin = self._effective_world_pos(i)
+        origin, axes = frame
+        from engine.ui.ship_property_viewer import gizmo_length
         return {
             "origin": origin,
-            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "axes": axes,
             "length": gizmo_length(self.camera),
             "highlight": self._gizmo_hover,
             "handle_kind": 1,
@@ -2025,51 +1904,13 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._axis_grab_param = grab_param
         g = self._active_gizmo()
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
-        t = self._scale_target()
+        t = self._scale_edit_target()
         if t is None:
             self._scale_grab = (0, 0.0)
             return
-        kind, fields = self._scale_kind_and_fields(t)
-        if kind == "xyz":
-            self._scale_grab = (axis, fields[axis]["value"])   # per-axis
-        elif kind == "radius_xy_length":
-            # Oriented cone: the handle aligned with `forward` (=axis) scales
-            # Length (field 2); of the two perpendicular handles, the one aligned
-            # with right = cross(forward, up) scales Radius X (field 0), the other
-            # (aligned with up) scales Radius Y (field 1). Gizmo handles are body
-            # X/Y/Z, so match each frame vector by its dominant body component.
-            from engine.appc.light_emitters import _derive_up
-            spec = self._effective_emitter(t[1], t[2]) or {}
-            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-            up = spec.get("up") or _derive_up(fwd)
-            right = (fwd[1]*up[2] - fwd[2]*up[1],
-                     fwd[2]*up[0] - fwd[0]*up[2],
-                     fwd[0]*up[1] - fwd[1]*up[0])
-            def _dom(v):
-                return max(range(3), key=lambda k: abs(v[k]))
-            if axis == _dom(fwd):
-                field_idx = 2
-            elif axis == _dom(right):
-                field_idx = 0
-            else:
-                field_idx = 1
-            self._scale_grab = (field_idx, fields[field_idx]["value"])
-        elif kind == "radius_length":
-            # Cylinder light OR strip emitter: the handle aligned with the
-            # node's body-frame axis scales Length (field 1); the two
-            # perpendicular handles scale Radius (field 0). The gizmo axes are
-            # body X/Y/Z, so the aligned handle is the dominant component of the
-            # region's/emitter's body-frame axis vector.
-            if t[0] == "emitter":
-                spec = self._effective_emitter(t[1], t[2]) or {}
-            else:
-                spec = self._effective_light(t[1]) or {}
-            av = spec.get("axis", (0.0, -1.0, 0.0))
-            aligned = max(range(3), key=lambda k: abs(av[k]))
-            field_idx = 1 if axis == aligned else 0
-            self._scale_grab = (field_idx, fields[field_idx]["value"])
-        else:
-            self._scale_grab = (0, fields[0]["value"])          # uniform -> radius
+        # Which field the handle scales is per kind (the cone handle->field
+        # map lives in EditTarget.scale_drag_begin).
+        self._scale_grab = t.scale_drag_begin(axis)
 
     def _apply_scale_drag(self, t_now: float) -> None:
         """Scale the grabbed field to `grab_value * (t_now / grab_param)`,
@@ -2088,8 +1929,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         from engine.ui.ship_property_viewer import gizmo_length
         L = gizmo_length(self.camera)
         ratio = t_now / max(self._axis_grab_param, 0.25 * L)
-        idx, grab_val = self._scale_grab
-        self._set_scale_field(idx, grab_val * ratio)
+        t = self._scale_edit_target()
+        if t is not None:
+            t.scale_drag_apply(self._scale_grab, ratio)
 
     def _begin_ring_drag(self, ring, grab_angle):
         """Start a ring drag on `ring` (0/1/2), capturing the grabbed screen
@@ -3454,44 +3296,44 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 return False
             if self._decal_target() is not None:
                 return self._decal_panel_nudge("scale", index, delta)
-            t = self._scale_target()
+            t = self._scale_edit_target()
             if t is None:
                 return False
-            kind, fields = self._scale_kind_and_fields(t)
+            kind, fields = t.scale_kind()
             if not (0 <= index < len(fields)):
                 return False
-            self._set_scale_field(index, fields[index]["value"] + delta)
+            t.set_scale_field(index, fields[index]["value"] + delta)
             return True
         if action == "scale_copy":
-            t = self._scale_target()
-            # _scale_kind_and_fields is emitter-aware (Task 7): a point emitter
+            t = self._scale_edit_target()
+            # scale_kind is emitter-aware (Task 7): a point emitter
             # copies real ("radius", (r,)), a strip/cone copies real
             # ("radius_length", (r, l)) — no inert placeholder to clobber the
             # clipboard with. The kind-match on scale_paste keeps a "radius"
             # clipboard from writing onto an "xyz"/"radius_length" target.
             if t is not None:
-                kind, fields = self._scale_kind_and_fields(t)
+                kind, fields = t.scale_kind()
                 self._scale_clipboard = (kind, tuple(f["value"] for f in fields))
                 self._last_pushed = None
             return True
         if action == "scale_paste":
-            t = self._scale_target()
+            t = self._scale_edit_target()
             if t is not None and self._scale_clipboard is not None:
-                kind, fields = self._scale_kind_and_fields(t)
+                kind, fields = t.scale_kind()
                 if self._scale_clipboard[0] == kind:
                     for idx, v in enumerate(self._scale_clipboard[1]):
-                        self._set_scale_field(idx, v)
+                        t.set_scale_field(idx, v)
             return True
         if action == "scale_uniform":
-            t = self._scale_target()
+            t = self._scale_edit_target()
             if t is not None:
-                kind, fields = self._scale_kind_and_fields(t)
+                kind, fields = t.scale_kind()
                 # Only Box lights have kind "xyz"; emitters/subsystems/other
                 # lights are naturally a no-op here.
                 if kind == "xyz":
                     m = max(f["value"] for f in fields)
                     for idx in range(3):
-                        self._set_scale_field(idx, m)
+                        t.set_scale_field(idx, m)
             return True
         if action.startswith("rotate_nudge:"):
             try:
