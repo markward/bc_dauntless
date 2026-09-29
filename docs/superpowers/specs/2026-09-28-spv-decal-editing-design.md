@@ -83,6 +83,42 @@ compatible.
   only where a decal covers the pixel. No-decal models run the same
   uniform-branch cost as today.
 
+### 2.4a Reusable masks, up to 16 placements (amended 2026-09-29, Mark, live)
+
+The cap of 4 above counted the wrong thing. A ship commonly carries about 10
+name placements (top, bottom, neck, both pylons, both nacelles, rim…), but
+they reuse a handful of masks. What costs a texture unit is a distinct
+**mask**, not a placement. This section supersedes the 4-cap above.
+
+- **`mask` key, optional:** each placement may name the mask it uses:
+  `"pylon_2": {"mask": "pylon", …}` → `<Registry>/pylon.png`. Without it,
+  the placement's own name is the mask, so existing files are unchanged.
+  `mask` follows the same filename-stem rules as a placement name.
+- **Placements:** up to **16** per model (`kMaxDecals` = 16). Beyond 16 →
+  the first 16 are used, with one warning.
+- **Masks:** up to **4 distinct** mask textures per model, still on units
+  8–11 (`kMaxDecalMasks` = 4). Masks are deduplicated by resolved path. A
+  placement needing a 5th distinct mask is skipped, with one warning.
+- Each projector carries a **mask slot index** (0–3). The per-mesh shape
+  enable mask widens to 16 bits.
+- **Shader:** loop over up to 16 projectors. Each samples its mask slot
+  through the four named samplers; select the sampler by slot in a small
+  switch, not by indexing a sampler array. Keep derivatives outside
+  branches, and keep composite order and rules as in §2.4.
+- **Override:** `set_instance_decals` takes up to 16 entries, with the same
+  mask dedupe and the same 4-mask limit.
+- **SPV:**
+  - Add lists every PNG in the previewed registry every time, plus the
+    default names, not only the unplaced ones.
+  - The new placement is named automatically: the mask name if it's free,
+    else `<mask>_2`, `<mask>_3`, …
+  - The pane list shows each placement's mask when it differs from the name.
+  - A 17th placement, or a 5th distinct mask, is refused inline.
+- **Cost:** up to 16 projector tests per pixel on decaled models (a few
+  multiply-adds each). Mask reads happen only where a projector covers the
+  pixel. The uniform budget is about 21 floats per projector, ≈340 for 16,
+  well under GL's 1024 minimum; the Windows check remains deferred.
+
 ### 2.5 Live per-instance override (approach A)
 - **New host binding:** `set_instance_decals(iid, list | None)`.
   - A list **replaces** the instance's baked decal list for drawing: same
