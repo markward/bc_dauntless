@@ -115,14 +115,18 @@ they reuse a handful of masks. What costs a texture unit is a distinct
   - The pane list shows each placement's mask when it differs from the name.
   - A 17th placement, or a 5th distinct mask, is refused inline.
 - **Cost:** up to 16 projector tests per pixel on decaled models (a few
-  multiply-adds each). Mask reads happen only where a projector covers the
-  pixel. The uniform budget is about 21 floats per projector, ≈340 for 16,
-  well under GL's 1024 minimum; the Windows check remains deferred.
+  multiply-adds each); mask reads only where a projector covers the pixel.
+  Uniforms: the WHOLE `opaque.frag` was already above GL 4.1's 1024-component
+  fragment minimum before this change (~1320 vec4-slot components), and 16
+  projectors take it to ~1670. This Mac allows 4096 and desktop Windows
+  drivers commonly do too, but the deferred Windows check must query
+  `GL_MAX_FRAGMENT_UNIFORM_COMPONENTS`. Headroom if needed: pack normal, depth
+  and slot into one `vec4[16]`, and send the projector as `mat3x4`.
 
 ### 2.5 Live per-instance override (approach A)
 - **New host binding:** `set_instance_decals(iid, list | None)`.
   - A list **replaces** the instance's baked decal list for drawing: same
-    entry shape as `load_model`'s decals, max 4.
+    entry shape as `load_model`'s decals, max 16 (§2.4a).
   - `None` clears it.
 - **Masks:** loaded through a host-side texture cache keyed by path (decoded
   with `decode_image`, premultiplied). The cache is released on host

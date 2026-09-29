@@ -983,8 +983,8 @@ void draw_model(const assets::Model& model,
         }
     }
     glBindVertexArray(0);
-    // Never leak the decal clamp to a later pass.
-    for (int i = 0; i < assets::kMaxDecals; ++i)
+    // Never leak the decal clamp to a later pass (mask units 8-11 only).
+    for (int i = 0; i < assets::kMaxDecalMasks; ++i)
         glBindSampler(kHullDecalUnit0 + i, 0);
 }
 
