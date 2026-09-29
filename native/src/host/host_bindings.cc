@@ -3103,14 +3103,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "and uploads the far-field table (CPU, ~1-2 s). Drawn only under "
           "--developer with Volumetric Nebulae on.");
     m.def("set_system_nebula_star",
-          [](std::tuple<float, float, float> pos) {
+          [](py::object pos) {
               if (!g_system_nebula_pass) return;
+              if (pos.is_none()) {
+                  g_system_nebula_pass->clear_star();
+                  return;
+              }
+              const auto t = pos.cast<std::tuple<float, float, float>>();
               g_system_nebula_pass->set_star(glm::vec3(
-                  std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)));
+                  std::get<0>(t), std::get<1>(t), std::get<2>(t)));
           },
           py::arg("pos"),
           "The system nebula's star centre in RENDER space (relative to the "
-          "floating origin), applied each frame().");
+          "floating origin), applied each frame(); None when the viewed set "
+          "has no sun (no forward scatter, no star-centred haze).");
+    m.def("system_nebula_has_star",
+          []() {
+              return g_system_nebula_pass ? g_system_nebula_pass->has_star()
+                                          : false;
+          },
+          "True when the system-scale nebula pass holds a star position.");
     m.def("system_nebula_has_profile",
           []() {
               return g_system_nebula_pass ? g_system_nebula_pass->has_profile()

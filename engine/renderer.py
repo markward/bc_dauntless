@@ -470,9 +470,10 @@ def set_system_nebula_profile(profile: dict | None) -> None:
     _h.set_system_nebula_profile(profile)
 
 
-def set_system_nebula_star(pos: tuple) -> None:
+def set_system_nebula_star(pos: tuple | None) -> None:
     """The system nebula's star centre in RENDER space (relative to the
-    floating origin), applied each frame()."""
+    floating origin), applied each frame(); None when the viewed set has no
+    sun (the pass then lights clumps by the emissive floor only)."""
     _h.set_system_nebula_star(pos)
 
 

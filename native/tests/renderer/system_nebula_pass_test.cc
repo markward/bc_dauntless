@@ -317,3 +317,103 @@ TEST_F(SystemNebulaPassTest, RendersVisibleHazeLookingAtTheStar) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
+
+namespace {
+
+// A clump-only scene on a fresh pass, centre pixel read back.
+renderer::NebulaVolume test_clump() {
+    renderer::NebulaVolume v;
+    v.spheres = {glm::vec4(0.0f, 5000.0f, 0.0f, 3000.0f)};
+    v.rgb = glm::vec3(0.5f, 0.6f, 0.9f);
+    v.visibility = 500.0f;
+    v.fbm = glm::vec3(0.001f, 3.0f, 0.2f);
+    v.seed = glm::vec3(1.0f, 2.0f, 3.0f);
+    return v;
+}
+
+scenegraph::Camera looking_down_y(float near_gu = 1.0f) {
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f);
+    cam.target = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.aspect = 1.0f;
+    cam.near = near_gu;
+    cam.far = 1.8e6f;
+    return cam;
+}
+
+glm::vec4 render_centre(renderer::Pipeline& pipeline, renderer::SystemNebulaPass& pass,
+                        const scenegraph::Camera& cam,
+                        const std::vector<renderer::NebulaVolume>& vols,
+                        double clear_depth = 1.0) {
+    renderer::HdrTarget target;
+    target.resize(64, 64);
+    target.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(clear_depth);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    renderer::Lighting lighting;
+    pass.render(cam, pipeline, vols, lighting, target.color_texture(),
+                target.depth_texture(), inv_vp, cam.eye, 0.0f);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    float px[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_FLOAT, px);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return glm::vec4(px[0], px[1], px[2], px[3]);
+}
+
+// Floor-only lighting: lit = floor * rgb * (1 - T) per channel, so
+// colour / alpha is floor * clump rgb (up to the march's quadrature; a lit
+// clump is ~30x brighter, so 25% cleanly separates the two).
+void expect_floor_only(const glm::vec4& px, const renderer::NebulaVolume& v, float floor) {
+    ASSERT_GT(px.a, 0.01f) << "clump drew nothing";
+    for (int c = 0; c < 3; ++c)
+        EXPECT_NEAR(px[c] / px.a, floor * v.rgb[c], 0.25f * floor * v.rgb[c])
+            << "channel " << c;
+}
+
+}  // namespace
+
+// A sunless set: the host tells the pass there is no star, so the clump is
+// lit by the emissive floor alone -- never by a star left over from the
+// previous set.
+TEST_F(SystemNebulaPassTest, NoStarLightsClumpsByTheFloorOnly) {
+    const auto v = test_clump();
+    const auto cam = looking_down_y();
+
+    renderer::SystemNebulaPass lit_pass;
+    lit_pass.set_star(glm::vec3(0.0f, 50000.0f, 0.0f));   // ahead: strong forward scatter
+    const glm::vec4 lit = render_centre(*pipeline, lit_pass, cam, {v});
+    ASSERT_GT(lit.a, 0.01f);
+    EXPECT_GT(lit.r / lit.a, 0.03f * v.rgb.r * 2.0f) << "a star must light the clump";
+
+    renderer::SystemNebulaPass pass;
+    pass.set_star(glm::vec3(0.0f, 50000.0f, 0.0f));
+    pass.clear_star();
+    EXPECT_FALSE(pass.has_star());
+    expect_floor_only(render_centre(*pipeline, pass, cam, {v}), v, pass.dials().floor);
+}
+
+TEST_F(SystemNebulaPassTest, ClearProfileForgetsTheStar) {
+    const auto v = test_clump();
+    renderer::SystemNebulaPass pass;
+    pass.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    pass.set_star(glm::vec3(0.0f, 50000.0f, 0.0f));
+    pass.clear_profile();
+    EXPECT_FALSE(pass.has_star());
+    expect_floor_only(render_centre(*pipeline, pass, looking_down_y(), {v}), v,
+                      pass.dials().floor);
+}
+
+// The haze is star-CENTRED: with a profile but no star there is nowhere to
+// put it, so nothing draws (rather than a haze centred on a stale point).
+TEST_F(SystemNebulaPassTest, ProfileWithoutAStarDrawsNoHaze) {
+    renderer::SystemNebulaPass pass;
+    pass.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    scenegraph::Camera cam = looking_down_y();
+    cam.eye = glm::vec3(0.0f, 300000.0f, 0.0f);
+    cam.target = glm::vec3(0.0f);
+    const glm::vec4 px = render_centre(*pipeline, pass, cam, {});
+    EXPECT_EQ(px.a, 0.0f);
+}

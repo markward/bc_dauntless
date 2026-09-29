@@ -87,3 +87,19 @@ def test_dials_round_trip_and_rebuild_only_for_g_or_floor():
         _dauntless_host.frame()   # not --developer: no crash either way
     finally:
         _dauntless_host.shutdown()
+
+
+def test_star_accepts_none_for_a_sunless_set():
+    """A sunless viewed set clears the star (the pass then lights clumps by
+    the emissive floor only) -- before and after init."""
+    import _dauntless_host
+    _dauntless_host.set_system_nebula_star(None)
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    _dauntless_host.init(64, 64, "test_system_nebula_star_none")
+    try:
+        _dauntless_host.set_system_nebula_star((1.0, 2.0, 3.0))
+        assert _dauntless_host.system_nebula_has_star() is True
+        _dauntless_host.set_system_nebula_star(None)
+        assert _dauntless_host.system_nebula_has_star() is False
+    finally:
+        _dauntless_host.shutdown()

@@ -70,7 +70,8 @@ public:
     /// kTableR x kTableMu (optical depth, inscatter). Needs a current context.
     void set_profile(const atmosphere::RadialProfile& profile,
                      const atmosphere::LookParams& look);
-    /// Delete the profile textures; the haze stops drawing.
+    /// Delete the profile textures and forget the profile and the star; the
+    /// haze stops drawing.
     void clear_profile();
     bool has_profile() const { return has_profile_; }
 
@@ -88,7 +89,13 @@ public:
     int profile_rebuild_count() const { return profile_rebuild_count_; }
 
     /// The star centre in RENDER space (relative to the floating origin).
-    void set_star(const glm::vec3& render_pos) { star_ = render_pos; }
+    /// The host pushes it every frame, or clear_star() when the viewed set
+    /// has no sun: with no star the forward-scatter term is zero (clumps are
+    /// lit by the emissive floor alone) and the star-CENTRED profile haze is
+    /// not drawn at all -- there is nowhere to centre it.
+    void set_star(const glm::vec3& render_pos) { star_ = render_pos; has_star_ = true; }
+    void clear_star() { star_ = glm::vec3(0.0f); has_star_ = false; }
+    bool has_star() const { return has_star_; }
 
     /// Same contract as NebulaVolumetricPass::render. Early-outs (zero GL
     /// work) when there is neither a profile nor any volume.
@@ -143,6 +150,7 @@ private:
     atmosphere::RadialProfile profile_;
     atmosphere::LookParams    look_;
     glm::vec3    star_{0.0f};
+    bool         has_star_ = false;
     Dials        dials_;
     int          profile_rebuild_count_ = 0;
 };

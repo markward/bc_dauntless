@@ -28,6 +28,8 @@ uniform float u_lane_size;
 uniform float u_lane_contrast;
 uniform vec3  u_noise_origin;
 uniform int   u_has_profile;
+uniform int   u_has_star;       // 0 in a sunless set: no forward scatter,
+                                 // the emissive floor lights everything
 uniform float u_time;           // slow fbm drift for clumps (matches
                                  // nebula_volumetric.frag's density()); the
                                  // gameplay concealment field drifts the
@@ -154,7 +156,9 @@ void main(){
             // clump contributes its own rgb, both weighted by their share of
             // this step's total extinction.
             vec3 weighted_col = (sig_h * u_cloud_rgb + col_c) / sigma;
-            vec3 light = u_scatter * hg(u_g, cos_t) * u_star_rgb * weighted_col * exp(-tau_star);
+            vec3 light = (u_has_star == 1)
+                ? u_scatter * hg(u_g, cos_t) * u_star_rgb * weighted_col * exp(-tau_star)
+                : vec3(0.0);
             vec3 emit  = u_floor * weighted_col;
             float ext = sigma * dt;
             lit += transm * (light + emit) * ext;

@@ -120,6 +120,8 @@ void SystemNebulaPass::set_dials(const Dials& dials) {
 void SystemNebulaPass::clear_profile() {
     destroy_profile_textures();
     has_profile_ = false;
+    profile_ = atmosphere::RadialProfile{};
+    clear_star();
     have_history_ = false;
 }
 
@@ -176,8 +178,10 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
                               const glm::vec3& eye,
                               float time,
                               const glm::dvec3& origin) {
+    // The profile haze is star-centred: without a star it cannot be placed.
+    const bool draw_haze = has_profile_ && has_star_;
     // Nothing to draw => zero GL work.
-    if (!has_profile_ && volumes.empty()) return;
+    if (!draw_haze && volumes.empty()) return;
     if (!initialized_) initialize_gl();
 
     // ── Local MetaNebula clumps: one sphere per volume (its first), at most
@@ -254,7 +258,8 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     march.set_vec3("u_eye", eye);
 
     // Atmosphere: star-centred profile + look dials.
-    march.set_int("u_has_profile", has_profile_ ? 1 : 0);
+    march.set_int("u_has_profile", draw_haze ? 1 : 0);
+    march.set_int("u_has_star", has_star_ ? 1 : 0);
     march.set_vec3("u_star", star_);
     march.set_float("u_far_gu", look_.far_gu);
     march.set_float("u_k_sys", profile_.k_sys);
