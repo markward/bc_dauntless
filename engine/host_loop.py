@@ -4715,6 +4715,9 @@ _SYSTEM_NEBULA_UNKNOWN = object()
 # resolves it one way or the other. Also reset to None whenever the
 # developer/volumetric gate closes, so re-opening it re-pushes.
 _system_nebula_pushed_for = None  # str | None | _SYSTEM_NEBULA_UNKNOWN
+# The veil (engine.dev_nebula_dials) the held profile's k_sys was solved
+# for: a veil-dial change re-solves k_sys and forces a re-push.
+_system_nebula_pushed_veil = None  # float | None
 # Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
 # until the first sweep; reset on mission swap so a new mission re-identifies.
 _last_identify_gt = None  # float | None
@@ -4918,17 +4921,33 @@ def _push_dust_profile(r, player, warp_streaking) -> None:
     r.set_dust_profile(dust)
 
 
+def _system_nebula_gate(r) -> bool:
+    """The one gate for everything that feeds or follows the developer-only
+    SystemNebulaPass (the profile/star push AND the flare veil): developer
+    mode AND the Volumetric Nebulae setting, matching the native pass's own
+    gate. Developer mode is tested FIRST so production short-circuits
+    without a single renderer call."""
+    return dev_mode.is_enabled() and r.volumetric_nebulae_enabled()
+
+
 def _push_system_nebula(r, player, suns, warp_streaking) -> None:
     """Feed the developer-only SystemNebulaPass: the mapped system's radial
-    profile once per system change (the pass builds its far-field table from
-    it -- ~1.6s, so never more than once per system), and the star's render
-    position every frame the gate is open, so clump-only lighting still tracks
-    the star with no profile present. Gated on developer mode AND the
-    Volumetric Nebulae toggle, matching the native pass's own gate: a closed
-    gate must never build a table in production, and drops any held profile
-    with a single None push."""
-    global _system_nebula_pushed_for
-    if not (dev_mode.is_enabled() and r.volumetric_nebulae_enabled()):
+    profile once per system (or veil-dial) change -- the pass builds its
+    far-field table from it, ~1.6s -- and, every frame the gate is open, the
+    star's render position, or None when the viewed set has no sun (the pass
+    then lights clumps by the emissive floor only and draws no star-centred
+    haze). The pushed profile carries the live dev dials' g/floor (the pass
+    syncs its dials from it, so omitting them would revert tuned values) and
+    a k_sys solved for the live veil dial.
+
+    Production (no --developer) returns before any renderer call: the pass
+    never runs there and was never fed, so there is nothing to clear -- even
+    after a mission swap leaves the latch UNKNOWN. With --developer, closing
+    the setting drops any held profile with a single None push."""
+    global _system_nebula_pushed_for, _system_nebula_pushed_veil
+    if not dev_mode.is_enabled():
+        return
+    if not _system_nebula_gate(r):
         if _system_nebula_pushed_for is not None:
             r.set_system_nebula_profile(None)
             _system_nebula_pushed_for = None
@@ -4940,41 +4959,46 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
         pos = frames.system_position(player)
         if pos is not None and pos[0][0] == "system":
             m = resolve.map_of(pos[0][1])
-    if m is None or m.profile is None:
+    star = (next((b for b in m.bodies if b.orbits is None), None)
+            if m is not None else None)
+    veil = dev_nebula_dials.veil()
+    if m is None or m.profile is None or star is None:
         if _system_nebula_pushed_for is not None:
             r.set_system_nebula_profile(None)
             _system_nebula_pushed_for = None
-    elif _system_nebula_pushed_for != m.system:
-        star = next(b for b in m.bodies if b.orbits is None)
+    elif (_system_nebula_pushed_for != m.system
+            or _system_nebula_pushed_veil != veil):
         colour = m.profile.color or (0.0, 0.0, 0.0)
         star_rgb = (tuple(star.appearance.color) if star.appearance.color
                     else (1.0, 1.0, 1.0))
+        dials = dev_nebula_dials.current()
         r.set_system_nebula_profile({
             "r": [row.distance_gu for row in m.profile.rows],
             "nebula": [row.nebula for row in m.profile.rows],
-            "k_sys": _profile.k_sys(m),
+            "k_sys": _profile.k_sys(m, veil),
             "star_radius": star.radius_gu,
             "cloud_rgb": tuple(colour),
             "star_rgb": star_rgb,
             "far_gu": SCENE_FAR_GU,
+            "g": dials["g"],
+            "floor": dials["floor"],
         })
         _system_nebula_pushed_for = m.system
-    if suns:
-        r.set_system_nebula_star(tuple(suns[0]["position"]))
+        _system_nebula_pushed_veil = veil
+    r.set_system_nebula_star(tuple(suns[0]["position"]) if suns else None)
 
 
 def _veil_flares(r, flares, player):
     """Billboard flares see no fog (their visibility is one depth read), so
     under the system nebula pass they take the exact eye->star transmittance
-    (spec 2026-09-29, "The sun and its flares"). Gated the same as the
-    SystemNebulaPass itself -- developer mode AND the volumetric-nebula
-    setting on -- so a developer run with the setting off does not dim the
-    flare while no haze is drawn."""
-    if (not dev_mode.is_enabled() or not r.volumetric_nebulae_enabled()
-            or player is None or not flares):
+    (spec 2026-09-29, "The sun and its flares") for the same live veil dial
+    the haze's k_sys was solved for. Same gate as the pass itself
+    (_system_nebula_gate), so a developer run with the setting off does not
+    dim the flare while no haze is drawn."""
+    if not _system_nebula_gate(r) or player is None or not flares:
         return flares
     from engine.systems import profile as _profile
-    t = _profile.star_transmittance(player)
+    t = _profile.star_transmittance(player, dev_nebula_dials.veil())
     return [dict(f, brightness=t) for f in flares]
 
 

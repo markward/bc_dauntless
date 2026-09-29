@@ -1,4 +1,7 @@
+import pytest
+
 from engine import dev_mode, host_loop
+from engine import dev_nebula_dials as D
 from engine.systems import profile as P
 from engine.systems.map import Body, Region, SystemMap
 
@@ -8,6 +11,7 @@ class _R:
         self.profiles = []
         self.stars = []
         self._volumetric = volumetric
+        self.volumetric_queries = 0
 
     def set_system_nebula_profile(self, d):
         self.profiles.append(d)
@@ -16,6 +20,7 @@ class _R:
         self.stars.append(pos)
 
     def volumetric_nebulae_enabled(self):
+        self.volumetric_queries += 1
         return self._volumetric
 
     def system_nebula_set_dials(self, dials):
@@ -32,6 +37,14 @@ def _map(name="Vesuvi"):
                      profile=P.Profile(rows=[P.ProfileRow(0.0, nebula=1.0),
                                              P.ProfileRow(200000.0, nebula=1.0)],
                                        color=(0.6, 0.35, 0.72)))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dials_and_latches(monkeypatch):
+    """The dev dials and the veil latch are module state: restore them."""
+    monkeypatch.setattr(D, "_dials", dict(D.DEFAULTS))
+    monkeypatch.setattr(host_loop, "_system_nebula_pushed_veil",
+                        host_loop._system_nebula_pushed_veil)
 
 
 def _patch(monkeypatch, m):
@@ -126,7 +139,8 @@ def test_gate_closing_pushes_one_none_then_reopening_repushes(monkeypatch):
     host_loop._push_system_nebula(r, object(), suns, False)
     assert len(r.profiles) == 1
 
-    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    # Developer mode is fixed for a process; the SETTING is what toggles.
+    r._volumetric = False
     host_loop._push_system_nebula(r, object(), suns, False)
     assert len(r.profiles) == 2 and r.profiles[-1] is None
     assert host_loop._system_nebula_pushed_for is None
@@ -135,7 +149,7 @@ def test_gate_closing_pushes_one_none_then_reopening_repushes(monkeypatch):
     host_loop._push_system_nebula(r, object(), suns, False)
     assert len(r.profiles) == 2
 
-    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    r._volumetric = True
     host_loop._push_system_nebula(r, object(), suns, False)
     assert len(r.profiles) == 3 and r.profiles[-1] is not None
 
@@ -199,3 +213,76 @@ def test_mapped_frame_with_the_same_system_name_repushes_after_reset(monkeypatch
     assert len(r.profiles) == 2, (
         "the sentinel must force a fresh push even into the same system name")
     assert host_loop._system_nebula_pushed_for == "Vesuvi"
+
+
+# ── Final-review fixes ──────────────────────────────────────────────────────
+
+def test_profile_push_carries_the_current_dev_dials_g_and_floor(monkeypatch):
+    """set_profile syncs the native dials from the pushed LookParams, so a
+    push WITHOUT g/floor would silently revert tuned values to defaults."""
+    m = _map()
+    _patch(monkeypatch, m)
+    D._dials = dict(D.DEFAULTS, g=0.3, floor=0.05)
+    r = _R()
+    host_loop._push_system_nebula(r, object(), [{"position": (0.0, 0.0, 0.0)}], False)
+    assert r.profiles[-1]["g"] == 0.3
+    assert r.profiles[-1]["floor"] == 0.05
+
+
+def test_veil_dial_resolves_k_sys_and_forces_a_repush(monkeypatch):
+    m = _map()
+    _patch(monkeypatch, m)
+    r = _R()
+    suns = [{"position": (0.0, 0.0, 0.0)}]
+    host_loop._push_system_nebula(r, object(), suns, False)
+    assert r.profiles[-1]["k_sys"] == pytest.approx(P.k_sys(m, D.DEFAULTS["veil"]))
+    D._dials = dict(D._dials, veil=0.4)
+    host_loop._push_system_nebula(r, object(), suns, False)
+    assert len(r.profiles) == 2, "a veil change must re-push the profile"
+    assert r.profiles[-1]["k_sys"] == pytest.approx(P.k_sys(m, 0.4))
+    host_loop._push_system_nebula(r, object(), suns, False)
+    assert len(r.profiles) == 2, "an unchanged veil must not rebuild again"
+
+
+def test_sunless_frame_clears_the_star(monkeypatch):
+    """No sun in the viewed set: tell the pass there is no star, every
+    frame, so it never lights from the previous set's sun."""
+    from engine.systems import frames
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(frames, "system_position", lambda obj: None)
+    monkeypatch.setattr(host_loop, "_system_nebula_pushed_for", None)
+    r = _R()
+    host_loop._push_system_nebula(r, object(), [{"position": (1.0, 2.0, 3.0)}], False)
+    host_loop._push_system_nebula(r, object(), [], False)
+    assert r.stars == [(1.0, 2.0, 3.0), None]
+
+
+def test_profile_map_without_a_star_does_not_raise(monkeypatch):
+    m = _map()
+    m.bodies = [Body("Planet", "Planet", 500.0, (1.0, 0.0, 0.0), orbits="Star")]
+    _patch(monkeypatch, m)   # latch None: nothing held yet
+    r = _R()
+    host_loop._push_system_nebula(r, object(), [], False)   # must not raise
+    assert r.profiles == []
+    # A held profile with no star to centre it on is cleared.
+    monkeypatch.setattr(host_loop, "_system_nebula_pushed_for", "Belaruz")
+    host_loop._push_system_nebula(r, object(), [], False)
+    assert r.profiles == [None], "no star to centre the haze on: clear it"
+
+
+def test_production_makes_no_native_call_after_a_mission_swap(monkeypatch):
+    """Without --developer the pass never runs and was never fed, so even
+    the UNKNOWN latch a mission swap leaves must not reach the renderer."""
+    _guard_latch_restore(monkeypatch)
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    host_loop._reset_sensor_state()
+    r = _R()
+    host_loop._push_system_nebula(r, object(), [{"position": (1.0, 2.0, 3.0)}], False)
+    assert r.profiles == [] and r.stars == []
+    assert r.volumetric_queries == 0
+
+
+def test_flare_veil_and_profile_push_share_one_gate():
+    import inspect
+    for fn in (host_loop._push_system_nebula, host_loop._veil_flares):
+        assert "_system_nebula_gate(" in inspect.getsource(fn), fn.__name__

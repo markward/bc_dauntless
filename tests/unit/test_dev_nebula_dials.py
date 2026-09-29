@@ -11,46 +11,75 @@ def _isolate_registry_and_dial_state():
     test can't leak into another."""
     saved_registry = dict(dev_mode._dev_keybindings)
     saved_dials = dict(D._dials)
+    saved_selected = D._selected
     yield
     dev_mode._dev_keybindings.clear()
     dev_mode._dev_keybindings.update(saved_registry)
     D._dials = saved_dials
+    D._selected = saved_selected
 
 
 class _Keys:
-    KEY_KP_DIVIDE, KEY_KP_MULTIPLY = 1, 2
-    KEY_L, KEY_O = 3, 4
-    KEY_SLASH, KEY_PAUSE = 5, 6
-    KEY_KP_DECIMAL, KEY_KP_0 = 7, 8
+    KEY_SLASH, KEY_L, KEY_O = 1, 2, 3
 
 
 class _FakeHost:
     keys = _Keys()
 
 
-def test_register_binds_eight_distinct_keys():
+def _press(key):
+    handler, _desc = dev_mode._dev_keybindings[key]
+    handler()
+
+
+def test_register_binds_exactly_the_three_macbook_keys():
+    """A MacBook has no numpad and no Pause; only /, L and O are free in
+    every namespace (see the module docstring), so the five dials share
+    them: / selects the dial, L steps it down, O steps it up."""
+    dev_mode._dev_keybindings.clear()
     D.register(_FakeHost())
-    registered = [k for k in dev_mode._dev_keybindings
-                 if k in (1, 2, 3, 4, 5, 6, 7, 8)]
-    assert sorted(registered) == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert sorted(dev_mode._dev_keybindings) == [1, 2, 3]
 
 
-def test_pressing_a_key_pushes_the_whole_dict_and_prints(monkeypatch, capsys):
+def test_slash_cycles_the_selected_dial_through_all_five(capsys):
+    D.register(_FakeHost())
+    D._selected = 0
+    seen = [D.selected()]
+    for _ in range(len(D.DIAL_ORDER)):
+        _press(_Keys.KEY_SLASH)
+        seen.append(D.selected())
+    assert seen[0] == "veil", "veil is the first thing Mark tunes (spec)"
+    assert sorted(set(seen)) == sorted(
+        ["veil", "floor", "g", "lane_contrast", "near_range"])
+    assert seen[-1] == seen[0], "cycling wraps"
+    assert "[nebula dials]" in capsys.readouterr().out
+
+
+def test_l_and_o_step_the_selected_dial_and_push_the_native_dials(monkeypatch, capsys):
     pushed = []
     import engine.renderer as r
     monkeypatch.setattr(r, "system_nebula_set_dials", lambda d: pushed.append(dict(d)))
     D._dials = dict(D.DEFAULTS)
     D.register(_FakeHost())
+    D._selected = D.DIAL_ORDER.index("g")
 
-    handler, _desc = dev_mode._dev_keybindings[_Keys.KEY_O]   # g +0.05
-    handler()
+    _press(_Keys.KEY_O)   # g +0.05
+    assert pushed[-1]["g"] == pytest.approx(0.65)
+    # the whole NATIVE dial set travels; the veil is Python-side only
+    assert set(pushed[-1]) == set(D.DEFAULTS) - {"veil"}
+    _press(_Keys.KEY_L)
+    assert pushed[-1]["g"] == pytest.approx(0.6)
+    assert "[nebula dials]" in capsys.readouterr().out
 
-    assert len(pushed) == 1
-    assert pushed[0]["g"] == pytest.approx(0.65)
-    # the WHOLE dict travels, not just the changed key
-    assert set(pushed[0]) == set(D.DEFAULTS)
-    out = capsys.readouterr().out
-    assert "[nebula dials]" in out
+
+def test_veil_steps_multiplicatively_and_stays_a_transmittance():
+    d = D.step(dict(D.DEFAULTS), "veil", +1)
+    assert d["veil"] == pytest.approx(0.15 * 1.25)
+    d = D.step(dict(D.DEFAULTS), "veil", -1)
+    assert d["veil"] == pytest.approx(0.15 / 1.25)
+    for _ in range(40):
+        d = D.step(d, "veil", +1)
+    assert d["veil"] <= 0.99   # k_sys = -ln(veil)/I needs 0 < veil < 1
 
 
 def test_step_functions_clamp_and_scale():
@@ -65,5 +94,8 @@ def test_step_functions_clamp_and_scale():
 
 
 def test_defaults_match_the_spec():
-    assert D.DEFAULTS == {"floor": 0.03, "g": 0.6, "lane_contrast": 0.7,
-                          "lane_size": 15000.0, "near_range": 30000.0}
+    assert D.DEFAULTS == {"veil": 0.15, "floor": 0.03, "g": 0.6,
+                          "lane_contrast": 0.7, "lane_size": 15000.0,
+                          "near_range": 30000.0}
+    from engine.systems import profile as P
+    assert D.DEFAULTS["veil"] == P.VEIL_DEFAULT

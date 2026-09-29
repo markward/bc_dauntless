@@ -44,11 +44,11 @@ struct Lighting;
 
 /// Live-tunable look dials (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md
 /// Task 7). Replaces the pass's former file-top constants (kNearRangeGu,
-/// kLaneSizeGu, kLaneContrast); `veil_scale` is reserved for a future dial
-/// and is not yet read anywhere. `set_dials` is the single entry point a
-/// developer keybinding calls each press -- see engine/dev_nebula_dials.py.
+/// kLaneSizeGu, kLaneContrast). The veil is NOT here: it is a Python-side
+/// dial that re-solves k_sys and re-pushes the profile (the flare veil reads
+/// the same value). `set_dials` is the single entry point a developer
+/// keybinding calls each press -- see engine/dev_nebula_dials.py.
 struct SystemNebulaDials {
-    float veil_scale    = 1.0f;
     float lane_size     = 15000.0f;
     float lane_contrast = 0.7f;
     float g             = 0.6f;

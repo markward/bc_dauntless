@@ -229,3 +229,27 @@ def test_no_dev_key_collides_with_bcs_own_keyboard_binding():
         "DefaultKeyboardBinding.py: "
         + ", ".join("%s (%s)" % (k, w) for k, w in collisions)
     )
+
+
+# ── A MacBook keyboard ──────────────────────────────────────────────────────
+#
+# Mark tunes on a MacBook: no numeric keypad, no Pause/Break, Insert, Scroll
+# Lock, Print Screen or Num Lock. The nebula dials first shipped on Numpad
+# / * . 0 and Pause -- all unreachable there.
+_NOT_ON_A_MACBOOK_PREFIXES = ("KEY_KP_",)
+_NOT_ON_A_MACBOOK = {"KEY_PAUSE", "KEY_INSERT", "KEY_SCROLL_LOCK",
+                     "KEY_PRINT_SCREEN", "KEY_NUM_LOCK", "KEY_MENU"}
+
+
+def _off_macbook(keys):
+    return sorted(k for k in keys
+                  if k in _NOT_ON_A_MACBOOK
+                  or k.startswith(_NOT_ON_A_MACBOOK_PREFIXES)
+                  or (k.startswith("KEY_F") and k[5:].isdigit() and int(k[5:]) > 12))
+
+
+def test_nebula_dial_keys_exist_on_a_macbook():
+    nebula_dials_file = [p for p in _DEV_KEYBINDING_FILES
+                         if p.name == "dev_nebula_dials.py"]
+    off = _off_macbook(_registered_dev_keys_in(nebula_dials_file))
+    assert not off, f"nebula dial key(s) a MacBook keyboard lacks: {off}"

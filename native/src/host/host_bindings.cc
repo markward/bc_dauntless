@@ -3134,8 +3134,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](py::dict d) {
               if (!g_system_nebula_pass) return;
               renderer::SystemNebulaPass::Dials dials;
-              if (d.contains("veil_scale"))
-                  dials.veil_scale = d["veil_scale"].cast<float>();
               if (d.contains("lane_size"))
                   dials.lane_size = d["lane_size"].cast<float>();
               if (d.contains("lane_contrast"))
@@ -3150,7 +3148,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("dials"),
           "Set the system-scale nebula's live look dials: optional keys "
-          "veil_scale, lane_size, lane_contrast, g, floor, near_range -- any "
+          "lane_size, lane_contrast, g, floor, near_range -- any "
           "key omitted resets that dial to the struct default. A change to "
           "g or floor rebuilds the far-field table (~1-2s) when a profile is "
           "already uploaded; lane_size/lane_contrast/near_range never "
@@ -3160,7 +3158,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict out;
               if (!g_system_nebula_pass) return out;
               const auto& d = g_system_nebula_pass->dials();
-              out["veil_scale"] = d.veil_scale;
               out["lane_size"] = d.lane_size;
               out["lane_contrast"] = d.lane_contrast;
               out["g"] = d.g;

@@ -479,8 +479,8 @@ def set_system_nebula_star(pos: tuple | None) -> None:
 
 def system_nebula_set_dials(dials: dict) -> None:
     """Set the system-scale nebula's live look dials (developer tuning --
-    engine/dev_nebula_dials.py): optional keys veil_scale, lane_size,
-    lane_contrast, g, floor, near_range; any key omitted resets that dial to
+    engine/dev_nebula_dials.py): optional keys lane_size, lane_contrast, g,
+    floor, near_range; any key omitted resets that dial to
     the native struct default. A g or floor change rebuilds the far-field
     table (~1-2s) when a profile is already uploaded."""
     _h.system_nebula_set_dials(dials)

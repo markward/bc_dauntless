@@ -82,8 +82,11 @@ def test_dials_round_trip_and_rebuild_only_for_g_or_floor():
         assert d["g"] == pytest.approx(0.25)
         assert d["floor"] == pytest.approx(0.1)
         assert d["near_range"] == 9000.0
-        # A key omitted resets that dial to the struct default (veil_scale).
-        assert d["veil_scale"] == 1.0
+        # The veil is a Python-side dial (it re-solves k_sys and re-pushes
+        # the profile); the native pass has no inert veil_scale field.
+        assert "veil_scale" not in d
+        assert set(d) == {"lane_size", "lane_contrast", "g", "floor",
+                          "near_range"}
         _dauntless_host.frame()   # not --developer: no crash either way
     finally:
         _dauntless_host.shutdown()
