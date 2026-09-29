@@ -497,3 +497,80 @@ TEST_F(SystemNebulaPassTest, ClumpBehindAHullIsHidden) {
     const glm::vec4 px = render_centre(*pipeline, pass, cam, {v}, depth_at(cam, 1000.0f));
     EXPECT_LT(px.a, 1e-3f) << "clump drew through a nearer hull";
 }
+
+// ── The join on the code that runs ──────────────────────────────────────────
+// nebula_atmosphere_test proves near + far == whole ray on the CPU; this
+// proves the SHADER's near march + table lookup (sky) and finite-segment
+// form (hull beyond the near range) agree with reference_march along the
+// same ray. lane_contrast 0 makes the lanes exactly 1, and alpha only sees
+// transmittance, so 1 - alpha must be the reference T.
+namespace {
+struct JoinCase {
+    scenegraph::Camera cam;
+    renderer::atmosphere::RadialProfile profile;
+    float r0 = 0.0f, mu = 0.0f;
+};
+
+// Two geometries: FAR-dominated (outside the band, grazing it: nearly all
+// the optical depth is in the table) and NEAR-dominated (inside the band:
+// ~a quarter of it is in the 30,000 GU near march).
+JoinCase join_case(glm::vec3 eye, glm::vec3 target, float k_sys) {
+    JoinCase j;
+    j.profile = band_profile();
+    j.profile.k_sys = k_sys;                 // a partial veil, not ~opaque
+    j.cam.eye = eye;                         // star at the origin
+    j.cam.target = target;
+    j.cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    j.cam.aspect = 1.0f;
+    j.cam.near = 100.0f;                     // depth precision
+    j.cam.far = 1.8e6f;
+    const glm::vec3 dir = glm::normalize(j.cam.target - j.cam.eye);
+    j.r0 = glm::length(j.cam.eye);
+    j.mu = glm::dot(dir, j.cam.eye / j.r0);
+    return j;
+}
+
+std::vector<JoinCase> join_cases() {
+    return {join_case({0.0f, 300000.0f, 0.0f}, {150000.0f, 0.0f, 0.0f}, 2.0e-6f),
+            join_case({0.0f, 130000.0f, 0.0f}, {100000.0f, 160000.0f, 0.0f}, 1.0e-5f)};
+}
+
+float shader_transmittance(renderer::Pipeline& pipeline, const JoinCase& j,
+                           double clear_depth) {
+    renderer::SystemNebulaPass pass;
+    pass.set_profile(j.profile, renderer::atmosphere::LookParams{});
+    pass.set_star(glm::vec3(0.0f));
+    renderer::SystemNebulaPass::Dials d = pass.dials();
+    d.lane_contrast = 0.0f;
+    pass.set_dials(d);
+    const glm::vec4 px = render_centre(pipeline, pass, j.cam, {}, clear_depth, 68);
+    return 1.0f - px.a;
+}
+}  // namespace
+
+TEST_F(SystemNebulaPassTest, JoinMatchesReferenceMarchOnTheSky) {
+    for (const JoinCase& j : join_cases()) {
+        const float t_ref = renderer::atmosphere::reference_march(
+            j.profile, renderer::atmosphere::LookParams{}, j.r0, j.mu, INFINITY, 16384)
+            .transmittance.x;
+        ASSERT_GT(t_ref, 0.1f);
+        ASSERT_LT(t_ref, 0.9f);
+        const float t_gpu = shader_transmittance(*pipeline, j, 1.0);
+        EXPECT_NEAR(t_gpu, t_ref, 0.03f * t_ref)
+            << "sky from r0=" << j.r0 << ": near march + table != reference";
+    }
+}
+
+TEST_F(SystemNebulaPassTest, JoinMatchesReferenceMarchToAHullBeyondTheNearRange) {
+    const float hull = 200000.0f;   // well past the 30,000 GU near range
+    for (const JoinCase& j : join_cases()) {
+        const float t_ref = renderer::atmosphere::reference_march(
+            j.profile, renderer::atmosphere::LookParams{}, j.r0, j.mu, hull, 16384)
+            .transmittance.x;
+        ASSERT_GT(t_ref, 0.1f);
+        ASSERT_LT(t_ref, 0.95f);
+        const float t_gpu = shader_transmittance(*pipeline, j, depth_at(j.cam, hull));
+        EXPECT_NEAR(t_gpu, t_ref, 0.03f * t_ref)
+            << "hull from r0=" << j.r0 << ": near march + finite table segment != reference";
+    }
+}
