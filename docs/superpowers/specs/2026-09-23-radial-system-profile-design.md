@@ -98,6 +98,11 @@ on) is added only if the live check asks for it. How it looks and
 what it costs are **unknown and settled by a live spike** (see *Unknowns*).
 Visibility has no gameplay effect: nothing but the faithful nebula pass reads it.
 
+**Superseded rendering (2026-09-29):** the spike was rejected live (the cloud glowed
+instead of concealing, and nothing veiled the sun from the outer system). The
+`nebula` column is now drawn by `2026-09-29-system-nebula-render-design.md` — a
+star-centred atmosphere (far-field lookup table + near-field march).
+
 ### `dust` — how dense the space dust is
 
 Drives **density only** — no tint, no drift; the sun keeps both.
