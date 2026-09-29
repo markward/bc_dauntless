@@ -43,7 +43,9 @@ identically, and decals gain per-tool Copy/Paste and Mirror.
 **Tests**
 - Existing test **assertions must not change**. Imports, helper calls and
   fixture wiring may change. If a step would need an assertion changed,
-  STOP and report `BLOCKED` with the test name.
+  STOP and report `BLOCKED` with the test name. The controller does NOT
+  rule on this itself: it goes to Mark, with the test, the assertion and
+  why the refactor would change it, and execution waits for his decision.
 - Per-kind maths moves verbatim (relocated, not rewritten). Live-tuned
   numbers stay byte-identical.
 
