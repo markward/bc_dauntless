@@ -40,3 +40,10 @@ def lightning_active(in_clump: bool, sample, warping: bool) -> bool:
     if warping:
         return False
     return in_clump or sample.nebula >= LIGHTNING_NEBULA_MIN
+
+
+def star_godray_intensity(gain: float, sample, star_transmittance: float) -> float:
+    """The star as a steady god-ray source: gain x the profile's gas at the
+    player x how much of the star shows through it. 0 in clear space and
+    wherever the star is fully veiled."""
+    return gain * sample.nebula * star_transmittance

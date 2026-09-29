@@ -5044,10 +5044,53 @@ def _push_nebula_godrays(r, player, suns, warp_streaking) -> None:
     if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
         flashes = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
                    for f in _nebula_thunder.active_flashes()]
+    godrays = list(flashes)
     if dev_mode.is_enabled():
         system_open = _system_nebula_gate(r) and not warp_streaking
         r.set_system_nebula_flashes(flashes if system_open else [])
-    r.set_nebula_godrays(flashes)
+        if system_open and suns and player is not None:
+            star = _star_godray(player, suns[0]["position"])
+            if star is not None:
+                godrays.append(star)
+    r.set_nebula_godrays(godrays)
+
+
+def _star_godray(player, star_render_pos):
+    """The star as a steady god-ray source (developer, system-nebula gate):
+    toward the star from the render origin (the camera sits at ~0), at
+    profile_fx.star_godray_intensity(godray_gain dial, the profile at the
+    player, the eye->star transmittance), in the map star's colour. None
+    when there is no light to cast (clear space, a fully veiled star) or the
+    star sits on the origin. Never a cloud-lighting flash: the haze already
+    forward-scatters the star."""
+    from engine.systems import profile as _profile
+    from engine.systems import profile_fx as _profile_fx
+    intensity = _profile_fx.star_godray_intensity(
+        dev_nebula_dials.godray_gain(),
+        _profile.sample_for_object(player),
+        _profile.star_transmittance(player, dev_nebula_dials.veil()))
+    x, y, z = star_render_pos
+    length = _math.sqrt(x * x + y * y + z * z)
+    if intensity <= 0.0 or length <= 1e-6:
+        return None
+    star = _map_star(player)
+    colour = (tuple(star.appearance.color)
+              if star is not None and star.appearance.color else (1.0, 1.0, 1.0))
+    return {"dir": (x / length, y / length, z / length),
+            "intensity": intensity, "color": colour}
+
+
+def _map_star(player):
+    """The mapped system's star body the player is in, or None (unmapped set,
+    no system position, a map with no root body)."""
+    from engine.systems import frames, resolve
+    pos = frames.system_position(player)
+    if pos is None or pos[0][0] != "system":
+        return None
+    m = resolve.map_of(pos[0][1])
+    if m is None:
+        return None
+    return next((b for b in m.bodies if b.orbits is None), None)
 
 
 def _push_environment_feeds(r, active_set, warp_streaking, player=None):

@@ -43,3 +43,12 @@ def test_lightning_fires_in_a_clump_alone_and_never_while_dashing():
     assert fx.lightning_active(True, Sample(), False) is True
     assert fx.lightning_active(True, Sample(nebula=1.0), True) is False
     assert fx.lightning_active(False, Sample(nebula=1.0), True) is False
+
+
+
+def test_star_godray_intensity_is_gain_times_gas_times_transmittance():
+    assert fx.star_godray_intensity(1.0, Sample(), 1.0) == 0.0
+    assert fx.star_godray_intensity(1.0, Sample(nebula=1.0), 0.0) == 0.0
+    assert fx.star_godray_intensity(2.0, Sample(nebula=0.5), 0.4) == pytest.approx(0.4)
+    assert (fx.star_godray_intensity(1.0, Sample(nebula=0.8), 0.5)
+            > fx.star_godray_intensity(1.0, Sample(nebula=0.2), 0.5))

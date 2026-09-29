@@ -4,10 +4,10 @@
 lets a developer nudge `SystemNebulaPass`'s look while the pass is running,
 instead of editing constants and rebuilding for every trial.
 
-Six dials, three keys (a MacBook keyboard -- no numpad, no Pause):
+Seven dials, three keys (a MacBook keyboard -- no numpad, no Pause):
 
   /   select the next dial: veil -> floor -> g -> lane_contrast ->
-      near_range -> conceal_cap -> veil ...
+      near_range -> conceal_cap -> godray_gain -> veil ...
   L   step the selected dial DOWN
   O   step the selected dial UP
 
@@ -18,6 +18,8 @@ Six dials, three keys (a MacBook keyboard -- no numpad, no Pause):
   near_range     x or / 1.5
   conceal_cap    +/- 0.01, clamped to [0, LOCK_BREAK_T) (Python-side): the
                  radial profile's concealment ceiling; 0.20 = re-acquire line
+  godray_gain    x or / 1.25 (Python-side): the star's god-ray intensity,
+                 gain x profile nebula x star transmittance at the player
 
 Every press prints `[nebula dials] ...` with the selected dial and the whole
 dial dict, so settled values can be read off and folded back into the
@@ -62,12 +64,15 @@ DEFAULTS: dict = {
     # == engine.appc.sensor_detection.PROFILE_CONCEALMENT_CAP (test-pinned).
     # Python-side like the veil: concealment_at reads it under --developer.
     "conceal_cap": 0.19,
+    # Python-side: scales the star's god-ray entry (host_loop
+    # _push_nebula_godrays via profile_fx.star_godray_intensity).
+    "godray_gain": 1.0,
 }
 
 # The order `/` cycles through. The veil first: the spec names it as the
 # first thing to tune.
 DIAL_ORDER: tuple = ("veil", "floor", "g", "lane_contrast", "near_range",
-                     "conceal_cap")
+                     "conceal_cap", "godray_gain")
 
 _VEIL_MIN, _VEIL_MAX, _VEIL_FACTOR = 0.001, 0.99, 1.25
 _G_MIN, _G_MAX, _G_STEP = 0.0, 0.95, 0.05
@@ -75,6 +80,7 @@ _LANE_CONTRAST_MIN, _LANE_CONTRAST_MAX, _LANE_CONTRAST_STEP = 0.0, 1.0, 0.1
 _FLOOR_FACTOR = 1.25
 _NEAR_RANGE_FACTOR = 1.5
 _CONCEAL_STEP = 0.01
+_GODRAY_GAIN_FACTOR = 1.25
 
 # Live dial state and the selected dial's index into DIAL_ORDER. Module-level
 # so presses accumulate across a session (mirrors dev_keybindings.py's
@@ -132,14 +138,25 @@ def step(dials: dict, name: str, direction: int) -> dict:
         from engine.appc.sensor_detection import LOCK_BREAK_T
         c = round(out["conceal_cap"] + direction * _CONCEAL_STEP, 4)
         out["conceal_cap"] = max(0.0, min(LOCK_BREAK_T - 0.001, c))
+    elif name == "godray_gain":
+        out["godray_gain"] = (out["godray_gain"] * _GODRAY_GAIN_FACTOR
+                              if direction > 0
+                              else out["godray_gain"] / _GODRAY_GAIN_FACTOR)
     else:
         raise ValueError("unknown nebula dial: %r" % (name,))
     return out
 
 
 def _native(dials: dict) -> dict:
-    """The dials the native pass owns (not the Python-side veil / conceal_cap)."""
-    return {k: v for k, v in dials.items() if k not in ("veil", "conceal_cap")}
+    """The dials the native pass owns (not the Python-side veil / conceal_cap
+    / godray_gain)."""
+    return {k: v for k, v in dials.items()
+            if k not in ("veil", "conceal_cap", "godray_gain")}
+
+
+def godray_gain() -> float:
+    """The live star god-ray gain (host_loop._push_nebula_godrays)."""
+    return _dials["godray_gain"]
 
 
 def conceal_cap() -> float:
@@ -177,7 +194,7 @@ def register(_h) -> None:
     """
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_SLASH, _cycle,
-        "System nebula: select next dial (veil/floor/g/lanes/near) (dev) - /",
+        "System nebula: select next dial (veil/floor/g/lanes/near/cap/godrays) (dev) - /",
     )
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_L, lambda: _push(-1),

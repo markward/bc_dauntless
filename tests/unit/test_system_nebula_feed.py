@@ -353,3 +353,74 @@ def test_production_never_pushes_system_nebula_flashes(monkeypatch):
     assert r.flashes == []
     assert r.godrays == [[_FLASH_DICT]]
     assert r.volumetric_queries == 0, "production must not even ask the gate"
+
+
+
+# ── The star as a steady godray source (Part C, 2026-09-30) ────────────────
+
+def _star_feed(monkeypatch, nebula=0.6, transmittance=0.5):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(host_loop, "_nebula_thunder", _Thunder([_Flash()]))
+    monkeypatch.setattr(P, "sample_for_object", lambda obj: P.Sample(nebula=nebula))
+    monkeypatch.setattr(P, "star_transmittance", lambda obj, veil: transmittance)
+    m = _map()
+    m.bodies[0].appearance.color = (1.0, 0.9, 0.7)
+    _patch(monkeypatch, m)
+
+
+def test_the_star_is_a_godray_source_under_the_gate(monkeypatch):
+    _star_feed(monkeypatch)
+    r = _R()
+    host_loop._push_nebula_godrays(r, object(), [{"position": (0.0, 0.0, 300.0)}], False)
+    (godrays,) = r.godrays
+    assert godrays[0] == _FLASH_DICT, "the lightning flashes stay in the list"
+    star = godrays[1]
+    assert star["dir"] == pytest.approx((0.0, 0.0, 1.0))
+    assert star["intensity"] == pytest.approx(1.0 * 0.6 * 0.5)
+    assert star["color"] == (1.0, 0.9, 0.7)
+    assert r.flashes == [[_FLASH_DICT]], "the star never lights the cloud as a flash"
+
+
+def test_the_star_godray_follows_the_gain_dial(monkeypatch):
+    _star_feed(monkeypatch)
+    monkeypatch.setattr(D, "_dials", dict(D.DEFAULTS, godray_gain=2.0))
+    r = _R()
+    host_loop._push_nebula_godrays(r, object(), [{"position": (0.0, 5.0, 0.0)}], False)
+    assert r.godrays[0][1]["intensity"] == pytest.approx(2.0 * 0.6 * 0.5)
+
+
+def test_no_star_godray_without_suns_player_gas_or_gate(monkeypatch):
+    _star_feed(monkeypatch)
+    suns = [{"position": (0.0, 0.0, 300.0)}]
+    for args, expected in (((object(), [], False), [_FLASH_DICT]),   # no sun
+                           ((None, suns, False), [_FLASH_DICT]),     # no player
+                           ((object(), suns, True), [])):            # warp streak
+        r = _R()
+        host_loop._push_nebula_godrays(r, *args)
+        assert r.godrays == [expected], args
+    r = _R(volumetric=False)
+    host_loop._push_nebula_godrays(r, object(), suns, False)
+    assert r.godrays == [[_FLASH_DICT]]
+    _star_feed(monkeypatch, nebula=0.0)
+    r = _R()
+    host_loop._push_nebula_godrays(r, object(), suns, False)
+    assert r.godrays == [[_FLASH_DICT]], "clear space: intensity 0, no entry"
+
+
+def test_the_star_godray_defaults_to_white_without_a_map_colour(monkeypatch):
+    _star_feed(monkeypatch)
+    m = _map()
+    m.bodies[0].appearance.color = None
+    _patch(monkeypatch, m)
+    r = _R()
+    host_loop._push_nebula_godrays(r, object(), [{"position": (3.0, 0.0, 0.0)}], False)
+    assert r.godrays[0][1]["color"] == (1.0, 1.0, 1.0)
+
+
+def test_production_godray_list_is_exactly_the_flashes(monkeypatch):
+    _star_feed(monkeypatch)
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    r = _R()
+    host_loop._push_nebula_godrays(r, object(), [{"position": (0.0, 0.0, 300.0)}], False)
+    assert r.godrays == [[_FLASH_DICT]]
+    assert r.flashes == []
