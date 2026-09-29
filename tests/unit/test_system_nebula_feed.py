@@ -132,3 +132,64 @@ def test_gate_closing_pushes_one_none_then_reopening_repushes(monkeypatch):
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
     host_loop._push_system_nebula(r, object(), suns, False)
     assert len(r.profiles) == 3 and r.profiles[-1] is not None
+
+
+# ── _reset_sensor_state's UNKNOWN sentinel (mission-swap clear bug) ─────────
+#
+# _reset_sensor_state forgets the latch to _SYSTEM_NEBULA_UNKNOWN, not None,
+# because the native pass keeps its old far-field table across a mission swap.
+# Forgetting to plain None would make the very next unmapped/gate-closed
+# frame's `if _system_nebula_pushed_for is not None` guard false already, so
+# the clear push would never fire and the previous system's haze would keep
+# drawing. The sentinel is `is not None` (forces exactly one clear) and never
+# `==` any system name (forces a fresh push into the SAME system too).
+
+def _guard_latch_restore(monkeypatch):
+    """Make monkeypatch restore the real module global on teardown even
+    though the code under test reassigns it directly (not through
+    monkeypatch), so these tests can't leak _system_nebula_pushed_for."""
+    monkeypatch.setattr(host_loop, "_system_nebula_pushed_for",
+                        host_loop._system_nebula_pushed_for)
+
+
+def test_reset_sensor_state_marks_the_nebula_latch_unknown(monkeypatch):
+    _guard_latch_restore(monkeypatch)
+    host_loop._system_nebula_pushed_for = "Vesuvi"
+    host_loop._reset_sensor_state()
+    assert host_loop._system_nebula_pushed_for is host_loop._SYSTEM_NEBULA_UNKNOWN
+
+
+def test_unmapped_frame_after_reset_pushes_exactly_one_none(monkeypatch):
+    from engine.systems import frames
+    _guard_latch_restore(monkeypatch)
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(frames, "system_position", lambda obj: None)
+    host_loop._system_nebula_pushed_for = "Vesuvi"
+    host_loop._reset_sensor_state()
+    r = _R()
+    host_loop._push_system_nebula(r, object(), [], False)
+    assert r.profiles == [None]
+    assert host_loop._system_nebula_pushed_for is None
+    # A second unmapped frame must not repeat the clear.
+    host_loop._push_system_nebula(r, object(), [], False)
+    assert r.profiles == [None]
+
+
+def test_mapped_frame_with_the_same_system_name_repushes_after_reset(monkeypatch):
+    _guard_latch_restore(monkeypatch)
+    m = _map()
+    _patch(monkeypatch, m)
+    r = _R()
+    suns = [{"position": (5.0, 6.0, 7.0)}]
+    host_loop._push_system_nebula(r, object(), suns, False)
+    assert len(r.profiles) == 1
+    assert host_loop._system_nebula_pushed_for == "Vesuvi"
+
+    host_loop._reset_sensor_state()
+    assert host_loop._system_nebula_pushed_for is host_loop._SYSTEM_NEBULA_UNKNOWN
+
+    # frames/resolve still resolve to the SAME system as before the swap.
+    host_loop._push_system_nebula(r, object(), suns, False)
+    assert len(r.profiles) == 2, (
+        "the sentinel must force a fresh push even into the same system name")
+    assert host_loop._system_nebula_pushed_for == "Vesuvi"

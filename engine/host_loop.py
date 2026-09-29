@@ -4417,9 +4417,11 @@ def _reset_sensor_state() -> None:
         _nebula_wake.reset()
     if _radiation_driver is not None:
         _radiation_driver.reset()
-    # The native pass keeps its old far-field table across a mission swap
-    # otherwise -- force the next tick to rebuild (or clear) it.
-    _system_nebula_pushed_for = None
+    # The native pass keeps its old far-field table across a mission swap --
+    # mark our latch UNKNOWN (not None) so the next _push_system_nebula call
+    # is forced to either clear it (unmapped/gate-closed) or rebuild it fresh
+    # (mapped, even into the same system name as before the swap).
+    _system_nebula_pushed_for = _SYSTEM_NEBULA_UNKNOWN
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -4695,10 +4697,23 @@ _warp_hidden = False
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
 _radiation_driver = None  # RadiationDriver | None
+# Sentinel meaning "native pass state is unknown" -- distinct from None (which
+# means "we know the native pass holds nothing, e.g. after we pushed a clear").
+# Used by _reset_sensor_state on mission swap: the native SystemNebulaPass
+# retains its table across a swap, so simply forgetting our own latch to None
+# would suppress the very clear push a subsequent unmapped/gate-closed frame
+# is meant to send (`if _system_nebula_pushed_for is not None` would already
+# be false). The sentinel is `is not None` (forces one clear push if the next
+# mapped system doesn't resolve) and never `==` any system name (forces a
+# fresh profile push even into the SAME system name as before the swap).
+_SYSTEM_NEBULA_UNKNOWN = object()
+
 # System name whose radial-profile table the SystemNebulaPass currently holds,
-# or None. Reset on mission swap (_reset_sensor_state) and whenever the
+# or None once we know it holds nothing, or _SYSTEM_NEBULA_UNKNOWN right after
+# a mission swap (_reset_sensor_state) until the next _push_system_nebula call
+# resolves it one way or the other. Also reset to None whenever the
 # developer/volumetric gate closes, so re-opening it re-pushes.
-_system_nebula_pushed_for = None  # str | None
+_system_nebula_pushed_for = None  # str | None | _SYSTEM_NEBULA_UNKNOWN
 # Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
 # until the first sweep; reset on mission swap so a new mission re-identifies.
 _last_identify_gt = None  # float | None

@@ -7,8 +7,8 @@ WarpPressed-style gating (and GetClassObjectList(CT_NEBULA)) works.
 from App import Nebula
 
 # freq, gain, density_floor (tunable): every MetaNebula's default fbm dials.
-# A constant so readers of the defaults (profile_render, profile_builder) need
-# not construct a MetaNebula, a TGObject the id registry holds forever.
+# A constant so readers of the defaults (profile_builder) need not construct a
+# MetaNebula, a TGObject the id registry holds forever.
 DEFAULT_FBM_DIALS = (0.02, 1.5, 0.30)
 
 
