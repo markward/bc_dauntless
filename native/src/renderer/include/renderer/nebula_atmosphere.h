@@ -47,8 +47,18 @@ inline constexpr int kRadialTexels = 4096;
 inline constexpr int kTableR = 256;
 inline constexpr int kTableMu = 128;
 
-/// `nebula(r)`: linear between rows, clamped to the first row below it and
-/// persisting the last row outward.
+/// RENDERER-ONLY departure from the profile's own "last row persists
+/// outward forever" rule: past the last row the density fades linearly to
+/// zero at kLastRowFadeFactor x the last row's radius. A persisted floor
+/// integrated all the way to the 1.8M GU far plane dimmed the whole sky from
+/// anywhere in the system; this caps it. Gameplay (engine/systems/profile.py
+/// evaluate) is unchanged. Surfaced to Mark as a look decision -- set to a
+/// huge value to restore the old persist-forever look.
+inline constexpr float kLastRowFadeFactor = 2.0f;
+
+/// `nebula(r)`: linear between rows, clamped to the first row below it; past
+/// the last row, fades linearly to 0 at kLastRowFadeFactor x its radius (a
+/// last row at r <= 0 persists: there is no radius to scale).
 float density(const RadialProfile& p, float r);
 
 /// `k_sys · ∫_{star_radius}^{r} nebula` — 0 for r ≤ star_radius.

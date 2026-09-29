@@ -27,7 +27,13 @@ float density(const RadialProfile& p, float r) {
             return p.nebula[i - 1] + (p.nebula[i] - p.nebula[i - 1]) * t;
         }
     }
-    return p.nebula.back();
+    // Past the last row: fade to 0 at kLastRowFadeFactor x its radius
+    // (renderer-only; see the header).
+    const float r_last = p.r.back();
+    if (r_last <= 0.0f) return p.nebula.back();
+    const float r_zero = kLastRowFadeFactor * r_last;
+    if (r >= r_zero) return 0.0f;
+    return p.nebula.back() * (r_zero - r) / (r_zero - r_last);
 }
 
 float tau_star(const RadialProfile& p, float r) {
@@ -35,6 +41,11 @@ float tau_star(const RadialProfile& p, float r) {
     // exact trapezoid over the profile's own breakpoints
     std::vector<float> pts{p.star_radius, r};
     for (float x : p.r) if (x > p.star_radius && x < r) pts.push_back(x);
+    // the fade's zero point is a breakpoint too
+    if (!p.r.empty()) {
+        const float r_zero = kLastRowFadeFactor * p.r.back();
+        if (r_zero > p.star_radius && r_zero < r) pts.push_back(r_zero);
+    }
     std::sort(pts.begin(), pts.end());
     double sum = 0.0;
     for (size_t i = 1; i < pts.size(); ++i)

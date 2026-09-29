@@ -71,8 +71,14 @@ coefficient `k_sys` (below). C++ builds the **far-field table** on the CPU
 - Two RGB channels: **transmittance** `T(r, μ)` from the start point along the
   ray to the far plane, and **inscatter** `S(r, μ)` — star light scattered toward
   the start point along that ray, plus the emissive floor.
-- The last profile row persists outward to the far plane (the profile's own
-  rule), so a ray through the floor integrates finitely.
+- ~~The last profile row persists outward to the far plane (the profile's own
+  rule), so a ray through the floor integrates finitely.~~ **Amended
+  2026-09-29 (final review):** in the RENDERER only, the last row fades
+  linearly to zero between its own radius and 2x it
+  (`atmosphere::kLastRowFadeFactor`) — a floor persisted to the 1.8M GU far
+  plane dimmed the whole sky from anywhere in the system. Gameplay's
+  `profile.evaluate` still persists the last row. A look decision for Mark;
+  one constant to revert.
 
 ### Per frame, per pixel
 

@@ -18,19 +18,38 @@ RadialProfile constant(float n, float k) {
 }
 }  // namespace
 
-TEST(NebulaAtmosphere, DensityInterpolatesAndPersists) {
+TEST(NebulaAtmosphere, DensityInterpolatesThenFadesPastTheLastRow) {
     RadialProfile p;
     p.r = {0.0f, 100.0f, 200.0f};
     p.nebula = {0.0f, 1.0f, 0.5f};
     EXPECT_FLOAT_EQ(density(p, 50.0f), 0.5f);
     EXPECT_FLOAT_EQ(density(p, 150.0f), 0.75f);
-    EXPECT_FLOAT_EQ(density(p, 5000.0f), 0.5f);
+    EXPECT_FLOAT_EQ(density(p, 200.0f), 0.5f);
+    // Renderer-only rule (kLastRowFadeFactor): the last row fades linearly
+    // to zero between its own radius and kLastRowFadeFactor x that radius,
+    // instead of persisting to the far plane (gameplay's profile.evaluate
+    // still persists it).
+    EXPECT_FLOAT_EQ(kLastRowFadeFactor, 2.0f);
+    EXPECT_FLOAT_EQ(density(p, 300.0f), 0.25f);
+    EXPECT_FLOAT_EQ(density(p, 400.0f), 0.0f);
+    EXPECT_FLOAT_EQ(density(p, 5000.0f), 0.0f);
 }
 
 TEST(NebulaAtmosphere, TauStarMatchesClosedForm) {
     const auto p = constant(0.5f, 1.0e-4f);
     EXPECT_NEAR(tau_star(p, 1100.0f), 1.0e-4f * 0.5f * 1000.0f, 1e-6f);
     EXPECT_FLOAT_EQ(tau_star(p, 50.0f), 0.0f);
+}
+
+// tau_star integrates exactly across the fade's kink at 2x the last row.
+TEST(NebulaAtmosphere, TauStarIntegratesTheFadeExactly) {
+    RadialProfile p;
+    p.r = {0.0f, 100.0f, 200.0f};
+    p.nebula = {0.0f, 1.0f, 0.5f};
+    p.k_sys = 1.0f;
+    p.star_radius = 0.0f;
+    // 0..100: 50; 100..200: 75; 200..400 ramp 0.5 -> 0: 50; beyond: 0
+    EXPECT_NEAR(tau_star(p, 1000.0f), 175.0f, 1e-3f);
 }
 
 TEST(NebulaAtmosphere, HgIsNormalised) {
@@ -76,6 +95,31 @@ TEST(NebulaAtmosphere, FloorIntegratesFinitelyToTheFarPlane) {
     const Segment s = reference_march(p, look, 330000.0f, 1.0f, INFINITY, 4096);
     EXPECT_TRUE(std::isfinite(s.transmittance.x));
     EXPECT_GT(s.transmittance.x, 0.0f);
+}
+
+// A real profile's last row (the floor) no longer persists to the 1.8M GU
+// far plane in the renderer: it fades to zero by 2x the last row's radius,
+// so a ray leaving the system integrates exactly that ramp and no more.
+TEST(NebulaAtmosphere, FloorFadesOutBeyondTwiceTheLastRow) {
+    RadialProfile p;
+    p.r = {0.0f, 60000.0f, 120000.0f, 240000.0f};
+    p.nebula = {0.0f, 0.0f, 1.0f, 0.05f};
+    p.k_sys = 2.0e-5f;
+    p.star_radius = 2000.0f;
+    LookParams look;
+    // outward from 330,000: the ramp 0.05*(480k - r)/240k from 330k to 480k
+    const float d330 = 0.05f * (480000.0f - 330000.0f) / 240000.0f;
+    const float integral = 0.5f * d330 * (480000.0f - 330000.0f);
+    const Segment s = reference_march(p, look, 330000.0f, 1.0f, INFINITY, 8192);
+    EXPECT_NEAR(s.transmittance.x, std::exp(-p.k_sys * integral), 1e-3f);
+    // beyond 2x the last row there is nothing left to integrate
+    const Segment out = reference_march(p, look, 500000.0f, 1.0f, INFINITY, 1024);
+    EXPECT_FLOAT_EQ(out.transmittance.x, 1.0f);
+    EXPECT_FLOAT_EQ(out.inscatter.x, 0.0f);
+    // the radial texels the shader reads follow the same rule
+    const auto tex = build_radial_texels(p, look);
+    const int i = static_cast<int>(u_of_radius(600000.0f, look.far_gu) * (kRadialTexels - 1));
+    EXPECT_FLOAT_EQ(tex[i].x, 0.0f);
 }
 
 TEST(NebulaAtmosphere, ZeroRadiusIsFinite) {
