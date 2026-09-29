@@ -638,7 +638,13 @@ class DecalsPaneMixin:
         from engine.ui.ship_property_viewer import gizmo_length
         L = gizmo_length(self.camera)
         ratio = max(t_now / max(self._axis_grab_param, 0.25 * L), 1e-3)
-        self._decal_apply(decal_editor.scale(self._decal_grab, ratio))
+        # Spec S3: uniform, "aspect locked to the mask" -- width scales by the
+        # factor and the height snaps to the previewed mask's aspect (2:1
+        # without a PNG), like the Width nudge. Depth still scales with it.
+        g = self._decal_grab
+        p = decal_editor.set_width(g, decal_editor.width(g) * ratio,
+                                   self._decal_aspect(g.name))
+        self._decal_apply(replace(p, depth=g.depth * ratio))
 
     def _decal_apply_ring_drag(self, d_body: float) -> None:
         self._decal_apply(decal_editor.roll(self._decal_grab, d_body))

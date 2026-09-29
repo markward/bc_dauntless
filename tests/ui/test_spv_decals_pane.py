@@ -440,6 +440,51 @@ def test_the_scale_gizmo_scales_uniformly(env):
     assert pl.depth == pytest.approx(2.0 * _TOP["depth"])
 
 
+def test_the_scale_gizmo_locks_the_aspect_to_the_mask(env):
+    """Spec S3: Scale is uniform "with the aspect locked to the mask". A 2:1
+    placement whose mask (Zhukov/top.png, 8x2) is 4:1 snaps to 4:1 even at a
+    1.0x scale; the width is old width x factor."""
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    two_to_one = decal_editor.Placement(
+        name="top", origin=(-50.0, 25.0, 60.0), u_axis=(100.0, 0.0, 0.0),
+        v_axis=(0.0, -50.0, 0.0), normal=(0.0, 0.0, 1.0), depth=3.0)
+    p._decal_working[0] = two_to_one
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("set_tool:scale")
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)
+    p._apply_scale_drag(L)                  # factor 1.0
+    pl = p._decal_working[0]
+    h = math.sqrt(sum(c * c for c in pl.v_axis))
+    assert decal_editor.width(pl) == pytest.approx(100.0)
+    assert decal_editor.width(pl) / h == pytest.approx(4.0)
+    assert _close(decal_editor.centre(pl), decal_editor.centre(two_to_one), 1e-9)
+    assert pl.depth == pytest.approx(3.0)
+
+
+def test_the_scale_gizmo_uses_the_default_aspect_without_a_mask(env):
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-registry:Excalibur")      # no top.png there
+    square = decal_editor.Placement(
+        name="top", origin=(-50.0, 50.0, 60.0), u_axis=(100.0, 0.0, 0.0),
+        v_axis=(0.0, -100.0, 0.0), normal=(0.0, 0.0, 1.0), depth=3.0)
+    p._decal_working[0] = square
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("set_tool:scale")
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)
+    p._apply_scale_drag(1.5 * L)
+    pl = p._decal_working[0]
+    h = math.sqrt(sum(c * c for c in pl.v_axis))
+    assert decal_editor.width(pl) == pytest.approx(150.0)
+    assert decal_editor.width(pl) / h == pytest.approx(2.0)
+    assert pl.depth == pytest.approx(4.5)
+
+
 def _wrap(deg):
     return (deg + 180.0) % 360.0 - 180.0
 
