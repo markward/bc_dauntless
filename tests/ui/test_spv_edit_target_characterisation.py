@@ -1246,3 +1246,30 @@ def test_box_to_box_rotate_paste(make_panel):
     re-orthonormalised forward and up (not swapped), one undo entry."""
     assert _scenario_box_to_box_rotate_paste(make_panel) == (
         True, ((0.6, 0.8, 0.0), (0.0, 0.0, 1.0)), 1)
+
+
+# Cone mirror with a tilted up (Task 5 review carry) -----------------------------
+
+def _tilted_up_cone_panel(make_panel):
+    """The fixture panel with emitter 4/2 (the cone) saved this session with
+    an `up` whose X is non-zero, orthonormal to its axis (-0.8, -0.6, 0):
+    the base cone's up (0, 0, 1) has x = 0, so it cannot see a sign error
+    in mirroring up."""
+    p = make_panel()
+    lst = [dict(e) for e in _DESCRIPTORS[4]["emitters"]]
+    lst[2] = dict(lst[2], up=(0.48, -0.64, 0.6))
+    p._saved_emitter[4] = lst
+    return p
+
+
+def test_mirrors_of_a_cone_whose_up_has_nonzero_x(make_panel):
+    """(rotate_mirror, mirror_element) on the tilted-up cone: both negate
+    X of axis AND up; mirror_element also flips position X. One undo each."""
+    got = tuple(_scenario_action(lambda: _tilted_up_cone_panel(make_panel),
+                                 "emitter_cone", tool, action)
+                for tool, action in (("rotate", "rotate_mirror"),
+                                     ("transform", "mirror_element")))
+    assert got == (
+        (True, {'axis': (0.8, -0.6, 0.0), 'up': (-0.48, -0.64, 0.6)}, 1),
+        (True, {'axis': (0.8, -0.6, 0.0), 'position': (-0.3, -0.6, 0.15),
+                'up': (-0.48, -0.64, 0.6)}, 1))

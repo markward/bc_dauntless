@@ -174,3 +174,61 @@ def test_set_rotation_round_trips_a_pose(make_panel):
     t = p._edit_target()
     t.set_rotation((5.0, 10.0, -15.0))
     assert t.get_rotation() == (5.0, 10.0, -15.0)
+
+
+# Pipette and Mirror Element (plan Task 5) ------------------------------------
+
+_KEYS = {"subsystem": ("subsystem", 0), "light_sphere": ("light", 1),
+         "light_cylinder": ("light", 2), "light_box": ("light", 3),
+         "emitter_point": ("emitter", 4, 0), "emitter_strip": ("emitter", 4, 1),
+         "emitter_cone": ("emitter", 4, 2)}
+
+# Staged-spec key the characterisation suite records -> pipette field.
+_FIELD_OF = {"position": "position", "axis": "rotation", "up": "rotation",
+             "orientation": "rotation", "radius": "scale", "radius_y": "scale",
+             "length": "scale", "extent": "scale", "scale": "scale",
+             "color": "colour", "intensity": "colour"}
+
+
+def test_pipette_fields_from_matches_characterised_pipette(make_panel):
+    """For every ordered pair of hardpoint cases, the fields the adapter
+    says it copies are exactly the ones the characterisation suite saw
+    change, in the order ("position", "rotation", "scale", "colour")."""
+    from engine.ui.spv_edit_targets import edit_target_for_key
+    from tests.ui.test_spv_edit_target_characterisation import EXPECTED_PIPETTE
+    order = ("position", "rotation", "scale", "colour")
+    p = make_panel()
+    for tgt in _KEYS:
+        for src in _KEYS:
+            if src == tgt:
+                continue
+            changed, _armed = EXPECTED_PIPETTE[tgt][1][src]
+            want = {_FIELD_OF[k] for k in changed}
+            got = edit_target_for_key(p, _KEYS[tgt]).pipette_fields_from(
+                edit_target_for_key(p, _KEYS[src]))
+            assert set(got) == want, (src, tgt)
+            assert list(got) == [f for f in order if f in got], (src, tgt)
+
+
+def test_part_targets_take_no_pipette_fields(make_panel):
+    from engine.ui.spv_edit_targets import edit_target_for_key
+    p = make_panel()
+    src = edit_target_for_key(p, _KEYS["subsystem"])
+    for key in (("part_anchor", "wing"), ("part_pose", "wing", "red")):
+        assert edit_target_for_key(p, key).pipette_fields_from(src) == ()
+
+
+def test_mirror_is_mirror_element(make_panel):
+    """`EditTarget.mirror()` is the whole Mirror Element: position x-flip
+    plus the rotation mirror -- pinned against the characterisation
+    record of `mirror_element`."""
+    from tests.ui.test_spv_edit_target_characterisation import (
+        EXPECTED_MIRRORS, _diff, _staged)
+    for case in ("subsystem", "light_sphere", "light_cylinder", "light_box",
+                 "emitter_point", "emitter_strip", "emitter_cone",
+                 "part_anchor", "part_pose"):
+        p = make_panel()
+        assert p.dispatch_event(_SELECT[case]) is True
+        before = _staged(p, case)
+        p._edit_target().mirror()
+        assert _diff(before, _staged(p, case)) == EXPECTED_MIRRORS[case][2][1], case

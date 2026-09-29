@@ -1340,20 +1340,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             t_new = tuple(q[k] - ra[k] for k in range(3))
         self._stage_part_pose(name, state, t_new + angles)
 
-    def _target_pos_of(self, target):
-        """Body-frame (x, y, z) of an arbitrary transform target -- where its
-        gizmo sits -- or None. A part anchor sits at the anchor; a part pose
-        at the POSED anchor (the pivot its rings rotate about). Per-kind:
-        `EditTarget.position` (engine/ui/spv_edit_targets.py)."""
-        from engine.ui.spv_edit_targets import edit_target_for_key
-        t = edit_target_for_key(self, target)
-        return t.position() if t is not None else None
-
     def _transform_target_pos(self):
         """The current transform target's editable body-frame coordinate --
         what the Move panel shows and the coord steppers/copy/paste edit --
         or None (no tool target). Always where the gizmo sits
-        (`_target_pos_of`): for a part POSE that is the POSED anchor, so the
+        (`EditTarget.position`): for a part POSE that is the POSED anchor, so the
         panel describes what is on screen (fix-round ruling 15), never the
         raw translation t."""
         t = self._edit_target()
@@ -1372,81 +1363,23 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     # ------------------------------------------------------------------
     # Pipette eyedropper
     # ------------------------------------------------------------------
-    def _src_rotate_target(self, src):
-        """src if it is rotate-capable (cylinder/box light, strip/cone emitter),
-        else None — mirrors _rotate_target but for an explicit target."""
-        if src[0] == "emitter":
-            spec = self._effective_emitter(src[1], src[2])
-            return src if spec and spec.get("kind") in ("strip", "cone") else None
-        if src[0] == "light":
-            spec = self._effective_light(src[1])
-            return src if spec and spec.get("shape") in ("Cylinder", "Box") else None
-        return None
-
-    def _src_axis(self, src):
-        if src[0] == "emitter":
-            spec = self._effective_emitter(src[1], src[2]) or {}
-        else:
-            spec = self._effective_light(src[1]) or {}
-        return tuple(spec.get("axis") or (0.0, -1.0, 0.0)) if spec else None
-
-    def _src_orientation(self, src):
-        """(forward, up) for a box light or cone emitter source, else None."""
-        if src[0] == "emitter":
-            spec = self._effective_emitter(src[1], src[2]) or {}
-            if spec.get("kind") == "cone":
-                from engine.appc.light_emitters import _derive_up
-                fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-                return (tuple(fwd), tuple(spec.get("up") or _derive_up(fwd)))
-            return None
-        spec = self._effective_light(src[1]) or {}
-        if spec.get("shape") == "Box":
-            fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-            return (tuple(fwd), tuple(up))
-        return None
-
-    def _apply_pipette(self, src) -> None:
-        """Copy every aspect the target can hold from `src` onto the current
-        selection (the target). Incompatible aspects are silently skipped."""
-        tgt = self._active_transform_target()
-        if tgt is None or src == tgt:
+    def _apply_pipette(self, src, tgt) -> None:
+        """Copy every aspect target adapter `tgt` can take from source
+        adapter `src` (`EditTarget.pipette_fields_from`), in order:
+        position, rotation, scale, colour. Incompatible aspects are silently
+        skipped; a pick of the target itself is a no-op."""
+        if tgt is None or src.key == tgt.key:
             return
-        # 1. Position (always) — set on the active target.
-        spos = self._target_pos_of(src)
-        if spos is not None:
-            self._set_transform_target_pos(spos)
-        # 2. Rotation — only when both share a rotate kind.
-        if self._rotate_target() is not None \
-                and self._src_rotate_target(src) is not None \
-                and self._rotate_clipboard_kind(src) == self._rotate_clipboard_kind(tgt):
-            kind = self._rotate_clipboard_kind(src)
-            if kind == "cylinder_axis":
-                axis = self._src_axis(src)
-                if axis is not None:
-                    self._set_axis_absolute(tgt, axis)
-            else:  # box_orientation / cone_orientation
-                fu = self._src_orientation(src)
-                if fu is not None:
-                    self._set_orientation_absolute(tgt, fu[0], fu[1])
-        # 3. Scale — only when both share a scale kind.
-        skind, sfields = self._scale_kind_and_fields(src)
-        tkind, _ = self._scale_kind_and_fields(tgt)
-        if skind == tkind:
-            for idx, f in enumerate(sfields):
-                self._set_scale_field(idx, f["value"])
-        # 4. Colour + intensity — emitter → emitter only.
-        if src[0] == "emitter" and tgt[0] == "emitter":
-            ssp = self._effective_emitter(src[1], src[2])
-            if ssp is not None:
-                _, ti, tj = tgt
-                lst = list(self._effective_emitters(ti))
-                if 0 <= tj < len(lst):
-                    spec = dict(lst[tj])
-                    spec["color"] = tuple(ssp["color"])
-                    spec["intensity"] = float(ssp["intensity"])
-                    lst[tj] = spec
-                    self._pending_emitter[ti] = lst
-                    self._last_pushed = None
+        for field in tgt.pipette_fields_from(src):
+            if field == "position":
+                tgt.set_position(src.position())
+            elif field == "rotation":
+                tgt.set_rotation(src.get_rotation())
+            elif field == "scale":
+                for idx, value in enumerate(src.get_scale()):
+                    tgt.set_scale_field(idx, value)
+            elif field == "colour":
+                tgt.set_colour(src.colour())   # EmitterTarget only
 
     def transform_coords(self) -> Optional[dict]:
         """Data for the transform-coordinate panel: `{"x","y","z",
@@ -1474,13 +1407,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     # ------------------------------------------------------------------
     # Scale tool (shape-aware size fields for the current transform target)
     # ------------------------------------------------------------------
-    def _scale_kind_and_fields(self, target):
-        """Shape-aware size fields for the explicit `target` key (see
-        `_active_transform_target`): `EditTarget.scale_kind` of its adapter.
-        Kept for the Pipette, which still speaks in target keys (plan Task 5)."""
-        from engine.ui.spv_edit_targets import edit_target_for_key
-        return edit_target_for_key(self, target).scale_kind()
-
     def _scale_edit_target(self):
         """The Scale tool's `EditTarget`: the current transform target's
         adapter, or None when nothing is selected or it has no size (a part
@@ -1511,8 +1437,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
 
     def _set_scale_field(self, index, value) -> None:
         """Stage `value` (floored at SCALE_MIN) for size field `index` of the
-        current transform target (`EditTarget.set_scale_field`). Kept for the
-        Pipette (plan Task 5)."""
+        current transform target (`EditTarget.set_scale_field`). Kept for
+        tests (removed in plan Task 7)."""
         t = self._scale_edit_target()
         if t is not None:
             t.set_scale_field(index, value)
@@ -1532,7 +1458,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     def _rotate_target(self):
         """The rotate tool's target key (("light", i), ("emitter", i, j) or
         ("part_pose", name, state)), or None -- the key of
-        `_rotate_edit_target`. Kept for the Pipette (plan Task 5)."""
+        `_rotate_edit_target`. Kept for tests (removed in plan Task 7)."""
         t = self._rotate_edit_target()
         return t.key if t is not None else None
 
@@ -1556,13 +1482,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         return {"fields": spec["fields"],
                 "has_clipboard": clip is not None,
                 "can_paste": clip is not None and clip[0] == kind}
-
-    def _rotate_clipboard_kind(self, target) -> str:
-        """Rotate-clipboard kind of the explicit rotate-capable `target` key
-        (`EditTarget.rotate_kind`). Kept for the Pipette (plan Task 5), which
-        only asks it of targets it has already checked are rotate-capable."""
-        from engine.ui.spv_edit_targets import edit_target_for_key
-        return edit_target_for_key(self, target).rotate_kind()
 
     def _rotate_axis(self, index, delta_deg) -> None:
         """Rotate the current rotate target by `delta_deg` about basis axis
@@ -2661,11 +2580,13 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         if action == "pipette":
             if self._pipette_armed:
                 self._pipette_armed = False
-            elif self._active_transform_target() is not None \
-                    and not self._is_part_target(self._active_transform_target()):
-                # A part node holds none of the aspects the pipette copies
-                # (a mount position, rotation, size, colour), so it never arms.
-                self._pipette_armed = True
+            else:
+                t = self._edit_target()
+                if t is not None and not self._is_part_target(t.key):
+                    # A part node holds none of the aspects the pipette copies
+                    # (a mount position, rotation, size, colour), so it never
+                    # arms.
+                    self._pipette_armed = True
             self._last_pushed = None
             return True
         if self._pipette_armed:
@@ -2698,7 +2619,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 self._pipette_armed = False
                 self._last_pushed = None
                 if src is not None:
-                    self._apply_pipette(src)
+                    from engine.ui.spv_edit_targets import edit_target_for_key
+                    self._apply_pipette(edit_target_for_key(self, src),
+                                        self._edit_target())
                 return True
             self._pipette_armed = False
             self._last_pushed = None
@@ -3021,10 +2944,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             # On a part pose the coordinate is the POSED anchor, so this
             # reflects q.x -> -q.x with R unchanged (ruling 15).
             t = self._edit_target()
-            pos = t.position() if t is not None else None
-            if pos is not None:
-                p = list(pos); p[0] = -p[0]
-                t.set_position(tuple(p))
+            if t is not None and t.position() is not None:
+                t.mirror_position()
                 self._last_pushed = None
             return True
         if action.startswith("scale_nudge:"):
@@ -3106,20 +3027,16 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         if action == "rotate_mirror":
             t = self._rotate_edit_target()
             if t is not None:
-                t.mirror()
+                t.mirror_rotation()
             return True
         if action == "mirror_element":
-            # A part pose takes both steps like any mount: the posed anchor's
-            # q.x -> -q.x, then (rx, -ry, -rz) about that held anchor -- one
-            # dispatch, so one undo step.
-            t = self._active_transform_target()
-            if t is not None:
-                pos = self._transform_target_pos()
-                if pos is not None:
-                    self._set_transform_target_pos((-pos[0], pos[1], pos[2]))
-                rt = self._rotate_edit_target()
-                if rt is not None:
-                    rt.mirror()
+            # `EditTarget.mirror()`: position x-flip, then the kind's
+            # rotation mirror. A part pose takes both steps like any mount:
+            # the posed anchor's q.x -> -q.x, then (rx, -ry, -rz) about that
+            # held anchor -- one dispatch, so one undo step.
+            t = self._edit_target()
+            if t:
+                t.mirror()
             return True
         if action == "save":
             hardpoints_pending = bool(

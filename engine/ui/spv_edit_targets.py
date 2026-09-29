@@ -13,7 +13,9 @@ the Move tool (position, coord clipboard kind, gizmo frame, axis drag, mount
 lock) through the adapters; Task 3 the Scale tool (size fields, scale
 clipboard kind, gizmo, handle drag); Task 4 the Rotate tool (rotate kind and
 readout, stepper nudge, copy/paste value, ring drag, rotate gizmo, and the
-rotation half of Mirror); the other tools and decals migrate in later tasks.
+rotation half of Mirror); Task 5 the Pipette (`pipette_fields_from`, an
+emitter's `colour`) and Mirror Element (`mirror()` = `mirror_position()` +
+`mirror_rotation()`); decals migrate in a later task.
 """
 import math
 
@@ -65,7 +67,19 @@ class EditTarget:
     def rotate_kind(self): return None
     def scale_kind(self): return None
     # Mirror / pipette
-    def mirror(self) -> None: pass
+    def mirror_position(self) -> None:
+        """Reflect the coordinate across the ship X axis (x -> -x): the
+        coord Mirror. On a part pose that is the POSED anchor (ruling 15)."""
+        pos = self.position()
+        if pos is not None:
+            p = list(pos); p[0] = -p[0]
+            self.set_position(tuple(p))
+    def mirror_rotation(self) -> None: pass      # the Rotate tool's Mirror
+    def mirror(self) -> None:
+        """Mirror Element: the position x-flip, then this kind's rotation
+        mirror (a part pose's rotation holds the just-mirrored anchor)."""
+        self.mirror_position()
+        self.mirror_rotation()
     def pipette_fields_from(self, src: "EditTarget") -> tuple: return ()
 
 def _ship_with_rotation(panel):
@@ -100,6 +114,25 @@ class _HardpointMount(EditTarget):
         `_current_target_is_locked_mount` for a subsystem/light/emitter
         target) -- refuses gizmo grabs, drags and nudges."""
         return not self.panel._mount_editing_enabled()
+
+    # -- Pipette -------------------------------------------------------
+    def pipette_fields_from(self, src) -> tuple:
+        """Every aspect this target can take from pipette source `src`, in
+        the order the Pipette applies them. Position always (when the source
+        has one); rotation only when both share a rotate kind; scale only
+        when both share a scale kind; colour + intensity emitter -> emitter
+        only. Incompatible aspects are silently skipped."""
+        fields = []
+        if src.position() is not None:
+            fields.append("position")
+        rkind = self.rotate_kind()
+        if rkind is not None and src.rotate_kind() == rkind:
+            fields.append("rotation")
+        if src.scale_kind()[0] == self.scale_kind()[0]:
+            fields.append("scale")
+        if src.kind == "emitter" and self.kind == "emitter":
+            fields.append("colour")
+        return tuple(fields)
 
     # -- Scale ---------------------------------------------------------
     def scale_spec(self):
@@ -426,11 +459,11 @@ class LightTarget(_HardpointMount):
         p._rotate_accum[t][k] = p._ring_grab_accum[k] + math.degrees(d_body)
         p._last_pushed = None
 
-    def mirror(self) -> None:
+    def mirror_rotation(self) -> None:
         """Reflect the orientation across the ship X axis (starboard):
         negate X of the axis (Cylinder) or of both forward and up (Box),
-        then set it absolutely. Rotation only (plan Task 5 folds position
-        in); a Sphere has no rotation and is untouched."""
+        then set it absolutely. Rotation only (`mirror()` adds the position
+        flip); a Sphere has no rotation and is untouched."""
         if self.rotate_kind() is None:
             return
         p = self.panel
@@ -510,6 +543,30 @@ class EmitterTarget(_HardpointMount):
 
     def _size_spec(self) -> dict:
         return self.panel._effective_emitter(self.key[1], self.key[2]) or {}
+
+    # -- Colour (Pipette, emitter -> emitter) --------------------------
+    def colour(self):
+        """(color, intensity), or None when the emitter is gone."""
+        ssp = self.panel._effective_emitter(self.key[1], self.key[2])
+        if ssp is None:
+            return None
+        return (tuple(ssp["color"]), float(ssp["intensity"]))
+
+    def set_colour(self, value) -> None:
+        """Stage `value` = (color, intensity), restaging the whole compacted
+        list. None (a vanished source) is a no-op."""
+        if value is None:
+            return
+        p = self.panel
+        _, ti, tj = self.key
+        lst = list(p._effective_emitters(ti))
+        if 0 <= tj < len(lst):
+            spec = dict(lst[tj])
+            spec["color"] = tuple(value[0])
+            spec["intensity"] = float(value[1])
+            lst[tj] = spec
+            p._pending_emitter[ti] = lst
+            p._last_pushed = None
 
     def _stage_scale_field(self, index, value) -> None:
         # Emitter spec uses SCALAR radius/length floats (NOT the light's
@@ -623,9 +680,10 @@ class EmitterTarget(_HardpointMount):
         p._rotate_accum[t][k] = p._ring_grab_accum[k] + math.degrees(d_body)
         p._last_pushed = None
 
-    def mirror(self) -> None:
+    def mirror_rotation(self) -> None:
         """Reflect the orientation across the ship X axis: negate X of the
-        axis (strip) or of both forward and up (cone). Rotation only; a
+        axis (strip) or of both forward and up (cone). Rotation only
+        (`mirror()` adds the position flip); a
         point emitter has no rotation and is untouched."""
         if self.rotate_kind() is None:
             return
@@ -784,7 +842,7 @@ class PartPoseTarget(_PartNode):
         t_new = part_pose.apply(hinge, t_grab)
         p._stage_part_pose(t[1], t[2], part_pose.pose_to6((R_new, t_new)))
 
-    def mirror(self) -> None:
+    def mirror_rotation(self) -> None:
         """Flip the pose's swing in place (Mark, 2026-09-26: "Mirror just
         flips the sign"): Euler (rx, ry, rz) -> (rx, -ry, -rz), i.e. R ->
         M.R.M with M = diag(-1, 1, 1), holding the POSED ANCHOR fixed
@@ -792,8 +850,8 @@ class PartPoseTarget(_PartNode):
         touched -- reflecting it too swung a side-mounted part about a pivot
         on the far side of the ship. The action-row Mirror adds the posed
         anchor's q.x -> -q.x (the coord Mirror); together they are the exact
-        reflection M.P.M once the anchor is mirrored. Rotation only (plan
-        Task 5 folds position in)."""
+        reflection M.P.M once the anchor is mirrored. Rotation only
+        (`mirror()` adds the position flip first)."""
         p = self.panel
         t = self.key
         rx, ry, rz = p._part_pose6(t[1], t[2])[3:]
