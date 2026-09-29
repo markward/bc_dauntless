@@ -40,10 +40,14 @@ BODY_FORWARD: Vec3 = (0.0, 1.0, 0.0)
 BODY_UP: Vec3 = (0.0, 0.0, 1.0)
 # Height of a new placement without a mask PNG: 2:1, the usual registry strip.
 DEFAULT_MASK_ASPECT = 2.0
-# The shader has four decal units (8..11); decals.json may declare no more.
-MAX_DECALS = 4
-# Offered by the Add picker alongside the registry's own unplaced PNG stems.
-# Keyboard -> CEF forwarding does not exist, so the name is CHOSEN, not typed.
+# Spec S2.4a: up to 16 placements (projectors) per model, sharing up to 4
+# DISTINCT masks (texture units 8..11) -- native kMaxDecals / kMaxDecalMasks
+# and hull_decals' _MAX_DECALS / _MAX_DECAL_MASKS.
+MAX_DECALS = 16
+MAX_DECAL_MASKS = 4
+# Offered by the Add picker after EVERY PNG stem in the previewed registry
+# (placed or not: a mask is reusable). Keyboard -> CEF forwarding does not
+# exist, so the MASK is chosen and the placement name is derived from it.
 SUGGESTED_NAMES = ("top", "bottom", "port", "starboard", "bow", "stern")
 # While the pane is open the override is re-pushed at least this often, even
 # unchanged, so the native mask cache sees a PNG re-exported from Gimp
@@ -51,6 +55,9 @@ SUGGESTED_NAMES = ("top", "bottom", "port", "starboard", "bow", "stern")
 OVERRIDE_REFRESH_S = 1.0
 MISS_HINT = "Missed the hull -- click on the ship"
 CAP_HINT = "At most %d decals per ship -- delete one first" % MAX_DECALS
+# %s = the masks already in use (any of which can still be picked).
+MASK_CAP_HINT = ("At most %d distinct masks per ship -- reuse one of: "
+                 % MAX_DECAL_MASKS) + "%s"
 # Persistent while the preview falls back to a registry the game would never
 # pick (no ID swap, no default_registry): the game draws NO decals then.
 NOT_IN_GAME_HINT = ("Not shown in game — no registry for this ship. "
@@ -161,6 +168,7 @@ class DecalsPaneMixin:
         self._decal_registry: Optional[str] = None
         self._decal_selected: Optional[str] = None
         self._decal_adding: Optional[str] = None   # name awaiting a hull click
+        self._decal_adding_mask: str = ""          # ... and the mask it uses
         self._decal_reposition = False
         self._decal_error: Optional[str] = None
         self._decal_grab: Optional[decal_editor.Placement] = None
@@ -195,8 +203,36 @@ class DecalsPaneMixin:
 
     def _decal_count(self) -> int:
         """Declared placements, unreadable ones included -- the game's
-        4-cap truncates the file's entries, readable or not."""
+        16-cap truncates the file's entries, readable or not."""
         return len(self._decal_working or []) + len(self._decal_passthrough)
+
+    def _decal_used_masks(self) -> List[str]:
+        """The distinct mask stems the readable placements use, first-use
+        order. Counted by exact stem within the one previewed registry, the
+        same identity native and hull_decals dedupe by (the resolved path).
+
+        - A stem with NO PNG yet still counts: the pane previews it with
+          the checkerboard, and once authored it takes a slot, so the pane
+          never lets Mark stage a list the game would then truncate.
+        - Unreadable (passthrough) placements count toward the 16-cap but
+          NOT toward the masks: their mask is unknown, and the game skips an
+          unreadable entry before it reaches the mask cap."""
+        out: List[str] = []
+        for p in self._decal_working or []:
+            m = decal_editor.mask_of(p)
+            if m not in out:
+                out.append(m)
+        return out
+
+    def _decal_auto_name(self, mask: str) -> str:
+        """Spec S2.4a: the mask's own name if free, else `<mask>_2`,
+        `<mask>_3`, ... -- free = valid_name accepts it against every taken
+        name (case-folded, unreadable ones included)."""
+        taken = self._decal_taken_names()
+        name, k = mask, 2
+        while decal_editor.valid_name(name, taken) is not None:
+            name, k = "%s_%d" % (mask, k), k + 1
+        return name
 
     def _decal_index(self, name) -> Optional[int]:
         for i, p in enumerate(self._decal_working or []):
@@ -222,17 +258,19 @@ class DecalsPaneMixin:
                     names.setdefault(c.name.lower(), c.name)
         return sorted(names.values(), key=str.lower)
 
-    def _decal_mask_path(self, name: str) -> Optional[Path]:
-        """The previewed registry's PNG for placement `name`, or None."""
+    def _decal_mask_path(self, mask: str) -> Optional[Path]:
+        """The previewed registry's PNG for mask stem `mask`, or None. Pass
+        `decal_editor.mask_of(p)` for a placement, never `p.name`."""
         from engine import paths
         d, reg = self._decal_dir(), self._decal_registry
         if d is None or not reg:
             return None
-        p = paths.game_asset(f"{d}/Masks/{reg}/{name}.png")
+        p = paths.game_asset(f"{d}/Masks/{reg}/{mask}.png")
         return p if p.is_file() else None
 
-    def _decal_aspect(self, name: str) -> float:
-        m = self._decal_mask_path(name)
+    def _decal_aspect(self, mask: str) -> float:
+        """width / height of mask stem `mask`'s PNG, else 2:1."""
+        m = self._decal_mask_path(mask)
         a = png_aspect(m) if m is not None else None
         return a if a is not None else DEFAULT_MASK_ASPECT
 
@@ -338,7 +376,8 @@ class DecalsPaneMixin:
     def _decal_entries(self) -> list:
         out = []
         for p in (self._decal_working or [])[:MAX_DECALS]:
-            mask = self._decal_mask_path(p.name) or placeholder_path()
+            mask = (self._decal_mask_path(decal_editor.mask_of(p))
+                    or placeholder_path())
             out.append((p.shape,
                         tuple(float(c) for c in p.origin),
                         tuple(float(c) for c in p.u_axis),
@@ -421,6 +460,7 @@ class DecalsPaneMixin:
         self._decals_active = False
         self.show_hull_texture = self._decal_prev_hull
         self._decal_adding = None
+        self._decal_adding_mask = ""
         self._decal_reposition = False
         self._decal_error = None
         self._decal_grab = None
@@ -455,18 +495,27 @@ class DecalsPaneMixin:
             self._decal_error = None
             return True
         if verb == "decal-add":
+            # `arg` is the MASK stem; the placement name is derived from it.
             self._decal_reposition = False
+            self._decal_adding, self._decal_adding_mask = None, ""
             if self._decal_count() >= MAX_DECALS:
-                self._decal_adding, self._decal_error = None, CAP_HINT
+                self._decal_error = CAP_HINT
                 return True
-            err = decal_editor.valid_name(arg, self._decal_taken_names())
+            err = decal_editor.valid_name(arg, ())
             if err is not None:
-                self._decal_adding, self._decal_error = None, "Name refused: " + err
+                self._decal_error = "Mask refused: " + err
                 return True
-            self._decal_adding, self._decal_error = arg, None
+            used = self._decal_used_masks()
+            if arg not in used and len(used) >= MAX_DECAL_MASKS:
+                self._decal_error = MASK_CAP_HINT % ", ".join(used)
+                return True
+            self._decal_adding = self._decal_auto_name(arg)
+            self._decal_adding_mask = arg
+            self._decal_error = None
             return True
         if verb == "decal-add-cancel":
             self._decal_adding = None
+            self._decal_adding_mask = ""
             self._decal_error = None
             return True
         if verb == "decal-delete":
@@ -566,13 +615,17 @@ class DecalsPaneMixin:
         try:
             if self._decal_adding is not None:
                 name = self._decal_adding
+                mask = self._decal_adding_mask or name
                 p = decal_editor.place_at_hit(
                     name, pb, nb, BODY_FORWARD, BODY_UP,
                     self._decal_ship_radius(self._ship_getter()),
-                    self._decal_aspect(name))
-                self._decal_working.append(p)
+                    self._decal_aspect(mask))
+                # "" when the name IS the mask: no redundant "mask" key.
+                self._decal_working.append(
+                    replace(p, mask="" if mask == name else mask))
                 self._decal_selected = name
                 self._decal_adding = None
+                self._decal_adding_mask = ""
             else:
                 i = self._decal_index(self._decal_selected)
                 if i is None:
@@ -656,7 +709,7 @@ class DecalsPaneMixin:
         # without a PNG), like the Width nudge. Depth still scales with it.
         g = self._decal_grab
         p = decal_editor.set_width(g, decal_editor.width(g) * ratio,
-                                   self._decal_aspect(g.name))
+                                   self._decal_aspect(decal_editor.mask_of(g)))
         self._decal_apply(replace(p, depth=g.depth * ratio))
 
     def _decal_apply_ring_drag(self, d_body: float) -> None:
@@ -671,13 +724,14 @@ class DecalsPaneMixin:
                 tuple(self._decal_passthrough),
                 self._decal_registry, self._decal_default,
                 tuple(self._decal_registries), self._decal_selected,
-                self._decal_adding, self._decal_reposition, self._decal_error)
+                self._decal_adding, self._decal_adding_mask,
+                self._decal_reposition, self._decal_error)
 
     def _decal_suggested_names(self) -> List[str]:
-        """Names the Add picker offers: the previewed registry's PNG stems
-        not yet placed, then the stock suggestions; all valid and unused."""
+        """MASKS the Add picker offers: every PNG stem in the previewed
+        registry -- placed or not, a mask is reusable (S2.4a) -- then the
+        stock suggestions; valid stems only, case-folded dedupe."""
         from engine import paths
-        taken = self._decal_taken_names()
         out: List[str] = []
         d, reg = self._decal_dir(), self._decal_registry
         if d is not None and reg:
@@ -695,7 +749,7 @@ class DecalsPaneMixin:
             if n.lower() in seen:
                 continue
             seen.add(n.lower())
-            if decal_editor.valid_name(n, taken) is None:
+            if decal_editor.valid_name(n, ()) is None:
                 result.append(n)
         return result
 
@@ -760,7 +814,8 @@ class DecalsPaneMixin:
             p = decal_editor.roll(p, math.radians(delta))
         elif panel == "scale" and index == 0:
             w = max(MIN_DEPTH, decal_editor.width(p) + delta)
-            p = decal_editor.set_width(p, w, self._decal_aspect(p.name))
+            p = decal_editor.set_width(
+                p, w, self._decal_aspect(decal_editor.mask_of(p)))
         elif panel == "scale" and index == 1:
             p = replace(p, depth=max(MIN_DEPTH, p.depth + delta))
         else:
@@ -777,7 +832,9 @@ class DecalsPaneMixin:
             "registry": self._decal_registry,
             "default_registry": self._decal_default,
             "placements": [{"name": p.name,
-                            "has_mask": self._decal_mask_path(p.name) is not None}
+                            "has_mask": self._decal_mask_path(
+                                decal_editor.mask_of(p)) is not None,
+                            "mask": decal_editor.mask_of(p)}
                            for p in working]
                           + [{"name": n, "has_mask": False, "unreadable": True}
                              for n in self._decal_passthrough],
@@ -788,6 +845,7 @@ class DecalsPaneMixin:
             "error": self._decal_error,
             "hint": self._decal_hint(),
             "can_add": self._decal_count() < MAX_DECALS,
+            "max_decals": MAX_DECALS,
             "suggested_names": (self._decal_suggested_names()
                                 if self._decals_active else []),
             "dirty": self._decal_dirty(),

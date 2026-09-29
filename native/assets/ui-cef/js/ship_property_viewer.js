@@ -965,11 +965,13 @@ function renderSPVModelParts(modelParts) {
 
 // ── Decals pane (spec 2026-09-28-spv-decal-editing-design.md S3) ──────────
 // Driven by `decals` = {active, has_model, registries, registry,
-// default_registry, placements:[{name, has_mask, unreadable?}], selected,
-// adding, adding_name, reposition, error, hint, can_add, suggested_names,
-// dirty}. A selected placement's numbers are NOT here: they live in the
-// top-right tool panels (renderSPVToolPanels), like every other selection's.
-// Python owns every rule (name validation, the 4-cap, the hull pick); this
+// default_registry, placements:[{name, has_mask, mask, unreadable?}],
+// selected, adding, adding_name, reposition, error, hint, can_add,
+// max_decals, suggested_names (MASK stems), dirty}. A selected placement's
+// numbers are NOT here: they live in the top-right tool panels
+// (renderSPVToolPanels), like every other selection's. Python owns every
+// rule (mask validation, auto-naming, the 16-placement / 4-mask caps, the
+// hull pick); this
 // only renders and fires 'ship-property-viewer/decal-*' events. Two bits of
 // state are JS-local because they never reach Python until confirmed: the
 // Add name picker being open, and the Delete confirm step. Identities travel
@@ -1041,7 +1043,7 @@ function renderSPVDecals(decals) {
     // parse; kept and written back unchanged) is listed, never selectable,
     // and carries its own Delete.
     out.push('<div class="spv-decal-section">Placements ('
-        + (d.placements || []).length + '/4)</div>');
+        + (d.placements || []).length + '/' + (d.max_decals || 16) + ')</div>');
     (d.placements || []).forEach(function (p) {
         if (p.unreadable === true) {
             out.push('<div class="spv-sys-row" data-name="' + escapeHtmlSPV(p.name) + '">'
@@ -1059,7 +1061,9 @@ function renderSPVDecals(decals) {
             + ' data-name="' + escapeHtmlSPV(p.name) + '"'
             + ' onclick="shipPropertyViewerDecalSelect(this)">'
             + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
-            + '<span class="spv-sys-row__name">' + escapeHtmlSPV(p.name) + '</span>'
+            + '<span class="spv-sys-row__name">' + escapeHtmlSPV(p.name)
+            + (p.mask && p.mask !== p.name ? ' (' + escapeHtmlSPV(p.mask) + ')' : '')
+            + '</span>'
             + (p.has_mask ? '' : '<span class="spv-decal-nomask">no mask</span>')
             + '</div>');
     });
@@ -1099,7 +1103,8 @@ function renderSPVDecals(decals) {
     }
     if (spvDecalPickerOpen) {
         var names = d.suggested_names || [];
-        out.push('<div class="spv-decal-section">Name (the mask file: &lt;registry&gt;/&lt;name&gt;.png)</div>');
+        out.push('<div class="spv-decal-section">Mask (&lt;registry&gt;/&lt;mask&gt;.png'
+            + ' &mdash; reusable; the placement is named after it)</div>');
         out.push('<div class="spv-decal-chips">' + names.map(function (n) {
             return spvDecalBtn(escapeHtmlSPV(n), 'shipPropertyViewerDecalAddName', '', n);
         }).join('') + spvDecalBtn('Cancel', 'shipPropertyViewerDecalAddClose') + '</div>');

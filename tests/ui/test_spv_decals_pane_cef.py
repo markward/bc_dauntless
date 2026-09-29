@@ -52,11 +52,13 @@ eval(fs.readFileSync(process.argv[2], "utf8"));
 const NAME = "we'ird\"&";
 const base = {active: true, has_model: true, registries: ["Excalibur", "Zhukov"],
   registry: "Zhukov", default_registry: "Zhukov",
-  placements: [{name: "top", has_mask: true}, {name: NAME, has_mask: false},
+  placements: [{name: "top", has_mask: true, mask: "top"},
+               {name: NAME, has_mask: false, mask: "<m&>"},
+               {name: "pylon_2", has_mask: true, mask: "pylon"},
                {name: "bad", has_mask: false, unreadable: true}],
   selected: "top", adding: false, adding_name: null, reposition: false,
   error: "Name refused: nope", hint: "Not shown in game — no registry",
-  can_add: true, suggested_names: ["bottom", "port"],
+  can_add: true, max_decals: 16, suggested_names: ["bottom", "port"],
   dirty: false};
 const out = {};
 renderSPVDecals(base);
@@ -121,6 +123,27 @@ def test_the_sidebar_has_no_numbers_block(run):
 
 def test_the_add_picker_offers_the_suggested_names(run):
     assert "bottom" in run["picker"] and "port" in run["picker"]
+
+
+def test_the_add_picker_is_labelled_as_a_mask_choice(run):
+    """S2.4a: Add picks a MASK; the placement name is derived from it."""
+    assert "Mask (" in run["picker"]
+
+
+def test_a_placement_shows_its_mask_when_it_differs(run):
+    [pylon] = _row(run["html"], "pylon_2")
+    assert "pylon_2 (pylon)" in pylon
+    [top] = _row(run["html"], "top")
+    assert "(top)" not in top
+
+
+def test_the_mask_label_is_html_escaped(run):
+    assert "(&lt;m&amp;&gt;)" in run["html"]
+    assert "<m&>" not in run["html"]
+
+
+def test_the_placement_count_uses_the_payload_cap(run):
+    assert "Placements (4/16)" in run["html"]
 
 
 def test_delete_asks_before_it_fires(run):

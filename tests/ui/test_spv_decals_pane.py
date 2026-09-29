@@ -219,7 +219,7 @@ def test_the_payload_carries_the_decals_pane(env):
     assert d["registries"] == ["Excalibur", "Zhukov"]
     assert d["registry"] == "Zhukov"
     assert d["default_registry"] == "Zhukov"
-    assert d["placements"] == [{"name": "top", "has_mask": True}]
+    assert d["placements"] == [{"name": "top", "has_mask": True, "mask": "top"}]
     assert d["selected"] is None and d["adding"] is False and d["error"] is None
 
 
@@ -272,8 +272,8 @@ def test_a_missed_click_sets_the_hint_and_places_nothing(env):
     assert d["adding"] is True, "still armed so the next click can retry"
 
 
-@pytest.mark.parametrize("name", ["top", "TOP", "", "../x", "a b"])
-def test_duplicate_and_invalid_names_are_refused_inline(env, name):
+@pytest.mark.parametrize("name", ["", "../x", "a b", "top.png"])
+def test_invalid_mask_names_are_refused_inline(env, name):
     p = env["p"]
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-add:" + name)
@@ -282,7 +282,10 @@ def test_duplicate_and_invalid_names_are_refused_inline(env, name):
     assert d["error"]
 
 
-def test_a_fifth_placement_is_refused(env):
+def test_a_fifth_distinct_mask_is_refused_but_a_used_mask_is_not(env):
+    """S2.4a: 4 distinct masks per model. b/c/d have no PNG: each missing
+    stem still takes a slot (the placeholder stands in for a mask that WILL
+    take one once authored)."""
     p = env["p"]
     p.dispatch_event("decal-pane")
     for i, name in enumerate(("b", "c", "d")):
@@ -292,7 +295,11 @@ def test_a_fifth_placement_is_refused(env):
     assert len(p._decal_working) == 4
     p.dispatch_event("decal-add:e")
     d = _payload(p)["decals"]
-    assert d["adding"] is False and "4" in d["error"]
+    assert d["adding"] is False and "4" in d["error"] and "mask" in d["error"]
+    # An already-used mask needs no new slot: allowed, auto-named.
+    p.dispatch_event("decal-add:b")
+    d = _payload(p)["decals"]
+    assert d["adding"] is True and d["adding_name"] == "b_2" and d["error"] is None
 
 
 def test_a_placement_without_a_mask_uses_the_placeholder(env):
@@ -306,7 +313,8 @@ def test_a_placement_without_a_mask_uses_the_placeholder(env):
     # No PNG -> the 2:1 default aspect.
     assert decal_editor.width(port) == pytest.approx(
         2.0 * math.sqrt(sum(c * c for c in port.v_axis)))
-    assert {"name": "port", "has_mask": False} in _payload(p)["decals"]["placements"]
+    assert ({"name": "port", "has_mask": False, "mask": "port"}
+            in _payload(p)["decals"]["placements"])
 
 
 def test_the_placeholder_is_a_committed_64x32_png():
@@ -862,15 +870,16 @@ def test_a_malformed_placement_is_listed_as_unreadable(env):
     p.dispatch_event("decal-pane")
     assert [pl.name for pl in p._decal_working] == ["top"]
     d = _payload(p)["decals"]
-    assert {"name": "top", "has_mask": True} in d["placements"]
+    assert {"name": "top", "has_mask": True, "mask": "top"} in d["placements"]
     unreadable = [x for x in d["placements"] if x.get("unreadable")]
     assert [x["name"] for x in unreadable] == ["broken", "nonormal"]
     # Not selectable, not editable.
     assert not p.dispatch_event("decal-select:broken")
     assert _payload(p)["decals"]["selected"] is None
-    # Its name is taken: a new placement cannot shadow it.
+    # Its name is taken: a new placement using mask `broken` cannot shadow
+    # it, and is auto-named past it instead.
     p.dispatch_event("decal-add:broken")
-    assert _payload(p)["decals"]["adding"] is False
+    assert _payload(p)["decals"]["adding_name"] == "broken_2"
 
 
 def test_a_malformed_placement_survives_a_save_unchanged(env):
@@ -907,12 +916,28 @@ def test_an_unreadable_placement_can_be_deleted_and_undone(env):
 
 def test_unreadable_placements_count_toward_the_cap(env):
     p = env["p"]
-    _write_with_broken(env, extra1=_NO_NORMAL)
+    extra = {"extra%d" % i: _NO_NORMAL for i in range(13)}
+    _write_with_broken(env, **extra)
     p.dispatch_event("decal-pane")
     d = _payload(p)["decals"]
-    assert len(d["placements"]) == 4 and d["can_add"] is False
+    assert len(d["placements"]) == 16 and d["can_add"] is False
     p.dispatch_event("decal-add:bottom")
-    assert _payload(p)["decals"]["adding"] is False
+    d = _payload(p)["decals"]
+    assert d["adding"] is False and "16" in d["error"]
+
+
+def test_unreadable_placements_do_not_take_a_mask_slot(env):
+    """Their mask is unknown, and the game skips an unreadable entry before
+    it reaches the mask cap (hull_decals.decals_for): so they take no slot."""
+    p = env["p"]
+    _write_with_broken(env)                       # top + 2 unreadable
+    p.dispatch_event("decal-pane")
+    for i, name in enumerate(("b", "c", "d")):
+        p.dispatch_event("decal-add:" + name)
+        assert _payload(p)["decals"]["adding"] is True, name
+        _arm_hit(env, (10.0 * i, 0.0, 60.0), (0.0, 0.0, 1.0))
+        p.decal_click(1.0, 1.0, (1280, 720))
+    assert [pl.name for pl in p._decal_working] == ["top", "b", "c", "d"]
 
 
 # ── final review: a preview the game won't show is flagged (fix 4) ──────
@@ -967,3 +992,187 @@ def test_clearing_the_class_default_brings_the_hint_back_and_saves(env):
     p.dispatch_event("save")
     doc = json.loads((env["masks"] / "decals.json").read_text())
     assert "default_registry" not in doc
+
+
+# ── reusable masks (spec S2.4a): Add offers every mask, auto-names ───────
+
+def _add(env, mask, at=(0.0, 0.0, 60.0), normal=(0.0, 0.0, 1.0)):
+    p = env["p"]
+    p.dispatch_event("decal-add:" + mask)
+    _arm_hit(env, at, normal)
+    p.decal_click(1.0, 1.0, (1280, 720))
+
+
+def test_the_add_picker_offers_every_mask_even_when_placed(env):
+    """Zhukov holds bottom.png and top.png; `top` is placed. Both PNG stems
+    are still offered, then the default names (case-folded dedupe)."""
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    assert _payload(p)["decals"]["suggested_names"] == [
+        "bottom", "top", "port", "starboard", "bow", "stern"]
+
+
+def test_picking_a_mask_twice_auto_names_the_second(env):
+    p, calls = env["p"], env["calls"]
+    (env["masks"] / "Zhukov" / "pylon.png").write_bytes(_png(300, 100))
+    p.dispatch_event("decal-pane")
+    _add(env, "pylon", at=(80.0, 0.0, 0.0), normal=(1.0, 0.0, 0.0))
+    _add(env, "pylon", at=(-80.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0))
+    names = [pl.name for pl in p._decal_working]
+    assert names == ["top", "pylon", "pylon_2"]
+    first, second = p._decal_working[1], p._decal_working[2]
+    assert first.mask == "" and second.mask == "pylon"
+    assert _payload(p)["decals"]["selected"] == "pylon_2"
+    pylon_png = str(env["masks"] / "Zhukov" / "pylon.png")
+    assert _masks_of(calls[-1][1])[1:] == [pylon_png, pylon_png]
+    # Both sized from pylon.png's 3:1 aspect.
+    for pl in (first, second):
+        h = math.sqrt(sum(c * c for c in pl.v_axis))
+        assert decal_editor.width(pl) / h == pytest.approx(3.0)
+    placements = _payload(p)["decals"]["placements"]
+    assert {"name": "pylon_2", "has_mask": True, "mask": "pylon"} in placements
+    assert {"name": "pylon", "has_mask": True, "mask": "pylon"} in placements
+
+
+def test_a_third_pick_and_a_taken_unreadable_name_skip_to_the_next_free(env):
+    p = env["p"]
+    (env["masks"] / "decals.json").write_text(json.dumps(
+        {"format": 1, "default_registry": "Zhukov",
+         "decals": {"top": _TOP, "pylon": _NO_NORMAL}}))
+    mods.invalidate_replacements()
+    p.dispatch_event("decal-pane")
+    _add(env, "pylon")
+    _add(env, "pylon")
+    _add(env, "top")
+    assert [(pl.name, decal_editor.mask_of(pl)) for pl in p._decal_working] == [
+        ("top", "top"), ("pylon_2", "pylon"), ("pylon_3", "pylon"),
+        ("top_2", "top")]
+
+
+def test_a_shared_missing_mask_previews_the_placeholder_for_both(env):
+    p, calls = env["p"], env["calls"]
+    p.dispatch_event("decal-pane")
+    _add(env, "pylon")
+    _add(env, "pylon")
+    assert _masks_of(calls[-1][1])[1:] == [_placeholder(), _placeholder()]
+    placements = _payload(p)["decals"]["placements"]
+    assert {"name": "pylon_2", "has_mask": False, "mask": "pylon"} in placements
+    # 2:1 default aspect for both.
+    for pl in p._decal_working[1:]:
+        h = math.sqrt(sum(c * c for c in pl.v_axis))
+        assert decal_editor.width(pl) / h == pytest.approx(2.0)
+
+
+def test_has_mask_and_the_override_follow_the_mask_not_the_name(env):
+    """A loaded `neck` placement using mask `top` (no neck.png exists)."""
+    p, calls = env["p"], env["calls"]
+    (env["masks"] / "decals.json").write_text(json.dumps(
+        {"format": 1, "default_registry": "Zhukov",
+         "decals": {"top": _TOP, "neck": dict(_TOP, mask="top")}}))
+    mods.invalidate_replacements()
+    p.dispatch_event("decal-pane")
+    top_png = str(env["masks"] / "Zhukov" / "top.png")
+    assert _masks_of(calls[-1][1]) == [top_png, top_png]
+    assert ({"name": "neck", "has_mask": True, "mask": "top"}
+            in _payload(p)["decals"]["placements"])
+
+
+def _load_neck_2_to_1(env):
+    """`neck` (mask `top`, 8x2 -> 4:1), authored at 2:1."""
+    (env["masks"] / "decals.json").write_text(json.dumps(
+        {"format": 1, "default_registry": "Zhukov",
+         "decals": {"top": _TOP,
+                    "neck": {"origin": [-50.0, 25.0, 60.0],
+                             "u_axis": [100.0, 0.0, 0.0],
+                             "v_axis": [0.0, -50.0, 0.0],
+                             "normal": [0.0, 0.0, 1.0], "depth": 3.0,
+                             "mask": "top"}}}))
+    mods.invalidate_replacements()
+
+
+def test_a_width_nudge_locks_to_the_placements_mask_aspect(env):
+    p = env["p"]
+    _load_neck_2_to_1(env)
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-select:neck")
+    p.dispatch_event("set_tool:scale")
+    assert p.dispatch_event('scale_nudge:{"index":0,"delta":10}')
+    pl = p._decal_working[1]
+    h = math.sqrt(sum(c * c for c in pl.v_axis))
+    assert decal_editor.width(pl) == pytest.approx(110.0)
+    assert decal_editor.width(pl) / h == pytest.approx(4.0)
+    assert pl.mask == "top"
+
+
+def test_the_scale_gizmo_locks_to_the_placements_mask_aspect(env):
+    p = env["p"]
+    _load_neck_2_to_1(env)
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-select:neck")
+    p.dispatch_event("set_tool:scale")
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)
+    p._apply_scale_drag(L)
+    p._end_axis_drag()
+    pl = p._decal_working[1]
+    h = math.sqrt(sum(c * c for c in pl.v_axis))
+    assert decal_editor.width(pl) / h == pytest.approx(4.0)
+    assert pl.mask == "top"
+
+
+def test_a_seventeenth_placement_is_refused(env):
+    p = env["p"]
+    decals = {"top": _TOP}
+    decals.update({"top_%d" % i: dict(_TOP, mask="top") for i in range(2, 17)})
+    (env["masks"] / "decals.json").write_text(json.dumps(
+        {"format": 1, "default_registry": "Zhukov", "decals": decals}))
+    mods.invalidate_replacements()
+    p.dispatch_event("decal-pane")
+    d = _payload(p)["decals"]
+    assert len(d["placements"]) == 16 and d["can_add"] is False
+    p.dispatch_event("decal-add:top")
+    d = _payload(p)["decals"]
+    assert d["adding"] is False and "16" in d["error"]
+    assert len(p._decal_working) == 16
+
+
+def test_move_rotate_reposition_delete_and_undo_keep_the_mask(env):
+    p = env["p"]
+    _load_neck_2_to_1(env)
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-select:neck")
+    p.dispatch_event("set_tool:transform")
+    p._begin_axis_drag(0, 0.0)
+    p._apply_axis_drag(1.0)
+    p._end_axis_drag()
+    assert p._decal_working[1].mask == "top"
+    p.dispatch_event("set_tool:rotate")
+    p._begin_ring_drag(2, 0.0)
+    p._apply_ring_drag_angle(0.3)
+    assert p._decal_working[1].mask == "top"
+    p.dispatch_event('rotate_nudge:{"index":0,"delta":5}')
+    p.dispatch_event("set_tool:transform")
+    p.dispatch_event('coord_nudge:{"index":0,"delta":5}')
+    assert p._decal_working[1].mask == "top"
+    p.dispatch_event("decal-reposition")
+    _arm_hit(env, (200.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    p.decal_click(1.0, 1.0, (1280, 720))
+    assert p._decal_working[1].mask == "top"
+    p.dispatch_event("decal-delete:neck")
+    p.dispatch_event("undo")
+    assert [(pl.name, pl.mask) for pl in p._decal_working] == [
+        ("top", ""), ("neck", "top")]
+
+
+def test_save_writes_the_mask_key_only_where_it_differs(env):
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    _add(env, "pylon")
+    _add(env, "pylon")
+    p.dispatch_event("save")
+    assert "Saved" in (p._current_toast() or "")
+    doc = json.loads((env["masks"] / "decals.json").read_text())
+    assert "mask" not in doc["decals"]["pylon"]
+    assert doc["decals"]["pylon_2"]["mask"] == "pylon"
+    assert "mask" not in doc["decals"]["top"]
