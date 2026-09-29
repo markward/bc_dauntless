@@ -76,7 +76,6 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
 
     shader.set_float("u_aspect", aspect);
     shader.set_int("u_texture", 0);
-    shader.set_float("u_brightness", 1.0f);
     glActiveTexture(GL_TEXTURE0);
 
     bool gl_state_active = false;
@@ -121,6 +120,7 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
         if (sampled_depth + kDepthEps < source_depth01) continue;
 
         activate_gl_state();
+        shader.set_float("u_brightness", f.brightness);
 
         for (const auto& e : f.elements) {
             assets::Texture* tex = ensure_texture(e.texture_path);

@@ -4962,6 +4962,21 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
         r.set_system_nebula_star(tuple(suns[0]["position"]))
 
 
+def _veil_flares(r, flares, player):
+    """Billboard flares see no fog (their visibility is one depth read), so
+    under the system nebula pass they take the exact eye->star transmittance
+    (spec 2026-09-29, "The sun and its flares"). Gated the same as the
+    SystemNebulaPass itself -- developer mode AND the volumetric-nebula
+    setting on -- so a developer run with the setting off does not dim the
+    flare while no haze is drawn."""
+    if (not dev_mode.is_enabled() or not r.volumetric_nebulae_enabled()
+            or player is None or not flares):
+        return flares
+    from engine.systems import profile as _profile
+    t = _profile.star_transmittance(player)
+    return [dict(f, brightness=t) for f in flares]
+
+
 def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     """Push the per-frame environment feeds -- suns, dust planets, the
     profile dust density, nebulae, nebula godrays, hull discharges, the
@@ -5018,6 +5033,7 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
     lens_flares = _with_render_positions(lens_flares, "source_world_pos",
                                          to_view_render)
+    lens_flares = _veil_flares(r, lens_flares, player)
     r.set_lens_flares(lens_flares)
     return suns, planets, lens_flares
 

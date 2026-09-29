@@ -3171,11 +3171,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       e.amp          = ed["amp"].cast<float>();
                       f.elements.push_back(std::move(e));
                   }
+                  if (d.contains("brightness"))
+                      f.brightness = d["brightness"].cast<float>();
                   g_lens_flares.push_back(std::move(f));
               }
           },
           py::arg("flares"),
           "Set the active lens-flare list, applied each frame().");
+
+    // Introspection for tests/host/test_lens_flare_brightness_binding.py:
+    // set_lens_flares has no other way to prove the optional "brightness"
+    // key was parsed and stored rather than silently ignored (pybind
+    // doesn't reject unread dict keys). Read-only, touches no GL.
+    m.def("lens_flares_brightness_debug",
+          []() {
+              std::vector<float> out;
+              out.reserve(g_lens_flares.size());
+              for (const auto& f : g_lens_flares) out.push_back(f.brightness);
+              return out;
+          },
+          "Current per-flare brightness values, in set_lens_flares order.");
 
     m.def("set_torpedoes",
           [](const std::vector<py::dict>& descs) {
