@@ -96,3 +96,62 @@ def sample_for_object(obj) -> Sample:
     if found is None:
         return CLEAR
     return evaluate(found[0], found[1])
+
+
+VEIL_DEFAULT = 0.15   # star transmittance through the whole cloud from the
+                      # system's outermost region (spec 2026-09-29, "The veil")
+
+
+def radial_integral(profile, r_a: float, r_b: float) -> float:
+    """Exact integral of the `nebula` column over [min(r_a,r_b), max(...)].
+    Piecewise-linear between rows; the last row persists outward."""
+    if profile is None or not profile.rows:
+        return 0.0
+    lo, hi = (r_a, r_b) if r_a <= r_b else (r_b, r_a)
+    pts = sorted({lo, hi} | {row.distance_gu for row in profile.rows
+                             if lo < row.distance_gu < hi})
+    total = 0.0
+    for a, b in zip(pts, pts[1:]):
+        total += 0.5 * (evaluate(profile, a).nebula + evaluate(profile, b).nebula) * (b - a)
+    return total
+
+
+def _star_and_outer(m):
+    star = next((b for b in m.bodies if b.orbits is None), None)
+    if star is None or not m.regions:
+        return None, 0.0
+    r_outer = max(math.dist(tuple(r.anchor_gu), tuple(star.position_gu))
+                  for r in m.regions)
+    return star, r_outer
+
+
+def k_sys(m, veil: float = VEIL_DEFAULT) -> float:
+    """Extinction per GU per unit `nebula` so the star's transmittance seen
+    from the outermost region equals `veil`. 0.0 when there is nothing to veil."""
+    if m is None or m.profile is None:
+        return 0.0
+    star, r_outer = _star_and_outer(m)
+    if star is None:
+        return 0.0
+    integral = radial_integral(m.profile, star.radius_gu, r_outer)
+    if integral <= 0.0:
+        return 0.0
+    return -math.log(veil) / integral
+
+
+def star_transmittance(obj, veil: float = VEIL_DEFAULT) -> float:
+    """exp(-k_sys * integral from the star's surface to the object's radius):
+    how much of the star shows through the cloud. The eye->star line is radial,
+    so this is exact. 1.0 outside a mapped system."""
+    from engine.systems import frames, resolve
+    pos = frames.system_position(obj)
+    if pos is None or pos[0][0] != "system":
+        return 1.0
+    m = resolve.map_of(pos[0][1])
+    if m is None or m.profile is None:
+        return 1.0
+    star, _ = _star_and_outer(m)
+    if star is None:
+        return 1.0
+    r = math.dist(pos[1:], tuple(star.position_gu))
+    return math.exp(-k_sys(m, veil) * radial_integral(m.profile, star.radius_gu, r))
