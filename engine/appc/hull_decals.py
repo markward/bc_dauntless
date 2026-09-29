@@ -347,7 +347,7 @@ def _resolve_mask_name(placement: str, spec) -> Optional[str]:
     if not isinstance(spec, dict):
         return placement
     mask_raw = spec.get("mask")
-    if not mask_raw:
+    if mask_raw is None or mask_raw == "":
         return placement
     if not isinstance(mask_raw, str):
         return None

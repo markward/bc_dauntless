@@ -402,8 +402,6 @@ def test_write_decals_byte_identical_round_trip_of_committed_head_ambassador_fil
     placements = [decal_editor.from_json_entry(name, entry)
                   for name, entry in doc["decals"].items()]
     default_registry = doc.get("default_registry")
-    assert all(p.mask == "" for p in placements), \
-        "fixture assumption: the committed HEAD file has no mask keys"
 
     decals_writer.write_decals(working, placements, default_registry)
 

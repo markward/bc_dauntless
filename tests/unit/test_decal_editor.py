@@ -436,6 +436,14 @@ def test_from_json_entry_rejects_non_string_mask():
         from_json_entry("top", {**_GOOD, "mask": 5})
 
 
+@pytest.mark.parametrize("stem", ["a.b", "../x", "a/b", ".."])
+def test_from_json_entry_rejects_invalid_mask_stem(stem):
+    """The game skips a placement whose mask stem is invalid; the editor
+    must treat it as unreadable too, not preview a traversed path."""
+    with pytest.raises(ValueError):
+        from_json_entry("top", {**_GOOD, "mask": stem})
+
+
 def test_mask_json_round_trip():
     p = Placement(name="pylon_2", origin=(1.0, 2.0, 3.0),
                   u_axis=(4.0, 0.0, 0.0), v_axis=(0.0, -2.0, 0.0),

@@ -359,6 +359,8 @@ def from_json_entry(name: str, d: Dict) -> Placement:
     mask = d.get("mask")
     if mask is not None and not isinstance(mask, str):
         raise ValueError("'mask' is not a string")
+    if mask and valid_name(mask, ()) is not None:
+        raise ValueError("'mask' is not a valid filename stem")
     depth = d["depth"]
     if not _is_number(depth):
         raise ValueError("'depth' is not a finite number")

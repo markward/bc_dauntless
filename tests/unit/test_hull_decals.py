@@ -575,6 +575,28 @@ def test_decals_for_invalid_mask_stem_is_skipped_with_warning(
     assert len(out_lines) == 1
 
 
+@pytest.mark.parametrize("falsy", [False, 0, 0.0, []])
+def test_decals_for_falsy_non_string_mask_is_skipped_not_defaulted(
+        asset_root, falsy):
+    """`"mask": false` / `0` is malformed, not "absent": the editor refuses
+    it (an unreadable row), so the game must skip it too, or the placement
+    silently holds a mask slot the preview never counted."""
+    bad = _valid_placement()
+    bad["mask"] = falsy
+    good = _valid_placement()
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": bad, "bottom": good},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "top")
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "bottom")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 1
+    assert specs[0][6].endswith("bottom.png")
+
+
 def test_decals_for_non_string_mask_is_skipped_with_warning(
         asset_root, capsys):
     bad = _valid_placement()
