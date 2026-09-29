@@ -146,9 +146,11 @@ near range (30,000 GU).
 
 ## What is removed
 
+- The spike now: `engine/systems/profile_render.py`, its host-loop hook and tests.
 - `native/src/renderer/nebula_volumetric_pass.{h,cc}`, `shaders/nebula_volumetric.frag`
-  (the upsample shader stays if the new pass reuses it).
-- The spike: `engine/systems/profile_render.py`, its host-loop hook and tests.
+  (the upsample shader stays if the new pass reuses it) — only after Mark
+  approves `SystemNebulaPass` live; until then production keeps the old pass
+  and `--developer` selects between them via the volumetric-nebula setting.
 
 ## What must not change
 
