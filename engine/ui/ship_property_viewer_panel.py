@@ -1710,7 +1710,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         """Apply a body-frame delta angle (radians) about the grabbed ring axis
         to the grab-start axis/orientation (or pose). Shared core for the
         cursor-driven drag + tests. Per kind: `EditTarget.ring_drag_apply`."""
-        t =self._rotate_edit_target()
+        t = self._rotate_edit_target()
         if t is None or self._axis_drag is None:
             return
         if self._current_target_is_locked_mount():
@@ -2560,11 +2560,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 self._pipette_armed = False
             else:
                 t = self._edit_target()
-                if (t is not None and not self._is_part_target(t.key)
-                        and t.kind != "decal"):
-                    # A part node or a decal holds none of the aspects the
-                    # pipette copies (a mount position, rotation, size,
-                    # colour), so it never arms.
+                # A part node or a decal never arms (EditTarget.pipette_arms).
+                if t is not None and t.pipette_arms():
                     self._pipette_armed = True
             self._last_pushed = None
             return True

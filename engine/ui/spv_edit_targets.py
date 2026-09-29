@@ -96,6 +96,9 @@ class EditTarget:
         self.mirror_position()
         self.mirror_rotation()
     def pipette_fields_from(self, src: "EditTarget") -> tuple: return ()
+    def pipette_arms(self) -> bool:
+        """Whether the Pipette arms with this target selected."""
+        return True
 
 def _ship_with_rotation(panel):
     """The panel's ship if it can be resolved with a world rotation, else
@@ -726,6 +729,11 @@ class _PartNode(EditTarget):
         # A part anchor and a posed anchor only paste onto their own kind.
         return self.key[0]
 
+    def pipette_arms(self) -> bool:
+        # A part node holds none of the aspects the pipette copies (a mount
+        # position, rotation, size, colour), so it never arms.
+        return False
+
     def gizmo_frame(self):
         p = self.panel
         ship = _ship_with_rotation(p)
@@ -886,6 +894,9 @@ class DecalTarget(EditTarget):
 
     def _placement(self):
         return self.panel._decal_by_name(self.key[1])
+
+    def pipette_arms(self) -> bool:
+        return False        # nothing a mount pipette copies applies here
 
     def payload_extras(self, tool: str) -> dict:
         """The decal-only keys of the Move/Rotate/Scale panel payloads:

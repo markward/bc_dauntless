@@ -215,6 +215,9 @@ function spvShowPanel(prefix, panelId, values, rowsHtml) {
     // action-row Mirror Element, a new placement): hide the per-panel one.
     var mirror = document.getElementById(prefix + '-mirror');
     if (mirror) mirror.style.display = values.can_mirror === false ? 'none' : '';
+    // Uniform acts only on a Box light's xyz; on a decal it is inert.
+    var uniform = document.getElementById(prefix + '-uniform');
+    if (uniform) uniform.style.display = values.decal === true ? 'none' : '';
     el.style.display = 'block';
 }
 

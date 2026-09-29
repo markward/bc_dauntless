@@ -206,6 +206,7 @@ def test_leaving_collapses_and_empties_the_pane(run):
 _PANEL_IDS = ["spv-coords", "spv-coord-rows", "spv-coord-actions", "spv-coord-paste",
               "spv-coord-mirror",
               "spv-scale", "spv-scale-rows", "spv-scale-actions", "spv-scale-paste",
+              "spv-scale-uniform",
               "spv-rotate", "spv-rotate-rows", "spv-rotate-actions", "spv-rotate-paste",
               "spv-rotate-mirror"]
 
@@ -249,6 +250,9 @@ const cases = {
                   has_clipboard: false, can_paste: false, decal: true}},
   mount_scale: {scale_values: {kind: "radius", fields: [{label: "Radius", value: 0.5}],
                                has_clipboard: false, can_paste: false}},
+  box_scale: {scale_values: {kind: "xyz", fields: [{label: "X", value: 0.3},
+                               {label: "Y", value: 0.5}, {label: "Z", value: 0.2}],
+                             has_clipboard: false, can_paste: false}},
   none: {},
 };
 const out = {};
@@ -344,3 +348,10 @@ def test_no_values_hide_every_panel(panels):
     c = panels["none"]
     assert all(c[i]["display"] == "none"
                for i in ("spv-coords", "spv-scale", "spv-rotate"))
+
+
+def test_uniform_is_hidden_for_a_decal_and_shown_for_a_box_light(panels):
+    """Uniform only acts on a Box light's xyz; on a decal it is inert."""
+    assert panels["decal_scale"]["spv-scale-uniform"]["display"] == "none"
+    assert panels["box_scale"]["spv-scale-uniform"]["display"] == ""
+    assert panels["box_scale"]["spv-scale-actions"]["display"] == ""

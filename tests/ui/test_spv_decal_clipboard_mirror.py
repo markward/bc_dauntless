@@ -337,3 +337,25 @@ def test_pipette_still_never_arms_on_a_decal(pane_with_two_decals):
     _select(p, "pylon")
     p.dispatch_event("pipette")
     assert p._pipette_armed is False
+
+
+def test_decal_mirror_clears_reposition_and_error(pane_with_two_decals):
+    p = pane_with_two_decals
+    _select(p, "pylon")
+    p._decal_reposition = True
+    p._decal_error = "stale"
+    p._edit_target().mirror()
+    assert p._decal_selected == "pylon_3"
+    assert p._decal_reposition is False
+    assert p._decal_error is None
+
+
+def test_pipette_arming_is_the_adapters_call(make_panel):
+    from engine.ui.spv_edit_targets import edit_target_for_key
+    p = make_panel([_PYLON])
+    arms = {k[0]: edit_target_for_key(p, k).pipette_arms()
+            for k in (("subsystem", 0), ("light", 0), ("emitter", 0, 0),
+                      ("part_anchor", "wing"), ("part_pose", "wing", "red"),
+                      ("decal", "pylon"))}
+    assert arms == {"subsystem": True, "light": True, "emitter": True,
+                    "part_anchor": False, "part_pose": False, "decal": False}
