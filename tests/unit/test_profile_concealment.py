@@ -9,9 +9,9 @@ def _prof(sensors):
 
 
 def test_profile_concealment_applies_with_no_local_nebula(monkeypatch):
-    monkeypatch.setattr(P, "locate", lambda obj: (_prof(0.5), 1000.0))
+    monkeypatch.setattr(P, "locate", lambda obj: (_prof(0.4), 1000.0))
     ship = type("S", (), {})()
-    assert sensor_detection.concealment_at(ship) == pytest.approx(0.2)
+    assert sensor_detection.concealment_at(ship) == pytest.approx(0.16)   # under the 0.19 cap
 
 
 def test_the_larger_of_local_and_profile_wins(monkeypatch):

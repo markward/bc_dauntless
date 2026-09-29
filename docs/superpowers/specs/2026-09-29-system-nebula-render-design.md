@@ -148,7 +148,7 @@ thousand GU the haze is barely visible; it builds with distance.
 
 **Dials** — named constants, live-tunable under `--developer`: veil (0.15), lane
 size (15,000 GU), lane contrast, forward bias `g` (0.6), emissive floor (0.0916),
-near range (30,000 GU), and the radial profile's concealment cap (0.27; 0.20 is the
+near range (30,000 GU), and the radial profile's concealment cap (0.19, just under the 0.20
 re-acquire line). Keys: `/` cycles, L / O step (`engine/dev_nebula_dials.py`).
 
 ## What is removed

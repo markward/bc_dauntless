@@ -97,7 +97,7 @@ def test_defaults_match_the_spec():
     # floor 0.0916: Mark's live pick, 2026-09-29 (0.03 read too dark).
     assert D.DEFAULTS == {"veil": 0.15, "floor": 0.0916, "g": 0.6,
                           "lane_contrast": 0.7, "lane_size": 15000.0,
-                          "near_range": 30000.0, "conceal_cap": 0.27}
+                          "near_range": 30000.0, "conceal_cap": 0.19}
     from engine.systems import profile as P
     assert D.DEFAULTS["veil"] == P.VEIL_DEFAULT
 
@@ -112,7 +112,7 @@ def test_conceal_cap_default_is_the_sensor_constant():
 def test_conceal_cap_steps_by_a_hundredth_and_stays_below_lock_break():
     from engine.appc import sensor_detection as sd
     d = D.step(dict(D.DEFAULTS), "conceal_cap", -1)
-    assert d["conceal_cap"] == pytest.approx(0.26)
+    assert d["conceal_cap"] == pytest.approx(0.18)
     for _ in range(10):
         d = D.step(d, "conceal_cap", +1)
     assert d["conceal_cap"] < sd.LOCK_BREAK_T

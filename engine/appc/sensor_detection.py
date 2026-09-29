@@ -44,8 +44,13 @@ HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detecti
 # Belaruz 1's anchor -- leaving E3M2's Berkeley, probe and Warbirds and the
 # player mutually undetectable (final review #1). The local MetaNebula's fbm
 # term is uncapped: it still breaks locks inside BC's own cloud.
+# Capped below the RE-ACQUIRE line (LOCK_BREAK_T - HYSTERESIS = 0.20), not just
+# below lock-break: above 0.20 the profile could keep a lock the local cloud
+# broke from ever re-acquiring while the target stayed in the band. 0.19 was
+# Mark's call 2026-09-29 (live: the cap made no visible difference, so choose
+# by that principle). Live-tunable under --developer (dev_nebula_dials).
 PROFILE_LOCK_MARGIN = 0.01
-PROFILE_CONCEALMENT_CAP = LOCK_BREAK_T - PROFILE_LOCK_MARGIN
+PROFILE_CONCEALMENT_CAP = LOCK_BREAK_T - HYSTERESIS - PROFILE_LOCK_MARGIN
 
 # ── The stage-4 sensing toggle (INTENTIONAL divergence from stock BC) ─────────
 # ONE flag covering BOTH stage-4 sensing changes as a set. It does NOT mean

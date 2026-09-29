@@ -61,7 +61,7 @@ DEFAULTS: dict = {
     "near_range": 30000.0,
     # == engine.appc.sensor_detection.PROFILE_CONCEALMENT_CAP (test-pinned).
     # Python-side like the veil: concealment_at reads it under --developer.
-    "conceal_cap": 0.27,
+    "conceal_cap": 0.19,
 }
 
 # The order `/` cycles through. The veil first: the spec names it as the
