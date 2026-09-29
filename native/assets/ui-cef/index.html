@@ -290,7 +290,7 @@
              pose. The Python side (_dispatch_event_inner) is the real gate;
              this + #spv-syslist's greyed-out state are the visible half. -->
         <div id="spv-lock-banner" class="spv-lock-banner" style="display:none"></div>
-        <div id="spv-syslist">
+        <div id="spv-syslist" class="spv-pane">
           <div class="spv-syslist__header">Subsystems</div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
         </div>
@@ -306,7 +306,7 @@
              part popups (#spv-part-anchor / -break / -addstate). "Show all" is the escape hatch for a hull whose
              hierarchy doesn't fit the Scene-Root-children rule -- stops
              propagation so it doesn't also toggle the pane. -->
-        <div id="spv-parts">
+        <div id="spv-parts" class="spv-pane">
           <div id="spv-parts-header"
                onclick="dauntlessEvent('ship-property-viewer/model_parts/toggle')">
             <span class="spv-parts-header__title">Model Parts</span>
@@ -326,7 +326,7 @@
              leaves. Body built by renderSPVDecals from `decals`. Mouse-only:
              keyboard -> CEF does not exist, so a new placement's name is
              CHOSEN from `decals.suggested_names`, never typed. -->
-        <div id="spv-decals">
+        <div id="spv-decals" class="spv-pane">
           <div id="spv-decals-header"
                onclick="dauntlessEvent('ship-property-viewer/decal-pane')">
             <span class="spv-parts-header__title">Decals</span>

@@ -151,12 +151,18 @@
     -webkit-font-smoothing: antialiased;
 }
 
+/* Side-pane header corner (Mark): only the FIRST pane in #spv-left gets
+   the rounded top-right corner; a header stacked beneath another pane is
+   square, so the stack reads as one column. Every pane div carries
+   .spv-pane and its header is its first child. */
+.spv-pane > :first-child { border-top-right-radius: 14px; }
+.spv-pane ~ .spv-pane > :first-child { border-top-right-radius: 0; }
+
 .spv-syslist__header {
     flex: 0 0 auto;
     background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
     color: rgb(0, 0, 0);
     padding: 3px 14px 3px 18px;
-    border-top-right-radius: 14px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 14px;
@@ -261,7 +267,6 @@
     background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
     color: rgb(0, 0, 0);
     padding: 3px 14px 3px 18px;
-    border-top-right-radius: 14px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 14px;
@@ -318,7 +323,6 @@
     background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
     color: rgb(0, 0, 0);
     padding: 3px 14px 3px 18px;
-    border-top-right-radius: 14px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 14px;
