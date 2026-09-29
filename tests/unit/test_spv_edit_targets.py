@@ -5,8 +5,8 @@ which carries a target of every kind at once."""
 from engine.ui.spv_edit_targets import (
     EmitterTarget, LightTarget, MountTarget, PartAnchorTarget, PartPoseTarget,
     edit_target_for)
-from tests.ui.test_spv_edit_target_characterisation import (  # noqa: F401
-    _SELECT, make_panel)
+from tests.ui.spv_test_fixtures import (  # noqa: F401  (make_panel: fixture)
+    _SELECT, _diff, _r, _staged, make_panel)
 
 
 def test_edit_target_for_maps_each_active_target(make_panel):
@@ -91,7 +91,7 @@ def test_scale_kind_matches_characterised_scale_payload(make_panel):
     """`scale_kind()` is the (kind, fields) tuple `scale_values` has always
     been built from -- pinned against the characterisation suite's record."""
     from tests.ui.test_spv_edit_target_characterisation import (
-        EXPECTED_PAYLOADS, _r)
+        EXPECTED_PAYLOADS)
     p = make_panel()
     for case in ("subsystem", "light_sphere", "light_cylinder", "light_box",
                  "emitter_point", "emitter_strip", "emitter_cone"):
@@ -223,7 +223,7 @@ def test_mirror_is_mirror_element(make_panel):
     plus the rotation mirror -- pinned against the characterisation
     record of `mirror_element`."""
     from tests.ui.test_spv_edit_target_characterisation import (
-        EXPECTED_MIRRORS, _diff, _staged)
+        EXPECTED_MIRRORS)
     for case in ("subsystem", "light_sphere", "light_cylinder", "light_box",
                  "emitter_point", "emitter_strip", "emitter_cone",
                  "part_anchor", "part_pose"):
