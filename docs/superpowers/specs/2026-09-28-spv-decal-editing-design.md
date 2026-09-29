@@ -174,6 +174,8 @@ except the removed "no mesh fix" row. New rows:
 | SPV: click misses the hull | no placement made; a hint in the pane |
 | SPV: invalid or duplicate placement name | refused inline |
 | SPV: save target not writable | existing SPV error toast; staged edits kept |
+| SPV: existing `decals.json` corrupt / not an object | save refused, file untouched, error toast; staged edits kept |
+| SPV: a placement entry is unreadable | listed as "(unreadable)", delete-only; written back unchanged on Save |
 
 ## 5. Testing
 
