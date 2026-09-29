@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -507,10 +508,18 @@ void apply_texture_replacements(
                 matched.insert(tex_idx);
         }
         if (matched.empty()) {
-            std::fprintf(stderr,
-                "apply_texture_replacements: no texture matching '%s' in %s; "
-                "leaving model untouched\n",
-                rep.old_substring.c_str(), model.source.string().c_str());
+            // Warn once per (source, old_substring): a mission that reloads a
+            // ship's model every frame would otherwise spam stderr forever,
+            // and this is the EXPECTED state for stock Fed hulls once their
+            // ID patch is merged away by a mesh fix (see mesh_fix.h).
+            static std::unordered_set<std::string> warned;
+            const std::string key = model.source.string() + '|' + rep.old_substring;
+            if (warned.insert(key).second) {
+                std::fprintf(stderr,
+                    "apply_texture_replacements: no texture matching '%s' in %s; "
+                    "leaving model untouched\n",
+                    rep.old_substring.c_str(), model.source.string().c_str());
+            }
             continue;
         }
 
@@ -549,6 +558,196 @@ void apply_texture_replacements(
 
 }  // namespace
 
+/// True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis:
+/// `u_axis x v_axis` near zero (parallel/zero axes), `normal` near zero
+/// (glm::normalize(0) is NaN), or `normal` lying in the span(u_axis, v_axis)
+/// plane (det([u_axis v_axis n_hat]) near zero -- decal_body_to_mask's
+/// glm::inverse would return inf/NaN). The zero-normal check must run
+/// BEFORE normalizing, and the cross-product check must run before dividing
+/// by its length, so this checks in that order.
+bool decal_projector_is_degenerate(
+    const glm::vec3& u_axis, const glm::vec3& v_axis, const glm::vec3& normal)
+{
+    const glm::vec3 cross = glm::cross(u_axis, v_axis);
+    const float cross_len = glm::length(cross);
+    if (cross_len < 1e-9f) return true;
+
+    const float normal_len = glm::length(normal);
+    if (normal_len < 1e-9f) return true;
+
+    const glm::vec3 n_hat = normal / normal_len;
+    const float det = glm::dot(cross, n_hat);  // == det([u_axis v_axis n_hat])
+    return std::fabs(det) < 1e-9f * cross_len;
+}
+
+void premultiply_decal_mask(Image& image)
+{
+    if (image.format != Image::Format::RGBA8) return;
+    auto& px = image.pixels;
+    for (std::size_t i = 0; i + 3 < px.size(); i += 4) {
+        const unsigned a = px[i + 3];
+        for (std::size_t c = 0; c < 3; ++c)
+            px[i + c] = static_cast<std::uint8_t>((px[i + c] * a + 127u) / 255u);
+    }
+}
+
+std::string decal_mask_key(const std::filesystem::path& mask)
+{
+    std::error_code ec;
+    auto resolved = std::filesystem::weakly_canonical(mask, ec);
+    if (ec) {
+        ec.clear();
+        resolved = std::filesystem::absolute(mask, ec);
+        if (ec) resolved = mask;
+        resolved = resolved.lexically_normal();
+    }
+    return resolved.string();
+}
+
+namespace {
+
+/// Build Model::decals (see ModelDecal, model.h) from ctx.decals, in request
+/// order. No-op when ctx.decals is empty (the overwhelming majority of
+/// models). A request with a non-empty `shape` is restricted to the meshes
+/// built from that shape (decal i's bit is cleared in every OTHER mesh's
+/// Mesh::decal_mask()); an
+/// empty `shape` paints every mesh. Masks are shared (spec §2.4a): each
+/// distinct mask (decal_mask_key) is decoded and uploaded ONCE into
+/// Model::decal_masks, and every placement naming it gets that slot. Nothing
+/// here can throw out of a ship load: an unknown shape, a degenerate
+/// projector, a mask that fails to decode or one that would be a fifth
+/// distinct mask each skip just that request, and requests past kMaxDecals
+/// are dropped -- each warning once (per the model + decal identity) so a
+/// mission that reloads a ship's model every frame never spams stderr.
+void apply_decals(Model& model, const ModelBuildContext& ctx)
+{
+    if (ctx.decals.empty()) return;
+    auto upload = ctx.texture_uploader
+        ? ctx.texture_uploader
+        : TextureUploaderFn(&assets::upload_image);
+
+    static std::unordered_set<std::string> warned;
+    auto warn_once = [](const std::string& key) {
+        return warned.insert(key).second;
+    };
+
+    // slot_keys[s] = decal_mask_key of Model::decal_masks[s].
+    std::vector<std::string> slot_keys;
+    auto push_decal = [&model](const DecalRequest& req, int slot) {
+        ModelDecal decal;
+        decal.body_to_mask =
+            decal_body_to_mask(req.origin, req.u_axis, req.v_axis, req.normal);
+        decal.normal = glm::normalize(req.normal);
+        decal.depth = req.depth;
+        decal.mask_slot = slot;
+
+        const auto bit = static_cast<std::uint16_t>(1u << model.decals.size());
+        if (!req.shape.empty()) {
+            for (auto& mesh : model.meshes) {
+                if (mesh.shape_name() != req.shape)
+                    mesh.set_decal_mask(
+                        static_cast<std::uint16_t>(mesh.decal_mask() & ~bit));
+            }
+        }
+        model.decals.push_back(decal);
+    };
+
+    for (std::size_t r = 0; r < ctx.decals.size(); ++r) {
+        const auto& req = ctx.decals[r];
+        if (static_cast<int>(model.decals.size()) >= kMaxDecals) {
+            if (warn_once(model.source.string() + "|decal-cap")) {
+                std::fprintf(stderr,
+                    "apply_decals: more than %d decals requested for %s; "
+                    "using the first %d, dropping %zu\n",
+                    kMaxDecals, model.source.string().c_str(), kMaxDecals,
+                    ctx.decals.size() - r);
+            }
+            break;
+        }
+
+        if (!req.shape.empty()) {
+            const bool found = std::any_of(
+                model.meshes.begin(), model.meshes.end(),
+                [&](const Mesh& m) { return m.shape_name() == req.shape; });
+            if (!found) {
+                if (warn_once(model.source.string() + "|decal-shape|" + req.shape)) {
+                    std::fprintf(stderr,
+                        "apply_decals: no shape named '%s' in %s; skipping decal\n",
+                        req.shape.c_str(), model.source.string().c_str());
+                }
+                continue;
+            }
+        }
+        if (decal_projector_is_degenerate(req.u_axis, req.v_axis, req.normal)) {
+            if (warn_once(model.source.string() + "|decal-degenerate|" + req.shape)) {
+                std::fprintf(stderr,
+                    "apply_decals: degenerate projector for shape '%s' in %s "
+                    "(u_axis, v_axis and normal don't span a basis); "
+                    "skipping decal\n",
+                    req.shape.c_str(), model.source.string().c_str());
+            }
+            continue;
+        }
+
+        const std::string mask_key = decal_mask_key(req.mask);
+        const auto known = std::find(slot_keys.begin(), slot_keys.end(), mask_key);
+        if (known != slot_keys.end()) {
+            push_decal(req, static_cast<int>(known - slot_keys.begin()));
+            continue;
+        }
+        if (static_cast<int>(slot_keys.size()) >= kMaxDecalMasks) {
+            if (warn_once(model.source.string() + "|decal-mask-cap")) {
+                std::fprintf(stderr,
+                    "apply_decals: more than %d distinct masks for %s; "
+                    "skipping the placement using %s (and any later one "
+                    "needing another new mask)\n",
+                    kMaxDecalMasks, model.source.string().c_str(),
+                    req.mask.string().c_str());
+            }
+            continue;
+        }
+
+        Image decoded;
+        try {
+            auto bytes = read_file(req.mask);
+            decoded = decode_image(bytes);
+        } catch (const std::exception& e) {
+            if (warn_once(model.source.string() + "|decal-mask|" + req.mask.string())) {
+                std::fprintf(stderr,
+                    "apply_decals: failed to load mask '%s' for shape '%s' "
+                    "in %s (%s); skipping decal\n",
+                    req.mask.string().c_str(), req.shape.c_str(),
+                    model.source.string().c_str(), e.what());
+            }
+            continue;
+        }
+
+        // Premultiply RGB by alpha (spec §2): opaque.frag composites
+        // base*(1-a) + mask.rgb, and filtering premultiplied texels never
+        // pulls transparent texels' RGB into letter edges as a dark halo.
+        // RGB8 / R8 masks have implicit alpha 1 -- nothing to do (still
+        // attached: alpha-less is treated as fully opaque), but that's easy
+        // to miss until it's live, so warn once per mask path.
+        if (decoded.format == Image::Format::RGBA8) {
+            premultiply_decal_mask(decoded);
+        } else {
+            if (warn_once(model.source.string() + "|decal-no-alpha|" + req.mask.string())) {
+                std::fprintf(stderr,
+                    "apply_decals: mask %s has no alpha channel; the whole "
+                    "decal rectangle will be painted\n",
+                    req.mask.string().c_str());
+            }
+        }
+
+        model.decal_masks.push_back(static_cast<int>(model.textures.size()));
+        model.textures.push_back(upload(decoded, /*generate_mipmaps=*/true));
+        slot_keys.push_back(mask_key);
+        push_decal(req, static_cast<int>(slot_keys.size()) - 1);
+    }
+}
+
+}  // namespace
+
 bool filename_is_normal(std::string_view fname) {
     auto dot = fname.find_last_of('.');
     auto stem = (dot == std::string_view::npos) ? fname : fname.substr(0, dot);
@@ -577,6 +776,21 @@ std::string sibling_normal_filename(std::string_view fname) {
         if (tail == "_glow") stem.resize(stem.size() - 5);
     }
     return stem + "_normal" + ext;
+}
+
+glm::mat4 decal_body_to_mask(const glm::vec3& origin, const glm::vec3& u_axis,
+                             const glm::vec3& v_axis, const glm::vec3& normal) {
+    const glm::vec3 n = glm::normalize(normal);
+    const glm::mat3 basis(u_axis, v_axis, n);  // columns: u, v, n
+    const glm::mat3 m = glm::inverse(basis);
+    const glm::vec3 t = -(m * origin);
+
+    glm::mat4 result(1.0f);
+    result[0] = glm::vec4(m[0], 0.0f);
+    result[1] = glm::vec4(m[1], 0.0f);
+    result[2] = glm::vec4(m[2], 0.0f);
+    result[3] = glm::vec4(t, 1.0f);
+    return result;
 }
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
@@ -863,12 +1077,18 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
 
         // Avoid copying the CPU vertex data unless retention is requested.
+        // The source shape name rides on the Mesh so hull decals can be
+        // restricted to a shape (apply_decals, and the renderer's per-instance
+        // decal overrides).
         if (ctx.keep_cpu_data) {
             Mesh mesh = mesh_upload(MeshCpu(cpu));
             mesh.set_cpu_data(std::move(cpu));
+            mesh.set_shape_name(shape->av.obj.name);
             model.meshes.push_back(std::move(mesh));
         } else {
-            model.meshes.push_back(mesh_upload(std::move(cpu)));
+            Mesh mesh = mesh_upload(std::move(cpu));
+            mesh.set_shape_name(shape->av.obj.name);
+            model.meshes.push_back(std::move(mesh));
         }
     }
     if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
@@ -914,6 +1134,10 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     // 6. Federation registry / hull-name texture swaps (BC ReplaceTexture).
     //    No-op when ctx.texture_replacements is empty (the common case).
     apply_texture_replacements(model, tex_result, ctx);
+
+    // 7. Hull-name decals (project feature; see DecalRequest, model.h).
+    //    No-op when ctx.decals is empty (the overwhelming majority of models).
+    apply_decals(model, ctx);
 
     return model;
 }

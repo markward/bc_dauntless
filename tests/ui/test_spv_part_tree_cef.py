@@ -628,9 +628,12 @@ def test_coord_paste_button_reads_can_paste():
     rotate and scale panels' do -- it reads the payload's can_paste, never
     has_clipboard alone."""
     js = _read(JS)
-    start = js.index("var coords = data.transform_coords;")
-    block = js[start:js.index("coordsEl.style.display = 'block';", start)]
-    assert "pasteBtn.disabled = !coords.can_paste;" in block
-    assert ("pasteBtn.classList.toggle('spv-coords__btn--disabled', "
-            "!coords.can_paste);") in block
-    assert "coords.has_clipboard" not in block
+    # All three panels share spvShowPanel (see renderSPVToolPanels); the
+    # Move panel goes through it too. Behaviour: test_spv_decals_pane_cef.py.
+    start = js.index("function spvShowPanel(")
+    block = js[start:js.index("el.style.display = 'block';", start)]
+    assert "paste.disabled = !values.can_paste;" in block
+    assert ("paste.classList.toggle('spv-coords__btn--disabled', "
+            "!values.can_paste);") in block
+    assert "has_clipboard" not in block
+    assert "spvShowPanel('spv-coord', 'spv-coords', coords, rows);" in js

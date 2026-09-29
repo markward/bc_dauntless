@@ -89,77 +89,7 @@ window.setShipPropertyViewer = function (data) {
         mirrorBtn.classList.toggle('spv-tool--disabled', data.has_selection !== true);
     }
 
-    // Transform coordinate panel (top-right): visible only while
-    // data.transform_coords is non-null (Transform tool active + a
-    // mount or part Anchor/State node selected). Mirrors the XYZ and the
-    // kind-aware Paste button (can_paste).
-    var coords = data.transform_coords;
-    var coordsEl = document.getElementById('spv-coords');
-    if (coordsEl) {
-        if (coords) {
-            document.getElementById('spv-coord-x').textContent = coords.x.toFixed(3);
-            document.getElementById('spv-coord-y').textContent = coords.y.toFixed(3);
-            document.getElementById('spv-coord-z').textContent = coords.z.toFixed(3);
-            var pasteBtn = document.getElementById('spv-coord-paste');
-            // Kind-aware, like the rotate/scale panels: a clipboard of the
-            // wrong kind (part anchor / posed anchor / mount) greys Paste.
-            pasteBtn.disabled = !coords.can_paste;
-            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.can_paste);
-            coordsEl.style.display = 'block';
-        } else {
-            coordsEl.style.display = 'none';
-        }
-    }
-
-    // Scale panel (top-right): visible only while data.scale_values is
-    // non-null (Scale tool active + a subsystem/light selected). Rows are
-    // shape-aware (built from scale_values.fields — X/Y/Z, Radius, Length),
-    // and the same top-right slot is shared with #spv-coords (radio: never
-    // both are shown at once).
-    var scale = data.scale_values;
-    var scaleEl = document.getElementById('spv-scale');
-    if (scaleEl) {
-        if (scale) {
-            var rows = scale.fields.map(function (f, i) {
-                return '<div class="spv-coords__row">'
-                     + '<span class="spv-coords__axis">' + escapeHtmlSPV(f.label) + '</span>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',-0.1)">&minus;0.1</button>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',-0.01)">&minus;0.01</button>'
-                     + '<span class="spv-coords__val">' + f.value.toFixed(3) + '</span>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',0.01)">+0.01</button>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',0.1)">+0.1</button>'
-                     + '</div>';
-            }).join('');
-            document.getElementById('spv-scale-rows').innerHTML = rows;
-            var sp = document.getElementById('spv-scale-paste');
-            sp.disabled = !scale.can_paste;
-            sp.classList.toggle('spv-coords__btn--disabled', !scale.can_paste);
-            scaleEl.style.display = 'block';
-        } else {
-            scaleEl.style.display = 'none';
-        }
-    }
-
-    // Rotate panel (top-right): visible only while data.rotate_values is
-    // non-null (Rotate tool active + a cylinder light volume selected).
-    // Fixed X/Y/Z degree rows (no innerHTML rebuild needed), and the same
-    // top-right slot is shared with #spv-coords/#spv-scale (radio: never
-    // more than one shown at once).
-    var rotate = data.rotate_values;
-    var rotateEl = document.getElementById('spv-rotate');
-    if (rotateEl) {
-        if (rotate) {
-            document.getElementById('spv-rotate-x').textContent = rotate.fields[0].value.toFixed(1) + '°';
-            document.getElementById('spv-rotate-y').textContent = rotate.fields[1].value.toFixed(1) + '°';
-            document.getElementById('spv-rotate-z').textContent = rotate.fields[2].value.toFixed(1) + '°';
-            var rp = document.getElementById('spv-rotate-paste');
-            rp.disabled = !rotate.can_paste;
-            rp.classList.toggle('spv-coords__btn--disabled', !rotate.can_paste);
-            rotateEl.style.display = 'block';
-        } else {
-            rotateEl.style.display = 'none';
-        }
-    }
+    renderSPVToolPanels(data);
 
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
@@ -181,6 +111,7 @@ window.setShipPropertyViewer = function (data) {
     if (sysList) sysList.classList.toggle('spv-syslist--locked', locked);
 
     renderSPVModelParts(mp);
+    renderSPVDecals(data.decals);
 
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
@@ -233,6 +164,96 @@ window.setShipPropertyViewer = function (data) {
         pop.innerHTML = '';
     }
 };
+
+// ── Top-right tool panels ──────────────────────────────────────────────────
+// Position (data.transform_coords), Scale (data.scale_values) and Rotate
+// (data.rotate_values) share the top-right slot, radio-style: Python sends at
+// most one non-null, for the active tool and the one selection that owns the
+// slot (a mount, a part node, or a selected decal in the Decals pane).
+//
+// Every row is the same stepper: two steps down, the value, two steps up.
+// The steps are authored for hardpoints (+-0.01/+-0.1, +-1/+-5 deg); a panel
+// or field may carry `step_scale`, which multiplies (and relabels) them -- a
+// decal's numbers are NIF units, so its Move/Width steps are x100 (the same
+// physical distance). `can_mirror: false` (a decal) hides the panel's
+// Mirror button; Copy/Paste stay.
+function spvStepLabel(delta, unit) {
+    var mag = String(parseFloat(Math.abs(delta).toPrecision(6)));
+    return (delta < 0 ? '&minus;' : '+') + mag + (unit || '');
+}
+
+function spvStepperRow(label, value, digits, unit, small, big, handler, index) {
+    function b(delta) {
+        return '<button class="spv-step" onclick="' + handler + '(' + index + ','
+            + parseFloat(delta.toPrecision(6)) + ')">' + spvStepLabel(delta, unit) + '</button>';
+    }
+    return '<div class="spv-coords__row">'
+        + '<span class="spv-coords__axis">' + escapeHtmlSPV(label) + '</span>'
+        + b(-big) + b(-small)
+        + '<span class="spv-coords__val">' + value.toFixed(digits) + (unit || '') + '</span>'
+        + b(small) + b(big)
+        + '</div>';
+}
+
+function spvShowPanel(prefix, panelId, values, rowsHtml) {
+    var el = document.getElementById(panelId);
+    if (!el) return;
+    if (!values) {
+        el.style.display = 'none';
+        return;
+    }
+    document.getElementById(prefix + '-rows').innerHTML = rowsHtml;
+    var paste = document.getElementById(prefix + '-paste');
+    if (paste) {
+        // Kind-aware: a clipboard of the wrong kind greys Paste.
+        paste.disabled = !values.can_paste;
+        paste.classList.toggle('spv-coords__btn--disabled', !values.can_paste);
+    }
+    var acts = document.getElementById(prefix + '-actions');
+    if (acts) acts.style.display = '';
+    // A decal's in-place half-mirror is meaningless (its Mirror is the
+    // action-row Mirror Element, a new placement): hide the per-panel one.
+    var mirror = document.getElementById(prefix + '-mirror');
+    if (mirror) mirror.style.display = values.can_mirror === false ? 'none' : '';
+    // Uniform acts only on a Box light's xyz; on a decal it is inert.
+    var uniform = document.getElementById(prefix + '-uniform');
+    if (uniform) uniform.style.display = values.decal === true ? 'none' : '';
+    el.style.display = 'block';
+}
+
+function renderSPVToolPanels(data) {
+    var coords = data.transform_coords;
+    var rows = '';
+    if (coords) {
+        var k = coords.step_scale || 1;
+        rows = [coords.x, coords.y, coords.z].map(function (v, i) {
+            return spvStepperRow('XYZ'.charAt(i), v, 3, '', 0.01 * k, 0.1 * k,
+                                 'shipPropertyViewerCoordNudge', i);
+        }).join('');
+    }
+    spvShowPanel('spv-coord', 'spv-coords', coords, rows);
+
+    var scale = data.scale_values;
+    rows = '';
+    if (scale) {
+        rows = scale.fields.map(function (f, i) {
+            var fk = f.step_scale || 1;
+            return spvStepperRow(f.label, f.value, 3, '', 0.01 * fk, 0.1 * fk,
+                                 'shipPropertyViewerScaleNudge', i);
+        }).join('');
+    }
+    spvShowPanel('spv-scale', 'spv-scale', scale, rows);
+
+    var rotate = data.rotate_values;
+    rows = '';
+    if (rotate) {
+        rows = rotate.fields.map(function (f, i) {
+            return spvStepperRow(f.label, f.value, 1, '&deg;', 1, 5,
+                                 'shipPropertyViewerRotateNudge', i);
+        }).join('');
+    }
+    spvShowPanel('spv-rotate', 'spv-rotate', rotate, rows);
+}
 
 // ── Context menu / radius modal / Save bar wiring (Task 5) ─────────────────
 // Right-click a subsystem row -> context menu -> "Set Radius..." -> numeric
@@ -949,6 +970,205 @@ function renderSPVModelParts(modelParts) {
     }
 }
 
+// ── Decals pane (spec 2026-09-28-spv-decal-editing-design.md S3) ──────────
+// Driven by `decals` = {active, has_model, registries, registry,
+// default_registry, placements:[{name, has_mask, mask, unreadable?}],
+// selected, adding, adding_name, reposition, error, hint, can_add,
+// max_decals, suggested_names (MASK stems), dirty}. A selected placement's
+// numbers are NOT here: they live in the top-right tool panels
+// (renderSPVToolPanels), like every other selection's. Python owns every
+// rule (mask validation, auto-naming, the 16-placement / 4-mask caps, the
+// hull pick); this
+// only renders and fires 'ship-property-viewer/decal-*' events. Two bits of
+// state are JS-local because they never reach Python until confirmed: the
+// Add name picker being open, and the Delete confirm step. Identities travel
+// in data-* attributes, never inside on* JS string literals (see
+// spvPartRowHtml for why).
+var spvDecalPickerOpen = false;
+var spvDecalConfirmDelete = null;
+var spvLastDecals = null;
+
+function spvDecalBtn(label, handler, extraClass, dataName) {
+    return '<button class="spv-decal-btn' + (extraClass ? ' ' + extraClass : '') + '"'
+        + (dataName !== undefined ? ' data-name="' + escapeHtmlSPV(dataName) + '"' : '')
+        + ' onclick="' + handler + '(this)">' + label + '</button>';
+}
+
+function renderSPVDecals(decals) {
+    var pane = document.getElementById('spv-decals');
+    var body = document.getElementById('spv-decals-body');
+    if (!pane || !body) return;
+    var d = decals || {};
+    spvLastDecals = d;
+    pane.classList.toggle('expanded', d.active === true);
+    if (d.active !== true) {
+        spvDecalPickerOpen = false;
+        spvDecalConfirmDelete = null;
+        body.innerHTML = '';
+        return;
+    }
+    if (d.adding === true || d.can_add !== true) spvDecalPickerOpen = false;
+    var out = [];
+    if (d.has_model !== true) {
+        out.push('<div class="spv-decal-hint">This ship declares no model path.</div>');
+        body.innerHTML = out.join('');
+        return;
+    }
+
+    // Registry preview: one chip per Masks/<registry>/ folder, the class
+    // default starred. A chip (not a <select>): OSR CEF draws no native
+    // popup for a dropdown.
+    var regs = d.registries || [];
+    var chips = regs.map(function (r) {
+        return spvDecalBtn(escapeHtmlSPV(r) + (r === d.default_registry ? ' &#9733;' : ''),
+            'shipPropertyViewerDecalRegistry',
+            r === d.registry ? 'spv-decal-btn--on' : '', r);
+    }).join('');
+    out.push('<div class="spv-decal-section">Registry preview</div>');
+    out.push('<div class="spv-decal-chips">'
+        + (chips || '<span class="spv-decal-hint">No registry folders under Masks/ &mdash; '
+            + 'masks preview as the checkerboard.</span>')
+        + '</div>');
+    var defActs = [];
+    if (d.registry && d.registry !== d.default_registry) {
+        defActs.push(spvDecalBtn('Make ' + escapeHtmlSPV(d.registry) + ' the class default',
+            'shipPropertyViewerDecalDefault', '', d.registry));
+    }
+    if (d.default_registry) {
+        defActs.push(spvDecalBtn('Clear class default', 'shipPropertyViewerDecalClearDefault'));
+    }
+    if (defActs.length) {
+        out.push('<div class="spv-decal-chips">' + defActs.join('') + '</div>');
+    }
+    // Persistent (unlike d.error): the previewed registry is one the game
+    // would never pick for this ship.
+    if (typeof d.hint === 'string' && d.hint.length > 0) {
+        out.push('<div class="spv-decal-hint">' + escapeHtmlSPV(d.hint) + '</div>');
+    }
+
+    // Placements. An unreadable one (a decals.json entry Python could not
+    // parse; kept and written back unchanged) is listed, never selectable,
+    // and carries its own Delete.
+    out.push('<div class="spv-decal-section">Placements ('
+        + (d.placements || []).length + '/' + (d.max_decals || 16) + ')</div>');
+    (d.placements || []).forEach(function (p) {
+        if (p.unreadable === true) {
+            out.push('<div class="spv-sys-row" data-name="' + escapeHtmlSPV(p.name) + '">'
+                + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+                + '<span class="spv-sys-row__name">' + escapeHtmlSPV(p.name) + '</span>'
+                + '<span class="spv-decal-nomask">(unreadable)</span>'
+                + '</div>');
+            out.push('<div class="spv-decal-chips">'
+                + spvDecalBtn('Delete ' + escapeHtmlSPV(p.name), 'shipPropertyViewerDecalDeleteAsk',
+                    '', p.name) + '</div>');
+            return;
+        }
+        var chosen = p.name === d.selected;
+        out.push('<div class="spv-sys-row' + (chosen ? ' spv-sys-row--chosen' : '') + '"'
+            + ' data-name="' + escapeHtmlSPV(p.name) + '"'
+            + ' onclick="shipPropertyViewerDecalSelect(this)">'
+            + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+            + '<span class="spv-sys-row__name">' + escapeHtmlSPV(p.name)
+            + (p.mask && p.mask !== p.name ? ' (' + escapeHtmlSPV(p.mask) + ')' : '')
+            + '</span>'
+            + (p.has_mask ? '' : '<span class="spv-decal-nomask">no mask</span>')
+            + '</div>');
+    });
+
+    // Actions.
+    var acts = [];
+    if (d.adding === true) {
+        out.push('<div class="spv-decal-hint">Click the hull to place &ldquo;'
+            + escapeHtmlSPV(d.adding_name || '') + '&rdquo;.</div>');
+        acts.push(spvDecalBtn('Cancel', 'shipPropertyViewerDecalAddCancel'));
+    } else if (d.can_add === true) {
+        acts.push(spvDecalBtn('Add&hellip;', 'shipPropertyViewerDecalAddOpen',
+            spvDecalPickerOpen ? 'spv-decal-btn--on' : ''));
+    }
+    if (d.selected) {
+        acts.push(spvDecalBtn('Reposition', 'shipPropertyViewerDecalReposition',
+            d.reposition === true ? 'spv-decal-btn--on' : ''));
+        acts.push(spvDecalBtn('Delete', 'shipPropertyViewerDecalDeleteAsk', '', d.selected));
+    }
+    out.push('<div class="spv-decal-chips">' + acts.join('') + '</div>');
+    if (d.reposition === true) {
+        out.push('<div class="spv-decal-hint">Click the hull to re-seat &ldquo;'
+            + escapeHtmlSPV(d.selected || '') + '&rdquo;.</div>');
+    }
+    var unreadable = (d.placements || []).filter(function (p) {
+        return p.unreadable === true;
+    }).map(function (p) { return p.name; });
+    if (spvDecalConfirmDelete !== null && (spvDecalConfirmDelete === d.selected
+            || unreadable.indexOf(spvDecalConfirmDelete) >= 0)) {
+        out.push('<div class="spv-decal-hint">Delete &ldquo;' + escapeHtmlSPV(spvDecalConfirmDelete)
+            + '&rdquo;?</div><div class="spv-decal-chips">'
+            + spvDecalBtn('Delete', 'shipPropertyViewerDecalDeleteYes', 'spv-decal-btn--danger',
+                spvDecalConfirmDelete)
+            + spvDecalBtn('Keep', 'shipPropertyViewerDecalDeleteNo') + '</div>');
+    } else {
+        spvDecalConfirmDelete = null;
+    }
+    if (spvDecalPickerOpen) {
+        var names = d.suggested_names || [];
+        out.push('<div class="spv-decal-section">Mask (&lt;registry&gt;/&lt;mask&gt;.png'
+            + ' &mdash; reusable; the placement is named after it)</div>');
+        out.push('<div class="spv-decal-chips">' + names.map(function (n) {
+            return spvDecalBtn(escapeHtmlSPV(n), 'shipPropertyViewerDecalAddName', '', n);
+        }).join('') + spvDecalBtn('Cancel', 'shipPropertyViewerDecalAddClose') + '</div>');
+    }
+    if (typeof d.error === 'string' && d.error.length > 0) {
+        out.push('<div class="spv-decal-error">' + escapeHtmlSPV(d.error) + '</div>');
+    }
+
+    body.innerHTML = out.join('');
+}
+
+function spvDecalRerender() { renderSPVDecals(spvLastDecals); }
+
+window.shipPropertyViewerDecalRegistry = function (el) {
+    dauntlessEvent('ship-property-viewer/decal-registry:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalDefault = function (el) {
+    dauntlessEvent('ship-property-viewer/decal-default:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalClearDefault = function () {
+    // An empty value clears the staged class default (Python: "" -> None).
+    dauntlessEvent('ship-property-viewer/decal-default:');
+};
+window.shipPropertyViewerDecalSelect = function (el) {
+    spvDecalConfirmDelete = null;
+    dauntlessEvent('ship-property-viewer/decal-select:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalAddOpen = function () {
+    spvDecalPickerOpen = !spvDecalPickerOpen;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalAddClose = function () {
+    spvDecalPickerOpen = false;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalAddName = function (el) {
+    spvDecalPickerOpen = false;
+    dauntlessEvent('ship-property-viewer/decal-add:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalAddCancel = function () {
+    dauntlessEvent('ship-property-viewer/decal-add-cancel');
+};
+window.shipPropertyViewerDecalReposition = function () {
+    dauntlessEvent('ship-property-viewer/decal-reposition');
+};
+window.shipPropertyViewerDecalDeleteAsk = function (el) {
+    spvDecalConfirmDelete = el.dataset.name;
+    spvDecalRerender();
+};
+window.shipPropertyViewerDecalDeleteYes = function (el) {
+    spvDecalConfirmDelete = null;
+    dauntlessEvent('ship-property-viewer/decal-delete:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalDeleteNo = function () {
+    spvDecalConfirmDelete = null;
+    spvDecalRerender();
+};
 // A part row (kind "part", depth 0). The row's identity travels ONLY in
 // data-* attributes (data-part-name/-has-anchor/-missing-states/-breakable),
 // never interpolated into a JS string literal inside an on* attribute: the

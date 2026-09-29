@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   version="1.1"
+   id="svg1"
+   width="512"
+   height="64"
+   viewBox="0 0 512 63.999999"
+   sodipodi:docname="ambassador_nacelle_reg_template.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   inkscape:export-filename="zhukov_nacelle.png"
+   inkscape:export-xdpi="24"
+   inkscape:export-ydpi="24"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <rect
+       x="0"
+       y="79.127274"
+       width="682.66669"
+       height="66.715157"
+       id="rect3" />
+    <rect
+       x="0"
+       y="79.127274"
+       width="684.2182"
+       height="98.521217"
+       id="rect4" />
+    <rect
+       x="0"
+       y="79.127274"
+       width="684.2182"
+       height="98.521217"
+       id="rect5" />
+    <rect
+       x="0"
+       y="79.127274"
+       width="682.66669"
+       height="66.715157"
+       id="rect17" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.2890625"
+     inkscape:cx="307.97577"
+     inkscape:cy="141.18788"
+     inkscape:window-width="1786"
+     inkscape:window-height="1077"
+     inkscape:window-x="346"
+     inkscape:window-y="56"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="g1" />
+  <g
+     inkscape:groupmode="layer"
+     inkscape:label="Image"
+     id="g1">
+    <text
+       xml:space="preserve"
+       id="text3"
+       style="font-size:42.6667px;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect3);display:inline;fill:#1a1a1a;stroke-width:2.1"
+       x="341.33334"
+       y="0"
+       transform="matrix(1.2564251,0,0,1.2564251,-168.94789,-109.46027)"
+       inkscape:label="Name"><tspan
+         x="167.78625"
+         y="118.05308"
+         id="tspan2"><tspan
+           style="font-weight:bold;font-family:'Microgramma D Extended';-inkscape-font-specification:'Microgramma D Extended Bold'"
+           id="tspan1">NCC - 26136</tspan></tspan></text>
+    <text
+       xml:space="preserve"
+       id="text17"
+       style="font-size:15.6667px;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect17);display:inline;fill:#1a1a1a;stroke-width:2.1"
+       x="341.33334"
+       y="0"
+       transform="matrix(1.2564251,0,0,1.2564251,-168.46055,-54.702972)"
+       inkscape:label="Name"><tspan
+         x="171.23968"
+         y="93.420159"
+         id="tspan4"><tspan
+           style="font-weight:bold;font-family:'Microgramma D Extended';-inkscape-font-specification:'Microgramma D Extended Bold'"
+           id="tspan3">UNITED FEDERATION OF PLANETS</tspan></tspan></text>
+  </g>
+</svg>

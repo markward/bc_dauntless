@@ -290,7 +290,7 @@
              pose. The Python side (_dispatch_event_inner) is the real gate;
              this + #spv-syslist's greyed-out state are the visible half. -->
         <div id="spv-lock-banner" class="spv-lock-banner" style="display:none"></div>
-        <div id="spv-syslist">
+        <div id="spv-syslist" class="spv-pane">
           <div class="spv-syslist__header">Subsystems</div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
         </div>
@@ -306,7 +306,7 @@
              part popups (#spv-part-anchor / -break / -addstate). "Show all" is the escape hatch for a hull whose
              hierarchy doesn't fit the Scene-Root-children rule -- stops
              propagation so it doesn't also toggle the pane. -->
-        <div id="spv-parts">
+        <div id="spv-parts" class="spv-pane">
           <div id="spv-parts-header"
                onclick="dauntlessEvent('ship-property-viewer/model_parts/toggle')">
             <span class="spv-parts-header__title">Model Parts</span>
@@ -317,6 +317,21 @@
             </label>
           </div>
           <div id="spv-parts-body"></div>
+        </div>
+        <!-- Decals pane (spec 2026-09-28-spv-decal-editing-design.md S3):
+             collapsed by default; clicking the header ENTERS the pane
+             ('ship-property-viewer/decal-pane'), which forces the textured
+             hull (the hologram cannot show decals) and live-previews the
+             working list through set_instance_decals. Clicking it again
+             leaves. Body built by renderSPVDecals from `decals`. Mouse-only:
+             keyboard -> CEF does not exist, so a new placement's name is
+             CHOSEN from `decals.suggested_names`, never typed. -->
+        <div id="spv-decals" class="spv-pane">
+          <div id="spv-decals-header"
+               onclick="dauntlessEvent('ship-property-viewer/decal-pane')">
+            <span class="spv-parts-header__title">Decals</span>
+          </div>
+          <div id="spv-decals-body"></div>
         </div>
       </div>
       <!-- Action tools (undo / pipette / mirror). Momentary buttons stacked
@@ -411,37 +426,16 @@
       </div>
       <!-- Transform coordinate panel (top-right). Shown only while the Transform
            tool is active and something is selected; driven by payload.transform_coords.
-           Mouse-only steppers (no keyboard->CEF forwarding). -->
+           Rows are built by renderSPVToolPanels (a selected decal's steppers
+           are rescaled to its NIF units). Mouse-only steppers (no keyboard->CEF
+           forwarding). A decal hides the per-panel Mirror (can_mirror). -->
       <div id="spv-coords" class="spv-coords dev-only" style="display:none;">
         <div class="spv-coords__title">Position</div>
-        <div class="spv-coords__row">
-          <span class="spv-coords__axis">X</span>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,-0.1)">&minus;0.1</button>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,-0.01)">&minus;0.01</button>
-          <span id="spv-coord-x" class="spv-coords__val">0.00</span>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,0.01)">+0.01</button>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,0.1)">+0.1</button>
-        </div>
-        <div class="spv-coords__row">
-          <span class="spv-coords__axis">Y</span>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,-0.1)">&minus;0.1</button>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,-0.01)">&minus;0.01</button>
-          <span id="spv-coord-y" class="spv-coords__val">0.00</span>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,0.01)">+0.01</button>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,0.1)">+0.1</button>
-        </div>
-        <div class="spv-coords__row">
-          <span class="spv-coords__axis">Z</span>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,-0.1)">&minus;0.1</button>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,-0.01)">&minus;0.01</button>
-          <span id="spv-coord-z" class="spv-coords__val">0.00</span>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,0.01)">+0.01</button>
-          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,0.1)">+0.1</button>
-        </div>
-        <div class="spv-coords__actions">
+        <div id="spv-coord-rows"></div>
+        <div id="spv-coord-actions" class="spv-coords__actions">
           <button class="spv-coords__btn" onclick="shipPropertyViewerCoordCopy()">Copy</button>
           <button id="spv-coord-paste" class="spv-coords__btn" onclick="shipPropertyViewerCoordPaste()">Paste</button>
-          <button class="spv-coords__btn" onclick="shipPropertyViewerCoordMirror()">Mirror</button>
+          <button id="spv-coord-mirror" class="spv-coords__btn" onclick="shipPropertyViewerCoordMirror()">Mirror</button>
         </div>
       </div>
       <!-- Scale panel (top-right). Shown only while the Scale tool is active and
@@ -450,46 +444,23 @@
       <div id="spv-scale" class="spv-coords dev-only" style="display:none;">
         <div class="spv-coords__title">Scale</div>
         <div id="spv-scale-rows"></div>
-        <div class="spv-coords__actions">
+        <div id="spv-scale-actions" class="spv-coords__actions">
           <button class="spv-coords__btn" onclick="shipPropertyViewerScaleCopy()">Copy</button>
           <button id="spv-scale-paste" class="spv-coords__btn" onclick="shipPropertyViewerScalePaste()">Paste</button>
-          <button class="spv-coords__btn" onclick="shipPropertyViewerScaleUniform()">Uniform</button>
+          <button id="spv-scale-uniform" class="spv-coords__btn" onclick="shipPropertyViewerScaleUniform()">Uniform</button>
         </div>
       </div>
       <!-- Rotate panel (top-right). Shown only while the Rotate tool is
-           active and a cylinder light volume is selected; fixed X/Y/Z
-           degree rows driven by payload.rotate_values. Shares the top-right
-           slot with #spv-coords/#spv-scale (radio: never more than one). -->
+           active and a rotatable node (or a decal: one Roll row) is selected;
+           degree rows built from payload.rotate_values.fields. Shares the
+           top-right slot with #spv-coords/#spv-scale (radio: never more than one). -->
       <div id="spv-rotate" class="spv-coords dev-only" style="display:none;">
         <div class="spv-coords__title">Rotate</div>
-        <div class="spv-coords__row">
-          <span class="spv-coords__axis">X</span>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,-5)">&minus;5&deg;</button>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,-1)">&minus;1&deg;</button>
-          <span id="spv-rotate-x" class="spv-coords__val">0.0&deg;</span>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,1)">+1&deg;</button>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,5)">+5&deg;</button>
-        </div>
-        <div class="spv-coords__row">
-          <span class="spv-coords__axis">Y</span>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,-5)">&minus;5&deg;</button>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,-1)">&minus;1&deg;</button>
-          <span id="spv-rotate-y" class="spv-coords__val">0.0&deg;</span>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,1)">+1&deg;</button>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,5)">+5&deg;</button>
-        </div>
-        <div class="spv-coords__row">
-          <span class="spv-coords__axis">Z</span>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,-5)">&minus;5&deg;</button>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,-1)">&minus;1&deg;</button>
-          <span id="spv-rotate-z" class="spv-coords__val">0.0&deg;</span>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,1)">+1&deg;</button>
-          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,5)">+5&deg;</button>
-        </div>
-        <div class="spv-coords__actions">
+        <div id="spv-rotate-rows"></div>
+        <div id="spv-rotate-actions" class="spv-coords__actions">
           <button class="spv-coords__btn" onclick="shipPropertyViewerRotateCopy()">Copy</button>
           <button id="spv-rotate-paste" class="spv-coords__btn" onclick="shipPropertyViewerRotatePaste()">Paste</button>
-          <button class="spv-coords__btn" onclick="shipPropertyViewerRotateMirror()">Mirror</button>
+          <button id="spv-rotate-mirror" class="spv-coords__btn" onclick="shipPropertyViewerRotateMirror()">Mirror</button>
         </div>
       </div>
       <div id="spv-popover" class="spv-popover"></div>

@@ -5,6 +5,12 @@
 #include <filesystem>
 #include "support/content_root.h"
 
+#include <assets/mesh_fix.h>
+#include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <string>
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -129,4 +135,194 @@ TEST(AssetCacheTest, SameRegistrySharesDifferentRegistryDistinct) {
 
     EXPECT_EQ(a.get(), b.get());   // same registry -> shared
     EXPECT_NE(a.get(), c.get());   // different registry -> distinct
+}
+
+// --- Mesh fixes (hull name-cut fix) -----------------------------------------
+
+namespace {
+std::string file_bytes(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    std::ostringstream ss; ss << in.rdbuf(); return ss.str();
+}
+fs::path temp_fix_dir(const char* tag) {
+    auto d = fs::temp_directory_path() / (std::string("dauntless_mesh_fix_") + tag);
+    fs::remove_all(d); fs::create_directories(d); return d;
+}
+}  // namespace
+
+TEST(AssetCacheMeshFix, EmptyFixFileAppliesAndChangesCacheKey) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    auto dir = temp_fix_dir("empty");
+    std::ofstream(dir / (assets::fnv1a64_hex(file_bytes(galaxy_path())) + ".json"))
+        << R"({"format":1,"merges":[]})";
+
+    assets::AssetCache plain(stub_config());
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [dir] { return dir; };
+    assets::AssetCache fixed(cfg);
+    auto a = plain.load(galaxy_path(), fed_high_path());
+    auto b = fixed.load(galaxy_path(), fed_high_path());
+    // An empty merge list changes nothing visible...
+    EXPECT_EQ(a->meshes.size(), b->meshes.size());
+    // ...and two loads through the fixed cache share one entry.
+    EXPECT_EQ(b.get(), fixed.load(galaxy_path(), fed_high_path()).get());
+}
+
+TEST(AssetCacheMeshFix, RefusedFixLoadsUnpatched) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    auto dir = temp_fix_dir("refused");
+    std::ofstream(dir / (assets::fnv1a64_hex(file_bytes(galaxy_path())) + ".json"))
+        << R"({"format":1,"merges":[{"patch":{"block":0,"name":"nope"},
+              "target":{"block":1,"name":"nope"},"uvs":[],"weld":[],"normals":null}]})";
+    assets::AssetCache plain(stub_config());
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [dir] { return dir; };
+    assets::AssetCache fixed(cfg);
+    EXPECT_EQ(plain.load(galaxy_path(), fed_high_path())->meshes.size(),
+              fixed.load(galaxy_path(), fed_high_path())->meshes.size());
+}
+
+TEST(AssetCacheMeshFix, MalformedFixFileLoadsUnpatched) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    auto dir = temp_fix_dir("malformed");
+    std::ofstream(dir / (assets::fnv1a64_hex(file_bytes(galaxy_path())) + ".json")) << "{ nope";
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [dir] { return dir; };
+    assets::AssetCache fixed(cfg);
+    EXPECT_NO_THROW(fixed.load(galaxy_path(), fed_high_path()));
+}
+
+TEST(AssetCacheMeshFix, NoFixDirConfiguredIsTodayBehaviour) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [] { return fs::path(); };
+    assets::AssetCache c(cfg);
+    EXPECT_NO_THROW(c.load(galaxy_path(), fed_high_path()));
+}
+
+// Ruling 1: one cache, with a mutable mesh_fix_dir, keys fixed and unfixed
+// loads of the SAME nif_path apart. The two-cache tests above can't show
+// this -- they prove each cache is internally consistent, not that a single
+// cache's key changes when the fix directory's contents change underneath
+// it.
+TEST(AssetCacheMeshFix, OneCacheKeysFixedAndUnfixedLoadsApart) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    auto dir = std::make_shared<fs::path>();  // empty => no fix dir configured
+
+    auto cfg = stub_config();
+    cfg.mesh_fix_dir = [dir] { return *dir; };
+    assets::AssetCache cache(cfg);
+
+    auto a = cache.load(galaxy_path(), fed_high_path());  // handle A: unfixed
+
+    auto fix_dir = temp_fix_dir("one_cache");
+    std::ofstream(fix_dir / (assets::fnv1a64_hex(file_bytes(galaxy_path())) + ".json"))
+        << R"({"format":1,"merges":[]})";
+    *dir = fix_dir;
+
+    auto b = cache.load(galaxy_path(), fed_high_path());  // handle B: fixed
+    EXPECT_NE(a.get(), b.get());
+
+    auto c = cache.load(galaxy_path(), fed_high_path());  // same fix dir again
+    EXPECT_EQ(b.get(), c.get());
+}
+
+// Real-asset proof: the committed Galaxy fix (Task 5) actually merges the ID
+// patch shape into the saucer -- one fewer mesh, one fewer material, and
+// fewer total vertices than the welded seam once had (welding removes the
+// duplicate seam verts the patch and target used to carry separately).
+TEST(AssetCacheMeshFix, RealGalaxyLosesItsIdPatch) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    const fs::path fixes = fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
+    ASSERT_TRUE(fs::exists(fixes / (assets::fnv1a64_hex(file_bytes(galaxy_path())) + ".json")))
+        << "committed Galaxy fix missing";
+    auto cfg = stub_config();
+    cfg.keep_cpu_data = true;
+    assets::AssetCache plain(cfg);
+    cfg.mesh_fix_dir = [fixes] { return fixes; };
+    assets::AssetCache fixed(cfg);
+    auto a = plain.load(galaxy_path(), fed_high_path());
+    auto b = fixed.load(galaxy_path(), fed_high_path());
+
+    // One mesh fewer: the ID patch shape is hidden and skipped.
+    EXPECT_EQ(b->meshes.size() + 1, a->meshes.size());
+    // No surviving texture was loaded from an "ID" source. Use the model's
+    // texture-source bookkeeping if it exposes one; otherwise count materials
+    // (the patch's material is gone).
+    EXPECT_EQ(b->materials.size() + 1, a->materials.size());
+    // Total vertices = old total − welded seam vertices.
+    auto verts = [](const assets::Model& m) {
+        std::size_t n = 0;
+        for (const auto& mesh : m.meshes) if (auto c = mesh.cpu_data()) n += c->vertices.size();
+        return n;
+    };
+    EXPECT_LT(verts(*b), verts(*a));
+}
+
+// Extracts a top-level `"source": "..."` string field from raw fix-file
+// JSON text without pulling nlohmann into this test binary (parse_mesh_fix
+// itself ignores the field). Good enough for the fixed, generator-written
+// shape of every committed fix file.
+namespace {
+std::string mesh_fix_source_field(const std::string& text) {
+    auto key = text.find("\"source\"");
+    if (key == std::string::npos) return {};
+    auto colon = text.find(':', key);
+    if (colon == std::string::npos) return {};
+    auto q1 = text.find('"', colon + 1);
+    if (q1 == std::string::npos) return {};
+    auto q2 = text.find('"', q1 + 1);
+    if (q2 == std::string::npos) return {};
+    return text.substr(q1 + 1, q2 - q1 - 1);
+}
+}  // namespace
+
+// Gate: every committed fix file in native/assets/mesh_fixes must actually
+// apply cleanly against the real stock NIF it names, and its filename stem
+// must be that NIF's own content hash (so it will ever be found at
+// runtime). Catches a fix that silently stopped applying (a hull edit
+// upstream, a stray hand-edit) without needing a per-ship named test.
+TEST(AssetCacheMeshFix, EveryCommittedFixApplies) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+
+    const fs::path fixes = fs::path(OPEN_STBC_PROJECT_ROOT) / "native/assets/mesh_fixes";
+    std::vector<fs::path> fix_files;
+    for (const auto& entry : fs::directory_iterator(fixes))
+        if (entry.path().extension() == ".json") fix_files.push_back(entry.path());
+    std::sort(fix_files.begin(), fix_files.end());
+    ASSERT_EQ(fix_files.size(), 5u) << "expected exactly 5 committed mesh fixes (High LOD only)";
+
+    auto cfg = stub_config();
+    assets::AssetCache plain(cfg);
+    cfg.mesh_fix_dir = [fixes] { return fixes; };
+    assets::AssetCache fixed(cfg);
+
+    for (const auto& fix_path : fix_files) {
+        SCOPED_TRACE(fix_path.string());
+        const auto text = file_bytes(fix_path);
+        const auto rel = mesh_fix_source_field(text);
+        ASSERT_FALSE(rel.empty()) << "fix file has no \"source\" field";
+
+        const fs::path nif_path = test_support::game_root() / rel;
+        if (!fs::exists(nif_path)) {
+            GTEST_SKIP() << "content missing: " << nif_path.string();
+        }
+
+        const auto nif_bytes = file_bytes(nif_path);
+        EXPECT_EQ(assets::fnv1a64_hex(nif_bytes), fix_path.stem().string())
+            << "fix filename does not match the content hash of " << rel;
+
+        auto file = nif::load(nif_path);
+        std::string parse_error;
+        auto fix = assets::parse_mesh_fix(text, &parse_error);
+        ASSERT_TRUE(fix.has_value()) << "parse failed: " << parse_error;
+        EXPECT_EQ(assets::apply_mesh_fix(file, *fix), "")
+            << "committed fix was refused";
+
+        std::vector<fs::path> search{nif_path.parent_path() / "High", fed_high_path()};
+        auto a = plain.load(nif_path, search);
+        auto b = fixed.load(nif_path, search);
+        EXPECT_EQ(b->meshes.size() + 1, a->meshes.size())
+            << "fixed model should have exactly one fewer mesh (the hidden patch)";
+    }
 }

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   version="1.1"
+   id="svg1"
+   width="682.66669"
+   height="341.33334"
+   viewBox="0 0 682.66669 341.33334"
+   sodipodi:docname="ambassador_reg_template.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <rect
+       x="0"
+       y="79.127275"
+       width="682.66669"
+       height="66.715154"
+       id="rect3" />
+    <rect
+       x="0"
+       y="79.127275"
+       width="684.21821"
+       height="98.521216"
+       id="rect4" />
+    <rect
+       x="0"
+       y="79.127275"
+       width="684.21821"
+       height="98.521216"
+       id="rect5" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.2890625"
+     inkscape:cx="293.23637"
+     inkscape:cy="141.18788"
+     inkscape:window-width="2355"
+     inkscape:window-height="1077"
+     inkscape:window-x="1209"
+     inkscape:window-y="35"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="g1" />
+  <g
+     inkscape:groupmode="layer"
+     inkscape:label="Image"
+     id="g1">
+    <text
+       xml:space="preserve"
+       id="text3"
+       style="font-size:42.6667px;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect3);fill:#1a1a1a;stroke-width:2.1"
+       x="341.33334"
+       y="0"
+       transform="translate(0,-6)"
+       inkscape:label="Name"><tspan
+         x="98.751528"
+         y="118.05308"
+         id="tspan2"><tspan
+           style="font-weight:bold;font-family:'Microgramma D Extended';-inkscape-font-specification:'Microgramma D Extended Bold'"
+           id="tspan1">U.S.S. EXCALIBUR</tspan></tspan></text>
+    <path
+       id="path13"
+       style="fill:none;stroke:none;stroke-width:6.645;stroke-dasharray:none"
+       transform="rotate(-90)"
+       d="M 817.54401,341.33334 A 528.57324,547.22369 0 0 0 288.97076,-205.89035 528.57324,547.22369 0 0 0 -239.60248,341.33334 528.57324,547.22369 0 0 0 288.97076,888.55704 528.57324,547.22369 0 0 0 817.54401,341.33334 Z"
+       inkscape:label="Registry Path" />
+    <text
+       xml:space="preserve"
+       id="text4"
+       style="font-size:69.3333px;line-height:0;text-align:center;letter-spacing:7.5px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;white-space:pre;fill:#1a1a1a;stroke-width:4;stroke-dasharray:none"
+       inkscape:label="Registry Number  - Base"
+       x="0"
+       y="0"><textPath
+         xlink:href="#path13"
+         startOffset="50%"
+         id="textPath16"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:69.3333px;font-family:'Microgramma D Extended';-inkscape-font-specification:'Microgramma D Extended';letter-spacing:7.5px;stroke:#b20810;stroke-width:4;stroke-dasharray:none;stroke-opacity:1">NCC-26517</textPath></text>
+    <text
+       xml:space="preserve"
+       id="text17"
+       style="font-size:69.3333px;line-height:0;text-align:center;letter-spacing:7.5px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;white-space:pre;fill:#1a1a1a;stroke-width:1.3;stroke-dasharray:none;stroke:#ffffff;stroke-opacity:1"
+       inkscape:label="Registry Number  - Fill"
+       x="0"
+       y="0"><textPath
+         xlink:href="#path13"
+         startOffset="50%"
+         id="textPath17"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:69.3333px;font-family:'Microgramma D Extended';-inkscape-font-specification:'Microgramma D Extended';letter-spacing:7.5px;stroke:#ffffff;stroke-width:1.3;stroke-dasharray:none;stroke-opacity:1">NCC-26517</textPath></text>
+  </g>
+</svg>

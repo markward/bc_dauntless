@@ -70,6 +70,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
+    "set_instance_decals",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
@@ -168,12 +169,17 @@ def frame() -> None:
 
 
 def load_model(nif_path: str, texture_search_path,
-               texture_replacements=None) -> int:
+               texture_replacements=None, decals=None) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
-    empty is byte-identical to the plain load."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements)
+    empty is byte-identical to the plain load.
+
+    `decals` is `engine.appc.hull_decals.decals_for(...)`'s output: a list of
+    (shape, origin, u_axis, v_axis, normal, depth, mask_abs_path) registry
+    name-decal projectors. None / empty is byte-identical to the plain
+    load."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals)
 
 
 def create_instance(model: int) -> InstanceId:
@@ -203,6 +209,15 @@ def spawn_test_character(nif_path: str):
 
 def set_visible(iid: InstanceId, visible: bool) -> None:
     _h.set_visible(iid, visible)
+
+
+def set_instance_decals(iid: InstanceId, decals) -> None:
+    """Replace one instance's baked hull decals for drawing (the SPV's live
+    decal preview). `decals` is a list of load_model-shaped entries
+    (shape_or_empty, origin, u_axis, v_axis, normal, depth, mask_path), body
+    frame, at most 4 -- an empty list draws none -- or None to go back to the
+    baked list. Bad entries are skipped natively; never raises."""
+    _h.set_instance_decals(iid, decals)
 
 
 def set_emissive_scale(iid: InstanceId, scale: float) -> None:

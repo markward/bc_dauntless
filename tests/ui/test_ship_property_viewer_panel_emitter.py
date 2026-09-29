@@ -6,6 +6,7 @@ pattern but for the (subsystem_index, emitter_index)-keyed emitter API.
 import json
 import math
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
+from engine.ui.spv_edit_targets import edit_target_for_key
 
 _DEFAULT_LIGHT_REGION = {
     "shape": "Sphere", "position": (0.0, 0.0, 0.0),
@@ -391,7 +392,7 @@ def test_rotate_target_is_emitter_for_strip_and_cone():
         p = _panel_with_subsystem(emitters=[_emitter_spec(kind)])
         _select_emitter(p)
         p.active_tool = "rotate"
-        assert p._rotate_target() == ("emitter", 0, 0)
+        assert p._rotate_edit_target().key == ("emitter", 0, 0)
 
 
 def test_rotate_ring_drag_rotates_cone_axis():
@@ -424,7 +425,7 @@ def test_point_emitter_rotate_is_inert_no_crash():
     p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
     _select_emitter(p)
     p.active_tool = "rotate"
-    assert p._rotate_target() is None            # point rotate inert
+    assert p._rotate_edit_target() is None            # point rotate inert
     assert p.rotate_gizmo() is None
     # A ring drag on a point emitter is a clean no-op (no crash, no mutation).
     p._begin_ring_drag(0, 0.0)
@@ -470,14 +471,14 @@ def test_emitter_and_light_rotate_readouts_are_independent():
 
     # Rotate the cone emitter's axis 90deg about +X.
     _select_emitter(p)
-    assert p._rotate_target() == ("emitter", 0, 0)
+    assert p._rotate_edit_target().key == ("emitter", 0, 0)
     p._begin_ring_drag(0, 0.0)
     p._apply_ring_drag_angle(math.radians(90.0))
 
     # The sibling light's degree readout must be untouched (still all zero) —
     # before the fix it showed the emitter's 90deg in X.
     assert p.dispatch_event('select_light:0') is True
-    assert p._rotate_target() == ("light", 0)
+    assert p._rotate_edit_target().key == ("light", 0)
     rv = p.rotate_values()
     assert rv is not None
     assert [f["value"] for f in rv["fields"]] == [0.0, 0.0, 0.0]
@@ -729,7 +730,7 @@ def test_scale_nudge_and_copy_paste_roundtrip_on_strip_emitter():
     assert p.dispatch_event("scale_copy") is True
     assert p._scale_clipboard == ("radius_length", (1.5, 2.0))
     # mutate then paste restores
-    p._set_scale_field(0, 3.0)
+    p._scale_edit_target().set_scale_field(0, 3.0)
     assert round(p._effective_emitter(0, 0)["radius"], 6) == 3.0
     assert p.dispatch_event("scale_paste") is True
     assert round(p._effective_emitter(0, 0)["radius"], 6) == 1.5
@@ -761,7 +762,7 @@ def test_rotate_paste_between_two_cone_emitters_keeps_list_dense():
         emitters=[_emitter_spec("cone"), _emitter_spec("cone")])
     _select_emitter(p, j=0)
     p.active_tool = "rotate"
-    p._rotate_axis(0, 90.0)              # (0,-1,0) about +X -> (0,0,-1)
+    p._rotate_edit_target().rotate_nudge(0, 90.0)              # (0,-1,0) about +X -> (0,0,-1)
     assert p.dispatch_event("rotate_copy") is True
     _select_emitter(p, j=1)
     assert p.dispatch_event("rotate_paste") is True
@@ -775,7 +776,7 @@ def test_rotate_mirror_negates_cone_emitter_axis_x():
     p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
     _select_emitter(p)
     p.active_tool = "rotate"
-    p._set_axis_absolute(("emitter", 0, 0), (0.6, -0.8, 0.0))
+    edit_target_for_key(p, ("emitter", 0, 0)).set_axis_absolute((0.6, -0.8, 0.0))
     assert p.dispatch_event("rotate_mirror") is True
     ax = p._effective_emitter(0, 0)["axis"]
     assert abs(ax[0] - (-0.6)) < 1e-6
@@ -808,7 +809,7 @@ def test_cylinder_light_axis_pastes_onto_strip_emitter_cross_kind():
     p._descriptors[0]["light_region"] = _cylinder_light_region()
     p.active_tool = "rotate"
     assert p.dispatch_event("select_light:0") is True
-    p._rotate_axis(0, 90.0)               # cylinder axis (0,-1,0) -> (0,0,-1)
+    p._rotate_edit_target().rotate_nudge(0, 90.0)               # cylinder axis (0,-1,0) -> (0,0,-1)
     assert p.dispatch_event("rotate_copy") is True
     assert p._rotate_clipboard[0] == "cylinder_axis"
     _select_emitter(p)
@@ -867,9 +868,9 @@ def test_set_scale_field_cone_writes_the_three_fields_whole_list():
                   _cone_with_orientation((0.0, -1.0, 0.0), (1.0, 0.0, 0.0))])
     _select_emitter(p, j=1)
     p.active_tool = "scale"
-    p._set_scale_field(0, 3.0)   # Radius X -> radius
-    p._set_scale_field(1, 4.0)   # Radius Y -> radius_y
-    p._set_scale_field(2, 5.0)   # Length   -> length
+    p._scale_edit_target().set_scale_field(0, 3.0)   # Radius X -> radius
+    p._scale_edit_target().set_scale_field(1, 4.0)   # Radius Y -> radius_y
+    p._scale_edit_target().set_scale_field(2, 5.0)   # Length   -> length
     specs = p._effective_emitters(0)
     assert [s["kind"] for s in specs] == ["point", "cone"]
     assert specs[1]["radius"] == 3.0
@@ -947,11 +948,11 @@ def test_rotate_ring_drag_cone_rotates_axis_and_up_orthonormal():
 
 
 def test_rotate_axis_nudge_cone_rotates_axis_and_up():
-    # The nudge sibling (_rotate_axis) also rotates both forward and up.
+    # The nudge sibling (rotate_nudge) also rotates both forward and up.
     p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
     _select_emitter(p)
     p.active_tool = "rotate"
-    p._rotate_axis(2, 90.0)                   # about +Z
+    p._rotate_edit_target().rotate_nudge(2, 90.0)                   # about +Z
     spec = p._effective_emitter(0, 0)
     ax, up = spec["axis"], spec["up"]
     assert abs(ax[0] - 1.0) < 1e-6
@@ -964,7 +965,7 @@ def test_rotate_copy_paste_roundtrips_cone_orientation():
         emitters=[_emitter_spec("cone"), _emitter_spec("cone")])
     _select_emitter(p, j=0)
     p.active_tool = "rotate"
-    p._rotate_axis(2, 90.0)                   # j=0 -> axis (1,0,0), up (0,1,0)
+    p._rotate_edit_target().rotate_nudge(2, 90.0)                   # j=0 -> axis (1,0,0), up (0,1,0)
     src = p._effective_emitter(0, 0)
     assert p.dispatch_event("rotate_copy") is True
     assert p._rotate_clipboard[0] == "cone_orientation"
@@ -1025,9 +1026,9 @@ def test_scale_copy_paste_roundtrip_cone_three_fields():
     p.active_tool = "scale"
     assert p.dispatch_event("scale_copy") is True
     assert p._scale_clipboard == ("radius_xy_length", (1.5, 0.75, 3.0))
-    p._set_scale_field(0, 9.0)
-    p._set_scale_field(1, 9.0)
-    p._set_scale_field(2, 9.0)
+    p._scale_edit_target().set_scale_field(0, 9.0)
+    p._scale_edit_target().set_scale_field(1, 9.0)
+    p._scale_edit_target().set_scale_field(2, 9.0)
     assert p.dispatch_event("scale_paste") is True
     spec = p._effective_emitter(0, 0)
     assert round(spec["radius"], 6) == 1.5

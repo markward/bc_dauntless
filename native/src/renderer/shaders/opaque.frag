@@ -111,6 +111,63 @@ uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal ta
 uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
 uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
 
+// ── Hull-name decals (docs/superpowers/specs/2026-09-28-hull-name-decals-design.md,
+//    per-model list: 2026-09-28-spv-decal-editing-design.md §2.4/§2.4a) ──
+// Up to 16 projectors (placements) project registry masks onto the hull in
+// ship-body space, composited in list order. They share up to four distinct
+// masks (mask SLOTS, units 8..11); u_decal_slot[i] says which one projector
+// i samples. Each mask's RGB is PREMULTIPLIED by alpha at load
+// (model_build.cc apply_decals), so each composite is base*(1-a) + m.rgb.
+// Paint is glossy on a matte hull: it gets its own specular term even when
+// the material has no specular map. Four NAMED samplers, not an array, picked
+// by an if-chain (sample_hull_decal_mask): GLSL 4.10 only indexes sampler
+// arrays with constant expressions.
+#define MAX_HULL_DECALS 16
+uniform sampler2D u_decal_mask0;          // units 8..11, clamp-to-edge sampler object
+uniform sampler2D u_decal_mask1;
+uniform sampler2D u_decal_mask2;
+uniform sampler2D u_decal_mask3;
+uniform int   u_hull_decal_count;         // model's decal list size, 0..16
+uniform int   u_decal_enabled_mask;       // bit i => decal i paints THIS mesh; 0 = none
+uniform mat4  u_decal_proj[MAX_HULL_DECALS];   // p_body -> (u, v, w); v = 0 is image row 0 (top)
+uniform vec3  u_decal_normal[MAX_HULL_DECALS]; // body-frame unit outward normal
+uniform float u_decal_depth[MAX_HULL_DECALS];  // |w| bound, model units
+uniform int   u_decal_slot[MAX_HULL_DECALS];   // mask slot 0..3 = u_decal_mask0..3
+const float kDecalPaintSpecular = 0.8;
+
+// Sample mask slot `slot` with explicit gradients. textureGrad, not texture:
+// this runs in non-uniform control flow, where implicit derivatives are
+// undefined -- the gradients come from derivatives taken outside it.
+vec4 sample_hull_decal_mask(int slot, vec2 uv, vec2 gx, vec2 gy) {
+    if (slot == 0) return textureGrad(u_decal_mask0, uv, gx, gy);
+    if (slot == 1) return textureGrad(u_decal_mask1, uv, gx, gy);
+    if (slot == 2) return textureGrad(u_decal_mask2, uv, gx, gy);
+    return textureGrad(u_decal_mask3, uv, gx, gy);
+}
+
+// Composite hull decal `i` over the running albedo, and fold it into the
+// running decal coverage (cover_a, premultiplied cover_rgb) the glow
+// composite and paint specular read later. Both use the associative "over"
+// operator, so N decals in order equal one decal of the combined coverage --
+// and a single decal reproduces the pre-list math exactly (cover_a == m.a,
+// cover_rgb == m.rgb). dpdx/dpdy are p_body's screen derivatives, taken by
+// the caller OUTSIDE all branches.
+void apply_hull_decal(int i, vec3 p_body, vec3 n_body,
+                      vec3 dpdx, vec3 dpdy, inout vec3 base_rgb,
+                      inout float cover_a, inout vec3 cover_rgb) {
+    if (((u_decal_enabled_mask >> i) & 1) == 0) return;
+    vec4 q = u_decal_proj[i] * vec4(p_body, 1.0);
+    if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0 &&
+        abs(q.z) <= u_decal_depth[i] && dot(n_body, u_decal_normal[i]) > 0.0) {
+        vec2 gx = (mat3(u_decal_proj[i]) * dpdx).xy;
+        vec2 gy = (mat3(u_decal_proj[i]) * dpdy).xy;
+        vec4 m = sample_hull_decal_mask(u_decal_slot[i], q.xy, gx, gy);
+        base_rgb  = base_rgb  * (1.0 - m.a) + m.rgb;
+        cover_rgb = cover_rgb * (1.0 - m.a) + m.rgb;
+        cover_a   = cover_a   * (1.0 - m.a) + m.a;
+    }
+}
+
 // ── Collision scuffs (class 2): a splatted normal map, pre-lighting ───────
 // Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §4
 // Each scuff is a patch of ONE tiling crumpled-sheet-metal normal map
@@ -1127,7 +1184,28 @@ void main() {
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
     // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
+    // Decal-mask gradients: taken OUTSIDE any branch (derivatives are
+    // undefined in non-uniform control flow), used by textureGrad below.
+    vec3 dpdx_d = dFdx(p_body);
+    vec3 dpdy_d = dFdy(p_body);
     vec4 base = texture(u_base_color, v_uv);
+
+    // Hull-name decals: replace albedo under each mask, in list order
+    // (premultiplied RGB). decal_a / decal_premult_rgb are the combined
+    // coverage, kept alive for the glow-map composite below (the letters must
+    // black out an emissive window band the same way they black out the
+    // albedo, and colour the glow when the mask itself carries colour) and
+    // the paint specular -- see
+    // docs/superpowers/specs/2026-09-28-hull-name-decals-design.md.
+    float decal_a = 0.0;
+    vec3 decal_premult_rgb = vec3(0.0);
+    if (u_decal_enabled_mask != 0) {
+        for (int i = 0; i < MAX_HULL_DECALS; ++i) {
+            if (i >= u_hull_decal_count) break;
+            apply_hull_decal(i, p_body, n_body, dpdx_d, dpdy_d,
+                             base.rgb, decal_a, decal_premult_rgb);
+        }
+    }
 
     // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
     // Must run before the Toksvig spec_ft line below and before any lighting
@@ -1175,16 +1253,21 @@ void main() {
 
     vec3 lit_dir  = vec3(0.0);
     vec3 spec_acc = vec3(0.0);
+    // Paint sheen under a hull-name decal: same lobe as spec_acc, but
+    // accumulated whenever the mask covers this fragment -- independent of
+    // u_specular_enabled and of the material having a specular map.
+    vec3 paint_spec_acc = vec3(0.0);
     for (int i = 0; i < u_dir_light_count; ++i) {
         vec3 L  = normalize(u_dir_light_dir_ws[i]);
         float nl = max(dot(n_shade, L), 0.0);
         float sf = (i == 0) ? sun_sf : 1.0;   // sun-only shadow
         lit_dir += sf * nl * u_dir_light_color[i];
 
-        if (u_specular_enabled != 0) {
+        if (u_specular_enabled != 0 || decal_a > 0.0) {
             vec3 H = normalize(L + V);
             float s = pow(max(dot(n_shade, H), 0.0), spec_power) * spec_norm * step(0.0, nl);
-            spec_acc += sf * s * u_dir_light_color[i];
+            if (u_specular_enabled != 0) spec_acc += sf * s * u_dir_light_color[i];
+            if (decal_a > 0.0) paint_spec_acc += sf * s * u_dir_light_color[i];
         }
     }
 
@@ -1266,10 +1349,11 @@ void main() {
 
         lit_dyn += att * nl * u_dyn_light_color[i];
 
-        if (u_specular_enabled != 0) {
+        if (u_specular_enabled != 0 || decal_a > 0.0) {
             vec3 H = normalize(L + V);
             float s = pow(max(dot(n_shade, H), 0.0), spec_power) * spec_norm * step(0.0, nl);
-            spec_acc += att * s * u_dyn_light_color[i];
+            if (u_specular_enabled != 0) spec_acc += att * s * u_dyn_light_color[i];
+            if (decal_a > 0.0) paint_spec_acc += att * s * u_dyn_light_color[i];
         }
     }
 
@@ -1317,10 +1401,23 @@ void main() {
     }
 
     vec4 glow = texture(u_glow_map, v_uv);
+    // The hull-name decals override the SAME texture's RGB wherever it is
+    // sampled, not just the albedo fetch: BC's _glow textures are one image
+    // (RGB = albedo, alpha = the emissive mask), so a letter painted into
+    // that texture would replace RGB under both terms and leave alpha (the
+    // "is this pixel lit" map) alone. Composite with the identical
+    // combined premultiplied coverage as the albedo composite above (one
+    // decal: exactly its m.rgb/m.a), BEFORE any
+    // further processing (hue rotation) of glow.rgb, so the lettering's
+    // colour passes through the same pipeline as the hull's own glow.
+    // decal_a == 0 (no decal on this material/fragment) leaves this an
+    // exact no-op: glow.rgb*(1-0) + 0 == glow.rgb.
+    glow.rgb = glow.rgb * (1.0 - decal_a) + decal_premult_rgb;
     float gf = clamp(glow_flicker, 0.0, FLICKER_MAX);
     vec3 spec = (u_specular_enabled != 0)
         ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
         : vec3(0.0);
+    spec += decal_a * kDecalPaintSpecular * paint_spec_acc;
 
     vec3 rim = vec3(0.0);
     if (u_rim_strength > 0.0) {

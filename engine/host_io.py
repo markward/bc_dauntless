@@ -47,7 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
-    "model_nodes",
+    "model_nodes", "set_instance_decals",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
@@ -383,6 +383,16 @@ def model_nodes(instance_id: int) -> List[dict]:
     if _h is None:
         return []
     return _h.model_nodes(instance_id)
+
+
+def set_instance_decals(instance_id, decals) -> None:
+    """The SPV's live decal preview: replace this instance's baked hull
+    decals for drawing with `decals` (load_model-shaped entries, body frame,
+    at most 4; [] draws none), or None to restore the baked list. No-op when
+    headless."""
+    if _h is None:
+        return
+    _h.set_instance_decals(instance_id, decals)
 
 
 def hull_split_detached(instance_id: int, min_cells: int) -> list:

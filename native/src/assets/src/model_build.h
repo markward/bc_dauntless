@@ -27,6 +27,10 @@ struct ModelBuildContext {
     /// Empty for the overwhelming majority of models; an empty list makes
     /// build_model byte-identical to the no-replacement path.
     std::vector<TextureReplacement>     texture_replacements;
+    /// Hull-name decal placements (see DecalRequest, model.h). Empty for the
+    /// overwhelming majority of models; an empty list makes build_model
+    /// byte-identical to the no-decal path.
+    std::vector<DecalRequest>           decals;
     /// Optional sink for each Model::textures entry's AUTHORED source basename
     /// ("body.tga", "head.tga", …), sized to model.textures.size(). Entries the
     /// loader synthesized rather than read from a NiImage (sibling _specular /
@@ -54,5 +58,33 @@ bool filename_is_normal(std::string_view fname);
 std::string sibling_normal_filename(std::string_view fname);
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx);
+
+/// True if `u_axis`, `v_axis` and `normal` don't span a usable 3D basis
+/// (decal_body_to_mask would produce inf/NaN). Shared by apply_decals and
+/// build_decal_override (decal_override.h) so both reject the same inputs.
+bool decal_projector_is_degenerate(
+    const glm::vec3& u_axis, const glm::vec3& v_axis, const glm::vec3& normal);
+
+/// Premultiply an RGBA8 hull-decal mask's RGB by its alpha in place (spec §2:
+/// opaque.frag composites base*(1-a) + mask.rgb). RGB8 / R8 are untouched --
+/// implicit alpha 1. The ONE premultiply both the baked path (apply_decals)
+/// and the per-instance mask cache (DecalMaskCache) use.
+void premultiply_decal_mask(Image& image);
+
+/// The dedupe key for a hull-decal mask path (spec §2.4a: masks dedupe by
+/// resolved absolute path): weakly_canonical when the filesystem can answer,
+/// else absolute + lexically_normal. Two spellings of one file ("m.png",
+/// "./m.png") share a key, so they share a mask slot. Shared by apply_decals
+/// and build_decal_override. Never throws.
+std::string decal_mask_key(const std::filesystem::path& mask);
+
+/// Build the ship-body-frame -> mask-space affine transform for a hull-name
+/// decal: `origin` maps to mask (0,0,0), `origin+u_axis` to (1,0,0),
+/// `origin+v_axis` to (0,1,0), and a point `depth` units along the unit
+/// normal from the rectangle's plane to (0,0,depth). Exposed for direct
+/// testing; callers must have already rejected a degenerate basis
+/// (|u_axis x v_axis| < 1e-9) -- this function does not check.
+glm::mat4 decal_body_to_mask(const glm::vec3& origin, const glm::vec3& u_axis,
+                             const glm::vec3& v_axis, const glm::vec3& normal);
 
 }  // namespace assets::detail

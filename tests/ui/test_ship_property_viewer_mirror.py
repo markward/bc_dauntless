@@ -8,6 +8,7 @@ monkeypatch pattern.
 import pytest
 
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
+from engine.ui.spv_edit_targets import edit_target_for_key
 
 _DEFAULT_LIGHT_REGION = {
     "shape": "Sphere", "position": (0.0, 0.0, 0.0),
@@ -84,7 +85,7 @@ def test_mirror_element_flips_strip_emitter_axis_x(spv_panel):
     # give subsystem 0 a strip emitter with a known axis
     p.dispatch_event('add_emitter:{"i":0,"kind":"strip"}')
     i, j = p._selected_emitter
-    p._set_axis_absolute(("emitter", i, j), (0.6, 0.8, 0.0))
+    edit_target_for_key(p, ("emitter", i, j)).set_axis_absolute((0.6, 0.8, 0.0))
     p.dispatch_event("mirror_element")
     spec = p._effective_emitter(i, j)
     ax = spec["axis"]

@@ -8,7 +8,7 @@ from __future__ import annotations
 import importlib
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Optional
 
 import os as _os_mod
@@ -2467,6 +2467,37 @@ DEFAULT_DIRECTIONALS: list = [
 _WARP_LIGHT_KEY: tuple = (0.7, 0.9, 1.6)      # cool blue-white, from ahead
 _WARP_LIGHT_FILL: tuple = (0.12, 0.16, 0.30)  # dim cool, from behind
 _WARP_LIGHT_AMBIENT: tuple = (0.05, 0.07, 0.13)
+
+# Ship Property Viewer fill light (dev-only). In hull-texture mode the side of
+# the ship facing away from the system's sun was near black: only ambient
+# reaches it, and the directional-ambient gradient (0.8) leaves that face 20%
+# of ambient. While the SPV is open, a fill directional is added from the
+# ANTI-key direction at this fraction of the brightest key's colour (the warp
+# rig's key + back-fill pattern). A fill rather than a bigger ambient because
+# the gradient multiplies ambient too: an ambient big enough to read the dark
+# face would blow out the lit one. The fill also halves the gradient's
+# coherence, softening it only while the SPV is up. Mark tunes this live.
+SPV_FILL_STRENGTH: float = 0.45
+
+
+def _spv_frame_lighting(ambient, directionals, spv_open):
+    """(ambient, directionals) for this frame. Closed: the inputs, returned
+    as they are, so in-game lighting is untouched. Open: plus a fill from
+    the anti-key direction (see SPV_FILL_STRENGTH), within the 4-light cap."""
+    if not spv_open or not directionals:
+        return ambient, directionals
+
+    def _lum(c):
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    (kx, ky, kz), kcol = max(directionals, key=lambda d: _lum(d[1]))
+    m = (kx * kx + ky * ky + kz * kz) ** 0.5
+    if m < 1e-9:
+        return ambient, directionals
+    fill = ((-kx / m, -ky / m, -kz / m),
+            tuple(SPV_FILL_STRENGTH * c for c in kcol))
+    return ambient, list(directionals)[:3] + [fill]
+
 
 # Galaxy-map units/sec the procedural-sky vantage flies forward during transit.
 # Galaxy systems sit ~50-260 units apart, so ~15 u/s over a 10-20s transit
@@ -5116,12 +5147,16 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     return handle, extent, sphere_radius
 
 
-def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
-    """Return absolute path to the ship's high-LOD NIF, or None if not found.
+def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
+    """`ship`'s script's `GetShipStats()` dict, or None on any fault (empty
+    script, import failure, missing/non-callable GetShipStats, non-dict
+    return). Shared by `_ship_nif_path` (resolves the absolute NIF) and
+    `declared_model_dir` (needs only the DECLARED, still-relative path) so
+    both use the identical script lookup.
 
-    When verbose is True, prints the specific reason for any None return
-    (script lookup, import, stats access, file-not-found) so the host's
-    diagnostic mode can surface why ships aren't getting render instances.
+    When verbose is True, prints the specific reason for any None return so
+    the host's diagnostic mode can surface why ships aren't getting render
+    instances.
     """
     try:
         script_name = ship.GetScript()
@@ -5149,10 +5184,23 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
         if verbose:
             print(f"[host_loop]   skip: {script_name}.GetShipStats() returned non-dict: {type(stats).__name__}", flush=True)
         return None
+    return stats
+
+
+def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
+    """Return absolute path to the ship's high-LOD NIF, or None if not found.
+
+    When verbose is True, prints the specific reason for any None return
+    (script lookup, import, stats access, file-not-found) so the host's
+    diagnostic mode can surface why ships aren't getting render instances.
+    """
+    stats = _ship_stats(ship, verbose=verbose)
+    if stats is None:
+        return None
     rel = stats.get("FilenameHigh")
     if not rel:
         if verbose:
-            print(f"[host_loop]   skip: {script_name}.GetShipStats() missing 'FilenameHigh' (keys: {list(stats.keys())})", flush=True)
+            print(f"[host_loop]   skip: GetShipStats() missing 'FilenameHigh' (keys: {list(stats.keys())})", flush=True)
         return None
     abs_path = _paths.game_asset(rel)
     if not abs_path.is_file():
@@ -5160,6 +5208,48 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
             print(f"[host_loop]   skip: NIF file not found at {abs_path}", flush=True)
         return None
     return str(abs_path)
+
+
+def declared_model_dir(ship) -> Optional[str]:
+    """The BC-relative dirname of `ship`'s DECLARED high-LOD model
+    (`GetShipStats()["FilenameHigh"]`), e.g.
+    "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif" -> "data/Models/Ships/BirdOfPrey".
+
+    Used to resolve a class's `Masks/` folder for hull decals beside the
+    path the ship SCRIPT declares, rather than `_ship_nif_path`'s resolved
+    absolute path -- a mod-supplied model can resolve outside `game_root()`
+    entirely (no `.relative_to(game_root())` is possible for it), but its
+    declared `FilenameHigh` string is still BC-relative and posix. Never
+    raises; any fault in the script lookup (see `_ship_stats`) or a missing
+    'FilenameHigh' returns None.
+    """
+    rel = declared_model_rel(ship)
+    if rel is None:
+        return None
+    try:
+        return PurePosixPath(rel).parent.as_posix()
+    except Exception:
+        return None
+
+
+def declared_model_rel(ship) -> Optional[str]:
+    """`ship`'s DECLARED high-LOD model file (`GetShipStats()["FilenameHigh"]`)
+    as a posix, game-root-relative path, e.g.
+    "data/Models/Ships/BirdOfPrey/BirdOfPrey.nif" -- what the SPV Decals pane
+    hands `decals_writer.decals_target_path` (which needs the FILE: a mod
+    owns a class only if it supplies the model itself). Backslashes (a
+    Windows-authored script) become forward slashes. Never raises; None on
+    any script-lookup fault or a missing 'FilenameHigh'."""
+    stats = _ship_stats(ship)
+    if stats is None:
+        return None
+    rel = stats.get("FilenameHigh")
+    if not rel:
+        return None
+    try:
+        return str(rel).replace("\\", "/")
+    except Exception:
+        return None
 
 
 # BC texture-detail tier subfolder. The original engine's texture-directory
@@ -5272,14 +5362,75 @@ def _ship_texture_replacements(ship):
     return reps or None
 
 
-def _ship_load_key(nif_path, reps):
+# nif_path values already warned about (Exception, not the routine
+# unresolvable-declared-model-dir case below) this process lifetime -- a
+# ship that keeps reloading every frame must not spam stderr.
+_ship_decals_warned: set = set()
+
+
+def _ship_decals(ship, nif_path, reps):
+    """Registry-mask decal list for a ship's model load
+    (`hull_decals.decals_for`), or `[]` when `ship`'s declared model path
+    can't be resolved (`declared_model_dir`), no registry was queued
+    (neither an "ID" swap nor a `decals.json` `default_registry`), or
+    anything else about resolving the decal list fails. This must never
+    abort `realize_set_objects`' loop over every other ship in the set --
+    `hull_decals.decals_for` already catches its own faults (spec S5), but
+    this is the backstop for anything it doesn't (a future regression
+    inside it, or in `declared_model_dir` / `resolve_registry` here).
+
+    `nif_path` is kept only as the warn-once dedupe key; the decal
+    resolution itself uses `declared_model_dir(ship)`, not `nif_path` --
+    see that function's docstring for why (mod-model NIFs resolve outside
+    `game_root()`, but the ship's DECLARED path is still BC-relative).
+
+    The `decals.json` doc is loaded once here (`hull_decals.load_decals_doc`)
+    so `resolve_registry` can see its optional `default_registry` before a
+    registry is known; `hull_decals.decals_for` re-reads the same file for
+    the placement list. The warn-once ledger means a parse/format fault
+    only ever prints once even though the file is read twice.
+    """
+    from engine.appc import hull_decals
+    try:
+        nif_rel_dir = declared_model_dir(ship)
+        if nif_rel_dir is None:
+            return []
+        doc = hull_decals.load_decals_doc(nif_rel_dir)
+        registry = hull_decals.resolve_registry(reps or [], doc)
+        return hull_decals.decals_for(nif_rel_dir, registry)
+    except Exception as e:
+        if nif_path not in _ship_decals_warned:
+            _ship_decals_warned.add(nif_path)
+            print(f"[host_loop] _ship_decals({nif_path!r}) raised "
+                  f"{type(e).__name__}: {e}; skipping decals", flush=True)
+        return []
+
+
+def _ship_load_key(nif_path, reps, decals=None):
     """Model-cache key for a ship load. Bare NIF path when no registry swap
-    (byte-identical to the legacy key, so non-fed ships + planets are
-    unaffected); NIF path + a stable registry suffix otherwise, so two hulls of
-    the same class with DIFFERENT registries don't collapse onto one handle."""
-    if not reps:
-        return nif_path
-    return nif_path + "|" + ";".join(f"{old}={new}" for old, new in reps)
+    and no decals (byte-identical to the legacy key, so non-fed ships +
+    planets are unaffected); NIF path + a stable registry suffix otherwise,
+    so two hulls of the same class with DIFFERENT registries don't collapse
+    onto one handle.
+
+    With decals the key becomes a hashable tuple `(str_key, "decals",
+    specs)` carrying EVERY element of every spec -- shape, origin, axes,
+    normal, depth AND mask path, floats included -- not just the mask.
+    `HostController.nif_to_handle` survives mission swaps, so a key blind to
+    geometry would hand a ship reloaded after an SPV placement edit + save
+    the stale handle with the OLD placement baked in (SPV decal-editing
+    spec S3: "on the ship's next load, the baked list matches"). The native
+    AssetCache key folds the same geometry in (cache.cc decals_key).
+    """
+    key = nif_path
+    if reps:
+        key += "|" + ";".join(f"{old}={new}" for old, new in reps)
+    if decals:
+        return (key, "decals",
+                tuple(tuple(tuple(e) if isinstance(e, (list, tuple)) else e
+                            for e in spec)
+                      for spec in decals))
+    return key
 
 
 def _resolve_active_set(player):
@@ -5755,8 +5906,10 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
             continue
         tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
+        decals = _ship_decals(ship, nif_path, reps)
         try:
-            handle = r_.load_model(nif_path, tex_search, reps)
+            handle = r_.load_model(nif_path, tex_search, reps,
+                                    decals=decals or None)
         except Exception as e:
             if verbose:
                 print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
@@ -6443,7 +6596,8 @@ class HostController:
     def __init__(self) -> None:
         self.renderer: Any = None
         self.loader: Any = None
-        self.nif_to_handle: dict[str, int] = {}
+        # Keys: a NIF path, or _ship_load_key's tuple for a decaled ship.
+        self.nif_to_handle: dict[Any, int] = {}
         # Outer model-space extent per NIF path; survives mission swaps so
         # repeated loads of the same ship don't re-query model_aabb.
         self.nif_to_extent: dict[str, float] = {}
@@ -6491,6 +6645,11 @@ class HostController:
         # Set by the host loop after PanelRegistry is constructed so that
         # _drain_pending_swap can invalidate all panel caches on swap.
         self.panel_registry: Any = None
+        # Zero-arg callables run at the START of _drain_pending_swap, before
+        # the outgoing session (and its renderer instances) is torn down --
+        # e.g. the SPV dropping its live decal override while the instance
+        # it is keyed on still exists. A raising hook is logged, never fatal.
+        self.pre_swap_hooks: list = []
 
     def swap_mission(self, mission_name: str) -> None:
         self.pending_swap = mission_name
@@ -6500,6 +6659,12 @@ class HostController:
             return
         name = self.pending_swap
         self.pending_swap = None
+        for hook in list(self.pre_swap_hooks):
+            try:
+                hook()
+            except Exception as e:
+                print(f"[host] pre-swap hook {hook!r} raised "
+                      f"{type(e).__name__}: {e}", flush=True)
         if self.session is not None:
             self.session.teardown(self.renderer)
         from engine.appc import ship_lifecycle
@@ -6819,11 +6984,13 @@ class _MissionLoader:
             # is pure geometry — identical across registries — so it stays keyed
             # by nif_path.
             reps = _ship_texture_replacements(ship)
-            load_key = _ship_load_key(nif_path, reps)
+            decals = _ship_decals(ship, nif_path, reps)
+            load_key = _ship_load_key(nif_path, reps, decals)
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
-                    handle = r_.load_model(nif_path, tex_search, reps)
+                    handle = r_.load_model(nif_path, tex_search, reps,
+                                            decals=decals or None)
                 except Exception as e:
                     if self._verbose:
                         print(f"[host_loop]   skip ship: load_model({nif_path}) raised: "
@@ -9495,7 +9662,12 @@ def run(mission_name: Optional[str] = None,
                 on_regions_saved=lambda ship, regions: refresh_ship_glow(
                     controller.session, ship, regions),
                 iid_getter=_spv_player_iid,
+                # Decals pane: where the class's Masks/ lives and a Save routes.
+                model_rel_getter=declared_model_rel,
             )
+            # The Decals pane's live override is keyed on the player's
+            # instance; drop it before a swap destroys that instance.
+            controller.pre_swap_hooks.append(ship_property_viewer.on_mission_swap)
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,
             )
@@ -11437,6 +11609,9 @@ def run(mission_name: Optional[str] = None,
                                  f.color[2] * f.intensity)) for f in flashes]
                     keep = max(0, 4 - len(thunder))
                     directionals = list(directionals)[:keep] + thunder[:4]
+            # Dev-only SPV fill; a no-op (same objects) when it is closed.
+            ambient, directionals = _spv_frame_lighting(
+                ambient, directionals, _spv_open)
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()

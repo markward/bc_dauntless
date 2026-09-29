@@ -613,6 +613,30 @@ def replacements() -> ModIndex:
     return index
 
 
+def invalidate_replacements() -> None:
+    """Drop the cached replacements index; the next replacements() rescans.
+
+    For a writer that has just CREATED a file under replacements_root() (the
+    SPV's first decals.json save for a class): without this, paths.game_asset
+    keeps answering from the index built before the file existed."""
+    global _REPLACEMENTS
+    _REPLACEMENTS = None
+
+
+def register_game_file(raw_rel, abs_path: Path, mod_name: str) -> None:
+    """Add one just-written game-target file to the configured mod index.
+
+    The mod-index counterpart of invalidate_replacements(): rebuilding the
+    whole index means re-walking every installed mod, but a writer that has
+    just created `abs_path` inside mod `mod_name` knows exactly which entry
+    is missing. An existing entry for the same path is replaced."""
+    raw_rel = str(raw_rel).replace("\\", "/").strip("/")
+    current().files[fold(raw_rel)] = ModFile(
+        abs_path=Path(abs_path), mod_name=mod_name,
+        target="game",  # paths-guard: kind label
+        rel=fold(raw_rel), raw_rel=raw_rel)
+
+
 def game_override(rel) -> Optional[Path]:
     """The replacement or mod file for a game-root-relative path, or None."""
     hit = replacements().lookup(rel) or current().lookup(rel)

@@ -27,7 +27,7 @@ class _CaptureRenderer:
         self._next = 1
         self.searches = []
 
-    def load_model(self, path, search, texture_replacements=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None):
         self.searches.append(list(search))
         return 100
 

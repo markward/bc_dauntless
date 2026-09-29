@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -50,6 +52,21 @@ public:
     int material_index() const noexcept { return material_index_; }
     int node_index() const noexcept { return node_index_; }
 
+    /// Source NiTriShape name (`av.obj.name`) this mesh was built from, set
+    /// by build_model; empty for meshes built any other way (upload_mesh
+    /// callers, composed officer heads). Hull decals restrict themselves to a
+    /// shape by this name -- see Model::decals.
+    const std::string& shape_name() const noexcept { return shape_name_; }
+    void set_shape_name(std::string name) { shape_name_ = std::move(name); }
+
+    /// Per-mesh hull-decal enable mask: bit i => Model::decals[i] may paint
+    /// this mesh. Defaults to all sixteen bits (kMaxDecals); build_model
+    /// clears bit i on every mesh whose shape_name() differs from decal i's
+    /// `shape` (when that decal names one). The renderer ANDs it with the
+    /// decals whose mask slot is bound.
+    std::uint16_t decal_mask() const noexcept { return decal_mask_; }
+    void set_decal_mask(std::uint16_t mask) noexcept { decal_mask_ = mask; }
+
     const std::optional<MeshCpu>& cpu_data() const noexcept { return cpu_data_; }
     void set_cpu_data(MeshCpu data) { cpu_data_ = std::move(data); }
 
@@ -63,6 +80,8 @@ private:
     std::uint32_t index_count_ = 0;
     int material_index_ = -1;
     int node_index_ = -1;
+    std::string shape_name_;
+    std::uint16_t decal_mask_ = 0xFFFF;
     std::optional<MeshCpu> cpu_data_;
     std::vector<Mesh> lod_chain_;
 };

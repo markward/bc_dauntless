@@ -33,8 +33,8 @@ unsigned int ensure_scuff_normal_texture() {
     if (g_tried) return g_id;
     g_tried = true;
 
-    // TGA, not PNG: the asset decoder is built STBI_ONLY_TGA (BC content is
-    // all TGA) and its header sniff refuses a PNG as "indexed".
+    // TGA, decoded with decode_tga. PNG would also work now through
+    // assets::decode_image (decode_tga alone refuses a PNG as "indexed").
     const std::string resolved = project_asset_path("textures/scuff_normal.tga");
     std::vector<std::uint8_t> bytes;
     if (!read_file(resolved, bytes)) {

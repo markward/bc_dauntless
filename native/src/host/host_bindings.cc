@@ -90,6 +90,8 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
+#include <assets/decal_override.h>
+#include <assets/mesh_fix.h>
 #include <assets/model_compose.h>
 #include <assets/texture.h>
 #include <nif/file.h>
@@ -475,6 +477,10 @@ struct LoadedModel {
 };
 
 std::unique_ptr<assets::AssetCache> g_cache;
+// Hull-decal mask textures for set_instance_decals overrides, loaded once per
+// path. Owns GL textures: cleared in shutdown() while the context is current
+// (after every override that borrows its ids is dropped), and again in init().
+assets::DecalMaskCache g_decal_mask_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
 
 // Bridge-node animation store: the active non-skinned node clips (doors, chairs).
@@ -506,10 +512,44 @@ std::unique_ptr<renderer::Pipeline> g_pipeline;
 // static destruction order which would run after the Window is gone.
 std::unique_ptr<renderer::FrameSubmitter> g_submitter;
 
+// Parse one Python decal entry -- a 7-sequence (shape, origin3, u_axis3,
+// v_axis3, normal3, depth, mask_path), exactly `hull_decals.DecalSpec` --
+// into a native DecalRequest. Returns false (leaving *out untouched) on
+// wrong arity or a non-numeric field; never throws. Mirrors model_build.cc's
+// apply_decals tolerance: a malformed entry must not stop a ship load
+// (spec S5), so the caller skips it and warns once instead of propagating
+// a TypeError out of load_model.
+bool parse_decal_request(const py::handle& item, assets::DecalRequest* out) {
+    try {
+        auto seq = item.cast<py::sequence>();
+        if (seq.size() != 7) return false;
+
+        auto parse_vec3 = [](py::handle h) -> glm::vec3 {
+            auto v = h.cast<py::sequence>();
+            if (v.size() != 3) throw std::runtime_error("decal vector arity");
+            return glm::vec3(v[0].cast<float>(), v[1].cast<float>(), v[2].cast<float>());
+        };
+
+        assets::DecalRequest req;
+        req.shape  = seq[0].cast<std::string>();
+        req.origin = parse_vec3(seq[1]);
+        req.u_axis = parse_vec3(seq[2]);
+        req.v_axis = parse_vec3(seq[3]);
+        req.normal = parse_vec3(seq[4]);
+        req.depth  = seq[5].cast<float>();
+        req.mask   = seq[6].cast<std::string>();
+        *out = std::move(req);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 scenegraph::ModelHandle load_model_impl(
     const std::string& nif_path,
     const py::object& texture_search_path,
-    const py::object& texture_replacements) {
+    const py::object& texture_replacements,
+    const py::object& decals) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -542,10 +582,43 @@ scenegraph::ModelHandle load_model_impl(
         }
     }
 
-    // Dedupe by (nif_path, replacements): callers that load the same NIF +
-    // registry for multiple ships get the same handle and the underlying
-    // assets::AssetCache::load isn't even called a second time. Distinct
-    // registries on the same NIF correctly produce distinct handles.
+    // Hull-name decals: a list of 7-sequences (see parse_decal_request).
+    // Every entry is passed on and folded into the dedupe key below; the
+    // caps (16 placements, 4 distinct masks) are enforced by build_model.
+    // None / empty leaves the model byte-identical, same as replacements.
+    // Malformed entries are skipped (not thrown) and warned once, keyed by
+    // nif_path + index so a mission that reloads the same bad decal list
+    // every frame doesn't spam stderr.
+    static std::unordered_set<std::string> warned_malformed_decals;
+    std::vector<assets::DecalRequest> decal_requests;
+    if (!decals.is_none()) {
+        std::size_t index = 0;
+        for (auto item : decals) {
+            assets::DecalRequest req;
+            if (parse_decal_request(item, &req)) {
+                // Geometry included (lossless): an SPV placement edit keeps
+                // shape + mask, and must not dedupe onto the stale handle.
+                rep_key += "|decals:" + assets::decal_request_key(req);
+                decal_requests.push_back(std::move(req));
+            } else {
+                const std::string key = nif_path + "|decal-arg|" + std::to_string(index);
+                if (warned_malformed_decals.insert(key).second) {
+                    std::fprintf(stderr,
+                        "load_model: malformed decal entry %zu for %s "
+                        "(expected a 7-sequence of shape, origin, u_axis, "
+                        "v_axis, normal, depth, mask_path); skipping\n",
+                        index, nif_path.c_str());
+                }
+            }
+            ++index;
+        }
+    }
+
+    // Dedupe by (nif_path, replacements, decals): callers that load the same
+    // NIF + registry + decal set for multiple ships get the same handle and
+    // the underlying assets::AssetCache::load isn't even called a second
+    // time. Distinct registries or decal sets on the same NIF correctly
+    // produce distinct handles.
     std::filesystem::path canonical = nif_path;
     for (std::size_t i = 0; i < g_loaded_models.size(); ++i) {
         if (g_loaded_models[i].nif_path == canonical &&
@@ -559,9 +632,16 @@ scenegraph::ModelHandle load_model_impl(
         // Without retention every Mesh::cpu_data() returns nullopt and the
         // shield bubble collapses to zero size.
         cfg.keep_cpu_data = true;
+        // Resolved at EACH load, not captured here: the project asset root
+        // is set once at boot (host_loop), after this cache may already
+        // exist for tests, so a lambda -- not a stored path -- keeps this
+        // live if that ever changes.
+        cfg.mesh_fix_dir = [] {
+            return std::filesystem::path(renderer::project_asset_root()) / "mesh_fixes";
+        };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -657,6 +737,11 @@ void reset_frame_state() {
     // binding like any other and can be called with the host down, so zero it
     // here with the rest.
     renderer::letterbox::set_covered(0.0f);
+
+    // Per-instance decal overrides (set_instance_decals). Keyed by full
+    // InstanceId and borrowing g_decal_mask_cache's texture ids: a new
+    // session's world recycles ids from scratch, so none may survive.
+    renderer::clear_instance_decal_overrides();
 }
 
 void init(int width, int height, const std::string& title) {
@@ -678,6 +763,8 @@ void init(int width, int height, const std::string& title) {
     g_bridge_node_ids.clear();
     // Everything frame() consumes and Python can push: see reset_frame_state().
     reset_frame_state();
+    // Empty after any shutdown(); cleared here too so the two ends agree.
+    g_decal_mask_cache.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
@@ -741,6 +828,13 @@ void shutdown() {
     renderer::reset_damage_decal_texture();
     // Same hazard for the collision-scuff normal map (renderer/scuff_texture.h).
     renderer::reset_scuff_normal_texture();
+    // And for the hull-name decal masks' shared clamp sampler (units 8-11,
+    // frame.cc).
+    renderer::reset_decal_mask_sampler();
+    // set_instance_decals masks: drop the overrides that borrow their ids
+    // first, then release the textures while this context is current.
+    renderer::clear_instance_decal_overrides();
+    g_decal_mask_cache.clear();
     g_loaded_models.clear();
     // Handle-recycling hazard: see the matching call in init(). Pure CPU
     // state (no GL), safe regardless of context currency.
@@ -1769,6 +1863,112 @@ py::object parse_set_camera_impl(const std::string& nif_abs_path) {
     return d;
 }
 
+namespace {
+
+/// Block-array index whose `file.block_ids` entry equals `link_id`, or
+/// npos. Mirrors mesh_fix.cc's local index_of (not exported); nif_shapes
+/// needs its own copy to resolve property/image links.
+std::size_t nif_shapes_index_of(const nif::File& file, std::uint32_t link_id) {
+    for (std::size_t i = 0; i < file.block_ids.size(); ++i)
+        if (file.block_ids[i] == link_id) return i;
+    return std::string::npos;
+}
+
+/// The part of `path` after the last '/' or '\\'.
+std::string nif_shapes_basename(const std::string& path) {
+    auto pos = path.find_last_of("/\\");
+    return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+/// Append the basename of the NiImage `img_link` resolves to, if any, to
+/// `out` -- only for external (on-disk) images; embedded images have no
+/// filename to report.
+void nif_shapes_collect_image(const nif::File& file, std::uint32_t img_link,
+                               std::vector<std::string>* out) {
+    std::size_t idx = nif_shapes_index_of(file, img_link);
+    if (idx == std::string::npos || idx >= file.blocks.size()) return;
+    const auto* img = std::get_if<nif::NiImage>(&file.blocks[idx]);
+    if (!img || img->use_external == 0 || img->file_name.empty()) return;
+    out->push_back(nif_shapes_basename(img->file_name));
+}
+
+}  // namespace
+
+// Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
+// one dict per NiTriShape, in block order, with world-space vertices/normals,
+// UV set 0, triangles, texture basenames and the hidden flag. Parse-only, no
+// GL context, and applies no mesh fix -- callers see the raw stock geometry.
+py::object nif_shapes_impl(const std::string& nif_abs_path) {
+    std::filesystem::path path = nif_abs_path;
+    if (!std::filesystem::exists(path)) return py::none();
+    nif::File f;
+    try {
+        f = nif::load(path);
+    } catch (const std::exception&) {
+        return py::none();
+    }
+
+    py::list out;
+    for (std::size_t i = 0; i < f.blocks.size(); ++i) {
+        const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
+        if (!shape) continue;
+
+        py::dict d;
+        d["block"] = static_cast<int>(i);
+        d["name"] = shape->av.obj.name;
+
+        std::vector<std::string> textures;
+        for (std::uint32_t link : shape->av.property_links) {
+            std::size_t idx = nif_shapes_index_of(f, link);
+            if (idx == std::string::npos || idx >= f.blocks.size()) continue;
+            const auto& b = f.blocks[idx];
+            if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
+                nif_shapes_collect_image(f, tp->image_link, &textures);
+            } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
+                for (const auto& elem : mtp->elements) {
+                    if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &textures);
+                }
+            }
+        }
+        d["textures"] = textures;
+
+        const nif::NiTriShapeData* data = nullptr;
+        std::size_t data_idx = nif_shapes_index_of(f, shape->data_link);
+        if (data_idx != std::string::npos && data_idx < f.blocks.size())
+            data = std::get_if<nif::NiTriShapeData>(&f.blocks[data_idx]);
+
+        py::list vertices, normals, uvs, triangles;
+        if (data) {
+            const glm::mat4 world = assets::nif_block_world(f, i);
+            const glm::mat3 normal_mat = glm::mat3(world);
+            for (const auto& v : data->vertices) {
+                const glm::vec4 wp = world * glm::vec4(v.x, v.y, v.z, 1.0f);
+                vertices.append(py::make_tuple(wp.x, wp.y, wp.z));
+            }
+            for (const auto& n : data->normals) {
+                const glm::vec3 wn = glm::normalize(normal_mat * glm::vec3(n.x, n.y, n.z));
+                normals.append(py::make_tuple(wn.x, wn.y, wn.z));
+            }
+            if (!data->uv_sets.empty()) {
+                for (const auto& uv : data->uv_sets[0]) {
+                    uvs.append(py::make_tuple(uv.u, uv.v));
+                }
+            }
+            for (const auto& t : data->triangles) {
+                triangles.append(py::make_tuple(t[0], t[1], t[2]));
+            }
+        }
+        d["vertices"] = vertices;
+        d["normals"] = normals;
+        d["uvs"] = uvs;
+        d["triangles"] = triangles;
+        d["hidden"] = (shape->av.flags & 0x0001u) != 0;
+
+        out.append(d);
+    }
+    return out;
+}
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -1852,6 +2052,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["hologram_ship_active"]   = g_hologram_ship.active;
               d["hologram_only_mode"]     = g_hologram_only_mode;
               d["spv_hull_mode"]          = g_spv_hull_mode;
+              d["instance_decal_overrides"] = renderer::instance_decal_override_count();
               d["target_reticle_visible"] = g_target_reticle.visible;
               d["starmap_enabled"]        = g_starmap_scene.enabled;
               d["viewscreen_enabled"]     = g_viewscreen_enabled;
@@ -1876,10 +2077,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("frame", &frame);
     m.def("load_model", &load_model_impl,
           py::arg("nif_path"), py::arg("texture_search_path"),
-          py::arg("texture_replacements") = py::none());
+          py::arg("texture_replacements") = py::none(),
+          py::arg("decals") = py::none());
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
+    m.def("nif_shapes", &nif_shapes_impl,
+          py::arg("abs_path"),
+          "Every NiTriShape in a NIF, in block order: block index, name, "
+          "texture basenames, world-space vertices/normals, UV set 0, "
+          "triangles, hidden flag. None if the file is missing or fails to "
+          "parse. Parse-only, no GL context; applies no mesh fix. Feeds "
+          "tools/gen_mesh_fixes.py.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def(py::init<>())
@@ -1916,6 +2125,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // skipping it would leak the GL texture for the rest of the
                   // process's life every time a damaged ship is destroyed.
                   if (g_instance_field_cache) g_instance_field_cache->forget(id);
+                  // Its set_instance_decals override (keyed on the full id,
+                  // so unreachable anyway -- but not leaked).
+                  renderer::clear_instance_decal_override(id);
               }
           },
           py::arg("id"));
@@ -2358,6 +2570,76 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "somewhere in its subtree, bounds in SHIP units. `candidate` marks "
           "the nodes a human would call a part (renderer::model_parts).");
 
+    // ── Per-instance decal override (SPV live preview) ───────────────────
+    // Spec 2026-09-28-spv-decal-editing-design.md §2.5. Never throws: a bad
+    // entry is skipped (warned once), an unknown id / a host that is down is
+    // a no-op, and every per-decal fault (unknown shape, degenerate
+    // projector, unloadable mask) skips that decal inside
+    // build_decal_override.
+    m.def("set_instance_decals",
+          [](scenegraph::InstanceId id, const py::object& decals) {
+              if (decals.is_none()) {
+                  renderer::clear_instance_decal_override(id);
+                  return;
+              }
+              if (!g_window) return;  // mask upload needs the GL context
+              const scenegraph::Instance* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale / unknown id
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr) return;
+
+              static std::unordered_set<std::string> warned_malformed;
+              std::vector<assets::DecalRequest> requests;
+              std::size_t index = 0;
+              try {
+                  for (auto item : decals) {
+                      assets::DecalRequest req;
+                      if (parse_decal_request(item, &req)) {
+                          requests.push_back(std::move(req));
+                      } else if (warned_malformed.insert(
+                                     model->source.string() + "|" +
+                                     std::to_string(index)).second) {
+                          std::fprintf(stderr,
+                              "set_instance_decals: malformed decal entry %zu "
+                              "for %s (expected a 7-sequence of shape, origin, "
+                              "u_axis, v_axis, normal, depth, mask_path); "
+                              "skipping\n",
+                              index, model->source.string().c_str());
+                      }
+                      ++index;
+                  }
+              } catch (const std::exception&) {
+                  // `decals` itself is not iterable: nothing to draw.
+                  std::fprintf(stderr,
+                      "set_instance_decals: decals must be a list or None; "
+                      "ignoring\n");
+                  return;
+              }
+              renderer::set_instance_decal_override(
+                  id, assets::build_decal_override(
+                          *model, requests,
+                          [](const std::filesystem::path& p) {
+                              return g_decal_mask_cache.get(p);
+                          }));
+          },
+          py::arg("instance_id"), py::arg("decals"),
+          "Replace this instance's baked hull decals for drawing with `decals` "
+          "(the load_model decal entry shape: (shape_or_empty, origin, "
+          "u_axis, v_axis, normal, depth, mask_path), body frame, at most 16 "
+          "entries sharing at most 4 distinct masks), "
+          "or None to go back to the baked list. An empty list draws none. "
+          "Masks load once per path, and again when the file mtime changes. "
+          "Never raises.");
+    m.def("instance_decal_override_size",
+          [](scenegraph::InstanceId id) -> std::optional<std::size_t> {
+              const auto* ov = renderer::instance_decal_override(id);
+              if (ov == nullptr) return std::nullopt;
+              return ov->decals.size();
+          },
+          py::arg("instance_id"),
+          "Number of decals this instance's set_instance_decals override "
+          "draws, or None when it draws its baked list.");
+
     // ── Part articulation (BoP wings) ────────────────────────────────────
     // Python owns the POSE (engine/appc/articulation.py, advanced on the sim
     // tick) and builds its matrix (part_pose.matrix4_model, the one place
@@ -2578,7 +2860,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none());
+                                            py::none(), py::none());
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the

@@ -27,6 +27,9 @@ struct Material {
     ///   Gloss — populated when a NiImage filename ends in "_specular"
     ///           or "_spec". Standalone per-texel specular mask; does
     ///           NOT dual-bind with Base.
+    ///
+    /// Decal0..2 mirror the NIF NiTexturingProperty decal slots only; they
+    /// are NOT project hull-name decals, which live on Model::decals.
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
         Count
