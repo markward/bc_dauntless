@@ -69,6 +69,20 @@ path, `TGRedbook` (CD audio via MCI), does not apply to us.
 audible) or fade-out-then-in. The reference section does not say. Settle by ear
 against the real game before committing.
 
+## Future work (noted 2026-09-29, not scheduled)
+
+**Extended ship metadata via extra `GetShipStats` keys.** Add Dauntless-only
+fields — era (possibly service years), role (tactical / auxiliary / …; *not*
+"class", which BC's `Name` already is) and a list of selectable ship names
+(name + registry, tying into the hull-decal `Masks/<registry>/` folders).
+Chosen shape: mods author the keys in their own `GetShipStats` (stock BC
+ignores unknown keys, so the file stays portable); stock ships get theirs from
+`ship_overrides.SHIP_STATS_OVERLAYS`. Open when picked up: key naming (a
+`Dauntless` prefix vs plain), merge order (a mod's own key must beat our
+overlay — today the overlay wins), one validating reader module, and whether a
+chosen name may touch the ship's object name (SDK scripts look ships up by
+name — check how QuickBattle names ships first). No spec yet.
+
 ## Needs Mark's live verification
 
 - **OQ-6.1** — music playback cannot be verified headlessly. Passing tests will
