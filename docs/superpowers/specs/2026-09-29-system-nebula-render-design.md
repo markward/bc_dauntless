@@ -144,11 +144,12 @@ thousand GU the haze is barely visible; it builds with distance.
   `g = 0.6`; colour = star colour × cloud colour; the star's light at the sample
   is attenuated by the table's transmittance from the star to that point, so the
   shell's inner face glows and its far side is darker.
-- **Emissive floor:** `0.03 × cloud colour × density` (today's self-glow: 0.25).
+- **Emissive floor:** `0.0916 × cloud colour × density` — Mark's live pick 2026-09-29 (the first default, 0.03, read too dark; the old self-glow was 0.25).
 
 **Dials** — named constants, live-tunable under `--developer`: veil (0.15), lane
-size (15,000 GU), lane contrast, forward bias `g` (0.6), emissive floor (0.03),
-near range (30,000 GU).
+size (15,000 GU), lane contrast, forward bias `g` (0.6), emissive floor (0.0916),
+near range (30,000 GU), and the radial profile's concealment cap (0.27; 0.20 is the
+re-acquire line). Keys: `/` cycles, L / O step (`engine/dev_nebula_dials.py`).
 
 ## What is removed
 

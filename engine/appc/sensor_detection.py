@@ -274,7 +274,17 @@ def concealment_at(ship) -> float:
         return local
     prof, r = found
     profile_term = _profile.evaluate(prof, r).sensors * prof.full_concealment
-    return max(local, min(profile_term, PROFILE_CONCEALMENT_CAP))
+    return max(local, min(profile_term, _profile_concealment_cap()))
+
+
+def _profile_concealment_cap() -> float:
+    """PROFILE_CONCEALMENT_CAP, or the live developer dial under --developer
+    (engine/dev_nebula_dials.py, selected with / and stepped with L / O)."""
+    import engine.dev_mode as dev_mode
+    if dev_mode.is_enabled():
+        from engine import dev_nebula_dials
+        return dev_nebula_dials.conceal_cap()
+    return PROFILE_CONCEALMENT_CAP
 
 
 def is_hidden_by_cloak(target) -> bool:

@@ -68,3 +68,16 @@ def test_local_fbm_at_lock_break_still_wins_over_the_capped_profile(monkeypatch)
     local = sensor_detection.LOCK_BREAK_T + 0.05
     monkeypatch.setattr(sensor_detection, "_local_concealment", lambda ship: local)
     assert sensor_detection.concealment_at(object()) == pytest.approx(local)
+
+
+def test_developer_conceal_cap_dial_overrides_the_constant(monkeypatch):
+    from engine import dev_mode, dev_nebula_dials
+    monkeypatch.setattr(P, "locate", lambda obj: (_prof(1.0), 1000.0))
+    monkeypatch.setattr(sensor_detection, "_local_concealment", lambda ship: 0.0)
+    monkeypatch.setattr(dev_nebula_dials, "_dials",
+                        dict(dev_nebula_dials.DEFAULTS, conceal_cap=0.15))
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    assert sensor_detection.concealment_at(object()) == pytest.approx(0.15)
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    assert sensor_detection.concealment_at(object()) == pytest.approx(
+        sensor_detection.PROFILE_CONCEALMENT_CAP)

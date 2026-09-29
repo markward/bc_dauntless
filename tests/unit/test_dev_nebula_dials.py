@@ -41,7 +41,7 @@ def test_register_binds_exactly_the_three_macbook_keys():
     assert sorted(dev_mode._dev_keybindings) == [1, 2, 3]
 
 
-def test_slash_cycles_the_selected_dial_through_all_five(capsys):
+def test_slash_cycles_the_selected_dial_through_all_six(capsys):
     D.register(_FakeHost())
     D._selected = 0
     seen = [D.selected()]
@@ -50,7 +50,7 @@ def test_slash_cycles_the_selected_dial_through_all_five(capsys):
         seen.append(D.selected())
     assert seen[0] == "veil", "veil is the first thing Mark tunes (spec)"
     assert sorted(set(seen)) == sorted(
-        ["veil", "floor", "g", "lane_contrast", "near_range"])
+        ["veil", "floor", "g", "lane_contrast", "near_range", "conceal_cap"])
     assert seen[-1] == seen[0], "cycling wraps"
     assert "[nebula dials]" in capsys.readouterr().out
 
@@ -65,8 +65,8 @@ def test_l_and_o_step_the_selected_dial_and_push_the_native_dials(monkeypatch, c
 
     _press(_Keys.KEY_O)   # g +0.05
     assert pushed[-1]["g"] == pytest.approx(0.65)
-    # the whole NATIVE dial set travels; the veil is Python-side only
-    assert set(pushed[-1]) == set(D.DEFAULTS) - {"veil"}
+    # the whole NATIVE dial set travels; veil and conceal_cap are Python-side
+    assert set(pushed[-1]) == set(D.DEFAULTS) - {"veil", "conceal_cap"}
     _press(_Keys.KEY_L)
     assert pushed[-1]["g"] == pytest.approx(0.6)
     assert "[nebula dials]" in capsys.readouterr().out
@@ -90,12 +90,37 @@ def test_step_functions_clamp_and_scale():
         d = D.step(d, "g", +1)
     assert d["g"] <= 0.95
     d = D.step(dict(D.DEFAULTS), "floor", -1)
-    assert abs(d["floor"] - 0.03 / 1.25) < 1e-9
+    assert abs(d["floor"] - 0.0916 / 1.25) < 1e-9
 
 
 def test_defaults_match_the_spec():
-    assert D.DEFAULTS == {"veil": 0.15, "floor": 0.03, "g": 0.6,
+    # floor 0.0916: Mark's live pick, 2026-09-29 (0.03 read too dark).
+    assert D.DEFAULTS == {"veil": 0.15, "floor": 0.0916, "g": 0.6,
                           "lane_contrast": 0.7, "lane_size": 15000.0,
-                          "near_range": 30000.0}
+                          "near_range": 30000.0, "conceal_cap": 0.27}
     from engine.systems import profile as P
     assert D.DEFAULTS["veil"] == P.VEIL_DEFAULT
+
+
+# ── Concealment cap dial (Mark 2026-09-29: make it debuggable like the floor) ─
+
+def test_conceal_cap_default_is_the_sensor_constant():
+    from engine.appc import sensor_detection as sd
+    assert D.DEFAULTS["conceal_cap"] == pytest.approx(sd.PROFILE_CONCEALMENT_CAP)
+
+
+def test_conceal_cap_steps_by_a_hundredth_and_stays_below_lock_break():
+    from engine.appc import sensor_detection as sd
+    d = D.step(dict(D.DEFAULTS), "conceal_cap", -1)
+    assert d["conceal_cap"] == pytest.approx(0.26)
+    for _ in range(10):
+        d = D.step(d, "conceal_cap", +1)
+    assert d["conceal_cap"] < sd.LOCK_BREAK_T
+    for _ in range(100):
+        d = D.step(d, "conceal_cap", -1)
+    assert d["conceal_cap"] == 0.0
+
+
+def test_conceal_cap_is_in_the_cycle_and_not_sent_native():
+    assert "conceal_cap" in D.DIAL_ORDER
+    assert "conceal_cap" not in D._native(dict(D.DEFAULTS))

@@ -4,10 +4,10 @@
 lets a developer nudge `SystemNebulaPass`'s look while the pass is running,
 instead of editing constants and rebuilding for every trial.
 
-Five dials, three keys (a MacBook keyboard -- no numpad, no Pause):
+Six dials, three keys (a MacBook keyboard -- no numpad, no Pause):
 
   /   select the next dial: veil -> floor -> g -> lane_contrast ->
-      near_range -> veil ...
+      near_range -> conceal_cap -> veil ...
   L   step the selected dial DOWN
   O   step the selected dial UP
 
@@ -16,6 +16,8 @@ Five dials, three keys (a MacBook keyboard -- no numpad, no Pause):
   g              +/- 0.05, clamped to [0, 0.95]
   lane_contrast  +/- 0.1,  clamped to [0, 1]
   near_range     x or / 1.5
+  conceal_cap    +/- 0.01, clamped to [0, LOCK_BREAK_T) (Python-side): the
+                 radial profile's concealment ceiling; 0.20 = re-acquire line
 
 Every press prints `[nebula dials] ...` with the selected dial and the whole
 dial dict, so settled values can be read off and folded back into the
@@ -52,22 +54,27 @@ import engine.dev_mode as dev_mode
 
 DEFAULTS: dict = {
     "veil": 0.15,   # == engine.systems.profile.VEIL_DEFAULT (test-pinned)
-    "floor": 0.03,
+    "floor": 0.0916,   # Mark's live pick 2026-09-29 (0.03 read too dark)
     "g": 0.6,
     "lane_contrast": 0.7,
     "lane_size": 15000.0,
     "near_range": 30000.0,
+    # == engine.appc.sensor_detection.PROFILE_CONCEALMENT_CAP (test-pinned).
+    # Python-side like the veil: concealment_at reads it under --developer.
+    "conceal_cap": 0.27,
 }
 
 # The order `/` cycles through. The veil first: the spec names it as the
 # first thing to tune.
-DIAL_ORDER: tuple = ("veil", "floor", "g", "lane_contrast", "near_range")
+DIAL_ORDER: tuple = ("veil", "floor", "g", "lane_contrast", "near_range",
+                     "conceal_cap")
 
 _VEIL_MIN, _VEIL_MAX, _VEIL_FACTOR = 0.001, 0.99, 1.25
 _G_MIN, _G_MAX, _G_STEP = 0.0, 0.95, 0.05
 _LANE_CONTRAST_MIN, _LANE_CONTRAST_MAX, _LANE_CONTRAST_STEP = 0.0, 1.0, 0.1
 _FLOOR_FACTOR = 1.25
 _NEAR_RANGE_FACTOR = 1.5
+_CONCEAL_STEP = 0.01
 
 # Live dial state and the selected dial's index into DIAL_ORDER. Module-level
 # so presses accumulate across a session (mirrors dev_keybindings.py's
@@ -119,14 +126,27 @@ def step(dials: dict, name: str, direction: int) -> dict:
         out["near_range"] = (out["near_range"] * _NEAR_RANGE_FACTOR
                              if direction > 0
                              else out["near_range"] / _NEAR_RANGE_FACTOR)
+    elif name == "conceal_cap":
+        # Strictly below LOCK_BREAK_T: at or above it the profile alone would
+        # break every lock in the band (the E3M2 blindness the cap exists for).
+        from engine.appc.sensor_detection import LOCK_BREAK_T
+        c = round(out["conceal_cap"] + direction * _CONCEAL_STEP, 4)
+        out["conceal_cap"] = max(0.0, min(LOCK_BREAK_T - 0.001, c))
     else:
         raise ValueError("unknown nebula dial: %r" % (name,))
     return out
 
 
 def _native(dials: dict) -> dict:
-    """The dials the native pass owns (everything but the veil)."""
-    return {k: v for k, v in dials.items() if k != "veil"}
+    """The dials the native pass owns (not the Python-side veil / conceal_cap)."""
+    return {k: v for k, v in dials.items() if k not in ("veil", "conceal_cap")}
+
+
+def conceal_cap() -> float:
+    """The live profile-concealment cap (sensor_detection.concealment_at reads
+    it under --developer). 0.20 is the re-acquire threshold: below it the
+    profile can never hold a lock broken by a local cloud."""
+    return _dials["conceal_cap"]
 
 
 def _report() -> None:
