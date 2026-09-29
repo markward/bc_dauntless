@@ -10,6 +10,7 @@ from __future__ import annotations
 from engine.appc.radiation import HULL_PER_S
 
 WAKE_NEBULA_MIN = 0.05   # the cloud's thin floor: any visible gas leaves a wake
+LIGHTNING_NEBULA_MIN = 0.5   # lightning only in the profile's thick cloud
 
 
 def discharge_inputs(in_clump: bool, clump_rate: float, sample, warping: bool):
@@ -31,3 +32,11 @@ def wake_active(in_clump: bool, sample, warping: bool) -> bool:
     if warping:
         return False
     return in_clump or sample.nebula >= WAKE_NEBULA_MIN
+
+
+def lightning_active(in_clump: bool, sample, warping: bool) -> bool:
+    """Tick the nebula thunder inside a clump or where the profile's gas is
+    thick (nebula >= LIGHTNING_NEBULA_MIN). Nothing while dashing."""
+    if warping:
+        return False
+    return in_clump or sample.nebula >= LIGHTNING_NEBULA_MIN

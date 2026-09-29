@@ -31,3 +31,15 @@ def test_trails_follow_the_nebula_column_at_its_floor():
     assert fx.wake_active(False, Sample(nebula=0.049), False) is False
     assert fx.wake_active(True, Sample(), False) is True
     assert fx.wake_active(False, Sample(nebula=1.0), True) is False
+
+
+def test_lightning_fires_in_the_profiles_thick_cloud():
+    assert fx.LIGHTNING_NEBULA_MIN == 0.5
+    assert fx.lightning_active(False, Sample(nebula=0.5), False) is True
+    assert fx.lightning_active(False, Sample(nebula=0.499), False) is False
+
+
+def test_lightning_fires_in_a_clump_alone_and_never_while_dashing():
+    assert fx.lightning_active(True, Sample(), False) is True
+    assert fx.lightning_active(True, Sample(nebula=1.0), True) is False
+    assert fx.lightning_active(False, Sample(nebula=1.0), True) is False

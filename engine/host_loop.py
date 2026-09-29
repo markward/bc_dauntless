@@ -10790,7 +10790,9 @@ def run(mission_name: Optional[str] = None,
                                 and _warp_state.is_ship_warping(player))
 
                     # Nebula lightning: tick the thunder driver while the player
-                    # is in a nebula.  Visual/audio only; gated by the toggle.
+                    # is in a clump or the profile's thick cloud
+                    # (profile_fx.lightning_active).  Visual/audio only; gated
+                    # by the toggle.
                     # Lazy construct (mirrors _nebula_tracker).
                     global _nebula_thunder
                     if r.nebula_lightning_enabled():
@@ -10799,7 +10801,10 @@ def run(mission_name: Optional[str] = None,
                             _nebula_thunder = NebulaThunderDriver()
                         fwd = player.GetWorldForwardTG() if player is not None else None
                         fwd_t = (fwd.x, fwd.y, fwd.z) if fwd is not None else (0.0, 1.0, 0.0)
-                        _nebula_thunder.update(in_neb, TICK_DT, _gt, fwd_t)
+                        _nebula_thunder.update(
+                            _profile_fx.lightning_active(
+                                in_neb, _prof_sample, _warping),
+                            TICK_DT, _gt, fwd_t)
                         for name in _nebula_thunder.pop_due_audio(_gt):
                             try:
                                 from engine.audio.tg_sound import TGSoundManager
