@@ -342,8 +342,9 @@ unsigned int damage_decal_texture();
 void reset_model_radius_cache();
 
 /// Release the lazily-created GL sampler object the opaque pass binds on
-/// texture unit 8 for hull-name decal masks (clamp-to-edge; the mask texture
-/// itself uploads with GL_REPEAT). Same contract as
+/// texture units 8-11 (one shared sampler, up to 4 decal masks per model;
+/// clamp-to-edge; the mask texture itself uploads with GL_REPEAT). Same
+/// contract as
 /// reset_damage_decal_texture(): call while the creating context is current,
 /// or the stale sampler id leaks into the next context.
 void reset_decal_mask_sampler();

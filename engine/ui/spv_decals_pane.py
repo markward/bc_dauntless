@@ -523,8 +523,8 @@ class DecalsPaneMixin:
             return None
         (px, py, pz), normal, _t = hit
         # The hit is in VIEW coordinates, which is what world_to_body takes
-        # (it subtracts the instance translation, then inverts the
-        # instance's own world_linear natively).
+        # (the host_io Python wrapper subtracts the instance translation,
+        # then the native call inverts the instance's own world_linear).
         try:
             body = host_io.world_to_body(iid, (px, py, pz), tuple(normal))
         except Exception:

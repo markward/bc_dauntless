@@ -58,7 +58,14 @@ is keyed by the **stock NIF's content hash** (`native/assets/mesh_fixes/
 <hash>.json`) — a mod-folder NIF (different bytes, a different file
 entirely) never matches a committed fix, the fix never "applies", and
 `AssetCache::load` (`native/src/assets/src/cache.cc`) skips decals
-whenever no fix applied, warning once. The stock Ambassador's masks live
+whenever no fix applied, warning once.
+
+> **Superseded** by `2026-09-28-spv-decal-editing-design.md` §2.1: the
+> mesh-fix gate described above was removed. Decals now attach to any
+> ship whose class declares them, regardless of whether a mesh fix
+> applied — see that spec for the current behaviour.
+
+The stock Ambassador's masks live
 in the project replacements tree:
 `native/assets/replacements/data/Models/Ships/Ambassador/Masks/`.
 
@@ -222,6 +229,10 @@ what it affects and logs once:
 | mask decodes with no alpha channel (RGB8/R8) | still attached (treated as fully opaque), one warning |
 | no mesh fix applied to this load (no `mesh_fix_dir` configured, no fix file matched, or a matched fix was refused) | **all** decals for this load skipped, one warning per NIF path -- BC's own un-merged "ID" patch geometry is still present and would otherwise paint a second name |
 
+> **Superseded** by `2026-09-28-spv-decal-editing-design.md` §2.1: the last
+> row above no longer applies -- the mesh-fix gate was removed, so decals
+> no longer skip when no fix applied.
+
 ## 6. Testing
 
 This section lists what is actually covered, by file, not an aspirational
@@ -271,7 +282,9 @@ plan -- two gaps called out explicitly below are real and unclosed.
   - the mesh-fix gate (`DecalMeshFixGate`): attaches on the real Ambassador
     with the committed fix, does NOT attach with no `mesh_fix_dir`
     configured (one warning asserted), does NOT attach when a matched fix
-    is refused;
+    is refused. **Superseded** by `2026-09-28-spv-decal-editing-design.md`
+    §2.1: the gate this test covered was removed, so this describes what
+    was true at the time, not current behaviour;
   - `DecalFrame`: the authored frame in `decals.json` agrees with the
     renderer's actual draw-time frame for the same real vertex.
 - **Renderer** (`native/tests/renderer/decal_render_test.cc`, headless GL):

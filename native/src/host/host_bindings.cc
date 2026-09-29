@@ -818,7 +818,8 @@ void shutdown() {
     renderer::reset_damage_decal_texture();
     // Same hazard for the collision-scuff normal map (renderer/scuff_texture.h).
     renderer::reset_scuff_normal_texture();
-    // And for the hull-name decal mask's clamp sampler (unit 8, frame.cc).
+    // And for the hull-name decal masks' shared clamp sampler (units 8-11,
+    // frame.cc).
     renderer::reset_decal_mask_sampler();
     // set_instance_decals masks: drop the overrides that borrow their ids
     // first, then release the textures while this context is current.
