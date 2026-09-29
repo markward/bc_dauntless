@@ -56,6 +56,16 @@ def _head_decals_json_bytes() -> bytes:
         ["git", "show", f"HEAD:{_COMMITTED_DECALS_JSON_GIT_REL}"],
         cwd=paths.PROJECT_ROOT, check=True, capture_output=True).stdout
 
+def _top_only_fixture_bytes() -> bytes:
+    """The committed decals.json reduced to its `top` placement: the known,
+    single-placement fixture this test adds `bottom` to. Committed saves may
+    carry more placements (Mark's authored bottom/pylon/nacelle), which the
+    test must not depend on."""
+    doc = json.loads(_head_decals_json_bytes())
+    doc["decals"] = {"top": doc["decals"]["top"]}
+    return (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+
+
 # Body-frame (NIF units) synthetic hit for "bottom": same x/y footprint as
 # the committed "top" (origin ~(58, 146, 51)), opposite face -- the saucer
 # underside rather than its dorsal surface.
@@ -145,15 +155,14 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
 
     # ── copy the committed Masks/ tree (registry PNGs, templates -- none of
     # those are ever hand-edited live) into a tmp replacements root, but
-    # swap in the COMMITTED HEAD decals.json rather than the working-tree
-    # one: the working copy holds Mark's uncommitted live saves (`bottom`,
-    # `pylon` on top of `top`), and this test needs the known, single-
-    # placement ("top") fixture to add "bottom" without a name collision
-    # and assert an exact two-placement result. The real committed file
-    # itself is never touched either way.
+    # swap in the committed decals.json REDUCED TO `top`: the real file
+    # carries Mark's authored placements (and the working copy may hold
+    # unsaved ones), while this test needs a known single-placement fixture
+    # to add "bottom" without a name collision and assert an exact
+    # two-placement result. The real file itself is never touched.
     tmp_masks = (tmp_path / "assets" / "replacements" / AMB_DIR / "Masks")
     shutil.copytree(COMMITTED_MASKS, tmp_masks)
-    (tmp_masks / "decals.json").write_bytes(_head_decals_json_bytes())
+    (tmp_masks / "decals.json").write_bytes(_top_only_fixture_bytes())
 
     # ── Point asset resolution at the tmp replacements root from the start
     # (not just for the later Save step), so every read in this test --
