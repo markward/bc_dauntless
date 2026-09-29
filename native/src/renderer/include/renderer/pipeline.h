@@ -21,6 +21,7 @@ public:
     Shader& nebula_shell_shader() noexcept { return *nebula_shell_; }
     Shader& nebula_volumetric_shader() noexcept { return *nebula_volumetric_; }
     Shader& nebula_upsample_shader() noexcept { return *nebula_upsample_; }
+    Shader& system_nebula_shader() noexcept { return *system_nebula_; }
     Shader& nebula_godray_shader() noexcept { return *nebula_godray_; }
     Shader& shield_shader() noexcept     { return *shield_; }
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
@@ -55,6 +56,7 @@ private:
     std::unique_ptr<Shader> nebula_shell_;
     std::unique_ptr<Shader> nebula_volumetric_;
     std::unique_ptr<Shader> nebula_upsample_;
+    std::unique_ptr<Shader> system_nebula_;
     std::unique_ptr<Shader> nebula_godray_;
     std::unique_ptr<Shader> shield_;
     std::unique_ptr<Shader> lens_flare_;

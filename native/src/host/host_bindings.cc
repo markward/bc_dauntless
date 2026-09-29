@@ -35,6 +35,8 @@
 #include <renderer/dust_pass.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
+#include <renderer/nebula_atmosphere.h>
+#include <renderer/system_nebula_pass.h>
 #include <renderer/nebula_godray_pass.h>
 #include <renderer/shield_pass.h>
 #include <renderer/lens_flare_pass.h>
@@ -248,6 +250,9 @@ std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
 std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
+// System-scale nebula (star-centred atmosphere). DEVELOPER-ONLY: frame()
+// runs it only under --developer with Volumetric Nebulae on.
+std::unique_ptr<renderer::SystemNebulaPass> g_system_nebula_pass;
 std::vector<renderer::GodrayFlash> g_nebula_godrays;
 std::unique_ptr<renderer::NebulaGodrayPass> g_nebula_godray_pass;
 std::unique_ptr<renderer::ShieldPass> g_shield_pass;
@@ -678,6 +683,7 @@ void init(int width, int height, const std::string& title) {
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
+    g_system_nebula_pass = std::make_unique<renderer::SystemNebulaPass>();
     g_nebula_godray_pass = std::make_unique<renderer::NebulaGodrayPass>();
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
@@ -749,6 +755,7 @@ void shutdown() {
     g_dust_pass.reset();
     g_nebula_pass.reset();
     g_nebula_volumetric_pass.reset();
+    g_system_nebula_pass.reset();
     g_nebula_godray_pass.reset();
     g_shield_pass.reset();
     g_lens_flare_pass.reset();
@@ -1048,7 +1055,21 @@ void frame() {
                                 dauntless_dash_vfx::intensity(),
                                 g_dust_profile);
         }
-        if (!g_nebulae.empty()) {
+        // System-scale nebula: developer-only. Without --developer (or with
+        // Volumetric Nebulae off) the branch below runs exactly as before.
+        const bool sys_neb = dauntless_volumetric_nebulae::enabled()
+            && dauntless::is_developer_mode() && g_system_nebula_pass
+            && (g_system_nebula_pass->has_profile() || !g_nebulae.empty());
+        if (sys_neb) {
+            DAUNTLESS_FRAME_SCOPE("space.system_nebula");
+            const glm::mat4 inv_vp =
+                glm::inverse(cam.proj_matrix() * cam.view_matrix());
+            g_system_nebula_pass->render(
+                cam, *g_pipeline, g_nebulae, g_lighting,
+                target.color_texture(), target.depth_texture(),
+                inv_vp, cam.eye, static_cast<float>(now),
+                g_world.render_origin());
+        } else if (!g_nebulae.empty()) {
             DAUNTLESS_FRAME_SCOPE("space.nebula");
             if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass) {
                 // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
@@ -1937,6 +1958,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_dust_pass) g_dust_pass->reset_motion_history();
               if (g_nebula_volumetric_pass)
                   g_nebula_volumetric_pass->reset_history();
+              if (g_system_nebula_pass)
+                  g_system_nebula_pass->reset_history();
               g_have_prev_viewproj = false;
           },
           "Reset the floating render origin to (0,0,0) for a new mission, and "
@@ -3041,6 +3064,59 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("nebulae"),
           "Set the active set's MetaNebula volumes, applied each frame().");
+
+    m.def("set_system_nebula_profile",
+          [](py::object desc) {
+              if (desc.is_none()) {
+                  if (g_system_nebula_pass) g_system_nebula_pass->clear_profile();
+                  return;
+              }
+              const py::dict d = desc.cast<py::dict>();
+              renderer::atmosphere::RadialProfile p;
+              p.r = d["r"].cast<std::vector<float>>();
+              p.nebula = d["nebula"].cast<std::vector<float>>();
+              if (p.r.empty() || p.r.size() != p.nebula.size())
+                  throw py::value_error(
+                      "set_system_nebula_profile: 'r' and 'nebula' must be "
+                      "non-empty and the same length");
+              p.k_sys = d["k_sys"].cast<float>();
+              p.star_radius = d["star_radius"].cast<float>();
+              auto rgb3 = [&](const char* key) {
+                  auto t = d[key].cast<std::tuple<float, float, float>>();
+                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+              };
+              p.cloud_rgb = rgb3("cloud_rgb");
+              p.star_rgb = rgb3("star_rgb");
+              renderer::atmosphere::LookParams look;
+              if (d.contains("g"))       look.g = d["g"].cast<float>();
+              if (d.contains("floor"))   look.floor = d["floor"].cast<float>();
+              if (d.contains("scatter")) look.scatter = d["scatter"].cast<float>();
+              if (d.contains("far_gu"))  look.far_gu = d["far_gu"].cast<float>();
+              // Validated above even with the host down; the upload needs GL.
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->set_profile(p, look);
+          },
+          py::arg("profile"),
+          "Set (dict) or clear (None) the system-scale nebula profile: keys "
+          "r, nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, "
+          "star_rgb (3-tuples), optional g, floor, scatter, far_gu. Builds "
+          "and uploads the far-field table (CPU, ~1-2 s). Drawn only under "
+          "--developer with Volumetric Nebulae on.");
+    m.def("set_system_nebula_star",
+          [](std::tuple<float, float, float> pos) {
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->set_star(glm::vec3(
+                  std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)));
+          },
+          py::arg("pos"),
+          "The system nebula's star centre in RENDER space (relative to the "
+          "floating origin), applied each frame().");
+    m.def("system_nebula_has_profile",
+          []() {
+              return g_system_nebula_pass ? g_system_nebula_pass->has_profile()
+                                          : false;
+          },
+          "True when a system-scale nebula profile is uploaded.");
 
     m.def("set_nebula_wake",
           [](const std::vector<py::dict>& pts) {

@@ -131,6 +131,17 @@ Table build_table(const RadialProfile& p, const LookParams& look) {
     return t;
 }
 
+std::vector<glm::vec3> tau_from_table(const Table& t) {
+    std::vector<glm::vec3> out(t.transmittance.size());
+    for (size_t i = 0; i < out.size(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            const float T = std::max(t.transmittance[i][c], std::numeric_limits<float>::min());
+            out[i][c] = std::clamp(-std::log(T), 0.0f, kMaxTableTau);
+        }
+    }
+    return out;
+}
+
 Segment compose(const Segment& n, const Segment& f) {
     return {n.transmittance * f.transmittance, n.inscatter + n.transmittance * f.inscatter};
 }

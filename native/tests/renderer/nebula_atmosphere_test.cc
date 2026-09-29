@@ -127,3 +127,60 @@ TEST(NebulaAtmosphere, TableMatchesReferenceAtCellCentres) {
     const Segment ref = reference_march(p, look, r, mu, INFINITY, 512);
     EXPECT_NEAR(t.transmittance[j * kTableR + i].x, ref.transmittance.x, 1e-5f);
 }
+
+TEST(NebulaAtmosphere, UOfRadiusInvertsRadiusOfU) {
+    const float far = 1.8e6f;
+    for (float u : {0.0f, 0.01f, 0.25f, 0.5f, 0.9f, 1.0f}) {
+        EXPECT_NEAR(u_of_radius(radius_of_u(u, far), far), u, 1e-5f) << "u=" << u;
+    }
+    EXPECT_FLOAT_EQ(u_of_radius(2.0f * far, far), 1.0f);   // clamps past far
+    EXPECT_FLOAT_EQ(u_of_radius(-5.0f, far), 0.0f);        // and below zero
+}
+
+TEST(NebulaAtmosphere, RadialTexelsSampleDensityAndTauStar) {
+    RadialProfile p;
+    p.r = {0.0f, 60000.0f, 120000.0f, 240000.0f};
+    p.nebula = {0.0f, 0.0f, 1.0f, 0.05f};
+    p.k_sys = 2.0e-5f;
+    p.star_radius = 2000.0f;
+    const LookParams look;
+    const auto tex = build_radial_texels(p, look);
+    ASSERT_EQ(static_cast<int>(tex.size()), kRadialTexels);
+    for (int i : {0, 400, 1000, 2000, kRadialTexels - 1}) {
+        const float r = radius_of_u(static_cast<float>(i) / (kRadialTexels - 1), look.far_gu);
+        EXPECT_FLOAT_EQ(tex[i].x, density(p, r)) << "i=" << i;
+        EXPECT_FLOAT_EQ(tex[i].y, tau_star(p, r)) << "i=" << i;
+    }
+    // a texel inside the populated band really is non-trivial
+    const int mid = static_cast<int>(u_of_radius(120000.0f, look.far_gu) * (kRadialTexels - 1));
+    EXPECT_GT(tex[mid].x, 0.5f);
+    EXPECT_GT(tex[mid].y, 0.0f);
+}
+
+// The far-field table goes to the GPU as OPTICAL DEPTH, not transmittance:
+// real system transmittances reach ~1e-16, which neither a half float nor a
+// division by a floored T survives. tau = -ln(T), clamped to <= 87.
+TEST(NebulaAtmosphere, TauFromTableRoundTripsAndClampsZero) {
+    Table t;
+    t.transmittance = {glm::vec3(1.0f), glm::vec3(0.5f, 0.25f, 1e-16f),
+                       glm::vec3(0.0f), glm::vec3(1e-30f, 1e-38f, 0.9f)};
+    t.inscatter.assign(t.transmittance.size(), glm::vec3(0.0f));
+    const auto tau = tau_from_table(t);
+    ASSERT_EQ(tau.size(), t.transmittance.size());
+    EXPECT_FLOAT_EQ(tau[0].x, 0.0f);
+    for (size_t i : {size_t(0), size_t(1)}) {
+        for (int c = 0; c < 3; ++c) {
+            const float T = t.transmittance[i][c];
+            EXPECT_NEAR(std::exp(-tau[i][c]) / T, 1.0f, 1e-5f) << i << "," << c;
+        }
+    }
+    for (int c = 0; c < 3; ++c) EXPECT_FLOAT_EQ(tau[2][c], 87.0f);   // T = 0
+    EXPECT_FLOAT_EQ(tau[3].y, 87.0f);                                // 1e-38 -> clamp
+    EXPECT_NEAR(tau[3].x, -std::log(1e-30f), 1e-3f);
+    for (const auto& v : tau)
+        for (int c = 0; c < 3; ++c) {
+            EXPECT_TRUE(std::isfinite(v[c]));
+            EXPECT_GE(v[c], 0.0f);
+            EXPECT_LE(v[c], 87.0f);
+        }
+}

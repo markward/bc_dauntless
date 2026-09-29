@@ -77,6 +77,16 @@ std::vector<glm::vec2> build_radial_texels(const RadialProfile& p, const LookPar
 /// out to infinity.
 Table build_table(const RadialProfile& p, const LookParams& look);
 
+/// Largest optical depth the GPU table stores: exp(-87) is ~FLT_MIN, so any
+/// deeper cell is indistinguishable from opaque in float.
+inline constexpr float kMaxTableTau = 87.0f;
+
+/// The table's transmittance as OPTICAL DEPTH, tau = -ln(max(T, FLT_MIN)),
+/// clamped to [0, kMaxTableTau] -- the form the shader samples. Real system
+/// transmittances reach ~1e-16, which neither a half float nor a division by
+/// a floored T survives; a difference of optical depths does.
+std::vector<glm::vec3> tau_from_table(const Table& t);
+
 /// Composes two adjoining segments (near then far) into the segment for the
 /// whole ray.
 Segment compose(const Segment& near, const Segment& far);

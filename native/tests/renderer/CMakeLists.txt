@@ -18,6 +18,7 @@ add_executable(renderer_tests
     sun_pass_test.cc
     dust_pass_test.cc
     nebula_atmosphere_test.cc
+    system_nebula_pass_test.cc
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc
     aabb_test.cc
