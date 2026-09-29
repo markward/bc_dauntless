@@ -423,9 +423,9 @@ class LightTarget(_HardpointMount):
             # box_orientation only matches a Box LIGHT target (an emitter
             # kind is cylinder_axis/cone_orientation).
             fwd, up = value
-            self.panel._set_orientation_absolute(self.key[1], fwd, up)
+            self.set_orientation_absolute(fwd, up)
         else:
-            self.panel._set_axis_absolute(self.key, value)
+            self.set_axis_absolute(value)
 
     def rotate_nudge(self, index, delta_deg) -> None:
         """Rotate by `delta_deg` about basis axis `index` (Rodrigues, via
@@ -490,12 +490,44 @@ class LightTarget(_HardpointMount):
         spec = p._effective_light(i) or {}
         if spec.get("shape") == "Box":
             fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-            p._set_orientation_absolute(i, (-fwd[0], fwd[1], fwd[2]),
-                                        (-up[0], up[1], up[2]))
+            self.set_orientation_absolute((-fwd[0], fwd[1], fwd[2]),
+                                          (-up[0], up[1], up[2]))
         else:
             axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
             axis[0] = -axis[0]
-            p._set_axis_absolute(t, axis)
+            self.set_axis_absolute(axis)
+
+    def set_axis_absolute(self, axis) -> None:
+        """Stage a normalized `axis` directly (Mirror/Paste, not an
+        incremental rotation) into `_pending_light[i]` and zero its degree
+        accumulator."""
+        p = self.panel
+        i = self.key[1]
+        n = math.sqrt(sum(a*a for a in axis)) or 1.0
+        naxis = (axis[0]/n, axis[1]/n, axis[2]/n)
+        spec = dict(p._effective_light(i) or {})
+        if not spec:
+            return
+        spec["axis"] = naxis
+        p._pending_light[i] = spec
+        p._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
+        p._last_pushed = None
+
+    def set_orientation_absolute(self, forward, up) -> None:
+        """Stage a re-orthonormalized Box `(forward, up)` orientation
+        directly (Mirror/Paste) into `_pending_light[i]` and zero its degree
+        accumulator."""
+        from engine.ui.ship_property_viewer import orthonormalize_basis
+        p = self.panel
+        i = self.key[1]
+        fwd, u = orthonormalize_basis(forward, up)
+        spec = dict(p._effective_light(i) or {})
+        if not spec:
+            return
+        spec["orientation"] = (fwd, u)
+        p._pending_light[i] = spec
+        p._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
+        p._last_pushed = None
 
 
 class EmitterTarget(_HardpointMount):
@@ -634,9 +666,9 @@ class EmitterTarget(_HardpointMount):
         if self.rotate_kind() == "cone_orientation":
             # cone_orientation only matches a CONE emitter target.
             fwd, up = value
-            self.panel._set_orientation_absolute(self.key, fwd, up)
+            self.set_orientation_absolute(fwd, up)
         else:
-            self.panel._set_axis_absolute(self.key, value)
+            self.set_axis_absolute(value)
 
     def rotate_nudge(self, index, delta_deg) -> None:
         """Rotate by `delta_deg` about basis axis `index` and bump that
@@ -713,12 +745,50 @@ class EmitterTarget(_HardpointMount):
             from engine.appc.light_emitters import _derive_up
             fwd = spec.get("axis") or (0.0, -1.0, 0.0)
             up = spec.get("up") or _derive_up(fwd)
-            p._set_orientation_absolute(t, (-fwd[0], fwd[1], fwd[2]),
-                                        (-up[0], up[1], up[2]))
+            self.set_orientation_absolute((-fwd[0], fwd[1], fwd[2]),
+                                          (-up[0], up[1], up[2]))
         else:
             axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
             axis[0] = -axis[0]
-            p._set_axis_absolute(t, axis)
+            self.set_axis_absolute(axis)
+
+    def set_axis_absolute(self, axis) -> None:
+        """Stage a normalized `axis` directly (Mirror/Paste, not an
+        incremental rotation), restaging the whole compacted emitter list
+        (dense-index invariant), and zero its degree accumulator."""
+        p = self.panel
+        _, i, j = self.key
+        n = math.sqrt(sum(a*a for a in axis)) or 1.0
+        naxis = (axis[0]/n, axis[1]/n, axis[2]/n)
+        lst = list(p._effective_emitters(i))
+        if not (0 <= j < len(lst)):
+            return
+        spec = dict(lst[j])
+        spec["axis"] = naxis
+        lst[j] = spec
+        p._pending_emitter[i] = lst
+        p._rotate_accum[("emitter", i, j)] = [0.0, 0.0, 0.0]
+        p._last_pushed = None
+
+    def set_orientation_absolute(self, forward, up) -> None:
+        """Stage a re-orthonormalized CONE `(forward, up)` orientation
+        directly (Mirror/Paste), writing `axis` (=forward) + `up` and
+        restaging the whole compacted emitter list (dense-index invariant),
+        and zero its degree accumulator."""
+        from engine.ui.ship_property_viewer import orthonormalize_basis
+        p = self.panel
+        _, i, j = self.key
+        fwd, u = orthonormalize_basis(forward, up)
+        lst = list(p._effective_emitters(i))
+        if not (0 <= j < len(lst)):
+            return
+        spec = dict(lst[j])
+        spec["axis"] = fwd
+        spec["up"] = u
+        lst[j] = spec
+        p._pending_emitter[i] = lst
+        p._rotate_accum[("emitter", i, j)] = [0.0, 0.0, 0.0]
+        p._last_pushed = None
 
 
 class _PartNode(EditTarget):

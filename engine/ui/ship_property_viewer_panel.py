@@ -599,7 +599,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     def _stage_part_field(self, name: str, **fields) -> None:
         """Merge `fields` onto part `name`'s current effective spec and stage
         the FULL result -- the same whole-spec-per-edit pattern as
-        `set_light_position`/`_set_scale_field` for a light, so editing one
+        `set_light_position`/`LightTarget.set_scale_field` for a light, so editing one
         field (say, the anchor) never drops another (say, an already-staged
         pose). `poses` is copied, never shared with the saved/baked spec it
         came from."""
@@ -1252,8 +1252,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         Transformation node is a Move and Rotate target (that state's pose,
         spec 2026-09-25 sections 3 and 7.3). The part ROW and its Breakage
         node are no transform target at all -- None, so no gizmo appears.
-        Every consumer that unpacks a 2-tuple (`kind, i = t`) branches on
-        the part kinds (`_is_part_target`) and `t[0] == "emitter"` first."""
+        Consumers never branch on the kind: `edit_target_for_key` maps the
+        tuple to its per-kind `EditTarget` adapter."""
         from engine.appc.articulated_part import STATES
         node = _spv.selected_part_node()
         if node is not None:
@@ -1280,11 +1280,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         cached adapter would keep editing the old state after a switch."""
         from engine.ui.spv_edit_targets import edit_target_for
         return edit_target_for(self)
-
-    @staticmethod
-    def _is_part_target(target) -> bool:
-        """True for a part-node transform target (anchor or state pose)."""
-        return target is not None and target[0] in ("part_anchor", "part_pose")
 
     def _part_pose6(self, name: str, state: str) -> tuple:
         """Part `name`'s effective `state` pose as a float 6-tuple
@@ -1339,26 +1334,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 (part_pose.euler_to_matrix(*angles), (0.0, 0.0, 0.0)), a)
             t_new = tuple(q[k] - ra[k] for k in range(3))
         self._stage_part_pose(name, state, t_new + angles)
-
-    def _transform_target_pos(self):
-        """The current transform target's editable body-frame coordinate --
-        what the Move panel shows and the coord steppers/copy/paste edit --
-        or None (no tool target). Always where the gizmo sits
-        (`EditTarget.position`): for a part POSE that is the POSED anchor, so the
-        panel describes what is on screen (fix-round ruling 15), never the
-        raw translation t."""
-        t = self._edit_target()
-        return t.position() if t is not None else None
-
-    def _set_transform_target_pos(self, xyz) -> None:
-        """Stage `xyz` as the current transform target's coordinate (see
-        `_transform_target_pos`), routing to the part anchor, part pose
-        translation, emitter (whole-list restage), light, or subsystem
-        staging path as appropriate (`EditTarget.set_position`). Setting an
-        anchor never touches a pose (spec 2.3, option A)."""
-        t = self._edit_target()
-        if t is not None:
-            t.set_position(xyz)
 
     # ------------------------------------------------------------------
     # Pipette eyedropper
@@ -1433,14 +1408,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         out.update(t.payload_extras("scale"))
         return out
 
-    def _set_scale_field(self, index, value) -> None:
-        """Stage `value` (floored at SCALE_MIN) for size field `index` of the
-        current transform target (`EditTarget.set_scale_field`). Kept for
-        tests (removed in plan Task 7)."""
-        t = self._scale_edit_target()
-        if t is not None:
-            t.set_scale_field(index, value)
-
     # ------------------------------------------------------------------
     # Rotate tool (per kind: the EditTarget rotate_* adapters)
     # ------------------------------------------------------------------
@@ -1452,13 +1419,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         is inert under Rotate)."""
         t = self._edit_target()
         return t if t is not None and t.rotate_kind() is not None else None
-
-    def _rotate_target(self):
-        """The rotate tool's target key (("light", i), ("emitter", i, j) or
-        ("part_pose", name, state)), or None -- the key of
-        `_rotate_edit_target`. Kept for tests (removed in plan Task 7)."""
-        t = self._rotate_edit_target()
-        return t.key if t is not None else None
 
     def rotate_values(self) -> Optional[dict]:
         """Data for the rotate-tool panel: `{"fields", "has_clipboard",
@@ -1481,74 +1441,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                "can_paste": clip is not None and clip[0] == kind}
         out.update(t.payload_extras("rotate"))
         return out
-
-    def _rotate_axis(self, index, delta_deg) -> None:
-        """Rotate the current rotate target by `delta_deg` about basis axis
-        `index` (`EditTarget.rotate_nudge`)."""
-        t = self._rotate_edit_target()
-        if t is not None:
-            t.rotate_nudge(index, delta_deg)
-
-    def _set_axis_absolute(self, target, axis) -> None:
-        """Stage a normalized `axis` directly (Mirror/Paste, not an incremental
-        rotation) and zero its degree accumulator. Target-aware: `target` may be
-        a light tuple `("light", i)` (or a bare int i, for legacy callers) which
-        writes `_pending_light[i]`, or an emitter tuple `("emitter", i, j)` which
-        restages the whole compacted emitter list (dense-index invariant)."""
-        n = math.sqrt(sum(a*a for a in axis)) or 1.0
-        naxis = (axis[0]/n, axis[1]/n, axis[2]/n)
-        if isinstance(target, tuple) and target[0] == "emitter":
-            _, i, j = target
-            lst = list(self._effective_emitters(i))
-            if not (0 <= j < len(lst)):
-                return
-            spec = dict(lst[j])
-            spec["axis"] = naxis
-            lst[j] = spec
-            self._pending_emitter[i] = lst
-            self._rotate_accum[("emitter", i, j)] = [0.0, 0.0, 0.0]
-            self._last_pushed = None
-            return
-        i = target[1] if isinstance(target, tuple) else target
-        spec = dict(self._effective_light(i) or {})
-        if not spec:
-            return
-        spec["axis"] = naxis
-        self._pending_light[i] = spec
-        self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
-        self._last_pushed = None
-
-    def _set_orientation_absolute(self, target, forward, up) -> None:
-        """Stage a re-orthonormalized `(forward, up)` orientation directly
-        (Mirror/Paste, not an incremental rotation) and zero its degree
-        accumulator. Target-aware like `_set_axis_absolute`: `target` may be a
-        Box-light tuple `("light", i)` (or a bare int i, for legacy callers)
-        which writes `orientation` into `_pending_light[i]`, or a CONE-emitter
-        tuple `("emitter", i, j)` which restages the whole compacted emitter
-        list, writing `axis` (=forward) + `up` (dense-index invariant)."""
-        from engine.ui.ship_property_viewer import orthonormalize_basis
-        fwd, u = orthonormalize_basis(forward, up)
-        if isinstance(target, tuple) and target[0] == "emitter":
-            _, i, j = target
-            lst = list(self._effective_emitters(i))
-            if not (0 <= j < len(lst)):
-                return
-            spec = dict(lst[j])
-            spec["axis"] = fwd
-            spec["up"] = u
-            lst[j] = spec
-            self._pending_emitter[i] = lst
-            self._rotate_accum[("emitter", i, j)] = [0.0, 0.0, 0.0]
-            self._last_pushed = None
-            return
-        i = target[1] if isinstance(target, tuple) else target
-        spec = dict(self._effective_light(i) or {})
-        if not spec:
-            return
-        spec["orientation"] = (fwd, u)
-        self._pending_light[i] = spec
-        self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
-        self._last_pushed = None
 
     def transform_gizmo(self) -> Optional[dict]:
         """The move-gizmo for the selected subsystem or light node, or None.

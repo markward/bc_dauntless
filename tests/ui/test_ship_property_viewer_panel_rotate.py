@@ -107,7 +107,7 @@ def _panel_box_light():
 
 def test_rotate_target_accepts_box_light():
     p = _panel_box_light()
-    assert p._rotate_target() == ("light", 0)
+    assert p._rotate_edit_target().key == ("light", 0)
     assert p.rotate_values() is not None
 
 

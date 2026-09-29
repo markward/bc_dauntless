@@ -177,7 +177,7 @@ def test_pipette_copies_rotation_axis_between_matching_strip_emitters(spv_panel)
     # Rotate the source emitter (subsystem 1's strip) 90deg about +X.
     p.dispatch_event('select_emitter:' + json.dumps({"i": 1, "j": 0}))
     p.active_tool = "rotate"
-    p._rotate_axis(0, 90.0)
+    p._rotate_edit_target().rotate_nudge(0, 90.0)
     src_axis = p._effective_emitter(1, 0)["axis"]
     assert abs(src_axis[2] - (-1.0)) < 1e-6   # sanity: it moved
 
