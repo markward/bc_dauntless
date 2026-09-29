@@ -1174,22 +1174,29 @@ class DecalTarget(EditTarget):
         p = self._placement()
         if p is not None:
             self.panel._decal_grab = p
+            self.panel._decal_scale_axis = axis
         return None
 
     def scale_drag_apply(self, state, ratio: float) -> None:
+        """Handles 0/1 (in the decal's plane, along u/v) scale the WIDTH,
+        the height snapping to the previewed mask's aspect (2:1 without a
+        PNG) like the Width nudge; depth is untouched. Handle 2 (along the
+        normal) scales the DEPTH only (Mark: a curved hull needs a deeper
+        slab without the lettering growing)."""
         from dataclasses import replace
         from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import MIN_DEPTH
         pane = self.panel
         g = pane._decal_grab
         if g is None:
             return
         ratio = max(ratio, 1e-3)
-        # Spec S3: uniform, "aspect locked to the mask" -- width scales by the
-        # factor and the height snaps to the previewed mask's aspect (2:1
-        # without a PNG), like the Width nudge. Depth still scales with it.
-        p = decal_editor.set_width(g, decal_editor.width(g) * ratio,
-                                   pane._decal_aspect(decal_editor.mask_of(g)))
-        pane._decal_apply(replace(p, depth=g.depth * ratio))
+        if getattr(pane, "_decal_scale_axis", 0) == 2:
+            pane._decal_apply(replace(g, depth=max(MIN_DEPTH, g.depth * ratio)))
+            return
+        pane._decal_apply(decal_editor.set_width(
+            g, decal_editor.width(g) * ratio,
+            pane._decal_aspect(decal_editor.mask_of(g))))
 
     # -- Mirror --------------------------------------------------------
     def mirror_position(self) -> None:

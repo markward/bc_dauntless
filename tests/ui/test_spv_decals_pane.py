@@ -432,7 +432,9 @@ def test_the_rotate_gizmo_rolls_about_the_normal(env):
     assert abs(sum(a * b for a, b in zip(_u_hat(pl), _u_hat(top)))) < 1e-9
 
 
-def test_the_scale_gizmo_scales_uniformly(env):
+def test_a_width_handle_scales_the_lettering_not_the_depth(env):
+    """In-plane handles scale width (height follows the mask aspect); the
+    depth slab is left alone (Mark: depth has its own handle)."""
     p = env["p"]
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-select:top")
@@ -445,7 +447,25 @@ def test_the_scale_gizmo_scales_uniformly(env):
     p._apply_scale_drag(2.0 * L)
     pl = p._decal_working[0]
     assert decal_editor.width(pl) == pytest.approx(2.0 * w0)
-    assert pl.depth == pytest.approx(2.0 * _TOP["depth"])
+    assert pl.depth == pytest.approx(_TOP["depth"])
+
+
+def test_the_normal_handle_scales_the_depth_only(env):
+    """Handle 2 (along the decal normal) drags the depth slab alone -- the
+    fix for a curved hull clipping the lettering (Mark, Sovereign)."""
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("set_tool:scale")
+    from engine.ui.ship_property_viewer import gizmo_length
+    before = p._decal_working[0]
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(2, L)
+    p._apply_scale_drag(3.0 * L)
+    pl = p._decal_working[0]
+    assert pl.depth == pytest.approx(3.0 * _TOP["depth"])
+    assert pl.origin == before.origin
+    assert pl.u_axis == before.u_axis and pl.v_axis == before.v_axis
 
 
 def test_the_scale_gizmo_locks_the_aspect_to_the_mask(env):
@@ -490,7 +510,7 @@ def test_the_scale_gizmo_uses_the_default_aspect_without_a_mask(env):
     h = math.sqrt(sum(c * c for c in pl.v_axis))
     assert decal_editor.width(pl) == pytest.approx(150.0)
     assert decal_editor.width(pl) / h == pytest.approx(2.0)
-    assert pl.depth == pytest.approx(4.5)
+    assert pl.depth == pytest.approx(3.0)
 
 
 def _wrap(deg):
