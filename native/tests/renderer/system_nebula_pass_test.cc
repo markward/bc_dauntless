@@ -245,6 +245,33 @@ TEST_F(SystemNebulaPassTest, SetDialsWithoutProfileNeverRebuilds) {
     EXPECT_EQ(pass.dials().floor, 0.5f);
 }
 
+TEST_F(SystemNebulaPassTest, SetProfileSyncsDialsFromLookParams) {
+    // set_profile takes a LookParams with its own g/floor (per-system
+    // overrides authored outside the dev-dial path); dials() must reflect
+    // whatever the pass is actually rendering, or a stale dials() would
+    // report the struct defaults and the next dev-key press would clobber
+    // the authored look with a "no-op" step off the wrong baseline.
+    renderer::SystemNebulaPass pass;
+    renderer::atmosphere::LookParams look;
+    look.g = 0.4f;
+    look.floor = 0.05f;
+    pass.set_profile(band_profile(), look);
+    EXPECT_EQ(pass.dials().g, 0.4f);
+    EXPECT_EQ(pass.dials().floor, 0.05f);
+    const int after_initial_upload = pass.profile_rebuild_count();
+
+    // A subsequent lane-contrast-only dial change must keep g/floor as
+    // set_profile left them, and must not rebuild the far-field table.
+    renderer::SystemNebulaPass::Dials d = pass.dials();
+    d.lane_contrast = 0.9f;
+    pass.set_dials(d);
+    EXPECT_EQ(pass.dials().g, 0.4f);
+    EXPECT_EQ(pass.dials().floor, 0.05f);
+    EXPECT_EQ(pass.dials().lane_contrast, 0.9f);
+    EXPECT_EQ(pass.profile_rebuild_count(), after_initial_upload)
+        << "a lane-contrast-only change must not rebuild the far-field table";
+}
+
 TEST_F(SystemNebulaPassTest, RendersVisibleHazeLookingAtTheStar) {
     renderer::HdrTarget target;
     target.resize(64, 64);

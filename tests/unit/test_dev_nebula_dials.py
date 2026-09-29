@@ -18,10 +18,10 @@ def _isolate_registry_and_dial_state():
 
 
 class _Keys:
-    KEY_J, KEY_L = 1, 2
-    KEY_N, KEY_M = 3, 4
-    KEY_U, KEY_O = 5, 6
-    KEY_B, KEY_P = 7, 8
+    KEY_KP_DIVIDE, KEY_KP_MULTIPLY = 1, 2
+    KEY_L, KEY_O = 3, 4
+    KEY_SLASH, KEY_PAUSE = 5, 6
+    KEY_KP_DECIMAL, KEY_KP_0 = 7, 8
 
 
 class _FakeHost:
@@ -42,7 +42,7 @@ def test_pressing_a_key_pushes_the_whole_dict_and_prints(monkeypatch, capsys):
     D._dials = dict(D.DEFAULTS)
     D.register(_FakeHost())
 
-    handler, _desc = dev_mode._dev_keybindings[_Keys.KEY_M]   # g +0.05
+    handler, _desc = dev_mode._dev_keybindings[_Keys.KEY_O]   # g +0.05
     handler()
 
     assert len(pushed) == 1

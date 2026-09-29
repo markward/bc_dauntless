@@ -5296,15 +5296,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_APOSTROPHE") = GLFW_KEY_APOSTROPHE;
     // Dev system-nebula look-dial tuning (engine/dev_nebula_dials.py). Free
     // in input_map.ACTIONS, the dev-keybinding registry, the directly-read
-    // set and the SDK-routed F6/F9 -- see test_dev_key_collisions.py.
-    keys.attr("KEY_J") = GLFW_KEY_J;
+    // set, the SDK-routed F6/F9, AND every App.WC_* key BC's own
+    // DefaultKeyboardBinding.py binds -- see test_dev_key_collisions.py's
+    // "namespace 5" check. (An earlier cut used J/N/M/U/B/P here, which
+    // collided with BC's own WC_J/N/M/U/B bindings; removed.)
     keys.attr("KEY_L") = GLFW_KEY_L;
-    keys.attr("KEY_N") = GLFW_KEY_N;
-    keys.attr("KEY_M") = GLFW_KEY_M;
-    keys.attr("KEY_U") = GLFW_KEY_U;
     keys.attr("KEY_O") = GLFW_KEY_O;
-    keys.attr("KEY_B") = GLFW_KEY_B;
-    keys.attr("KEY_P") = GLFW_KEY_P;
+    keys.attr("KEY_SLASH") = GLFW_KEY_SLASH;
+    keys.attr("KEY_PAUSE") = GLFW_KEY_PAUSE;
+    keys.attr("KEY_KP_0")        = GLFW_KEY_KP_0;
+    keys.attr("KEY_KP_DECIMAL")  = GLFW_KEY_KP_DECIMAL;
+    keys.attr("KEY_KP_MULTIPLY") = GLFW_KEY_KP_MULTIPLY;
+    keys.attr("KEY_KP_DIVIDE")   = GLFW_KEY_KP_DIVIDE;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

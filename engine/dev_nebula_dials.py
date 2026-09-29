@@ -11,18 +11,31 @@ back into `system_nebula_pass.cc`'s struct defaults once settled.
 
 Keys chosen (none claimed by `input_map.ACTIONS`, the existing dev-keybinding
 registry in `engine/dev_keybindings.py`, the directly-read set (throttle
-1-9/F12/Escape/Space), or the SDK-routed F6/F9 -- see
-`tests/unit/test_dev_key_collisions.py`, which now scans this module too).
-Deliberately avoids the bare `T` key even though it looked free: `KEY_T` is
-also polled, WITH Alt, by the tractor-beam toggle
-(`tests/integration/test_modifier_chord_poller.py`), and `dispatch_dev_key`
-fires on the bare keycode regardless of any modifier -- binding `T` here
-would double-fire every time a developer pressed Alt+T for tractors.
+1-9/F12/Escape/Space), the SDK-routed F6/F9, OR any `App.WC_*` physical key
+BC's own `DefaultKeyboardBinding.Initialize()` binds -- see
+`tests/unit/test_dev_key_collisions.py`, which scans this module against all
+five namespaces). The first cut of this module used J/L/N/M/U/O/B/P, which
+collided with BC's own WC_J (target attacker), WC_N (next navpoint), WC_P
+(next planet), WC_M (map mode), WC_U (target nearest) and WC_B (first
+person) -- dev-key dispatch never consumes the key, so those would have
+double-fired the SDK's own handler on every press. Only L and O of the
+original eight were actually free.
 
-  J / L   floor          -  / x  (divide / multiply by 1.25)
-  N / M   g              -0.05 / +0.05, clamped to [0, 0.95]
-  U / O   lane_contrast  -0.1 / +0.1, clamped to [0, 1]
-  B / P   near_range     -  / x  (divide / multiply by 1.5)
+BC binds a bare letter/digit/F-key/most punctuation to SOMETHING (see
+`sdk/Build/scripts/DefaultKeyboardBinding.py`); the keys below are the ones
+confirmed free against BC's `BindKey` calls, `input_map.ACTIONS`,
+`dev_keybindings.py`'s registry, and the directly-read/SDK-routed sets:
+
+  KP_DIVIDE / KP_MULTIPLY   floor          -  / x  (divide / multiply by 1.25)
+  L / O                     g              -0.05 / +0.05, clamped to [0, 0.95]
+  SLASH / PAUSE             lane_contrast  -0.1 / +0.1, clamped to [0, 1]
+  KP_DECIMAL / KP_0         near_range     -  / x  (divide / multiply by 1.5)
+
+`KP_*` are the numeric-keypad keys (`GLFW_KEY_KP_*`); a keyboard without a
+physical numpad cannot reach `floor` or `near_range` from these bindings.
+`PAUSE` is BC's `WC_PAUSE` (Pause/Break) -- unbound in both BC and every one
+of our own tables, but absent on many laptop keyboards; it is the only
+letter/punctuation key left once the ten collisions above are excluded.
 
 `lane_size` travels in the pushed dict too (unchanged -- there is no key for
 it) because the native `Dials` struct expects the whole dial set each call.
@@ -98,34 +111,34 @@ def register(_h) -> None:
     convention.
     """
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_J, lambda: _push("floor", -1),
-        "System nebula floor / 1.25 (dev) - J",
+        _h.keys.KEY_KP_DIVIDE, lambda: _push("floor", -1),
+        "System nebula floor / 1.25 (dev) - Numpad /",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_L, lambda: _push("floor", +1),
-        "System nebula floor x 1.25 (dev) - L",
+        _h.keys.KEY_KP_MULTIPLY, lambda: _push("floor", +1),
+        "System nebula floor x 1.25 (dev) - Numpad *",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_N, lambda: _push("g", -1),
-        "System nebula g -0.05 (dev) - N",
+        _h.keys.KEY_L, lambda: _push("g", -1),
+        "System nebula g -0.05 (dev) - L",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_M, lambda: _push("g", +1),
-        "System nebula g +0.05 (dev) - M",
+        _h.keys.KEY_O, lambda: _push("g", +1),
+        "System nebula g +0.05 (dev) - O",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_U, lambda: _push("lane_contrast", -1),
-        "System nebula lane contrast -0.1 (dev) - U",
+        _h.keys.KEY_SLASH, lambda: _push("lane_contrast", -1),
+        "System nebula lane contrast -0.1 (dev) - /",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_O, lambda: _push("lane_contrast", +1),
-        "System nebula lane contrast +0.1 (dev) - O",
+        _h.keys.KEY_PAUSE, lambda: _push("lane_contrast", +1),
+        "System nebula lane contrast +0.1 (dev) - Pause",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_B, lambda: _push("near_range", -1),
-        "System nebula near range / 1.5 (dev) - B",
+        _h.keys.KEY_KP_DECIMAL, lambda: _push("near_range", -1),
+        "System nebula near range / 1.5 (dev) - Numpad .",
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_P, lambda: _push("near_range", +1),
-        "System nebula near range x 1.5 (dev) - P",
+        _h.keys.KEY_KP_0, lambda: _push("near_range", +1),
+        "System nebula near range x 1.5 (dev) - Numpad 0",
     )

@@ -29,8 +29,8 @@ struct Lighting;
 /// premultiplied OVER the HDR target.
 ///
 /// What it marches (system_nebula.frag): a near field of ~64 geometric steps
-/// out to kNearRangeGu through the radial density texture (density, tau_star
-/// by radius from the star) modulated by fbm "lanes", then the far field
+/// out to dials().near_range through the radial density texture (density,
+/// tau_star by radius from the star) modulated by fbm "lanes", then the far field
 /// from a precomputed table keyed by (radius, cos to the outward radial).
 /// The table's transmittance is uploaded as OPTICAL DEPTH (tau_from_table):
 /// system-scale transmittances reach ~1e-16, so the shader recovers a finite

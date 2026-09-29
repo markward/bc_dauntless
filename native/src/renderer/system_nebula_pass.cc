@@ -74,6 +74,13 @@ void SystemNebulaPass::set_profile(const atmosphere::RadialProfile& profile,
     destroy_profile_textures();
     profile_ = profile;
     look_ = look;
+    // Keep dials_ in sync with whatever LookParams the pass actually renders
+    // -- a per-system caller (or set_dials' own rebuild below) can pass g/
+    // floor that differ from the dial struct's defaults, and dials() must
+    // report the true baseline so the NEXT dev-key press steps from it
+    // rather than silently clobbering the authored look.
+    dials_.g = look.g;
+    dials_.floor = look.floor;
 
     const std::vector<glm::vec2> radial = atm::build_radial_texels(profile, look);
     const atm::Table table = atm::build_table(profile, look);
