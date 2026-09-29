@@ -606,7 +606,8 @@ def test_an_iid_change_clears_the_old_instance_before_pushing(env):
 def _record_writes(monkeypatch):
     writes = []
     monkeypatch.setattr(decals_writer, "write_decals",
-                        lambda path, pls, reg: writes.append((path, pls, reg)))
+                        lambda path, pls, reg, passthrough=None:
+                        writes.append((path, pls, reg)))
     return writes
 
 
@@ -660,7 +661,7 @@ def test_save_writes_into_the_mod_that_supplies_the_model(env, monkeypatch):
 def test_a_failed_save_keeps_the_staged_edits(env, monkeypatch):
     p = env["p"]
 
-    def _boom(path, pls, reg):
+    def _boom(path, pls, reg, passthrough=None):
         raise ValueError("corrupt decals.json")
     monkeypatch.setattr(decals_writer, "write_decals", _boom)
     p.dispatch_event("decal-pane")
@@ -703,3 +704,134 @@ def test_nothing_is_pushed_when_the_pane_was_never_entered(env):
     p.close()
     p.on_mission_swap()
     assert calls == []
+
+
+# ── final review: malformed placements are never dropped (fix 2) ─────────
+
+# A 2-vector origin with a non-numeric depth, and one missing its normal:
+# neither can become an editable Placement, and neither may vanish on Save.
+_BROKEN = {"shape": "amb saucer:0", "origin": [1, 2], "u_axis": [1, 0, 0],
+           "v_axis": [0, 1, 0], "normal": [0, 0, 1], "depth": "deep",
+           "note": {"keep": [1, None]}}
+_NO_NORMAL = {"origin": [0, 0, 0], "u_axis": [1, 0, 0], "v_axis": [0, 1, 0],
+              "depth": 1}
+
+
+def _write_with_broken(env, **extra):
+    (env["masks"] / "decals.json").write_text(json.dumps(
+        {"format": 1, "default_registry": "Zhukov",
+         "decals": {"broken": _BROKEN, "top": _TOP, "nonormal": _NO_NORMAL,
+                    **extra}}))
+    mods.invalidate_replacements()
+
+
+def test_a_malformed_placement_is_listed_as_unreadable(env):
+    p = env["p"]
+    _write_with_broken(env)
+    p.dispatch_event("decal-pane")
+    assert [pl.name for pl in p._decal_working] == ["top"]
+    d = _payload(p)["decals"]
+    assert {"name": "top", "has_mask": True} in d["placements"]
+    unreadable = [x for x in d["placements"] if x.get("unreadable")]
+    assert [x["name"] for x in unreadable] == ["broken", "nonormal"]
+    # Not selectable, not editable.
+    assert not p.dispatch_event("decal-select:broken")
+    assert _payload(p)["decals"]["selected"] is None
+    # Its name is taken: a new placement cannot shadow it.
+    p.dispatch_event("decal-add:broken")
+    assert _payload(p)["decals"]["adding"] is False
+
+
+def test_a_malformed_placement_survives_a_save_unchanged(env):
+    p = env["p"]
+    _write_with_broken(env)
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event('decal-nudge:{"field":"depth","delta":0.5}')
+    p.dispatch_event("save")
+    assert "Saved" in (p._current_toast() or "")
+    doc = json.loads((env["masks"] / "decals.json").read_text())
+    assert json.dumps(doc["decals"]["broken"]) == json.dumps(_BROKEN)
+    assert json.dumps(doc["decals"]["nonormal"]) == json.dumps(_NO_NORMAL)
+    assert doc["decals"]["top"]["depth"] == pytest.approx(_TOP["depth"] + 0.5)
+
+
+def test_an_unreadable_placement_can_be_deleted_and_undone(env):
+    p = env["p"]
+    _write_with_broken(env)
+    p.dispatch_event("decal-pane")
+    assert p.dispatch_event("decal-delete:broken")
+    d = _payload(p)["decals"]
+    assert "broken" not in [x["name"] for x in d["placements"]]
+    assert d["dirty"] is True
+    p.dispatch_event("undo")
+    assert "broken" in [x["name"] for x in _payload(p)["decals"]["placements"]]
+    assert _payload(p)["decals"]["dirty"] is False
+    p.dispatch_event("decal-delete:broken")
+    p.dispatch_event("save")
+    doc = json.loads((env["masks"] / "decals.json").read_text())
+    assert list(doc["decals"]) == ["top", "nonormal"]
+
+
+def test_unreadable_placements_count_toward_the_cap(env):
+    p = env["p"]
+    _write_with_broken(env, extra1=_NO_NORMAL)
+    p.dispatch_event("decal-pane")
+    d = _payload(p)["decals"]
+    assert len(d["placements"]) == 4 and d["can_add"] is False
+    p.dispatch_event("decal-add:bottom")
+    assert _payload(p)["decals"]["adding"] is False
+
+
+# ── final review: a preview the game won't show is flagged (fix 4) ──────
+
+NOT_SHOWN = ("Not shown in game — no registry for this ship. "
+             "Use 'Make X the class default'.")
+
+
+def _no_default(env):
+    (env["masks"] / "decals.json").write_text(json.dumps(
+        {"format": 1, "decals": {"top": _TOP}}))
+    mods.invalidate_replacements()
+
+
+def test_a_fallback_preview_carries_a_persistent_not_in_game_hint(env):
+    p = env["p"]
+    _no_default(env)
+    p.dispatch_event("decal-pane")
+    d = _payload(p)["decals"]
+    assert d["registry"] == "Excalibur"        # the first folder, previewed
+    assert d["hint"] == NOT_SHOWN
+    p.dispatch_event("decal-select:top")        # clears errors, not the hint
+    assert _payload(p)["decals"]["hint"] == NOT_SHOWN
+    p.dispatch_event("decal-default:Excalibur")
+    assert _payload(p)["decals"]["hint"] is None
+
+
+def test_no_hint_when_the_class_has_a_default(env):
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    assert _payload(p)["decals"]["hint"] is None
+
+
+def test_no_hint_when_the_ship_swaps_its_id_texture(env, monkeypatch):
+    from engine.appc import registry_texture
+    _no_default(env)
+    monkeypatch.setattr(registry_texture, "replacements_for",
+                        lambda ship: [("ID", "/x/Zhukov.tga")])
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    d = _payload(p)["decals"]
+    assert d["registry"] == "Zhukov" and d["hint"] is None
+
+
+def test_clearing_the_class_default_brings_the_hint_back_and_saves(env):
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    assert p.dispatch_event("decal-default:")
+    d = _payload(p)["decals"]
+    assert d["default_registry"] is None and d["hint"] == NOT_SHOWN
+    assert d["dirty"] is True
+    p.dispatch_event("save")
+    doc = json.loads((env["masks"] / "decals.json").read_text())
+    assert "default_registry" not in doc

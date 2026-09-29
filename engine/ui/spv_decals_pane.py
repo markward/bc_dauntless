@@ -52,6 +52,10 @@ SUGGESTED_NAMES = ("top", "bottom", "port", "starboard", "bow", "stern")
 OVERRIDE_REFRESH_S = 1.0
 MISS_HINT = "Missed the hull -- click on the ship"
 CAP_HINT = "At most %d decals per ship -- delete one first" % MAX_DECALS
+# Persistent while the preview falls back to a registry the game would never
+# pick (no ID swap, no default_registry): the game draws NO decals then.
+NOT_IN_GAME_HINT = ("Not shown in game — no registry for this ship. "
+                    "Use 'Make X the class default'.")
 NUDGE_FIELDS = ("x", "y", "z", "width", "roll", "depth")
 MIN_DEPTH = 1e-4
 
@@ -141,6 +145,14 @@ class DecalsPaneMixin:
         self._decal_baseline: List[decal_editor.Placement] = []
         self._decal_default: Optional[str] = None
         self._decal_baseline_default: Optional[str] = None
+        # Entries under "decals" that don't parse into a Placement, raw JSON
+        # value by name: listed "(unreadable)", deletable, never editable,
+        # and written back unchanged on Save (never destroy data silently).
+        self._decal_passthrough: dict = {}
+        self._decal_baseline_passthrough: dict = {}
+        # The registry the SHIP picks by its own ID ReplaceTexture (None when
+        # it queues none) -- with the staged default, what the game would use.
+        self._decal_id_registry: Optional[str] = None
         self._decal_registries: List[str] = []
         self._decal_registry: Optional[str] = None
         self._decal_selected: Optional[str] = None
@@ -171,6 +183,16 @@ class DecalsPaneMixin:
 
     def _decal_names(self) -> List[str]:
         return [p.name for p in (self._decal_working or [])]
+
+    def _decal_taken_names(self) -> List[str]:
+        """Every declared name, parsed or unreadable: a new placement may
+        not shadow either (they share one JSON object)."""
+        return self._decal_names() + list(self._decal_passthrough)
+
+    def _decal_count(self) -> int:
+        """Declared placements, unreadable ones included -- the game's
+        4-cap truncates the file's entries, readable or not."""
+        return len(self._decal_working or []) + len(self._decal_passthrough)
 
     def _decal_index(self, name) -> Optional[int]:
         for i, p in enumerate(self._decal_working or []):
@@ -253,7 +275,7 @@ class DecalsPaneMixin:
                 rel = None
         self._decal_model_rel = rel or None
         self._decal_refresh_registries()
-        working, default, doc = [], None, None
+        working, passthrough, default, doc = [], {}, None, None
         d = self._decal_dir()
         if d is not None:
             doc = hull_decals.load_decals_doc(d)
@@ -265,21 +287,34 @@ class DecalsPaneMixin:
                 try:
                     working.append(decal_editor.from_json_entry(name, entry))
                 except (KeyError, TypeError, ValueError, AttributeError):
-                    self._decal_error = ("Skipped malformed placement %r" % name)
+                    passthrough[name] = entry
         self._decal_working = working
         self._decal_baseline = list(working)
+        self._decal_passthrough = passthrough
+        self._decal_baseline_passthrough = dict(passthrough)
         self._decal_default = default
         self._decal_baseline_default = default
+        reps = registry_texture.replacements_for(ship) if ship is not None else []
+        self._decal_id_registry = hull_decals.registry_stem(reps)
         reg = hull_decals.resolve_registry(
-            registry_texture.replacements_for(ship) if ship is not None else [],
-            doc if isinstance(doc, dict) else None)
+            reps, doc if isinstance(doc, dict) else None)
         if reg is None and self._decal_registries:
+            # Something to preview -- flagged by NOT_IN_GAME_HINT (_decal_hint).
             reg = self._decal_registries[0]
         self._decal_registry = reg
+
+    def _decal_hint(self) -> Optional[str]:
+        """NOT_IN_GAME_HINT while the game would resolve no registry for this
+        ship (no ID swap, no staged class default) yet the pane previews one."""
+        if (self._decal_registry and self._decal_id_registry is None
+                and not self._decal_default):
+            return NOT_IN_GAME_HINT
+        return None
 
     def _decal_dirty(self) -> bool:
         return (self._decal_working is not None
                 and (self._decal_working != self._decal_baseline
+                     or self._decal_passthrough != self._decal_baseline_passthrough
                      or self._decal_default != self._decal_baseline_default))
 
     def _decal_change_count(self) -> int:
@@ -288,6 +323,7 @@ class DecalsPaneMixin:
         base = {p.name: p for p in self._decal_baseline}
         work = {p.name: p for p in self._decal_working}
         n = sum(1 for k in set(base) | set(work) if base.get(k) != work.get(k))
+        n += len(set(self._decal_baseline_passthrough) ^ set(self._decal_passthrough))
         if self._decal_default != self._decal_baseline_default:
             n += 1
         return max(n, 1)
@@ -416,10 +452,10 @@ class DecalsPaneMixin:
             return True
         if verb == "decal-add":
             self._decal_reposition = False
-            if len(self._decal_working) >= MAX_DECALS:
+            if self._decal_count() >= MAX_DECALS:
                 self._decal_adding, self._decal_error = None, CAP_HINT
                 return True
-            err = decal_editor.valid_name(arg, self._decal_names())
+            err = decal_editor.valid_name(arg, self._decal_taken_names())
             if err is not None:
                 self._decal_adding, self._decal_error = None, "Name refused: " + err
                 return True
@@ -430,6 +466,10 @@ class DecalsPaneMixin:
             self._decal_error = None
             return True
         if verb == "decal-delete":
+            if arg in self._decal_passthrough:
+                del self._decal_passthrough[arg]
+                self._decal_error = None
+                return True
             i = self._decal_index(arg)
             if i is None:
                 return False
@@ -655,6 +695,7 @@ class DecalsPaneMixin:
     def _decal_state_key(self) -> tuple:
         return (self._decals_active,
                 tuple(self._decal_working) if self._decal_working is not None else None,
+                tuple(self._decal_passthrough),
                 self._decal_registry, self._decal_default,
                 tuple(self._decal_registries), self._decal_selected,
                 self._decal_adding, self._decal_reposition, self._decal_error)
@@ -663,7 +704,7 @@ class DecalsPaneMixin:
         """Names the Add picker offers: the previewed registry's PNG stems
         not yet placed, then the stock suggestions; all valid and unused."""
         from engine import paths
-        taken = self._decal_names()
+        taken = self._decal_taken_names()
         out: List[str] = []
         d, reg = self._decal_dir(), self._decal_registry
         if d is not None and reg:
@@ -708,13 +749,16 @@ class DecalsPaneMixin:
             "default_registry": self._decal_default,
             "placements": [{"name": p.name,
                             "has_mask": self._decal_mask_path(p.name) is not None}
-                           for p in working],
+                           for p in working]
+                          + [{"name": n, "has_mask": False, "unreadable": True}
+                             for n in self._decal_passthrough],
             "selected": self._decal_selected,
             "adding": self._decal_adding is not None,
             "adding_name": self._decal_adding,
             "reposition": self._decal_reposition,
             "error": self._decal_error,
-            "can_add": len(working) < MAX_DECALS,
+            "hint": self._decal_hint(),
+            "can_add": self._decal_count() < MAX_DECALS,
             "suggested_names": (self._decal_suggested_names()
                                 if self._decals_active else []),
             "numbers": self._decal_numbers(),
@@ -732,13 +776,15 @@ class DecalsPaneMixin:
             return False
         try:
             path = decals_writer.save_decals(
-                self._decal_model_rel, list(self._decal_working), self._decal_default)
+                self._decal_model_rel, list(self._decal_working), self._decal_default,
+                passthrough=dict(self._decal_passthrough))
         except Exception as e:
             from engine import dev_mode
             dev_mode.log_swallowed("spv decal save", e)
             self._show_toast("Decal save failed: %s" % e)
             return False
         self._decal_baseline = list(self._decal_working)
+        self._decal_baseline_passthrough = dict(self._decal_passthrough)
         self._decal_baseline_default = self._decal_default
         self._show_toast("Saved decals to %s" % path)
         return True

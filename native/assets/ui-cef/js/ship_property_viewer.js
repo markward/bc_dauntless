@@ -952,8 +952,9 @@ function renderSPVModelParts(modelParts) {
 
 // ── Decals pane (spec 2026-09-28-spv-decal-editing-design.md S3) ──────────
 // Driven by `decals` = {active, has_model, registries, registry,
-// default_registry, placements:[{name, has_mask}], selected, adding,
-// adding_name, reposition, error, can_add, suggested_names, numbers, dirty}.
+// default_registry, placements:[{name, has_mask, unreadable?}], selected,
+// adding, adding_name, reposition, error, hint, can_add, suggested_names,
+// numbers, dirty}.
 // Python owns every rule (name validation, the 4-cap, the hull pick); this
 // only renders and fires 'ship-property-viewer/decal-*' events. Two bits of
 // state are JS-local because they never reach Python until confirmed: the
@@ -1018,16 +1019,40 @@ function renderSPVDecals(decals) {
         + (chips || '<span class="spv-decal-hint">No registry folders under Masks/ &mdash; '
             + 'masks preview as the checkerboard.</span>')
         + '</div>');
+    var defActs = [];
     if (d.registry && d.registry !== d.default_registry) {
-        out.push('<div class="spv-decal-chips">'
-            + spvDecalBtn('Make ' + escapeHtmlSPV(d.registry) + ' the class default',
-                'shipPropertyViewerDecalDefault', '', d.registry) + '</div>');
+        defActs.push(spvDecalBtn('Make ' + escapeHtmlSPV(d.registry) + ' the class default',
+            'shipPropertyViewerDecalDefault', '', d.registry));
+    }
+    if (d.default_registry) {
+        defActs.push(spvDecalBtn('Clear class default', 'shipPropertyViewerDecalClearDefault'));
+    }
+    if (defActs.length) {
+        out.push('<div class="spv-decal-chips">' + defActs.join('') + '</div>');
+    }
+    // Persistent (unlike d.error): the previewed registry is one the game
+    // would never pick for this ship.
+    if (typeof d.hint === 'string' && d.hint.length > 0) {
+        out.push('<div class="spv-decal-hint">' + escapeHtmlSPV(d.hint) + '</div>');
     }
 
-    // Placements.
+    // Placements. An unreadable one (a decals.json entry Python could not
+    // parse; kept and written back unchanged) is listed, never selectable,
+    // and carries its own Delete.
     out.push('<div class="spv-decal-section">Placements ('
         + (d.placements || []).length + '/4)</div>');
     (d.placements || []).forEach(function (p) {
+        if (p.unreadable === true) {
+            out.push('<div class="spv-sys-row" data-name="' + escapeHtmlSPV(p.name) + '">'
+                + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+                + '<span class="spv-sys-row__name">' + escapeHtmlSPV(p.name) + '</span>'
+                + '<span class="spv-decal-nomask">(unreadable)</span>'
+                + '</div>');
+            out.push('<div class="spv-decal-chips">'
+                + spvDecalBtn('Delete ' + escapeHtmlSPV(p.name), 'shipPropertyViewerDecalDeleteAsk',
+                    '', p.name) + '</div>');
+            return;
+        }
         var chosen = p.name === d.selected;
         out.push('<div class="spv-sys-row' + (chosen ? ' spv-sys-row--chosen' : '') + '"'
             + ' data-name="' + escapeHtmlSPV(p.name) + '"'
@@ -1058,7 +1083,11 @@ function renderSPVDecals(decals) {
         out.push('<div class="spv-decal-hint">Click the hull to re-seat &ldquo;'
             + escapeHtmlSPV(d.selected || '') + '&rdquo;.</div>');
     }
-    if (spvDecalConfirmDelete !== null && spvDecalConfirmDelete === d.selected) {
+    var unreadable = (d.placements || []).filter(function (p) {
+        return p.unreadable === true;
+    }).map(function (p) { return p.name; });
+    if (spvDecalConfirmDelete !== null && (spvDecalConfirmDelete === d.selected
+            || unreadable.indexOf(spvDecalConfirmDelete) >= 0)) {
         out.push('<div class="spv-decal-hint">Delete &ldquo;' + escapeHtmlSPV(spvDecalConfirmDelete)
             + '&rdquo;?</div><div class="spv-decal-chips">'
             + spvDecalBtn('Delete', 'shipPropertyViewerDecalDeleteYes', 'spv-decal-btn--danger',
@@ -1100,6 +1129,10 @@ window.shipPropertyViewerDecalRegistry = function (el) {
 };
 window.shipPropertyViewerDecalDefault = function (el) {
     dauntlessEvent('ship-property-viewer/decal-default:' + el.dataset.name);
+};
+window.shipPropertyViewerDecalClearDefault = function () {
+    // An empty value clears the staged class default (Python: "" -> None).
+    dauntlessEvent('ship-property-viewer/decal-default:');
 };
 window.shipPropertyViewerDecalSelect = function (el) {
     spvDecalConfirmDelete = null;

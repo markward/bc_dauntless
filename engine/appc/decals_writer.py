@@ -71,7 +71,8 @@ def decals_target_path(model_rel: str) -> Path:
 
 
 def save_decals(model_rel: str, placements: List["decal_editor.Placement"],
-                default_registry: Optional[str]) -> Path:
+                default_registry: Optional[str],
+                passthrough: Optional[dict] = None) -> Path:
     """The SPV's Save: `write_decals` at `decals_target_path(model_rel)`,
     then make the file visible to the reader (Ruling N). Returns the path.
 
@@ -85,12 +86,14 @@ def save_decals(model_rel: str, placements: List["decal_editor.Placement"],
     installed mod. `hull_decals.reset()` then clears the reader's warn-once
     ledger so a fault in the new file is reported afresh.
 
+    `passthrough` is forwarded to `write_decals` unchanged (see there).
+
     Raises whatever `write_decals` raises; the indexes are left alone then.
     """
     from engine.appc import hull_decals
 
     path = decals_target_path(model_rel)
-    write_decals(path, placements, default_registry)
+    write_decals(path, placements, default_registry, passthrough=passthrough)
 
     json_rel = f"{posixpath.dirname(model_rel)}/Masks/decals.json"
     try:
@@ -109,7 +112,8 @@ def save_decals(model_rel: str, placements: List["decal_editor.Placement"],
 
 
 def write_decals(path: Path, placements: List["decal_editor.Placement"],
-                  default_registry: Optional[str]) -> None:
+                  default_registry: Optional[str],
+                  passthrough: Optional[dict] = None) -> None:
     """Write `path`'s `decals.json`.
 
     Format: `{"format": 1, "default_registry": ..., "decals": {...}}`, with
@@ -119,6 +123,13 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
     source of the entry shape -- see that module). Any top-level key already
     in the file that isn't one of `_KNOWN_KEYS` is preserved, in its
     original order, after them.
+
+    `passthrough` maps placement name -> the RAW JSON value of an entry the
+    SPV could not parse into a `Placement`. Those entries are written back
+    unchanged, in their given order, after the parsed placements, so a Save
+    never silently deletes a hand-authored entry it doesn't understand. A
+    passthrough name that is also a parsed placement's name raises
+    `ValueError` (one of the two would be lost) before anything is written.
 
     Write is atomic: `path` + ".tmp" is written first, then `os.replace`d
     onto `path` (the `.tmp` is unlinked again if `os.replace` itself fails).
@@ -151,7 +162,14 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
     doc = {"format": 1}
     if default_registry:
         doc["default_registry"] = default_registry
-    doc["decals"] = {p.name: decal_editor.to_json_entry(p) for p in placements}
+    decals = {p.name: decal_editor.to_json_entry(p) for p in placements}
+    for name, raw in (passthrough or {}).items():
+        if name in decals:
+            raise ValueError(
+                f"{path}: placement {name!r} is both edited and unreadable "
+                "-- refusing to write either")
+        decals[name] = raw
+    doc["decals"] = decals
     for key, value in existing.items():
         if key in _KNOWN_KEYS:
             continue

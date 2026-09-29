@@ -52,9 +52,11 @@ eval(fs.readFileSync(process.argv[2], "utf8"));
 const NAME = "we'ird\"&";
 const base = {active: true, has_model: true, registries: ["Excalibur", "Zhukov"],
   registry: "Zhukov", default_registry: "Zhukov",
-  placements: [{name: "top", has_mask: true}, {name: NAME, has_mask: false}],
+  placements: [{name: "top", has_mask: true}, {name: NAME, has_mask: false},
+               {name: "bad", has_mask: false, unreadable: true}],
   selected: "top", adding: false, adding_name: null, reposition: false,
-  error: "Name refused: nope", can_add: true, suggested_names: ["bottom", "port"],
+  error: "Name refused: nope", hint: "Not shown in game — no registry",
+  can_add: true, suggested_names: ["bottom", "port"],
   numbers: {centre: [1, 2, 3], width: 1.5, roll: 10, depth: 0.1, step: 0.075},
   dirty: false};
 const out = {};
@@ -74,7 +76,13 @@ shipPropertyViewerDecalDeleteYes(el({name: "top"}));
 shipPropertyViewerDecalNudge(el({field: "width", delta: "0.075"}));
 shipPropertyViewerDecalAddCancel();
 shipPropertyViewerDecalDefault(el({name: "Excalibur"}));
+shipPropertyViewerDecalDeleteAsk(el({name: "bad"}));
+out.confirm_bad = els["spv-decals-body"].innerHTML;
+shipPropertyViewerDecalDeleteYes(el({name: "bad"}));
+shipPropertyViewerDecalClearDefault();
 out.events = events;
+renderSPVDecals(Object.assign({}, base, {default_registry: null, hint: null}));
+out.no_default = els["spv-decals-body"].innerHTML;
 renderSPVDecals(Object.assign({}, base, {active: false}));
 out.collapsed = !els["spv-decals"].classList.contains("expanded")
                 && els["spv-decals-body"].innerHTML === "";
@@ -123,7 +131,40 @@ def test_the_handlers_fire_the_panel_actions(run):
         'ship-property-viewer/decal-nudge:{"field":"width","delta":0.075}',
         "ship-property-viewer/decal-add-cancel",
         "ship-property-viewer/decal-default:Excalibur",
+        "ship-property-viewer/decal-delete:bad",
+        "ship-property-viewer/decal-default:",
     ]
+
+
+def _row(html, name):
+    """The one placement row whose data-name is `name`."""
+    import re
+    rows = re.findall(r'<div class="spv-sys-row[^"]*"[^>]*>.*?</div>', html)
+    return [r for r in rows if 'data-name="%s"' % name in r]
+
+
+def test_an_unreadable_placement_is_listed_but_not_selectable(run):
+    [bad] = _row(run["html"], "bad")
+    assert "(unreadable)" in bad
+    assert "shipPropertyViewerDecalSelect" not in bad
+    [top] = _row(run["html"], "top")
+    assert "shipPropertyViewerDecalSelect" in top
+
+
+def test_an_unreadable_placement_can_be_deleted_with_a_confirm(run):
+    assert ('shipPropertyViewerDecalDeleteAsk' in run["html"]
+            and 'data-name="bad"' in run["html"])
+    assert "Delete &ldquo;bad&rdquo;?" in run["confirm_bad"]
+
+
+def test_the_not_in_game_hint_is_shown(run):
+    assert "Not shown in game" in run["html"]
+    assert "Not shown in game" not in run["no_default"]
+
+
+def test_clear_default_is_offered_only_when_a_default_is_set(run):
+    assert "shipPropertyViewerDecalClearDefault" in run["html"]
+    assert "shipPropertyViewerDecalClearDefault" not in run["no_default"]
 
 
 def test_leaving_collapses_and_empties_the_pane(run):

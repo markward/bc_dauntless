@@ -1195,17 +1195,18 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 copy.deepcopy(self._pending_emitter),
                 copy.deepcopy(self._pending_pos),
                 copy.deepcopy(self._pending_part),
-                (decals, self._decal_default))
+                (decals, self._decal_default, dict(self._decal_passthrough)))
 
     def _restore_pending(self, snap) -> None:
         """Replace the five staged-edit dicts and the decal list from a
         snapshot, drop a now-stale emitter/decal selection, re-push the decal
         override, and force a CEF re-push."""
         import copy
-        r, l, e, p, pt, (decals, decal_default) = snap
+        r, l, e, p, pt, (decals, decal_default, passthrough) = snap
         if decals is not None:
             self._decal_working = list(decals)
             self._decal_default = decal_default
+            self._decal_passthrough = dict(passthrough)
         elif self._decal_working is not None:
             # The snapshot predates the pane's LOAD (a hardpoint edit staged
             # before Decals was entered). Loading is not an edit, so undoing
@@ -1213,6 +1214,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             # which would leave an active pane blank and dead.
             self._decal_working = list(self._decal_baseline)
             self._decal_default = self._decal_baseline_default
+            self._decal_passthrough = dict(self._decal_baseline_passthrough)
         if self._decal_index(self._decal_selected) is None:
             self._decal_selected = None
             self._decal_reposition = False

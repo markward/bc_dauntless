@@ -319,6 +319,29 @@ def test_json_null_shape_reads_as_unrestricted_like_the_game():
     assert "shape" not in to_json_entry(p)
 
 
+_GOOD = {"origin": [0, 0, 0], "u_axis": [4.0, 0.0, 0.0],
+         "v_axis": [0.0, -2.0, 0.0], "normal": [0.0, 0.0, 1.0], "depth": 1}
+
+
+@pytest.mark.parametrize("patch", [
+    {"origin": [1.0, 2.0]}, {"u_axis": "sideways"}, {"v_axis": [0, "x", 0]},
+    {"normal": [0.0, 0.0, float("nan")]}, {"depth": "deep"}, {"depth": None},
+    {"depth": True}, {"origin": [True, 0, 0]}, {"shape": 5},
+])
+def test_from_json_entry_rejects_what_it_cannot_edit(patch):
+    """A value the editor maths cannot work with raises ValueError (the SPV
+    keeps such an entry raw and writes it back unchanged)."""
+    with pytest.raises(ValueError):
+        from_json_entry("x", {**_GOOD, **patch})
+
+
+def test_from_json_entry_keeps_values_uncoerced():
+    """No float() coercion: an untouched int survives a save as an int."""
+    p = from_json_entry("x", _GOOD)
+    assert to_json_entry(p)["depth"] == 1 and isinstance(p.depth, int)
+    assert to_json_entry(p)["origin"] == [0, 0, 0]
+
+
 def test_json_entry_matches_committed_ambassador_key_shape():
     # Sanity-check against the shape of the real committed decals.json
     # entry cited in the brief (native/assets/replacements/data/Models/

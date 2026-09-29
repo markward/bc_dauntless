@@ -304,17 +304,42 @@ def to_json_entry(p: Placement) -> Dict:
     return entry
 
 
+def _is_number(v) -> bool:
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v))
+
+
+def _json_vec3(d: Dict, key: str) -> Vec3:
+    v = d[key]
+    if not isinstance(v, (list, tuple)) or len(v) != 3 \
+            or not all(_is_number(c) for c in v):
+        raise ValueError(f"{key!r} is not three finite numbers")
+    return tuple(v)
+
+
 def from_json_entry(name: str, d: Dict) -> Placement:
     """Inverse of `to_json_entry`. A missing OR null `shape` reads as ""
-    (unrestricted), exactly as `hull_decals.decals_for` treats it in game."""
+    (unrestricted), exactly as `hull_decals.decals_for` treats it in game.
+
+    Strict: each vector must be three finite numbers, `depth` a finite
+    number and `shape` a string (or absent/null); anything else raises
+    ValueError (KeyError for a missing field, TypeError for a non-dict) --
+    an entry the editor maths cannot work with is not a Placement. Values
+    are NOT coerced (an int stays an int), so an untouched entry is written
+    back as it was read."""
     shape = d.get("shape")
+    if shape is not None and not isinstance(shape, str):
+        raise ValueError("'shape' is not a string")
+    depth = d["depth"]
+    if not _is_number(depth):
+        raise ValueError("'depth' is not a finite number")
     return Placement(
         name=name,
-        origin=tuple(d["origin"]),
-        u_axis=tuple(d["u_axis"]),
-        v_axis=tuple(d["v_axis"]),
-        normal=tuple(d["normal"]),
-        depth=d["depth"],
+        origin=_json_vec3(d, "origin"),
+        u_axis=_json_vec3(d, "u_axis"),
+        v_axis=_json_vec3(d, "v_axis"),
+        normal=_json_vec3(d, "normal"),
+        depth=depth,
         shape="" if shape is None else shape,
     )
 

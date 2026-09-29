@@ -270,6 +270,51 @@ def test_write_decals_multiple_placements_keyed_by_name_in_order(tmp_path):
     assert list(doc["decals"].keys()) == ["top", "bottom"]
 
 
+# ── write_decals: passthrough of placements the SPV could not parse ─────
+
+_MALFORMED = {"origin": [1.0, 2.0], "u_axis": "sideways", "note": [1, {"a": None}]}
+
+
+def test_write_decals_writes_passthrough_entries_after_the_placements(tmp_path):
+    path = tmp_path / "decals.json"
+    decals_writer.write_decals(path, [_placement("top")], None,
+                               passthrough={"broken": _MALFORMED, "odd": 7})
+    doc = json.loads(path.read_text())
+    assert list(doc["decals"]) == ["top", "broken", "odd"]
+    assert doc["decals"]["broken"] == _MALFORMED
+    assert doc["decals"]["odd"] == 7
+
+
+def test_write_decals_passthrough_none_or_empty_changes_nothing(tmp_path):
+    a, b, c = (tmp_path / n for n in ("a.json", "b.json", "c.json"))
+    decals_writer.write_decals(a, [_placement("top")], "Zhukov")
+    decals_writer.write_decals(b, [_placement("top")], "Zhukov", passthrough=None)
+    decals_writer.write_decals(c, [_placement("top")], "Zhukov", passthrough={})
+    assert a.read_bytes() == b.read_bytes() == c.read_bytes()
+
+
+def test_write_decals_refuses_a_passthrough_name_clash(tmp_path):
+    """Never destroy data silently: a parsed placement and an unreadable one
+    with the same name cannot both be written, so neither is."""
+    path = tmp_path / "decals.json"
+    path.write_text('{"format": 1, "decals": {}}')
+    with pytest.raises(ValueError):
+        decals_writer.write_decals(path, [_placement("top")], None,
+                                   passthrough={"top": _MALFORMED})
+    assert path.read_text() == '{"format": 1, "decals": {}}'
+
+
+def test_save_decals_forwards_passthrough(tmp_path, monkeypatch):
+    root = tmp_path / "replacements"
+    monkeypatch.setattr(mods, "replacements_root", lambda: root)
+    monkeypatch.setattr(mods, "current", _empty_index)
+    mods.invalidate_replacements()
+    written = decals_writer.save_decals(BOP_MODEL_REL, [_placement("top")], None,
+                                        passthrough={"broken": _MALFORMED})
+    assert json.loads(written.read_text())["decals"]["broken"] == _MALFORMED
+    mods.invalidate_replacements()
+
+
 # ── write_decals: unknown top-level keys preserved ──────────────────────
 
 def test_write_decals_preserves_unknown_top_level_keys(tmp_path):
