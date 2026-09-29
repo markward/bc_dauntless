@@ -64,10 +64,14 @@ def test_ambassador_zhukov_registry_resolves_and_loads_distinct_handle():
     assert stem == "Zhukov"
 
     decals = hull_decals.decals_for("data/Models/Ships/Ambassador", stem)
-    assert len(decals) == 1
-    shape, origin, u_axis, v_axis, normal, depth, mask_path = decals[0]
+    # Mark's uncommitted live saves may have added more placements
+    # (`bottom`, `pylon`) on top of the committed `top` -- assert `top` is
+    # present and correct, not an exact count (spec Review Focus 5).
+    top = [d for d in decals
+           if d[6].replace("\\", "/").lower().endswith("masks/zhukov/top.png")]
+    assert len(top) == 1
+    shape, origin, u_axis, v_axis, normal, depth, mask_path = top[0]
     assert shape == "amb saucer:0"
-    assert mask_path.replace("\\", "/").lower().endswith("masks/zhukov/top.png")
 
     host = _init_host("decal-e2e-test")
     try:

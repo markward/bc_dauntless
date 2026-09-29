@@ -21,6 +21,7 @@ import json
 import math
 import os
 import shutil
+import subprocess
 
 import pytest
 
@@ -40,6 +41,20 @@ AMBASSADOR_TEX = GAME_DATA / "Models" / "Ships" / "Ambassador" / "High"
 COMMITTED_MASKS = (paths.PROJECT_ROOT / "native" / "assets" / "replacements"
                    / AMB_DIR / "Masks")
 COMMITTED_DECALS_JSON = COMMITTED_MASKS / "decals.json"
+
+# The committed decals.json git-relative path -- for `git show HEAD:...`.
+# The WORKING TREE copy of this one file (unlike the registry PNGs beside
+# it) holds Mark's uncommitted live saves (`bottom`, `pylon` on top of
+# `top`), so a test that assumes exactly one declared placement must read
+# the committed blob, never COMMITTED_DECALS_JSON directly.
+_COMMITTED_DECALS_JSON_GIT_REL = (
+    "native/assets/replacements/" + AMB_DIR + "/Masks/decals.json")
+
+
+def _head_decals_json_bytes() -> bytes:
+    return subprocess.run(
+        ["git", "show", f"HEAD:{_COMMITTED_DECALS_JSON_GIT_REL}"],
+        cwd=paths.PROJECT_ROOT, check=True, capture_output=True).stdout
 
 # Body-frame (NIF units) synthetic hit for "bottom": same x/y footprint as
 # the committed "top" (origin ~(58, 146, 51)), opposite face -- the saucer
@@ -128,10 +143,25 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
     assert COMMITTED_DECALS_JSON.is_file()
     committed_before = COMMITTED_DECALS_JSON.read_bytes()
 
-    # ── copy the committed Masks/ tree into a tmp replacements root BEFORE
-    # pointing anything at it, so the real committed file is never touched.
+    # ── copy the committed Masks/ tree (registry PNGs, templates -- none of
+    # those are ever hand-edited live) into a tmp replacements root, but
+    # swap in the COMMITTED HEAD decals.json rather than the working-tree
+    # one: the working copy holds Mark's uncommitted live saves (`bottom`,
+    # `pylon` on top of `top`), and this test needs the known, single-
+    # placement ("top") fixture to add "bottom" without a name collision
+    # and assert an exact two-placement result. The real committed file
+    # itself is never touched either way.
     tmp_masks = (tmp_path / "assets" / "replacements" / AMB_DIR / "Masks")
     shutil.copytree(COMMITTED_MASKS, tmp_masks)
+    (tmp_masks / "decals.json").write_bytes(_head_decals_json_bytes())
+
+    # ── Point asset resolution at the tmp replacements root from the start
+    # (not just for the later Save step), so every read in this test --
+    # including the very first decals_for() below -- sees the known fixture,
+    # never the live/dirty real file.
+    monkeypatch.setattr(paths, "project_asset_root",
+                        lambda: tmp_path / "assets")
+    mods.invalidate_replacements()
 
     # ── 1. Load the Ambassador with its committed decals ("top").
     committed_decals = hull_decals.decals_for(AMB_DIR, "Zhukov")
@@ -186,10 +216,8 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
         assert decal_editor.chirality_ok(bottom)
         assert host.instance_decal_override_size(iid) == 2
 
-        # ── 3. Save to a temp replacements root -- never the committed file.
-        monkeypatch.setattr(paths, "project_asset_root",
-                            lambda: tmp_path / "assets")
-        mods.invalidate_replacements()
+        # ── 3. Save to the temp replacements root -- never the committed
+        # file (paths.project_asset_root is already redirected there).
         target = mods.replacements_root() / AMB_DIR / "Masks" / "decals.json"
         assert target == tmp_masks / "decals.json"
         p.dispatch_event("save")

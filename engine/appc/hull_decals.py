@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from engine import paths
+from engine.ui import decal_editor
 
 # (shape, origin, u_axis, v_axis, normal, depth, mask_abs_path) -- exactly the
 # positional shape `renderer.load_model(..., decals=)` and the native binding
@@ -125,7 +126,8 @@ def _projector_is_degenerate(
     return abs(det) <= _MIN_PROJECTOR_AREA * cross_len
 
 
-_MAX_DECALS = 4
+_MAX_DECALS = 16
+_MAX_DECAL_MASKS = 4
 
 
 def load_decals_doc(nif_rel_dir: str) -> Optional[dict]:
@@ -203,19 +205,26 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
     silent. Resolution goes through `paths.game_asset`, so mod / project
     overlays apply exactly like every other BC asset.
 
-    A per-model list of more than `_MAX_DECALS` (4) declared placements is
-    truncated to the first 4 (JSON object order), with one warning. A
-    `registry` for which NONE of the declared placements' masks resolve
-    short-circuits to no decals with one warning, rather than one
-    missing-mask warning per declared placement (this is the common
-    `default_registry`-names-an-unpopulated-folder case, but the check
-    itself is registry-source-agnostic). `paths.game_asset` is file-keyed
-    (mod/replacement overlays index individual files, not directories), so
-    this is a per-file existence check, not a directory check -- a
-    directory check would miss real content that resolves only through the
-    project-replacements overlay. `shape` is optional: a missing or empty
-    value passes through as `""` (native side: applies to every mesh it
-    projects onto); any other non-string value is invalid.
+    A per-model list of more than `_MAX_DECALS` (16) declared placements is
+    truncated to the first 16 (JSON object order), with one warning. Each
+    placement's mask defaults to its own name, or an explicit `"mask"` key
+    (`<Registry>/<mask>.png`) so several placements can share one texture --
+    see `_resolve_mask_name`. At most `_MAX_DECAL_MASKS` (4) DISTINCT masks
+    (by resolved path) may back the returned list; a placement that would
+    need a 5th is skipped, with one warning, and never occupies a slot --
+    matching the native dedupe (spec S2.4a), which the same way never
+    counts a placement that native itself would drop. A `registry` for
+    which NONE of the declared placements' masks resolve short-circuits to
+    no decals with one warning, rather than one missing-mask warning per
+    declared placement (this is the common `default_registry`-names-an-
+    unpopulated-folder case, but the check itself is registry-source-
+    agnostic). `paths.game_asset` is file-keyed (mod/replacement overlays
+    index individual files, not directories), so this is a per-file
+    existence check, not a directory check -- a directory check would miss
+    real content that resolves only through the project-replacements
+    overlay. `shape` is optional: a missing or empty value passes through
+    as `""` (native side: applies to every mesh it projects onto); any
+    other non-string value is invalid.
     """
     if registry is None:
         return []
@@ -239,10 +248,16 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
                     f"using the first {_MAX_DECALS}")
         items = items[:_MAX_DECALS]
 
-    resolved = [(placement, spec,
-                 paths.game_asset(f"{nif_rel_dir}/Masks/{registry}/{placement}.png"))
-                for placement, spec in items]
-    if not any(mask_path.is_file() for _, _, mask_path in resolved):
+    resolved = []
+    for placement, spec in items:
+        mask_name = _resolve_mask_name(placement, spec)
+        mask_path = (paths.game_asset(
+            f"{nif_rel_dir}/Masks/{registry}/{mask_name}.png")
+            if mask_name is not None else None)
+        resolved.append((placement, spec, mask_name, mask_path))
+
+    if not any(mask_path is not None and mask_path.is_file()
+               for _, _, _, mask_path in resolved):
         registry_dir = paths.game_asset(f"{nif_rel_dir}/Masks/{registry}")
         _warn_once((str(registry_dir), "registry_missing"),
                     f"{registry_dir}: registry folder not found (none of "
@@ -250,11 +265,18 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
         return []
 
     out: List[DecalSpec] = []
-    for placement, spec, mask_path in resolved:
+    seen_masks: set = set()
+    for placement, spec, mask_name, mask_path in resolved:
         if not isinstance(spec, dict):
             _warn_once((str(mask_path), "shape"),
                         f"{json_path}: placement {placement!r} is not an "
                         "object")
+            continue
+
+        if mask_name is None:
+            _warn_once((str(json_path), f"mask_invalid:{placement}"),
+                        f"{json_path}: placement {placement!r} has an "
+                        "invalid 'mask' value")
             continue
 
         shape_raw = spec.get("shape")
@@ -295,7 +317,40 @@ def decals_for(nif_rel_dir: str, registry: Optional[str]) -> List[DecalSpec]:
                         f"placement {placement!r}")
             continue
 
-        out.append((shape, origin, u_axis, v_axis, normal, depth,
-                     str(mask_path)))
+        mask_key = str(mask_path)
+        if mask_key not in seen_masks and len(seen_masks) >= _MAX_DECAL_MASKS:
+            _warn_once((str(json_path), "mask_cap"),
+                        f"{json_path}: placement {placement!r} needs a "
+                        f"{_MAX_DECAL_MASKS + 1}th distinct mask, only "
+                        f"{_MAX_DECAL_MASKS} are allowed per model -- "
+                        "skipped")
+            continue
+        seen_masks.add(mask_key)
+
+        out.append((shape, origin, u_axis, v_axis, normal, depth, mask_key))
 
     return out
+
+
+def _resolve_mask_name(placement: str, spec) -> Optional[str]:
+    """The mask filename stem `placement`'s entry `spec` should resolve
+    under `<Registry>/` -- `spec["mask"]` when present and a valid,
+    non-empty filename stem, else `placement` itself (spec S2.4a: several
+    placements sharing one mask). Returns None when `spec` names an
+    explicit `"mask"` that is invalid (non-string, or fails the same
+    stem rule as a placement name -- `decal_editor.valid_name`); the
+    caller warns and skips that placement. A non-dict `spec` -- or a dict
+    with no `"mask"` key, or `"mask": null`/`""` -- falls back to
+    `placement` without judgement; `decals_for`'s own "not an object"
+    check reports a non-dict `spec` separately.
+    """
+    if not isinstance(spec, dict):
+        return placement
+    mask_raw = spec.get("mask")
+    if not mask_raw:
+        return placement
+    if not isinstance(mask_raw, str):
+        return None
+    if decal_editor.valid_name(mask_raw, []) is not None:
+        return None
+    return mask_raw

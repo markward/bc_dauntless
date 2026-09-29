@@ -2,6 +2,7 @@
 the atomic writer (spec 2026-09-28-spv-decal-editing-design.md S2.6)."""
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,19 @@ from engine.ui import decal_editor
 
 NIF_REL_DIR = "data/Models/Ships/Ambassador"
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 AMBASSADOR_DECALS_JSON = (
-    Path(__file__).resolve().parents[2]
+    _REPO_ROOT
     / "native" / "assets" / "replacements" / NIF_REL_DIR / "Masks" / "decals.json"
 )
+
+# The Masks/decals.json relative path as git sees it, for `git show HEAD:...`
+# -- the working copy of AMBASSADOR_DECALS_JSON holds Mark's UNCOMMITTED live
+# saves (spec Global Constraints) and must never be read as a fixed-content
+# fixture; only the committed HEAD version is a known-stable byte string.
+_AMBASSADOR_DECALS_JSON_GIT_REL = (
+    "native/assets/replacements/" + NIF_REL_DIR + "/Masks/decals.json")
 
 
 def _placement(name="top", shape=""):
@@ -369,6 +379,31 @@ def test_write_decals_byte_identical_round_trip_of_committed_ambassador_file(
     placements = [decal_editor.from_json_entry(name, entry)
                   for name, entry in doc["decals"].items()]
     default_registry = doc.get("default_registry")
+
+    decals_writer.write_decals(working, placements, default_registry)
+
+    assert working.read_bytes() == original_bytes
+
+
+def test_write_decals_byte_identical_round_trip_of_committed_head_ambassador_file(
+        tmp_path):
+    """The mask-key change must not perturb byte-for-byte output for a file
+    with no "mask" keys at all -- read the COMMITTED HEAD blob via `git
+    show`, not the (possibly Mark-edited) working tree file, per the plan's
+    Global Constraints: never depend on the working copy's placement set."""
+    original_bytes = subprocess.run(
+        ["git", "show", f"HEAD:{_AMBASSADOR_DECALS_JSON_GIT_REL}"],
+        cwd=_REPO_ROOT, check=True, capture_output=True).stdout
+
+    working = tmp_path / "decals.json"
+    working.write_bytes(original_bytes)
+
+    doc = json.loads(original_bytes.decode("utf-8"))
+    placements = [decal_editor.from_json_entry(name, entry)
+                  for name, entry in doc["decals"].items()]
+    default_registry = doc.get("default_registry")
+    assert all(p.mask == "" for p in placements), \
+        "fixture assumption: the committed HEAD file has no mask keys"
 
     decals_writer.write_decals(working, placements, default_registry)
 

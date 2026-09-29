@@ -7,6 +7,7 @@ from engine.ui.decal_editor import (
     centre,
     chirality_ok,
     from_json_entry,
+    mask_of,
     move_uv,
     place_at_hit,
     reposition,
@@ -369,6 +370,79 @@ def test_json_entry_matches_committed_ambassador_key_shape():
     p = from_json_entry("top", d)
     assert chirality_ok(p)
     assert not math.isnan(_dot(p.u_axis, p.normal))
+
+
+# ---------------------------------------------------------------------------
+# mask key round-trip and mask_of
+# ---------------------------------------------------------------------------
+
+def test_mask_of_defaults_to_name_when_mask_is_empty():
+    p = Placement(name="top", origin=(0, 0, 0), u_axis=(1, 0, 0),
+                  v_axis=(0, 1, 0), normal=(0, 0, 1), depth=1.0)
+    assert p.mask == ""
+    assert mask_of(p) == "top"
+
+
+def test_mask_of_uses_explicit_mask():
+    p = Placement(name="pylon_2", origin=(0, 0, 0), u_axis=(1, 0, 0),
+                  v_axis=(0, 1, 0), normal=(0, 0, 1), depth=1.0,
+                  mask="pylon")
+    assert mask_of(p) == "pylon"
+
+
+def test_to_json_entry_omits_mask_when_empty():
+    p = Placement(name="top", origin=(0, 0, 0), u_axis=(1, 0, 0),
+                  v_axis=(0, 1, 0), normal=(0, 0, 1), depth=1.0)
+    assert "mask" not in to_json_entry(p)
+
+
+def test_to_json_entry_omits_mask_when_equal_to_name():
+    p = Placement(name="pylon", origin=(0, 0, 0), u_axis=(1, 0, 0),
+                  v_axis=(0, 1, 0), normal=(0, 0, 1), depth=1.0,
+                  mask="pylon")
+    assert "mask" not in to_json_entry(p)
+
+
+def test_to_json_entry_writes_mask_when_it_differs_from_name():
+    p = Placement(name="pylon_2", origin=(0, 0, 0), u_axis=(1, 0, 0),
+                  v_axis=(0, 1, 0), normal=(0, 0, 1), depth=1.0,
+                  mask="pylon")
+    entry = to_json_entry(p)
+    assert entry["mask"] == "pylon"
+
+
+def test_from_json_entry_reads_mask():
+    p = from_json_entry("pylon_2", {
+        "mask": "pylon", "origin": [0, 0, 0], "u_axis": [1.0, 0.0, 0.0],
+        "v_axis": [0.0, 1.0, 0.0], "normal": [0.0, 0.0, 1.0], "depth": 1.0,
+    })
+    assert p.mask == "pylon"
+    assert mask_of(p) == "pylon"
+
+
+def test_from_json_entry_absent_mask_reads_as_empty():
+    p = from_json_entry("top", _GOOD)
+    assert p.mask == ""
+    assert mask_of(p) == "top"
+
+
+def test_from_json_entry_null_mask_reads_as_empty():
+    p = from_json_entry("top", {**_GOOD, "mask": None})
+    assert p.mask == ""
+
+
+def test_from_json_entry_rejects_non_string_mask():
+    with pytest.raises(ValueError):
+        from_json_entry("top", {**_GOOD, "mask": 5})
+
+
+def test_mask_json_round_trip():
+    p = Placement(name="pylon_2", origin=(1.0, 2.0, 3.0),
+                  u_axis=(4.0, 0.0, 0.0), v_axis=(0.0, -2.0, 0.0),
+                  normal=(0.0, 0.0, 1.0), depth=0.5, mask="pylon")
+    entry = to_json_entry(p)
+    p2 = from_json_entry("pylon_2", entry)
+    assert p2 == p
 
 
 # ---------------------------------------------------------------------------

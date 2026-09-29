@@ -476,7 +476,25 @@ def test_decals_for_default_registry_folder_missing_warns_once(
     assert len(out_lines) == 1
 
 
-def test_decals_for_caps_at_four_placements(asset_root, capsys):
+def test_decals_for_caps_at_sixteen_placements(asset_root, capsys):
+    # 17 placements, all sharing ONE mask, so only the 16-placement cap
+    # (never the 4-distinct-mask cap) is exercised.
+    decals = {f"p{i}": _valid_placement() for i in range(17)}
+    for spec in decals.values():
+        spec["mask"] = "shared"
+    _write_json(asset_root, NIF_REL_DIR, {"format": 1, "decals": decals})
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "shared")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 16
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
+def test_decals_for_fifth_distinct_mask_is_skipped(asset_root, capsys):
+    # 5 placements, each with its OWN distinct mask -> the 4-mask cap bites,
+    # not the 16-placement cap.
     decals = {name: _valid_placement() for name in
               ("top", "bottom", "nacelle", "pylon", "fifth")}
     _write_json(asset_root, NIF_REL_DIR, {"format": 1, "decals": decals})
@@ -486,6 +504,91 @@ def test_decals_for_caps_at_four_placements(asset_root, capsys):
     specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
 
     assert len(specs) == 4
+    masks = {spec[6] for spec in specs}
+    assert len(masks) == 4
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
+def test_decals_for_absent_mask_key_uses_placement_name(asset_root):
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": _valid_placement()},
+    })
+    mask = _write_png(asset_root, NIF_REL_DIR, "Zhukov", "top")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 1
+    assert specs[0][6] == str(mask)
+
+
+def test_decals_for_mask_key_resolves_a_shared_mask(asset_root):
+    placement = _valid_placement()
+    placement["mask"] = "pylon"
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"pylon_2": placement},
+    })
+    mask = _write_png(asset_root, NIF_REL_DIR, "Zhukov", "pylon")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 1
+    assert specs[0][6] == str(mask)
+
+
+def test_decals_for_two_placements_sharing_one_mask_both_load(asset_root):
+    p1 = _valid_placement()
+    p2 = _valid_placement()
+    p2["mask"] = "pylon"
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"pylon": p1, "pylon_2": p2},
+    })
+    mask = _write_png(asset_root, NIF_REL_DIR, "Zhukov", "pylon")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 2
+    assert specs[0][6] == str(mask) and specs[1][6] == str(mask)
+
+
+def test_decals_for_invalid_mask_stem_is_skipped_with_warning(
+        asset_root, capsys):
+    bad = _valid_placement()
+    bad["mask"] = "../escape"
+    good = _valid_placement()
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": bad, "bottom": good},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "bottom")
+    # No PNG anywhere named "../escape" or "top" -- only "bottom" resolves,
+    # proving the bad "mask" key never falls back to the placement's own
+    # name or is silently attempted on disk.
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 1
+    out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
+    assert len(out_lines) == 1
+
+
+def test_decals_for_non_string_mask_is_skipped_with_warning(
+        asset_root, capsys):
+    bad = _valid_placement()
+    bad["mask"] = 42
+    good = _valid_placement()
+    _write_json(asset_root, NIF_REL_DIR, {
+        "format": 1,
+        "decals": {"top": bad, "bottom": good},
+    })
+    _write_png(asset_root, NIF_REL_DIR, "Zhukov", "bottom")
+
+    specs = hull_decals.decals_for(NIF_REL_DIR, "Zhukov")
+
+    assert len(specs) == 1
     out_lines = [l for l in capsys.readouterr().out.splitlines() if l]
     assert len(out_lines) == 1
 

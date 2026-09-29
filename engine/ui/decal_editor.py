@@ -122,7 +122,12 @@ def _place_axes(up_s: Vec3, n: Vec3) -> Tuple[Vec3, Vec3]:
 @dataclass(frozen=True)
 class Placement:
     """Mirrors one `decals.json` entry (`name` is the outer JSON key, not a
-    field of the entry itself — see `to_json_entry`/`from_json_entry`)."""
+    field of the entry itself — see `to_json_entry`/`from_json_entry`).
+
+    `mask` is the optional per-placement mask override (spec S2.4a): the
+    filename stem of the PNG this placement projects, when it differs from
+    `name` — several placements can share one mask this way. `""` means
+    "use `name`"; read it through `mask_of`, never `p.mask` directly."""
     name: str
     origin: Vec3
     u_axis: Vec3
@@ -130,6 +135,7 @@ class Placement:
     normal: Vec3
     depth: float
     shape: str = ""
+    mask: str = ""
 
 
 def place_at_hit(name: str, hit_point: Vec3, hit_normal: Vec3,
@@ -243,6 +249,13 @@ def set_width(p: Placement, width: float, mask_aspect: float) -> Placement:
     return replace(p, origin=origin, u_axis=u_axis, v_axis=v_axis)
 
 
+def mask_of(p: Placement) -> str:
+    """The mask filename stem `p` actually projects: `p.mask` when set,
+    else `p.name` — the single place that resolves the S2.4a "several
+    placements share a mask" default so no caller re-derives it."""
+    return p.mask or p.name
+
+
 def centre(p: Placement) -> Vec3:
     return _add(p.origin, _add(_scale(p.u_axis, 0.5), _scale(p.v_axis, 0.5)))
 
@@ -298,8 +311,13 @@ def chirality_ok(p: Placement) -> bool:
 
 def to_json_entry(p: Placement) -> Dict:
     """One `decals.json` "decals" entry (the value under `p.name`, not
-    including the name itself). `shape` is omitted when empty."""
+    including the name itself). `shape` is omitted when empty. `mask` is
+    omitted whenever it is empty OR equal to `p.name` — both mean "use
+    `p.name`" (spec S2.4a), so an untouched placement round-trips without
+    ever gaining a redundant `"mask"` key."""
     entry: Dict = {}
+    if p.mask and p.mask != p.name:
+        entry["mask"] = p.mask
     if p.shape:
         entry["shape"] = p.shape
     entry["origin"] = list(p.origin)
@@ -326,16 +344,21 @@ def _json_vec3(d: Dict, key: str) -> Vec3:
 def from_json_entry(name: str, d: Dict) -> Placement:
     """Inverse of `to_json_entry`. A missing OR null `shape` reads as ""
     (unrestricted), exactly as `hull_decals.decals_for` treats it in game.
+    A missing OR null `mask` likewise reads as "" (meaning "use `name`" —
+    see `mask_of`).
 
     Strict: each vector must be three finite numbers, `depth` a finite
-    number and `shape` a string (or absent/null); anything else raises
-    ValueError (KeyError for a missing field, TypeError for a non-dict) --
-    an entry the editor maths cannot work with is not a Placement. Values
-    are NOT coerced (an int stays an int), so an untouched entry is written
-    back as it was read."""
+    number, and `shape`/`mask` each a string (or absent/null); anything
+    else raises ValueError (KeyError for a missing field, TypeError for a
+    non-dict) -- an entry the editor maths cannot work with is not a
+    Placement. Values are NOT coerced (an int stays an int), so an
+    untouched entry is written back as it was read."""
     shape = d.get("shape")
     if shape is not None and not isinstance(shape, str):
         raise ValueError("'shape' is not a string")
+    mask = d.get("mask")
+    if mask is not None and not isinstance(mask, str):
+        raise ValueError("'mask' is not a string")
     depth = d["depth"]
     if not _is_number(depth):
         raise ValueError("'depth' is not a finite number")
@@ -347,6 +370,7 @@ def from_json_entry(name: str, d: Dict) -> Placement:
         normal=_json_vec3(d, "normal"),
         depth=depth,
         shape="" if shape is None else shape,
+        mask="" if mask is None else mask,
     )
 
 
