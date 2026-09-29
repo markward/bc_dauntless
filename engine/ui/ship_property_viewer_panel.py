@@ -1518,200 +1518,58 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             t.set_scale_field(index, value)
 
     # ------------------------------------------------------------------
-    # Rotate tool (Cylinder light-volume axis only)
+    # Rotate tool (per kind: the EditTarget rotate_* adapters)
     # ------------------------------------------------------------------
+    def _rotate_edit_target(self):
+        """The Rotate tool's `EditTarget`: the current transform target's
+        adapter when it rotates (`rotate_kind()` is not None) -- a Cylinder
+        or Box light, a strip or cone emitter, or a part's state pose --
+        else None (a sphere light, subsystem, point emitter or part anchor
+        is inert under Rotate)."""
+        t = self._edit_target()
+        return t if t is not None and t.rotate_kind() is not None else None
+
     def _rotate_target(self):
-        """The rotate tool's target: ("light", i) for a Cylinder (rotate its axis) or Box (rotate its
-        forward+up orientation basis) light; ("emitter", i, j) for a strip
-        emitter (rotate its single `axis`) or a cone emitter (rotate its
-        forward+up basis, like a Box); None otherwise (sphere/subsystem, and
-        a point emitter, are inert). A part's state pose rotates
-        (("part_pose", name, state)); its anchor has no rotation (None)."""
-        t = self._active_transform_target()
-        if t is None:
-            return None
-        kt = t[0]
-        if kt == "part_pose":
-            return t
-        if kt == "part_anchor":
-            return None
-        if kt == "emitter":
-            _, i, j = t
-            spec = self._effective_emitter(i, j)
-            if not spec or spec.get("kind") not in ("strip", "cone"):
-                return None
-            return ("emitter", i, j)
-        if kt != "light":
-            return None
-        i = t[1]
-        spec = self._effective_light(i)
-        if not spec or spec.get("shape") not in ("Cylinder", "Box"):
-            return None
-        return ("light", i)
-
-    def _mirror_target_rotation(self, t) -> None:
-        """Reflect the rotate target `t`'s orientation across the ship X axis
-        (starboard): negate X of the axis (cylinder/strip) or of both forward
-        and up (box/cone), then set it absolutely.
-
-        A part POSE flips its swing in place (Mark, 2026-09-26: "Mirror just
-        flips the sign"): Euler (rx, ry, rz) -> (rx, -ry, -rz), i.e. R ->
-        M.R.M with M = diag(-1, 1, 1), holding the POSED ANCHOR fixed
-        (`_stage_pose_euler`, ruling 14). The translation is not otherwise
-        touched -- reflecting it too swung a side-mounted part about a pivot
-        on the far side of the ship. The action-row Mirror adds the posed
-        anchor's q.x -> -q.x (the coord Mirror); together they are the exact
-        reflection M.P.M once the anchor is mirrored. A part ANCHOR
-        reflects x -> -x."""
-        if t[0] == "part_pose":
-            rx, ry, rz = self._part_pose6(t[1], t[2])[3:]
-            self._stage_pose_euler(t[1], t[2], (rx, -ry, -rz))
-            return
-        if t[0] == "part_anchor":
-            anchor = self._effective_part(t[1]).get("anchor")
-            if anchor is not None:
-                self._stage_part_field(
-                    t[1], anchor=(-float(anchor[0]), float(anchor[1]),
-                                  float(anchor[2])))
-            return
-        if t[0] == "emitter":
-            _, i, j = t
-            spec = self._effective_emitter(i, j) or {}
-            if spec.get("kind") == "cone":
-                from engine.appc.light_emitters import _derive_up
-                fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-                up = spec.get("up") or _derive_up(fwd)
-                self._set_orientation_absolute(t, (-fwd[0], fwd[1], fwd[2]),
-                                               (-up[0], up[1], up[2]))
-            else:
-                axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
-                axis[0] = -axis[0]
-                self._set_axis_absolute(t, axis)
-        else:
-            _, i = t
-            spec = self._effective_light(i) or {}
-            if spec.get("shape") == "Box":
-                fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-                self._set_orientation_absolute(i, (-fwd[0], fwd[1], fwd[2]),
-                                               (-up[0], up[1], up[2]))
-            else:
-                axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
-                axis[0] = -axis[0]
-                self._set_axis_absolute(t, axis)
+        """The rotate tool's target key (("light", i), ("emitter", i, j) or
+        ("part_pose", name, state)), or None -- the key of
+        `_rotate_edit_target`. Kept for the Pipette (plan Task 5)."""
+        t = self._rotate_edit_target()
+        return t.key if t is not None else None
 
     def rotate_values(self) -> Optional[dict]:
         """Data for the rotate-tool panel: `{"fields", "has_clipboard",
         "can_paste"}` for the current rotate target, or None when the rotate
-        tool isn't active or the target isn't a cylinder/box light.
+        tool isn't active or the target doesn't rotate.
         `can_paste` is kind-aware: true only when the clipboard's kind
-        (`cylinder_axis`/`box_orientation`) matches the selected target's
-        shape."""
+        (`EditTarget.rotate_kind`) matches the selected target's."""
         if self.active_tool != "rotate":
             return None
         decal = self._decal_rotate_values()
         if decal is not None:
             return decal
-        t = self._rotate_target()
+        t = self._rotate_edit_target()
         if t is None:
-            # _rotate_target() already returns None for a point emitter and for
-            # non-cylinder/box lights/subsystems, so no panel there — correct.
             return None
-        # Keyed by the full target tuple (("light", i) / ("emitter", i, j)) so a
-        # subsystem's light readout stays independent of that same subsystem's
-        # emitter readouts — a bare index i would collide.
-        # A part pose shows its OWN Euler angles (rx, ry, rz degrees, spec
-        # section 3), not an accumulator: the pose IS those three numbers.
-        if t[0] == "part_pose":
-            acc = list(self._part_pose6(t[1], t[2])[3:])
-        else:
-            acc = self._rotate_accum.get(t, [0.0, 0.0, 0.0])
+        spec = t.rotate_spec()
         clip = self._rotate_clipboard
-        kind = self._rotate_clipboard_kind(t)
-        return {"fields": [{"label": "X", "value": acc[0]},
-                           {"label": "Y", "value": acc[1]},
-                           {"label": "Z", "value": acc[2]}],
+        kind = spec["clipboard_kind"]
+        return {"fields": spec["fields"],
                 "has_clipboard": clip is not None,
                 "can_paste": clip is not None and clip[0] == kind}
 
     def _rotate_clipboard_kind(self, target) -> str:
-        """Clipboard kind for `target`'s current shape: `box_orientation` for a
-        Box light; `cone_orientation` for a CONE emitter (an oriented
-        forward+up basis, like a Box); `cylinder_axis` for a Cylinder light OR a
-        strip emitter. Strip emitters and cylinder lights share `cylinder_axis`
-        INTENTIONALLY — both rotate a single axis, so a cylinder-light rotation
-        can be copied and pasted/mirrored onto a strip emitter and vice versa
-        (the mirror-a-light workflow). A cone carries a full orientation basis,
-        so it uses `cone_orientation` and only interchanges with other cones.
-        A part pose's three Euler angles are `pose_euler` -- they only paste
-        onto another pose."""
-        if target[0] == "part_pose":
-            return "pose_euler"
-        if target[0] == "emitter":
-            spec = self._effective_emitter(target[1], target[2]) or {}
-            return "cone_orientation" if spec.get("kind") == "cone" \
-                else "cylinder_axis"
-        spec = self._effective_light(target[1]) or {}
-        return "box_orientation" if spec.get("shape") == "Box" else "cylinder_axis"
+        """Rotate-clipboard kind of the explicit rotate-capable `target` key
+        (`EditTarget.rotate_kind`). Kept for the Pipette (plan Task 5), which
+        only asks it of targets it has already checked are rotate-capable."""
+        from engine.ui.spv_edit_targets import edit_target_for_key
+        return edit_target_for_key(self, target).rotate_kind()
 
     def _rotate_axis(self, index, delta_deg) -> None:
         """Rotate the current rotate target by `delta_deg` about basis axis
-        `index` (Rodrigues, via rotate_about_axis) and bump that axis's
-        degree accumulator. Shape-aware: a Cylinder rotates its `axis`; a Box
-        rotates BOTH `forward` and `up` of its orientation basis, then
-        re-orthonormalizes."""
-        t = self._rotate_target()
-        if t is None:
-            return
-        from engine.ui.ship_property_viewer import (
-            rotate_about_axis, orthonormalize_basis)
-        ang = math.radians(delta_deg)
-        if t[0] == "part_pose":
-            # The stepper edits that Euler component (spec section 3),
-            # holding the posed anchor fixed (ruling 14).
-            angles = list(self._part_pose6(t[1], t[2])[3:])
-            angles[index] += float(delta_deg)
-            self._stage_pose_euler(t[1], t[2], angles)
-            return
-        if t[0] == "emitter":
-            # A CONE carries an oriented (forward=axis, up) basis like a Box, so
-            # it rotates BOTH and re-orthonormalizes; a strip rotates its single
-            # `axis` (same math as the cylinder-light branch). Restage the whole
-            # compacted list to keep emitter indices dense.
-            _, i, j = t
-            lst = list(self._effective_emitters(i))
-            if not (0 <= j < len(lst)):
-                return
-            spec = dict(lst[j])
-            if spec.get("kind") == "cone":
-                from engine.appc.light_emitters import _derive_up
-                fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-                up = spec.get("up") or _derive_up(fwd)
-                fwd = rotate_about_axis(fwd, index, ang)
-                up = rotate_about_axis(up, index, ang)
-                spec["axis"], spec["up"] = orthonormalize_basis(fwd, up)
-            else:
-                axis = spec.get("axis") or (0.0, -1.0, 0.0)
-                spec["axis"] = rotate_about_axis(axis, index, ang)
-            lst[j] = spec
-            self._pending_emitter[i] = lst
-            self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
-            self._last_pushed = None
-            return
-        _, i = t
-        spec = dict(self._effective_light(i) or {})
-        if not spec:
-            return
-        if spec.get("shape") == "Box":
-            fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-            fwd = rotate_about_axis(fwd, index, ang)
-            up = rotate_about_axis(up, index, ang)
-            spec["orientation"] = orthonormalize_basis(fwd, up)
-        else:
-            axis = spec.get("axis") or (0.0, -1.0, 0.0)
-            spec["axis"] = rotate_about_axis(axis, index, ang)
-        self._pending_light[i] = spec
-        self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
-        self._last_pushed = None
+        `index` (`EditTarget.rotate_nudge`)."""
+        t = self._rotate_edit_target()
+        if t is not None:
+            t.rotate_nudge(index, delta_deg)
 
     def _set_axis_absolute(self, target, axis) -> None:
         """Stage a normalized `axis` directly (Mirror/Paste, not an incremental
@@ -1835,42 +1693,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         resolvable with a world rotation."""
         if self.active_tool != "rotate" or self.camera is None:
             return None
-        t = self._rotate_target()
+        t = self._rotate_edit_target()
         if t is None:
             return None
-        ship = self._ship_getter()
-        if ship is None or not hasattr(ship, "GetWorldRotation"):
+        frame = t.rotate_gizmo_frame()    # per-kind origin + axes, or None
+        if frame is None:
             return None
-        from engine.ui.ship_property_viewer import (
-            gizmo_axes, gizmo_length, world_from_body)
-        if t[0] == "part_pose":
-            # Rings sit at the POSED anchor -- the pivot they rotate about.
-            pos = self._target_pos_of(t)
-            if pos is None:
-                return None
-            return {
-                "origin": world_from_body(ship, pos),
-                "axes": gizmo_axes(ship.GetWorldRotation()),
-                "length": gizmo_length(self.camera),
-                "highlight": self._gizmo_hover,
-                "handle_kind": 2,
-            }
-        i = t[1]
-        if not (0 <= i < len(self._descriptors)):
-            return None
-        if t[0] == "emitter":
-            spec = self._effective_emitter(i, t[2])
-            if spec is None:
-                return None
-            origin = world_from_body(ship, spec["position"])
-        else:
-            light = self._effective_light(i)
-            if light is None:
-                return None
-            origin = world_from_body(ship, light["position"])
+        origin, axes = frame
+        from engine.ui.ship_property_viewer import gizmo_length
         return {
             "origin": origin,
-            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "axes": axes,
             "length": gizmo_length(self.camera),
             "highlight": self._gizmo_hover,
             "handle_kind": 2,
@@ -1946,30 +1779,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         # A selected decal rolls from its grab-time placement (_decal_grab)
         # and needs only the screen sign computed below.
         decal = self._decal_begin_drag(ring, 0.0)
-        t = None if decal else self._rotate_target()
+        t = None if decal else self._rotate_edit_target()
         if t is None and not decal:
             self._ring_grab_axis = (0.0, -1.0, 0.0)
             self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             self._ring_grab_accum = [0.0, 0.0, 0.0]
             self._ring_sign = 1.0
             return
-        if decal:
-            pass
-        elif t[0] == "part_pose":
-            # A pose rotates from its GRAB-time pose about its GRAB-time
-            # posed anchor, so every drag frame recomputes from the same
-            # base instead of compounding (see _apply_ring_drag_angle).
-            from engine.appc import part_pose
-            self._ring_grab_pose = part_pose.pose_from6(
-                self._part_pose6(t[1], t[2]))
-            self._ring_grab_pivot = self._posed_anchor(t[1], t[2])
-        else:
-            i = t[1]
-            if t[0] == "emitter":
-                spec = self._effective_emitter(i, t[2]) or {}
-            else:
-                spec = self._effective_light(i) or {}
-            self._begin_ring_drag_spec(t, spec)
+        if not decal:
+            # Per kind: a pose's grab-time pose + posed anchor, or a
+            # light/emitter's grab-time axis/orientation + accumulators.
+            t.ring_drag_begin()
         eye, tgt = self.camera.eye(), self.camera.target
         fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
         wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
@@ -1978,101 +1798,20 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         # inverted in-game, flip this comparison.
         self._ring_sign = -1.0 if d > 0.0 else 1.0
 
-    def _begin_ring_drag_spec(self, t, spec) -> None:
-        """Capture a light/emitter rotate target's grab-start axis,
-        orientation and degree accumulators (see `_begin_ring_drag`)."""
-        self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
-        if t[0] == "emitter" and spec.get("kind") == "cone":
-            # A cone rotates from its (forward=axis, up) basis, like a Box light;
-            # seed the grab-start orientation from it (deriving up if absent) so
-            # the ring drag rolls the ellipse + re-aims from the grab pose.
-            from engine.appc.light_emitters import _derive_up
-            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-            up = spec.get("up") or _derive_up(fwd)
-            self._ring_grab_orientation = (tuple(fwd), tuple(up))
-        else:
-            self._ring_grab_orientation = spec.get("orientation") \
-                or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        # Keyed by the full target tuple so light and emitter accumulators on
-        # the same subsystem stay independent (see rotate_values).
-        self._ring_grab_accum = list(self._rotate_accum.get(t, [0.0, 0.0, 0.0]))
-
     def _apply_ring_drag_angle(self, d_body):
         """Apply a body-frame delta angle (radians) about the grabbed ring axis
-        to the grab-start axis/orientation. Shared core for the cursor-driven
-        drag + tests. Shape-aware: a Cylinder rotates its `axis`; a Box
-        rotates BOTH `forward` and `up` of the grab-start orientation, then
-        re-orthonormalizes."""
+        to the grab-start axis/orientation (or pose). Shared core for the
+        cursor-driven drag + tests. Per kind: `EditTarget.ring_drag_apply`."""
         if self._decal_grab is not None and self._axis_drag is not None:
             self._decal_apply_ring_drag(d_body)
             return
-        t = self._rotate_target()
+        t = self._rotate_edit_target()
         if t is None or self._axis_drag is None:
             return
         if self._current_target_is_locked_mount():
             # Defence in depth -- see _apply_scale_drag's identical guard.
             return
-        from engine.ui.ship_property_viewer import (
-            rotate_about_axis, orthonormalize_basis)
-        k = self._axis_drag
-        if t[0] == "part_pose":
-            # Rotate the grab-time pose by d about body axis e_k through the
-            # grab-time posed anchor q: R' = rot(e_k, d).R_grab and
-            # t' = rot(e_k, d).(t_grab - q) + q. hinge_pose(q, e_k, d) is
-            # exactly (rot, q - rot.q), so the new pose is that hinge
-            # composed after the grab pose.
-            from engine.appc import part_pose
-            if self._ring_grab_pivot is None:
-                return
-            e_k = tuple(1.0 if a == k else 0.0 for a in range(3))
-            hinge = part_pose.hinge_pose(self._ring_grab_pivot, e_k,
-                                         math.degrees(d_body))
-            R_grab, t_grab = self._ring_grab_pose
-            cols = [part_pose.apply_vector(
-                        hinge, (R_grab[0][j], R_grab[1][j], R_grab[2][j]))
-                    for j in range(3)]
-            R_new = tuple(tuple(cols[j][i] for j in range(3)) for i in range(3))
-            t_new = part_pose.apply(hinge, t_grab)
-            self._stage_part_pose(t[1], t[2],
-                                  part_pose.pose_to6((R_new, t_new)))
-            return
-        if t[0] == "emitter":
-            # A CONE rotates BOTH `forward` and `up` of its grab-start
-            # orientation (like a Box), then re-orthonormalizes; a strip rotates
-            # its single `axis`. Restage the whole compacted list.
-            _, i, j = t
-            lst = list(self._effective_emitters(i))
-            if not (0 <= j < len(lst)):
-                return
-            spec = dict(lst[j])
-            if spec.get("kind") == "cone":
-                fwd, up = self._ring_grab_orientation
-                fwd = rotate_about_axis(fwd, k, d_body)
-                up = rotate_about_axis(up, k, d_body)
-                spec["axis"], spec["up"] = orthonormalize_basis(fwd, up)
-            else:
-                spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
-            lst[j] = spec
-            self._pending_emitter[i] = lst
-            self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
-            self._rotate_accum[t][k] = self._ring_grab_accum[k] + math.degrees(d_body)
-            self._last_pushed = None
-            return
-        _, i = t
-        spec = dict(self._effective_light(i) or {})
-        if not spec:
-            return
-        if spec.get("shape") == "Box":
-            fwd, up = self._ring_grab_orientation
-            fwd = rotate_about_axis(fwd, k, d_body)
-            up = rotate_about_axis(up, k, d_body)
-            spec["orientation"] = orthonormalize_basis(fwd, up)
-        else:
-            spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
-        self._pending_light[i] = spec
-        self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
-        self._rotate_accum[t][k] = self._ring_grab_accum[k] + math.degrees(d_body)
-        self._last_pushed = None
+        t.ring_drag_apply(self._axis_drag, d_body)
 
     def _apply_ring_drag(self, x, y, fb_size):
         """Map the cursor's screen angle to a body-frame delta about the grabbed
@@ -3343,67 +3082,31 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 return False
             if self._decal_target() is not None:
                 return self._decal_panel_nudge("rotate", axis, delta)
-            if axis not in (0, 1, 2) or self._rotate_target() is None:
+            t = self._rotate_edit_target()
+            if axis not in (0, 1, 2) or t is None:
                 return False
-            self._rotate_axis(axis, delta)
+            t.rotate_nudge(axis, delta)
             return True
         if action == "rotate_copy":
-            t = self._rotate_target()
+            t = self._rotate_edit_target()
             if t is not None:
-                if t[0] == "part_pose":
-                    self._rotate_clipboard = (
-                        "pose_euler", self._part_pose6(t[1], t[2])[3:])
-                elif t[0] == "emitter":
-                    _, i, j = t
-                    spec = self._effective_emitter(i, j) or {}
-                    if spec.get("kind") == "cone":
-                        from engine.appc.light_emitters import _derive_up
-                        fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-                        up = spec.get("up") or _derive_up(fwd)
-                        self._rotate_clipboard = (
-                            "cone_orientation", (tuple(fwd), tuple(up)))
-                    else:
-                        axis = spec.get("axis") or (0.0, -1.0, 0.0)
-                        self._rotate_clipboard = ("cylinder_axis", tuple(axis))
-                else:
-                    _, i = t
-                    spec = self._effective_light(i) or {}
-                    if spec.get("shape") == "Box":
-                        fwd, up = spec.get("orientation") \
-                            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-                        self._rotate_clipboard = (
-                            "box_orientation", (tuple(fwd), tuple(up)))
-                    else:
-                        axis = spec.get("axis") or (0.0, -1.0, 0.0)
-                        self._rotate_clipboard = ("cylinder_axis", tuple(axis))
+                # (kind, value) per EditTarget.rotate_kind / get_rotation:
+                # pose Euler angles, a cone's/Box's (forward, up) basis, or
+                # a cylinder light's/strip's single axis.
+                self._rotate_clipboard = (t.rotate_kind(), t.get_rotation())
                 self._last_pushed = None
             return True
         if action == "rotate_paste":
-            t = self._rotate_target()
+            t = self._rotate_edit_target()
             if (t is not None
                     and self._rotate_clipboard is not None
-                    and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t)):
-                if self._rotate_clipboard[0] == "pose_euler":
-                    # Only a part pose target has this kind: set its three
-                    # Euler angles, holding its posed anchor (ruling 14).
-                    self._stage_pose_euler(t[1], t[2], self._rotate_clipboard[1])
-                elif self._rotate_clipboard[0] == "box_orientation":
-                    # box_orientation only matches a Box LIGHT target (an emitter
-                    # kind is cylinder_axis/cone_orientation), so t is
-                    # ("light", i) here.
-                    fwd, up = self._rotate_clipboard[1]
-                    self._set_orientation_absolute(t[1], fwd, up)
-                elif self._rotate_clipboard[0] == "cone_orientation":
-                    # cone_orientation only matches a CONE emitter target.
-                    fwd, up = self._rotate_clipboard[1]
-                    self._set_orientation_absolute(t, fwd, up)
-                else:
-                    self._set_axis_absolute(t, self._rotate_clipboard[1])
+                    and self._rotate_clipboard[0] == t.rotate_kind()):
+                t.set_rotation(self._rotate_clipboard[1])
             return True
         if action == "rotate_mirror":
-            t = self._rotate_target()
+            t = self._rotate_edit_target()
             if t is not None:
-                self._mirror_target_rotation(t)
+                t.mirror()
             return True
         if action == "mirror_element":
             # A part pose takes both steps like any mount: the posed anchor's
@@ -3414,9 +3117,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 pos = self._transform_target_pos()
                 if pos is not None:
                     self._set_transform_target_pos((-pos[0], pos[1], pos[2]))
-                rt = self._rotate_target()
+                rt = self._rotate_edit_target()
                 if rt is not None:
-                    self._mirror_target_rotation(rt)
+                    rt.mirror()
             return True
         if action == "save":
             hardpoints_pending = bool(

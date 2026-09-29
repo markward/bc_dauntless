@@ -119,3 +119,58 @@ def test_scale_spec_and_get_scale_on_a_box_light(make_panel):
     assert t.get_scale() == (0.3, 0.5, 0.2)
     t.set_scale_field(1, 0.9)
     assert t.get_scale() == (0.3, 0.9, 0.2)
+
+
+# Rotate tool (plan Task 4) ---------------------------------------------------
+
+def test_rotate_kind_matches_characterised_clipboard_tag(make_panel):
+    """`rotate_kind()` is today's rotate-clipboard tag, per case -- pinned
+    against the characterisation suite's record."""
+    from tests.ui.test_spv_edit_target_characterisation import (
+        EXPECTED_CLIP_TAGS)
+    p = make_panel()
+    for case in ("subsystem", "light_sphere", "light_cylinder", "light_box",
+                 "emitter_point", "emitter_strip", "emitter_cone",
+                 "part_anchor", "part_pose"):
+        assert p.dispatch_event(_SELECT[case]) is True
+        assert p._edit_target().rotate_kind() == EXPECTED_CLIP_TAGS[case][2], case
+
+
+def test_cylinder_light_and_strip_emitter_share_cylinder_axis(make_panel):
+    p = make_panel()
+    for case in ("light_cylinder", "emitter_strip"):
+        assert p.dispatch_event(_SELECT[case]) is True
+        t = p._edit_target()
+        assert t.rotate_kind() == "cylinder_axis", case
+        assert t.rotate_spec()["clipboard_kind"] == "cylinder_axis", case
+
+
+def test_non_rotating_targets_have_no_rotate_spec(make_panel):
+    p = make_panel()
+    for case in ("light_sphere", "emitter_point", "subsystem", "part_anchor"):
+        assert p.dispatch_event(_SELECT[case]) is True
+        t = p._edit_target()
+        assert t.rotate_spec() is None, case
+        assert t.rotate_kind() is None, case
+
+
+def test_get_rotation_is_what_rotate_copy_stores(make_panel):
+    """`(rotate_kind(), get_rotation())` is exactly the rotate clipboard
+    entry `rotate_copy` writes, for every rotating kind."""
+    for case in ("light_cylinder", "light_box", "emitter_strip",
+                 "emitter_cone", "part_pose"):
+        p = make_panel()
+        assert p.dispatch_event(_SELECT[case]) is True
+        if p.active_tool != "rotate":
+            p.dispatch_event("set_tool:rotate")
+        t = p._edit_target()
+        assert p.dispatch_event("rotate_copy") is True
+        assert p._rotate_clipboard == (t.rotate_kind(), t.get_rotation()), case
+
+
+def test_set_rotation_round_trips_a_pose(make_panel):
+    p = make_panel()
+    assert p.dispatch_event(_SELECT["part_pose"]) is True
+    t = p._edit_target()
+    t.set_rotation((5.0, 10.0, -15.0))
+    assert t.get_rotation() == (5.0, 10.0, -15.0)

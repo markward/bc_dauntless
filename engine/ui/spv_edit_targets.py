@@ -11,9 +11,12 @@ staging, undo snapshots and Save are unchanged.
 A capability a kind lacks is `None` / empty / a no-op here. Task 2 routes
 the Move tool (position, coord clipboard kind, gizmo frame, axis drag, mount
 lock) through the adapters; Task 3 the Scale tool (size fields, scale
-clipboard kind, gizmo, handle drag); the other tools and decals migrate in
-later tasks.
+clipboard kind, gizmo, handle drag); Task 4 the Rotate tool (rotate kind and
+readout, stepper nudge, copy/paste value, ring drag, rotate gizmo, and the
+rotation half of Mirror); the other tools and decals migrate in later tasks.
 """
+import math
+
 
 
 class EditTarget:
@@ -28,12 +31,28 @@ class EditTarget:
     def set_position(self, xyz: tuple) -> None: raise NotImplementedError
     def gizmo_frame(self): return None           # (origin_world, axes) or None
     # Rotate
-    def rotate_spec(self): return None           # dict {fields, clipboard_kind} | None
-    def get_rotation(self): return None
-    def set_rotation(self, value) -> None: pass
-    def rotate_nudge(self, field: str, delta: float) -> None: pass
+    def rotate_spec(self):                       # dict {fields, clipboard_kind} | None
+        """The Rotate panel's X/Y/Z readout and clipboard kind, or None when
+        this target has no rotation (`rotate_kind()` is None)."""
+        kind = self.rotate_kind()
+        if kind is None:
+            return None
+        acc = self._rotate_readout()
+        return {"fields": [{"label": "X", "value": acc[0]},
+                           {"label": "Y", "value": acc[1]},
+                           {"label": "Z", "value": acc[2]}],
+                "clipboard_kind": kind}
+    def _rotate_readout(self):
+        # Keyed by the full target tuple (("light", i) / ("emitter", i, j)) so a
+        # subsystem's light readout stays independent of that same subsystem's
+        # emitter readouts — a bare index i would collide.
+        return self.panel._rotate_accum.get(self.key, [0.0, 0.0, 0.0])
+    def get_rotation(self): return None          # the rotate-clipboard value
+    def set_rotation(self, value) -> None: pass  # absolute (Paste)
+    def rotate_nudge(self, index: int, delta: float) -> None: pass
     def ring_drag_begin(self, *args): return None
     def ring_drag_apply(self, state, angle: float) -> None: pass
+    def rotate_gizmo_frame(self): return None    # (origin_world, axes) or None
     # Scale
     def scale_spec(self): return None            # dict {kind, fields, step_scale} | None
     def get_scale(self): return None
@@ -163,6 +182,35 @@ class _HardpointMount(EditTarget):
         if not (0 <= self.key[1] < len(self.panel._descriptors)):
             return None
         return self.gizmo_frame()
+
+    # -- Rotate --------------------------------------------------------
+    def rotate_gizmo_frame(self):
+        """The rotate rings' (origin, axes): at the node's position, behind
+        the same stale-index guard as the scale gizmo."""
+        return self.scale_gizmo_frame()
+
+    def ring_drag_begin(self) -> None:
+        """Capture a light/emitter rotate target's grab-start axis,
+        orientation and degree accumulators (see the panel's
+        `_begin_ring_drag`)."""
+        p = self.panel
+        t = self.key
+        spec = self._size_spec()
+        p._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
+        if t[0] == "emitter" and spec.get("kind") == "cone":
+            # A cone rotates from its (forward=axis, up) basis, like a Box light;
+            # seed the grab-start orientation from it (deriving up if absent) so
+            # the ring drag rolls the ellipse + re-aims from the grab pose.
+            from engine.appc.light_emitters import _derive_up
+            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+            up = spec.get("up") or _derive_up(fwd)
+            p._ring_grab_orientation = (tuple(fwd), tuple(up))
+        else:
+            p._ring_grab_orientation = spec.get("orientation") \
+                or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        # Keyed by the full target tuple so light and emitter accumulators on
+        # the same subsystem stay independent (see rotate_spec).
+        p._ring_grab_accum = list(p._rotate_accum.get(t, [0.0, 0.0, 0.0]))
 
 
 class MountTarget(_HardpointMount):
@@ -297,6 +345,108 @@ class LightTarget(_HardpointMount):
         p._last_pushed = None
 
 
+    # -- Rotate --------------------------------------------------------
+    def rotate_kind(self):
+        # A Cylinder rotates its `axis`, a Box its forward+up `orientation`
+        # basis; a Sphere (or a missing spec) has no rotation. Tags:
+        # `box_orientation` for a Box, `cylinder_axis` for a Cylinder --
+        # shared INTENTIONALLY with a strip emitter (both rotate a single
+        # axis, so a rotation copies/pastes/mirrors between them).
+        spec = self.panel._effective_light(self.key[1])
+        if not spec or spec.get("shape") not in ("Cylinder", "Box"):
+            return None
+        return "box_orientation" if spec.get("shape") == "Box" \
+            else "cylinder_axis"
+
+    def get_rotation(self):
+        spec = self.panel._effective_light(self.key[1]) or {}
+        if spec.get("shape") == "Box":
+            fwd, up = spec.get("orientation") \
+                or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            return (tuple(fwd), tuple(up))
+        axis = spec.get("axis") or (0.0, -1.0, 0.0)
+        return tuple(axis)
+
+    def set_rotation(self, value) -> None:
+        if self.rotate_kind() == "box_orientation":
+            # box_orientation only matches a Box LIGHT target (an emitter
+            # kind is cylinder_axis/cone_orientation).
+            fwd, up = value
+            self.panel._set_orientation_absolute(self.key[1], fwd, up)
+        else:
+            self.panel._set_axis_absolute(self.key, value)
+
+    def rotate_nudge(self, index, delta_deg) -> None:
+        """Rotate by `delta_deg` about basis axis `index` (Rodrigues, via
+        rotate_about_axis) and bump that axis's degree accumulator. A
+        Cylinder rotates its `axis`; a Box rotates BOTH `forward` and `up`
+        of its orientation basis, then re-orthonormalizes."""
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
+        p = self.panel
+        t = self.key
+        ang = math.radians(delta_deg)
+        _, i = t
+        spec = dict(p._effective_light(i) or {})
+        if not spec:
+            return
+        if spec.get("shape") == "Box":
+            fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            fwd = rotate_about_axis(fwd, index, ang)
+            up = rotate_about_axis(up, index, ang)
+            spec["orientation"] = orthonormalize_basis(fwd, up)
+        else:
+            axis = spec.get("axis") or (0.0, -1.0, 0.0)
+            spec["axis"] = rotate_about_axis(axis, index, ang)
+        p._pending_light[i] = spec
+        p._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
+        p._last_pushed = None
+
+    def ring_drag_apply(self, k, d_body) -> None:
+        """Rotate the grab-start axis (Cylinder) or BOTH forward and up of
+        the grab-start orientation (Box, then re-orthonormalized) by body
+        angle `d_body` (radians) about ring axis `k`."""
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
+        p = self.panel
+        t = self.key
+        _, i = t
+        spec = dict(p._effective_light(i) or {})
+        if not spec:
+            return
+        if spec.get("shape") == "Box":
+            fwd, up = p._ring_grab_orientation
+            fwd = rotate_about_axis(fwd, k, d_body)
+            up = rotate_about_axis(up, k, d_body)
+            spec["orientation"] = orthonormalize_basis(fwd, up)
+        else:
+            spec["axis"] = rotate_about_axis(p._ring_grab_axis, k, d_body)
+        p._pending_light[i] = spec
+        p._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
+        p._rotate_accum[t][k] = p._ring_grab_accum[k] + math.degrees(d_body)
+        p._last_pushed = None
+
+    def mirror(self) -> None:
+        """Reflect the orientation across the ship X axis (starboard):
+        negate X of the axis (Cylinder) or of both forward and up (Box),
+        then set it absolutely. Rotation only (plan Task 5 folds position
+        in); a Sphere has no rotation and is untouched."""
+        if self.rotate_kind() is None:
+            return
+        p = self.panel
+        t = self.key
+        _, i = t
+        spec = p._effective_light(i) or {}
+        if spec.get("shape") == "Box":
+            fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            p._set_orientation_absolute(i, (-fwd[0], fwd[1], fwd[2]),
+                                        (-up[0], up[1], up[2]))
+        else:
+            axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
+            axis[0] = -axis[0]
+            p._set_axis_absolute(t, axis)
+
+
 class EmitterTarget(_HardpointMount):
     """A subsystem emitter (point, strip or cone): key ("emitter", i, j)."""
     kind = "emitter"
@@ -382,6 +532,119 @@ class EmitterTarget(_HardpointMount):
         p._last_pushed = None
 
 
+    # -- Rotate --------------------------------------------------------
+    def rotate_kind(self):
+        # A strip rotates its single `axis` (`cylinder_axis`, shared
+        # INTENTIONALLY with a Cylinder light); a cone carries a full
+        # forward+up basis (`cone_orientation`, only interchanging with other
+        # cones); a point emitter (or a missing spec) has no rotation.
+        spec = self.panel._effective_emitter(self.key[1], self.key[2])
+        if not spec or spec.get("kind") not in ("strip", "cone"):
+            return None
+        return "cone_orientation" if spec.get("kind") == "cone" \
+            else "cylinder_axis"
+
+    def get_rotation(self):
+        _, i, j = self.key
+        spec = self.panel._effective_emitter(i, j) or {}
+        if spec.get("kind") == "cone":
+            from engine.appc.light_emitters import _derive_up
+            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+            up = spec.get("up") or _derive_up(fwd)
+            return (tuple(fwd), tuple(up))
+        axis = spec.get("axis") or (0.0, -1.0, 0.0)
+        return tuple(axis)
+
+    def set_rotation(self, value) -> None:
+        if self.rotate_kind() == "cone_orientation":
+            # cone_orientation only matches a CONE emitter target.
+            fwd, up = value
+            self.panel._set_orientation_absolute(self.key, fwd, up)
+        else:
+            self.panel._set_axis_absolute(self.key, value)
+
+    def rotate_nudge(self, index, delta_deg) -> None:
+        """Rotate by `delta_deg` about basis axis `index` and bump that
+        axis's degree accumulator."""
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
+        p = self.panel
+        t = self.key
+        ang = math.radians(delta_deg)
+        # A CONE carries an oriented (forward=axis, up) basis like a Box, so
+        # it rotates BOTH and re-orthonormalizes; a strip rotates its single
+        # `axis` (same math as the cylinder-light branch). Restage the whole
+        # compacted list to keep emitter indices dense.
+        _, i, j = t
+        lst = list(p._effective_emitters(i))
+        if not (0 <= j < len(lst)):
+            return
+        spec = dict(lst[j])
+        if spec.get("kind") == "cone":
+            from engine.appc.light_emitters import _derive_up
+            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+            up = spec.get("up") or _derive_up(fwd)
+            fwd = rotate_about_axis(fwd, index, ang)
+            up = rotate_about_axis(up, index, ang)
+            spec["axis"], spec["up"] = orthonormalize_basis(fwd, up)
+        else:
+            axis = spec.get("axis") or (0.0, -1.0, 0.0)
+            spec["axis"] = rotate_about_axis(axis, index, ang)
+        lst[j] = spec
+        p._pending_emitter[i] = lst
+        p._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
+        p._last_pushed = None
+
+    def ring_drag_apply(self, k, d_body) -> None:
+        """Rotate from the grab-start pose by body angle `d_body` (radians)
+        about ring axis `k`."""
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
+        p = self.panel
+        t = self.key
+        # A CONE rotates BOTH `forward` and `up` of its grab-start
+        # orientation (like a Box), then re-orthonormalizes; a strip rotates
+        # its single `axis`. Restage the whole compacted list.
+        _, i, j = t
+        lst = list(p._effective_emitters(i))
+        if not (0 <= j < len(lst)):
+            return
+        spec = dict(lst[j])
+        if spec.get("kind") == "cone":
+            fwd, up = p._ring_grab_orientation
+            fwd = rotate_about_axis(fwd, k, d_body)
+            up = rotate_about_axis(up, k, d_body)
+            spec["axis"], spec["up"] = orthonormalize_basis(fwd, up)
+        else:
+            spec["axis"] = rotate_about_axis(p._ring_grab_axis, k, d_body)
+        lst[j] = spec
+        p._pending_emitter[i] = lst
+        p._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
+        p._rotate_accum[t][k] = p._ring_grab_accum[k] + math.degrees(d_body)
+        p._last_pushed = None
+
+    def mirror(self) -> None:
+        """Reflect the orientation across the ship X axis: negate X of the
+        axis (strip) or of both forward and up (cone). Rotation only; a
+        point emitter has no rotation and is untouched."""
+        if self.rotate_kind() is None:
+            return
+        p = self.panel
+        t = self.key
+        _, i, j = t
+        spec = p._effective_emitter(i, j) or {}
+        if spec.get("kind") == "cone":
+            from engine.appc.light_emitters import _derive_up
+            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+            up = spec.get("up") or _derive_up(fwd)
+            p._set_orientation_absolute(t, (-fwd[0], fwd[1], fwd[2]),
+                                        (-up[0], up[1], up[2]))
+        else:
+            axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
+            axis[0] = -axis[0]
+            p._set_axis_absolute(t, axis)
+
+
 class _PartNode(EditTarget):
     """A model part's Anchor or {State} Transformation node. Never locked:
     tuning the very pose you are looking at is the point."""
@@ -458,6 +721,83 @@ class PartPoseTarget(_PartNode):
             q_old = p6[:3]
         t_new = tuple(p6[k] + float(xyz[k]) - q_old[k] for k in range(3))
         p._stage_part_pose(t[1], t[2], t_new + p6[3:])
+
+    # -- Rotate --------------------------------------------------------
+    def rotate_kind(self):
+        # A pose's three Euler angles only paste onto another pose.
+        return "pose_euler"
+
+    def _rotate_readout(self):
+        # A part pose shows its OWN Euler angles (rx, ry, rz degrees, spec
+        # section 3), not an accumulator: the pose IS those three numbers.
+        return list(self.panel._part_pose6(self.key[1], self.key[2])[3:])
+
+    def get_rotation(self):
+        return self.panel._part_pose6(self.key[1], self.key[2])[3:]
+
+    def set_rotation(self, value) -> None:
+        # Set its three Euler angles, holding its posed anchor (ruling 14).
+        self.panel._stage_pose_euler(self.key[1], self.key[2], value)
+
+    def rotate_gizmo_frame(self):
+        # Rings sit at the POSED anchor -- the pivot they rotate about.
+        return self.gizmo_frame()
+
+    def rotate_nudge(self, index, delta_deg) -> None:
+        # The stepper edits that Euler component (spec section 3),
+        # holding the posed anchor fixed (ruling 14).
+        p = self.panel
+        t = self.key
+        angles = list(p._part_pose6(t[1], t[2])[3:])
+        angles[index] += float(delta_deg)
+        p._stage_pose_euler(t[1], t[2], angles)
+
+    def ring_drag_begin(self) -> None:
+        # A pose rotates from its GRAB-time pose about its GRAB-time
+        # posed anchor, so every drag frame recomputes from the same
+        # base instead of compounding (see ring_drag_apply).
+        from engine.appc import part_pose
+        p = self.panel
+        t = self.key
+        p._ring_grab_pose = part_pose.pose_from6(p._part_pose6(t[1], t[2]))
+        p._ring_grab_pivot = p._posed_anchor(t[1], t[2])
+
+    def ring_drag_apply(self, k, d_body) -> None:
+        # Rotate the grab-time pose by d about body axis e_k through the
+        # grab-time posed anchor q: R' = rot(e_k, d).R_grab and
+        # t' = rot(e_k, d).(t_grab - q) + q. hinge_pose(q, e_k, d) is
+        # exactly (rot, q - rot.q), so the new pose is that hinge
+        # composed after the grab pose.
+        from engine.appc import part_pose
+        p = self.panel
+        t = self.key
+        if p._ring_grab_pivot is None:
+            return
+        e_k = tuple(1.0 if a == k else 0.0 for a in range(3))
+        hinge = part_pose.hinge_pose(p._ring_grab_pivot, e_k,
+                                     math.degrees(d_body))
+        R_grab, t_grab = p._ring_grab_pose
+        cols = [part_pose.apply_vector(
+                    hinge, (R_grab[0][j], R_grab[1][j], R_grab[2][j]))
+                for j in range(3)]
+        R_new = tuple(tuple(cols[j][i] for j in range(3)) for i in range(3))
+        t_new = part_pose.apply(hinge, t_grab)
+        p._stage_part_pose(t[1], t[2], part_pose.pose_to6((R_new, t_new)))
+
+    def mirror(self) -> None:
+        """Flip the pose's swing in place (Mark, 2026-09-26: "Mirror just
+        flips the sign"): Euler (rx, ry, rz) -> (rx, -ry, -rz), i.e. R ->
+        M.R.M with M = diag(-1, 1, 1), holding the POSED ANCHOR fixed
+        (`_stage_pose_euler`, ruling 14). The translation is not otherwise
+        touched -- reflecting it too swung a side-mounted part about a pivot
+        on the far side of the ship. The action-row Mirror adds the posed
+        anchor's q.x -> -q.x (the coord Mirror); together they are the exact
+        reflection M.P.M once the anchor is mirrored. Rotation only (plan
+        Task 5 folds position in)."""
+        p = self.panel
+        t = self.key
+        rx, ry, rz = p._part_pose6(t[1], t[2])[3:]
+        p._stage_pose_euler(t[1], t[2], (rx, -ry, -rz))
 
 
 _ADAPTERS = {
