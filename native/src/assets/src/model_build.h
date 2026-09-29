@@ -71,6 +71,13 @@ bool decal_projector_is_degenerate(
 /// and the per-instance mask cache (DecalMaskCache) use.
 void premultiply_decal_mask(Image& image);
 
+/// The dedupe key for a hull-decal mask path (spec §2.4a: masks dedupe by
+/// resolved absolute path): weakly_canonical when the filesystem can answer,
+/// else absolute + lexically_normal. Two spellings of one file ("m.png",
+/// "./m.png") share a key, so they share a mask slot. Shared by apply_decals
+/// and build_decal_override. Never throws.
+std::string decal_mask_key(const std::filesystem::path& mask);
+
 /// Build the ship-body-frame -> mask-space affine transform for a hull-name
 /// decal: `origin` maps to mask (0,0,0), `origin+u_axis` to (1,0,0),
 /// `origin+v_axis` to (0,1,0), and a point `depth` units along the unit

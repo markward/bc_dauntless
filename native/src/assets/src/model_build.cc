@@ -591,6 +591,19 @@ void premultiply_decal_mask(Image& image)
     }
 }
 
+std::string decal_mask_key(const std::filesystem::path& mask)
+{
+    std::error_code ec;
+    auto resolved = std::filesystem::weakly_canonical(mask, ec);
+    if (ec) {
+        ec.clear();
+        resolved = std::filesystem::absolute(mask, ec);
+        if (ec) resolved = mask;
+        resolved = resolved.lexically_normal();
+    }
+    return resolved.string();
+}
+
 namespace {
 
 /// Build Model::decals (see ModelDecal, model.h) from ctx.decals, in request
@@ -598,11 +611,14 @@ namespace {
 /// models). A request with a non-empty `shape` is restricted to the meshes
 /// built from that shape (decal i's bit is cleared in every OTHER mesh's
 /// Mesh::decal_mask()); an
-/// empty `shape` paints every mesh. Nothing here can throw out of a ship
-/// load: an unknown shape, a degenerate projector or a mask that fails to
-/// decode each skip just that request, and requests past kMaxDecals are
-/// dropped -- each warning once (per the model + decal identity) so a mission
-/// that reloads a ship's model every frame never spams stderr.
+/// empty `shape` paints every mesh. Masks are shared (spec §2.4a): each
+/// distinct mask (decal_mask_key) is decoded and uploaded ONCE into
+/// Model::decal_masks, and every placement naming it gets that slot. Nothing
+/// here can throw out of a ship load: an unknown shape, a degenerate
+/// projector, a mask that fails to decode or one that would be a fifth
+/// distinct mask each skip just that request, and requests past kMaxDecals
+/// are dropped -- each warning once (per the model + decal identity) so a
+/// mission that reloads a ship's model every frame never spams stderr.
 void apply_decals(Model& model, const ModelBuildContext& ctx)
 {
     if (ctx.decals.empty()) return;
@@ -613,6 +629,27 @@ void apply_decals(Model& model, const ModelBuildContext& ctx)
     static std::unordered_set<std::string> warned;
     auto warn_once = [](const std::string& key) {
         return warned.insert(key).second;
+    };
+
+    // slot_keys[s] = decal_mask_key of Model::decal_masks[s].
+    std::vector<std::string> slot_keys;
+    auto push_decal = [&model](const DecalRequest& req, int slot) {
+        ModelDecal decal;
+        decal.body_to_mask =
+            decal_body_to_mask(req.origin, req.u_axis, req.v_axis, req.normal);
+        decal.normal = glm::normalize(req.normal);
+        decal.depth = req.depth;
+        decal.mask_slot = slot;
+
+        const auto bit = static_cast<std::uint16_t>(1u << model.decals.size());
+        if (!req.shape.empty()) {
+            for (auto& mesh : model.meshes) {
+                if (mesh.shape_name() != req.shape)
+                    mesh.set_decal_mask(
+                        static_cast<std::uint16_t>(mesh.decal_mask() & ~bit));
+            }
+        }
+        model.decals.push_back(decal);
     };
 
     for (std::size_t r = 0; r < ctx.decals.size(); ++r) {
@@ -652,6 +689,24 @@ void apply_decals(Model& model, const ModelBuildContext& ctx)
             continue;
         }
 
+        const std::string mask_key = decal_mask_key(req.mask);
+        const auto known = std::find(slot_keys.begin(), slot_keys.end(), mask_key);
+        if (known != slot_keys.end()) {
+            push_decal(req, static_cast<int>(known - slot_keys.begin()));
+            continue;
+        }
+        if (static_cast<int>(slot_keys.size()) >= kMaxDecalMasks) {
+            if (warn_once(model.source.string() + "|decal-mask-cap")) {
+                std::fprintf(stderr,
+                    "apply_decals: more than %d distinct masks for %s; "
+                    "skipping the placement using %s (and any later one "
+                    "needing another new mask)\n",
+                    kMaxDecalMasks, model.source.string().c_str(),
+                    req.mask.string().c_str());
+            }
+            continue;
+        }
+
         Image decoded;
         try {
             auto bytes = read_file(req.mask);
@@ -684,24 +739,10 @@ void apply_decals(Model& model, const ModelBuildContext& ctx)
             }
         }
 
-        Texture tex = upload(decoded, /*generate_mipmaps=*/true);
-        ModelDecal decal;
-        decal.texture_index = static_cast<int>(model.textures.size());
-        model.textures.push_back(std::move(tex));
-        decal.body_to_mask =
-            decal_body_to_mask(req.origin, req.u_axis, req.v_axis, req.normal);
-        decal.normal = glm::normalize(req.normal);
-        decal.depth = req.depth;
-
-        const auto bit = static_cast<std::uint8_t>(1u << model.decals.size());
-        if (!req.shape.empty()) {
-            for (auto& mesh : model.meshes) {
-                if (mesh.shape_name() != req.shape)
-                    mesh.set_decal_mask(
-                        static_cast<std::uint8_t>(mesh.decal_mask() & ~bit));
-            }
-        }
-        model.decals.push_back(decal);
+        model.decal_masks.push_back(static_cast<int>(model.textures.size()));
+        model.textures.push_back(upload(decoded, /*generate_mipmaps=*/true));
+        slot_keys.push_back(mask_key);
+        push_decal(req, static_cast<int>(slot_keys.size()) - 1);
     }
 }
 

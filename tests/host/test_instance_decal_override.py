@@ -81,14 +81,16 @@ def test_none_clears_and_an_empty_list_is_an_override():
         host.shutdown()
 
 
-def test_more_than_four_keeps_four():
+def test_more_than_sixteen_keeps_sixteen():
+    # Spec 2026-09-28-spv-decal-editing-design.md §2.4a: up to 16 placements,
+    # here all sharing ONE mask (a single slot).
     _skip_unless_assets_available()
     good = _zhukov_top()
     host = _init_host("instance-decal-cap")
     try:
         iid = _plain_ambassador(host)
-        host.set_instance_decals(iid, [good] * 6)
-        assert host.instance_decal_override_size(iid) == 4
+        host.set_instance_decals(iid, [good] * 20)
+        assert host.instance_decal_override_size(iid) == 16
     finally:
         host.shutdown()
 

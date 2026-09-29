@@ -88,9 +88,9 @@ TEST(DecalOverrideTest, DecalGeometryAndTextureIdsMatchTheBakedPath) {
 
     ASSERT_EQ(ov.decals.size(), 1u);
     const auto& d = ov.decals[0];
-    ASSERT_GE(d.texture_index, 0);
-    ASSERT_LT(d.texture_index, static_cast<int>(ov.texture_ids.size()));
-    EXPECT_EQ(ov.texture_ids[static_cast<std::size_t>(d.texture_index)],
+    ASSERT_GE(d.mask_slot, 0);
+    ASSERT_LT(d.mask_slot, static_cast<int>(ov.texture_ids.size()));
+    EXPECT_EQ(ov.texture_ids[static_cast<std::size_t>(d.mask_slot)],
               fake_ids("x.png"));
     // origin -> mask (0,0,0); origin + u_axis -> (1,0,0); origin + v_axis -> (0,1,0).
     const glm::vec4 o = d.body_to_mask * glm::vec4(1.0f, 2.0f, 3.0f, 1.0f);
@@ -117,20 +117,78 @@ TEST(DecalOverrideTest, BadEntriesAreSkippedAndSurvivorsPacked) {
         fake_ids);
 
     ASSERT_EQ(ov.decals.size(), 1u);
-    EXPECT_EQ(ov.texture_ids[static_cast<std::size_t>(ov.decals[0].texture_index)],
+    EXPECT_EQ(ov.texture_ids[static_cast<std::size_t>(ov.decals[0].mask_slot)],
               fake_ids("bbbb.png"));
+    EXPECT_EQ(ov.texture_ids.size(), 1u) << "a skipped entry takes no mask slot";
     ASSERT_EQ(ov.mesh_masks.size(), 3u);
     EXPECT_EQ(ov.mesh_masks[0], 0x0);
     EXPECT_EQ(ov.mesh_masks[1], 0x1);
     EXPECT_EQ(ov.mesh_masks[2], 0x0);
 }
 
-TEST(DecalOverrideTest, AtMostFourDecals) {
+// 20 entries sharing two masks: the first 16 are kept (spec §2.4a).
+TEST(DecalOverrideTest, AtMostSixteenDecals) {
+    const auto model = model_with_shapes();
+    std::vector<assets::DecalRequest> reqs;
+    for (int i = 0; i < 20; ++i) reqs.push_back(request("", i % 2 ? "m1" : "m0"));
+    const auto ov = assets::build_decal_override(model, reqs, fake_ids);
+    EXPECT_EQ(assets::kMaxDecals, 16);
+    EXPECT_EQ(ov.decals.size(), 16u);
+    EXPECT_EQ(ov.texture_ids.size(), 2u);
+}
+
+// Review Focus 1, override side: entries naming the same mask resolve it
+// ONCE and share its slot.
+TEST(DecalOverrideTest, SharedMaskResolvesOnceAndSharesASlot) {
+    const auto model = model_with_shapes();
+    int resolves = 0;
+    const auto ov = assets::build_decal_override(
+        model,
+        {request("a", "shared.png"), request("", "other.png"),
+         request("b", "shared.png"), request("", "./shared.png")},
+        [&](const fs::path& p) { ++resolves; return fake_ids(p); });
+
+    ASSERT_EQ(ov.decals.size(), 4u);
+    EXPECT_EQ(resolves, 2) << "each distinct mask resolves once";
+    ASSERT_EQ(ov.texture_ids.size(), 2u);
+    EXPECT_EQ(ov.decals[0].mask_slot, 0);
+    EXPECT_EQ(ov.decals[1].mask_slot, 1);
+    EXPECT_EQ(ov.decals[2].mask_slot, 0);
+    EXPECT_EQ(ov.decals[3].mask_slot, 0);
+}
+
+// Review Focus 2, override side: a 5th distinct mask skips its entry
+// without even resolving it (a resolve would load -- and possibly retire --
+// a texture for nothing); a later entry reusing a slot still attaches.
+TEST(DecalOverrideTest, FifthDistinctMaskIsSkippedUnresolved) {
     const auto model = model_with_shapes();
     std::vector<assets::DecalRequest> reqs;
     for (int i = 0; i < 6; ++i) reqs.push_back(request("", "m" + std::to_string(i)));
+    reqs.push_back(request("", "m2"));
+    std::vector<fs::path> resolved;
+    const auto ov = assets::build_decal_override(
+        model, reqs,
+        [&](const fs::path& p) { resolved.push_back(p); return fake_ids(p); });
+
+    EXPECT_EQ(assets::kMaxDecalMasks, 4);
+    ASSERT_EQ(ov.decals.size(), 5u);
+    EXPECT_EQ(ov.texture_ids.size(), 4u);
+    EXPECT_EQ(resolved.size(), 4u);
+    EXPECT_EQ(ov.decals[4].mask_slot, 2);
+}
+
+// Review Focus 3, override side: 16-bit per-mesh enable masks.
+TEST(DecalOverrideTest, ShapeRestrictionWorksAboveBitThree) {
+    const auto model = model_with_shapes();
+    std::vector<assets::DecalRequest> reqs(16, request("", "x.png"));
+    reqs[10].shape = "b";
     const auto ov = assets::build_decal_override(model, reqs, fake_ids);
-    EXPECT_EQ(ov.decals.size(), static_cast<std::size_t>(assets::kMaxDecals));
+    ASSERT_EQ(ov.decals.size(), 16u);
+    ASSERT_EQ(ov.mesh_masks.size(), 3u);
+    const unsigned bit10 = 1u << 10;
+    EXPECT_EQ(ov.mesh_masks[0], 0xFFFFu & ~bit10);
+    EXPECT_EQ(ov.mesh_masks[1], 0xFFFFu);
+    EXPECT_EQ(ov.mesh_masks[2], 0xFFFFu & ~bit10);
 }
 
 TEST(DecalOverrideTest, EmptyListIsAnEmptyOverride) {

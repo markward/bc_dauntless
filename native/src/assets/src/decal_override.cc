@@ -39,6 +39,7 @@ DecalOverride build_decal_override(const Model& model,
                                    const DecalMaskResolver& resolve_mask) {
     DecalOverride out;
     out.mesh_masks.assign(model.meshes.size(), 0);
+    std::vector<std::string> slot_keys;  // decal_mask_key of texture_ids[s]
 
     for (std::size_t r = 0; r < requests.size(); ++r) {
         const auto& req = requests[r];
@@ -72,21 +73,41 @@ DecalOverride build_decal_override(const Model& model,
             }
             continue;
         }
-        const std::uint32_t tex = resolve_mask ? resolve_mask(req.mask) : 0u;
-        if (tex == 0) continue;  // the resolver warns about its own failures
+        // Shared masks (spec §2.4a): a known mask reuses its slot; a new one
+        // past kMaxDecalMasks is skipped BEFORE resolving, so it never loads
+        // (or retires) a texture nothing will draw.
+        const std::string mask_key = detail::decal_mask_key(req.mask);
+        int slot = static_cast<int>(
+            std::find(slot_keys.begin(), slot_keys.end(), mask_key) - slot_keys.begin());
+        if (slot == static_cast<int>(slot_keys.size())) {
+            if (slot >= kMaxDecalMasks) {
+                if (warn_once(model.source.string() + "|override-mask-cap")) {
+                    std::fprintf(stderr,
+                        "set_instance_decals: more than %d distinct masks for "
+                        "%s; skipping the entry using %s (and any later one "
+                        "needing another new mask)\n",
+                        kMaxDecalMasks, model.source.string().c_str(),
+                        req.mask.string().c_str());
+                }
+                continue;
+            }
+            const std::uint32_t tex = resolve_mask ? resolve_mask(req.mask) : 0u;
+            if (tex == 0) continue;  // the resolver warns about its own failures
+            slot_keys.push_back(mask_key);
+            out.texture_ids.push_back(tex);
+        }
 
         ModelDecal decal;
         decal.body_to_mask =
             detail::decal_body_to_mask(req.origin, req.u_axis, req.v_axis, req.normal);
         decal.normal = glm::normalize(req.normal);
         decal.depth = req.depth;
-        decal.texture_index = static_cast<int>(out.texture_ids.size());
-        out.texture_ids.push_back(tex);
+        decal.mask_slot = slot;
 
-        const auto bit = static_cast<std::uint8_t>(1u << out.decals.size());
+        const auto bit = static_cast<std::uint16_t>(1u << out.decals.size());
         for (std::size_t m = 0; m < model.meshes.size(); ++m) {
             if (req.shape.empty() || model.meshes[m].shape_name() == req.shape)
-                out.mesh_masks[m] = static_cast<std::uint8_t>(out.mesh_masks[m] | bit);
+                out.mesh_masks[m] = static_cast<std::uint16_t>(out.mesh_masks[m] | bit);
         }
         out.decals.push_back(decal);
     }

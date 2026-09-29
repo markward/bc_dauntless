@@ -577,6 +577,8 @@ scenegraph::ModelHandle load_model_impl(
     }
 
     // Hull-name decals: a list of 7-sequences (see parse_decal_request).
+    // Every entry is passed on and folded into the dedupe key below; the
+    // caps (16 placements, 4 distinct masks) are enforced by build_model.
     // None / empty leaves the model byte-identical, same as replacements.
     // Malformed entries are skipped (not thrown) and warned once, keyed by
     // nif_path + index so a mission that reloads the same bad decal list
@@ -2596,7 +2598,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("instance_id"), py::arg("decals"),
           "Replace this instance's baked hull decals for drawing with `decals` "
           "(the load_model decal entry shape: (shape_or_empty, origin, "
-          "u_axis, v_axis, normal, depth, mask_path), body frame, at most 4), "
+          "u_axis, v_axis, normal, depth, mask_path), body frame, at most 16 "
+          "entries sharing at most 4 distinct masks), "
           "or None to go back to the baked list. An empty list draws none. "
           "Masks load once per path, and again when the file mtime changes. "
           "Never raises.");

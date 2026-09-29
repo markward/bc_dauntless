@@ -344,55 +344,65 @@ std::uint64_t decal_override_key(scenegraph::InstanceId id) {
     return (static_cast<std::uint64_t>(id.index) << 32) | id.generation;
 }
 
-// Bind ONE draw_model's hull-decal list: decal i's mask on unit 8+i through
-// the clamp sampler, plus the projector uniform arrays, the list size and
-// u_ship_world_inv (p_body reconstruction; otherwise set only for damaged /
-// glowing / carved instances). Units past the list get the black fallback
-// and sampler 0, so every declared sampler stays valid and nothing inherits
-// the clamp; the units u_decal_mask0..3 name are fixed once, in Pipeline's
-// constructor. Returns the bits of the list that have a mask bound; each
-// mesh then ANDs its own enable mask with it (u_decal_enabled_mask, set per
-// mesh by the caller).
+// Bind ONE draw_model's hull-decal list (spec 2026-09-28-spv-decal-editing-
+// design.md §2.4a): its up to four DISTINCT masks, mask slot s on unit 8+s
+// through the clamp sampler -- once per draw_model however many of the up to
+// 16 projectors share them -- plus the projector uniform arrays (with each
+// projector's u_decal_slot), the list size and u_ship_world_inv (p_body
+// reconstruction; otherwise set only for damaged / glowing / carved
+// instances). Unused slots get the black fallback and sampler 0, so every
+// declared sampler stays valid and nothing inherits the clamp; the units
+// u_decal_mask0..3 name are fixed once, in Pipeline's constructor. Returns
+// the bits of the list whose mask slot is bound; each mesh then ANDs its own
+// enable mask with it (u_decal_enabled_mask, set per mesh by the caller).
 //
 // The baked Model::decals and a per-instance override (DecalOverride) both
-// come through here -- only the texture lookup differs: `texture_id` maps a
-// ModelDecal::texture_index to a GL id, 0 for "none" (that decal is then
-// disabled rather than bound). An empty list whose units already hold the
-// fallback costs no GL call at all.
-template <class TextureId>
+// come through here -- only the slot lookup differs: `slot_ids[s]` is slot
+// s's GL id, 0 for "none" (every decal on that slot is then disabled rather
+// than bound). An empty list whose units already hold the fallback costs no
+// GL call at all.
+using DecalSlotIds = std::array<GLuint, assets::kMaxDecalMasks>;
+
 int bind_hull_decal_list(const Shader& prog,
                          const std::vector<assets::ModelDecal>& decals,
-                         const TextureId& texture_id,
+                         const DecalSlotIds& slot_ids,
                          GLuint black_fallback,
                          const glm::mat4& world) {
     const int n = std::min<int>(static_cast<int>(decals.size()),
                                 assets::kMaxDecals);
     if (n == 0 && black_fallback != 0 && g_decal_units_fallback == black_fallback)
         return 0;
+    bool any_slot_bound = false;
+    for (int s = 0; s < assets::kMaxDecalMasks; ++s) {
+        const GLuint tex = n > 0 ? slot_ids[static_cast<std::size_t>(s)] : 0u;
+        const bool bound = tex != 0;
+        any_slot_bound = any_slot_bound || bound;
+        glActiveTexture(GL_TEXTURE0 + kHullDecalUnit0 + s);
+        glBindTexture(GL_TEXTURE_2D, bound ? tex : black_fallback);
+        glBindSampler(kHullDecalUnit0 + s, bound ? ensure_decal_mask_sampler() : 0);
+    }
+    glActiveTexture(GL_TEXTURE0);  // restore default active unit
+    g_decal_units_fallback = any_slot_bound ? 0 : black_fallback;
+
     int available = 0;
     glm::mat4 proj[assets::kMaxDecals];
     glm::vec3 normal[assets::kMaxDecals];
     float     depth[assets::kMaxDecals] = {};
+    GLint     slot[assets::kMaxDecals] = {};
     for (int i = 0; i < assets::kMaxDecals; ++i) {
-        GLuint tex = 0;
-        if (i < n) {
-            const auto& d = decals[static_cast<std::size_t>(i)];
-            tex = texture_id(d.texture_index);
-            if (tex != 0) available |= 1 << i;
-            proj[i] = d.body_to_mask;
-            normal[i] = d.normal;
-            depth[i] = d.depth;
-        } else {
-            proj[i] = glm::mat4(1.0f);
-            normal[i] = glm::vec3(0.0f, 0.0f, 1.0f);
-        }
-        const bool bound = (available & (1 << i)) != 0;
-        glActiveTexture(GL_TEXTURE0 + kHullDecalUnit0 + i);
-        glBindTexture(GL_TEXTURE_2D, bound ? tex : black_fallback);
-        glBindSampler(kHullDecalUnit0 + i, bound ? ensure_decal_mask_sampler() : 0);
+        proj[i] = glm::mat4(1.0f);
+        normal[i] = glm::vec3(0.0f, 0.0f, 1.0f);
+        if (i >= n) continue;
+        const auto& d = decals[static_cast<std::size_t>(i)];
+        const bool slot_ok = d.mask_slot >= 0 && d.mask_slot < assets::kMaxDecalMasks &&
+                             slot_ids[static_cast<std::size_t>(d.mask_slot)] != 0;
+        if (!slot_ok) continue;
+        available |= 1 << i;
+        proj[i] = d.body_to_mask;
+        normal[i] = d.normal;
+        depth[i] = d.depth;
+        slot[i] = d.mask_slot;
     }
-    glActiveTexture(GL_TEXTURE0);  // restore default active unit
-    g_decal_units_fallback = (available == 0) ? black_fallback : 0;
     prog.set_int("u_hull_decal_count", n);
     if (available != 0) {
         prog.set_mat4("u_ship_world_inv", glm::inverse(world));
@@ -400,6 +410,8 @@ int bind_hull_decal_list(const Shader& prog,
         prog.set_vec3_array("u_decal_normal", normal, assets::kMaxDecals);
         glUniform1fv(glGetUniformLocation(prog.program(), "u_decal_depth"),
                      assets::kMaxDecals, depth);
+        glUniform1iv(glGetUniformLocation(prog.program(), "u_decal_slot"),
+                     assets::kMaxDecals, slot);
     }
     return available;
 }
@@ -829,20 +841,25 @@ void draw_model(const assets::Model& model,
         articulated ? rest_corrections(model, *node_overrides)
                     : std::vector<glm::mat4>{};
 
-    // Units 8..11 = hull-name decal masks: bound once for the whole model
-    // (a per-instance override replaces the baked Model::decals), then each
-    // mesh below sets only its own enable mask.
-    const int decals_available = decal_override != nullptr
-        ? bind_hull_decal_list(prog, decal_override->decals,
-              [&](int t) -> GLuint {
-                  return (t >= 0 && t < static_cast<int>(decal_override->texture_ids.size()))
-                      ? decal_override->texture_ids[static_cast<std::size_t>(t)] : 0u;
-              }, black_fallback, world)
-        : bind_hull_decal_list(prog, model.decals,
-              [&](int t) -> GLuint {
-                  return (t >= 0 && t < static_cast<int>(model.textures.size()))
-                      ? model.textures[static_cast<std::size_t>(t)].id() : 0u;
-              }, black_fallback, world);
+    // Units 8..11 = the hull-name decal list's mask slots: bound once for the
+    // whole model (a per-instance override replaces the baked Model::decals
+    // and its Model::decal_masks), then each mesh below sets only its own
+    // enable mask.
+    DecalSlotIds decal_slot_ids{};
+    if (decal_override != nullptr) {
+        const auto& ids = decal_override->texture_ids;
+        for (std::size_t s = 0; s < decal_slot_ids.size() && s < ids.size(); ++s)
+            decal_slot_ids[s] = ids[s];
+    } else {
+        for (std::size_t s = 0; s < decal_slot_ids.size() && s < model.decal_masks.size(); ++s) {
+            const int t = model.decal_masks[s];
+            if (t >= 0 && t < static_cast<int>(model.textures.size()))
+                decal_slot_ids[s] = model.textures[static_cast<std::size_t>(t)].id();
+        }
+    }
+    const int decals_available = bind_hull_decal_list(
+        prog, decal_override != nullptr ? decal_override->decals : model.decals,
+        decal_slot_ids, black_fallback, world);
 
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const auto& node = model.nodes[i];
@@ -953,11 +970,11 @@ void draw_model(const assets::Model& model,
 
             // This mesh's shape-derived decal enable mask (an override
             // carries its own, one per Model::meshes entry).
-            std::uint8_t mesh_decals = mesh.decal_mask();
+            std::uint16_t mesh_decals = mesh.decal_mask();
             if (decal_override != nullptr) {
                 const auto m = static_cast<std::size_t>(mesh_idx);
                 mesh_decals = m < decal_override->mesh_masks.size()
-                    ? decal_override->mesh_masks[m] : std::uint8_t{0};
+                    ? decal_override->mesh_masks[m] : std::uint16_t{0};
             }
             prog.set_int("u_decal_enabled_mask", mesh_decals & decals_available);
 

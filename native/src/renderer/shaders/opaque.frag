@@ -112,42 +112,56 @@ uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albe
 uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
 
 // ── Hull-name decals (docs/superpowers/specs/2026-09-28-hull-name-decals-design.md,
-//    per-model list: 2026-09-28-spv-decal-editing-design.md §2.4) ──
-// Up to four registry masks projected onto the hull in ship-body space,
-// composited in list order. Each mask's RGB is PREMULTIPLIED by alpha at
-// load (model_build.cc apply_decals), so each composite is base*(1-a) + m.rgb.
+//    per-model list: 2026-09-28-spv-decal-editing-design.md §2.4/§2.4a) ──
+// Up to 16 projectors (placements) project registry masks onto the hull in
+// ship-body space, composited in list order. They share up to four distinct
+// masks (mask SLOTS, units 8..11); u_decal_slot[i] says which one projector
+// i samples. Each mask's RGB is PREMULTIPLIED by alpha at load
+// (model_build.cc apply_decals), so each composite is base*(1-a) + m.rgb.
 // Paint is glossy on a matte hull: it gets its own specular term even when
-// the material has no specular map. Four NAMED samplers, not an array:
-// GLSL 4.10 only indexes sampler arrays with constant expressions.
-#define MAX_HULL_DECALS 4
+// the material has no specular map. Four NAMED samplers, not an array, picked
+// by an if-chain (sample_hull_decal_mask): GLSL 4.10 only indexes sampler
+// arrays with constant expressions.
+#define MAX_HULL_DECALS 16
 uniform sampler2D u_decal_mask0;          // units 8..11, clamp-to-edge sampler object
 uniform sampler2D u_decal_mask1;
 uniform sampler2D u_decal_mask2;
 uniform sampler2D u_decal_mask3;
-uniform int   u_hull_decal_count;         // model's decal list size, 0..4
+uniform int   u_hull_decal_count;         // model's decal list size, 0..16
 uniform int   u_decal_enabled_mask;       // bit i => decal i paints THIS mesh; 0 = none
 uniform mat4  u_decal_proj[MAX_HULL_DECALS];   // p_body -> (u, v, w); v = 0 is image row 0 (top)
 uniform vec3  u_decal_normal[MAX_HULL_DECALS]; // body-frame unit outward normal
 uniform float u_decal_depth[MAX_HULL_DECALS];  // |w| bound, model units
+uniform int   u_decal_slot[MAX_HULL_DECALS];   // mask slot 0..3 = u_decal_mask0..3
 const float kDecalPaintSpecular = 0.8;
 
-// Composite hull decal `i` (mask sampler `mask`) over the running albedo,
-// and fold it into the running decal coverage (cover_a, premultiplied
-// cover_rgb) the glow composite and paint specular read later. Both use the
-// associative "over" operator, so N decals in order equal one decal of the
-// combined coverage -- and a single decal reproduces the pre-list math
-// exactly (cover_a == m.a, cover_rgb == m.rgb). dpdx/dpdy are p_body's
-// screen derivatives, taken by the caller OUTSIDE all branches.
-void apply_hull_decal(int i, sampler2D mask, vec3 p_body, vec3 n_body,
+// Sample mask slot `slot` with explicit gradients. textureGrad, not texture:
+// this runs in non-uniform control flow, where implicit derivatives are
+// undefined -- the gradients come from derivatives taken outside it.
+vec4 sample_hull_decal_mask(int slot, vec2 uv, vec2 gx, vec2 gy) {
+    if (slot == 0) return textureGrad(u_decal_mask0, uv, gx, gy);
+    if (slot == 1) return textureGrad(u_decal_mask1, uv, gx, gy);
+    if (slot == 2) return textureGrad(u_decal_mask2, uv, gx, gy);
+    return textureGrad(u_decal_mask3, uv, gx, gy);
+}
+
+// Composite hull decal `i` over the running albedo, and fold it into the
+// running decal coverage (cover_a, premultiplied cover_rgb) the glow
+// composite and paint specular read later. Both use the associative "over"
+// operator, so N decals in order equal one decal of the combined coverage --
+// and a single decal reproduces the pre-list math exactly (cover_a == m.a,
+// cover_rgb == m.rgb). dpdx/dpdy are p_body's screen derivatives, taken by
+// the caller OUTSIDE all branches.
+void apply_hull_decal(int i, vec3 p_body, vec3 n_body,
                       vec3 dpdx, vec3 dpdy, inout vec3 base_rgb,
                       inout float cover_a, inout vec3 cover_rgb) {
-    if (i >= u_hull_decal_count || ((u_decal_enabled_mask >> i) & 1) == 0) return;
+    if (((u_decal_enabled_mask >> i) & 1) == 0) return;
     vec4 q = u_decal_proj[i] * vec4(p_body, 1.0);
     if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0 &&
         abs(q.z) <= u_decal_depth[i] && dot(n_body, u_decal_normal[i]) > 0.0) {
         vec2 gx = (mat3(u_decal_proj[i]) * dpdx).xy;
         vec2 gy = (mat3(u_decal_proj[i]) * dpdy).xy;
-        vec4 m = textureGrad(mask, q.xy, gx, gy);
+        vec4 m = sample_hull_decal_mask(u_decal_slot[i], q.xy, gx, gy);
         base_rgb  = base_rgb  * (1.0 - m.a) + m.rgb;
         cover_rgb = cover_rgb * (1.0 - m.a) + m.rgb;
         cover_a   = cover_a   * (1.0 - m.a) + m.a;
@@ -1186,14 +1200,11 @@ void main() {
     float decal_a = 0.0;
     vec3 decal_premult_rgb = vec3(0.0);
     if (u_decal_enabled_mask != 0) {
-        apply_hull_decal(0, u_decal_mask0, p_body, n_body, dpdx_d, dpdy_d,
-                         base.rgb, decal_a, decal_premult_rgb);
-        apply_hull_decal(1, u_decal_mask1, p_body, n_body, dpdx_d, dpdy_d,
-                         base.rgb, decal_a, decal_premult_rgb);
-        apply_hull_decal(2, u_decal_mask2, p_body, n_body, dpdx_d, dpdy_d,
-                         base.rgb, decal_a, decal_premult_rgb);
-        apply_hull_decal(3, u_decal_mask3, p_body, n_body, dpdx_d, dpdy_d,
-                         base.rgb, decal_a, decal_premult_rgb);
+        for (int i = 0; i < MAX_HULL_DECALS; ++i) {
+            if (i >= u_hull_decal_count) break;
+            apply_hull_decal(i, p_body, n_body, dpdx_d, dpdy_d,
+                             base.rgb, decal_a, decal_premult_rgb);
+        }
     }
 
     // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.

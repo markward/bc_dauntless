@@ -167,14 +167,14 @@ protected:
     // Opaque RGBA PNG, `top` colour on the upper half of the IMAGE (row 0
     // and down) and `bottom` on the lower half.
     fs::path write_mask(const std::string& name, const std::uint8_t top[3],
-                        const std::uint8_t bottom[3]) {
+                        const std::uint8_t bottom[3], std::uint8_t alpha = 255) {
         constexpr int kMask = 64;
         std::vector<std::uint8_t> px(kMask * kMask * 4);
         for (int y = 0; y < kMask; ++y) {
             const std::uint8_t* c = (y < kMask / 2) ? top : bottom;
             for (int x = 0; x < kMask; ++x) {
                 std::uint8_t* d = &px[(static_cast<std::size_t>(y) * kMask + x) * 4];
-                d[0] = c[0]; d[1] = c[1]; d[2] = c[2]; d[3] = 255;
+                d[0] = c[0]; d[1] = c[1]; d[2] = c[2]; d[3] = alpha;
             }
         }
         const fs::path path = tmp_dir / name;
@@ -438,8 +438,165 @@ TEST_F(DecalRenderTest, RealZhukovMaskIsVisibleOverTheGlowBand) {
     std::fprintf(stderr, "[DecalRender] real Zhukov mask changed pixels: %d"
                          " (per-material baseline 224)\n", changed);
 
-    EXPECT_GT(changed, 150);
+    // Pinned EXACTLY: the 16-projector / 4-slot list must render the one
+    // committed placement exactly as the 4-decal list did (spec §2.4a
+    // compatibility constraint).
+    EXPECT_EQ(changed, 224);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// ── Reusable masks: 16 projectors over up to 4 mask slots (spec §2.4a) ──────
+
+namespace {
+
+// Red-dominant pixels in screen columns [x0, x1).
+int count_red_in_columns(const std::vector<std::uint8_t>& px, int x0, int x1) {
+    int n = 0;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            const std::uint8_t* p = &px[(static_cast<std::size_t>(y) * kSize + x) * 4];
+            if (p[0] > 2 * p[1] && p[0] > 2 * p[2]) ++n;
+        }
+    }
+    return n;
+}
+
+int count_green(const std::vector<std::uint8_t>& px) {
+    int n = 0;
+    for (std::size_t i = 0; i + 3 < px.size(); i += 4)
+        if (px[i + 1] > 2 * px[i] && px[i + 1] > 2 * px[i + 2]) ++n;
+    return n;
+}
+
+}  // namespace
+
+// Review Focus 1, draw side: ONE red mask shared by two placements -- the
+// left half and the right half of the hull footprint -- is one slot, and
+// both halves turn red.
+TEST_F(DecalRenderTest, SharedMaskPairPaintsBothLocations) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    const fs::path mask = write_mask("red.png", red, red);
+
+    auto left = whole_hull(box, false, mask);
+    left.u_axis.x *= 0.5f;
+    auto right = left;
+    right.origin.x += left.u_axis.x;
+
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {}, {left, right});
+    ASSERT_EQ(decal->decals.size(), 2u);
+    ASSERT_EQ(decal->decal_masks.size(), 1u) << "one shared mask, one slot";
+    EXPECT_EQ(decal->decals[0].mask_slot, decal->decals[1].mask_slot);
+
+    const auto px = render_top_down(decal, box);
+    const int red_left = count_red_in_columns(px, 0, kSize / 2 - 8);
+    const int red_right = count_red_in_columns(px, kSize / 2 + 8, kSize);
+    std::fprintf(stderr, "[DecalRender] shared mask: left red=%d right red=%d\n",
+                 red_left, red_right);
+    EXPECT_GT(red_left, 200);
+    EXPECT_GT(red_right, 200);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// Review Focus 3, draw side: 17 placements -> the 16th (index 15, blue from
+// below) draws and the 17th (green from above) is dropped; the decal at
+// index 10 (red, restricted to the saucer shape) paints exactly what the
+// same decal alone paints -- so enable bit 10 reaches the shader. Indices
+// 0..9 and 11..14 are fully transparent masks, which leave the hull as is.
+TEST_F(DecalRenderTest, SixteenPlacementsHonourIndexTenAndDropTheSeventeenth) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    const std::uint8_t blue[3] = {0, 0, 255};
+    const std::uint8_t green[3] = {0, 255, 0};
+    const fs::path clear_mask = write_mask("clear.png", red, red, /*alpha=*/0);
+    const fs::path red_mask = write_mask("red.png", red, red);
+
+    std::vector<assets::DecalRequest> reqs(15, whole_hull(box, false, clear_mask));
+    reqs[10] = whole_hull(box, false, red_mask, "amb saucer:0");
+    reqs.push_back(whole_hull(box, true, write_mask("blue.png", blue, blue)));
+    reqs.push_back(whole_hull(box, false, write_mask("green.png", green, green)));
+    ASSERT_EQ(reqs.size(), 17u);
+
+    auto sixteen = cache->load(ambassador_nif(), ambassador_search(), {}, reqs);
+    auto alone = cache->load(ambassador_nif(), ambassador_search(), {},
+                             {whole_hull(box, false, red_mask, "amb saucer:0")});
+    ASSERT_EQ(sixteen->decals.size(), 16u);
+    EXPECT_EQ(sixteen->decal_masks.size(), 3u);
+
+    const auto top = render_top_down(sixteen, box);
+    const Counts c_top = count_pixels(top);
+    const Counts c_alone = count_pixels(render_top_down(alone, box));
+    const Counts c_bot = count_pixels(render_top_down(sixteen, box, /*from_below=*/true));
+    const int green_px = count_green(top);
+    std::fprintf(stderr,
+        "[DecalRender] 17 placements: top red=%d (index-10 alone %d) green=%d; "
+        "bottom blue=%d\n", c_top.red, c_alone.red, green_px, c_bot.blue);
+
+    EXPECT_GT(c_alone.red, 200);
+    EXPECT_EQ(c_top.red, c_alone.red);
+    EXPECT_EQ(green_px, 0) << "the 17th placement must be dropped";
+    EXPECT_GT(c_bot.blue, 200) << "the 16th placement must draw";
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// Review Focus 4: 16 strips across the hull sharing 4 masks (one of them
+// half-transparent, so premultiplication is exercised), alternating
+// unrestricted and saucer-only -- baked into the model vs pushed as a
+// per-instance override on the plain model: pixel-for-pixel identical.
+TEST_F(DecalRenderTest, OverrideMatchesBakedForSixteenSharedMaskEntries) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    const std::uint8_t blue[3] = {0, 0, 255};
+    const std::uint8_t white[3] = {255, 255, 255};
+    const fs::path masks[4] = {
+        write_mask("red.png", red, red),
+        write_mask("blue.png", blue, blue),
+        write_mask("red_over_blue.png", red, blue),
+        write_mask("half_white.png", white, white, /*alpha=*/128),
+    };
+
+    std::vector<assets::DecalRequest> reqs;
+    for (int i = 0; i < 16; ++i) {
+        auto r = whole_hull(box, false, masks[i % 4], (i % 2) ? "amb saucer:0" : "");
+        r.u_axis.x /= 16.0f;
+        r.origin.x += static_cast<float>(i) * r.u_axis.x;
+        reqs.push_back(r);
+    }
+
+    auto plain = cache->load(ambassador_nif(), ambassador_search());
+    auto baked = cache->load(ambassador_nif(), ambassador_search(), {}, reqs);
+    ASSERT_EQ(baked->decals.size(), 16u);
+    ASSERT_EQ(baked->decal_masks.size(), 4u);
+
+    assets::DecalMaskCache mask_cache;
+    int resolves = 0;
+    auto ov = assets::build_decal_override(*plain, reqs,
+        [&](const fs::path& p) { ++resolves; return mask_cache.get(p); });
+    ASSERT_EQ(ov.decals.size(), 16u);
+    EXPECT_EQ(resolves, 4);
+
+    scenegraph::World world;
+    const auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(plain.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    renderer::set_instance_decal_override(iid, std::move(ov));
+    const auto via_override = render_world_top_down(world, box);
+    renderer::clear_instance_decal_overrides();
+
+    const auto via_baked = render_top_down(baked, box);
+    const auto via_plain = render_top_down(plain, box);
+    const int changed = count_changed_pixels(via_plain, via_baked, 30);
+    int differing = 0;
+    for (std::size_t i = 0; i < via_baked.size(); ++i)
+        if (via_baked[i] != via_override[i]) ++differing;
+    std::fprintf(stderr,
+        "[DecalRender] 16 shared-mask strips: changed vs plain=%d, "
+        "baked vs override differing bytes=%d\n", changed, differing);
+
+    EXPECT_GT(changed, 1000);
+    EXPECT_EQ(differing, 0);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    mask_cache.clear();
 }
 
 // Two decals on one model, both unrestricted (no shape): an opaque red one

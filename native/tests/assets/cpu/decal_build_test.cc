@@ -251,8 +251,10 @@ TEST_F(DecalBuildTest, AttachesToNamedShapeOnly) {
     auto model = assets::detail::build_model(f, ctx);
     ASSERT_EQ(model.decals.size(), 1u);
     const auto& d = model.decals[0];
-    ASSERT_GE(d.texture_index, 0);
-    ASSERT_LT(d.texture_index, static_cast<int>(model.textures.size()));
+    ASSERT_EQ(d.mask_slot, 0);
+    ASSERT_EQ(model.decal_masks.size(), 1u);
+    ASSERT_GE(model.decal_masks[0], 0);
+    ASSERT_LT(model.decal_masks[0], static_cast<int>(model.textures.size()));
     EXPECT_FLOAT_EQ(d.depth, 2.0f);
     EXPECT_NEAR(glm::length(d.normal), 1.0f, 1e-5f);
 
@@ -281,7 +283,8 @@ TEST_F(DecalBuildTest, ShapeIsOptionalAndSetsPerMeshBits) {
     ASSERT_EQ(model.decals.size(), 2u);
     EXPECT_NEAR(model.decals[0].normal.z, 1.0f, 1e-5f);
     EXPECT_NEAR(model.decals[1].normal.z, -1.0f, 1e-5f);
-    EXPECT_NE(model.decals[0].texture_index, model.decals[1].texture_index);
+    EXPECT_NE(model.decals[0].mask_slot, model.decals[1].mask_slot);
+    EXPECT_EQ(model.decal_masks.size(), 2u);
 
     const int a = mesh_for_shape(model, "a");
     const int b = mesh_for_shape(model, "b");
@@ -293,26 +296,109 @@ TEST_F(DecalBuildTest, ShapeIsOptionalAndSetsPerMeshBits) {
     EXPECT_NE(model.meshes[b].decal_mask() & 0x2, 0);
 }
 
-// (b) More than kMaxDecals placements: the first four are kept, the rest
-// dropped with exactly one warning.
-TEST_F(DecalBuildTest, FiveRequestsKeepFourWithOneWarning) {
+// (b) More than kMaxDecals placements: the first sixteen are kept, the
+// rest dropped with exactly one warning (spec §2.4a).
+TEST_F(DecalBuildTest, SeventeenRequestsKeepSixteenWithOneWarning) {
     auto f = file_with_two_named_shapes();
+    f.source = tmp_dir / "seventeen.nif";  // warn-once keys are per model
     auto mask = write_png("mask.png");
 
     auto ctx = make_ctx();
-    ctx.decals.assign(5, request("", mask));
+    ctx.decals.assign(17, request("", mask));
 
     testing::internal::CaptureStderr();
     auto model = assets::detail::build_model(f, ctx);
     const std::string err = testing::internal::GetCapturedStderr();
 
-    EXPECT_EQ(assets::kMaxDecals, 4);
-    EXPECT_EQ(model.decals.size(), 4u);
+    EXPECT_EQ(assets::kMaxDecals, 16);
+    EXPECT_EQ(assets::kMaxDecalMasks, 4);
+    EXPECT_EQ(model.decals.size(), 16u);
     std::size_t warnings = 0;
-    for (auto pos = err.find("more than 4 decals"); pos != std::string::npos;
-         pos = err.find("more than 4 decals", pos + 1))
+    for (auto pos = err.find("more than 16 decals"); pos != std::string::npos;
+         pos = err.find("more than 16 decals", pos + 1))
         ++warnings;
     EXPECT_EQ(warnings, 1u) << err;
+}
+
+// Review Focus 1: two placements naming the SAME mask -- even spelled
+// differently, since masks dedupe by resolved absolute path -- decode and
+// upload it once, and both projectors point at the one slot.
+TEST_F(DecalBuildTest, SharedMaskIsUploadedOnceAndBothPlacementsShareASlot) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_png("shared.png");
+    const fs::path same_mask_other_spelling = tmp_dir / "." / "shared.png";
+
+    int uploads = 0;
+    auto ctx = make_ctx();
+    ctx.texture_uploader = [&uploads](const assets::Image& img, bool mips) {
+        ++uploads;
+        return stub_texture(img, mips);
+    };
+    auto second = request("", same_mask_other_spelling);
+    second.origin = {5.0f, 0.0f, 0.0f};
+    ctx.decals = {request("a", mask), second};
+
+    auto model = assets::detail::build_model(f, ctx);
+    ASSERT_EQ(model.decals.size(), 2u);
+    EXPECT_EQ(uploads, 1) << "a shared mask must be decoded and uploaded once";
+    ASSERT_EQ(model.decal_masks.size(), 1u);
+    EXPECT_EQ(model.decals[0].mask_slot, 0);
+    EXPECT_EQ(model.decals[1].mask_slot, 0);
+    EXPECT_EQ(model.textures.size(), 1u);
+}
+
+// Review Focus 2: five distinct masks -> slots 0..3 are used, the placement
+// needing a 5th is skipped (and a 6th distinct one too) with exactly ONE
+// warning, and a later placement reusing an existing mask still attaches.
+TEST_F(DecalBuildTest, FifthDistinctMaskIsSkippedWithOneWarning) {
+    auto f = file_with_two_named_shapes();
+    f.source = tmp_dir / "five-masks.nif";  // warn-once keys are per model
+    std::vector<fs::path> masks;
+    for (int i = 0; i < 6; ++i)
+        masks.push_back(write_png("m" + std::to_string(i) + ".png"));
+
+    auto ctx = make_ctx();
+    for (int i = 0; i < 6; ++i) ctx.decals.push_back(request("", masks[i]));
+    ctx.decals.push_back(request("b", masks[1]));  // reuses slot 1
+
+    testing::internal::CaptureStderr();
+    auto model = assets::detail::build_model(f, ctx);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(model.decal_masks.size(), 4u);
+    ASSERT_EQ(model.decals.size(), 5u);
+    for (int i = 0; i < 4; ++i) EXPECT_EQ(model.decals[i].mask_slot, i);
+    EXPECT_EQ(model.decals[4].mask_slot, 1);
+    std::size_t warnings = 0;
+    for (auto pos = err.find("more than 4 distinct masks"); pos != std::string::npos;
+         pos = err.find("more than 4 distinct masks", pos + 1))
+        ++warnings;
+    EXPECT_EQ(warnings, 1u) << err;
+    EXPECT_NE(err.find(masks[4].string()), std::string::npos) << err;
+}
+
+// Review Focus 3: the per-mesh enable mask holds 16 bits -- a decal at index
+// 10 restricted to shape "a" is enabled on "a"'s mesh and nowhere else.
+TEST_F(DecalBuildTest, ShapeRestrictionWorksAboveBitThree) {
+    auto f = file_with_two_named_shapes();
+    auto mask = write_png("mask.png");
+
+    auto ctx = make_ctx();
+    ctx.decals.assign(16, request("", mask));
+    ctx.decals[10].shape = "a";
+
+    auto model = assets::detail::build_model(f, ctx);
+    ASSERT_EQ(model.decals.size(), 16u);
+    const int a = mesh_for_shape(model, "a");
+    const int b = mesh_for_shape(model, "b");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    const unsigned bit10 = 1u << 10;
+    EXPECT_NE(model.meshes[a].decal_mask() & bit10, 0u);
+    EXPECT_EQ(model.meshes[b].decal_mask() & bit10, 0u);
+    // Every unrestricted decal, below and above bit 10, still paints both.
+    EXPECT_EQ(model.meshes[a].decal_mask() & 0xFFFFu, 0xFFFFu);
+    EXPECT_EQ(model.meshes[b].decal_mask() & 0xFFFFu, 0xFFFFu & ~bit10);
 }
 
 TEST_F(DecalBuildTest, ZeroNormalIsSkippedWithoutThrowing) {

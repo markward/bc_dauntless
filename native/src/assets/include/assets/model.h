@@ -56,24 +56,33 @@ struct DecalRequest {
     std::filesystem::path mask;
 };
 
-/// Most hull decals one model carries. The shader binds their masks on
-/// texture units 8..11 (units 0..7 are taken).
-inline constexpr int kMaxDecals = 4;
+/// Most hull-decal PLACEMENTS (projectors) one model carries (spec
+/// 2026-09-28-spv-decal-editing-design.md §2.4a). Beyond it, the first
+/// kMaxDecals are used, with one warning.
+inline constexpr int kMaxDecals = 16;
+static_assert(kMaxDecals <= 16, "Mesh::decal_mask() is a 16-bit enable mask");
+/// Most DISTINCT mask textures one model's placements share. The shader binds
+/// them on texture units 8..11 (units 0..7 are taken). Masks dedupe by
+/// resolved absolute path (detail::decal_mask_key); a placement that would
+/// need a fifth is skipped, with one warning.
+inline constexpr int kMaxDecalMasks = 4;
 
 /// One attached hull decal (spec 2026-09-28-spv-decal-editing-design.md
-/// §2.4), built by build_model from a DecalRequest. `body_to_mask` maps a
-/// ship-body-frame point (the shader's `p_body`) to (u, v, w, 1): u/v are
-/// mask texture coordinates, w the signed distance along `normal` from the
-/// decal plane (decal_body_to_mask, model_build.h). `normal` is unit-length,
-/// body frame; a fragment whose body normal disagrees (dot <= 0) is outside.
-/// `depth` bounds |w|. `texture_index` indexes Model::textures -- the mask,
-/// RGB premultiplied by alpha at load. Which meshes a decal may paint is
+/// §2.4/§2.4a), built by build_model from a DecalRequest. `body_to_mask`
+/// maps a ship-body-frame point (the shader's `p_body`) to (u, v, w, 1): u/v
+/// are mask texture coordinates, w the signed distance along `normal` from
+/// the decal plane (decal_body_to_mask, model_build.h). `normal` is
+/// unit-length, body frame; a fragment whose body normal disagrees
+/// (dot <= 0) is outside. `depth` bounds |w|. `mask_slot` (0..3) indexes the
+/// list's deduplicated masks -- Model::decal_masks for a baked list,
+/// DecalOverride::texture_ids for an override -- and is the texture unit
+/// 8 + mask_slot the shader samples. Which meshes a decal may paint is
 /// Mesh::decal_mask() bit i, for decals[i].
 struct ModelDecal {
     glm::mat4 body_to_mask{1.0f};
     glm::vec3 normal{0.0f, 0.0f, 1.0f};
     float     depth = 0.0f;
-    int       texture_index = -1;
+    int       mask_slot = -1;
 };
 
 struct Node {
@@ -109,6 +118,10 @@ struct Model {
     /// order by opaque.frag. Per-mesh enablement is Mesh::decal_mask(); each
     /// mesh records its source shape as Mesh::shape_name().
     std::vector<ModelDecal>       decals;
+    /// The decals' distinct masks, at most kMaxDecalMasks: slot s is
+    /// Model::textures[decal_masks[s]] (RGB premultiplied by alpha at load),
+    /// bound on texture unit 8 + s. ModelDecal::mask_slot indexes this.
+    std::vector<int>              decal_masks;
     /// A small (~96) sample of MODEL-SPACE hull surface points, already
     /// transformed out of node-local space (node->model bake applied at load).
     /// Spread across all mesh shapes for whole-hull VFX anchoring (electrical

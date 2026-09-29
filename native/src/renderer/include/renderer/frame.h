@@ -342,7 +342,8 @@ unsigned int damage_decal_texture();
 void reset_model_radius_cache();
 
 /// Release the lazily-created GL sampler object the opaque pass binds on
-/// texture units 8-11 (one shared sampler, up to 4 decal masks per model;
+/// texture units 8-11 (one shared sampler, up to 4 distinct decal masks per
+/// model, shared by up to 16 placements;
 /// clamp-to-edge; the mask texture itself uploads with GL_REPEAT). Same
 /// contract as
 /// reset_damage_decal_texture(): call while the creating context is current,
