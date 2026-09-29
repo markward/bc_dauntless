@@ -2467,6 +2467,37 @@ _WARP_LIGHT_KEY: tuple = (0.7, 0.9, 1.6)      # cool blue-white, from ahead
 _WARP_LIGHT_FILL: tuple = (0.12, 0.16, 0.30)  # dim cool, from behind
 _WARP_LIGHT_AMBIENT: tuple = (0.05, 0.07, 0.13)
 
+# Ship Property Viewer fill light (dev-only). In hull-texture mode the side of
+# the ship facing away from the system's sun was near black: only ambient
+# reaches it, and the directional-ambient gradient (0.8) leaves that face 20%
+# of ambient. While the SPV is open, a fill directional is added from the
+# ANTI-key direction at this fraction of the brightest key's colour (the warp
+# rig's key + back-fill pattern). A fill rather than a bigger ambient because
+# the gradient multiplies ambient too: an ambient big enough to read the dark
+# face would blow out the lit one. The fill also halves the gradient's
+# coherence, softening it only while the SPV is up. Mark tunes this live.
+SPV_FILL_STRENGTH: float = 0.45
+
+
+def _spv_frame_lighting(ambient, directionals, spv_open):
+    """(ambient, directionals) for this frame. Closed: the inputs, returned
+    as they are, so in-game lighting is untouched. Open: plus a fill from
+    the anti-key direction (see SPV_FILL_STRENGTH), within the 4-light cap."""
+    if not spv_open or not directionals:
+        return ambient, directionals
+
+    def _lum(c):
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    (kx, ky, kz), kcol = max(directionals, key=lambda d: _lum(d[1]))
+    m = (kx * kx + ky * ky + kz * kz) ** 0.5
+    if m < 1e-9:
+        return ambient, directionals
+    fill = ((-kx / m, -ky / m, -kz / m),
+            tuple(SPV_FILL_STRENGTH * c for c in kcol))
+    return ambient, list(directionals)[:3] + [fill]
+
+
 # Galaxy-map units/sec the procedural-sky vantage flies forward during transit.
 # Galaxy systems sit ~50-260 units apart, so ~15 u/s over a 10-20s transit
 # covers a full inter-system hop — clear cluster/nebula parallax. Tunable.
@@ -11415,6 +11446,9 @@ def run(mission_name: Optional[str] = None,
                                  f.color[2] * f.intensity)) for f in flashes]
                     keep = max(0, 4 - len(thunder))
                     directionals = list(directionals)[:keep] + thunder[:4]
+            # Dev-only SPV fill; a no-op (same objects) when it is closed.
+            ambient, directionals = _spv_frame_lighting(
+                ambient, directionals, _spv_open)
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
