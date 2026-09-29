@@ -94,6 +94,46 @@ TEST_F(SystemNebulaPassTest, NoProfileNoVolumesDrawsNothing) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+TEST_F(SystemNebulaPassTest, ClumpsWithoutProfileRender) {
+    renderer::HdrTarget target;
+    target.resize(64, 64);
+    target.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0);   // far plane everywhere: nothing occludes the clump
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.target = glm::vec3(0.0f, 1.0f, 0.0f);   // looking down +Y
+    cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.aspect = 1.0f;
+    cam.near = 1.0f;
+    cam.far = 1.8e6f;
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+
+    renderer::NebulaVolume v;
+    v.spheres = {glm::vec4(0.0f, 5000.0f, 0.0f, 3000.0f)};   // at the look point
+    v.rgb = glm::vec3(0.5f, 0.6f, 0.9f);
+    v.visibility = 500.0f;
+    v.fbm = glm::vec3(0.001f, 3.0f, 0.2f);
+    v.seed = glm::vec3(1.0f, 2.0f, 3.0f);
+
+    renderer::SystemNebulaPass pass;
+    // No set_profile(): this run has no radial atmosphere at all, only a
+    // local clump. The pass must still march and draw it.
+    EXPECT_FALSE(pass.has_profile());
+    renderer::Lighting lighting;
+    pass.render(cam, *pipeline, {v}, lighting, target.color_texture(),
+                target.depth_texture(), inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    float px[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_FLOAT, px);
+    EXPECT_GT(px[3], 0.0f) << "clump drew nothing without a profile";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 TEST_F(SystemNebulaPassTest, RendersVisibleHazeLookingAtTheStar) {
     renderer::HdrTarget target;
     target.resize(64, 64);

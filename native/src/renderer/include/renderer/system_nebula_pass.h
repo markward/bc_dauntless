@@ -36,8 +36,11 @@ struct Lighting;
 /// system-scale transmittances reach ~1e-16, so the shader recovers a finite
 /// segment as exp(-(tau_a - tau_b)) and never divides by a stored T.
 ///
-/// Haze only in this revision: `volumes` (clumps) are accepted but not yet
-/// drawn.
+/// `volumes` (local MetaNebula clumps) are density bumps in the same near
+/// field: each contributes its own sphere (the volume's first, up to 8),
+/// colour, fbm dials, seed and extinction (1/visibility per GU). They march
+/// even with no bound profile -- a clump-only system skips the far-field
+/// table lookups entirely and marches the near field for the clumps alone.
 class SystemNebulaPass {
 public:
     SystemNebulaPass();

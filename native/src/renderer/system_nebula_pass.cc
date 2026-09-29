@@ -149,10 +149,28 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
                               const glm::vec3& eye,
                               float time,
                               const glm::dvec3& origin) {
-    // Nothing to draw => zero GL work. (Clumps from `volumes` arrive in a
-    // later revision; today only the profile haze is marched.)
+    // Nothing to draw => zero GL work.
     if (!has_profile_ && volumes.empty()) return;
     if (!initialized_) initialize_gl();
+
+    // ── Local MetaNebula clumps: one sphere per volume (its first), at most
+    // 8. Extinction per GU per unit clump density is 1/visibility (spec).
+    constexpr int kMaxClumps = 8;
+    std::vector<glm::vec4> clump_sphere;
+    std::vector<glm::vec3> clump_rgb;
+    std::vector<glm::vec3> clump_fbm;
+    std::vector<glm::vec3> clump_seed;
+    std::vector<float>     clump_ext;
+    for (const NebulaVolume& v : volumes) {
+        if (static_cast<int>(clump_sphere.size()) >= kMaxClumps) break;
+        if (v.spheres.empty()) continue;
+        clump_sphere.push_back(v.spheres.front());
+        clump_rgb.push_back(v.rgb);
+        clump_fbm.push_back(v.fbm);
+        clump_seed.push_back(v.seed);
+        clump_ext.push_back(1.0f / std::max(v.visibility, 1.0f));
+    }
+    const int clump_count = static_cast<int>(clump_sphere.size());
 
     // ── Capture the currently-bound framebuffer + viewport ─────────────────
     // The caller (render_space) has the HDR target bound; everything below
@@ -225,6 +243,17 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     // The lanes' fbm is sampled at the WORLD point, p + origin, so the
     // structure stays put while the origin follows the camera.
     march.set_vec3("u_noise_origin", glm::vec3(origin));
+
+    // Local MetaNebula clumps: density bumps that add on top of (or, with no
+    // profile, are the entire density of) the near field.
+    march.set_int("u_clump_count", clump_count);
+    if (clump_count > 0) {
+        march.set_vec4_array("u_clump_sphere", clump_sphere.data(), clump_count);
+        march.set_vec3_array("u_clump_rgb", clump_rgb.data(), clump_count);
+        march.set_vec3_array("u_clump_fbm", clump_fbm.data(), clump_count);
+        march.set_vec3_array("u_clump_seed", clump_seed.data(), clump_count);
+        march.set_float_array("u_clump_ext", clump_ext.data(), clump_count);
+    }
 
     // Perf-path dials: dither step-offset + temporal.
     // u_jitter animates the dither pattern slightly so it doesn't sit static.

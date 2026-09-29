@@ -28,6 +28,15 @@ uniform float u_lane_size;
 uniform float u_lane_contrast;
 uniform vec3  u_noise_origin;
 uniform int   u_has_profile;
+// Local MetaNebula clumps: density bumps inside the profile haze (or, with no
+// profile at all, the ONLY density in this system). One sphere per clump
+// (the volume's first sphere), at most 8.
+uniform int   u_clump_count;
+uniform vec4  u_clump_sphere[8];   // xyz centre, w radius (GU, render space)
+uniform vec3  u_clump_rgb[8];
+uniform vec3  u_clump_fbm[8];      // freq, gain, floor
+uniform vec3  u_clump_seed[8];
+uniform float u_clump_ext[8];      // 1/visibility per GU per unit clump density
 // temporal (same contract as nebula_volumetric.frag)
 uniform sampler2D u_prev;
 uniform mat4  u_prev_view_proj;
@@ -64,6 +73,19 @@ float texel_centre(float u, float n){ return (u*(n-1.0)+0.5)/n; }
 float u_of_r(float r){ return sqrt(clamp(r/u_far_gu,0.0,1.0)); }
 
 vec2 radial(float r){ return texture(u_radial, vec2(texel_centre(u_of_r(r), kRadialTexels), 0.5)).rg; }
+
+// Clump i's density bump at world point p: a smoothstep spherical falloff
+// (the volume's first sphere) times an fbm bump, same shape as
+// nebula_volumetric.frag's density() but keyed by that clump's own dials.
+float clump_density(int i, vec3 p){
+    vec4 s = u_clump_sphere[i]; if (s.w <= 0.0) return 0.0;
+    float d = length(p - s.xyz);
+    float tb = clamp((s.w - d)/(0.3*s.w), 0.0, 1.0); float b = tb*tb*(3.0-2.0*tb);
+    if (b <= 0.0) return 0.0;
+    vec3 w = p + u_noise_origin; vec3 f = u_clump_fbm[i]; vec3 sd = u_clump_seed[i];
+    float n = fbm(vec3(w.x*f.x+sd.x, w.y*f.x+sd.y, w.z*f.x+sd.z));
+    return b * clamp(n*f.y - f.z, 0.0, 1.0);
+}
 float lanes(vec3 p){
     float n = fbm((p+u_noise_origin)/u_lane_size);          // ~0.5 mean
     return max(0.0, mix(1.0, 2.0*n, u_lane_contrast));
@@ -92,7 +114,7 @@ void main(){
 
     vec3 transm = vec3(1.0); vec3 lit = vec3(0.0);
     float near_end = min(scene_dist, u_near_range);
-    if (u_has_profile == 1) {
+    if (u_has_profile == 1 || u_clump_count > 0) {
         // geometric steps: t_i = near_end * ((1+q)^i - 1)/((1+q)^N - 1)
         float q = 0.06; float denom = pow(1.0+q, float(u_steps)) - 1.0;
         float jit = u_dither_amount * dither(gl_FragCoord.xy + u_jitter);
@@ -106,27 +128,49 @@ void main(){
             if (dt <= 0.0) continue;
             vec3 p = u_eye + dir * (t - 0.5*dt);
             vec3 rel = p - u_star; float r = length(rel);
-            vec2 rd = radial(r);
-            float sigma = u_k_sys * rd.x * lanes(p);
+            // The star-centred haze (only when a profile is bound).
+            float sig_h = 0.0; float tau_star = 0.0;
+            if (u_has_profile == 1) {
+                vec2 rd = radial(r);
+                sig_h = u_k_sys * rd.x * lanes(p);
+                tau_star = rd.y;
+            }
+            // Local MetaNebula clumps: density bumps that add on top (or, with
+            // no profile, are the entire density in this system).
+            float sig_c = 0.0; vec3 col_c = vec3(0.0);
+            for (int ci = 0; ci < u_clump_count; ++ci) {
+                float dc = clump_density(ci, p) * u_clump_ext[ci];
+                sig_c += dc;
+                col_c += dc * u_clump_rgb[ci];
+            }
+            float sigma = sig_h + sig_c;
             if (sigma <= 0.0) continue;
             float cos_t = r > 1e-3 ? -dot(dir, rel/r) : 0.0;
-            vec3 light = u_scatter * hg(u_g, cos_t) * u_star_rgb * u_cloud_rgb * exp(-rd.y);
-            vec3 emit  = u_floor * u_cloud_rgb;
+            // Density-weighted colour: haze contributes u_cloud_rgb, each
+            // clump contributes its own rgb, both weighted by their share of
+            // this step's total extinction.
+            vec3 weighted_col = (sig_h * u_cloud_rgb + col_c) / sigma;
+            vec3 light = u_scatter * hg(u_g, cos_t) * u_star_rgb * weighted_col * exp(-tau_star);
+            vec3 emit  = u_floor * weighted_col;
             float ext = sigma * dt;
             lit += transm * (light + emit) * ext;
             transm *= exp(-ext);
         }
-        vec3 p_end = u_eye + dir * near_end;
-        vec3 tau_a, Sa; far_at(p_end, dir, tau_a, Sa);
-        if (scene_dist <= u_near_range) {
-            // a hull inside the near field: nothing behind it
-        } else if (scene_dist < 1e19) {
-            vec3 tau_b, Sb; far_at(u_eye + dir*scene_dist, dir, tau_b, Sb);
-            vec3 T = exp(-max(tau_a - tau_b, vec3(0.0)));   // <= 1
-            vec3 S = max(Sa - T*Sb, vec3(0.0));
-            lit += transm * S * sky_lanes(dir); transm *= T;
-        } else {
-            lit += transm * Sa * sky_lanes(dir); transm *= exp(-tau_a);
+        // The far field is the star-centred table: nothing to look up without
+        // a bound profile, so a clump-only run skips it entirely.
+        if (u_has_profile == 1) {
+            vec3 p_end = u_eye + dir * near_end;
+            vec3 tau_a, Sa; far_at(p_end, dir, tau_a, Sa);
+            if (scene_dist <= u_near_range) {
+                // a hull inside the near field: nothing behind it
+            } else if (scene_dist < 1e19) {
+                vec3 tau_b, Sb; far_at(u_eye + dir*scene_dist, dir, tau_b, Sb);
+                vec3 T = exp(-max(tau_a - tau_b, vec3(0.0)));   // <= 1
+                vec3 S = max(Sa - T*Sb, vec3(0.0));
+                lit += transm * S * sky_lanes(dir); transm *= T;
+            } else {
+                lit += transm * Sa * sky_lanes(dir); transm *= exp(-tau_a);
+            }
         }
     }
     float alpha = 1.0 - dot(transm, vec3(1.0/3.0));

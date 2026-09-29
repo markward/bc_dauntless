@@ -166,4 +166,14 @@ void Shader::set_int_array(const std::string& name,
     }
 }
 
+void Shader::set_float_array(const std::string& name,
+                              const float* data,
+                              int count) const {
+    if (count <= 0) return;
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) {
+        glUniform1fv(loc, count, data);
+    }
+}
+
 }  // namespace renderer
