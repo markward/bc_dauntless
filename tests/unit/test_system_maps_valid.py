@@ -171,11 +171,13 @@ def test_belaruz_and_vesuvi_carry_the_stars_their_descriptions_claim():
 
 
 def test_belaruzs_description_matches_where_its_cloud_actually_is():
-    """The description says the dense part of Belaruz's cloud has fallen
-    inward, closer to the star than any of its three planets. BC anchors the
-    profile's clump at Belaruz 1, INSIDE the orbit of every planet."""
+    """The description says the cloud's dense shell sits just beyond Belaruz 1,
+    closer to the star than any of its three planets -- and that the star's
+    radiation there will not burn you. BC anchors the profile's clump at
+    Belaruz 1, INSIDE the orbit of every planet, with radiation at zero."""
     import math
-    from engine.systems.profile import clump_radius
+    from engine.systems.descriptions import for_system
+    from engine.systems.profile import clump_radius, evaluate
 
     m = load("belaruz")
     star = [b for b in m.bodies if b.orbits is None][0]
@@ -185,6 +187,11 @@ def test_belaruzs_description_matches_where_its_cloud_actually_is():
     region = m.region("Belaruz1")
     pocket = clump_radius(region, star.position_gu)
     assert all(math.dist(p.position_gu, star.position_gu) > pocket for p in planets)
+    assert evaluate(m.profile, pocket).radiation == 0.0, "'will not burn you'"
+
+    detail = for_system("Belaruz")["detail"]
+    assert "ahead" not in detail
+    assert "just beyond Belaruz 1" in detail
 
 
 def test_planets_orbit_at_the_doubled_scale():
@@ -448,3 +455,16 @@ def test_vesuvi_4_sphere_constant_matches_the_survey():
     from tools.systems.profile_builder import VESUVI_4_SPHERES
     assert [tuple(s) for s in load("vesuvi").region("Vesuvi4").nebula["spheres"]] == \
         [tuple(s) for s in VESUVI_4_SPHERES]
+
+
+def test_vesuvis_description_matches_the_radiation_hazard():
+    """The old text ("route around it or accept the damage") described a
+    hazard you could simply avoid. The radial profile's radiation term
+    cannot be routed around -- it drains shields and can knock a subsystem
+    offline anywhere inside the debris -- so the text must say that instead."""
+    from engine.systems.descriptions import for_system
+
+    detail = for_system("vesuvi")["detail"]
+    assert "route around it" not in detail
+    assert "radiation" in detail.lower()
+    assert "offline" in detail.lower()
