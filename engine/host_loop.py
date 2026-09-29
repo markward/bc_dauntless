@@ -10607,6 +10607,16 @@ def run(mission_name: Optional[str] = None,
                     )
                     _gt = App.g_kUtopiaModule.GetGameTime()
 
+                    # The radial profile at the player: hull sparks follow its
+                    # radiation, the impulse wake its gas (engine/systems/profile_fx).
+                    from engine.systems import profile as _profile
+                    from engine.systems import profile_fx as _profile_fx
+                    from engine.appc import warp_state as _warp_state
+                    _prof_sample = (_profile.sample_for_object(player)
+                                    if player is not None else _profile.CLEAR)
+                    _warping = (player is not None
+                                and _warp_state.is_ship_warping(player))
+
                     # Nebula lightning: tick the thunder driver while the player
                     # is in a nebula.  Visual/audio only; gated by the toggle.
                     # Lazy construct (mirrors _nebula_tracker).
@@ -10632,7 +10642,7 @@ def run(mission_name: Optional[str] = None,
                         if _hull_discharge is None:
                             from engine.appc.hull_discharge import HullDischargeDriver
                             _hull_discharge = HullDischargeDriver()
-                        dmg_rate = 0.0
+                        clump_rate = 0.0
                         hull_pts = []
                         if in_neb and player is not None:
                             pset = player.GetContainingSet()
@@ -10640,8 +10650,12 @@ def run(mission_name: Optional[str] = None,
                                 for obj in pset.GetClassObjectList(App.CT_NEBULA):
                                     neb = App.MetaNebula_Cast(obj)
                                     if neb is not None and neb.IsObjectInNebula(player):
-                                        dmg_rate = neb.GetDamage()[0]
+                                        clump_rate = neb.GetDamage()[0]
                                         break
+                        sparking, dmg_rate = _profile_fx.discharge_inputs(
+                            in_neb, clump_rate, _prof_sample, _warping)
+                        if sparking and player is not None:
+                            pset = player.GetContainingSet()
                             # Anchor sparks across the WHOLE hull (saucer rim,
                             # nacelles, pylons) via the model's surface-point
                             # sample, not just the central subsystem mounts.
@@ -10662,7 +10676,7 @@ def run(mission_name: Optional[str] = None,
                                                           wp.x, wp.y, wp.z)
                                     hull_pts.append(_hp if _hp is not None
                                                     else (wp.x, wp.y, wp.z))
-                        _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
+                        _hull_discharge.update(sparking, dmg_rate, TICK_DT, hull_pts, _gt)
 
                     # Nebula ship wake: record the player's path while in a nebula.
                     # Gated by Volumetric Nebulae ONLY (spec §7: "no cloud → no
@@ -10673,10 +10687,11 @@ def run(mission_name: Optional[str] = None,
                             from engine.appc.nebula_wake import NebulaWakeTracker
                             _nebula_wake = NebulaWakeTracker()
                         _emitters = []
-                        if in_neb and player is not None:
+                        _waking = _profile_fx.wake_active(in_neb, _prof_sample, _warping)
+                        if _waking and player is not None:
                             from engine.appc.subsystems import active_impulse_emitters
                             _emitters = active_impulse_emitters(player)
-                        _nebula_wake.update(in_neb, _emitters, _gt)
+                        _nebula_wake.update(_waking, _emitters, _gt)
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
