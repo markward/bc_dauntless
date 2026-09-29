@@ -305,6 +305,9 @@ def to_json_entry(p: Placement) -> Dict:
 
 
 def from_json_entry(name: str, d: Dict) -> Placement:
+    """Inverse of `to_json_entry`. A missing OR null `shape` reads as ""
+    (unrestricted), exactly as `hull_decals.decals_for` treats it in game."""
+    shape = d.get("shape")
     return Placement(
         name=name,
         origin=tuple(d["origin"]),
@@ -312,7 +315,7 @@ def from_json_entry(name: str, d: Dict) -> Placement:
         v_axis=tuple(d["v_axis"]),
         normal=tuple(d["normal"]),
         depth=d["depth"],
-        shape=d.get("shape", ""),
+        shape="" if shape is None else shape,
     )
 
 

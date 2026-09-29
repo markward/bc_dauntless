@@ -307,6 +307,18 @@ def test_json_round_trip_with_shape():
     assert p2.origin == (1.0, 2.0, 3.0)
 
 
+def test_json_null_shape_reads_as_unrestricted_like_the_game():
+    """hull_decals.decals_for treats `"shape": null` as "" (every mesh); the
+    SPV preview must read it the same, not as None (which the live override
+    would drop)."""
+    entry = {"shape": None, "origin": [0.0, 0.0, 0.0],
+             "u_axis": [4.0, 0.0, 0.0], "v_axis": [0.0, -2.0, 0.0],
+             "normal": [0.0, 0.0, 1.0], "depth": 0.5}
+    p = from_json_entry("top", entry)
+    assert p.shape == ""
+    assert "shape" not in to_json_entry(p)
+
+
 def test_json_entry_matches_committed_ambassador_key_shape():
     # Sanity-check against the shape of the real committed decals.json
     # entry cited in the brief (native/assets/replacements/data/Models/
