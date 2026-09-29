@@ -28,6 +28,10 @@ uniform float u_lane_size;
 uniform float u_lane_contrast;
 uniform vec3  u_noise_origin;
 uniform int   u_has_profile;
+uniform float u_time;           // slow fbm drift for clumps (matches
+                                 // nebula_volumetric.frag's density()); the
+                                 // gameplay concealment field drifts the
+                                 // same way (engine/appc/nebula_density.py)
 // Local MetaNebula clumps: density bumps inside the profile haze (or, with no
 // profile at all, the ONLY density in this system). One sphere per clump
 // (the volume's first sphere), at most 8.
@@ -83,7 +87,7 @@ float clump_density(int i, vec3 p){
     float tb = clamp((s.w - d)/(0.3*s.w), 0.0, 1.0); float b = tb*tb*(3.0-2.0*tb);
     if (b <= 0.0) return 0.0;
     vec3 w = p + u_noise_origin; vec3 f = u_clump_fbm[i]; vec3 sd = u_clump_seed[i];
-    float n = fbm(vec3(w.x*f.x+sd.x, w.y*f.x+sd.y, w.z*f.x+sd.z));
+    float n = fbm(vec3(w.x*f.x+sd.x+u_time*0.01, w.y*f.x+sd.y, w.z*f.x+sd.z));
     return b * clamp(n*f.y - f.z, 0.0, 1.0);
 }
 float lanes(vec3 p){

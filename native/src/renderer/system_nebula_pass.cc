@@ -163,7 +163,7 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     std::vector<float>     clump_ext;
     for (const NebulaVolume& v : volumes) {
         if (static_cast<int>(clump_sphere.size()) >= kMaxClumps) break;
-        if (v.spheres.empty()) continue;
+        if (v.spheres.empty()) continue;   // intentional: no sphere, no clump to draw
         clump_sphere.push_back(v.spheres.front());
         clump_rgb.push_back(v.rgb);
         clump_fbm.push_back(v.fbm);
@@ -243,6 +243,10 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     // The lanes' fbm is sampled at the WORLD point, p + origin, so the
     // structure stays put while the origin follows the camera.
     march.set_vec3("u_noise_origin", glm::vec3(origin));
+    // Slow fbm drift for clumps only, matching nebula_volumetric.frag's
+    // density(): gameplay concealment (engine/appc/nebula_density.py) reads
+    // the same drifting field, so the visual clump must drift identically.
+    march.set_float("u_time", time);
 
     // Local MetaNebula clumps: density bumps that add on top of (or, with no
     // profile, are the entire density of) the near field.

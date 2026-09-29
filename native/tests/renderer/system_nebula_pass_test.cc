@@ -134,6 +134,59 @@ TEST_F(SystemNebulaPassTest, ClumpsWithoutProfileRender) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+// The clump fbm must drift with time, exactly as nebula_volumetric.frag's
+// density() does -- gameplay concealment (engine/appc/nebula_density.py)
+// samples the same drifting field, so the visual clump has to match it.
+// Renders the SAME clump-only scene twice, at two different `time` values,
+// on two FRESH passes (no temporal history to blend the difference away)
+// and asserts the centre pixel actually changed.
+TEST_F(SystemNebulaPassTest, ClumpDensityDriftsWithTime) {
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.target = glm::vec3(0.0f, 1.0f, 0.0f);   // looking down +Y
+    cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.aspect = 1.0f;
+    cam.near = 1.0f;
+    cam.far = 1.8e6f;
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+
+    renderer::NebulaVolume v;
+    // The ray from the origin toward +Y stays at x=0 for every sample point,
+    // so u_time*0.01 (added only to the x argument of the fbm call) is the
+    // ONLY thing that can move the sampled noise between the two renders --
+    // isolating the drift term from ordinary spatial variation.
+    v.spheres = {glm::vec4(0.0f, 5000.0f, 0.0f, 3000.0f)};
+    v.rgb = glm::vec3(0.5f, 0.6f, 0.9f);
+    v.visibility = 500.0f;
+    v.fbm = glm::vec3(0.001f, 3.0f, 0.2f);
+    v.seed = glm::vec3(1.0f, 2.0f, 3.0f);
+    renderer::Lighting lighting;
+
+    auto render_at = [&](float time_s) {
+        renderer::HdrTarget target;
+        target.resize(64, 64);
+        target.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearDepth(1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        renderer::SystemNebulaPass pass;   // fresh: no temporal history
+        pass.render(cam, *pipeline, {v}, lighting, target.color_texture(),
+                    target.depth_texture(), inv_vp, cam.eye, time_s);
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+        float px[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        glReadPixels(32, 32, 1, 1, GL_RGBA, GL_FLOAT, px);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return glm::vec4(px[0], px[1], px[2], px[3]);
+    };
+
+    const glm::vec4 at_t0 = render_at(0.0f);
+    const glm::vec4 at_t200 = render_at(200.0f);
+    EXPECT_GT(at_t0.a, 0.0f) << "clump drew nothing at t=0";
+    EXPECT_NE(at_t0, at_t200) << "clump did not drift with u_time";
+}
+
 TEST_F(SystemNebulaPassTest, RendersVisibleHazeLookingAtTheStar) {
     renderer::HdrTarget target;
     target.resize(64, 64);
