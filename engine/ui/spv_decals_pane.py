@@ -24,7 +24,6 @@ is 1 / (0.01 * GetScale()) body units -- NOT 1 / GetScale().
 """
 from __future__ import annotations
 
-import json
 import math
 import posixpath
 import time
@@ -56,8 +55,13 @@ CAP_HINT = "At most %d decals per ship -- delete one first" % MAX_DECALS
 # pick (no ID swap, no default_registry): the game draws NO decals then.
 NOT_IN_GAME_HINT = ("Not shown in game — no registry for this ship. "
                     "Use 'Make X the class default'.")
-NUDGE_FIELDS = ("x", "y", "z", "width", "roll", "depth")
 MIN_DEPTH = 1e-4
+# The top-right tool panels' steppers are authored for hardpoints (+-0.01 /
+# +-0.1 body GU). A decal's numbers are NIF units (1 GU = 1 / BC_MODEL_SCALE
+# of them), so the JS multiplies -- and relabels -- a decal's steps by
+# `step_scale`: Move and Width then step the same physical distance as on a
+# hardpoint; Depth (a few units deep) steps a tenth of that.
+DEPTH_STEP_SCALE = 10.0
 
 
 def placeholder_path() -> Path:
@@ -503,38 +507,7 @@ class DecalsPaneMixin:
             self._decal_reposition = not self._decal_reposition
             self._decal_adding = None
             return True
-        if verb == "decal-nudge":
-            return self._decal_nudge(arg)
         return False
-
-    def _decal_nudge(self, arg: str) -> bool:
-        i = self._decal_index(self._decal_selected)
-        if i is None:
-            return False
-        try:
-            a = json.loads(arg)
-            field, delta = str(a["field"]), float(a["delta"])
-        except (ValueError, KeyError, TypeError):
-            return False
-        if field not in NUDGE_FIELDS or not math.isfinite(delta):
-            return False
-        p = self._decal_working[i]
-        if field in ("x", "y", "z"):
-            k = "xyz".index(field)
-            o = list(p.origin)
-            o[k] += delta
-            p = replace(p, origin=tuple(o))
-        elif field == "width":
-            w = decal_editor.width(p) + delta
-            if w <= 0.0:
-                return False
-            p = decal_editor.set_width(p, w, self._decal_aspect(p.name))
-        elif field == "roll":
-            p = decal_editor.roll(p, math.radians(delta))
-        else:
-            p = replace(p, depth=max(MIN_DEPTH, p.depth + delta))
-        self._decal_working[i] = p
-        return True
 
     # ------------------------------------------------------------------
     # Hull clicks
@@ -726,18 +699,74 @@ class DecalsPaneMixin:
                 result.append(n)
         return result
 
-    def _decal_numbers(self) -> Optional[dict]:
+    # ------------------------------------------------------------------
+    # The top-right tool panels. The panel's transform_coords /
+    # rotate_values / scale_values and their *_nudge events consult these
+    # first: a selected decal owns that slot, as it owns the gizmo.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _decal_coord_step_scale() -> float:
+        from engine.host_loop import BC_MODEL_SCALE
+        return 1.0 / BC_MODEL_SCALE
+
+    def _decal_transform_coords(self) -> Optional[dict]:
+        """The Move panel for the selected decal: its centre, body frame, NIF
+        units. No Copy/Paste/Mirror (`decal` tells the JS to hide them)."""
         p = self._decal_target()
         if p is None:
             return None
-        w = decal_editor.width(p)
+        x, y, z = decal_editor.centre(p)
+        return {"x": x, "y": y, "z": z, "has_clipboard": False,
+                "can_paste": False, "decal": True,
+                "step_scale": self._decal_coord_step_scale()}
+
+    def _decal_rotate_values(self) -> Optional[dict]:
+        """The Rotate panel for the selected decal: one Roll row, degrees."""
+        p = self._decal_target()
+        if p is None:
+            return None
         try:
-            roll_deg = math.degrees(decal_editor.roll_angle(p, BODY_FORWARD, BODY_UP))
+            deg = math.degrees(decal_editor.roll_angle(p, BODY_FORWARD, BODY_UP))
         except ValueError:
-            roll_deg = 0.0
-        return {"centre": list(decal_editor.centre(p)), "width": w,
-                "roll": roll_deg, "depth": p.depth,
-                "step": max(w * 0.05, 1e-3)}
+            deg = 0.0
+        return {"fields": [{"label": "Roll", "value": deg}],
+                "has_clipboard": False, "can_paste": False, "decal": True}
+
+    def _decal_scale_values(self) -> Optional[dict]:
+        """The Scale panel for the selected decal: Width (aspect-locked to
+        the previewed mask) and Depth."""
+        p = self._decal_target()
+        if p is None:
+            return None
+        return {"kind": "decal",
+                "fields": [{"label": "Width", "value": decal_editor.width(p),
+                            "step_scale": self._decal_coord_step_scale()},
+                           {"label": "Depth", "value": p.depth,
+                            "step_scale": DEPTH_STEP_SCALE}],
+                "has_clipboard": False, "can_paste": False, "decal": True}
+
+    def _decal_panel_nudge(self, panel: str, index: int, delta: float) -> bool:
+        """A coord/rotate/scale stepper on the selected decal. `delta`
+        arrives in the decal's own units (NIF units / degrees). False for a
+        row the decal's panel does not have."""
+        p = self._decal_target()
+        if p is None or not math.isfinite(delta):
+            return False
+        if panel == "coord" and index in (0, 1, 2):
+            c = list(decal_editor.centre(p))
+            c[index] += delta
+            p = decal_editor.set_centre(p, tuple(c))
+        elif panel == "rotate" and index == 0:
+            p = decal_editor.roll(p, math.radians(delta))
+        elif panel == "scale" and index == 0:
+            w = max(MIN_DEPTH, decal_editor.width(p) + delta)
+            p = decal_editor.set_width(p, w, self._decal_aspect(p.name))
+        elif panel == "scale" and index == 1:
+            p = replace(p, depth=max(MIN_DEPTH, p.depth + delta))
+        else:
+            return False
+        self._decal_apply(p)
+        return True
 
     def _decals_payload(self) -> dict:
         working = self._decal_working or []
@@ -761,7 +790,6 @@ class DecalsPaneMixin:
             "can_add": self._decal_count() < MAX_DECALS,
             "suggested_names": (self._decal_suggested_names()
                                 if self._decals_active else []),
-            "numbers": self._decal_numbers(),
             "dirty": self._decal_dirty(),
         }
 

@@ -750,10 +750,13 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                                 and self.active_tool != "rotate"):
             self.active_tool = "transform"
         # Mutually exclusive with subsystem/light/emitter selection, as
-        # model_parts/select is.
+        # model_parts/select is -- and with a decal, which would otherwise
+        # keep the gizmo and the top-right panel.
         self.selected_index = None
         self._selected_light_index = None
         self._selected_emitter = None
+        self._decal_selected = None
+        self._decal_reposition = False
         self._last_pushed = None
 
     def _close_add_state_picker(self) -> None:
@@ -1489,6 +1492,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         the current target's, i.e. exactly when `coord_paste` would act."""
         if self.active_tool != "transform":
             return None
+        decal = self._decal_transform_coords()
+        if decal is not None:
+            return decal
         pos = self._transform_target_pos()
         if pos is None:
             return None
@@ -1571,6 +1577,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         "radius", strip/cone -> "radius_length")."""
         if self.active_tool != "scale":
             return None
+        decal = self._decal_scale_values()
+        if decal is not None:
+            return decal
         t = self._scale_target()
         if t is None:
             return None
@@ -1734,6 +1743,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         shape."""
         if self.active_tool != "rotate":
             return None
+        decal = self._decal_rotate_values()
+        if decal is not None:
+            return decal
         t = self._rotate_target()
         if t is None:
             # _rotate_target() already returns None for a point emitter and for
@@ -3499,6 +3511,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 axis = int(arg["axis"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
+            if self._decal_target() is not None:
+                return self._decal_panel_nudge("coord", axis, delta)
             if axis not in (0, 1, 2):
                 return False
             pos = self._transform_target_pos()
@@ -3541,6 +3555,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 index = int(arg["index"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
+            if self._decal_target() is not None:
+                return self._decal_panel_nudge("scale", index, delta)
             t = self._scale_target()
             if t is None:
                 return False
@@ -3586,6 +3602,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 axis = int(arg["axis"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
+            if self._decal_target() is not None:
+                return self._decal_panel_nudge("rotate", axis, delta)
             if axis not in (0, 1, 2) or self._rotate_target() is None:
                 return False
             self._rotate_axis(axis, delta)

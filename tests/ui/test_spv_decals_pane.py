@@ -489,22 +489,153 @@ def _wrap(deg):
     return (deg + 180.0) % 360.0 - 180.0
 
 
-def test_the_numbers_panel_nudges_width_roll_depth_and_centre(env):
-    p = env["p"]
+# ── the top-right tool panels (Transform / Rotate / Scale) ───────────────
+
+def _select_top(p, tool):
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-select:top")
-    n = _payload(p)["decals"]["numbers"]
-    assert n["width"] == pytest.approx(119.566, abs=1e-2)
-    assert n["depth"] == pytest.approx(2.0)
-    p.dispatch_event('decal-nudge:{"field":"depth","delta":0.5}')
-    p.dispatch_event('decal-nudge:{"field":"roll","delta":10}')
-    p.dispatch_event('decal-nudge:{"field":"z","delta":5}')
-    p.dispatch_event('decal-nudge:{"field":"width","delta":10}')
-    n2 = _payload(p)["decals"]["numbers"]
-    assert n2["depth"] == pytest.approx(2.5)
-    assert _wrap(n2["roll"] - n["roll"]) == pytest.approx(10.0)
-    assert n2["centre"][2] == pytest.approx(n["centre"][2] + 5.0)
-    assert n2["width"] == pytest.approx(n["width"] + 10.0)
+    p.dispatch_event("set_tool:" + tool)
+
+
+def _roll_deg(pl):
+    return math.degrees(decal_editor.roll_angle(
+        pl, (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+
+
+def test_the_sidebar_no_longer_carries_a_numbers_block(env):
+    p = env["p"]
+    _select_top(p, "transform")
+    assert "numbers" not in _payload(p)["decals"]
+
+
+def test_the_transform_panel_shows_the_decal_centre_in_body_units(env):
+    p = env["p"]
+    _select_top(p, "transform")
+    c = _payload(p)["transform_coords"]
+    assert _close((c["x"], c["y"], c["z"]),
+                  decal_editor.centre(p._decal_working[0]), 1e-9)
+    # A decal has no Copy/Paste/Mirror: the panel hides them.
+    assert c["decal"] is True and c["can_paste"] is False
+    # Steppers step in GU, like a hardpoint's; the numbers are NIF units.
+    assert c["step_scale"] == pytest.approx(1.0 / BC_MODEL_SCALE)
+
+
+def test_a_coord_nudge_recentres_the_decal_with_one_undo(env):
+    p, calls = env["p"], env["calls"]
+    _select_top(p, "transform")
+    before = p._decal_working[0]
+    n_undo = len(p._undo_stack)
+    assert p.dispatch_event('coord_nudge:{"axis":2,"delta":5}')
+    after = p._decal_working[0]
+    c0, c1 = decal_editor.centre(before), decal_editor.centre(after)
+    assert _close(c1, (c0[0], c0[1], c0[2] + 5.0), 1e-9)
+    assert (after.u_axis, after.v_axis, after.normal) == (
+        before.u_axis, before.v_axis, before.normal)
+    assert len(p._undo_stack) == n_undo + 1
+    assert _close(calls[-1][1][0][1], after.origin, 1e-9), "override re-pushed"
+    p.dispatch_event("undo")
+    assert p._decal_working[0] == before
+
+
+def test_copy_paste_mirror_never_touch_a_decal(env):
+    p = env["p"]
+    _select_top(p, "transform")
+    before = p._decal_working[0]
+    for a in ("coord_copy", "coord_paste", "coord_mirror", "mirror_element"):
+        p.dispatch_event(a)
+    assert p._decal_working[0] == before
+    assert p._coord_clipboard is None
+
+
+def test_the_rotate_panel_shows_and_edits_the_roll(env):
+    p = env["p"]
+    _select_top(p, "rotate")
+    r = _payload(p)["rotate_values"]
+    assert r["decal"] is True and r["can_paste"] is False
+    [f] = r["fields"]
+    assert f["label"] == "Roll"
+    before = p._decal_working[0]
+    assert f["value"] == pytest.approx(_roll_deg(before))
+    n_undo = len(p._undo_stack)
+    assert p.dispatch_event('rotate_nudge:{"axis":0,"delta":10}')
+    after = p._decal_working[0]
+    assert after == decal_editor.roll(before, math.radians(10.0))
+    assert _wrap(_payload(p)["rotate_values"]["fields"][0]["value"]
+                 - f["value"]) == pytest.approx(10.0)
+    assert len(p._undo_stack) == n_undo + 1
+    # Only the one Roll row exists.
+    assert not p.dispatch_event('rotate_nudge:{"axis":1,"delta":10}')
+    assert p._decal_working[0] == after
+
+
+def test_the_scale_panel_shows_width_and_depth(env):
+    p = env["p"]
+    _select_top(p, "scale")
+    s = _payload(p)["scale_values"]
+    assert s["decal"] is True and s["can_paste"] is False
+    assert [f["label"] for f in s["fields"]] == ["Width", "Depth"]
+    assert s["fields"][0]["value"] == pytest.approx(119.566, abs=1e-2)
+    assert s["fields"][1]["value"] == pytest.approx(2.0)
+    assert all(f["step_scale"] > 1.0 for f in s["fields"])
+
+
+def test_a_width_nudge_is_aspect_locked_to_the_mask(env):
+    """Zhukov/top.png is 8x2: the height snaps to width / 4."""
+    p = env["p"]
+    _select_top(p, "scale")
+    c0 = decal_editor.centre(p._decal_working[0])
+    w0 = decal_editor.width(p._decal_working[0])
+    n_undo = len(p._undo_stack)
+    assert p.dispatch_event('scale_nudge:{"index":0,"delta":10}')
+    pl = p._decal_working[0]
+    assert decal_editor.width(pl) == pytest.approx(w0 + 10.0)
+    h = math.sqrt(sum(c * c for c in pl.v_axis))
+    assert decal_editor.width(pl) / h == pytest.approx(4.0)
+    assert _close(decal_editor.centre(pl), c0, 1e-9)
+    assert len(p._undo_stack) == n_undo + 1
+
+
+def test_a_depth_nudge_edits_depth_and_stays_positive(env):
+    p = env["p"]
+    _select_top(p, "scale")
+    p.dispatch_event('scale_nudge:{"index":1,"delta":0.5}')
+    assert p._decal_working[0].depth == pytest.approx(2.5)
+    p.dispatch_event('scale_nudge:{"index":1,"delta":-100}')
+    assert p._decal_working[0].depth > 0.0
+    p.dispatch_event('scale_nudge:{"index":0,"delta":-1000}')
+    assert decal_editor.width(p._decal_working[0]) > 0.0
+
+
+def test_scale_copy_paste_uniform_never_touch_a_decal(env):
+    p = env["p"]
+    _select_top(p, "scale")
+    before = p._decal_working[0]
+    for a in ("scale_copy", "scale_paste", "scale_uniform",
+              "rotate_copy", "rotate_paste", "rotate_mirror"):
+        p.dispatch_event(a)
+    assert p._decal_working[0] == before
+
+
+def test_no_decal_panel_without_the_matching_tool_or_selection(env):
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("set_tool:transform")
+    assert _payload(p)["transform_coords"] is None      # nothing selected
+    p.dispatch_event("decal-select:top")
+    d = _payload(p)
+    assert d["scale_values"] is None and d["rotate_values"] is None
+    p.dispatch_event("decal-pane")                     # pane closed
+    assert _payload(p)["transform_coords"] is None
+
+
+def test_selecting_a_part_node_takes_the_panel_off_the_decal(env):
+    p = env["p"]
+    _select_top(p, "transform")
+    p._model_part_nodes = [{"name": "wing", "bounds_min": [0, 0, 0],
+                            "bounds_max": [1, 1, 1]}]
+    p._select_part_node("wing", "breakage")
+    assert p._decal_selected is None
+    assert _payload(p)["transform_coords"] is None
 
 
 def test_reposition_reseats_the_selection_at_the_next_click(env):
@@ -747,7 +878,8 @@ def test_a_malformed_placement_survives_a_save_unchanged(env):
     _write_with_broken(env)
     p.dispatch_event("decal-pane")
     p.dispatch_event("decal-select:top")
-    p.dispatch_event('decal-nudge:{"field":"depth","delta":0.5}')
+    p.dispatch_event("set_tool:scale")
+    p.dispatch_event('scale_nudge:{"index":1,"delta":0.5}')
     p.dispatch_event("save")
     assert "Saved" in (p._current_toast() or "")
     doc = json.loads((env["masks"] / "decals.json").read_text())

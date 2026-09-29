@@ -13,6 +13,7 @@ from engine.ui.decal_editor import (
     roll,
     roll_angle,
     scale,
+    set_centre,
     set_width,
     to_json_entry,
     valid_name,
@@ -268,6 +269,14 @@ def test_set_width_keeps_centre_roll_and_normal():
     assert _approx_vec(p2.normal, p.normal)
     r1 = roll_angle(p2, FWD)
     assert abs(r1 - r0) < 1e-6
+
+
+def test_set_centre_moves_the_centre_and_keeps_the_axes():
+    p = roll(_sample_placement(), math.radians(25.0))
+    p2 = set_centre(p, (3.0, -4.0, 5.0))
+    assert _approx_vec(centre(p2), (3.0, -4.0, 5.0))
+    assert (p2.u_axis, p2.v_axis, p2.normal, p2.depth) == (
+        p.u_axis, p.v_axis, p.normal, p.depth)
 
 
 def test_set_width_rejects_non_positive():

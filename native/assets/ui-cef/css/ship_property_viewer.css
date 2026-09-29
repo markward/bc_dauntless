@@ -399,12 +399,6 @@
     color: rgb(255, 150, 130);
 }
 
-.spv-decal-num__label {
-    width: 40px;
-    font-size: 11px;
-    color: rgba(235, 225, 255, 0.8);
-}
-
 /* Derived-bounds readout for the selected part -- what severance will
    actually test against (see model_part_rows / select_model_part). */
 .spv-part-box {

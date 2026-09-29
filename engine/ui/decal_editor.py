@@ -247,6 +247,12 @@ def centre(p: Placement) -> Vec3:
     return _add(p.origin, _add(_scale(p.u_axis, 0.5), _scale(p.v_axis, 0.5)))
 
 
+def set_centre(p: Placement, c: Vec3) -> Placement:
+    """Move `p` so its centre is `c`. Axes, normal and depth unchanged."""
+    return replace(p, origin=_sub(tuple(c), _add(_scale(p.u_axis, 0.5),
+                                                 _scale(p.v_axis, 0.5))))
+
+
 def width(p: Placement) -> float:
     return _mag(p.u_axis)
 

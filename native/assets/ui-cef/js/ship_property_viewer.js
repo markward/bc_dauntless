@@ -89,77 +89,7 @@ window.setShipPropertyViewer = function (data) {
         mirrorBtn.classList.toggle('spv-tool--disabled', data.has_selection !== true);
     }
 
-    // Transform coordinate panel (top-right): visible only while
-    // data.transform_coords is non-null (Transform tool active + a
-    // mount or part Anchor/State node selected). Mirrors the XYZ and the
-    // kind-aware Paste button (can_paste).
-    var coords = data.transform_coords;
-    var coordsEl = document.getElementById('spv-coords');
-    if (coordsEl) {
-        if (coords) {
-            document.getElementById('spv-coord-x').textContent = coords.x.toFixed(3);
-            document.getElementById('spv-coord-y').textContent = coords.y.toFixed(3);
-            document.getElementById('spv-coord-z').textContent = coords.z.toFixed(3);
-            var pasteBtn = document.getElementById('spv-coord-paste');
-            // Kind-aware, like the rotate/scale panels: a clipboard of the
-            // wrong kind (part anchor / posed anchor / mount) greys Paste.
-            pasteBtn.disabled = !coords.can_paste;
-            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.can_paste);
-            coordsEl.style.display = 'block';
-        } else {
-            coordsEl.style.display = 'none';
-        }
-    }
-
-    // Scale panel (top-right): visible only while data.scale_values is
-    // non-null (Scale tool active + a subsystem/light selected). Rows are
-    // shape-aware (built from scale_values.fields — X/Y/Z, Radius, Length),
-    // and the same top-right slot is shared with #spv-coords (radio: never
-    // both are shown at once).
-    var scale = data.scale_values;
-    var scaleEl = document.getElementById('spv-scale');
-    if (scaleEl) {
-        if (scale) {
-            var rows = scale.fields.map(function (f, i) {
-                return '<div class="spv-coords__row">'
-                     + '<span class="spv-coords__axis">' + escapeHtmlSPV(f.label) + '</span>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',-0.1)">&minus;0.1</button>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',-0.01)">&minus;0.01</button>'
-                     + '<span class="spv-coords__val">' + f.value.toFixed(3) + '</span>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',0.01)">+0.01</button>'
-                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',0.1)">+0.1</button>'
-                     + '</div>';
-            }).join('');
-            document.getElementById('spv-scale-rows').innerHTML = rows;
-            var sp = document.getElementById('spv-scale-paste');
-            sp.disabled = !scale.can_paste;
-            sp.classList.toggle('spv-coords__btn--disabled', !scale.can_paste);
-            scaleEl.style.display = 'block';
-        } else {
-            scaleEl.style.display = 'none';
-        }
-    }
-
-    // Rotate panel (top-right): visible only while data.rotate_values is
-    // non-null (Rotate tool active + a cylinder light volume selected).
-    // Fixed X/Y/Z degree rows (no innerHTML rebuild needed), and the same
-    // top-right slot is shared with #spv-coords/#spv-scale (radio: never
-    // more than one shown at once).
-    var rotate = data.rotate_values;
-    var rotateEl = document.getElementById('spv-rotate');
-    if (rotateEl) {
-        if (rotate) {
-            document.getElementById('spv-rotate-x').textContent = rotate.fields[0].value.toFixed(1) + '°';
-            document.getElementById('spv-rotate-y').textContent = rotate.fields[1].value.toFixed(1) + '°';
-            document.getElementById('spv-rotate-z').textContent = rotate.fields[2].value.toFixed(1) + '°';
-            var rp = document.getElementById('spv-rotate-paste');
-            rp.disabled = !rotate.can_paste;
-            rp.classList.toggle('spv-coords__btn--disabled', !rotate.can_paste);
-            rotateEl.style.display = 'block';
-        } else {
-            rotateEl.style.display = 'none';
-        }
-    }
+    renderSPVToolPanels(data);
 
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
@@ -234,6 +164,89 @@ window.setShipPropertyViewer = function (data) {
         pop.innerHTML = '';
     }
 };
+
+// ── Top-right tool panels ──────────────────────────────────────────────────
+// Position (data.transform_coords), Scale (data.scale_values) and Rotate
+// (data.rotate_values) share the top-right slot, radio-style: Python sends at
+// most one non-null, for the active tool and the one selection that owns the
+// slot (a mount, a part node, or a selected decal in the Decals pane).
+//
+// Every row is the same stepper: two steps down, the value, two steps up.
+// The steps are authored for hardpoints (+-0.01/+-0.1, +-1/+-5 deg); a panel
+// or field may carry `step_scale`, which multiplies (and relabels) them -- a
+// decal's numbers are NIF units, so its Move/Width steps are x100 (the same
+// physical distance). `decal: true` hides the action row (a decal has no
+// Copy/Paste/Mirror/Uniform).
+function spvStepLabel(delta, unit) {
+    var mag = String(parseFloat(Math.abs(delta).toPrecision(6)));
+    return (delta < 0 ? '&minus;' : '+') + mag + (unit || '');
+}
+
+function spvStepperRow(label, value, digits, unit, small, big, handler, index) {
+    function b(delta) {
+        return '<button class="spv-step" onclick="' + handler + '(' + index + ','
+            + parseFloat(delta.toPrecision(6)) + ')">' + spvStepLabel(delta, unit) + '</button>';
+    }
+    return '<div class="spv-coords__row">'
+        + '<span class="spv-coords__axis">' + escapeHtmlSPV(label) + '</span>'
+        + b(-big) + b(-small)
+        + '<span class="spv-coords__val">' + value.toFixed(digits) + (unit || '') + '</span>'
+        + b(small) + b(big)
+        + '</div>';
+}
+
+function spvShowPanel(prefix, panelId, values, rowsHtml) {
+    var el = document.getElementById(panelId);
+    if (!el) return;
+    if (!values) {
+        el.style.display = 'none';
+        return;
+    }
+    document.getElementById(prefix + '-rows').innerHTML = rowsHtml;
+    var paste = document.getElementById(prefix + '-paste');
+    if (paste) {
+        // Kind-aware: a clipboard of the wrong kind greys Paste.
+        paste.disabled = !values.can_paste;
+        paste.classList.toggle('spv-coords__btn--disabled', !values.can_paste);
+    }
+    var acts = document.getElementById(prefix + '-actions');
+    if (acts) acts.style.display = values.decal === true ? 'none' : '';
+    el.style.display = 'block';
+}
+
+function renderSPVToolPanels(data) {
+    var coords = data.transform_coords;
+    var rows = '';
+    if (coords) {
+        var k = coords.step_scale || 1;
+        rows = [coords.x, coords.y, coords.z].map(function (v, i) {
+            return spvStepperRow('XYZ'.charAt(i), v, 3, '', 0.01 * k, 0.1 * k,
+                                 'shipPropertyViewerCoordNudge', i);
+        }).join('');
+    }
+    spvShowPanel('spv-coord', 'spv-coords', coords, rows);
+
+    var scale = data.scale_values;
+    rows = '';
+    if (scale) {
+        rows = scale.fields.map(function (f, i) {
+            var fk = f.step_scale || 1;
+            return spvStepperRow(f.label, f.value, 3, '', 0.01 * fk, 0.1 * fk,
+                                 'shipPropertyViewerScaleNudge', i);
+        }).join('');
+    }
+    spvShowPanel('spv-scale', 'spv-scale', scale, rows);
+
+    var rotate = data.rotate_values;
+    rows = '';
+    if (rotate) {
+        rows = rotate.fields.map(function (f, i) {
+            return spvStepperRow(f.label, f.value, 1, '&deg;', 1, 5,
+                                 'shipPropertyViewerRotateNudge', i);
+        }).join('');
+    }
+    spvShowPanel('spv-rotate', 'spv-rotate', rotate, rows);
+}
 
 // ── Context menu / radius modal / Save bar wiring (Task 5) ─────────────────
 // Right-click a subsystem row -> context menu -> "Set Radius..." -> numeric
@@ -954,7 +967,8 @@ function renderSPVModelParts(modelParts) {
 // Driven by `decals` = {active, has_model, registries, registry,
 // default_registry, placements:[{name, has_mask, unreadable?}], selected,
 // adding, adding_name, reposition, error, hint, can_add, suggested_names,
-// numbers, dirty}.
+// dirty}. A selected placement's numbers are NOT here: they live in the
+// top-right tool panels (renderSPVToolPanels), like every other selection's.
 // Python owns every rule (name validation, the 4-cap, the hull pick); this
 // only renders and fires 'ship-property-viewer/decal-*' events. Two bits of
 // state are JS-local because they never reach Python until confirmed: the
@@ -969,19 +983,6 @@ function spvDecalBtn(label, handler, extraClass, dataName) {
     return '<button class="spv-decal-btn' + (extraClass ? ' ' + extraClass : '') + '"'
         + (dataName !== undefined ? ' data-name="' + escapeHtmlSPV(dataName) + '"' : '')
         + ' onclick="' + handler + '(this)">' + label + '</button>';
-}
-
-function spvDecalStepper(label, field, value, small, big, unit) {
-    function b(delta, text) {
-        return '<button class="spv-step" data-field="' + field + '" data-delta="' + delta
-            + '" onclick="shipPropertyViewerDecalNudge(this)">' + text + '</button>';
-    }
-    return '<div class="spv-coords__row">'
-        + '<span class="spv-decal-num__label">' + label + '</span>'
-        + b(-big, '&minus;&minus;') + b(-small, '&minus;')
-        + '<span class="spv-coords__val">' + value.toFixed(3) + (unit || '') + '</span>'
-        + b(small, '+') + b(big, '++')
-        + '</div>';
 }
 
 function renderSPVDecals(decals) {
@@ -1107,18 +1108,6 @@ function renderSPVDecals(decals) {
         out.push('<div class="spv-decal-error">' + escapeHtmlSPV(d.error) + '</div>');
     }
 
-    // Numbers panel for the selection (body frame, model units).
-    var n = d.numbers;
-    if (n) {
-        var s = n.step || 0.01;
-        out.push('<div class="spv-decal-section">Selected: ' + escapeHtmlSPV(d.selected || '') + '</div>');
-        out.push(spvDecalStepper('X', 'x', n.centre[0], s, s * 10));
-        out.push(spvDecalStepper('Y', 'y', n.centre[1], s, s * 10));
-        out.push(spvDecalStepper('Z', 'z', n.centre[2], s, s * 10));
-        out.push(spvDecalStepper('Width', 'width', n.width, s, s * 10));
-        out.push(spvDecalStepper('Roll', 'roll', n.roll, 1, 15, '&deg;'));
-        out.push(spvDecalStepper('Depth', 'depth', n.depth, s * 0.2, s * 2));
-    }
     body.innerHTML = out.join('');
 }
 
@@ -1168,11 +1157,6 @@ window.shipPropertyViewerDecalDeleteNo = function () {
     spvDecalConfirmDelete = null;
     spvDecalRerender();
 };
-window.shipPropertyViewerDecalNudge = function (el) {
-    dauntlessEvent('ship-property-viewer/decal-nudge:' + JSON.stringify(
-        {field: el.dataset.field, delta: parseFloat(el.dataset.delta)}));
-};
-
 // A part row (kind "part", depth 0). The row's identity travels ONLY in
 // data-* attributes (data-part-name/-has-anchor/-missing-states/-breakable),
 // never interpolated into a JS string literal inside an on* attribute: the

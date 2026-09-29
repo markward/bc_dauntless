@@ -146,7 +146,7 @@ If a click misses the hull, no placement is made and a hint is shown.
 | Move | Arrows along the decal's own u/v axes; **click-to-reposition** re-seats it at a new hull hit with the new normal |
 | Rotate | A ring about the normal (roll) |
 | Scale | Uniform, with the aspect locked to the mask |
-| Numbers panel | Centre, width, roll and depth |
+| Numbers | In the tool's own top-right panel, never the sidebar (Mark, live): Move shows the centre X/Y/Z, Rotate the Roll, Scale the Width (aspect-locked) and Depth. No Copy/Paste/Mirror/Uniform for a decal |
 
 **No mask yet:** a built-in **checkerboard placeholder** is used for the
 preview, so a placement can be positioned and sized before its artwork
