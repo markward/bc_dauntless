@@ -21,7 +21,6 @@ and a Mirror that creates a new placement).
 import math
 
 
-
 class EditTarget:
     """Thin per-kind view over ShipPropertyViewerPanel's staged state
     (spec 2026-09-29-spv-edit-target-refactor §3). Owns no state."""
@@ -33,6 +32,10 @@ class EditTarget:
     def position(self) -> tuple: raise NotImplementedError
     def set_position(self, xyz: tuple) -> None: raise NotImplementedError
     def gizmo_frame(self): return None           # (origin_world, axes) or None
+    def grab_allowed(self, tool: str, handle: int) -> bool:
+        """Whether gizmo handle `handle` (0/1/2) may be grabbed under
+        `tool` ("transform"/"rotate"/"scale"). Every handle, by default."""
+        return True
     def axis_drag_apply(self, param_now: float) -> None:
         """Move the target to the grab-time coordinate with the grabbed axis
         component advanced by (param_now - grab_param)."""
@@ -71,9 +74,15 @@ class EditTarget:
     def ring_drag_apply(self, state, angle: float) -> None: pass
     def rotate_gizmo_frame(self): return None    # (origin_world, axes) or None
     # Scale
-    def scale_spec(self): return None            # dict {kind, fields, step_scale} | None
+    def scale_spec(self):
+        """The Scale panel's {kind, fields} (as `scale_kind()`), or None when
+        the Scale tool is inert here. A field may carry its own `step_scale`
+        (a decal's Width/Depth); there is no spec-level `step_scale`."""
+        return None
     def get_scale(self): return None
-    def set_scale_field(self, name: str, value: float) -> None: pass
+    def set_scale_field(self, index: int, value: float) -> None:
+        """Stage `value` for size field `index` (a position in
+        `scale_kind()[1]`); an out-of-range index is a no-op."""
     def scale_drag_begin(self, *args): return None
     def scale_drag_apply(self, state, *args) -> None: pass
     def scale_gizmo_frame(self): return None     # (origin_world, axes) or None
@@ -138,8 +147,9 @@ class _HardpointMount(EditTarget):
         """Every aspect this target can take from pipette source `src`, in
         the order the Pipette applies them. Position always (when the source
         has one); rotation only when both share a rotate kind; scale only
-        when both share a scale kind; colour + intensity emitter -> emitter
-        only. Incompatible aspects are silently skipped."""
+        when both share a scale kind; colour + intensity only when both
+        carry a colour (`colour` / `set_colour`: an emitter). Incompatible
+        aspects are silently skipped."""
         fields = []
         if src.position() is not None:
             fields.append("position")
@@ -148,7 +158,7 @@ class _HardpointMount(EditTarget):
             fields.append("rotation")
         if src.scale_kind()[0] == self.scale_kind()[0]:
             fields.append("scale")
-        if src.kind == "emitter" and self.kind == "emitter":
+        if hasattr(src, "colour") and hasattr(self, "set_colour"):
             fields.append("colour")
         return tuple(fields)
 
@@ -248,20 +258,15 @@ class _HardpointMount(EditTarget):
         t = self.key
         spec = self._size_spec()
         p._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
-        if t[0] == "emitter" and spec.get("kind") == "cone":
-            # A cone rotates from its (forward=axis, up) basis, like a Box light;
-            # seed the grab-start orientation from it (deriving up if absent) so
-            # the ring drag rolls the ellipse + re-aims from the grab pose.
-            from engine.appc.light_emitters import _derive_up
-            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-            up = spec.get("up") or _derive_up(fwd)
-            p._ring_grab_orientation = (tuple(fwd), tuple(up))
-        else:
-            p._ring_grab_orientation = spec.get("orientation") \
-                or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        p._ring_grab_orientation = self._ring_grab_orientation_of(spec)
         # Keyed by the full target tuple so light and emitter accumulators on
         # the same subsystem stay independent (see rotate_spec).
         p._ring_grab_accum = list(p._rotate_accum.get(t, [0.0, 0.0, 0.0]))
+
+    def _ring_grab_orientation_of(self, spec):
+        """The grab-start (forward, up) basis a ring drag rotates from: the
+        spec's `orientation` (a Box light), else the default basis."""
+        return spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
 class MountTarget(_HardpointMount):
@@ -394,7 +399,6 @@ class LightTarget(_HardpointMount):
             spec["radius"] = (value,)
         p._pending_light[i] = spec
         p._last_pushed = None
-
 
     # -- Rotate --------------------------------------------------------
     def rotate_kind(self):
@@ -594,6 +598,17 @@ class EmitterTarget(_HardpointMount):
     def _size_spec(self) -> dict:
         return self.panel._effective_emitter(self.key[1], self.key[2]) or {}
 
+    def _ring_grab_orientation_of(self, spec):
+        # A cone rotates from its (forward=axis, up) basis, like a Box light;
+        # seed the grab-start orientation from it (deriving up if absent) so
+        # the ring drag rolls the ellipse + re-aims from the grab pose.
+        if spec.get("kind") != "cone":
+            return super()._ring_grab_orientation_of(spec)
+        from engine.appc.light_emitters import _derive_up
+        fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+        up = spec.get("up") or _derive_up(fwd)
+        return (tuple(fwd), tuple(up))
+
     # -- Colour (Pipette, emitter -> emitter) --------------------------
     def colour(self):
         """(color, intensity), or None when the emitter is gone."""
@@ -637,7 +652,6 @@ class EmitterTarget(_HardpointMount):
         lst[j] = spec
         p._pending_emitter[i] = lst
         p._last_pushed = None
-
 
     # -- Rotate --------------------------------------------------------
     def rotate_kind(self):
@@ -1020,6 +1034,16 @@ class DecalTarget(EditTarget):
     def rotate_gizmo_frame(self):
         return self.gizmo_frame()
 
+    def grab_allowed(self, tool: str, handle: int) -> bool:
+        """Move has no normal arrow and Rotate only the ring about the
+        normal: those handles are drawn (the gizmo pass draws three) but
+        never grabbed."""
+        if tool == "transform":
+            return handle in (0, 1)
+        if tool == "rotate":
+            return handle == 2
+        return True
+
     def axis_drag_begin(self, axis: int, grab_param: float) -> None:
         p = self._placement()
         if p is None:
@@ -1028,6 +1052,11 @@ class DecalTarget(EditTarget):
         pane._decal_grab = p
         pane._axis_drag = axis
         pane._axis_grab_param = grab_param
+        # The drag projects the cursor onto the shaft through THIS origin;
+        # left stale (the last mount's, or (0,0,0)) the first frame jumps.
+        frame = self.gizmo_frame()
+        if frame is not None:
+            pane._axis_grab_origin = frame[0]
 
     def axis_drag_apply(self, param_now: float) -> None:
         """Slide along u (handle 0) or v (handle 1) from the grab-time

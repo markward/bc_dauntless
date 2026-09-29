@@ -359,3 +359,44 @@ def test_pipette_arming_is_the_adapters_call(make_panel):
                       ("decal", "pylon"))}
     assert arms == {"subsystem": True, "light": True, "emitter": True,
                     "part_anchor": False, "part_pose": False, "decal": False}
+
+
+# ── Gizmo handle restriction (EditTarget.grab_allowed) ───────────────────────
+
+@pytest.mark.parametrize("tool,allowed", [("transform", {0, 1}),
+                                          ("rotate", {2}),
+                                          ("scale", {0, 1, 2})])
+def test_decal_grab_allowed_is_the_adapters_call(make_panel, tool, allowed):
+    """Move grabs only the u/v arrows, Rotate only the ring about the
+    normal, Scale any handle -- asked of the adapter, not the panel."""
+    from engine.ui.spv_edit_targets import edit_target_for_key
+    p = make_panel([_PYLON])
+    t = edit_target_for_key(p, ("decal", "pylon"))
+    assert {h for h in range(3) if t.grab_allowed(tool, h)} == allowed
+
+
+def test_decal_move_drag_first_frame_does_not_jump(make_panel):
+    """A decal Move drag starts from the decal's own gizmo origin, not the
+    last mount drag's (or (0,0,0)): applying the drag at the grab cursor
+    leaves the decal's centre where it was."""
+    from engine.ui.ship_property_viewer import axis_drag_param, gizmo_length
+    p = make_panel([_PYLON])
+    fb = lambda: (800, 600)
+    # A mount Move drag leaves a stale _axis_grab_origin behind.
+    assert p.dispatch_event("select_light:0") is True
+    _use_tool(p, "transform")
+    p._begin_axis_drag_for_test(0, 0.0)
+    p._axis_drag = None
+    _select(p, "pylon")
+    g = p._active_gizmo()
+    assert g is not None
+    assert tuple(p._axis_grab_origin) != pytest.approx(tuple(g["origin"]))
+    # Grab the u arrow at a cursor on its shaft, then apply at that cursor.
+    x, y = 400.0, 300.0
+    L = gizmo_length(p.camera)
+    t_grab = axis_drag_param(x, y, g["origin"], g["axes"][0], L, p.camera, fb())
+    p._begin_axis_drag(0, t_grab)
+    t_now = axis_drag_param(x, y, p._axis_grab_origin, g["axes"][0], L,
+                            p.camera, fb())
+    p._apply_axis_drag(t_now)
+    assert centre(p._decal_by_name("pylon")) == pytest.approx(centre(_PYLON))

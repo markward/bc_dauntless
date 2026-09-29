@@ -657,16 +657,6 @@ class DecalsPaneMixin:
         i = self._decal_index(name)
         return self._decal_working[i] if i is not None else None
 
-    def _decal_grab_allowed(self, handle: int) -> bool:
-        """Move has no normal arrow and Rotate only the ring about the
-        normal: those handles are drawn (the gizmo pass draws three) but
-        never grabbed."""
-        if self.active_tool == "transform":
-            return handle in (0, 1)
-        if self.active_tool == "rotate":
-            return handle == 2
-        return True
-
     def _decal_apply(self, new_p) -> None:
         """Replace the selected placement with `new_p` and re-push the
         override (every `DecalTarget` edit lands here)."""

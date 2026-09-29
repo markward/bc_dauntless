@@ -232,3 +232,15 @@ def test_mirror_is_mirror_element(make_panel):
         before = _staged(p, case)
         p._edit_target().mirror()
         assert _diff(before, _staged(p, case)) == EXPECTED_MIRRORS[case][2][1], case
+
+
+def test_grab_allowed_defaults_true_for_non_decal_kinds(make_panel):
+    """Only a decal restricts which gizmo handles grab; every other kind
+    takes any handle under every tool."""
+    from engine.ui.spv_edit_targets import edit_target_for_key
+    p = make_panel()
+    for key in (("subsystem", 0), ("light", 1), ("emitter", 4, 2),
+                ("part_anchor", "wing"), ("part_pose", "wing", "red")):
+        t = edit_target_for_key(p, key)
+        for tool in ("transform", "rotate", "scale"):
+            assert all(t.grab_allowed(tool, h) for h in range(3)), (key, tool)

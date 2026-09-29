@@ -2265,11 +2265,15 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 # _current_target_is_locked_mount's docstring for why this
                 # cannot be the DOM's `disabled` attribute alone.
                 return False
+            # A kind may refuse a drawn handle (a decal's Move has no normal
+            # arrow, its Rotate only the ring about the normal).
+            et = self._edit_target()
+            refused = (lambda h: et is not None
+                       and not et.grab_allowed(self.active_tool, h))
             if self.active_tool == "rotate":
                 ring = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
                                        self.camera, fb_size(), dsf)
-                if ring is None or (self._decal_target() is not None
-                                    and not self._decal_grab_allowed(ring)):
+                if ring is None or refused(ring):
                     return False
                 self._begin_ring_drag(
                     ring, ring_drag_angle(x, y, g["origin"], self.camera,
@@ -2278,8 +2282,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             else:
                 axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
                                        self.camera, fb_size(), dsf)
-                if axis is None or (self._decal_target() is not None
-                                    and not self._decal_grab_allowed(axis)):
+                if axis is None or refused(axis):
                     return False
                 t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
                                          g["length"], self.camera, fb_size())
