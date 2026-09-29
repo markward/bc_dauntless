@@ -187,6 +187,64 @@ TEST_F(SystemNebulaPassTest, ClumpDensityDriftsWithTime) {
     EXPECT_NE(at_t0, at_t200) << "clump did not drift with u_time";
 }
 
+TEST_F(SystemNebulaPassTest, SetDialsRebuildsTableOnlyForGOrFloor) {
+    renderer::SystemNebulaPass pass;
+    pass.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    EXPECT_TRUE(pass.has_profile());
+    const int after_initial_upload = pass.profile_rebuild_count();
+    EXPECT_EQ(after_initial_upload, 1);
+
+    // lane_size / lane_contrast / near_range: no table dependency, no rebuild.
+    renderer::SystemNebulaPass::Dials d = pass.dials();
+    d.lane_size = 20000.0f;
+    d.lane_contrast = 0.9f;
+    d.near_range = 45000.0f;
+    pass.set_dials(d);
+    EXPECT_EQ(pass.profile_rebuild_count(), after_initial_upload)
+        << "a lane/near-range-only change must not rebuild the far-field table";
+    EXPECT_TRUE(pass.has_profile());
+    EXPECT_EQ(pass.dials().lane_size, 20000.0f);
+    EXPECT_EQ(pass.dials().lane_contrast, 0.9f);
+    EXPECT_EQ(pass.dials().near_range, 45000.0f);
+
+    // g change: rebuilds.
+    d.g = 0.2f;
+    pass.set_dials(d);
+    EXPECT_EQ(pass.profile_rebuild_count(), after_initial_upload + 1)
+        << "a g change must rebuild the far-field table";
+    EXPECT_TRUE(pass.has_profile());
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+    // floor change: rebuilds again.
+    d.floor = 0.1f;
+    pass.set_dials(d);
+    EXPECT_EQ(pass.profile_rebuild_count(), after_initial_upload + 2)
+        << "a floor change must rebuild the far-field table";
+    EXPECT_TRUE(pass.has_profile());
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+    // Setting the SAME g/floor again must not rebuild.
+    pass.set_dials(d);
+    EXPECT_EQ(pass.profile_rebuild_count(), after_initial_upload + 2)
+        << "re-setting identical dials must not rebuild";
+}
+
+TEST_F(SystemNebulaPassTest, SetDialsWithoutProfileNeverRebuilds) {
+    renderer::SystemNebulaPass pass;
+    EXPECT_FALSE(pass.has_profile());
+    EXPECT_EQ(pass.profile_rebuild_count(), 0);
+
+    renderer::SystemNebulaPass::Dials d = pass.dials();
+    d.g = 0.1f;
+    d.floor = 0.5f;
+    pass.set_dials(d);
+    EXPECT_FALSE(pass.has_profile())
+        << "no profile to rebuild: set_dials must not create one";
+    EXPECT_EQ(pass.profile_rebuild_count(), 0);
+    EXPECT_EQ(pass.dials().g, 0.1f);
+    EXPECT_EQ(pass.dials().floor, 0.5f);
+}
+
 TEST_F(SystemNebulaPassTest, RendersVisibleHazeLookingAtTheStar) {
     renderer::HdrTarget target;
     target.resize(64, 64);

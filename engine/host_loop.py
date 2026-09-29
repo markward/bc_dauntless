@@ -23,6 +23,7 @@ from engine.appc.ship_iter import (
 )
 import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
+import engine.dev_nebula_dials as dev_nebula_dials
 from engine.core import frame_profiler
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
@@ -9407,6 +9408,14 @@ def run(mission_name: Optional[str] = None,
             # (DAUNTLESS_STUB_TELEMETRY=0 force-disables). See
             # docs/superpowers/specs/2026-07-10-stub-telemetry-accumulation-design.md.
             dev_mode.enable_stub_telemetry()
+
+            # System-scale nebula look-dial tuning keys (Task 7 of
+            # docs/superpowers/specs/2026-09-29-system-nebula-render-design.md).
+            # Registered once at boot, not per-frame: the dials persist
+            # across the session rather than resetting every tick like
+            # dev_keybindings.register_for_frame's re-bound handlers.
+            if _h is not None:
+                dev_nebula_dials.register(_h)
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:

@@ -3118,6 +3118,47 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "True when a system-scale nebula profile is uploaded.");
 
+    m.def("system_nebula_set_dials",
+          [](py::dict d) {
+              if (!g_system_nebula_pass) return;
+              renderer::SystemNebulaPass::Dials dials;
+              if (d.contains("veil_scale"))
+                  dials.veil_scale = d["veil_scale"].cast<float>();
+              if (d.contains("lane_size"))
+                  dials.lane_size = d["lane_size"].cast<float>();
+              if (d.contains("lane_contrast"))
+                  dials.lane_contrast = d["lane_contrast"].cast<float>();
+              if (d.contains("g"))
+                  dials.g = d["g"].cast<float>();
+              if (d.contains("floor"))
+                  dials.floor = d["floor"].cast<float>();
+              if (d.contains("near_range"))
+                  dials.near_range = d["near_range"].cast<float>();
+              g_system_nebula_pass->set_dials(dials);
+          },
+          py::arg("dials"),
+          "Set the system-scale nebula's live look dials: optional keys "
+          "veil_scale, lane_size, lane_contrast, g, floor, near_range -- any "
+          "key omitted resets that dial to the struct default. A change to "
+          "g or floor rebuilds the far-field table (~1-2s) when a profile is "
+          "already uploaded; lane_size/lane_contrast/near_range never "
+          "rebuild. Developer-only tuning: engine/dev_nebula_dials.py.");
+    m.def("system_nebula_dials",
+          []() -> py::dict {
+              py::dict out;
+              if (!g_system_nebula_pass) return out;
+              const auto& d = g_system_nebula_pass->dials();
+              out["veil_scale"] = d.veil_scale;
+              out["lane_size"] = d.lane_size;
+              out["lane_contrast"] = d.lane_contrast;
+              out["g"] = d.g;
+              out["floor"] = d.floor;
+              out["near_range"] = d.near_range;
+              return out;
+          },
+          "Current system-scale nebula look dials as a dict (empty before "
+          "init).");
+
     m.def("set_nebula_wake",
           [](const std::vector<py::dict>& pts) {
               g_nebula_wake.clear();
@@ -5253,6 +5294,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_PERIOD")     = GLFW_KEY_PERIOD;
     keys.attr("KEY_SEMICOLON")  = GLFW_KEY_SEMICOLON;
     keys.attr("KEY_APOSTROPHE") = GLFW_KEY_APOSTROPHE;
+    // Dev system-nebula look-dial tuning (engine/dev_nebula_dials.py). Free
+    // in input_map.ACTIONS, the dev-keybinding registry, the directly-read
+    // set and the SDK-routed F6/F9 -- see test_dev_key_collisions.py.
+    keys.attr("KEY_J") = GLFW_KEY_J;
+    keys.attr("KEY_L") = GLFW_KEY_L;
+    keys.attr("KEY_N") = GLFW_KEY_N;
+    keys.attr("KEY_M") = GLFW_KEY_M;
+    keys.attr("KEY_U") = GLFW_KEY_U;
+    keys.attr("KEY_O") = GLFW_KEY_O;
+    keys.attr("KEY_B") = GLFW_KEY_B;
+    keys.attr("KEY_P") = GLFW_KEY_P;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

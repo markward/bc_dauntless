@@ -26,25 +26,34 @@ import pathlib
 from engine import input_map
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_DEV_KEYBINDINGS = _ROOT / "engine" / "dev_keybindings.py"
+# Every module that calls register_dev_keybinding(...) at its own call sites.
+# dev_keybindings.py re-registers every tick (register_for_frame);
+# dev_nebula_dials.py registers once at boot (register()) -- both share the
+# same dev_mode._dev_keybindings table, so a collision between the two files
+# is exactly as real as a collision within one of them.
+_DEV_KEYBINDING_FILES = (
+    _ROOT / "engine" / "dev_keybindings.py",
+    _ROOT / "engine" / "dev_nebula_dials.py",
+)
 
 
 def _registered_dev_keys():
     """Every `KEY_*` name passed as the first argument of a
-    `register_dev_keybinding(...)` call."""
-    tree = ast.parse(_DEV_KEYBINDINGS.read_text())
+    `register_dev_keybinding(...)` call, across every dev-keybinding module."""
     names = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        if not (isinstance(fn, ast.Attribute) and fn.attr == "register_dev_keybinding"):
-            continue
-        assert node.args, "register_dev_keybinding called with no key"
-        key = node.args[0]
-        # `_h.keys.KEY_X`
-        assert isinstance(key, ast.Attribute), ast.dump(key)
-        names.append(key.attr)
+    for path in _DEV_KEYBINDING_FILES:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr == "register_dev_keybinding"):
+                continue
+            assert node.args, "register_dev_keybinding called with no key"
+            key = node.args[0]
+            # `_h.keys.KEY_X`
+            assert isinstance(key, ast.Attribute), ast.dump(key)
+            names.append(key.attr)
     return names
 
 

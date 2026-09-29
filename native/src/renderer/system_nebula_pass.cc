@@ -19,10 +19,10 @@ namespace renderer {
 
 namespace {
 // Look dials (spec: docs/superpowers/specs/2026-09-29-system-nebula-render-design.md).
-constexpr float kNearRangeGu = 30000.0f;   // near-field march reach
+// near_range/lane_size/lane_contrast/g/floor are now live-tunable -- see
+// SystemNebulaDials in the header and set_dials() below. kSteps stays a
+// compile-time constant: it isn't part of the Task 7 dev-tuning surface.
 constexpr int   kSteps = 64;               // near-field geometric steps
-constexpr float kLaneSizeGu = 15000.0f;    // fbm lane feature size
-constexpr float kLaneContrast = 0.7f;      // 0 = uniform haze, 1 = full lanes
 
 // History is reset when the camera moves "a lot" between frames — temporal
 // reprojection only holds up for small deltas. Generous thresholds: ghosting
@@ -88,6 +88,26 @@ void SystemNebulaPass::set_profile(const atmosphere::RadialProfile& profile,
                                   &table.inscatter[0].x);
     has_profile_ = true;
     have_history_ = false;   // a new atmosphere: last frame's cloud is stale
+    ++profile_rebuild_count_;
+}
+
+void SystemNebulaPass::set_dials(const Dials& dials) {
+    // g/floor feed the far-field table (build_table bakes them into every
+    // cell's HG phase + floor), so a change needs the table rebuilt; the
+    // OTHER dials (lane_size, lane_contrast, near_range) are read directly
+    // by the shader every frame and never touch the table.
+    const bool look_changed = (dials.g != dials_.g) || (dials.floor != dials_.floor);
+    dials_ = dials;
+    if (look_changed) {
+        look_.g = dials.g;
+        look_.floor = dials.floor;
+        if (has_profile_) {
+            // Re-upload with the SAME profile, updated LookParams -- exactly
+            // what a fresh set_profile(profile_, look_) does, including the
+            // rebuild counter and the temporal-history reset.
+            set_profile(profile_, look_);
+        }
+    }
 }
 
 void SystemNebulaPass::clear_profile() {
@@ -236,10 +256,10 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     march.set_float("u_g", look_.g);
     march.set_float("u_floor", look_.floor);
     march.set_float("u_scatter", look_.scatter);
-    march.set_float("u_near_range", kNearRangeGu);
+    march.set_float("u_near_range", dials_.near_range);
     march.set_int("u_steps", kSteps);
-    march.set_float("u_lane_size", kLaneSizeGu);
-    march.set_float("u_lane_contrast", kLaneContrast);
+    march.set_float("u_lane_size", dials_.lane_size);
+    march.set_float("u_lane_contrast", dials_.lane_contrast);
     // The lanes' fbm is sampled at the WORLD point, p + origin, so the
     // structure stays put while the origin follows the camera.
     march.set_vec3("u_noise_origin", glm::vec3(origin));

@@ -75,6 +75,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
     "set_subsystem_pins", "set_suns",
     "set_system_nebula_profile", "set_system_nebula_star",
+    "system_nebula_set_dials", "system_nebula_dials",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -473,6 +474,20 @@ def set_system_nebula_star(pos: tuple) -> None:
     """The system nebula's star centre in RENDER space (relative to the
     floating origin), applied each frame()."""
     _h.set_system_nebula_star(pos)
+
+
+def system_nebula_set_dials(dials: dict) -> None:
+    """Set the system-scale nebula's live look dials (developer tuning --
+    engine/dev_nebula_dials.py): optional keys veil_scale, lane_size,
+    lane_contrast, g, floor, near_range; any key omitted resets that dial to
+    the native struct default. A g or floor change rebuilds the far-field
+    table (~1-2s) when a profile is already uploaded."""
+    _h.system_nebula_set_dials(dials)
+
+
+def system_nebula_dials() -> dict:
+    """Current system-scale nebula look dials (empty before init)."""
+    return _h.system_nebula_dials()
 
 
 def set_nebula_wake(points: list) -> None:

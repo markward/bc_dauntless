@@ -18,6 +18,12 @@ class _R:
     def volumetric_nebulae_enabled(self):
         return self._volumetric
 
+    def system_nebula_set_dials(self, dials):
+        # Task 7 dev-tuning surface: _push_system_nebula never touches this,
+        # but the double mirrors the real renderer facade's shape (see
+        # tests/unit/test_dev_nebula_dials.py for the dial-stepping tests).
+        self.dials = dict(dials)
+
 
 def _map(name="Vesuvi"):
     return SystemMap(system=name,

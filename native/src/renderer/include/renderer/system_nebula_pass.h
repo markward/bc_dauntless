@@ -41,8 +41,25 @@ struct Lighting;
 /// colour, fbm dials, seed and extinction (1/visibility per GU). They march
 /// even with no bound profile -- a clump-only system skips the far-field
 /// table lookups entirely and marches the near field for the clumps alone.
+
+/// Live-tunable look dials (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md
+/// Task 7). Replaces the pass's former file-top constants (kNearRangeGu,
+/// kLaneSizeGu, kLaneContrast); `veil_scale` is reserved for a future dial
+/// and is not yet read anywhere. `set_dials` is the single entry point a
+/// developer keybinding calls each press -- see engine/dev_nebula_dials.py.
+struct SystemNebulaDials {
+    float veil_scale    = 1.0f;
+    float lane_size     = 15000.0f;
+    float lane_contrast = 0.7f;
+    float g             = 0.6f;
+    float floor         = 0.03f;
+    float near_range    = 30000.0f;
+};
+
 class SystemNebulaPass {
 public:
+    using Dials = SystemNebulaDials;
+
     SystemNebulaPass();
     ~SystemNebulaPass();
     SystemNebulaPass(const SystemNebulaPass&) = delete;
@@ -56,6 +73,19 @@ public:
     /// Delete the profile textures; the haze stops drawing.
     void clear_profile();
     bool has_profile() const { return has_profile_; }
+
+    /// Set the near-field/table look dials. A change to `g` or `floor` with
+    /// a profile already uploaded rebuilds the far-field table (re-runs
+    /// set_profile with the updated LookParams, ~1-2s); `lane_size`,
+    /// `lane_contrast` and `near_range` are read directly by the shader
+    /// every frame and never trigger a rebuild.
+    void set_dials(const Dials& dials);
+    const Dials& dials() const { return dials_; }
+
+    /// Incremented once per set_profile() call (including the rebuild
+    /// set_dials triggers) -- lets a test observe a rebuild without reading
+    /// GPU texture contents back.
+    int profile_rebuild_count() const { return profile_rebuild_count_; }
 
     /// The star centre in RENDER space (relative to the floating origin).
     void set_star(const glm::vec3& render_pos) { star_ = render_pos; }
@@ -113,6 +143,8 @@ private:
     atmosphere::RadialProfile profile_;
     atmosphere::LookParams    look_;
     glm::vec3    star_{0.0f};
+    Dials        dials_;
+    int          profile_rebuild_count_ = 0;
 };
 
 }  // namespace renderer

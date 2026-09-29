@@ -59,3 +59,31 @@ def test_set_and_clear_round_trip_after_init():
         assert _dauntless_host.system_nebula_has_profile() is False
     finally:
         _dauntless_host.shutdown()
+
+
+def test_dials_round_trip_and_rebuild_only_for_g_or_floor():
+    """system_nebula_set_dials / system_nebula_dials Python surface: shape,
+    the missing-key -> struct-default reset, and that a g/floor change is
+    the only path that rebuilds (see the GL-level assertion in
+    native/tests/renderer/system_nebula_pass_test.cc; this just pins that
+    the Python round trip carries every value through unmangled)."""
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _dauntless_host
+    _dauntless_host.init(64, 64, "test_system_nebula_dials")
+    try:
+        _dauntless_host.set_system_nebula_profile(_profile())
+        _dauntless_host.system_nebula_set_dials({
+            "lane_size": 12345.0, "lane_contrast": 0.4,
+            "g": 0.25, "floor": 0.1, "near_range": 9000.0,
+        })
+        d = _dauntless_host.system_nebula_dials()
+        assert d["lane_size"] == 12345.0
+        assert d["lane_contrast"] == pytest.approx(0.4)
+        assert d["g"] == pytest.approx(0.25)
+        assert d["floor"] == pytest.approx(0.1)
+        assert d["near_range"] == 9000.0
+        # A key omitted resets that dial to the struct default (veil_scale).
+        assert d["veil_scale"] == 1.0
+        _dauntless_host.frame()   # not --developer: no crash either way
+    finally:
+        _dauntless_host.shutdown()
