@@ -1010,11 +1010,20 @@ def _add(env, mask, at=(0.0, 0.0, 60.0), normal=(0.0, 0.0, 1.0)):
 
 def test_the_add_picker_offers_every_mask_even_when_placed(env):
     """Zhukov holds bottom.png and top.png; `top` is placed. Both PNG stems
-    are still offered, then the default names (case-folded dedupe)."""
+    are still offered, and nothing else -- no stock suggestions (Mark)."""
     p = env["p"]
     p.dispatch_event("decal-pane")
-    assert _payload(p)["decals"]["suggested_names"] == [
-        "bottom", "top", "port", "starboard", "bow", "stern"]
+    assert _payload(p)["decals"]["suggested_names"] == ["bottom", "top"]
+
+
+def test_a_folder_without_pngs_is_not_a_registry(env):
+    """An artwork folder (e.g. Masks/templates/ holding SVG sources) is not
+    offered as a registry to preview."""
+    p = env["p"]
+    (env["masks"] / "templates").mkdir()
+    (env["masks"] / "templates" / "x_top_reg_template.svg").write_text("<svg/>")
+    p.dispatch_event("decal-pane")
+    assert "templates" not in _payload(p)["decals"]["registries"]
 
 
 def test_picking_a_mask_twice_auto_names_the_second(env):

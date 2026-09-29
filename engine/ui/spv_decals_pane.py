@@ -45,10 +45,17 @@ DEFAULT_MASK_ASPECT = 2.0
 # and hull_decals' _MAX_DECALS / _MAX_DECAL_MASKS.
 MAX_DECALS = 16
 MAX_DECAL_MASKS = 4
-# Offered by the Add picker after EVERY PNG stem in the previewed registry
-# (placed or not: a mask is reusable). Keyboard -> CEF forwarding does not
-# exist, so the MASK is chosen and the placement name is derived from it.
-SUGGESTED_NAMES = ("top", "bottom", "port", "starboard", "bow", "stern")
+def _is_registry_folder(folder: Path) -> bool:
+    """A registry folder holds PNG masks, or nothing yet (a new registry
+    previews the checkerboard). A folder holding files but no PNG is
+    artwork sources (e.g. `templates/` of SVGs), not a registry."""
+    try:
+        files = [f for f in folder.iterdir() if f.is_file()]
+    except OSError:
+        return False
+    return not files or any(f.suffix.lower() == ".png" for f in files)
+
+
 # While the pane is open the override is re-pushed at least this often, even
 # unchanged, so the native mask cache sees a PNG re-exported from Gimp
 # (Ruling K: it reloads on an mtime change, checked at push time).
@@ -242,7 +249,9 @@ class DecalsPaneMixin:
 
     def _decal_scan_registries(self) -> List[str]:
         """Registry folders under the class's Masks/, across the replacements
-        overlay, installed mods and the stock tree (case-folded, sorted)."""
+        overlay, installed mods and the stock tree (case-folded, sorted). A
+        folder holding files but no PNG (e.g. `templates/` of SVG sources)
+        is not a registry; an empty one is (see `_is_registry_folder`)."""
         from engine import paths
         d = self._decal_dir()
         if d is None:
@@ -254,7 +263,7 @@ class DecalsPaneMixin:
             except OSError:
                 children = []
             for c in children:
-                if c.is_dir():
+                if c.is_dir() and _is_registry_folder(c):
                     names.setdefault(c.name.lower(), c.name)
         return sorted(names.values(), key=str.lower)
 
@@ -681,8 +690,10 @@ class DecalsPaneMixin:
 
     def _decal_suggested_names(self) -> List[str]:
         """MASKS the Add picker offers: every PNG stem in the previewed
-        registry -- placed or not, a mask is reusable (S2.4a) -- then the
-        stock suggestions; valid stems only, case-folded dedupe."""
+        registry -- placed or not, a mask is reusable (S2.4a) -- and nothing
+        else (Mark: only real files, no stock suggestions). Keyboard -> CEF
+        forwarding does not exist, so the MASK is picked and the placement
+        name is derived from it. Valid stems only, case-folded dedupe."""
         from engine import paths
         out: List[str] = []
         d, reg = self._decal_dir(), self._decal_registry
@@ -695,7 +706,6 @@ class DecalsPaneMixin:
                 for f in files:
                     if f.suffix.lower() == ".png":
                         out.append(f.stem)
-        out += list(SUGGESTED_NAMES)
         seen, result = set(), []
         for n in out:
             if n.lower() in seen:
