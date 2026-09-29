@@ -1273,19 +1273,18 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             return ("subsystem", self.selected_index)
         return None
 
+    def _edit_target(self):
+        """The `EditTarget` adapter for the one live transform target, or
+        None (spec 2026-09-29-spv-edit-target-refactor S4). Recomputed on
+        EVERY call, never cached: a part pose's key carries its state, so a
+        cached adapter would keep editing the old state after a switch."""
+        from engine.ui.spv_edit_targets import edit_target_for
+        return edit_target_for(self)
+
     @staticmethod
     def _is_part_target(target) -> bool:
         """True for a part-node transform target (anchor or state pose)."""
         return target is not None and target[0] in ("part_anchor", "part_pose")
-
-    @staticmethod
-    def _coord_clipboard_kind(target) -> str:
-        """Coord-clipboard tag: "part_anchor" / "part_pose" for a part node,
-        "mount" for any subsystem/light/emitter (which interchange freely,
-        as they always have)."""
-        if target is not None and target[0] in ("part_anchor", "part_pose"):
-            return target[0]
-        return "mount"
 
     def _part_pose6(self, name: str, state: str) -> tuple:
         """Part `name`'s effective `state` pose as a float 6-tuple
@@ -1344,23 +1343,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     def _target_pos_of(self, target):
         """Body-frame (x, y, z) of an arbitrary transform target -- where its
         gizmo sits -- or None. A part anchor sits at the anchor; a part pose
-        at the POSED anchor (the pivot its rings rotate about)."""
-        if target is None:
-            return None
-        if target[0] == "part_anchor":
-            anchor = self._effective_part(target[1]).get("anchor")
-            return tuple(float(c) for c in anchor) if anchor is not None else None
-        if target[0] == "part_pose":
-            return self._posed_anchor(target[1], target[2])
-        if target[0] == "emitter":
-            _, i, j = target
-            spec = self._effective_emitter(i, j)
-            return tuple(float(c) for c in spec["position"]) if spec else None
-        kind, i = target
-        if kind == "light":
-            spec = self._effective_light(i)
-            return tuple(float(c) for c in spec["position"]) if spec else None
-        return tuple(float(c) for c in self._effective_pos(i))
+        at the POSED anchor (the pivot its rings rotate about). Per-kind:
+        `EditTarget.position` (engine/ui/spv_edit_targets.py)."""
+        from engine.ui.spv_edit_targets import edit_target_for_key
+        t = edit_target_for_key(self, target)
+        return t.position() if t is not None else None
 
     def _transform_target_pos(self):
         """The current transform target's editable body-frame coordinate --
@@ -1369,39 +1356,18 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         (`_target_pos_of`): for a part POSE that is the POSED anchor, so the
         panel describes what is on screen (fix-round ruling 15), never the
         raw translation t."""
-        return self._target_pos_of(self._active_transform_target())
+        t = self._edit_target()
+        return t.position() if t is not None else None
 
     def _set_transform_target_pos(self, xyz) -> None:
         """Stage `xyz` as the current transform target's coordinate (see
         `_transform_target_pos`), routing to the part anchor, part pose
         translation, emitter (whole-list restage), light, or subsystem
-        staging path as appropriate. Setting an anchor never touches a pose
-        (spec 2.3, option A)."""
-        t = self._active_transform_target()
-        if t is None:
-            return
-        if t[0] == "part_anchor":
-            self._stage_part_field(t[1], anchor=tuple(float(c) for c in xyz))
-            return
-        if t[0] == "part_pose":
-            # xyz is the NEW posed anchor: translate the pose by the move,
-            # t += (xyz - q_old), R unchanged (ruling 15).
-            p6 = self._part_pose6(t[1], t[2])
-            q_old = self._target_pos_of(t)
-            if q_old is None:          # no anchor: the coordinate is t
-                q_old = p6[:3]
-            t_new = tuple(p6[k] + float(xyz[k]) - q_old[k] for k in range(3))
-            self._stage_part_pose(t[1], t[2], t_new + p6[3:])
-            return
-        if t[0] == "emitter":
-            _, i, j = t
-            self.set_emitter_position(i, j, xyz)
-            return
-        kind, i = t
-        if kind == "light":
-            self.set_light_position(i, xyz)
-        else:
-            self.set_subsystem_position(i, xyz)
+        staging path as appropriate (`EditTarget.set_position`). Setting an
+        anchor never touches a pose (spec 2.3, option A)."""
+        t = self._edit_target()
+        if t is not None:
+            t.set_position(xyz)
 
     # ------------------------------------------------------------------
     # Pipette eyedropper
@@ -1488,18 +1454,19 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         None when the transform tool isn't active or nothing is selected.
 
         `can_paste` is kind-aware, as in `scale_values` / `rotate_values`:
-        true only when the clipboard's kind (`_coord_clipboard_kind`) matches
+        true only when the clipboard's kind (`EditTarget.coord_kind`) matches
         the current target's, i.e. exactly when `coord_paste` would act."""
         if self.active_tool != "transform":
             return None
         decal = self._decal_transform_coords()
         if decal is not None:
             return decal
-        pos = self._transform_target_pos()
+        t = self._edit_target()
+        pos = t.position() if t is not None else None
         if pos is None:
             return None
         clip = self._coord_clipboard
-        kind = self._coord_clipboard_kind(self._active_transform_target())
+        kind = t.coord_kind()
         return {"x": pos[0], "y": pos[1], "z": pos[2],
                 "has_clipboard": clip is not None,
                 "can_paste": clip is not None and clip[0] == kind}
@@ -1921,38 +1888,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         is the hovered axis (-1 none)."""
         if self.active_tool != "transform" or self.camera is None:
             return None
-        target = self._active_transform_target()
+        target = self._edit_target()
         if target is None:
             return None
-        kt = target[0]
-        if kt == "subsystem" and not (0 <= target[1] < len(self._descriptors)):
+        frame = target.gizmo_frame()      # per-kind origin + axes, or None
+        if frame is None:
             return None
-        ship = self._ship_getter()
-        if ship is None or not hasattr(ship, "GetWorldRotation"):
-            return None
-        from engine.ui.ship_property_viewer import (
-            gizmo_axes, gizmo_length, world_from_body)
-        if self._is_part_target(target):
-            # The anchor, or the POSED anchor for a state pose.
-            pos = self._target_pos_of(target)
-            if pos is None:
-                return None
-            origin = world_from_body(ship, pos)
-        elif kt == "emitter":
-            spec = self._effective_emitter(target[1], target[2])
-            if spec is None:
-                return None
-            origin = world_from_body(ship, spec["position"])
-        elif kt == "light":
-            light = self._effective_light(target[1])
-            if light is None:
-                return None
-            origin = world_from_body(ship, light["position"])
-        else:
-            origin = self._effective_world_pos(target[1])
+        origin, axes = frame
+        from engine.ui.ship_property_viewer import gizmo_length
         return {
             "origin": origin,
-            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "axes": axes,
             "length": gizmo_length(self.camera),
             "highlight": self._gizmo_hover,
             "handle_kind": 0,
@@ -2304,51 +2250,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         if self._decal_begin_drag(axis, grab_param):
             return
         self._drag_undo_before = self._snapshot_pending()
-        target = self._active_transform_target()
+        target = self._edit_target()
         if target is None:
             return
-        if self._is_part_target(target):
-            # Grab the COORDINATE the drag edits (the anchor, or a pose's
-            # translation) and the gizmo's world origin (the anchor, or the
-            # posed anchor) -- a pose drag adds its body-frame delta to t,
-            # which moves the posed anchor by exactly that delta.
-            pos = self._target_pos_of(target)
-            if pos is None:
-                return
-            self._axis_drag = axis
-            self._axis_grab_param = grab_param
-            self._axis_grab_pos = self._transform_target_pos()
-            ship = self._ship_getter()
-            if ship is not None and hasattr(ship, "GetWorldRotation"):
-                from engine.ui.ship_property_viewer import world_from_body
-                self._axis_grab_origin = world_from_body(ship, pos)
-            return
-        if target[0] == "emitter":
-            _, i, j = target
-            spec = self._effective_emitter(i, j)
-            if spec is None:
-                return
-            self._axis_drag = axis
-            self._axis_grab_param = grab_param
-            self._axis_grab_pos = tuple(float(c) for c in spec["position"])
-            ship = self._ship_getter()
-            if ship is not None and hasattr(ship, "GetWorldRotation"):
-                from engine.ui.ship_property_viewer import world_from_body
-                self._axis_grab_origin = world_from_body(ship, self._axis_grab_pos)
-            return
-        kind, i = target
-        self._axis_drag = axis
-        self._axis_grab_param = grab_param
-        if kind == "light":
-            self._axis_grab_pos = tuple(self._effective_light(i)["position"])
-            ship = self._ship_getter()
-            if ship is not None and hasattr(ship, "GetWorldRotation"):
-                from engine.ui.ship_property_viewer import world_from_body
-                self._axis_grab_origin = world_from_body(
-                    ship, self._axis_grab_pos)
-        else:
-            self._axis_grab_pos = self._effective_pos(i)
-            self._axis_grab_origin = self._effective_world_pos(i)
+        # Per-kind grab of the drag-start coordinate and world origin.
+        target.axis_drag_begin(axis, grab_param)
 
     def _begin_axis_drag_for_test(self, axis: int, grab_param: float) -> None:
         """Test seam: identical to a press-edge grab, without a host/gizmo."""
@@ -2360,10 +2266,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         if self._decal_grab is not None and self._axis_drag is not None:
             self._decal_apply_axis_drag(param_now)
             return
-        target = self._active_transform_target()
+        target = self._edit_target()
         if self._axis_drag is None or target is None:
             return
-        if self._current_target_is_locked_mount():
+        if target.locked:
             # Defence in depth -- see _apply_scale_drag's identical guard.
             # This is THE bug the reviewer reproduced: without this check
             # (and _handle_gizmo_input's press-edge refusal), a subsystem
@@ -2373,19 +2279,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         k = self._axis_drag
         base = list(self._axis_grab_pos)
         base[k] += (param_now - self._axis_grab_param)
-        if self._is_part_target(target):
-            # Anchor -> the anchor; pose -> its translation (and the preview).
-            self._set_transform_target_pos(tuple(base))
-            return
-        if target[0] == "emitter":
-            _, i, j = target
-            self.set_emitter_position(i, j, tuple(base))
-            return
-        kind, i = target
-        if kind == "light":
-            self.set_light_position(i, tuple(base))
-        else:
-            self.set_subsystem_position(i, tuple(base))
+        # Anchor -> the anchor; pose -> its translation (and the preview);
+        # emitter / light / subsystem -> its staged position.
+        target.set_position(tuple(base))
 
     def _end_axis_drag(self) -> None:
         self._axis_drag = None
@@ -3145,11 +3041,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         (`_handle_gizmo_input` / the `_apply_*_drag` methods) consult, so
         there is exactly one place that decides "is the thing under the
         gizmo right now a locked mount" rather than two copies that could
-        drift."""
-        if self._mount_editing_enabled():
-            return False
-        t = self._active_transform_target()
-        return t is not None and t[0] in ("subsystem", "light", "emitter")
+        drift. Per-kind: `EditTarget.locked` (only the hardpoint mount
+        adapters ever lock)."""
+        t = self._edit_target()
+        return t is not None and t.locked
 
     def _is_locked_mount_action(self, action: str) -> bool:
         """True when `action` would select-toward-editing or edit a
@@ -3515,38 +3410,40 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 return self._decal_panel_nudge("coord", axis, delta)
             if axis not in (0, 1, 2):
                 return False
-            pos = self._transform_target_pos()
+            t = self._edit_target()
+            pos = t.position() if t is not None else None
             if pos is None:
                 return False
             p = list(pos); p[axis] += delta
-            self._set_transform_target_pos(tuple(p))
+            t.set_position(tuple(p))
             self._last_pushed = None
             return True
         if action == "coord_copy":
-            pos = self._transform_target_pos()
+            t = self._edit_target()
+            pos = t.position() if t is not None else None
             if pos is not None:
                 # Tagged with its source kind (ruling 15): a part anchor and
                 # a posed anchor only paste onto their own kind.
-                self._coord_clipboard = (
-                    self._coord_clipboard_kind(self._active_transform_target()),
-                    pos)
+                self._coord_clipboard = (t.coord_kind(), pos)
                 self._last_pushed = None
             return True
         if action == "coord_paste":
             clip = self._coord_clipboard
-            if (clip is not None and self._transform_target_pos() is not None
-                    and clip[0] == self._coord_clipboard_kind(
-                        self._active_transform_target())):
-                self._set_transform_target_pos(clip[1])
+            t = self._edit_target()
+            if (clip is not None and t is not None
+                    and t.position() is not None
+                    and clip[0] == t.coord_kind()):
+                t.set_position(clip[1])
                 self._last_pushed = None
             return True
         if action == "coord_mirror":
             # On a part pose the coordinate is the POSED anchor, so this
             # reflects q.x -> -q.x with R unchanged (ruling 15).
-            pos = self._transform_target_pos()
+            t = self._edit_target()
+            pos = t.position() if t is not None else None
             if pos is not None:
                 p = list(pos); p[0] = -p[0]
-                self._set_transform_target_pos(tuple(p))
+                t.set_position(tuple(p))
                 self._last_pushed = None
             return True
         if action.startswith("scale_nudge:"):
