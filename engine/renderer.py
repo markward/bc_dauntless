@@ -76,6 +76,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
     "set_subsystem_pins", "set_suns",
     "set_system_nebula_profile", "set_system_nebula_star",
+    "set_system_nebula_flashes",
     "system_nebula_set_dials", "system_nebula_dials",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
@@ -490,6 +491,14 @@ def set_system_nebula_star(pos: tuple | None) -> None:
     floating origin), applied each frame(); None when the viewed set has no
     sun (the pass then lights clumps by the emissive floor only)."""
     _h.set_system_nebula_star(pos)
+
+
+def set_system_nebula_flashes(flashes: list) -> None:
+    """Lightning flashes that light the system-scale nebula's haze and clumps.
+    Same shape as set_nebula_godrays: each {"dir": (x,y,z) render-space unit
+    vector TOWARD the flash, "intensity": float, "color": (r,g,b)}; up to 4.
+    Empty list = none (the pass renders exactly as without the feature)."""
+    _h.set_system_nebula_flashes(flashes)
 
 
 def system_nebula_set_dials(dials: dict) -> None:

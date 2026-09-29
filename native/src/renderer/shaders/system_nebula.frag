@@ -44,6 +44,12 @@ uniform vec3  u_clump_rgb[8];
 uniform vec3  u_clump_fbm[8];      // freq, gain, floor
 uniform vec3  u_clump_seed[8];
 uniform float u_clump_ext[8];      // 1/visibility per GU per unit clump density
+// Lightning flashes (at most 4): light arriving FROM u_flash_dir[i] (render-
+// space unit vector toward the flash) with colour x intensity u_flash_col[i].
+// u_flash_count == 0 skips the term entirely: output identical to no flashes.
+uniform int   u_flash_count;
+uniform vec3  u_flash_dir[4];
+uniform vec3  u_flash_col[4];
 // temporal (same contract as nebula_volumetric.frag)
 uniform sampler2D u_prev;
 uniform mat4  u_prev_view_proj;
@@ -73,6 +79,17 @@ float fbm(vec3 p){ float a=0.5,s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise(p); p*=2
 
 const float PI = 3.14159265;
 float hg(float g, float c){ float g2=g*g; return (1.0-g2)/(4.0*PI*pow(max(1e-6,1.0+g2-2.0*g*c),1.5)); }
+
+// Flash light scattered toward the eye at a sample on view ray `dir`: light
+// travels along -flash_dir, the eye sees it along -dir, so the scattering
+// cosine is dot(dir, flash_dir). Mild forward bias.
+const float kFlashG = 0.3;
+vec3 flash_light(vec3 dir){
+    vec3 s = vec3(0.0);
+    for (int i = 0; i < u_flash_count; ++i)
+        s += u_flash_col[i] * hg(kFlashG, dot(dir, u_flash_dir[i]));
+    return s;
+}
 
 // The CPU samples texel i at u = i/(N-1); map u onto that texel's CENTRE so
 // the GPU reads the exact CPU samples, not a half-texel-shifted blend.
@@ -173,6 +190,7 @@ void march_clumps(vec3 dir, float scene_dist, float jit){
                 ? u_scatter * hg(u_g, cos_t) * u_star_rgb * u_clump_rgb[ci] * exp(-star_tau(r))
                 : vec3(0.0);
             vec3 emit = u_floor * u_clump_rgb[ci];
+            if (u_flash_count > 0) light += flash_light(dir);
             // energy-conserving step: steps may be optically thick
             float absorb = 1.0 - exp(-sigma * dt);
             L += T * (light + emit) * absorb;
@@ -234,6 +252,7 @@ void main(){
                 ? u_scatter * hg(u_g, cos_t) * u_star_rgb * u_cloud_rgb * exp(-rd.y)
                 : vec3(0.0);
             vec3 emit  = u_floor * u_cloud_rgb;
+            if (u_flash_count > 0) light += flash_light(dir);
             float ext = sigma * dt;
             g_lit += g_transm * (light + emit) * ext;
             g_transm *= exp(-ext);

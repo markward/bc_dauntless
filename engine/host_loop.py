@@ -5033,6 +5033,23 @@ def _veil_flares(r, flares, player):
     return [dict(f, brightness=t) for f in flares]
 
 
+def _push_nebula_godrays(r, player, suns, warp_streaking) -> None:
+    """The lightning flashes, to the god-ray pass (as ever) and -- under the
+    system-nebula gate, developer-only -- to SystemNebulaPass, which lights
+    the haze and clumps from them (the new pass scatters only the star, so
+    without this a flash never lit the gas). The developer gate closed or a
+    warp streak pushes [] there; production never calls it at all, and does
+    not even ask the volumetric setting."""
+    flashes = []
+    if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
+        flashes = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
+                   for f in _nebula_thunder.active_flashes()]
+    if dev_mode.is_enabled():
+        system_open = _system_nebula_gate(r) and not warp_streaking
+        r.set_system_nebula_flashes(flashes if system_open else [])
+    r.set_nebula_godrays(flashes)
+
+
 def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     """Push the per-frame environment feeds -- suns, dust planets, the
     profile dust density, nebulae, nebula godrays, hull discharges, the
@@ -5061,11 +5078,7 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     nebulae = [] if warp_streaking else _aggregate_nebulae(active_set)
     r.set_nebulae(_render_nebulae(nebulae, view, active_set))
 
-    godrays = []
-    if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
-        godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
-                   for f in _nebula_thunder.active_flashes()]
-    r.set_nebula_godrays(godrays)
+    _push_nebula_godrays(r, player, suns, warp_streaking)
 
     discharges = []
     if (_hull_discharge is not None

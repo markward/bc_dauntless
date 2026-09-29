@@ -130,11 +130,17 @@ void SystemNebulaPass::set_dials(const Dials& dials) {
     }
 }
 
+void SystemNebulaPass::set_flashes(const std::vector<GodrayFlash>& flashes) {
+    const std::size_t n = std::min<std::size_t>(flashes.size(), kMaxFlashes);
+    flashes_.assign(flashes.begin(), flashes.begin() + n);
+}
+
 void SystemNebulaPass::clear_profile() {
     destroy_profile_textures();
     has_profile_ = false;
     profile_ = atmosphere::RadialProfile{};
     clear_star();
+    flashes_.clear();
     have_history_ = false;
 }
 
@@ -309,6 +315,22 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
         march.set_vec3_array("u_clump_fbm", clump_fbm.data(), clump_count);
         march.set_vec3_array("u_clump_seed", clump_seed.data(), clump_count);
         march.set_float_array("u_clump_ext", clump_ext.data(), clump_count);
+    }
+
+    // Lightning flashes: light arriving from each flash direction, scattered
+    // by the haze and the clumps. Zero flashes => the shader's flash loop
+    // never runs and the output is exactly the flash-free path.
+    const int flash_count = static_cast<int>(flashes_.size());
+    march.set_int("u_flash_count", flash_count);
+    if (flash_count > 0) {
+        glm::vec3 flash_dir[kMaxFlashes];
+        glm::vec3 flash_col[kMaxFlashes];
+        for (int i = 0; i < flash_count; ++i) {
+            flash_dir[i] = glm::normalize(flashes_[i].dir);
+            flash_col[i] = flashes_[i].color * flashes_[i].intensity;
+        }
+        march.set_vec3_array("u_flash_dir", flash_dir, flash_count);
+        march.set_vec3_array("u_flash_col", flash_col, flash_count);
     }
 
     // Perf-path dials: dither step-offset + temporal.

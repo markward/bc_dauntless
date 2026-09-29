@@ -106,3 +106,20 @@ def test_star_accepts_none_for_a_sunless_set():
         assert _dauntless_host.system_nebula_has_star() is False
     finally:
         _dauntless_host.shutdown()
+
+
+def test_flashes_binding_accepts_the_godray_shape():
+    """set_system_nebula_flashes takes the set_nebula_godrays dict shape; the
+    GL effect is pinned in system_nebula_pass_test.cc."""
+    import _dauntless_host
+    _dauntless_host.set_system_nebula_flashes([])   # host down: silent
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    _dauntless_host.init(64, 64, "test_system_nebula_flashes")
+    try:
+        _dauntless_host.set_system_nebula_flashes(
+            [{"dir": (0.0, 1.0, 0.0), "intensity": 2.0, "color": (1.0, 1.0, 1.0)}] * 6)
+        assert _dauntless_host.system_nebula_flash_count() == 4
+        _dauntless_host.set_system_nebula_flashes([])
+        assert _dauntless_host.system_nebula_flash_count() == 0
+    finally:
+        _dauntless_host.shutdown()

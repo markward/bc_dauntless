@@ -3413,6 +3413,34 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "True when a system-scale nebula profile is uploaded.");
 
+    m.def("set_system_nebula_flashes",
+          [](const std::vector<py::dict>& descs) {
+              std::vector<renderer::GodrayFlash> flashes;
+              flashes.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::GodrayFlash g;
+                  auto dir = d["dir"].cast<std::tuple<float,float,float>>();
+                  g.dir = glm::vec3(std::get<0>(dir), std::get<1>(dir), std::get<2>(dir));
+                  g.intensity = d["intensity"].cast<float>();
+                  auto c = d["color"].cast<std::tuple<float,float,float>>();
+                  g.color = glm::vec3(std::get<0>(c), std::get<1>(c), std::get<2>(c));
+                  flashes.push_back(g);
+              }
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->set_flashes(flashes);
+          },
+          py::arg("flashes"),
+          "Lightning flashes that light the system-scale nebula (haze and "
+          "clumps): the set_nebula_godrays dict shape -- dir (render-space "
+          "unit vector TOWARD the flash), intensity, color. Up to 4; extras "
+          "dropped. Cleared with the profile. Developer-only pass.");
+    m.def("system_nebula_flash_count",
+          []() {
+              return g_system_nebula_pass ? g_system_nebula_pass->flash_count()
+                                          : 0;
+          },
+          "Number of lightning flashes the system-scale nebula pass holds.");
+
     m.def("system_nebula_set_dials",
           [](py::dict d) {
               if (!g_system_nebula_pass) return;

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "renderer/nebula_atmosphere.h"
+#include "renderer/nebula_godray_pass.h"   // GodrayFlash
 
 #include <glm/glm.hpp>
 
@@ -112,6 +113,16 @@ public:
     void clear_star() { star_ = glm::vec3(0.0f); has_star_ = false; }
     bool has_star() const { return has_star_; }
 
+    /// Active lightning flashes that light the cloud (both the haze
+    /// near-march and every clump sub-march), up to kMaxFlashes; extras are
+    /// dropped. `dir` is the render-space unit vector TOWARD the flash, the
+    /// shader adds colour x intensity x HG(kFlashG) per sample. Empty (the
+    /// default, and after clear_profile) renders exactly as with no flash
+    /// feature at all. Pushed per frame by the host (set_system_nebula_flashes).
+    static constexpr int kMaxFlashes = 4;
+    void set_flashes(const std::vector<GodrayFlash>& flashes);
+    int flash_count() const { return static_cast<int>(flashes_.size()); }
+
     /// Same contract as NebulaVolumetricPass::render. Early-outs (zero GL
     /// work) when there is neither a profile nor any volume.
     void render(const scenegraph::Camera& camera,
@@ -166,6 +177,7 @@ private:
     atmosphere::LookParams    look_;
     glm::vec3    star_{0.0f};
     bool         has_star_ = false;
+    std::vector<GodrayFlash> flashes_;
     Dials        dials_;
     int          profile_rebuild_count_ = 0;
 };

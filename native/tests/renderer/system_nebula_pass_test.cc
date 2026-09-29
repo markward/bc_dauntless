@@ -574,3 +574,80 @@ TEST_F(SystemNebulaPassTest, JoinMatchesReferenceMarchToAHullBeyondTheNearRange)
             << "hull from r0=" << j.r0 << ": near march + finite table segment != reference";
     }
 }
+
+// ── Lightning flashes light the cloud (Part B, 2026-09-30 brief) ───────────
+namespace {
+
+renderer::GodrayFlash ahead_flash(float intensity = 4.0f) {
+    renderer::GodrayFlash f;
+    f.dir = glm::vec3(0.0f, 1.0f, 0.0f);   // toward the flash: straight ahead
+    f.intensity = intensity;
+    f.color = glm::vec3(1.0f, 1.0f, 1.0f);
+    return f;
+}
+
+scenegraph::Camera looking_at_star_from_band() {
+    scenegraph::Camera cam = looking_down_y();
+    cam.eye = glm::vec3(0.0f, -150000.0f, 0.0f);   // inside the 120k-240k band
+    cam.target = glm::vec3(0.0f);                   // looking +Y, at the star
+    return cam;
+}
+
+}  // namespace
+
+TEST_F(SystemNebulaPassTest, FlashBrightensTheClump) {
+    const auto v = test_clump();
+    renderer::SystemNebulaPass dark;
+    const glm::vec4 before = render_centre(*pipeline, dark, looking_down_y(), {v});
+    ASSERT_GT(before.a, 0.01f);
+
+    renderer::SystemNebulaPass lit;
+    lit.set_flashes({ahead_flash()});
+    EXPECT_EQ(lit.flash_count(), 1);
+    const glm::vec4 after = render_centre(*pipeline, lit, looking_down_y(), {v});
+    EXPECT_GT(after.r + after.g + after.b, 1.5f * (before.r + before.g + before.b))
+        << "a flash must light the clump sub-march";
+    EXPECT_FLOAT_EQ(after.a, before.a) << "a flash lights, it adds no density";
+}
+
+TEST_F(SystemNebulaPassTest, FlashBrightensTheHaze) {
+    renderer::SystemNebulaPass dark;
+    dark.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    dark.set_star(glm::vec3(0.0f));
+    const glm::vec4 before = render_centre(*pipeline, dark, looking_at_star_from_band(), {});
+    ASSERT_GT(before.a, 0.0f);
+
+    renderer::SystemNebulaPass lit;
+    lit.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    lit.set_star(glm::vec3(0.0f));
+    lit.set_flashes({ahead_flash()});
+    const glm::vec4 after = render_centre(*pipeline, lit, looking_at_star_from_band(), {});
+    EXPECT_GT(after.r + after.g + after.b, before.r + before.g + before.b)
+        << "a flash must light the haze near-march";
+}
+
+TEST_F(SystemNebulaPassTest, ZeroFlashesRenderIdenticallyToNone) {
+    const auto v = test_clump();
+    renderer::SystemNebulaPass fresh;
+    fresh.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    fresh.set_star(glm::vec3(0.0f));
+    const glm::vec4 ref = render_centre(*pipeline, fresh, looking_at_star_from_band(), {v});
+
+    renderer::SystemNebulaPass cleared;
+    cleared.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    cleared.set_star(glm::vec3(0.0f));
+    cleared.set_flashes({ahead_flash()});
+    cleared.set_flashes({});
+    EXPECT_EQ(cleared.flash_count(), 0);
+    const glm::vec4 px = render_centre(*pipeline, cleared, looking_at_star_from_band(), {v});
+    for (int c = 0; c < 4; ++c) EXPECT_EQ(px[c], ref[c]) << "channel " << c;
+}
+
+TEST_F(SystemNebulaPassTest, FlashesCappedAtFourAndClearedWithTheProfile) {
+    renderer::SystemNebulaPass pass;
+    pass.set_flashes(std::vector<renderer::GodrayFlash>(6, ahead_flash()));
+    EXPECT_EQ(pass.flash_count(), 4);
+    pass.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+    pass.clear_profile();
+    EXPECT_EQ(pass.flash_count(), 0);
+}

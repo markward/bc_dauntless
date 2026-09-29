@@ -12,6 +12,9 @@ class _R:
         self.stars = []
         self._volumetric = volumetric
         self.volumetric_queries = 0
+        self.flashes = []
+        self.godrays = []
+        self._lightning = True
 
     def set_system_nebula_profile(self, d):
         self.profiles.append(d)
@@ -22,6 +25,15 @@ class _R:
     def volumetric_nebulae_enabled(self):
         self.volumetric_queries += 1
         return self._volumetric
+
+    def set_system_nebula_flashes(self, flashes):
+        self.flashes.append(list(flashes))
+
+    def set_nebula_godrays(self, godrays):
+        self.godrays.append(list(godrays))
+
+    def nebula_lightning_enabled(self):
+        return self._lightning
 
     def system_nebula_set_dials(self, dials):
         # Task 7 dev-tuning surface: _push_system_nebula never touches this,
@@ -286,3 +298,58 @@ def test_flare_veil_and_profile_push_share_one_gate():
     import inspect
     for fn in (host_loop._push_system_nebula, host_loop._veil_flares):
         assert "_system_nebula_gate(" in inspect.getsource(fn), fn.__name__
+
+
+# ── Lightning flashes light the system nebula (Part B, 2026-09-30) ─────────
+
+class _Flash:
+    def __init__(self, d=(0.0, 1.0, 0.0), intensity=2.0, color=(0.8, 0.9, 1.0)):
+        self.dir, self.intensity, self.color = d, intensity, color
+
+
+class _Thunder:
+    def __init__(self, flashes):
+        self._f = flashes
+
+    def active_flashes(self):
+        return list(self._f)
+
+
+_FLASH_DICT = {"dir": (0.0, 1.0, 0.0), "intensity": 2.0, "color": (0.8, 0.9, 1.0)}
+
+
+def test_thunder_flashes_go_to_the_system_nebula_under_the_gate(monkeypatch):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(host_loop, "_nebula_thunder", _Thunder([_Flash()]))
+    r = _R()
+    host_loop._push_nebula_godrays(r, None, [], False)
+    assert r.flashes == [[_FLASH_DICT]]
+    assert r.godrays == [[_FLASH_DICT]]
+
+
+def test_gate_closed_in_developer_mode_pushes_no_flashes(monkeypatch):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(host_loop, "_nebula_thunder", _Thunder([_Flash()]))
+    r = _R(volumetric=False)
+    host_loop._push_nebula_godrays(r, None, [], False)
+    assert r.flashes == [[]]
+    assert r.godrays == [[_FLASH_DICT]]
+
+
+def test_warp_streaking_pushes_no_flashes(monkeypatch):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(host_loop, "_nebula_thunder", _Thunder([_Flash()]))
+    r = _R()
+    host_loop._push_nebula_godrays(r, None, [], True)
+    assert r.flashes == [[]]
+    assert r.godrays == [[]]
+
+
+def test_production_never_pushes_system_nebula_flashes(monkeypatch):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    monkeypatch.setattr(host_loop, "_nebula_thunder", _Thunder([_Flash()]))
+    r = _R()
+    host_loop._push_nebula_godrays(r, None, [{"position": (1.0, 0.0, 0.0)}], False)
+    assert r.flashes == []
+    assert r.godrays == [[_FLASH_DICT]]
+    assert r.volumetric_queries == 0, "production must not even ask the gate"
