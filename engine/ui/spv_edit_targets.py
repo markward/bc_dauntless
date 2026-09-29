@@ -15,7 +15,8 @@ clipboard kind, gizmo, handle drag); Task 4 the Rotate tool (rotate kind and
 readout, stepper nudge, copy/paste value, ring drag, rotate gizmo, and the
 rotation half of Mirror); Task 5 the Pipette (`pipette_fields_from`, an
 emitter's `colour`) and Mirror Element (`mirror()` = `mirror_position()` +
-`mirror_rotation()`); decals migrate in a later task.
+`mirror_rotation()`); Task 6 decals (`DecalTarget`, which gains Copy/Paste
+and a Mirror that creates a new placement).
 """
 import math
 
@@ -32,6 +33,20 @@ class EditTarget:
     def position(self) -> tuple: raise NotImplementedError
     def set_position(self, xyz: tuple) -> None: raise NotImplementedError
     def gizmo_frame(self): return None           # (origin_world, axes) or None
+    def axis_drag_apply(self, param_now: float) -> None:
+        """Move the target to the grab-time coordinate with the grabbed axis
+        component advanced by (param_now - grab_param)."""
+        p = self.panel
+        k = p._axis_drag
+        base = list(p._axis_grab_pos)
+        base[k] += (param_now - p._axis_grab_param)
+        # Anchor -> the anchor; pose -> its translation (and the preview);
+        # emitter / light / subsystem -> its staged position.
+        self.set_position(tuple(base))
+    def payload_extras(self, tool: str) -> dict:
+        """Kind-specific keys added to the "coord"/"rotate"/"scale" panel
+        payload (a decal's `decal`, `step_scale`, `can_mirror`)."""
+        return {}
     # Rotate
     def rotate_spec(self):                       # dict {fields, clipboard_kind} | None
         """The Rotate panel's X/Y/Z readout and clipboard kind, or None when
@@ -858,12 +873,258 @@ class PartPoseTarget(_PartNode):
         p._stage_pose_euler(t[1], t[2], (rx, -ry, -rz))
 
 
+class DecalTarget(EditTarget):
+    """A decal placement in the active Decals pane: key ("decal", name).
+    Body frame, NIF units (see spv_decals_pane's module docstring). Move is
+    its centre, Rotate its roll, Scale its width (aspect-locked to its mask)
+    and depth; every clipboard kind is "decal", so nothing pastes between a
+    decal and any other kind. Mirror creates a NEW `<mask>_N` placement
+    (spec 2026-09-29-spv-edit-target-refactor S5) instead of reflecting in
+    place: an in-place half-mirror of a projector is meaningless, so the
+    per-panel coord and rotate Mirrors are no-ops here (`can_mirror`)."""
+    kind = "decal"
+
+    def _placement(self):
+        return self.panel._decal_by_name(self.key[1])
+
+    def payload_extras(self, tool: str) -> dict:
+        """The decal-only keys of the Move/Rotate/Scale panel payloads:
+        `decal` (stepper labelling), `step_scale` and `can_mirror`."""
+        from engine.ui.spv_decals_pane import DecalsPaneMixin
+        if tool == "coord":
+            return {"decal": True, "can_mirror": False,
+                    "step_scale": DecalsPaneMixin._decal_coord_step_scale()}
+        if tool == "rotate":
+            return {"decal": True, "can_mirror": False}
+        return {"decal": True}
+
+    # -- Move ----------------------------------------------------------
+    def coord_kind(self) -> str:
+        return "decal"
+
+    def position(self):
+        from engine.ui import decal_editor
+        p = self._placement()
+        return decal_editor.centre(p) if p is not None else None
+
+    def set_position(self, xyz) -> None:
+        """Re-centre the decal on `xyz`, keeping its axes, normal and depth
+        (a pasted centre may float off the hull: Reposition re-seats it).
+        Setting the centre it already has is a no-op."""
+        from engine.ui import decal_editor
+        p = self._placement()
+        xyz = tuple(float(c) for c in xyz)
+        if (p is None or not all(math.isfinite(c) for c in xyz)
+                or xyz == tuple(decal_editor.centre(p))):
+            return
+        self.panel._decal_apply(decal_editor.set_centre(p, xyz))
+
+    def gizmo_frame(self):
+        """The decal's own frame: origin at its centre, axes u/v/normal (the
+        Move u/v arrows, the Scale handles, the Roll ring about the normal)."""
+        from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import (
+            _unit, body_dir_to_world, body_to_world)
+        p = self._placement()
+        ship = self.panel._ship_getter()
+        if p is None or ship is None:
+            return None
+        axes = tuple(body_dir_to_world(ship, _unit(v))
+                     for v in (p.u_axis, p.v_axis, p.normal))
+        return body_to_world(ship, decal_editor.centre(p)), axes
+
+    def scale_gizmo_frame(self):
+        return self.gizmo_frame()
+
+    def rotate_gizmo_frame(self):
+        return self.gizmo_frame()
+
+    def axis_drag_begin(self, axis: int, grab_param: float) -> None:
+        p = self._placement()
+        if p is None:
+            return
+        pane = self.panel
+        pane._decal_grab = p
+        pane._axis_drag = axis
+        pane._axis_grab_param = grab_param
+
+    def axis_drag_apply(self, param_now: float) -> None:
+        """Slide along u (handle 0) or v (handle 1) from the grab-time
+        placement; a GU along the world axis is 1 / instance_scale units."""
+        from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import instance_scale
+        pane = self.panel
+        if pane._decal_grab is None:
+            return
+        d = (param_now - pane._axis_grab_param) / instance_scale(pane._ship_getter())
+        if pane._axis_drag == 0:
+            pane._decal_apply(decal_editor.move_uv(pane._decal_grab, d, 0.0))
+        elif pane._axis_drag == 1:
+            pane._decal_apply(decal_editor.move_uv(pane._decal_grab, 0.0, d))
+
+    # -- Rotate --------------------------------------------------------
+    def rotate_kind(self):
+        return "decal"
+
+    def rotate_spec(self):
+        """One Roll row, degrees."""
+        if self._placement() is None:
+            return None
+        return {"fields": [{"label": "Roll",
+                            "value": math.degrees(self.get_rotation())}],
+                "clipboard_kind": "decal"}
+
+    def get_rotation(self):
+        """The roll (radians) against the ship's forward/up -- the 3-arg
+        form, so a bow/stern decal reads its fallback reference."""
+        from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import BODY_FORWARD, BODY_UP
+        try:
+            return decal_editor.roll_angle(self._placement(), BODY_FORWARD, BODY_UP)
+        except ValueError:
+            return 0.0
+
+    def set_rotation(self, value) -> None:
+        """Roll to `value` radians (Paste). The roll it already has is a
+        no-op."""
+        from engine.ui import decal_editor
+        d = float(value) - self.get_rotation()
+        if d == 0.0 or not math.isfinite(d):
+            return
+        self.panel._decal_apply(decal_editor.roll(self._placement(), d))
+
+    def rotate_nudge(self, index, delta_deg) -> None:
+        from engine.ui import decal_editor
+        if index != 0 or not math.isfinite(delta_deg):
+            return
+        self.panel._decal_apply(
+            decal_editor.roll(self._placement(), math.radians(delta_deg)))
+
+    def ring_drag_begin(self) -> None:
+        # A decal rolls from its grab-time placement.
+        p = self._placement()
+        if p is None:
+            return
+        self.panel._decal_grab = p
+        self.panel._axis_grab_param = 0.0
+
+    def ring_drag_apply(self, k, d_body) -> None:
+        from engine.ui import decal_editor
+        pane = self.panel
+        if pane._decal_grab is None:
+            return
+        pane._decal_apply(decal_editor.roll(pane._decal_grab, d_body))
+
+    # -- Scale ---------------------------------------------------------
+    def scale_kind(self):
+        """("decal", [Width, Depth]); Width is aspect-locked to the mask."""
+        from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import DEPTH_STEP_SCALE, DecalsPaneMixin
+        p = self._placement()
+        if p is None:
+            return "decal", []
+        return "decal", [{"label": "Width", "value": decal_editor.width(p),
+                          "step_scale": DecalsPaneMixin._decal_coord_step_scale()},
+                         {"label": "Depth", "value": p.depth,
+                          "step_scale": DEPTH_STEP_SCALE}]
+
+    def scale_spec(self):
+        if self._placement() is None:
+            return None
+        kind, fields = self.scale_kind()
+        return {"kind": kind, "fields": fields}
+
+    def get_scale(self):
+        return tuple(f["value"] for f in self.scale_kind()[1])
+
+    def set_scale_field(self, index, value) -> None:
+        """Width (0, aspect-locked to the mask) or Depth (1), floored at
+        MIN_DEPTH. The value a field already has is a no-op."""
+        from dataclasses import replace
+        from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import MIN_DEPTH
+        p = self._placement()
+        if p is None or not math.isfinite(value):
+            return
+        if index == 0:
+            if value == decal_editor.width(p):
+                return
+            w = max(MIN_DEPTH, value)
+            p = decal_editor.set_width(
+                p, w, self.panel._decal_aspect(decal_editor.mask_of(p)))
+        elif index == 1:
+            if value == p.depth:
+                return
+            p = replace(p, depth=max(MIN_DEPTH, value))
+        else:
+            return
+        self.panel._decal_apply(p)
+
+    def scale_drag_begin(self, axis: int):
+        p = self._placement()
+        if p is not None:
+            self.panel._decal_grab = p
+        return None
+
+    def scale_drag_apply(self, state, ratio: float) -> None:
+        from dataclasses import replace
+        from engine.ui import decal_editor
+        pane = self.panel
+        g = pane._decal_grab
+        if g is None:
+            return
+        ratio = max(ratio, 1e-3)
+        # Spec S3: uniform, "aspect locked to the mask" -- width scales by the
+        # factor and the height snaps to the previewed mask's aspect (2:1
+        # without a PNG), like the Width nudge. Depth still scales with it.
+        p = decal_editor.set_width(g, decal_editor.width(g) * ratio,
+                                   pane._decal_aspect(decal_editor.mask_of(g)))
+        pane._decal_apply(replace(p, depth=g.depth * ratio))
+
+    # -- Mirror --------------------------------------------------------
+    def mirror_position(self) -> None:
+        pass            # the per-panel coord Mirror: hidden for a decal
+
+    def mirror(self) -> None:
+        """Mirror Element: a NEW placement `<mask>_N` reflected across
+        X = 0, which becomes the selection. Reflect origin/u/v/normal, then
+        negate u and start from the reflected old far corner, so
+        (u x v) . n < 0 still holds (readable from outside). Refused inline
+        at the 16-placement cap."""
+        from dataclasses import replace
+        from engine.ui import decal_editor
+        from engine.ui.spv_decals_pane import MAX_DECALS
+        pane = self.panel
+        p = self._placement()
+        if p is None:
+            return
+        if pane._decal_count() >= MAX_DECALS:
+            pane._decal_error = "Mirror refused: 16 placements is the maximum"
+            return
+        fx = lambda v: (-v[0], v[1], v[2])
+        o, u, v, n = fx(p.origin), fx(p.u_axis), fx(p.v_axis), fx(p.normal)
+        new_origin = (o[0] + u[0], o[1] + u[1], o[2] + u[2])
+        new_u = (-u[0], -u[1], -u[2])
+        mask = decal_editor.mask_of(p)
+        name = pane._decal_auto_name(mask)
+        # "" when the name IS the mask: no redundant "mask" key (as Add).
+        q = replace(p, name=name, mask="" if name == mask else mask,
+                    origin=new_origin, u_axis=new_u, v_axis=v, normal=n)
+        pane._decal_working.append(q)
+        pane._decal_selected = name
+        pane._decal_reposition = False
+        pane._decal_error = None
+        pane._last_pushed = None
+        pane._decal_sync_override()
+
+
 _ADAPTERS = {
     "subsystem": MountTarget,
     "light": LightTarget,
     "emitter": EmitterTarget,
     "part_anchor": PartAnchorTarget,
     "part_pose": PartPoseTarget,
+    "decal": DecalTarget,
 }
 
 
@@ -879,5 +1140,8 @@ def edit_target_for_key(panel, key):
 def edit_target_for(panel):
     """The adapter for `panel`'s one live transform target, or None. Built
     fresh on every call -- never cache it (a part pose's key carries its
-    state)."""
+    state). A selected decal in the active Decals pane wins (selecting one
+    clears every other selection, and vice versa)."""
+    if panel._decal_target() is not None:
+        return DecalTarget(panel, ("decal", panel._decal_selected))
     return edit_target_for_key(panel, panel._active_transform_target())

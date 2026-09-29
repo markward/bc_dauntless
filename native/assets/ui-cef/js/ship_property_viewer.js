@@ -175,8 +175,8 @@ window.setShipPropertyViewer = function (data) {
 // The steps are authored for hardpoints (+-0.01/+-0.1, +-1/+-5 deg); a panel
 // or field may carry `step_scale`, which multiplies (and relabels) them -- a
 // decal's numbers are NIF units, so its Move/Width steps are x100 (the same
-// physical distance). `decal: true` hides the action row (a decal has no
-// Copy/Paste/Mirror/Uniform).
+// physical distance). `can_mirror: false` (a decal) hides the panel's
+// Mirror button; Copy/Paste stay.
 function spvStepLabel(delta, unit) {
     var mag = String(parseFloat(Math.abs(delta).toPrecision(6)));
     return (delta < 0 ? '&minus;' : '+') + mag + (unit || '');
@@ -210,7 +210,11 @@ function spvShowPanel(prefix, panelId, values, rowsHtml) {
         paste.classList.toggle('spv-coords__btn--disabled', !values.can_paste);
     }
     var acts = document.getElementById(prefix + '-actions');
-    if (acts) acts.style.display = values.decal === true ? 'none' : '';
+    if (acts) acts.style.display = '';
+    // A decal's in-place half-mirror is meaningless (its Mirror is the
+    // action-row Mirror Element, a new placement): hide the per-panel one.
+    var mirror = document.getElementById(prefix + '-mirror');
+    if (mirror) mirror.style.display = values.can_mirror === false ? 'none' : '';
     el.style.display = 'block';
 }
 

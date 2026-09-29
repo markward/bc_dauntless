@@ -1391,18 +1391,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         the current target's, i.e. exactly when `coord_paste` would act."""
         if self.active_tool != "transform":
             return None
-        decal = self._decal_transform_coords()
-        if decal is not None:
-            return decal
         t = self._edit_target()
         pos = t.position() if t is not None else None
         if pos is None:
             return None
         clip = self._coord_clipboard
         kind = t.coord_kind()
-        return {"x": pos[0], "y": pos[1], "z": pos[2],
-                "has_clipboard": clip is not None,
-                "can_paste": clip is not None and clip[0] == kind}
+        out = {"x": pos[0], "y": pos[1], "z": pos[2],
+               "has_clipboard": clip is not None,
+               "can_paste": clip is not None and clip[0] == kind}
+        out.update(t.payload_extras("coord"))
+        return out
 
     # ------------------------------------------------------------------
     # Scale tool (shape-aware size fields for the current transform target)
@@ -1422,18 +1421,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         "radius", strip/cone -> "radius_length")."""
         if self.active_tool != "scale":
             return None
-        decal = self._decal_scale_values()
-        if decal is not None:
-            return decal
         t = self._scale_edit_target()
         if t is None:
             return None
         spec = t.scale_spec()
         kind, fields = spec["kind"], spec["fields"]
         clip = self._scale_clipboard
-        return {"kind": kind, "fields": fields,
-                "has_clipboard": clip is not None,
-                "can_paste": clip is not None and clip[0] == kind}
+        out = {"kind": kind, "fields": fields,
+               "has_clipboard": clip is not None,
+               "can_paste": clip is not None and clip[0] == kind}
+        out.update(t.payload_extras("scale"))
+        return out
 
     def _set_scale_field(self, index, value) -> None:
         """Stage `value` (floored at SCALE_MIN) for size field `index` of the
@@ -1470,18 +1468,19 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         (`EditTarget.rotate_kind`) matches the selected target's."""
         if self.active_tool != "rotate":
             return None
-        decal = self._decal_rotate_values()
-        if decal is not None:
-            return decal
         t = self._rotate_edit_target()
         if t is None:
             return None
         spec = t.rotate_spec()
+        if spec is None:
+            return None
         clip = self._rotate_clipboard
         kind = spec["clipboard_kind"]
-        return {"fields": spec["fields"],
-                "has_clipboard": clip is not None,
-                "can_paste": clip is not None and clip[0] == kind}
+        out = {"fields": spec["fields"],
+               "has_clipboard": clip is not None,
+               "can_paste": clip is not None and clip[0] == kind}
+        out.update(t.payload_extras("rotate"))
+        return out
 
     def _rotate_axis(self, index, delta_deg) -> None:
         """Rotate the current rotate target by `delta_deg` about basis axis
@@ -1632,10 +1631,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         """The gizmo for the active tool: `transform_gizmo` under Transform,
         `scale_gizmo` under Scale, `rotate_gizmo` under Rotate, else None.
         Shared by `_handle_gizmo_input` so hover/grab/drag geometry follows the
-        current tool. A selected decal in the active Decals pane wins."""
-        dg = self._decal_gizmo()
-        if dg is not None:
-            return dg
+        current tool. (A selected decal is an ordinary `EditTarget`: its
+        gizmo sits in its own u/v/normal frame, `DecalTarget.gizmo_frame`.)"""
         if self.active_tool == "transform":
             return self.transform_gizmo()
         if self.active_tool == "scale":
@@ -1649,8 +1646,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         origin and the grabbed size value so `_apply_scale_drag` multiplies
         from a stable anchor. For xyz (Box) targets the axis picks the field;
         every other shape is uniform and scales field 0 (the radius)."""
-        if self._decal_begin_drag(axis, grab_param):
-            return
         self._drag_undo_before = self._snapshot_pending()
         self._axis_drag = axis
         self._axis_grab_param = grab_param
@@ -1669,9 +1664,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         with the grab param floored at a quarter of the gizmo length so a
         drag past the origin can't invert or divide-by-zero."""
         if self._axis_drag is None:
-            return
-        if self._decal_grab is not None:
-            self._decal_apply_scale_drag(t_now)
             return
         if self._current_target_is_locked_mount():
             # Defence in depth: _handle_gizmo_input already refuses to BEGIN
@@ -1695,20 +1687,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._axis_drag = ring
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
         self._ring_grab_angle = grab_angle
-        # A selected decal rolls from its grab-time placement (_decal_grab)
-        # and needs only the screen sign computed below.
-        decal = self._decal_begin_drag(ring, 0.0)
-        t = None if decal else self._rotate_edit_target()
-        if t is None and not decal:
+        t = self._rotate_edit_target()
+        if t is None:
             self._ring_grab_axis = (0.0, -1.0, 0.0)
             self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             self._ring_grab_accum = [0.0, 0.0, 0.0]
             self._ring_sign = 1.0
             return
-        if not decal:
-            # Per kind: a pose's grab-time pose + posed anchor, or a
-            # light/emitter's grab-time axis/orientation + accumulators.
-            t.ring_drag_begin()
+        # Per kind: a pose's grab-time pose + posed anchor, a light/emitter's
+        # grab-time axis/orientation + accumulators, or a decal's grab-time
+        # placement (_decal_grab).
+        t.ring_drag_begin()
         eye, tgt = self.camera.eye(), self.camera.target
         fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
         wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
@@ -1721,10 +1710,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         """Apply a body-frame delta angle (radians) about the grabbed ring axis
         to the grab-start axis/orientation (or pose). Shared core for the
         cursor-driven drag + tests. Per kind: `EditTarget.ring_drag_apply`."""
-        if self._decal_grab is not None and self._axis_drag is not None:
-            self._decal_apply_ring_drag(d_body)
-            return
-        t = self._rotate_edit_target()
+        t =self._rotate_edit_target()
         if t is None or self._axis_drag is None:
             return
         if self._current_target_is_locked_mount():
@@ -1747,8 +1733,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
         body position and world origin so the drag mapping stays stable."""
-        if self._decal_begin_drag(axis, grab_param):
-            return
         self._drag_undo_before = self._snapshot_pending()
         target = self._edit_target()
         if target is None:
@@ -1762,10 +1746,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
 
     def _apply_axis_drag(self, param_now: float) -> None:
         """Move the selected node to grab_pos with the grabbed axis component
-        advanced by (param_now - grab_param)."""
-        if self._decal_grab is not None and self._axis_drag is not None:
-            self._decal_apply_axis_drag(param_now)
-            return
+        advanced by (param_now - grab_param); a decal slides along its own
+        u/v (`EditTarget.axis_drag_apply`)."""
         target = self._edit_target()
         if self._axis_drag is None or target is None:
             return
@@ -1776,12 +1758,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             # selected BEFORE the rig was forced into a pose (a 'K' press)
             # stayed draggable through it.
             return
-        k = self._axis_drag
-        base = list(self._axis_grab_pos)
-        base[k] += (param_now - self._axis_grab_param)
-        # Anchor -> the anchor; pose -> its translation (and the preview);
-        # emitter / light / subsystem -> its staged position.
-        target.set_position(tuple(base))
+        target.axis_drag_apply(param_now)
 
     def _end_axis_drag(self) -> None:
         self._axis_drag = None
@@ -1919,7 +1896,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                     tuple(sorted((k, tuple(v)) for k, v in self._rotate_accum.items())),
                     len(self._undo_stack),
                     self._pipette_armed,
-                    self._active_transform_target() is not None,
+                    self._edit_target() is not None,
                     self._decal_state_key())
         if snapshot == self._last_pushed:
             return None
@@ -1967,7 +1944,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
-            "has_selection": self._active_transform_target() is not None,
+            # A selected decal counts: Mirror Element acts on it.
+            "has_selection": self._edit_target() is not None,
         }
         self._close_overlays = False
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
@@ -2582,10 +2560,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 self._pipette_armed = False
             else:
                 t = self._edit_target()
-                if t is not None and not self._is_part_target(t.key):
-                    # A part node holds none of the aspects the pipette copies
-                    # (a mount position, rotation, size, colour), so it never
-                    # arms.
+                if (t is not None and not self._is_part_target(t.key)
+                        and t.kind != "decal"):
+                    # A part node or a decal holds none of the aspects the
+                    # pipette copies (a mount position, rotation, size,
+                    # colour), so it never arms.
                     self._pipette_armed = True
             self._last_pushed = None
             return True
@@ -2910,8 +2889,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 axis = int(arg["axis"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
-            if self._decal_target() is not None:
-                return self._decal_panel_nudge("coord", axis, delta)
             if axis not in (0, 1, 2):
                 return False
             t = self._edit_target()
@@ -2954,8 +2931,6 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 index = int(arg["index"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
-            if self._decal_target() is not None:
-                return self._decal_panel_nudge("scale", index, delta)
             t = self._scale_edit_target()
             if t is None:
                 return False
@@ -3001,10 +2976,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 axis = int(arg["axis"]); delta = float(arg["delta"])
             except (ValueError, KeyError, TypeError):
                 return False
-            if self._decal_target() is not None:
-                return self._decal_panel_nudge("rotate", axis, delta)
             t = self._rotate_edit_target()
-            if axis not in (0, 1, 2) or t is None:
+            # Only the rows the Rotate panel shows: X/Y/Z, or a decal's Roll.
+            if t is None or not (0 <= axis < len(t.rotate_spec()["fields"])):
                 return False
             t.rotate_nudge(axis, delta)
             return True

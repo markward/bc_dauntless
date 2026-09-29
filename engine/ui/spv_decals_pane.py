@@ -652,18 +652,10 @@ class DecalsPaneMixin:
         i = self._decal_index(self._decal_selected)
         return self._decal_working[i] if i is not None else None
 
-    def _decal_gizmo(self) -> Optional[dict]:
-        kind = {"transform": 0, "scale": 1, "rotate": 2}.get(self.active_tool)
-        p = self._decal_target()
-        ship = self._ship_getter()
-        if kind is None or p is None or ship is None or self.camera is None:
-            return None
-        from engine.ui.ship_property_viewer import gizmo_length
-        axes = tuple(body_dir_to_world(ship, _unit(v))
-                     for v in (p.u_axis, p.v_axis, p.normal))
-        return {"origin": body_to_world(ship, decal_editor.centre(p)),
-                "axes": axes, "length": gizmo_length(self.camera),
-                "highlight": self._gizmo_hover, "handle_kind": kind}
+    def _decal_by_name(self, name) -> Optional[decal_editor.Placement]:
+        """The working placement called `name`, or None."""
+        i = self._decal_index(name)
+        return self._decal_working[i] if i is not None else None
 
     def _decal_grab_allowed(self, handle: int) -> bool:
         """Move has no normal arrow and Rotate only the ring about the
@@ -675,45 +667,15 @@ class DecalsPaneMixin:
             return handle == 2
         return True
 
-    def _decal_begin_drag(self, handle: int, grab_param: float) -> bool:
-        p = self._decal_target()
-        if p is None:
-            return False
-        self._drag_undo_before = self._snapshot_pending()
-        self._decal_grab = p
-        self._axis_drag = handle
-        self._axis_grab_param = grab_param
-        return True
-
     def _decal_apply(self, new_p) -> None:
+        """Replace the selected placement with `new_p` and re-push the
+        override (every `DecalTarget` edit lands here)."""
         i = self._decal_index(self._decal_selected)
         if i is None:
             return
         self._decal_working[i] = new_p
         self._last_pushed = None
         self._decal_sync_override()
-
-    def _decal_apply_axis_drag(self, param_now: float) -> None:
-        d = (param_now - self._axis_grab_param) / instance_scale(self._ship_getter())
-        if self._axis_drag == 0:
-            self._decal_apply(decal_editor.move_uv(self._decal_grab, d, 0.0))
-        elif self._axis_drag == 1:
-            self._decal_apply(decal_editor.move_uv(self._decal_grab, 0.0, d))
-
-    def _decal_apply_scale_drag(self, t_now: float) -> None:
-        from engine.ui.ship_property_viewer import gizmo_length
-        L = gizmo_length(self.camera)
-        ratio = max(t_now / max(self._axis_grab_param, 0.25 * L), 1e-3)
-        # Spec S3: uniform, "aspect locked to the mask" -- width scales by the
-        # factor and the height snaps to the previewed mask's aspect (2:1
-        # without a PNG), like the Width nudge. Depth still scales with it.
-        g = self._decal_grab
-        p = decal_editor.set_width(g, decal_editor.width(g) * ratio,
-                                   self._decal_aspect(decal_editor.mask_of(g)))
-        self._decal_apply(replace(p, depth=g.depth * ratio))
-
-    def _decal_apply_ring_drag(self, d_body: float) -> None:
-        self._decal_apply(decal_editor.roll(self._decal_grab, d_body))
 
     # ------------------------------------------------------------------
     # Payload
@@ -754,74 +716,13 @@ class DecalsPaneMixin:
         return result
 
     # ------------------------------------------------------------------
-    # The top-right tool panels. The panel's transform_coords /
-    # rotate_values / scale_values and their *_nudge events consult these
-    # first: a selected decal owns that slot, as it owns the gizmo.
+    # The top-right tool panels. A selected decal drives them (and the
+    # gizmo) through `spv_edit_targets.DecalTarget`; its steppers step in GU.
     # ------------------------------------------------------------------
     @staticmethod
     def _decal_coord_step_scale() -> float:
         from engine.host_loop import BC_MODEL_SCALE
         return 1.0 / BC_MODEL_SCALE
-
-    def _decal_transform_coords(self) -> Optional[dict]:
-        """The Move panel for the selected decal: its centre, body frame, NIF
-        units. No Copy/Paste/Mirror (`decal` tells the JS to hide them)."""
-        p = self._decal_target()
-        if p is None:
-            return None
-        x, y, z = decal_editor.centre(p)
-        return {"x": x, "y": y, "z": z, "has_clipboard": False,
-                "can_paste": False, "decal": True,
-                "step_scale": self._decal_coord_step_scale()}
-
-    def _decal_rotate_values(self) -> Optional[dict]:
-        """The Rotate panel for the selected decal: one Roll row, degrees."""
-        p = self._decal_target()
-        if p is None:
-            return None
-        try:
-            deg = math.degrees(decal_editor.roll_angle(p, BODY_FORWARD, BODY_UP))
-        except ValueError:
-            deg = 0.0
-        return {"fields": [{"label": "Roll", "value": deg}],
-                "has_clipboard": False, "can_paste": False, "decal": True}
-
-    def _decal_scale_values(self) -> Optional[dict]:
-        """The Scale panel for the selected decal: Width (aspect-locked to
-        the previewed mask) and Depth."""
-        p = self._decal_target()
-        if p is None:
-            return None
-        return {"kind": "decal",
-                "fields": [{"label": "Width", "value": decal_editor.width(p),
-                            "step_scale": self._decal_coord_step_scale()},
-                           {"label": "Depth", "value": p.depth,
-                            "step_scale": DEPTH_STEP_SCALE}],
-                "has_clipboard": False, "can_paste": False, "decal": True}
-
-    def _decal_panel_nudge(self, panel: str, index: int, delta: float) -> bool:
-        """A coord/rotate/scale stepper on the selected decal. `delta`
-        arrives in the decal's own units (NIF units / degrees). False for a
-        row the decal's panel does not have."""
-        p = self._decal_target()
-        if p is None or not math.isfinite(delta):
-            return False
-        if panel == "coord" and index in (0, 1, 2):
-            c = list(decal_editor.centre(p))
-            c[index] += delta
-            p = decal_editor.set_centre(p, tuple(c))
-        elif panel == "rotate" and index == 0:
-            p = decal_editor.roll(p, math.radians(delta))
-        elif panel == "scale" and index == 0:
-            w = max(MIN_DEPTH, decal_editor.width(p) + delta)
-            p = decal_editor.set_width(
-                p, w, self._decal_aspect(decal_editor.mask_of(p)))
-        elif panel == "scale" and index == 1:
-            p = replace(p, depth=max(MIN_DEPTH, p.depth + delta))
-        else:
-            return False
-        self._decal_apply(p)
-        return True
 
     def _decals_payload(self) -> dict:
         working = self._decal_working or []

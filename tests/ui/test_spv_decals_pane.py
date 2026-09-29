@@ -522,7 +522,7 @@ def test_the_transform_panel_shows_the_decal_centre_in_body_units(env):
     c = _payload(p)["transform_coords"]
     assert _close((c["x"], c["y"], c["z"]),
                   decal_editor.centre(p._decal_working[0]), 1e-9)
-    # A decal has no Copy/Paste/Mirror: the panel hides them.
+    # Nothing copied yet, so Paste is greyed.
     assert c["decal"] is True and c["can_paste"] is False
     # Steppers step in GU, like a hardpoint's; the numbers are NIF units.
     assert c["step_scale"] == pytest.approx(1.0 / BC_MODEL_SCALE)
@@ -545,14 +545,17 @@ def test_a_coord_nudge_recentres_the_decal_with_one_undo(env):
     assert p._decal_working[0] == before
 
 
-def test_copy_paste_mirror_never_touch_a_decal(env):
+def test_copy_paste_mirror_leave_the_selected_decal_itself_alone(env):
+    """Copy/Paste onto itself and the (hidden) coord Mirror change nothing;
+    Mirror Element adds a NEW placement rather than editing this one. The
+    clipboard is a decal one (spec 2026-09-29 edit-target refactor S5)."""
     p = env["p"]
     _select_top(p, "transform")
     before = p._decal_working[0]
     for a in ("coord_copy", "coord_paste", "coord_mirror", "mirror_element"):
         p.dispatch_event(a)
     assert p._decal_working[0] == before
-    assert p._coord_clipboard is None
+    assert p._coord_clipboard[0] == "decal"
 
 
 def test_the_rotate_panel_shows_and_edits_the_roll(env):
@@ -614,7 +617,9 @@ def test_a_depth_nudge_edits_depth_and_stays_positive(env):
     assert decal_editor.width(p._decal_working[0]) > 0.0
 
 
-def test_scale_copy_paste_uniform_never_touch_a_decal(env):
+def test_scale_and_rotate_copy_paste_onto_itself_leave_a_decal_alone(env):
+    """Pasting a decal's own size/roll, Uniform (Box-only) and the hidden
+    rotate Mirror change nothing."""
     p = env["p"]
     _select_top(p, "scale")
     before = p._decal_working[0]

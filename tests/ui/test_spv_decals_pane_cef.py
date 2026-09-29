@@ -204,8 +204,10 @@ def test_leaving_collapses_and_empties_the_pane(run):
 # Scale / Rotate panels from transform_coords / scale_values / rotate_values.
 
 _PANEL_IDS = ["spv-coords", "spv-coord-rows", "spv-coord-actions", "spv-coord-paste",
+              "spv-coord-mirror",
               "spv-scale", "spv-scale-rows", "spv-scale-actions", "spv-scale-paste",
-              "spv-rotate", "spv-rotate-rows", "spv-rotate-actions", "spv-rotate-paste"]
+              "spv-rotate", "spv-rotate-rows", "spv-rotate-actions", "spv-rotate-paste",
+              "spv-rotate-mirror"]
 
 _PANEL_HARNESS = r"""
 const fs = require("fs");
@@ -231,10 +233,13 @@ function snap() {
 }
 const cases = {
   decal_move: {transform_coords: {x: 1, y: 2, z: 3, has_clipboard: false, can_paste: false,
-                                  decal: true, step_scale: 100}},
+                                  decal: true, can_mirror: false, step_scale: 100}},
+  decal_move_pasteable: {transform_coords: {x: 1, y: 2, z: 3, has_clipboard: true,
+                                            can_paste: true, decal: true, can_mirror: false,
+                                            step_scale: 100}},
   mount_move: {transform_coords: {x: 1, y: 2, z: 3, has_clipboard: true, can_paste: true}},
   decal_rotate: {rotate_values: {fields: [{label: "Roll", value: 12.5}], has_clipboard: false,
-                                 can_paste: false, decal: true}},
+                                 can_paste: false, decal: true, can_mirror: false}},
   mount_rotate: {rotate_values: {fields: [{label: "X", value: 1}, {label: "Y", value: 2},
                                           {label: "Z", value: 3}],
                                  has_clipboard: false, can_paste: false}},
@@ -271,7 +276,7 @@ def test_the_panel_markup_has_rows_and_action_hosts():
         assert 'id="%s"' % i in html, i
 
 
-def test_a_decal_move_panel_steps_in_gu_and_hides_copy_paste_mirror(panels):
+def test_a_decal_move_panel_steps_in_gu_and_shows_copy_paste_not_mirror(panels):
     c = panels["decal_move"]
     assert c["spv-coords"]["display"] == "block"
     rows = c["spv-coord-rows"]["html"]
@@ -280,7 +285,10 @@ def test_a_decal_move_panel_steps_in_gu_and_hides_copy_paste_mirror(panels):
     assert "shipPropertyViewerCoordNudge(2,10)" in rows
     assert "shipPropertyViewerCoordNudge(0,-1)" in rows
     assert "+10<" in rows and "&minus;1<" in rows
-    assert c["spv-coord-actions"]["display"] == "none"
+    # Copy/Paste shown; the per-panel Mirror hidden (can_mirror: false).
+    assert c["spv-coord-actions"]["display"] == ""
+    assert c["spv-coord-mirror"]["display"] == "none"
+    assert panels["decal_move_pasteable"]["spv-coord-paste"]["disabled"] is False
 
 
 def test_a_mount_move_panel_is_unchanged(panels):
@@ -292,6 +300,7 @@ def test_a_mount_move_panel_is_unchanged(panels):
     assert "shipPropertyViewerCoordNudge(2,-0.01)" in rows
     assert "+0.1<" in rows and "&minus;0.01<" in rows
     assert c["spv-coord-actions"]["display"] == ""
+    assert c["spv-coord-mirror"]["display"] == ""
     assert c["spv-coord-paste"]["disabled"] is False       # can_paste: true
     assert panels["decal_move"]["spv-coord-paste"]["disabled"] is True
 
@@ -303,7 +312,8 @@ def test_a_decal_rotate_panel_has_only_roll(panels):
     assert ">Roll<" in rows and "12.5&deg;" in rows
     assert "shipPropertyViewerRotateNudge(0,5)" in rows
     assert "shipPropertyViewerRotateNudge(1," not in rows
-    assert c["spv-rotate-actions"]["display"] == "none"
+    assert c["spv-rotate-actions"]["display"] == ""
+    assert c["spv-rotate-mirror"]["display"] == "none"
 
 
 def test_a_mount_rotate_panel_keeps_three_rows(panels):
@@ -311,6 +321,7 @@ def test_a_mount_rotate_panel_keeps_three_rows(panels):
     assert "shipPropertyViewerRotateNudge(2,-1)" in rows
     assert "+5&deg;<" in rows
     assert panels["mount_rotate"]["spv-rotate-actions"]["display"] == ""
+    assert panels["mount_rotate"]["spv-rotate-mirror"]["display"] == ""
 
 
 def test_a_decal_scale_panel_has_width_and_depth_steppers(panels):
@@ -320,7 +331,7 @@ def test_a_decal_scale_panel_has_width_and_depth_steppers(panels):
     assert "shipPropertyViewerScaleNudge(0,10)" in rows
     assert "shipPropertyViewerScaleNudge(1,0.1)" in rows
     assert "shipPropertyViewerScaleNudge(1,-1)" in rows
-    assert c["spv-scale-actions"]["display"] == "none"
+    assert c["spv-scale-actions"]["display"] == ""
 
 
 def test_a_mount_scale_panel_is_unchanged(panels):

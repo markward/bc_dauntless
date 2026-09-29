@@ -8,7 +8,9 @@ code. Nothing here recomputes an expectation through the code under test: a
 scenario runs the product, `_r` rounds what it observed to 9 decimals, and
 the result is compared with the literal. If a later task changes one of these
 literals, that is a behaviour change and must be recorded as one -- the only
-planned ones are the decal Copy/Paste/Mirror gaps pinned here (Task 6).
+planned ones were the decal Copy/Paste/Mirror gaps, closed by Task 6: the
+decal row's clipboard tags, its Mirror Element (a new placement, one undo
+step) and its panels' `can_mirror: False` (the per-panel Mirrors hide).
 
 One panel carries a target of every kind at once, so cross-kind Copy/Paste
 and Pipette run between real targets on the same panel:
@@ -621,11 +623,13 @@ EXPECTED_PAYLOADS = {'subsystem': ({'x': 0.5,
             'has_clipboard': False,
             'can_paste': False,
             'decal': True,
+            'can_mirror': False,
             'step_scale': 100.0},
            {'fields': ({'label': 'Roll', 'value': 0.0},),
             'has_clipboard': False,
             'can_paste': False,
-            'decal': True},
+            'decal': True,
+            'can_mirror': False},
            {'kind': 'decal',
             'fields': ({'label': 'Width', 'value': 40.0, 'step_scale': 100.0},
                        {'label': 'Depth', 'value': 2.0, 'step_scale': 10.0}),
@@ -745,7 +749,7 @@ EXPECTED_CLIP_TAGS = {'subsystem': ('mount', 'radius', None),
  'emitter_cone': ('mount', 'radius_xy_length', 'cone_orientation'),
  'part_anchor': ('part_anchor', None, None),
  'part_pose': ('part_pose', None, 'pose_euler'),
- 'decal': (None, None, None)}
+ 'decal': ('decal', 'decal', 'decal')}
 
 EXPECTED_COORD_PASTE = {'subsystem': ('light_sphere',
                'light_cylinder',
@@ -873,7 +877,7 @@ EXPECTED_MIRRORS = {'subsystem': ((True, {'position': (-0.5, 1.0, -0.25)}, 1),
                                    -5.0,
                                    15.0)}},
                 1)),
- 'decal': ((True, {}, 0), (True, {}, 0), (True, {}, 0))}
+ 'decal': ((True, {}, 0), (True, {}, 0), (True, {}, 1))}
 
 EXPECTED_PIPETTE = {'subsystem': (True,
                {'light_sphere': (('position', 'radius'), False),
@@ -1110,7 +1114,7 @@ def test_scale_nudge_each_field(make_panel, case):
 @pytest.mark.parametrize("case", CASES)
 def test_clipboard_tags(make_panel, case):
     """The kind tag each Copy writes: (coord, scale, rotate). None = Copy
-    wrote nothing (the decal gap: it has no clipboard at all)."""
+    wrote nothing. A decal's is "decal" for all three (Task 6)."""
     got = tuple(_scenario_clip_tag(make_panel, case, tool, verb)
                 for tool, verb in (("transform", "coord"), ("scale", "scale"),
                                    ("rotate", "rotate")))
@@ -1137,8 +1141,9 @@ def test_rotate_paste_matrix(make_panel):
 @pytest.mark.parametrize("case", CASES)
 def test_mirrors(make_panel, case):
     """(coord_mirror, rotate_mirror, mirror_element), each from a fresh
-    panel: (returned, what changed, undo entries). The decal row is the
-    Mirror gap: every mirror returns True and changes nothing."""
+    panel: (returned, what changed, undo entries). A decal's coord and
+    rotate Mirrors are no-ops (hidden); its Mirror Element leaves "top"
+    as it is and adds a new placement -- one undo step (Task 6)."""
     got = tuple(_scenario_action(make_panel, case, tool, action)
                 for tool, action in (("transform", "coord_mirror"),
                                      ("rotate", "rotate_mirror"),
