@@ -1288,7 +1288,7 @@ git commit -m "feat(rocks): rocks break up by size at 0 HP instead of dying like
 - Test: `tests/unit/test_collision_broadphase.py`
 
 **Interfaces:**
-- Produces: `engine.appc.collisions._candidate_pairs(bodies, sets, positions) -> list[tuple[int, int]]` (index pairs with i < k, in all-pairs order), plus the module dial `kBroadphaseMinCellGU = 4.0`.
+- Produces: `engine.appc.collisions._candidate_pairs(positions: list[tuple], radii: list[float], sets: list) -> list[tuple[int, int]]` (index pairs with i < k, sorted in all-pairs order), plus the module dials `kBroadphaseMinCellGU = 4.0` and `_BROADPHASE = True`.
 
 Design: bodies are bucketed **per containing set** (bodies in different sets are compared only when `frames.offset_between` is not None; keep that path exact by falling back to all-pairs across any two distinct sets). Within one set, a uniform hash uses cell size `max(kBroadphaseMinCellGU, 2 × max radius in that set)`. Each body checks its own cell and the 26 neighbouring cells. The pair list is **sorted** into the same `(i, k)` order the old nested loop produced, so `_respond_pair` runs in an identical sequence and the resolved state is bit-identical.
 
@@ -1337,7 +1337,7 @@ def test_distinct_sets_fall_back_to_all_pairs():
     assert cands == [(0, 1)]
 ```
 
-The helper signature used here is `_candidate_pairs(positions: list[tuple], radii: list[float], sets: list) -> list[tuple[int, int]]`; use that exact signature, which supersedes the Interfaces line above. Also add a resolved-state equivalence test: build 30 real `_make(App.GENUS_ASTEROID)` rocks in one scratch set in a tight cluster (random positions within 10 GU, radius 0.8), run `resolve_collisions` once with the broadphase and once with it forced off (a module flag `_BROADPHASE = True` the test monkeypatches to False), and assert the returned hit lists and every object's `GetWorldLocation()` and collision overlay velocity are identical. Rebuild the rocks from the same seed for each run.
+Also add a resolved-state equivalence test: build 30 real `_make(App.GENUS_ASTEROID)` rocks in one scratch set in a tight cluster (random positions within 10 GU, radius 0.8), run `resolve_collisions` once with the broadphase and once with it forced off (a module flag `_BROADPHASE = True` the test monkeypatches to False), and assert the returned hit lists and every object's `GetWorldLocation()` and collision overlay velocity are identical. Rebuild the rocks from the same seed for each run.
 
 - [ ] **Step 2: Run to verify failure**
 
