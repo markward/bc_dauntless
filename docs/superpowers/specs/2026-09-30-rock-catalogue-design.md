@@ -289,6 +289,30 @@ It also records the tool version and the recipe hash.
   special cases.
 - The `.dvox` volume is scaled the same way when `SourceVolumeCache` reads it.
 
+### Hull source keying (found while planning)
+
+`Model::source` is the key for every damage-volume consumer: `CarveFieldCache`,
+`SourceVolumeCache`, the `.dhv` `HullVolumeCache`, `hull_volume_resolution`, and
+the hull-split bindings. The last two caches also **re-read the file** to
+voxelise it or bake its SDF, and they only understand NIF. So both the glTF
+format and the load scale have to reach them:
+
+- **Source string.** `Model::source` is the file path when `scale == 1`, and
+  otherwise `<path>#s=<scale, %.6g>`. Distinct scales therefore get distinct
+  cache entries everywhere with no key changes. `assets/hull_source.h` provides
+  `hull_source_string(path, scale)` and `split_hull_source(source) -> {path,
+  scale}`.
+- **One triangle source.** `voxel::collect_hull_triangles_from_source(source)`
+  splits the source, reads NIF or glTF by extension, and applies the scale. It
+  replaces the direct `nif::load` + `collect_hull_triangles_from_nif` calls in
+  `SourceVolumeCache` and in `HullVolumeCache`'s bake.
+- **The filesystem half.** Only the split path touches the filesystem: the
+  existence checks and the `.dhv` size/mtime fingerprint. The `.dhv`
+  `source_path` and key keep the full source string.
+- **A GL-free glTF reader.** `assets::gltf::load_cpu(path, scale)` returns
+  flattened `MeshCpu`s already in BC's frame and units, material image paths,
+  and the `extras` volume path. The GPU build and the voxel library share it.
+
 ### `.dvox` damage volume sidecar
 
 - **Layout:**
@@ -343,9 +367,11 @@ It also records the tool version and the recipe hash.
   case-insensitive.
 - **Keyed on the stock filenames, not species 712**, so a mod that ships its own
   asteroid model is left alone.
-- **Size.** Load scale = `STOCK_HALF_EXTENT[nif] / (rock.bound_radius_m / 1.75)`,
-  where `STOCK_HALF_EXTENT` is in BC model units and the divisor is the rock's
-  radius after the loader's metre conversion. The four
+- **Size.** Load scale = `STOCK_RADIUS_MU[nif] / (rock.bound_radius_m / 1.75)`.
+  `STOCK_RADIUS_MU` is the stock mesh's bounding radius in BC model units: the
+  largest vertex distance from the model origin, the same definition the tool
+  normalises rocks by. The divisor is the rock's radius after the loader's metre
+  conversion. The four
   constants live in `engine/rocks/catalogue.py`, and an asset-backed test measures
   the real NIFs against them (Testing). The ship's `SetScale` still applies on
   top, exactly as today.
@@ -398,7 +424,7 @@ Every test runs under `scripts/check_tests.sh`, which must exit 0.
   - the developer toggle is respected
   - the conftest autouse reset covers the toggle
 - **Asset-backed:** the measured AABBs of the four stock NIFs match
-  `STOCK_HALF_EXTENT`. BC content is found through the configured content root,
+  `STOCK_RADIUS_MU`. BC content is found through the configured content root,
   never a hard-coded `game/`. With a root configured, a skip fails the gate
   unless baselined.
 - **Host (hidden GL window):** `load_model` on a catalogue rock at a stock scale
