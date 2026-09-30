@@ -10,7 +10,7 @@ Removal reuses ship_death.retire, so the ordering is exactly the ship one:
 SetDead + ET_OBJECT_DESTROYED while still in the set, then target locks
 cleared, then set removal, then ET_DELETE_OBJECT_PUBLIC.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import engine.dev_mode as dev_mode
 from engine.appc.math import TGPoint3
@@ -34,6 +34,9 @@ class ChunkSpec:
     vel: tuple
     angular: tuple
     pSet: object
+    # ObjIDs of the breakup's parent and major pieces: the host ghosts the
+    # chunk against these (and its sibling chunks) for kPieceGhostTime.
+    ghost_ids: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,7 @@ def _break_up(rock, pSet, name) -> None:
     _vfx_specs.append(DeathVfxSpec((loc.x, loc.y, loc.z), radius, pSet))
     major_i = 0
     pieces = []
+    chunk_specs = []
     for i, p in enumerate(breakup.plan(name, radius)):
         d = TGPoint3(*p.offset)
         d.MultMatrixLeft(R)                  # body -> world
@@ -128,9 +132,12 @@ def _break_up(rock, pSet, name) -> None:
             pSet.AddObjectToSet(piece, piece_name)
             pieces.append(piece)
         elif p.tier == "chunk":
-            _chunk_specs.append(ChunkSpec(
+            chunk_specs.append(ChunkSpec(
                 family, "%s#%d" % (name, i), p.radius_gu,
                 stats.piece_mass(parent_mass, p.v_ratio), at, vel, ang, pSet))
+    # Chunk specs wait for the majors: they carry every piece's ObjID.
+    ghost_ids = tuple(o.GetObjID() for o in [rock] + pieces)
+    _chunk_specs.extend(replace(s, ghost_ids=ghost_ids) for s in chunk_specs)
     if pieces:
         _ghost([rock] + pieces)
 

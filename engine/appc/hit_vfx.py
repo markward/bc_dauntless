@@ -44,7 +44,9 @@ def spawn(position: TGPoint3, normal=None, severity=Severity.HULL,
       instance_id  — receiving ship's renderer instance id (hull anchor)
       body_point   — impact point in ship body frame (model units, 3-tuple)
       body_normal  — surface normal in ship body frame (3-tuple)
-      weapon_kind  — SPARK_KIND_PHASER (0) / SPARK_KIND_TORPEDO (1) tint+cone
+      weapon_kind  — SPARK_KIND_PHASER (0) / SPARK_KIND_TORPEDO (1) /
+                     SPARK_KIND_ROCK (2, drawn world-anchored at `position`
+                     when instance_id is None) tint+cone
       spark_count  — number of sparks to emit
 
     `pSet` is the set `position` is local to (the struck ship's). The render

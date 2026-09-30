@@ -199,7 +199,7 @@ struct HitVfxDescriptor {
     scenegraph::InstanceId instance_id{};  // default {0,0}
     glm::vec3 body_point{0.0f};       // impact in ship body frame (model units)
     glm::vec3 body_normal{0.0f};      // surface normal, body frame
-    int       weapon_kind = 1;        // 0=phaser (cool/tight), 1=torpedo (hot/wide)
+    int       weapon_kind = 1;        // 0=phaser (cool/tight), 1=torpedo (hot/wide), 2=rock dust (grey, spherical; world-anchored w/o instance)
     int       spark_count = 0;
 };
 

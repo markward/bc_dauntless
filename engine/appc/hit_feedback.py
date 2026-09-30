@@ -90,8 +90,10 @@ def shield_impact_intensity(weapon_type: str | None) -> float:
 
 SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
 SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
+SPARK_KIND_ROCK = 2      # grey-brown dust and grit, near-spherical (any hit on a rock)
 
-_SPARK_BASE_COUNT = {SPARK_KIND_PHASER: 6, SPARK_KIND_TORPEDO: 12}
+_SPARK_BASE_COUNT = {SPARK_KIND_PHASER: 6, SPARK_KIND_TORPEDO: 12,
+                     SPARK_KIND_ROCK: 10}
 _SPARK_CRITICAL_MULT = 1.5
 
 
@@ -499,6 +501,14 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
     spark_count, weapon_kind = spark_params(
         weapon_type=weapon_type, severity=severity,
         absorbed_hull=absorbed_hull)
+    from engine.rocks.rock import is_rock
+    if is_rock(ship):
+        # Dust and grit, not hot metal (rock-class spec §2: no hull arcing).
+        weapon_kind = SPARK_KIND_ROCK
+        if spark_count:
+            spark_count = _SPARK_BASE_COUNT[SPARK_KIND_ROCK]
+            if severity == Severity.CRITICAL:
+                spark_count = int(spark_count * _SPARK_CRITICAL_MULT)
     body_point = body_normal = None
     instance_id = None
     # Resolve the hull anchor for EVERY hit that can have one, not just

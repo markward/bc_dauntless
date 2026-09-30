@@ -11055,6 +11055,15 @@ def run(mission_name: Optional[str] = None,
                         ship_instances=(session.ship_instances if session is not None else None),
                     )
 
+                # Rock breakup, render side (rock-class spec §2): the death
+                # burst (crack flash, dust, light) and the tumbling chunks
+                # engine.rocks.death queued -- this frame's collision kills
+                # included.
+                with frame_profiler.scope("sim.rock_breakup"):
+                    from engine.rocks import chunks as rock_chunks, vfx as rock_vfx
+                    rock_vfx.pump()
+                    rock_chunks.pump(r, session)
+
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame
                 # -- before the hand-off tick, so a drop-out's own hand-off

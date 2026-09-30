@@ -78,6 +78,11 @@ class DebrisChunk:
         # True while tick() has hidden the instance because the chunk's set is
         # outside the viewed frame; visibility is pushed only on a change.
         self._frame_hidden = False
+        # Seconds left on a TIMED pair mask (ghost()); None = the parent-
+        # distance release below. Rock chunks use the timer: their "origin"
+        # is a sentinel with no position, and a breakup's parent, major
+        # pieces and sibling chunks all have to be ignored, not one parent.
+        self._ghost_time_left = None
 
     @property
     def origin_ship(self):
@@ -172,6 +177,43 @@ def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
     return chunk
 
 
+class _BodyOrigin:
+    """weakref target for a chunk with no parent hull (spawn_body): the only
+    reader of origin_ship is _release_parent_mask_if_clear, which a ghost()
+    timer or an empty mask bypasses."""
+
+
+_BODY_ORIGIN = _BodyOrigin()
+
+
+def spawn_body(iid, *, loc, rot, vel, angular, mass, radius, scale,
+               pSet=None):
+    """A chunk body for an already-instanced model that is NOT a piece of a
+    hull (a rock breakup chunk wearing a catalogue fragment): centred on its
+    model origin (centroid 0), no cells, no parent mask. `scale` multiplies
+    BC_MODEL_SCALE in the pushed transform, like a ship's GetScale(); `pSet`
+    is the set `loc` is in (a chunk with no set strikes nothing)."""
+    global _next_obj_id
+    _next_obj_id += 1
+    chunk = DebrisChunk(iid, _BODY_ORIGIN, 0, mass, radius, scale,
+                        TGPoint3(0.0, 0.0, 0.0), loc, _copy_rot(rot), vel,
+                        angular, _next_obj_id)
+    chunk._containing_set = pSet
+    _live.append(chunk)
+    return chunk
+
+
+def ghost(chunks, peer_ids, seconds):
+    """Mask every chunk in `chunks` against the ObjIDs `peer_ids` and against
+    each other for `seconds`, then tick() lifts the mask. The mask is read
+    symmetrically by collisions.resolve_collisions, so listing a peer on the
+    chunk side alone exempts the pair."""
+    ids = frozenset(peer_ids) | frozenset(c.GetObjID() for c in chunks)
+    for c in chunks:
+        c._collision_disabled_ids = ids - {c.GetObjID()}
+        c._ghost_time_left = float(seconds)
+
+
 def live():
     return list(_live)
 
@@ -211,30 +253,47 @@ def tick(dt, renderer):
     while len(_live) > kMaxLiveChunks:
         old = _live.pop(0)
         _destroy(old, renderer)
-    from engine.host_loop import _world_matrix_from, BC_MODEL_SCALE
     from engine.systems import frames
     view = frames.viewing_set()
     for c in _live:
         v = c._vel
         c._loc = TGPoint3(c._loc.x + v.x * dt, c._loc.y + v.y * dt, c._loc.z + v.z * dt)
         _integrate_rotation(c, dt)
-        c._release_parent_mask_if_clear()
-        try:
-            o = c._mesh_origin()
-            pos = frames.in_view(view, c._containing_set, o.x, o.y, o.z)
-            if pos is None:
-                if not c._frame_hidden:
-                    renderer.set_visible(c.iid, False)
-                    c._frame_hidden = True
-                continue
-            if c._frame_hidden:
-                renderer.set_visible(c.iid, True)
-                c._frame_hidden = False
-            renderer.set_world_transform(
-                c.iid, _world_matrix_from(TGPoint3(*pos), c._rot,
-                                          BC_MODEL_SCALE * c.scale))
-        except Exception as _e:
-            dev_mode.log_swallowed("debris chunk transform push", _e)
+        if c._ghost_time_left is not None:
+            c._ghost_time_left -= dt
+            if c._ghost_time_left <= 0.0:
+                c._collision_disabled_ids = frozenset()
+                c._ghost_time_left = None
+        else:
+            c._release_parent_mask_if_clear()
+        push_transform(c, renderer, view)
+
+
+def push_transform(c, renderer, view=None):
+    """Push `c`'s world transform (in the viewed set's coordinates), hiding
+    it outside the viewed frame. tick() calls it per chunk; a spawner calls
+    it once at birth so the instance never draws a frame at its default
+    transform. `view` defaults to the current viewing set."""
+    from engine.host_loop import _world_matrix_from, BC_MODEL_SCALE
+    from engine.systems import frames
+    if view is None:
+        view = frames.viewing_set()
+    try:
+        o = c._mesh_origin()
+        pos = frames.in_view(view, c._containing_set, o.x, o.y, o.z)
+        if pos is None:
+            if not c._frame_hidden:
+                renderer.set_visible(c.iid, False)
+                c._frame_hidden = True
+            return
+        if c._frame_hidden:
+            renderer.set_visible(c.iid, True)
+            c._frame_hidden = False
+        renderer.set_world_transform(
+            c.iid, _world_matrix_from(TGPoint3(*pos), c._rot,
+                                      BC_MODEL_SCALE * c.scale))
+    except Exception as _e:
+        dev_mode.log_swallowed("debris chunk transform push", _e)
 
 
 def _destroy(chunk, renderer):
