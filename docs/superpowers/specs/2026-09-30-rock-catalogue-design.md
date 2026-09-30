@@ -390,7 +390,7 @@ format and the load scale have to reach them:
 - **Unchanged in this sub-project:** hardpoint radius, hull, mass and genus.
   Sub-project 2 replaces them.
 - **Developer toggle.** Developer Options gets a row, "Rocks: catalogue / stock
-  BC", labelled *(applies on mission load)*. The default is catalogue. It sits on
+  BC", labelled *(applies to rocks loaded after toggling)*. The default is catalogue. It sits on
   the same tab the branch used for its procedural toggle (Lighting, the de facto
   visual-toggles tab). It is not persisted, and it exists for A/B checks.
 

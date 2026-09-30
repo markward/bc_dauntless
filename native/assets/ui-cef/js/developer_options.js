@@ -145,7 +145,7 @@ function _doRenderLightingBody(state, focusables) {
     html += _doValueRow('Normal Map Strength', 'normal_strength',
                         Number(s.normal_strength).toFixed(1) + '×',
                         isFoc('normal_strength'));
-    html += _doToggleRow('Catalogue Rocks (off = stock BC; applies on mission load)',
+    html += _doToggleRow('Catalogue Rocks (off = stock BC; applies to rocks loaded after toggling)',
                          'rock_catalogue', s.rock_catalogue, isFoc('rock_catalogue'));
     return html;
 }
