@@ -555,6 +555,18 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     # mesh (host present) exactly as the weapons path does, and anchors at
     # the boundary itself on a miss or headless. `contact` (a's boundary) is
     # the nominal point returned for tests/debugging.
+    # A planet strike posts ET_PLANET_COLLISION BEFORE the impact damage,
+    # chunks included (see the emitter). Order, not damage, is what this
+    # changes: event dispatch is synchronous, so a lethal hit posted first
+    # would run the victim's ET_OBJECT_EXPLODING handlers ahead of the
+    # planet event. E1M2 then counts an asteroid that struck Haven as a
+    # player kill (ObjectDestroyed -> AsteroidDestroyed) and PlanetCollision
+    # finds it already gone -- the Haven-hit / MissionLost beat never fires.
+    # Inference, not RE: BC routes planet contact through its own handler on
+    # this event (ShipClass::PlanetCollisionHandler), so the event cannot
+    # trail a death it may itself cause.
+    _emit_planet_collision(a.obj, b.obj)
+
     from engine.appc.combat import apply_hit
     damage = _ke_damage(inv_sum, v_rel)
     contact = boundary_a
@@ -637,6 +649,38 @@ def _emit_object_collision(obj_a, obj_b, contact, force,
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("emit ET_OBJECT_COLLISION", _e)
+
+
+def _emit_planet_collision(obj_a, obj_b) -> None:
+    """Broadcast ET_PLANET_COLLISION when exactly one party is a Planet (moons
+    and suns included: Sun subclasses Planet, and iter_collidables already
+    treats both as the same immovable anchor). Source = the planet,
+    destination = the object that struck it; ONE event per contact, on the
+    same impact-only path as ET_OBJECT_COLLISION, so a resting grind is
+    silent. Two planets never reach here (two immovables return early).
+
+    Evidence is SDK usage only -- the stbc-reference MCP was unavailable:
+    E1M2.PlanetCollision (E1M2.py:1308), the event's only SDK consumer, reads
+    Planet_Cast(GetSource()) and ShipClass_Cast(GetDestination()). BC's own
+    ShipClass::PlanetCollisionHandler (registered on this event in the
+    decompile) is unreconstructed; we post the event, we do not model what
+    that handler does. A DebrisChunk destination is safe: E1M2's
+    ShipClass_Cast gives None and it returns. Raise-safe."""
+    import App
+    from engine.appc.planet import Planet
+    from engine import dev_mode
+    a_planet, b_planet = isinstance(obj_a, Planet), isinstance(obj_b, Planet)
+    if a_planet == b_planet:
+        return
+    planet, other = (obj_a, obj_b) if a_planet else (obj_b, obj_a)
+    try:
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_PLANET_COLLISION)
+        evt.SetSource(planet)
+        evt.SetDestination(other)
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("emit ET_PLANET_COLLISION", _e)
 
 
 def _emit_cloaked_collision(obj_a, obj_b) -> None:

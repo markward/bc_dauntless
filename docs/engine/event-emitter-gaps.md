@@ -596,6 +596,35 @@ The emitter above was real but unreachable in production: nothing called
 reachable in production — see
 `docs/engine/npc-ai-contract-review-2026-09-19.md` gap #8.
 
+## 13. `ET_PLANET_COLLISION` (0x800052) — ✅ DONE (found 2026-09-30, after the original 12)
+
+Not in the Q13 dozen: the constant was real, but nothing posted it, and the
+register had never listed it. Found by the rock-class E2E
+(`tests/integration/test_e1m2_rocks.py`), where an asteroid driven into Haven
+never reached `E1M2.PlanetCollision`, the event's only SDK consumer
+(`E1M2.py:1135` registers, `:1308` handles).
+
+**Emitter:** `collisions.py` `_emit_planet_collision()`, called from
+`_respond_pair` on the impact path only (a resting grind is silent). It posts
+one event per contact when exactly one party is a `Planet`. Moons and suns
+count, because `Sun` subclasses `Planet`. Source = the planet, destination =
+the other body. Debris chunks are included: E1M2's `ShipClass_Cast` returns
+None for a chunk and bails, unlike the FriendlyFire dereference that keeps
+chunks off `ET_OBJECT_COLLISION`.
+
+**Evidence:** SDK usage only. `PlanetCollision` reads
+`Planet_Cast(GetSource())` and `ShipClass_Cast(GetDestination())`. The
+stbc-reference MCP was down. The decompile shows BC registering
+`ShipClass::PlanetCollisionHandler` on this event; its body is unreconstructed,
+and we do not model it.
+
+**⚠️ Posted BEFORE the impact damage.** Dispatch is synchronous, so a lethal
+hit posted first runs `ET_OBJECT_EXPLODING` handlers ahead of the planet event.
+E1M2 then scores the asteroid as a player kill (`AsteroidDestroyed`), and the
+Haven-hit → `MissionLost` beat never fires. Posting first means one count, as
+a planet hit. That order is an inference from BC having a handler on this
+event, not RE'd. Pinned by the E2E `killed == []`.
+
 ---
 
 ## Summary table
@@ -614,3 +643,4 @@ reachable in production — see
 | `ET_RESTORE_PERSISTENT_TARGET` | `TacticalMenuHandlers.py:407/958` | ✅ **DONE** — `target_menu.attempt_persistent_restore`, on the periodic refresh; mechanism recovered by the RE project |
 | `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | ✅ **DONE** — `ships.py` engage + `_end_in_system_warp()` shared by all 4 disengage sites |
 | `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |
+| `ET_PLANET_COLLISION` | `E1M2.py:1135/1308` | ✅ **DONE** (#13, found after the 12) — `collisions.py` `_emit_planet_collision()`, impact path, source planet / destination body, posted before impact damage |

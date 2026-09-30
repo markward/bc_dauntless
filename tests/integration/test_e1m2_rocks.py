@@ -77,24 +77,22 @@ def test_planet_collision_handler_counts_a_rock():
     assert name not in mod.g_dAsteroidInfo
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "No engine emitter for ET_PLANET_COLLISION: BC registers "
-    "ShipClass::PlanetCollisionHandler on 0x800052 (decompiled "
-    "05_game_mission.c:68141) but engine/appc/collisions.py only posts "
-    "ET_OBJECT_COLLISION, so E1M2.PlanetCollision never runs. The rock is "
-    "instead destroyed by collision damage and counted by ObjectDestroyed "
-    "as a player kill (AsteroidDestroyed), not AsteroidHitPlanet."))
 def test_moving_asteroid_hitting_haven_counts():
     """The whole beat through the real collision path: a moving asteroid
-    driven into Haven reaches E1M2.PlanetCollision -> AsteroidHitPlanet."""
+    driven into Haven reaches E1M2.PlanetCollision -> AsteroidHitPlanet.
+
+    The contact is also lethal to the rock (it dies and breaks up), so it must
+    count ONCE, as a planet hit: ET_PLANET_COLLISION is posted before the
+    impact damage, and ObjectDestroyed then finds the name already gone."""
     from engine.appc import collisions
     mod = _init_e1m2()
     haven, rock, name = _haven_and_first_rock(mod)
     # Live, host realise sets GetRadius from the mesh; headless nothing does,
     # and a zero-radius object is not collidable at all.
     rock.SetRadius(1.0)
-    hit = []
+    hit, killed = [], []
     mod.AsteroidHitPlanet = lambda: hit.append(1)
+    mod.AsteroidDestroyed = lambda: killed.append(1)
     hp = haven.GetWorldLocation()
     # Just outside the effective boundary (bounding spheres x the scale).
     r = (haven.GetRadius() + rock.GetRadius()) * collisions.COLLISION_RADIUS_SCALE
@@ -106,4 +104,7 @@ def test_moving_asteroid_hitting_haven_counts():
         loop.tick()
         collisions.tick_collisions(1.0 / 60.0)
     assert hit == [1]
+    assert killed == []
     assert len(mod.g_dAsteroidInfo) == before - 1
+    assert name not in mod.g_dAsteroidInfo
+    assert rock.IsDying() or rock.IsDead()       # the contact was lethal
