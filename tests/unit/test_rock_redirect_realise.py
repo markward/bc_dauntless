@@ -184,3 +184,61 @@ def test_realize_session_redirects_stock_asteroid(monkeypatch):
     assert call.path.endswith("lod0.gltf")
     rock = catalogue.pick(player.GetName())
     assert call.kwargs["scale"] == pytest.approx(catalogue.load_scale(rock, "asteroid1.nif"))
+
+
+# ---- I1: a failed catalogue rock load falls back to the stock NIF ----------
+
+class _GltfFailingRenderer(_FakeRenderer):
+    """load_model raises for any catalogue rock (.gltf) -- a missing / corrupt
+    committed catalogue must not make the asteroid vanish."""
+
+    def load_model(self, path, search, texture_replacements=None, decals=None, **kwargs):
+        self.load_calls.append(_LoadCall(path, search, texture_replacements, dict(kwargs)))
+        if str(path).endswith(".gltf"):
+            raise RuntimeError("simulated glTF load failure")
+        return 100
+
+
+def test_failed_rock_load_falls_back_to_stock_in_realize_set_objects(
+        monkeypatch, stock_asteroid_ship, session):
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: _stock_asteroid_path())
+    r_ = _GltfFailingRenderer()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    s.AddObjectToSet(stock_asteroid_ship, "Debris1")
+
+    hl.realize_set_objects(session, s, r_, ships=[stock_asteroid_ship])
+
+    assert r_.load_calls[0].path.endswith("lod0.gltf")
+    last = r_.load_calls[-1]
+    assert last.path.lower().endswith("asteroid1.nif")
+    assert "scale" not in last.kwargs
+    assert stock_asteroid_ship in session.ship_instances
+
+
+def test_failed_rock_load_falls_back_to_stock_in_realize_session(monkeypatch):
+    from tools import mission_harness
+    mission_harness.setup_sdk()
+
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: _stock_asteroid_path())
+
+    controller = hl.HostController()
+    controller.renderer = _GltfFailingRenderer()
+    controller.loader = hl._MissionLoader(controller, verbose=False)
+
+    session = controller.loader.load_quickbattle()
+
+    from engine.core.game import Game_GetCurrentGame
+    player = Game_GetCurrentGame().GetPlayer()
+    assert player is not None
+    assert player in session.ship_instances
+
+    calls = controller.renderer.load_calls
+    assert any(c.path.endswith("lod0.gltf") for c in calls)
+    last = calls[-1]
+    assert last.path.lower().endswith("asteroid1.nif")
+    assert "scale" not in last.kwargs
+    # The stock handle is cached under the legacy key (no rock, no scale).
+    legacy_key = hl._ship_load_key(_stock_asteroid_path(), last.reps)
+    assert controller.nif_to_handle.get(legacy_key) == 100
+    assert _stock_asteroid_path() in controller.nif_to_extent

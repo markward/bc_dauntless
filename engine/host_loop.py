@@ -5474,6 +5474,20 @@ def _ship_model_source(ship, nif_path: str) -> tuple:
         return nif_path, 1.0
 
 
+_rock_fallback_warned: set = set()
+
+
+def _warn_rock_fallback(model_path, nif_path, exc: BaseException) -> None:
+    """One stderr line per catalogue model path whose load failed; the caller
+    then retries the stock NIF (the fallback `_ship_model_source` promises)."""
+    if model_path in _rock_fallback_warned:
+        return
+    _rock_fallback_warned.add(model_path)
+    print(f"[host_loop] rock catalogue: load_model({model_path}) raised "
+          f"{type(exc).__name__}: {exc}; falling back to stock {nif_path}",
+          file=sys.stderr, flush=True)
+
+
 def _ship_load_key(nif_path, reps, decals=None, scale: float = 1.0):
     """Model-cache key for a ship load. Bare NIF path when no registry swap,
     no decals and no rock-catalogue scale (byte-identical to the legacy key,
@@ -5987,8 +6001,16 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         reps = _ship_texture_replacements(ship)
         decals = _ship_decals(ship, nif_path, reps)
         try:
-            handle = r_.load_model(model_path, tex_search, reps,
-                                    decals=decals or None, **load_kwargs)
+            try:
+                handle = r_.load_model(model_path, tex_search, reps,
+                                        decals=decals or None, **load_kwargs)
+            except Exception as e:
+                if model_path == nif_path:
+                    raise
+                # A catalogue rock that fails to load falls back to stock.
+                _warn_rock_fallback(model_path, nif_path, e)
+                handle = r_.load_model(nif_path, tex_search, reps,
+                                        decals=decals or None)
         except Exception as e:
             if verbose:
                 print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
@@ -7074,8 +7096,22 @@ class _MissionLoader:
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
-                    handle = r_.load_model(model_path, tex_search, reps,
-                                            decals=decals or None, **load_kwargs)
+                    try:
+                        handle = r_.load_model(model_path, tex_search, reps,
+                                                decals=decals or None, **load_kwargs)
+                    except Exception as e:
+                        if model_path == nif_path:
+                            raise
+                        # A catalogue rock that fails to load falls back to
+                        # stock, under the legacy load/extent keys.
+                        _warn_rock_fallback(model_path, nif_path, e)
+                        model_path, model_scale = nif_path, 1.0
+                        load_key = _ship_load_key(nif_path, reps, decals)
+                        extent_key = nif_path
+                        handle = self._c.nif_to_handle.get(load_key)
+                        if handle is None:
+                            handle = r_.load_model(nif_path, tex_search, reps,
+                                                    decals=decals or None)
                 except Exception as e:
                     if self._verbose:
                         print(f"[host_loop]   skip ship: load_model({nif_path}) raised: "
