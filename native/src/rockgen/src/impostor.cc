@@ -54,6 +54,38 @@ Projected project(const glm::vec3& p, const glm::vec3& n, const glm::vec2& uv,
     return out;
 }
 
+// Barycentric weights near a shared triangle edge can independently round to
+// a hair on the WRONG side of zero in each of the two triangles that share
+// it (their edge-function formulas differ -- each uses its own third,
+// non-shared vertex), so a plain ">= 0" inclusion test can have BOTH
+// triangles reject the same pixel: a 1-pixel transparent crack along the
+// seam. kEdgeEpsilon treats any weight within this band of zero as "on the
+// edge" rather than "outside", and owns_tie() below deterministically
+// assigns that boundary pixel to exactly one of the two triangles.
+constexpr float kEdgeEpsilon = 1e-4f;
+
+/// Deterministic tie-break for a pixel on (or within kEdgeEpsilon of) the
+/// line through directed edge a->b: this edge "owns" boundary pixels if it
+/// points toward decreasing screen Y, or -- if exactly horizontal -- toward
+/// decreasing screen X. A mesh's shared interior edge is walked in OPPOSITE
+/// directions by its two owning triangles (consistent mesh winding, see
+/// shape.cc's `Shape.OutwardWinding`), so `owns_tie(a, b)` and
+/// `owns_tie(b, a)` are never both true (nor both false): exactly one
+/// triangle claims the boundary.
+bool owns_tie(const glm::vec2& a, const glm::vec2& b) {
+    if (a.y != b.y) return b.y < a.y;
+    return b.x < a.x;
+}
+
+/// Whether a triangle vertex's (opposite-edge) barycentric weight `w` puts a
+/// pixel inside this triangle across that edge (a->b, in the triangle's own
+/// vertex order).
+bool covers(float w, const glm::vec2& a, const glm::vec2& b) {
+    if (w > kEdgeEpsilon) return true;
+    if (w < -kEdgeEpsilon) return false;
+    return owns_tie(a, b);
+}
+
 /// Nearest-texel sample of one channel of an interleaved image. `uv.x` wraps
 /// (seam-split duplicate vertices carry u in [0, 2]); `uv.y` clamps (poles).
 std::uint8_t sample_nearest(const assets::Image& img, const glm::vec2& uv, int channel, int channels) {
@@ -142,7 +174,9 @@ Impostor bake_impostor(const assets::MeshCpu& mesh, const RockSurface& s, int vi
                     const float w1 = ((p2.screen.y - p0.screen.y) * (sx - p2.screen.x)
                                     + (p0.screen.x - p2.screen.x) * (sy - p2.screen.y)) / denom;
                     const float w2 = 1.0f - w0 - w1;
-                    if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) continue;
+                    if (!covers(w0, p1.screen, p2.screen)) continue;
+                    if (!covers(w1, p2.screen, p0.screen)) continue;
+                    if (!covers(w2, p0.screen, p1.screen)) continue;
 
                     const float d = w0 * p0.depth + w1 * p1.depth + w2 * p2.depth;
                     const size_t di = static_cast<size_t>(py) * static_cast<size_t>(view_size) + static_cast<size_t>(px);
