@@ -1187,6 +1187,15 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # Explosion lights (engine.appc.explosion_lights): blasts and pending
+    # death sequences; a rock's crack flash (register_at) or a ship death
+    # left glowing by one test would light every later test's scene.
+    try:
+        _el = sys.modules.get("engine.appc.explosion_lights")
+        if _el is not None:
+            _el.reset()
+    except Exception:
+        pass
     # Rock death registry + the render-side chunk/VFX queues it fills: a rock
     # left dying by one test would be retired (by NAME, from its set) in a
     # later test's advance().

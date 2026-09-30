@@ -43,7 +43,12 @@ This is a **deliberate departure from BC**, which built every asteroid as a full
     "Asteroid 3")` or the Warbird never flings the Karoon.
   - E1M2 `AsteroidExploding` (`E1M2.py:3084`, the death script) uses
     `DamageableObject_Cast`, which any design passes.
-- **E3M1's "asteroid" is a disguised Amagon ship** (`E3M1.py:411`). Out of scope.
+- **E3M1's "Asteroid Amagon" DOES become a rock** (`E3M1.py:411`,
+  `loadspacehelper.CreateShip("Amagon", ...)`): its hardpoint sets genus 3
+  (`ships/Hardpoints/amagon.py:24`, `AsteroidMass.SetGenus(3)`), so
+  `SetupProperties` switches it to `RockClass` like any stock asteroid.
+  (Corrected in the final review; an earlier draft called it a disguised ship
+  and out of scope.) Needs a live check — see below.
 - **Nothing attaches an AI to a rock.** The hardpoints' `SetAIString
   ("NonFedAttack")` is copied (`ships.py:1210`) and never read by the engine or
   the SDK. E2M1's "FlyToAsteroid" AI belongs to the Warbird.
@@ -255,3 +260,10 @@ inert).
 moving asteroids actually move and break; E3M2 — Vesuvi 4's Unknown Debris
 still scan and do not die; QuickBattle in Multi1 — 54 rocks visible; shoot a
 big rock until it breaks into targetable pieces.
+
+Also:
+- **E1M2 — a fully destroyed large asteroid** yields many targetable pieces
+  (~58 across generations): check the target list and frame rate hold up.
+- **E3M1 — "Asteroid Amagon"** is a genus-3 rock: it should drift/spin as
+  scripted, not run ship AI, and break up rather than explode like a ship.
+  Confirm E3M1's own handling of it still plays out.

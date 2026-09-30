@@ -520,3 +520,32 @@ def test_immovable_killer_keeps_outward_velocity():
     death.begin(rock, killer=planet)
     for p in _majors_of(pSet, "Asteroid 5b", 2.0):
         assert p.GetVelocityTG().x < -5.0 + breakup.kSeparationSpeedGU + 1e-9
+
+
+def test_render_queues_are_bounded_and_keep_the_newest():
+    """Headless nothing drains the chunk/VFX queues, so a long run of rock
+    deaths must not grow them without bound: oldest dropped at the cap."""
+    from engine.rocks import death
+    cap = death.kMaxQueuedSpecs
+    for i in range(cap + 40):
+        rock = _make(App.GENUS_ASTEROID)
+        rock.SetRadius(0.8)              # stock size: chunks, no majors
+        _in_set(rock, "Q%d" % i)
+        death.begin(rock)
+    vfx = death.drain_death_vfx()
+    chunks = death.drain_chunk_specs()
+    assert len(vfx) == cap
+    assert len(chunks) == cap
+    assert chunks[-1].seed.startswith("Q%d#" % (cap + 39))   # newest kept
+
+
+def test_a_set_less_dying_rock_is_logged_once(monkeypatch):
+    """A rock that dies outside any set cannot break up (pieces need a set):
+    say so once in dev mode rather than dropping it silently."""
+    import engine.dev_mode as dm
+    from engine.rocks import death
+    logged = []
+    monkeypatch.setattr(dm, "log_swallowed", lambda ctx, e: logged.append(ctx))
+    for _ in range(3):
+        death.begin(_make(App.GENUS_ASTEROID))
+    assert logged.count("set-less dying rock: no breakup") == 1

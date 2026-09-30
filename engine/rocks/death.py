@@ -17,11 +17,16 @@ from engine.appc.math import TGPoint3
 from engine.rocks import breakup, stats
 
 kRockDeathLife = 0.5
+# Cap on each render-side queue. The host drains them every frame; headless
+# nothing does, so a long run of rock deaths would grow them for ever. Past
+# the cap the OLDEST entries go (a stale chunk matters least).
+kMaxQueuedSpecs = 256
 
 _dying: list = []           # [{"rock", "time_left"}]
 _ghosts: list = []          # [{"objs": [parent, piece...], "time_left"}]
 _chunk_specs: list = []
 _vfx_specs: list = []
+_warned_setless = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,14 @@ def begin(rock, killer=None) -> None:
             _break_up(rock, pSet, name, killer)
         except Exception as e:
             dev_mode.log_swallowed("rock breakup", e)
+    else:
+        # Pieces need a set to join, so a set-less rock cannot break up, and
+        # advance() drops it without a retire. Say so once, not silently.
+        global _warned_setless
+        if not _warned_setless:
+            _warned_setless = True
+            dev_mode.log_swallowed("set-less dying rock: no breakup",
+                                   RuntimeError(str(name)))
 
 
 def _is_immovable(obj) -> bool:
@@ -153,7 +166,7 @@ def _break_up(rock, pSet, name, killer=None) -> None:
     parent_mass = float(rock.GetMass())
     family = rock.__dict__.get("_rock_family", "silicate")
     gen = int(rock.__dict__.get("_rock_generation", 0)) + 1
-    _vfx_specs.append(DeathVfxSpec((loc.x, loc.y, loc.z), radius, pSet))
+    _enqueue(_vfx_specs, [DeathVfxSpec((loc.x, loc.y, loc.z), radius, pSet)])
     major_i = 0
     pieces = []
     chunk_specs = []
@@ -198,9 +211,18 @@ def _break_up(rock, pSet, name, killer=None) -> None:
     # the killer's.
     ghosted = [rock] + pieces + ([killer] if killer is not None else [])
     ghost_ids = tuple(o.GetObjID() for o in ghosted)
-    _chunk_specs.extend(replace(s, ghost_ids=ghost_ids) for s in chunk_specs)
+    _enqueue(_chunk_specs, [replace(s, ghost_ids=ghost_ids) for s in chunk_specs])
     if pieces:
         _ghost(ghosted)
+
+
+def _enqueue(queue: list, items: list) -> None:
+    """Append to a render-side queue, dropping the oldest past
+    kMaxQueuedSpecs."""
+    queue.extend(items)
+    over = len(queue) - kMaxQueuedSpecs
+    if over > 0:
+        del queue[:over]
 
 
 def _set_pairs(objs, on) -> None:
@@ -281,6 +303,8 @@ def drain_death_vfx() -> list:
 
 
 def reset() -> None:
+    global _warned_setless
+    _warned_setless = False
     _dying.clear()
     _ghosts.clear()
     _chunk_specs.clear()

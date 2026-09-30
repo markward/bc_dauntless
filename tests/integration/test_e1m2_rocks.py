@@ -30,7 +30,7 @@ def test_moving_asteroids_are_rocks_and_actually_move():
         assert abs(moved - 2.0 * v) < 0.05 * v + 1e-3
 
 
-def test_clearing_debris_spawns_the_moving_asteroids():
+def test_destroying_every_debris_rock_sets_debris_cleared():
     """E1M2.ObjectDestroyed (E1M2.py:1257) ShipClass_Casts the destroyed
     object; when the last debris rock is destroyed it sets g_bDebrisCleared.
     Destroy every debris rock through the real damage path."""
