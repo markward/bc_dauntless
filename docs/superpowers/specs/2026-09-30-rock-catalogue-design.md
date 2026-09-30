@@ -185,8 +185,9 @@ It also records the tool version and the recipe hash.
 - **Fragments must look broken, not round.** Each is a displaced blob cut by 2–4
   random planes, giving flat fracture faces with lightly roughened edges. The
   planes are chosen per fragment from its seed.
-- After shaping, every mesh is recentred and rescaled so its bounding sphere
-  radius is exactly 100 m.
+- After shaping, LOD0 is recentred and rescaled so its bounding sphere radius
+  is exactly 100 m; every lower LOD reuses LOD0's centre and scale, so its
+  radius is at most 100 m and it never pops against LOD0.
 
 ### Surfaces
 

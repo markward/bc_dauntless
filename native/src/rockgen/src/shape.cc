@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <random>
 #include <utility>
@@ -52,7 +53,7 @@ struct Rng {
 };
 
 struct Crater { glm::vec3 centre; float radius; };   // radius: angular, radians
-struct Cut    { glm::vec3 normal; float fraction; }; // dist = fraction * max|p| (LOD0, pre-cut)
+struct Cut    { glm::vec3 normal; float fraction; }; // dist = fraction * support along normal (LOD0, pre-cut)
 
 struct RockParams {
     std::uint32_t noise_seed = 0;
@@ -85,7 +86,7 @@ RockParams draw_params(const RockSpec& spec) {
         for (int i = 0; i < n_cuts; ++i) {
             Cut c;
             c.normal = rng.direction();
-            c.fraction = static_cast<float>(rng.range(0.45, 0.8));
+            c.fraction = static_cast<float>(rng.range(0.45, 0.70));
             p.cuts.push_back(c);
         }
     }
@@ -161,12 +162,6 @@ float crater_term(const glm::vec3& d, const std::vector<Crater>& craters) {
 float radius_at(const glm::vec3& d, const FamilyParams& f, const RockParams& p) {
     const float n = detail::fbm(d * f.noise_scale, p.noise_seed, f.octaves);
     return 1.0f + f.displace * (n - 0.5f) * 2.0f - crater_term(d, p.craters);
-}
-
-float max_length(const std::vector<glm::vec3>& ps) {
-    float m = 0.0f;
-    for (const glm::vec3& q : ps) m = std::max(m, glm::length(q));
-    return m;
 }
 
 // --- normals and UVs (ported) ---------------------------------------------
@@ -250,29 +245,44 @@ std::vector<assets::MeshCpu> generate_rock_lods(const RockSpec& spec) {
         positions.push_back(std::move(ps));
     }
 
-    // Cut distances are fixed from LOD0's pre-cut extent, so every LOD is cut
-    // by the SAME planes.
-    const float cut_ref = positions.empty() ? 0.0f : max_length(positions[0]);
+    // Each cut's distance is a fraction of the rock's SUPPORT along the cut
+    // normal (max dot(p, n) over LOD0's pre-cut vertices), so every cut bites
+    // regardless of the rock's elongation. A fraction of max|p| instead let
+    // ~7% of cuts miss a stretched rock outright and left most of the rest
+    // too shallow to form a fracture face. Measured on LOD0 so every LOD is
+    // cut by the SAME planes.
+    std::vector<float> cut_dist;
+    for (const Cut& c : params.cuts) {
+        float support = -std::numeric_limits<float>::infinity();
+        for (const glm::vec3& q : positions[0]) support = std::max(support, glm::dot(q, c.normal));
+        cut_dist.push_back(c.fraction * support);
+    }
+
+    // Plane cuts: flatten everything beyond each plane onto it.
+    for (std::vector<glm::vec3>& ps : positions)
+        for (size_t k = 0; k < params.cuts.size(); ++k)
+            for (glm::vec3& q : ps) {
+                const float over = glm::dot(q, params.cuts[k].normal) - cut_dist[k];
+                if (over > 0.0f) q -= over * params.cuts[k].normal;
+            }
+
+    // LOD0 is recentred on its AABB midpoint and scaled so its max|p| is
+    // exactly the bound radius. Every lower LOD reuses LOD0's centre AND
+    // scale: a shared direction lands at the same position in every LOD (no
+    // popping), and a lower LOD's radius is <= the bound -- slightly short
+    // where it lacks LOD0's extreme vertex. Normalising each LOD to its own
+    // max|p| instead rescaled a coarse fragment LOD by up to ~10%.
+    glm::vec3 lo(positions[0][0]), hi(positions[0][0]);
+    for (const glm::vec3& q : positions[0]) { lo = glm::min(lo, q); hi = glm::max(hi, q); }
+    const glm::vec3 centre = (lo + hi) * 0.5f;
+    float lod0_max = 0.0f;
+    for (const glm::vec3& q : positions[0]) lod0_max = std::max(lod0_max, glm::length(q - centre));
+    const float scale = spec.bound_radius_m / lod0_max;
 
     std::vector<assets::MeshCpu> lods;
     for (size_t l = 0; l < subdivs.size(); ++l) {
         std::vector<glm::vec3>& ps = positions[l];
-
-        // Plane cuts: flatten everything beyond each plane onto it.
-        for (const Cut& c : params.cuts) {
-            const float dist = c.fraction * cut_ref;
-            for (glm::vec3& q : ps) {
-                const float over = glm::dot(q, c.normal) - dist;
-                if (over > 0.0f) q -= over * c.normal;
-            }
-        }
-
-        // Recentre on the AABB midpoint, then scale to the bound radius.
-        glm::vec3 lo(ps[0]), hi(ps[0]);
-        for (const glm::vec3& q : ps) { lo = glm::min(lo, q); hi = glm::max(hi, q); }
-        const glm::vec3 centre = (lo + hi) * 0.5f;
         for (glm::vec3& q : ps) q -= centre;
-        const float scale = spec.bound_radius_m / max_length(ps);
         for (glm::vec3& q : ps) q *= scale;
 
         assets::MeshCpu cpu;
