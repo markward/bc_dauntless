@@ -725,7 +725,16 @@ def _candidate_pairs(positions, radii, sets):
 
     Different sets: always a candidate -- resolve_collisions' own
     frames.offset_between check decides afterwards whether the pair is even
-    comparable, exactly as it did before broadphase existed."""
+    comparable, exactly as it did before broadphase existed.
+
+    A non-finite coordinate (NaN or +-inf) cannot be floor-divided into a
+    cell index -- `int(nan // cell)` raises ValueError, `int(inf // cell)`
+    raises OverflowError, and the old all-pairs loop never crashed on either
+    (a NaN/inf distance compare just evaluates to a normal True/False). Such
+    a body is pulled out of the grid and paired against every other body in
+    its set instead: conservative (a superset of whatever the grid would
+    have found had the position been sane), and it can never silently drop a
+    pair the old loop would have reached."""
     n = len(positions)
     if not _BROADPHASE:
         return [(i, k) for i in range(n) for k in range(i + 1, n)]
@@ -736,9 +745,17 @@ def _candidate_pairs(positions, radii, sets):
     for idxs in by_set.values():
         if len(idxs) < 2:
             continue
+        finite_idxs = []
+        nonfinite_idxs = []
+        for i in idxs:
+            p = positions[i]
+            if math.isfinite(p[0]) and math.isfinite(p[1]) and math.isfinite(p[2]):
+                finite_idxs.append(i)
+            else:
+                nonfinite_idxs.append(i)
         cell = max(kBroadphaseMinCellGU, 2.0 * max(radii[i] for i in idxs))
         grid: dict = {}
-        for i in idxs:
+        for i in finite_idxs:
             p = positions[i]
             key = (int(p[0] // cell), int(p[1] // cell), int(p[2] // cell))
             grid.setdefault(key, []).append(i)
@@ -753,6 +770,10 @@ def _candidate_pairs(positions, radii, sets):
                             for k in other:
                                 if i < k:
                                     pairs.add((i, k))
+        for i in nonfinite_idxs:
+            for k in idxs:
+                if i != k:
+                    pairs.add((min(i, k), max(i, k)))
     keys = list(by_set.keys())
     for a in range(len(keys)):
         for b in range(a + 1, len(keys)):
@@ -797,7 +818,7 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     offsets: dict = {}
     hits = []
     pos_list = [(b.center.x, b.center.y, b.center.z) for b in bodies]
-    radii = [b.obj.GetRadius() for b in bodies]
+    radii = [b.radius for b in bodies]   # exact value _respond_pair tests; _resolve_body already read GetRadius() once
     for i, k in _candidate_pairs(pos_list, radii, sets):
         a_obj, b_obj = bodies[i].obj, bodies[k].obj
         # Different frames never interact: a planet left standing in the
