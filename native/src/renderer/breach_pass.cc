@@ -94,6 +94,20 @@ namespace {
 bool g_shell_debug = false;
 }  // namespace
 
+unsigned int find_base_texture_id(const assets::Model& model) {
+    constexpr auto kBase =
+        static_cast<std::size_t>(assets::Material::StageSlot::Base);
+    for (const auto& mesh : model.meshes) {
+        const int mi = mesh.material_index();
+        if (mi < 0 || static_cast<std::size_t>(mi) >= model.materials.size()) continue;
+        const int ti = model.materials[static_cast<std::size_t>(mi)].stages[kBase].texture_index;
+        if (ti < 0 || static_cast<std::size_t>(ti) >= model.textures.size()) continue;
+        const unsigned int id = model.textures[static_cast<std::size_t>(ti)].id();
+        if (id != 0) return id;
+    }
+    return 0;
+}
+
 void BreachPass::set_shell_debug(bool on) { g_shell_debug = on; }
 bool BreachPass::shell_debug() { return g_shell_debug; }
 
@@ -200,7 +214,9 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
                                  const scenegraph::HullCarveField* carve,
                                  bool interior_shell,
                                  const std::unordered_map<int, glm::mat4>*
-                                     node_overrides) {
+                                     node_overrides,
+                                 bool surface_is_rock,
+                                 unsigned int rock_tex) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
     // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass. NOT uploaded to
@@ -254,6 +270,15 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     // Triplanar Damage.tga on unit 1.
     shader.set_int("u_damage_tex", 1);
     shader.set_float("u_tex_scale", kTexScale);
+
+    // Rock crater interior on unit 4 (0=fill, 1=damage, 2=field atlas,
+    // 3=lattice). 0 = hull (Damage frames + molten rim), 1 = rock with its own
+    // base texture, 2 = rock with no base texture (flat rock colour). Set and
+    // bound on EVERY draw: the shell and scoop share one program, and an unset
+    // sampler would default to unit 0 and collide with u_fill's sampler3D.
+    shader.set_int("u_rock_tex", 4);
+    shader.set_int("u_interior_is_rock",
+                   surface_is_rock ? (rock_tex != 0 ? 1 : 2) : 0);
 
     // Molten-rim emissive: age of the nearest active breach event.
     // breach_age >= kRimLife → heat = 0 → no emissive (cold hole).
@@ -367,6 +392,9 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, field.tex2d);
 
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, surface_is_rock ? rock_tex : 0u);
+
     glActiveTexture(GL_TEXTURE0);  // restore default active unit
 
     // Draw the REAL hull mesh (round 3): each fragment surviving the
@@ -397,7 +425,9 @@ void BreachPass::draw_interior_shell(const assets::Model& model,
                                      float ambient_scale,
                                      const scenegraph::HullCarveField* carve,
                                      const std::unordered_map<int, glm::mat4>*
-                                         node_overrides) {
+                                         node_overrides,
+                                     bool surface_is_rock,
+                                     unsigned int rock_tex) {
     // The ONLY difference from the scoop's own submission is the winding and
     // the mode flag: same mesh, same stencil, same program, same uniforms.
     // Front-culled, so what draws is the hull's BACK faces -- the inside of
@@ -406,7 +436,8 @@ void BreachPass::draw_interior_shell(const assets::Model& model,
     draw_hull_proxy(model, field, fill_tex, fill_origin, fill_cell, fill_dims,
                     world_xf, camera, pipeline, breach_age, breach_center,
                     breach_radius, damage_tex, lighting, ambient_scale, carve,
-                    /*interior_shell=*/true, node_overrides);
+                    /*interior_shell=*/true, node_overrides, surface_is_rock,
+                    rock_tex);
     glCullFace(GL_BACK);
 }
 
@@ -424,7 +455,9 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                float ambient_scale,
                                const scenegraph::HullCarveField* carve,
                                const std::unordered_map<int, glm::mat4>*
-                                   node_overrides) {
+                                   node_overrides,
+                               bool surface_is_rock,
+                               unsigned int rock_tex) {
     if (field.tex2d == 0) return;   // no damage field: nothing to raymarch
 
     ensure_damage_frames();
@@ -442,14 +475,18 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     draw_interior_shell(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                         world_xf, camera, pipeline, breach_age,
                         breach_center, breach_radius, damage_frames_[0], lighting,
-                        ambient_scale, carve, node_overrides);
+                        ambient_scale, carve, node_overrides, surface_is_rock,
+                        rock_tex);
     draw_hull_proxy(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
                     world_xf, camera, pipeline, breach_age,
                     breach_center, breach_radius, damage_frames_[0], lighting,
-                        ambient_scale, carve, /*interior_shell=*/false, node_overrides);
+                        ambient_scale, carve, /*interior_shell=*/false, node_overrides,
+                        surface_is_rock, rock_tex);
     end_scoop_state();
 
     // Restore texture bindings.
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
@@ -535,17 +572,25 @@ void BreachPass::render(const scenegraph::World& world,
                 }
             }
 
+            // A rock's crater shows the rock's own base texture, not hull
+            // interior (breach.frag's u_interior_is_rock). Looked up only for
+            // rocks, so a ship pays nothing.
+            const unsigned int rock_tex =
+                inst.surface_is_rock ? find_base_texture_id(*model) : 0u;
+
             // Shell first, scoop second. Both write depth; the scoop's is the
             // nearer hull surface, so it wins wherever it finds a real cavity
             // wall and the shell shows through only where the scoop gave up.
             draw_interior_shell(*model, *field, ce->tex3d, ce->origin, ce->cell,
                                 ce->dims, inst.world, camera, pipeline, breach_age,
                                 breach_center, breach_radius, frame_tex, lighting, ambient_scale,
-                                &inst.carve, &inst.node_overrides);
+                                &inst.carve, &inst.node_overrides,
+                                inst.surface_is_rock, rock_tex);
             draw_hull_proxy(*model, *field, ce->tex3d, ce->origin, ce->cell, ce->dims,
                             inst.world, camera, pipeline, breach_age,
                             breach_center, breach_radius, frame_tex, lighting, ambient_scale,
-                                &inst.carve, /*interior_shell=*/false, &inst.node_overrides);
+                                &inst.carve, /*interior_shell=*/false, &inst.node_overrides,
+                                inst.surface_is_rock, rock_tex);
         });
 
     if (any_state_changed) {
@@ -555,6 +600,8 @@ void BreachPass::render(const scenegraph::World& world,
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
         // Restore texture bindings.
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE1);
