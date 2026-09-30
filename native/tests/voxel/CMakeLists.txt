@@ -16,6 +16,7 @@ add_executable(voxel_tests
     field_brush_test.cc
     field_atlas_test.cc
     hull_connectivity_test.cc
+    catalogue_volume_agreement_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main
     nlohmann_json::nlohmann_json)
