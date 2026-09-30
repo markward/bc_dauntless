@@ -38,6 +38,10 @@ class RockClass(ShipClass):
                 shields.SetMaxShields(face, 0.0)
                 shields.SetCurrentShields(face, 0.0)
 
+    def SetAngularVelocity(self, v, space=PhysicsObjectClass.DIRECTION_WORLD_SPACE) -> None:
+        super().SetAngularVelocity(v, space)
+        self._angular_space = int(space)
+
     def SetAI(self, ai, *_extra) -> None:
         if ai is not None:
             dev_mode.log_swallowed(

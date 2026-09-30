@@ -75,6 +75,10 @@ class GameLoop:
         with _prof.scope("gl.motion"):
             tick_all_ship_motion(TICK_DELTA)
 
+        from engine.rocks import motion as rock_motion
+        with _prof.scope("gl.rock_motion"):
+            rock_motion.tick_all(TICK_DELTA)
+
         with _prof.scope("gl.subsystems"):
             _update_ship_subsystems()
 
