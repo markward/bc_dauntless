@@ -6,6 +6,7 @@ add_library(assets STATIC
     src/gl_handle.cc
     src/flip_frame.cc
     src/gltf_load.cc
+    src/gltf_model_build.cc
     src/hull_source.cc
     src/material_build.cc
     src/mesh_build.cc

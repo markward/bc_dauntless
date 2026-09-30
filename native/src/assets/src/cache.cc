@@ -1,7 +1,9 @@
 #include <assets/cache.h>
+#include <assets/hull_source.h>
 #include <assets/mesh_fix.h>
 #include <assets/path_resolver.h>
 
+#include "gltf_model_build.h"
 #include "model_build.h"
 
 #include <nif/file.h>
@@ -149,6 +151,68 @@ ModelHandle AssetCache::load(
     const std::vector<fs::path>& search_paths,
     const std::vector<TextureReplacement>& texture_replacements,
     const std::vector<DecalRequest>& decals) {
+    return load(nif_path, search_paths, texture_replacements, decals, 1.0f);
+}
+
+ModelHandle AssetCache::load(
+    const fs::path& nif_path,
+    const std::vector<fs::path>& search_paths,
+    const std::vector<TextureReplacement>& texture_replacements,
+    const std::vector<DecalRequest>& decals,
+    float scale) {
+    // glTF/GLB path: an entirely separate build (build_model_from_gltf), with
+    // no mesh fixes, no texture replacements and no decals -- those are all
+    // BC-NIF-specific features that don't apply to rock-catalogue meshes.
+    // Handled up front, before the mesh-fix block below, so a glTF path never
+    // pays for (or trips over) a nif::load / read_file_bytes(nif_path).
+    if (is_gltf_path(nif_path)) {
+        if (!texture_replacements.empty() || !decals.empty()) {
+            static std::unordered_set<std::string> warned;
+            if (warned.insert(nif_path.string()).second) {
+                std::cerr << "AssetCache::load: texture_replacements/decals "
+                             "are not supported for glTF paths ("
+                          << nif_path.string() << "); ignoring\n";
+            }
+        }
+
+        auto canon_path = fs::weakly_canonical(nif_path);
+        auto canon = hull_source_string(canon_path, scale);
+        auto it = impl_->entries.find(canon);
+        if (it != impl_->entries.end()) {
+            if (auto live = it->second.live.lock()) {
+                if (it->second.search_paths != search_paths) {
+                    throw AssetError(
+                        "asset already loaded with different texture_search_paths: "
+                        + canon);
+                }
+                return live;
+            }
+        }
+
+        detail::ModelBuildContext ctx;
+        ctx.resolver             = &impl_->resolver;
+        ctx.texture_search_paths = search_paths;
+        ctx.texture_uploader     = impl_->config.texture_uploader;
+        ctx.mesh_uploader        = impl_->config.mesh_uploader;
+        ctx.keep_cpu_data        = impl_->config.keep_cpu_data;
+
+        auto model = std::make_shared<const Model>(
+            detail::build_model_from_gltf(nif_path, scale, ctx));
+
+        Impl::Entry entry;
+        entry.live         = model;
+        entry.pinned       = model;
+        entry.search_paths = search_paths;
+        impl_->entries[canon] = std::move(entry);
+        return model;
+    }
+
+    // No production caller needs a scaled NIF -- YAGNI, rather than silently
+    // ignoring a scale nobody asked for.
+    if (scale != 1.0f) {
+        throw AssetError("scale is only supported for glTF");
+    }
+
     // Decided BEFORE the cache lookup, so the fix (if any) can change the
     // cache key: a fixed and an unfixed load of the same nif_path land in
     // different entries. This does NOT avoid re-reading the NIF on a cache

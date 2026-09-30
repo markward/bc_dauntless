@@ -29,6 +29,7 @@ add_executable(assets_tests
     gpu/mesh_upload_test.cc
     gpu/model_smoke_test.cc
     gpu/model_compose_gpu_test.cc
+    gpu/gltf_model_test.cc
     gpu/texture_upload_test.cc
 )
 
