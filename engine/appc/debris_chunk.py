@@ -117,10 +117,12 @@ class DebrisChunk:
         if parent is None:
             self._collision_disabled_ids = frozenset()
             return
-        from engine.appc.collisions import COLLISION_RADIUS_SCALE
+        from engine.appc.collisions import COLLISION_RADIUS_SCALE, contact_radius
         p = parent.GetWorldLocation()
         dx, dy, dz = self._loc.x - p.x, self._loc.y - p.y, self._loc.z - p.z
-        reach = (self.radius + float(parent.GetRadius())) * COLLISION_RADIUS_SCALE
+        # Clear of the parent's CONTACT boundary, exactly as _respond_pair
+        # tests it: the parent's radius follows its GetScale().
+        reach = self.radius * COLLISION_RADIUS_SCALE + contact_radius(parent)
         if dx * dx + dy * dy + dz * dz >= reach * reach:
             self._collision_disabled_ids = frozenset()
 

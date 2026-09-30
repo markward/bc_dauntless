@@ -101,17 +101,67 @@ def _trace_own_hull(ship_instances, body: "_Body", boundary, n_out, reach: float
     return pt, (mesh_n if mesh_n is not None else n_out)
 
 
+def world_radius(obj) -> float:
+    """An object's bounding radius as DRAWN, in GU: GetRadius() x GetScale().
+
+    GetRadius() is SDK surface and stays UNSCALED -- missions read it, and
+    the host sets it from the model at GetScale() == 1 -- but every ship and
+    planet draws at GetRadius() x GetScale() (_ship_world_matrix /
+    _apply_live_world_transform). E1M2 scales its asteroids 3-8.5x, so a raw
+    GetRadius() collision let the player fly most of the way into a rock.
+
+    A DebrisChunk is the exception: its GetRadius() is already its world size,
+    and its GetScale() is the render scale of a SHARED model, not a size
+    factor. The scale is read through the class (TGObject.__getattr__ vends a
+    truthy _Stub for any unknown name) and a non-positive or unreadable scale
+    counts as 1."""
+    from engine.appc.debris_chunk import DebrisChunk
+    r = float(obj.GetRadius())
+    if isinstance(obj, DebrisChunk):
+        return r
+    fn = getattr(type(obj), "GetScale", None)
+    if fn is None:
+        return r
+    try:
+        s = float(fn(obj))
+    except (TypeError, ValueError):
+        return r
+    return r * s if s > 0.0 and math.isfinite(s) else r
+
+
+def _boundary_shrink(obj) -> float:
+    """COLLISION_RADIUS_SCALE for anything shaped like a ship -- its hull sits
+    well inside the bounding sphere -- and 1.0 for a rock, whose sphere IS
+    its surface (rock-class final review)."""
+    from engine.rocks.rock import is_rock
+    return 1.0 if is_rock(obj) else COLLISION_RADIUS_SCALE
+
+
+def contact_radius(obj) -> float:
+    """The radius a collision actually registers at: world_radius x the
+    object's boundary shrink. What _respond_pair's broad phase tests."""
+    return world_radius(obj) * _boundary_shrink(obj)
+
+
 @dataclass
 class _Body:
     obj: object
     center: TGPoint3
-    radius: float
+    radius: float        # world_radius: GetRadius() x GetScale(). The
+                         # broadphase buckets on this (never smaller than
+                         # the contact radius, so it stays conservative).
     inv_mass: float
     is_movable: bool
     velocity: TGPoint3   # world thrust velocity + current overlay
     angular: TGPoint3    # WORLD-frame angular velocity (rad/s); zero for
                          # immovables. Body-frame at rest in ShipClass -- see
                          # _resolve_body for the rotation into world space.
+    shrink: float = COLLISION_RADIUS_SCALE   # see _boundary_shrink
+
+    @property
+    def contact(self) -> float:
+        """The contact radius: radius x shrink."""
+        return self.radius * self.shrink
 
 
 # b_offset for a pair in ONE set: B is already in A's coordinates.
@@ -192,7 +242,7 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
     from engine.appc.ships import ShipClass
     from engine.appc.debris_chunk import DebrisChunk
     center = position if position is not None else obj.GetWorldLocation()
-    radius = obj.GetRadius()
+    radius = world_radius(obj)
     if isinstance(obj, (ShipClass, DebrisChunk)) and not obj.IsImmobile():
         m = obj.GetMass()
         if m <= 0.0:
@@ -226,7 +276,8 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
     cv = _overlay_vec(obj)
     if cv is not None:
         v = v + cv
-    return _Body(obj, center, radius, inv_mass, movable, v, w)
+    return _Body(obj, center, radius, inv_mass, movable, v, w,
+                 _boundary_shrink(obj))
 
 
 def _ke_damage(inv_sum: float, v_rel: float) -> float:
@@ -267,16 +318,19 @@ def _deepest_piece_overlap(obj_a, obj_b, b_offset=_NO_OFFSET):
     if not has_hull_bounds(obj_a) or not has_hull_bounds(obj_b):
         return None
     # Each side is culled against the other's model-wide bound before anything
-    # is transformed into world space. GetRadius is the AABB corner distance,
-    # comfortably larger than any real reach, so the cull cannot drop a pair
-    # the loop below would have found.
+    # is transformed into world space. world_radius (GetRadius x GetScale) is
+    # the scaled AABB corner distance, comfortably larger than any real
+    # reach, so the cull cannot drop a pair the loop below would have found.
+    # The pieces themselves are cached at GetScale() == 1 and hull_bounds
+    # multiplies centre and radius by the live GetScale(), so they are
+    # already in the same scaled space.
     # B's location into A's frame for A's cull; A's into B's for B's cull.
     pieces_a = hull_spheres_near(obj_a, _shifted(obj_b.GetWorldLocation(), b_offset),
-                                 float(obj_b.GetRadius()))
+                                 world_radius(obj_b))
     if not pieces_a:
         return ()
     pieces_b = hull_spheres_near(obj_b, _shifted(obj_a.GetWorldLocation(), b_offset, -1.0),
-                                 float(obj_a.GetRadius()))
+                                 world_radius(obj_a))
     if not pieces_b:
         return ()
     if b_offset != _NO_OFFSET:
@@ -424,8 +478,9 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     dz = b.center.z - a.center.z
     dist2 = dx * dx + dy * dy + dz * dz
     # Effective boundary is scaled below the raw bounding-sphere sum so hulls
-    # visually close most of the gap before the hit registers (spec §4).
-    sum_r = (a.radius + b.radius) * COLLISION_RADIUS_SCALE
+    # visually close most of the gap before the hit registers (spec §4) --
+    # per body: a rock's shrink is 1.0 (see _boundary_shrink).
+    sum_r = a.contact + b.contact
     if dist2 >= sum_r * sum_r:
         return None
     dist = math.sqrt(dist2)
@@ -460,7 +515,7 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         cx, cy, cz = pa.x + nx * ra, pa.y + ny * ra, pa.z + nz * ra
     else:
         nx, ny, nz = dx / dist, dy / dist, dz / dist
-        eff_ra = a.radius * COLLISION_RADIUS_SCALE
+        eff_ra = a.contact
         cx, cy, cz = (a.center.x + nx * eff_ra,
                       a.center.y + ny * eff_ra,
                       a.center.z + nz * eff_ra)
@@ -469,7 +524,7 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     if narrowed:
         r_small = min(ra, rb)
     else:
-        r_small = min(a.radius, b.radius) * COLLISION_RADIUS_SCALE
+        r_small = min(a.contact, b.contact)
     pen = sum_r - dist
     scuff_r = scuff_radius_gu(r_small, pen)
     # Each ship's contact BOUNDARY point (its piece surface facing the other):
@@ -767,10 +822,11 @@ def _candidate_pairs(positions, radii, sets):
     pair that can overlap is at most ``ra + rb <= 2 * rmax`` apart (rmax the
     largest radius in the set), so such a pair's cells differ by at most one
     step on each axis and the 3x3x3 neighbourhood always covers it. `radii`
-    here is each body's whole-model bounding radius (GetRadius()), the same
-    quantity _respond_pair's broad phase and _deepest_piece_overlap's culls
-    both key off (COLLISION_RADIUS_SCALE only ever SHRINKS the effective
-    reach from there), so bucketing on the raw radius stays conservative.
+    here is each body's whole-model bounding radius as drawn (world_radius:
+    GetRadius() x GetScale()), the same quantity _respond_pair's broad phase
+    and _deepest_piece_overlap's culls both key off (the per-body boundary
+    shrink is <= 1, so it only ever SHRINKS the effective reach from there),
+    so bucketing on it stays conservative.
 
     Different sets: always a candidate -- resolve_collisions' own
     frames.offset_between check decides afterwards whether the pair is even
@@ -867,7 +923,7 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     offsets: dict = {}
     hits = []
     pos_list = [(b.center.x, b.center.y, b.center.z) for b in bodies]
-    radii = [b.radius for b in bodies]   # exact value _respond_pair tests; _resolve_body already read GetRadius() once
+    radii = [b.radius for b in bodies]   # world_radius, read once in _resolve_body; >= the contact radius _respond_pair tests
     for i, k in _candidate_pairs(pos_list, radii, sets):
         a_obj, b_obj = bodies[i].obj, bodies[k].obj
         # Different frames never interact: a planet left standing in the

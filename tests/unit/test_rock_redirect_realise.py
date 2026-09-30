@@ -245,3 +245,72 @@ def test_failed_rock_load_falls_back_to_stock_in_realize_session(monkeypatch):
     legacy_key = hl._ship_load_key(_stock_asteroid_path(), last.reps)
     assert controller.nif_to_handle.get(legacy_key) == 100
     assert _stock_asteroid_path() in controller.nif_to_extent
+
+
+# ---- Rock-class final review: a rock's realised radius is its SPHERE --------
+# GetRadius() seeded from the AABB corner distance (|half-extents|) is ~1.7x a
+# roughly spherical rock's real surface; a rock gets the bounding-sphere
+# radius (_model_sphere_radius_from_aabb, the planets' divisor) instead.
+
+_BOX = ((0.0, 0.0, 0.0), (30.0, 40.0, 50.0))
+# (AABB corner extent, bounding-sphere radius) of _BOX, in model units.
+_EXTENT_AND_SPHERE = (hl._model_extent_from_aabb(*_BOX),
+                      hl._model_sphere_radius_from_aabb(*_BOX))
+
+
+class _BoxRenderer(_FakeRenderer):
+    def model_aabb(self, h):
+        return ((0.0, 0.0, 0.0), (30.0, 40.0, 50.0))
+
+
+def _hardpoint_rock():
+    from tests.unit.test_rock_class import _make
+    rock = _make(App.GENUS_ASTEROID)       # GetRadius 0, as headless/live
+    assert rock.GetRadius() == 0.0
+    return rock
+
+
+def test_seed_radius_rock_uses_the_bounding_sphere():
+    rock = _hardpoint_rock()
+    hl._seed_ship_radius(rock, *_EXTENT_AND_SPHERE)
+    assert rock.GetRadius() == pytest.approx(50.0 * hl.BC_MODEL_SCALE)
+
+
+def test_seed_radius_ship_keeps_the_aabb_corner():
+    ship = App.ShipClass_Create()
+    hl._seed_ship_radius(ship, *_EXTENT_AND_SPHERE)
+    assert ship.GetRadius() == pytest.approx(
+        (30.0 ** 2 + 40.0 ** 2 + 50.0 ** 2) ** 0.5 * hl.BC_MODEL_SCALE)
+
+
+def test_seed_radius_leaves_an_authored_radius_alone():
+    rock = _hardpoint_rock()
+    rock.SetRadius(0.744)
+    hl._seed_ship_radius(rock, *_EXTENT_AND_SPHERE)
+    assert rock.GetRadius() == pytest.approx(0.744)
+
+
+def test_realize_set_objects_seeds_a_rock_from_its_sphere(monkeypatch, session):
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    rock = _hardpoint_rock()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    s.AddObjectToSet(rock, "Rocky")
+    hl.realize_set_objects(session, s, _BoxRenderer(), ships=[rock])
+    assert rock.GetRadius() == pytest.approx(50.0 * hl.BC_MODEL_SCALE)
+
+
+def test_realize_session_seeds_through_the_same_helper(monkeypatch):
+    from tools import mission_harness
+    mission_harness.setup_sdk()
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    seen = []
+    monkeypatch.setattr(hl, "_seed_ship_radius",
+                        lambda ship, e, r: seen.append((ship, e, r)))
+    controller = hl.HostController()
+    controller.renderer = _BoxRenderer()
+    controller.loader = hl._MissionLoader(controller, verbose=False)
+    controller.loader.load_quickbattle()
+    from engine.core.game import Game_GetCurrentGame
+    player = Game_GetCurrentGame().GetPlayer()
+    assert (player,) + _EXTENT_AND_SPHERE in seen

@@ -131,7 +131,9 @@ def _resolve_hit_point(ship_instances, ship,
     if not sphere_fallback:
         return fallback_point, None
     center = ship.GetWorldLocation()
-    radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+    # The sphere as drawn: GetRadius() x GetScale() (collisions.world_radius).
+    from engine.appc.collisions import world_radius
+    radius = world_radius(ship) if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
                              center, radius)
     if entry is not None:
@@ -909,7 +911,10 @@ def bubble_bound_radius(ship) -> float:
     half-extents are bounded by the bounding-sphere radius.
     """
     try:
-        radius = float(ship.GetRadius())
+        # Scaled (GetRadius x GetScale): it must contain the projectile loop's
+        # hull-sphere test, which uses the scaled radius.
+        from engine.appc.collisions import world_radius
+        radius = world_radius(ship)
     except Exception:
         # INFINITY, not 0.0. This bound is only ever used to REJECT a pair, so
         # the safe failure direction is "never reject". A 0.0 fallback culls

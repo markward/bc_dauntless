@@ -5697,6 +5697,28 @@ def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
     return max(abs(hx), abs(hy), abs(hz))
 
 
+def _seed_ship_radius(ship, extent: float, sphere_radius: float) -> None:
+    """Seed a gameplay GetRadius() (model units -> GU at BC_MODEL_SCALE) for a
+    ship that lacks one -- camera-follow distance, AI threat range, splash,
+    collisions. Leaves an authored (> 0) radius alone.
+
+    A ship gets the AABB corner distance (`extent`): its hull sits well inside
+    that, which collisions' COLLISION_RADIUS_SCALE compensates for. A ROCK
+    gets its bounding-sphere radius (`sphere_radius`, the planets' divisor,
+    _model_sphere_radius_from_aabb): its sphere IS its surface, collisions
+    apply no shrink to it, and the corner distance is ~1.7x too big for a
+    roughly spherical mesh. Both are unscaled: the collision and hit code
+    multiply by GetScale() (collisions.world_radius)."""
+    if ship.GetRadius() > 0.0:
+        return
+    from engine.rocks.rock import is_rock
+    r = sphere_radius if is_rock(ship) else extent
+    try:
+        ship.SetRadius(r * BC_MODEL_SCALE)
+    except Exception as _e:
+        dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
+
+
 def _rot_determinant(rot) -> float:
     """3x3 determinant of a row-major BC TGMatrix3."""
     return (rot.m00 * (rot.m11*rot.m22 - rot.m12*rot.m21)
@@ -6034,12 +6056,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                       f"raised: {type(e).__name__}: {e}", flush=True)
             continue
         center, half_extents = r_.model_aabb(handle)
-        extent = _model_extent_from_aabb(center, half_extents)
-        if ship.GetRadius() <= 0.0:
-            try:
-                ship.SetRadius(extent * BC_MODEL_SCALE)
-            except Exception as _e:
-                dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
+        _seed_ship_radius(ship, _model_extent_from_aabb(center, half_extents),
+                          _model_sphere_radius_from_aabb(center, half_extents))
         iid = r_.create_instance(handle)
         _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
@@ -7148,16 +7166,14 @@ class _MissionLoader:
                 if extent_key not in self._c.nif_to_extent:
                     center, half_extents = r_.model_aabb(handle)
                     self._c.nif_to_extent[extent_key] = _model_extent_from_aabb(center, half_extents)
+                    self._c.nif_to_sphere_radius[extent_key] = \
+                        _model_sphere_radius_from_aabb(center, half_extents)
             extent = self._c.nif_to_extent.get(extent_key, 1.0)
-            # Seed a gameplay GetRadius() for shim ships that lack one
-            # (camera-follow distance, AI threat range, splash damage).
-            # Use the same flat NIF→world scale we render with so the
-            # gameplay radius matches the visible mesh bound.
-            if ship.GetRadius() <= 0.0:
-                try:
-                    ship.SetRadius(extent * BC_MODEL_SCALE)
-                except Exception as _e:
-                    dev_mode.log_swallowed("ship.SetRadius fallback", _e)
+            # Seed a gameplay GetRadius() for shim ships that lack one, at
+            # the same flat NIF->world scale we render with (a rock from its
+            # bounding sphere -- see _seed_ship_radius).
+            _seed_ship_radius(ship, extent,
+                              self._c.nif_to_sphere_radius.get(extent_key, extent))
             iid = r_.create_instance(handle)
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))

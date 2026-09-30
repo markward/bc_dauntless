@@ -205,6 +205,19 @@ never paired. **The pair set must equal the all-pairs set**: a test runs both
 over randomised scenes and asserts identical pairs and identical resolved
 state.
 
+**Radius follows GetScale (final review, 2026-09-30).** Every object draws at
+`GetRadius() × GetScale()`, but collisions used the raw `GetRadius()`, so the
+player flew partway into E1M2's 3–8.5× rocks (Mark, live). The collision body
+radius (`collisions.world_radius`) is now `GetRadius() × GetScale()` for every
+object — the broadphase, `_respond_pair` and the hull-piece culls all read it;
+`GetRadius()` itself stays unscaled SDK surface, so
+`rocks.rock.effective_radius` (base × `GetScale()`) is unchanged. A rock is
+exempt from `COLLISION_RADIUS_SCALE` (its sphere is its surface), and at
+realise a radius-less rock seeds `GetRadius()` from its bounding sphere
+(`_model_sphere_radius_from_aabb`, as planets do), not the AABB corner. The
+projectile hull-sphere test, its broadphase bound, the sphere hit-point
+fallback and the death-splash reach use the scaled radius too.
+
 ## Out of scope
 
 Minors and halos, fly-through and shield flicker (sub-project 3); the far tier
