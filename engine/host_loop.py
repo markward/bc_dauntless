@@ -5462,12 +5462,31 @@ def _ship_decals(ship, nif_path, reps):
         return []
 
 
-def _ship_load_key(nif_path, reps, decals=None):
-    """Model-cache key for a ship load. Bare NIF path when no registry swap
-    and no decals (byte-identical to the legacy key, so non-fed ships +
-    planets are unaffected); NIF path + a stable registry suffix otherwise,
-    so two hulls of the same class with DIFFERENT registries don't collapse
-    onto one handle.
+def _ship_model_source(ship, nif_path: str) -> tuple:
+    """(model path, load scale) for a ship: the rock catalogue's pick for a
+    stock BC asteroid NIF (engine/rocks/catalogue.py), else (nif_path, 1.0).
+    Never blocks spawn -- any catalogue fault falls back to the stock NIF."""
+    from engine.rocks import catalogue as rock_catalogue
+    try:
+        return rock_catalogue.ship_model_source(ship.GetName(), nif_path)
+    except Exception as e:
+        dev_mode.log_swallowed("rock catalogue redirect", e)
+        return nif_path, 1.0
+
+
+def _ship_load_key(nif_path, reps, decals=None, scale: float = 1.0):
+    """Model-cache key for a ship load. Bare NIF path when no registry swap,
+    no decals and no rock-catalogue scale (byte-identical to the legacy key,
+    so non-fed ships + planets are unaffected); NIF path + a stable registry
+    suffix otherwise, so two hulls of the same class with DIFFERENT
+    registries don't collapse onto one handle.
+
+    `scale != 1.0` appends `#s=<scale %.6g>` to the string key before reps
+    and decals are folded in -- the same suffix `Model::source` uses on the
+    native side (native/src/renderer -- see catalogue.py's `load_scale`), so
+    two catalogue rocks picked for stock NIFs of different sizes (e.g.
+    asteroid1.nif vs asteroid3.nif) never collapse onto one cached handle
+    even when they share the same underlying rock.
 
     With decals the key becomes a hashable tuple `(str_key, "decals",
     specs)` carrying EVERY element of every spec -- shape, origin, axes,
@@ -5479,6 +5498,8 @@ def _ship_load_key(nif_path, reps, decals=None):
     AssetCache key folds the same geometry in (cache.cc decals_key).
     """
     key = nif_path
+    if scale != 1.0:
+        key += f"#s={scale:.6g}"
     if reps:
         key += "|" + ";".join(f"{old}={new}" for old, new in reps)
     if decals:
@@ -5960,12 +5981,14 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         nif_path = _ship_nif_path(ship, verbose=verbose)
         if nif_path is None:
             continue
+        model_path, model_scale = _ship_model_source(ship, nif_path)
+        load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
         tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
         decals = _ship_decals(ship, nif_path, reps)
         try:
-            handle = r_.load_model(nif_path, tex_search, reps,
-                                    decals=decals or None)
+            handle = r_.load_model(model_path, tex_search, reps,
+                                    decals=decals or None, **load_kwargs)
         except Exception as e:
             if verbose:
                 print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
@@ -7031,6 +7054,8 @@ class _MissionLoader:
             nif_path = _ship_nif_path(ship, verbose=self._verbose)
             if nif_path is None:
                 continue
+            model_path, model_scale = _ship_model_source(ship, nif_path)
+            load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
             # BC ships split textures: a per-ship <NIFdir>/High for hull-specific
             # assets (Sovereign, FedStarbase) plus the class's SetTextureSharePath
             # shared dir (FedShips, CardShips, KlingShips, …). See FUN_0044f4a0.
@@ -7038,25 +7063,29 @@ class _MissionLoader:
             # Federation registry / hull-name swaps make the same NIF a distinct
             # model, so the handle cache is keyed by (nif, registry). The extent
             # is pure geometry — identical across registries — so it stays keyed
-            # by nif_path.
+            # by nif_path (or, for a rock-catalogue redirect, by the picked
+            # model path + its scale, since two stock NIFs of different sizes
+            # can pick the SAME rock and must not collapse onto one extent).
             reps = _ship_texture_replacements(ship)
             decals = _ship_decals(ship, nif_path, reps)
-            load_key = _ship_load_key(nif_path, reps, decals)
+            load_key = _ship_load_key(model_path, reps, decals, model_scale)
+            extent_key = (nif_path if model_scale == 1.0
+                         else f"{model_path}#s={model_scale:.6g}")
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
-                    handle = r_.load_model(nif_path, tex_search, reps,
-                                            decals=decals or None)
+                    handle = r_.load_model(model_path, tex_search, reps,
+                                            decals=decals or None, **load_kwargs)
                 except Exception as e:
                     if self._verbose:
                         print(f"[host_loop]   skip ship: load_model({nif_path}) raised: "
                               f"{type(e).__name__}: {e}", flush=True)
                     continue
                 self._c.nif_to_handle[load_key] = handle
-                if nif_path not in self._c.nif_to_extent:
+                if extent_key not in self._c.nif_to_extent:
                     center, half_extents = r_.model_aabb(handle)
-                    self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
-            extent = self._c.nif_to_extent.get(nif_path, 1.0)
+                    self._c.nif_to_extent[extent_key] = _model_extent_from_aabb(center, half_extents)
+            extent = self._c.nif_to_extent.get(extent_key, 1.0)
             # Seed a gameplay GetRadius() for shim ships that lack one
             # (camera-follow distance, AI threat range, splash damage).
             # Use the same flat NIF→world scale we render with so the

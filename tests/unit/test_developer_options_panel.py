@@ -125,7 +125,7 @@ def test_render_payload_shape(panel):
         "disable_collisions": False,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
-        "profiler": False,
+        "profiler": False, "rock_catalogue": True,
     }
 
 
@@ -363,6 +363,41 @@ def test_normal_map_toggle_round_trips(panel, monkeypatch):
     p.dispatch_event("toggle:normal_maps")
     p.dispatch_event("toggle:normal_maps")
     assert seen == [False, True], seen
+
+
+# ---- Rock catalogue toggle (Lighting tab) ---------------------------------
+
+def test_lighting_tab_exposes_rock_catalogue_row(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    payload = _body(p.render_payload())["settings"]
+    assert "rock_catalogue" in payload
+
+
+def test_rock_catalogue_toggle_flips_the_real_flag(panel):
+    """The panel must move the real engine.rocks.catalogue flag, not just a
+    local mirror -- mirrors test_normal_map_toggle_round_trips."""
+    from engine.rocks import catalogue as rock_catalogue
+
+    p, _ = panel
+    saved = rock_catalogue.enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:lighting")
+        p.dispatch_event("toggle:rock_catalogue")
+        assert rock_catalogue.enabled() is (not saved)
+        p.dispatch_event("toggle:rock_catalogue")
+        assert rock_catalogue.enabled() is saved
+    finally:
+        rock_catalogue.set_enabled(saved)
+
+
+def test_rock_catalogue_ctrl_is_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "rock_catalogue") in p._focusables()
 
 
 # ── Diagnostics tab: the frame profiler ─────────────────────────────────────

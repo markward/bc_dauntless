@@ -1466,6 +1466,18 @@ def _reset_leakable_engine_globals():
             }
     except Exception:
         pass
+    # Rock catalogue: the Developer Options "Catalogue Rocks" toggle and the
+    # manifest read cache are both process-lifetime module globals (Task 9/10,
+    # engine/rocks/catalogue.py). A test that calls set_enabled(False) or
+    # seeds a fake catalogue_root would otherwise leave every later test's
+    # stock-asteroid realise redirected to a fake/disabled state.
+    try:
+        from engine.rocks import catalogue as _rock_catalogue
+        _rock_catalogue._enabled = True
+        _rock_catalogue._memo.clear()
+        _rock_catalogue._warned.clear()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds

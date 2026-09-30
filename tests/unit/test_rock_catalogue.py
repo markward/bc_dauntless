@@ -7,18 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from engine import paths
 from engine.rocks import catalogue as rc
-
-
-@pytest.fixture(autouse=True)
-def _rock_catalogue_state():
-    saved_enabled = rc._enabled
-    rc._memo.clear()
-    rc._warned.clear()
-    yield
-    rc._enabled = saved_enabled
-    rc._memo.clear()
-    rc._warned.clear()
 
 
 def _fake_root(tmp_path, rocks):
@@ -45,6 +35,10 @@ def _rock(i, kind="major", family="silicate"):
 def fake(monkeypatch, tmp_path):
     root = _fake_root(tmp_path, [_rock(i) for i in range(1, 6)] + [_rock(1, family="icy")])
     monkeypatch.setattr(rc, "catalogue_root", lambda: root)
+    # ship_model_source only redirects paths under paths.game_root() (R13);
+    # the existing fixtures below use "/g/..." fake paths, so pin the root
+    # to match.
+    monkeypatch.setattr(paths, "game_root", lambda: Path("/g"))
     rc._memo.clear()
     return root
 
@@ -92,6 +86,7 @@ def test_disabled_leaves_stock(fake):
 
 def test_missing_catalogue_falls_back_to_stock(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(rc, "catalogue_root", lambda: tmp_path / "nope")
+    monkeypatch.setattr(paths, "game_root", lambda: Path("/g"))
     rc._memo.clear()
     p = "/g/data/Models/Misc/Asteroids/asteroid.NIF"
     assert rc.ship_model_source("A", p) == (p, 1.0)
@@ -103,6 +98,24 @@ def test_catalogue_root_resolved_at_use(monkeypatch, tmp_path):
     from engine import paths
     monkeypatch.setattr(paths, "project_asset_root", lambda: tmp_path)
     assert rc.catalogue_root() == tmp_path / "rocks"
+
+
+def test_ship_model_source_only_redirects_under_game_root(fake, monkeypatch, tmp_path):
+    """R13: a stock-named asteroid NIF resolved from a MOD tree (or anywhere
+    outside paths.game_root()) is left alone -- the mod author's own mesh
+    wins, not the catalogue. Only a path that actually lies under the
+    configured game root is a real stock BC asset eligible for redirect."""
+    game_root = tmp_path / "realgame"
+    mod_root = tmp_path / "mods" / "X"
+    monkeypatch.setattr(paths, "game_root", lambda: game_root)
+
+    stock_path = str(game_root / "data/Models/Misc/Asteroids/asteroid1.nif")
+    mod_path = str(mod_root / "data/Models/Misc/Asteroids/asteroid1.nif")
+
+    path, scale = rc.ship_model_source("Debris1", stock_path)
+    assert path.endswith("lod0.gltf") and scale != 1.0
+
+    assert rc.ship_model_source("Debris1", mod_path) == (mod_path, 1.0)
 
 
 def test_real_catalogue_loads():

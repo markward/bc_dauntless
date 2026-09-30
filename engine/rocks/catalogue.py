@@ -108,11 +108,33 @@ def load_scale(rock: Rock, stock: str) -> float:
     return STOCK_RADIUS_MU[stock] / (rock.bound_radius_m * MODEL_UNITS_PER_METRE)
 
 
+def _under_game_root(nif_path) -> bool:
+    """Whether `nif_path` resolves inside the CONFIGURED BC install root.
+
+    A mod override (or any path a mod tree served instead) lies outside
+    `paths.game_root()`, so it is never a genuine stock BC asteroid NIF even
+    if its basename matches one -- the mod author's own mesh wins, not the
+    catalogue. Resolved at USE, like every other paths.py consumer; never
+    captured. Any failure to resolve the root (e.g. unconfigured) is treated
+    as "not under the root" so the catalogue never blocks spawn.
+    """
+    from engine import paths
+    try:
+        root = paths.game_root()
+    except Exception:
+        return False
+    root_parts = PurePath(str(root).replace("\\", "/")).parts
+    path_parts = PurePath(str(nif_path).replace("\\", "/")).parts
+    return path_parts[:len(root_parts)] == root_parts
+
+
 def ship_model_source(ship_name: str, nif_path: str) -> tuple[str, float]:
     if not _enabled:
         return nif_path, 1.0
     stock = stock_key(nif_path)
     if stock is None:
+        return nif_path, 1.0
+    if not _under_game_root(nif_path):
         return nif_path, 1.0
     rock = pick(ship_name)
     if rock is None:
