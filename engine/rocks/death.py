@@ -19,6 +19,7 @@ from engine.rocks import breakup, stats
 kRockDeathLife = 0.5
 
 _dying: list = []           # [{"rock", "time_left"}]
+_ghosts: list = []          # [{"objs": [parent, piece...], "time_left"}]
 _chunk_specs: list = []
 _vfx_specs: list = []
 
@@ -69,6 +70,9 @@ def begin(rock, killer=None) -> None:
         dev_mode.log_swallowed("rock death script", e)
     from engine.appc import ship_death
     ship_death._broadcast_exploding(rock, killer)
+    # The parent stops colliding at once (E1M2's authored death script does
+    # the same), so the grind path cannot damage the pieces born inside it.
+    rock.SetCollisionsOn(0)
     # Read the lifetime AFTER the death script: that is where E1M2 sets it.
     _dying.append({"rock": rock, "time_left": _life(rock)})
     if pSet is not None:
@@ -91,6 +95,7 @@ def _break_up(rock, pSet, name) -> None:
     gen = int(rock.__dict__.get("_rock_generation", 0)) + 1
     _vfx_specs.append(DeathVfxSpec((loc.x, loc.y, loc.z), radius, pSet))
     major_i = 0
+    pieces = []
     for i, p in enumerate(breakup.plan(name, radius)):
         d = TGPoint3(*p.offset)
         d.MultMatrixLeft(R)                  # body -> world
@@ -121,29 +126,71 @@ def _break_up(rock, pSet, name) -> None:
             piece.SetVelocity(TGPoint3(*vel))
             piece.SetAngularVelocity(TGPoint3(*ang))
             pSet.AddObjectToSet(piece, piece_name)
+            pieces.append(piece)
         elif p.tier == "chunk":
             _chunk_specs.append(ChunkSpec(
                 family, "%s#%d" % (name, i), p.radius_gu,
                 stats.piece_mass(parent_mass, p.v_ratio), at, vel, ang, pSet))
+    if pieces:
+        _ghost([rock] + pieces)
+
+
+def _set_pairs(objs, on) -> None:
+    """EnableCollisionsWith both ways for every pair in `objs`. Raise-safe per
+    pair, so a piece that has since left the world cannot stop the rest."""
+    for i, a in enumerate(objs):
+        for b in objs[i + 1:]:
+            for x, y in ((a, b), (b, a)):
+                try:
+                    x.EnableCollisionsWith(y, 1 if on else 0)
+                except Exception as e:
+                    dev_mode.log_swallowed("rock piece collision mask", e)
+
+
+def _ghost(objs) -> None:
+    _set_pairs(objs, False)
+    _ghosts.append({"objs": objs, "time_left": breakup.kPieceGhostTime})
+
+
+def _advance_ghosts(dt: float) -> None:
+    done = []
+    for g in list(_ghosts):
+        g["time_left"] -= dt
+        if g["time_left"] <= 0.0:
+            done.append(g)
+            _set_pairs(g["objs"], True)
+    _remove_entries(_ghosts, done)
+
+
+def _remove_entries(registry: list, done: list) -> None:
+    """Drop `done` from `registry` by identity. Anything appended while the
+    caller was iterating (a handler that killed another rock) survives."""
+    registry[:] = [e for e in registry if not any(e is d for d in done)]
 
 
 def advance(dt: float) -> None:
+    if _ghosts:
+        _advance_ghosts(dt)
     if not _dying:
         return
     from engine.appc import ship_death
-    still = []
+    # retire() dispatches ET_OBJECT_DESTROYED / EXITED_SET /
+    # ET_DELETE_OBJECT_PUBLIC synchronously, and a handler may kill another
+    # rock (begin() appends to _dying). Iterate a snapshot, drop only what
+    # was processed.
+    done = []
     for e in list(_dying):
         e["time_left"] -= dt
         if e["time_left"] > 0.0:
-            still.append(e)
             continue
+        done.append(e)
         rock = e["rock"]
         # A mission removed it first, or object_lifetime already retired it
         # (a death script's SetLifeTime also registers the rock there).
         if rock.GetContainingSet() is None or rock.IsDead():
             continue
         ship_death.retire(rock)
-    _dying[:] = still
+    _remove_entries(_dying, done)
 
 
 def drain_chunk_specs() -> list:
@@ -160,5 +207,6 @@ def drain_death_vfx() -> list:
 
 def reset() -> None:
     _dying.clear()
+    _ghosts.clear()
     _chunk_specs.clear()
     _vfx_specs.clear()

@@ -16,6 +16,9 @@ kPieceCountMin = 2
 kPieceCountMax = 5
 kSeparationSpeedGU = 0.4
 kTumbleRate = 0.5
+# Seconds a new major piece ignores collisions with its siblings and parent:
+# pieces are born overlapping, and a grind contact would chain breakups.
+kPieceGhostTime = 1.0
 
 
 @dataclass(frozen=True)

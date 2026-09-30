@@ -108,7 +108,9 @@ def test_death_script_lifetime_is_honoured(monkeypatch):
     seen = _events(monkeypatch)
     rock = _make(App.GENUS_ASTEROID)
     _in_set(rock, "Asteroid 5b")
-    rock.SetLifeTime(2.0)
+    # Set INSIDE the death script (E1M2's pattern): pins that the lifetime is
+    # read after the script has run.
+    rock.RunDeathScript = lambda: rock.SetLifeTime(2.0)
     death.begin(rock)
     death.advance(1.0)
     assert App.ET_OBJECT_DESTROYED not in seen
@@ -253,3 +255,116 @@ def test_game_loop_tick_advances_rock_death(monkeypatch):
     monkeypatch.setattr(death, "advance", lambda dt: seen.append(dt))
     GameLoop().tick()
     assert seen == [TICK_DELTA]
+
+
+def _typed_events(monkeypatch, obj):
+    """Event types whose source is `obj`, in dispatch order."""
+    seen = []
+    real = App.g_kEventManager.AddEvent
+    def spy(evt):
+        if evt.GetSource() is obj:
+            seen.append(evt.GetEventType())
+        return real(evt)
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", spy)
+    return seen
+
+
+def test_rock_killed_during_advance_is_still_retired(monkeypatch):
+    """A DESTROYED handler that kills a second rock (retire dispatches
+    synchronously inside advance) must not lose that rock's death entry."""
+    from engine.rocks import death
+    a = _make(App.GENUS_ASTEROID)
+    b = _make(App.GENUS_ASTEROID)
+    pSet = _in_set(a, "Asteroid 5b")
+    _in_set(b, "Asteroid 6b")
+    b_events = []
+    real = App.g_kEventManager.AddEvent
+    def spy(evt):
+        if evt.GetSource() is b:
+            b_events.append(evt.GetEventType())
+        rv = real(evt)
+        if evt.GetEventType() == App.ET_OBJECT_DESTROYED and evt.GetSource() is a:
+            death.begin(b)                   # a handler kills another rock
+        return rv
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", spy)
+    death.begin(a)
+    death.advance(1.0)                       # a retires; b begins mid-advance
+    assert death.is_dying_rock(b)
+    death.advance(1.0)
+    assert b_events.count(App.ET_OBJECT_DESTROYED) == 1
+    assert pSet.GetObject("Asteroid 6b") is None
+    assert not death.is_dying_rock(b)
+
+
+def _pair_masked(x, y):
+    from engine.appc.collisions import _collision_disabled_ids
+    return (y.GetObjID() in _collision_disabled_ids(x)
+            or x.GetObjID() in _collision_disabled_ids(y))
+
+
+def _majors_of(pSet, name, radius):
+    from engine.rocks import breakup
+    n = sum(1 for p in breakup.plan(name, radius) if p.tier == "major")
+    return [pSet.GetObject("%s-%d" % (name, i)) for i in range(1, n + 1)]
+
+
+def test_parent_collisions_off_and_pieces_ghosted_then_unmasked():
+    from engine.rocks import breakup, death
+    assert breakup.kPieceGhostTime == 1.0
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    assert rock.CanCollide() == 0
+    pieces = _majors_of(pSet, "Asteroid 5b", 4.0)
+    assert len(pieces) >= 2
+    for i, x in enumerate(pieces):
+        assert _pair_masked(x, rock)
+        for y in pieces[i + 1:]:
+            assert _pair_masked(x, y)
+    death.advance(breakup.kPieceGhostTime - 0.01)
+    assert _pair_masked(pieces[0], pieces[1])     # still ghosted
+    death.advance(0.02)
+    for i, x in enumerate(pieces):
+        for y in pieces[i + 1:]:
+            assert not _pair_masked(x, y)
+
+
+def test_unghost_is_safe_when_a_piece_is_gone():
+    from engine.rocks import breakup, death
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    pieces = _majors_of(pSet, "Asteroid 5b", 4.0)
+    pSet.DeleteObjectFromSet(pieces[0].GetName())
+    death.advance(breakup.kPieceGhostTime + 0.01)   # must not raise
+    assert not _pair_masked(pieces[1], pieces[2])
+
+
+
+
+
+@pytest.mark.parametrize("lifetime_first", [True, False])
+def test_script_lifetime_with_object_lifetime_ticking_fires_once(
+        monkeypatch, lifetime_first):
+    """E1M2's death script sets SetLifeTime(0.5), which also registers the
+    rock with object_lifetime; with both ticking, each event fires once."""
+    from engine.appc import object_lifetime
+    from engine.core.loop import TICK_DELTA
+    from engine.rocks import death
+    rock = _make(App.GENUS_ASTEROID)
+    _in_set(rock, "Asteroid 5b")
+    rock.RunDeathScript = lambda: rock.SetLifeTime(0.5)
+    seen = _typed_events(monkeypatch, rock)
+    death.begin(rock)
+    for _ in range(90):
+        if lifetime_first:
+            object_lifetime.advance(TICK_DELTA)
+            death.advance(TICK_DELTA)
+        else:
+            death.advance(TICK_DELTA)
+            object_lifetime.advance(TICK_DELTA)
+    assert seen.count(App.ET_OBJECT_EXPLODING) == 1
+    assert seen.count(App.ET_OBJECT_DESTROYED) == 1
+    assert seen.count(App.ET_DELETE_OBJECT_PUBLIC) == 1
