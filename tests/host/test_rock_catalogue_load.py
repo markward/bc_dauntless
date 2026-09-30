@@ -35,3 +35,23 @@ def test_catalogue_rock_loads_at_stock_size(host):
     (_c, half) = host.model_aabb(handle)
     assert max(half) <= rc.STOCK_RADIUS_MU["asteroid1.nif"] * 1.001
     assert max(half) >= rc.STOCK_RADIUS_MU["asteroid1.nif"] * 0.5
+
+
+@pytest.mark.parametrize("stock", sorted(["asteroid.nif", "asteroid1.nif",
+                                          "asteroid2.nif", "asteroid3.nif"]))
+def test_prebake_target_matches_the_loaded_model_source(host, stock):
+    """The boot pre-bake's rock target string is the SAME string the loaded
+    model's Model::source carries -- the .dhv cache key. Built by C++'s
+    assets::hull_source_string (float32 %.6g), never Python formatting."""
+    from engine.appc import hull_volume
+    from engine.rocks import catalogue as rc
+
+    rock = rc.pick("Unknown Debris 4")
+    s = rc.load_scale(rock, stock)
+    targets = hull_volume.rock_bake_targets(stock, 10.0)
+    handle = host.load_model(
+        rock.lod_paths[0], [str(Path(rock.lod_paths[0]).parent)], None, None, s)
+    source = host.model_source(handle)
+    assert "#s=" in source
+    assert (source, 10.0) in targets
+    assert host.hull_source_string(rock.lod_paths[0], s) == source

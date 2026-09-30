@@ -128,13 +128,21 @@ def _under_game_root(nif_path) -> bool:
     return path_parts[:len(root_parts)] == root_parts
 
 
-def ship_model_source(ship_name: str, nif_path: str) -> tuple[str, float]:
+def redirected_stock(nif_path) -> Optional[str]:
+    """The stock asteroid basename `nif_path` redirects from, or None when it
+    does not redirect (catalogue off, not a stock asteroid NIF, or not under
+    the configured BC install root -- R13)."""
     if not _enabled:
-        return nif_path, 1.0
+        return None
     stock = stock_key(nif_path)
+    if stock is None or not _under_game_root(nif_path):
+        return None
+    return stock
+
+
+def ship_model_source(ship_name: str, nif_path: str) -> tuple[str, float]:
+    stock = redirected_stock(nif_path)
     if stock is None:
-        return nif_path, 1.0
-    if not _under_game_root(nif_path):
         return nif_path, 1.0
     rock = pick(ship_name)
     if rock is None:

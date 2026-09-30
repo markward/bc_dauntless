@@ -91,6 +91,7 @@
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
 #include <assets/decal_override.h>
+#include <assets/hull_source.h>
 #include <assets/mesh_fix.h>
 #include <assets/model_compose.h>
 #include <assets/texture.h>
@@ -4704,6 +4705,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Returns ((center_x,y,z), (half_extents_x,y,z)) computed from the "
           "union of every CPU-side mesh vertex position in the model. (0,0,0) "
           "tuples on invalid handle or model with no retained CPU data.");
+
+    // Model::source -- the hull-volume cache key ("<path>" or
+    // "<path>#s=<scale %.6g>"). Empty for an invalid handle.
+    m.def("model_source",
+          [](scenegraph::ModelHandle h) -> std::string {
+              if (h == 0 || h > g_loaded_models.size()) return {};
+              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              return model ? model->source.string() : std::string{};
+          },
+          py::arg("model"),
+          "The loaded model's Model::source string (the .dhv/.dvox cache "
+          "key): the bare path, or '<path>#s=<scale>' for a scaled glTF. "
+          "Empty string for an invalid handle.");
+
+    // The one formatter for a scaled source string (float32, %.6g). Python
+    // must never format the scale itself -- the boot pre-bake's target has
+    // to be byte-identical to the Model::source the runtime keys on.
+    m.def("hull_source_string",
+          [](const std::string& path, float scale) -> std::string {
+              return assets::hull_source_string(path, scale);
+          },
+          py::arg("path"), py::arg("scale"),
+          "assets::hull_source_string: '<path>' when scale == 1.0, else "
+          "'<path>#s=<scale as float32 %.6g>'. Pure; no GL context needed.");
 
     m.def("model_bounds",
           [](scenegraph::ModelHandle h)

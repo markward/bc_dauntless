@@ -47,6 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
+    "hull_source_string",
     "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
@@ -655,6 +656,14 @@ def hull_volume_bake_to_disk(hull_path: str, authored_res: float) -> bool:
     No hasattr guard, deliberately -- same reason as hull_volume_prewarm.
     """
     return bool(_h.hull_volume_bake_to_disk(str(hull_path), float(authored_res)))
+
+
+def hull_source_string(path: str, scale: float) -> str:
+    """C++'s assets::hull_source_string: the bare path at scale 1.0, else
+    "<path>#s=<scale as float32 %.6g>" -- the exact Model::source string the
+    hull-volume caches key on. Never format a scale in Python for a cache
+    key: a double %.6g can differ from the float32 one."""
+    return str(_h.hull_source_string(str(path), float(scale)))
 
 
 def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",
