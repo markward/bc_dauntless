@@ -6067,6 +6067,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         # shader and must stay rim-free (default ineligible).
         r_.set_rim_eligible(iid, True)
         r_.set_rim_strength(iid, _rim_strength_for(ship))
+        from engine.rocks.rock import is_rock
+        if is_rock(ship):
+            r_.set_surface_rock(iid, True)
 
         # Subsystem glow dimming (best-effort VFX); never block spawn.
         try:
@@ -7182,6 +7185,9 @@ class _MissionLoader:
             # opaque shader and must stay rim-free (default ineligible).
             r_.set_rim_eligible(iid, True)
             r_.set_rim_strength(iid, _rim_strength_for(ship))
+            from engine.rocks.rock import is_rock
+            if is_rock(ship):
+                r_.set_surface_rock(iid, True)
 
             # Subsystem glow dimming (best-effort VFX). Ships missing a warp /
             # impulse / sensor subsystem simply register fewer regions; any

@@ -1234,11 +1234,13 @@ void frame() {
                     [&](const scenegraph::Instance& inst) {
                         if (inst.breach_events.count() == 0) return;
                         auto vent = renderer::build_venting_descriptors(
-                            inst.breach_events, inst.id, g_decal_game_time);
+                            inst.breach_events, inst.id, g_decal_game_time,
+                            inst.surface_is_rock);
                         all_emitters.insert(all_emitters.end(),
                                             vent.begin(), vent.end());
                         auto debris = renderer::build_debris_descriptors(
-                            inst.breach_events, inst.id, g_decal_game_time);
+                            inst.breach_events, inst.id, g_decal_game_time,
+                            inst.surface_is_rock);
                         all_emitters.insert(all_emitters.end(),
                                             debris.begin(), debris.end());
                     });
@@ -2829,6 +2831,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Fresnel rim intensity for a rim-eligible instance. Authored by "
           "the hardpoint stats' 'SpecularCoef'; defaults to 0.1 when the "
           "ship does not define one.");
+    m.def("set_surface_rock",
+          [](scenegraph::InstanceId id, bool rock) {
+              g_world.set_surface_rock(id, rock);
+          },
+          py::arg("id"), py::arg("rock"),
+          "Mark an instance as rock: rock craters, no venting, grey debris.");
     m.def("set_emissive_scale",
           [](scenegraph::InstanceId id, float scale) {
               g_world.set_emissive_scale(id, scale);
@@ -5153,6 +5161,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           cinst->rim_eligible = inst->rim_eligible;
                           cinst->rim_strength = inst->rim_strength;
                           cinst->emissive_scale = inst->emissive_scale;
+                          cinst->surface_is_rock = inst->surface_is_rock;
                       }
                       if (g_instance_field_cache->split(id, child, c.cell_list)) {
                           d["instance_id"] = child;

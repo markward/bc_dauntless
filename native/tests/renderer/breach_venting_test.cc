@@ -27,6 +27,14 @@ TEST(BuildVentingDescriptors, FreshEventYieldsOneDescriptor) {
     ASSERT_EQ(desc.size(), 1u);
 }
 
+TEST(BuildVentingDescriptors, RockVentsNothing) {
+    scenegraph::BreachEventRing ring;
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    scenegraph::InstanceId id{1, 1};
+    EXPECT_FALSE(renderer::build_venting_descriptors(ring, id, 0.f, false).empty());
+    EXPECT_TRUE(renderer::build_venting_descriptors(ring, id, 0.f, true).empty());
+}
+
 TEST(BuildVentingDescriptors, DescriptorHasCorrectInstanceId) {
     scenegraph::BreachEventRing ring;
     ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 42u);

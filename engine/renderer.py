@@ -75,6 +75,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
+    "set_surface_rock",
     "set_subsystem_pins", "set_suns",
     "set_system_nebula_profile", "set_system_nebula_star",
     "set_system_nebula_flashes",
@@ -797,6 +798,12 @@ def set_rim_strength(instance_id: InstanceId, strength: float) -> None:
     hardpoint stats' optional 'SpecularCoef' key (via ShipClass.SetSpecularKs);
     ships without one use DEFAULT_RIM_STRENGTH."""
     _h.set_rim_strength(instance_id, float(strength))
+
+
+def set_surface_rock(instance_id: InstanceId, rock: bool) -> None:
+    """Mark an instance as rock (rock-class spec §2): craters expose rock,
+    no venting, grey-brown debris."""
+    _h.set_surface_rock(instance_id, rock)
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:

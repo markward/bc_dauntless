@@ -33,6 +33,9 @@ class _FakeRenderer:
     def set_rim_strength(self, iid, s):
         pass
 
+    def set_surface_rock(self, iid, rock):
+        pass
+
 
 def test_realize_then_teardown(monkeypatch):
     from engine import host_loop as hl
@@ -79,6 +82,41 @@ def test_rerealize_after_departure_uses_the_current_radius(monkeypatch):
     planet.SetRadius(1800.0)
     hl.realize_set_objects(sess, s, r)
     assert sess.planet_natural_scale[planet] == pytest.approx(20.0 * scale_at_90)
+
+
+def test_realize_marks_rock_surface_rock_true(monkeypatch):
+    """set_surface_rock is called for a genus-3 rock (rock-class spec §2); a
+    normal ship must never receive the call."""
+    from tests.unit.test_rock_class import _make
+    from engine import host_loop as hl
+
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+
+    class _Recording(_FakeRenderer):
+        def __init__(self):
+            super().__init__()
+            self.surface_rock_calls = []
+
+        def set_surface_rock(self, iid, rock):
+            self.surface_rock_calls.append((iid, rock))
+
+    sess = hl.MissionSession(mission_name="t")
+    r = _Recording()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+
+    rock = _make(App.GENUS_ASTEROID)
+    normal_ship = App.ShipClass_Create()
+    normal_ship.SetName("normal")
+    s.AddObjectToSet(rock, "rock")
+    s.AddObjectToSet(normal_ship, "normal")
+
+    hl.realize_set_objects(sess, s, r)
+
+    rock_iid = sess.ship_instances[rock]
+    normal_iid = sess.ship_instances[normal_ship]
+    assert (rock_iid, True) in r.surface_rock_calls
+    assert not any(iid == normal_iid for iid, _ in r.surface_rock_calls)
 
 
 def test_script_less_rock_realises_its_catalogue_fragment(monkeypatch):

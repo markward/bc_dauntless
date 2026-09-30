@@ -81,6 +81,10 @@ struct Instance {
     /// this default.
     float rim_strength = 0.1f;
 
+    /// True for rocks (RockClass, rock-class spec §2): craters expose rock,
+    /// no venting, grey-brown debris. Default false.
+    bool surface_is_rock = false;
+
     /// Scales the ship's self-illumination (material emissive + glow map) at
     /// draw time. 1.0 = normal; 0.0 = no self-light, used for destroyed ships
     /// so a dead hull goes dark in space (diffuse-lit, specular, and rim

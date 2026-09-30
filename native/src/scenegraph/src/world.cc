@@ -115,6 +115,10 @@ void World::set_rim_strength(InstanceId id, float strength) {
     if (auto* inst = get(id)) inst->rim_strength = strength;
 }
 
+void World::set_surface_rock(InstanceId id, bool rock) {
+    if (auto* inst = get(id)) inst->surface_is_rock = rock;
+}
+
 void World::set_emissive_scale(InstanceId id, float scale) {
     if (auto* inst = get(id)) inst->emissive_scale = scale;
 }

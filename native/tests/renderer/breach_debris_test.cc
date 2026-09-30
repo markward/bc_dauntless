@@ -25,6 +25,20 @@ TEST(BuildDebrisDescriptors, FreshEventYieldsChunkAndSpark) {
     EXPECT_EQ(desc[1].texture_path, "data/spark.tga");
 }
 
+TEST(BuildDebrisDescriptors, RockDebrisIsGreyBrownNotHotOrange) {
+    scenegraph::BreachEventRing ring;
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    scenegraph::InstanceId id{1, 1};
+    const auto rock = renderer::build_debris_descriptors(ring, id, 0.f, true);
+    ASSERT_FALSE(rock.empty());
+    for (const auto& d : rock) {
+        const auto& k0 = d.color_keys[0];
+        // No channel dominates: grey-brown, never a hot spark (r >> b).
+        EXPECT_LT(k0.r - k0.b, 0.2f);
+        EXPECT_LT(k0.r, 0.6f);
+    }
+}
+
 TEST(BuildDebrisDescriptors, BothAttachedToInstance) {
     scenegraph::BreachEventRing ring;
     ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 42u);

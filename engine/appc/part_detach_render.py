@@ -168,6 +168,9 @@ def _copy_render_state(ship, chunk_iid) -> None:
     renderer.set_rim_eligible(chunk_iid, True)
     renderer.set_rim_strength(chunk_iid, _rim_strength_for(ship))
     renderer.set_emissive_scale(chunk_iid, 1.0)
+    from engine.rocks.rock import is_rock
+    if is_rock(ship):
+        renderer.set_surface_rock(chunk_iid, True)
     return shown
 
 

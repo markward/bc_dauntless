@@ -35,6 +35,7 @@ class _FakeRenderer:
         self.rim_eligible = {}
         self.rim_strength = {}
         self.emissive = {}
+        self.surface_rock = {}
 
     def create_instance(self, model):
         iid = 900 + len(self.created)
@@ -52,6 +53,9 @@ class _FakeRenderer:
 
     def set_rim_strength(self, iid, v):
         self.rim_strength[iid] = v
+
+    def set_surface_rock(self, iid, v):
+        self.surface_rock[iid] = v
 
     def set_emissive_scale(self, iid, v):
         self.emissive[iid] = v
