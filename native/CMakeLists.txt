@@ -208,6 +208,7 @@ add_subdirectory(tools/inspect_flip)
 add_subdirectory(tools/inspect_tex_props)
 add_subdirectory(tools/inspect_materials)
 add_subdirectory(tools/voxel_inspect)
+add_subdirectory(tools/rock_catalogue)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)

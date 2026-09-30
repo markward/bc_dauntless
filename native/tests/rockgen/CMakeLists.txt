@@ -3,6 +3,7 @@ add_executable(rockgen_tests
     shape_test.cc
     surface_test.cc
     impostor_test.cc
+    catalogue_writer_test.cc
 )
-target_link_libraries(rockgen_tests PRIVATE rockgen GTest::gtest_main)
+target_link_libraries(rockgen_tests PRIVATE rockgen rock_catalogue_writer GTest::gtest_main)
 gtest_discover_tests(rockgen_tests)
