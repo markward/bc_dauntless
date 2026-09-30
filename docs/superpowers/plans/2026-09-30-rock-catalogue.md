@@ -27,7 +27,7 @@
   - 1 BC model unit = **1.75 m**, so `kGltfMetresToModelUnits = 1.0f / 1.75f`.
   - The axis map is `(x, y, z)_glTF → (−x, z, y)_BC`. It is det +1, so winding is preserved.
   - Normal maps are +Y (OpenGL), with no `reconstruct_normal_map_z`.
-- **Catalogue rocks** are stored centred with a bounding radius of exactly **100 m**. The bounding radius is the largest vertex distance from the origin.
+- **Catalogue rocks** are stored centred with LOD0's bounding radius exactly **100 m**; lower LODs share LOD0's centre and scale (radius ≤ 100 m). The bounding radius is the largest vertex distance from the origin.
 - **Source string:** `Model::source` is `<path>` when `scale == 1.0f`, else `<path>#s=<scale formatted %.6g>`.
 - **Redirect key:** the four stock NIF basenames, matched case-insensitively: `asteroid.nif`, `asteroid1.nif`, `asteroid2.nif`, `asteroid3.nif`, under `data/Models/Misc/Asteroids/`. Never species 712.
 - **Deviation from spec D7:** the tool WRITES glTF JSON with nlohmann_json (sorted keys, deterministic) and the engine READS it with cgltf. A writer and reader from independent libraries make the round-trip test meaningful.

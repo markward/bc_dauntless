@@ -4,7 +4,7 @@ Regenerates two rocks (one major, one fragment) with --only and compares bytes. 
 generator change that alters output fails here; the fix is to regenerate and commit the
 catalogue deliberately (see native/assets/rocks/README.md).
 """
-import hashlib, json, subprocess
+import json, subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]

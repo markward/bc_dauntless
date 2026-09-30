@@ -120,10 +120,11 @@ Per rock:
 
 ### Normalisation
 
-Every rock is written centred on the origin, with its bounding sphere radius at
-exactly **100 m** (100 glTF units; see the units convention in Part 3). That is
-≈57.14 BC model units, or ≈0.571 GU at scale 1. Sizing a rock to a particular use
-happens at load (Part 3), never in the files.
+Every rock is written centred on the origin, with LOD0's bounding sphere radius
+at exactly **100 m** (100 glTF units; see the units convention in Part 3); lower
+LODs share LOD0's centre and scale, so their radius is at most 100 m. LOD0's
+100 m is ≈57.14 BC model units, or ≈0.571 GU at scale 1. Sizing a rock to a
+particular use happens at load (Part 3), never in the files.
 
 ### Layout
 
@@ -391,7 +392,8 @@ Every test runs under `scripts/check_tests.sh`, which must exit 0.
 
 - **rockgen (C++):**
   - **determinism:** byte-identical mesh and texels across two runs
-  - **bounds:** the bounding sphere radius is 100 m ± ε for every recipe rock
+  - **bounds:** LOD0's bounding sphere radius is 100 m ± ε for every recipe
+    rock, and every lower LOD shares LOD0's centre and scale (radius ≤ 100 m)
   - **distinctness:** different ids give measurably different geometry
   - **fragment faces:** every fragment has 2–4 near-planar face clusters
   - **LOD fidelity:** each LOD's radial profile stays within tolerance of LOD0
