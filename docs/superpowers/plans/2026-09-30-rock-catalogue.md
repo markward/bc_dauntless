@@ -1681,3 +1681,58 @@ Expected: exit 0. Any failure not in `tests/known_failures.txt` is a regression 
 git add tests/host/test_rock_catalogue_load.py CLAUDE.md docs/superpowers/specs/2026-09-30-modern-asteroids-roadmap.md
 git commit -m "test+docs(rocks): host load smoke test, CLAUDE.md row, roadmap status"
 ```
+
+---
+
+### Task 12: Embedded glTF textures (`.glb` binary chunk and data URIs)
+
+Added 2026-09-30 at Mark's request. Blender's default glTF export is `.glb` with textures embedded in the binary chunk. Today `load_cpu` reads only images referenced by an external URI. An embedded image (`image.buffer_view`, or a `data:` URI) warns once and loads **untextured**, so a modder's first export would arrive with no textures.
+
+**Files:**
+- Modify: `native/src/assets/include/assets/gltf.h`, `native/src/assets/src/gltf_load.cc`, `native/src/assets/src/gltf_model_build.cc`, `docs/superpowers/specs/2026-09-30-rock-catalogue-design.md` (the Part 3 "Supported" list gains "embedded images (`.glb` buffer views and base64 data URIs)")
+- Test: `native/tests/assets/cpu/gltf_load_test.cc`, `native/tests/assets/gpu/gltf_model_test.cc`, `native/tests/assets/cpu/gltf_fixture.h`
+
+**Interfaces:**
+- Consumes: Tasks 1–2 (`load_cpu`, `build_model_from_gltf`).
+- Produces: `CpuMaterial`'s two image fields become a `CpuImage`:
+
+```cpp
+namespace assets::gltf {
+struct CpuImage {
+    std::filesystem::path path;         // absolute, for an external URI; empty otherwise
+    std::vector<std::uint8_t> bytes;    // encoded PNG/JPEG bytes, for an embedded image; empty otherwise
+    std::string key;                    // dedupe key: path.string(), or "<gltf path>#image<N>" when embedded
+    bool empty() const { return path.empty() && bytes.empty(); }
+};
+struct CpuMaterial {
+    glm::vec4 base_color_factor{1.0f};
+    CpuImage base_color_image;
+    CpuImage normal_image;
+};
+}
+```
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `gltf_fixture.h`, add `write_glb_fixture(dir, embed_texture)`. It writes the Task 1 triangle as a `.glb`: 12-byte header `glTF`, version 2, total length; a JSON chunk (type `0x4E4F534A`, padded with spaces to 4 bytes); a BIN chunk (type `0x004E4942`, padded with zeros), holding geometry plus, when `embed_texture`, a 2×2 PNG from `stbi_write_png_to_func` referenced by `images[0] = {bufferView, mimeType "image/png"}`.
+  - Also add a `with_data_uri_texture` option to `write_fixture` that embeds the same PNG as `data:image/png;base64,...`.
+  - `GltfLoad.GlbEmbeddedImageIsRead`: `load_cpu` of the `.glb` gives `materials[0].base_color_image.bytes` non-empty, `path` empty, and `key` ending in `#image0`.
+  - `GltfLoad.DataUriImageIsRead`: same, for the data-URI fixture.
+  - `GltfLoad.ExternalImageStillUsesPath`: the Task 2 external-PNG fixture still yields a non-empty `path` and empty `bytes`.
+  - `TEST_F(GLContext, GlbEmbeddedTextureBindsBaseStage)`: `AssetCache::load` of the `.glb` gives `stages[Base].texture_index >= 0`, and no "ignoring data-uri image" warning is printed (capture stderr).
+- [ ] **Step 2: Run to verify failure.** Run: `cmake --build build -j --target assets_tests && ./build/native/tests/assets/assets_tests --gtest_filter='GltfLoad*:*Glb*'`. Expected: FAIL (no `bytes` member / empty texture).
+- [ ] **Step 3: Implement.**
+  - In `load_cpu`, for a texture's image:
+    - if `image->buffer_view`, copy `cgltf_buffer_view_data(view)` for `view->size` bytes (cgltf has already loaded the GLB BIN chunk / buffers);
+    - else if `image->uri` starts with `data:`, decode it with `cgltf_load_buffer_base64` (size from the base64 length; strip the `data:...;base64,` prefix);
+    - else keep today's external path.
+  - Remove the "ignoring data-uri image" warning; keep a one-time warning only if decoding fails.
+  - In `build_model_from_gltf`, key the texture map by `CpuImage::key`, and decode from `bytes` when present, else read the file at `path`.
+- [ ] **Step 4: Run to verify pass.** Run: the whole `assets_tests` binary plus a full `cmake --build build -j`. Expected: all PASS.
+- [ ] **Step 5: Commit.**
+
+```bash
+git add native/src/assets/include/assets/gltf.h native/src/assets/src/gltf_load.cc native/src/assets/src/gltf_model_build.cc native/tests/assets/cpu/gltf_load_test.cc native/tests/assets/gpu/gltf_model_test.cc native/tests/assets/cpu/gltf_fixture.h docs/superpowers/specs/2026-09-30-rock-catalogue-design.md
+git commit -m "feat(assets): embedded glTF textures (.glb buffer views and data URIs)"
+```
+
+After this task, re-run `scripts/check_tests.sh` (it must exit 0).
