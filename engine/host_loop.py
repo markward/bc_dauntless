@@ -5474,6 +5474,18 @@ def _ship_model_source(ship, nif_path: str) -> tuple:
         return nif_path, 1.0
 
 
+def _rock_model_override(ship):
+    """(model path, load scale) for a script-less rock (RockClass_Create /
+    DamageableObject_Create, engine/rocks/rock.py), else None -- the ship
+    then realises from its script's NIF as before. Never blocks spawn."""
+    from engine.rocks.rock import rock_model_override
+    try:
+        return rock_model_override(ship)
+    except Exception as e:
+        dev_mode.log_swallowed("rock model override", e)
+        return None
+
+
 _rock_fallback_warned: set = set()
 
 
@@ -5992,10 +6004,15 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
-        nif_path = _ship_nif_path(ship, verbose=verbose)
-        if nif_path is None:
-            continue
-        model_path, model_scale = _ship_model_source(ship, nif_path)
+        _override = _rock_model_override(ship)
+        if _override is not None:
+            model_path, model_scale = _override
+            nif_path = model_path
+        else:
+            nif_path = _ship_nif_path(ship, verbose=verbose)
+            if nif_path is None:
+                continue
+            model_path, model_scale = _ship_model_source(ship, nif_path)
         load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
         tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
@@ -7073,10 +7090,15 @@ class _MissionLoader:
         r_ = self._c.renderer
 
         for ship in _iter_active_ships(verbose=self._verbose):
-            nif_path = _ship_nif_path(ship, verbose=self._verbose)
-            if nif_path is None:
-                continue
-            model_path, model_scale = _ship_model_source(ship, nif_path)
+            _override = _rock_model_override(ship)
+            if _override is not None:
+                model_path, model_scale = _override
+                nif_path = model_path
+            else:
+                nif_path = _ship_nif_path(ship, verbose=self._verbose)
+                if nif_path is None:
+                    continue
+                model_path, model_scale = _ship_model_source(ship, nif_path)
             load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
             # BC ships split textures: a per-ship <NIFdir>/High for hull-specific
             # assets (Sovereign, FedStarbase) plus the class's SetTextureSharePath

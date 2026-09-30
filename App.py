@@ -128,6 +128,7 @@ from engine.appc.objects import (
     PhysicsObjectClass_GetObject,
     IsNull,
 )
+from engine.rocks.rock import DamageableObject_Create
 from engine.appc.sets import (
     SetClass, SetManager, SetClass_Create, SetClass_GetNull,
     SetClass_MakeDisplayName,
@@ -1126,6 +1127,16 @@ class _UtopiaModule:
         # same default as the original engine.
         self._max_torpedo_load: dict = {}
         self._starbase_torpedo_load: dict = {}
+        # Multiplayer object-ID policy (Multi1.py sets 1 before building its
+        # asteroid field). Stored only: the headless engine has no client ID
+        # ranges for it to change.
+        self._ignore_client_id_for_object_creation = 0
+
+    def SetIgnoreClientIDForObjectCreation(self, value) -> None:
+        self._ignore_client_id_for_object_creation = int(value)
+
+    def IsIgnoreClientIDForObjectCreation(self) -> int:
+        return self._ignore_client_id_for_object_creation
 
     def GetGameTime(self) -> float:
         return g_kTimerManager.get_time()

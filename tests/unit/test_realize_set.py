@@ -79,3 +79,69 @@ def test_rerealize_after_departure_uses_the_current_radius(monkeypatch):
     planet.SetRadius(1800.0)
     hl.realize_set_objects(sess, s, r)
     assert sess.planet_natural_scale[planet] == pytest.approx(20.0 * scale_at_90)
+
+
+def test_script_less_rock_realises_its_catalogue_fragment(monkeypatch):
+    """A RockClass_Create rock has no ship script, so _ship_nif_path finds no
+    model for it; realize_set_objects must load its catalogue fragment
+    (rock_model_override) and create an instance of that model instead of
+    skipping it."""
+    from engine import host_loop as hl
+    from engine.rocks.rock import RockClass_Create, rock_model_override
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: None)
+
+    class _Recording(_FakeRenderer):
+        def __init__(self):
+            super().__init__()
+            self.handles = {}
+            self.instanced = []
+
+        def load_model(self, path, search, texture_replacements=None, decals=None, **kw):
+            h = 200 + len(self.handles)
+            self.handles[h] = (path, kw)
+            return h
+
+        def create_instance(self, h):
+            self.instanced.append(self.handles[h])
+            return super().create_instance(h)
+
+    sess = hl.MissionSession(mission_name="t")
+    r = _Recording()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    rock = RockClass_Create(1.5, seed="Asteroid 1-1", name="Asteroid 1-1")
+    s.AddObjectToSet(rock, "Asteroid 1-1")
+
+    hl.realize_set_objects(sess, s, r)
+
+    frag_path, frag_scale = rock_model_override(rock)
+    assert rock in sess.ship_instances
+    assert r.instanced == [(frag_path, {})]
+    assert frag_path.endswith("lod0.gltf") and frag_scale == 1.0
+    assert rock.GetRadius() == 1.5
+
+
+def test_script_less_rock_realises_in_mission_loader_session(monkeypatch):
+    """Seam 2 (_MissionLoader._realize_session, the mission-load path) takes
+    the same rock_model_override branch as realize_set_objects."""
+    from engine import host_loop as hl
+    from engine.rocks.rock import RockClass_Create, rock_model_override
+    rock = RockClass_Create(1.5, seed="Asteroid 1-1", name="Asteroid 1-1")
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: None)
+    monkeypatch.setattr(hl, "_iter_active_ships", lambda **k: [rock])
+    monkeypatch.setattr(hl, "_iter_active_planets", lambda **k: [], raising=False)
+
+    loaded = []
+
+    class _Recording(_FakeRenderer):
+        def load_model(self, path, search, texture_replacements=None, decals=None, **kw):
+            loaded.append(path)
+            return 100
+
+    controller = hl.HostController()
+    controller.renderer = _Recording()
+    controller.loader = hl._MissionLoader(controller, verbose=False)
+    sess = controller.loader._realize_session(hl.MissionSession(mission_name="t"))
+
+    assert rock in sess.ship_instances
+    assert loaded == [rock_model_override(rock)[0]]

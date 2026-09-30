@@ -401,6 +401,27 @@ class ObjectClass(TGEventHandlerObject):
         """
         get_store().set_rotation(*self._xform, matrix.as_tuple())
 
+    def RandomOrientation(self) -> None:
+        """SDK ObjectClass_RandomOrientation (Multi1.py places every asteroid
+        with it). A uniform random rotation (Shoemake's quaternion method)
+        drawn from App.g_kSystemWrapper.GetRandomNumber, so a mission that
+        seeds the wrapper (Multi1: SetRandomSeed(42)) gets the same field
+        every run. The draw sequence is ours, not BC's."""
+        import math
+        import App
+        n = 1 << 24
+        rnd = App.g_kSystemWrapper.GetRandomNumber
+        u1, u2, u3 = rnd(n) / n, rnd(n) / n, rnd(n) / n
+        a, b = math.sqrt(1.0 - u1), math.sqrt(u1)
+        x, y = a * math.sin(2 * math.pi * u2), a * math.cos(2 * math.pi * u2)
+        z, w = b * math.sin(2 * math.pi * u3), b * math.cos(2 * math.pi * u3)
+        m = TGMatrix3()
+        m.set_from_tuple((
+            1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+            2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+            2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)))
+        self.SetMatrixRotation(m)
+
     def GetRotation(self) -> TGMatrix3:
         result = TGMatrix3()
         result.set_from_tuple(get_store().get_rotation(*self._xform))
