@@ -404,3 +404,119 @@ def test_scaled_hardpoint_rock_breaks_up_at_effective_radius(monkeypatch):
     assert planned and abs(planned[0] - 4.0) < 1e-9
     assert pSet.GetObject("Asteroid 5b-1") is not None
     assert abs(death.drain_death_vfx()[-1].radius_gu - 4.0) < 1e-9
+
+
+# ── The killer (the body whose hit caused the death) ─────────────────────────
+# A rock killed against Haven used to break into pieces born inside Haven and
+# still moving inward: each piece's next contact was lethal too, and the
+# breakup cascaded (87 rocks in 2 s). The killer joins the ghost set, and an
+# immovable killer strips the inward part of every piece's velocity.
+
+
+def _planet_at(x, pSet):
+    from engine.appc.planet import Planet
+    p = Planet(50.0)
+    p.SetTranslateXYZ(x, 0.0, 0.0)
+    pSet.AddObjectToSet(p, "Killer Planet")
+    return p
+
+
+def _big_rock(vx=5.0):
+    """2.0 GU: "Asteroid 5b" then breaks into both majors AND chunks."""
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(2.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    rock.SetVelocity(TGPoint3(vx, 0.0, 0.0))
+    return rock, pSet
+
+
+def test_movable_killer_is_ghosted_against_pieces_and_chunks():
+    from engine.rocks import breakup, death
+    rock, pSet = _big_rock()
+    ship = _make(App.GENUS_SHIP)
+    _in_set(ship, "Ship", "RockTest")
+    death.begin(rock, killer=ship)
+    pieces = _majors_of(pSet, "Asteroid 5b", 2.0)
+    assert pieces
+    for p in pieces:
+        assert _pair_masked(p, ship)
+    specs = death.drain_chunk_specs()
+    assert specs and all(ship.GetObjID() in s.ghost_ids for s in specs)
+    death.advance(breakup.kPieceGhostTime + 0.01)
+    for p in pieces:
+        assert not _pair_masked(p, ship)
+
+
+def test_movable_killer_leaves_piece_velocity_untouched():
+    from engine.rocks import breakup, death
+    rock, pSet = _big_rock()
+    ship = _make(App.GENUS_SHIP)
+    ship.SetTranslateXYZ(10.0, 0.0, 0.0)     # dead ahead of the rock
+    _in_set(ship, "Ship", "RockTest")
+    death.begin(rock, killer=ship)
+    majors = [p for p in breakup.plan("Asteroid 5b", 2.0) if p.tier == "major"]
+    sp = breakup.kSeparationSpeedGU
+    for i, piece in enumerate(_majors_of(pSet, "Asteroid 5b", 2.0)):
+        v = piece.GetVelocityTG()
+        assert abs(v.x - (5.0 + majors[i].offset[0] * sp)) < 1e-9
+
+
+def test_planet_killer_is_ghosted_from_the_piece_side_only():
+    """Planet is not a DamageableObject: EnableCollisionsWith on it would be a
+    silent TGObject stub. The mask is read symmetrically, so the pieces'
+    side alone exempts the pair."""
+    from engine.rocks import breakup, death
+    rock, pSet = _big_rock()
+    planet = _planet_at(60.0, pSet)
+    death.begin(rock, killer=planet)
+    pieces = _majors_of(pSet, "Asteroid 5b", 2.0)
+    for p in pieces:
+        assert planet.GetObjID() in p._collision_disabled_ids
+    assert "_collision_disabled_ids" not in planet.__dict__
+    specs = death.drain_chunk_specs()
+    assert specs and all(planet.GetObjID() in s.ghost_ids for s in specs)
+    death.advance(breakup.kPieceGhostTime + 0.01)
+    for p in pieces:
+        assert planet.GetObjID() not in p._collision_disabled_ids
+
+
+def _inward(vel, at, centre):
+    dx, dy, dz = centre[0] - at[0], centre[1] - at[1], centre[2] - at[2]
+    n = (dx * dx + dy * dy + dz * dz) ** 0.5
+    return (vel[0] * dx + vel[1] * dy + vel[2] * dz) / n
+
+
+@pytest.mark.parametrize("kind", ["planet", "immobile_ship"])
+def test_immovable_killer_strips_inward_velocity(kind):
+    from engine.rocks import death
+    rock, pSet = _big_rock(vx=5.0)           # flying straight at the killer
+    if kind == "planet":
+        killer = _planet_at(60.0, pSet)
+    else:
+        killer = _make(App.GENUS_SHIP)
+        killer.SetStatic(1)
+        killer.SetTranslateXYZ(60.0, 0.0, 0.0)
+        _in_set(killer, "Ship", "RockTest")
+        assert killer.IsImmobile()
+    death.begin(rock, killer=killer)
+    c = (60.0, 0.0, 0.0)
+    pieces = _majors_of(pSet, "Asteroid 5b", 2.0)
+    assert pieces
+    for p in pieces:
+        v, at = p.GetVelocityTG(), p.GetWorldLocation()
+        assert _inward((v.x, v.y, v.z), (at.x, at.y, at.z), c) <= 1e-9
+    specs = death.drain_chunk_specs()
+    assert specs
+    for s in specs:
+        assert _inward(s.vel, s.loc, c) <= 1e-9
+
+
+def test_immovable_killer_keeps_outward_velocity():
+    """Only the component TOWARD the killer goes: a rock already moving away
+    keeps its speed."""
+    from engine.rocks import breakup, death
+    rock, pSet = _big_rock(vx=-5.0)          # receding from the planet at +x
+    planet = _planet_at(60.0, pSet)
+    death.begin(rock, killer=planet)
+    for p in _majors_of(pSet, "Asteroid 5b", 2.0):
+        assert p.GetVelocityTG().x < -5.0 + breakup.kSeparationSpeedGU + 1e-9

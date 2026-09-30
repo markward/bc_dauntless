@@ -80,13 +80,70 @@ def begin(rock, killer=None) -> None:
     _dying.append({"rock": rock, "time_left": _life(rock)})
     if pSet is not None:
         try:
-            _break_up(rock, pSet, name)
+            _break_up(rock, pSet, name, killer)
         except Exception as e:
             dev_mode.log_swallowed("rock breakup", e)
 
 
-def _break_up(rock, pSet, name) -> None:
+def _is_immovable(obj) -> bool:
+    """A Planet (moons and suns included), or anything whose class says it is
+    immobile (SetStatic / SetStationary ships). Class-level lookup, not
+    getattr on the instance: TGObject.__getattr__ vends a truthy _Stub."""
+    from engine.appc.planet import Planet
+    if isinstance(obj, Planet):
+        return True
+    fn = getattr(type(obj), "IsImmobile", None)
+    if fn is None:
+        return False
+    try:
+        return bool(fn(obj))
+    except Exception as e:
+        dev_mode.log_swallowed("rock killer IsImmobile", e)
+        return False
+
+
+def _killer_centre(killer, pSet):
+    """The killer's centre in `pSet`'s coordinates, or None when its frame is
+    not comparable (it has left, or sits in an unrelated set)."""
+    from engine.systems import frames
+    try:
+        k_set = frames.containing_set(killer)
+        off = frames.offset_between(pSet, k_set)
+        if off is None:
+            return None
+        c = killer.GetWorldLocation()
+        return (c.x + off[0], c.y + off[1], c.z + off[2])
+    except Exception as e:
+        dev_mode.log_swallowed("rock killer centre", e)
+        return None
+
+
+def _strip_inward(vel, at, centre) -> tuple:
+    """`vel` with its component toward `centre` (seen from `at`) removed. A
+    piece born against an immovable killer must not keep flying into it: its
+    next contact would be lethal too, and the breakup would cascade."""
+    dx, dy, dz = centre[0] - at[0], centre[1] - at[1], centre[2] - at[2]
+    n = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if n < 1e-9:
+        return vel
+    dx, dy, dz = dx / n, dy / n, dz / n
+    vn = vel[0] * dx + vel[1] * dy + vel[2] * dz
+    if vn <= 0.0:
+        return vel
+    return (vel[0] - vn * dx, vel[1] - vn * dy, vel[2] - vn * dz)
+
+
+def _break_up(rock, pSet, name, killer=None) -> None:
+    """Spawn the breakup. `killer` is the body whose hit caused the death (a
+    collision's other body, planets included -- collisions passes it to
+    apply_hit as `source`, which DamageSystem hands to begin()). It joins
+    the ghost set for kPieceGhostTime, and when it is immovable every
+    piece's velocity toward its centre is removed."""
     from engine.rocks.rock import RockClass_Create, effective_radius
+    if killer is rock:
+        killer = None
+    centre = (_killer_centre(killer, pSet)
+              if killer is not None and _is_immovable(killer) else None)
     loc = rock.GetWorldLocation()
     R = rock.GetWorldRotation()
     v = rock.GetVelocityTG()
@@ -107,6 +164,8 @@ def _break_up(rock, pSet, name) -> None:
               loc.z + d.z * radius * 0.5)
         sp = breakup.kSeparationSpeedGU
         vel = (v.x + d.x * sp, v.y + d.y * sp, v.z + d.z * sp)
+        if centre is not None:
+            vel = _strip_inward(vel, at, centre)
         tr = breakup.kTumbleRate
         ang = (d.y * tr, d.z * tr, d.x * tr)
         if p.tier == "major":
@@ -135,19 +194,28 @@ def _break_up(rock, pSet, name) -> None:
             chunk_specs.append(ChunkSpec(
                 family, "%s#%d" % (name, i), p.radius_gu,
                 stats.piece_mass(parent_mass, p.v_ratio), at, vel, ang, pSet))
-    # Chunk specs wait for the majors: they carry every piece's ObjID.
-    ghost_ids = tuple(o.GetObjID() for o in [rock] + pieces)
+    # Chunk specs wait for the majors: they carry every piece's ObjID, and
+    # the killer's.
+    ghosted = [rock] + pieces + ([killer] if killer is not None else [])
+    ghost_ids = tuple(o.GetObjID() for o in ghosted)
     _chunk_specs.extend(replace(s, ghost_ids=ghost_ids) for s in chunk_specs)
     if pieces:
-        _ghost([rock] + pieces)
+        _ghost(ghosted)
 
 
 def _set_pairs(objs, on) -> None:
     """EnableCollisionsWith both ways for every pair in `objs`. Raise-safe per
-    pair, so a piece that has since left the world cannot stop the rest."""
+    pair, so a piece that has since left the world cannot stop the rest.
+
+    An object whose class has no EnableCollisionsWith (a Planet is not a
+    DamageableObject) is masked from the other side only -- calling it on
+    the instance would hit TGObject's silent _Stub. resolve_collisions reads
+    the mask symmetrically, so one side is enough."""
     for i, a in enumerate(objs):
         for b in objs[i + 1:]:
             for x, y in ((a, b), (b, a)):
+                if getattr(type(x), "EnableCollisionsWith", None) is None:
+                    continue
                 try:
                     x.EnableCollisionsWith(y, 1 if on else 0)
                 except Exception as e:

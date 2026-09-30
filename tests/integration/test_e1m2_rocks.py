@@ -153,3 +153,54 @@ def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit():
     assert rock.IsDying() or rock.IsDead()       # the contact was lethal
     assert beats == ["station", "destroyed"]
     assert name not in mod.g_dAsteroidInfo
+
+
+def test_asteroid_killed_against_haven_does_not_cascade():
+    """A moving asteroid driven into Haven dies on contact and breaks up.
+    Its pieces are born inside Haven's boundary; before the fix they kept the
+    parent's inward velocity and were not ghosted against Haven, so every
+    piece's next contact was lethal too (probe: 87 rocks in 2 s, 230
+    ET_PLANET_COLLISIONs). Within 2 s of the strike there must be only the
+    parent and its first-generation pieces -- no "-1-1" names."""
+    from engine.appc import collisions
+    from engine.appc.ship_iter import iter_rocks
+    from engine.rocks import breakup
+    mod = _init_e1m2()
+    haven, rock, name = _haven_and_first_rock(mod)
+    rock.SetRadius(1.0)                 # headless: no mesh radius (see above)
+    hp = haven.GetWorldLocation()
+    # Haven is 1800 GU: start at the narrowest boundary any radius rule
+    # gives (0.8 x the raw sum), which is at or inside contact under all of
+    # them; the loop below waits for the strike either way.
+    r = (haven.GetRadius() + rock.GetRadius()) * collisions.COLLISION_RADIUS_SCALE
+    rock.SetTranslateXYZ(hp.x + r + 0.5, hp.y, hp.z)
+    rock.SetVelocity(App.TGPoint3(-6.0, 0.0, 0.0))
+    strikes = []
+    real = collisions._emit_planet_collision
+
+    def spy(a, b):
+        strikes.append(1)
+        real(a, b)
+
+    collisions._emit_planet_collision = spy
+    try:
+        loop = GameLoop()
+        for _ in range(600):            # until the strike
+            loop.tick()
+            collisions.tick_collisions(1.0 / 60.0)
+            if strikes:
+                break
+        assert strikes, "the asteroid never reached Haven"
+        assert rock.IsDying() or rock.IsDead()
+        seen = set()
+        for _ in range(120):            # 2 s after it
+            loop.tick()
+            collisions.tick_collisions(1.0 / 60.0)
+            seen.update(x.GetName() for x in iter_rocks()
+                        if x.GetName().startswith(name))
+    finally:
+        collisions._emit_planet_collision = real
+    pieces = seen - {name}
+    assert 1 <= len(pieces) <= breakup.kPieceCountMax
+    assert all(p.count("-") == 1 for p in pieces), sorted(pieces)
+    assert len(strikes) == 1

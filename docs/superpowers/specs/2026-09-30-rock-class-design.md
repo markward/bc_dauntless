@@ -180,6 +180,13 @@ when the critical hull reaches 0:
   (`debris_chunk` style, catalogue fragment mesh, capped and oldest-first
   evicted). Sub-project 3 replaces these with minors.
 - Below that, dust only.
+- For `kPieceGhostTime` (1 s) pieces and chunks ignore collisions with their
+  siblings, the parent, and **the killer** — the body whose hit caused the
+  death (a collision's other body reaches `death.begin` as DamageSystem's
+  `source`). When the killer is immovable (a `Planet`, or `IsImmobile()`),
+  each piece's and chunk's velocity component toward the killer's centre is
+  removed: pieces born inside Haven used to keep flying inward, and the
+  breakup cascaded (final review, 2026-09-30).
 - Pieces do not inherit the parent's death script, and are not in any mission
   name list, so mission bookkeeping sees exactly one death per scripted rock.
 
