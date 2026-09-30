@@ -93,3 +93,44 @@ TEST(GltfLoad, UnsupportedFeaturesWarnOnceAndStillLoad) {
 TEST(GltfLoad, UnreadableFileThrows) {
     EXPECT_THROW(assets::gltf::load_cpu("/nonexistent/x.gltf"), assets::AssetError);
 }
+
+TEST(GltfLoad, SparsePositionOverridesAreApplied) {
+    // A sparse accessor patches ONE element (vertex 1) of the base POSITION
+    // accessor to (0, 5, 0) in glTF space; vertices 0 and 2 keep their base
+    // values. Reading sparse accessors correctly (via
+    // cgltf_accessor_unpack_floats, not per-element cgltf_accessor_read_float)
+    // matters because the latter silently returns 0 for a sparse accessor.
+    auto d = tmpdir("sparse");
+    auto p = write_fixture(d);
+    auto j = nlohmann::json::parse(std::ifstream(p));
+
+    // Second buffer: 2-byte sparse index (1) + 2 bytes pad (4-byte align) +
+    // 12-byte VEC3 override value (0, 5, 0).
+    std::vector<unsigned char> sparse_buf;
+    put(sparse_buf, std::uint16_t{1});
+    put(sparse_buf, std::uint16_t{0});
+    float over[3] = {0.0f, 5.0f, 0.0f};
+    for (float f : over) put(sparse_buf, f);
+
+    j["buffers"].push_back({{"byteLength", sparse_buf.size()},
+                             {"uri", "data:application/octet-stream;base64," + b64(sparse_buf)}});
+    j["bufferViews"].push_back({{"buffer", 1}, {"byteOffset", 0}, {"byteLength", 2}});
+    j["bufferViews"].push_back({{"buffer", 1}, {"byteOffset", 4}, {"byteLength", 12}});
+    j["accessors"][0]["sparse"] = {
+        {"count", 1},
+        {"indices", {{"bufferView", 3}, {"componentType", 5123}, {"byteOffset", 0}}},
+        {"values", {{"bufferView", 4}, {"byteOffset", 0}}},
+    };
+    std::ofstream(p) << j.dump();
+
+    auto s = assets::gltf::load_cpu(p);
+    const auto& v = s.meshes[0].vertices;
+    const float k = assets::gltf::kMetresToModelUnits;
+    glm::vec3 expect_v1 = assets::gltf::to_bc_frame({0.0f, 5.0f, 0.0f}) * k;
+    EXPECT_NEAR(v[1].position.x, expect_v1.x, 1e-6f);
+    EXPECT_NEAR(v[1].position.y, expect_v1.y, 1e-6f);
+    EXPECT_NEAR(v[1].position.z, expect_v1.z, 1e-6f);
+    // Vertices 0 and 2 are untouched by the sparse patch.
+    EXPECT_NEAR(v[0].position.x, -1.0f * k, 1e-6f);
+    EXPECT_NEAR(v[2].position.y, 3.0f * k, 1e-6f);
+}

@@ -58,16 +58,15 @@ std::filesystem::path resolve_image_path(const std::filesystem::path& gltf_path,
     return gltf_path.parent_path() / image->uri;
 }
 
-glm::vec3 read_vec3(const cgltf_accessor* accessor, cgltf_size index) {
-    float v[3] = {0.0f, 0.0f, 0.0f};
-    cgltf_accessor_read_float(accessor, index, v, 3);
-    return {v[0], v[1], v[2]};
-}
-
-glm::vec2 read_vec2(const cgltf_accessor* accessor, cgltf_size index) {
-    float v[2] = {0.0f, 0.0f};
-    cgltf_accessor_read_float(accessor, index, v, 2);
-    return {v[0], v[1]};
+// Unpacks a whole accessor's worth of `components`-wide floats in one call.
+// Unlike per-element cgltf_accessor_read_float, cgltf_accessor_unpack_floats
+// applies sparse substitution (its documented "second pass"), so a sparse
+// POSITION/NORMAL/TEXCOORD_0 reads its overridden values instead of silently
+// coming back as zero.
+std::vector<float> unpack_floats(const cgltf_accessor* accessor, cgltf_size components) {
+    std::vector<float> out(accessor->count * components, 0.0f);
+    cgltf_accessor_unpack_floats(accessor, out.data(), out.size());
+    return out;
 }
 
 }  // namespace
@@ -153,10 +152,6 @@ CpuScene load_cpu(const std::filesystem::path& path, float scale) {
                     } else if (attr.type == cgltf_attribute_type_texcoord && attr.index == 0) {
                         texcoord0 = attr.data;
                     }
-                    if (attr.data && attr.data->is_sparse) warn_once(path_str, "sparse accessors");
-                }
-                if (prim.indices && prim.indices->is_sparse) {
-                    warn_once(path_str, "sparse accessors");
                 }
 
                 if (!position) {
@@ -169,18 +164,24 @@ CpuScene load_cpu(const std::filesystem::path& path, float scale) {
 
                 const cgltf_size vertex_count = position->count;
                 out.vertices.resize(vertex_count);
+
+                std::vector<float> pos_buf = unpack_floats(position, 3);
+                std::vector<float> nrm_buf = normal ? unpack_floats(normal, 3) : std::vector<float>{};
+                std::vector<float> uv_buf =
+                    texcoord0 ? unpack_floats(texcoord0, 2) : std::vector<float>{};
+
                 for (cgltf_size vi = 0; vi < vertex_count; ++vi) {
-                    glm::vec3 p_local = read_vec3(position, vi);
+                    glm::vec3 p_local{pos_buf[vi * 3 + 0], pos_buf[vi * 3 + 1], pos_buf[vi * 3 + 2]};
                     glm::vec3 p_world = glm::vec3(world * glm::vec4(p_local, 1.0f));
                     out.vertices[vi].position = to_bc_frame(p_world) * kMetresToModelUnits * scale;
 
                     if (normal) {
-                        glm::vec3 n_local = read_vec3(normal, vi);
+                        glm::vec3 n_local{nrm_buf[vi * 3 + 0], nrm_buf[vi * 3 + 1], nrm_buf[vi * 3 + 2]};
                         glm::vec3 n_world = normal_mat * n_local;
                         out.vertices[vi].normal = glm::normalize(to_bc_frame(n_world));
                     }
                     if (texcoord0) {
-                        out.vertices[vi].uv = read_vec2(texcoord0, vi);
+                        out.vertices[vi].uv = {uv_buf[vi * 2 + 0], uv_buf[vi * 2 + 1]};
                     }
                 }
 
