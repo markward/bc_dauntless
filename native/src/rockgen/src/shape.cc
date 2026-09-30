@@ -12,6 +12,7 @@
 #include <rockgen/shape.h>
 
 #include "noise.h"
+#include "uv_sphere.h"
 
 #include <algorithm>
 #include <cmath>
@@ -182,11 +183,6 @@ void recompute_smooth_normals(assets::MeshCpu& cpu) {
     }
 }
 
-glm::vec2 spherical_uv(const glm::vec3& n) {
-    return glm::vec2(std::atan2(n.z, n.x) / (2.0f * 3.14159265f) + 0.5f,
-                     std::asin(glm::clamp(n.y, -1.0f, 1.0f)) / 3.14159265f + 0.5f);
-}
-
 /// A triangle whose vertices straddle the u=0/u=1 meridian would otherwise
 /// interpolate BACKWARDS through the whole texture. For each triangle spanning
 /// more than half the u range, duplicate its low-u (<= 0.5) vertices with
@@ -299,7 +295,7 @@ std::vector<assets::MeshCpu> generate_rock_lods(const RockSpec& spec) {
         cpu.vertices.resize(ps.size());
         for (size_t i = 0; i < ps.size(); ++i) {
             cpu.vertices[i].position = ps[i];
-            cpu.vertices[i].uv = spherical_uv(spheres[l].pos[i]);   // pre-cut direction
+            cpu.vertices[i].uv = detail::direction_to_uv(spheres[l].pos[i]);   // pre-cut direction
         }
         cpu.indices = spheres[l].idx;
         recompute_smooth_normals(cpu);
