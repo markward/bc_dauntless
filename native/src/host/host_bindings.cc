@@ -618,9 +618,12 @@ scenegraph::ModelHandle load_model_impl(
 
     // Uniform import scale (glTF only): folded into rep_key only when it
     // differs from the default, so every existing key (NIF loads, and glTF
-    // loads at scale 1.0) stays byte-identical.
+    // loads at scale 1.0) stays byte-identical. Formatted by the same helper
+    // as Model::source (%.6g) -- std::to_string's %f collapses tiny scales
+    // (1e-7 and 2e-7 both "0.000000") onto one handle.
     if (scale != 1.0f) {
-        rep_key += "|scale:" + std::to_string(scale);
+        const std::string src = assets::hull_source_string(nif_path, scale);
+        rep_key += "|scale:" + src.substr(src.rfind("#s=") + 3);
     }
 
     // Dedupe by (nif_path, replacements, decals): callers that load the same

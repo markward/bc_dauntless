@@ -55,3 +55,17 @@ def test_prebake_target_matches_the_loaded_model_source(host, stock):
     assert "#s=" in source
     assert (source, 10.0) in targets
     assert host.hull_source_string(rock.lod_paths[0], s) == source
+
+
+def test_tiny_distinct_scales_get_distinct_handles(host):
+    """load_model's dedupe key must format the scale like Model::source
+    (%.6g), not std::to_string (%f), which collapses 1e-7 and 2e-7 onto
+    "0.000000" and hands the second load the first one's model."""
+    from engine.rocks import catalogue as rc
+
+    rock = rc.pick("Unknown Debris 4")
+    search = [str(Path(rock.lod_paths[0]).parent)]
+    h1 = host.load_model(rock.lod_paths[0], search, None, None, 1e-7)
+    h2 = host.load_model(rock.lod_paths[0], search, None, None, 2e-7)
+    assert h1 != h2
+    assert host.model_source(h1) != host.model_source(h2)
