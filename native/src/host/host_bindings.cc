@@ -549,7 +549,8 @@ scenegraph::ModelHandle load_model_impl(
     const std::string& nif_path,
     const py::object& texture_search_path,
     const py::object& texture_replacements,
-    const py::object& decals) {
+    const py::object& decals,
+    float scale) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -614,6 +615,13 @@ scenegraph::ModelHandle load_model_impl(
         }
     }
 
+    // Uniform import scale (glTF only): folded into rep_key only when it
+    // differs from the default, so every existing key (NIF loads, and glTF
+    // loads at scale 1.0) stays byte-identical.
+    if (scale != 1.0f) {
+        rep_key += "|scale:" + std::to_string(scale);
+    }
+
     // Dedupe by (nif_path, replacements, decals): callers that load the same
     // NIF + registry + decal set for multiple ships get the same handle and
     // the underlying assets::AssetCache::load isn't even called a second
@@ -641,7 +649,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -2078,7 +2086,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("load_model", &load_model_impl,
           py::arg("nif_path"), py::arg("texture_search_path"),
           py::arg("texture_replacements") = py::none(),
-          py::arg("decals") = py::none());
+          py::arg("decals") = py::none(),
+          py::arg("scale") = 1.0f);
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -2860,7 +2869,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none(), py::none());
+                                            py::none(), py::none(), 1.0f);
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
