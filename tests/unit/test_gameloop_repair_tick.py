@@ -17,6 +17,8 @@ def test_gameloop_ticks_repair(monkeypatch):
         def GetRepairSubsystem(self): return self._bay
         def __init__(self): self._bay = _Bay()
 
-    monkeypatch.setattr("engine.core.loop.iter_ships", lambda: [_Ship()])
+    # engine.core.loop now imports iter_non_rock_ships (rock-class Task 1):
+    # rocks are excluded from this loop's subsystem/articulation walk.
+    monkeypatch.setattr("engine.core.loop.iter_non_rock_ships", lambda: [_Ship()])
     GameLoop().tick()
     assert ticked == [TICK_DELTA]

@@ -1661,14 +1661,15 @@ def tick_all_ai(game_time: float) -> None:
     """Iterate every ship and tick its attached AI subtree.
 
     Called once per frame from GameLoop.tick(). Q2 closed at AI-first
-    within the tick so this fires before physics + render.
+    within the tick so this fires before physics + render. Rocks are
+    excluded — a rock has no attached AI to tick (rock-class spec §1).
     """
-    from engine.appc.ship_iter import iter_ships
+    from engine.appc.ship_iter import iter_non_rock_ships
     from engine.appc import defensive_cloak
     if _AI_BREAKDOWN is not None:
         _AI_TICKS[0] += 1
     max_sleep = AI_MAX_SLEEP_TICKS
-    for ship in iter_ships():
+    for ship in iter_non_rock_ships():
         # A ship hiding-to-repair is owned by the defensive-cloak controller;
         # suppress its SDK AI so the two cloak drivers never conflict.
         if defensive_cloak.is_defensive(ship):

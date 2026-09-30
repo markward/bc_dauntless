@@ -133,9 +133,13 @@ def _asymptote_step(accel: float, gap: float, dt: float) -> float:
 
 
 def tick_all_ship_motion(dt: float) -> None:
-    """Iterate every live ship and advance its motion by `dt` seconds."""
-    from engine.appc.ship_iter import iter_ships
-    for ship in iter_ships():
+    """Iterate every live ship and advance its motion by `dt` seconds.
+
+    Rocks are excluded — a rock's motion is never AI-driven (rock-class
+    spec §1).
+    """
+    from engine.appc.ship_iter import iter_non_rock_ships
+    for ship in iter_non_rock_ships():
         _step_ship_motion(ship, dt)
 
 

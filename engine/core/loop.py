@@ -1,7 +1,7 @@
 import App
 
 from engine.appc import articulation
-from engine.appc.ship_iter import iter_ships
+from engine.appc.ship_iter import iter_non_rock_ships
 from engine.core import frame_profiler as _prof
 
 TICK_RATE = 60
@@ -92,9 +92,11 @@ def _update_ship_subsystems() -> None:
 
     Extracted from GameLoop.tick so the profiler can scope it without
     re-indenting the body (and so the scope covers the whole walk, including
-    iter_ships itself, rather than only the per-ship work).
+    iter_ships itself, rather than only the per-ship work). Rocks are
+    excluded — a rock's shield/power/cloak/repair/articulation never ticks
+    (rock-class spec §1).
     """
-    for ship in iter_ships():
+    for ship in iter_non_rock_ships():
         ss = ship.GetShieldSubsystem()
         if ss is not None:
             ss.Update(TICK_DELTA)

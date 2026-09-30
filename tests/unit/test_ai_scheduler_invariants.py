@@ -92,7 +92,9 @@ def drive(monkeypatch):
         ai._ship = ship
         monkeypatch.setattr(ai_driver, "AI_MAX_SLEEP_TICKS", max_sleep)
         import engine.appc.ship_iter as ship_iter
-        monkeypatch.setattr(ship_iter, "iter_ships", lambda: [ship])
+        # tick_all_ai now walks iter_non_rock_ships, which calls
+        # iter_ships(verbose=...) -- accept the kwarg (rock-class Task 1).
+        monkeypatch.setattr(ship_iter, "iter_ships", lambda **kw: [ship])
         t = start
         for _ in range(ticks):
             t += TICK

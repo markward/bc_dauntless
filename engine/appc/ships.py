@@ -1557,6 +1557,13 @@ class ShipClass(DamageableObject):
         # at t = 0 in the mission-scene captures (bible §13 N2).
         self.SetAlertLevel(self._alert_level)
 
+        # Genus GENUS_ASTEROID -> RockClass: a lean body, not a full ship.
+        # ShipClass_Create only ever sees a name, so this is where a rock's
+        # genus becomes knowable. See docs/superpowers/specs/
+        # 2026-09-30-rock-class-design.md.
+        from engine.rocks.rock import maybe_become_rock
+        maybe_become_rock(self)
+
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
         if subsystem is None:
