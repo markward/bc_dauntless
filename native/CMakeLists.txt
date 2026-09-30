@@ -226,6 +226,9 @@ add_subdirectory(src/scenegraph)
 # Voxel hull-damage foundation.
 add_subdirectory(src/voxel)
 
+# Rock-catalogue generator library (recipe, shapes, surface/impostor bakes).
+add_subdirectory(src/rockgen)
+
 # Renderer host subtree.
 add_subdirectory(src/host)
 
