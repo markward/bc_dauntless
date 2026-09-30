@@ -42,7 +42,7 @@ Size decides how real a rock is.
 | # | Sub-project | Status |
 |---|---|---|
 | 1 | **Rock catalogue**: glTF loader, offline generation tool, committed catalogue, BC scripts redirected to it | built, awaiting live check — spec `2026-09-30-rock-catalogue-design.md` |
-| 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | designing — spec `2026-09-30-rock-class-design.md`, branch `feat/rock-class` |
+| 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | built, awaiting live check — spec `2026-09-30-rock-class-design.md`, branch `feat/rock-class` |
 | 3 | **Minors**: instancing, halos, tile fields, fly-through | not started |
 | 3b | **Far tier** | not started |
 | 4 | **Profile seeding** | not started |
@@ -172,9 +172,11 @@ the profile's existing `sensors` column.
 - The stbc-reference MCP (clean-room RE) was **unavailable** during the brainstorm
   (connection failure). BC's own asteroid classes (`AsteroidField`,
   `CT_ASTEROID_TILE`) have not been checked against the RE.
-- `DamageableObject_Create` is an **unimplemented stub** today, so Multi1's and
+- ~~`DamageableObject_Create` is an **unimplemented stub** today, so Multi1's and
   Multi6's 54 rocks each are inert and invisible. Sub-project 2 or 3 should give
-  them a real home.
+  them a real home.~~ Now implemented by sub-project 2:
+  `engine/rocks/rock.py:DamageableObject_Create` returns a `RockClass` for a
+  stock asteroid model, so Multi1's and Multi6's rocks exist.
 - No engine code reads `GENUS_ASTEROID`. Its only reader is SDK
   `ScienceCharacterHandlers.py`, which keeps the science officer quiet about rocks. Whatever sub-project 2
   builds must keep `GetShipProperty().GetGenus()` answering 3 for rocks.
