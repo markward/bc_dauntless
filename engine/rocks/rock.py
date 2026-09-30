@@ -56,6 +56,19 @@ def is_rock(obj) -> bool:
     return isinstance(obj, RockClass)
 
 
+def effective_radius(rock) -> float:
+    """The rock's real size in GU: base x GetScale(). Base is GetRadius()
+    when set, else the hull subsystem's radius -- headless a hardpoint rock's
+    GetRadius is 0 (HullProperty.SetRadius sets only the hull), and live the
+    host sets GetRadius from the mesh extent without SetScale. E1M2 scales
+    its rocks 3.7-8.5x, so reading GetRadius alone plans them at ~0.8 GU."""
+    base = float(rock.GetRadius())
+    if base <= 0.0:
+        hull = rock.GetHull()
+        base = float(hull.GetRadius()) if hull is not None else 0.0
+    return base * float(rock.GetScale())
+
+
 def maybe_become_rock(ship) -> bool:
     """Switch `ship` to RockClass if its genus says asteroid. Idempotent."""
     import App

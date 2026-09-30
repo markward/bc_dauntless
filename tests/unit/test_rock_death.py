@@ -368,3 +368,39 @@ def test_script_lifetime_with_object_lifetime_ticking_fires_once(
     assert seen.count(App.ET_OBJECT_EXPLODING) == 1
     assert seen.count(App.ET_OBJECT_DESTROYED) == 1
     assert seen.count(App.ET_DELETE_OBJECT_PUBLIC) == 1
+
+
+def test_effective_radius_falls_back_to_hull_radius_times_scale():
+    """Headless, a hardpoint rock's GetRadius is 0 (HullProperty.SetRadius
+    sets only the hull subsystem radius) and SetScale is ignored by
+    GetRadius; breakup must size from base x GetScale()."""
+    from engine.rocks.rock import effective_radius
+    rock = _make(App.GENUS_ASTEROID)
+    assert float(rock.GetRadius()) == 0.0
+    rock.SetScale(5.0)
+    assert abs(effective_radius(rock) - 4.0) < 1e-9
+
+
+def test_effective_radius_uses_get_radius_when_set():
+    from engine.rocks.rock import effective_radius
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(1.2)
+    rock.SetScale(1.0)
+    assert abs(effective_radius(rock) - 1.2) < 1e-9
+
+
+def test_scaled_hardpoint_rock_breaks_up_at_effective_radius(monkeypatch):
+    """E1M2's SetScale 3.7-8.5 rocks: GetRadius 0, hull 0.8, SetScale(5)
+    plans at 4.0 GU, so at least one targetable major piece spawns."""
+    from engine.rocks import breakup, death
+    planned = []
+    real_plan = breakup.plan
+    monkeypatch.setattr(breakup, "plan",
+                        lambda n, r: planned.append(r) or real_plan(n, r))
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetScale(5.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    assert planned and abs(planned[0] - 4.0) < 1e-9
+    assert pSet.GetObject("Asteroid 5b-1") is not None
+    assert abs(death.drain_death_vfx()[-1].radius_gu - 4.0) < 1e-9

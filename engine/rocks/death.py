@@ -86,11 +86,11 @@ def begin(rock, killer=None) -> None:
 
 
 def _break_up(rock, pSet, name) -> None:
-    from engine.rocks.rock import RockClass_Create
+    from engine.rocks.rock import RockClass_Create, effective_radius
     loc = rock.GetWorldLocation()
     R = rock.GetWorldRotation()
     v = rock.GetVelocityTG()
-    radius = float(rock.GetRadius())
+    radius = effective_radius(rock)
     hull = rock.GetHull()
     parent_max = float(hull.GetMaxCondition()) if hull is not None else stats.size_hull(radius)
     parent_mass = float(rock.GetMass())
