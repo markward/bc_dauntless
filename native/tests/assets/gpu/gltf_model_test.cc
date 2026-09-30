@@ -21,6 +21,7 @@
 #include "../cpu/gltf_fixture.h"
 
 #include <filesystem>
+#include <memory>
 #include <vector>
 
 class GltfModelTest : public assets_test::GLContext {};
@@ -50,6 +51,35 @@ TEST_F(GltfModelTest, ScaleIsPartOfCacheKey) {
     const float ax = a->meshes[0].cpu_data()->vertices[0].position.x;
     const float bx = b->meshes[0].cpu_data()->vertices[0].position.x;
     EXPECT_NEAR(bx, 2.0f * ax, 1e-5f);
+}
+
+TEST_F(GltfModelTest, EvictDropsScaledGltfVariants) {
+    // Fix round 1 regression test: evict(path) used to key purely on the
+    // plain canonical path (fs::weakly_canonical(nif_path).string()), so a
+    // scale != 1.0f glTF variant -- keyed "<path>#s=<scale>" -- was never
+    // unpinned by evict(); the AssetCache's own `pinned` shared_ptr kept it
+    // alive forever, independent of any caller handle.
+    auto p = write_fixture(tmpdir("gltf_model_evict_scaled"));
+    assets::AssetCache cache;
+    auto scale1 = cache.load(p, std::vector<std::filesystem::path>{}, {}, {}, 1.0f);
+    auto scale2 = cache.load(p, std::vector<std::filesystem::path>{}, {}, {}, 2.0f);
+    std::weak_ptr<const assets::Model> weak_scale2 = scale2;
+
+    // Drop every caller handle -- only the cache's own pin can keep the
+    // scale-2 model alive from here on.
+    scale1.reset();
+    scale2.reset();
+    ASSERT_FALSE(weak_scale2.expired())
+        << "sanity: the cache itself still pins the scale-2 entry before evict()";
+
+    cache.evict(p);
+    EXPECT_TRUE(weak_scale2.expired())
+        << "evict(path) must drop the scale-2 entry's pin too, not just scale 1.0f's";
+
+    // Loading at scale 2 again after eviction must build a brand-new model.
+    auto reloaded = cache.load(p, std::vector<std::filesystem::path>{}, {}, {}, 2.0f);
+    ASSERT_TRUE(reloaded);
+    EXPECT_TRUE(weak_scale2.expired());
 }
 
 TEST_F(GltfModelTest, NifPathStillGoesToNifLoader) {

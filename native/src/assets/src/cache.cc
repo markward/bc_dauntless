@@ -288,9 +288,20 @@ ModelHandle AssetCache::load(
 
 void AssetCache::evict(const fs::path& nif_path) {
     auto canon = fs::weakly_canonical(nif_path).string();
-    auto it = impl_->entries.find(canon);
-    if (it == impl_->entries.end()) return;
-    it->second.pinned.reset();
+    // A glTF path's cache key carries a "#s=<scale>" suffix for every
+    // scale != 1.0f (hull_source_string), so the plain canonical path alone
+    // only ever matches the scale == 1.0f entry. Unpin every entry for this
+    // path AT ANY SCALE: the exact key, plus any key that is the canonical
+    // path immediately followed by "#s=". (NIF-only suffixes -- "|rep:",
+    // "|decals:", "|fix:" -- are intentionally left alone here: no caller
+    // passes a scale for a NIF path today, so widening this to cover them
+    // is out of scope for this fix.)
+    const std::string scale_prefix = canon + "#s=";
+    for (auto& [key, entry] : impl_->entries) {
+        if (key == canon || key.starts_with(scale_prefix)) {
+            entry.pinned.reset();
+        }
+    }
 }
 
 void AssetCache::evict_unused() {

@@ -101,6 +101,17 @@ public:
                      const std::vector<DecalRequest>& decals,
                      float scale);
 
+    /// Unpin every cached entry for `nif_path`, AT ANY SCALE. A glTF path's
+    /// cache key carries a `#s=<scale>` suffix (see the 5-argument `load`
+    /// overload / hull_source_string) for every scale != 1.0f, so this drops
+    /// the plain canonical-path entry AND every `<canonical path>#s=...`
+    /// entry -- a scaled glTF variant is evicted along with its scale == 1.0f
+    /// sibling. (NIF-only cache-key suffixes -- texture-replacement / decal /
+    /// mesh-fix variants -- are untouched by this call, matching prior
+    /// behaviour: no caller passes a non-default scale for a NIF path.) A
+    /// still-outstanding ModelHandle keeps the model alive regardless; this
+    /// only drops the cache's OWN pin, so a model with no other referents is
+    /// freed on its next handle release.
     void evict(const std::filesystem::path& nif_path);
     void evict_unused();
 
