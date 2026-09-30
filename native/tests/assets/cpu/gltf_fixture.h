@@ -96,4 +96,51 @@ inline fs::path tmpdir(const char* name) {
     fs::remove_all(d); return d;
 }
 
+// A closed, 12-triangle cube (2 tris/face), CCW outward-facing winding, in
+// glTF metres, centred on the origin with half-extent `half_m`. POSITION
+// only (no NORMAL/TEXCOORD) -- the loader derives flat per-triangle normals.
+// `extras` is merged into asset.extras (e.g. {{"dauntless_volume", "..."}})
+// exactly as write_fixture does; pass nullptr for none.
+inline fs::path write_cube_fixture(const fs::path& dir, float half_m,
+                                    nlohmann::json extras = nullptr) {
+    fs::create_directories(dir);
+    const float h = half_m;
+    const float corners[8][3] = {
+        {-h,-h,-h}, {h,-h,-h}, {h,h,-h}, {-h,h,-h},
+        {-h,-h, h}, {h,-h, h}, {h,h, h}, {-h,h, h},
+    };
+    std::vector<unsigned char> buf;
+    for (const auto& c : corners) for (float f : c) put(buf, f);
+    const std::size_t pos_bytes = buf.size();  // 8 * 3 * 4 = 96
+
+    const std::uint16_t idx[36] = {
+        0,3,2, 0,2,1,   // -Z
+        4,5,6, 4,6,7,   // +Z
+        0,1,5, 0,5,4,   // -Y
+        2,3,7, 2,7,6,   // +Y
+        0,4,7, 0,7,3,   // -X
+        1,2,6, 1,6,5,   // +X
+    };
+    for (auto i : idx) put(buf, i);
+    const std::size_t idx_bytes = buf.size() - pos_bytes;  // 36 * 2 = 72
+
+    nlohmann::json prim = {{"attributes", {{"POSITION", 0}}}, {"indices", 1}};
+    nlohmann::json j = {
+      {"asset", {{"version", "2.0"}}},
+      {"buffers", {{{"byteLength", buf.size()},
+                    {"uri", "data:application/octet-stream;base64," + b64(buf)}}}},
+      {"bufferViews", {{{"buffer",0},{"byteOffset",0},{"byteLength",pos_bytes}},
+                       {{"buffer",0},{"byteOffset",pos_bytes},{"byteLength",idx_bytes}}}},
+      {"accessors", {{{"bufferView",0},{"componentType",5126},{"count",8},{"type","VEC3"},
+                      {"min",{-h,-h,-h}},{"max",{h,h,h}}},
+                     {{"bufferView",1},{"componentType",5123},{"count",36},{"type","SCALAR"}}}},
+      {"meshes", {{{"primitives", {prim}}}}},
+      {"nodes", {nlohmann::json{{"mesh",0}}}},
+      {"scenes", {{{"nodes",{0}}}}}, {"scene", 0}};
+    if (!extras.is_null()) j["asset"]["extras"] = extras;
+    auto p = dir / "cube.gltf";
+    std::ofstream(p) << j.dump();
+    return p;
+}
+
 }  // namespace

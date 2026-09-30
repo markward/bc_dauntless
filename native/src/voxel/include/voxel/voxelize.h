@@ -1,5 +1,6 @@
 // native/src/voxel/include/voxel/voxelize.h
 #pragma once
+#include <filesystem>
 #include <vector>
 #include <glm/glm.hpp>
 #include <voxel/volume.h>
@@ -65,6 +66,18 @@ VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd);
 /// dependency; links only against `nif`. Used by voxel_inspect and by tests
 /// that need hull geometry without a renderer.
 std::vector<Tri> collect_hull_triangles_from_nif(const nif::File& f);
+
+/// Format/scale-aware hull triangle collection: `h = split_hull_source(source)`.
+/// A glTF `h.path` loads via `assets::gltf::load_cpu(h.path, h.scale)` and
+/// flattens its meshes into triangles (positions already baked to BC frame,
+/// model units x scale by the loader). A NIF `h.path` loads via `nif::load`
+/// + `collect_hull_triangles_from_nif`, then every vertex is multiplied by
+/// `h.scale` (NIFs have no per-load scale of their own, so this is applied
+/// here rather than at parse time). Returns empty if `h.path` does not
+/// exist. May throw `assets::AssetError` for a glTF `h.path` that fails to
+/// parse/validate.
+std::vector<Tri> collect_hull_triangles_from_source(
+    const std::filesystem::path& source);
 
 /// Voxelize a raw triangle soup into a solid volume at the given grid
 /// resolution. Computes the tris' AABB, derives a 1-voxel margin lattice, then

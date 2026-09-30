@@ -7,6 +7,7 @@ add_library(voxel STATIC
     src/dual_contour.cc
     src/distance_field.cc
     src/dhv.cc
+    src/dvox.cc
     src/hull_volume_cache.cc
     src/field_brush.cc
     src/field_atlas.cc
