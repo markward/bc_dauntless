@@ -42,7 +42,7 @@ Size decides how real a rock is.
 | # | Sub-project | Status |
 |---|---|---|
 | 1 | **Rock catalogue**: glTF loader, offline generation tool, committed catalogue, BC scripts redirected to it | built, awaiting live check — spec `2026-09-30-rock-catalogue-design.md` |
-| 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | not started |
+| 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | designing — spec `2026-09-30-rock-class-design.md`, branch `feat/rock-class` |
 | 3 | **Minors**: instancing, halos, tile fields, fly-through | not started |
 | 3b | **Far tier** | not started |
 | 4 | **Profile seeding** | not started |
