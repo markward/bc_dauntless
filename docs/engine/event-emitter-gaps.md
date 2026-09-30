@@ -625,6 +625,18 @@ Haven-hit → `MissionLost` beat never fires. Posting first means one count, as
 a planet hit. That order is an inference from BC having a handler on this
 event, not RE'd. Pinned by the E2E `killed == []`.
 
+**The same order applies to `ET_OBJECT_COLLISION` and `ET_CLOAKED_COLLISION`**
+(`_respond_pair` posts all three before either `apply_hit`). Found by the
+rock-class final review: a group-"e" asteroid striking E1M2's Facility is
+lethal to the asteroid (Asteroid 9e, ~14,500 impact damage against 3,000 HP),
+and with the collision events trailing the damage `E1M2.ObjectDestroyed` ran
+first and `ObjectCollision` → `AsteroidHitStation` never fired. Unlike the
+planet case, the asteroid is still counted once by `ObjectDestroyed` — and
+must be: `AsteroidHitStation` leaves the name in `g_dAsteroidInfo`, and
+`CheckAllDone` needs destroyed + hit-planet == 5. Pinned by the E2E
+`beats == ["station", "destroyed"]` and the unit
+`test_collision_event_precedes_the_impact_damage`.
+
 ---
 
 ## Summary table

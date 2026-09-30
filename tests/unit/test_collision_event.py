@@ -202,3 +202,45 @@ def test_a_non_collision_posts_nothing():
     resolve_collisions([a, b])
 
     assert received == []
+
+
+def test_collision_event_precedes_the_impact_damage():
+    """A lethal strike must post ET_OBJECT_COLLISION while the struck body is
+    still whole: dispatch is synchronous, so posting after apply_hit ran the
+    victim's ET_OBJECT_EXPLODING handlers first (E1M2.ObjectDestroyed deleted
+    the asteroid's name, and ObjectCollision's AsteroidHitStation never fired).
+    Same ruling as ET_PLANET_COLLISION (test_planet_collision_event.py)."""
+    from engine.appc.collisions import resolve_collisions
+    from engine.rocks.rock import RockClass_Create
+
+    order = []
+
+    def _on_coll(dest, event):
+        d = event.GetDestination()
+        if d is rock:
+            order.append(("collision", rock.GetHull().GetCondition(),
+                          bool(rock.IsDying())))
+
+    def _on_exploding(dest, event):
+        if event.GetDestination() is rock:
+            order.append(("exploding",))
+
+    globals()["_on_coll_order"] = _on_coll
+    globals()["_on_exploding_order"] = _on_exploding
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_OBJECT_COLLISION, None, __name__ + "._on_coll_order")
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_OBJECT_EXPLODING, None, __name__ + "._on_exploding_order")
+
+    a, _ = _colliding_pair()
+    rock = RockClass_Create(10.0, name="Order Rock", hull=1.0, mass=100.0)
+    rock.SetTranslateXYZ(12.0, 0.0, 0.0)
+    rock.SetVelocity(TGPoint3(-5.0, 0.0, 0.0))
+    share_one_set(a, rock)
+    full = rock.GetHull().GetCondition()
+
+    resolve_collisions([a, rock])
+
+    assert order, "no events seen"
+    assert order[0] == ("collision", full, False)
+    assert ("exploding",) in order          # the strike WAS lethal

@@ -549,27 +549,49 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         p = b.obj.GetTranslate()
         b.obj.SetTranslateXYZ(p.x + nx * s, p.y + ny * s, p.z + nz * s)
 
+    # Every collision event is posted BEFORE the impact damage. Order, not
+    # damage, is what this changes: event dispatch is synchronous, so a lethal
+    # hit applied first runs the victim's ET_OBJECT_EXPLODING handlers ahead
+    # of its collision events.
+    #
+    # ET_PLANET_COLLISION (chunks included, see the emitter): E1M2 otherwise
+    # counts an asteroid that struck Haven as a player kill (ObjectDestroyed
+    # -> AsteroidDestroyed) and PlanetCollision finds it already gone -- the
+    # Haven-hit / MissionLost beat never fires. Inference, not RE: BC routes
+    # planet contact through its own handler on this event
+    # (ShipClass::PlanetCollisionHandler), so the event cannot trail a death
+    # it may itself cause.
+    #
+    # ET_CLOAKED_COLLISION / ET_OBJECT_COLLISION, same reasoning: a lethal
+    # asteroid -> Facility strike in E1M2 used to explode the asteroid first,
+    # so ObjectCollision's AsteroidHitStation beat never saw the contact.
+    contact = boundary_a
+    _emit_planet_collision(a.obj, b.obj)
+
+    # No ET_OBJECT_COLLISION / ET_CLOAKED_COLLISION when either party is a
+    # detached hull chunk (the impulse and damage still land).
+    # MissionLib.FriendlyFireCollisionHandler does ObjectClass_Cast on both
+    # parties and calls .GetName() on the result OUTSIDE its try -- a
+    # DebrisChunk is not an ObjectClass, casts to None, and every
+    # friendly-fire mission would traceback on the first chunk strike. The
+    # cloaked-collision line ("we hit a cloaked ship") is equally wrong for
+    # debris. Lazy import, as _resolve_body does.
+    from engine.appc.debris_chunk import DebrisChunk
+    if not (isinstance(a.obj, DebrisChunk) or isinstance(b.obj, DebrisChunk)):
+        # A cloaked hull is still physically present: BC fires
+        # ET_CLOAKED_COLLISION when something rams one
+        # (HelmMenuHandlers.CloakedCollision plays a line).
+        _emit_cloaked_collision(a.obj, b.obj)
+        _emit_object_collision(a.obj, b.obj, contact, abs(j), b_offset)
+
     # KE impact damage routed through the existing weapons path. Each ship's
     # hit lands on its OWN hull: _trace_own_hull traces from just outside that
     # ship's contact boundary back into it, refining point + normal to the
     # mesh (host present) exactly as the weapons path does, and anchors at
     # the boundary itself on a miss or headless. `contact` (a's boundary) is
     # the nominal point returned for tests/debugging.
-    # A planet strike posts ET_PLANET_COLLISION BEFORE the impact damage,
-    # chunks included (see the emitter). Order, not damage, is what this
-    # changes: event dispatch is synchronous, so a lethal hit posted first
-    # would run the victim's ET_OBJECT_EXPLODING handlers ahead of the
-    # planet event. E1M2 then counts an asteroid that struck Haven as a
-    # player kill (ObjectDestroyed -> AsteroidDestroyed) and PlanetCollision
-    # finds it already gone -- the Haven-hit / MissionLost beat never fires.
-    # Inference, not RE: BC routes planet contact through its own handler on
-    # this event (ShipClass::PlanetCollisionHandler), so the event cannot
-    # trail a death it may itself cause.
-    _emit_planet_collision(a.obj, b.obj)
-
     from engine.appc.combat import apply_hit
     damage = _ke_damage(inv_sum, v_rel)
-    contact = boundary_a
     n_ab = TGPoint3(nx, ny, nz)
     n_ba = TGPoint3(-nx, -ny, -nz)
     if a.is_movable:
@@ -585,24 +607,6 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
-
-    # No SDK event when either party is a detached hull chunk. The impulse
-    # and damage above have already landed; only the event is withheld.
-    # MissionLib.FriendlyFireCollisionHandler does ObjectClass_Cast on both
-    # parties and calls .GetName() on the result OUTSIDE its try -- a
-    # DebrisChunk is not an ObjectClass, casts to None, and every
-    # friendly-fire mission would traceback on the first chunk strike. The
-    # cloaked-collision line ("we hit a cloaked ship") is equally wrong for
-    # debris. Lazy import, as _resolve_body does.
-    from engine.appc.debris_chunk import DebrisChunk
-    if isinstance(a.obj, DebrisChunk) or isinstance(b.obj, DebrisChunk):
-        return (a.obj, b.obj, contact, v_rel)
-
-    # A cloaked hull is still physically present: BC fires ET_CLOAKED_COLLISION
-    # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
-    _emit_cloaked_collision(a.obj, b.obj)
-
-    _emit_object_collision(a.obj, b.obj, contact, abs(j), b_offset)
 
     return (a.obj, b.obj, contact, v_rel)
 
@@ -631,9 +635,10 @@ def _emit_object_collision(obj_a, obj_b, contact, force,
     B's event gets the contact shifted back by `b_offset` (identity when zero,
     so a same-set pair posts the one contact to both).
 
-    Raise-safe, like _emit_cloaked_collision above: a failure here must not
-    abort collision response, which has already mutated positions and applied
-    damage by this point.
+    Posted BEFORE the impact damage (see _respond_pair). Raise-safe, like
+    _emit_cloaked_collision: a failure here must not abort collision
+    response, which has already mutated positions by this point and still
+    has the damage to apply.
     """
     import App
     from engine import dev_mode

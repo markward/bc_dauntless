@@ -108,3 +108,48 @@ def test_moving_asteroid_hitting_haven_counts():
     assert len(mod.g_dAsteroidInfo) == before - 1
     assert name not in mod.g_dAsteroidInfo
     assert rock.IsDying() or rock.IsDead()       # the contact was lethal
+
+
+def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit():
+    """A group-"e" asteroid driven into the Facility reaches
+    E1M2.ObjectCollision -> AsteroidHitStation, through the real collision
+    path. The strike is lethal (Asteroid 9e: ~14,500 impact damage against
+    3,000 HP), so ET_OBJECT_COLLISION must be posted before the damage, or the
+    ET_OBJECT_EXPLODING handler runs first and the beat never fires.
+
+    The asteroid is ALSO counted once by ObjectDestroyed, and must be:
+    AsteroidHitStation (E1M2.py:3227) never removes the name from
+    g_dAsteroidInfo, and CheckAllDone (E1M2.py:3478) needs
+    g_iAsteroidsDestroyed + g_iNumberAsteroidsHit == 5, so an asteroid that
+    struck the station and was not counted would leave the mission unwinnable.
+    What the ordering fixes is that the station hit is seen FIRST.
+
+    Out of scope: the Facility's own scripted SetVelocity toward the planet
+    does not move it (ship scripted velocity, rock-class spec)."""
+    from engine.appc import collisions
+    mod = _init_e1m2()
+    pSet = App.g_kSetManager.GetSet("Vesuvi6")
+    mod.CreateMovingAsteroids()
+    name = "Asteroid 9e"
+    assert mod.g_dAsteroidInfo[name][1] == "e"       # ASTER_GROUP
+    fac = App.ShipClass_GetObject(pSet, "Facility")
+    rock = App.ShipClass_GetObject(pSet, name)
+    # Headless nothing realises a mesh radius (see the Haven test).
+    fac.SetRadius(3.0)
+    rock.SetRadius(0.744)
+    beats = []
+    mod.AsteroidHitStation = lambda: beats.append("station")
+    mod.AsteroidDestroyed = lambda: beats.append("destroyed")
+    fp = fac.GetWorldLocation()
+    # Clear of the widest boundary any radius rule gives (raw x scale), so
+    # the rock is approaching, not born overlapping.
+    r = fac.GetRadius() * fac.GetScale() + rock.GetRadius() * rock.GetScale()
+    rock.SetTranslateXYZ(fp.x + r + 0.3, fp.y, fp.z)
+    rock.SetVelocity(App.TGPoint3(-6.6, 0.0, 0.0))
+    loop = GameLoop()
+    for _ in range(90):
+        loop.tick()
+        collisions.tick_collisions(1.0 / 60.0)
+    assert rock.IsDying() or rock.IsDead()       # the contact was lethal
+    assert beats == ["station", "destroyed"]
+    assert name not in mod.g_dAsteroidInfo
