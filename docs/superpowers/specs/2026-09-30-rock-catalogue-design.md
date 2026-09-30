@@ -121,7 +121,8 @@ Per rock:
 ### Normalisation
 
 Every rock is written centred on the origin, with its bounding sphere radius at
-exactly **100 model units** (1 GU at scale 1). Sizing a rock to a particular use
+exactly **100 m** (100 glTF units; see the units convention in Part 3). That is
+≈57.14 BC model units, or ≈0.571 GU at scale 1. Sizing a rock to a particular use
 happens at load (Part 3), never in the files.
 
 ### Layout
@@ -144,7 +145,7 @@ The LODs of one rock share its textures and volume.
 - `kind` (`major`/`fragment`)
 - `family`
 - LOD file paths
-- bound radius (always 100; recorded so a hand-edited rock can differ)
+- bound radius in metres (always 100; recorded so a hand-edited rock can differ)
 - average albedo (linear RGB)
 - gloss
 - impostor paths
@@ -185,7 +186,7 @@ It also records the tool version and the recipe hash.
   random planes, giving flat fracture faces with lightly roughened edges. The
   planes are chosen per fragment from its seed.
 - After shaping, every mesh is recentred and rescaled so its bounding sphere
-  radius is exactly 100.
+  radius is exactly 100 m.
 
 ### Surfaces
 
@@ -267,7 +268,11 @@ It also records the tool version and the recipe hash.
     and normals. An asset exported from Blender therefore arrives the right way
     up and facing forward. The mapping is pinned by an asymmetric fixture test
     (Testing).
-  - **Units.** 1 glTF unit = 1 BC model unit, and × `BC_MODEL_SCALE` gives GU.
+  - **Units.** 1 glTF unit = **1 metre**, as the glTF 2.0 specification defines.
+    One BC model unit is 1.75 m (0.01 GU × 175 m), so the loader multiplies
+    positions by `kGltfMetresToModelUnits = 1 / 1.75` after the axis mapping.
+    A 642 m ship is authored as 642 units. Mod docs will note Blender's default
+    1 km viewport clip for large stations.
   - **Normal maps** are +Y (OpenGL), matching ours. They get no
     `reconstruct_normal_map_z` pass.
   - **Texture URIs** resolve relative to the `.gltf` file. BC texture search
@@ -291,7 +296,8 @@ It also records the tool version and the recipe hash.
   - `u16` format version = 1
   - `ivec3` dims
   - `vec3` origin
-  - `vec3` cell size (model units)
+  - `vec3` cell size, in the same units as its glTF (metres). The reader applies
+    the same axis mapping, metre conversion and load scale as the mesh
   - bit-packed occupancy, x-fastest, padded to a byte
 - **Linking.** A glTF file points at its volume through standard glTF `extras`
   on the asset object: `"extras": {"dauntless_volume": "volume.dvox"}`. The path
@@ -337,7 +343,9 @@ It also records the tool version and the recipe hash.
   case-insensitive.
 - **Keyed on the stock filenames, not species 712**, so a mod that ships its own
   asteroid model is left alone.
-- **Size.** Load scale = `STOCK_HALF_EXTENT[nif] / rock.bound_radius`. The four
+- **Size.** Load scale = `STOCK_HALF_EXTENT[nif] / (rock.bound_radius_m / 1.75)`,
+  where `STOCK_HALF_EXTENT` is in BC model units and the divisor is the rock's
+  radius after the loader's metre conversion. The four
   constants live in `engine/rocks/catalogue.py`, and an asset-backed test measures
   the real NIFs against them (Testing). The ship's `SetScale` still applies on
   top, exactly as today.
@@ -356,7 +364,7 @@ Every test runs under `scripts/check_tests.sh`, which must exit 0.
 
 - **rockgen (C++):**
   - **determinism:** byte-identical mesh and texels across two runs
-  - **bounds:** the bounding sphere radius is 100 ± ε for every recipe rock
+  - **bounds:** the bounding sphere radius is 100 m ± ε for every recipe rock
   - **distinctness:** different ids give measurably different geometry
   - **fragment faces:** every fragment has 2–4 near-planar face clusters
   - **LOD fidelity:** each LOD's radial profile stays within tolerance of LOD0
@@ -371,6 +379,8 @@ Every test runs under `scripts/check_tests.sh`, which must exit 0.
     static mesh and warns once
   - **missing `POSITION`:** throws `AssetError`
   - **materials:** Base and Bump bind to the PNGs
+  - **metres:** a fixture cube 1.75 m on a side loads as 1 BC model unit on a
+    side
   - **scale:** `scale=2` doubles the AABB and gives a distinct cache entry
 - **`.dvox` (C++):**
   - write/read round trip
