@@ -79,6 +79,10 @@ class GameLoop:
         with _prof.scope("gl.rock_motion"):
             rock_motion.tick_all(TICK_DELTA)
 
+        from engine.rocks import death as rock_death
+        with _prof.scope("gl.rock_death"):
+            rock_death.advance(TICK_DELTA)
+
         with _prof.scope("gl.subsystems"):
             _update_ship_subsystems()
 

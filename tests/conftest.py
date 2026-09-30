@@ -1187,6 +1187,15 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # Rock death registry + the render-side chunk/VFX queues it fills: a rock
+    # left dying by one test would be retired (by NAME, from its set) in a
+    # later test's advance().
+    try:
+        _rd = sys.modules.get("engine.rocks.death")
+        if _rd is not None:
+            _rd.reset()
+    except Exception:
+        pass
     # Current-tooltip-owner (engine.appc.characters._current_tooltip_owner): a
     # scalar module global, same leak class as the accumulator lists just
     # above. A test that calls CharacterClass_SetCurrentToolTipOwner would

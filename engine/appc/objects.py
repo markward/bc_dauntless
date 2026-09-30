@@ -1053,8 +1053,13 @@ class DamageableObject(PhysicsObjectClass):
         _route_zero_crossing(self, subsystem, cur > 0.0 and new_cond <= 0.0)
         if new_cond <= 0.0 and _is_critical(subsystem) \
                 and not self.IsDying() and not self.IsDead():
-            from engine.appc import ship_death
-            ship_death.begin(self, killer=source)
+            from engine.rocks.rock import is_rock
+            if is_rock(self):
+                from engine.rocks import death as rock_death
+                rock_death.begin(self, killer=source)
+            else:
+                from engine.appc import ship_death
+                ship_death.begin(self, killer=source)
 
     def DestroySystem(self, subsystem) -> None:
         """Force a subsystem to zero condition (mirrors SDK
@@ -1070,8 +1075,13 @@ class DamageableObject(PhysicsObjectClass):
         _route_zero_crossing(self, subsystem, cur > 0.0)
         if _is_critical(subsystem) \
                 and not self.IsDying() and not self.IsDead():
-            from engine.appc import ship_death
-            ship_death.begin(self)
+            from engine.rocks.rock import is_rock
+            if is_rock(self):
+                from engine.rocks import death as rock_death
+                rock_death.begin(self)
+            else:
+                from engine.appc import ship_death
+                ship_death.begin(self)
 
 
 class ObjectGroup(TGEventHandlerObject):
