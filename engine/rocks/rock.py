@@ -23,6 +23,20 @@ class RockClass(ShipClass):
         d.setdefault("_angular_space", PhysicsObjectClass.DIRECTION_WORLD_SPACE)
         d.setdefault("_rock_generation", 0)
         self._ai = None
+        # Spec §1: "Shield maxima are zeroed so shields_block is false" --
+        # unconditionally, whatever the hardpoint authored. Stock asteroid
+        # hardpoints already declare every face at MaxShields 0, but a
+        # genus-3 hardpoint is not guaranteed to (a modded rock could reuse
+        # a shielded template), so zero every face here rather than trust
+        # the source. Idempotent: re-zeroing an already-zero face is a
+        # no-op. GetShields() is None until a hardpoint declares a
+        # ShieldProperty at all (SetupProperties Pass 3 scrubs the
+        # default-constructed slot when none was claimed).
+        shields = self.GetShields()
+        if shields is not None:
+            for face in range(shields.NUM_SHIELDS):
+                shields.SetMaxShields(face, 0.0)
+                shields.SetCurrentShields(face, 0.0)
 
     def SetAI(self, ai, *_extra) -> None:
         if ai is not None:

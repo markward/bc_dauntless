@@ -1,6 +1,6 @@
 import App
 from engine.appc.ships import ShipClass_Create
-from engine.appc.properties import ShipProperty, HullProperty
+from engine.appc.properties import ShipProperty, HullProperty, ShieldProperty
 
 
 def _make(genus):
@@ -16,6 +16,35 @@ def _make(genus):
     hp.SetPrimary(1)
     hp.SetRadius(0.8)
     ps.AddToSet("Scene Root", hp)
+    ship.SetupProperties()
+    return ship
+
+
+def _make_with_shields(genus, max_shield=100.0):
+    """Mirrors a stock hardpoint's ShieldGenerator (see e.g.
+    sdk/.../ships/Hardpoints/asteroid.py), but with a NON-zero MaxShields on
+    every face -- the modded-rock case the fix targets."""
+    ship = ShipClass_Create("Test")
+    ps = ship.GetPropertySet()
+    sp = ShipProperty("Mass")
+    sp.SetGenus(genus)
+    sp.SetMass(400.0)
+    ps.AddToSet("Scene Root", sp)
+    hp = HullProperty("Hull")
+    hp.SetMaxCondition(2500.0)
+    hp.SetCritical(1)
+    hp.SetPrimary(1)
+    hp.SetRadius(0.8)
+    ps.AddToSet("Scene Root", hp)
+    shp = ShieldProperty("Shield Generator")
+    shp.SetMaxCondition(200.0)
+    shp.SetCritical(0)
+    shp.SetTargetable(0)
+    shp.SetPrimary(1)
+    for face in range(ShieldProperty.NUM_SHIELDS):
+        shp.SetMaxShields(face, max_shield)
+        shp.SetShieldChargePerSecond(face, 1.0)
+    ps.AddToSet("Scene Root", shp)
     ship.SetupProperties()
     return ship
 
@@ -60,6 +89,19 @@ def test_rock_shields_do_not_block():
     from engine.appc.combat import shields_block
     rock = _make(App.GENUS_ASTEROID)
     assert shields_block(rock) is False
+
+
+def test_rock_with_nonzero_shield_hardpoint_still_unshielded():
+    """Spec §1: 'Shield maxima are zeroed so shields_block is false' --
+    unconditionally, even when a genus-3 hardpoint (a modded rock) declares
+    a ShieldProperty with real non-zero MaxShields on every face."""
+    from engine.appc.combat import shields_block
+    rock = _make_with_shields(App.GENUS_ASTEROID, max_shield=100.0)
+    assert shields_block(rock) is False
+    shields = rock.GetShields()
+    assert shields is not None
+    for face in range(ShieldProperty.NUM_SHIELDS):
+        assert shields.GetMaxShields(face) == 0.0
 
 
 def test_set_ai_on_rock_is_inert():
