@@ -10,3 +10,8 @@ target_compile_features(rockgen PUBLIC cxx_std_20)
 target_link_libraries(rockgen
     PUBLIC assets glm
     PRIVATE nlohmann_json::nlohmann_json)
+# The catalogue is committed, so generation must not depend on whether the
+# compiler fuses a*b+c into an FMA (clang on arm64 contracts by default).
+if(NOT MSVC)
+    target_compile_options(rockgen PRIVATE -ffp-contract=off)
+endif()

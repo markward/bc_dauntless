@@ -197,3 +197,26 @@ TEST(Shape, EveryFragmentLodSilhouetteTracksLod0) {
         EXPECT_LE(worst_silhouette_error(lods[0], lods[1]), 0.08f * 100.0f) << s.id;
     }
 }
+
+// Plane cuts must never fold a triangle inward. Orthogonal flattening along
+// the cut normal reversed any cap triangle facing away from the normal,
+// leaving back-facing slivers overlapping the fracture face; central
+// projection toward the origin keeps the surface star-shaped and every face
+// outward. Zero tolerance, every fragment, every LOD.
+TEST(Shape, EveryFragmentWindsOutward) {
+    auto r = rockgen::parse_recipe(kFragmentSweep); auto specs = rockgen::expand_recipe(r);
+    ASSERT_EQ(specs.size(), 24u);
+    for (auto& s : specs) {
+        auto lods = rockgen::generate_rock_lods(s);
+        for (size_t l = 0; l < lods.size(); ++l) {
+            const auto& m = lods[l];
+            int inward = 0;
+            for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+                auto& a = m.vertices[m.indices[i]].position; auto& b = m.vertices[m.indices[i+1]].position;
+                auto& c = m.vertices[m.indices[i+2]].position;
+                if (glm::dot(glm::cross(b - a, c - a), (a + b + c) / 3.0f) <= 0.0f) ++inward;
+            }
+            EXPECT_EQ(inward, 0) << s.id << " lod" << l;
+        }
+    }
+}

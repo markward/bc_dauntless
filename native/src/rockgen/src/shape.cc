@@ -258,12 +258,20 @@ std::vector<assets::MeshCpu> generate_rock_lods(const RockSpec& spec) {
         cut_dist.push_back(c.fraction * support);
     }
 
-    // Plane cuts: flatten everything beyond each plane onto it.
+    // Plane cuts: pull everything beyond each plane onto it by CENTRAL
+    // projection toward the origin (q *= dist / dot(q, n)). Orthogonal
+    // flattening along n folded every cap triangle that faced away from n
+    // back over the fracture face with reversed winding; scaling along the
+    // ray keeps the surface star-shaped about the origin, so no face can
+    // turn inward. Scaling toward the origin never pushes a point back past
+    // an earlier plane (dist > 0), so the cuts do not undo one another. The
+    // same planes are applied identically to every LOD, preserving the
+    // shared-direction positions.
     for (std::vector<glm::vec3>& ps : positions)
         for (size_t k = 0; k < params.cuts.size(); ++k)
             for (glm::vec3& q : ps) {
-                const float over = glm::dot(q, params.cuts[k].normal) - cut_dist[k];
-                if (over > 0.0f) q -= over * params.cuts[k].normal;
+                const float along = glm::dot(q, params.cuts[k].normal);
+                if (along > cut_dist[k]) q *= cut_dist[k] / along;
             }
 
     // LOD0 is recentred on its AABB midpoint and scaled so its max|p| is

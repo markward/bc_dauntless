@@ -50,6 +50,8 @@ Recipe parse_recipe(const std::string& json_text);
 
 /// Families in recipe order; within a family, majors then fragments; nn from 01.
 std::vector<RockSpec> expand_recipe(const Recipe& r);
+/// RockSpec points into the Recipe; expanding a temporary would dangle.
+std::vector<RockSpec> expand_recipe(Recipe&&) = delete;
 
 /// Standard FNV-1a 64.
 std::uint64_t fnv1a64(const std::string& s);

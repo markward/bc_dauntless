@@ -29,3 +29,11 @@ TEST(Recipe, Fnv1a64KnownVectors) {
     EXPECT_EQ(rockgen::fnv1a64("a"), 0xaf63dc4c8601ec8cull);
     EXPECT_EQ(rockgen::fnv1a64("foobar"), 0x85944171f73967e8ull);
 }
+
+// RockSpec holds pointers into its Recipe, so expanding a temporary recipe
+// must not compile (checked through a concept: a bare requires-expression
+// outside a template is not a SFINAE context).
+template <typename R>
+concept Expandable = requires(R&& r) { rockgen::expand_recipe(static_cast<R&&>(r)); };
+static_assert(!Expandable<rockgen::Recipe>, "expand_recipe(Recipe&&) must be deleted");
+static_assert(Expandable<const rockgen::Recipe&>);
