@@ -1,0 +1,144 @@
+{
+ "accessors": [
+  {
+   "bufferView": 0,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 667,
+   "max": [
+    62.679527282714844,
+    93.82930755615234,
+    80.60163879394531
+   ],
+   "min": [
+    -60.9420051574707,
+    -93.83438110351563,
+    -80.60163879394531
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 1,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 667,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 667,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 3840,
+   "type": "SCALAR"
+  }
+ ],
+ "asset": {
+  "extras": {
+   "dauntless_volume": "volume.dvox"
+  },
+  "generator": "dauntless rock_catalogue 1",
+  "version": "2.0"
+ },
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteLength": 8004,
+   "byteOffset": 0,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 8004,
+   "byteOffset": 8004,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 5336,
+   "byteOffset": 16008,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 15360,
+   "byteOffset": 21344,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 36704,
+   "uri": "lod1.bin"
+  }
+ ],
+ "images": [
+  {
+   "uri": "base.png"
+  },
+  {
+   "uri": "normal.png"
+  }
+ ],
+ "materials": [
+  {
+   "normalTexture": {
+    "index": 1
+   },
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 1
+   }
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 1,
+      "POSITION": 0,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0
+  }
+ ],
+ "samplers": [
+  {}
+ ],
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "textures": [
+  {
+   "sampler": 0,
+   "source": 0
+  },
+  {
+   "sampler": 0,
+   "source": 1
+  }
+ ]
+}

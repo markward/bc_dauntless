@@ -6,4 +6,5 @@ add_executable(rockgen_tests
     catalogue_writer_test.cc
 )
 target_link_libraries(rockgen_tests PRIVATE rockgen rock_catalogue_writer GTest::gtest_main)
+target_compile_definitions(rockgen_tests PRIVATE OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
 gtest_discover_tests(rockgen_tests)

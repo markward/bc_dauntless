@@ -1,0 +1,991 @@
+{
+ "contact_sheet_order": [
+  "majors/silicate_01",
+  "majors/silicate_02",
+  "majors/silicate_03",
+  "majors/silicate_04",
+  "majors/silicate_05",
+  "fragments/silicate_01",
+  "fragments/silicate_02",
+  "fragments/silicate_03",
+  "fragments/silicate_04",
+  "fragments/silicate_05",
+  "fragments/silicate_06",
+  "fragments/silicate_07",
+  "fragments/silicate_08",
+  "majors/carbonaceous_01",
+  "majors/carbonaceous_02",
+  "majors/carbonaceous_03",
+  "fragments/carbonaceous_01",
+  "fragments/carbonaceous_02",
+  "fragments/carbonaceous_03",
+  "fragments/carbonaceous_04",
+  "fragments/carbonaceous_05",
+  "fragments/carbonaceous_06",
+  "majors/icy_01",
+  "majors/icy_02",
+  "majors/icy_03",
+  "fragments/icy_01",
+  "fragments/icy_02",
+  "fragments/icy_03",
+  "fragments/icy_04",
+  "fragments/icy_05",
+  "fragments/icy_06",
+  "majors/metallic_01",
+  "majors/metallic_02",
+  "fragments/metallic_01",
+  "fragments/metallic_02",
+  "fragments/metallic_03",
+  "fragments/metallic_04"
+ ],
+ "impostor_view_dirs": [
+  [
+   0.34798526763916016,
+   0.9375,
+   0.0
+  ],
+  [
+   -0.42985740303993225,
+   0.8125,
+   0.39378467202186584
+  ],
+  [
+   0.06348706036806107,
+   0.6875,
+   -0.7234038710594177
+  ],
+  [
+   0.5030559301376343,
+   0.5625,
+   0.6561467051506042
+  ],
+  [
+   -0.8854725956916809,
+   0.4375,
+   -0.15662729740142822
+  ],
+  [
+   0.8014979958534241,
+   0.3125,
+   -0.5098476409912109
+  ],
+  [
+   -0.25499916076660156,
+   0.1875,
+   0.948587954044342
+  ],
+  [
+   -0.4600066840648651,
+   0.0625,
+   -0.8857130408287048
+  ],
+  [
+   0.9374850988388062,
+   -0.0625,
+   0.3423673212528229
+  ],
+  [
+   -0.9079516530036926,
+   -0.1875,
+   0.37478986382484436
+  ],
+  [
+   0.4026184678077698,
+   -0.3125,
+   -0.8603731989860535
+  ],
+  [
+   0.26912179589271545,
+   -0.4375,
+   0.8580018877983093
+  ],
+  [
+   -0.7153550982475281,
+   -0.5625,
+   -0.414561003446579
+  ],
+  [
+   0.7092463970184326,
+   -0.6875,
+   -0.15592722594738007
+  ],
+  [
+   -0.3352773189544678,
+   -0.8125,
+   0.47689923644065857
+  ],
+  [
+   -0.0447203703224659,
+   -0.9375,
+   -0.3450997471809387
+  ]
+ ],
+ "recipe_fnv1a64": "160ffa2e5a9b5ee0",
+ "rocks": [
+  {
+   "avg_albedo": [
+    0.42550477385520935,
+    0.40121933817863464,
+    0.367216557264328
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "majors/silicate_01",
+   "impostor": {
+    "albedo": "majors/silicate_01/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/silicate_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/silicate_01/lod0.gltf",
+    "majors/silicate_01/lod1.gltf",
+    "majors/silicate_01/lod2.gltf"
+   ],
+   "volume": "majors/silicate_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.44383275508880615,
+    0.418499231338501,
+    0.38303831219673157
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "majors/silicate_02",
+   "impostor": {
+    "albedo": "majors/silicate_02/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/silicate_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/silicate_02/lod0.gltf",
+    "majors/silicate_02/lod1.gltf",
+    "majors/silicate_02/lod2.gltf"
+   ],
+   "volume": "majors/silicate_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4426404535770416,
+    0.4173731207847595,
+    0.382026731967926
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "majors/silicate_03",
+   "impostor": {
+    "albedo": "majors/silicate_03/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/silicate_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/silicate_03/lod0.gltf",
+    "majors/silicate_03/lod1.gltf",
+    "majors/silicate_03/lod2.gltf"
+   ],
+   "volume": "majors/silicate_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.44326823949813843,
+    0.41796875,
+    0.3825615346431732
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "majors/silicate_04",
+   "impostor": {
+    "albedo": "majors/silicate_04/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/silicate_04/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/silicate_04/lod0.gltf",
+    "majors/silicate_04/lod1.gltf",
+    "majors/silicate_04/lod2.gltf"
+   ],
+   "volume": "majors/silicate_04/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4392874240875244,
+    0.41422969102859497,
+    0.3790926933288574
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "majors/silicate_05",
+   "impostor": {
+    "albedo": "majors/silicate_05/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/silicate_05/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/silicate_05/lod0.gltf",
+    "majors/silicate_05/lod1.gltf",
+    "majors/silicate_05/lod2.gltf"
+   ],
+   "volume": "majors/silicate_05/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4455222189426422,
+    0.4200935959815979,
+    0.3845057487487793
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_01",
+   "impostor": {
+    "albedo": "fragments/silicate_01/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_01/lod0.gltf",
+    "fragments/silicate_01/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4448317587375641,
+    0.4194464087486267,
+    0.3838961720466614
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_02",
+   "impostor": {
+    "albedo": "fragments/silicate_02/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_02/lod0.gltf",
+    "fragments/silicate_02/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.44141721725463867,
+    0.41621625423431396,
+    0.3809651732444763
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_03",
+   "impostor": {
+    "albedo": "fragments/silicate_03/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_03/lod0.gltf",
+    "fragments/silicate_03/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.42843660712242126,
+    0.40398916602134705,
+    0.36975252628326416
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_04",
+   "impostor": {
+    "albedo": "fragments/silicate_04/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_04/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_04/lod0.gltf",
+    "fragments/silicate_04/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_04/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4414816200733185,
+    0.4163072407245636,
+    0.38101938366889954
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_05",
+   "impostor": {
+    "albedo": "fragments/silicate_05/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_05/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_05/lod0.gltf",
+    "fragments/silicate_05/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_05/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.444881409406662,
+    0.4194972515106201,
+    0.38394108414649963
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_06",
+   "impostor": {
+    "albedo": "fragments/silicate_06/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_06/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_06/lod0.gltf",
+    "fragments/silicate_06/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_06/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.445071816444397,
+    0.419661283493042,
+    0.38410741090774536
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_07",
+   "impostor": {
+    "albedo": "fragments/silicate_07/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_07/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_07/lod0.gltf",
+    "fragments/silicate_07/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_07/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.42530637979507446,
+    0.4010416269302368,
+    0.3670318126678467
+   ],
+   "bound_radius_m": 100.0,
+   "family": "silicate",
+   "gloss": 0.11999999731779099,
+   "id": "fragments/silicate_08",
+   "impostor": {
+    "albedo": "fragments/silicate_08/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/silicate_08/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/silicate_08/lod0.gltf",
+    "fragments/silicate_08/lod1.gltf"
+   ],
+   "volume": "fragments/silicate_08/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.1471952199935913,
+    0.13227954506874084,
+    0.11736361682415009
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "majors/carbonaceous_01",
+   "impostor": {
+    "albedo": "majors/carbonaceous_01/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/carbonaceous_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/carbonaceous_01/lod0.gltf",
+    "majors/carbonaceous_01/lod1.gltf",
+    "majors/carbonaceous_01/lod2.gltf"
+   ],
+   "volume": "majors/carbonaceous_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14547418057918549,
+    0.13073554635047913,
+    0.11598707735538483
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "majors/carbonaceous_02",
+   "impostor": {
+    "albedo": "majors/carbonaceous_02/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/carbonaceous_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/carbonaceous_02/lod0.gltf",
+    "majors/carbonaceous_02/lod1.gltf",
+    "majors/carbonaceous_02/lod2.gltf"
+   ],
+   "volume": "majors/carbonaceous_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14624522626399994,
+    0.13142287731170654,
+    0.11660358309745789
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "majors/carbonaceous_03",
+   "impostor": {
+    "albedo": "majors/carbonaceous_03/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/carbonaceous_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/carbonaceous_03/lod0.gltf",
+    "majors/carbonaceous_03/lod1.gltf",
+    "majors/carbonaceous_03/lod2.gltf"
+   ],
+   "volume": "majors/carbonaceous_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14813177287578583,
+    0.1331157386302948,
+    0.11810260266065598
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "fragments/carbonaceous_01",
+   "impostor": {
+    "albedo": "fragments/carbonaceous_01/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/carbonaceous_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/carbonaceous_01/lod0.gltf",
+    "fragments/carbonaceous_01/lod1.gltf"
+   ],
+   "volume": "fragments/carbonaceous_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14912308752536774,
+    0.13401377201080322,
+    0.11890888959169388
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "fragments/carbonaceous_02",
+   "impostor": {
+    "albedo": "fragments/carbonaceous_02/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/carbonaceous_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/carbonaceous_02/lod0.gltf",
+    "fragments/carbonaceous_02/lod1.gltf"
+   ],
+   "volume": "fragments/carbonaceous_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14576761424541473,
+    0.13098204135894775,
+    0.11620697379112244
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "fragments/carbonaceous_03",
+   "impostor": {
+    "albedo": "fragments/carbonaceous_03/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/carbonaceous_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/carbonaceous_03/lod0.gltf",
+    "fragments/carbonaceous_03/lod1.gltf"
+   ],
+   "volume": "fragments/carbonaceous_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14766046404838562,
+    0.13269248604774475,
+    0.11773096024990082
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "fragments/carbonaceous_04",
+   "impostor": {
+    "albedo": "fragments/carbonaceous_04/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/carbonaceous_04/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/carbonaceous_04/lod0.gltf",
+    "fragments/carbonaceous_04/lod1.gltf"
+   ],
+   "volume": "fragments/carbonaceous_04/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14497829973697662,
+    0.13029468059539795,
+    0.11558415740728378
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "fragments/carbonaceous_05",
+   "impostor": {
+    "albedo": "fragments/carbonaceous_05/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/carbonaceous_05/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/carbonaceous_05/lod0.gltf",
+    "fragments/carbonaceous_05/lod1.gltf"
+   ],
+   "volume": "fragments/carbonaceous_05/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.14564812183380127,
+    0.1308928281068802,
+    0.11613456904888153
+   ],
+   "bound_radius_m": 100.0,
+   "family": "carbonaceous",
+   "gloss": 0.05999999865889549,
+   "id": "fragments/carbonaceous_06",
+   "impostor": {
+    "albedo": "fragments/carbonaceous_06/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/carbonaceous_06/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/carbonaceous_06/lod0.gltf",
+    "fragments/carbonaceous_06/lod1.gltf"
+   ],
+   "volume": "fragments/carbonaceous_06/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7484250068664551,
+    0.7991700768470764,
+    0.8499115109443665
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "majors/icy_01",
+   "impostor": {
+    "albedo": "majors/icy_01/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/icy_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/icy_01/lod0.gltf",
+    "majors/icy_01/lod1.gltf",
+    "majors/icy_01/lod2.gltf"
+   ],
+   "volume": "majors/icy_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7431095242500305,
+    0.7932664752006531,
+    0.8434275388717651
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "majors/icy_02",
+   "impostor": {
+    "albedo": "majors/icy_02/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/icy_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/icy_02/lod0.gltf",
+    "majors/icy_02/lod1.gltf",
+    "majors/icy_02/lod2.gltf"
+   ],
+   "volume": "majors/icy_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7191328406333923,
+    0.7681034207344055,
+    0.8170734643936157
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "majors/icy_03",
+   "impostor": {
+    "albedo": "majors/icy_03/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/icy_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/icy_03/lod0.gltf",
+    "majors/icy_03/lod1.gltf",
+    "majors/icy_03/lod2.gltf"
+   ],
+   "volume": "majors/icy_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7327477931976318,
+    0.782187283039093,
+    0.831636369228363
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "fragments/icy_01",
+   "impostor": {
+    "albedo": "fragments/icy_01/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/icy_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/icy_01/lod0.gltf",
+    "fragments/icy_01/lod1.gltf"
+   ],
+   "volume": "fragments/icy_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7309768199920654,
+    0.7804251909255981,
+    0.8298728466033936
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "fragments/icy_02",
+   "impostor": {
+    "albedo": "fragments/icy_02/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/icy_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/icy_02/lod0.gltf",
+    "fragments/icy_02/lod1.gltf"
+   ],
+   "volume": "fragments/icy_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7474724054336548,
+    0.7978429198265076,
+    0.8482142686843872
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "fragments/icy_03",
+   "impostor": {
+    "albedo": "fragments/icy_03/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/icy_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/icy_03/lod0.gltf",
+    "fragments/icy_03/lod1.gltf"
+   ],
+   "volume": "fragments/icy_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7258177399635315,
+    0.7749257683753967,
+    0.8240615129470825
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "fragments/icy_04",
+   "impostor": {
+    "albedo": "fragments/icy_04/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/icy_04/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/icy_04/lod0.gltf",
+    "fragments/icy_04/lod1.gltf"
+   ],
+   "volume": "fragments/icy_04/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7304556965827942,
+    0.7803722023963928,
+    0.8302904367446899
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "fragments/icy_05",
+   "impostor": {
+    "albedo": "fragments/icy_05/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/icy_05/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/icy_05/lod0.gltf",
+    "fragments/icy_05/lod1.gltf"
+   ],
+   "volume": "fragments/icy_05/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.7584726214408875,
+    0.8092562556266785,
+    0.8600398898124695
+   ],
+   "bound_radius_m": 100.0,
+   "family": "icy",
+   "gloss": 0.3499999940395355,
+   "id": "fragments/icy_06",
+   "impostor": {
+    "albedo": "fragments/icy_06/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/icy_06/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/icy_06/lod0.gltf",
+    "fragments/icy_06/lod1.gltf"
+   ],
+   "volume": "fragments/icy_06/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.44486185908317566,
+    0.4042431712150574,
+    0.3585183322429657
+   ],
+   "bound_radius_m": 100.0,
+   "family": "metallic",
+   "gloss": 0.550000011920929,
+   "id": "majors/metallic_01",
+   "impostor": {
+    "albedo": "majors/metallic_01/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/metallic_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/metallic_01/lod0.gltf",
+    "majors/metallic_01/lod1.gltf",
+    "majors/metallic_01/lod2.gltf"
+   ],
+   "volume": "majors/metallic_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4434501528739929,
+    0.40295839309692383,
+    0.3573906421661377
+   ],
+   "bound_radius_m": 100.0,
+   "family": "metallic",
+   "gloss": 0.550000011920929,
+   "id": "majors/metallic_02",
+   "impostor": {
+    "albedo": "majors/metallic_02/impostor_base.png",
+    "grid": 4,
+    "normal": "majors/metallic_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "major",
+   "lods": [
+    "majors/metallic_02/lod0.gltf",
+    "majors/metallic_02/lod1.gltf",
+    "majors/metallic_02/lod2.gltf"
+   ],
+   "volume": "majors/metallic_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.44843190908432007,
+    0.4074786901473999,
+    0.3614020049571991
+   ],
+   "bound_radius_m": 100.0,
+   "family": "metallic",
+   "gloss": 0.550000011920929,
+   "id": "fragments/metallic_01",
+   "impostor": {
+    "albedo": "fragments/metallic_01/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/metallic_01/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/metallic_01/lod0.gltf",
+    "fragments/metallic_01/lod1.gltf"
+   ],
+   "volume": "fragments/metallic_01/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.42952829599380493,
+    0.39031368494033813,
+    0.3461979627609253
+   ],
+   "bound_radius_m": 100.0,
+   "family": "metallic",
+   "gloss": 0.550000011920929,
+   "id": "fragments/metallic_02",
+   "impostor": {
+    "albedo": "fragments/metallic_02/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/metallic_02/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/metallic_02/lod0.gltf",
+    "fragments/metallic_02/lod1.gltf"
+   ],
+   "volume": "fragments/metallic_02/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.44801008701324463,
+    0.4071170389652252,
+    0.36108505725860596
+   ],
+   "bound_radius_m": 100.0,
+   "family": "metallic",
+   "gloss": 0.550000011920929,
+   "id": "fragments/metallic_03",
+   "impostor": {
+    "albedo": "fragments/metallic_03/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/metallic_03/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/metallic_03/lod0.gltf",
+    "fragments/metallic_03/lod1.gltf"
+   ],
+   "volume": "fragments/metallic_03/volume.dvox"
+  },
+  {
+   "avg_albedo": [
+    0.4433528780937195,
+    0.4028635323047638,
+    0.3573504686355591
+   ],
+   "bound_radius_m": 100.0,
+   "family": "metallic",
+   "gloss": 0.550000011920929,
+   "id": "fragments/metallic_04",
+   "impostor": {
+    "albedo": "fragments/metallic_04/impostor_base.png",
+    "grid": 4,
+    "normal": "fragments/metallic_04/impostor_normal.png",
+    "view_size": 128
+   },
+   "kind": "fragment",
+   "lods": [
+    "fragments/metallic_04/lod0.gltf",
+    "fragments/metallic_04/lod1.gltf"
+   ],
+   "volume": "fragments/metallic_04/volume.dvox"
+  }
+ ],
+ "tool_version": 1
+}

@@ -10,6 +10,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -41,6 +45,26 @@ float worst_silhouette_error(const assets::MeshCpu& lod0, const assets::MeshCpu&
         worst = std::max(worst, std::abs(glm::length(v1.position) - r0));
     }
     return worst;
+}
+
+/// Number of triangles whose winding faces inward (normal pointing back
+/// toward the mesh centroid rather than away from it). Shared by
+/// OutwardWinding, EveryFragmentWindsOutward and
+/// CommittedRecipeFragmentsArePlanar so the "outward" definition lives once.
+int inward_triangle_count(const assets::MeshCpu& m) {
+    int inward = 0;
+    for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+        auto& a = m.vertices[m.indices[i]].position; auto& b = m.vertices[m.indices[i+1]].position;
+        auto& c = m.vertices[m.indices[i+2]].position;
+        if (glm::dot(glm::cross(b - a, c - a), (a + b + c) / 3.0f) <= 0.0f) ++inward;
+    }
+    return inward;
+}
+
+std::string read_file(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::ostringstream ss; ss << f.rdbuf();
+    return ss.str();
 }
 
 }  // namespace
@@ -209,14 +233,37 @@ TEST(Shape, EveryFragmentWindsOutward) {
     for (auto& s : specs) {
         auto lods = rockgen::generate_rock_lods(s);
         for (size_t l = 0; l < lods.size(); ++l) {
-            const auto& m = lods[l];
-            int inward = 0;
-            for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
-                auto& a = m.vertices[m.indices[i]].position; auto& b = m.vertices[m.indices[i+1]].position;
-                auto& c = m.vertices[m.indices[i+2]].position;
-                if (glm::dot(glm::cross(b - a, c - a), (a + b + c) / 3.0f) <= 0.0f) ++inward;
-            }
-            EXPECT_EQ(inward, 0) << s.id << " lod" << l;
+            EXPECT_EQ(inward_triangle_count(lods[l]), 0) << s.id << " lod" << l;
+        }
+    }
+}
+
+// Planarity + winding over the COMMITTED production recipe (Task 8), not a
+// small test-only sweep: every fragment's LOD0 must read as a broken rock
+// (2-4 planar face clusters, same definition as EveryFragmentHasPlanarFaces)
+// and no rock, at any LOD, may have an inward-facing triangle.
+TEST(Shape, CommittedRecipeFragmentsArePlanar) {
+    const std::string recipe_path =
+        std::string(OPEN_STBC_PROJECT_ROOT) + "/native/assets/rocks/recipe.json";
+    const std::string text = read_file(recipe_path);
+    ASSERT_FALSE(text.empty()) << "could not read " << recipe_path;
+
+    auto r = rockgen::parse_recipe(text);
+    auto specs = rockgen::expand_recipe(r);
+    ASSERT_EQ(specs.size(), 13u + 24u);
+
+    for (auto& s : specs) {
+        auto lods = rockgen::generate_rock_lods(s);
+        ASSERT_FALSE(lods.empty()) << s.id;
+
+        if (s.fragment) {
+            const int big = big_planar_clusters(lods[0]);
+            EXPECT_GE(big, 2) << s.id;
+            EXPECT_LE(big, 4) << s.id;
+        }
+
+        for (size_t l = 0; l < lods.size(); ++l) {
+            EXPECT_EQ(inward_triangle_count(lods[l]), 0) << s.id << " lod" << l;
         }
     }
 }

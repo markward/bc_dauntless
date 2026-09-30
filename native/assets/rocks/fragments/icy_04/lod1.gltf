@@ -1,0 +1,144 @@
+{
+ "accessors": [
+  {
+   "bufferView": 0,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 175,
+   "max": [
+    82.18131256103516,
+    71.96295166015625,
+    63.92232894897461
+   ],
+   "min": [
+    -79.43697357177734,
+    -72.0823745727539,
+    -65.50296783447266
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 1,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 175,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 175,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 960,
+   "type": "SCALAR"
+  }
+ ],
+ "asset": {
+  "extras": {
+   "dauntless_volume": "volume.dvox"
+  },
+  "generator": "dauntless rock_catalogue 1",
+  "version": "2.0"
+ },
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteLength": 2100,
+   "byteOffset": 0,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 2100,
+   "byteOffset": 2100,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 1400,
+   "byteOffset": 4200,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 3840,
+   "byteOffset": 5600,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 9440,
+   "uri": "lod1.bin"
+  }
+ ],
+ "images": [
+  {
+   "uri": "base.png"
+  },
+  {
+   "uri": "normal.png"
+  }
+ ],
+ "materials": [
+  {
+   "normalTexture": {
+    "index": 1
+   },
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 1
+   }
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 1,
+      "POSITION": 0,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0
+  }
+ ],
+ "samplers": [
+  {}
+ ],
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "textures": [
+  {
+   "sampler": 0,
+   "source": 0
+  },
+  {
+   "sampler": 0,
+   "source": 1
+  }
+ ]
+}
