@@ -59,7 +59,7 @@ TEST(Catalogue, WrittenGltfLoadsInEngineReader) {
     EXPECT_EQ(scene.meshes[0].vertices.size(), lods[0].vertices.size());
     EXPECT_EQ(scene.meshes[0].indices.size(), lods[0].indices.size());
     ASSERT_EQ(scene.materials.size(), 1u);
-    EXPECT_EQ(scene.materials[0].base_color_image, dir / "base.png");
-    EXPECT_EQ(scene.materials[0].normal_image, dir / "normal.png");
+    EXPECT_EQ(scene.materials[0].base_color_image.path, dir / "base.png");
+    EXPECT_EQ(scene.materials[0].normal_image.path, dir / "normal.png");
     EXPECT_EQ(scene.volume, dir / "volume.dvox");
 }

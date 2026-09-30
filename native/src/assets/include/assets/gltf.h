@@ -12,8 +12,10 @@
 
 #include <assets/mesh.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <glm/glm.hpp>
+#include <string>
 #include <vector>
 
 namespace assets::gltf {
@@ -25,10 +27,24 @@ inline constexpr float kMetresToModelUnits = 1.0f / 1.75f;
 /// direction-only and never scaled).
 glm::vec3 to_bc_frame(glm::vec3 v_gltf);
 
+/// A material's image, either an external file (`path` set, `bytes` empty)
+/// or embedded in the glTF itself -- a `.glb` binary-chunk buffer view or a
+/// base64 `data:` URI (`bytes` set, `path` empty). `key` is the dedupe key
+/// build_model_from_gltf uses to avoid decoding/uploading the same image
+/// twice: `path.string()` for an external image, or
+/// `"<gltf path>#image<N>"` (N = the image's index in the glTF) when
+/// embedded.
+struct CpuImage {
+    std::filesystem::path path;
+    std::vector<std::uint8_t> bytes;
+    std::string key;
+    bool empty() const { return path.empty() && bytes.empty(); }
+};
+
 struct CpuMaterial {
     glm::vec4 base_color_factor{1.0f};
-    std::filesystem::path base_color_image;  // absolute; empty if none
-    std::filesystem::path normal_image;      // absolute; empty if none
+    CpuImage base_color_image;
+    CpuImage normal_image;
 };
 
 struct CpuScene {

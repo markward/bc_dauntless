@@ -256,6 +256,7 @@ It also records the tool version and the recipe hash.
   - the node TRS/matrix hierarchy
   - `baseColorTexture`, `baseColorFactor`, `normalTexture`
   - external `.bin` buffers and `.glb`
+  - embedded images (`.glb` buffer views and base64 data URIs)
 - **Not supported:** skins, animation, morph targets, cameras, lights, sparse
   accessors, and any extension. Each is **skipped with a one-time warning** per
   file.

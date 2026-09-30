@@ -90,6 +90,45 @@ TEST(GltfLoad, UnsupportedFeaturesWarnOnceAndStillLoad) {
     EXPECT_EQ(count("ignoring extensions"), 1u);
 }
 
+TEST(GltfLoad, GlbEmbeddedImageIsRead) {
+    // A Blender-style .glb with the base-color image in the binary chunk
+    // (image.buffer_view) must decode with bytes populated and no path.
+    auto p = write_glb_fixture(tmpdir("glb_embedded"), /*embed_texture=*/true);
+    auto s = assets::gltf::load_cpu(p);
+    ASSERT_EQ(s.materials.size(), 1u);
+    const auto& img = s.materials[0].base_color_image;
+    EXPECT_FALSE(img.bytes.empty());
+    EXPECT_TRUE(img.path.empty());
+    ASSERT_GE(img.key.size(), 7u);
+    EXPECT_EQ(img.key.substr(img.key.size() - 7), "#image0");
+}
+
+TEST(GltfLoad, DataUriImageIsRead) {
+    // A base64 data: URI image (some exporters use this even for .gltf) must
+    // decode the same way as a .glb buffer-view image.
+    auto p = write_fixture(tmpdir("datauri_img"), {}, nullptr, true, false,
+                            /*with_data_uri_texture=*/true);
+    auto s = assets::gltf::load_cpu(p);
+    ASSERT_EQ(s.materials.size(), 1u);
+    const auto& img = s.materials[0].base_color_image;
+    EXPECT_FALSE(img.bytes.empty());
+    EXPECT_TRUE(img.path.empty());
+    ASSERT_GE(img.key.size(), 7u);
+    EXPECT_EQ(img.key.substr(img.key.size() - 7), "#image0");
+}
+
+TEST(GltfLoad, ExternalImageStillUsesPath) {
+    // The Task 2 external-PNG fixture must still resolve to a path, not
+    // inline bytes -- embedded-image support must not regress this case.
+    auto p = write_fixture(tmpdir("external_img"), {}, nullptr, true,
+                            /*with_texture=*/true);
+    auto s = assets::gltf::load_cpu(p);
+    ASSERT_EQ(s.materials.size(), 1u);
+    const auto& img = s.materials[0].base_color_image;
+    EXPECT_FALSE(img.path.empty());
+    EXPECT_TRUE(img.bytes.empty());
+}
+
 TEST(GltfLoad, UnreadableFileThrows) {
     EXPECT_THROW(assets::gltf::load_cpu("/nonexistent/x.gltf"), assets::AssetError);
 }

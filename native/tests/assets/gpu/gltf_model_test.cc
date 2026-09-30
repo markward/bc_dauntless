@@ -82,6 +82,22 @@ TEST_F(GltfModelTest, EvictDropsScaledGltfVariants) {
     EXPECT_TRUE(weak_scale2.expired());
 }
 
+TEST_F(GltfModelTest, GlbEmbeddedTextureBindsBaseStage) {
+    // A Blender-default .glb export -- texture embedded in the binary chunk
+    // -- must arrive textured, with no "ignoring data-uri image" warning.
+    auto p = write_glb_fixture(tmpdir("glb_model_embedded"), /*embed_texture=*/true);
+    assets::AssetCache::Config cfg; cfg.keep_cpu_data = true;
+    assets::AssetCache cache(cfg);
+    testing::internal::CaptureStderr();
+    auto m = cache.load(p, std::vector<std::filesystem::path>{}, {}, {}, 1.0f);
+    std::string err = testing::internal::GetCapturedStderr();
+    ASSERT_TRUE(m);
+    ASSERT_EQ(m->materials.size(), 1u);
+    using S = assets::Material::StageSlot;
+    EXPECT_GE(m->materials[0].stages[static_cast<size_t>(S::Base)].texture_index, 0);
+    EXPECT_EQ(err.find("ignoring data-uri image"), std::string::npos);
+}
+
 TEST_F(GltfModelTest, NifPathStillGoesToNifLoader) {
     // An unreadable .nif must still throw from the NIF path (not the glTF
     // reader), and scale == 1.0f (the default for every existing caller)

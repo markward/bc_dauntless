@@ -7,6 +7,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -45,17 +46,64 @@ bool is_data_uri(const char* uri) {
     return uri != nullptr && std::string_view(uri).rfind("data:", 0) == 0;
 }
 
-std::filesystem::path resolve_image_path(const std::filesystem::path& gltf_path,
-                                          const cgltf_texture_view& view,
-                                          const std::string& path_str) {
+// Resolves a texture view's image to either an external path or embedded
+// bytes: `image->buffer_view` set means a `.glb` binary-chunk image (cgltf
+// has already loaded the GLB BIN chunk / any external buffers via
+// cgltf_load_buffers, so cgltf_buffer_view_data just returns a pointer into
+// it); a `data:` URI is decoded with cgltf_load_buffer_base64, sized from the
+// base64 payload length; anything else is today's external-file path.
+CpuImage resolve_image(const cgltf_data* data, const std::filesystem::path& gltf_path,
+                       const cgltf_texture_view& view, const std::string& path_str) {
     if (!view.texture || !view.texture->image) return {};
     const cgltf_image* image = view.texture->image;
-    if (!image->uri || image->uri[0] == '\0') return {};
-    if (is_data_uri(image->uri)) {
-        warn_once(path_str, "data-uri image");
-        return {};
+    const int index = static_cast<int>(image - data->images);
+
+    if (image->buffer_view) {
+        const std::uint8_t* bytes = cgltf_buffer_view_data(image->buffer_view);
+        if (!bytes) {
+            warn_once(path_str, "unreadable embedded image");
+            return {};
+        }
+        CpuImage out;
+        out.key = path_str + "#image" + std::to_string(index);
+        out.bytes.assign(bytes, bytes + image->buffer_view->size);
+        return out;
     }
-    return gltf_path.parent_path() / image->uri;
+
+    if (!image->uri || image->uri[0] == '\0') return {};
+
+    if (is_data_uri(image->uri)) {
+        const char* comma = std::strchr(image->uri, ',');
+        if (!comma) {
+            warn_once(path_str, "malformed data-uri image");
+            return {};
+        }
+        const std::string_view b64(comma + 1);
+        const cgltf_size len = b64.size();
+        cgltf_size padding = 0;
+        if (len >= 1 && b64[len - 1] == '=') ++padding;
+        if (len >= 2 && b64[len - 2] == '=') ++padding;
+        const cgltf_size decoded_size = len / 4 * 3 - padding;
+
+        cgltf_options options{};
+        void* decoded = nullptr;
+        cgltf_result result = cgltf_load_buffer_base64(&options, decoded_size, comma + 1, &decoded);
+        if (result != cgltf_result_success || !decoded) {
+            warn_once(path_str, "undecodable data-uri image");
+            return {};
+        }
+        const auto* decoded_bytes = static_cast<const std::uint8_t*>(decoded);
+        CpuImage out;
+        out.key = path_str + "#image" + std::to_string(index);
+        out.bytes.assign(decoded_bytes, decoded_bytes + decoded_size);
+        std::free(decoded);
+        return out;
+    }
+
+    CpuImage out;
+    out.path = gltf_path.parent_path() / image->uri;
+    out.key = out.path.string();
+    return out;
 }
 
 // Unpacks a whole accessor's worth of `components`-wide floats in one call.
@@ -113,8 +161,8 @@ CpuScene load_cpu(const std::filesystem::path& path, float scale) {
         const auto& bcf = mat.pbr_metallic_roughness.base_color_factor;
         cm.base_color_factor = {bcf[0], bcf[1], bcf[2], bcf[3]};
         cm.base_color_image =
-            resolve_image_path(path, mat.pbr_metallic_roughness.base_color_texture, path_str);
-        cm.normal_image = resolve_image_path(path, mat.normal_texture, path_str);
+            resolve_image(data.get(), path, mat.pbr_metallic_roughness.base_color_texture, path_str);
+        cm.normal_image = resolve_image(data.get(), path, mat.normal_texture, path_str);
         scene.materials.push_back(std::move(cm));
     }
 

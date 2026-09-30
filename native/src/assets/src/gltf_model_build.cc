@@ -44,21 +44,24 @@ Model build_model_from_gltf(const fs::path& path, float scale, const ModelBuildC
         ? ctx.texture_uploader
         : TextureUploaderFn(&assets::upload_image);
 
-    // Unique image path -> Model::textures index. A failed load is cached too
-    // (as -1), so a bad texture referenced by multiple materials only warns
-    // once and is only attempted once.
+    // CpuImage::key -> Model::textures index. A failed load is cached too (as
+    // -1), so a bad texture referenced by multiple materials only warns once
+    // and is only attempted once. `key` dedupes both external images (by
+    // path) and embedded ones (by "<gltf path>#image<N>"), so two materials
+    // that happen to reference the same embedded image share one upload.
     std::unordered_map<std::string, int> tex_index_for_path;
     static std::unordered_set<std::string> warned;
 
-    auto load_texture = [&](const fs::path& image_path) -> int {
-        if (image_path.empty()) return -1;
-        const std::string key = image_path.string();
+    auto load_texture = [&](const gltf::CpuImage& image) -> int {
+        if (image.empty()) return -1;
+        const std::string& key = image.key;
         auto found = tex_index_for_path.find(key);
         if (found != tex_index_for_path.end()) return found->second;
 
         int index = -1;
         try {
-            auto bytes = read_file_bytes(image_path);
+            std::vector<std::uint8_t> bytes =
+                image.bytes.empty() ? read_file_bytes(image.path) : image.bytes;
             Image decoded = decode_image(bytes);
             Texture tex = upload(decoded, /*generate_mipmaps=*/true);
             index = static_cast<int>(model.textures.size());
