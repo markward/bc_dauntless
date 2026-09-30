@@ -90,6 +90,26 @@ TEST(GltfLoad, UnsupportedFeaturesWarnOnceAndStillLoad) {
     EXPECT_EQ(count("ignoring extensions"), 1u);
 }
 
+TEST(GltfLoad, UnsupportedRequiredExtensionThrowsNamingIt) {
+    // A required extension changes how the file must be read (e.g. Draco /
+    // meshopt compressed geometry); loading anyway yields zero-filled,
+    // invisible geometry, so it is a load error that names the extension.
+    for (const char* ext : {"KHR_draco_mesh_compression", "EXT_meshopt_compression"}) {
+        auto d = tmpdir((std::string("required_") + ext).c_str());
+        auto p = write_fixture(d);
+        auto j = nlohmann::json::parse(std::ifstream(p));
+        j["extensionsUsed"] = {ext};
+        j["extensionsRequired"] = {ext};
+        std::ofstream(p) << j.dump();
+        try {
+            assets::gltf::load_cpu(p);
+            ADD_FAILURE() << "expected AssetError for required " << ext;
+        } catch (const assets::AssetError& e) {
+            EXPECT_NE(std::string(e.what()).find(ext), std::string::npos) << e.what();
+        }
+    }
+}
+
 TEST(GltfLoad, GlbEmbeddedImageIsRead) {
     // A Blender-style .glb with the base-color image in the binary chunk
     // (image.buffer_view) must decode with bytes populated and no path.

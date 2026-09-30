@@ -145,6 +145,15 @@ CpuScene load_cpu(const std::filesystem::path& path, float scale) {
                           std::to_string(static_cast<int>(result)) + ")");
     }
 
+    // This loader implements no glTF extension. One that is merely USED is
+    // ignored with a warning; one that is REQUIRED changes how the file must
+    // be read (Draco / meshopt compressed geometry would come out zero-filled
+    // and invisible), so it is a load error naming the extension.
+    if (data->extensions_required_count > 0) {
+        throw AssetError("gltf: " + path_str + ": unsupported required extension " +
+                         std::string(data->extensions_required[0]));
+    }
+
     if (data->skins_count > 0) warn_once(path_str, "skins");
     if (data->animations_count > 0) warn_once(path_str, "animations");
     if (data->cameras_count > 0) warn_once(path_str, "cameras");

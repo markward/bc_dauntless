@@ -257,9 +257,11 @@ It also records the tool version and the recipe hash.
   - `baseColorTexture`, `baseColorFactor`, `normalTexture`
   - external `.bin` buffers and `.glb`
   - embedded images (`.glb` buffer views and base64 data URIs)
-- **Not supported:** skins, animation, morph targets, cameras, lights, sparse
-  accessors, and any extension. Each is **skipped with a one-time warning** per
-  file.
+  - sparse accessors
+- **Not supported:** skins, animation, morph targets, cameras, lights, and any
+  extension. Each is **skipped with a one-time warning** per file — except an
+  extension listed in `extensionsRequired`, which is a load error (see
+  Conventions).
   - A primitive without `POSITION` is a load error (`AssetError`).
   - So is a non-triangle mode.
 - **Conventions.** Mods will inherit these, so they are stated here and
@@ -280,6 +282,11 @@ It also records the tool version and the recipe hash.
     `reconstruct_normal_map_z` pass.
   - **Texture URIs** resolve relative to the `.gltf` file. BC texture search
     directories and `mesh_fix` patches do not apply to glTF.
+  - **Textures: PNG only** (JPEG is not decoded; a JPEG texture loads
+    untextured with a warning).
+  - **A required extension the loader does not support is a load error**
+    (`AssetError` naming the extension). An extension that is only in
+    `extensionsUsed` stays a one-time warning.
 - **Cache.** glTF entries use the existing canonical-path key, plus the load
   scale (below).
 
