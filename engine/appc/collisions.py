@@ -42,6 +42,14 @@ COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
                                  # for hulls sitting well inside their generous
                                  # bounding spheres (e.g. Galaxy saucer+nacelles)
 
+# Broadphase spatial hash (see _candidate_pairs). Floor cell size in GU, so a
+# set of tiny bodies (rock chunks) doesn't degenerate into a huge number of
+# tiny cells; real conservativeness comes from 2x the largest radius in the
+# set, which is always >= the largest overlap reach any pair in that set can
+# have (see _candidate_pairs' docstring for the bound argument).
+kBroadphaseMinCellGU = 4.0
+_BROADPHASE = True
+
 # Scuff decal size band (GU). The decal radius is the contact chord
 # sqrt(2 * R_small * pen) clamped to this band; it is VISUAL ONLY and never
 # feeds apply_hit's splash radius (which sets the subsystem catchment).
@@ -701,6 +709,59 @@ def _apply_overlay_all(objects, dt: float) -> None:
         cv.z *= decay
 
 
+def _candidate_pairs(positions, radii, sets):
+    """Index pairs (i < k) that could touch, in the same order the old
+    all-pairs nested loop produced (sorted).
+
+    Same set: a uniform spatial hash. The cell size is
+    ``max(kBroadphaseMinCellGU, 2 x the largest radius in that set)`` -- any
+    pair that can overlap is at most ``ra + rb <= 2 * rmax`` apart (rmax the
+    largest radius in the set), so such a pair's cells differ by at most one
+    step on each axis and the 3x3x3 neighbourhood always covers it. `radii`
+    here is each body's whole-model bounding radius (GetRadius()), the same
+    quantity _respond_pair's broad phase and _deepest_piece_overlap's culls
+    both key off (COLLISION_RADIUS_SCALE only ever SHRINKS the effective
+    reach from there), so bucketing on the raw radius stays conservative.
+
+    Different sets: always a candidate -- resolve_collisions' own
+    frames.offset_between check decides afterwards whether the pair is even
+    comparable, exactly as it did before broadphase existed."""
+    n = len(positions)
+    if not _BROADPHASE:
+        return [(i, k) for i in range(n) for k in range(i + 1, n)]
+    by_set: dict = {}
+    for i, s in enumerate(sets):
+        by_set.setdefault(s, []).append(i)
+    pairs = set()
+    for idxs in by_set.values():
+        if len(idxs) < 2:
+            continue
+        cell = max(kBroadphaseMinCellGU, 2.0 * max(radii[i] for i in idxs))
+        grid: dict = {}
+        for i in idxs:
+            p = positions[i]
+            key = (int(p[0] // cell), int(p[1] // cell), int(p[2] // cell))
+            grid.setdefault(key, []).append(i)
+        for (cx, cy, cz), members in grid.items():
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        other = grid.get((cx + dx, cy + dy, cz + dz))
+                        if not other:
+                            continue
+                        for i in members:
+                            for k in other:
+                                if i < k:
+                                    pairs.add((i, k))
+    keys = list(by_set.keys())
+    for a in range(len(keys)):
+        for b in range(a + 1, len(keys)):
+            for i in by_set[keys[a]]:
+                for k in by_set[keys[b]]:
+                    pairs.add((min(i, k), max(i, k)))
+    return sorted(pairs)
+
+
 def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     """Snapshot every object into a _Body and resolve all unordered pairs.
     Returns the list of collision tuples from _respond_pair (for tests /
@@ -735,29 +796,30 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     # collidables Plan 3 adds) -- the projectiles.update_all per-call cache.
     offsets: dict = {}
     hits = []
-    for i in range(len(bodies)):
-        for k in range(i + 1, len(bodies)):
-            a_obj, b_obj = bodies[i].obj, bodies[k].obj
-            # Different frames never interact: a planet left standing in the
-            # set you warped out of is not where your ship is, whatever the
-            # numbers say. One frame (the same set, or two regions of one
-            # system) compares in A's set-local coordinates.
-            key = (sets[i], sets[k])
-            if key in offsets:
-                b_offset = offsets[key]
-            else:
-                b_offset = offsets[key] = frames.offset_between(*key)
-            if b_offset is None:
-                continue
-            # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
-            # either side disabling the other exempts the pair.
-            if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
-                    or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
-                continue
-            hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt,
-                                b_offset=b_offset)
-            if hit is not None:
-                hits.append(hit)
+    pos_list = [(b.center.x, b.center.y, b.center.z) for b in bodies]
+    radii = [b.obj.GetRadius() for b in bodies]
+    for i, k in _candidate_pairs(pos_list, radii, sets):
+        a_obj, b_obj = bodies[i].obj, bodies[k].obj
+        # Different frames never interact: a planet left standing in the
+        # set you warped out of is not where your ship is, whatever the
+        # numbers say. One frame (the same set, or two regions of one
+        # system) compares in A's set-local coordinates.
+        key = (sets[i], sets[k])
+        if key in offsets:
+            b_offset = offsets[key]
+        else:
+            b_offset = offsets[key] = frames.offset_between(*key)
+        if b_offset is None:
+            continue
+        # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
+        # either side disabling the other exempts the pair.
+        if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
+                or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
+            continue
+        hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt,
+                            b_offset=b_offset)
+        if hit is not None:
+            hits.append(hit)
     return hits
 
 
