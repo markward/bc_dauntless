@@ -116,8 +116,8 @@ def test_script_less_rock_realises_its_catalogue_fragment(monkeypatch):
 
     frag_path, frag_scale = rock_model_override(rock)
     assert rock in sess.ship_instances
-    assert r.instanced == [(frag_path, {})]
-    assert frag_path.endswith("lod0.gltf") and frag_scale == 1.0
+    assert r.instanced == [(frag_path, {"scale": frag_scale})]
+    assert frag_path.endswith("lod0.gltf") and frag_scale != 1.0
     assert rock.GetRadius() == 1.5
 
 

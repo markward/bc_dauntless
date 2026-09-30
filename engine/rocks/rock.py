@@ -95,7 +95,7 @@ def _stock_radius_gu(base: str) -> float:
 
 
 def _catalogue_model(seed: str, kind: str, family: str):
-    """(abs path to lod0, family actually used) for a catalogue rock. Works
+    """(catalogue Rock or None, family actually used). Works
     with the catalogue toggle off: that toggle only governs redirecting
     stock NIFs; a script-less rock has no stock mesh to fall back to."""
     from engine.rocks import catalogue
@@ -105,7 +105,7 @@ def _catalogue_model(seed: str, kind: str, family: str):
         family = "silicate"
     if rock is None:
         return None, family
-    return str(catalogue.catalogue_root() / rock.lod_paths[0]), family
+    return rock, family
 
 
 def _install_hull(ship, max_hp: float, radius_gu: float) -> None:
@@ -132,14 +132,33 @@ def RockClass_Create(radius_gu, *, family="silicate", seed="", name="",
     ship._become_rock()
     ship.SetGenus(App.GENUS_ASTEROID)
     ship.SetSpecies(App.SPECIES_ASTEROID)
-    ship.SetRadius(float(radius_gu))
+    # Rendered, collided and damage-volume sizes share the quantised radius;
+    # hull and mass use the exact one.
+    r_q = stats.quantise_radius(radius_gu)
+    ship.SetRadius(r_q)
     _install_hull(ship, stats.size_hull(radius_gu) if hull is None else hull,
-                  radius_gu)
+                  r_q)
     ship.SetMass(stats.size_mass(radius_gu) if mass is None else float(mass))
-    path, fam = _catalogue_model(seed or name, kind, family)
+    rock, fam = _catalogue_model(seed or name, kind, family)
     ship._rock_family = fam
-    ship._model_override = (path, 1.0) if path else None
+    ship._model_override = (
+        (str(rock.lod_paths[0]), _render_load_scale(r_q, rock))
+        if rock is not None else None)
     return ship
+
+
+# One glTF unit is a metre and a BC model unit is 1.75 m (the loader's
+# kMetresToModelUnits); every ship draws at BC_MODEL_SCALE (0.01 GU per model
+# unit) x GetScale(). So a rock of bound radius B metres loaded at scale s
+# draws at B / 1.75 * s * 0.01 GU, and s = r * 175 / B draws it at r GU.
+# (host_loop.BC_MODEL_SCALE; not imported -- host_loop is the whole host.)
+_BC_MODEL_SCALE = 0.01
+
+
+def _render_load_scale(r_gu: float, rock) -> float:
+    from engine.rocks.catalogue import MODEL_UNITS_PER_METRE
+    return float(r_gu) / (
+        rock.bound_radius_m * MODEL_UNITS_PER_METRE * _BC_MODEL_SCALE)
 
 
 def DamageableObject_Create(model_name):
