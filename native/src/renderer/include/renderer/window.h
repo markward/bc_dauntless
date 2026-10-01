@@ -2,6 +2,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
+
+#include "renderer/text_input.h"
 
 struct GLFWwindow;
 struct GLFWcursor;
@@ -95,6 +98,11 @@ public:
     /// headless capture the opposite of the truth.
     int swap_interval() const noexcept { return swap_interval_; }
 
+    /// Typed characters and editing keys since the last call (oldest first),
+    /// for forwarding to a CEF text field. Filled by GLFW callbacks during
+    /// poll_events(); bounded (see TextEventQueue).
+    std::vector<TextEvent> drain_text_events();
+
 private:
     GLFWwindow* handle_ = nullptr;
     GLFWcursor* crosshair_cursor_ = nullptr;
@@ -105,6 +113,7 @@ private:
     double      last_cursor_x_  = 0.0;
     double      last_cursor_y_  = 0.0;
     bool        cursor_seeded_  = false;  // false until first cursor-pos event
+    TextEventQueue text_events_;
 };
 
 }  // namespace renderer
