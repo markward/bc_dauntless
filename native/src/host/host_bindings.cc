@@ -35,6 +35,8 @@
 #include <renderer/dust_pass.h>
 #include <renderer/minor_field.h>
 #include <renderer/minor_pass.h>
+#include <renderer/far_field.h>
+#include <renderer/far_pass.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_atmosphere.h>
@@ -276,6 +278,27 @@ std::vector<renderer::minors::Bin> g_minor_target_bins;
 // compute_model_aabb walks every vertex, so it runs once per handle; cleared
 // with the handles (reset_frame_state) because handles are reissued.
 std::unordered_map<std::uint64_t, renderer::Aabb> g_minor_player_aabbs;
+// Far tier (docs/superpowers/specs/2026-10-01-far-tier-design.md). The field
+// is pure CPU state, built per DRAWN camera in render_space_geometry (main
+// view or viewscreen RTT); the pass owns GL (atlases, VAOs) like g_minor_pass.
+renderer::far::FarField g_far_field;
+std::unique_ptr<renderer::FarPass> g_far_pass;
+bool g_far_enabled = true;
+// The last camera's build; reused across cameras so the vectors keep their
+// capacity. Its specks and g_minor_specks draw in ONE render_specks call.
+renderer::far::FarOutput g_far_out;
+std::vector<renderer::SpeckGpu> g_minor_specks;
+std::vector<renderer::SpeckGpu> g_far_speck_staging;
+// Instance keys currently flagged (far_set_rocks): an instance unflagged, or
+// every one when the tier is disabled/cleared, gets far_fade written back to 0
+// so a stale fade can never hide its mesh.
+std::vector<std::uint64_t> g_far_flagged_keys;
+// What the last frame built and drew, summed over its drawn cameras.
+int g_far_generated = 0;
+int g_far_cells = 0;
+int g_far_impostors = 0;
+int g_far_specks = 0;
+int g_far_draw_calls = 0;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
@@ -713,6 +736,21 @@ scenegraph::ModelHandle load_model_impl(
 // NOT here, deliberately: g_world, g_loaded_models, the model-radius cache and
 // the pass objects. Those own GL handles or are rebuilt by init(), and their
 // ORDER relative to the GL-context teardown in shutdown() is load-bearing.
+// Far tier: a FarField key is minor_instance_key()'s (index << 32 | generation).
+scenegraph::Instance* far_instance_of(std::uint64_t key) {
+    const scenegraph::InstanceId id{static_cast<std::uint32_t>(key >> 32),
+                                    static_cast<std::uint32_t>(key & 0xffffffffu)};
+    return g_world.get(id);
+}
+
+// Write far_fade = 0 (mesh only) on every currently flagged instance that
+// still exists. Called whenever the tier stops owning those fades: disabled,
+// cleared, or a rock unflagged (far_set_rocks).
+void far_zero_fades(const std::vector<std::uint64_t>& keys) {
+    for (const std::uint64_t key : keys)
+        if (scenegraph::Instance* inst = far_instance_of(key)) inst->far_fade = 0.0f;
+}
+
 void reset_frame_state() {
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
@@ -798,6 +836,24 @@ void reset_frame_state() {
     // this before make_unique; shutdown() resets the pass first), and a fresh
     // pass has no VAOs. It guards a future caller that resets mid-session.
     if (g_minor_pass) g_minor_pass->forget_models();
+
+    // Far tier: sources, flagged rocks, frame and cell cache belong to the old
+    // session (the catalogue is not mission content and survives). Flagged
+    // keys name instances of the old world, which init()/shutdown() have
+    // already replaced, so there is no fade to write back here.
+    g_far_field.clear();
+    g_far_field.set_dials({});
+    g_far_enabled = true;
+    g_far_out = {};
+    g_minor_specks.clear();
+    g_far_speck_staging.clear();
+    g_far_flagged_keys.clear();
+    g_minor_field.set_specks(true, g_far_field.dials().tiers.p_min);
+    g_far_generated = 0;
+    g_far_cells = 0;
+    g_far_impostors = 0;
+    g_far_specks = 0;
+    g_far_draw_calls = 0;
 }
 
 void init(int width, int height, const std::string& title) {
@@ -825,6 +881,7 @@ void init(int width, int height, const std::string& title) {
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_minor_pass = std::make_unique<renderer::MinorPass>();
+    g_far_pass = std::make_unique<renderer::FarPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
     g_system_nebula_pass = std::make_unique<renderer::SystemNebulaPass>();
@@ -905,6 +962,7 @@ void shutdown() {
     g_sun_pass.reset();
     g_dust_pass.reset();
     g_minor_pass.reset();     // releases VAOs + instance buffer (GL alive)
+    g_far_pass.reset();       // releases atlases + VAOs + buffers (GL alive)
     g_nebula_pass.reset();
     g_nebula_volumetric_pass.reset();
     g_system_nebula_pass.reset();
@@ -1092,6 +1150,11 @@ void frame() {
         // hulls draw with: Instance anchors and the player's contact box.
         g_minor_draw_calls = 0;   // the draws below add to these, if they run
         g_minor_drawn = 0;
+        g_far_generated = 0;      // likewise the far tier's per-camera builds
+        g_far_cells = 0;
+        g_far_impostors = 0;
+        g_far_specks = 0;
+        g_far_draw_calls = 0;
         if (g_minors_enabled) {
             DAUNTLESS_FRAME_SCOPE("space.minors.step");
             step_minor_field(static_cast<float>(fh));
@@ -1161,6 +1224,41 @@ void frame() {
                                      const std::vector<renderer::DynamicLightDescriptor>*
                                          dyn_lights) {
         if (msaa != nullptr) msaa->bind(); else hdr->bind();
+        // The drawn target's framebuffer size: the viewscreen RTT is
+        // kViewscreenRtt{W,H}; the main view (plain or MSAA) is fw x fh.
+        const bool to_viewscreen = hdr != nullptr && hdr == g_viewscreen_hdr.get();
+        const float target_h = to_viewscreen ? static_cast<float>(kViewscreenRttH)
+                                             : static_cast<float>(fh);
+        const int target_w = to_viewscreen ? kViewscreenRttW : fw;
+        // Instance::rim_strength's 0.1 default, gated + scaled as
+        // FrameSubmitter does for every opaque instance (minors + impostors).
+        const float rim = dauntless_rim::enabled()
+            ? 0.1f * dauntless_rim::strength_scale() : 0.0f;
+        if (g_far_pass) g_far_pass->reset_counts();
+        // Far tier build for THIS camera, before the hull draw: it writes each
+        // flagged rock's far_fade, which space.opaque reads (dither / skip).
+        if (g_far_enabled) {
+            DAUNTLESS_FRAME_SCOPE("space.far.build");
+            renderer::far::BuildInput in;
+            in.view = cam.view_matrix();
+            in.proj = cam.proj_matrix();
+            in.viewport_h = target_h;
+            in.render_origin = g_world.render_origin();
+            in.game_time = g_decal_game_time;
+            in.world_of = [](std::uint64_t key, glm::mat4& world) {
+                const scenegraph::Instance* inst = far_instance_of(key);
+                if (inst == nullptr) return false;
+                world = inst->world;
+                return true;
+            };
+            g_far_field.build(in, g_far_out);
+            for (const auto& [key, fade] : g_far_out.fades)
+                if (scenegraph::Instance* inst = far_instance_of(key)) inst->far_fade = fade;
+            g_far_generated += g_far_out.generated;
+            g_far_cells += g_far_out.cells;
+            for (const auto& bin : g_far_out.impostors)
+                g_far_impostors += static_cast<int>(bin.items.size());
+        }
         {
             DAUNTLESS_FRAME_SCOPE("space.backdrop");
             if (sky_use_cubemap)
@@ -1188,22 +1286,25 @@ void frame() {
         // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
         // in bridge view, the ONLY space render -- so re-bin the stepped poses
         // against the camera and height actually drawn with.
+        g_minor_specks.clear();
         if (g_minors_enabled && g_minor_pass) {
             DAUNTLESS_FRAME_SCOPE("space.minors.draw");
-            const float target_h = (hdr != nullptr && hdr == g_viewscreen_hdr.get())
-                ? static_cast<float>(kViewscreenRttH) : static_cast<float>(fh);
             int drawn = 0;
+            // With the far tier on, the sub-min_pixel_radius band becomes
+            // specks (drawn below with the far specks) instead of vanishing.
             g_minor_field.build_bins(cam.view_matrix(), cam.proj_matrix(), target_h,
-                                     g_minor_target_bins, &drawn);
-            // Instance::rim_strength's 0.1 default, gated + scaled as
-            // FrameSubmitter does for every opaque instance.
-            const float rim = dauntless_rim::enabled()
-                ? 0.1f * dauntless_rim::strength_scale() : 0.0f;
+                                     g_minor_target_bins, &drawn,
+                                     g_far_enabled ? &g_minor_specks : nullptr);
             g_minor_pass->render(g_minor_field, g_minor_target_bins, cam, *g_pipeline,
                                  [](std::uint64_t h) { return resolve_model(h); },
                                  g_lighting, ambient_scale, rim);
             g_minor_draw_calls += g_minor_pass->last_draw_calls();
             g_minor_drawn += drawn;
+        }
+        if (g_far_enabled && g_far_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.far.impostors");
+            g_far_pass->render_impostors(g_far_out.impostors, cam, *g_pipeline, g_lighting,
+                                         ambient_scale, rim);
         }
         // Stencil-mark where the hull was cut away, so the scoop below draws
         // only through real holes and never in open space. Must sit between the
@@ -1231,6 +1332,23 @@ void frame() {
                                   *g_carve_cache, g_instance_field_cache.get(),
                                   g_decal_game_time, g_lighting, ambient_scale);
         }
+        // Far + minor specks in ONE instanced draw, after every opaque writer
+        // (hull, minors, impostors, breach) so they depth-test against all of
+        // it. render_specks leaves depth test/writes on, cull on, blend off --
+        // the state space.shield's submit sets up from anyway.
+        if (g_far_enabled && g_far_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.far.specks");
+            g_far_speck_staging.clear();
+            g_far_speck_staging.insert(g_far_speck_staging.end(),
+                                       g_far_out.specks.begin(), g_far_out.specks.end());
+            g_far_speck_staging.insert(g_far_speck_staging.end(),
+                                       g_minor_specks.begin(), g_minor_specks.end());
+            g_far_pass->render_specks(g_far_speck_staging, cam, *g_pipeline, g_lighting,
+                                      ambient_scale, g_far_field.dials().speck_gain,
+                                      target_w, static_cast<int>(target_h));
+            g_far_specks += static_cast<int>(g_far_speck_staging.size());
+        }
+        if (g_far_pass) g_far_draw_calls += g_far_pass->last_draw_calls();
         if (g_shield_pass) {
             DAUNTLESS_FRAME_SCOPE("space.shield");
             g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
@@ -1276,6 +1394,25 @@ void frame() {
                                 g_world.render_origin(),
                                 dauntless_dash_vfx::intensity(),
                                 g_dust_profile);
+        }
+        // Belt haze: the unresolved remainder of every active disc source.
+        // Samples target.depth_texture() on unit 0 while drawing into
+        // `target` -- the same arrangement as nebula_volumetric's composite
+        // and system_nebula below: depth test AND depth writes off for the
+        // draw, so the depth attachment is only read, never written.
+        // render_haze restores depth test/writes on, cull on, blend off.
+        if (g_far_enabled && g_far_pass && !g_far_field.active_sources().empty()) {
+            DAUNTLESS_FRAME_SCOPE("space.far.haze");
+            g_far_pass->reset_counts();
+            const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+            const glm::dvec3 origin_sys =
+                g_world.render_origin() + glm::dvec3(cam.eye) + g_far_field.anchor();
+            g_far_pass->render_haze(
+                g_far_field.active_sources(), origin_sys, cam, *g_pipeline, g_lighting,
+                ambient_scale, target.depth_texture(), inv_vp,
+                renderer::far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(vh)),
+                g_far_field.dials());
+            g_far_draw_calls += g_far_pass->last_draw_calls();
         }
         // System-scale nebula: developer-only. Without --developer (or with
         // Volumetric Nebulae off) the legacy branch runs exactly as before.
@@ -2240,6 +2377,79 @@ py::dict dials_dict(const mr::Dials& o) {
     return d;
 }
 
+// ── Far tier: Python <-> renderer::far conversions ─────────────────────────
+namespace rf = renderer::far;
+
+std::vector<int> ints_of(const py::handle& o) { return o.cast<std::vector<int>>(); }
+std::vector<float> floats_of(const py::handle& o) { return o.cast<std::vector<float>>(); }
+
+rf::Population population_of(const py::dict& d) {
+    rf::Population p;
+    p.kind = d["kind"].cast<int>();
+    p.density_at_1 = d["density_at_1"].cast<float>();
+    p.a_lo = d["a_lo"].cast<float>();
+    p.a_hi = d["a_hi"].cast<float>();
+    p.size = rf::PowerLaw{d["r_min"].cast<float>(), d["r_max"].cast<float>(),
+                          d["exponent"].cast<float>()};
+    p.rocks = ints_of(d["rocks"]);
+    p.weights = floats_of(d["weights"]);
+    if (p.rocks.size() != p.weights.size())
+        throw py::value_error("far population: rocks and weights differ in length");
+    p.albedo = vec3_of(d["albedo"]);
+    return p;
+}
+
+// Keys exactly DiscSource.to_native() (engine side, far-tier plan Task 9).
+rf::DiscSource disc_source_of(const py::dict& d) {
+    rf::DiscSource s;
+    s.id = d["id"].cast<std::uint32_t>();
+    s.frame = d["frame"].cast<std::string>();
+    s.centre = dvec3_of(d["centre"]);
+    s.normal = vec3_of(d["normal"]);
+    for (const auto& row : d["table"].cast<py::list>()) {
+        const auto t = row.cast<std::tuple<float, float>>();
+        s.table.emplace_back(std::get<0>(t), std::get<1>(t));
+    }
+    s.outer_fade_gu = d["outer_fade_gu"].cast<float>();
+    s.scale_height_frac = d["scale_height_frac"].cast<float>();
+    s.scale_height_min_gu = d["scale_height_min_gu"].cast<float>();
+    s.seed = d["seed"].cast<std::uint32_t>();
+    for (const auto& reg : d["explicit_regions"].cast<py::list>()) {
+        const auto t = reg.cast<py::tuple>();
+        if (t.size() != 2)
+            throw py::value_error("far explicit region must be ((x, y, z), r)");
+        s.explicit_regions.emplace_back(dvec3_of(t[0]), t[1].cast<double>());
+    }
+    for (const auto& pop : d["populations"].cast<py::list>())
+        s.pops.push_back(population_of(pop.cast<py::dict>()));
+    return s;
+}
+
+// An omitted key resets to its default (dials_of's convention). `p_min` sets
+// both the tier ladder's and the generator's.
+rf::FarDials far_dials_of(const py::dict& d) {
+    rf::FarDials o;
+    auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
+    auto i = [&](const char* k, int& v) { if (d.contains(k)) v = d[k].cast<int>(); };
+    f("imp_hi", o.tiers.imp_hi);
+    f("imp_lo", o.tiers.imp_lo);
+    f("speck_hi", o.tiers.speck_hi);
+    f("speck_lo", o.tiers.speck_lo);
+    f("p_min", o.tiers.p_min);
+    o.gen.p_min = o.tiers.p_min;
+    f("k_ref", o.gen.k_ref);
+    i("size_classes", o.gen.size_classes);
+    i("cells_per_range", o.gen.cells_per_range);
+    i("max_far_rocks", o.max_far_rocks);
+    i("cell_cache_max", o.cell_cache_max);
+    f("slab_sigmas", o.slab_sigmas);
+    f("speck_gain", o.speck_gain);
+    f("haze_gain", o.haze_gain);
+    i("haze_steps", o.haze_steps);
+    i("max_cells_per_axis", o.max_cells_per_axis);
+    return o;
+}
+
 py::list contacts_list(std::vector<mr::Contact> contacts) {
     py::list out;
     for (const auto& c : contacts) {
@@ -2368,6 +2578,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["minor_player"]           = g_minor_player.has_value();
               d["minor_shove_min_gups"]   = py_float(g_minor_field.dials().shove_min_gups);
               d["minor_aabb_cache"]       = g_minor_player_aabbs.size();
+              d["far_sources"]            = g_far_field.source_count();
+              d["far_rocks"]              = g_far_field.rock_count();
+              d["far_enabled"]            = g_far_enabled;
+              d["far_p_min"]              = py_float(g_far_field.dials().tiers.p_min);
               return d;
           },
           "Test-only snapshot of the per-frame state reset_frame_state() owns: "
@@ -3853,6 +4067,127 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "'draw_calls'} summed over the targets the last frame drew minors into.");
     m.def("minors_clear", []() { g_minor_field.clear(); },
           "Drop every cloud, fragment table and pending contact.");
+
+    // ── Far tier (far-tier spec; engine/renderer.py façade) ────────────────
+    // Safe with the host down: CPU state only, except set_atlas_paths, which
+    // is skipped (nothing to hold paths) until init() has made the pass.
+    m.def("far_set_catalogue",
+          [](py::list entries, const std::vector<std::tuple<float, float, float>>& view_dirs) {
+              std::vector<rf::CatalogueRock> rocks;
+              std::vector<std::pair<std::string, std::string>> paths;
+              for (const auto& item : entries) {
+                  const auto d = item.cast<py::dict>();
+                  auto albedo = d["albedo"].is_none() ? std::string()
+                                                      : d["albedo"].cast<std::string>();
+                  auto normal = d["normal"].is_none() ? std::string()
+                                                      : d["normal"].cast<std::string>();
+                  rf::CatalogueRock r;
+                  r.avg_albedo = vec3_of(d["avg_albedo"]);
+                  r.has_impostor = !albedo.empty() && !normal.empty();
+                  rocks.push_back(r);
+                  paths.emplace_back(std::move(albedo), std::move(normal));
+              }
+              std::vector<glm::vec3> dirs;
+              dirs.reserve(view_dirs.size());
+              for (const auto& t : view_dirs)
+                  dirs.emplace_back(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+              g_far_field.set_catalogue(std::move(rocks), std::move(dirs));
+              if (g_far_pass) g_far_pass->set_atlas_paths(std::move(paths));
+          },
+          py::arg("entries"), py::arg("view_dirs"),
+          "Catalogue for the far tier: [{'albedo', 'normal' (atlas paths, empty "
+          "or None = no impostor), 'avg_albedo': (r, g, b)}, ...] by catalogue "
+          "index, and the impostor bake's view directions (glTF axes).");
+    m.def("far_set_rocks",
+          [](py::list rocks) {
+              std::vector<rf::FlaggedRock> out;
+              std::vector<std::uint64_t> keys;
+              for (const auto& item : rocks) {
+                  const auto d = item.cast<py::dict>();
+                  const std::uint64_t key =
+                      minor_instance_key(d["instance"].cast<scenegraph::InstanceId>());
+                  out.push_back(rf::FlaggedRock{key, d["index"].cast<int>(),
+                                                d["radius_mu"].cast<float>()});
+                  keys.push_back(key);
+              }
+              // Unflagged rocks go back to mesh-only now, not on some later
+              // frame that may never draw them.
+              std::vector<std::uint64_t> dropped;
+              for (const std::uint64_t k : g_far_flagged_keys)
+                  if (std::find(keys.begin(), keys.end(), k) == keys.end())
+                      dropped.push_back(k);
+              far_zero_fades(dropped);
+              g_far_flagged_keys = std::move(keys);
+              g_far_field.set_rocks(std::move(out));
+          },
+          py::arg("rocks"),
+          "Flagged mission/breakup rocks: [{'instance': InstanceId, 'index': "
+          "catalogue index (-1 = no impostor), 'radius_mu'}, ...]. Replaces the "
+          "list; a rock no longer listed gets far_fade 0 at once.");
+    m.def("far_set_sources",
+          [](py::list sources) {
+              std::vector<rf::DiscSource> out;
+              for (const auto& item : sources) out.push_back(disc_source_of(item.cast<py::dict>()));
+              g_far_field.set_sources(std::move(out));
+          },
+          py::arg("sources"), "Disc density sources (DiscSource.to_native() dicts).");
+    m.def("far_set_frame",
+          [](std::optional<std::string> system, std::tuple<double, double, double> anchor) {
+              g_far_field.set_frame(std::move(system),
+                                    {std::get<0>(anchor), std::get<1>(anchor),
+                                     std::get<2>(anchor)});
+          },
+          py::arg("system"), py::arg("anchor"),
+          "The viewed system (None: none) and the system position of view-space origin.");
+    m.def("far_set_dials",
+          [](py::dict d) {
+              g_far_field.set_dials(far_dials_of(d));
+              g_minor_field.set_specks(g_far_enabled, g_far_field.dials().tiers.p_min);
+          },
+          py::arg("dials"),
+          "Set the native far dials; an omitted key resets to its default. "
+          "'p_min' sets both the tier ladder's and the generator's.");
+    m.def("far_set_enabled",
+          [](bool on) {
+              g_far_enabled = on;
+              if (!on) far_zero_fades(g_far_flagged_keys);
+              g_minor_field.set_specks(on, g_far_field.dials().tiers.p_min);
+          },
+          py::arg("enabled"),
+          "Turn the far tier on or off. Off: no build, no draws, every flagged "
+          "rock back to mesh-only, and minors stop emitting specks.");
+    m.def("far_enabled", []() { return g_far_enabled; });
+    m.def("far_stats",
+          []() {
+              py::dict d;
+              d["sources"] = g_far_field.source_count();
+              d["rocks"] = g_far_field.rock_count();
+              d["cached_cells"] = g_far_field.cached_cells();
+              d["generated"] = g_far_generated;
+              d["cells"] = g_far_cells;
+              d["impostors"] = g_far_impostors;
+              d["specks"] = g_far_specks;
+              d["draw_calls"] = g_far_draw_calls;
+              return d;
+          },
+          "{'sources', 'rocks', 'cached_cells'} now; {'generated', 'cells', "
+          "'impostors', 'specks' (far + minor), 'draw_calls'} summed over the "
+          "cameras the last frame drew.");
+    m.def("far_clear",
+          []() {
+              far_zero_fades(g_far_flagged_keys);
+              g_far_flagged_keys.clear();
+              g_far_field.clear();
+          },
+          "Drop sources, flagged rocks (back to mesh-only), frame and cell "
+          "cache; keeps the catalogue.");
+    m.def("far_debug_fade",
+          [](scenegraph::InstanceId id) -> float {
+              const scenegraph::Instance* inst = g_world.get(id);
+              if (inst == nullptr) throw py::value_error("far_debug_fade: no such instance");
+              return inst->far_fade;
+          },
+          py::arg("iid"), "TEST-ONLY: an instance's far_fade. Never call from game code.");
 
     // Standalone field for headless probes: no GL, no init(), no frame().
     py::class_<mr::MinorField>(m, "MinorField")

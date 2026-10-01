@@ -71,6 +71,18 @@ def _dirty_every_reachable_global(h):
     h.minors_set_player(iid)
     h.minors_set_enabled(False)
     h.minors_set_dials({"shove_min_gups": 9.0})
+    h.far_set_sources([_far_source()])
+    h.far_set_rocks([{"instance": iid, "index": -1, "radius_mu": 1.0}])
+    h.far_set_enabled(False)
+    h.far_set_dials({"p_min": 0.5})
+
+
+def _far_source():
+    return {
+        "id": 1, "frame": "Vesuvi", "centre": (0.0, 0.0, 0.0), "normal": (0.0, 0.0, 1.0),
+        "table": [(0.0, 0.05), (226000.0, 0.5)], "outer_fade_gu": 20000.0,
+        "scale_height_frac": 0.03, "scale_height_min_gu": 1000.0, "seed": 9,
+        "explicit_regions": [], "populations": []}
 
 
 def _minor_cloud():
@@ -135,6 +147,12 @@ CLEAN = {
     "minor_player": False,
     "minor_shove_min_gups": 0.3,
     "minor_aabb_cache": 0,
+    # Far tier: disc sources, flagged rocks, the toggle and one dial (p_min,
+    # which sets both the tier ladder's and the generator's).
+    "far_sources": 0,
+    "far_rocks": 0,
+    "far_enabled": True,
+    "far_p_min": 0.25,
 }
 
 
@@ -280,5 +298,60 @@ def test_minors_state_cleared_by_reset():
         state = h.frame_state_debug()
         minor_rows = {k: v for k, v in state.items() if "minor" in k}
         assert minor_rows == {k: v for k, v in CLEAN.items() if "minor" in k}
+    finally:
+        h.shutdown()
+
+
+# ── Far tier (far-tier plan Task 8) ────────────────────────────────────────
+
+
+def test_far_state_cleared_by_reset():
+    """A mission's disc sources, flagged rocks, toggle and dials must not
+    survive a shutdown()/init() pair, and a recycled instance must come back
+    mesh-only (far_fade 0): a leftover fade of 1 hides the hull outright.
+    """
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _dauntless_host as h
+    from engine.rocks import catalogue
+
+    def rock_instance():
+        rock = catalogue.pick("x", kind="fragment", family="silicate")
+        model = h.load_model(rock.lod_paths[0], [], None, decals=None, scale=1.0)
+        return h.create_instance(model)
+
+    try:
+        h.init(64, 64, "reset-far")
+    except RuntimeError as e:
+        pytest.skip(f"no GL context: {e}")
+    try:
+        rock = rock_instance()
+        h.set_world_transform(rock, [1.0, 0, 0, 0, 0, 1.0, 0, 0,
+                                     0, 0, 1.0, -10000.0, 0, 0, 0, 1.0])
+        h.far_set_sources([_far_source()])
+        h.far_set_rocks([{"instance": rock, "index": -1, "radius_mu": 1.0}])
+        h.set_camera(eye=(0.0, 0.0, 0.0), target=(0.0, 0.0, -1.0),
+                     up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=0.1, far=1.0e7)
+        h.frame()                                  # drives the fade to 1
+        assert h.far_debug_fade(rock) == 1.0
+        h.far_set_dials({"p_min": 0.5})
+        live = h.frame_state_debug()
+        assert live["far_sources"] == 1 and live["far_rocks"] == 1
+        assert live["far_p_min"] == 0.5
+    finally:
+        h.shutdown()
+    # Set with the host down: the toggle is a plain global.
+    h.far_set_enabled(False)
+
+    try:
+        h.init(64, 64, "reset-far-2")
+    except RuntimeError as e:
+        pytest.skip(f"no GL context: {e}")
+    try:
+        state = h.frame_state_debug()
+        far_rows = {k: v for k, v in state.items() if k.startswith("far_")}
+        assert far_rows == {k: v for k, v in CLEAN.items() if k.startswith("far_")}
+        recycled = rock_instance()
+        assert recycled.index == rock.index
+        assert h.far_debug_fade(recycled) == 0.0
     finally:
         h.shutdown()

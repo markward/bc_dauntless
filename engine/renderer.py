@@ -84,6 +84,9 @@ _REQUIRED_BINDINGS = frozenset({
     "minors_fade_out", "minors_set_fragments", "minors_set_player",
     "minors_set_dials", "minors_set_enabled", "minors_enabled",
     "minors_drain_contacts", "minors_stats", "minors_clear",
+    "far_set_catalogue", "far_set_rocks", "far_set_sources",
+    "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
+    "far_stats", "far_clear",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -586,6 +589,56 @@ def minors_stats() -> dict:
 def minors_clear() -> None:
     """Drop every cloud, fragment table and pending contact."""
     _h.minors_clear()
+
+
+# ── Far tier (docs/superpowers/specs/2026-10-01-far-tier-design.md) ──
+
+
+def far_set_catalogue(entries: list, view_dirs: list) -> None:
+    """Catalogue by index: [{"albedo", "normal", "avg_albedo"}, ...] plus the
+    impostor bake's view directions; empty atlas paths mean no impostor."""
+    _h.far_set_catalogue(entries, view_dirs)
+
+
+def far_set_rocks(rocks: list) -> None:
+    """Flagged rocks: [{"instance", "index", "radius_mu"}, ...]; replaces the list."""
+    _h.far_set_rocks(rocks)
+
+
+def far_set_sources(sources: list) -> None:
+    """Disc density sources as DiscSource.to_native() dicts."""
+    _h.far_set_sources(sources)
+
+
+def far_set_frame(system, anchor) -> None:
+    """The viewed system (None: none) and view-space origin's system position."""
+    _h.far_set_frame(system, anchor)
+
+
+def far_set_dials(d: dict) -> None:
+    """Set the native far dials; an omitted key resets to its default."""
+    _h.far_set_dials(d)
+
+
+def far_set_enabled(enabled: bool) -> None:
+    """Turn the far tier's build and draws on or off."""
+    _h.far_set_enabled(bool(enabled))
+
+
+def far_enabled() -> bool:
+    """Whether the far tier builds and draws."""
+    return _h.far_enabled()
+
+
+def far_stats() -> dict:
+    """{"sources", "rocks", "cached_cells", "generated", "cells", "impostors",
+    "specks", "draw_calls"}; the last five summed over the last frame's cameras."""
+    return _h.far_stats()
+
+
+def far_clear() -> None:
+    """Drop sources, flagged rocks, frame and cell cache (keeps the catalogue)."""
+    _h.far_clear()
 
 
 def set_nebula_wake(points: list) -> None:
