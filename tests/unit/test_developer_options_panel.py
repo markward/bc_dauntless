@@ -126,7 +126,7 @@ def test_render_payload_shape(panel):
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
-        "minor_rocks": True,
+        "minor_rocks": True, "far_tier": True,
     }
 
 
@@ -439,6 +439,46 @@ def test_minor_rocks_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
     p = DeveloperOptionsPanel()
     p.open()
     assert _body(p.render_payload())["settings"]["minor_rocks"] is True
+
+
+# ---- Far tier toggle (Lighting tab; far-tier plan Task 10) --------------
+
+def test_far_tier_toggle_flips_the_real_renderer_flag(panel):
+    """Drives renderer.far_set_enabled, not just a local mirror."""
+    from engine import renderer
+
+    p, _ = panel
+    saved = renderer.far_enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:lighting")
+        p.render_payload()
+        assert p.dispatch_event("toggle:far_tier") is True
+        assert renderer.far_enabled() is (not saved)
+        assert _body(p.render_payload())["settings"]["far_tier"] is (not saved)
+        p.dispatch_event("toggle:far_tier")
+        assert renderer.far_enabled() is saved
+    finally:
+        renderer.far_set_enabled(saved)
+
+
+def test_far_tier_ctrl_is_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "far_tier") in p._focusables()
+
+
+def test_far_tier_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
+    from engine import renderer
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    def boom():
+        raise RuntimeError("renderer not initialised")
+    monkeypatch.setattr(renderer, "far_enabled", boom)
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert _body(p.render_payload())["settings"]["far_tier"] is True
 
 
 # ── Diagnostics tab: the frame profiler ─────────────────────────────────────

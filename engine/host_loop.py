@@ -30,6 +30,7 @@ import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine import manual_aim
+from engine.rocks import far_tier as _far_tier
 from engine.appc.windows import TacticalControlWindow
 from engine.ui.letterbox import LetterboxAnimator
 from engine.appc.character_position_zoom import (
@@ -6059,6 +6060,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                     raise
                 # A catalogue rock that fails to load falls back to stock.
                 _warn_rock_fallback(model_path, nif_path, e)
+                model_path, model_scale = nif_path, 1.0
                 handle = r_.load_model(nif_path, tex_search, reps,
                                         decals=decals or None)
         except Exception as e:
@@ -6070,6 +6072,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         _seed_ship_radius(ship, _model_extent_from_aabb(center, half_extents),
                           _model_sphere_radius_from_aabb(center, half_extents))
         iid = r_.create_instance(handle)
+        # Far tier (far-tier plan Task 10): flag a rock by the model it
+        # ACTUALLY loaded -- the stock NIF at 1.0 after a fallback.
+        _far_tier.note_model(ship, model_path, model_scale)
         _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
@@ -6615,6 +6620,9 @@ def _reconcile_scene(session, renderer, *, nif_cache=None,
     # rocks the scope reconcile just realised. Never raises.
     from engine.rocks import minors as _minors
     _minors.reconcile(session, renderer)
+    # Far tier (far-tier plan Task 10): frame, sources and flagged rocks for
+    # the same viewed set. Never raises.
+    _far_tier.reconcile(session, renderer)
     _reconcile_celestial_instances(
         session, renderer, nif_cache=nif_cache, verbose=verbose)
     _check_mapped_bodies_untouched(_frames.viewing_set())
@@ -6831,6 +6839,7 @@ class HostController:
         _debris_chunk.clear(self.renderer)
         from engine.rocks import minors as _minors
         _minors.reset(self.renderer)
+        _far_tier.reset(self.renderer)
         from engine.rocks import minor_contact as _minor_contact
         _minor_contact.reset()
         from engine.appc import hull_breakup as _hull_breakup
@@ -7194,6 +7203,9 @@ class _MissionLoader:
             _seed_ship_radius(ship, extent,
                               self._c.nif_to_sphere_radius.get(extent_key, extent))
             iid = r_.create_instance(handle)
+            # Far tier: the model ACTUALLY loaded (stock NIF at 1.0 after a
+            # fallback -- model_path/model_scale were reset there).
+            _far_tier.note_model(ship, model_path, model_scale)
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
@@ -9803,6 +9815,8 @@ def run(mission_name: Optional[str] = None,
                 dev_nebula_dials.register(_h)
                 from engine.rocks import minor_dials as _minor_dials
                 _minor_dials.register()
+                from engine.rocks import far_dials as _far_dials
+                _far_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:

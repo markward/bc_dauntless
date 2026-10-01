@@ -1538,6 +1538,15 @@ def _reset_leakable_engine_globals():
             _mn.reset(None)
     except Exception:
         pass
+    # Far-tier registry (engine/rocks/far_tier.py): noted rock models and
+    # the push memos would otherwise make the next test's first reconcile
+    # skip pushes it expects.
+    try:
+        _ft = sys.modules.get("engine.rocks.far_tier")
+        if _ft is not None:
+            _ft.reset(None)
+    except Exception:
+        pass
     # Fly-through response token buckets (engine/rocks/minor_contact.py):
     # a test that drives the rate limiter would otherwise leave partially
     # spent buckets for the next test's own rate-limit assertions.

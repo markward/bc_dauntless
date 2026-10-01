@@ -35,6 +35,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'normal_strength'});
         out.push({kind: 'ctrl', target: 'rock_catalogue'});
         out.push({kind: 'ctrl', target: 'minor_rocks'});
+        out.push({kind: 'ctrl', target: 'far_tier'});
         out.push({kind: 'ctrl', target: 'dial_group'});
     }
     return out;
@@ -150,6 +151,7 @@ function _doRenderLightingBody(state, focusables) {
     html += _doToggleRow('Catalogue Rocks (off = stock BC; applies to rocks loaded after toggling)',
                          'rock_catalogue', s.rock_catalogue, isFoc('rock_catalogue'));
     html += _doToggleRow('Minor Rocks', 'minor_rocks', s.minor_rocks, isFoc('minor_rocks'));
+    html += _doToggleRow('Far Tier', 'far_tier', s.far_tier, isFoc('far_tier'));
     html += _doValueRow('Dial keys (/ L O act on)', 'dial_group',
                         String(s.dial_group), isFoc('dial_group'));
     return html;
