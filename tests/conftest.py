@@ -1503,6 +1503,11 @@ def _reset_leakable_engine_globals():
         _ddg.reset()
     except Exception:
         pass
+    try:
+        from engine.rocks import minor_dials as _md
+        _md.reset()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds
