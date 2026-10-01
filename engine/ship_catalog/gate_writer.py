@@ -19,8 +19,14 @@ class GateWriteError(Exception):
     """A write that could not complete; the message names the file."""
 
 
+_ESCAPES = {"\\": "\\\\", "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
 def _lit(s) -> str:
-    return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
+    """A single-quoted literal Python 1.5 parses back to `s`: backslash,
+    quote, newline, CR and tab escaped, any other control char as \\xNN."""
+    return "'" + "".join(_ESCAPES.get(c) or ("\\x%02x" % ord(c) if ord(c) < 0x20 else c)
+                         for c in str(s)) + "'"
 
 
 def _value(key, v) -> str:

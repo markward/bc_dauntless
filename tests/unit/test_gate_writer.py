@@ -36,6 +36,13 @@ def test_render_all_eras_and_quotes():
     assert "'era': 'all'" in text and "'title': 'Vor\\'cha'" in text
 
 
+def test_render_escapes_control_characters():
+    title = "USS Line\nBreak\r\tTab\x01 back\\slash 'q'"
+    tree = ast.parse(gate_writer.render("X", {"title": title}))
+    d = next(n for n in ast.walk(tree) if isinstance(n, ast.Dict) and n.keys)
+    assert ast.literal_eval(d) == {"title": title}
+
+
 def test_render_omits_class_default_when_false():
     assert "class_default" not in gate_writer.render("X", dict(ANS, class_default=False))
 
