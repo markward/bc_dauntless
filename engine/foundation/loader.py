@@ -48,6 +48,7 @@ def load_plugins() -> LoadReport:
     import runpy
 
     from engine import mods
+    from engine.foundation.shipdef import plugin_origin
 
     report = LoadReport()
     index = mods.current()
@@ -55,7 +56,8 @@ def load_plugins() -> LoadReport:
     for subdir, bucket in _SUBDIRS:
         for key, mf in _scripts_in(index, subdir):
             try:
-                runpy.run_path(str(mf.abs_path), run_name="__foundation__")
+                with plugin_origin(mf.mod_name, key):
+                    runpy.run_path(str(mf.abs_path), run_name="__foundation__")
             except Exception as exc:
                 # One broken mod must not stop the others registering --
                 # the same rule build_index follows for an unreadable mod,

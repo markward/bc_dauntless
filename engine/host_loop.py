@@ -9414,6 +9414,14 @@ def run(mission_name: Optional[str] = None,
     if _fnd_text:
         print(_fnd_text, file=sys.stderr)
 
+    # Ship metadata catalog (engine/ship_catalog): built here, after every
+    # Foundation plugin has run, so the report names mod ships that still
+    # lack metadata. Report only -- nothing is gated until sub-project 3.
+    from engine import ship_catalog as _ship_catalog
+    _cat_text = _ship_catalog.describe()
+    if _cat_text:
+        print(_cat_text, file=sys.stderr)
+
     _start_hull_prebake()
 
     import App

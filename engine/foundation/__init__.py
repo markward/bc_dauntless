@@ -157,3 +157,7 @@ def reset():
     # or they leak between tests and inflate describe()'s tech list.
     from engine.foundation.shipdef import _ALL_DEFINITIONS
     _ALL_DEFINITIONS.clear()
+    # The ship catalog snapshots ShipDefs; a reset leaves it describing
+    # definitions that no longer exist.
+    from engine import ship_catalog
+    ship_catalog.invalidate()

@@ -7,6 +7,8 @@ which names and how they were measured.
 """
 from __future__ import annotations
 
+import contextlib
+
 # Attributes a ship definition is known to carry. Anything else a mod sets
 # is recorded in `unknown_attributes` rather than rejected: our corpus is
 # two mods, and a third will set something neither of them does.
@@ -14,10 +16,28 @@ _KNOWN = frozenset({
     "race", "abbrev", "species", "name", "iconName", "shipFile", "desc",
     "SubMenu", "SubSubMenu", "hasTGLName", "hasTGLDesc", "dTechs",
     "friendlyDetails", "enemyDetails", "menuGroup", "playerMenuGroup",
+    "dauntless",
 })
 
 
 _ALL_DEFINITIONS: list = []
+
+# (mod_name, folded index key) of the Custom/ plugin script currently being
+# run by engine.foundation.loader, else None. Copied into each definition's
+# `_origin` so the ship catalog knows WHICH mod declared it -- the metadata
+# gate writes its answers into that mod (spec 2026-10-01 ship metadata §2.2).
+_CURRENT_ORIGIN = None
+
+
+@contextlib.contextmanager
+def plugin_origin(mod_name, key):
+    global _CURRENT_ORIGIN
+    previous = _CURRENT_ORIGIN
+    _CURRENT_ORIGIN = (mod_name, key)
+    try:
+        yield
+    finally:
+        _CURRENT_ORIGIN = previous
 
 
 def all_definitions() -> list:
@@ -58,14 +78,21 @@ def icon_name_for_script(script):
 class ShipDefinition:
     """One registered ship. Attribute-set is how mods configure it."""
 
-    def __init__(self, race, abbrev, species, details=None, dict=None):
+    def __init__(self, race, abbrev, species, details=None, dict=None, *,
+                 _listed=True):
         # `dict` shadows the builtin deliberately: Foundation's own keyword
         # is spelled that way and mods pass it positionally or by name.
         object.__setattr__(self, "unknown_attributes", {})
         # Every definition ever built, so describe() can report declared
         # techs without the caller having to hand them over. Registration
-        # into ShipDef is a mod's choice; existing is not.
-        _ALL_DEFINITIONS.append(self)
+        # into ShipDef is a mod's choice; existing is not. The one exception
+        # is _listed=False: engine/foundation/shipdef_overrides.py's STOCK
+        # definitions, which carry metadata only and must not change what
+        # all_definitions()'s readers (bridge_selection, icon_name_for_script,
+        # describe) see.
+        if _listed:
+            _ALL_DEFINITIONS.append(self)
+        self._origin = _CURRENT_ORIGIN
         self.race = race
         self.abbrev = abbrev
         self.species = species
