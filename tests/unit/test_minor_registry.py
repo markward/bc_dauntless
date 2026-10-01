@@ -33,7 +33,7 @@ def _fresh(monkeypatch):
 
 def test_halo_spec_follows_the_dials():
     s = minors.halo_spec(_Rock("Asteroid 1", r=4.0), iid=object())
-    assert s.key == "halo:Asteroid 1" and s.anchor == "instance"
+    assert s.key == "halo::Asteroid 1" and s.anchor == "instance"
     assert s.shell_inner == pytest.approx(4.4) and s.shell_outer == pytest.approx(12.0)
     assert s.count == 128                       # 8 x 16
     assert s.r_max == pytest.approx(0.6)        # min(0.15 x 4, 1.0)
@@ -139,7 +139,7 @@ def test_budget_evicts_oldest_free_cloud_first(monkeypatch):
     minors.reconcile_with(r, None, {big: 3}, [], None)
     ids = minors.native_ids()
     assert faded and faded[0] == ids["free::old"]
-    assert "halo:Big" in ids                         # halos never evicted
+    assert "halo::Big" in ids                         # halos never evicted
 
 
 # ── Beyond the brief's minimum: the rules the registry must also hold ─────────
@@ -262,17 +262,35 @@ def test_first_reconcile_pushes_native_dials_and_a_native_change_repushes():
     assert len(r.named("minors_add_cloud")) == 1      # native: no rebuild
 
 
-def test_a_python_dial_change_rebuilds_every_cloud():
+def test_only_a_shape_dial_rebuilds_a_cloud():
+    """Response / budget / debris dials are read at use and never rebuild
+    (controller ruling): a rebuild would wipe the shove wake. A SHAPE dial
+    changes the recomputed spec, so the per-key diff rebuilds exactly the
+    clouds it affects."""
     r = _Rec()
     minors.reconcile_with(r, None, {_Rock("A"): 1}, [], None)
     (old,) = minors.native_ids().values()
-    md._step("puff_spark_count", +1)      # a Python dial with no spec effect
+    for dial in ("puff_spark_count", "grit_volume", "max_live_minors",
+                 "free_cloud_fade_seconds", "debris_gravel_per_gu"):
+        md._step(dial, +1)
+        minors.reconcile_with(r, None, {_Rock("A"): 1}, [], None)
+    assert r.named("minors_remove_cloud") == []
+    assert minors.native_ids() == {"halo::A": old}
+    md._step("halo_per_gu2", +1)          # a count change rebuilds
     minors.reconcile_with(r, None, {_Rock("A"): 1}, [], None)
-    (new,) = minors.native_ids().values()
-    assert ("minors_remove_cloud", old) in r.calls and new != old
-    md._step("halo_per_gu2", +1)          # a count change rebuilds too
-    minors.reconcile_with(r, None, {_Rock("A"): 1}, [], None)
+    assert ("minors_remove_cloud", old) in r.calls
     assert r.named("minors_add_cloud")[-1][1]["count"] == 160
+
+
+def test_a_shape_dial_rebuilds_only_the_clouds_it_shapes():
+    r = _Rec()
+    minors.reconcile_with(r, None, {_Rock("A"): 1}, [_field()], None)
+    ids = minors.native_ids()
+    md._step("tile_count_mult", +1)
+    minors.reconcile_with(r, None, {_Rock("A"): 1}, [_field()], None)
+    assert r.named("minors_remove_cloud") == [
+        ("minors_remove_cloud", ids["tile::Asteroid Field 1"])]
+    assert minors.native_ids()["halo::A"] == ids["halo::A"]
 
 
 def _free(name, pSet=None, p0=(1.0, 2.0, 3.0), v=(0.5, 0.0, 0.0), t0=7.0):
@@ -286,11 +304,11 @@ def test_free_spec_detaches_an_existing_halo_and_rekeys_it():
     r = _Rec()
     rock = _Rock("Rock 1")
     minors.reconcile_with(r, None, {rock: 1}, [], None)
-    hid = minors.native_ids()["halo:Rock 1"]
+    hid = minors.native_ids()["halo::Rock 1"]
     minors.register_free_cloud(_free("Rock 1"))
     minors.reconcile_with(r, None, {}, [], None)     # the dying rock is gone
     ids = minors.native_ids()
-    assert "halo:Rock 1" not in ids and ids["free::Rock 1"] == hid
+    assert "halo::Rock 1" not in ids and ids["free::Rock 1"] == hid
     det = r.named("minors_detach")
     assert len(det) == 1
     _, cid, p0, v, t0, debris = det[0]
@@ -417,3 +435,50 @@ def test_a_changed_spec_is_removed_and_re_added():
     (new,) = minors.native_ids().values()
     assert ("minors_remove_cloud", old) in r.calls and new != old
     assert r.named("minors_add_cloud")[-1][1]["point"] == (5.0, 0.0, 0.0)
+
+
+def test_drain_frame_with_the_dying_rock_still_listed_detaches_not_removes(
+        monkeypatch):
+    """Task 10's contract: the free spec is registered only once
+    death.is_dying_rock(rock) is true, so on the drain frame the rock is
+    still realised (in rock_instances) but dying -- its halo must be
+    detached into the free cloud, never removed and never re-added."""
+    r = _Rec()
+    rock = _Rock("Rock 4")
+    minors.reconcile_with(r, None, {rock: 1}, [], None)
+    hid = minors.native_ids()["halo::Rock 4"]
+    monkeypatch.setattr(minors, "_is_dying", lambda rk: rk is rock)
+    minors.register_free_cloud(_free("Rock 4"))
+    minors.reconcile_with(r, None, {rock: 1}, [], None)
+    ids = minors.native_ids()
+    assert not any(k.startswith("halo:") for k in ids)
+    assert ids == {"free::Rock 4": hid}
+    assert [c[1] for c in r.named("minors_detach")] == [hid]
+    assert r.named("minors_remove_cloud") == []
+    assert len(r.named("minors_add_cloud")) == 1
+
+
+def test_halo_keys_are_set_qualified_and_the_drain_matches_by_set():
+    from engine.appc.sets import SetClass
+
+    class _SetRock(_Rock):
+        def __init__(self, name, pSet):
+            super().__init__(name)
+            self._set = pSet
+        def GetContainingSet(self): return self._set
+
+    a, b = SetClass(), SetClass()
+    a.SetName("A"); b.SetName("B")
+    ra, rb = _SetRock("Twin", a), _SetRock("Twin", b)
+    assert minors.halo_spec(ra, 1).key == "halo:A:Twin"
+    assert minors.halo_spec(rb, 2).key == "halo:B:Twin"
+    r = _Rec()
+    minors.reconcile_with(r, a, {ra: 1}, [], None)
+    hid = minors.native_ids()["halo:A:Twin"]
+    minors.register_free_cloud(_free("Twin", pSet=b))   # the OTHER set's twin
+    minors.reconcile_with(r, a, {ra: 1}, [], None)
+    assert r.named("minors_detach") == []
+    assert minors.native_ids()["halo:A:Twin"] == hid
+    minors.register_free_cloud(_free("Twin", pSet=a))
+    minors.reconcile_with(r, a, {}, [], None)
+    assert minors.native_ids()["free:A:Twin"] == hid

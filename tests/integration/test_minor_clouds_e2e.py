@@ -37,6 +37,7 @@ def test_multi1_registers_54_halos():
     assert all(is_rock(r) for r in rocks)
     specs = minors.desired_clouds(pSet, rock_instances=rocks, fields=_fields(pSet))
     assert sum(1 for k in specs if k.startswith("halo:")) == 54
+    assert "halo:Multi1:Asteroid 1" in specs      # set-qualified halo keys
     assert _tile_counts(specs) == []          # Multi1's field is commented out
 
 

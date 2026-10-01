@@ -73,3 +73,13 @@ def test_registered_group_steps_and_notifies():
 def test_family_index():
     assert md.FAMILY_INDEX == {"silicate": 0, "carbonaceous": 1,
                                "icy": 2, "metallic": 3}
+
+
+def test_on_change_getter_returns_the_registered_hook():
+    from engine.rocks import minor_dials as md
+    md.reset()
+    assert md.on_change() is None
+    fn = lambda names: None
+    md.set_on_change(fn)
+    assert md.on_change() is fn
+    md.reset()

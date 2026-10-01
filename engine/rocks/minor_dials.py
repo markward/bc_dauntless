@@ -99,6 +99,11 @@ def set_on_change(fn: Optional[Callable[[set], None]]) -> None:
     _on_change = fn
 
 
+def on_change() -> Optional[Callable[[set], None]]:
+    """The hook set_on_change installed, or None."""
+    return _on_change
+
+
 def _step(name: str, direction: int) -> None:
     global _dials
     _dials = step(_dials, name, direction)

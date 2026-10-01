@@ -3,14 +3,15 @@
 Python owns the cloud LIST; native (renderer.minors_*) owns the instances.
 Every frame `reconcile` derives the desired clouds from the viewed set --
 
-  halo:<rock>          one per realised RockClass, anchored to its instance
+  halo:<set>:<rock>    one per realised RockClass, anchored to its instance
   tile:<set>:<field>   one per BC AsteroidField, a uniform sphere at a point
   free:<set>:<rock>    a dead rock's halo + breakup debris, drifting freely
                        (queued by rocks/death.py through register_free_cloud)
 
 -- and sends native only the difference (adds / removes by key). A spec whose
-numbers change (a dial rebuild, a view change moving a point) is removed and
-re-added. Free clouds live here per set and are re-sent when their set is
+numbers change (a SHAPE dial -- halo_* / tile_* -- or a view change moving a
+point) is removed and re-added; every other dial is read at use and never
+rebuilds a cloud (a rebuild would wipe its shove wake). Free clouds live here per set and are re-sent when their set is
 viewed again; over the live-minor budget the oldest free cloud fades out and
 is dropped. Halos and tile fields are never evicted.
 
@@ -87,7 +88,6 @@ _seen_view = _UNSEEN
 _fading: dict = {}               # native id -> game time to remove it at
 _dials_pushed = False
 _native_dirty = False
-_rebuild_all = False
 
 
 # ── Seams (monkeypatched by tests) ────────────────────────────────────────────
@@ -157,8 +157,9 @@ def halo_spec(rock, iid) -> Optional[CloudSpec]:
     if radius <= 0.0:
         return None
     name = rock.GetName()
+    from engine.systems import frames
     return CloudSpec(
-        key="halo:" + name, anchor="instance", instance=iid,
+        key=_halo_key(_set_name(frames.containing_set(rock)), name), anchor="instance", instance=iid,
         point=_ZERO, velocity=_ZERO, t0=0.0,
         family=_family_index(rock.__dict__.get("_rock_family", "silicate")),
         seed=zlib.crc32(("halo:" + name).encode("utf-8")),
@@ -191,6 +192,10 @@ def tile_spec(field_obj, view_set, set_name: str, offset: tuple) -> Optional[Clo
         family=md.FAMILY_INDEX["silicate"],
         seed=zlib.crc32(key.encode("utf-8")),
         orbit_rate=float(md.get("tile_orbit_rate")))
+
+
+def _halo_key(set_name: str, rock_name: str) -> str:
+    return "halo:%s:%s" % (set_name, rock_name)
 
 
 def _free_key(spec: FreeCloudSpec) -> str:
@@ -256,7 +261,14 @@ def desired_clouds(view_set, rock_instances: dict, fields: list) -> dict:
 
 def register_free_cloud(spec: FreeCloudSpec) -> None:
     """Queue a dead rock's free cloud; the next reconcile detaches its halo
-    into it (or adds it fresh when no halo is held)."""
+    (`halo:<set>:<rock>`, matched by spec.pSet's name and spec.rock_name)
+    into it, or adds it fresh when no halo is held.
+
+    CONTRACT (rocks/death.py): register only once death.is_dying_rock(rock)
+    is true. On the drain frame the rock may still be realised (in
+    rock_instances); halo_spec returns None for a dying rock, so the halo is
+    detached and re-keyed, never removed or re-added. Registered earlier,
+    the still-live rock would grow a fresh halo beside the free cloud."""
     _pending_free.append(spec)
 
 
@@ -272,19 +284,18 @@ def live_minor_count() -> int:
 
 
 def on_dials_changed(names) -> None:
-    global _native_dirty, _rebuild_all
-    names = set(names)
-    if names & md.NATIVE_KEYS:
+    """A native key re-pushes native() on the next reconcile. Nothing else
+    needs a hook: shape dials change the specs recomputed every frame (the
+    diff rebuilds exactly those clouds), the rest are read at use."""
+    global _native_dirty
+    if set(names) & md.NATIVE_KEYS:
         _native_dirty = True
-    if names - md.NATIVE_KEYS:
-        _rebuild_all = True
 
 
 def reset(r=None) -> None:
     """Forget every cloud (mission swap). Native minors_clear also wipes the
     fragment tables, so the memo goes with it."""
     global _next_id, _free_seq, _seen_view, _dials_pushed, _native_dirty
-    global _rebuild_all
     _ids.clear()
     _specs.clear()
     _free.clear()
@@ -296,8 +307,7 @@ def reset(r=None) -> None:
     _seen_view = _UNSEEN
     _dials_pushed = False
     _native_dirty = False
-    _rebuild_all = False
-    if md._on_change is on_dials_changed:
+    if md.on_change() is on_dials_changed:
         md.set_on_change(None)
     if r is not None:
         try:
@@ -393,7 +403,7 @@ def _drain_pending(r, view_set) -> None:
         _free_seq += 1
         _free.setdefault(_set_name(spec.pSet), []).append(
             _FreeEntry(spec=spec, seq=_free_seq, key=key))
-        halo_key = "halo:" + spec.rock_name
+        halo_key = _halo_key(_set_name(spec.pSet), spec.rock_name)
         if halo_key not in _ids:
             continue                         # the diff adds it fresh
         fs = _free_cloud_spec(spec, view_set)
@@ -436,7 +446,7 @@ def _enforce_budget(r, now: float) -> None:
 def reconcile_with(r, view_set, rock_instances: dict, fields: list,
                    player_iid) -> None:
     """The testable core of `reconcile` (minor-rocks spec §1)."""
-    global _seen_view, _dials_pushed, _native_dirty, _rebuild_all
+    global _seen_view, _dials_pushed, _native_dirty
     from engine.rocks import catalogue
     try:
         enabled = bool(r.minors_enabled())
@@ -471,10 +481,6 @@ def reconcile_with(r, view_set, rock_instances: dict, fields: list,
                 _remove(r, key)
 
     _drain_pending(r, view_set)
-
-    if _rebuild_all:
-        _rebuild_all = False
-        _remove_all(r)
 
     desired = desired_clouds(view_set, rock_instances, fields)
     _ensure_fragments(r, {s.family for s in desired.values()})
