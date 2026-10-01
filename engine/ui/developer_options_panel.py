@@ -21,6 +21,15 @@ from engine import renderer
 from engine.rocks import catalogue as rock_catalogue
 
 
+def _minors_enabled() -> bool:
+    """renderer.minors_enabled(), or True (the native default) when the
+    renderer is unavailable -- this panel is constructed in headless tests."""
+    try:
+        return bool(renderer.minors_enabled())
+    except Exception:
+        return True
+
+
 def _frame_profiler():
     """Imported lazily. engine.core.frame_profiler reaches the native timer
     through host_io, and this panel is constructed in tests that never build
@@ -60,6 +69,7 @@ class DeveloperOptionsPanel(Panel):
         self._normal_flip_g = True
         self._normal_strength = 1.0
         self._rock_catalogue = rock_catalogue.enabled()
+        self._minor_rocks = _minors_enabled()
         self._dial_group = dev_dial_groups.active() or "nebula"
         # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
         # profiler at startup, so a hard-coded False would show OFF while it
@@ -86,6 +96,7 @@ class DeveloperOptionsPanel(Panel):
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
         self._dial_group = dev_dial_groups.active() or "nebula"
+        self._minor_rocks = _minors_enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -110,6 +121,7 @@ class DeveloperOptionsPanel(Panel):
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
             self._profiler, self._rock_catalogue, self._dial_group,
+            self._minor_rocks,
         )
         if snapshot == self._last_pushed:
             return None
@@ -134,6 +146,7 @@ class DeveloperOptionsPanel(Panel):
                 "profiler": self._profiler,
                 "rock_catalogue": self._rock_catalogue,
                 "dial_group": self._dial_group,
+                "minor_rocks": self._minor_rocks,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -207,6 +220,10 @@ class DeveloperOptionsPanel(Panel):
             rock_catalogue.set_enabled(not self._rock_catalogue)
             self._rock_catalogue = not self._rock_catalogue
             return True
+        if action == "toggle:minor_rocks":
+            renderer.minors_set_enabled(not self._minor_rocks)
+            self._minor_rocks = not self._minor_rocks
+            return True
         if action == "action:dial_group":
             self._dial_group = dev_dial_groups.cycle_active() or "nebula"
             return True
@@ -245,7 +262,7 @@ class DeveloperOptionsPanel(Panel):
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
                     ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue"),
-                    ("ctrl", "dial_group")]
+                    ("ctrl", "minor_rocks"), ("ctrl", "dial_group")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler")]
         return out

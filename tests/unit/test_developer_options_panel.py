@@ -126,6 +126,7 @@ def test_render_payload_shape(panel):
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
+        "minor_rocks": True,
     }
 
 
@@ -398,6 +399,46 @@ def test_rock_catalogue_ctrl_is_a_lighting_tab_focusable(panel):
     p.open()
     p.dispatch_event("tab:lighting")
     assert ("ctrl", "rock_catalogue") in p._focusables()
+
+
+# ---- Minor rocks toggle (Lighting tab; minor-rocks spec §2) --------------
+
+def test_minor_rocks_toggle_flips_the_real_renderer_flag(panel):
+    """Drives renderer.minors_set_enabled, not just a local mirror."""
+    from engine import renderer
+
+    p, _ = panel
+    saved = renderer.minors_enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:lighting")
+        p.render_payload()
+        assert p.dispatch_event("toggle:minor_rocks") is True
+        assert renderer.minors_enabled() is (not saved)
+        assert _body(p.render_payload())["settings"]["minor_rocks"] is (not saved)
+        p.dispatch_event("toggle:minor_rocks")
+        assert renderer.minors_enabled() is saved
+    finally:
+        renderer.minors_set_enabled(saved)
+
+
+def test_minor_rocks_ctrl_is_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "minor_rocks") in p._focusables()
+
+
+def test_minor_rocks_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
+    from engine import renderer
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    def boom():
+        raise RuntimeError("renderer not initialised")
+    monkeypatch.setattr(renderer, "minors_enabled", boom)
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert _body(p.render_payload())["settings"]["minor_rocks"] is True
 
 
 # ── Diagnostics tab: the frame profiler ─────────────────────────────────────

@@ -6600,6 +6600,10 @@ def _reconcile_scene(session, renderer, *, nif_cache=None,
         return
     _reconcile_runtime_instances(
         session, renderer, on_player_change=on_player_change, verbose=verbose)
+    # Minor-rock clouds for the viewed set (minor-rocks spec §1): reads the
+    # rocks the scope reconcile just realised. Never raises.
+    from engine.rocks import minors as _minors
+    _minors.reconcile(session, renderer)
     _reconcile_celestial_instances(
         session, renderer, nif_cache=nif_cache, verbose=verbose)
     _check_mapped_bodies_untouched(_frames.viewing_set())
@@ -6814,6 +6818,8 @@ class HostController:
         _rock_death.reset()
         from engine.appc import debris_chunk as _debris_chunk
         _debris_chunk.clear(self.renderer)
+        from engine.rocks import minors as _minors
+        _minors.reset(self.renderer)
         from engine.appc import hull_breakup as _hull_breakup
         _hull_breakup.reset()
         _explosion_lights.reset()
@@ -9774,6 +9780,8 @@ def run(mission_name: Optional[str] = None,
             # dev_keybindings.register_for_frame's re-bound handlers.
             if _h is not None:
                 dev_nebula_dials.register(_h)
+                from engine.rocks import minor_dials as _minor_dials
+                _minor_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:

@@ -1508,6 +1508,14 @@ def _reset_leakable_engine_globals():
         _md.reset()
     except Exception:
         pass
+    # Minor-cloud registry (engine/rocks/minors.py): held ids, free clouds and
+    # the fragment memo would otherwise carry one test's clouds into the next.
+    try:
+        _mn = sys.modules.get("engine.rocks.minors")
+        if _mn is not None:
+            _mn.reset(None)
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds
