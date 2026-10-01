@@ -187,3 +187,38 @@ def test_set_player_none_forgets_the_previous_pose():
         assert h.minors_drain_contacts() == []
     finally:
         h.shutdown()
+
+
+def test_bridge_view_draws_minors_into_the_viewscreen():
+    """In bridge view the only space render is the viewscreen RTT: minors must
+    be binned against THAT camera and drawn there."""
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _dauntless_host as h
+    h.init(64, 64, "test_minors_viewscreen")
+    try:
+        h0, h1, bound_mu = _load_fragment(h)
+        h.minors_set_fragments(0, [(h0, h1, bound_mu)])
+        h.minors_add_cloud(_desc(point=(0.0, 0.0, 20.0)))   # behind g_camera
+        _look_down_minus_z(h)
+        h.set_viewscreen_scene_source(eye=(0.0, 0.0, 0.0), target=(0.0, 0.0, 1.0),
+                                      up=(0.0, 1.0, 0.0), fov_y_rad=1.0472,
+                                      near=0.1, far=1.0e6)
+        h.bridge_pass_set_enabled(True)
+        h.set_viewscreen_enabled(True)
+        h.damage_decals_tick(1.0)
+        h.frame()
+        s = h.minors_stats()
+        assert s["draw_calls"] >= 1 and s["drawn"] > 0
+    finally:
+        h.clear_viewscreen_scene_source()
+        h.shutdown()
+
+
+def test_detach_accepts_none_debris():
+    import _dauntless_host as h
+    f = h.MinorField()
+    f.add_cloud(_desc(anchor="instance", instance=h.InstanceId()), 0.0)
+    f.detach(1, (0.0, 0.0, -20.0), (0.0, 0.0, 0.0), 0.0, None)
+    h.minors_add_cloud(_desc(anchor="instance", instance=h.InstanceId()))
+    h.minors_detach(1, (0.0, 0.0, -20.0), (0.0, 0.0, 0.0), 0.0, None)
+    h.minors_clear()

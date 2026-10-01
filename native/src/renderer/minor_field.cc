@@ -230,14 +230,26 @@ void MinorField::step(const StepInput& in) {
     // 3. Player contact (spec §3): swept oriented box against the minors.
     if (in.player) step_contact(*in.player, in.render_origin, t, dt, tau);
 
-    // 4. Cull, LOD and bin.
+    // 4. Cull, LOD and bin against the step's own camera.
+    last_time_ = t;
+    stepped_ = true;
+    build_bins(in.view, in.proj, in.viewport_h, bins_, &stats_.drawn);
+    stats_.bins = static_cast<int>(bins_.size());
+}
+
+void MinorField::build_bins(const glm::mat4& view, const glm::mat4& proj,
+                            float viewport_h, std::vector<Bin>& out, int* drawn) const {
+    out.clear();
+    if (drawn != nullptr) *drawn = 0;
+    if (!stepped_) return;                       // no poses yet
+    const double t = last_time_;                 // the poses' game time
     // Frustum planes (Gribb-Hartmann), normalised: inside iff dot(n,p)+d >= -r.
-    const glm::mat4 vp = in.proj * in.view;
+    const glm::mat4 vp = proj * view;
     const glm::vec4 r0 = glm::row(vp, 0), r1 = glm::row(vp, 1),
                     r2 = glm::row(vp, 2), r3 = glm::row(vp, 3);
     glm::vec4 planes[6] = {r3 + r0, r3 - r0, r3 + r1, r3 - r1, r3 + r2, r3 - r2};
     for (auto& p : planes) p /= glm::length(glm::vec3(p));
-    const float px_per_gu = in.proj[1][1] * 0.5f * in.viewport_h;
+    const float px_per_gu = proj[1][1] * 0.5f * viewport_h;
 
     std::map<std::tuple<int, int, int>, std::vector<InstanceGpu>> binned;
     for (auto& [id, c] : clouds_) {
@@ -254,7 +266,10 @@ void MinorField::step(const StepInput& in) {
 
         const auto& frags = fragments(d.family);
         if (!(fade > 0.0f) || frags.empty()) continue;   // NaN-safe
-        for (std::size_t i = 0; i < c.minors.size(); ++i) {
+        // pos is the last step's: a detach() since then appended debris that
+        // has no pose yet, so bin only the posed prefix.
+        const std::size_t posed = std::min(c.minors.size(), c.pos.size());
+        for (std::size_t i = 0; i < posed; ++i) {
             const Minor& m = c.minors[i];
             const glm::vec3 p = c.pos[i];
             float spin = 0.0f;
@@ -266,7 +281,7 @@ void MinorField::step(const StepInput& in) {
             for (const auto& pl : planes)
                 if (glm::dot(glm::vec3(pl), p) + pl.w < -r) { inside = false; break; }
             if (!inside) continue;
-            const float z_view = (in.view * glm::vec4(p, 1.0f)).z;
+            const float z_view = (view * glm::vec4(p, 1.0f)).z;
             const float pixel_r = r * px_per_gu / std::max(-z_view, 1e-3f);
             if (pixel_r < dials_.min_pixel_radius) continue;
             const int lod = pixel_r >= dials_.lod0_pixel_radius ? 0 : 1;
@@ -288,13 +303,10 @@ void MinorField::step(const StepInput& in) {
     for (auto& [key, items] : binned) {
         Bin b;
         std::tie(b.family, b.slot, b.lod) = key;
-        stats_.drawn += static_cast<int>(items.size());
+        if (drawn != nullptr) *drawn += static_cast<int>(items.size());
         b.items = std::move(items);
-        bins_.push_back(std::move(b));
+        out.push_back(std::move(b));
     }
-    stats_.bins = static_cast<int>(bins_.size());
-    last_time_ = t;
-    stepped_ = true;
 }
 
 void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_origin,

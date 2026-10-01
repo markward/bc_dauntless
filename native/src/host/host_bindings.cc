@@ -265,7 +265,13 @@ renderer::minors::MinorField g_minor_field;
 std::unique_ptr<renderer::MinorPass> g_minor_pass;
 bool g_minors_enabled = true;
 std::optional<scenegraph::InstanceId> g_minor_player;
+// What the last frame actually drew, summed over every target that drew
+// minors (main view, or the bridge viewscreen RTT). Zeroed each frame.
 int g_minor_draw_calls = 0;
+int g_minor_drawn = 0;
+// Reused per-target bins: each drawn target re-bins the field against its own
+// camera and height (MinorField::build_bins), never the step's g_camera bins.
+std::vector<renderer::minors::Bin> g_minor_target_bins;
 // Model-space hull AABB per model handle, for the player's contact box.
 // compute_model_aabb walks every vertex, so it runs once per handle; cleared
 // with the handles (reset_frame_state) because handles are reissued.
@@ -785,7 +791,12 @@ void reset_frame_state() {
     g_minors_enabled = true;
     g_minor_player.reset();
     g_minor_draw_calls = 0;
+    g_minor_drawn = 0;
+    g_minor_target_bins.clear();
     g_minor_player_aabbs.clear();
+    // Belt-and-braces: on both real paths the pass is null here (init() calls
+    // this before make_unique; shutdown() resets the pass first), and a fresh
+    // pass has no VAOs. It guards a future caller that resets mid-session.
     if (g_minor_pass) g_minor_pass->forget_models();
 }
 
@@ -1079,7 +1090,8 @@ void frame() {
         renderer::resolve_attached_dynamic_lights(g_world, g_dynamic_lights);
         // Minor rocks step against the same RENDER-space inst->world the
         // hulls draw with: Instance anchors and the player's contact box.
-        g_minor_draw_calls = 0;   // the draw below sets it, if it runs
+        g_minor_draw_calls = 0;   // the draws below add to these, if they run
+        g_minor_drawn = 0;
         if (g_minors_enabled) {
             DAUNTLESS_FRAME_SCOPE("space.minors.step");
             step_minor_field(static_cast<float>(fh));
@@ -1172,20 +1184,26 @@ void frame() {
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
                 ambient_scale, dyn_lights, g_instance_field_cache.get());
         }
-        // Minor rocks. The field's bins were culled and LOD-picked against
-        // g_camera in the step above, so they are drawn only by the pass
-        // that renders with g_camera itself -- never into the viewscreen RTT,
-        // whose camera (a copy, or the bridge-view feed) saw a different scene.
-        if (g_minors_enabled && g_minor_pass && &cam == &g_camera) {
+        // Minor rocks. The step culled against g_camera; this target may be
+        // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
+        // in bridge view, the ONLY space render -- so re-bin the stepped poses
+        // against the camera and height actually drawn with.
+        if (g_minors_enabled && g_minor_pass) {
             DAUNTLESS_FRAME_SCOPE("space.minors.draw");
+            const float target_h = (hdr != nullptr && hdr == g_viewscreen_hdr.get())
+                ? static_cast<float>(kViewscreenRttH) : static_cast<float>(fh);
+            int drawn = 0;
+            g_minor_field.build_bins(cam.view_matrix(), cam.proj_matrix(), target_h,
+                                     g_minor_target_bins, &drawn);
             // Instance::rim_strength's 0.1 default, gated + scaled as
             // FrameSubmitter does for every opaque instance.
             const float rim = dauntless_rim::enabled()
                 ? 0.1f * dauntless_rim::strength_scale() : 0.0f;
-            g_minor_pass->render(g_minor_field, cam, *g_pipeline,
+            g_minor_pass->render(g_minor_field, g_minor_target_bins, cam, *g_pipeline,
                                  [](std::uint64_t h) { return resolve_model(h); },
                                  g_lighting, ambient_scale, rim);
-            g_minor_draw_calls = g_minor_pass->last_draw_calls();
+            g_minor_draw_calls += g_minor_pass->last_draw_calls();
+            g_minor_drawn += drawn;
         }
         // Stencil-mark where the hull was cut away, so the scoop below draws
         // only through real holes and never in open space. Must sit between the
@@ -2332,6 +2350,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["sky_dirty"]              = g_sky_dirty;
               d["prev_input_edges"]       = g_prev_key_state.size()
                                           + g_prev_mouse_state.size();
+              d["minor_clouds"]           = g_minor_field.cloud_count();
+              d["minors_enabled"]         = g_minors_enabled;
+              d["minor_player"]           = g_minor_player.has_value();
+              d["minor_shove_min_gups"]   = py_float(g_minor_field.dials().shove_min_gups);
+              d["minor_aabb_cache"]       = g_minor_player_aabbs.size();
               return d;
           },
           "Test-only snapshot of the per-frame state reset_frame_state() owns: "
@@ -3761,16 +3784,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](std::uint32_t id) { g_minor_field.remove_cloud(id); }, py::arg("id"));
     m.def("minors_detach",
           [](std::uint32_t id, std::tuple<double, double, double> p0,
-             std::tuple<float, float, float> v, double t0, py::list debris) {
+             std::tuple<float, float, float> v, double t0, py::object debris) {
               g_minor_field.detach(id,
                   {std::get<0>(p0), std::get<1>(p0), std::get<2>(p0)},
                   {std::get<0>(v), std::get<1>(v), std::get<2>(v)}, t0,
                   debris_of(debris));
           },
           py::arg("id"), py::arg("p0"), py::arg("v"), py::arg("t0"),
-          py::arg("debris"),
+          py::arg("debris") = py::none(),
           "Turn an Instance cloud Free at VIEW-space p0 moving at v (GU/s) "
-          "from game time t0, appending breakup debris dicts.");
+          "from game time t0, appending breakup debris dicts (None: none).");
     m.def("minors_fade_out",
           [](std::uint32_t id, float seconds) {
               g_minor_field.fade_out(id, seconds, g_decal_game_time);
@@ -3808,10 +3831,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("minors_stats",
           []() {
               py::dict d = stats_dict(g_minor_field.stats());
+              // What was DRAWN, summed over the frame's targets -- not the
+              // step's own g_camera binning.
+              d["drawn"] = g_minor_drawn;
               d["draw_calls"] = g_minor_draw_calls;
               return d;
           },
-          "{'clouds', 'minors', 'drawn', 'bins', 'draw_calls'} for the last frame.");
+          "{'clouds', 'minors', 'bins'} from the last step; {'drawn', "
+          "'draw_calls'} summed over the targets the last frame drew minors into.");
     m.def("minors_clear", []() { g_minor_field.clear(); },
           "Drop every cloud, fragment table and pending contact.");
 
@@ -3827,13 +3854,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
         .def("detach",
              [](mr::MinorField& f, std::uint32_t id,
                 std::tuple<double, double, double> p0,
-                std::tuple<float, float, float> v, double t0, py::list debris) {
+                std::tuple<float, float, float> v, double t0, py::object debris) {
                  f.detach(id, {std::get<0>(p0), std::get<1>(p0), std::get<2>(p0)},
                           {std::get<0>(v), std::get<1>(v), std::get<2>(v)}, t0,
                           debris_of(debris));
              },
              py::arg("id"), py::arg("p0"), py::arg("v"), py::arg("t0"),
-             py::arg("debris"))
+             py::arg("debris") = py::none())
         .def("fade_out",
              [](mr::MinorField& f, std::uint32_t id, float s, double now) {
                  f.fade_out(id, s, now);

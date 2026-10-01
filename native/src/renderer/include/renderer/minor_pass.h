@@ -36,6 +36,13 @@ public:
                 Pipeline& pipeline,
                 const std::function<const assets::Model*(std::uint64_t)>& lookup,
                 const Lighting& lighting, float ambient_scale, float rim_strength);
+    // Draws `bins` -- built by field.build_bins() for THIS camera -- instead of
+    // field.bins(). `field` still supplies the fragment tables. The overload
+    // above forwards field.bins() here.
+    void render(const minors::MinorField& field, const std::vector<minors::Bin>& bins,
+                const scenegraph::Camera& cam, Pipeline& pipeline,
+                const std::function<const assets::Model*(std::uint64_t)>& lookup,
+                const Lighting& lighting, float ambient_scale, float rim_strength);
 
     // Drop VAOs keyed on model handles (mission swap: handles are recycled).
     void forget_models();

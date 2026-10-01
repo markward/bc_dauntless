@@ -110,7 +110,16 @@ public:
     void clear();
     void step(const StepInput& in);
     const std::vector<Bin>& bins() const { return bins_; }
+    // Cull, LOD-pick and bin the poses of the last step() against ANY camera,
+    // into `out` (cleared first). Reads only cached state, so the host can
+    // bin once per drawn target (main view, bridge viewscreen RTT) with that
+    // target's own camera and height. `drawn` (optional) gets the instance
+    // count. step() bins into bins() through this same function.
+    void build_bins(const glm::mat4& view, const glm::mat4& proj, float viewport_h,
+                    std::vector<Bin>& out, int* drawn = nullptr) const;
     Stats stats() const { return stats_; }
+    // Clouds held right now (stats().clouds is as of the last step).
+    std::size_t cloud_count() const { return clouds_.size(); }
     // Touches since the last drain (moved out).
     std::vector<Contact> drain_contacts() { return std::exchange(contacts_, {}); }
     // Forget the previous pose. The host MUST call this whenever the player

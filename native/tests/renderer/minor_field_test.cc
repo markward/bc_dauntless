@@ -552,3 +552,54 @@ TEST(MinorContact, TheClearTestsTouchDoesMakeAContact) {
     f.step(in);
     EXPECT_EQ(f.drain_contacts().size(), 1u);
 }
+
+// Fix round 1: the host re-bins per drawn camera (the bridge viewscreen RTT
+// sees through a different camera than the one frame() stepped with).
+TEST(MinorStep, BuildBinsWithAnotherCameraBinsWhatStepCulled) {
+    auto f = field_with_fragments();
+    f.add_cloud(point_cloud({0, 0, +20}), 0.0);     // behind the step camera
+    f.step(looking_down_minus_z());
+    EXPECT_EQ(f.stats().drawn, 0);
+    EXPECT_TRUE(f.bins().empty());
+
+    const glm::mat4 view_plus_z =
+        glm::lookAt(glm::vec3(0, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
+    const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1e6f);
+    std::vector<Bin> out;
+    int drawn = -1;
+    f.build_bins(view_plus_z, proj, 360.0f, out, &drawn);
+    EXPECT_EQ(drawn, 50);
+    EXPECT_FALSE(out.empty());
+    EXPECT_TRUE(f.bins().empty());                  // const: step's bins untouched
+}
+
+TEST(MinorStep, BuildBinsWithTheStepCameraMatchesStep) {
+    auto f = field_with_fragments();
+    f.add_cloud(point_cloud({0, 0, -20}), 0.0);
+    const auto in = looking_down_minus_z();
+    f.step(in);
+    std::vector<Bin> out;
+    int drawn = 0;
+    f.build_bins(in.view, in.proj, in.viewport_h, out, &drawn);
+    EXPECT_EQ(drawn, f.stats().drawn);
+    ASSERT_EQ(out.size(), f.bins().size());
+    for (std::size_t b = 0; b < out.size(); ++b)
+        EXPECT_EQ(out[b].items.size(), f.bins()[b].items.size());
+}
+
+TEST(MinorStep, BuildBinsAfterADetachBinsOnlyPosedMinors) {
+    auto f = field_with_fragments();
+    auto d = point_cloud({0, 0, -20});
+    d.anchor = Anchor::Instance; d.instance_key = 7;
+    f.add_cloud(d, 0.0);
+    auto in = looking_down_minus_z();
+    in.anchor_of = [](std::uint64_t, glm::vec3& out) { out = {0, 0, -20}; return true; };
+    f.step(in);
+    ASSERT_EQ(f.stats().drawn, 50);
+    f.detach(9, {0, 0, -20}, {0, 0, 0}, 0.0,
+             std::vector<DebrisSpec>(10, DebrisSpec{{0, 0, 0}, {0, 0, 0}, 0.3f, 1}));
+    std::vector<Bin> out;
+    int drawn = 0;
+    f.build_bins(in.view, in.proj, in.viewport_h, out, &drawn);
+    EXPECT_EQ(drawn, 50);                 // the 10 debris have no pose until step()
+}

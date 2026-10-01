@@ -130,8 +130,14 @@ void MinorPass::render(const minors::MinorField& field, const scenegraph::Camera
                        Pipeline& pipeline,
                        const std::function<const assets::Model*(std::uint64_t)>& lookup,
                        const Lighting& lighting, float ambient_scale, float rim_strength) {
+    render(field, field.bins(), cam, pipeline, lookup, lighting, ambient_scale, rim_strength);
+}
+
+void MinorPass::render(const minors::MinorField& field, const std::vector<minors::Bin>& bins,
+                       const scenegraph::Camera& cam, Pipeline& pipeline,
+                       const std::function<const assets::Model*(std::uint64_t)>& lookup,
+                       const Lighting& lighting, float ambient_scale, float rim_strength) {
     draw_calls_ = 0;
-    const auto& bins = field.bins();
     if (bins.empty()) return;
 
     // 1-2. Per-frame uniforms, exactly as submit_opaque_in_pass's configure_common.
