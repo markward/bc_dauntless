@@ -311,3 +311,145 @@ TEST(MinorStep, OutsideSidePlaneIsCulled) {
     f.step(looking_down_minus_z());
     EXPECT_EQ(f.stats().drawn, 0);
 }
+
+namespace {
+PlayerBox box_at(glm::vec3 p, glm::vec3 half_mu = {50, 100, 30}) {
+    PlayerBox b;
+    b.world = glm::translate(glm::mat4(1.0f), p) * glm::scale(glm::mat4(1.0f), glm::vec3(0.01f));
+    b.half_mu = half_mu;                    // 0.5 x 1.0 x 0.3 GU at scale 0.01
+    return b;
+}
+CloudDesc single_minor_at(glm::dvec3 at, float r = 0.2f) {
+    CloudDesc d; d.id = 5; d.anchor = Anchor::Point; d.point = at;
+    d.shell_inner = 0; d.shell_outer = 0; d.count = 1; d.r_min = d.r_max = r; d.seed = 2;
+    return d;
+}
+}  // namespace
+
+TEST(MinorContact, SweptBoxHitsAMinorAPointTestWouldMiss) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    // 4,800 GU/s: 80 GU per frame. The sweep is capped at 32 sub-steps, so it
+    // is gap-free only while travel/32 <= 2 x (half_y 1.1 + radius 0.2) = 2.6 GU,
+    // i.e. up to ~83 GU per frame (12x dash speed). 80/32 = 2.5 GU spacing.
+    in.player = box_at({0, -40, -20});
+    f.step(in);
+    in.game_time = 1.0 / 60.0;
+    in.player = box_at({0, +40, -20});         // the end pose alone misses by 38 GU
+    f.step(in);
+    const auto c = f.drain_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_NEAR(c[0].rel_speed, 80.0f * 60.0f, 50.0f);
+}
+
+TEST(MinorContact, ShoveIsOutwardAndOffsetPersists) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0.6, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({-2, 0, -20});
+    f.step(in);
+    in.game_time = 0.1;
+    in.player = box_at({0.3, 0, -20});         // moving +x into the minor
+    f.step(in);
+    ASSERT_EQ(f.drain_contacts().size(), 1u);
+    glm::vec3 p1; f.minor_position(5, 0, p1);
+    EXPECT_GT(p1.x, 0.6f);
+    in.player = box_at({0.3, 0, -20});
+    for (int i = 0; i < 600; ++i) { in.game_time += 0.1; f.step(in); }   // 60 s
+    glm::vec3 p2; f.minor_position(5, 0, p2);
+    EXPECT_GT(p2.x, p1.x);                      // drifted further out
+    glm::vec3 p3; in.game_time += 60.0; f.step(in); f.minor_position(5, 0, p3);
+    EXPECT_NEAR(p3.x, p2.x, 0.05f);             // velocity has decayed; offset stays
+}
+
+TEST(MinorContact, VelocityHalvesAtTheHalfLife) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0.6, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({-2, 0, -20}); f.step(in);
+    in.game_time = 0.1; in.player = box_at({0.3, 0, -20}); f.step(in);
+    in.player = box_at({-50, 0, -20});          // back off, then measure drift
+    in.game_time = 0.2; f.step(in);
+    glm::vec3 a; f.minor_position(5, 0, a);
+    in.game_time = 0.3; f.step(in);
+    glm::vec3 b; f.minor_position(5, 0, b);
+    in.game_time = 4.2; f.step(in);
+    glm::vec3 c; f.minor_position(5, 0, c);
+    in.game_time = 4.3; f.step(in);
+    glm::vec3 d; f.minor_position(5, 0, d);
+    EXPECT_NEAR((d.x - c.x) / (b.x - a.x), 0.5f, 0.02f);
+}
+
+TEST(MinorContact, ShoveCapPerFrameHolds) {
+    auto f = field_with_fragments();
+    CloudDesc d; d.id = 1; d.anchor = Anchor::Point; d.point = {0, 0, -20};
+    d.shell_inner = 0; d.shell_outer = 0.4f; d.count = 500; d.r_min = d.r_max = 0.05f;
+    f.add_cloud(d, 0.0);
+    auto dials = f.dials(); dials.contact_cooldown_s = 0.0f; f.set_dials(dials);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, -10, -20}); f.step(in);
+    in.game_time = 0.1; in.player = box_at({0, 0, -20}); f.step(in);
+    EXPECT_EQ(f.drain_contacts().size(), 64u);
+}
+
+TEST(MinorContact, CooldownLimitsRepeatContactsFromOneMinor) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, -2, -20}); f.step(in);
+    int total = 0;
+    for (int i = 1; i <= 30; ++i) {              // ploughing for 0.5 s at 60 Hz
+        in.game_time = i / 60.0;
+        in.player = box_at({0, -2.0f + i * 0.1f, -20});
+        f.step(in);
+        total += int(f.drain_contacts().size());
+    }
+    EXPECT_LE(total, 2);
+}
+
+TEST(MinorContact, TeleportJumpDoesNotSweep) {
+    auto f = field_with_fragments();
+    CloudDesc d; d.id = 1; d.anchor = Anchor::Point; d.point = {0, 0, -20};
+    d.shell_inner = 0; d.shell_outer = 5; d.count = 300; d.r_min = d.r_max = 0.1f;
+    f.add_cloud(d, 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, -30000, -20}); f.step(in);
+    in.game_time = 1.0 / 60.0;
+    in.player = box_at({0, +30000, -20}); f.step(in);   // 60,000 GU: a hand-off
+    EXPECT_TRUE(f.drain_contacts().empty());
+}
+
+TEST(MinorContact, PausedFrameMakesNoContacts) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(1.0);
+    in.player = box_at({0, -5, -20}); f.step(in);
+    in.player = box_at({0, 0, -20}); f.step(in);        // same game time: paused
+    EXPECT_TRUE(f.drain_contacts().empty());
+}
+
+TEST(MinorContact, ReAddingACloudClearsItsShoves) {
+    auto f = field_with_fragments();
+    auto d = single_minor_at({0.6, 0, -20});
+    f.add_cloud(d, 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({-2, 0, -20}); f.step(in);
+    in.game_time = 0.1; in.player = box_at({0.3, 0, -20}); f.step(in);
+    f.add_cloud(d, 0.1);
+    in.player.reset(); f.step(in);
+    glm::vec3 p; f.minor_position(5, 0, p);
+    EXPECT_NEAR(p.x, 0.6f, 1e-4f);
+}
+
+TEST(MinorContact, ContactPointIsInViewSpace) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({5000, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.render_origin = glm::dvec3(5000, 0, 0);
+    in.player = box_at({0, -3, -20}); f.step(in);
+    in.game_time = 0.1; in.player = box_at({0, 0, -20}); f.step(in);
+    auto c = f.drain_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_NEAR(c[0].point_view.x, 5000.0, 1.0);
+}

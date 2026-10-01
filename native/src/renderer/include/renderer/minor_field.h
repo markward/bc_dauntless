@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -71,12 +72,24 @@ struct Bin { int family = 0; int slot = 0; int lod = 0; std::vector<InstanceGpu>
 
 using AnchorLookup = std::function<bool(std::uint64_t key, glm::vec3& out_render_pos)>;
 
+// The player's contact box (spec §3): the hull AABB in model space, posed by
+// the player's RENDER-space instance world (which includes scale).
+struct PlayerBox {
+    glm::mat4 world{1.0f};        // RENDER-space instance world (incl. scale)
+    glm::vec3 center_mu{0.0f};    // model-space AABB centre
+    glm::vec3 half_mu{1.0f};      // model-space AABB half extents
+};
+
+// One player/minor touch, drained by Python (engine/rocks/minor_contact.py).
+struct Contact { glm::dvec3 point_view{0.0}; float radius = 0.0f; float rel_speed = 0.0f; };
+
 struct StepInput {
     double game_time = 0.0;
     glm::dvec3 render_origin{0.0};
     glm::mat4 view{1.0f}, proj{1.0f};
     float viewport_h = 720.0f;
     AnchorLookup anchor_of;              // may be empty: Instance clouds then skip
+    std::optional<PlayerBox> player;     // unset: no contact test this step
 };
 
 struct Stats { int clouds = 0; int minors = 0; int drawn = 0; int bins = 0; };
@@ -97,6 +110,9 @@ public:
     void step(const StepInput& in);
     const std::vector<Bin>& bins() const { return bins_; }
     Stats stats() const { return stats_; }
+    // Touches since the last drain (moved out).
+    std::vector<Contact> drain_contacts() { return std::move(contacts_); }
+    void reset_player() { has_prev_ = false; }   // forget the previous pose
     // Test hook: render-space centre of minor `i` of cloud `id` after the last step.
     bool minor_position(std::uint32_t id, std::size_t i, glm::vec3& out) const;
 private:
@@ -115,7 +131,13 @@ private:
     std::map<std::uint32_t, Cloud> clouds_;     // ordered: deterministic bins
     std::vector<Bin> bins_;
     Stats stats_;
+    void step_contact(const PlayerBox& box, const glm::dvec3& render_origin,
+                      double t, double dt, float tau);
     double last_time_ = -1.0;
+    bool stepped_ = false;                // last_time_ is valid
+    std::vector<Contact> contacts_;
+    bool has_prev_ = false;
+    glm::dvec3 prev_center_view_{0.0};    // player box centre, VIEW space
 };
 
 }  // namespace renderer::minors

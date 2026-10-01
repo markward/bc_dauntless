@@ -160,30 +160,41 @@ void MinorField::clear() {
     bins_.clear();
     stats_ = Stats{};
     last_time_ = -1.0;
+    stepped_ = false;
 }
 
 void MinorField::step(const StepInput& in) {
     const double t = in.game_time;
+    // dt <= 0 is a paused frame (or the first): no contact, no integration.
+    const double dt = stepped_ ? t - last_time_ : 0.0;
     bins_.clear();
     stats_ = Stats{};
     stats_.clouds = static_cast<int>(clouds_.size());
 
-    // Frustum planes (Gribb-Hartmann), normalised: inside iff dot(n,p)+d >= -r.
-    const glm::mat4 vp = in.proj * in.view;
-    const glm::vec4 r0 = glm::row(vp, 0), r1 = glm::row(vp, 1),
-                    r2 = glm::row(vp, 2), r3 = glm::row(vp, 3);
-    glm::vec4 planes[6] = {r3 + r0, r3 - r0, r3 + r1, r3 - r1, r3 + r2, r3 - r2};
-    for (auto& p : planes) p /= glm::length(glm::vec3(p));
-    const float px_per_gu = in.proj[1][1] * 0.5f * in.viewport_h;
     const float tau = dials_.debris_damp_seconds / std::log(2.0f);
 
-    std::map<std::tuple<int, int, int>, std::vector<InstanceGpu>> binned;
+    // 1. Integrate every shove: the offset persists, velocity and spin decay.
+    if (dt > 0.0) {
+        const float fdt = static_cast<float>(dt);
+        const float decay = std::pow(0.5f, fdt / dials_.shove_damp_seconds);
+        for (auto& [id, c] : clouds_) {
+            (void)id;
+            for (auto& [i, sh] : c.shoves) {
+                (void)i;
+                sh.offset += sh.vel * fdt;
+                sh.vel *= decay;
+                sh.spin += sh.spin_rate * fdt;
+                sh.spin_rate *= decay;
+            }
+        }
+    }
+
+    // 2. Anchors and minor positions, render space.
     for (auto& [id, c] : clouds_) {
         (void)id;
         stats_.minors += static_cast<int>(c.minors.size());
         const CloudDesc& d = c.desc;
 
-        // Anchor in render space.
         c.anchor_ok = true;
         switch (d.anchor) {
         case Anchor::Instance:
@@ -199,14 +210,6 @@ void MinorField::step(const StepInput& in) {
         }
         if (!c.anchor_ok) { c.pos.clear(); continue; }
 
-        // A ramp of <= 0 seconds is an instant step (no 0/0 NaN at its start).
-        float fade = 1.0f;
-        if (c.fading_in)
-            fade *= ramp(t - c.born, dials_.cloud_fade_in_seconds);
-        if (c.fade_out_start >= 0.0)
-            fade *= 1.0f - ramp(t - c.fade_out_start, c.fade_out_seconds);
-
-        const auto& frags = fragments(d.family);
         const glm::vec3 axis = orbit_axis(d.seed);
         const float debris_k =
             tau * (1.0f - std::exp(-std::max(0.0f, static_cast<float>(t - d.t0)) / tau));
@@ -215,15 +218,46 @@ void MinorField::step(const StepInput& in) {
             const Minor& m = c.minors[i];
             glm::vec3 local = m.debris ? m.offset + m.v0 * debris_k
                                        : orbit_offset(m, axis, d.orbit_rate, t);
-            float spin = 0.0f;
-            if (auto sh = c.shoves.find(static_cast<std::uint32_t>(i)); sh != c.shoves.end()) {
+            if (auto sh = c.shoves.find(static_cast<std::uint32_t>(i)); sh != c.shoves.end())
                 local += sh->second.offset;
-                spin = sh->second.spin;
-            }
-            const glm::vec3 p = c.anchor_render + local;
-            c.pos[i] = p;
+            c.pos[i] = c.anchor_render + local;
+        }
+    }
 
-            if (!(fade > 0.0f) || frags.empty()) continue;   // NaN-safe
+    // 3. Player contact (spec §3): swept oriented box against the minors.
+    if (in.player) step_contact(*in.player, in.render_origin, t, dt, tau);
+
+    // 4. Cull, LOD and bin.
+    // Frustum planes (Gribb-Hartmann), normalised: inside iff dot(n,p)+d >= -r.
+    const glm::mat4 vp = in.proj * in.view;
+    const glm::vec4 r0 = glm::row(vp, 0), r1 = glm::row(vp, 1),
+                    r2 = glm::row(vp, 2), r3 = glm::row(vp, 3);
+    glm::vec4 planes[6] = {r3 + r0, r3 - r0, r3 + r1, r3 - r1, r3 + r2, r3 - r2};
+    for (auto& p : planes) p /= glm::length(glm::vec3(p));
+    const float px_per_gu = in.proj[1][1] * 0.5f * in.viewport_h;
+
+    std::map<std::tuple<int, int, int>, std::vector<InstanceGpu>> binned;
+    for (auto& [id, c] : clouds_) {
+        (void)id;
+        if (!c.anchor_ok) continue;
+        const CloudDesc& d = c.desc;
+
+        // A ramp of <= 0 seconds is an instant step (no 0/0 NaN at its start).
+        float fade = 1.0f;
+        if (c.fading_in)
+            fade *= ramp(t - c.born, dials_.cloud_fade_in_seconds);
+        if (c.fade_out_start >= 0.0)
+            fade *= 1.0f - ramp(t - c.fade_out_start, c.fade_out_seconds);
+
+        const auto& frags = fragments(d.family);
+        if (!(fade > 0.0f) || frags.empty()) continue;   // NaN-safe
+        for (std::size_t i = 0; i < c.minors.size(); ++i) {
+            const Minor& m = c.minors[i];
+            const glm::vec3 p = c.pos[i];
+            float spin = 0.0f;
+            if (auto sh = c.shoves.find(static_cast<std::uint32_t>(i)); sh != c.shoves.end())
+                spin = sh->second.spin;
+
             const float r = m.radius * fade;
             bool inside = true;
             for (const auto& pl : planes)
@@ -257,6 +291,106 @@ void MinorField::step(const StepInput& in) {
     }
     stats_.bins = static_cast<int>(bins_.size());
     last_time_ = t;
+    stepped_ = true;
+}
+
+void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_origin,
+                              double t, double dt, float tau) {
+    // OBB, render space: centre, unit axes, inflated half extents, bound.
+    const glm::vec3 c = glm::vec3(box.world * glm::vec4(box.center_mu, 1.0f));
+    glm::vec3 a[3], h;
+    for (int k = 0; k < 3; ++k) {
+        const glm::vec3 col = glm::vec3(box.world[k]);
+        const float len = glm::length(col);
+        a[k] = len > 0.0f ? col / len : glm::vec3(k == 0, k == 1, k == 2);
+        h[k] = len * box.half_mu[k] + dials_.contact_margin_gu;
+    }
+    const float bound = glm::length(h);
+
+    // The previous centre lives in VIEW space so a moved render origin is not travel.
+    const glm::dvec3 c_view = glm::dvec3(c) + render_origin;
+    const bool had_prev = has_prev_;
+    const glm::vec3 prev_render = glm::vec3(prev_center_view_ - render_origin);
+    has_prev_ = true;
+    prev_center_view_ = c_view;
+    if (!(dt > 0.0)) return;
+
+    glm::vec3 seg0 = c;
+    float travel = had_prev ? glm::length(c - prev_render) : 0.0f;
+    glm::vec3 v_player{0.0f};
+    if (had_prev && travel <= dials_.teleport_gu) {
+        seg0 = prev_render;
+        v_player = (c - prev_render) / static_cast<float>(dt);
+    } else {
+        travel = 0.0f;                          // teleport / no pose: current pose only
+    }
+    const float rel_speed = glm::length(v_player);
+    const glm::vec3 seg = c - seg0;
+    const float seg_len2 = glm::dot(seg, seg);
+    auto dist_to_segment = [&](const glm::vec3& p) {
+        const float u = seg_len2 > 0.0f
+            ? std::clamp(glm::dot(p - seg0, seg) / seg_len2, 0.0f, 1.0f) : 0.0f;
+        return glm::length(p - (seg0 + seg * u));
+    };
+    const float min_h = std::min({h.x, h.y, h.z});
+    const int n = std::clamp(static_cast<int>(std::ceil(travel / std::max(min_h, 0.05f))), 1, 32);
+
+    int touches = 0;
+    for (auto& [id, cl] : clouds_) {
+        (void)id;
+        if (!cl.anchor_ok || cl.pos.empty()) continue;
+        if (touches >= dials_.max_shoves_per_frame) break;
+
+        // Cloud reject: anchor sphere, grown by the largest shove offset.
+        float extent = cl.desc.shell_outer + cl.desc.r_max + 10.0f;
+        if (cl.desc.anchor == Anchor::Free) {
+            // Detached orbit minors keep their offsets, so measure every minor.
+            extent = 0.0f;
+            for (const auto& m : cl.minors)
+                extent = std::max(extent, glm::length(m.offset) + glm::length(m.v0) * tau + m.radius);
+        }
+        float shove_ext = 0.0f;
+        for (const auto& [i, sh] : cl.shoves) { (void)i; shove_ext = std::max(shove_ext, glm::length(sh.offset)); }
+        if (dist_to_segment(cl.anchor_render) > extent + shove_ext + bound) continue;
+
+        for (std::size_t i = 0; i < cl.minors.size(); ++i) {
+            if (touches >= dials_.max_shoves_per_frame) break;
+            const float radius = cl.minors[i].radius;
+            const glm::vec3 p = cl.pos[i];
+            if (dist_to_segment(p) > radius + bound) continue;
+
+            // Sub-stepped box test, orientation from this frame; first hit wins.
+            for (int k = 1; k <= n; ++k) {
+                const glm::vec3 ck = seg0 + seg * (static_cast<float>(k) / n);
+                const glm::vec3 d = p - ck;
+                glm::vec3 q = ck;
+                for (int ax = 0; ax < 3; ++ax)
+                    q += a[ax] * std::clamp(glm::dot(d, a[ax]), -h[ax], h[ax]);
+                const float gap = glm::length(p - q);
+                const bool inside = gap == 0.0f;
+                if (!inside && gap > radius) continue;
+
+                glm::vec3 nrm;
+                if (!inside) nrm = (p - q) / gap;
+                else if (glm::length(d) > 0.0f) nrm = glm::normalize(d);
+                else nrm = a[1];
+
+                Shove& sh = cl.shoves[static_cast<std::uint32_t>(i)];
+                const glm::vec3 push = nrm * (radius - gap);   // sit on the surface
+                sh.offset += push;
+                cl.pos[i] += push;
+                sh.vel = nrm * (std::max(glm::dot(v_player, nrm), 0.0f) * dials_.shove_transfer
+                                + dials_.shove_min_gups);
+                sh.spin_rate += dials_.shove_tumble;
+                if (t - sh.last_contact >= dials_.contact_cooldown_s) {
+                    contacts_.push_back({glm::dvec3(q) + render_origin, radius, rel_speed});
+                    sh.last_contact = t;
+                }
+                ++touches;
+                break;
+            }
+        }
+    }
 }
 
 bool MinorField::minor_position(std::uint32_t id, std::size_t i, glm::vec3& out) const {
