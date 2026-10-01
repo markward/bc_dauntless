@@ -130,14 +130,10 @@ void MinorField::detach(std::uint32_t id, const glm::dvec3& p0_view, const glm::
     auto it = clouds_.find(id);
     if (it == clouds_.end()) return;
     Cloud& c = it->second;
-    // Re-base every orbit minor on its anchor-relative position at t0 and stop
-    // the orbit, so the minor does not jump when the anchor turns Free.
-    const glm::vec3 axis = orbit_axis(c.desc.seed);
-    for (auto& m : c.minors) {
-        if (m.debris) continue;
-        m.offset = orbit_offset(m, axis, c.desc.orbit_rate, t0);
-        m.orbit_u = 0.0f;
-    }
+    // The minors are left as generated: a Free cloud evaluates its orbit at
+    // min(t, t0) (step), so each minor stays where it was at t0, and a free
+    // cloud built fresh from the same descriptor (seed, orbit_rate, t0)
+    // poses identically.
     c.desc.anchor = Anchor::Free;
     c.desc.point = p0_view;
     c.desc.velocity = v;
@@ -214,13 +210,15 @@ void MinorField::step(const StepInput& in) {
         if (!c.anchor_ok) { c.pos.clear(); continue; }
 
         const glm::vec3 axis = orbit_axis(d.seed);
+        // A Free cloud's orbit is frozen at t0 (the detach instant).
+        const double orbit_t = d.anchor == Anchor::Free ? std::min(t, d.t0) : t;
         const float debris_k =
             tau * (1.0f - std::exp(-std::max(0.0f, static_cast<float>(t - d.t0)) / tau));
         c.pos.resize(c.minors.size());
         for (std::size_t i = 0; i < c.minors.size(); ++i) {
             const Minor& m = c.minors[i];
             glm::vec3 local = m.debris ? m.offset + m.v0 * debris_k
-                                       : orbit_offset(m, axis, d.orbit_rate, t);
+                                       : orbit_offset(m, axis, d.orbit_rate, orbit_t);
             if (auto sh = c.shoves.find(static_cast<std::uint32_t>(i)); sh != c.shoves.end())
                 local += sh->second.offset;
             c.pos[i] = c.anchor_render + local;
@@ -365,7 +363,7 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
         // Cloud reject: anchor sphere, grown by the largest shove offset.
         float extent = cl.desc.shell_outer + cl.desc.r_max + 10.0f;
         if (cl.desc.anchor == Anchor::Free) {
-            // Detached orbit minors keep their offsets, so measure every minor.
+            // Orbit is a rotation about the anchor (frozen at t0): |offset| holds.
             extent = 0.0f;
             for (const auto& m : cl.minors)
                 extent = std::max(extent, glm::length(m.offset) + glm::length(m.v0) * tau + m.radius);

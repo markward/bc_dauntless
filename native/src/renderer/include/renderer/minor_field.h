@@ -35,7 +35,7 @@ struct CloudDesc {
     float r_min = 0.05f, r_max = 0.5f, size_exponent = 2.5f;
     int family = 0;
     std::uint32_t seed = 0;
-    float orbit_rate = 0.0f;             // rad/s
+    float orbit_rate = 0.0f;             // rad/s; a Free cloud freezes it at t0
     bool fade_in = false;
     std::vector<DebrisSpec> debris;
 };

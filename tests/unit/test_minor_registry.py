@@ -342,7 +342,8 @@ def test_free_spec_without_a_halo_adds_a_free_cloud():
     (d,) = [c[1] for c in r.named("minors_add_cloud")]
     assert d["anchor"] == "free" and d["point"] == (1.0, 2.0, 3.0)
     assert d["velocity"] == (0.5, 0.0, 0.0) and d["t0"] == 7.0
-    assert d["orbit_rate"] == 0.0 and len(d["debris"]) == 1
+    # The halo's orbit rate: native freezes a Free cloud's orbit at t0.
+    assert d["orbit_rate"] == md.get("halo_orbit_rate") and len(d["debris"]) == 1
     assert d["family"] == md.FAMILY_INDEX["metallic"]
     assert d["count"] == 128 and d["shell_outer"] == pytest.approx(12.0)
     assert d["seed"] == zlib.crc32(b"halo:Rock 2")
@@ -540,3 +541,18 @@ def test_a_scope_hidden_player_has_no_contact_box():
     finally:
         m.reconcile_with = orig
     assert calls["player"] is None
+
+
+def test_a_free_cloud_carries_the_halos_seed_and_orbit_rate():
+    """Final review #2: native freezes a Free cloud's orbit at t0, so a
+    re-sent free cloud rebuilds the detached halo exactly only if it carries
+    the halo's own seed AND orbit rate (0.0 would pose every minor at angle 0)."""
+    md._dials["halo_orbit_rate"] = 0.25
+    r = _Rec()
+    minors.register_free_cloud(_free("Rock 1"))
+    minors.reconcile_with(r, None, {}, [], None)
+    desc = r.named("minors_add_cloud")[0][1]
+    halo = minors.halo_spec(_Rock("Rock 1"), iid=1)
+    assert desc["anchor"] == "free"
+    assert desc["seed"] == halo.seed
+    assert desc["orbit_rate"] == halo.orbit_rate == 0.25

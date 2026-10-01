@@ -603,3 +603,34 @@ TEST(MinorStep, BuildBinsAfterADetachBinsOnlyPosedMinors) {
     f.build_bins(in.view, in.proj, in.viewport_h, out, &drawn);
     EXPECT_EQ(drawn, 50);                 // the 10 debris have no pose until step()
 }
+
+// Final review #2: a free cloud rebuilt from its descriptor (a re-viewed set)
+// must match the detached halo it replaced. Both carry the halo's seed and
+// orbit rate; a Free cloud freezes its orbit at t0.
+TEST(MinorStep, FreeCloudBuiltFreshMatchesADetachedHalo) {
+    auto halo = field_with_fragments();
+    CloudDesc d = point_cloud({0, 0, 0}); d.anchor = Anchor::Instance; d.instance_key = 7;
+    d.orbit_rate = 0.5f;
+    halo.add_cloud(d, 0.0);
+    auto in = looking_down_minus_z(3.0);
+    in.anchor_of = [](std::uint64_t, glm::vec3& o) { o = {0, 0, -20}; return true; };
+    halo.step(in);
+    halo.detach(9, glm::dvec3(0, 0, -20), glm::vec3(0), 3.0, {});
+    in.anchor_of = nullptr;
+    in.game_time = 10.0;
+    halo.step(in);
+
+    auto fresh = field_with_fragments();
+    CloudDesc fd = d;
+    fd.anchor = Anchor::Free; fd.instance_key = 0;
+    fd.point = glm::dvec3(0, 0, -20); fd.velocity = glm::vec3(0); fd.t0 = 3.0;
+    fresh.add_cloud(fd, 10.0);
+    fresh.step(looking_down_minus_z(10.0));
+
+    for (std::size_t i = 0; i < 50; ++i) {
+        glm::vec3 a, b;
+        ASSERT_TRUE(halo.minor_position(9, i, a));
+        ASSERT_TRUE(fresh.minor_position(9, i, b));
+        EXPECT_NEAR(glm::length(a - b), 0.0f, 1e-4f) << i;
+    }
+}

@@ -226,10 +226,11 @@ def _free_cloud_spec(spec: FreeCloudSpec, view_set) -> Optional[CloudSpec]:
         point=p0, velocity=tuple(float(c) for c in spec.velocity),
         t0=float(spec.t0),
         family=_family_index(spec.family),
-        # The halo's own seed: a re-sent free cloud regenerates the very
-        # instances the detached halo carried.
+        # The halo's own seed AND orbit rate: native freezes a Free cloud's
+        # orbit at t0, so a re-sent free cloud poses the very instances the
+        # detached halo carried exactly where they stopped.
         seed=zlib.crc32(("halo:" + spec.rock_name).encode("utf-8")),
-        orbit_rate=0.0,
+        orbit_rate=float(md.get("halo_orbit_rate")),
         debris=tuple(dict(d) for d in spec.debris),
         **_halo_numbers(radius))
 

@@ -291,7 +291,9 @@ its own:
 1. **Detach the halo.** `minors_detach(cloud_id, p0, v)` turns the cloud into a
    `free` cloud at the parent's world position and velocity, keeping its
    instances and shove state. Python records `{p0, v, t0, halo descriptor,
-   debris list}`.
+   debris list}`. A `free` cloud evaluates its orbit at `min(t, t0)`, so each
+   halo minor stops where it was at the detach, and a free cloud rebuilt from
+   the descriptor (the halo's seed and orbit rate, and t0) poses identically.
 2. **Debris minors join that cloud:**
    - every planned piece that is not a major: below `kMajorMinRadiusGU`
      (1.0), or a would-be major demoted by `kMaxMajorGeneration`. This
