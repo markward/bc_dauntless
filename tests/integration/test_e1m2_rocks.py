@@ -204,3 +204,85 @@ def test_asteroid_killed_against_haven_does_not_cascade():
     assert 1 <= len(pieces) <= breakup.kPieceCountMax
     assert all(p.count("-") == 1 for p in pieces), sorted(pieces)
     assert len(strikes) == 1
+
+
+class _NullRenderer:
+    def __init__(self):
+        self._n = 0
+
+    def __getattr__(self, name):
+        def f(*a, **k):
+            self._n += 1
+            return self._n
+        return f
+
+
+def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
+    """Scenario A of the 2026-10-01 cascade probe: E1M2's largest moving
+    asteroid, alone in space, destroyed outright. Its pieces are born
+    overlapping and drift apart over 1-8 s; with a fixed 1 s ghost every
+    still-overlapping sibling pair ground every frame afterwards (3,520
+    float-noise hit-VFX spawns in 10 s, live: every render frame). Ghosted
+    until separated, there must be no sibling grind VFX at all and no death
+    beyond the parent."""
+    from engine.appc import collisions, debris_chunk, hit_vfx
+    from engine.appc.ship_iter import iter_ships
+    from engine.rocks import chunks as rock_chunks, death
+    mod = _init_e1m2()
+    pSet = App.g_kSetManager.GetSet("Vesuvi6")
+    mod.CreateMovingAsteroids()
+    rocks = [App.ShipClass_GetObject(pSet, n) for n in mod.g_dAsteroidInfo]
+    for s in iter_ships():              # host realise: hull radius when unset
+        if s.GetRadius() <= 0.0 and s.GetHull() is not None:
+            s.SetRadius(s.GetHull().GetRadius())
+    rocks.sort(key=lambda r: -r.GetScale())
+    target = rocks[0]
+    p0 = target.GetWorldLocation()      # isolate it: everything else far off
+    target.SetTranslateXYZ(p0.x, p0.y, p0.z + 3000.0)
+    for i, r in enumerate(rocks[1:]):
+        q = r.GetWorldLocation()
+        r.SetTranslateXYZ(q.x, q.y, q.z - 3000.0 - 50 * i)
+    tl = target.GetWorldLocation()
+    player = App.Game_GetCurrentGame().GetPlayer()
+    if player is not None:
+        player.SetTranslateXYZ(tl.x + 500, tl.y, tl.z)
+        player.SetVelocity(App.TGPoint3(0, 0, 0))
+
+    grinding = [False]
+    grind_vfx = []
+    deaths = []
+    real_grind, real_spawn, real_begin = (collisions._grind_contact,
+                                          hit_vfx.spawn, death.begin)
+
+    def grind(*a, **k):
+        grinding[0] = True
+        try:
+            return real_grind(*a, **k)
+        finally:
+            grinding[0] = False
+
+    def spawn(*a, **k):
+        if grinding[0]:
+            grind_vfx.append(1)
+        return real_spawn(*a, **k)
+
+    def begin(rock, killer=None):
+        if not (death.is_dying_rock(rock) or rock.IsDead()):
+            deaths.append(rock.GetName())
+        return real_begin(rock, killer)
+
+    monkeypatch.setattr(collisions, "_grind_contact", grind)
+    monkeypatch.setattr(hit_vfx, "spawn", spawn)
+    monkeypatch.setattr(death, "begin", begin)
+    target.DamageSystem(target.GetHull(), 1e9)
+    renderer = _NullRenderer()
+    loop = GameLoop()
+    dt = 1.0 / 60.0
+    for _ in range(600):                # 10 s
+        loop.tick()
+        debris_chunk.tick(dt, renderer)
+        collisions.tick_collisions(dt)
+        rock_chunks.pump(renderer, None)
+        death.drain_death_vfx()
+    assert deaths == [target.GetName()]
+    assert grind_vfx == []

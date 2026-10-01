@@ -23,7 +23,7 @@ kRockDeathLife = 0.5
 kMaxQueuedSpecs = 256
 
 _dying: list = []           # [{"rock", "time_left"}]
-_ghosts: list = []          # [{"objs": [parent, piece...], "time_left"}]
+_ghosts: list = []          # [{"a", "b", "time_left"}], one per masked pair
 _chunk_specs: list = []
 _vfx_specs: list = []
 _warned_setless = False
@@ -39,9 +39,9 @@ class ChunkSpec:
     vel: tuple
     angular: tuple
     pSet: object
-    # ObjIDs of the breakup's parent and major pieces: the host ghosts the
-    # chunk against these (and its sibling chunks) for kPieceGhostTime.
-    ghost_ids: tuple = ()
+    # The breakup's parent, major pieces and killer: the host ghosts the
+    # chunk against these (and its sibling chunks) until each pair separates.
+    ghost_peers: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ def _break_up(rock, pSet, name, killer=None) -> None:
     """Spawn the breakup. `killer` is the body whose hit caused the death (a
     collision's other body, planets included -- collisions passes it to
     apply_hit as `source`, which DamageSystem hands to begin()). It joins
-    the ghost set for kPieceGhostTime, and when it is immovable every
+    the ghost set (masked until separated), and when it is immovable every
     piece's velocity toward its centre is removed."""
     from engine.rocks.rock import RockClass_Create, effective_radius
     if killer is rock:
@@ -207,11 +207,10 @@ def _break_up(rock, pSet, name, killer=None) -> None:
             chunk_specs.append(ChunkSpec(
                 family, "%s#%d" % (name, i), p.radius_gu,
                 stats.piece_mass(parent_mass, p.v_ratio), at, vel, ang, pSet))
-    # Chunk specs wait for the majors: they carry every piece's ObjID, and
-    # the killer's.
+    # Chunk specs wait for the majors: they carry every piece, and the killer.
     ghosted = [rock] + pieces + ([killer] if killer is not None else [])
-    ghost_ids = tuple(o.GetObjID() for o in ghosted)
-    _enqueue(_chunk_specs, [replace(s, ghost_ids=ghost_ids) for s in chunk_specs])
+    _enqueue(_chunk_specs, [replace(s, ghost_peers=tuple(ghosted))
+                            for s in chunk_specs])
     if pieces:
         _ghost(ghosted)
 
@@ -245,17 +244,34 @@ def _set_pairs(objs, on) -> None:
 
 
 def _ghost(objs) -> None:
+    """Mask every pair in `objs`; each is unmasked by _advance_ghosts once its
+    contact spheres are clear, or after kGhostMaxTime."""
     _set_pairs(objs, False)
-    _ghosts.append({"objs": objs, "time_left": breakup.kPieceGhostTime})
+    for i, a in enumerate(objs):
+        for b in objs[i + 1:]:
+            _ghosts.append({"a": a, "b": b, "time_left": breakup.kGhostMaxTime})
 
 
 def _advance_ghosts(dt: float) -> None:
+    from engine.appc.collisions import ghost_peer_gone, spheres_clear
     done = []
     for g in list(_ghosts):
         g["time_left"] -= dt
-        if g["time_left"] <= 0.0:
+        a, b = g["a"], g["b"]
+        if ghost_peer_gone(a) or ghost_peer_gone(b):
+            done.append(g)               # dropped; _set_pairs is raise-safe
+        elif g["time_left"] <= 0.0:
             done.append(g)
-            _set_pairs(g["objs"], True)
+        else:
+            try:
+                clear = spheres_clear(a, b, breakup.kGhostSeparationMarginGU)
+            except Exception as e:
+                dev_mode.log_swallowed("rock ghost separation", e)
+                clear = True
+            if not clear:
+                continue
+            done.append(g)
+        _set_pairs([a, b], True)
     _remove_entries(_ghosts, done)
 
 

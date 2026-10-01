@@ -308,9 +308,18 @@ def _majors_of(pSet, name, radius):
     return [pSet.GetObject("%s-%d" % (name, i)) for i in range(1, n + 1)]
 
 
-def test_parent_collisions_off_and_pieces_ghosted_then_unmasked():
+def _spread(objs, step=100.0):
+    """Move every object far from every other (and from the origin, where the
+    parent sits): headless nothing integrates the pieces apart."""
+    for i, o in enumerate(objs):
+        o.SetTranslateXYZ(step * (i + 1), 0.0, 0.0)
+
+
+def test_parent_collisions_off_and_pieces_ghosted_while_overlapping():
+    """Ghost until separated (tuned after live test 2026-10-01): pieces born
+    overlapping stay masked as long as they overlap, well past the old fixed
+    1 s window that let them grind each other afterwards."""
     from engine.rocks import breakup, death
-    assert breakup.kPieceGhostTime == 1.0
     rock = _make(App.GENUS_ASTEROID)
     rock.SetRadius(4.0)
     pSet = _in_set(rock, "Asteroid 5b")
@@ -322,23 +331,77 @@ def test_parent_collisions_off_and_pieces_ghosted_then_unmasked():
         assert _pair_masked(x, rock)
         for y in pieces[i + 1:]:
             assert _pair_masked(x, y)
-    death.advance(breakup.kPieceGhostTime - 0.01)
-    assert _pair_masked(pieces[0], pieces[1])     # still ghosted
-    death.advance(0.02)
+    for _ in range(150):                          # 2.5 s, nothing moves
+        death.advance(1.0 / 60.0)
+    assert _pair_masked(pieces[0], pieces[1])     # still overlapping
+
+
+def test_pieces_unmask_within_one_advance_of_separating():
+    from engine.rocks import death
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    pieces = _majors_of(pSet, "Asteroid 5b", 4.0)
+    death.advance(1.0 / 60.0)
+    assert _pair_masked(pieces[0], pieces[1])
+    _spread(pieces)
+    death.advance(1.0 / 60.0)
     for i, x in enumerate(pieces):
+        assert not _pair_masked(x, rock)
         for y in pieces[i + 1:]:
             assert not _pair_masked(x, y)
 
 
-def test_unghost_is_safe_when_a_piece_is_gone():
+def test_separation_margin_is_beyond_the_contact_spheres():
+    from engine.appc.collisions import contact_radius
     from engine.rocks import breakup, death
+    assert breakup.kGhostSeparationMarginGU == 0.25
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    a, b = _majors_of(pSet, "Asteroid 5b", 4.0)[:2]
+    _spread(_majors_of(pSet, "Asteroid 5b", 4.0))
+    reach = contact_radius(a) + contact_radius(b)
+    a.SetTranslateXYZ(500.0, 0.0, 0.0)
+    b.SetTranslateXYZ(500.0 + reach + 0.2, 0.0, 0.0)
+    death.advance(1.0 / 60.0)
+    assert _pair_masked(a, b)                     # touching-ish: inside margin
+    b.SetTranslateXYZ(500.0 + reach + 0.3, 0.0, 0.0)
+    death.advance(1.0 / 60.0)
+    assert not _pair_masked(a, b)
+
+
+def test_ghost_cap_forces_unmask_while_still_overlapping():
+    from engine.rocks import breakup, death
+    assert breakup.kGhostMaxTime == 10.0
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    pieces = _majors_of(pSet, "Asteroid 5b", 4.0)
+    death.advance(breakup.kGhostMaxTime - 0.01)
+    assert _pair_masked(pieces[0], pieces[1])
+    death.advance(0.02)
+    for i, x in enumerate(pieces):
+        for y in pieces[i + 1:]:
+            assert not _pair_masked(x, y)
+    assert not death._ghosts
+
+
+def test_unghost_is_safe_when_a_piece_is_gone():
+    from engine.rocks import death
     rock = _make(App.GENUS_ASTEROID)
     rock.SetRadius(4.0)
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
     pieces = _majors_of(pSet, "Asteroid 5b", 4.0)
     pSet.DeleteObjectFromSet(pieces[0].GetName())
-    death.advance(breakup.kPieceGhostTime + 0.01)   # must not raise
+    death.advance(1.0 / 60.0)                     # must not raise
+    assert not any(pieces[0] in (g["a"], g["b"]) for g in death._ghosts)
+    _spread(pieces[1:])
+    death.advance(1.0 / 60.0)
     assert not _pair_masked(pieces[1], pieces[2])
 
 
@@ -441,8 +504,12 @@ def test_movable_killer_is_ghosted_against_pieces_and_chunks():
     for p in pieces:
         assert _pair_masked(p, ship)
     specs = death.drain_chunk_specs()
-    assert specs and all(ship.GetObjID() in s.ghost_ids for s in specs)
-    death.advance(breakup.kPieceGhostTime + 0.01)
+    assert specs and all(ship in s.ghost_peers for s in specs)
+    death.advance(1.0 / 60.0)
+    for p in pieces:
+        assert _pair_masked(p, ship)           # within the margin of the killer
+    _spread(pieces)
+    death.advance(1.0 / 60.0)
     for p in pieces:
         assert not _pair_masked(p, ship)
 
@@ -474,8 +541,8 @@ def test_planet_killer_is_ghosted_from_the_piece_side_only():
         assert planet.GetObjID() in p._collision_disabled_ids
     assert "_collision_disabled_ids" not in planet.__dict__
     specs = death.drain_chunk_specs()
-    assert specs and all(planet.GetObjID() in s.ghost_ids for s in specs)
-    death.advance(breakup.kPieceGhostTime + 0.01)
+    assert specs and all(planet in s.ghost_peers for s in specs)
+    death.advance(1.0 / 60.0)                 # 60 GU off: already clear
     for p in pieces:
         assert planet.GetObjID() not in p._collision_disabled_ids
 

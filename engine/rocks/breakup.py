@@ -16,9 +16,15 @@ kPieceCountMin = 2
 kPieceCountMax = 5
 kSeparationSpeedGU = 0.4
 kTumbleRate = 0.5
-# Seconds a new major piece ignores collisions with its siblings and parent:
-# pieces are born overlapping, and a grind contact would chain breakups.
-kPieceGhostTime = 1.0
+# A breakup group (parent, major pieces, chunks, killer) ignores collisions
+# pair by pair until that pair's contact spheres are kGhostSeparationMarginGU
+# clear: pieces are born overlapping, and a grind contact would chain
+# breakups. Pieces drift apart over 1-8 s (2026-10-01 cascade probe), so the
+# old fixed 1 s window (kPieceGhostTime, retired) let still-overlapping
+# siblings grind every frame. kGhostMaxTime is the safety cap: a pair that
+# never separates is unmasked after it regardless.
+kGhostSeparationMarginGU = 0.25
+kGhostMaxTime = 10.0
 
 
 @dataclass(frozen=True)

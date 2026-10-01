@@ -78,10 +78,14 @@ class DebrisChunk:
         # True while tick() has hidden the instance because the chunk's set is
         # outside the viewed frame; visibility is pushed only on a change.
         self._frame_hidden = False
-        # Seconds left on a TIMED pair mask (ghost()); None = the parent-
-        # distance release below. Rock chunks use the timer: their "origin"
-        # is a sentinel with no position, and a breakup's parent, major
-        # pieces and sibling chunks all have to be ignored, not one parent.
+        # A GROUP pair mask (ghost()): the peers still masked, and seconds
+        # left before the safety cap lifts the rest. _ghost_time_left None =
+        # the parent-distance release below. Rock chunks use the group mask:
+        # their "origin" is a sentinel with no position, and a breakup's
+        # parent, major pieces and sibling chunks all have to be ignored --
+        # each until that pair's contact spheres are clear.
+        self._ghost_peers = []
+        self._ghost_margin = 0.0
         self._ghost_time_left = None
 
     @property
@@ -182,7 +186,7 @@ def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
 class _BodyOrigin:
     """weakref target for a chunk with no parent hull (spawn_body): the only
     reader of origin_ship is _release_parent_mask_if_clear, which a ghost()
-    timer or an empty mask bypasses."""
+    group mask or an empty mask bypasses."""
 
 
 _BODY_ORIGIN = _BodyOrigin()
@@ -205,15 +209,41 @@ def spawn_body(iid, *, loc, rot, vel, angular, mass, radius, scale,
     return chunk
 
 
-def ghost(chunks, peer_ids, seconds):
-    """Mask every chunk in `chunks` against the ObjIDs `peer_ids` and against
-    each other for `seconds`, then tick() lifts the mask. The mask is read
-    symmetrically by collisions.resolve_collisions, so listing a peer on the
-    chunk side alone exempts the pair."""
-    ids = frozenset(peer_ids) | frozenset(c.GetObjID() for c in chunks)
+def ghost(chunks, peers, margin, max_seconds):
+    """Mask every chunk in `chunks` against the objects `peers` and against
+    each other. tick() lifts each pair once its contact spheres are `margin`
+    GU clear (collisions.spheres_clear), or when a peer is gone, and lifts
+    whatever is left after `max_seconds`. The mask is read symmetrically by
+    collisions.resolve_collisions, so listing a peer on the chunk side alone
+    exempts the pair."""
+    group = list(peers) + list(chunks)
     for c in chunks:
-        c._collision_disabled_ids = ids - {c.GetObjID()}
-        c._ghost_time_left = float(seconds)
+        c._ghost_peers = [o for o in group if o is not c]
+        c._collision_disabled_ids = frozenset(o.GetObjID() for o in c._ghost_peers)
+        c._ghost_margin = float(margin)
+        c._ghost_time_left = float(max_seconds)
+
+
+def _release_ghost_peers(c, dt):
+    from engine.appc.collisions import ghost_peer_gone, spheres_clear
+    c._ghost_time_left -= dt
+    if c._ghost_time_left <= 0.0:
+        keep = []
+    else:
+        keep = []
+        for o in c._ghost_peers:
+            try:
+                if ghost_peer_gone(o) or spheres_clear(c, o, c._ghost_margin):
+                    continue
+            except Exception as _e:
+                dev_mode.log_swallowed("debris chunk ghost separation", _e)
+                continue
+            keep.append(o)
+    if len(keep) != len(c._ghost_peers):
+        c._ghost_peers = keep
+        c._collision_disabled_ids = frozenset(o.GetObjID() for o in keep)
+    if not keep:
+        c._ghost_time_left = None
 
 
 def live():
@@ -261,11 +291,11 @@ def tick(dt, renderer):
         v = c._vel
         c._loc = TGPoint3(c._loc.x + v.x * dt, c._loc.y + v.y * dt, c._loc.z + v.z * dt)
         _integrate_rotation(c, dt)
+    # Masks are released after EVERY chunk has moved, so both sides of a
+    # chunk-chunk pair judge separation on the same positions.
+    for c in _live:
         if c._ghost_time_left is not None:
-            c._ghost_time_left -= dt
-            if c._ghost_time_left <= 0.0:
-                c._collision_disabled_ids = frozenset()
-                c._ghost_time_left = None
+            _release_ghost_peers(c, dt)
         else:
             c._release_parent_mask_if_clear()
         push_transform(c, renderer, view)

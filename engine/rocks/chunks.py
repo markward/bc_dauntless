@@ -66,8 +66,9 @@ def pump(renderer, session) -> None:
         if chunk is None:
             continue
         debris_chunk.push_transform(chunk, renderer)
-        if spec.ghost_ids:
-            groups[spec.ghost_ids].append(chunk)
-    # One breakup's chunks share its ghost_ids (the parent's ObjID is unique).
-    for ghost_ids, members in groups.items():
-        debris_chunk.ghost(members, ghost_ids, breakup.kPieceGhostTime)
+        if spec.ghost_peers:
+            groups[tuple(id(o) for o in spec.ghost_peers)].append((spec, chunk))
+    # One breakup's chunks share its ghost_peers (the parent is unique to it).
+    for entries in groups.values():
+        debris_chunk.ghost([c for _, c in entries], entries[0][0].ghost_peers,
+                           breakup.kGhostSeparationMarginGU, breakup.kGhostMaxTime)

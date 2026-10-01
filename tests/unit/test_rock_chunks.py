@@ -41,10 +41,10 @@ def _clean():
         App.g_kSetManager.DeleteSet("RockTest")
 
 
-def _spec(radius=0.3, seed="Asteroid 5b#3", pSet=None, ghost_ids=()):
+def _spec(radius=0.3, seed="Asteroid 5b#3", pSet=None, ghost_peers=()):
     from engine.rocks import death
     return death.ChunkSpec("silicate", seed, radius, 5.0, (1.0, 0.0, 0.0),
-                           (0.1, 0.0, 0.0), (0.0, 0.2, 0.0), pSet, ghost_ids)
+                           (0.1, 0.0, 0.0), (0.0, 0.2, 0.0), pSet, ghost_peers)
 
 
 def test_chunk_spec_becomes_rendered_tumbling_body():
@@ -108,37 +108,83 @@ def _masked(x, y):
             or x.GetObjID() in _collision_disabled_ids(y))
 
 
-def test_chunks_ghost_their_breakup_then_collide_normally():
-    """Carried ruling: chunks of one breakup ignore each other, the parent and
-    its major pieces for kPieceGhostTime, then collide normally."""
+def _chunk_breakup():
     from engine.appc import debris_chunk
     from engine.rocks import breakup, chunks, death
     rock = _make(App.GENUS_ASTEROID)
-    rock.SetRadius(2.0)                 # "Asteroid 5b" at 2.0: 3 majors, 2 chunks
+    rock.SetRadius(2.0)                 # "Asteroid 5b" at 2.0: majors + chunks
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
     n = sum(1 for p in breakup.plan("Asteroid 5b", 2.0) if p.tier == "major")
     majors = [pSet.GetObject("Asteroid 5b-%d" % i) for i in range(1, n + 1)]
     r = FakeRenderer()
     chunks.pump(r, session=None)
-    live = debris_chunk.live()
+    return rock, pSet, majors, debris_chunk.live(), r
+
+
+def _still(chunks_):
+    from engine.appc.math import TGPoint3
+    for c in chunks_:
+        c._vel = TGPoint3(0.0, 0.0, 0.0)
+
+
+def _assert_all_masked(rock, majors, live, want):
+    for i, c in enumerate(live):
+        assert _masked(c, rock) is want
+        for m in majors:
+            assert _masked(c, m) is want
+        for d in live[i + 1:]:
+            assert _masked(c, d) is want
+
+
+def test_chunks_ghost_their_breakup_while_overlapping():
+    """Carried ruling, tuned after live test 2026-10-01: chunks of one
+    breakup ignore each other, the parent and its major pieces until their
+    contact spheres are clear, not for a fixed 1 s."""
+    from engine.appc import debris_chunk
+    rock, pSet, majors, live, r = _chunk_breakup()
     assert len(live) >= 2 and majors
-    for i, c in enumerate(live):
+    for c in live:
         assert c.GetContainingSet() is pSet
-        assert _masked(c, rock)
-        for m in majors:
-            assert _masked(c, m)
-        for d in live[i + 1:]:
-            assert _masked(c, d)
-    debris_chunk.tick(breakup.kPieceGhostTime - 0.01, r)
+    _assert_all_masked(rock, majors, live, True)
+    _still(live)
+    for _ in range(150):                # 2.5 s, nothing moves
+        debris_chunk.tick(1.0 / 60.0, r)
     assert _masked(live[0], live[1]) and _masked(live[0], majors[0])
+
+
+def test_chunks_unmask_within_one_tick_of_separating():
+    from engine.appc import debris_chunk
+    from engine.appc.math import TGPoint3
+    rock, pSet, majors, live, r = _chunk_breakup()
+    _still(live)
+    debris_chunk.tick(1.0 / 60.0, r)
+    assert _masked(live[0], live[1])
+    for i, o in enumerate(majors + live):
+        o.SetTranslateXYZ(100.0 * (i + 1), 0.0, 0.0)
+    debris_chunk.tick(1.0 / 60.0, r)
+    _assert_all_masked(rock, majors, live, False)
+
+
+def test_chunk_ghost_cap_forces_unmask():
+    from engine.appc import debris_chunk
+    from engine.rocks import breakup
+    rock, pSet, majors, live, r = _chunk_breakup()
+    _still(live)
+    debris_chunk.tick(breakup.kGhostMaxTime - 0.01, r)
+    assert _masked(live[0], live[1])
     debris_chunk.tick(0.02, r)
-    for i, c in enumerate(live):
-        assert not _masked(c, rock)
-        for m in majors:
-            assert not _masked(c, m)
-        for d in live[i + 1:]:
-            assert not _masked(c, d)
+    _assert_all_masked(rock, majors, live, False)
+
+
+def test_chunk_ghost_drops_a_peer_that_is_gone():
+    from engine.appc import debris_chunk
+    rock, pSet, majors, live, r = _chunk_breakup()
+    _still(live)
+    pSet.DeleteObjectFromSet(majors[0].GetName())
+    debris_chunk.tick(1.0 / 60.0, r)                # must not raise
+    for c in live:
+        assert majors[0] not in c._ghost_peers
 
 
 def test_spawn_body_registers_a_colliding_body():

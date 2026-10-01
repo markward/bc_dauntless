@@ -143,6 +143,41 @@ def contact_radius(obj) -> float:
     return world_radius(obj) * _boundary_shrink(obj)
 
 
+def ghost_peer_gone(obj) -> bool:
+    """Whether a ghosted pair member has left the world: a DebrisChunk no
+    longer live, or anything dead or out of every set. Class-level lookups
+    (TGObject.__getattr__ vends a truthy _Stub for unknown names)."""
+    from engine.appc import debris_chunk
+    if obj is None:
+        return True
+    if isinstance(obj, debris_chunk.DebrisChunk):
+        return not any(c is obj for c in debris_chunk.live())
+    dead = getattr(type(obj), "IsDead", None)
+    from engine import dev_mode
+    try:
+        if dead is not None and dead(obj):
+            return True
+    except Exception as e:
+        dev_mode.log_swallowed("ghost peer IsDead", e)
+    from engine.systems import frames
+    return frames.containing_set(obj) is None
+
+
+def spheres_clear(a, b, margin: float) -> bool:
+    """Whether `a` and `b`'s CONTACT spheres (contact_radius, what
+    _respond_pair tests) are at least `margin` GU apart, compared in one
+    frame. A pair in no common frame cannot collide, so it counts as clear."""
+    from engine.systems import frames
+    off = frames.offset_between(frames.containing_set(a), frames.containing_set(b))
+    if off is None:
+        return True
+    pa = a.GetWorldLocation()
+    pb = _shifted(b.GetWorldLocation(), off)
+    dx, dy, dz = pb.x - pa.x, pb.y - pa.y, pb.z - pa.z
+    reach = contact_radius(a) + contact_radius(b) + float(margin)
+    return dx * dx + dy * dy + dz * dz >= reach * reach
+
+
 @dataclass
 class _Body:
     obj: object
