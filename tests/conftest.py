@@ -1516,6 +1516,11 @@ def _reset_leakable_engine_globals():
         _md.reset()
     except Exception:
         pass
+    try:
+        from engine.rocks import far_dials as _fd
+        _fd.reset()
+    except Exception:
+        pass
     # Minor-cloud registry (engine/rocks/minors.py): held ids, free clouds and
     # the fragment memo would otherwise carry one test's clouds into the next.
     try:
