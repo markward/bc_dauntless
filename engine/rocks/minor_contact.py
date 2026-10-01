@@ -77,8 +77,10 @@ def _play_grit(point, radius: float) -> bool:
         return False
     old = snd.GetVolume()
     snd.SetVolume(old * md.get("grit_volume") * min(1.0, radius / 0.5))
-    snd.Play(position=point)
-    snd.SetVolume(old)
+    try:
+        snd.Play(position=point)
+    finally:
+        snd.SetVolume(old)      # a shared pool sound: never leave it quiet
     return True
 
 

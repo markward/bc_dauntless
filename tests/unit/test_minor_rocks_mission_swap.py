@@ -48,3 +48,21 @@ def test_boot_registers_the_minor_dial_group_beside_the_nebula_dials():
     mnr = src.find("_minor_dials.register()")
     assert neb >= 0 and mnr >= 0
     assert 0 < mnr - neb < 400, "register the minors group beside the nebula's"
+
+
+def test_a_mission_swap_resets_the_minor_contact_rate_limits():
+    """Final review #5: the contact token buckets hold game times. The next
+    mission's clock restarts, and a depleted stale bucket would not refill
+    until that clock passed the old mission's last touch."""
+    from engine.rocks import minor_contact
+
+    class _FakeRenderer:
+        def destroy_instance(self, iid):
+            pass
+        def minors_clear(self):
+            pass
+
+    minor_contact._take("puff", 500.0)
+    assert minor_contact._buckets
+    _swap(_FakeRenderer())
+    assert minor_contact._buckets == {}

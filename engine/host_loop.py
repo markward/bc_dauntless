@@ -5019,6 +5019,17 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
     r.set_system_nebula_star(tuple(suns[0]["position"]) if suns else None)
 
 
+def _pump_minor_contact(player, session) -> None:
+    """Minor-rock contact responses (puff / grit / shield flicker) are
+    cosmetic: nothing the pump raises may break the frame."""
+    try:
+        from engine.rocks import minor_contact
+        minor_contact.pump(player, session=session)
+    except Exception as e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("minor contact pump", e)
+
+
 def _veil_flares(r, flares, player):
     """Billboard flares see no fog (their visibility is one depth read), so
     under the system nebula pass they take the exact eye->star transmittance
@@ -6820,6 +6831,8 @@ class HostController:
         _debris_chunk.clear(self.renderer)
         from engine.rocks import minors as _minors
         _minors.reset(self.renderer)
+        from engine.rocks import minor_contact as _minor_contact
+        _minor_contact.reset()
         from engine.appc import hull_breakup as _hull_breakup
         _hull_breakup.reset()
         _explosion_lights.reset()
@@ -11086,8 +11099,7 @@ def run(mission_name: Optional[str] = None,
                 with frame_profiler.scope("sim.rock_breakup"):
                     from engine.rocks import vfx as rock_vfx
                     rock_vfx.pump()
-                    from engine.rocks import minor_contact
-                    minor_contact.pump(player, session=session)
+                    _pump_minor_contact(player, session=session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame
