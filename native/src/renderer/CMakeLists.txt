@@ -155,6 +155,7 @@ add_library(renderer STATIC
     backdrop_pass.cc
     sun_pass.cc
     dust_pass.cc
+    minor_field.cc
     nebula_pass.cc
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc
