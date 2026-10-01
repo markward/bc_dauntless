@@ -108,6 +108,9 @@ namespace {
     // before it reaches the shader: authored values read too bright at
     // face value (tune-by-eye).
     constexpr float kStrengthScale = 0.5f;
+    // kStrengthScale for other TUs (constexpr has internal linkage): the
+    // minor-rock pass computes its own u_rim_strength (host_bindings.cc).
+    float strength_scale() { return kStrengthScale; }
 }
 
 // Toggle for the HDR resolve pass (tonemap + bloom + grade). Default on.

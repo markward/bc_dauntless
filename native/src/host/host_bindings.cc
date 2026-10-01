@@ -33,6 +33,8 @@
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
+#include <renderer/minor_field.h>
+#include <renderer/minor_pass.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_atmosphere.h>
@@ -119,6 +121,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -201,6 +204,12 @@ namespace dauntless_nebula_lightning {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Opaque-pass Fresnel rim gate + scale. Defined in frame.cc. The minor-rock
+// pass draws outside FrameSubmitter, so it computes u_rim_strength here.
+namespace dauntless_rim {
+    bool enabled();            // defined in frame.cc
+    float strength_scale();    // defined in frame.cc (kStrengthScale)
+}
 namespace dauntless_ambient_gradient {
     float strength();          // defined in frame.cc
     void  set_strength(float);  // defined in frame.cc
@@ -249,6 +258,18 @@ std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
 float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-1
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
+// Minor rocks (docs/superpowers/specs/2026-10-01-minor-rocks-design.md). The
+// field is pure CPU state stepped in frame()'s xform_sync block; the pass owns
+// GL (VAOs, instance buffer) and lives with the context like the other passes.
+renderer::minors::MinorField g_minor_field;
+std::unique_ptr<renderer::MinorPass> g_minor_pass;
+bool g_minors_enabled = true;
+std::optional<scenegraph::InstanceId> g_minor_player;
+int g_minor_draw_calls = 0;
+// Model-space hull AABB per model handle, for the player's contact box.
+// compute_model_aabb walks every vertex, so it runs once per handle; cleared
+// with the handles (reset_frame_state) because handles are reissued.
+std::unordered_map<std::uint64_t, renderer::Aabb> g_minor_player_aabbs;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
@@ -754,6 +775,18 @@ void reset_frame_state() {
     // InstanceId and borrowing g_decal_mask_cache's texture ids: a new
     // session's world recycles ids from scratch, so none may survive.
     renderer::clear_instance_decal_overrides();
+
+    // Minor rocks: clouds, fragment tables, pending contacts and the player's
+    // previous pose all belong to the old session. MinorPass VAOs are keyed
+    // on model handles, which a new session reissues from 1.
+    g_minor_field.clear();
+    g_minor_field.reset_player();
+    g_minor_field.set_dials({});
+    g_minors_enabled = true;
+    g_minor_player.reset();
+    g_minor_draw_calls = 0;
+    g_minor_player_aabbs.clear();
+    if (g_minor_pass) g_minor_pass->forget_models();
 }
 
 void init(int width, int height, const std::string& title) {
@@ -780,6 +813,7 @@ void init(int width, int height, const std::string& title) {
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
+    g_minor_pass = std::make_unique<renderer::MinorPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
     g_system_nebula_pass = std::make_unique<renderer::SystemNebulaPass>();
@@ -859,6 +893,7 @@ void shutdown() {
                               // GL context is still alive.
     g_sun_pass.reset();
     g_dust_pass.reset();
+    g_minor_pass.reset();     // releases VAOs + instance buffer (GL alive)
     g_nebula_pass.reset();
     g_nebula_volumetric_pass.reset();
     g_system_nebula_pass.reset();
@@ -958,6 +993,47 @@ void sync_instance_transforms_from_store() {
     });
 }
 
+// The player's contact box for this frame, or nullopt when there is no
+// player, its instance is gone, or its model is unresolved.
+std::optional<renderer::minors::PlayerBox> minor_player_box() {
+    if (!g_minor_player) return std::nullopt;
+    const scenegraph::Instance* inst = g_world.get(*g_minor_player);
+    if (inst == nullptr) return std::nullopt;
+    auto it = g_minor_player_aabbs.find(inst->model_handle);
+    if (it == g_minor_player_aabbs.end()) {
+        const assets::Model* m = resolve_model(inst->model_handle);
+        if (m == nullptr) return std::nullopt;
+        it = g_minor_player_aabbs.emplace(inst->model_handle,
+                                          renderer::compute_model_aabb(*m)).first;
+    }
+    return renderer::minors::PlayerBox{inst->world, it->second.center,
+                                       it->second.half_extents};
+}
+
+// One MinorField step for frame(). Instance anchors are keyed
+// (index<<32)|generation and resolve to the instance's RENDER-space origin.
+void step_minor_field(float viewport_h) {
+    renderer::minors::StepInput in;
+    in.game_time = g_decal_game_time;
+    in.render_origin = g_world.render_origin();
+    in.view = g_camera.view_matrix();
+    in.proj = g_camera.proj_matrix();
+    in.viewport_h = viewport_h;
+    in.anchor_of = [](std::uint64_t key, glm::vec3& out) {
+        const scenegraph::InstanceId id{static_cast<std::uint32_t>(key >> 32),
+                                        static_cast<std::uint32_t>(key & 0xffffffffu)};
+        const scenegraph::Instance* inst = g_world.get(id);
+        if (inst == nullptr) return false;
+        out = glm::vec3(inst->world[3]);
+        return true;
+    };
+    in.player = minor_player_box();
+    // A player that vanished this frame must not be swept from its last pose
+    // when it (or a successor) reappears.
+    if (!in.player) g_minor_field.reset_player();
+    g_minor_field.step(in);
+}
+
 void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
@@ -1001,6 +1077,13 @@ void frame() {
         // (store-bound ships) and every set_world_transform push
         // (interpolated ships, which landed before frame() was entered).
         renderer::resolve_attached_dynamic_lights(g_world, g_dynamic_lights);
+        // Minor rocks step against the same RENDER-space inst->world the
+        // hulls draw with: Instance anchors and the player's contact box.
+        g_minor_draw_calls = 0;   // the draw below sets it, if it runs
+        if (g_minors_enabled) {
+            DAUNTLESS_FRAME_SCOPE("space.minors.step");
+            step_minor_field(static_cast<float>(fh));
+        }
     }
 
     {
@@ -1088,6 +1171,21 @@ void frame() {
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
                 ambient_scale, dyn_lights, g_instance_field_cache.get());
+        }
+        // Minor rocks. The field's bins were culled and LOD-picked against
+        // g_camera in the step above, so they are drawn only by the pass
+        // that renders with g_camera itself -- never into the viewscreen RTT,
+        // whose camera (a copy, or the bridge-view feed) saw a different scene.
+        if (g_minors_enabled && g_minor_pass && &cam == &g_camera) {
+            DAUNTLESS_FRAME_SCOPE("space.minors.draw");
+            // Instance::rim_strength's 0.1 default, gated + scaled as
+            // FrameSubmitter does for every opaque instance.
+            const float rim = dauntless_rim::enabled()
+                ? 0.1f * dauntless_rim::strength_scale() : 0.0f;
+            g_minor_pass->render(g_minor_field, cam, *g_pipeline,
+                                 [](std::uint64_t h) { return resolve_model(h); },
+                                 g_lighting, ambient_scale, rim);
+            g_minor_draw_calls = g_minor_pass->last_draw_calls();
         }
         // Stencil-mark where the hull was cut away, so the scoop below draws
         // only through real holes and never in open space. Must sit between the
@@ -1982,6 +2080,157 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
     }
     return out;
 }
+
+// ── Minor rocks: Python <-> renderer::minors conversions ───────────────────
+namespace {
+
+namespace mr = renderer::minors;
+
+std::uint64_t minor_instance_key(const scenegraph::InstanceId& id) {
+    return (static_cast<std::uint64_t>(id.index) << 32) | id.generation;
+}
+
+glm::vec3 vec3_of(const py::handle& o) {
+    const auto t = o.cast<std::tuple<float, float, float>>();
+    return {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+}
+glm::dvec3 dvec3_of(const py::handle& o) {
+    const auto t = o.cast<std::tuple<double, double, double>>();
+    return {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+}
+glm::mat4 mat4_of(const std::vector<float>& m16, const char* what) {
+    if (m16.size() != 16)
+        throw std::runtime_error(std::string(what) + ": need 16 floats (column-major)");
+    return glm::make_mat4(m16.data());
+}
+
+// A float32 dial as the Python float it was written as: the shortest decimal
+// that round-trips to the same float (0.05f -> 0.05, not 0.05000000074505806),
+// so dials() compares equal to engine/rocks/minor_dials.py's DEFAULTS.
+double py_float(float v) {
+    char buf[32];
+    for (int prec = 6; prec <= 9; ++prec) {
+        std::snprintf(buf, sizeof buf, "%.*g", prec, static_cast<double>(v));
+        if (std::strtof(buf, nullptr) == v) break;
+    }
+    return std::strtod(buf, nullptr);
+}
+
+std::vector<mr::DebrisSpec> debris_of(const py::handle& list) {
+    std::vector<mr::DebrisSpec> out;
+    if (list.is_none()) return out;
+    for (const auto& item : list.cast<py::list>()) {
+        const auto d = item.cast<py::dict>();
+        mr::DebrisSpec s;
+        s.offset = vec3_of(d["offset"]);
+        s.v0 = vec3_of(d["v0"]);
+        s.radius = d["radius"].cast<float>();
+        s.seed = d["seed"].cast<std::uint32_t>();
+        out.push_back(s);
+    }
+    return out;
+}
+
+mr::CloudDesc cloud_desc_of(const py::dict& d) {
+    mr::CloudDesc c;
+    c.id = d["id"].cast<std::uint32_t>();
+    const auto anchor = d["anchor"].cast<std::string>();
+    if (anchor == "instance") c.anchor = mr::Anchor::Instance;
+    else if (anchor == "point") c.anchor = mr::Anchor::Point;
+    else if (anchor == "free") c.anchor = mr::Anchor::Free;
+    else throw std::runtime_error("minors: unknown anchor '" + anchor + "'");
+    if (d.contains("instance") && !d["instance"].is_none())
+        c.instance_key = minor_instance_key(d["instance"].cast<scenegraph::InstanceId>());
+    c.point = dvec3_of(d["point"]);
+    c.velocity = vec3_of(d["velocity"]);
+    c.t0 = d["t0"].cast<double>();
+    c.shell_inner = d["shell_inner"].cast<float>();
+    c.shell_outer = d["shell_outer"].cast<float>();
+    c.falloff = d["falloff"].cast<float>();
+    c.count = d["count"].cast<int>();
+    c.r_min = d["r_min"].cast<float>();
+    c.r_max = d["r_max"].cast<float>();
+    c.size_exponent = d["size_exponent"].cast<float>();
+    c.family = d["family"].cast<int>();
+    c.seed = d["seed"].cast<std::uint32_t>();
+    c.orbit_rate = d["orbit_rate"].cast<float>();
+    c.fade_in = d["fade_in"].cast<bool>();
+    c.debris = debris_of(d.contains("debris") ? py::handle(d["debris"]) : py::handle(py::none()));
+    return c;
+}
+
+std::vector<mr::Fragment> fragments_of(
+        const std::vector<std::tuple<std::uint64_t, std::uint64_t, float>>& entries) {
+    std::vector<mr::Fragment> out;
+    out.reserve(entries.size());
+    for (const auto& [lod0, lod1, bound] : entries) out.push_back({lod0, lod1, bound});
+    return out;
+}
+
+// Each key read with `contains`; an omitted key resets to the struct default
+// (the system_nebula_set_dials convention).
+mr::Dials dials_of(const py::dict& d) {
+    mr::Dials o;
+    auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
+    auto i = [&](const char* k, int& v) { if (d.contains(k)) v = d[k].cast<int>(); };
+    f("min_pixel_radius", o.min_pixel_radius);
+    f("lod0_pixel_radius", o.lod0_pixel_radius);
+    f("tumble_min", o.tumble_min);
+    f("tumble_max", o.tumble_max);
+    f("cloud_fade_in_seconds", o.cloud_fade_in_seconds);
+    f("contact_margin_gu", o.contact_margin_gu);
+    f("shove_transfer", o.shove_transfer);
+    f("shove_min_gups", o.shove_min_gups);
+    f("shove_damp_seconds", o.shove_damp_seconds);
+    f("shove_tumble", o.shove_tumble);
+    i("max_shoves_per_frame", o.max_shoves_per_frame);
+    f("teleport_gu", o.teleport_gu);
+    f("contact_cooldown_s", o.contact_cooldown_s);
+    f("debris_damp_seconds", o.debris_damp_seconds);
+    return o;
+}
+
+py::dict dials_dict(const mr::Dials& o) {
+    py::dict d;
+    d["min_pixel_radius"] = py_float(o.min_pixel_radius);
+    d["lod0_pixel_radius"] = py_float(o.lod0_pixel_radius);
+    d["tumble_min"] = py_float(o.tumble_min);
+    d["tumble_max"] = py_float(o.tumble_max);
+    d["cloud_fade_in_seconds"] = py_float(o.cloud_fade_in_seconds);
+    d["contact_margin_gu"] = py_float(o.contact_margin_gu);
+    d["shove_transfer"] = py_float(o.shove_transfer);
+    d["shove_min_gups"] = py_float(o.shove_min_gups);
+    d["shove_damp_seconds"] = py_float(o.shove_damp_seconds);
+    d["shove_tumble"] = py_float(o.shove_tumble);
+    d["max_shoves_per_frame"] = o.max_shoves_per_frame;
+    d["teleport_gu"] = py_float(o.teleport_gu);
+    d["contact_cooldown_s"] = py_float(o.contact_cooldown_s);
+    d["debris_damp_seconds"] = py_float(o.debris_damp_seconds);
+    return d;
+}
+
+py::list contacts_list(std::vector<mr::Contact> contacts) {
+    py::list out;
+    for (const auto& c : contacts) {
+        py::dict d;
+        d["point"] = py::make_tuple(c.point_view.x, c.point_view.y, c.point_view.z);
+        d["radius"] = c.radius;
+        d["rel_speed"] = c.rel_speed;
+        out.append(d);
+    }
+    return out;
+}
+
+py::dict stats_dict(const mr::Stats& s) {
+    py::dict d;
+    d["clouds"] = s.clouds;
+    d["minors"] = s.minors;
+    d["drawn"] = s.drawn;
+    d["bins"] = s.bins;
+    return d;
+}
+
+}  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
@@ -3499,6 +3748,147 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Current system-scale nebula look dials as a dict (empty before "
           "init).");
+
+    // ── Minor rocks (minor-rocks spec; engine/renderer.py façade) ──────────
+    // All safe with the host down: they touch only the CPU-side field. `now`
+    // for clouds, fades and detaches is g_decal_game_time, the clock frame()
+    // steps the field with.
+    m.def("minors_add_cloud",
+          [](py::dict desc) { g_minor_field.add_cloud(cloud_desc_of(desc), g_decal_game_time); },
+          py::arg("desc"),
+          "Add (or replace, same id) a minor-rock cloud from a desc dict.");
+    m.def("minors_remove_cloud",
+          [](std::uint32_t id) { g_minor_field.remove_cloud(id); }, py::arg("id"));
+    m.def("minors_detach",
+          [](std::uint32_t id, std::tuple<double, double, double> p0,
+             std::tuple<float, float, float> v, double t0, py::list debris) {
+              g_minor_field.detach(id,
+                  {std::get<0>(p0), std::get<1>(p0), std::get<2>(p0)},
+                  {std::get<0>(v), std::get<1>(v), std::get<2>(v)}, t0,
+                  debris_of(debris));
+          },
+          py::arg("id"), py::arg("p0"), py::arg("v"), py::arg("t0"),
+          py::arg("debris"),
+          "Turn an Instance cloud Free at VIEW-space p0 moving at v (GU/s) "
+          "from game time t0, appending breakup debris dicts.");
+    m.def("minors_fade_out",
+          [](std::uint32_t id, float seconds) {
+              g_minor_field.fade_out(id, seconds, g_decal_game_time);
+          },
+          py::arg("id"), py::arg("seconds"));
+    m.def("minors_set_fragments",
+          [](int family,
+             const std::vector<std::tuple<std::uint64_t, std::uint64_t, float>>& entries) {
+              g_minor_field.set_fragments(family, fragments_of(entries));
+          },
+          py::arg("family"), py::arg("entries"),
+          "Set a family's fragment meshes: [(lod0_handle, lod1_handle, "
+          "bound_radius_mu), ...], each loaded at scale 1.");
+    m.def("minors_set_player",
+          [](std::optional<scenegraph::InstanceId> iid) {
+              // A new player (or none) must not be swept from the old pose.
+              if (!iid || !g_minor_player || !(*iid == *g_minor_player))
+                  g_minor_field.reset_player();
+              g_minor_player = iid;
+          },
+          py::arg("iid"),
+          "The instance whose hull box touches minors, or None for no contact.");
+    m.def("minors_set_dials",
+          [](py::dict d) { g_minor_field.set_dials(dials_of(d)); },
+          py::arg("dials"),
+          "Set the native minor dials (engine/rocks/minor_dials.py NATIVE_KEYS); "
+          "an omitted key resets to its default.");
+    m.def("minors_set_enabled",
+          [](bool on) { g_minors_enabled = on; }, py::arg("enabled"));
+    m.def("minors_enabled", []() { return g_minors_enabled; });
+    m.def("minors_drain_contacts",
+          []() { return contacts_list(g_minor_field.drain_contacts()); },
+          "Player/minor touches since the last drain: [{'point': VIEW-space "
+          "(x,y,z), 'radius', 'rel_speed'}, ...].");
+    m.def("minors_stats",
+          []() {
+              py::dict d = stats_dict(g_minor_field.stats());
+              d["draw_calls"] = g_minor_draw_calls;
+              return d;
+          },
+          "{'clouds', 'minors', 'drawn', 'bins', 'draw_calls'} for the last frame.");
+    m.def("minors_clear", []() { g_minor_field.clear(); },
+          "Drop every cloud, fragment table and pending contact.");
+
+    // Standalone field for headless probes: no GL, no init(), no frame().
+    py::class_<mr::MinorField>(m, "MinorField")
+        .def(py::init<>())
+        .def("add_cloud",
+             [](mr::MinorField& f, py::dict desc, double now) {
+                 f.add_cloud(cloud_desc_of(desc), now);
+             },
+             py::arg("desc"), py::arg("now"))
+        .def("remove_cloud", &mr::MinorField::remove_cloud, py::arg("id"))
+        .def("detach",
+             [](mr::MinorField& f, std::uint32_t id,
+                std::tuple<double, double, double> p0,
+                std::tuple<float, float, float> v, double t0, py::list debris) {
+                 f.detach(id, {std::get<0>(p0), std::get<1>(p0), std::get<2>(p0)},
+                          {std::get<0>(v), std::get<1>(v), std::get<2>(v)}, t0,
+                          debris_of(debris));
+             },
+             py::arg("id"), py::arg("p0"), py::arg("v"), py::arg("t0"),
+             py::arg("debris"))
+        .def("fade_out",
+             [](mr::MinorField& f, std::uint32_t id, float s, double now) {
+                 f.fade_out(id, s, now);
+             },
+             py::arg("id"), py::arg("seconds"), py::arg("now"))
+        .def("set_fragments",
+             [](mr::MinorField& f, int family,
+                const std::vector<std::tuple<std::uint64_t, std::uint64_t, float>>& e) {
+                 f.set_fragments(family, fragments_of(e));
+             },
+             py::arg("family"), py::arg("entries"))
+        .def("set_dials",
+             [](mr::MinorField& f, py::dict d) { f.set_dials(dials_of(d)); },
+             py::arg("dials"))
+        .def("dials", [](const mr::MinorField& f) { return dials_dict(f.dials()); })
+        .def("step",
+             [](mr::MinorField& f, double game_time, const std::vector<float>& view16,
+                const std::vector<float>& proj16, float viewport_h, py::dict anchors,
+                py::object player, std::tuple<double, double, double> render_origin) {
+                 mr::StepInput in;
+                 in.game_time = game_time;
+                 in.view = mat4_of(view16, "MinorField.step view");
+                 in.proj = mat4_of(proj16, "MinorField.step proj");
+                 in.viewport_h = viewport_h;
+                 in.render_origin = {std::get<0>(render_origin),
+                                     std::get<1>(render_origin),
+                                     std::get<2>(render_origin)};
+                 std::unordered_map<std::uint64_t, glm::vec3> table;
+                 for (const auto& [k, v] : anchors)
+                     table[k.cast<std::uint64_t>()] = vec3_of(v);
+                 in.anchor_of = [table](std::uint64_t key, glm::vec3& out) {
+                     const auto it = table.find(key);
+                     if (it == table.end()) return false;
+                     out = it->second;
+                     return true;
+                 };
+                 if (!player.is_none()) {
+                     const auto p = player.cast<py::dict>();
+                     in.player = mr::PlayerBox{
+                         mat4_of(p["world"].cast<std::vector<float>>(),
+                                 "MinorField.step player.world"),
+                         vec3_of(p["center"]), vec3_of(p["half"])};
+                 }
+                 f.step(in);
+             },
+             py::arg("game_time"), py::arg("view16"), py::arg("proj16"),
+             py::arg("viewport_h"), py::arg("anchors") = py::dict(),
+             py::arg("player") = py::none(),
+             py::arg("render_origin") = std::make_tuple(0.0, 0.0, 0.0),
+             "One step. view16/proj16 and player['world'] are 16 floats, "
+             "column-major; anchors maps (index<<32)|generation -> RENDER-space "
+             "(x,y,z).")
+        .def("drain_contacts",
+             [](mr::MinorField& f) { return contacts_list(f.drain_contacts()); })
+        .def("stats", [](const mr::MinorField& f) { return stats_dict(f.stats()); });
 
     m.def("set_nebula_wake",
           [](const std::vector<py::dict>& pts) {

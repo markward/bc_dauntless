@@ -162,6 +162,8 @@ void MinorField::clear() {
     last_time_ = -1.0;
     stepped_ = false;
     has_prev_ = false;
+    contacts_.clear();     // a pending contact would puff for a dead mission's rock
+    fragments_.clear();    // model handles are recycled after a reset
 }
 
 void MinorField::step(const StepInput& in) {

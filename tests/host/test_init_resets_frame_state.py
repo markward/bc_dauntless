@@ -212,3 +212,44 @@ def test_init_resets_every_non_gl_global_that_shutdown_resets():
     assert not missing, (
         "shutdown() resets these but init() does not -- Python can push them "
         "across a session boundary: %s" % sorted(missing))
+
+
+# ── Minor rocks (minor-rocks plan Task 8) ──────────────────────────────────
+
+
+def test_minors_state_cleared_by_reset():
+    """A mission's minor clouds, player and on/off toggle must not survive a
+    shutdown()/init() pair: a leftover cloud would draw with the next
+    session's recycled model handles, and a leftover player id would sweep a
+    contact box through rocks from a pose in another session."""
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _dauntless_host as h
+
+    try:
+        h.init(64, 64, "reset-minors")
+    except RuntimeError as e:
+        pytest.skip(f"no GL context: {e}")
+    try:
+        h.minors_set_fragments(0, [(1, 2, 57.142857)])
+        h.minors_add_cloud(dict(
+            id=1, anchor="point", instance=None, point=(0.0, 0.0, -20.0),
+            velocity=(0.0, 0.0, 0.0), t0=0.0, shell_inner=0.0,
+            shell_outer=2.0, falloff=0.0, count=50, r_min=0.3, r_max=0.3,
+            size_exponent=2.5, family=0, seed=1, orbit_rate=0.0,
+            fade_in=False, debris=[]))
+        h.minors_set_player(h.InstanceId())
+        h.minors_set_enabled(False)
+        h.minors_set_dials({"shove_min_gups": 9.0})
+    finally:
+        h.shutdown()
+
+    try:
+        h.init(64, 64, "reset-minors-2")
+    except RuntimeError as e:
+        pytest.skip(f"no GL context: {e}")
+    try:
+        assert h.minors_stats()["clouds"] == 0
+        assert h.minors_drain_contacts() == []
+        assert h.minors_enabled() is True
+    finally:
+        h.shutdown()

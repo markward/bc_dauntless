@@ -521,3 +521,34 @@ TEST(MinorContact, RenderOriginShiftIsNotTravel) {
     EXPECT_NEAR(p.x, -500.0f, 1e-3f);                    // un-shoved (render space)
     EXPECT_NEAR(p.y, 0.0f, 1e-4f);
 }
+
+// Task 8: a mission swap clears the field. A contact left pending across the
+// clear would fire a puff for a rock in the old mission, and a fragment table
+// left behind would bind the next session's recycled model handles.
+TEST(MinorContact, ClearDropsPendingContactsAndFragments) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, -5, -20});
+    f.step(in);
+    in.game_time = 0.1;
+    in.player = box_at({0, 0, -20});
+    f.step(in);
+    f.clear();
+    EXPECT_TRUE(f.drain_contacts().empty());
+    EXPECT_TRUE(f.fragments(0).empty());
+}
+
+// The precondition the test above relies on: the same two steps, uncleared,
+// DO leave a contact pending.
+TEST(MinorContact, TheClearTestsTouchDoesMakeAContact) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, -5, -20});
+    f.step(in);
+    in.game_time = 0.1;
+    in.player = box_at({0, 0, -20});
+    f.step(in);
+    EXPECT_EQ(f.drain_contacts().size(), 1u);
+}
