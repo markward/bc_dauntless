@@ -18,10 +18,10 @@
 
 #include "renderer/frame.h"
 #include "renderer/pipeline.h"
+#include "renderer/rock_shading.h"
 #include "renderer/shader.h"
 
 // Defined in frame.cc (global namespace), read the way draw_model reads them.
-namespace dauntless_nan_debug { bool enabled(); }
 namespace dauntless_normal_map {
     bool  enabled();
     float strength();
@@ -140,62 +140,12 @@ void MinorPass::render(const minors::MinorField& field, const std::vector<minors
     draw_calls_ = 0;
     if (bins.empty()) return;
 
-    // 1-2. Per-frame uniforms, exactly as submit_opaque_in_pass's configure_common.
+    // 1-3. Per-frame uniforms and every ship-only feature off (shared with
+    // the far tier's impostors: renderer/rock_shading.h).
     Shader& s = pipeline.minor_shader();
-    s.use();
-    s.set_mat4("u_view", cam.view_matrix());
-    s.set_mat4("u_proj", cam.proj_matrix());
-    s.set_vec3("u_camera_pos_ws", glm::vec3(glm::inverse(cam.view_matrix())[3]));
-    set_ambient_uniforms(s, lighting, ambient_scale);
-    s.set_int("u_dir_light_count", lighting.directional_count);
-    if (lighting.directional_count > 0) {
-        s.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
-                         lighting.directional_count);
-        s.set_vec3_array("u_dir_light_color", lighting.directional_color,
-                         lighting.directional_count);
-    }
-
-    // 3. Every per-instance feature of the opaque path is off for minors.
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
-    s.set_int("u_decal_count", 0);
-    s.set_int("u_glow_region_count", 0);
-    s.set_int("u_dyn_light_count", 0);
-    s.set_int("u_carve_enabled", 0);
-    s.set_int("u_carve_count", 0);
-    s.set_int("u_carve_invert", 0);
-    s.set_int("u_hull_field", 6);
-    s.set_int("u_hull_field_enabled", 0);
-    s.set_int("u_frame_enabled", 0);
-    s.set_int("u_damage_decal", 3);
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, black);
-    s.set_int("u_hull_decal_count", 0);
-    s.set_int("u_decal_enabled_mask", 0);
-    s.set_mat4("u_node_rest_fix", glm::mat4(1.0f));
-    s.set_float("u_emissive_scale", 1.0f);
-    glActiveTexture(GL_TEXTURE7);
-    glBindTexture(GL_TEXTURE_2D, 0);       // draw_model's undamaged scuff binding
-    s.set_int("u_scuff_map_ok", 0);
-    s.set_int("u_nan_debug", dauntless_nan_debug::enabled() ? 1 : 0);
-    s.set_float("u_rim_strength", rim_strength);
-    s.set_mat4("u_model", glm::mat4(1.0f));    // unused by minor.vert; never stale
-    s.set_mat4("u_ship_world_inv", glm::mat4(1.0f));   // no body-frame feature reads it
-    {
-        // Sun shadow, as draw_model binds it (unit 5).
-        const bool shadows_on = active_shadow_enabled();
-        const int unit = 5;
-        s.set_int("u_shadows_enabled", shadows_on ? 1 : 0);
-        s.set_int("u_shadow_map", unit);
-        if (shadows_on) {
-            const ShadowLight& light = active_shadow_light();
-            s.set_mat4("u_light_view_proj", light.view_proj);
-            s.set_float("u_shadow_texel", light.texel_world_size);
-            glActiveTexture(GL_TEXTURE0 + unit);
-            glBindTexture(GL_TEXTURE_2D, active_shadow_texture());
-        }
-    }
-    glActiveTexture(GL_TEXTURE0);
+    configure_rock_program(s, cam, lighting, ambient_scale, rim_strength, white, black);
 
     // 4. Every bin's instances into one stream buffer, bin after bin.
     staging_.clear();

@@ -7,6 +7,7 @@
 #include "embedded_opaque_fs.h"
 #include "embedded_skinned_vs.h"
 #include "embedded_minor_vs.h"
+#include "embedded_impostor_vs.h"
 #include "embedded_backdrop_vs.h"
 #include "embedded_backdrop_fs.h"
 #include "embedded_sun_vs.h"
@@ -75,6 +76,9 @@ Pipeline::Pipeline() {
     // Minor rocks: per-instance model matrix, the SAME opaque.frag (minor-rocks
     // spec §2), so its fixed sampler units are assigned with opaque's below.
     minor_ = std::make_unique<Shader>(shader_src::minor_vs, shader_src::opaque_fs);
+    // Far-tier impostors: a quad per instance, the SAME opaque.frag (far-tier
+    // spec §3), so its fixed sampler units are assigned with opaque's too.
+    impostor_ = std::make_unique<Shader>(shader_src::impostor_vs, shader_src::opaque_fs);
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the
@@ -84,7 +88,7 @@ Pipeline::Pipeline() {
     // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
     // Same for the hull-decal masks: u_decal_mask0..3 live on units 8..11
     // (draw_model binds the textures there once per model, frame.cc).
-    for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get()}) {
+    for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get(), impostor_.get()}) {
         sh->use();
         sh->set_int("u_scuff_map", 7);
         sh->set_int("u_decal_mask0", 8);
