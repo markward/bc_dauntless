@@ -528,7 +528,8 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
                    inv_sum: float, dt: float, ship_instances=None,
                    scuff_radius: float | None = None,
                    boundary_b=None, reach: float = 0.0,
-                   b_offset=_NO_OFFSET, shield_pt_a=None,
+                   b_offset=_NO_OFFSET, shielded_a: bool = False,
+                   shielded_b: bool = False, shield_pt_a=None,
                    shield_pt_b=None) -> None:
     """Abrasion damage for a contact that is not closing.
 
@@ -552,10 +553,12 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     A's set-local frame (the caller passes B's A-frame view). `b_offset` is
     only used to hand B's trace back to B's own frame.
 
-    `shield_pt_a` / `shield_pt_b`: a side whose shields met a rock (see
-    _bubble_contact) -- the bubble point, in THAT side's own frame. That
-    side's abrasion then drains its facing shield instead of bypassing it;
-    None keeps the ramming bypass.
+    `shielded_a` / `shielded_b`: that side is a ship whose raised shields a
+    rock met (see _shield_contact) -- its abrasion drains its facing shield
+    instead of bypassing it. `shield_pt_*` is then the bubble point in THAT
+    side's own frame (the facing input), or None when the contact is the
+    hull (the facing comes from the hull point). False keeps the ramming
+    bypass.
     """
     if not (dt > 0.0):
         return
@@ -602,14 +605,14 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
         apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_a, decal_radius=scuff_radius, decal_dent=0.0,
-                  bypass_shields=shield_pt_a is None, shield_point=shield_pt_a)
+                  bypass_shields=not shielded_a, shield_point=shield_pt_a)
     if b.is_movable:
         pt_b, n_b = _trace_own_hull(ship_instances, b,
                                     _shifted(boundary_b, b_offset, -1.0), n_ba, reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_radius, decal_dent=0.0,
-                  bypass_shields=shield_pt_b is None, shield_point=shield_pt_b)
+                  bypass_shields=not shielded_b, shield_point=shield_pt_b)
 
 
 def _hull_contact(a: "_Body", b: "_Body", b_offset=_NO_OFFSET):
@@ -680,15 +683,27 @@ def _hull_contact(a: "_Body", b: "_Body", b_offset=_NO_OFFSET):
 
 
 def _shield_contact(a: "_Body", b: "_Body"):
-    """The rock-vs-bubble contact, same shape as _hull_contact plus the
-    bubble point, or None (use the hull contact) / _BUBBLE_MISS."""
+    """Rock vs a shielded ship's bubble. Returns:
+
+      * None -- not a rock meeting raised shields: the plain hull contact,
+        both sides bypassing shields (ramming).
+      * _BUBBLE_MISS -- shields up, rock not touching the bubble: no contact.
+      * a bool (ship_is_a) -- shields up but no bubble to meet (see below):
+        the hull contact, with the ship's side cascading through shields.
+      * a tuple -- the bubble contact, same shape as _hull_contact plus the
+        bubble point and ship_is_a."""
     pair = _shield_pair(a, b)
     if pair is None:
         return None
     ship, rock, ship_is_a = pair
     hit = _bubble_contact(ship, rock)
-    if hit is None or hit is _BUBBLE_MISS:
+    if hit is _BUBBLE_MISS:
         return hit
+    if hit is None:
+        # Shields up but no bubble to meet: no cached hull box, or the rock
+        # is already inside the bubble. The hull is the contact; the ship's
+        # share still cascades through its shields, as a weapon's does.
+        return ship_is_a
     point, (snx, sny, snz), pen = hit
     s = 1.0 if ship_is_a else -1.0
     nx, ny, nz = s * snx, s * sny, s * snz          # A -> B
@@ -727,12 +742,13 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     shielded = _shield_contact(a, b)
     if shielded is _BUBBLE_MISS:
         return None
-    if shielded is not None:
+    if isinstance(shielded, tuple):
         ((nx, ny, nz), pen, r_small, boundary_a, boundary_b, trace_reach,
          bubble_pt, ship_is_a) = shielded
         contact = bubble_pt
         # The ship's side cascades through its facing; the point is handed
         # over in that ship's own frame. The rock keeps the bypass.
+        shielded_a, shielded_b = ship_is_a, not ship_is_a
         shield_pt_a = bubble_pt if ship_is_a else None
         shield_pt_b = None if ship_is_a else _shifted(bubble_pt, b_offset, -1.0)
     else:
@@ -742,6 +758,10 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         (nx, ny, nz), pen, r_small, boundary_a, boundary_b, trace_reach = hull
         contact = boundary_a
         shield_pt_a = shield_pt_b = None
+        # A shielded pair with no bubble contact (see _shield_contact) still
+        # cascades the ship's share through its shields.
+        shielded_a = shielded is True       # None (unshielded pair) -> both
+        shielded_b = shielded is False      # False: today's ramming bypass
     cx, cy, cz = boundary_a.x, boundary_a.y, boundary_a.z
     # Scuff decal size from the contact geometry (visual only; see scuff_radius_gu).
     scuff_r = scuff_radius_gu(r_small, pen)
@@ -784,7 +804,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         # velocity entirely.
         _grind_contact(a, b, cx, cy, cz, nx, ny, nz, inv_sum, dt,
                        ship_instances, scuff_r, boundary_b, trace_reach,
-                       b_offset, shield_pt_a, shield_pt_b)
+                       b_offset, shielded_a, shielded_b, shield_pt_a,
+                       shield_pt_b)
         return None
 
     # Mass-weighted impulse magnitude.
@@ -865,14 +886,14 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_a, decal_radius=scuff_r, decal_dent=1.0,
-                  bypass_shields=shield_pt_a is None, shield_point=shield_pt_a)
+                  bypass_shields=not shielded_a, shield_point=shield_pt_a)
     if b.is_movable:
         pt_b, n_b = _trace_own_hull(ship_instances, b,
                                     _shifted(boundary_b, b_offset, -1.0), n_ba, trace_reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
-                  bypass_shields=shield_pt_b is None, shield_point=shield_pt_b)
+                  bypass_shields=not shielded_b, shield_point=shield_pt_b)
 
     return (a.obj, b.obj, contact, v_rel)
 

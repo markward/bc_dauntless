@@ -304,7 +304,7 @@ grind run on it. The ship's share goes through `apply_hit` with the bubble
 point as `shield_point`, so the facing absorbs it and overflow cascades to the
 hull; the rock's share still bypasses. A rock whose centre is already inside
 the bubble (it arrived with shields down), or a ship with no cached hull box,
-uses the hull contact. Shields dropping mid-contact: the next frame is the
+uses the hull contact, but the ship's share still goes through its shields. Shields dropping mid-contact: the next frame is the
 hull contact as before. The broadphase buckets a shielded ship on
 `bubble_bound_radius` whenever a rock is present. Ship↔ship and ship↔planet
 still bypass shields.

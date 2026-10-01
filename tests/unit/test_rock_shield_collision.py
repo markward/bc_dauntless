@@ -318,3 +318,30 @@ def test_broadphase_finds_a_bubble_only_contact(monkeypatch):
     pos = [(0.0, -1e-3, 0.0), (0.0, rock.GetWorldLocation().y, 0.0)]
     assert collisions._candidate_pairs(pos, radii, ["S", "S"]) == []
     assert collisions.resolve_collisions([ship, rock])
+
+
+def test_rock_inside_the_bubble_still_meets_raised_shields():
+    """Hull contact (no shove to the bubble), but the shields are UP, so the
+    ship's share still cascades through the facing -- as a weapon fired from
+    inside the bubble is still absorbed."""
+    ship = _ship()
+    reach = HULL_R * collisions.COLLISION_RADIUS_SCALE + ROCK_R
+    rock = _rock((0.0, reach - 0.01, 0.0), (0.0, -5.0, 0.0))
+    share_one_set(ship, rock)
+    assert collisions.resolve_collisions([ship, rock])
+    assert _faces(ship)[FRONT] < 1.0e5
+    assert ship.GetHull().GetCondition() == 1.0e6
+
+
+def test_no_hull_box_hull_contact_but_shields_still_absorb():
+    """No cached hull box = no bubble geometry: the hull sphere is the
+    contact, but raised shields still take the ship's share."""
+    ship = _ship()
+    del ship._shield_hull_box
+    reach = HULL_R * collisions.COLLISION_RADIUS_SCALE + ROCK_R
+    rock = _rock((0.0, reach - 0.01, 0.0), (0.0, -5.0, 0.0))
+    share_one_set(ship, rock)
+    hits = collisions.resolve_collisions([ship, rock])
+    assert hits and hits[0][2].y == pytest.approx(reach - ROCK_R, abs=1e-6)
+    assert _faces(ship)[FRONT] < 1.0e5
+    assert ship.GetHull().GetCondition() == 1.0e6
