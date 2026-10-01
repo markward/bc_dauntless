@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="css/character_tooltip.css">
     <link rel="stylesheet" href="css/star_map.css">
     <link rel="stylesheet" href="css/first_run.css">
+    <link rel="stylesheet" href="css/mods_screen.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
@@ -82,6 +83,25 @@
                         onclick="dauntlessEvent('first-run/continue')">Continue</button>
             </div>
         </div>
+    </section>
+
+    <!-- Pre-boot Mods screen (sub-project 3). setModsScreen(payload|null)
+         drives it; engine/ui/mods_screen_panel.py is the state machine and
+         the page holds no logic. Events: dauntlessEvent('mods/<verb>...').
+         Spec: docs/superpowers/specs/2026-10-01-mod-ships-screen-design.md -->
+    <section id="mods-screen">
+        <div class="fr-backdrop"></div>
+        <div class="cp-modal ms-modal">
+            <div class="cp-header" id="ms-header"></div>
+            <div class="ms-body">
+                <p class="ms-intro" id="ms-intro"></p>
+                <div class="ms-error" id="ms-error"></div>
+                <div class="ms-selbar" id="ms-selbar"></div>
+                <div id="ms-table"></div>
+            </div>
+            <div class="cp-footer ms-footer" id="ms-footer"></div>
+        </div>
+        <div class="ms-menu" id="ms-menu"></div>
     </section>
 
     <!-- Configuration overlay (production).
@@ -1041,5 +1061,6 @@
     <script src="js/info_box.js"></script>
     <script src="js/engineering_power.js"></script>
     <script src="js/first_run.js"></script>
+    <script src="js/mods_screen.js"></script>
 </body>
 </html>

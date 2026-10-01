@@ -54,6 +54,13 @@ def test_prefills_from_suggestions_and_era_stays_blank():
     assert payload(p)["can_continue"] is False
 
 
+def test_row_carries_a_resolved_icon_url_never_raising_on_a_missing_icon():
+    # rec()'s fixture icon ("DCMPDefiantClass") has no on-disk TGA in the
+    # test environment -- the row must still render, with icon_url "".
+    p = gate(rec("DCMPAvenger"))
+    assert row(p, "DCMPAvenger")["icon_url"] == ""
+
+
 def test_set_era_from_and_to_drag_each_other():
     p = gate(rec("DCMPAvenger"))
     ev(p, "set", "DCMPAvenger", "era-from", "DS9")

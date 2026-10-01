@@ -16,6 +16,7 @@ from engine.ship_catalog import catalog
 from engine.ship_catalog.gate_writer import GateWriteError
 from engine.ship_catalog.schema import parse_dauntless
 from engine.ship_catalog.tables import ERA_IDS, ERAS, MANDATORY, ROLES
+from engine.ui import ship_icons
 from engine.ui.panel import Panel
 
 WriteRow = namedtuple("WriteRow", "mod ship_id attr answers")
@@ -279,6 +280,7 @@ class ModsScreenPanel(Panel):
             key = r.class_key()
             rows.append({
                 "file": r.file, "mod": r.record.mod, "icon": r.record.icon,
+                "icon_url": ship_icons.icon_path_for_species(r.record.icon) or "",
                 "title": a.get("title"), "variant_of": a.get("variant_of"),
                 "is_default": flags.get(r.file, False),
                 "stock_class": bool(key) and key in self._stock_keys,
