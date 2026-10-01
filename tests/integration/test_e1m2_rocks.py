@@ -201,7 +201,7 @@ def test_asteroid_killed_against_haven_does_not_cascade():
     finally:
         collisions._emit_planet_collision = real
     pieces = seen - {name}
-    assert 1 <= len(pieces) <= 1 + breakup.kMediumCountMax   # large + mediums
+    assert 1 <= len(pieces) <= 1 + breakup.kSmallMaxCount    # remnant + smalls
     assert all(p.count("-") == 1 for p in pieces), sorted(pieces)
     assert len(strikes) == 1
 
@@ -292,10 +292,11 @@ def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
     assert grind_vfx == []
 
 
-def test_largest_asteroid_breaks_into_one_target_mediums_and_chunks():
-    """Size-mix split (live test 2026-10-01): E1M2's largest moving asteroid
-    breaks into one large piece -- the only target, when built at >= 2 GU --
-    3-5 untargetable medium rocks, and at most 8 chunk specs."""
+def test_largest_asteroid_breaks_into_one_target_small_rocks_and_chunks():
+    """Remnant + capped small rocks (live test 2026-10-01, third): E1M2's
+    largest moving asteroid breaks into one remnant -- the only target, when
+    built at >= 2 GU -- at most 12 untargetable small rocks (the >= 1 GU
+    ones as RockClass, the rest chunks), and at most 8 chunk specs."""
     from engine.appc.ship_iter import iter_rocks, iter_ships
     from engine.rocks import breakup, death
     mod = _init_e1m2()
@@ -312,13 +313,13 @@ def test_largest_asteroid_breaks_into_one_target_mediums_and_chunks():
     target.DamageSystem(target.GetHull(), 1e9)
     pieces = sorted((x for x in iter_rocks()
                      if x.GetName().startswith(name + "-")),
-                    key=lambda x: x.GetName())
-    large, mediums = pieces[0], pieces[1:]
-    assert large.GetName() == name + "-1"
-    assert large.GetRadius() >= breakup.kTargetableMinRadiusGU
-    assert large.IsTargetable()
-    assert breakup.kMediumCountMin <= len(mediums) <= breakup.kMediumCountMax
-    assert not any(m.IsTargetable() for m in mediums)
-    assert all(m.GetRadius() < large.GetRadius() for m in mediums)
+                    key=lambda x: int(x.GetName().rsplit("-", 1)[1]))
+    targetable = [x for x in pieces if x.IsTargetable()]
+    assert [x.GetName() for x in targetable] == [name + "-1"]
+    remnant, smalls = pieces[0], pieces[1:]
+    assert remnant.GetRadius() >= breakup.kTargetableMinRadiusGU
     specs = death.drain_chunk_specs()
+    assert len(smalls) + len(specs) <= breakup.kSmallMaxCount
+    assert all(breakup.kMajorMinRadiusGU <= m.GetRadius()
+               <= breakup.kSmallRadiusMaxGU for m in smalls)
     assert 1 <= len(specs) <= breakup.kMaxChunksPerDeath

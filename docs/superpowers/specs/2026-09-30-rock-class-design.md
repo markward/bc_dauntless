@@ -171,37 +171,48 @@ when the critical hull reaches 0:
    (E1M2 sets 0.5 s).
 
 **Breakup.**
-- A size-mix split (`engine/rocks/breakup.py` dials), drawn by a generator
-  seeded by the rock's name, so the same rock always breaks the same way.
-  Fractions are of the parent's volume, each uniform in its range: **one large**
-  piece (0.20–0.30), **3–5 medium** (0.07–0.12 each), **5–8 small** (0.03–0.06
-  each); the rest is dust. If the total exceeds `kVolumeTotalMax` (1.0) the
-  small pieces shrink first, then the medium; the large piece is never scaled,
-  so it stays the largest. Piece radius = parent radius × v^(1/3).
-  (`kVolumeBudget` and `kPieceCountMin/Max` are retired.)
+- A remnant plus capped small rocks (`engine/rocks/breakup.py` dials), drawn
+  by a generator seeded by the rock's name, so the same rock always breaks the
+  same way. Fractions are of the parent's volume.
+  - **Remnant:** exactly one piece, `kRemnantFrac` = **0.30**, radius = parent
+    radius × 0.30^(1/3) (≈ 0.67 × parent).
+  - **Small rocks:** up to `kSmallMaxCount` = **12**. Each radius is uniform in
+    [`kSmallRadiusMinGU` 0.5, `kSmallRadiusMaxGU` 1.5] GU, clamped to the
+    remnant's radius. Each takes (r / R)³ of the volume while the total stays
+    ≤ `kSmallVolumeFrac` = **0.70**; a draw that would overflow is skipped.
+    Drawing stops at the count cap or after `kSmallMaxDraws` (48) draws.
+  - **Tiny parents:** when the remnant itself is below 0.5 GU, the small range
+    becomes [`kTinySmallRadiusMinFrac` 0.3, `kTinySmallRadiusMaxFrac` 0.9] ×
+    the remnant's radius, so small rocks stay smaller than it.
+  - **Dust:** whatever is left (0.70 minus what the small rocks took). On a big
+    rock that is most of it: at 7.4 GU twelve 1.5 GU rocks hold only ~0.10.
+  - Retired: `kLargeFrac*`, `kMediumCount*`, `kMediumFrac*`, `kSmallCount*`,
+    `kSmallFrac*`, `kVolumeTotalMax` (and earlier `kVolumeBudget`,
+    `kPieceCountMin/Max`).
 - Pieces fly apart with the parent's velocity plus an outward push of
-  `kSeparationSpeedGU` (**0.8 GU/s**, was 0.4) along parent-centre →
-  piece-centre, and a random tumble. The large and medium pieces take
-  **spread** directions (best of `kSpreadCandidates` seeded unit vectors,
-  farthest from those already placed); small pieces stay random.
-- Large and medium pieces of radius ≥ **1.0 GU** (`kMajorMinRadiusGU`) become
-  a new `RockClass` via `RockClass_Create`: a catalogue *fragment* of the
-  parent's family, named `"<parent>-1"`, `"<parent>-2"`, … in plan order (the
-  large piece is always `-1`), scannable / hailable copied from the parent, HP
-  and mass per §1. Below that floor they become chunks.
-- **Targeting:** only the large piece may be targetable, and only when its
-  BUILT (quantised) radius is ≥ **2.0 GU** (`kTargetableMinRadiusGU`); it then
+  `kSeparationSpeedGU` (**0.8 GU/s**) along parent-centre → piece-centre, and
+  a random tumble. Every major takes a **spread** direction (best of
+  `kSpreadCandidates` seeded unit vectors, farthest from those already
+  placed); chunk-sized pieces stay random.
+- The remnant and every small rock of radius ≥ **1.0 GU** (`kMajorMinRadiusGU`)
+  become a new `RockClass` via `RockClass_Create`: a catalogue *fragment* of
+  the parent's family, named `"<parent>-1"`, `"<parent>-2"`, … in plan order
+  (the remnant is always `-1`), scannable / hailable copied from the parent,
+  HP and mass per §1. A remnant below that floor is a chunk.
+- **Targeting:** only the remnant may be targetable, and only when its BUILT
+  (quantised) radius is ≥ **2.0 GU** (`kTargetableMinRadiusGU`); it then
   copies the parent's flag. Every other piece is untargetable whatever the
-  parent's flag, and stays a solid rock you can shoot by aiming.
+  parent's flag, and stays a solid rock you can shoot by aiming. (Small rocks
+  are ≤ 1.5 GU, so the threshold alone would already exclude them; the rank
+  rule makes it explicit.)
 - One major generation (`kMaxMajorGeneration = 1`): a rock that is itself a
   piece (`_rock_generation ≥ 1`) breaks into chunks and dust only — its
-  would-be majors become chunks — so there is no `"<parent>-1-1"`, and
-  destroying a remnant never spawns a new target.
-- Small pieces become tumbling rock chunks whatever their radius
-  (`debris_chunk` style, catalogue fragment mesh, never targeted, no hull;
-  capped and oldest-first evicted). At most `kMaxChunksPerDeath` (**8**) per
-  death, the largest; the rest become dust. Sub-project 3 replaces these with
-  minors.
+  would-be majors, remnant included, become chunks — so there is no
+  `"<parent>-1-1"`, and destroying a remnant never spawns a new target.
+- Small rocks below 1.0 GU become tumbling rock chunks (`debris_chunk` style,
+  catalogue fragment mesh, never targeted, no hull; capped and oldest-first
+  evicted). At most `kMaxChunksPerDeath` (**8**) per death, the largest; the
+  rest become dust. Sub-project 3 replaces these with minors.
 - Below `kChunkMinRadiusGU`, dust only.
 - Every pair in the breakup group — pieces, chunks, the parent, and **the
   killer** — ignores collisions until that pair's contact spheres
@@ -237,6 +248,15 @@ spread major directions and separation speed 0.4 → 0.8 GU/s.
 `test_no_sibling_major_pair_overlaps_at_the_ghost_cap` pins that no major pair
 is still overlapping at `kGhostMaxTime`. Note radius is the cube root of
 volume, so a 0.25 vs 0.05 split is only about 1.7× in radius.
+(The large / medium / small split was superseded by the remnant split below;
+the spread directions, 0.8 GU/s and the model test remain.)
+
+**Remnant + capped small rocks after live test 2026-10-01.** Mark's third
+E1M2 run: the size-mix split still scaled every piece from the parent, so a
+big rock threw out big pieces (its "small" chunks were 2.3–2.9 GU). Now one
+remnant keeps 30% of the volume and everything else is capped at 1.5 GU and
+12 pieces; what they cannot hold is dust. The model test re-runs over the
+same 224 names × {3.0, 5.0, 7.44, 8.5} GU with the new split.
 
 **Family.** A rock's family comes from its catalogue pick (sub-project 1's
 `engine/rocks/catalogue.py`). With catalogue rocks toggled off (stock BC
@@ -305,10 +325,12 @@ still scan and do not die; QuickBattle in Multi1 — 54 rocks visible; shoot a
 big rock until it breaks into targetable pieces.
 
 Also:
-- **E1M2 — a fully destroyed large asteroid** yields one large piece (the only
-  target, if built ≥ 2.0 GU), 3–5 untargetable medium rocks and ≤ 8 small
-  chunks; each piece breaks into ≤ 8 chunks and dust, with no generation 2.
-  Check the size mix reads as one big / some medium / many small, and that
+- **E1M2 — a fully destroyed large asteroid** yields one remnant (the only
+  target, if built ≥ 2.0 GU; ≈ 4.97 GU for the 7.44 GU rock) and 12 small
+  rocks of 0.5–1.5 GU — the ≥ 1 GU ones untargetable rocks, the rest ≤ 8
+  chunks — with most of the volume as dust; each piece breaks into ≤ 8 chunks
+  and dust, with no generation 2. Check it reads as one big remnant plus a
+  spray of small rocks, and that
   the pieces separate cleanly at 0.8 GU/s (tune `kSeparationSpeedGU` by feel). Was ~58 across generations before the 2026-10-01 tuning:
   check the target list and frame rate hold up, and that no lagging cascade
   of small explosions follows the kill.
