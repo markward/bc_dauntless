@@ -367,7 +367,7 @@ def _capture_shield_hits(monkeypatch):
     return calls
 
 
-def test_rock_impact_on_shields_flashes_like_a_single_impact(monkeypatch):
+def test_rock_impact_on_shields_flashes_at_the_rock_seed(monkeypatch):
     from engine.appc import hit_feedback
     calls = _capture_shield_hits(monkeypatch)
     ship = _ship()
@@ -379,9 +379,12 @@ def test_rock_impact_on_shields_flashes_like_a_single_impact(monkeypatch):
     c = calls[0]
     assert c["iid"] == 7
     assert c["point"] == pytest.approx((0.0, SEMI[1], 0.0), abs=1e-6)
-    # Fully absorbed (face 1e5 >> damage): the full single-impact seed.
+    # Fully absorbed (face 1e5 >> damage): the full rock seed, 10x a torpedo's
+    # (tuned live 2026-10-01; at the torpedo seed the flash read as invisible).
     assert c["intensity"] == pytest.approx(
-        hit_feedback.SHIELD_IMPACT_INTENSITY_TORPEDO)
+        hit_feedback.SHIELD_IMPACT_INTENSITY_ROCK)
+    assert hit_feedback.SHIELD_IMPACT_INTENSITY_ROCK == pytest.approx(
+        10.0 * hit_feedback.SHIELD_IMPACT_INTENSITY_TORPEDO)
     # Sized to the rock: reach (= radius x 10 in shield_state.h) equals the
     # rock's contact radius -- its full 1.0 GU radius (a rock is its sphere;
     # no 0.8 shrink) -> radius 0.1, reach 1.0 GU (torpedo: 0.13 -> 1.3 GU).

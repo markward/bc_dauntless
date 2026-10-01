@@ -56,6 +56,10 @@ SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-ey
 # spec/ShieldFacingDamage.md §4.3) — the same split _play_audio already makes.
 SHIELD_IMPACT_INTENSITY = 0.325         # per phaser tick (and the default)
 SHIELD_IMPACT_INTENSITY_TORPEDO = 1.3   # one discrete impact
+# A rock striking raised shields (the only collision that reaches the shields:
+# ship and planet collisions bypass them). Tuned by eye live 2026-10-01 -- at
+# the torpedo seed the flash was invisible under the rock's breakup burst.
+SHIELD_IMPACT_INTENSITY_ROCK = 13.0
 
 # Python mirror of renderer kShieldSplashReachPerRadius (shield_state.h): the
 # splash reach in GU is `radius * this`, clamped to [0.6, 2.0]. Lets a caller
@@ -94,6 +98,8 @@ def shield_impact_intensity(weapon_type: str | None,
     caller flags `single_impact` (a collision's closing impact, which is one
     push; its grind frames are per-frame pushes and keep the per-tick seed).
     """
+    if single_impact and weapon_type == "collision":
+        return SHIELD_IMPACT_INTENSITY_ROCK
     return (SHIELD_IMPACT_INTENSITY_TORPEDO
             if single_impact or weapon_type == "torpedo"
             else SHIELD_IMPACT_INTENSITY)
