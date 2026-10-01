@@ -201,8 +201,8 @@ The result is that:
 listed in the boot report, because the same rule for files is reported as a
 conflict by `mods.describe`.
 
-`source` on the entry is `"stock"` when no mod definition contributed, and
-`"mod"` otherwise. `origins` lists every contributing mod in order. The gate
+`source` on the entry is `"stock"` when no mod definition shares the stem,
+and `"mod"` otherwise, even if that mod definition sets no `dauntless` keys. `origins` lists every contributing mod in order. The gate
 writes to the **last** one, the one whose values won.
 
 ## 4. The catalog API: `engine/ship_catalog/`
