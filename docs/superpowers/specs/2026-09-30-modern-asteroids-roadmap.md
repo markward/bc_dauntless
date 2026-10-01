@@ -41,11 +41,11 @@ Size decides how real a rock is.
 
 | # | Sub-project | Status |
 |---|---|---|
-| 1 | **Rock catalogue**: glTF loader, offline generation tool, committed catalogue, BC scripts redirected to it | built, awaiting live check — spec `2026-09-30-rock-catalogue-design.md` |
-| 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | built, awaiting live check — spec `2026-09-30-rock-class-design.md`, branch `feat/rock-class` |
-| 3 | **Minors**: instancing, halos, tile fields, fly-through | built, awaiting live check — spec `2026-10-01-minor-rocks-design.md`, branch `feat/minor-rocks` |
-| 3b | **Far tier** | not started |
-| 4 | **Profile seeding** | not started |
+| 1 | **Rock catalogue**: glTF loader, offline generation tool, committed catalogue, BC scripts redirected to it | merged to local main, live-verified — spec `2026-09-30-rock-catalogue-design.md` |
+| 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | merged to local main (`c0210aac`), live-verified — spec `2026-09-30-rock-class-design.md` |
+| 3 | **Minors**: instancing, halos, tile fields, fly-through | merged to local main (`6f8f4f14`), live-verified — spec `2026-10-01-minor-rocks-design.md` |
+| 3b | **Far tier**: impostor/speck/haze ladder, disc density source, profile belts (render only) | design — spec `2026-10-01-far-tier-design.md`, branch `feat/far-tier` |
+| 4 | **Profile seeding** | not started — extends 3b's `DiscSource` (fills `explicit_regions`, promotes generator rocks) |
 | later | **Sensor occlusion by rocks** | play-test experiment |
 
 ## Standing decisions for sub-projects 2–4
@@ -119,6 +119,10 @@ Size decides how real a rock is.
   majors and minors as you approach.
 - It uses the catalogue's baked impostors and per-rock average albedo (from
   sub-project 1), so the distant band matches the rocks it stands in for.
+- **Settled 2026-10-01** (`2026-10-01-far-tier-design.md`): 3b defines the
+  minimal density-field interface (a `DiscSource`), and renders profile belts
+  as a flat disc in the system plane, **render only**. Sub-project 4 seeds the
+  real rocks and fills the source's `explicit_regions`.
 
 ### Sub-project 4: profile seeding
 
