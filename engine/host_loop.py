@@ -9958,8 +9958,7 @@ def run(mission_name: Optional[str] = None,
         def _quit_and_manage_mods():
             # host_main re-executes us with --mods after a normal shutdown.
             try:
-                import _dauntless_host as _hh
-                _hh.request_relaunch(["--mods"])
+                host_io.request_relaunch(["--mods"])
             except Exception as _e:
                 dev_mode.log_swallowed("request_relaunch", _e)
             pause.request_quit()
