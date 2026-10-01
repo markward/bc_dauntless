@@ -8,3 +8,4 @@ Spec: docs/superpowers/specs/2026-10-01-ship-metadata-catalog-design.md
 from engine.ship_catalog.tables import (  # noqa: F401
     ALL_ERAS, DEFAULT_ERAS, ERA_IDS, ERAS, MANDATORY, ROLE_IDS, ROLES,
     STOCK_SPECIES, Era, Role, Species)
+from engine.ship_catalog.schema import Variant  # noqa: F401
