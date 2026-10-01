@@ -27,6 +27,10 @@ from typing import Optional
 from engine.rocks import minor_dials as md
 
 _ZERO = (0.0, 0.0, 0.0)
+# Cap on the pending free-cloud queue. Only reconcile drains it, and headless
+# nothing reconciles, so a long run of rock deaths would grow it for ever.
+# Past the cap the OLDEST spec goes (the same rule as death's VFX queue).
+kMaxPendingFree = 256
 _FAMILY_NAME = {i: n for n, i in md.FAMILY_INDEX.items()}
 
 
@@ -268,8 +272,12 @@ def register_free_cloud(spec: FreeCloudSpec) -> None:
     is true. On the drain frame the rock may still be realised (in
     rock_instances); halo_spec returns None for a dying rock, so the halo is
     detached and re-keyed, never removed or re-added. Registered earlier,
-    the still-live rock would grow a fresh halo beside the free cloud."""
+    the still-live rock would grow a fresh halo beside the free cloud.
+    Past kMaxPendingFree queued specs the oldest is dropped."""
     _pending_free.append(spec)
+    over = len(_pending_free) - kMaxPendingFree
+    if over > 0:
+        del _pending_free[:over]
 
 
 def native_ids() -> dict:

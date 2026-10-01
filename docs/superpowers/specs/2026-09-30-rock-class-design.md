@@ -218,6 +218,8 @@ when the critical hull reaches 0:
   catalogue fragment mesh, never targeted, no hull; capped and oldest-first
   evicted). At most `kMaxChunksPerDeath` (**8**) per death, the largest; the
   rest become dust. Sub-project 3 replaces these with minors.
+  **Superseded:** `kMaxChunksPerDeath` and rock chunks are retired by the
+  minor-rocks spec §4 (`2026-10-01-minor-rocks-design.md`): sub-1 GU pieces are now debris minors in the dead rock's free cloud.
 - Below `kChunkMinRadiusGU`, dust only.
 - Every pair in the breakup group — pieces, chunks, the parent, and **the
   killer** — ignores collisions until that pair's contact spheres

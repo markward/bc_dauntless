@@ -630,12 +630,13 @@ def test_immovable_killer_strips_inward_velocity(kind):
     for p in pieces:
         v, at = p.GetVelocityTG(), p.GetWorldLocation()
         assert _inward((v.x, v.y, v.z), (at.x, at.y, at.z), c) <= 1e-9
-    # The debris minors too: offset/v0 are relative to the parent.
+    # EVERY debris minor too, gravel included: offset/v0 are relative to
+    # the parent.
     [spec] = _free_clouds()
-    chunks = [d for d in spec.debris if d["radius"] >= breakup.kChunkMinRadiusGU
-              and d["seed"] in _chunk_seeds("Asteroid 5b", 1.6)]
-    assert chunks
-    for d in chunks:
+    assert any(d["seed"] in _chunk_seeds("Asteroid 5b", 1.6) for d in spec.debris)
+    assert any(d["seed"] not in _chunk_seeds("Asteroid 5b", 1.6)
+               for d in spec.debris)                 # gravel present
+    for d in spec.debris:
         at = tuple(p + o for p, o in zip(spec.p0, d["offset"]))
         vel = tuple(v + w for v, w in zip(spec.velocity, d["v0"]))
         assert _inward(vel, at, c) <= 1e-9

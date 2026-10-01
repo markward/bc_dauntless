@@ -297,8 +297,10 @@ def test_largest_asteroid_breaks_into_one_target_small_rocks_and_debris():
     built at >= 2 GU -- at most 12 untargetable small rocks (the >= 1 GU
     ones as RockClass, the rest debris minors in its free cloud)."""
     from engine.appc.ship_iter import iter_rocks, iter_ships
+    import zlib
     from engine.rocks import breakup, minors
     from engine.rocks import minor_dials as md
+    from engine.rocks.rock import effective_radius
     mod = _init_e1m2()
     pSet = App.g_kSetManager.GetSet("Vesuvi6")
     mod.CreateMovingAsteroids()
@@ -323,8 +325,13 @@ def test_largest_asteroid_breaks_into_one_target_small_rocks_and_debris():
     assert remnant.GetRadius() >= breakup.kTargetableMinRadiusGU
     [cloud] = minors._pending_free
     assert cloud.rock_name == name
-    chunk_debris = [d for d in cloud.debris
-                    if d["radius"] > md.get("debris_gravel_r_max_gu")]
+    gravel = {zlib.crc32(("%s#g%d" % (name, j)).encode("utf-8"))
+              for j in range(int(round(md.get("debris_gravel_per_gu")
+                                       * effective_radius(target))))}
+    chunk_debris = [d for d in cloud.debris if d["seed"] not in gravel]
+    n_chunk = sum(1 for p in breakup.plan(name, effective_radius(target))
+                  if p.tier == "chunk")
+    assert len(chunk_debris) == n_chunk
     assert len(smalls) + len(chunk_debris) <= breakup.kSmallMaxCount
     assert all(breakup.kMajorMinRadiusGU <= m.GetRadius()
                <= breakup.kSmallRadiusMaxGU for m in smalls)

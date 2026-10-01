@@ -142,7 +142,7 @@ def _crc(s: str) -> int:
     return zlib.crc32(s.encode("utf-8"))
 
 
-def debris_specs(name, pieces, at, loc, parent_v, vels, R) -> tuple:
+def debris_specs(name, pieces, at, loc, parent_v, vels, R, centre=None) -> tuple:
     """The debris of a dead rock's free minor cloud (minor-rocks spec §4).
 
     `pieces` is the breakup plan; `at[i]` / `vels[i]` are piece i's world
@@ -150,7 +150,11 @@ def debris_specs(name, pieces, at, loc, parent_v, vels, R) -> tuple:
     a would-be major demoted by the generation cap included -- joins,
     relative to the parent's centre `loc` and velocity `parent_v`; then
     round(debris_gravel_per_gu x R) seeded gravel pieces. The largest
-    max_debris_per_death are kept, largest first. Pure and deterministic."""
+    max_debris_per_death are kept, largest first. Pure and deterministic.
+
+    `centre` is an immovable killer's centre (or None): chunk `vels` arrive
+    already stripped; gravel gets the same _strip_inward on its world
+    velocity, so no debris keeps flying into the body that killed the rock."""
     from engine.rocks import minor_dials as md
     name = str(name)
     out = []
@@ -168,8 +172,13 @@ def debris_specs(name, pieces, at, loc, parent_v, vels, R) -> tuple:
         u = breakup._unit(rng)
         reach = R * 0.5 * rng.random()
         speed = breakup.kSeparationSpeedGU * rng.uniform(0.5, 1.0)
-        out.append({"offset": (u[0] * reach, u[1] * reach, u[2] * reach),
-                    "v0": (u[0] * speed, u[1] * speed, u[2] * speed),
+        offset = (u[0] * reach, u[1] * reach, u[2] * reach)
+        v0 = (u[0] * speed, u[1] * speed, u[2] * speed)
+        if centre is not None:
+            at_w = (loc[0] + offset[0], loc[1] + offset[1], loc[2] + offset[2])
+            vel = (parent_v[0] + v0[0], parent_v[1] + v0[1], parent_v[2] + v0[2])
+            v0 = _sub(_strip_inward(vel, at_w, centre), parent_v)
+        out.append({"offset": offset, "v0": v0,
                     "radius": r, "seed": _crc("%s#g%d" % (name, j))})
     out.sort(key=lambda d: -d["radius"])      # stable: ties keep plan order
     return tuple(out[:int(md.get("max_debris_per_death"))])
@@ -267,7 +276,7 @@ def _break_up(rock, pSet, name, killer=None) -> None:
     p0, v0 = (loc.x, loc.y, loc.z), (v.x, v.y, v.z)
     minors.register_free_cloud(minors.FreeCloudSpec(
         name, pSet, p0, v0, _game_time(), family,
-        debris_specs(name, plan, ats, p0, v0, vels, radius), radius))
+        debris_specs(name, plan, ats, p0, v0, vels, radius, centre), radius))
 
 
 def _enqueue(queue: list, items: list) -> None:

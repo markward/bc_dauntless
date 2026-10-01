@@ -320,6 +320,19 @@ def test_free_spec_detaches_an_existing_halo_and_rekeys_it():
     assert len(r.named("minors_add_cloud")) == 1     # never re-added
 
 
+def test_pending_free_is_capped_dropping_the_oldest():
+    """Headless nothing drains the pending queue (only reconcile does), so a
+    long run of rock deaths must not grow it for ever: past kMaxPendingFree
+    the oldest goes."""
+    cap = minors.kMaxPendingFree
+    assert cap == 256
+    for i in range(cap + 7):
+        minors.register_free_cloud(_free("Rock %d" % i))
+    assert len(minors._pending_free) == cap
+    assert minors._pending_free[0].rock_name == "Rock 7"
+    assert minors._pending_free[-1].rock_name == "Rock %d" % (cap + 6)
+
+
 def test_free_spec_without_a_halo_adds_a_free_cloud():
     r = _Rec()
     minors.register_free_cloud(_free("Rock 2"))
