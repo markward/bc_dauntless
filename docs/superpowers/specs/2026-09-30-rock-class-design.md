@@ -171,22 +171,31 @@ when the critical hull reaches 0:
    (E1M2 sets 0.5 s).
 
 **Breakup.**
-- Volume budget: 70% of the parent's volume goes into 2–5 pieces; the rest is
-  dust. Piece count and sizes come from a generator seeded by the rock's name,
-  so the same rock always breaks the same way.
+- Volume budget: 70% of the parent's volume goes into 2–3 pieces
+  (`kPieceCountMax`, was 5); the rest is dust. Piece count and sizes come from
+  a generator seeded by the rock's name, so the same rock always breaks the
+  same way.
 - Pieces fly apart with the parent's velocity plus an outward push along
   parent-centre → piece-centre, and a random tumble.
 - A piece with radius ≥ **1.0 GU** (`kMajorMinRadiusGU`, a Python dial) becomes
   a new `RockClass` via `RockClass_Create`: a catalogue *fragment* of the
-  parent's family, named `"<parent>-1"`, `"<parent>-2"`, … (so
-  `"Asteroid 5-1-2"` after two generations), targetable / scannable /
-  hailable copied from the parent, HP and mass per §1.
+  parent's family, named `"<parent>-1"`, `"<parent>-2"`, …, scannable /
+  hailable copied from the parent, HP and mass per §1. Targetable is copied only for a piece of radius ≥ **2.5 GU**
+  (`kTargetableMinRadiusGU`); a smaller one is created untargetable whatever
+  the parent's flag, and stays a solid rock you can shoot by aiming.
+- One major generation (`kMaxMajorGeneration = 1`): a rock that is itself a
+  piece (`_rock_generation ≥ 1`) breaks into chunks and dust only — its
+  would-be majors become chunks — so there is no `"<parent>-1-1"`.
 - A smaller piece above `kChunkMinRadiusGU` becomes a tumbling rock chunk
   (`debris_chunk` style, catalogue fragment mesh, capped and oldest-first
-  evicted). Sub-project 3 replaces these with minors.
+  evicted). At most `kMaxChunksPerDeath` (3) per death, the largest; the
+  rest become dust. Sub-project 3 replaces these with minors.
 - Below that, dust only.
-- For `kPieceGhostTime` (1 s) pieces and chunks ignore collisions with their
-  siblings, the parent, and **the killer** — the body whose hit caused the
+- Every pair in the breakup group — pieces, chunks, the parent, and **the
+  killer** — ignores collisions until that pair's contact spheres
+  (`collisions.contact_radius`) are `kGhostSeparationMarginGU` (0.25 GU) clear,
+  with a `kGhostMaxTime` (10 s) safety cap; a pair whose member is gone is
+  dropped. The killer is the body whose hit caused the
   death (a collision's other body reaches `death.begin` as DamageSystem's
   `source`). When the killer is immovable (a `Planet`, or `IsImmobile()`),
   each piece's and chunk's velocity component toward the killer's centre is
@@ -194,6 +203,15 @@ when the critical hull reaches 0:
   breakup cascaded (final review, 2026-09-30).
 - Pieces do not inherit the parent's death script, and are not in any mission
   name list, so mission bookkeeping sees exactly one death per scripted rock.
+
+**Tuned after live test 2026-10-01.** Mark's first E1M2 run: destroying a large
+rock set off a lagging cascade of small explosions, with too many chunks and
+large remnants crowding the target list. A headless probe found pieces born
+overlapping that stay overlapped for 1.15–8.05 s against the old fixed 1 s
+ghost (`kPieceGhostTime`, now retired), after which every overlapping pair
+ground each collision frame: 3,520 float-noise hit-VFX spawns in 10 s for one
+rock. Hence ghost-until-separated, 2–3 pieces, one major generation, ≤3
+chunks per death and the 2.5 GU targetable threshold above.
 
 **Family.** A rock's family comes from its catalogue pick (sub-project 1's
 `engine/rocks/catalogue.py`). With catalogue rocks toggled off (stock BC
@@ -262,8 +280,11 @@ still scan and do not die; QuickBattle in Multi1 — 54 rocks visible; shoot a
 big rock until it breaks into targetable pieces.
 
 Also:
-- **E1M2 — a fully destroyed large asteroid** yields many targetable pieces
-  (~58 across generations): check the target list and frame rate hold up.
+- **E1M2 — a fully destroyed large asteroid** yields 2–3 pieces (only those
+  ≥ 2.5 GU targetable), and each piece breaks into ≤ 3 chunks and dust, with
+  no generation 2. Was ~58 across generations before the 2026-10-01 tuning:
+  check the target list and frame rate hold up, and that no lagging cascade
+  of small explosions follows the kill.
 - **E3M1 — "Asteroid Amagon"** is a genus-3 rock: it should drift/spin as
   scripted, not run ship AI, and break up rather than explode like a ship.
   Confirm E3M1's own handling of it still plays out.

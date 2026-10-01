@@ -154,7 +154,9 @@ def test_big_rock_spawns_named_major_pieces_without_death_script():
         assert abs(v.x - (1.0 + off[0] * sp)) < 1e-9
         assert abs(v.y - off[1] * sp) < 1e-9
         assert abs(v.z - off[2] * sp) < 1e-9
-        assert piece.IsTargetable()
+        # Targetable parent: copied at or above the threshold, off below it.
+        big = majors[i - 1].radius_gu >= breakup.kTargetableMinRadiusGU
+        assert bool(piece.IsTargetable()) is big
 
 
 def test_piece_hull_scales_from_parent_max():
@@ -640,3 +642,53 @@ def test_generation_zero_rock_spawns_at_most_three_majors():
         death.begin(rock)
         assert pSet.GetObject(name + "-1") is not None
         assert pSet.GetObject(name + "-4") is None
+
+
+# ── Targetable threshold (tuned after live test 2026-10-01) ──────────────────
+# Large remnants in the target list obstructed E1M2. A major piece smaller
+# than kTargetableMinRadiusGU is created untargetable whatever its parent's
+# flag; it stays a solid rock you can shoot by aiming.
+
+
+def _one_piece_death(monkeypatch, piece_radius, parent_targetable):
+    from engine.rocks import breakup, death
+    spec = breakup.PieceSpec(radius_gu=piece_radius, offset=(1.0, 0.0, 0.0),
+                             v_ratio=0.3, tier="major")
+    monkeypatch.setattr(breakup, "plan", lambda *a, **k: [spec])
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(6.0)
+    rock.SetTargetable(1 if parent_targetable else 0)
+    rock.SetScannable(1)
+    rock.SetHailable(1)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    return pSet.GetObject("Asteroid 5b-1")
+
+
+def test_targetable_threshold_dial():
+    from engine.rocks import breakup
+    assert breakup.kTargetableMinRadiusGU == 2.5
+
+
+def test_small_piece_is_not_targetable_but_copies_scan_and_hail(monkeypatch):
+    piece = _one_piece_death(monkeypatch, 2.0, parent_targetable=True)
+    assert not piece.IsTargetable()
+    assert piece.IsScannable() and piece.IsHailable()
+    assert piece.CanCollide()                     # still a solid rock
+
+
+def test_large_piece_of_targetable_parent_is_targetable(monkeypatch):
+    piece = _one_piece_death(monkeypatch, 3.0, parent_targetable=True)
+    assert piece.IsTargetable()
+
+
+def test_large_piece_of_untargetable_parent_is_not_targetable(monkeypatch):
+    piece = _one_piece_death(monkeypatch, 3.0, parent_targetable=False)
+    assert not piece.IsTargetable()
+
+
+def test_piece_at_threshold_copies_parent(monkeypatch):
+    from engine.rocks import breakup
+    piece = _one_piece_death(monkeypatch, breakup.kTargetableMinRadiusGU,
+                             parent_targetable=True)
+    assert piece.IsTargetable()

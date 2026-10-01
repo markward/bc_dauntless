@@ -22,6 +22,10 @@ kPieceCountMax = 3
 # (the largest); the rest become dust.
 kMaxMajorGeneration = 1
 kMaxChunksPerDeath = 3
+# Large remnants listed as targets obstructed E1M2 (Mark's choice, live test
+# 2026-10-01): a major piece smaller than this is created untargetable; at or
+# above it the parent's flag is copied. Scannable/hailable always copy.
+kTargetableMinRadiusGU = 2.5
 kSeparationSpeedGU = 0.4
 kTumbleRate = 0.5
 # A breakup group (parent, major pieces, chunks, killer) ignores collisions

@@ -198,6 +198,8 @@ def _break_up(rock, pSet, name, killer=None) -> None:
                 s = getattr(piece, setter, None)
                 if callable(g) and callable(s):
                     s(g())
+            if p.radius_gu < breakup.kTargetableMinRadiusGU:
+                piece.SetTargetable(0)    # still solid: shoot it by aiming
             piece.SetTranslateXYZ(*at)
             piece.SetMatrixRotation(R)
             piece.SetVelocity(TGPoint3(*vel))
