@@ -257,12 +257,16 @@ def species() -> list:
 
 def describe() -> str:
     """One boot line (+ indented details), or "" when there is nothing to
-    say: stock only, every entry complete, no problems (spec §5)."""
+    say: stock only, every entry complete, no problems (spec §5). The whole
+    body is guarded: host_loop calls this unguarded at boot."""
     try:
-        b = _built()
+        return _describe(_built())
     except Exception as exc:  # noqa: BLE001 -- a boot report must not kill boot
         return "ship catalog: WARNING could not build: %s: %s" % (
             type(exc).__name__, exc)
+
+
+def _describe(b: _Built) -> str:
     n_stock = sum(1 for e in b.entries if e.source == "stock")
     n_mod = len(b.entries) - n_stock
     bad = [e for e in b.entries if not e.complete]
@@ -279,7 +283,9 @@ def describe() -> str:
             "%s: %d" % (k, by_mod[k]) for k in sorted(by_mod)))
     lines = [head]
     for ship_id, names in b.shared:
-        lines.append("  shared stem %r: %s" % (ship_id, " over ".join(reversed(names))))
+        # A definition built outside plugin_origin has no mod name: "?".
+        lines.append("  shared stem %r: %s" % (
+            ship_id, " over ".join(str(n or "?") for n in reversed(names))))
     for ship_file, mod_name in b.unresolved:
         lines.append("  unresolved: %s (%s) -- ships/%s.py not found"
                      % (ship_file, mod_name, ship_file))

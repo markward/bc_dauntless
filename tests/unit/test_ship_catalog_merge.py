@@ -157,6 +157,18 @@ def test_two_mods_on_one_stem_merge_in_load_order_and_are_recorded(stock, tmp_pa
     assert catalog._built().shared == [("Defiant", ["ModA", "ModB"])]
 
 
+def test_describe_survives_a_shared_stem_with_an_unattributed_definition(stock, tmp_path):
+    """A definition built outside plugin_origin has no mod name; sharing a
+    stem with a mod's must not make the boot report raise (it runs unguarded
+    in host_loop)."""
+    install_mod(tmp_path, "A", {"scripts/ships/Defiant.py": "# ship\n"})
+    d = ShipDefinition("Fed", "Defiant", 103, {"shipFile": "Defiant"})
+    d.RegisterQBShipMenu("Fed Ships", qb=None)
+    _mod_def("Defiant", mod="ModB")
+    text = ship_catalog.describe()
+    assert "shared stem 'Defiant': ModB over ?" in text
+
+
 def test_entries_are_memoised_until_invalidate(stock):
     first = ship_catalog.entries()
     assert ship_catalog.entries()[0] is first[0]
