@@ -266,3 +266,48 @@ TEST(MinorStep, InstanceScaleDrawsAtMinorRadius) {
     const float s = glm::length(glm::vec3(g.row0.x, g.row1.x, g.row2.x));
     EXPECT_NEAR(s * 57.142857f * 0.01f, 0.3f, 1e-4f);
 }
+
+TEST(MinorStep, ZeroSecondFadeOutIsInstantNotNaN) {
+    auto f = field_with_fragments();
+    f.add_cloud(point_cloud({0, 0, -20}), 0.0);
+    f.fade_out(9, 0.0f, 1.0);
+    f.step(looking_down_minus_z(1.0));             // t == fade_out_start: 0/0
+    EXPECT_EQ(f.stats().drawn, 0);
+}
+
+TEST(MinorStep, ZeroSecondFadeInIsInstantNotNaN) {
+    auto f = field_with_fragments();
+    Dials dl; dl.cloud_fade_in_seconds = 0.0f; f.set_dials(dl);
+    CloudDesc d = point_cloud({0, 0, -20}); d.fade_in = true;
+    f.add_cloud(d, 5.0);
+    f.step(looking_down_minus_z(5.0));             // t == born: 0/0
+    EXPECT_EQ(f.stats().drawn, 50);
+    for (const auto& b : f.bins())
+        for (const auto& g : b.items) ASSERT_TRUE(std::isfinite(g.row0.x));
+}
+
+TEST(MinorStep, DetachIsContinuousForOrbitingMinors) {
+    auto f = field_with_fragments();
+    CloudDesc d = point_cloud({0, 0, 0}); d.anchor = Anchor::Instance; d.instance_key = 7;
+    d.orbit_rate = 0.5f;
+    f.add_cloud(d, 0.0);
+    auto in = looking_down_minus_z(3.0);
+    in.anchor_of = [](std::uint64_t, glm::vec3& o) { o = {0, 0, -20}; return true; };
+    f.step(in);
+    std::vector<glm::vec3> before(50);
+    for (std::size_t i = 0; i < 50; ++i) ASSERT_TRUE(f.minor_position(9, i, before[i]));
+    f.detach(9, glm::dvec3(0, 0, -20), glm::vec3(0), 3.0, {});
+    in.anchor_of = nullptr;
+    f.step(in);
+    for (std::size_t i = 0; i < 50; ++i) {
+        glm::vec3 after; ASSERT_TRUE(f.minor_position(9, i, after));
+        EXPECT_NEAR(glm::length(after - before[i]), 0.0f, 1e-4f) << i;
+    }
+}
+
+TEST(MinorStep, OutsideSidePlaneIsCulled) {
+    auto f = field_with_fragments();
+    f.add_cloud(point_cloud({+100, 0, -5}), 0.0);
+    f.step(looking_down_minus_z());
+    EXPECT_EQ(f.stats().drawn, 0);
+}

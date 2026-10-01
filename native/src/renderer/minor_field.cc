@@ -65,6 +65,12 @@ glm::vec3 orbit_offset(const Minor& m, const glm::vec3& axis, float rate, double
     return rotation(angle, axis) * m.offset;
 }
 
+// 0 -> 1 over `seconds` from elapsed 0; `seconds <= 0` is an instant step to 1.
+float ramp(double elapsed, float seconds) {
+    if (!(seconds > 0.0f)) return 1.0f;
+    return std::clamp(static_cast<float>(elapsed / seconds), 0.0f, 1.0f);
+}
+
 }  // namespace
 
 std::vector<Minor> generate(const CloudDesc& d) {
@@ -193,13 +199,12 @@ void MinorField::step(const StepInput& in) {
         }
         if (!c.anchor_ok) { c.pos.clear(); continue; }
 
+        // A ramp of <= 0 seconds is an instant step (no 0/0 NaN at its start).
         float fade = 1.0f;
         if (c.fading_in)
-            fade *= std::clamp(static_cast<float>((t - c.born) / dials_.cloud_fade_in_seconds),
-                               0.0f, 1.0f);
+            fade *= ramp(t - c.born, dials_.cloud_fade_in_seconds);
         if (c.fade_out_start >= 0.0)
-            fade *= 1.0f - std::clamp(static_cast<float>((t - c.fade_out_start)
-                                                         / c.fade_out_seconds), 0.0f, 1.0f);
+            fade *= 1.0f - ramp(t - c.fade_out_start, c.fade_out_seconds);
 
         const auto& frags = fragments(d.family);
         const glm::vec3 axis = orbit_axis(d.seed);
@@ -218,7 +223,7 @@ void MinorField::step(const StepInput& in) {
             const glm::vec3 p = c.anchor_render + local;
             c.pos[i] = p;
 
-            if (fade <= 0.0f || frags.empty()) continue;
+            if (!(fade > 0.0f) || frags.empty()) continue;   // NaN-safe
             const float r = m.radius * fade;
             bool inside = true;
             for (const auto& pl : planes)
