@@ -44,6 +44,29 @@ float scale_height(const DiscSource& s, float rho);
 float density_a(const DiscSource& s, const glm::dvec3& x_sys);
 float pop_density(const Population& p, float a);
 
+// ---- Haze (spec §2 "Haze") ------------------------------------------------
+
+struct HazeSample { glm::vec3 rgb{0}; float alpha = 0; };
+
+// The ray interval [t0, t1] (t from `origin_sys` along unit `dir`) inside the
+// disc's slab (|z| <= slab_sigmas * H at the outer radius) and its outer
+// radius (last table row + outer_fade_gu), clipped to [0, t_max]. False when
+// empty (or the table is). far_haze.frag MUST compute exactly the same
+// interval (same slab at the outer radius, same cylinder): change both or
+// neither -- FarPassGLTest.HazeShaderMatchesTheCpuReference pins them.
+bool haze_interval(const DiscSource& s, const glm::dvec3& origin_sys, const glm::vec3& dir,
+                   float t_max, float slab_sigmas, double& t0, double& t1);
+
+// CPU twin of far_haze.frag (spec §2 "Haze"): march `steps` midpoint samples
+// over the ray's interval inside the disc's slab and outer radius, from t=0 to
+// t_max; at each, dtau = gain * sum_pop n(a) * cross_section_below(size,
+// p_min * t / k) * dt; rgb += T * (1 - exp(-dtau)) * albedo_mix * light;
+// T *= exp(-dtau). Returns premultiplied rgb and alpha = 1 - T. albedo_mix is
+// the populations' albedo weighted by n * sigma at the sample.
+HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
+                       const glm::vec3& dir, float t_max, float k, float p_min,
+                       float slab_sigmas, int steps, float gain, const glm::vec3& light);
+
 struct GenParams { float k_ref = 1713.0f, p_min = 0.25f; int size_classes = 4, cells_per_range = 4; };
 
 struct ClassBin { float r_lo = 0, r_hi = 0, share = 0, cell_gu = 1; };
@@ -75,7 +98,7 @@ struct FarDials {
     int cell_cache_max = 32768;
     float slab_sigmas = 4.0f;
     float speck_gain = 1.0f;
-    float haze_gain = 143.0f;
+    float haze_gain = 270.0f;   // R14: alpha ~0.15 forward from mid-band (spec §2)
     int haze_steps = 24;
     int max_cells_per_axis = 17;   // per class: enumeration spans at most this many cells per axis
 };

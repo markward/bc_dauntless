@@ -766,3 +766,177 @@ TEST_F(FarPassGLTest, SpeckFluxIsSteadyUnderSubPixelMotion) {
         EXPECT_LE(hi / lo, 1.10) << "p = " << p;
     }
 }
+
+// ---- Haze (far-tier Task 7) ----------------------------------------------
+
+namespace {
+
+constexpr int kHazeSize = 64;
+
+// Vesuvi's band (far_field_test.cc's vesuvi_like), minors only.
+far::DiscSource haze_source(glm::dvec3 centre = glm::dvec3(0.0)) {
+    far::DiscSource s;
+    s.id = 1; s.frame = "Vesuvi"; s.seed = 7;
+    s.centre = centre;
+    s.table = {{0.0f, 0.05f}, {215000.0f, 0.05f}, {226000.0f, 0.5f},
+               {330000.0f, 0.5f}, {340000.0f, 0.05f}};
+    far::Population minors;
+    minors.kind = 0; minors.density_at_1 = 9.67e-8f; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
+    s.pops = {minors};
+    return s;
+}
+
+// The haze test's camera: render-space eye off the origin (so u_centre's
+// system -> render offset is exercised), looking roughly along +y.
+scenegraph::Camera haze_camera() {
+    scenegraph::Camera c;
+    c.eye = glm::vec3(10.0f, 20.0f, 5.0f);
+    c.target = c.eye + glm::vec3(0.1f, 1.0f, 0.02f);
+    c.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    c.fov_y_rad = glm::radians(60.0f);
+    c.aspect = 1.0f;
+    c.near = 10.0f;
+    c.far = 1.0e6f;
+    return c;
+}
+
+glm::dvec3 unproject(const glm::dmat4& inv_vp, double u, double v, double d) {
+    const glm::dvec4 w = inv_vp * glm::dvec4(u * 2.0 - 1.0, v * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+    return glm::dvec3(w) / w.w;
+}
+
+}  // namespace
+
+// far_haze.frag implements haze_column exactly: at 5 pixels of a 64x64
+// render, alpha agrees within 0.01 (asserted: 0.001) with a far depth (cleared to 1.0) and with
+// a near occluder (depth cleared to a plane 60,000 GU ahead), and the
+// premultiplied colour agrees too.
+TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
+    // Targets first: HdrTarget::resize binds on the ACTIVE unit.
+    renderer::HdrTarget scene, out;
+    scene.resize(kHazeSize, kHazeSize);
+    out.resize(kHazeSize, kHazeSize);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    const std::vector<far::DiscSource> sources = {haze_source()};
+    const scenegraph::Camera cam = haze_camera();
+    const glm::mat4 vp = cam.proj_matrix() * cam.view_matrix();
+    const glm::mat4 inv_vp = glm::inverse(vp);
+    const glm::dmat4 inv_vp_d = glm::inverse(glm::dmat4(cam.proj_matrix()) * glm::dmat4(cam.view_matrix()));
+    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kHazeSize));
+    const far::FarDials dials;
+    renderer::Lighting l;
+    l.ambient = glm::vec3(0.1f, 0.12f, 0.15f);
+    l.directional_count = 1;
+    l.directional_dir_ws[0] = glm::normalize(glm::vec3(1.0f, 0.3f, 0.5f));
+    l.directional_color[0] = glm::vec3(1.0f, 0.9f, 0.8f);
+    const float ambient_scale = 0.7f;
+
+    // Depth of a plane 60,000 GU ahead.
+    const glm::vec4 clip = cam.proj_matrix() * glm::vec4(0.0f, 0.0f, -60000.0f, 1.0f);
+    const float near_depth = clip.z / clip.w * 0.5f + 0.5f;
+
+    const int pix[5][2] = {{32, 32}, {6, 6}, {57, 6}, {6, 57}, {57, 57}};
+    float max_diff = 0.0f;
+    float centre_alpha[2] = {0.0f, 0.0f};
+    for (int pass_i = 0; pass_i < 2; ++pass_i) {
+        scene.bind();
+        glViewport(0, 0, kHazeSize, kHazeSize);
+        glDepthMask(GL_TRUE);
+        glClearDepth(pass_i == 0 ? 1.0 : static_cast<double>(near_depth));
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glClearDepth(1.0);
+        std::vector<float> depth(static_cast<std::size_t>(kHazeSize) * kHazeSize);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, scene.fbo());
+        glReadPixels(0, 0, kHazeSize, kHazeSize, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data());
+
+        out.bind();
+        glViewport(0, 0, kHazeSize, kHazeSize);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer::FarPass pass;
+        pass.render_haze(sources, origin_sys, cam, *pipeline, l, ambient_scale,
+                         scene.depth_texture(), inv_vp, k, dials);
+        EXPECT_EQ(pass.last_draw_calls(), 1);
+        EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+        std::vector<float> px(static_cast<std::size_t>(kHazeSize) * kHazeSize * 4);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, out.fbo());
+        glReadPixels(0, 0, kHazeSize, kHazeSize, GL_RGBA, GL_FLOAT, px.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        for (const auto& p : pix) {
+            const double u = (p[0] + 0.5) / kHazeSize, v = (p[1] + 0.5) / kHazeSize;
+            const std::size_t idx = static_cast<std::size_t>(p[1]) * kHazeSize + p[0];
+            const double d = depth[idx];
+            const glm::dvec3 eye(cam.eye);
+            const glm::vec3 dir = glm::vec3(glm::normalize(unproject(inv_vp_d, u, v, 0.5) - eye));
+            const float t_max = d >= 1.0 ? 1.0e30f
+                                         : static_cast<float>(glm::length(unproject(inv_vp_d, u, v, d) - eye));
+            glm::vec3 light = l.ambient * ambient_scale;
+            light += l.directional_color[0] *
+                     far::lambert_sphere_phase(glm::dot(l.directional_dir_ws[0], -dir));
+            const auto h = far::haze_column(sources[0], origin_sys, dir, t_max, k, dials.tiers.p_min,
+                                            dials.slab_sigmas, dials.haze_steps, dials.haze_gain, light);
+            const float* g = &px[idx * 4];
+            std::printf("[far_pass_test] haze %s px (%d,%d): gpu a %.4f rgb (%.4f %.4f %.4f) | "
+                        "cpu a %.4f rgb (%.4f %.4f %.4f)\n", pass_i == 0 ? "far " : "near",
+                        p[0], p[1], g[3], g[0], g[1], g[2], h.alpha, h.rgb.r, h.rgb.g, h.rgb.b);
+            // The brief's bound is 0.01; measured agreement is ~4e-5, and a
+            // left-endpoint (not midpoint) march differs by only ~0.003, so
+            // 0.001 is what actually pins "the same midpoint rule".
+            EXPECT_NEAR(g[3], h.alpha, 0.001f) << "pixel " << p[0] << "," << p[1];
+            for (int c = 0; c < 3; ++c) EXPECT_NEAR(g[c], h.rgb[c], 0.001f);
+            max_diff = std::max(max_diff, std::fabs(g[3] - h.alpha));
+            if (p[0] == 32) centre_alpha[pass_i] = h.alpha;
+        }
+    }
+    std::printf("[far_pass_test] haze shader-vs-CPU max alpha diff %.5f\n", max_diff);
+    EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees real haze";
+    EXPECT_LT(centre_alpha[1], centre_alpha[0] - 0.03f) << "the occluder stops the march";
+}
+
+// One fullscreen draw per active source, at most 4; none for no sources. GL
+// state is restored: blend off, depth test and depth writes on, the caller's
+// blend function kept.
+TEST_F(FarPassGLTest, HazeDrawsOncePerSourceAndCapsAtFour) {
+    renderer::HdrTarget scene, out;
+    scene.resize(kHazeSize, kHazeSize);
+    out.resize(kHazeSize, kHazeSize);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    const scenegraph::Camera cam = haze_camera();
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kHazeSize));
+    renderer::Lighting l;
+    const far::FarDials dials;
+
+    out.bind();
+    glViewport(0, 0, kHazeSize, kHazeSize);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);     // a caller's blend function, to be kept
+    renderer::FarPass pass;
+    for (int n : {0, 1, 2, 4, 6}) {
+        std::vector<far::DiscSource> srcs;
+        for (int i = 0; i < n; ++i) srcs.push_back(haze_source(glm::dvec3(1000.0 * i, 0.0, 0.0)));
+        pass.reset_counts();
+        pass.render_haze(srcs, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l, 1.0f,
+                         scene.depth_texture(), inv_vp, k, dials);
+        EXPECT_EQ(pass.last_draw_calls(), std::min(n, 4)) << n << " sources";
+        EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    EXPECT_FALSE(glIsEnabled(GL_BLEND));
+    EXPECT_TRUE(glIsEnabled(GL_DEPTH_TEST));
+    GLboolean depth_write = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
+    EXPECT_TRUE(depth_write);
+    GLint src = 0, dst = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst);
+    EXPECT_EQ(src, GL_SRC_ALPHA);
+    EXPECT_EQ(dst, GL_ONE);
+    glBlendFunc(GL_ONE, GL_ZERO);
+}

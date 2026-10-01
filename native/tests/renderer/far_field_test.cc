@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include <renderer/far_field.h>
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 #include <optional>
 #include <string>
@@ -425,5 +426,103 @@ TEST(FarFieldBuild, TelephotoEnumerationIsBoundedPerAxis) {
         f.build(*in, out);
         EXPECT_LE(out.cells, bound);
         EXPECT_FALSE(out.specks.empty());
+    }
+}
+
+// ---- Haze (spec §2 "Haze") -------------------------------------------------
+
+namespace {
+far::DiscSource vesuvi_minors_only() {
+    auto s = vesuvi_like();
+    s.pops.resize(1);   // a = 0.5 has no majors; the derivation uses minors only
+    return s;
+}
+}  // namespace
+
+// Spec §2 (ruling R14): with the default gain (270), looking FORWARD along the
+// mid-plane of Vesuvi's band from mid-band (rho 278,000 GU) on a tangent, the
+// haze alpha is 0.15 +- 0.03. The eye sees only the forward half of the band
+// chord, which is why the default is 270 and not the 143 of a full chord.
+TEST(FarHaze, DefaultGainHitsTheStatedTarget) {
+    EXPECT_EQ(far::FarDials{}.haze_gain, 270.0f);
+    const far::DiscSource s = vesuvi_minors_only();
+    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
+                                    1.0e6f, 1713.0f, 0.25f, 4.0f, 24, 270.0f,
+                                    glm::vec3(1.0f));
+    std::printf("[FarHaze] default-gain alpha = %.4f\n", h.alpha);
+    EXPECT_NEAR(h.alpha, 0.15f, 0.03f);
+}
+
+TEST(FarHaze, NoSourceNoHaze) {
+    far::DiscSource s = vesuvi_minors_only();
+    s.table.clear();
+    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
+                                    1.0e6f, 1713.0f, 0.25f, 4.0f, 24, 143.0f,
+                                    glm::vec3(1.0f));
+    EXPECT_EQ(h.alpha, 0.0f);
+    EXPECT_EQ(h.rgb, glm::vec3(0.0f));
+}
+
+TEST(FarHaze, StopsAtSceneDepth) {
+    const far::DiscSource s = vesuvi_minors_only();
+    const auto far_h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
+                                        1.0e6f, 1713.0f, 0.25f, 4.0f, 24, 143.0f,
+                                        glm::vec3(1.0f));
+    const auto near_h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
+                                         1000.0f, 1713.0f, 0.25f, 4.0f, 24, 143.0f,
+                                         glm::vec3(1.0f));
+    EXPECT_GT(far_h.alpha, 0.0f);
+    EXPECT_GT(near_h.alpha, 0.0f);
+    EXPECT_LT(near_h.alpha, 0.01f * far_h.alpha);
+}
+
+TEST(FarHaze, ColourIsPremultipliedAlbedoTimesLight) {
+    // One population: rgb == alpha * albedo * light exactly (T telescopes).
+    const far::DiscSource s = vesuvi_minors_only();
+    const glm::vec3 light(2.0f, 1.0f, 0.5f);
+    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
+                                    1.0e6f, 1713.0f, 0.25f, 4.0f, 24, 143.0f, light);
+    const glm::vec3 want = h.alpha * s.pops[0].albedo * light;
+    EXPECT_NEAR(h.rgb.r, want.r, 1e-5f);
+    EXPECT_NEAR(h.rgb.g, want.g, 1e-5f);
+    EXPECT_NEAR(h.rgb.b, want.b, 1e-5f);
+}
+
+TEST(FarHaze, OutsideTheSlabSeesNothing) {
+    // A ray parallel to the plane, 10 scale heights above it.
+    const far::DiscSource s = vesuvi_minors_only();
+    const double H = far::scale_height(s, 360000.0f);
+    const auto h = far::haze_column(s, {278000.0, 0.0, 10.0 * H}, {0.0f, 1.0f, 0.0f},
+                                    1.0e6f, 1713.0f, 0.25f, 4.0f, 24, 143.0f,
+                                    glm::vec3(1.0f));
+    EXPECT_EQ(h.alpha, 0.0f);
+}
+
+TEST(FarHaze, SpecksAndHazeConserveCrossSection) {
+    // For one size population at distance d: cross_section_below(r_cut(d)) +
+    // the specks' share (cross-section of r >= r_cut) == mean_cross_section.
+    // The specks' share is integrated numerically here, independent of the
+    // closed form, for q = 2.5 and the q == 1 / q == 3 log branches.
+    for (float q : {1.0f, 2.5f, 3.0f}) {
+        const far::PowerLaw pl{0.05f, 0.7f, q};
+        double norm = 0.0;
+        const int N = 200000;
+        const double w = (pl.r_max - pl.r_min) / N;
+        for (int i = 0; i < N; ++i) norm += std::pow(pl.r_min + (i + 0.5) * w, -q) * w;
+        for (float d : {500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f}) {
+            const float r_cut = 0.25f * d / 1713.0f;
+            double above = 0.0;
+            const double lo = std::max<double>(r_cut, pl.r_min);
+            if (lo < pl.r_max) {
+                const double wa = (pl.r_max - lo) / N;
+                for (int i = 0; i < N; ++i) {
+                    const double r = lo + (i + 0.5) * wa;
+                    above += 3.14159265358979 * r * r * std::pow(r, -q) / norm * wa;
+                }
+            }
+            const float below = far::cross_section_below(pl, r_cut);
+            EXPECT_NEAR(below + above, far::mean_cross_section(pl),
+                        1e-4 * far::mean_cross_section(pl)) << "q=" << q << " d=" << d;
+        }
     }
 }

@@ -1,0 +1,180 @@
+#version 410 core
+// Far tier belt haze (docs/superpowers/specs/2026-10-01-far-tier-design.md,
+// §2 "Haze"). One fullscreen march per disc source. This is the GLSL twin of
+// renderer::far::haze_column / haze_interval (far_field.cc) and must stay
+// EXACTLY the same: the same interval (the slab |z| <= u_slab_sigmas * H at the
+// OUTER radius, and the cylinder rho <= last table row + u_outer_fade, clipped
+// to [0, scene depth]), the same midpoint rule, the same closed-form
+// cross-section (with its q == 1 / q == 3 log branches) and the same
+// n * sigma-weighted albedo mix. FarPassGLTest.HazeShaderMatchesTheCpuReference
+// pins the two together.
+// Output is PREMULTIPLIED (rgb, alpha = 1 - T); blend GL_ONE,
+// GL_ONE_MINUS_SRC_ALPHA.
+in vec2 v_uv;
+out vec4 frag_color;
+
+uniform sampler2D u_depth;
+uniform mat4  u_inv_vp;
+uniform vec3  u_eye;            // render space
+uniform vec3  u_centre;         // render space: centre - origin_sys + eye_render
+uniform vec3  u_normal;
+uniform float u_table_r[32];
+uniform float u_table_a[32];
+uniform int   u_table_n;
+uniform float u_outer_fade;
+uniform float u_h_frac;
+uniform float u_h_min;
+uniform float u_slab_sigmas;
+uniform int   u_pop_n;          // <= 2
+uniform float u_pop_density[2];
+uniform float u_pop_a_lo[2];
+uniform float u_pop_a_hi[2];
+uniform float u_pop_rmin[2];
+uniform float u_pop_rmax[2];
+uniform float u_pop_q[2];
+uniform vec3  u_pop_albedo[2];
+uniform float u_k;
+uniform float u_p_min;
+uniform int   u_steps;          // clamped to [1, kMaxSteps] by the host
+uniform float u_gain;
+// Light: the same inputs speck.frag reads.
+uniform vec3 u_ambient_light;
+uniform int  u_dir_light_count;
+uniform vec3 u_dir_light_dir_ws[4];   // toward each light
+uniform vec3 u_dir_light_color[4];
+
+const float PI = 3.14159265;
+const int kMaxSteps = 64;
+
+// renderer::far::lambert_sphere_phase (far_math.cc).
+float lambert_sphere_phase(float cos_alpha) {
+    float c = clamp(cos_alpha, -1.0, 1.0);
+    float a = acos(c);
+    return (2.0 / (3.0 * PI)) * (sin(a) + (PI - a) * c);
+}
+
+// ∫ r^e dr from a to b (e may be -1): far_math.cc int_pow.
+float int_pow(float a, float b, float e) {
+    if (abs(e + 1.0) < 1e-6) return log(b / a);
+    return (pow(b, e + 1.0) - pow(a, e + 1.0)) / (e + 1.0);
+}
+
+// renderer::far::cross_section_below.
+float cross_section_below(int i, float r_cut) {
+    float rmin = u_pop_rmin[i], rmax = u_pop_rmax[i];
+    float hi = min(r_cut, rmax);
+    if (hi <= rmin) return 0.0;
+    float e = -u_pop_q[i];
+    return PI * int_pow(rmin, hi, e + 2.0) / int_pow(rmin, rmax, e);
+}
+
+// renderer::far::table_a.
+float table_a(float rho) {
+    if (u_table_n <= 0) return 0.0;
+    if (rho <= u_table_r[0]) return u_table_a[0];
+    for (int i = 1; i < 32; ++i) {
+        if (i >= u_table_n) break;
+        if (rho <= u_table_r[i]) {
+            float span = u_table_r[i] - u_table_r[i - 1];
+            float u = span > 0.0 ? (rho - u_table_r[i - 1]) / span : 1.0;
+            return u_table_a[i - 1] + (u_table_a[i] - u_table_a[i - 1]) * u;
+        }
+    }
+    if (!(u_outer_fade > 0.0)) return 0.0;
+    float last_r = u_table_r[u_table_n - 1];
+    float u = (rho - last_r) / u_outer_fade;
+    return u >= 1.0 ? 0.0 : u_table_a[u_table_n - 1] * (1.0 - u);
+}
+
+float scale_height(float rho) { return max(u_h_frac * rho, u_h_min); }
+
+// renderer::far::density_a.
+float density_a(vec3 p) {
+    vec3 d = p - u_centre;
+    float z = dot(d, u_normal);
+    float rho = length(d - u_normal * z);
+    float H = scale_height(rho);
+    return table_a(rho) * exp(-0.5 * z * z / (H * H));
+}
+
+// renderer::far::pop_density.
+float pop_density(int i, float a) {
+    float span = u_pop_a_hi[i] - u_pop_a_lo[i];
+    float w = span > 0.0 ? clamp((a - u_pop_a_lo[i]) / span, 0.0, 1.0)
+                         : (a > u_pop_a_lo[i] ? 1.0 : 0.0);
+    return u_pop_density[i] * w;
+}
+
+vec3 world_from_depth(vec2 uv, float d) {
+    vec4 w = u_inv_vp * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+    return w.xyz / w.w;
+}
+
+// renderer::far::haze_interval. Keep identical (see the header comment).
+bool haze_interval(vec3 dir, float t_max, out float t0, out float t1) {
+    if (u_table_n <= 0) return false;
+    float R = u_table_r[u_table_n - 1] + max(0.0, u_outer_fade);
+    float Z = u_slab_sigmas * scale_height(R);
+    vec3 d = u_eye - u_centre;
+    t0 = 0.0;
+    t1 = t_max;
+    float z0 = dot(d, u_normal), dz = dot(dir, u_normal);
+    if (abs(dz) < 1e-12) {
+        if (abs(z0) > Z) return false;
+    } else {
+        float a = (-Z - z0) / dz, b = (Z - z0) / dz;
+        t0 = max(t0, min(a, b));
+        t1 = min(t1, max(a, b));
+    }
+    vec3 p = d - u_normal * z0, v = dir - u_normal * dz;
+    float qa = dot(v, v), qb = 2.0 * dot(p, v), qc = dot(p, p) - R * R;
+    if (qa < 1e-12) {
+        if (qc > 0.0) return false;
+    } else {
+        float disc = qb * qb - 4.0 * qa * qc;
+        if (disc < 0.0) return false;
+        float sq = sqrt(disc);
+        t0 = max(t0, (-qb - sq) / (2.0 * qa));
+        t1 = min(t1, (-qb + sq) / (2.0 * qa));
+    }
+    return t1 > t0;
+}
+
+void main() {
+    float dsc = texture(u_depth, v_uv).r;
+    float t_max = 1e30;
+    if (dsc < 1.0) t_max = length(world_from_depth(v_uv, dsc) - u_eye);
+    vec3 dir = normalize(world_from_depth(v_uv, 0.5) - u_eye);
+
+    float t0, t1;
+    if (!haze_interval(dir, t_max, t0, t1)) { frag_color = vec4(0.0); return; }
+
+    vec3 light = u_ambient_light;
+    for (int i = 0; i < u_dir_light_count; ++i)
+        light += u_dir_light_color[i]
+               * lambert_sphere_phase(dot(normalize(u_dir_light_dir_ws[i]), -dir));
+
+    float dt = (t1 - t0) / float(u_steps);
+    float T = 1.0;
+    vec3 rgb = vec3(0.0);
+    for (int s = 0; s < kMaxSteps; ++s) {
+        if (s >= u_steps) break;
+        float t = t0 + (float(s) + 0.5) * dt;
+        float a = density_a(u_eye + dir * t);
+        float r_cut = u_p_min * t / u_k;
+        float sum = 0.0;
+        vec3 sum_albedo = vec3(0.0);
+        for (int i = 0; i < 2; ++i) {
+            if (i >= u_pop_n) break;
+            float ns = pop_density(i, a) * cross_section_below(i, r_cut);
+            sum += ns;
+            sum_albedo += ns * u_pop_albedo[i];
+        }
+        if (!(sum > 0.0)) continue;
+        float dtau = u_gain * sum * dt;
+        float ext = exp(-dtau);
+        rgb += T * (1.0 - ext) * (sum_albedo / sum) * light;
+        T *= ext;
+    }
+    frag_color = vec4(rgb, 1.0 - T);
+}

@@ -55,6 +55,21 @@ public:
                        Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                        float speck_gain, int viewport_w, int viewport_h);
 
+    // Belt haze (spec §2 "Haze"): one fullscreen-triangle draw of
+    // far_haze.frag per source in `active`, at most 4 (the rest are ignored,
+    // with one warning). `origin_sys` is the eye in system coordinates; the
+    // eye in render space is the camera's. `depth_texture` is the scene depth
+    // the march stops at, reconstructed through `inv_view_proj`; `k` is the
+    // spec's pixels-per-GU. A table longer than 32 rows uses its first 32 and
+    // warns once; at most 2 populations per source are marched, and
+    // dials.haze_steps is clamped to [1, 64]. Premultiplied blend, depth test
+    // and depth writes off; afterwards depth test and writes are on, blending
+    // off, and the blend function is as found.
+    void render_haze(const std::vector<far::DiscSource>& active, const glm::dvec3& origin_sys,
+                     const scenegraph::Camera& cam, Pipeline& pipeline, const Lighting& lighting,
+                     float ambient_scale, unsigned depth_texture, const glm::mat4& inv_view_proj,
+                     float k, const far::FarDials& dials);
+
     int last_draw_calls() const { return draw_calls_; }   // since the last reset_counts()
     void reset_counts() { draw_calls_ = 0; }
     bool atlas_loaded(int index) const { return atlases_.count(index) != 0; }
@@ -81,6 +96,10 @@ private:
     std::size_t speck_capacity_ = 0;        // bytes
     std::uint32_t white_texture_ = 0;
     std::uint32_t black_texture_ = 0;
+    std::uint32_t haze_vao_ = 0;            // empty: the fullscreen triangle
+    bool warned_haze_cap_ = false;
+    bool warned_haze_table_ = false;
+    bool warned_haze_pops_ = false;
     int draw_calls_ = 0;
 };
 

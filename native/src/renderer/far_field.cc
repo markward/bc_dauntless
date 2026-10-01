@@ -140,6 +140,67 @@ float pop_density(const Population& p, float a) {
     return p.density_at_1 * w;
 }
 
+bool haze_interval(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir_f,
+                   float t_max, float slab_sigmas, double& t0, double& t1) {
+    if (s.table.empty()) return false;
+    const double R = static_cast<double>(s.table.back().x) + std::max(0.0f, s.outer_fade_gu);
+    const double Z = static_cast<double>(slab_sigmas) * scale_height(s, static_cast<float>(R));
+    const glm::dvec3 n(s.normal), dir(dir_f), d = origin - s.centre;
+    t0 = 0.0;
+    t1 = t_max;
+    // Slab |z0 + t dz| <= Z.
+    const double z0 = glm::dot(d, n), dz = glm::dot(dir, n);
+    if (std::fabs(dz) < 1e-12) {
+        if (std::fabs(z0) > Z) return false;
+    } else {
+        const double a = (-Z - z0) / dz, b = (Z - z0) / dz;
+        t0 = std::max(t0, std::min(a, b));
+        t1 = std::min(t1, std::max(a, b));
+    }
+    // Cylinder |p + t v| <= R in the disc plane.
+    const glm::dvec3 p = d - n * z0, v = dir - n * dz;
+    const double qa = glm::dot(v, v), qb = 2.0 * glm::dot(p, v), qc = glm::dot(p, p) - R * R;
+    if (qa < 1e-12) {
+        if (qc > 0.0) return false;
+    } else {
+        const double disc = qb * qb - 4.0 * qa * qc;
+        if (disc < 0.0) return false;
+        const double sq = std::sqrt(disc);
+        t0 = std::max(t0, (-qb - sq) / (2.0 * qa));
+        t1 = std::min(t1, (-qb + sq) / (2.0 * qa));
+    }
+    return t1 > t0;
+}
+
+HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir,
+                       float t_max, float k, float p_min, float slab_sigmas, int steps,
+                       float gain, const glm::vec3& light) {
+    HazeSample out;
+    double t0 = 0.0, t1 = 0.0;
+    if (steps < 1 || !haze_interval(s, origin, dir, t_max, slab_sigmas, t0, t1)) return out;
+    const double dt = (t1 - t0) / steps;
+    float T = 1.0f;
+    for (int i = 0; i < steps; ++i) {
+        const double t = t0 + (i + 0.5) * dt;
+        const float a = density_a(s, origin + glm::dvec3(dir) * t);
+        const float r_cut = p_min * static_cast<float>(t) / k;
+        float sum = 0.0f;
+        glm::vec3 sum_albedo(0.0f);
+        for (const Population& P : s.pops) {
+            const float ns = pop_density(P, a) * cross_section_below(P.size, r_cut);
+            sum += ns;
+            sum_albedo += ns * P.albedo;
+        }
+        if (!(sum > 0.0f)) continue;
+        const float dtau = gain * sum * static_cast<float>(dt);
+        const float ext = std::exp(-dtau);
+        out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light;
+        T *= ext;
+    }
+    out.alpha = 1.0f - T;
+    return out;
+}
+
 std::vector<ClassBin> size_classes(const Population& p, const GenParams& g) {
     const int n = std::max(1, g.size_classes);
     std::vector<ClassBin> out(static_cast<std::size_t>(n));

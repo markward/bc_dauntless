@@ -2,6 +2,7 @@
 // Far tier impostors (docs/superpowers/specs/2026-10-01-far-tier-design.md, §3).
 #include "renderer/far_pass.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -121,6 +122,7 @@ FarPass::~FarPass() {
     if (speck_vbo_ != 0) { GLuint b = speck_vbo_; glDeleteBuffers(1, &b); }
     if (white_texture_ != 0) { GLuint t = white_texture_; glDeleteTextures(1, &t); }
     if (black_texture_ != 0) { GLuint t = black_texture_; glDeleteTextures(1, &t); }
+    if (haze_vao_ != 0) { GLuint v = haze_vao_; glDeleteVertexArrays(1, &v); }
 }
 
 void FarPass::set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal) {
@@ -264,6 +266,118 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glActiveTexture(GL_TEXTURE0);
+}
+
+void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm::dvec3& origin_sys,
+                          const scenegraph::Camera& cam, Pipeline& pipeline,
+                          const Lighting& lighting, float ambient_scale, unsigned depth_texture,
+                          const glm::mat4& inv_view_proj, float k, const far::FarDials& dials) {
+    constexpr std::size_t kMaxSources = 4, kMaxRows = 32, kMaxPops = 2;
+    constexpr int kMaxSteps = 64;   // far_haze.frag's loop bound
+    if (active.empty()) return;
+    if (active.size() > kMaxSources && !warned_haze_cap_) {
+        std::fprintf(stderr, "[far] haze: %zu sources, drawing the first %zu\n", active.size(),
+                     kMaxSources);
+        warned_haze_cap_ = true;
+    }
+    if (haze_vao_ == 0) {
+        GLuint v = 0;
+        glGenVertexArrays(1, &v);
+        haze_vao_ = v;
+    }
+
+    const glm::vec3 eye_render = glm::vec3(glm::inverse(cam.view_matrix())[3]);
+    Shader& s = pipeline.far_haze_shader();
+    s.use();
+    s.set_mat4("u_inv_vp", inv_view_proj);
+    s.set_vec3("u_eye", eye_render);
+    s.set_float("u_k", k);
+    s.set_float("u_p_min", dials.tiers.p_min);
+    s.set_int("u_steps", std::clamp(dials.haze_steps, 1, kMaxSteps));
+    s.set_float("u_gain", dials.haze_gain);
+    s.set_float("u_slab_sigmas", dials.slab_sigmas);
+    // The light configure_rock_program / render_specks give a rock.
+    set_ambient_uniforms(s, lighting, ambient_scale);
+    s.set_int("u_dir_light_count", lighting.directional_count);
+    if (lighting.directional_count > 0) {
+        s.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
+                         lighting.directional_count);
+        s.set_vec3_array("u_dir_light_color", lighting.directional_color,
+                         lighting.directional_count);
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, depth_texture);
+    s.set_int("u_depth", 0);
+
+    GLint blend_src_rgb = GL_ONE, blend_dst_rgb = GL_ZERO;
+    GLint blend_src_a = GL_ONE, blend_dst_a = GL_ZERO;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blend_dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dst_a);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // premultiplied
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glBindVertexArray(haze_vao_);
+
+    for (std::size_t si = 0; si < active.size() && si < kMaxSources; ++si) {
+        const far::DiscSource& src = active[si];
+        if (src.table.size() > kMaxRows && !warned_haze_table_) {
+            std::fprintf(stderr, "[far] haze: source %u has %zu table rows, using the first %zu\n",
+                         src.id, src.table.size(), kMaxRows);
+            warned_haze_table_ = true;
+        }
+        if (src.pops.size() > kMaxPops && !warned_haze_pops_) {
+            std::fprintf(stderr, "[far] haze: source %u has %zu populations, marching the first %zu\n",
+                         src.id, src.pops.size(), kMaxPops);
+            warned_haze_pops_ = true;
+        }
+        const int rows = static_cast<int>(std::min(src.table.size(), kMaxRows));
+        float tr[kMaxRows] = {}, ta[kMaxRows] = {};
+        for (int i = 0; i < rows; ++i) { tr[i] = src.table[i].x; ta[i] = src.table[i].y; }
+        const int pops = static_cast<int>(std::min(src.pops.size(), kMaxPops));
+        float dens[kMaxPops] = {}, alo[kMaxPops] = {}, ahi[kMaxPops] = {};
+        float rmin[kMaxPops] = {}, rmax[kMaxPops] = {}, q[kMaxPops] = {};
+        glm::vec3 alb[kMaxPops] = {};
+        for (int i = 0; i < pops; ++i) {
+            const far::Population& P = src.pops[static_cast<std::size_t>(i)];
+            dens[i] = P.density_at_1; alo[i] = P.a_lo; ahi[i] = P.a_hi;
+            rmin[i] = P.size.r_min; rmax[i] = P.size.r_max; q[i] = P.size.q;
+            alb[i] = P.albedo;
+        }
+        // System -> render, in double before the cast.
+        s.set_vec3("u_centre", glm::vec3(src.centre - origin_sys + glm::dvec3(eye_render)));
+        s.set_vec3("u_normal", src.normal);
+        s.set_float_array("u_table_r", tr, static_cast<int>(kMaxRows));
+        s.set_float_array("u_table_a", ta, static_cast<int>(kMaxRows));
+        s.set_int("u_table_n", rows);
+        s.set_float("u_outer_fade", src.outer_fade_gu);
+        s.set_float("u_h_frac", src.scale_height_frac);
+        s.set_float("u_h_min", src.scale_height_min_gu);
+        s.set_int("u_pop_n", pops);
+        s.set_float_array("u_pop_density", dens, static_cast<int>(kMaxPops));
+        s.set_float_array("u_pop_a_lo", alo, static_cast<int>(kMaxPops));
+        s.set_float_array("u_pop_a_hi", ahi, static_cast<int>(kMaxPops));
+        s.set_float_array("u_pop_rmin", rmin, static_cast<int>(kMaxPops));
+        s.set_float_array("u_pop_rmax", rmax, static_cast<int>(kMaxPops));
+        s.set_float_array("u_pop_q", q, static_cast<int>(kMaxPops));
+        s.set_vec3_array("u_pop_albedo", alb, static_cast<int>(kMaxPops));
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        ++draw_calls_;
+    }
+
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    // Restore the frame defaults: depth test and writes on, cull on, blend
+    // off; and the blend function as it was found.
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_CULL_FACE);
+    glBlendFuncSeparate(static_cast<GLenum>(blend_src_rgb), static_cast<GLenum>(blend_dst_rgb),
+                        static_cast<GLenum>(blend_src_a), static_cast<GLenum>(blend_dst_a));
+    glDisable(GL_BLEND);
 }
 
 void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegraph::Camera& cam,
