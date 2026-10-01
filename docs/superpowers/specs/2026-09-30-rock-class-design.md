@@ -196,9 +196,13 @@ when the critical hull reaches 0:
   placed); chunk-sized pieces stay random.
 - The remnant and every small rock of radius ≥ **1.0 GU** (`kMajorMinRadiusGU`)
   become a new `RockClass` via `RockClass_Create`: a catalogue *fragment* of
-  the parent's family, named `"<parent>-1"`, `"<parent>-2"`, … in plan order
-  (the remnant is always `-1`), scannable / hailable copied from the parent,
-  HP and mass per §1. A remnant below that floor is a chunk.
+  the parent's family. The remnant is named `"<parent> - Remnant"`; each small
+  rock is `"<parent>-1"`, `"<parent>-2"`, … numbered in plan order counting
+  only the smalls. Scannable / hailable copied from the parent, HP and mass
+  per §1. A remnant below that floor is a chunk. If a set already holds the
+  target name (should not happen — one remnant per parent, and a remnant
+  never breaks into majors), the piece is skipped and logged once via
+  `dev_mode.log_swallowed` rather than clobbering it.
 - **Targeting:** only the remnant may be targetable, and only when its BUILT
   (quantised) radius is ≥ **2.0 GU** (`kTargetableMinRadiusGU`); it then
   copies the parent's flag. Every other piece is untargetable whatever the
@@ -208,7 +212,8 @@ when the critical hull reaches 0:
 - One major generation (`kMaxMajorGeneration = 1`): a rock that is itself a
   piece (`_rock_generation ≥ 1`) breaks into chunks and dust only — its
   would-be majors, remnant included, become chunks — so there is no
-  `"<parent>-1-1"`, and destroying a remnant never spawns a new target.
+  `"<parent> - Remnant - Remnant"`, and destroying a remnant never spawns a
+  new target.
 - Small rocks below 1.0 GU become tumbling rock chunks (`debris_chunk` style,
   catalogue fragment mesh, never targeted, no hull; capped and oldest-first
   evicted). At most `kMaxChunksPerDeath` (**8**) per death, the largest; the

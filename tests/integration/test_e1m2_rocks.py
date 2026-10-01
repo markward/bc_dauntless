@@ -311,12 +311,15 @@ def test_largest_asteroid_breaks_into_one_target_small_rocks_and_chunks():
     assert target.IsTargetable()
     death.drain_chunk_specs()
     target.DamageSystem(target.GetHull(), 1e9)
-    pieces = sorted((x for x in iter_rocks()
+    remnant_name = name + " - Remnant"
+    remnant = next((x for x in iter_rocks() if x.GetName() == remnant_name),
+                   None)
+    assert remnant is not None
+    smalls = sorted((x for x in iter_rocks()
                      if x.GetName().startswith(name + "-")),
                     key=lambda x: int(x.GetName().rsplit("-", 1)[1]))
-    targetable = [x for x in pieces if x.IsTargetable()]
-    assert [x.GetName() for x in targetable] == [name + "-1"]
-    remnant, smalls = pieces[0], pieces[1:]
+    targetable = [x for x in [remnant] + smalls if x.IsTargetable()]
+    assert [x.GetName() for x in targetable] == [remnant_name]
     assert remnant.GetRadius() >= breakup.kTargetableMinRadiusGU
     specs = death.drain_chunk_specs()
     assert len(smalls) + len(specs) <= breakup.kSmallMaxCount

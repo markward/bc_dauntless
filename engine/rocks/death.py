@@ -183,8 +183,18 @@ def _break_up(rock, pSet, name, killer=None) -> None:
         tr = breakup.kTumbleRate
         ang = (d.y * tr, d.z * tr, d.x * tr)
         if p.tier == "major":
-            major_i += 1
-            piece_name = "%s-%d" % (name, major_i)
+            if p.rank == "remnant":
+                piece_name = "%s - Remnant" % name
+            else:
+                major_i += 1
+                piece_name = "%s-%d" % (name, major_i)
+            if pSet.GetObject(piece_name) is not None:
+                # Should not happen -- one remnant per parent, and a remnant
+                # never breaks into majors (kMaxMajorGeneration) -- but don't
+                # clobber whatever already holds that name.
+                dev_mode.log_swallowed("rock piece name collision",
+                                       RuntimeError(piece_name))
+                continue
             piece = RockClass_Create(
                 p.radius_gu, family=family, seed=piece_name, name=piece_name,
                 kind="fragment",

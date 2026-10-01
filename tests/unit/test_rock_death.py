@@ -141,22 +141,28 @@ def test_big_rock_spawns_named_major_pieces_without_death_script():
     death.begin(rock)
     majors = [p for p in breakup.plan("Asteroid 5b", 4.0) if p.tier == "major"]
     assert majors
-    for i in range(1, len(majors) + 1):
-        piece = pSet.GetObject("Asteroid 5b-%d" % i)
+    small_i = 0
+    for m in majors:
+        if m.rank == "remnant":
+            piece_name = "Asteroid 5b - Remnant"
+        else:
+            small_i += 1
+            piece_name = "Asteroid 5b-%d" % small_i
+        piece = pSet.GetObject(piece_name)
         assert piece is not None and is_rock(piece)
         assert piece.GetDeathScript() is None
         assert piece._rock_generation == 1
         # Parent velocity carried: what remains is the separation kick alone
         # (identity rotation, so the kick is exactly offset * speed).
         v = piece.GetVelocityTG()
-        off = majors[i - 1].offset
+        off = m.offset
         sp = breakup.kSeparationSpeedGU
         assert abs(v.x - (1.0 + off[0] * sp)) < 1e-9
         assert abs(v.y - off[1] * sp) < 1e-9
         assert abs(v.z - off[2] * sp) < 1e-9
         # Targetable parent: only the remnant, at or above the threshold.
         big = piece.GetRadius() >= breakup.kTargetableMinRadiusGU
-        assert bool(piece.IsTargetable()) is (big and majors[i - 1].rank == "remnant")
+        assert bool(piece.IsTargetable()) is (big and m.rank == "remnant")
 
 
 def test_piece_hull_scales_from_parent_max():
@@ -169,7 +175,7 @@ def test_piece_hull_scales_from_parent_max():
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
     majors = [p for p in breakup.plan("Asteroid 5b", 4.0) if p.tier == "major"]
-    first = pSet.GetObject("Asteroid 5b-1")
+    first = pSet.GetObject("Asteroid 5b - Remnant")   # majors[0] is the remnant
     assert abs(first.GetHull().GetMaxCondition()
                - stats.piece_hull(8000.0, majors[0].v_ratio)) < 1e-6
     assert abs(first.GetMass()
@@ -306,8 +312,16 @@ def _pair_masked(x, y):
 
 def _majors_of(pSet, name, radius):
     from engine.rocks import breakup
-    n = sum(1 for p in breakup.plan(name, radius) if p.tier == "major")
-    return [pSet.GetObject("%s-%d" % (name, i)) for i in range(1, n + 1)]
+    majors = [p for p in breakup.plan(name, radius) if p.tier == "major"]
+    out = []
+    small_i = 0
+    for p in majors:
+        if p.rank == "remnant":
+            out.append(pSet.GetObject("%s - Remnant" % name))
+        else:
+            small_i += 1
+            out.append(pSet.GetObject("%s-%d" % (name, small_i)))
+    return out
 
 
 def _spread(objs, step=100.0):
@@ -467,7 +481,7 @@ def test_scaled_hardpoint_rock_breaks_up_at_effective_radius(monkeypatch):
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
     assert planned and abs(planned[0] - 4.0) < 1e-9
-    assert pSet.GetObject("Asteroid 5b-1") is not None
+    assert pSet.GetObject("Asteroid 5b - Remnant") is not None
     assert abs(death.drain_death_vfx()[-1].radius_gu - 4.0) < 1e-9
 
 
@@ -620,6 +634,24 @@ def test_a_set_less_dying_rock_is_logged_once(monkeypatch):
     assert logged.count("set-less dying rock: no breakup") == 1
 
 
+def test_piece_name_collision_is_logged_and_skipped_not_crashed(monkeypatch):
+    """Should not happen (one remnant per parent, and a remnant never breaks
+    into majors), but if the target name is already taken, skip that piece
+    and log once rather than clobbering the existing object or raising."""
+    import engine.dev_mode as dm
+    from engine.rocks import death
+    logged = []
+    monkeypatch.setattr(dm, "log_swallowed", lambda ctx, e: logged.append((ctx, e)))
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    pSet = _in_set(rock, "Asteroid 5b")
+    squatter = _make(App.GENUS_SHIP)
+    pSet.AddObjectToSet(squatter, "Asteroid 5b - Remnant")
+    death.begin(rock)                        # must not raise
+    assert pSet.GetObject("Asteroid 5b - Remnant") is squatter   # untouched
+    assert [c for c, _ in logged].count("rock piece name collision") == 1
+
+
 def test_generation_one_rock_breaks_into_chunks_and_dust_only():
     """Tuned after live test 2026-10-01: no generation-2 rocks."""
     from engine.rocks import breakup, death
@@ -634,9 +666,10 @@ def test_generation_one_rock_breaks_into_chunks_and_dust_only():
 
 
 def test_generation_zero_rock_spawns_remnant_then_small_majors():
-    """Remnant + capped small rocks: the remnant is "-1"; every small rock
-    >= kMajorMinRadiusGU is a RockClass numbered after it in plan order; the
-    smaller ones are chunk specs (<= kMaxChunksPerDeath)."""
+    """Remnant + capped small rocks: the remnant is "<name> - Remnant"; every
+    small rock >= kMajorMinRadiusGU is a RockClass "<name>-N" numbered in
+    plan order counting only the smalls; the smaller ones are chunk specs
+    (<= kMaxChunksPerDeath)."""
     from engine.rocks import breakup, death
     from engine.rocks.rock import is_rock
     for name in ("Asteroid 5b", "Asteroid 6b", "Asteroid 7a"):
@@ -649,10 +682,12 @@ def test_generation_zero_rock_spawns_remnant_then_small_majors():
         assert [p.rank for p in majors] == \
             ["remnant"] + ["small"] * (len(majors) - 1)
         assert all(p.radius_gu >= breakup.kMajorMinRadiusGU for p in majors)
-        for i in range(1, len(majors) + 1):
+        remnant = pSet.GetObject("%s - Remnant" % name)
+        assert remnant is not None and is_rock(remnant)
+        for i in range(1, len(majors)):
             piece = pSet.GetObject("%s-%d" % (name, i))
             assert piece is not None and is_rock(piece)
-        assert pSet.GetObject("%s-%d" % (name, len(majors) + 1)) is None
+        assert pSet.GetObject("%s-%d" % (name, len(majors))) is None
         specs = death.drain_chunk_specs()
         n_chunk = sum(1 for p in plan if p.tier == "chunk")
         assert all(p.radius_gu < breakup.kMajorMinRadiusGU
@@ -679,7 +714,8 @@ def _one_piece_death(monkeypatch, piece_radius, parent_targetable,
     rock.SetHailable(1)
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
-    return pSet.GetObject("Asteroid 5b-1")
+    name = "Asteroid 5b - Remnant" if rank == "remnant" else "Asteroid 5b-1"
+    return pSet.GetObject(name)
 
 
 def test_targetable_threshold_dial():
@@ -771,11 +807,11 @@ def test_destroying_a_generation_one_remnant_creates_no_target():
     rock.SetTargetable(1)
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
-    large = pSet.GetObject("Asteroid 5b-1")
+    large = pSet.GetObject("Asteroid 5b - Remnant")
     assert large.IsTargetable() and large._rock_generation == 1
     before = {id(x) for x in iter_rocks()}
     death.begin(large)
     new = [x for x in iter_rocks() if id(x) not in before]
     assert new == []
-    assert pSet.GetObject("Asteroid 5b-1-1") is None
+    assert pSet.GetObject("Asteroid 5b - Remnant - Remnant") is None
     assert death.drain_chunk_specs()            # it still broke up, as chunks

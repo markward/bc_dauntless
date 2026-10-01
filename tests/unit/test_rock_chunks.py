@@ -115,8 +115,15 @@ def _chunk_breakup():
     rock.SetRadius(1.6)                 # "Asteroid 5b" at 1.6: 1 major + 8 chunks
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
-    n = sum(1 for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "major")
-    majors = [pSet.GetObject("Asteroid 5b-%d" % i) for i in range(1, n + 1)]
+    plan_majors = [p for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "major"]
+    majors = []
+    small_i = 0
+    for p in plan_majors:
+        if p.rank == "remnant":
+            majors.append(pSet.GetObject("Asteroid 5b - Remnant"))
+        else:
+            small_i += 1
+            majors.append(pSet.GetObject("Asteroid 5b-%d" % small_i))
     r = FakeRenderer()
     chunks.pump(r, session=None)
     return rock, pSet, majors, debris_chunk.live(), r
