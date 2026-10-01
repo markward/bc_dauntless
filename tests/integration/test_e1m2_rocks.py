@@ -230,7 +230,7 @@ def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
     the grind-rate cutoff would otherwise hide those noise grinds too."""
     from engine.appc import collisions, debris_chunk, hit_vfx
     from engine.appc.ship_iter import iter_ships
-    from engine.rocks import chunks as rock_chunks, death
+    from engine.rocks import death
     mod = _init_e1m2()
     pSet = App.g_kSetManager.GetSet("Vesuvi6")
     mod.CreateMovingAsteroids()
@@ -286,19 +286,19 @@ def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
         loop.tick()
         debris_chunk.tick(dt, renderer)
         collisions.tick_collisions(dt)
-        rock_chunks.pump(renderer, None)
         death.drain_death_vfx()
     assert deaths == [target.GetName()]
     assert grind_vfx == []
 
 
-def test_largest_asteroid_breaks_into_one_target_small_rocks_and_chunks():
+def test_largest_asteroid_breaks_into_one_target_small_rocks_and_debris():
     """Remnant + capped small rocks (live test 2026-10-01, third): E1M2's
     largest moving asteroid breaks into one remnant -- the only target, when
     built at >= 2 GU -- at most 12 untargetable small rocks (the >= 1 GU
-    ones as RockClass, the rest chunks), and at most 8 chunk specs."""
+    ones as RockClass, the rest debris minors in its free cloud)."""
     from engine.appc.ship_iter import iter_rocks, iter_ships
-    from engine.rocks import breakup, death
+    from engine.rocks import breakup, minors
+    from engine.rocks import minor_dials as md
     mod = _init_e1m2()
     pSet = App.g_kSetManager.GetSet("Vesuvi6")
     mod.CreateMovingAsteroids()
@@ -309,7 +309,7 @@ def test_largest_asteroid_breaks_into_one_target_small_rocks_and_chunks():
     target = max(rocks, key=lambda r: r.GetScale())
     name = target.GetName()
     assert target.IsTargetable()
-    death.drain_chunk_specs()
+    minors._pending_free.clear()
     target.DamageSystem(target.GetHull(), 1e9)
     remnant_name = name + " - Remnant"
     remnant = next((x for x in iter_rocks() if x.GetName() == remnant_name),
@@ -321,8 +321,34 @@ def test_largest_asteroid_breaks_into_one_target_small_rocks_and_chunks():
     targetable = [x for x in [remnant] + smalls if x.IsTargetable()]
     assert [x.GetName() for x in targetable] == [remnant_name]
     assert remnant.GetRadius() >= breakup.kTargetableMinRadiusGU
-    specs = death.drain_chunk_specs()
-    assert len(smalls) + len(specs) <= breakup.kSmallMaxCount
+    [cloud] = minors._pending_free
+    assert cloud.rock_name == name
+    chunk_debris = [d for d in cloud.debris
+                    if d["radius"] > md.get("debris_gravel_r_max_gu")]
+    assert len(smalls) + len(chunk_debris) <= breakup.kSmallMaxCount
     assert all(breakup.kMajorMinRadiusGU <= m.GetRadius()
                <= breakup.kSmallRadiusMaxGU for m in smalls)
-    assert 1 <= len(specs) <= breakup.kMaxChunksPerDeath
+    assert 1 <= len(cloud.debris) <= md.get("max_debris_per_death")
+
+
+def test_destroying_an_e1m2_debris_rock_leaves_a_free_cloud_and_zero_rock_chunks():
+    """Minor-rocks spec §4: a debris rock's breakup debris is a free minor
+    cloud registered with engine.rocks.minors -- no debris_chunk body is
+    made for it any more."""
+    from engine.appc import debris_chunk
+    from engine.rocks import minors
+    mod = _init_e1m2()
+    name = list(mod.g_lDebrisNames)[0]
+    obj, home = None, None
+    for pSet in App.g_kSetManager._sets.values():
+        if pSet.GetObject(name) is not None:
+            obj, home = pSet.GetObject(name), pSet
+    assert obj is not None
+    minors._pending_free.clear()
+    live_before = list(debris_chunk._live)
+    obj.DamageSystem(obj.GetHull(), 1e9)
+    GameLoop().advance(60)
+    assert debris_chunk._live == live_before
+    clouds = [s for s in minors._pending_free if s.rock_name == name]
+    assert len(clouds) == 1
+    assert clouds[0].pSet is home

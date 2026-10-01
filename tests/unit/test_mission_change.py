@@ -345,8 +345,8 @@ def test_an_episode_change_leaves_running_campaign_music_alone(monkeypatch):
 
 def test_a_mission_change_clears_dying_rocks_and_queued_breakup_specs():
     """A rock dying at the change would be retired (by name, from a set that
-    no longer exists) in the next mission's advance, and its queued chunk and
-    VFX specs spawned there. rocks.death is reset with the rest."""
+    no longer exists) in the next mission's advance, and its queued VFX specs
+    spawned there. rocks.death is reset with the rest."""
     from engine.rocks import death
     game, player, _ = _world()
     _install("_t.Old", Terminate=lambda m: None)
@@ -354,8 +354,6 @@ def test_a_mission_change_clears_dying_rocks_and_queued_breakup_specs():
     rock = App.ShipClass_Create()
     death._dying.append({"rock": rock, "time_left": 0.5})
     death._vfx_specs.append(object())
-    death._chunk_specs.append(object())
     assert mission_change.change(mission="_t.New") is True
     assert death._dying == []
     assert death.drain_death_vfx() == []
-    assert death.drain_chunk_specs() == []

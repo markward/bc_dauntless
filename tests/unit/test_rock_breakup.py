@@ -44,7 +44,6 @@ def test_remnant_split_dials():
     assert b.kSmallVolumeFrac == 0.70
     assert (b.kTinySmallRadiusMinFrac, b.kTinySmallRadiusMaxFrac) == (0.3, 0.9)
     assert b.kMajorMinRadiusGU == 1.0
-    assert b.kMaxChunksPerDeath == 8
     assert b.kMaxMajorGeneration == 1
     assert b.kTargetableMinRadiusGU == 2.0
     for retired in ("kVolumeBudget", "kPieceCountMin", "kPieceCountMax",
@@ -173,29 +172,6 @@ def test_generation_one_rock_spawns_no_majors_only_chunks_and_dust():
         gen1 = breakup.plan(name, 8.0, generation=1)
         assert all(p.tier in ("chunk", "dust") for p in gen1)
         assert [p.radius_gu for p in gen1] == [p.radius_gu for p in gen0]
-
-
-def test_chunks_per_death_capped_keeping_the_largest():
-    """Generation 1: the remnant + 12 smalls are chunk candidates, cut to the
-    8 largest -- the remnant, being largest, is always kept."""
-    for name in _NAMES:
-        pieces = breakup.plan(name, 6.0, generation=1)
-        assert pieces[0].tier == "chunk"
-        chunks = [p for p in pieces if p.tier == "chunk"]
-        assert len(chunks) == breakup.kMaxChunksPerDeath
-        demoted = [p for p in pieces if p.tier == "dust"
-                   and p.radius_gu >= breakup.kChunkMinRadiusGU]
-        assert demoted and min(c.radius_gu for c in chunks) >= \
-            max(d.radius_gu for d in demoted)
-
-
-def test_chunk_count_never_exceeds_cap():
-    for name in _NAMES:
-        for gen in (0, 1, 2):
-            for r in (0.5, 1.5, 4.0, 8.0):
-                chunks = [p for p in breakup.plan(name, r, generation=gen)
-                          if p.tier == "chunk"]
-                assert len(chunks) <= breakup.kMaxChunksPerDeath
 
 
 # ── Spread majors (ruling after live test 2026-10-01) ────────────────────────

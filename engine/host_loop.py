@@ -11080,13 +11080,12 @@ def run(mission_name: Optional[str] = None,
                     )
 
                 # Rock breakup, render side (rock-class spec §2): the death
-                # burst (crack flash, dust, light) and the tumbling chunks
-                # engine.rocks.death queued -- this frame's collision kills
-                # included.
+                # burst (crack flash, dust, light) engine.rocks.death queued
+                # -- this frame's collision kills included. Breakup debris is
+                # a free minor cloud (engine.rocks.minors), not bodies here.
                 with frame_profiler.scope("sim.rock_breakup"):
-                    from engine.rocks import chunks as rock_chunks, vfx as rock_vfx
+                    from engine.rocks import vfx as rock_vfx
                     rock_vfx.pump()
-                    rock_chunks.pump(r, session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame

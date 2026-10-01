@@ -23,6 +23,23 @@ def _in_set(obj, name, set_name="RockTest"):
     return pSet
 
 
+def _free_clouds():
+    """The free minor clouds rock death has queued (minor-rocks spec §4)."""
+    from engine.rocks import minors
+    return list(minors._pending_free)
+
+
+def _debris_count(name, radius, generation=0):
+    """The spec §4 rule: every chunk-tier plan piece plus round(per_gu x R)
+    gravel, capped at max_debris_per_death."""
+    from engine.rocks import breakup
+    from engine.rocks import minor_dials as md
+    n_chunk = sum(1 for p in breakup.plan(name, radius, generation=generation)
+                  if p.tier == "chunk")
+    n = n_chunk + round(md.get("debris_gravel_per_gu") * radius)
+    return min(n, md.get("max_debris_per_death"))
+
+
 def _events(monkeypatch):
     seen = []
     real = App.g_kEventManager.AddEvent
@@ -182,21 +199,40 @@ def test_piece_hull_scales_from_parent_max():
                - stats.piece_mass(rock.GetMass(), majors[0].v_ratio)) < 1e-6
 
 
-def test_chunks_and_vfx_are_queued():
-    from engine.rocks import breakup, death
+def test_free_cloud_and_vfx_are_queued(monkeypatch):
+    """One FreeCloudSpec per death (minor-rocks spec §4): the rock's own name
+    and set, its centre and velocity, the game time, its family, its
+    effective radius for the halo, and the debris death.debris_specs
+    builds -- registered only once the rock is dying (minors' contract)."""
+    from engine.rocks import breakup, death, minors
+    monkeypatch.setattr(App.g_kUtopiaModule, "GetGameTime", lambda: 42.5)
+    seen_dying = []
+    real = minors.register_free_cloud
+    monkeypatch.setattr(minors, "register_free_cloud",
+                        lambda spec: (seen_dying.append(death.is_dying_rock(rock)),
+                                      real(spec)))
     rock = _make(App.GENUS_ASTEROID)
     rock.SetRadius(1.6)                  # 1 major + 2 chunks (see _big_rock)
-    _in_set(rock, "Asteroid 5b")
+    rock.SetTranslateXYZ(3.0, 4.0, 5.0)
+    rock.SetVelocity(TGPoint3(1.0, 0.0, 0.0))
+    rock._rock_family = "icy"
+    pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
-    n_chunks = sum(1 for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "chunk")
-    assert n_chunks and len(death.drain_chunk_specs()) == n_chunks
-    assert death.drain_chunk_specs() == []
+    [spec] = _free_clouds()
+    assert isinstance(spec, minors.FreeCloudSpec)
+    assert seen_dying == [True]
+    assert spec.rock_name == "Asteroid 5b" and spec.pSet is pSet
+    assert spec.p0 == (3.0, 4.0, 5.0) and spec.velocity == (1.0, 0.0, 0.0)
+    assert spec.t0 == 42.5 and spec.family == "icy"
+    assert spec.halo_radius_gu == 1.6
+    assert any(p.tier == "chunk" for p in breakup.plan("Asteroid 5b", 1.6))
+    assert len(spec.debris) == _debris_count("Asteroid 5b", 1.6)
     assert len(death.drain_death_vfx()) == 1
 
 
-def test_small_rock_queues_chunks_not_objects():
+def test_small_rock_queues_debris_not_objects():
     """A stock-size rock (0.8 GU) makes no majors: every non-dust piece is a
-    render-side chunk spec, and nothing new joins the set."""
+    debris minor in its free cloud, and nothing new joins the set."""
     from engine.rocks import breakup, death
     rock = _make(App.GENUS_ASTEROID)
     rock.SetRadius(0.8)                  # _make leaves the ship radius at 0
@@ -205,10 +241,12 @@ def test_small_rock_queues_chunks_not_objects():
         if hasattr(pSet, "GetClassObjectList") else None
     death.begin(rock)
     plan = breakup.plan("Asteroid 5b", 0.8)
-    chunks = [p for p in plan if p.tier == "chunk"]
-    specs = death.drain_chunk_specs()
-    assert chunks and len(specs) == len(chunks)
-    assert all(s.pSet is pSet for s in specs)
+    assert any(p.tier == "chunk" for p in plan)
+    assert not any(p.tier == "major" for p in plan)
+    [spec] = _free_clouds()
+    assert spec.pSet is pSet
+    assert len(spec.debris) == _debris_count("Asteroid 5b", 0.8)
+    assert pSet.GetObject("Asteroid 5b - Remnant") is None
     assert pSet.GetObject("Asteroid 5b-1") is None
     if before is not None:
         assert len(list(pSet.GetClassObjectList(App.CT_SHIP))) == before
@@ -237,7 +275,8 @@ def test_reset_drops_pending_and_removed_rock_is_skipped(monkeypatch):
     assert App.ET_OBJECT_DESTROYED not in seen
     death.begin(_make(App.GENUS_ASTEROID))
     death.reset()
-    assert death.drain_chunk_specs() == []
+    assert death._dying == []
+    assert death.drain_death_vfx() == []
 
 
 def test_no_splash_from_or_to_rocks(monkeypatch):
@@ -509,7 +548,7 @@ def _big_rock(vx=5.0):
     return rock, pSet
 
 
-def test_movable_killer_is_ghosted_against_pieces_and_chunks():
+def test_movable_killer_is_ghosted_against_the_pieces():
     from engine.rocks import breakup, death
     rock, pSet = _big_rock()
     ship = _make(App.GENUS_SHIP)
@@ -519,8 +558,6 @@ def test_movable_killer_is_ghosted_against_pieces_and_chunks():
     assert pieces
     for p in pieces:
         assert _pair_masked(p, ship)
-    specs = death.drain_chunk_specs()
-    assert specs and all(ship in s.ghost_peers for s in specs)
     death.advance(1.0 / 60.0)
     for p in pieces:
         assert _pair_masked(p, ship)           # within the margin of the killer
@@ -556,8 +593,6 @@ def test_planet_killer_is_ghosted_from_the_piece_side_only():
     for p in pieces:
         assert planet.GetObjID() in p._collision_disabled_ids
     assert "_collision_disabled_ids" not in planet.__dict__
-    specs = death.drain_chunk_specs()
-    assert specs and all(planet in s.ghost_peers for s in specs)
     death.advance(1.0 / 60.0)                 # 60 GU off: already clear
     for p in pieces:
         assert planet.GetObjID() not in p._collision_disabled_ids
@@ -569,9 +604,16 @@ def _inward(vel, at, centre):
     return (vel[0] * dx + vel[1] * dy + vel[2] * dz) / n
 
 
+def _chunk_seeds(name, radius):
+    import zlib
+    from engine.rocks import breakup
+    return {zlib.crc32(("%s#%d" % (name, i)).encode("utf-8"))
+            for i, p in enumerate(breakup.plan(name, radius)) if p.tier == "chunk"}
+
+
 @pytest.mark.parametrize("kind", ["planet", "immobile_ship"])
 def test_immovable_killer_strips_inward_velocity(kind):
-    from engine.rocks import death
+    from engine.rocks import breakup, death
     rock, pSet = _big_rock(vx=5.0)           # flying straight at the killer
     if kind == "planet":
         killer = _planet_at(60.0, pSet)
@@ -588,10 +630,15 @@ def test_immovable_killer_strips_inward_velocity(kind):
     for p in pieces:
         v, at = p.GetVelocityTG(), p.GetWorldLocation()
         assert _inward((v.x, v.y, v.z), (at.x, at.y, at.z), c) <= 1e-9
-    specs = death.drain_chunk_specs()
-    assert specs
-    for s in specs:
-        assert _inward(s.vel, s.loc, c) <= 1e-9
+    # The debris minors too: offset/v0 are relative to the parent.
+    [spec] = _free_clouds()
+    chunks = [d for d in spec.debris if d["radius"] >= breakup.kChunkMinRadiusGU
+              and d["seed"] in _chunk_seeds("Asteroid 5b", 1.6)]
+    assert chunks
+    for d in chunks:
+        at = tuple(p + o for p, o in zip(spec.p0, d["offset"]))
+        vel = tuple(v + w for v, w in zip(spec.velocity, d["v0"]))
+        assert _inward(vel, at, c) <= 1e-9
 
 
 def test_immovable_killer_keeps_outward_velocity():
@@ -606,20 +653,19 @@ def test_immovable_killer_keeps_outward_velocity():
 
 
 def test_render_queues_are_bounded_and_keep_the_newest():
-    """Headless nothing drains the chunk/VFX queues, so a long run of rock
-    deaths must not grow them without bound: oldest dropped at the cap."""
+    """Headless nothing drains the VFX queue, so a long run of rock deaths
+    must not grow it without bound: oldest dropped at the cap."""
     from engine.rocks import death
     cap = death.kMaxQueuedSpecs
     for i in range(cap + 40):
         rock = _make(App.GENUS_ASTEROID)
         rock.SetRadius(0.8)              # stock size: chunks, no majors
+        rock.SetTranslateXYZ(float(i), 0.0, 0.0)
         _in_set(rock, "Q%d" % i)
         death.begin(rock)
     vfx = death.drain_death_vfx()
-    chunks = death.drain_chunk_specs()
     assert len(vfx) == cap
-    assert len(chunks) == cap
-    assert chunks[-1].seed.startswith("Q%d#" % (cap + 39))   # newest kept
+    assert vfx[-1].loc[0] == float(cap + 39)                 # newest kept
 
 
 def test_a_set_less_dying_rock_is_logged_once(monkeypatch):
@@ -661,15 +707,20 @@ def test_generation_one_rock_breaks_into_chunks_and_dust_only():
     pSet = _in_set(rock, "Asteroid 5b-1")
     death.begin(rock)
     assert pSet.GetObject("Asteroid 5b-1-1") is None
-    specs = death.drain_chunk_specs()
-    assert 1 <= len(specs) <= breakup.kMaxChunksPerDeath
+    assert pSet.GetObject("Asteroid 5b-1 - Remnant") is None
+    [spec] = _free_clouds()
+    assert len(spec.debris) == _debris_count("Asteroid 5b-1", 4.0, generation=1)
+    # No per-death chunk cap: every demoted major is a debris minor.
+    n_chunk = sum(1 for p in breakup.plan("Asteroid 5b-1", 4.0, generation=1)
+                  if p.tier == "chunk")
+    assert n_chunk > 8
 
 
 def test_generation_zero_rock_spawns_remnant_then_small_majors():
     """Remnant + capped small rocks: the remnant is "<name> - Remnant"; every
     small rock >= kMajorMinRadiusGU is a RockClass "<name>-N" numbered in
-    plan order counting only the smalls; the smaller ones are chunk specs
-    (<= kMaxChunksPerDeath)."""
+    plan order counting only the smalls; the smaller ones are debris minors
+    in the rock's free cloud."""
     from engine.rocks import breakup, death
     from engine.rocks.rock import is_rock
     for name in ("Asteroid 5b", "Asteroid 6b", "Asteroid 7a"):
@@ -688,11 +739,11 @@ def test_generation_zero_rock_spawns_remnant_then_small_majors():
             piece = pSet.GetObject("%s-%d" % (name, i))
             assert piece is not None and is_rock(piece)
         assert pSet.GetObject("%s-%d" % (name, len(majors))) is None
-        specs = death.drain_chunk_specs()
-        n_chunk = sum(1 for p in plan if p.tier == "chunk")
         assert all(p.radius_gu < breakup.kMajorMinRadiusGU
                    for p in plan if p.tier == "chunk")
-        assert len(specs) == n_chunk <= breakup.kMaxChunksPerDeath
+        spec = [s for s in _free_clouds() if s.rock_name == name]
+        assert len(spec) == 1
+        assert len(spec[0].debris) == _debris_count(name, 7.4)
 
 
 # ── Targetable rule (Mark, live tests 2026-10-01) ────────────────────────────
@@ -814,4 +865,7 @@ def test_destroying_a_generation_one_remnant_creates_no_target():
     new = [x for x in iter_rocks() if id(x) not in before]
     assert new == []
     assert pSet.GetObject("Asteroid 5b - Remnant - Remnant") is None
-    assert death.drain_chunk_specs()            # it still broke up, as chunks
+    # It still broke up, as debris minors in a free cloud of its own.
+    assert [s.rock_name for s in _free_clouds()] == \
+        ["Asteroid 5b", "Asteroid 5b - Remnant"]
+    assert _free_clouds()[1].debris

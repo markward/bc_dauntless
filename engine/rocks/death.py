@@ -4,44 +4,32 @@ At 0 HP: death script, ET_OBJECT_EXPLODING at once, pieces out, no splash,
 no fireball; ET_OBJECT_DESTROYED fires after kRockDeathLife (or the lifetime a
 death script set -- E1M2 sets 0.5 s) and the rock then leaves its set.
 Pieces that are majors are real RockClass objects added to the parent's set
-here; chunks and the death VFX are queued for the host (render-side).
+here; the death VFX is queued for the host (render-side), and every smaller
+piece plus seeded gravel becomes the debris of the rock's free minor cloud
+(engine.rocks.minors, minor-rocks spec §4): its halo detaches and drifts on.
 
 Removal reuses ship_death.retire, so the ordering is exactly the ship one:
 SetDead + ET_OBJECT_DESTROYED while still in the set, then target locks
 cleared, then set removal, then ET_DELETE_OBJECT_PUBLIC.
 """
-from dataclasses import dataclass, replace
+import random
+import zlib
+from dataclasses import dataclass
 
 import engine.dev_mode as dev_mode
 from engine.appc.math import TGPoint3
 from engine.rocks import breakup, stats
 
 kRockDeathLife = 0.5
-# Cap on each render-side queue. The host drains them every frame; headless
-# nothing does, so a long run of rock deaths would grow them for ever. Past
-# the cap the OLDEST entries go (a stale chunk matters least).
+# Cap on the render-side VFX queue. The host drains it every frame; headless
+# nothing does, so a long run of rock deaths would grow it for ever. Past
+# the cap the OLDEST entries go (a stale burst matters least).
 kMaxQueuedSpecs = 256
 
 _dying: list = []           # [{"rock", "time_left"}]
 _ghosts: list = []          # [{"a", "b", "time_left"}], one per masked pair
-_chunk_specs: list = []
 _vfx_specs: list = []
 _warned_setless = False
-
-
-@dataclass(frozen=True)
-class ChunkSpec:
-    family: str
-    seed: str
-    radius_gu: float
-    mass: float
-    loc: tuple
-    vel: tuple
-    angular: tuple
-    pSet: object
-    # The breakup's parent, major pieces and killer: the host ghosts the
-    # chunk against these (and its sibling chunks) until each pair separates.
-    ghost_peers: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -146,12 +134,62 @@ def _strip_inward(vel, at, centre) -> tuple:
     return (vel[0] - vn * dx, vel[1] - vn * dy, vel[2] - vn * dz)
 
 
+def _sub(a, b) -> tuple:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _crc(s: str) -> int:
+    return zlib.crc32(s.encode("utf-8"))
+
+
+def debris_specs(name, pieces, at, loc, parent_v, vels, R) -> tuple:
+    """The debris of a dead rock's free minor cloud (minor-rocks spec §4).
+
+    `pieces` is the breakup plan; `at[i]` / `vels[i]` are piece i's world
+    position and velocity (aligned with `pieces`). Every "chunk" piece --
+    a would-be major demoted by the generation cap included -- joins,
+    relative to the parent's centre `loc` and velocity `parent_v`; then
+    round(debris_gravel_per_gu x R) seeded gravel pieces. The largest
+    max_debris_per_death are kept, largest first. Pure and deterministic."""
+    from engine.rocks import minor_dials as md
+    name = str(name)
+    out = []
+    for i, p in enumerate(pieces):
+        if p.tier != "chunk":
+            continue
+        out.append({"offset": _sub(at[i], loc), "v0": _sub(vels[i], parent_v),
+                    "radius": p.radius_gu, "seed": _crc("%s#%d" % (name, i))})
+    R = float(R)
+    rng = random.Random(_crc(name + "#gravel"))
+    lo = float(md.get("debris_gravel_r_min_gu"))
+    hi = float(md.get("debris_gravel_r_max_gu"))
+    for j in range(int(round(md.get("debris_gravel_per_gu") * R))):
+        r = rng.uniform(lo, hi)
+        u = breakup._unit(rng)
+        reach = R * 0.5 * rng.random()
+        speed = breakup.kSeparationSpeedGU * rng.uniform(0.5, 1.0)
+        out.append({"offset": (u[0] * reach, u[1] * reach, u[2] * reach),
+                    "v0": (u[0] * speed, u[1] * speed, u[2] * speed),
+                    "radius": r, "seed": _crc("%s#g%d" % (name, j))})
+    out.sort(key=lambda d: -d["radius"])      # stable: ties keep plan order
+    return tuple(out[:int(md.get("max_debris_per_death"))])
+
+
+def _game_time() -> float:
+    import App
+    return float(App.g_kUtopiaModule.GetGameTime())
+
+
 def _break_up(rock, pSet, name, killer=None) -> None:
     """Spawn the breakup. `killer` is the body whose hit caused the death (a
     collision's other body, planets included -- collisions passes it to
     apply_hit as `source`, which DamageSystem hands to begin()). It joins
     the ghost set (masked until separated), and when it is immovable every
-    piece's velocity toward its centre is removed."""
+    piece's velocity toward its centre is removed.
+
+    Called from begin() after the rock joined _dying: minors'
+    register_free_cloud contract (the halo is detached, not re-created)."""
+    from engine.rocks import minors
     from engine.rocks.rock import RockClass_Create, effective_radius
     if killer is rock:
         killer = None
@@ -170,8 +208,9 @@ def _break_up(rock, pSet, name, killer=None) -> None:
     _enqueue(_vfx_specs, [DeathVfxSpec((loc.x, loc.y, loc.z), radius, pSet)])
     major_i = 0
     pieces = []
-    chunk_specs = []
-    for i, p in enumerate(breakup.plan(name, radius, generation=parent_gen)):
+    plan = breakup.plan(name, radius, generation=parent_gen)
+    ats, vels = [], []
+    for p in plan:
         d = TGPoint3(*p.offset)
         d.MultMatrixLeft(R)                  # body -> world
         at = (loc.x + d.x * radius * 0.5, loc.y + d.y * radius * 0.5,
@@ -180,6 +219,8 @@ def _break_up(rock, pSet, name, killer=None) -> None:
         vel = (v.x + d.x * sp, v.y + d.y * sp, v.z + d.z * sp)
         if centre is not None:
             vel = _strip_inward(vel, at, centre)
+        ats.append(at)
+        vels.append(vel)
         tr = breakup.kTumbleRate
         ang = (d.y * tr, d.z * tr, d.x * tr)
         if p.tier == "major":
@@ -220,16 +261,13 @@ def _break_up(rock, pSet, name, killer=None) -> None:
             piece.SetAngularVelocity(TGPoint3(*ang))
             pSet.AddObjectToSet(piece, piece_name)
             pieces.append(piece)
-        elif p.tier == "chunk":
-            chunk_specs.append(ChunkSpec(
-                family, "%s#%d" % (name, i), p.radius_gu,
-                stats.piece_mass(parent_mass, p.v_ratio), at, vel, ang, pSet))
-    # Chunk specs wait for the majors: they carry every piece, and the killer.
-    ghosted = [rock] + pieces + ([killer] if killer is not None else [])
-    _enqueue(_chunk_specs, [replace(s, ghost_peers=tuple(ghosted))
-                            for s in chunk_specs])
     if pieces:
-        _ghost(ghosted)
+        _ghost([rock] + pieces + ([killer] if killer is not None else []))
+    # Last, so nothing here can cost the majors their ghosting.
+    p0, v0 = (loc.x, loc.y, loc.z), (v.x, v.y, v.z)
+    minors.register_free_cloud(minors.FreeCloudSpec(
+        name, pSet, p0, v0, _game_time(), family,
+        debris_specs(name, plan, ats, p0, v0, vels, radius), radius))
 
 
 def _enqueue(queue: list, items: list) -> None:
@@ -323,12 +361,6 @@ def advance(dt: float) -> None:
     _remove_entries(_dying, done)
 
 
-def drain_chunk_specs() -> list:
-    out = list(_chunk_specs)
-    _chunk_specs.clear()
-    return out
-
-
 def drain_death_vfx() -> list:
     out = list(_vfx_specs)
     _vfx_specs.clear()
@@ -340,5 +372,4 @@ def reset() -> None:
     _warned_setless = False
     _dying.clear()
     _ghosts.clear()
-    _chunk_specs.clear()
     _vfx_specs.clear()

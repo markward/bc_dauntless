@@ -5,7 +5,9 @@ name so the same rock always breaks the same way. One remnant takes 30% of
 the parent's volume; up to 12 small rocks of at most 1.5 GU take what they
 can of the other 70%; whatever is left is dust. The remnant and every small
 rock >= kMajorMinRadiusGU are majors, smaller ones are chunks; then the
-generation cap and the per-death chunk cap.
+generation cap. A chunk is a debris minor in the dead rock's free cloud
+(death.debris_specs, minor-rocks spec §4), so there is no per-death cap here:
+the cloud's own max_debris_per_death (minor_dials) bounds it.
 """
 import math
 import random
@@ -35,11 +37,10 @@ kTinySmallRadiusMinFrac = 0.3
 kTinySmallRadiusMaxFrac = 0.9
 # Tuned after live test 2026-10-01 (unbounded generations read as a lagging
 # cascade): a rock whose _rock_generation is already >= kMaxMajorGeneration
-# breaks into chunks and dust only -- its would-be majors become chunks --
-# and a death keeps at most kMaxChunksPerDeath chunks (the largest); the rest
-# become dust. 8 since the size-mix split.
+# breaks into chunks and dust only -- its would-be majors become chunks.
+# The old per-death chunk cap retired with rock chunks: debris minors are
+# capped by minor_dials max_debris_per_death instead.
 kMaxMajorGeneration = 1
-kMaxChunksPerDeath = 8
 # Large remnants listed as targets obstructed E1M2 (Mark's rule, live tests
 # 2026-10-01): only the remnant may be targetable, and only when its
 # BUILT radius is at least this; it then copies the parent's flag. Every
@@ -55,7 +56,7 @@ kSeparationSpeedGU = 0.8
 # Chunk-sized pieces stay random.
 kSpreadCandidates = 64
 kTumbleRate = 0.5
-# A breakup group (parent, major pieces, chunks, killer) ignores collisions
+# A breakup group (parent, major pieces, killer) ignores collisions
 # pair by pair until that pair's contact spheres are kGhostSeparationMarginGU
 # clear: pieces are born overlapping, and a grind contact would chain
 # breakups. Pieces drift apart over 1-8 s (2026-10-01 cascade probe), so the
@@ -146,8 +147,4 @@ def plan(parent_name: str, parent_radius_gu: float, generation: int = 0) -> list
                              tier=tier, rank=rank))
     if generation >= kMaxMajorGeneration:
         out = [replace(p, tier="chunk") if p.tier == "major" else p for p in out]
-    chunks = sorted((i for i, p in enumerate(out) if p.tier == "chunk"),
-                    key=lambda i: -out[i].radius_gu)
-    for i in chunks[kMaxChunksPerDeath:]:
-        out[i] = replace(out[i], tier="dust")
     return out
