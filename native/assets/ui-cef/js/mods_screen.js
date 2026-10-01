@@ -9,6 +9,14 @@ function msEsc(t) {
     });
 }
 function msJs(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+// msAttr HTML-escapes a fully-built inline event handler string (the outer
+// onclick="..."/onchange="..." layer) -- msJs only escapes the INNER JS
+// single-quoted string, so dynamic text containing a literal double quote
+// (a player-typed variant-of class, a payload species or mod name) would
+// otherwise close the attribute early and corrupt the generated markup.
+// Apply this to the complete handler text at the point it is written into
+// an attribute; msJs stays as the inner layer underneath it.
+function msAttr(js) { return msEsc(js); }
 function msSend(verb) { dauntlessEvent('mods/' + verb); }
 function msSet(file, field, value) {
     msSend('set:' + file + ':' + field + ':' + encodeURIComponent(value == null ? '' : value));
@@ -24,8 +32,9 @@ function msEraText(era) {
 
 function msCell(r, field, text, missing) {
     if (!r.editable) { return '<span class="ms-ro">' + msEsc(text || '—') + '</span>'; }
+    var handler = "msPick(event,'" + msJs(r.file) + "','" + field + "')";
     return '<button class="ms-cell' + (missing ? ' ms-cell--missing' : '') +
-        '" onclick="msPick(event,\'' + msJs(r.file) + '\',\'' + field + '\')">' +
+        '" onclick="' + msAttr(handler) + '">' +
         msEsc(text || 'set…') + '</button>';
 }
 
@@ -44,22 +53,26 @@ function msRow(r) {
     var f = msJs(r.file);
     var miss = function (k) { return r.missing.indexOf(k) >= 0; };
     var check = r.editable
-        ? '<button class="ms-check' + (r.ticked ? ' ms-check--on' : '') + '" onclick="msSend(\'tick:' + f + '\')">' + (r.ticked ? '✓' : '') + '</button>'
+        ? '<button class="ms-check' + (r.ticked ? ' ms-check--on' : '') + '" onclick="' +
+          msAttr("msSend('tick:" + f + "')") + '">' + (r.ticked ? '✓' : '') + '</button>'
         : '';
     var title = r.editable
         ? '<input class="ms-text' + (miss('title') ? ' ms-text--bad' : '') + '" value="' + msEsc(r.title) +
-          '" onchange="msSet(\'' + f + '\',\'title\',this.value)">'
+          '" onchange="' + msAttr("msSet('" + f + "','title',this.value)") + '">'
         : '<span class="ms-ro ms-ro--title">' + msEsc(r.title) + '</span>';
     var variant = r.editable
         ? '<input class="ms-text ms-text--variant" placeholder="— own class —" value="' + msEsc(r.variant_of) +
-          '" onfocus="msVariantMenu(this,\'' + f + '\')" oninput="msVariantMenu(this,\'' + f + '\')"' +
-          ' onchange="msSet(\'' + f + '\',\'variant_of\',this.value)">'
+          '" onfocus="' + msAttr("msVariantMenu(this,'" + f + "')") + '"' +
+          ' oninput="' + msAttr("msVariantMenu(this,'" + f + "')") + '"' +
+          ' onchange="' + msAttr("msSet('" + f + "','variant_of',this.value)") + '">'
         : '<span class="ms-ro">' + msEsc(r.variant_of || '—') + '</span>';
     var star = !r.variant_of ? '' : r.stock_class ? '<span class="ms-stock">stock default</span>'
         : '<button class="ms-star' + (r.is_default ? ' ms-star--on' : '') + '"' +
-          (r.editable && !r.star_locked ? ' onclick="msSend(\'star:' + f + '\')"' : ' disabled') + '>' + (r.is_default ? '★' : '☆') + '</button>';
+          (r.editable && !r.star_locked ? ' onclick="' + msAttr("msSend('star:" + f + "')") + '"' : ' disabled') +
+          '>' + (r.is_default ? '★' : '☆') + '</button>';
     var species = MS.newSpecies === r.file
-        ? '<input class="ms-text" id="ms-new-species" placeholder="Species" onchange="MS.newSpecies=null;msSet(\'' + f + '\',\'species\',this.value)">'
+        ? '<input class="ms-text" id="ms-new-species" placeholder="Species" onchange="' +
+          msAttr("MS.newSpecies=null;msSet('" + f + "','species',this.value)") + '">'
         : msCell(r, 'species', r.species, miss('species'));
     var playable = r.playable == null ? null : (r.playable ? 'Yes' : 'No');
     return '<tr class="ms-tr' + (r.ticked ? ' ms-tr--ticked' : '') + (r.editable ? '' : ' ms-tr--ro') + '">' +
@@ -93,7 +106,8 @@ function msRender() {
         var editable = mine.filter(function (r) { return r.editable; });
         var all = editable.length && editable.every(function (r) { return r.ticked; });
         html += '<tr class="ms-modrow"><td class="ms-td-check">' + (editable.length
-            ? '<button class="ms-check' + (all ? ' ms-check--on' : '') + '" onclick="msSend(\'tick-mod:' + msJs(m.name) + '\')">' + (all ? '✓' : '') + '</button>' : '') +
+            ? '<button class="ms-check' + (all ? ' ms-check--on' : '') + '" onclick="' +
+              msAttr("msSend('tick-mod:" + msJs(m.name) + "')") + '">' + (all ? '✓' : '') + '</button>' : '') +
             '</td><td colspan="8"><span class="ms-mod">' + msEsc(m.name) + '</span><span class="ms-count">' +
             m.ships + ' ships · ' + m.classes + (m.classes === 1 ? ' class' : ' classes') + '</span></td></tr>';
         mine.forEach(function (r) { html += msRow(r); });
@@ -122,7 +136,10 @@ function msShowMenu(anchor, html) {
 }
 
 function msItem(label, onclick, on) {
-    return '<button class="ms-menu__item' + (on ? ' ms-menu__item--on' : '') + '" onclick="' + onclick + '">' + label + '</button>';
+    // Central fix point: every picker/quick-pick menu item (role, species,
+    // playable, era "All eras", variant-of quick-pick, "New…", "Clear")
+    // routes its handler text through here.
+    return '<button class="ms-menu__item' + (on ? ' ms-menu__item--on' : '') + '" onclick="' + msAttr(onclick) + '">' + label + '</button>';
 }
 
 function msRowOf(file) {
@@ -151,7 +168,8 @@ function msPick(ev, file, field) {
         var ends = r.era && r.era !== 'all' ? r.era.split('-') : [null, null];
         var col = function (which, cur) {
             return MS.p.eras.map(function (e) {
-                return '<button class="ms-era' + (cur === e.id ? ' ms-era--on' : '') + '" onclick="msSet(\'' + f + '\',\'era-' + which + '\',\'' + e.id + '\')">' +
+                var handler = "msSet('" + f + "','era-" + which + "','" + e.id + "')";
+                return '<button class="ms-era' + (cur === e.id ? ' ms-era--on' : '') + '" onclick="' + msAttr(handler) + '">' +
                     '<b>' + msEsc(e.tag) + '</b><span>' + msEsc(e.name) + '</span></button>';
             }).join('');
         };
