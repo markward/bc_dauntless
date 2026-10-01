@@ -27,6 +27,8 @@ namespace {
 
 constexpr GLsizei kInstanceStride = static_cast<GLsizei>(sizeof(far::ImpostorGpu));
 constexpr GLuint  kCentreAttrib = 7;   // impostor.vert a_centre_half..a_up_dither = 7..9
+constexpr GLsizei kSpeckStride = static_cast<GLsizei>(sizeof(SpeckGpu));
+constexpr GLuint  kSpeckAttrib = 7;    // speck.vert a_pos_p, a_albedo_alpha = 7, 8
 constexpr int     kDilatePasses = 8;
 
 // Atlas conventions. The bake (native/src/rockgen/src/impostor.cc) writes each
@@ -115,6 +117,8 @@ FarPass::~FarPass() {
     if (vao_ != 0) { GLuint v = vao_; glDeleteVertexArrays(1, &v); }
     if (corner_vbo_ != 0) { GLuint b = corner_vbo_; glDeleteBuffers(1, &b); }
     if (instance_vbo_ != 0) { GLuint b = instance_vbo_; glDeleteBuffers(1, &b); }
+    if (speck_vao_ != 0) { GLuint v = speck_vao_; glDeleteVertexArrays(1, &v); }
+    if (speck_vbo_ != 0) { GLuint b = speck_vbo_; glDeleteBuffers(1, &b); }
     if (white_texture_ != 0) { GLuint t = white_texture_; glDeleteTextures(1, &t); }
     if (black_texture_ != 0) { GLuint t = black_texture_; glDeleteTextures(1, &t); }
 }
@@ -260,6 +264,74 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glActiveTexture(GL_TEXTURE0);
+}
+
+void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegraph::Camera& cam,
+                            Pipeline& pipeline, const Lighting& lighting, float speck_gain,
+                            int viewport_w, int viewport_h) {
+    if (specks.empty()) return;
+    ensure_geometry();   // the shared corner strip
+    if (speck_vao_ == 0) {
+        GLuint vao = 0, vbo = 0;
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, corner_vbo_);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        for (GLuint k = 0; k < 2; ++k) {
+            glEnableVertexAttribArray(kSpeckAttrib + k);
+            glVertexAttribPointer(kSpeckAttrib + k, 4, GL_FLOAT, GL_FALSE, kSpeckStride,
+                                  reinterpret_cast<void*>(static_cast<std::uintptr_t>(k * 16)));
+            glVertexAttribDivisor(kSpeckAttrib + k, 1);
+        }
+        glBindVertexArray(0);
+        speck_vao_ = vao;
+        speck_vbo_ = vbo;
+    }
+
+    const std::size_t bytes = specks.size() * sizeof(SpeckGpu);
+    glBindBuffer(GL_ARRAY_BUFFER, speck_vbo_);
+    if (bytes > speck_capacity_) speck_capacity_ = bytes;   // grows only
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(speck_capacity_), nullptr,
+                 GL_STREAM_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes), specks.data());
+
+    // The lighting inputs configure_rock_program gives a mesh rock.
+    Shader& s = pipeline.speck_shader();
+    s.use();
+    s.set_mat4("u_view", cam.view_matrix());
+    s.set_mat4("u_proj", cam.proj_matrix());
+    s.set_vec3("u_camera_pos_ws", glm::vec3(glm::inverse(cam.view_matrix())[3]));
+    set_ambient_uniforms(s, lighting, 1.0f);
+    s.set_int("u_dir_light_count", lighting.directional_count);
+    if (lighting.directional_count > 0) {
+        s.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
+                         lighting.directional_count);
+        s.set_vec3_array("u_dir_light_color", lighting.directional_color,
+                         lighting.directional_count);
+    }
+    s.set_float("u_speck_gain", speck_gain);
+    s.set_vec2("u_viewport", glm::vec2(static_cast<float>(viewport_w),
+                                       static_cast<float>(viewport_h)));
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // premultiplied
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+
+    glBindVertexArray(speck_vao_);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(specks.size()));
+    ++draw_calls_;
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    // Restore the frame defaults: cull on, depth writes on, blend off.
+    glEnable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 }  // namespace renderer

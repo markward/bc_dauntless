@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <glm/glm.hpp>
 #include <renderer/minor_field.h>
+#include <renderer/speck.h>
 
 #include <cmath>
 
@@ -633,4 +634,48 @@ TEST(MinorStep, FreeCloudBuiltFreshMatchesADetachedHalo) {
         ASSERT_TRUE(fresh.minor_position(9, i, b));
         EXPECT_NEAR(glm::length(a - b), 0.0f, 1e-4f) << i;
     }
+}
+
+// Far tier (Task 6): the band build_bins culls today (p_min <= pixel_r <
+// min_pixel_radius) becomes a lit speck per minor when specks are on.
+TEST(MinorField, SpeckBandReplacesTheCull) {
+    // pixel_r = r * proj[1][1] * 0.5 * viewport_h / depth = 0.5 * 935.3 / depth
+    auto one_minor_at = [](float depth) {
+        CloudDesc d; d.id = 4; d.anchor = Anchor::Point; d.point = {0, 0, -depth};
+        d.shell_inner = 0; d.shell_outer = 1e-3f; d.count = 1;
+        d.r_min = 0.5f; d.r_max = 0.5f; d.seed = 1;
+        return d;
+    };
+    const glm::vec3 albedo(0.31f, 0.27f, 0.22f);
+    MinorField f;
+    Fragment frag{1, 2, 57.142857f};
+    frag.albedo = albedo;
+    f.set_fragments(0, {frag});
+    f.add_cloud(one_minor_at(585.0f), 0.0);      // ~0.8 px
+    const auto in = looking_down_minus_z();
+    f.step(in);
+
+    std::vector<Bin> bins;
+    std::vector<renderer::SpeckGpu> specks{renderer::SpeckGpu{}};   // cleared by build_bins
+    f.build_bins(in.view, in.proj, in.viewport_h, bins, nullptr, &specks);
+    EXPECT_TRUE(bins.empty());
+    EXPECT_TRUE(specks.empty()) << "specks off: the band is still culled";
+
+    f.set_specks(true, 0.25f);
+    f.build_bins(in.view, in.proj, in.viewport_h, bins, nullptr, &specks);
+    EXPECT_TRUE(bins.empty());
+    ASSERT_EQ(specks.size(), 1u);
+    EXPECT_NEAR(specks[0].p_px, 0.8f, 0.01f);
+    EXPECT_NEAR(specks[0].pos.z, -585.0f, 0.01f);
+    EXPECT_EQ(specks[0].albedo, albedo);
+    EXPECT_EQ(specks[0].alpha, 1.0f);
+
+    f.build_bins(in.view, in.proj, in.viewport_h, bins);   // no speck sink: still fine
+    EXPECT_TRUE(bins.empty());
+
+    f.add_cloud(one_minor_at(4677.0f), 0.0);     // same id: ~0.1 px, below p_min
+    f.step(in);
+    f.build_bins(in.view, in.proj, in.viewport_h, bins, nullptr, &specks);
+    EXPECT_TRUE(bins.empty());
+    EXPECT_TRUE(specks.empty());
 }

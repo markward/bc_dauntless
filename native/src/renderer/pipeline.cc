@@ -8,6 +8,8 @@
 #include "embedded_skinned_vs.h"
 #include "embedded_minor_vs.h"
 #include "embedded_impostor_vs.h"
+#include "embedded_speck_vs.h"
+#include "embedded_speck_fs.h"
 #include "embedded_backdrop_vs.h"
 #include "embedded_backdrop_fs.h"
 #include "embedded_sun_vs.h"
@@ -96,6 +98,8 @@ Pipeline::Pipeline() {
         sh->set_int("u_decal_mask2", 10);
         sh->set_int("u_decal_mask3", 11);
     }
+    // Far-tier specks: a lit, area-weighted screen quad per sub-1.5-px rock.
+    speck_ = std::make_unique<Shader>(shader_src::speck_vs, shader_src::speck_fs);
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);

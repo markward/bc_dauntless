@@ -2177,11 +2177,24 @@ mr::CloudDesc cloud_desc_of(const py::dict& d) {
     return c;
 }
 
-std::vector<mr::Fragment> fragments_of(
-        const std::vector<std::tuple<std::uint64_t, std::uint64_t, float>>& entries) {
+// (lod0, lod1, bound_mu) or, far tier, (lod0, lod1, bound_mu, (r, g, b)):
+// the 4th element is the fragment's speck albedo (catalogue avg_albedo).
+std::vector<mr::Fragment> fragments_of(const std::vector<py::tuple>& entries) {
     std::vector<mr::Fragment> out;
     out.reserve(entries.size());
-    for (const auto& [lod0, lod1, bound] : entries) out.push_back({lod0, lod1, bound});
+    for (const auto& e : entries) {
+        if (e.size() != 3 && e.size() != 4)
+            throw py::value_error("fragment entry must be (lod0, lod1, bound_mu[, (r, g, b)])");
+        mr::Fragment f;
+        f.lod0 = e[0].cast<std::uint64_t>();
+        f.lod1 = e[1].cast<std::uint64_t>();
+        f.bound_radius_mu = e[2].cast<float>();
+        if (e.size() == 4) {
+            const auto rgb = e[3].cast<std::tuple<float, float, float>>();
+            f.albedo = glm::vec3(std::get<0>(rgb), std::get<1>(rgb), std::get<2>(rgb));
+        }
+        out.push_back(f);
+    }
     return out;
 }
 
@@ -3800,13 +3813,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("id"), py::arg("seconds"));
     m.def("minors_set_fragments",
-          [](int family,
-             const std::vector<std::tuple<std::uint64_t, std::uint64_t, float>>& entries) {
+          [](int family, const std::vector<py::tuple>& entries) {
               g_minor_field.set_fragments(family, fragments_of(entries));
           },
           py::arg("family"), py::arg("entries"),
           "Set a family's fragment meshes: [(lod0_handle, lod1_handle, "
-          "bound_radius_mu), ...], each loaded at scale 1.");
+          "bound_radius_mu[, (r, g, b) speck albedo]), ...], each loaded at scale 1.");
     m.def("minors_set_player",
           [](std::optional<scenegraph::InstanceId> iid) {
               // A new player (or none) must not be swept from the old pose.
@@ -3867,8 +3879,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              },
              py::arg("id"), py::arg("seconds"), py::arg("now"))
         .def("set_fragments",
-             [](mr::MinorField& f, int family,
-                const std::vector<std::tuple<std::uint64_t, std::uint64_t, float>>& e) {
+             [](mr::MinorField& f, int family, const std::vector<py::tuple>& e) {
                  f.set_fragments(family, fragments_of(e));
              },
              py::arg("family"), py::arg("entries"))

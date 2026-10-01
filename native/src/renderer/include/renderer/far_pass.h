@@ -4,7 +4,8 @@
 // catalogue rock has an atlas, through Pipeline::impostor_shader() --
 // impostor.vert linked with the EXISTING opaque.frag -- so an impostor is lit
 // by the same code as a mesh rock. Speck and haze draws arrive with later
-// tasks of the far-tier plan.
+// tasks of the far-tier plan. Specks (render_specks) are one instanced draw of
+// premultiplied, area-weighted screen quads through Pipeline::speck_shader().
 #pragma once
 
 #include <cstddef>
@@ -18,6 +19,7 @@
 #include <assets/texture.h>
 
 #include <renderer/far_field.h>
+#include <renderer/speck.h>
 
 namespace scenegraph { struct Camera; }
 
@@ -43,6 +45,13 @@ public:
                           Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                           float rim_strength);
 
+    // One instanced draw of every speck (none when empty): premultiplied,
+    // blended GL_ONE / GL_ONE_MINUS_SRC_ALPHA, depth-tested without depth
+    // writes, unculled. `viewport_w/h` are the target's framebuffer pixels.
+    void render_specks(const std::vector<SpeckGpu>& specks, const scenegraph::Camera& cam,
+                       Pipeline& pipeline, const Lighting& lighting, float speck_gain,
+                       int viewport_w, int viewport_h);
+
     int last_draw_calls() const { return draw_calls_; }   // since the last reset_counts()
     void reset_counts() { draw_calls_ = 0; }
     bool atlas_loaded(int index) const { return atlases_.count(index) != 0; }
@@ -64,6 +73,9 @@ private:
     std::uint32_t instance_vbo_ = 0;
     std::size_t instance_capacity_ = 0;     // bytes
     std::vector<far::ImpostorGpu> staging_;
+    std::uint32_t speck_vao_ = 0;
+    std::uint32_t speck_vbo_ = 0;
+    std::size_t speck_capacity_ = 0;        // bytes
     std::uint32_t white_texture_ = 0;
     std::uint32_t black_texture_ = 0;
     int draw_calls_ = 0;

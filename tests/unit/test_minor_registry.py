@@ -225,6 +225,9 @@ def test_fragments_load_once_per_family_and_reload_after_reset():
     assert len(entries) == len(icy)
     assert entries[0][2] == pytest.approx(
         icy[0].bound_radius_m * catalogue.MODEL_UNITS_PER_METRE)
+    # Far tier: the 4th element is the rock's speck albedo.
+    assert all(len(e) == 4 for e in entries)
+    assert [e[3] for e in entries] == [tuple(c.avg_albedo) for c in icy]
     loads = r.named("load_model")
     assert loads[0][1] == icy[0].lod_paths[0] and loads[1][1] == icy[0].lod_paths[1]
     assert loads[0][3].get("scale") == 1.0

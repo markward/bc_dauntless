@@ -393,7 +393,8 @@ def _ensure_fragments(r, families) -> None:
                 _swallow("load fragment", e)
                 continue
             entries.append((h0, h1, rock.bound_radius_m
-                            * catalogue.MODEL_UNITS_PER_METRE))
+                            * catalogue.MODEL_UNITS_PER_METRE,
+                            tuple(rock.avg_albedo)))   # the speck's colour
         try:
             r.minors_set_fragments(idx, entries)
         except Exception as e:

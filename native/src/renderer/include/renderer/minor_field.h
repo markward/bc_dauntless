@@ -12,6 +12,8 @@
 
 #include <glm/glm.hpp>
 
+#include <renderer/speck.h>
+
 namespace renderer::minors {
 
 enum class Anchor : std::uint8_t { Instance, Point, Free };
@@ -65,7 +67,11 @@ struct Dials {   // defaults MUST equal engine/rocks/minor_dials.py DEFAULTS
     float debris_damp_seconds = 6.0f;
 };
 
-struct Fragment { std::uint64_t lod0 = 0, lod1 = 0; float bound_radius_mu = 57.142857f; };
+struct Fragment {
+    std::uint64_t lod0 = 0, lod1 = 0;
+    float bound_radius_mu = 57.142857f;
+    glm::vec3 albedo{0.4f};    // catalogue avg_albedo: the colour of its speck
+};
 
 struct InstanceGpu { glm::vec4 row0, row1, row2; };   // rows of [R·s | t], render space
 
@@ -115,8 +121,14 @@ public:
     // bin once per drawn target (main view, bridge viewscreen RTT) with that
     // target's own camera and height. `drawn` (optional) gets the instance
     // count. step() bins into bins() through this same function.
+    // `specks` (optional, cleared first): with set_specks(true, p_min), every
+    // in-frustum minor with p_min <= pixel_r < min_pixel_radius -- the band
+    // culled otherwise -- becomes one far-tier speck (far-tier spec §3).
     void build_bins(const glm::mat4& view, const glm::mat4& proj, float viewport_h,
-                    std::vector<Bin>& out, int* drawn = nullptr) const;
+                    std::vector<Bin>& out, int* drawn = nullptr,
+                    std::vector<SpeckGpu>* specks = nullptr) const;
+    // Far tier: draw the sub-min_pixel_radius band as specks (off by default).
+    void set_specks(bool on, float p_min) { specks_on_ = on; speck_p_min_ = p_min; }
     Stats stats() const { return stats_; }
     // Clouds held right now (stats().clouds is as of the last step).
     std::size_t cloud_count() const { return clouds_.size(); }
@@ -142,6 +154,8 @@ private:
         glm::vec3 anchor_render{0.0f}; bool anchor_ok = false;
     };
     Dials dials_;
+    bool specks_on_ = false;
+    float speck_p_min_ = 0.25f;
     std::unordered_map<int, std::vector<Fragment>> fragments_;
     std::map<std::uint32_t, Cloud> clouds_;     // ordered: deterministic bins
     std::vector<Bin> bins_;

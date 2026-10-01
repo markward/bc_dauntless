@@ -212,8 +212,11 @@ void MinorField::step(const StepInput& in) {
 }
 
 void MinorField::build_bins(const glm::mat4& view, const glm::mat4& proj,
-                            float viewport_h, std::vector<Bin>& out, int* drawn) const {
+                            float viewport_h, std::vector<Bin>& out, int* drawn,
+                            std::vector<SpeckGpu>* specks) const {
     out.clear();
+    if (specks != nullptr) specks->clear();
+    const bool emit_specks = specks_on_ && specks != nullptr;
     if (drawn != nullptr) *drawn = 0;
     if (!stepped_) return;                       // no poses yet
     const double t = last_time_;                 // the poses' game time
@@ -257,9 +260,13 @@ void MinorField::build_bins(const glm::mat4& view, const glm::mat4& proj,
             if (!inside) continue;
             const float z_view = (view * glm::vec4(p, 1.0f)).z;
             const float pixel_r = r * px_per_gu / std::max(-z_view, 1e-3f);
-            if (pixel_r < dials_.min_pixel_radius) continue;
-            const int lod = pixel_r >= dials_.lod0_pixel_radius ? 0 : 1;
             const int slot = static_cast<int>(m.mesh_u % frags.size());
+            if (pixel_r < dials_.min_pixel_radius) {
+                if (emit_specks && pixel_r >= speck_p_min_)
+                    specks->push_back(SpeckGpu{p, pixel_r, frags[slot].albedo, 1.0f});
+                continue;
+            }
+            const int lod = pixel_r >= dials_.lod0_pixel_radius ? 0 : 1;
 
             const float angle = m.phase
                 + glm::mix(dials_.tumble_min, dials_.tumble_max, m.tumble_u) * static_cast<float>(t)

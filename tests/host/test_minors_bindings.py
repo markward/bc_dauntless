@@ -37,6 +37,17 @@ def test_standalone_minorfield_steps_without_init():
     assert s["clouds"] == 1 and s["minors"] == 50 and s["drawn"] == 50
 
 
+def test_set_fragments_takes_an_optional_albedo_fourth_element():
+    # Far tier: (lod0, lod1, bound_mu, (r, g, b)) carries the speck albedo;
+    # the 3-tuple form keeps working, mixed in one list.
+    import _dauntless_host as h
+    f = h.MinorField()
+    f.set_fragments(0, [(1, 2, 57.142857, (0.3, 0.25, 0.2)), (3, 4, 57.142857)])
+    f.add_cloud(_desc(), 0.0)
+    f.step(0.0, _identity16(), _persp16(), 1080.0)
+    assert f.stats()["drawn"] == 50
+
+
 def test_dials_defaults_match_python_defaults():
     import _dauntless_host as h
     from engine.rocks import minor_dials as md

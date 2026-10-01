@@ -29,8 +29,10 @@
 #include <renderer/far_field.h>
 #include <renderer/far_pass.h>
 #include <renderer/frame.h>
+#include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
 #include <renderer/scuff_texture.h>
+#include <renderer/speck.h>
 #include <renderer/window.h>
 
 #include <assets/material.h>
@@ -517,4 +519,141 @@ TEST(FarPassCpu, DilateCoverageGrowsOneRingPerPass) {
     EXPECT_EQ(img.pixels[8], 90);
     EXPECT_EQ(img.pixels[9], 30);
     EXPECT_EQ(img.pixels[11], 0);
+}
+
+// ---- Specks (far-tier Task 6) --------------------------------------------
+
+namespace {
+
+constexpr int kFluxSize = 256;
+
+// A camera `dist` away from `centre` along baked view `view`, BC +Z up, 35
+// degree fov, square: the flux test's view for a rock at p = 2 px.
+scenegraph::Camera flux_camera(int view, glm::vec3 centre, float dist) {
+    scenegraph::Camera c;
+    c.eye = centre + bc_view(view).dir * dist;
+    c.target = centre;
+    c.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    c.fov_y_rad = glm::radians(35.0f);
+    c.aspect = 1.0f;
+    c.near = 1.0f;
+    c.far = 2000.0f;
+    return c;
+}
+
+// Clear `t` to black, run `draw`, and return sum(r + g + b) over every pixel
+// of the RGBA16F colour target, read back as floats.
+template <class F>
+double hdr_flux(renderer::HdrTarget& t, F&& draw) {
+    t.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    draw();
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    std::vector<float> px(static_cast<std::size_t>(t.width()) * t.height() * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo());
+    glReadPixels(0, 0, t.width(), t.height(), GL_RGBA, GL_FLOAT, px.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    double sum = 0.0;
+    for (std::size_t i = 0; i < px.size(); i += 4) sum += px[i] + px[i + 1] + px[i + 2];
+    return sum;
+}
+
+}  // namespace
+
+// Flux continuity (spec §5): the same rock at p = 2 px drawn as a mesh, as an
+// impostor and as a speck: summed linear radiance within 25% of each other.
+TEST_F(FarPassGLTest, FluxContinuityAtTwoPixels) {
+    // The target first: HdrTarget::resize binds on the ACTIVE unit.
+    renderer::HdrTarget target;
+    target.resize(kFluxSize, kFluxSize);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    const glm::vec3 grey8(150.0f, 150.0f, 150.0f);
+    const glm::vec3 avg_albedo = grey8 / 255.0f;
+    const Atlas atlas = sphere_atlas(grey8, grey8);
+    const assets::Model sphere = make_sphere_model(grey8, grey8);
+
+    const int view = kLevelView;
+    const glm::vec3 centre(0.0f, 0.0f, 0.0f);
+    const float r = 1.0f;
+    const float p = 2.0f;
+    scenegraph::Camera cam = flux_camera(view, centre, 1.0f);
+    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kFluxSize));
+    cam = flux_camera(view, centre, r * k / p);
+
+    const BcView v = bc_view(view);
+    renderer::Lighting l;
+    l.ambient = glm::vec3(0.05f);
+    l.directional_count = 1;
+    l.directional_dir_ws[0] = glm::normalize(v.dir + 0.8f * v.up + 0.4f * v.right);
+    l.directional_color[0] = glm::vec3(1.0f, 0.95f, 0.9f);
+
+    const glm::mat4 world = glm::scale(glm::mat4(1.0f), glm::vec3(r / kBoundMu));
+    const double mesh = hdr_flux(target, [&] {
+        scenegraph::World sg;
+        const auto iid = sg.create_instance(static_cast<scenegraph::ModelHandle>(handle_of(sphere)));
+        sg.set_world_transform(iid, world);
+        renderer::FrameSubmitter submitter;
+        submitter.submit_opaque_instance(
+            sg, iid, cam, *pipeline,
+            [](scenegraph::ModelHandle h) { return lookup_handle(h); }, l);
+    });
+
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    const double impostor = hdr_flux(target, [&] {
+        pass.render_impostors({one_impostor_bin(0, view, centre, r)}, cam, *pipeline, l,
+                              /*ambient_scale=*/1.0f, /*rim_strength=*/0.0f);
+    });
+    const double speck = hdr_flux(target, [&] {
+        pass.render_specks({renderer::SpeckGpu{centre, p, avg_albedo, 1.0f}}, cam, *pipeline, l,
+                           /*speck_gain=*/1.0f, kFluxSize, kFluxSize);
+    });
+
+    std::printf("[far_pass_test] flux at p = 2 px: mesh %.4f impostor %.4f speck %.4f\n", mesh,
+                impostor, speck);
+    ASSERT_GT(mesh, 0.0);
+    EXPECT_NEAR(impostor, mesh, 0.25 * mesh);
+    EXPECT_NEAR(speck, mesh, 0.25 * mesh);
+    EXPECT_NEAR(speck, impostor, 0.25 * impostor);
+}
+
+// Premultiplied output: a speck over a white clear colour DARKENS it, and a
+// non-empty speck list is one draw call.
+TEST_F(FarPassGLTest, SpeckOccludesABrightBackground) {
+    const glm::vec3 centre(0.0f, 0.0f, 0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    renderer::Lighting dark;          // no ambient, no sun: the speck's colour is 0
+    dark.ambient = glm::vec3(0.0f);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, kW, kH);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FarPass pass;
+    pass.reset_counts();
+    pass.render_specks({}, cam, *pipeline, dark, 1.0f, kW, kH);
+    EXPECT_EQ(pass.last_draw_calls(), 0) << "an empty list draws nothing";
+    pass.render_specks({renderer::SpeckGpu{centre, 4.0f, glm::vec3(0.4f), 1.0f}}, cam, *pipeline,
+                       dark, 1.0f, kW, kH);
+    EXPECT_EQ(pass.last_draw_calls(), 1);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+
+    const auto px = read_frame();
+    const std::size_t c = (static_cast<std::size_t>(kH / 2) * kW + kW / 2) * 4;
+    EXPECT_LT(px[c], 40) << "the speck's centre covers the white background";
+    EXPECT_EQ(px[0], 255) << "a far corner is untouched";
+
+    // State is restored: blending off, depth writes on.
+    EXPECT_FALSE(glIsEnabled(GL_BLEND));
+    GLboolean depth_write = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
+    EXPECT_TRUE(depth_write);
 }
