@@ -247,7 +247,9 @@ def test_player_iid_is_pushed_every_frame():
     r = _Rec()
     minors.reconcile_with(r, None, {}, [], player_iid=42)
     minors.reconcile_with(r, None, {}, [], player_iid=None)
-    assert r.named("minors_set_player") == [("minors_set_player", 42),
+    # The first frame is a view change: the sweep is reset before the push.
+    assert r.named("minors_set_player") == [("minors_set_player", None),
+                                           ("minors_set_player", 42),
                                            ("minors_set_player", None)]
 
 
@@ -495,3 +497,46 @@ def test_halo_keys_are_set_qualified_and_the_drain_matches_by_set():
     minors.register_free_cloud(_free("Twin", pSet=a))
     minors.reconcile_with(r, a, {}, [], None)
     assert minors.native_ids()["free:A:Twin"] == hid
+
+
+# ── Final review #1: a view change or a hidden player never sweeps ────────────
+
+def test_a_view_change_resets_the_sweep_before_setting_the_player():
+    """BC's set-to-set warp lands a few hundred GU from where the ship left,
+    far under the teleport guard: a view change must drop the sweep origin
+    (set_player(None)) before the player is pushed again, or the arrival
+    frame's step sweeps departure -> arrival through the new set's clouds."""
+    from engine.appc.sets import SetClass
+    a, b = SetClass(), SetClass()
+    a.SetName("A"); b.SetName("B")
+    r = _Rec()
+    minors.reconcile_with(r, a, {}, [], player_iid=42)
+    minors.reconcile_with(r, a, {}, [], player_iid=42)
+    minors.reconcile_with(r, b, {}, [], player_iid=42)
+    assert r.named("minors_set_player") == [
+        ("minors_set_player", None), ("minors_set_player", 42),   # first view
+        ("minors_set_player", 42),                                # same view
+        ("minors_set_player", None), ("minors_set_player", 42),   # new view
+    ]
+
+
+def test_a_scope_hidden_player_has_no_contact_box():
+    """A cutscene showing another frame keeps the player's instance but
+    scope-hides it: no phantom hull box may sweep the cutscene set."""
+    calls = {}
+
+    class _Sess:
+        player = "P"
+        ship_instances = {"P": 9}
+        scope_hidden = {9}
+
+    def fake_with(r, view_set, rock_instances, fields, player_iid):
+        calls.update(player=player_iid)
+    import engine.rocks.minors as m
+    orig = m.reconcile_with
+    m.reconcile_with = fake_with
+    try:
+        m.reconcile(_Sess(), _Rec())
+    finally:
+        m.reconcile_with = orig
+    assert calls["player"] is None

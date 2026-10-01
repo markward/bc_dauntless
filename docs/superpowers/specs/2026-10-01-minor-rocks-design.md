@@ -241,9 +241,16 @@ not persisted. Off means the step and the draw are skipped.
     skipped. Then a minor farther from the swept segment than its radius plus
     the box's bounding radius is skipped. Only the survivors get the
     sub-stepped box test.
+  - **View changes reset the sweep.** On any frame where the viewed set
+    changes, the registry sends `minors_set_player(None)` before the player,
+    so that frame tests only the current pose. This covers BC's set-to-set
+    warp, which lands a few hundred to a few thousand GU from where the ship
+    left — far under the teleport guard. A scope-hidden player (a cutscene
+    showing another frame) has no contact box at all.
   - **Teleport guard:** a view-space jump of more than `kTeleportGU`
-    (20,000 GU) in one frame is a hand-off or a set change, not flight. That
-    frame does no sweep and tests only the current pose.
+    (20,000 GU) in one frame *within the same view* is treated as a
+    hand-off, not flight. That frame does no sweep and tests only the current
+    pose. It covers in-view jumps only; view changes are handled above.
 - **Shove:** a touched minor gets a velocity of the player's speed ×
   `kShoveTransfer` (0.6) plus `kShoveMinGU` (0.3 GU/s), directed out of the
   box from the contact, and a tumble kick (`kShoveTumble`). The velocity decays

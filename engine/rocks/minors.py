@@ -236,7 +236,7 @@ def _free_cloud_spec(spec: FreeCloudSpec, view_set) -> Optional[CloudSpec]:
 
 def desired_clouds(view_set, rock_instances: dict, fields: list) -> dict:
     """{key: CloudSpec} for the viewed set: a halo per rock, a tile cloud per
-    field in the viewed frame, and every free cloud whose set is in it."""
+    field in the viewed SET, and every free cloud whose set is in it."""
     out: dict = {}
     for rock, iid in rock_instances.items():
         s = halo_spec(rock, iid)
@@ -506,6 +506,11 @@ def reconcile_with(r, view_set, rock_instances: dict, fields: list,
     _enforce_budget(r, now)
 
     try:
+        if first_of_view:
+            # A view change (BC's set-to-set warp lands a few hundred GU
+            # from where the ship left, far under the teleport guard) drops
+            # the sweep origin first, so the arrival frame never sweeps.
+            r.minors_set_player(None)
         r.minors_set_player(player_iid)
     except Exception as e:
         _swallow("set_player", e)
@@ -536,6 +541,8 @@ def reconcile(session, r) -> None:
                     fields.append(f)
         player = getattr(session, "player", None)
         player_iid = instances.get(player) if player is not None else None
+        if player_iid in hidden:
+            player_iid = None        # cutscene in another frame: no hull box
     except Exception as e:
         _swallow("gather", e)
         return
