@@ -101,8 +101,11 @@ class ShipDefinition:
         self.iconName = details.get("iconName", abbrev)
         self.shipFile = details.get("shipFile", abbrev)
         self.desc = ""
-        self.SubMenu = None
-        self.SubSubMenu = None
+        # Every corpus mod passes these in `details` (BC Mod Packager's
+        # generated ShipDef line); reading only name/iconName/shipFile from it
+        # meant nested QuickBattle menus never appeared live.
+        self.SubMenu = details.get("SubMenu") or None
+        self.SubSubMenu = details.get("SubSubMenu") or None
         self.hasTGLName = 0
         self.hasTGLDesc = 0
         self.dTechs = {}
