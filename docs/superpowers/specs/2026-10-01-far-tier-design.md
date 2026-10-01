@@ -252,11 +252,14 @@ the roadmap's threshold.
   light`, `T *= e^(−Δτ)`, alpha = `1 − T`. Colour and alpha therefore stay
   consistent (premultiplied).
 - Physically, τ across a belt is about 10⁻⁵, which is invisible, so
-  `haze_gain` is an explicit art dial, tuned live. **Default 143**, derived
-  (amended while planning, 2026-10-01) from one target: at mid-band (ρ =
-  278,000 GU) looking tangentially along the plane, alpha ≈ 0.15. Minors only
-  (a = 0.5 has no majors): n = 4.84×10⁻⁸ /GU³, mean cross-section
-  0.0659 GU², chord 355,600 GU, so τ ≈ 1.13×10⁻³ and τ·143 ≈ 0.162.
+  `haze_gain` is an explicit art dial, tuned live. **Default 270**, derived
+  (amended 2026-10-01, ruling R14 during execution) from one target: from
+  mid-band (ρ = 278,000 GU) looking tangentially forward along the plane,
+  alpha ≈ 0.15. Minors only (a = 0.5 has no majors): n = 4.84×10⁻⁸ /GU³, mean
+  cross-section 0.0659 GU². The eye sees HALF the 355,600 GU band chord
+  (plus the 330k–360k fade tail); the CPU reference measures alpha 0.0825 at
+  gain 143, so 270 = 143·ln(0.85)/ln(1 − 0.0825). (An earlier draft used the
+  full chord and gave 143.)
 - The haze ignores explicit regions: real rocks below `p_min` are culled, so
   the haze still stands in for them.
 
