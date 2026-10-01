@@ -123,8 +123,8 @@ looks the same every time you come back. Every instance gets:
 - a radius from a truncated power law (`size_exponent`)
 - a fragment mesh of the cloud's family
 - a tumble axis and rate
-- a slow drift velocity
-- a brightness jitter
+- a slow orbit about the cloud centre (bounded drift: a halo never
+  disperses; tile fields default to no orbit)
 
 **Anchors:**
 
@@ -189,7 +189,7 @@ GL: the clouds, their instances, shove state, and the per-frame step.
 4. **LOD:** lod0 when the on-screen radius is at least `kLod0PixelRadius`
    (24 px), otherwise lod1.
 5. Bin the survivors by (fragment mesh, LOD) into one compact buffer: a mat3x4
-   plus a brightness tint, 64 B each.
+   (three `vec4` rows), 48 B each.
 
 **`MinorPass`** (`native/src/renderer/minor_pass.{h,cc}`)
 - Uploads the buffer once per frame.
@@ -204,15 +204,21 @@ GL: the clouds, their instances, shove state, and the per-frame step.
 - Fragment models load once through the existing loader and are re-resolved
   after a mission swap.
 
-**Shading** (`minor.vert` / `minor.frag`, GLSL 410)
-- Sun directional light, directional ambient (`g_lighting`, with
-  `ambient_scale` passed in as the breach pass does), base and normal maps, the
-  family gloss constant, and the per-instance brightness jitter.
-- They receive the ship shadow map but cast nothing. There are no dynamic
-  lights, decals, carve or glow.
-- The ambient, sun and normal-map functions are copied from `opaque.frag` with
-  identical maths, and a headless GL test pins pixel agreement with a major
-  drawn through the opaque path (§5).
+**Shading** (amended while planning, 2026-10-01)
+- A new **`minor.vert`** is linked with the existing **`opaque.frag`**, the way
+  the skinned program already pairs `skinned.vert` with it
+  (`pipeline.cc`). Minors are therefore lit by the *same* fragment code as
+  majors, by construction rather than by a copy that could drift.
+- `minor.vert` reads the per-instance transform (three `vec4` rows at
+  locations 7–9) and writes the three varyings `opaque.vert` writes.
+- The pass sets the sun, directional ambient (`g_lighting`, with
+  `ambient_scale` passed in as the breach pass does), shadow-map, material
+  (base, normal map, no glow, no specular map) and rim uniforms. Every
+  ship-only feature is set off: decals, carve, hull field, glow regions,
+  dynamic lights, hull-name decals.
+- They receive the ship shadow map but cast nothing.
+- **The per-instance brightness jitter is dropped.** `opaque.frag` has no
+  per-instance input, and the fragment meshes already vary.
 
 **Profiling:** `DAUNTLESS_FRAME_SCOPE("space.minors.step")` and
 `"space.minors.draw"`.
@@ -228,8 +234,15 @@ not persisted. Off means the step and the draw are skipped.
   `minors_set_player(iid, box)`, and native reads the pose from `inst->world`
   each frame.
 - The box is **swept** from last frame's pose to this frame's, so a minor
-  cannot be tunnelled past at dash speed. A per-frame uniform grid over the
-  candidate clouds keeps the test to nearby minors.
+  cannot be tunnelled past at dash speed.
+  - Two cheap rejects keep the test to nearby minors (amended while planning;
+    no grid). First, a cloud whose bounding sphere misses the swept capsule is
+    skipped. Then a minor farther from the swept segment than its radius plus
+    the box's bounding radius is skipped. Only the survivors get the
+    sub-stepped box test.
+  - **Teleport guard:** a view-space jump of more than `kTeleportGU`
+    (20,000 GU) in one frame is a hand-off or a set change, not flight. That
+    frame does no sweep and tests only the current pose.
 - **Shove:** a touched minor gets a velocity of the player's speed ×
   `kShoveTransfer` (0.6) plus `kShoveMinGU` (0.3 GU/s), directed out of the
   box from the contact, and a tumble kick (`kShoveTumble`). The velocity decays
@@ -309,7 +322,7 @@ and death scripts behave exactly as now.
   and intensities, budget) are read at use. A count, shell or size change
   rebuilds the viewed set's clouds.
 - Native-owned values (pixel thresholds, LOD switch, drift and tumble rates,
-  shove parameters, brightness jitter, fade times) go to native as one
+  shove parameters, fade times) go to native as one
   `minors_set_dials(dict)` call, following `system_nebula_set_dials`.
 - Not persisted. The conftest autouse reset restores the defaults.
 
@@ -342,8 +355,8 @@ and death scripts behave exactly as now.
   - `kMaxShovesPerFrame` holds
   - a rebuild clears shove state
 - **C++ render** (headless GL, in the existing breach-pass test style):
-  - a minor and an opaque-path major at the same pose and lighting agree
-    within tolerance
+  - a minor and the same fragment mesh drawn through `draw_model` at the
+    same pose and lighting give identical pixels (same fragment shader)
   - the draw count equals the number of non-empty bins
   - the model's VAO state is unchanged after the pass
 - **Bindings:** `minors_*` added to the `host_io` manifest
@@ -368,6 +381,9 @@ and death scripts behave exactly as now.
 - **Headless VFX probe:** a scripted player flight of 10 s at full impulse and
   10 s dashing, through Beol 4's tile cloud and through Multi1's halos, driving
   the real native `MinorField` step through the extension module (no GL).
+  `MinorField` is exposed to Python as its own class
+  (`_dauntless_host.MinorField`), separate from the global the renderer
+  uses, so the probe needs no `init()`.
   It counts puffs, grit plays and shield flashes, and asserts each stays within
   its cap and that no damage or event occurs.
 - **E2E through the mission harness** (entry at the mission):
