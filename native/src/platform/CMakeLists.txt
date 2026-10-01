@@ -4,7 +4,7 @@
 # implementation needs <windows.h>, and this header is included by CEF
 # translation units. Pulling <windows.h> in there collides with CEF's
 # std::min/std::max usage (see the NOMINMAX handling in src/ui_cef).
-set(PLATFORM_SOURCES exe_path.cc folder_picker.cc)
+set(PLATFORM_SOURCES exe_path.cc folder_picker.cc relaunch.cc)
 if(APPLE)
     list(APPEND PLATFORM_SOURCES folder_picker.mm)
 elseif(WIN32)

@@ -1,5 +1,6 @@
 add_executable(platform_tests
     exe_path_test.cc
+    relaunch_test.cc
 )
 target_link_libraries(platform_tests PRIVATE platform GTest::gtest_main)
 target_compile_definitions(platform_tests PRIVATE

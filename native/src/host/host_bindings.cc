@@ -17,6 +17,7 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/transform_store.h"
+#include "platform/relaunch.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -6136,6 +6137,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Typed characters and editing keys since the last call, oldest first, "
           "as (kind, code, scancode, action, mods); kind 0 = char (code = "
           "codepoint), 1 = key (code = GLFW key).");
+
+    m.def("request_relaunch",
+          [](std::vector<std::string> extra_args) {
+              dauntless::platform::set_relaunch_request(std::move(extra_args));
+          },
+          py::arg("extra_args"),
+          "Ask host_main to re-execute the game after a clean shutdown, with the "
+          "original arguments plus `extra_args` (Quit and Manage Mods). Last call "
+          "wins. Only the dauntless binary honours it; the pytest .so just stores it.");
 
     m.def("consume_mouse_delta",
           []() {
