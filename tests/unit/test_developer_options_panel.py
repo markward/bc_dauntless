@@ -125,7 +125,8 @@ def test_render_payload_shape(panel):
         "disable_collisions": False,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
-        "profiler": False, "rock_catalogue": True,
+        "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
+        "minor_rocks": True,
     }
 
 
@@ -400,6 +401,46 @@ def test_rock_catalogue_ctrl_is_a_lighting_tab_focusable(panel):
     assert ("ctrl", "rock_catalogue") in p._focusables()
 
 
+# ---- Minor rocks toggle (Lighting tab; minor-rocks spec §2) --------------
+
+def test_minor_rocks_toggle_flips_the_real_renderer_flag(panel):
+    """Drives renderer.minors_set_enabled, not just a local mirror."""
+    from engine import renderer
+
+    p, _ = panel
+    saved = renderer.minors_enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:lighting")
+        p.render_payload()
+        assert p.dispatch_event("toggle:minor_rocks") is True
+        assert renderer.minors_enabled() is (not saved)
+        assert _body(p.render_payload())["settings"]["minor_rocks"] is (not saved)
+        p.dispatch_event("toggle:minor_rocks")
+        assert renderer.minors_enabled() is saved
+    finally:
+        renderer.minors_set_enabled(saved)
+
+
+def test_minor_rocks_ctrl_is_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "minor_rocks") in p._focusables()
+
+
+def test_minor_rocks_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
+    from engine import renderer
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    def boom():
+        raise RuntimeError("renderer not initialised")
+    monkeypatch.setattr(renderer, "minors_enabled", boom)
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert _body(p.render_payload())["settings"]["minor_rocks"] is True
+
+
 # ── Diagnostics tab: the frame profiler ─────────────────────────────────────
 # The profiler used to be reachable only by the backtick key. Backtick sits
 # next to Esc/1/Tab, there was no confirmation, and once on it printed a full
@@ -485,6 +526,22 @@ def test_toggling_the_profiler_re_emits_the_payload(monkeypatch):
         "toggling the profiler emitted no payload — the button will keep "
         "showing its old state; _profiler is missing from the snapshot tuple")
     assert '"profiler": true' in after.replace(" ", " ")
+
+
+# ---- Dial-group picker (Lighting tab, minor-rocks spec §5) ---------------
+
+def test_dial_group_row_cycles_active_group():
+    import engine.dev_dial_groups as g
+    g.reset()
+    g.register_group("nebula", ("veil",), lambda: {}, lambda n, d: None)
+    g.register_group("minors", ("halo_outer",), lambda: {}, lambda n, d: None)
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert p.dispatch_event("action:dial_group") is True
+    assert g.active() == "minors"
+    assert '"dial_group": "minors"' in p.render_payload()
+    g.reset()
 
 
 def test_every_setting_is_in_the_render_snapshot():

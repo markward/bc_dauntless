@@ -93,9 +93,21 @@ def test_reconcile_scene_loads_the_system_first_then_scope_then_bodies():
     body = inspect.getsource(host_loop._reconcile_scene)
     order = [_at(body, c) for c in ("_ensure_system_loaded(",
                                     "_reconcile_runtime_instances(",
+                                    "_minors.reconcile(",
                                     "_reconcile_celestial_instances(",
                                     "_check_mapped_bodies_untouched(")]
     assert order == sorted(order)
+
+
+def test_minor_clouds_reconcile_right_after_the_scope_reconcile():
+    """minor-rocks spec §1: the cloud registry reads which rocks the scope
+    reconcile just realised (session.ship_instances, scope_hidden), so it
+    runs immediately after it, inside _reconcile_scene -- every view change
+    (warp, hand-off, cutscene) is covered by the same per-frame pass."""
+    body = inspect.getsource(host_loop._reconcile_scene)
+    scope = _at(body, "_reconcile_runtime_instances(")
+    minors = _at(body, "_minors.reconcile(session, renderer)")
+    assert scope < minors < _at(body, "_reconcile_celestial_instances(")
 
 
 def test_player_identity_is_synced_before_the_sim_reads_the_player():

@@ -28,12 +28,13 @@ from engine import input_map
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Every module that calls register_dev_keybinding(...) at its own call sites.
 # dev_keybindings.py re-registers every tick (register_for_frame);
-# dev_nebula_dials.py registers once at boot (register()) -- both share the
+# dev_dial_groups.py registers once at boot (register_keys(), called by
+# dev_nebula_dials.register() and any later dial group) -- both share the
 # same dev_mode._dev_keybindings table, so a collision between the two files
 # is exactly as real as a collision within one of them.
 _DEV_KEYBINDING_FILES = (
     _ROOT / "engine" / "dev_keybindings.py",
-    _ROOT / "engine" / "dev_nebula_dials.py",
+    _ROOT / "engine" / "dev_dial_groups.py",
 )
 
 
@@ -210,22 +211,23 @@ def test_no_dev_key_collides_with_bcs_own_keyboard_binding():
     `DefaultKeyboardBinding.Initialize()` already binds -- dev-key dispatch
     never consumes the key, so both handlers would fire on one press.
 
-    Scoped to `engine/dev_nebula_dials.py` alone (this is the file whose
-    keys this check exists to re-verify). `engine/dev_keybindings.py`
-    predates this check and, running it there too, ALSO trips on three
-    pre-existing collisions (KEY_LEFT_BRACKET/WC_OPEN_BRACKET,
-    KEY_RIGHT_BRACKET/WC_CLOSE_BRACKET, KEY_I/WC_I) that are a real, separate
-    bug outside this task's scope -- filed as a follow-up, not silently
-    fixed here."""
+    Scoped to `engine/dev_dial_groups.py` alone (this is the file whose
+    keys this check exists to re-verify -- the / L O keys dev_nebula_dials.py
+    originally claimed moved here with the minor-rocks dial-group registry).
+    `engine/dev_keybindings.py` predates this check and, running it there
+    too, ALSO trips on three pre-existing collisions
+    (KEY_LEFT_BRACKET/WC_OPEN_BRACKET, KEY_RIGHT_BRACKET/WC_CLOSE_BRACKET,
+    KEY_I/WC_I) that are a real, separate bug outside this task's scope --
+    filed as a follow-up, not silently fixed here."""
     bc_bound = _bc_bound_wc_names()
-    nebula_dials_file = [p for p in _DEV_KEYBINDING_FILES if p.name == "dev_nebula_dials.py"]
+    dial_groups_file = [p for p in _DEV_KEYBINDING_FILES if p.name == "dev_dial_groups.py"]
     collisions = []
-    for key in _registered_dev_keys_in(nebula_dials_file):
+    for key in _registered_dev_keys_in(dial_groups_file):
         wc_name = _key_to_wc_name(key)
         if wc_name in bc_bound:
             collisions.append((key, wc_name))
     assert not collisions, (
-        "dev_nebula_dials.py keybinding(s) collide with BC's own "
+        "dev_dial_groups.py keybinding(s) collide with BC's own "
         "DefaultKeyboardBinding.py: "
         + ", ".join("%s (%s)" % (k, w) for k, w in collisions)
     )
@@ -249,7 +251,7 @@ def _off_macbook(keys):
 
 
 def test_nebula_dial_keys_exist_on_a_macbook():
-    nebula_dials_file = [p for p in _DEV_KEYBINDING_FILES
-                         if p.name == "dev_nebula_dials.py"]
-    off = _off_macbook(_registered_dev_keys_in(nebula_dials_file))
-    assert not off, f"nebula dial key(s) a MacBook keyboard lacks: {off}"
+    dial_groups_file = [p for p in _DEV_KEYBINDING_FILES
+                        if p.name == "dev_dial_groups.py"]
+    off = _off_macbook(_registered_dev_keys_in(dial_groups_file))
+    assert not off, f"dial group key(s) a MacBook keyboard lacks: {off}"

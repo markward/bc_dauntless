@@ -80,6 +80,10 @@ _REQUIRED_BINDINGS = frozenset({
     "set_system_nebula_profile", "set_system_nebula_star",
     "set_system_nebula_flashes",
     "system_nebula_set_dials", "system_nebula_dials",
+    "minors_add_cloud", "minors_remove_cloud", "minors_detach",
+    "minors_fade_out", "minors_set_fragments", "minors_set_player",
+    "minors_set_dials", "minors_set_enabled", "minors_enabled",
+    "minors_drain_contacts", "minors_stats", "minors_clear",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -519,6 +523,69 @@ def system_nebula_set_dials(dials: dict) -> None:
 def system_nebula_dials() -> dict:
     """Current system-scale nebula look dials (empty before init)."""
     return _h.system_nebula_dials()
+
+
+# ── Minor rocks (docs/superpowers/specs/2026-10-01-minor-rocks-design.md) ──
+
+
+def minors_add_cloud(desc: dict) -> None:
+    """Add (or replace, by id) a minor-rock cloud from a desc dict."""
+    _h.minors_add_cloud(desc)
+
+
+def minors_remove_cloud(id: int) -> None:
+    """Remove a minor-rock cloud at once (no fade)."""
+    _h.minors_remove_cloud(id)
+
+
+def minors_detach(id: int, p0, v, t0: float, debris: list) -> None:
+    """Turn an instance-anchored cloud free at VIEW-space p0, moving at v."""
+    _h.minors_detach(id, p0, v, t0, debris)
+
+
+def minors_fade_out(id: int, seconds: float) -> None:
+    """Fade a cloud out over `seconds` of game time."""
+    _h.minors_fade_out(id, seconds)
+
+
+def minors_set_fragments(family: int, entries: list) -> None:
+    """Set a family's [(lod0_handle, lod1_handle, bound_radius_mu), ...]."""
+    _h.minors_set_fragments(family, entries)
+
+
+def minors_set_player(iid) -> None:
+    """The InstanceId whose hull box touches minors, or None."""
+    _h.minors_set_player(iid)
+
+
+def minors_set_dials(d: dict) -> None:
+    """Set the native minor dials; an omitted key resets to its default."""
+    _h.minors_set_dials(d)
+
+
+def minors_set_enabled(enabled: bool) -> None:
+    """Turn the minor-rock step and draw on or off."""
+    _h.minors_set_enabled(bool(enabled))
+
+
+def minors_enabled() -> bool:
+    """Whether minor rocks step and draw."""
+    return _h.minors_enabled()
+
+
+def minors_drain_contacts() -> list:
+    """Touches since the last drain: [{"point", "radius", "rel_speed"}, ...]."""
+    return _h.minors_drain_contacts()
+
+
+def minors_stats() -> dict:
+    """{"clouds", "minors", "drawn", "bins", "draw_calls"} for the last frame."""
+    return _h.minors_stats()
+
+
+def minors_clear() -> None:
+    """Drop every cloud, fragment table and pending contact."""
+    _h.minors_clear()
 
 
 def set_nebula_wake(points: list) -> None:

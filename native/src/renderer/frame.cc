@@ -108,6 +108,9 @@ namespace {
     // before it reaches the shader: authored values read too bright at
     // face value (tune-by-eye).
     constexpr float kStrengthScale = 0.5f;
+    // kStrengthScale for other TUs (constexpr has internal linkage): the
+    // minor-rock pass computes its own u_rim_strength (host_bindings.cc).
+    float strength_scale() { return kStrengthScale; }
 }
 
 // Toggle for the HDR resolve pass (tonemap + bloom + grade). Default on.
@@ -1036,12 +1039,11 @@ std::uint32_t FrameSubmitter::ensure_black_texture() {
 // Sets the three ambient uniforms together. One helper rather than three
 // copies: u_ambient_light is set at three sites (submit_opaque,
 // submit_opaque_in_pass, submit_opaque_instance) and adding the gradient
-// uniforms by hand at each invites updating only some of them.
-// static: file-local. The anonymous namespace above (frame.cc:64-298) closes
-// well before this point, so without `static` this would have external
-// linkage it doesn't need.
-static void set_ambient_uniforms(Shader& s, const Lighting& lighting,
-                                 float ambient_scale) {
+// uniforms by hand at each invites updating only some of them. External
+// linkage (declared in frame.h) so MinorPass, which draws through the same
+// opaque.frag, sets them through this one helper too.
+void set_ambient_uniforms(Shader& s, const Lighting& lighting,
+                          float ambient_scale) {
     s.set_vec3 ("u_ambient_light",    lighting.ambient * ambient_scale);
     s.set_vec3 ("u_ambient_dir_ws",   lighting.ambient_dir_ws);
     s.set_float("u_ambient_gradient", lighting.ambient_gradient);

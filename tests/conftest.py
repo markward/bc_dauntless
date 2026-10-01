@@ -1504,6 +1504,35 @@ def _reset_leakable_engine_globals():
         _rock_catalogue._warned.clear()
     except Exception:
         pass
+    # Dev dial groups (minor-rocks spec §5): a test that registers a group
+    # would otherwise leave every later test's / L O acting on it.
+    try:
+        import engine.dev_dial_groups as _ddg
+        _ddg.reset()
+    except Exception:
+        pass
+    try:
+        from engine.rocks import minor_dials as _md
+        _md.reset()
+    except Exception:
+        pass
+    # Minor-cloud registry (engine/rocks/minors.py): held ids, free clouds and
+    # the fragment memo would otherwise carry one test's clouds into the next.
+    try:
+        _mn = sys.modules.get("engine.rocks.minors")
+        if _mn is not None:
+            _mn.reset(None)
+    except Exception:
+        pass
+    # Fly-through response token buckets (engine/rocks/minor_contact.py):
+    # a test that drives the rate limiter would otherwise leave partially
+    # spent buckets for the next test's own rate-limit assertions.
+    try:
+        _mc = sys.modules.get("engine.rocks.minor_contact")
+        if _mc is not None:
+            _mc.reset()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds
