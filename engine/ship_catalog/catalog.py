@@ -9,7 +9,7 @@ Spec: docs/superpowers/specs/2026-10-01-ship-metadata-catalog-design.md
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from engine import mods
@@ -48,8 +48,32 @@ class CatalogEntry:
                    for e in era_ids)
 
 
+@dataclass(frozen=True)
+class ShipRecord:
+    """One ship definition in the catalog: sub-project 1's per-key merge of
+    the stock section and every mod ShipDef for the same stem, BEFORE class
+    formation. The gate edits these; consumers read class entries."""
+    ship_id: str             # shipFile, display spelling (stock's first)
+    source: str              # "stock" | "mod"
+    mod: Optional[str]       # owning mod = the last contributing mod; None = stock
+    shipdef_attr: Optional[str]
+    icon: str
+    values: dict = field(compare=False)   # parsed own values (MANDATORY keys present)
+    variant_of: Optional[str] = None      # class name as written; None = own class
+    class_default: bool = False
+    missing: tuple = ()
+    errors: tuple = ()
+    raw_name: str = ""
+    raw_race: Optional[str] = None
+    sub_menu: Optional[str] = None
+    player_menu: bool = False
+    origins: tuple = ()                   # ((mod_name, shipdef_attr), ...) load order
+    declared_variants: tuple = ()         # schema.Variant from its own `variants` key
+
+
 @dataclass
 class _Built:
+    ships: list
     entries: list
     unresolved: list        # (ship_file, mod_name)
     shared: list            # (ship_id, [mod_name, ...]) -- mod-over-mod only
@@ -153,19 +177,20 @@ def _build() -> _Built:
             continue
         groups.setdefault(key, [None, []])[1].append(d)
 
-    built = []
+    records = []
     shared = []
     for stock_d, mod_ds in groups.values():
-        e = _entry(stock_d, mod_ds, installed)
-        built.append(e)
+        r = _record(stock_d, mod_ds, installed)
+        records.append(r)
         names = [_mod_name(d) for d in mod_ds]
         if len(set(names)) >= 2:
-            shared.append((e.ship_id, names))
+            shared.append((r.ship_id, names))
+    built = [_entry_from_record(r) for r in records]
     built.sort(key=lambda e: ((e.title or e.ship_id).lower(), e.ship_id))
-    return _Built(built, unresolved, shared, stock_error)
+    return _Built(records, built, unresolved, shared, stock_error)
 
 
-def _entry(stock_d, mod_ds, installed) -> CatalogEntry:
+def _record(stock_d, mod_ds, installed) -> ShipRecord:
     errors: list = []
     merged = None
     layers = ([stock_d] if stock_d is not None else []) + list(mod_ds)
@@ -189,25 +214,41 @@ def _entry(stock_d, mod_ds, installed) -> CatalogEntry:
             continue
         variants.append(v)
 
-    first = layers[0]
-    last = layers[-1]
-    values = parsed.values
-    return CatalogEntry(
+    first, last = layers[0], layers[-1]
+    last_mod = mod_ds[-1] if mod_ds else None
+    return ShipRecord(
         ship_id=str(first.shipFile),
-        icon=str(getattr(first, "iconName", None) or first.shipFile),
         source="mod" if mod_ds else "stock",
-        origins=tuple((_mod_name(d), _shipdef_attr(d)) for d in mod_ds),
-        title=values.get("title"),
-        species=values.get("species"),
-        era=values.get("era"),
-        role=values.get("role"),
-        playable=values.get("playable"),
-        variants=tuple(variants),
+        mod=_mod_name(last_mod) if last_mod is not None else None,
+        shipdef_attr=_shipdef_attr(last_mod) if last_mod is not None else None,
+        icon=str(getattr(first, "iconName", None) or first.shipFile),
+        values=dict(parsed.values),
+        variant_of=parsed.variant_of,
+        class_default=parsed.class_default,
         missing=parsed.missing,
         errors=tuple(errors),
         raw_name=str(getattr(last, "name", "") or ""),
         raw_race=getattr(last, "race", None),
+        sub_menu=getattr(last, "SubMenu", None),
+        player_menu=any(getattr(d, "playerMenuGroup", None) is not None for d in mod_ds),
+        origins=tuple((_mod_name(d), _shipdef_attr(d)) for d in mod_ds),
+        declared_variants=tuple(variants),
     )
+
+
+def _entry_from_record(r: ShipRecord) -> CatalogEntry:
+    v = r.values
+    return CatalogEntry(
+        ship_id=r.ship_id, icon=r.icon, source=r.source, origins=r.origins,
+        title=v.get("title"), species=v.get("species"), era=v.get("era"),
+        role=v.get("role"), playable=v.get("playable"),
+        variants=r.declared_variants, missing=r.missing, errors=r.errors,
+        raw_name=r.raw_name, raw_race=r.raw_race)
+
+
+def ships(source: Optional[str] = None) -> list:
+    """Every ShipRecord (stock and mod), or only `source` ("stock"/"mod")."""
+    return [r for r in _built().ships if source is None or r.source == source]
 
 
 # ── species ────────────────────────────────────────────────────────────────
