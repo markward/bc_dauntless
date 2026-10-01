@@ -60,6 +60,34 @@ def test_ships_dir_follows_the_mods_spelling(tmp_path):
     assert d == ships and prefix == "Custom/Ships"
 
 
+def test_ships_dir_fallback_reuses_existing_scripts_casing(tmp_path):
+    """A mod whose only Custom script lives under Custom/Autoload (so the
+    first loop in ships_dir -- which only looks for an existing
+    custom/ships/*.py file -- finds nothing) must fall back into the mod's
+    REAL `Scripts/` directory, not a newly-invented lowercase `scripts/`
+    sibling. The on-disk dir is capital-S `Scripts`; a case-sensitive
+    filesystem would get a second, wrong, lowercase `scripts/` dir if the
+    fallback hard-codes the casing."""
+    root = tmp_path / "mods" / "AutoloadOnly"
+    autoload = root / "Scripts" / "Custom" / "Autoload"
+    autoload.mkdir(parents=True)
+    (autoload / "plug.py").write_text("#")
+    stock_ships = root / "Scripts" / "ships"
+    stock_ships.mkdir(parents=True)
+    (stock_ships / "X.py").write_text("#")
+    mods.configure(mods.build_index(tmp_path / "mods"))
+
+    d, prefix = gate_writer.ships_dir("AutoloadOnly")
+
+    assert d == root / "Scripts" / "Custom" / "Ships"
+    assert prefix == "Custom/Ships"
+    # The path string itself (not merely existence, which a case-insensitive
+    # filesystem would satisfy either way) must carry the real "Scripts"
+    # spelling, and no sibling "scripts" dir may have been invented.
+    assert str(d).endswith("Scripts/Custom/Ships")
+    assert not any(p.name == "scripts" for p in root.iterdir())
+
+
 def test_write_registers_and_runs_the_file(tmp_path):
     _mod_tree(tmp_path)
     foundation.load_plugins()

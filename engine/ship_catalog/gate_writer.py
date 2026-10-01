@@ -49,6 +49,23 @@ def render(attr: str, answers: dict) -> str:
             "    d.dauntless.update({\n%s\n    })\n") % (_lit(attr), attr, "\n".join(items))
 
 
+def _existing_or_default(parent: Path, name: str) -> Path:
+    """The subdirectory of `parent` matching `name` case-insensitively, if
+    one already exists on disk, else `parent / name` in `name`'s own
+    casing. `mods.find_content_root`/`build_index` match a mod's content
+    dirs case-insensitively and discard the real spelling, so this is the
+    only place that can recover it -- a mod whose folder is `Scripts/` must
+    get that real directory back, never a newly-created, wrongly-cased
+    sibling."""
+    try:
+        for entry in parent.iterdir():
+            if entry.is_dir() and entry.name.lower() == name.lower():
+                return entry
+    except OSError:
+        pass
+    return parent / name
+
+
 def ships_dir(mod_name: str):
     """(absolute Custom/Ships dir, raw-rel prefix) for `mod_name`, in the
     mod's own spelling when it already has a Custom/Ships script."""
@@ -60,7 +77,14 @@ def ships_dir(mod_name: str):
             return mf.abs_path.parent, prefix
     for status in mods.current().mods:
         if status.name == mod_name and status.content_root is not None:
-            return status.content_root / "scripts" / "Custom" / "Ships", "Custom/Ships"  # paths-guard: mod content layout
+            # No Custom/Ships script to copy the spelling from -- reuse the
+            # mod's existing Scripts/Custom/Ships dirs in their own casing
+            # where they exist, BC archive convention ("Scripts", "Custom",
+            # "Ships") where they don't.
+            scripts = _existing_or_default(status.content_root, "Scripts")  # paths-guard: mod content layout
+            custom = _existing_or_default(scripts, "Custom")
+            ships = _existing_or_default(custom, "Ships")
+            return ships, "%s/%s" % (custom.name, ships.name)
     raise GateWriteError("mod %r has no content root to write into" % mod_name)
 
 
