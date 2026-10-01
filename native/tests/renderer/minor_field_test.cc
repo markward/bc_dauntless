@@ -464,3 +464,60 @@ TEST(MinorContact, ContactPointIsInViewSpace) {
     ASSERT_EQ(c.size(), 1u);
     EXPECT_NEAR(c[0].point_view.x, 5000.0, 1.0);
 }
+
+TEST(MinorContact, InsideRotatedBoxShovesOutwardNotByRoundingNoise) {
+    // A rotated box: q = c + sum a_k clamp(d.a_k) does not round-trip to p in
+    // float, so "inside" must be decided in box-local coordinates.
+    const glm::vec3 centre{0, 0, -20};
+    const glm::mat4 rot = glm::rotate(glm::mat4(1.0f), glm::radians(37.0f),
+                                      glm::normalize(glm::vec3(1, 2, 3)));
+    PlayerBox b;
+    b.world = glm::translate(glm::mat4(1.0f), centre) * rot * glm::scale(glm::mat4(1.0f), glm::vec3(0.01f));
+    b.half_mu = {50, 100, 30};                  // 0.5 x 1.0 x 0.3 GU (+0.1 margin)
+    int checked = 0;
+    for (float x : {-0.31f, -0.13f, 0.17f, 0.29f})
+        for (float y : {-0.73f, -0.21f, 0.37f, 0.61f})
+            for (float z : {-0.19f, 0.23f}) {
+                const glm::vec3 p = centre + glm::vec3(rot * glm::vec4(x, y, z, 0.0f));
+                auto f = field_with_fragments();
+                f.add_cloud(single_minor_at(glm::dvec3(p), 0.05f), 0.0);
+                auto in = looking_down_minus_z(0.0);
+                in.player = b; f.step(in);
+                in.game_time = 0.1; f.step(in);   // still overlapping: inside contact
+                ASSERT_EQ(f.drain_contacts().size(), 1u);
+                glm::vec3 after; ASSERT_TRUE(f.minor_position(5, 0, after));
+                EXPECT_GT(glm::dot(after - p, p - centre), 0.0f) << x << " " << y << " " << z;
+                ++checked;
+            }
+    EXPECT_EQ(checked, 32);
+}
+
+TEST(MinorContact, InsideMinorIsPushedOntoTheNearestFace) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0.3, 0, -20}), 0.0);   // r 0.2; box h = 0.6 x 1.1 x 0.4
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, 0, -20}); f.step(in);
+    in.game_time = 0.1; f.step(in);                      // stationary overlap
+    glm::vec3 p; ASSERT_TRUE(f.minor_position(5, 0, p));
+    // x has the least penetration (0.6 - 0.3): exit through +x by depth + radius.
+    EXPECT_NEAR(p.x, 0.6f + 0.2f, 1e-4f);
+    EXPECT_NEAR(p.y, 0.0f, 1e-4f);
+    EXPECT_NEAR(p.z, -20.0f, 1e-4f);
+}
+
+TEST(MinorContact, RenderOriginShiftIsNotTravel) {
+    // The player holds still in VIEW space while the floating origin jumps
+    // 1,000 GU, so its RENDER position moves -1,000 GU. A minor sitting on
+    // that false render-space path must not be touched.
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({500, 0, -20}), 0.0);   // VIEW space
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, 0, -20}); f.step(in);        // origin 0: view == render
+    in.game_time = 0.1;
+    in.render_origin = glm::dvec3(1000, 0, 0);
+    in.player = box_at({-1000, 0, -20}); f.step(in);    // same VIEW position
+    EXPECT_TRUE(f.drain_contacts().empty());
+    glm::vec3 p; ASSERT_TRUE(f.minor_position(5, 0, p));
+    EXPECT_NEAR(p.x, -500.0f, 1e-3f);                    // un-shoved (render space)
+    EXPECT_NEAR(p.y, 0.0f, 1e-4f);
+}

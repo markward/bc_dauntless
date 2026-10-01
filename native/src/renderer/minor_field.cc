@@ -161,6 +161,7 @@ void MinorField::clear() {
     stats_ = Stats{};
     last_time_ = -1.0;
     stepped_ = false;
+    has_prev_ = false;
 }
 
 void MinorField::step(const StepInput& in) {
@@ -386,25 +387,40 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
                 if (f(1.0f) <= f(s)) s = 1.0f;     // prefer the current pose on a tie
             }
             const glm::vec3 ck = seg0 + seg * s;
-            const glm::vec3 q = closest_on_box(ck, p);
             const glm::vec3 d = p - ck;
             {
-                const float gap = glm::length(p - q);
-                const bool inside = gap == 0.0f;
-                if (!inside && gap > radius) continue;
-
-                glm::vec3 nrm;
-                if (!inside) nrm = (p - q) / gap;
-                else if (glm::length(d) > 0.0f) nrm = glm::normalize(d);
-                else nrm = a[1];
+                // Inside is decided in box-local coordinates: q = ck + sum a_k clamp(..)
+                // does not round-trip to p in float for a rotated box.
+                float dl[3];
+                bool inside = true;
+                for (int ax = 0; ax < 3; ++ax) {
+                    dl[ax] = glm::dot(d, a[ax]);
+                    inside = inside && std::fabs(dl[ax]) <= h[ax];
+                }
+                glm::vec3 nrm, q, push;
+                if (inside) {
+                    // Exit through the face of least penetration, ending one radius out.
+                    int k = 0;
+                    for (int ax = 1; ax < 3; ++ax)
+                        if (h[ax] - std::fabs(dl[ax]) < h[k] - std::fabs(dl[k])) k = ax;
+                    const float depth = h[k] - std::fabs(dl[k]);
+                    nrm = a[k] * (dl[k] >= 0.0f ? 1.0f : -1.0f);
+                    q = p + nrm * depth;                       // on that face
+                    push = nrm * (depth + radius);
+                } else {
+                    q = closest_on_box(ck, p);
+                    const float gap = glm::length(p - q);
+                    if (gap > radius) continue;
+                    nrm = (p - q) / gap;
+                    push = nrm * (radius - gap);
+                }
 
                 Shove& sh = cl.shoves[static_cast<std::uint32_t>(i)];
-                const glm::vec3 push = nrm * (radius - gap);   // sit on the surface
-                sh.offset += push;
+                sh.offset += push;                             // sit on the surface
                 cl.pos[i] += push;
                 sh.vel = nrm * (std::max(glm::dot(v_player, nrm), 0.0f) * dials_.shove_transfer
                                 + dials_.shove_min_gups);
-                sh.spin_rate += dials_.shove_tumble;
+                sh.spin_rate = std::max(sh.spin_rate, dials_.shove_tumble);   // re-touches do not ramp
                 if (t - sh.last_contact >= dials_.contact_cooldown_s) {
                     contacts_.push_back({glm::dvec3(q) + render_origin, radius, rel_speed});
                     sh.last_contact = t;

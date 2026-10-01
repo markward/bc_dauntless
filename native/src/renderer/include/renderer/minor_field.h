@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -111,7 +112,7 @@ public:
     const std::vector<Bin>& bins() const { return bins_; }
     Stats stats() const { return stats_; }
     // Touches since the last drain (moved out).
-    std::vector<Contact> drain_contacts() { return std::move(contacts_); }
+    std::vector<Contact> drain_contacts() { return std::exchange(contacts_, {}); }
     // Forget the previous pose. The host MUST call this whenever the player
     // changes or disappears, or the next step sweeps from the stale pose (Task 8).
     void reset_player() { has_prev_ = false; }
