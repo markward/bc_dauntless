@@ -36,6 +36,17 @@ COLLISION_GRIND_COEFF = 2.5      # sustained-contact (abrasion) damage, in hull
                                  # COEFF because this is a work RATE (linear in
                                  # slip speed, scaled by dt), not the quadratic
                                  # kinetic energy of an impact.
+kGrindMinDamageRate = 1.0        # hull pts/s: a grind whose damage / dt is
+                                 # below this applies NOTHING (no apply_hit, so
+                                 # no hit VFX, smoke, decal or carve). Kills the
+                                 # float-noise grinds (~1e-10 pts/s) a rock
+                                 # breakup's overlapping pieces produced every
+                                 # frame (3,520 hit-VFX spawns in 10 s, live
+                                 # test 2026-10-01). A RATE, not a per-call
+                                 # amount: tick_collisions runs per render
+                                 # frame, and a per-call cutoff would drop the
+                                 # calibrated grinds above (0.52/frame at
+                                 # 144 Hz) and the docking nudge (7.5 pts/s).
 COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
                                  # rA+rB: objects close 20% of the bounding-
                                  # sphere gap before a hit registers, compensating
@@ -446,8 +457,8 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
         return
     mu = 1.0 / inv_sum
     damage = COLLISION_GRIND_COEFF * mu * slip * dt
-    if damage <= 0.0:
-        return
+    if damage <= 0.0 or damage / dt < kGrindMinDamageRate:
+        return   # dt > 0 here: the dt guard above already returned
 
     # Scuff tangent: the slip direction itself, sign per ship (each hull's
     # scratch runs the way the OTHER hull moved across it). No slip (pure
