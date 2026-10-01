@@ -9435,6 +9435,20 @@ def run(mission_name: Optional[str] = None,
     if _cat_text:
         print(_cat_text, file=sys.stderr)
 
+    # Pre-boot Mods screen (sub-project 3): gate mode when mod ships lack
+    # metadata, home mode under --mods. Needs a live CEF page; without one
+    # the boot line above has already named the incomplete ships and boot
+    # proceeds. Quit here must tear CEF and the window down explicitly, like
+    # the unresolved-paths exit above -- the try/finally that covers every
+    # other exit has not started yet.
+    if _cef_ready:
+        from engine.ui import mods_screen as _mods_screen
+        if _mods_screen.run_mods_screen(
+                lambda p: _run_preboot_panel(p, _CEF_VIEW_W, _CEF_VIEW_H)) == "quit":
+            r.cef_shutdown()
+            r.shutdown()
+            return 0
+
     _start_hull_prebake()
 
     import App
