@@ -43,8 +43,19 @@ def test_render_escapes_control_characters():
     assert ast.literal_eval(d) == {"title": title}
 
 
-def test_render_omits_class_default_when_false():
-    assert "class_default" not in gate_writer.render("X", dict(ANS, class_default=False))
+def test_render_omits_class_default_only_when_absent():
+    no_key = dict(ANS)
+    del no_key["class_default"]
+    assert "class_default" not in gate_writer.render("X", no_key)
+    # Present-but-False must be written: the zz file UPDATEs the author's
+    # dict, so an omitted 0 would leave an author's class_default 1 in place.
+    assert "'class_default': 0" in gate_writer.render("X", dict(ANS, class_default=False))
+
+
+def test_render_writes_an_explicit_none_to_undo_an_author_value():
+    text = gate_writer.render("X", dict(ANS, variant_of=None))
+    assert "'variant_of': None" in text
+    ast.parse(text)
 
 
 def _mod_tree(tmp_path):

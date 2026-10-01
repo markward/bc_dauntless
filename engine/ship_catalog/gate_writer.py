@@ -30,6 +30,8 @@ def _lit(s) -> str:
 
 
 def _value(key, v) -> str:
+    if v is None:
+        return "None"       # parse_dauntless reads an explicit None as absent
     if key == "era":
         return _lit("all") if tuple(v) == ("all",) else "(%s, %s)" % (_lit(v[0]), _lit(v[1]))
     if key in ("playable", "class_default"):
@@ -40,9 +42,10 @@ def _value(key, v) -> str:
 def render(attr: str, answers: dict) -> str:
     items = []
     for key in _KEY_ORDER:
-        if key not in answers or answers[key] is None:
-            continue
-        if key == "class_default" and not answers[key]:
+        # A key present in `answers` is always written -- None and False
+        # included -- because the file UPDATEs the author's dict: leaving a
+        # key out would let the author's value survive the player's answer.
+        if key not in answers:
             continue
         items.append("        %s: %s," % (_lit(key), _value(key, answers[key])))
     return ("# Written by Dauntless's Mod Ships screen. Safe to delete: the\n"

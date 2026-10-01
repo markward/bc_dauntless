@@ -240,9 +240,14 @@ class ModsScreenPanel(Panel):
             if not r.editable:
                 continue
             answers = {k: r.answers.get(k) for k in MANDATORY}
+            # The zz file UPDATEs the author's dict, so undoing an author
+            # value takes an explicit write: class_default always 1 or 0,
+            # and a cleared variant_of written as None.
             if r.answers.get("variant_of"):
                 answers["variant_of"] = r.answers["variant_of"]
                 answers["class_default"] = flags.get(r.file, False)
+            elif r.record.variant_of:
+                answers["variant_of"] = None
             rows.append(WriteRow(r.record.mod, r.file, r.record.shipdef_attr, answers))
         if self._writer is not None:
             try:
