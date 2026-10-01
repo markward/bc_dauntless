@@ -187,6 +187,7 @@ def _build() -> _Built:
         names = [_mod_name(d) for d in mod_ds]
         if len(set(names)) >= 2:
             shared.append((r.ship_id, names))
+    records = [r for r in records if r.ship_id.lower() not in _skipped]
     built, members = _classes(records)
     built.sort(key=lambda e: ((e.title or e.ship_id).lower(), e.ship_id))
     return _Built(records, members, built, unresolved, shared, stock_error)
@@ -384,6 +385,67 @@ def _classes(records: list):
 def ships(source: Optional[str] = None) -> list:
     """Every ShipRecord (stock and mod), or only `source` ("stock"/"mod")."""
     return [r for r in _built().ships if source is None or r.source == source]
+
+
+# ── gate support (sub-project 3 §2.3-2.4, §3.3) ────────────────────────────
+
+RACE_TO_SPECIES = {"fed": "Federation", "klingon": "Klingon", "romulan": "Romulan",
+                   "cardassian": "Cardassian", "ferengi": "Ferengi", "kessok": "Kessok"}
+
+# Folded ship ids hidden for this PROCESS by "Skip for now". Not part of the
+# memo: invalidate() must not un-skip. reset_session() is for tests.
+_skipped: set = set()
+
+
+def skip_for_session(ship_ids) -> None:
+    _skipped.update(str(s).lower() for s in ship_ids)
+    invalidate()
+
+
+def skipped() -> frozenset:
+    return frozenset(_skipped)
+
+
+def reset_session() -> None:
+    _skipped.clear()
+    invalidate()
+
+
+def incomplete_ships() -> list:
+    """Mod ships the gate must ask about: those missing a key, plus every mod
+    member of a class that is incomplete only through a role/species
+    conflict (each member is complete alone; the player fixes it by editing
+    one). Load order, no duplicates."""
+    b = _built()
+    out = [r for r in b.ships if r.source == "mod" and r.missing]
+    seen = {r.ship_id for r in out}
+    for e in b.entries:
+        if e.complete:
+            continue
+        group = b.members.get(e.ship_id.lower(), [])
+        if all(not m.missing for m in group):
+            for m in group:
+                if m.source == "mod" and m.ship_id not in seen:
+                    out.append(m)
+                    seen.add(m.ship_id)
+    return out
+
+
+def suggestions(r: ShipRecord) -> dict:
+    """Pre-fills for one ship (spec §2.4). Only keys with a real source."""
+    out: dict = {}
+    if r.raw_name:
+        out["title"] = r.raw_name
+    species = RACE_TO_SPECIES.get(str(r.raw_race or "").lower())
+    if species:
+        out["species"] = species
+    if r.player_menu:
+        out["playable"] = True
+    out["role"] = "tactical"
+    sub = re.sub(r"\s*class\s*$", "", str(r.sub_menu or ""), flags=re.IGNORECASE).strip()
+    if sub:
+        out["variant_of"] = sub
+    return out
 
 
 # ── species ────────────────────────────────────────────────────────────────

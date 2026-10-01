@@ -886,9 +886,11 @@ def _reset_leakable_engine_globals():
     # Ship catalog memo (engine/ship_catalog/catalog.py): keyed on the mod
     # index, but a test that mutates a ShipDef in place would otherwise leak
     # a stale snapshot into the next test that happens to share the index.
+    # reset_session() also invalidates, and clears "Skip for now" state so
+    # it cannot leak between tests either.
     try:
         from engine import ship_catalog as _ship_catalog
-        _ship_catalog.invalidate()
+        _ship_catalog.reset_session()
     except Exception:
         pass
     # Swapped-module split: fixtures that re-import an SDK module
