@@ -20,10 +20,13 @@ from engine.ship_catalog.tables import (
 class Variant:
     """A named ship. `script` spawns a separate ships/<script>.py instead of
     the definition's own; `registry` is the hull-name decal registry
-    (Masks/<registry>/). At least one is set."""
+    (Masks/<registry>/). The class default (variants[0]) may set neither: it
+    spawns the entry's own script. `playable` is set on a variant that is a
+    class member ship (it has its own flag); None means "the entry's"."""
     name: str
     script: Optional[str] = None
     registry: Optional[str] = None
+    playable: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,8 @@ class Parsed:
     variants: tuple
     missing: tuple
     errors: tuple
+    variant_of: Optional[str] = None     # class name, trimmed; None = own class
+    class_default: bool = False
 
 
 def _text(value) -> Optional[str]:
@@ -108,7 +113,21 @@ def parse_dauntless(raw) -> Parsed:
             values[key] = got
 
     variants = _variants(raw.get("variants"), errors)
-    return Parsed(values, variants, tuple(missing), tuple(errors))
+    variant_of = None
+    if "variant_of" in raw and raw["variant_of"] is not None:
+        if isinstance(raw["variant_of"], str):
+            variant_of = raw["variant_of"].strip() or None
+        else:
+            errors.append("variant_of: invalid value %r" % (raw["variant_of"],))
+    class_default = False
+    if "class_default" in raw:
+        got = _playable(raw["class_default"])      # same 0/1/bool rule
+        if got is None:
+            errors.append("class_default: invalid value %r" % (raw["class_default"],))
+        else:
+            class_default = got
+    return Parsed(values, variants, tuple(missing), tuple(errors),
+                  variant_of, class_default)
 
 
 def _variants(raw, errors: list) -> tuple:
@@ -130,7 +149,9 @@ def _variants(raw, errors: list) -> tuple:
             continue
         script = _text(v.get("script"))
         registry = _text(v.get("registry"))
-        if script is None and registry is None:
+        if script is None and registry is None and kept:
+            # Only the class default (the first kept variant) may be
+            # name-only: it spawns the entry's own script.
             errors.append("%s %r: needs a 'script' or a 'registry'" % (where, name))
             continue
         if name in seen:
