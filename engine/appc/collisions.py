@@ -879,6 +879,13 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     # kinetic-impact AddDamage primitive, which skips shields.
     from engine.appc.combat import apply_hit
     damage = _ke_damage(inv_sum, v_rel)
+    # The shield flash (a shielded side only -- a bypassing side absorbs
+    # nothing, so draws none) is ONE push: the single-impact seed, not the
+    # per-tick one a phaser or a grind frame uses, with the splash reach
+    # sized to the smaller body (the rock) -- live 2026-10-01, a rock bounced
+    # off the bubble with no visible flash at the per-tick seed.
+    from engine.appc.hit_feedback import SHIELD_SPLASH_REACH_PER_RADIUS
+    flash_r = r_small / SHIELD_SPLASH_REACH_PER_RADIUS
     n_ab = TGPoint3(nx, ny, nz)
     n_ba = TGPoint3(-nx, -ny, -nz)
     if a.is_movable:
@@ -886,14 +893,16 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_a, decal_radius=scuff_r, decal_dent=1.0,
-                  bypass_shields=not shielded_a, shield_point=shield_pt_a)
+                  bypass_shields=not shielded_a, shield_point=shield_pt_a,
+                  single_impact=True, shield_radius=flash_r)
     if b.is_movable:
         pt_b, n_b = _trace_own_hull(ship_instances, b,
                                     _shifted(boundary_b, b_offset, -1.0), n_ba, trace_reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
-                  bypass_shields=not shielded_b, shield_point=shield_pt_b)
+                  bypass_shields=not shielded_b, shield_point=shield_pt_b,
+                  single_impact=True, shield_radius=flash_r)
 
     return (a.obj, b.obj, contact, v_rel)
 

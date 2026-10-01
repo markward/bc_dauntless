@@ -616,7 +616,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
               bypass_shields: bool = False,
               shield_point=None,
               hit_tangent=None, decal_radius: float | None = None,
-              decal_dent: float = 0.0) -> None:
+              decal_dent: float = 0.0,
+              single_impact: bool = False,
+              shield_radius: float | None = None) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -687,6 +689,11 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               catchment / carve / WeaponHitEvent.
         decal_dent           — collision scuff impact weight: 1 crumples
                               (facets + dish), 0 scrapes (scratches).
+        single_impact        — a one-push hit (a collision's closing impact):
+                              the shield flash takes the single-impact seed,
+                              not the per-tick one. See hit_feedback.dispatch.
+        shield_radius        — shield-flash size override (DRF units); like
+                              decal_radius, never feeds the catchment.
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -868,6 +875,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             shield_point=shield_point,
             tangent=hit_tangent, decal_radius=decal_radius,
             decal_dent=decal_dent,
+            single_impact=single_impact, shield_radius=shield_radius,
         )
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)

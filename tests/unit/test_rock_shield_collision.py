@@ -345,3 +345,86 @@ def test_no_hull_box_hull_contact_but_shields_still_absorb():
     assert hits and hits[0][2].y == pytest.approx(reach - ROCK_R, abs=1e-6)
     assert _faces(ship)[FRONT] < 1.0e5
     assert ship.GetHull().GetCondition() == 1.0e6
+
+
+# -- The shield FLASH a rock leaves (live 2026-10-01: bounce, but no flash) ---
+#
+# The flash fired, but at the PER-TICK seed SHIELD_IMPACT_INTENSITY (0.325),
+# which exists for a phaser landing every frame (8 summed slots ~ 2.46). A rock
+# impact is ONE push, so it drew a quarter of a torpedo's single-impact seed
+# (1.3), sized by the 0.15 GU phaser-default radius. Impacts now take the
+# single-impact seed and a splash sized to the rock; grind frames are a
+# per-frame push and keep the per-tick seed.
+
+def _capture_shield_hits(monkeypatch):
+    from engine import host_io
+    calls = []
+
+    def spy(iid, point, rgba=(0.0, 0.0, 0.0, 0.0), intensity=1.0, radius=0.0):
+        calls.append({"iid": iid, "point": point, "intensity": intensity,
+                      "radius": radius})
+    monkeypatch.setattr(host_io, "shield_hit", spy)
+    return calls
+
+
+def test_rock_impact_on_shields_flashes_like_a_single_impact(monkeypatch):
+    from engine.appc import hit_feedback
+    calls = _capture_shield_hits(monkeypatch)
+    ship = _ship()
+    rock = _rock((0.0, SEMI[1] + ROCK_R - 0.05, 0.0), (0.0, -2.0, 0.0))
+    share_one_set(ship, rock)
+    collisions.resolve_collisions([ship, rock], ship_instances={ship: 7},
+                                  dt=1.0 / 60.0)
+    assert len(calls) == 1
+    c = calls[0]
+    assert c["iid"] == 7
+    assert c["point"] == pytest.approx((0.0, SEMI[1], 0.0), abs=1e-6)
+    # Fully absorbed (face 1e5 >> damage): the full single-impact seed.
+    assert c["intensity"] == pytest.approx(
+        hit_feedback.SHIELD_IMPACT_INTENSITY_TORPEDO)
+    # Sized to the rock: reach (= radius x 10 in shield_state.h) equals the
+    # rock's contact radius -- its full 1.0 GU radius (a rock is its sphere;
+    # no 0.8 shrink) -> radius 0.1, reach 1.0 GU (torpedo: 0.13 -> 1.3 GU).
+    assert c["radius"] == pytest.approx(
+        ROCK_R / hit_feedback.SHIELD_SPLASH_REACH_PER_RADIUS)
+    assert c["radius"] == pytest.approx(0.1)
+
+
+def test_rock_grind_on_shields_keeps_the_per_tick_flash(monkeypatch):
+    from engine.appc import hit_feedback
+    calls = _capture_shield_hits(monkeypatch)
+    ship = _ship()
+    # Overlapping the bubble, sliding along it: no closing speed -> grind.
+    rock = _rock((0.0, SEMI[1] + ROCK_R - 0.05, 0.0), (1.0, 0.0, 0.0))
+    share_one_set(ship, rock)
+    for _ in range(3):
+        collisions.resolve_collisions([ship, rock], ship_instances={ship: 7},
+                                      dt=1.0 / 60.0)
+    assert len(calls) == 3
+    for c in calls:
+        assert c["intensity"] == pytest.approx(
+            hit_feedback.SHIELD_IMPACT_INTENSITY)
+        assert c["radius"] == pytest.approx(0.15)   # unchanged default
+
+
+def test_torpedo_and_phaser_shield_flash_unchanged(monkeypatch):
+    """Pin the weapon paths: torpedo 1.3 at its DRF, phaser beam 0.325."""
+    from engine.appc import combat, hit_feedback
+    calls = _capture_shield_hits(monkeypatch)
+    ship = _ship()
+    src = _ship("Src")
+
+    class _Photon:
+        def GetDamageRadiusFactor(self):
+            return 0.13
+    combat.apply_hit(ship, 500.0, TGPoint3(0.0, 3.0, 0.0), src,
+                     weapon_type="torpedo", payload_template=_Photon(),
+                     ship_instances={ship: 7},
+                     shield_point=TGPoint3(0.0, SEMI[1], 0.0))
+    hit_feedback.beam_contact(
+        ship=ship, source=src, point=TGPoint3(0.0, 3.0, 0.0), normal=None,
+        shield_point=TGPoint3(0.0, SEMI[1], 0.0), tick_damage=1.0,
+        ship_instances={ship: 7}, radius=0.15)
+    assert [(c["intensity"], c["radius"]) for c in calls] == [
+        (pytest.approx(1.3), pytest.approx(0.13)),
+        (pytest.approx(0.325), pytest.approx(0.15))]
