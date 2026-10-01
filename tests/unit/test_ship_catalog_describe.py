@@ -21,7 +21,7 @@ def built(monkeypatch):
     holder = {}
     monkeypatch.setattr(catalog, "_built", lambda: holder["b"])
     def set_(entries, unresolved=(), shared=(), stock_error=None):
-        holder["b"] = _Built([], list(entries), list(unresolved), list(shared), stock_error)
+        holder["b"] = _Built([], {}, list(entries), list(unresolved), list(shared), stock_error)
     return set_
 
 
