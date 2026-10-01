@@ -198,7 +198,9 @@ def _break_up(rock, pSet, name, killer=None) -> None:
                 s = getattr(piece, setter, None)
                 if callable(g) and callable(s):
                     s(g())
-            if p.radius_gu < breakup.kTargetableMinRadiusGU:
+            # The BUILT radius: RockClass_Create quantises (planned 2.46 is
+            # a 2.5 GU rock), and the player sees the built one.
+            if float(piece.GetRadius()) < breakup.kTargetableMinRadiusGU:
                 piece.SetTargetable(0)    # still solid: shoot it by aiming
             piece.SetTranslateXYZ(*at)
             piece.SetMatrixRotation(R)
@@ -270,7 +272,7 @@ def _advance_ghosts(dt: float) -> None:
                 clear = spheres_clear(a, b, breakup.kGhostSeparationMarginGU)
             except Exception as e:
                 dev_mode.log_swallowed("rock ghost separation", e)
-                clear = True
+                clear = True             # deliberate fail-open, logged
             if not clear:
                 continue
             done.append(g)

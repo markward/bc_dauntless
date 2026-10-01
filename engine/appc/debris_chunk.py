@@ -237,7 +237,7 @@ def _release_ghost_peers(c, dt):
                     continue
             except Exception as _e:
                 dev_mode.log_swallowed("debris chunk ghost separation", _e)
-                continue
+                continue    # deliberate fail-open (unmask), logged
             keep.append(o)
     if len(keep) != len(c._ghost_peers):
         c._ghost_peers = keep

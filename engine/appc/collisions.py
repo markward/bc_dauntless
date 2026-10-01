@@ -47,6 +47,8 @@ kGrindMinDamageRate = 1.0        # hull pts/s: a grind whose damage / dt is
                                  # frame, and a per-call cutoff would drop the
                                  # calibrated grinds above (0.52/frame at
                                  # 144 Hz) and the docking nudge (7.5 pts/s).
+                                 # Mass-dependent (damage scales with reduced
+                                 # mass): low-mass bodies' slow slips fall under.
 COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
                                  # rA+rB: objects close 20% of the bounding-
                                  # sphere gap before a hit registers, compensating

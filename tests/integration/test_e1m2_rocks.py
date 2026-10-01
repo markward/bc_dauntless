@@ -224,7 +224,10 @@ def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
     still-overlapping sibling pair ground every frame afterwards (3,520
     float-noise hit-VFX spawns in 10 s, live: every render frame). Ghosted
     until separated, there must be no sibling grind VFX at all and no death
-    beyond the parent."""
+    beyond the parent.
+
+    kGrindMinDamageRate is pinned to 0 so this guards the ghosting ALONE:
+    the grind-rate cutoff would otherwise hide those noise grinds too."""
     from engine.appc import collisions, debris_chunk, hit_vfx
     from engine.appc.ship_iter import iter_ships
     from engine.rocks import chunks as rock_chunks, death
@@ -271,6 +274,7 @@ def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
             deaths.append(rock.GetName())
         return real_begin(rock, killer)
 
+    monkeypatch.setattr(collisions, "kGrindMinDamageRate", 0.0)
     monkeypatch.setattr(collisions, "_grind_contact", grind)
     monkeypatch.setattr(hit_vfx, "spawn", spawn)
     monkeypatch.setattr(death, "begin", begin)

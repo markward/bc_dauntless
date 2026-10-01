@@ -155,7 +155,7 @@ def test_big_rock_spawns_named_major_pieces_without_death_script():
         assert abs(v.y - off[1] * sp) < 1e-9
         assert abs(v.z - off[2] * sp) < 1e-9
         # Targetable parent: copied at or above the threshold, off below it.
-        big = majors[i - 1].radius_gu >= breakup.kTargetableMinRadiusGU
+        big = piece.GetRadius() >= breakup.kTargetableMinRadiusGU
         assert bool(piece.IsTargetable()) is big
 
 
@@ -692,3 +692,15 @@ def test_piece_at_threshold_copies_parent(monkeypatch):
     piece = _one_piece_death(monkeypatch, breakup.kTargetableMinRadiusGU,
                              parent_targetable=True)
     assert piece.IsTargetable()
+
+
+
+@pytest.mark.parametrize("planned, built, targetable",
+                         [(2.46, 2.5, True), (2.44, 2.4, False)])
+def test_threshold_reads_the_built_radius_not_the_planned_one(
+        monkeypatch, planned, built, targetable):
+    """RockClass_Create quantises to 2 s.f.: planned 2.46 is BUILT at 2.5 GU
+    (targetable), planned 2.44 at 2.4 GU (not)."""
+    piece = _one_piece_death(monkeypatch, planned, parent_targetable=True)
+    assert piece.GetRadius() == built
+    assert bool(piece.IsTargetable()) is targetable
