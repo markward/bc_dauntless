@@ -9078,8 +9078,8 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
     `panel.outcome` is set or the window closes.
 
     Shared by the first-run picker and the Mods screen. Everything the first
-    -run loop learned the hard way applies (see _run_first_run_screen's
-    history and tests/host/test_first_run_pump_loop.py): the scene pass is
+    -run loop learned the hard way applies (tests/host/test_first_run_pump_loop.py
+    pins it, and the comments below carry the reasons): the scene pass is
     off, the page-load handler re-invalidates the panel so its first payload
     lands, and mouse moves/edges are forwarded because run()'s own
     forwarding only exists inside the game loop. Added here: typed text and
@@ -9100,6 +9100,16 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
                 panel.dispatch_event(event[len(prefix):])
         _set_handler(_dispatch)
 
+    # CreateBrowser is asynchronous (~340ms measured -- see cef_lifecycle.cc's
+    # execute_javascript()), and every cef_execute_javascript push is dropped
+    # silently until the page's own <script> tags have run. Without this
+    # handler the screen's only payload goes out on frame 1, is dropped, and
+    # nothing ever pushes again -- render_payload() diffs against its own
+    # cache and the snapshot never changes on its own. The load-end handler
+    # is what actually gets a payload onto the page: it fires once the
+    # browser reports the document loaded, and panel.invalidate() there
+    # drops the cache so the very next render_payload() re-emits into a page
+    # that can now receive it.
     _set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
     if _set_load_end is not None:
         _set_load_end(panel.invalidate)
@@ -9112,11 +9122,23 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
 
     r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
     try:
+        # Also invalidated by the load-end handler above once the page
+        # actually loads (which may land before or after this first
+        # iteration runs); kept here too since a panel handed in may not be
+        # fresh (its diff cache already holding a payload).
         panel.invalidate()
         while not r.should_close() and panel.outcome is None:
             script = panel.render_payload()
             if script is not None and _h is not None:
                 _h.cef_execute_javascript(script)
+            # Forward mouse move + left-click edges so the panel's buttons
+            # are actually clickable: run()'s main loop only ever forwards
+            # mouse to CEF from INSIDE the game loop (pause menu, crew
+            # menus, ...), and this loop runs before that one exists.
+            # Mirrors run()'s pause-menu forwarding block
+            # (_forward_mouse_to_cef + the mouse_button_pressed/released
+            # edge pair), the only other place this project turns host
+            # cursor state into CEF input.
             if _cef_send_mouse_move is not None:
                 _mx, _my = _forward_mouse_to_cef(_h, _cef_send_mouse_move, view_w, view_h)
                 if _cef_send_mouse_click is not None:
@@ -9133,8 +9155,17 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
                         panel.handle_key_esc()
             r.frame()
     finally:
+        # Unguarded deliberately, unlike the JS call below: this only ever
+        # assigns two native globals (g_hologram_only_mode, g_hologram_bg),
+        # with no browser/CEF state to be torn down or absent -- there is no
+        # failure mode for it to swallow.
         r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
         if _set_load_end is not None:
+            # Replace rather than leave bound to this finished panel: run()
+            # registers its OWN load-end handler later (once the game loop
+            # exists), which would overwrite this anyway, but a bare no-op
+            # here means there is no window -- however unlikely -- where a
+            # reload could call back into a panel whose screen has ended.
             _set_load_end(lambda: None)
         if _h is not None:
             try:
