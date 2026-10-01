@@ -4,7 +4,14 @@
 lets a developer nudge `SystemNebulaPass`'s look while the pass is running,
 instead of editing constants and rebuilding for every trial.
 
-Seven dials, three keys (a MacBook keyboard -- no numpad, no Pause):
+The three keys -- / L O -- now live in `engine/dev_dial_groups.py`, shared
+across every dial GROUP (minor-rocks spec §5, M4): this module only
+registers the "nebula" group's dial order and step function with that
+registry and lets it claim the keys. Developer Options -> Lighting ->
+"Dial keys" picks which group / L O act on; nebula is active by default
+(the first group registered, at boot).
+
+Seven dials:
 
   /   select the next dial: veil -> floor -> g -> lane_contrast ->
       near_range -> conceal_cap -> godray_gain -> veil ...
@@ -28,7 +35,8 @@ defaults.
 WHY ONLY THREE KEYS. A dev key must be free in every namespace a key can be
 claimed in (tests/unit/test_dev_key_collisions.py enforces all of them):
 BC's own `DefaultKeyboardBinding.py` BindKey calls, `input_map.ACTIONS`,
-the dev-keybinding registry (`engine/dev_keybindings.py` + this module),
+the dev-keybinding registry (`engine/dev_keybindings.py` +
+`engine/dev_dial_groups.py`),
 the directly-read keys (throttle 1-9, F12 DevTools, Escape, Space), the
 SDK-routed F6/F9 -- and it must exist on a MacBook and be exported by the
 host key table (`_dauntless_host.keys`). Checked 2026-09-29 against every
@@ -52,8 +60,6 @@ rebuild) whenever it changes, and the flare veil uses the same value via
 set). A `g` or `floor` change rebuilds the far-field table (~1.6s);
 `lane_contrast` and `near_range` never rebuild anything.
 """
-import engine.dev_mode as dev_mode
-
 DEFAULTS: dict = {
     "veil": 0.15,   # == engine.systems.profile.VEIL_DEFAULT (test-pinned)
     "floor": 0.0916,   # Mark's live pick 2026-09-29 (0.03 read too dark)
@@ -82,11 +88,10 @@ _NEAR_RANGE_FACTOR = 1.5
 _CONCEAL_STEP = 0.01
 _GODRAY_GAIN_FACTOR = 1.25
 
-# Live dial state and the selected dial's index into DIAL_ORDER. Module-level
-# so presses accumulate across a session (mirrors dev_keybindings.py's
-# module-level toggle state).
+# Live dial state. Module-level so presses accumulate across a session
+# (mirrors dev_keybindings.py's module-level toggle state). The selected
+# dial's index now lives in dev_dial_groups.py, keyed by group name.
 _dials: dict = dict(DEFAULTS)
-_selected: int = 0
 
 
 def current() -> dict:
@@ -99,11 +104,6 @@ def veil() -> float:
     region that k_sys is solved for (engine.systems.profile.k_sys). Read by
     host_loop for both the profile push and the flare veil."""
     return _dials["veil"]
-
-
-def selected() -> str:
-    """The dial L / O currently step."""
-    return DIAL_ORDER[_selected]
 
 
 def step(dials: dict, name: str, direction: int) -> dict:
@@ -166,41 +166,25 @@ def conceal_cap() -> float:
     return _dials["conceal_cap"]
 
 
-def _report() -> None:
-    print("[nebula dials] selected=%s %s" % (selected(), _dials))
-
-
-def _cycle() -> None:
-    global _selected
-    _selected = (_selected + 1) % len(DIAL_ORDER)
-    _report()
-
-
-def _push(direction: int) -> None:
+def _step(name: str, direction: int) -> None:
+    """The nebula group's step function: steps `_dials[name]` and pushes the
+    native dials. No print -- dev_dial_groups.push() does the reporting for
+    whichever group is active."""
     global _dials
-    _dials = step(_dials, selected(), direction)
+    _dials = step(_dials, name, direction)
     from engine import renderer as r
     r.system_nebula_set_dials(_native(_dials))
-    _report()
 
 
 def register(_h) -> None:
-    """Register the three keys. Call once at boot, gated on
-    `dev_mode.is_enabled()` -- see `engine/host_loop.py`'s `run()`.
+    """Register the nebula dial group and the shared / L O keys. Call once
+    at boot, gated on `dev_mode.is_enabled()` -- see `engine/host_loop.py`'s
+    `run()`.
 
     `_h` is the `_dauntless_host` extension module (or a test double
     exposing `.keys.KEY_*`), matching `dev_keybindings.register_for_frame`'s
     convention.
     """
-    dev_mode.register_dev_keybinding(
-        _h.keys.KEY_SLASH, _cycle,
-        "System nebula: select next dial (veil/floor/g/lanes/near/cap/godrays) (dev) - /",
-    )
-    dev_mode.register_dev_keybinding(
-        _h.keys.KEY_L, lambda: _push(-1),
-        "System nebula: selected dial down (dev) - L",
-    )
-    dev_mode.register_dev_keybinding(
-        _h.keys.KEY_O, lambda: _push(+1),
-        "System nebula: selected dial up (dev) - O",
-    )
+    from engine import dev_dial_groups
+    dev_dial_groups.register_group("nebula", DIAL_ORDER, current, _step)
+    dev_dial_groups.register_keys(_h)

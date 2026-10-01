@@ -125,7 +125,7 @@ def test_render_payload_shape(panel):
         "disable_collisions": False,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
-        "profiler": False, "rock_catalogue": True,
+        "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
     }
 
 
@@ -485,6 +485,22 @@ def test_toggling_the_profiler_re_emits_the_payload(monkeypatch):
         "toggling the profiler emitted no payload — the button will keep "
         "showing its old state; _profiler is missing from the snapshot tuple")
     assert '"profiler": true' in after.replace(" ", " ")
+
+
+# ---- Dial-group picker (Lighting tab, minor-rocks spec §5) ---------------
+
+def test_dial_group_row_cycles_active_group():
+    import engine.dev_dial_groups as g
+    g.reset()
+    g.register_group("nebula", ("veil",), lambda: {}, lambda n, d: None)
+    g.register_group("minors", ("halo_outer",), lambda: {}, lambda n, d: None)
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert p.dispatch_event("action:dial_group") is True
+    assert g.active() == "minors"
+    assert '"dial_group": "minors"' in p.render_payload()
+    g.reset()
 
 
 def test_every_setting_is_in_the_render_snapshot():

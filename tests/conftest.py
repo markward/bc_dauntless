@@ -1496,6 +1496,13 @@ def _reset_leakable_engine_globals():
         _rock_catalogue._warned.clear()
     except Exception:
         pass
+    # Dev dial groups (minor-rocks spec §5): a test that registers a group
+    # would otherwise leave every later test's / L O acting on it.
+    try:
+        import engine.dev_dial_groups as _ddg
+        _ddg.reset()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds

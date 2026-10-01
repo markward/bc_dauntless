@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple
 
 from engine.ui.panel import Panel
 from engine import dev_combat_cheats as cheats
+from engine import dev_dial_groups
 from engine import dev_light_preview as light_preview
 from engine import renderer
 from engine.rocks import catalogue as rock_catalogue
@@ -31,7 +32,8 @@ def _frame_profiler():
 class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
-    _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength"})
+    _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
+                                 "dial_group"})
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
     # (identical to disabled), 1 = as authored, 2/4 exaggerate for tuning.
@@ -58,6 +60,7 @@ class DeveloperOptionsPanel(Panel):
         self._normal_flip_g = True
         self._normal_strength = 1.0
         self._rock_catalogue = rock_catalogue.enabled()
+        self._dial_group = dev_dial_groups.active() or "nebula"
         # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
         # profiler at startup, so a hard-coded False would show OFF while it
         # was running.
@@ -82,6 +85,7 @@ class DeveloperOptionsPanel(Panel):
         self._disable_collisions = cheats.disable_collisions_active()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
+        self._dial_group = dev_dial_groups.active() or "nebula"
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -105,7 +109,7 @@ class DeveloperOptionsPanel(Panel):
             self._no_npc_shields, self._disable_collisions,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
-            self._profiler, self._rock_catalogue,
+            self._profiler, self._rock_catalogue, self._dial_group,
         )
         if snapshot == self._last_pushed:
             return None
@@ -129,6 +133,7 @@ class DeveloperOptionsPanel(Panel):
                 "normal_strength": self._normal_strength,
                 "profiler": self._profiler,
                 "rock_catalogue": self._rock_catalogue,
+                "dial_group": self._dial_group,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -202,6 +207,9 @@ class DeveloperOptionsPanel(Panel):
             rock_catalogue.set_enabled(not self._rock_catalogue)
             self._rock_catalogue = not self._rock_catalogue
             return True
+        if action == "action:dial_group":
+            self._dial_group = dev_dial_groups.cycle_active() or "nebula"
+            return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
             # there is no local flag and no render_payload entry. Lived on the
@@ -236,7 +244,8 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
-                    ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue")]
+                    ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue"),
+                    ("ctrl", "dial_group")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler")]
         return out

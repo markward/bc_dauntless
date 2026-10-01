@@ -1,22 +1,24 @@
 import pytest
 
 import engine.dev_mode as dev_mode
+import engine.dev_dial_groups as dial_groups
 from engine import dev_nebula_dials as D
 
 
 @pytest.fixture(autouse=True)
 def _isolate_registry_and_dial_state():
     """Snapshot/restore the shared dev-keybinding registry (test_dev_keybindings.py's
-    pattern) AND dev_nebula_dials' own live `_dials` state, so a press in one
-    test can't leak into another."""
+    pattern), dev_nebula_dials' own live `_dials` state, AND the shared
+    dev_dial_groups registry (the selected dial / active group now live
+    there), so a press in one test can't leak into another."""
     saved_registry = dict(dev_mode._dev_keybindings)
     saved_dials = dict(D._dials)
-    saved_selected = D._selected
+    dial_groups.reset()
     yield
     dev_mode._dev_keybindings.clear()
     dev_mode._dev_keybindings.update(saved_registry)
     D._dials = saved_dials
-    D._selected = saved_selected
+    dial_groups.reset()
 
 
 class _Keys:
@@ -43,11 +45,10 @@ def test_register_binds_exactly_the_three_macbook_keys():
 
 def test_slash_cycles_the_selected_dial_through_all_seven(capsys):
     D.register(_FakeHost())
-    D._selected = 0
-    seen = [D.selected()]
+    seen = [dial_groups.selected()]
     for _ in range(len(D.DIAL_ORDER)):
         _press(_Keys.KEY_SLASH)
-        seen.append(D.selected())
+        seen.append(dial_groups.selected())
     assert seen[0] == "veil", "veil is the first thing Mark tunes (spec)"
     assert sorted(set(seen)) == sorted(
         ["veil", "floor", "g", "lane_contrast", "near_range", "conceal_cap",
@@ -62,7 +63,8 @@ def test_l_and_o_step_the_selected_dial_and_push_the_native_dials(monkeypatch, c
     monkeypatch.setattr(r, "system_nebula_set_dials", lambda d: pushed.append(dict(d)))
     D._dials = dict(D.DEFAULTS)
     D.register(_FakeHost())
-    D._selected = D.DIAL_ORDER.index("g")
+    while dial_groups.selected() != "g":
+        dial_groups.cycle_dial()
 
     _press(_Keys.KEY_O)   # g +0.05
     assert pushed[-1]["g"] == pytest.approx(0.65)
