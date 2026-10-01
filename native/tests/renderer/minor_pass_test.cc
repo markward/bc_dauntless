@@ -33,6 +33,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/world.h>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -47,6 +48,8 @@ constexpr int kH = 64;
 
 // Every catalogue fragment's bound radius at load scale 1 (constraints.md).
 constexpr float kBoundMu = 57.142857f;
+// A real-sized fragment: a cube whose corner radius is exactly kBoundMu.
+const float kCubeHalf = kBoundMu / std::sqrt(3.0f);
 
 // A cube of half-extent `h` with per-face outward normals, per-face UVs and
 // CCW-from-outside winding (front faces under the pipeline's GL_CCW), plus a
@@ -268,12 +271,13 @@ protected:
 
 // Same fragment shader, same inputs => identical pixels. The major draws the
 // cube at world = translate(p) * scale(s), with s computed exactly as
-// MinorField computes a minor's instance scale (r / (bound_mu * 0.01)).
+// MinorField computes a minor's instance scale (r / bound_mu: model units
+// straight to GU).
 TEST_F(MinorPassGLTest, MatchesDrawModelPixelForPixel) {
-    const assets::Model cube = make_cube_model(0.33f);
+    const assets::Model cube = make_cube_model(kCubeHalf);
     const glm::vec3 centre(0.0f, 0.0f, -3.0f);
     const float r = 0.5f;
-    const float s = r / (kBoundMu * 0.01f);
+    const float s = r / kBoundMu;
     const scenegraph::Camera cam = test_camera(centre);
     const renderer::Lighting lighting = test_lighting();
 
@@ -306,7 +310,7 @@ TEST_F(MinorPassGLTest, MatchesDrawModelPixelForPixel) {
 // transposed (row/column swapped) read would turn the cube the other way and
 // light different faces. The major's world is rebuilt from the minor's rows.
 TEST_F(MinorPassGLTest, RotatedMinorMatchesDrawModelPixelForPixel) {
-    const assets::Model cube = make_cube_model(0.33f);
+    const assets::Model cube = make_cube_model(kCubeHalf);
     const glm::vec3 centre(0.0f, 0.0f, -3.0f);
     const scenegraph::Camera cam = test_camera(centre);
     const renderer::Lighting lighting = test_lighting();
@@ -331,7 +335,7 @@ TEST_F(MinorPassGLTest, RotatedMinorMatchesDrawModelPixelForPixel) {
 }
 
 TEST_F(MinorPassGLTest, OneInstancedDrawPerNonEmptyBin) {
-    const assets::Model cube = make_cube_model(0.33f);
+    const assets::Model cube = make_cube_model(kCubeHalf);
     const glm::vec3 centre(0.0f, 0.0f, -8.0f);
     const scenegraph::Camera cam = test_camera(centre);
 
@@ -369,7 +373,7 @@ TEST_F(MinorPassGLTest, OneInstancedDrawPerNonEmptyBin) {
 }
 
 TEST_F(MinorPassGLTest, ModelVaoIsNotModified) {
-    const assets::Model cube = make_cube_model(0.33f);
+    const assets::Model cube = make_cube_model(kCubeHalf);
     const glm::vec3 centre(0.0f, 0.0f, -3.0f);
     const scenegraph::Camera cam = test_camera(centre);
 
@@ -400,7 +404,7 @@ TEST_F(MinorPassGLTest, ModelVaoIsNotModified) {
 }
 
 TEST_F(MinorPassGLTest, EmptyFieldIssuesNoDraws) {
-    const assets::Model cube = make_cube_model(0.33f);
+    const assets::Model cube = make_cube_model(kCubeHalf);
     const glm::vec3 centre(0.0f, 0.0f, -3.0f);
     const scenegraph::Camera cam = test_camera(centre);
 
@@ -422,7 +426,7 @@ TEST_F(MinorPassGLTest, EmptyFieldIssuesNoDraws) {
 }
 
 TEST_F(MinorPassGLTest, NullModelSkipsTheBin) {
-    const assets::Model cube = make_cube_model(0.33f);
+    const assets::Model cube = make_cube_model(kCubeHalf);
     const glm::vec3 centre(0.0f, 0.0f, -3.0f);
     const scenegraph::Camera cam = test_camera(centre);
 
@@ -440,4 +444,97 @@ TEST_F(MinorPassGLTest, NullModelSkipsTheBin) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
     EXPECT_EQ(pass.last_draw_calls(), 0);
     EXPECT_EQ(lit_pixels(read_frame()), 0);
+}
+
+// Pins the per-bin instance offset: bin 0 (family 0, its model unresolvable)
+// and bin 1 (family 1) each hold one minor at a different place. Bin 1 must
+// draw at ITS OWN item's world -- pixel-for-pixel what draw_model draws there.
+// A pass reading every bin's rows from offset 0 would draw bin 1 at bin 0's
+// item instead.
+TEST_F(MinorPassGLTest, EachBinDrawsItsOwnInstances) {
+    const assets::Model hidden = make_cube_model(kCubeHalf);
+    const assets::Model shown  = make_cube_model(kCubeHalf);
+    const glm::vec3 centre(0.0f, 0.0f, -3.0f);
+    const scenegraph::Camera cam = test_camera(centre);
+    const renderer::Lighting lighting = test_lighting();
+
+    minors::MinorField field;
+    field.set_fragments(0, {{handle_of(hidden), handle_of(hidden), kBoundMu}});
+    field.set_fragments(1, {{handle_of(shown), handle_of(shown), kBoundMu}});
+    minors::Dials d;
+    d.tumble_min = 0.0f;
+    d.tumble_max = 0.0f;
+    field.set_dials(d);
+    const glm::vec3 at[2] = {centre + glm::vec3(-0.7f, 0.0f, 0.0f),
+                             centre + glm::vec3( 0.7f, 0.0f, 0.0f)};
+    for (int fam = 0; fam < 2; ++fam) {
+        minors::CloudDesc c;
+        c.id = static_cast<std::uint32_t>(10 + fam);
+        c.anchor = minors::Anchor::Point;
+        c.point = glm::dvec3(at[fam]);
+        c.shell_inner = 0.0f;
+        c.shell_outer = 0.0f;
+        c.count = 1;
+        c.r_min = c.r_max = 0.3f;
+        c.family = fam;
+        c.seed = 21u + static_cast<std::uint32_t>(fam);
+        field.add_cloud(c, 0.0);
+        field.debug_set_phase(c.id, 0, 0.0f);
+    }
+    field.step(step_input(cam));
+    ASSERT_EQ(field.bins().size(), 2u);
+    ASSERT_EQ(field.bins()[0].family, 0);
+    ASSERT_EQ(field.bins()[1].family, 1);
+    const glm::mat4 world1 = world_of(field.bins()[1].items[0]);
+    ASSERT_NE(world_of(field.bins()[0].items[0]), world1);
+
+    const auto a = draw_major(shown, world1, cam, lighting);
+
+    renderer::MinorPass pass;
+    clear_framebuffer();
+    const std::uint64_t hidden_h = handle_of(hidden);
+    pass.render(field, cam, *pipeline,
+                [hidden_h](std::uint64_t h) {
+                    return h == hidden_h ? nullptr : lookup_handle(h);
+                },
+                lighting, 1.0f, 0.0f);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    const auto b = read_frame();
+
+    EXPECT_EQ(pass.last_draw_calls(), 1);
+    ASSERT_GT(lit_pixels(a), kW * kH / 50);
+    int differing = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) differing += a[i] != b[i] ? 1 : 0;
+    EXPECT_EQ(differing, 0) << "bin 1 must draw at its own instance, not bin 0's";
+}
+
+// The VAO cache is keyed on (model handle, mesh index); a handle whose mesh
+// was re-uploaded (new vbo/ebo) must not keep drawing the old geometry. The
+// replacement is uploaded while the old mesh is alive, so its buffer ids
+// differ from the old ones.
+TEST_F(MinorPassGLTest, ReuploadedMeshUnderTheSameHandleDrawsTheNewGeometry) {
+    assets::Model cube = make_cube_model(kCubeHalf);
+    const glm::vec3 centre(0.0f, 0.0f, -3.0f);
+    const scenegraph::Camera cam = test_camera(centre);
+    const renderer::Lighting lighting = test_lighting();
+
+    minors::MinorField field;
+    set_family(field, cube, 1);
+    one_minor_cloud(field, centre, 0.5f, 0.0f);
+    field.step(step_input(cam));
+    ASSERT_EQ(field.bins().size(), 1u);
+    renderer::MinorPass pass;
+    draw_minors(pass, field, cam, lighting);         // caches the VAO
+    ASSERT_EQ(pass.last_draw_calls(), 1);
+
+    assets::Model smaller = make_cube_model(0.5f * kCubeHalf);
+    ASSERT_NE(smaller.meshes[0].vbo(), cube.meshes[0].vbo());
+    cube.meshes[0] = std::move(smaller.meshes[0]);
+
+    const auto a = draw_major(cube, world_of(field.bins()[0].items[0]), cam, lighting);
+    const auto b = draw_minors(pass, field, cam, lighting);
+    ASSERT_GT(lit_pixels(a), kW * kH / 50);
+    int differing = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) differing += a[i] != b[i] ? 1 : 0;
+    EXPECT_EQ(differing, 0) << "a stale VAO drew the old mesh";
 }

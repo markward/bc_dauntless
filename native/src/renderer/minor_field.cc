@@ -273,7 +273,7 @@ void MinorField::step(const StepInput& in) {
             const float angle = m.phase
                 + glm::mix(dials_.tumble_min, dials_.tumble_max, m.tumble_u) * static_cast<float>(t)
                 + spin;
-            const float s = r / (frags[slot].bound_radius_mu * 0.01f);
+            const float s = r / frags[slot].bound_radius_mu;   // model units straight to GU
             const glm::mat3 rs = rotation(angle, m.tumble_axis) * s;
             InstanceGpu g;   // rows of [R·s | t]; glm is column-major: rs[col][row]
             g.row0 = {rs[0][0], rs[1][0], rs[2][0], p.x};

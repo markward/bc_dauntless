@@ -264,7 +264,7 @@ TEST(MinorStep, InstanceScaleDrawsAtMinorRadius) {
     ASSERT_FALSE(f.bins().empty());
     const auto& g = f.bins()[0].items[0];
     const float s = glm::length(glm::vec3(g.row0.x, g.row1.x, g.row2.x));
-    EXPECT_NEAR(s * 57.142857f * 0.01f, 0.3f, 1e-4f);
+    EXPECT_NEAR(s * 57.142857f, 0.3f, 1e-4f);   // model units straight to GU
 }
 
 TEST(MinorStep, ZeroSecondFadeOutIsInstantNotNaN) {

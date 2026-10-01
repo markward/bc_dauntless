@@ -62,9 +62,9 @@ MinorPass::~MinorPass() {
 }
 
 void MinorPass::forget_models() {
-    for (auto& [key, vao] : vaos_) {
+    for (auto& [key, cached] : vaos_) {
         (void)key;
-        GLuint v = vao;
+        GLuint v = cached.vao;
         glDeleteVertexArrays(1, &v);
     }
     vaos_.clear();
@@ -89,7 +89,12 @@ std::uint32_t MinorPass::ensure_black_texture() {
 std::uint32_t MinorPass::vao_for(std::uint64_t handle, int mesh_index, std::uint32_t vbo,
                                  std::uint32_t ebo) {
     const auto key = std::make_pair(handle, mesh_index);
-    if (auto it = vaos_.find(key); it != vaos_.end()) return it->second;
+    if (auto it = vaos_.find(key); it != vaos_.end()) {
+        if (it->second.vbo == vbo && it->second.ebo == ebo) return it->second.vao;
+        GLuint stale = it->second.vao;            // the mesh was re-uploaded
+        glDeleteVertexArrays(1, &stale);
+        vaos_.erase(it);
+    }
 
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
@@ -117,7 +122,7 @@ std::uint32_t MinorPass::vao_for(std::uint64_t handle, int mesh_index, std::uint
                               reinterpret_cast<void*>(static_cast<std::uintptr_t>(k * 16)));
         glVertexAttribDivisor(kRow0Attrib + k, 1);
     }
-    vaos_.emplace(key, vao);
+    vaos_.emplace(key, CachedVao{vao, vbo, ebo});
     return vao;
 }
 
@@ -169,6 +174,7 @@ void MinorPass::render(const minors::MinorField& field, const scenegraph::Camera
     s.set_int("u_nan_debug", dauntless_nan_debug::enabled() ? 1 : 0);
     s.set_float("u_rim_strength", rim_strength);
     s.set_mat4("u_model", glm::mat4(1.0f));    // unused by minor.vert; never stale
+    s.set_mat4("u_ship_world_inv", glm::mat4(1.0f));   // no body-frame feature reads it
     {
         // Sun shadow, as draw_model binds it (unit 5).
         const bool shadows_on = active_shadow_enabled();
@@ -244,9 +250,10 @@ void MinorPass::render(const minors::MinorField& field, const scenegraph::Camera
         }
 
         // Material, as draw_model's mesh loop sets it.
-        const assets::Material mat = mesh.material_index() >= 0
+        static const assets::Material kDefaultMaterial{};
+        const assets::Material& mat = mesh.material_index() >= 0
             ? model->materials[static_cast<std::size_t>(mesh.material_index())]
-            : assets::Material{};
+            : kDefaultMaterial;
         s.set_vec3("u_diffuse_color", mat.diffuse);
         s.set_vec3("u_emissive_color", mat.emissive);
 

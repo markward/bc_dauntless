@@ -29,6 +29,9 @@ public:
     ~MinorPass();                       // deletes VAOs / instance VBO (GL alive)
 
     // Draws field.bins() into the bound target. `lookup` resolves a model handle.
+    // `rim_strength` is the FINAL u_rim_strength: the caller passes it already
+    // gated and scaled, as the opaque submit paths compute it per instance
+    // (dauntless_rim::enabled() ? strength * dauntless_rim::kStrengthScale : 0).
     void render(const minors::MinorField& field, const scenegraph::Camera& cam,
                 Pipeline& pipeline,
                 const std::function<const assets::Model*(std::uint64_t)>& lookup,
@@ -44,11 +47,14 @@ private:
     std::uint32_t ensure_black_texture();
     // The VAO for (model handle, mesh index): the mesh's own vbo/ebo on
     // attributes 0..2 plus the shared instance buffer on 7..9. Never the
-    // mesh's own VAO, which the opaque path still owns unmodified.
+    // mesh's own VAO, which the opaque path still owns unmodified. A cached
+    // VAO whose recorded vbo/ebo no longer match the mesh's is rebuilt (the
+    // handle's mesh was re-uploaded).
     std::uint32_t vao_for(std::uint64_t handle, int mesh_index, std::uint32_t vbo,
                           std::uint32_t ebo);
 
-    std::map<std::pair<std::uint64_t, int>, std::uint32_t> vaos_;
+    struct CachedVao { std::uint32_t vao = 0, vbo = 0, ebo = 0; };
+    std::map<std::pair<std::uint64_t, int>, CachedVao> vaos_;
     std::uint32_t instance_vbo_ = 0;
     std::size_t   instance_capacity_ = 0;      // bytes
     std::vector<minors::InstanceGpu> staging_;
