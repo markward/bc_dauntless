@@ -251,3 +251,38 @@ def species() -> list:
     out = [s._replace(insignia=insignia_path(s.name)) for s in STOCK_SPECIES]
     out += [Species(name, None, insignia_path(name)) for name in extra]
     return out
+
+
+# ── boot report ────────────────────────────────────────────────────────────
+
+def describe() -> str:
+    """One boot line (+ indented details), or "" when there is nothing to
+    say: stock only, every entry complete, no problems (spec §5)."""
+    try:
+        b = _built()
+    except Exception as exc:  # noqa: BLE001 -- a boot report must not kill boot
+        return "ship catalog: WARNING could not build: %s: %s" % (
+            type(exc).__name__, exc)
+    n_stock = sum(1 for e in b.entries if e.source == "stock")
+    n_mod = len(b.entries) - n_stock
+    bad = [e for e in b.entries if not e.complete]
+    if not (n_mod or bad or b.unresolved or b.shared or b.stock_error):
+        return ""
+
+    head = "ship catalog: %d stock, %d mod" % (n_stock, n_mod)
+    if bad:
+        by_mod: dict = {}
+        for e in bad:
+            who = (e.origins[-1][0] if e.origins else None) or "stock"
+            by_mod[who] = by_mod.get(who, 0) + 1
+        head += "; %d incomplete (%s)" % (len(bad), ", ".join(
+            "%s: %d" % (k, by_mod[k]) for k in sorted(by_mod)))
+    lines = [head]
+    for ship_id, names in b.shared:
+        lines.append("  shared stem %r: %s" % (ship_id, " over ".join(reversed(names))))
+    for ship_file, mod_name in b.unresolved:
+        lines.append("  unresolved: %s (%s) -- ships/%s.py not found"
+                     % (ship_file, mod_name, ship_file))
+    if b.stock_error:
+        lines.append("  WARNING stock metadata failed to load: %s" % b.stock_error)
+    return "\n".join(lines)
