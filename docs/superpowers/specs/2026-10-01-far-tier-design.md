@@ -139,6 +139,12 @@ Distances at 1080p and the default 35° FOV (k ≈ 1,713):
 The viewscreen RTT (360 px) divides every distance by 3. A Retina framebuffer
 doubles them; thresholds are in framebuffer pixels, as for minors.
 
+**Procedural rocks** use the same weights minus the mesh: a procedural major's
+impostor fades in over 16 → 12 px, and a procedural minor's speck fades out
+over 1.5 → 2 px (there is no lod1 for it). Until sub-project 4 seeds real
+rocks, that leaves an empty zone around the eye inside a belt, which is
+expected.
+
 **Hand-offs**
 - **Mesh → impostor (majors):** a screen-door fade. The mesh draw discards by a
   4×4 Bayer mask at `far_fade`; the impostor draws with the inverse mask, so
@@ -241,11 +247,16 @@ the roadmap's threshold.
 - Single scattering: the population's average albedo (the mean `avg_albedo` of
   its family's catalogue rocks) × the Lambert-sphere phase function of the
   sun–rock–eye angle × sun colour, plus the ambient term.
-- Alpha = `1 − exp(−τ · haze_alpha_gain)`, so the haze dims what it covers.
-- Physically, τ across a belt is about 10⁻⁵, which is invisible.
-  **`haze_gain` is an explicit art dial**, tuned live. Its starting default
-  is derived in the plan from one stated target: looking along the mid-plane
-  of Vesuvi's band from Haven, the haze alpha is about 0.15.
+- One dial, **`haze_gain`**, scales the optical depth: per step
+  `Δτ = haze_gain · Σ n·σ_below · ds`, colour += `T · (1 − e^(−Δτ)) · albedo ·
+  light`, `T *= e^(−Δτ)`, alpha = `1 − T`. Colour and alpha therefore stay
+  consistent (premultiplied).
+- Physically, τ across a belt is about 10⁻⁵, which is invisible, so
+  `haze_gain` is an explicit art dial, tuned live. **Default 143**, derived
+  (amended while planning, 2026-10-01) from one target: at mid-band (ρ =
+  278,000 GU) looking tangentially along the plane, alpha ≈ 0.15. Minors only
+  (a = 0.5 has no majors): n = 4.84×10⁻⁸ /GU³, mean cross-section
+  0.0659 GU², chord 355,600 GU, so τ ≈ 1.13×10⁻³ and τ·143 ≈ 0.162.
 - The haze ignores explicit regions: real rocks below `p_min` are culled, so
   the haze still stands in for them.
 
