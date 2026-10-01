@@ -31,9 +31,11 @@ offers a flat catalog, two rosters and a player-ship pick
 |---|---|---|---|
 | 1 | **Ship metadata**: the fields, where they live, stock defaults, how mods declare them, the catalog API the game reads | — | spec + plan written (branch `feat/qb-ship-metadata`): `2026-10-01-ship-metadata-catalog-design.md`, plan `docs/superpowers/plans/2026-10-01-ship-metadata-catalog.md` |
 | 2 | **Quick Battle setup screen and battle start**: the CEF screen, groups, presets, persistence, group spawning, named ships | 1 | not started |
-| 3 | **Mod metadata gate**: stop at load when a mod ship lacks metadata, a screen to supply it, answers persisted | 1 | not started |
+| 3 | **Mod metadata gate**, grown into a pre-boot **Mod Ships screen**: gate mode (supply missing metadata), read-only home mode (`--mods`, pause **Quit and Manage Mods** relaunch), CEF keyboard input, a class-by-name catalog model, and the shim `SubMenu` fix | 1 | spec written (branch `feat/qb-mod-gate`): `2026-10-01-mod-ships-screen-design.md` |
+| 4 | **Mod manager**: grows sub-project 3's home mode into a real manager, starting with enabling and disabling mods per mod (persisted, effective on relaunch), then whatever else is needed (load order, conflicts, editing complete ships' metadata) | 3 | not started |
 
 Sub-projects 2 and 3 are independent of each other; either can follow 1.
+Sub-project 4 follows 3.
 
 **Small fix, any time (Mark's call when):** delete the revert-on-End-Combat hook
 `_sync_quickbattle_player_revert` (`engine/host_loop.py`, commit `c6a21e63`).
@@ -234,6 +236,12 @@ The questions below are kept for the record.
   is no way to delete a preset.
 
 ### 3: Mod metadata gate
+
+**Answered** in `2026-10-01-mod-ships-screen-design.md` (its Decisions table):
+it runs pre-boot after Foundation plugins load, as one table of all mod ships
+with ticked-row bulk edits. Escapes are **Skip for now** (session-only) and
+Quit. Re-asking is automatic, because a mod update's new ships are simply
+incomplete. The questions below are kept for the record.
 
 - **When exactly?** At boot after Foundation plugins load (`foundation.load_plugins`),
   before the game loop. The first-run picker (`engine/ui/first_run_panel.py`,
