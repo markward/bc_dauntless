@@ -62,3 +62,27 @@ def test_to_native_resolves_families_to_catalogue_indices():
                for i in minor["rocks"])
     assert all(rocks[i].kind == "major" for i in major["rocks"])
     assert len(minor["weights"]) == len(minor["rocks"])
+
+
+def test_to_native_drops_a_population_with_no_matching_rocks(monkeypatch, capsys):
+    """A family with no matching catalogue rock of a population's kind must
+    not reach native: pick_rock would render every generated rock of that
+    population as catalogue index 0 regardless of kind/family."""
+    from engine.rocks import catalogue
+
+    class _FakeRock:
+        def __init__(self, kind, family, avg_albedo=(0.4, 0.4, 0.4)):
+            self.kind = kind
+            self.family = family
+            self.avg_albedo = avg_albedo
+
+    (s,) = density.sources_for_system("Vesuvi")
+    # Only a "major" silicate rock exists -- no "fragment" (minor) match.
+    monkeypatch.setattr(catalogue, "load", lambda: (_FakeRock("major", "silicate"),))
+
+    d = density.to_native(s)
+    kinds = [p["kind"] for p in d["populations"]]
+    assert kinds == [1]   # minor (kind 0) dropped, major (kind 1) kept
+
+    err = capsys.readouterr().err
+    assert err.count("[far]") == 1

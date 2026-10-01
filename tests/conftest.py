@@ -1521,6 +1521,15 @@ def _reset_leakable_engine_globals():
         _fd.reset()
     except Exception:
         pass
+    # far-tier density warnings (engine/rocks/density.py): one-shot "[far]"
+    # prints are deduped per (system[, kind]) -- clear so a test asserting
+    # on a fresh warning isn't silenced by an earlier test's own dedup set.
+    try:
+        from engine.rocks import density as _density
+        _density._warned_truncate.clear()
+        _density._warned_no_match.clear()
+    except Exception:
+        pass
     # Minor-cloud registry (engine/rocks/minors.py): held ids, free clouds and
     # the fragment memo would otherwise carry one test's clouds into the next.
     try:

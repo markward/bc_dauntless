@@ -123,3 +123,19 @@ def test_real_catalogue_loads():
     rocks = rc.load()
     assert len([r for r in rocks if r.kind == "major"]) == 13
     assert {r.family for r in rocks} == {"silicate", "carbonaceous", "icy", "metallic"}
+
+
+def test_impostor_view_dirs_are_16_unit_vectors():
+    rc._memo_view_dirs.clear()
+    dirs = rc.impostor_view_dirs()
+    assert len(dirs) == 16
+    for d in dirs:
+        length = sum(c * c for c in d) ** 0.5
+        assert abs(length - 1.0) < 1e-3
+
+
+def test_index_of_path_finds_a_real_rock_and_minus_one_for_unknown():
+    rc._memo.clear()
+    rocks = rc.load()
+    assert rc.index_of_path(rocks[0].lod_paths[0]) == 0
+    assert rc.index_of_path("/no/such/rock/lod0.gltf") == -1

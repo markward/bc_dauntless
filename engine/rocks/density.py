@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 MAX_TABLE_ROWS = 32   # far_haze.frag's u_table_* arrays
 
 _warned_truncate: set = set()
+_warned_no_match: set = set()
 
 
 @dataclass
@@ -113,19 +114,27 @@ def sources_for_system(system_name: str) -> list:
     return [] if s is None else [s]
 
 
-def _population_native(pop, rocks) -> dict:
-    kind_name = "fragment" if pop.kind == 0 else "major"
+def _kind_name(pop) -> str:
+    return "fragment" if pop.kind == 0 else "major"
+
+
+def _population_native(pop, rocks):
+    """The native population dict, or None when no catalogue rock matches
+    this population's kind + families -- an empty `rocks`/`weights` list
+    would still carry a live `density_at_1` into native, and
+    renderer::far::pick_rock renders every generated rock of an empty
+    population as catalogue index 0 regardless of kind or family."""
+    kind_name = _kind_name(pop)
     fam_weight = dict(pop.families)
     matched = [(i, fam_weight[r.family]) for i, r in enumerate(rocks)
               if r.kind == kind_name and r.family in fam_weight]
+    if not matched:
+        return None
     indices = [i for i, _ in matched]
     weights = [w for _, w in matched]
-    if indices:
-        albedo = tuple(
-            sum(rocks[i].avg_albedo[c] for i in indices) / len(indices)
-            for c in range(3))
-    else:
-        albedo = (0.4, 0.4, 0.4)
+    albedo = tuple(
+        sum(rocks[i].avg_albedo[c] for i in indices) / len(indices)
+        for c in range(3))
     return {
         "kind": pop.kind,
         "density_at_1": pop.density_at_1,
@@ -141,10 +150,29 @@ def _population_native(pop, rocks) -> dict:
 
 
 def to_native(source) -> dict:
-    """The dict renderer.far_set_sources's disc_source_of() parses."""
+    """The dict renderer.far_set_sources's disc_source_of() parses.
+
+    A population with no matching catalogue rock is OMITTED, not sent
+    empty (one [far] warning per (system, kind), deduped like
+    profile_belt's own truncation warning). A source that ends up with no
+    populations at all is still emitted -- the haze and generator then
+    simply find nothing to draw for it."""
     from engine.rocks import catalogue, field_table
     minor, major = field_table.populations(source.families)
     rocks = catalogue.load()
+    pops = []
+    for pop in (minor, major):
+        native_pop = _population_native(pop, rocks)
+        if native_pop is None:
+            key = (source.frame, _kind_name(pop))
+            if key not in _warned_no_match:
+                _warned_no_match.add(key)
+                print("[far] %s: no catalogue rocks match kind=%s families=%s; "
+                      "population dropped"
+                      % (source.frame, _kind_name(pop), dict(pop.families)),
+                      file=sys.stderr)
+            continue
+        pops.append(native_pop)
     return {
         "id": source.id,
         "frame": source.frame,
@@ -156,5 +184,5 @@ def to_native(source) -> dict:
         "scale_height_min_gu": source.scale_height_min_gu,
         "seed": source.seed,
         "explicit_regions": [(tuple(c), r) for c, r in source.explicit_regions],
-        "populations": [_population_native(minor, rocks), _population_native(major, rocks)],
+        "populations": pops,
     }
