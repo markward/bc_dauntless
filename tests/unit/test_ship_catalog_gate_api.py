@@ -40,6 +40,19 @@ def test_conflicting_class_members_are_all_incomplete(stock, tmp_path):
     assert sorted(r.ship_id for r in ship_catalog.incomplete_ships()) == ["A", "B"]
 
 
+def test_conflict_members_listed_even_when_a_sibling_is_missing_a_key(stock, tmp_path):
+    # A and B disagree on role; C is missing its era. Every member must be
+    # editable or the player can never resolve the conflict.
+    install_mod(tmp_path, "M", {"scripts/ships/A.py": "#", "scripts/ships/B.py": "#",
+                                "scripts/ships/C.py": "#"})
+    _mod_def("A", dauntless=dict(FULL, title="A", variant_of="K"))
+    _mod_def("B", dauntless=dict(FULL, title="B", variant_of="K", role="station"))
+    c = dict(FULL, title="C", variant_of="K")
+    del c["era"]
+    _mod_def("C", dauntless=c)
+    assert sorted(r.ship_id for r in ship_catalog.incomplete_ships()) == ["A", "B", "C"]
+
+
 def test_suggestions(stock, tmp_path):
     install_mod(tmp_path, "M", {"scripts/ships/A.py": "#"})
     _mod_def("A", player=True, details={"SubMenu": "Defiant Class"})

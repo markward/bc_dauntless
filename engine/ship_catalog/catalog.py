@@ -413,9 +413,9 @@ def reset_session() -> None:
 
 def incomplete_ships() -> list:
     """Mod ships the gate must ask about: those missing a key, plus every mod
-    member of a class that is incomplete only through a role/species
-    conflict (each member is complete alone; the player fixes it by editing
-    one). Load order, no duplicates."""
+    member of a class with a role/species conflict -- whatever its siblings
+    are missing, since the player fixes a conflict by editing any member.
+    Load order, no duplicates."""
     b = _built()
     out = [r for r in b.ships if r.source == "mod" and r.missing]
     seen = {r.ship_id for r in out}
@@ -423,7 +423,8 @@ def incomplete_ships() -> list:
         if e.complete:
             continue
         group = b.members.get(e.ship_id.lower(), [])
-        if all(not m.missing for m in group):
+        _v, _m, errors = combine_class([_member(m) for m in group])
+        if any(err.startswith(("role:", "species:")) for err in errors):
             for m in group:
                 if m.source == "mod" and m.ship_id not in seen:
                     out.append(m)
