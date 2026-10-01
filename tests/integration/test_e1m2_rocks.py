@@ -201,7 +201,7 @@ def test_asteroid_killed_against_haven_does_not_cascade():
     finally:
         collisions._emit_planet_collision = real
     pieces = seen - {name}
-    assert 1 <= len(pieces) <= breakup.kPieceCountMax
+    assert 1 <= len(pieces) <= 1 + breakup.kMediumCountMax   # large + mediums
     assert all(p.count("-") == 1 for p in pieces), sorted(pieces)
     assert len(strikes) == 1
 
@@ -290,3 +290,35 @@ def test_isolated_rock_breakup_does_not_grind_its_siblings(monkeypatch):
         death.drain_death_vfx()
     assert deaths == [target.GetName()]
     assert grind_vfx == []
+
+
+def test_largest_asteroid_breaks_into_one_target_mediums_and_chunks():
+    """Size-mix split (live test 2026-10-01): E1M2's largest moving asteroid
+    breaks into one large piece -- the only target, when built at >= 2 GU --
+    3-5 untargetable medium rocks, and at most 8 chunk specs."""
+    from engine.appc.ship_iter import iter_rocks, iter_ships
+    from engine.rocks import breakup, death
+    mod = _init_e1m2()
+    pSet = App.g_kSetManager.GetSet("Vesuvi6")
+    mod.CreateMovingAsteroids()
+    for s in iter_ships():              # host realise: hull radius when unset
+        if s.GetRadius() <= 0.0 and s.GetHull() is not None:
+            s.SetRadius(s.GetHull().GetRadius())
+    rocks = [App.ShipClass_GetObject(pSet, n) for n in mod.g_dAsteroidInfo]
+    target = max(rocks, key=lambda r: r.GetScale())
+    name = target.GetName()
+    assert target.IsTargetable()
+    death.drain_chunk_specs()
+    target.DamageSystem(target.GetHull(), 1e9)
+    pieces = sorted((x for x in iter_rocks()
+                     if x.GetName().startswith(name + "-")),
+                    key=lambda x: x.GetName())
+    large, mediums = pieces[0], pieces[1:]
+    assert large.GetName() == name + "-1"
+    assert large.GetRadius() >= breakup.kTargetableMinRadiusGU
+    assert large.IsTargetable()
+    assert breakup.kMediumCountMin <= len(mediums) <= breakup.kMediumCountMax
+    assert not any(m.IsTargetable() for m in mediums)
+    assert all(m.GetRadius() < large.GetRadius() for m in mediums)
+    specs = death.drain_chunk_specs()
+    assert 1 <= len(specs) <= breakup.kMaxChunksPerDeath

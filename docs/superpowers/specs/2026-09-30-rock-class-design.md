@@ -171,26 +171,38 @@ when the critical hull reaches 0:
    (E1M2 sets 0.5 s).
 
 **Breakup.**
-- Volume budget: 70% of the parent's volume goes into 2–3 pieces
-  (`kPieceCountMax`, was 5); the rest is dust. Piece count and sizes come from
-  a generator seeded by the rock's name, so the same rock always breaks the
-  same way.
-- Pieces fly apart with the parent's velocity plus an outward push along
-  parent-centre → piece-centre, and a random tumble.
-- A piece with radius ≥ **1.0 GU** (`kMajorMinRadiusGU`, a Python dial) becomes
+- A size-mix split (`engine/rocks/breakup.py` dials), drawn by a generator
+  seeded by the rock's name, so the same rock always breaks the same way.
+  Fractions are of the parent's volume, each uniform in its range: **one large**
+  piece (0.20–0.30), **3–5 medium** (0.07–0.12 each), **5–8 small** (0.03–0.06
+  each); the rest is dust. If the total exceeds `kVolumeTotalMax` (1.0) the
+  small pieces shrink first, then the medium; the large piece is never scaled,
+  so it stays the largest. Piece radius = parent radius × v^(1/3).
+  (`kVolumeBudget` and `kPieceCountMin/Max` are retired.)
+- Pieces fly apart with the parent's velocity plus an outward push of
+  `kSeparationSpeedGU` (**0.8 GU/s**, was 0.4) along parent-centre →
+  piece-centre, and a random tumble. The large and medium pieces take
+  **spread** directions (best of `kSpreadCandidates` seeded unit vectors,
+  farthest from those already placed); small pieces stay random.
+- Large and medium pieces of radius ≥ **1.0 GU** (`kMajorMinRadiusGU`) become
   a new `RockClass` via `RockClass_Create`: a catalogue *fragment* of the
-  parent's family, named `"<parent>-1"`, `"<parent>-2"`, …, scannable /
-  hailable copied from the parent, HP and mass per §1. Targetable is copied only for a piece of radius ≥ **2.5 GU**
-  (`kTargetableMinRadiusGU`); a smaller one is created untargetable whatever
-  the parent's flag, and stays a solid rock you can shoot by aiming.
+  parent's family, named `"<parent>-1"`, `"<parent>-2"`, … in plan order (the
+  large piece is always `-1`), scannable / hailable copied from the parent, HP
+  and mass per §1. Below that floor they become chunks.
+- **Targeting:** only the large piece may be targetable, and only when its
+  BUILT (quantised) radius is ≥ **2.0 GU** (`kTargetableMinRadiusGU`); it then
+  copies the parent's flag. Every other piece is untargetable whatever the
+  parent's flag, and stays a solid rock you can shoot by aiming.
 - One major generation (`kMaxMajorGeneration = 1`): a rock that is itself a
   piece (`_rock_generation ≥ 1`) breaks into chunks and dust only — its
-  would-be majors become chunks — so there is no `"<parent>-1-1"`.
-- A smaller piece above `kChunkMinRadiusGU` becomes a tumbling rock chunk
-  (`debris_chunk` style, catalogue fragment mesh, capped and oldest-first
-  evicted). At most `kMaxChunksPerDeath` (3) per death, the largest; the
-  rest become dust. Sub-project 3 replaces these with minors.
-- Below that, dust only.
+  would-be majors become chunks — so there is no `"<parent>-1-1"`, and
+  destroying a remnant never spawns a new target.
+- Small pieces become tumbling rock chunks whatever their radius
+  (`debris_chunk` style, catalogue fragment mesh, never targeted, no hull;
+  capped and oldest-first evicted). At most `kMaxChunksPerDeath` (**8**) per
+  death, the largest; the rest become dust. Sub-project 3 replaces these with
+  minors.
+- Below `kChunkMinRadiusGU`, dust only.
 - Every pair in the breakup group — pieces, chunks, the parent, and **the
   killer** — ignores collisions until that pair's contact spheres
   (`collisions.contact_radius`) are `kGhostSeparationMarginGU` (0.25 GU) clear,
@@ -211,7 +223,20 @@ overlapping that stay overlapped for 1.15–8.05 s against the old fixed 1 s
 ghost (`kPieceGhostTime`, now retired), after which every overlapping pair
 ground each collision frame: 3,520 float-noise hit-VFX spawns in 10 s for one
 rock. Hence ghost-until-separated, 2–3 pieces, one major generation, ≤3
-chunks per death and the 2.5 GU targetable threshold above.
+chunks per death and the 2.5 GU targetable threshold above. (The piece count, chunk cap and threshold were
+superseded by the size-mix split below.)
+
+**Size-mix split after live test 2026-10-01.** Mark's second E1M2 run: the
+largest asteroid broke into pieces all about the same size. He asked for a
+classic fragment mix (his feel: 1 × 0.25, 4 × 0.1, 7 × 0.05 of the volume),
+hence the large / medium / small split, small pieces as chunks (cap 3 → 8),
+and the large-only targeting rule at 2.0 GU. With up to six 3–5 GU majors on
+random directions, nearly every name left one near-parallel sibling pair
+overlapping past the 10 s ghost cap, which then ground (scenario A); hence
+spread major directions and separation speed 0.4 → 0.8 GU/s.
+`test_no_sibling_major_pair_overlaps_at_the_ghost_cap` pins that no major pair
+is still overlapping at `kGhostMaxTime`. Note radius is the cube root of
+volume, so a 0.25 vs 0.05 split is only about 1.7× in radius.
 
 **Family.** A rock's family comes from its catalogue pick (sub-project 1's
 `engine/rocks/catalogue.py`). With catalogue rocks toggled off (stock BC

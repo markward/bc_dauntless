@@ -112,7 +112,7 @@ def _chunk_breakup():
     from engine.appc import debris_chunk
     from engine.rocks import breakup, chunks, death
     rock = _make(App.GENUS_ASTEROID)
-    rock.SetRadius(1.6)                 # "Asteroid 5b" at 1.6: 1 major + 2 chunks
+    rock.SetRadius(1.6)                 # "Asteroid 5b" at 1.6: 1 major + 8 chunks
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
     n = sum(1 for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "major")
@@ -123,9 +123,13 @@ def _chunk_breakup():
 
 
 def _still(chunks_):
+    """Stop every chunk and stack it on the breakup centre, so every pair
+    overlaps: the size-mix split's 8 small chunks are born spread round the
+    parent, and two of them need not overlap at birth."""
     from engine.appc.math import TGPoint3
     for c in chunks_:
         c._vel = TGPoint3(0.0, 0.0, 0.0)
+        c.SetTranslateXYZ(0.0, 0.0, 0.0)
 
 
 def _assert_all_masked(rock, majors, live, want):

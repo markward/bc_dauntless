@@ -154,9 +154,9 @@ def test_big_rock_spawns_named_major_pieces_without_death_script():
         assert abs(v.x - (1.0 + off[0] * sp)) < 1e-9
         assert abs(v.y - off[1] * sp) < 1e-9
         assert abs(v.z - off[2] * sp) < 1e-9
-        # Targetable parent: copied at or above the threshold, off below it.
+        # Targetable parent: only the large piece, at or above the threshold.
         big = piece.GetRadius() >= breakup.kTargetableMinRadiusGU
-        assert bool(piece.IsTargetable()) is big
+        assert bool(piece.IsTargetable()) is (big and majors[i - 1].rank == "large")
 
 
 def test_piece_hull_scales_from_parent_max():
@@ -633,27 +633,38 @@ def test_generation_one_rock_breaks_into_chunks_and_dust_only():
     assert 1 <= len(specs) <= breakup.kMaxChunksPerDeath
 
 
-def test_generation_zero_rock_spawns_at_most_three_majors():
-    from engine.rocks import death
+def test_generation_zero_rock_spawns_one_large_and_medium_majors():
+    """Size-mix split: the large piece and every medium piece are majors,
+    numbered 1..k in plan order; the small pieces are chunk specs."""
+    from engine.rocks import breakup, death
     for name in ("Asteroid 5b", "Asteroid 6b", "Asteroid 7a"):
         rock = _make(App.GENUS_ASTEROID)
         rock.SetRadius(8.0)
         pSet = _in_set(rock, name)
         death.begin(rock)
-        assert pSet.GetObject(name + "-1") is not None
-        assert pSet.GetObject(name + "-4") is None
+        plan = breakup.plan(name, 8.0)
+        majors = [p for p in plan if p.tier == "major"]
+        assert [p.rank for p in majors] == \
+            ["large"] + ["medium"] * (len(majors) - 1)
+        for i in range(1, len(majors) + 1):
+            assert pSet.GetObject("%s-%d" % (name, i)) is not None
+        assert pSet.GetObject("%s-%d" % (name, len(majors) + 1)) is None
+        specs = death.drain_chunk_specs()
+        n_small = sum(1 for p in plan if p.rank == "small" and p.tier == "chunk")
+        assert len(specs) == n_small <= breakup.kMaxChunksPerDeath
 
 
-# ── Targetable threshold (tuned after live test 2026-10-01) ──────────────────
-# Large remnants in the target list obstructed E1M2. A major piece smaller
-# than kTargetableMinRadiusGU is created untargetable whatever its parent's
-# flag; it stays a solid rock you can shoot by aiming.
+# ── Targetable rule (Mark, live tests 2026-10-01) ────────────────────────────
+# Only the "large" piece may be targetable, and only when its BUILT radius is
+# at least kTargetableMinRadiusGU; it then copies the parent's flag. Every
+# other piece is untargetable; scannable/hailable always copy.
 
 
-def _one_piece_death(monkeypatch, piece_radius, parent_targetable):
+def _one_piece_death(monkeypatch, piece_radius, parent_targetable,
+                     rank="large"):
     from engine.rocks import breakup, death
     spec = breakup.PieceSpec(radius_gu=piece_radius, offset=(1.0, 0.0, 0.0),
-                             v_ratio=0.3, tier="major")
+                             v_ratio=0.3, tier="major", rank=rank)
     monkeypatch.setattr(breakup, "plan", lambda *a, **k: [spec])
     rock = _make(App.GENUS_ASTEROID)
     rock.SetRadius(6.0)
@@ -667,11 +678,12 @@ def _one_piece_death(monkeypatch, piece_radius, parent_targetable):
 
 def test_targetable_threshold_dial():
     from engine.rocks import breakup
-    assert breakup.kTargetableMinRadiusGU == 2.5
+    assert breakup.kTargetableMinRadiusGU == 2.0
 
 
-def test_small_piece_is_not_targetable_but_copies_scan_and_hail(monkeypatch):
-    piece = _one_piece_death(monkeypatch, 2.0, parent_targetable=True)
+def test_small_large_piece_is_not_targetable_but_copies_scan_and_hail(
+        monkeypatch):
+    piece = _one_piece_death(monkeypatch, 1.9, parent_targetable=True)
     assert not piece.IsTargetable()
     assert piece.IsScannable() and piece.IsHailable()
     assert piece.CanCollide()                     # still a solid rock
@@ -687,20 +699,61 @@ def test_large_piece_of_untargetable_parent_is_not_targetable(monkeypatch):
     assert not piece.IsTargetable()
 
 
-def test_piece_at_threshold_copies_parent(monkeypatch):
+def test_large_piece_at_threshold_copies_parent(monkeypatch):
     from engine.rocks import breakup
     piece = _one_piece_death(monkeypatch, breakup.kTargetableMinRadiusGU,
                              parent_targetable=True)
     assert piece.IsTargetable()
 
 
+def test_medium_piece_is_never_targetable_but_copies_scan_and_hail(
+        monkeypatch):
+    piece = _one_piece_death(monkeypatch, 4.0, parent_targetable=True,
+                             rank="medium")
+    assert not piece.IsTargetable()
+    assert piece.IsScannable() and piece.IsHailable()
+
 
 @pytest.mark.parametrize("planned, built, targetable",
-                         [(2.46, 2.5, True), (2.44, 2.4, False)])
+                         [(1.96, 2.0, True), (1.94, 1.9, False)])
 def test_threshold_reads_the_built_radius_not_the_planned_one(
         monkeypatch, planned, built, targetable):
-    """RockClass_Create quantises to 2 s.f.: planned 2.46 is BUILT at 2.5 GU
-    (targetable), planned 2.44 at 2.4 GU (not)."""
+    """RockClass_Create quantises to 2 s.f.: planned 1.96 is BUILT at 2.0 GU
+    (targetable), planned 1.94 at 1.9 GU (not)."""
     piece = _one_piece_death(monkeypatch, planned, parent_targetable=True)
     assert piece.GetRadius() == built
     assert bool(piece.IsTargetable()) is targetable
+
+
+def test_real_breakup_targets_only_the_large_piece():
+    from engine.rocks import breakup, death
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(8.0)
+    rock.SetTargetable(1)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    majors = _majors_of(pSet, "Asteroid 5b", 8.0)
+    assert len(majors) >= 4
+    assert majors[0].GetRadius() >= breakup.kTargetableMinRadiusGU
+    assert [bool(m.IsTargetable()) for m in majors] == \
+        [True] + [False] * (len(majors) - 1)
+
+
+def test_destroying_a_generation_one_remnant_creates_no_target():
+    """The generation cap means a remnant breaks into chunks and dust only,
+    so destroying the targetable large piece never spawns a new target."""
+    from engine.appc.ship_iter import iter_rocks
+    from engine.rocks import death
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(8.0)
+    rock.SetTargetable(1)
+    pSet = _in_set(rock, "Asteroid 5b")
+    death.begin(rock)
+    large = pSet.GetObject("Asteroid 5b-1")
+    assert large.IsTargetable() and large._rock_generation == 1
+    before = {id(x) for x in iter_rocks()}
+    death.begin(large)
+    new = [x for x in iter_rocks() if id(x) not in before]
+    assert new == []
+    assert pSet.GetObject("Asteroid 5b-1-1") is None
+    assert death.drain_chunk_specs()            # it still broke up, as chunks

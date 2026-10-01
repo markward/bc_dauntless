@@ -198,9 +198,11 @@ def _break_up(rock, pSet, name, killer=None) -> None:
                 s = getattr(piece, setter, None)
                 if callable(g) and callable(s):
                     s(g())
-            # The BUILT radius: RockClass_Create quantises (planned 2.46 is
-            # a 2.5 GU rock), and the player sees the built one.
-            if float(piece.GetRadius()) < breakup.kTargetableMinRadiusGU:
+            # Only the large piece may stay targetable, and only at a BUILT
+            # radius (RockClass_Create quantises: planned 1.96 is a 2.0 GU
+            # rock, and the player sees the built one) >= the threshold.
+            if (p.rank != "large" or float(piece.GetRadius())
+                    < breakup.kTargetableMinRadiusGU):
                 piece.SetTargetable(0)    # still solid: shoot it by aiming
             piece.SetTranslateXYZ(*at)
             piece.SetMatrixRotation(R)
