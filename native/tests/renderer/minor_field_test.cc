@@ -344,10 +344,12 @@ TEST(MinorContact, DashSpeedSweepHitsAt100kGups) {
     auto f = field_with_fragments();
     f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
     auto in = looking_down_minus_z(0.0);
-    in.player = box_at({0, -833, -20});
+    // Off-grid on purpose: 32 evenly spaced samples of this path land 21.7 GU
+    // from the minor at best, so only an exact sweep can hit it.
+    in.player = box_at({0, -811.3f, -20});
     f.step(in);
     in.game_time = 1.0 / 60.0;                 // ~100,000 GU/s: 1,666 GU per frame
-    in.player = box_at({0, +833, -20});        // still below teleport_gu (20,000)
+    in.player = box_at({0, +854.7f, -20});     // still below teleport_gu (20,000)
     f.step(in);
     EXPECT_EQ(f.drain_contacts().size(), 1u);
 }
