@@ -77,6 +77,7 @@ struct FarDials {
     float speck_gain = 1.0f;
     float haze_gain = 143.0f;
     int haze_steps = 24;
+    int max_cells_per_axis = 17;   // per class: enumeration spans at most this many cells per axis
 };
 
 struct ImpostorGpu {

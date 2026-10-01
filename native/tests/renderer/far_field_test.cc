@@ -362,3 +362,68 @@ TEST(FarFieldBuild, CellCacheIsCappedAndForgetsOnGeneratorChange) {
     f.set_sources({vesuvi_like()});
     EXPECT_EQ(f.cached_cells(), 0u);
 }
+
+TEST(FarFieldBuild, FailedLookupGivesAFadeOfZero) {
+    far::FarField f = field_with_catalogue();
+    f.set_rocks({{42, 7, 57.142857f}, {43, 7, 57.142857f}});
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    far::FarOutput out;
+    f.build(in, out);                            // no lookup at all
+    ASSERT_EQ(out.fades.size(), 2u);
+    EXPECT_EQ(out.fades[0], std::make_pair(std::uint64_t{42}, 0.0f));
+    EXPECT_EQ(out.fades[1], std::make_pair(std::uint64_t{43}, 0.0f));
+    in.world_of = [](std::uint64_t key, glm::mat4& w) {
+        if (key == 42) return false;             // lookup fails
+        w = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0, 1000, 0)),
+                       glm::vec3(0.0f));        // degenerate scale
+        return true;
+    };
+    f.build(in, out);
+    ASSERT_EQ(out.fades.size(), 2u);
+    EXPECT_EQ(out.fades[0], std::make_pair(std::uint64_t{42}, 0.0f));
+    EXPECT_EQ(out.fades[1], std::make_pair(std::uint64_t{43}, 0.0f));
+    EXPECT_TRUE(out.impostors.empty());
+    EXPECT_TRUE(out.specks.empty());
+}
+
+TEST(FarFieldBuild, FrustumCulledFlaggedRockKeepsItsFade) {
+    far::FarField f = field_with_catalogue();
+    f.set_rocks({{42, 7, 57.142857f}});
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    in.world_of = [](std::uint64_t, glm::mat4& w) {
+        w = glm::translate(glm::mat4(1.0f), glm::vec3(0, -1000, 0))   // behind the eye
+          * glm::scale(glm::mat4(1.0f), glm::vec3(0.035f));            // p ~ 3.4 px: impostor
+        return true;
+    };
+    far::FarOutput out;
+    f.build(in, out);
+    ASSERT_EQ(out.fades.size(), 1u);
+    EXPECT_EQ(out.fades[0].first, 42u);
+    EXPECT_EQ(out.fades[0].second, 1.0f);
+    EXPECT_TRUE(out.impostors.empty());
+    EXPECT_TRUE(out.specks.empty());
+}
+
+TEST(FarFieldBuild, TelephotoEnumerationIsBoundedPerAxis) {
+    // k = 10 x k_ref two ways. The narrow FOV is the viewscreen zoom; its
+    // frustum already rejects most cells, so `cells` alone cannot see the
+    // enumeration. The tall target has the same k with a wide frustum, so
+    // without the per-axis clamp its walk passes the bound.
+    far::FarField f = field_with_catalogue();
+    const auto s = vesuvi_like();
+    f.set_sources({s});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarDials d;
+    EXPECT_EQ(d.max_cells_per_axis, 17);
+    const int bound = d.gen.size_classes * static_cast<int>(s.pops.size()) * 17 * 17 * 17;
+    auto narrow = camera_at({0, 0, 0}, {0, 1, 0});
+    narrow.proj = glm::perspective(glm::radians(3.5f), 16.0f / 9.0f, 1.0f, 1.8e6f);
+    auto tall = camera_at({0, 0, 0}, {0, 1, 0}, 10820.0f);
+    for (const auto* in : {&narrow, &tall}) {
+        ASSERT_GE(far::pixels_per_gu(in->proj, in->viewport_h), 10.0f * d.gen.k_ref);
+        far::FarOutput out;
+        f.build(*in, out);
+        EXPECT_LE(out.cells, bound);
+        EXPECT_FALSE(out.specks.empty());
+    }
+}

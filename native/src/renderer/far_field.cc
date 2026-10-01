@@ -313,24 +313,24 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
     };
 
     // Step 2: flagged (explicit) rocks.
-    if (in.world_of) {
-        for (const auto& fr : rocks_) {
-            glm::mat4 W(1.0f);
-            if (!in.world_of(fr.key, W)) continue;
-            const glm::vec3 c(W[3]);
-            const float s = glm::length(glm::vec3(W[0]));
-            if (!(s > 0.0f)) continue;
-            const glm::mat3 R = glm::mat3(W) / s;
-            const float r = fr.radius_mu * s;
-            const float d = glm::length(c - eye);
-            const float p = r * k / std::max(d, 1e-3f);
-            const Kind kind = has_impostor(fr.index) ? Kind::Explicit : Kind::ExplicitNoImpostor;
-            const TierWeights w = tier_weights(p, kind, td);
-            out.fades.emplace_back(fr.key, 1.0f - w.mesh);
-            if (!frustum.sphere(c, r)) continue;
-            if (w.impostor > 0.0f) emit_impostor(fr.index, c, R, r, w.impostor);
-            if (w.speck > 0.0f) out.specks.push_back(SpeckGpu{c, p, albedo_of(fr.index), w.speck});
-        }
+    // Every flagged rock gets a fade entry; one we cannot place is mesh-only
+    // (0), so the host never keeps a stale fade that hides the mesh.
+    for (const auto& fr : rocks_) {
+        glm::mat4 W(1.0f);
+        const bool placed = in.world_of && in.world_of(fr.key, W);
+        const float s = placed ? glm::length(glm::vec3(W[0])) : 0.0f;
+        if (!(s > 0.0f)) { out.fades.emplace_back(fr.key, 0.0f); continue; }
+        const glm::vec3 c(W[3]);
+        const glm::mat3 R = glm::mat3(W) / s;
+        const float r = fr.radius_mu * s;
+        const float d = glm::length(c - eye);
+        const float p = r * k / std::max(d, 1e-3f);
+        const Kind kind = has_impostor(fr.index) ? Kind::Explicit : Kind::ExplicitNoImpostor;
+        const TierWeights w = tier_weights(p, kind, td);
+        out.fades.emplace_back(fr.key, 1.0f - w.mesh);   // culled ones too: fade stays current
+        if (!frustum.sphere(c, r)) continue;
+        if (w.impostor > 0.0f) emit_impostor(fr.index, c, R, r, w.impostor);
+        if (w.speck > 0.0f) out.specks.push_back(SpeckGpu{c, p, albedo_of(fr.index), w.speck});
     }
 
     // Step 4: enumerate the active sources' cells, nearest first.
@@ -348,8 +348,11 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
                 const auto classes = size_classes(s.pops[static_cast<std::size_t>(pi)], dials_.gen);
                 for (int ci = 0; ci < static_cast<int>(classes.size()); ++ci) {
                     const ClassBin& B = classes[static_cast<std::size_t>(ci)];
-                    const double D = static_cast<double>(k) * B.r_hi / td.p_min;
                     const double L = B.cell_gu;
+                    // Telephoto guard: D grows with k, so cap the span at
+                    // max_cells_per_axis cells per axis.
+                    const double D = std::min(static_cast<double>(k) * B.r_hi / td.p_min,
+                                              0.5 * dials_.max_cells_per_axis * L);
                     if (!(D > 0.0) || !(L > 0.0)) continue;
                     const double hd = L * half_diag_unit;
                     const glm::i64vec3 lo(glm::floor((eye_sys - D) / L));
