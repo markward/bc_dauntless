@@ -291,6 +291,24 @@ realise a radius-less rock seeds `GetRadius()` from its bounding sphere
 projectile hull-sphere test, its broadphase bound, the sphere hit-point
 fallback and the death-splash reach use the scaled radius too.
 
+**Rocks vs shields (live test 2026-10-01).** A deliberate departure, for rocks
+only: a rock meeting a non-rock ship whose shields are up
+(`combat.shields_block`) bounces off the ship's shield **bubble** — the
+√3 × hull-box ellipsoid torpedoes detonate on — not its hull. Mark saw rocks
+ignore shields because every collision passed `bypass_shields=True`; the
+ramming bypass was confirmed for **ships** (commit 4d999a50) and rocks only
+inherited it by subclassing ShipClass. The contact is the exact closest point
+on the bubble to the rock centre (`collisions._bubble_contact`), the normal is
+the bubble's surface normal there, and the usual impulse / de-penetration /
+grind run on it. The ship's share goes through `apply_hit` with the bubble
+point as `shield_point`, so the facing absorbs it and overflow cascades to the
+hull; the rock's share still bypasses. A rock whose centre is already inside
+the bubble (it arrived with shields down), or a ship with no cached hull box,
+uses the hull contact. Shields dropping mid-contact: the next frame is the
+hull contact as before. The broadphase buckets a shielded ship on
+`bubble_bound_radius` whenever a rock is present. Ship↔ship and ship↔planet
+still bypass shields.
+
 ## Out of scope
 
 Minors and halos, fly-through and shield flicker (sub-project 3); the far tier
