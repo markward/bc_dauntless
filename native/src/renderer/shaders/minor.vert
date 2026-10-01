@@ -14,6 +14,7 @@ uniform mat4 u_proj;
 out vec3 v_normal_ws;
 out vec2 v_uv;
 out vec3 v_position_ws;
+flat out float v_dither;   // opaque.frag's far-tier dither; minors never dither
 
 void main() {
     mat4 model = transpose(mat4(a_row0, a_row1, a_row2, vec4(0.0, 0.0, 0.0, 1.0)));
@@ -22,4 +23,5 @@ void main() {
     v_uv = a_uv;
     v_position_ws = ws.xyz;
     gl_Position = u_proj * u_view * ws;
+    v_dither = 0.0;
 }

@@ -3,6 +3,11 @@
 in vec3 v_normal_ws;
 in vec2 v_uv;
 in vec3 v_position_ws;
+// Far tier (far-tier spec §1, §3): every vertex shader linked with this one
+// writes v_dither (0 = no dither). u_coverage_cutout != 0 discards base texels
+// with alpha < 0.5 (impostor silhouettes); 0 = the production path.
+flat in float v_dither;
+uniform int u_coverage_cutout;
 
 uniform sampler2D u_base_color;
 uniform vec3 u_diffuse_color;
@@ -1166,8 +1171,29 @@ bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
 }
 // === HULL_CUT_DECISION END ===
 
+// Far tier (far-tier spec §1, §3): screen-door crossfade between a rock's mesh
+// and its impostor. v_dither > 0 keeps the UPPER (1 - d) of the Bayer range
+// (a mesh fading out); v_dither < 0 keeps the LOWER |d| (an impostor fading in,
+// or out toward a speck). Exactly 0 = no dither: the production path is
+// byte-identical. The two signs at equal |d| are exact complements.
+float bayer4(vec2 frag) {
+    ivec2 p = ivec2(mod(frag, 4.0));
+    const float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+                                  3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+    return (m[p.y * 4 + p.x] + 0.5) / 16.0;
+}
 
 void main() {
+    if (v_dither != 0.0) {
+        float b = bayer4(gl_FragCoord.xy);
+        if (v_dither > 0.0 ? (b < v_dither) : (b >= -v_dither)) discard;
+    }
+    // Far tier: impostor coverage (base alpha < 0.5 is outside the silhouette).
+    // Tested HERE, beside the dither, not after the main base sample: a discard
+    // placed after the dFdx/dFdy block MEASURED to break the amb_d NaN guard on
+    // this driver even with the cutout off (HullClipTest /
+    // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
+    if (u_coverage_cutout != 0 && texture(u_base_color, v_uv).a < 0.5) discard;
     vec3 n = normalize(v_normal_ws);
     vec3 V = normalize(u_camera_pos_ws - v_position_ws);
 
@@ -1189,6 +1215,9 @@ void main() {
     vec3 dpdx_d = dFdx(p_body);
     vec3 dpdy_d = dFdy(p_body);
     vec4 base = texture(u_base_color, v_uv);
+    // Far tier: a texel kept by the coverage cutout (top of main) is forced
+    // opaque so it never reads as an emissive mask.
+    if (u_coverage_cutout != 0) { base.a = 1.0; }
 
     // Hull-name decals: replace albedo under each mask, in list order
     // (premultiplied RGB). decal_a / decal_premult_rgb are the combined

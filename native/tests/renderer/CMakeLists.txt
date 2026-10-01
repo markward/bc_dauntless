@@ -24,6 +24,7 @@ add_executable(renderer_tests
     minor_field_test.cc
     minor_field_bench_test.cc
     minor_pass_test.cc
+    far_dither_test.cc
     nebula_atmosphere_test.cc
     system_nebula_pass_test.cc
     motion_blur_shutter_test.cc

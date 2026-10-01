@@ -532,6 +532,9 @@ void BreachPass::render(const scenegraph::World& world,
             // no InstanceFieldCache entry — see that header's class comment
             // — so this is the exact "undamaged instance" gate, and the
             // cheapest possible one (one map lookup, no model/asset touch).
+            // Far tier (far-tier spec §3): a mesh drawn as its impostor has
+            // no hull, so no breach scoop either.
+            if (inst.far_fade >= 1.0f) return;
             const InstanceFieldCache::Entry* field = field_cache->get(inst.id);
             if (field == nullptr) return;
             if (field->tex2d == 0) return;   // defensive: entry exists but upload failed
