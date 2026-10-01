@@ -305,9 +305,11 @@ still scan and do not die; QuickBattle in Multi1 — 54 rocks visible; shoot a
 big rock until it breaks into targetable pieces.
 
 Also:
-- **E1M2 — a fully destroyed large asteroid** yields 2–3 pieces (only those
-  ≥ 2.5 GU targetable), and each piece breaks into ≤ 3 chunks and dust, with
-  no generation 2. Was ~58 across generations before the 2026-10-01 tuning:
+- **E1M2 — a fully destroyed large asteroid** yields one large piece (the only
+  target, if built ≥ 2.0 GU), 3–5 untargetable medium rocks and ≤ 8 small
+  chunks; each piece breaks into ≤ 8 chunks and dust, with no generation 2.
+  Check the size mix reads as one big / some medium / many small, and that
+  the pieces separate cleanly at 0.8 GU/s (tune `kSeparationSpeedGU` by feel). Was ~58 across generations before the 2026-10-01 tuning:
   check the target list and frame rate hold up, and that no lagging cascade
   of small explosions follows the kill.
 - **E3M1 — "Asteroid Amagon"** is a genus-3 rock: it should drift/spin as
