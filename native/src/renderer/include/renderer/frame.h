@@ -494,4 +494,10 @@ const ShadowLight& active_shadow_light() noexcept;
 std::uint32_t      active_shadow_texture() noexcept;
 bool               active_shadow_enabled() noexcept;
 
+/// Set opaque.frag's three ambient uniforms (u_ambient_light scaled by
+/// `ambient_scale`, u_ambient_dir_ws, u_ambient_gradient) on `s`, which must
+/// be in use. Every program linked with opaque.frag sets ambient through this
+/// one helper (the opaque submit paths and MinorPass).
+void set_ambient_uniforms(Shader& s, const Lighting& lighting, float ambient_scale);
+
 }  // namespace renderer

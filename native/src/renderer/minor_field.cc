@@ -438,4 +438,10 @@ bool MinorField::minor_position(std::uint32_t id, std::size_t i, glm::vec3& out)
     return true;
 }
 
+void MinorField::debug_set_phase(std::uint32_t id, std::size_t i, float phase) {
+    auto it = clouds_.find(id);
+    if (it == clouds_.end() || i >= it->second.minors.size()) return;
+    it->second.minors[i].phase = phase;
+}
+
 }  // namespace renderer::minors

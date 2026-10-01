@@ -118,6 +118,9 @@ public:
     void reset_player() { has_prev_ = false; }
     // Test hook: render-space centre of minor `i` of cloud `id` after the last step.
     bool minor_position(std::uint32_t id, std::size_t i, glm::vec3& out) const;
+    // TEST-ONLY: overwrite minor `i`'s generated initial rotation angle, so a
+    // test can pose a minor exactly (minor_pass_test.cc). No-op when absent.
+    void debug_set_phase(std::uint32_t id, std::size_t i, float phase);
 private:
     struct Shove { glm::vec3 offset{0.0f}, vel{0.0f}; float spin = 0.0f, spin_rate = 0.0f;
                    double last_contact = -1e9; };

@@ -48,6 +48,7 @@ endfunction()
 embed_shader(SHADER_OPAQUE_VS shaders/opaque.vert opaque_vs)
 embed_shader(SHADER_OPAQUE_FS shaders/opaque.frag opaque_fs)
 embed_shader(SHADER_SKINNED_VS shaders/skinned.vert skinned_vs)
+embed_shader(SHADER_MINOR_VS shaders/minor.vert minor_vs)
 embed_shader(SHADER_BACKDROP_VS shaders/backdrop.vert backdrop_vs)
 embed_shader(SHADER_BACKDROP_FS shaders/backdrop.frag backdrop_fs)
 embed_shader(SHADER_SUN_VS shaders/sun.vert sun_vs)
@@ -156,6 +157,7 @@ add_library(renderer STATIC
     sun_pass.cc
     dust_pass.cc
     minor_field.cc
+    minor_pass.cc
     nebula_pass.cc
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc

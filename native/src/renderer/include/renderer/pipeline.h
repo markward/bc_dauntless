@@ -13,6 +13,7 @@ public:
 
     Shader& opaque_shader() noexcept     { return *opaque_; }
     Shader& skinned_shader() noexcept    { return *skinned_; }
+    Shader& minor_shader() noexcept      { return *minor_; }
     Shader& backdrop_shader() noexcept   { return *backdrop_; }
     Shader& sun_shader() noexcept        { return *sun_; }
     Shader& sun_flare_shader() noexcept  { return *sun_flare_; }
@@ -48,6 +49,7 @@ public:
 private:
     std::unique_ptr<Shader> opaque_;
     std::unique_ptr<Shader> skinned_;
+    std::unique_ptr<Shader> minor_;
     std::unique_ptr<Shader> backdrop_;
     std::unique_ptr<Shader> sun_;
     std::unique_ptr<Shader> sun_flare_;
