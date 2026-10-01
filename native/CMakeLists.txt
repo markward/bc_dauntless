@@ -16,6 +16,7 @@ endif()
 
 # Third-party vendored libraries.
 add_subdirectory(third_party/stb)
+add_subdirectory(third_party/cgltf)
 add_subdirectory(third_party/dr_libs)
 add_subdirectory(third_party/glad)
 add_subdirectory(third_party/glm)
@@ -207,6 +208,7 @@ add_subdirectory(tools/inspect_flip)
 add_subdirectory(tools/inspect_tex_props)
 add_subdirectory(tools/inspect_materials)
 add_subdirectory(tools/voxel_inspect)
+add_subdirectory(tools/rock_catalogue)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -224,6 +226,9 @@ add_subdirectory(src/scenegraph)
 
 # Voxel hull-damage foundation.
 add_subdirectory(src/voxel)
+
+# Rock-catalogue generator library (recipe, shapes, surface/impostor bakes).
+add_subdirectory(src/rockgen)
 
 # Renderer host subtree.
 add_subdirectory(src/host)

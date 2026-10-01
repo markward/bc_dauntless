@@ -96,6 +96,19 @@ uniform float     u_fill_backing;  // kBackingIsovalue/255.0
 uniform sampler2D u_damage_tex;
 uniform float     u_tex_scale;     // body-units -> texture-period scale
 
+// Rock crater interior (rock-class Task 7). A rock (scenegraph::Instance::
+// surface_is_rock) is not a hull with decks inside it: its crater shows the
+// rock's OWN base-stage texture, darkened, instead of u_damage_tex, and it
+// never glows molten. 0 = hull; 1 = rock, sample u_rock_tex; 2 = rock with no
+// base texture, flat kRockFlatColour. u_rock_tex is on unit 4 and is bound
+// (to 0 when unused) on every draw by breach_pass.cc.
+uniform int       u_interior_is_rock;
+uniform sampler2D u_rock_tex;
+// Crater interior brightness relative to the rock's sunlit surface texture:
+// recessed and shadowed, so dimmer. Eyeball-tunable.
+const float kRockInteriorDarken = 0.55;
+const vec3  kRockFlatColour     = vec3(0.30, 0.28, 0.25);
+
 // u_camera_pos_body: camera position in THIS instance's body frame,
 // precomputed CPU-side as inverse(instance_world) * cam_ws (one matrix inverse
 // per draw, not per fragment) -- the ray origin every fragment marches from,
@@ -945,10 +958,20 @@ void main() {
     w /= (w.x + w.y + w.z);
 
     vec3 uvw = hit_point * u_tex_scale;
-    vec3 cx  = texture(u_damage_tex, uvw.yz).rgb;   // project along +X
-    vec3 cy  = texture(u_damage_tex, uvw.zx).rgb;   // project along +Y
-    vec3 cz  = texture(u_damage_tex, uvw.xy).rgb;   // project along +Z
-    vec3 tex = cx * w.x + cy * w.y + cz * w.z;
+    vec3 tex;
+    if (u_interior_is_rock == 1) {
+        vec3 cx = texture(u_rock_tex, uvw.yz).rgb;   // project along +X
+        vec3 cy = texture(u_rock_tex, uvw.zx).rgb;   // project along +Y
+        vec3 cz = texture(u_rock_tex, uvw.xy).rgb;   // project along +Z
+        tex = (cx * w.x + cy * w.y + cz * w.z) * kRockInteriorDarken;
+    } else if (u_interior_is_rock == 2) {
+        tex = kRockFlatColour * kRockInteriorDarken;
+    } else {
+        vec3 cx = texture(u_damage_tex, uvw.yz).rgb;   // project along +X
+        vec3 cy = texture(u_damage_tex, uvw.zx).rgb;   // project along +Y
+        vec3 cz = texture(u_damage_tex, uvw.xy).rgb;   // project along +Z
+        tex = cx * w.x + cy * w.y + cz * w.z;
+    }
 
     // Neutral metallic base so the cross-section always reads as structural
     // hull interior; Damage.tga modulates it. With no texture bound (mod ship /
@@ -967,8 +990,11 @@ void main() {
     // its old brightness; a 0.59x darker base and a 0.30 occlusion floor on top
     // of that reached ~3.5%. Darkening has no headroom here until the interior
     // has a light that reaches it -- tune the LIGHT, not the material.
+    //
+    // The metallic floor is HULL interior only: a rock's crater is the rock's
+    // own colour, and a blue-grey metal floor under it would tint it.
     const vec3 kBase = vec3(0.16, 0.17, 0.19);
-    tex = kBase + tex * 1.1;
+    if (u_interior_is_rock == 0) tex = kBase + tex * 1.1;
 
     // ── Double-sided lighting ──────────────────────────────────────────────
     // The wall this shades is a point INSIDE the hull found by the raymarch,
@@ -1042,6 +1068,7 @@ void main() {
     // fresh hit anywhere on the hull would re-ignite every OTHER, already-
     // cooled hole on the same instance too.
     float heat = clamp(1.0 - u_breach_age / u_rim_life, 0.0, 1.0);
+    if (u_interior_is_rock != 0) heat = 0.0;   // rock does not glow molten
     if (heat > 0.0) {
         // kEventFalloffMul: multiple of the event's own carve radius before
         // the glow fully fades. 3x gives a soft halo a bit larger than the

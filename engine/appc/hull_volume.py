@@ -24,7 +24,7 @@ from typing import Callable, List, Optional, Tuple
 
 from engine import renderer as _renderer
 
-__all__ = ["push_resolution", "prewarm_field",
+__all__ = ["push_resolution", "prewarm_field", "rock_bake_targets",
            "discover_bake_targets", "prebake_all"]
 
 
@@ -194,18 +194,48 @@ def _bake_target_for(name: str) -> Optional[Tuple[Path, float]]:
     return nif, res
 
 
-def discover_bake_targets() -> List[Tuple[Path, float]]:
-    """Every (absolute hull NIF, authored resolution) pair the runtime could
-    ask the cache for, smallest NIF first -- a cheap proxy for bake cost, so
-    the most hulls are warm soonest and the 16 MB stations go last. Runs on
-    the main thread (it imports ship scripts through the SDK finder, whose
-    override hooks are not thread-safe); ~50 tiny modules, well under the
-    cost of one bake."""
+def rock_bake_targets(stock: str, authored_res: float) -> List[Tuple[str, float]]:
+    """(source string, authored resolution) for every catalogue rock a stock
+    asteroid NIF `stock` (e.g. "asteroid3.nif") can realise as.
+
+    The runtime keys the cache on the loaded model's Model::source,
+    "<rock>/lod0.gltf#s=<scale>" (engine/rocks/catalogue.py), never on the
+    stock NIF -- so the stock pre-bake alone is never hit once the catalogue
+    redirects. A cold bake of an asteroid3-sized rock measured ~3.9 s
+    (Debug), hence pre-baking. The string is built by C++'s
+    assets::hull_source_string through the façade, never Python formatting:
+    it must be byte-identical to Model::source."""
+    from engine.rocks import catalogue
+    return [(_renderer.hull_source_string(rock.lod_paths[0],
+                                          catalogue.load_scale(rock, stock)),
+             authored_res)
+            for rock in catalogue.load()
+            if rock.kind == "major" and rock.family == "silicate"]
+
+
+def _hull_file(target) -> Path:
+    """The file behind a target: a Path, or a source string's path part."""
+    return Path(str(target).split("#s=", 1)[0])
+
+
+def discover_bake_targets() -> List[Tuple[object, float]]:
+    """Every (hull, authored resolution) pair the runtime could ask the
+    cache for, smallest file first -- a cheap proxy for bake cost, so the
+    most hulls are warm soonest and the 16 MB stations go last. A hull is an
+    absolute NIF Path, or -- for the rocks a stock asteroid NIF redirects to
+    while the rock catalogue is enabled -- a source string (see
+    rock_bake_targets). Runs on the main thread (it imports ship scripts
+    through the SDK finder, whose override hooks are not thread-safe); ~50
+    tiny modules, well under the cost of one bake."""
+    from engine.rocks import catalogue
     targets = []
     for name in _ship_script_names():
         t = _bake_target_for(name)
         if t is not None:
             targets.append(t)
+            stock = catalogue.redirected_stock(t[0])
+            if stock is not None:
+                targets.extend(rock_bake_targets(stock, t[1]))
     # Dedupe: two scripts can name the same hull at the same resolution.
     seen = set()
     unique = []
@@ -216,7 +246,7 @@ def discover_bake_targets() -> List[Tuple[Path, float]]:
 
     def size_of(t):
         try:
-            return t[0].stat().st_size
+            return _hull_file(t[0]).stat().st_size
         except OSError:
             return 0
 
@@ -248,7 +278,8 @@ def prebake_all() -> Optional[threading.Thread]:
                 if _renderer.hull_volume_bake_to_disk(str(nif), res):
                     baked += 1
             except Exception as exc:  # noqa: BLE001 - never kill the worker
-                dev_mode.log_swallowed(f"prebake hull volume {nif.name}", exc)
+                dev_mode.log_swallowed(
+                    f"prebake hull volume {_hull_file(nif).name}", exc)
         if dev_mode.is_enabled():
             print(f"[hull_volume] prebake: {baked}/{len(targets)} hulls "
                   f"valid on disk in {time.monotonic() - t0:.1f}s",

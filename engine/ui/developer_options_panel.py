@@ -17,6 +17,7 @@ from engine.ui.panel import Panel
 from engine import dev_combat_cheats as cheats
 from engine import dev_light_preview as light_preview
 from engine import renderer
+from engine.rocks import catalogue as rock_catalogue
 
 
 def _frame_profiler():
@@ -56,6 +57,7 @@ class DeveloperOptionsPanel(Panel):
         # (+Y up) authored map render correctly out of the box.
         self._normal_flip_g = True
         self._normal_strength = 1.0
+        self._rock_catalogue = rock_catalogue.enabled()
         # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
         # profiler at startup, so a hard-coded False would show OFF while it
         # was running.
@@ -103,7 +105,7 @@ class DeveloperOptionsPanel(Panel):
             self._no_npc_shields, self._disable_collisions,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
-            self._profiler,
+            self._profiler, self._rock_catalogue,
         )
         if snapshot == self._last_pushed:
             return None
@@ -126,6 +128,7 @@ class DeveloperOptionsPanel(Panel):
                 "normal_flip_g": self._normal_flip_g,
                 "normal_strength": self._normal_strength,
                 "profiler": self._profiler,
+                "rock_catalogue": self._rock_catalogue,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -195,6 +198,10 @@ class DeveloperOptionsPanel(Panel):
             renderer.set_normal_map_strength(nxt)
             self._normal_strength = nxt
             return True
+        if action == "toggle:rock_catalogue":
+            rock_catalogue.set_enabled(not self._rock_catalogue)
+            self._rock_catalogue = not self._rock_catalogue
+            return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
             # there is no local flag and no render_payload entry. Lived on the
@@ -229,7 +236,7 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
-                    ("ctrl", "normal_strength")]
+                    ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler")]
         return out

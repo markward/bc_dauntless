@@ -47,6 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
+    "hull_source_string",
     "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
@@ -74,6 +75,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
+    "set_surface_rock",
     "set_subsystem_pins", "set_suns",
     "set_system_nebula_profile", "set_system_nebula_star",
     "set_system_nebula_flashes",
@@ -170,7 +172,8 @@ def frame() -> None:
 
 
 def load_model(nif_path: str, texture_search_path,
-               texture_replacements=None, decals=None) -> int:
+               texture_replacements=None, decals=None,
+               scale: float = 1.0) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
@@ -179,8 +182,11 @@ def load_model(nif_path: str, texture_search_path,
     `decals` is `engine.appc.hull_decals.decals_for(...)`'s output: a list of
     (shape, origin, u_axis, v_axis, normal, depth, mask_abs_path) registry
     name-decal projectors. None / empty is byte-identical to the plain
-    load."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals)
+    load.
+
+    `scale` bakes a uniform scale into the vertices (glTF only); it is part
+    of the model's identity."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale)
 
 
 def create_instance(model: int) -> InstanceId:
@@ -653,6 +659,14 @@ def hull_volume_bake_to_disk(hull_path: str, authored_res: float) -> bool:
     return bool(_h.hull_volume_bake_to_disk(str(hull_path), float(authored_res)))
 
 
+def hull_source_string(path: str, scale: float) -> str:
+    """C++'s assets::hull_source_string: the bare path at scale 1.0, else
+    "<path>#s=<scale as float32 %.6g>" -- the exact Model::source string the
+    hull-volume caches key on. Never format a scale in Python for a cache
+    key: a double %.6g can differ from the float32 one."""
+    return str(_h.hull_source_string(str(path), float(scale)))
+
+
 def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",
                                 max_dumps: int = 8) -> None:
     """Toggle the developer NaN/Inf detector on the HDR target.
@@ -784,6 +798,12 @@ def set_rim_strength(instance_id: InstanceId, strength: float) -> None:
     hardpoint stats' optional 'SpecularCoef' key (via ShipClass.SetSpecularKs);
     ships without one use DEFAULT_RIM_STRENGTH."""
     _h.set_rim_strength(instance_id, float(strength))
+
+
+def set_surface_rock(instance_id: InstanceId, rock: bool) -> None:
+    """Mark an instance as rock (rock-class spec §2): craters expose rock,
+    no venting, grey-brown debris."""
+    _h.set_surface_rock(instance_id, rock)
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:

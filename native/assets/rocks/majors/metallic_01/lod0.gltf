@@ -1,0 +1,144 @@
+{
+ "accessors": [
+  {
+   "bufferView": 0,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 2611,
+   "max": [
+    68.86900329589844,
+    91.52428436279297,
+    91.20685577392578
+   ],
+   "min": [
+    -68.86900329589844,
+    -91.52428436279297,
+    -91.20685577392578
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 1,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 2611,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 2611,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 15360,
+   "type": "SCALAR"
+  }
+ ],
+ "asset": {
+  "extras": {
+   "dauntless_volume": "volume.dvox"
+  },
+  "generator": "dauntless rock_catalogue 1",
+  "version": "2.0"
+ },
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteLength": 31332,
+   "byteOffset": 0,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 31332,
+   "byteOffset": 31332,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 20888,
+   "byteOffset": 62664,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteLength": 61440,
+   "byteOffset": 83552,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 144992,
+   "uri": "lod0.bin"
+  }
+ ],
+ "images": [
+  {
+   "uri": "base.png"
+  },
+  {
+   "uri": "normal.png"
+  }
+ ],
+ "materials": [
+  {
+   "normalTexture": {
+    "index": 1
+   },
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 1
+   }
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 1,
+      "POSITION": 0,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0
+  }
+ ],
+ "samplers": [
+  {}
+ ],
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "textures": [
+  {
+   "sampler": 0,
+   "source": 0
+  },
+  {
+   "sampler": 0,
+   "source": 1
+  }
+ ]
+}

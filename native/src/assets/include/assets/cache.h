@@ -83,6 +83,35 @@ public:
                      const std::vector<TextureReplacement>& texture_replacements,
                      const std::vector<DecalRequest>& decals);
 
+    /// Load with an explicit import SCALE, baked into vertex positions (never
+    /// applied to a NIF: only glTF/GLB paths, see assets::is_gltf_path,
+    /// support this). `scale` is folded into the cache key exactly like
+    /// texture_replacements/decals, so the same path at two scales yields two
+    /// distinct model variants; `Model::source` becomes
+    /// `hull_source_string(nif_path, scale)`. The 4-argument overload is
+    /// `scale = 1.0f`, byte-identical to today's behaviour. For a NIF path,
+    /// `scale != 1.0f` throws AssetError -- no production caller needs a
+    /// scaled NIF, so this is YAGNI rather than silently ignored. glTF paths
+    /// ignore texture_replacements and decals (BC-registry / hull-decal
+    /// features that don't apply to rock-catalogue meshes); a non-empty list
+    /// there warns once and is otherwise ignored.
+    ModelHandle load(const std::filesystem::path& nif_path,
+                     const std::vector<std::filesystem::path>& texture_search_paths,
+                     const std::vector<TextureReplacement>& texture_replacements,
+                     const std::vector<DecalRequest>& decals,
+                     float scale);
+
+    /// Unpin every cached entry for `nif_path`, AT ANY SCALE. A glTF path's
+    /// cache key carries a `#s=<scale>` suffix (see the 5-argument `load`
+    /// overload / hull_source_string) for every scale != 1.0f, so this drops
+    /// the plain canonical-path entry AND every `<canonical path>#s=...`
+    /// entry -- a scaled glTF variant is evicted along with its scale == 1.0f
+    /// sibling. (NIF-only cache-key suffixes -- texture-replacement / decal /
+    /// mesh-fix variants -- are untouched by this call, matching prior
+    /// behaviour: no caller passes a non-default scale for a NIF path.) A
+    /// still-outstanding ModelHandle keeps the model alive regardless; this
+    /// only drops the cache's OWN pin, so a model with no other referents is
+    /// freed on its next handle release.
     void evict(const std::filesystem::path& nif_path);
     void evict_unused();
 

@@ -1,0 +1,31 @@
+{
+  "tool_version": 1,
+  "seed": 20260930,
+  "bound_radius_m": 100.0,
+  "impostor_view_size": 128,
+  "volume_dims": 48,
+  "major":    {"lod_subdivisions": [4, 3, 2], "texture_size": 1024},
+  "fragment": {"lod_subdivisions": [3, 2], "texture_size": 256, "cuts": [2, 4]},
+  "families": [
+    {"name": "silicate", "majors": 5, "fragments": 8,
+     "palette": [[0.36, 0.34, 0.31], [0.52, 0.49, 0.45]], "gloss": 0.12,
+     "displace": 0.35, "octaves": 5, "noise_scale": 2.3, "axis": [0.7, 1.3],
+     "craters": [3, 7], "crater_radius": [0.08, 0.25],
+     "detail_octaves": 3, "detail_scale": 7.0, "normal_strength": 2.5},
+    {"name": "carbonaceous", "majors": 3, "fragments": 6,
+     "palette": [[0.10, 0.09, 0.08], [0.20, 0.18, 0.16]], "gloss": 0.06,
+     "displace": 0.40, "octaves": 5, "noise_scale": 2.0, "axis": [0.65, 1.35],
+     "craters": [4, 9], "crater_radius": [0.08, 0.3],
+     "detail_octaves": 4, "detail_scale": 8.0, "normal_strength": 3.0},
+    {"name": "icy", "majors": 3, "fragments": 6,
+     "palette": [[0.62, 0.68, 0.74], [0.86, 0.90, 0.94]], "gloss": 0.35,
+     "displace": 0.22, "octaves": 4, "noise_scale": 1.8, "axis": [0.75, 1.25],
+     "craters": [0, 2], "crater_radius": [0.1, 0.2],
+     "detail_octaves": 3, "detail_scale": 5.0, "normal_strength": 1.6},
+    {"name": "metallic", "majors": 2, "fragments": 4,
+     "palette": [[0.33, 0.30, 0.27], [0.55, 0.50, 0.44]], "gloss": 0.55,
+     "displace": 0.25, "octaves": 4, "noise_scale": 2.6, "axis": [0.8, 1.2],
+     "craters": [1, 3], "crater_radius": [0.06, 0.15],
+     "detail_octaves": 3, "detail_scale": 9.0, "normal_strength": 2.0}
+  ]
+}

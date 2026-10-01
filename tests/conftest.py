@@ -1187,6 +1187,24 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # Explosion lights (engine.appc.explosion_lights): blasts and pending
+    # death sequences; a rock's crack flash (register_at) or a ship death
+    # left glowing by one test would light every later test's scene.
+    try:
+        _el = sys.modules.get("engine.appc.explosion_lights")
+        if _el is not None:
+            _el.reset()
+    except Exception:
+        pass
+    # Rock death registry + the render-side chunk/VFX queues it fills: a rock
+    # left dying by one test would be retired (by NAME, from its set) in a
+    # later test's advance().
+    try:
+        _rd = sys.modules.get("engine.rocks.death")
+        if _rd is not None:
+            _rd.reset()
+    except Exception:
+        pass
     # Current-tooltip-owner (engine.appc.characters._current_tooltip_owner): a
     # scalar module global, same leak class as the accumulator lists just
     # above. A test that calls CharacterClass_SetCurrentToolTipOwner would
@@ -1464,6 +1482,18 @@ def _reset_leakable_engine_globals():
                 "left wing01": ((0.1236, -0.6777, -0.7125), (1.0258, 0.5344, 0.1862)),
                 "birdofprey": ((-0.3112, -0.7044, -0.1331), (0.3137, 0.2922, 0.2125)),
             }
+    except Exception:
+        pass
+    # Rock catalogue: the Developer Options "Catalogue Rocks" toggle and the
+    # manifest read cache are both process-lifetime module globals (Task 9/10,
+    # engine/rocks/catalogue.py). A test that calls set_enabled(False) or
+    # seeds a fake catalogue_root would otherwise leave every later test's
+    # stock-asteroid realise redirected to a fake/disabled state.
+    try:
+        from engine.rocks import catalogue as _rock_catalogue
+        _rock_catalogue._enabled = True
+        _rock_catalogue._memo.clear()
+        _rock_catalogue._warned.clear()
     except Exception:
         pass
     # TransformStore is deliberately NOT reset here. On the native backend

@@ -459,6 +459,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                                     bubble_bound_radius as _bubble_bound_radius)
     from engine.appc.math import TGPoint3
     from engine.systems import frames
+    from engine.appc.collisions import world_radius
 
     hits: list[tuple] = []
     expired: list[Torpedo] = []
@@ -589,8 +590,11 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 shield_bubble_entry(ship, seg_prev, aim_unit, seg_len)
                 if (aim_unit is not None and shields_block(ship)) else None)
 
+            # The hull sphere as DRAWN (GetRadius x GetScale): E1M2's rocks
+            # are scaled 3-8.5x, and the raw radius let a torpedo fly deep
+            # into one before it hit.
             if bubble_entry is None and not sphere_hit(
-                    seg_cur, ship.GetWorldLocation(), ship.GetRadius()):
+                    seg_cur, ship.GetWorldLocation(), world_radius(ship)):
                 continue
 
             if bubble_entry is not None:
@@ -612,7 +616,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             # the origin up by the ship radius and spanning ~2x the radius
             # mirrors how the phaser trace (firing-ship -> target) succeeds.
             if aim_unit is not None:
-                radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+                radius = world_radius(ship) if hasattr(ship, "GetRadius") else 0.0
                 backoff = radius + seg_len
                 ray_origin = TGPoint3(
                     seg_cur.x - aim_unit.x * backoff,

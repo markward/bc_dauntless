@@ -36,6 +36,9 @@ def apply(ship, ship_instances=None) -> None:
     radius. Raise-safe; a no-op when the object carries no splash."""
     if ship is None:
         return
+    from engine.rocks.rock import is_rock
+    if is_rock(ship):
+        return          # rock-class spec §2: a rock's death splashes nothing
     amount = float(ship.GetSplashDamage()) if hasattr(ship, "GetSplashDamage") else 0.0
     radius = float(ship.GetSplashDamageRadius()) if hasattr(ship, "GetSplashDamageRadius") else 0.0
     if amount <= 0.0 or radius <= 0.0:
@@ -44,13 +47,14 @@ def apply(ship, ship_instances=None) -> None:
     from engine.appc import combat
     from engine.appc.math import TGPoint3
     from engine.appc.ship_iter import iter_ships
+    from engine.appc.collisions import world_radius
     from engine.systems import frames
 
     centre_set = frames.containing_set(ship)
     c = ship.GetWorldLocation()
     for target in list(iter_ships()):
-        if target is ship:
-            continue
+        if target is ship or is_rock(target):
+            continue    # ...and no death splash lands on a rock
         tgt_set = frames.containing_set(target)
         # Express the blast centre in the TARGET's set-local frame: the hull,
         # the ray trace and the fallback point all live there. None = another
@@ -64,7 +68,7 @@ def apply(ship, ship_instances=None) -> None:
         dy = centre.y - loc.y
         dz = centre.z - loc.z
         d = (dx * dx + dy * dy + dz * dz) ** 0.5
-        r_tgt = target.GetRadius() if hasattr(target, "GetRadius") else 0.0
+        r_tgt = world_radius(target) if hasattr(target, "GetRadius") else 0.0   # as drawn
         w = combat._splash_weight(r_tgt, radius, d)
         if w <= 0.0:
             continue
@@ -86,12 +90,13 @@ def _impact_point(target, centre, ship_instances):
     None) when no renderer instance is available (headless / tests)."""
     from engine.appc.math import TGPoint3
     from engine.appc.combat import _resolve_hit_point
+    from engine.appc.collisions import world_radius
     loc = target.GetWorldLocation()
     dx = loc.x - centre.x
     dy = loc.y - centre.y
     dz = loc.z - centre.z
     dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-    r_tgt = target.GetRadius() if hasattr(target, "GetRadius") else 0.0
+    r_tgt = world_radius(target) if hasattr(target, "GetRadius") else 0.0   # as drawn
     if dist <= 1e-6:
         return TGPoint3(loc.x, loc.y, loc.z), None
     inv = 1.0 / dist

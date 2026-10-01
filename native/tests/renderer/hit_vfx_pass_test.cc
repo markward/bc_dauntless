@@ -166,3 +166,126 @@ TEST(HitVfxSparkJitter, IdenticalUnderTwoRenderOrigins) {
     // Distinct sparks still get distinct directions.
     EXPECT_NE(a[0], a[1]);
 }
+
+// ── rock dust (weapon_kind 2) ─────────────────────────────────────────────
+//
+// Rock hits and the rock death burst shed grey-brown dust, not hot metal
+// sparks (rock-class spec §2, "no hull arcing"). The death burst also has no
+// instance to ride: the rock leaves its set 0.5 s later, so a kind-2 burst
+// whose instance is missing draws world-anchored at world_pos. Kinds 0/1
+// keep today's skip.
+
+#include <renderer/pipeline.h>
+#include <renderer/window.h>
+#include <renderer/frame.h>
+#include <scenegraph/camera.h>
+#include <glad/glad.h>
+
+#include <memory>
+#include <vector>
+
+namespace {
+
+class HitVfxSparkPixelTest : public ::testing::Test {
+protected:
+    std::unique_ptr<renderer::Window>   window;
+    std::unique_ptr<renderer::Pipeline> pipeline;
+
+    void SetUp() override {
+        namespace fs = std::filesystem;
+        const fs::path game = test_support::game_root();
+        if (!fs::is_regular_file(game / "data" / "rough.tga") ||
+            !fs::is_regular_file(game / "data" / "Textures" / "Tactical"
+                                 / "TorpedoFlares.tga")) {
+            GTEST_SKIP() << "hit-VFX sprites absent under " << game;
+        }
+        try {
+            window = std::make_unique<renderer::Window>(64, 64, "hit-vfx-test", false);
+        } catch (const std::runtime_error& e) {
+            GTEST_SKIP() << "no GL context: " << e.what();
+        }
+        pipeline = std::make_unique<renderer::Pipeline>();
+    }
+    void TearDown() override {
+        pipeline.reset();
+        window.reset();
+    }
+
+    // Summed RGB over the frame after drawing `v` alone. Age 0.5 s is past the
+    // HULL flash's 0.33 s life, so every lit pixel is a spark.
+    glm::dvec3 render_sum(renderer::HitVfxDescriptor v,
+                          const scenegraph::World& world) {
+        namespace fs = std::filesystem;
+        scenegraph::Camera camera;
+        camera.eye    = {0.0f, 0.0f, 3.0f};
+        camera.target = {0.0f, 0.0f, 0.0f};
+        camera.up     = {0.0f, 1.0f, 0.0f};
+        camera.aspect = 1.0f;
+        glViewport(0, 0, 64, 64);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer::HitVfxPass pass;
+        std::vector<renderer::HitVfxDescriptor> hits{v};
+        test_support::RendererGameRootGuard guard;
+        guard.apply_configured();
+        const fs::path prev_cwd = fs::current_path();
+        fs::current_path(fs::path(__FILE__).parent_path().parent_path()
+                             .parent_path().parent_path());
+        pass.render(hits, world, camera, *pipeline);
+        fs::current_path(prev_cwd);
+        std::vector<unsigned char> px(64 * 64 * 4);
+        glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        glm::dvec3 sum(0.0);
+        for (std::size_t i = 0; i < px.size(); i += 4) {
+            sum += glm::dvec3(px[i], px[i + 1], px[i + 2]);
+        }
+        return sum;
+    }
+
+    static renderer::HitVfxDescriptor burst(int kind) {
+        renderer::HitVfxDescriptor v;
+        v.world_pos      = {0.0f, 0.0f, 0.0f};
+        v.surface_normal = {0.0f, 0.0f, 1.0f};
+        v.severity       = 1;
+        v.age            = 0.5f;
+        v.weapon_kind    = kind;
+        v.spark_count    = 40;
+        return v;
+    }
+};
+
+}  // namespace
+
+TEST_F(HitVfxSparkPixelTest, RockDustIsGreyWhereTorpedoIsOrange) {
+    scenegraph::World world;
+    const auto id = world.create_instance(1);
+    world.set_world_transform(id, glm::mat4(1.0f));
+    auto anchored = [&](int kind) {
+        auto v = burst(kind);
+        v.instance_id = id;
+        v.has_body_anchor = true;
+        v.body_normal = {0.0f, 0.0f, 1.0f};
+        return v;
+    };
+    const glm::dvec3 torp = render_sum(anchored(1), world);
+    ASSERT_GT(torp.r, 0.0) << "control: the torpedo burst must draw";
+    EXPECT_GT(torp.r, 2.0 * torp.b) << "control: torpedo sparks are orange";
+
+    const glm::dvec3 rock = render_sum(anchored(2), world);
+    ASSERT_GT(rock.r + rock.g + rock.b, 0.0) << "rock dust must draw";
+    // Grey-BROWN: the tint {0.46, 0.42, 0.36} itself has |r-b|/r = 0.217, so
+    // the bound is 0.25 (torpedo orange sits near 0.8).
+    EXPECT_LT(std::abs(rock.r - rock.b), 0.25 * std::max(rock.r, rock.b))
+        << "rock dust must be grey (r=" << rock.r << " b=" << rock.b << ")";
+}
+
+TEST_F(HitVfxSparkPixelTest, RockDustDrawsWorldAnchoredWithoutAnInstance) {
+    scenegraph::World world;   // empty: the descriptor's instance is gone
+    const glm::dvec3 rock = render_sum(burst(2), world);
+    EXPECT_GT(rock.r + rock.g + rock.b, 0.0)
+        << "a kind-2 burst with no live instance draws at world_pos";
+
+    const glm::dvec3 torp = render_sum(burst(1), world);
+    EXPECT_EQ(torp.r + torp.g + torp.b, 0.0)
+        << "kinds 0/1 still skip a burst whose instance is missing";
+}

@@ -6,7 +6,10 @@ namespace renderer {
 std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
     const scenegraph::BreachEventRing& ring,
     scenegraph::InstanceId             instance_id,
-    float                              now) {
+    float                              now,
+    bool                               surface_is_rock) {
+
+    if (surface_is_rock) return {};
 
     std::vector<ParticleEmitterDescriptor> out;
     for (const auto& ev : ring.slots()) {

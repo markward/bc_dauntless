@@ -1,7 +1,9 @@
 # Procedural asteroids and rock damage — design
 
 **Date:** 2026-08-21
-**Status:** approved, pre-implementation
+**Status:** superseded 2026-09-30. Runtime generation was too slow, so the generator becomes an offline tool
+(`2026-09-30-rock-catalogue-design.md`). The rock damage half moves to sub-project 2 of
+`2026-09-30-modern-asteroids-roadmap.md`. Branch `feat/procedural-asteroids` is the source for both.
 
 ## Summary
 

@@ -63,3 +63,12 @@ def test_js_renders_lighting_toggles():
     assert "systems_disabled" in text
     assert "Set Systems Damaged" in text
     assert "Set Systems Disabled" in text
+
+
+def test_js_rock_catalogue_label_says_when_it_applies():
+    """realize_set_objects reads the toggle too, so it applies to every rock
+    loaded after toggling -- not only at mission load."""
+    text = open(JS).read()
+    assert ("Catalogue Rocks (off = stock BC; applies to rocks loaded after "
+            "toggling)") in text
+    assert "applies on mission load" not in text

@@ -7,6 +7,8 @@ add_executable(assets_tests
     cpu/mesh_build_test.cc
     cpu/mesh_fix_parse_test.cc
     cpu/mesh_fix_apply_test.cc
+    cpu/gltf_load_test.cc
+    cpu/hull_source_test.cc
     cpu/model_build_test.cc
     cpu/decal_build_test.cc
     cpu/decal_override_test.cc
@@ -27,6 +29,7 @@ add_executable(assets_tests
     gpu/mesh_upload_test.cc
     gpu/model_smoke_test.cc
     gpu/model_compose_gpu_test.cc
+    gpu/gltf_model_test.cc
     gpu/texture_upload_test.cc
 )
 
@@ -35,6 +38,7 @@ target_link_libraries(assets_tests
         assets
         GTest::gtest_main
         glfw
+        nlohmann_json::nlohmann_json
 )
 
 # Block parsers in libnif.a self-register via static initializers. Without

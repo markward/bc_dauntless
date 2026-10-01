@@ -2,6 +2,7 @@
 #include <voxel/hull_volume_cache.h>
 
 #include <voxel/voxelize.h>
+#include <assets/hull_source.h>
 #include <nif/file.h>
 
 #include <cstdio>
@@ -89,8 +90,7 @@ bool bake_and_write(const std::filesystem::path& cache_file,
                     DistanceField& field) {
     field = DistanceField{};
     try {
-        nif::File f = nif::load(hull_nif);
-        const std::vector<Tri> tris = collect_hull_triangles_from_nif(f);
+        const std::vector<Tri> tris = collect_hull_triangles_from_source(hull_nif);
         if (!tris.empty()) {
             const float cell = (quality > 0.0f && authored_res > 0.0f)
                              ? authored_res / quality
@@ -133,11 +133,12 @@ bool bake_and_write(const std::filesystem::path& cache_file,
 bool ensure_dhv(const std::filesystem::path& cache_root,
                 const std::filesystem::path& hull_nif,
                 float authored_res, float quality) {
-    if (!std::filesystem::exists(hull_nif)) return false;
+    const assets::HullSource h = assets::split_hull_source(hull_nif);
+    if (!std::filesystem::exists(h.path)) return false;
     const std::filesystem::path cache_file =
         cache_path_for(cache_root, hull_nif, authored_res, quality);
-    const std::uint32_t size  = file_size_of(hull_nif);
-    const std::int64_t  mtime = mtime_of(hull_nif);
+    const std::uint32_t size  = file_size_of(h.path);
+    const std::int64_t  mtime = mtime_of(h.path);
     DistanceField f;
     if (read_valid_dhv(cache_file, hull_nif, authored_res, quality,
                        size, mtime, f))
@@ -162,10 +163,11 @@ const DistanceField& HullVolumeCache::get(
     auto it = by_key_.find(key);
     if (it != by_key_.end()) return it->second;
 
+    const assets::HullSource h = assets::split_hull_source(hull_nif);
     const std::filesystem::path cache_file =
         path_for(hull_nif, authored_res, quality);
-    const std::uint32_t size  = file_size_of(hull_nif);
-    const std::int64_t  mtime = mtime_of(hull_nif);
+    const std::uint32_t size  = file_size_of(h.path);
+    const std::int64_t  mtime = mtime_of(h.path);
 
     DistanceField field;
     if (!read_valid_dhv(cache_file, hull_nif, authored_res, quality,
@@ -175,7 +177,7 @@ const DistanceField& HullVolumeCache::get(
         // could never validate. An existing-but-unparseable hull still
         // bakes (to empty) and writes, so the next launch does not retry.
         ++bakes_;
-        if (std::filesystem::exists(hull_nif)) {
+        if (std::filesystem::exists(h.path)) {
             // Best effort: a read-only cache dir must not stop the game
             // loading, so the write's result is deliberately ignored.
             (void)bake_and_write(cache_file, hull_nif, authored_res, quality,

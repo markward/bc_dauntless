@@ -157,6 +157,24 @@ def register(ship, *, size_gu, count, spacing_s, life_s) -> None:
     })
 
 
+def register_at(loc, pSet, *, size_gu, life_s) -> None:
+    """One blast at a fixed point, with no ship to follow: the rock death
+    burst's crack flash (engine.rocks.vfx), whose rock leaves its set 0.5 s
+    later. `loc` is a TGPoint3 (or (x, y, z)) in `pSet`'s coordinates. Born
+    at once, then aged by advance() like any scheduled blast."""
+    if size_gu <= 0.0 or life_s <= 0.0:
+        return
+    pos = (float(loc.x), float(loc.y), float(loc.z)) if hasattr(loc, "x") \
+        else tuple(float(c) for c in loc)
+    _active.append({
+        "position": pos,
+        "set":      pSet,
+        "size_gu":  float(size_gu),
+        "age":      0.0,
+        "life":     float(life_s),
+    })
+
+
 def advance(dt: float) -> None:
     """Bear any blasts whose time has come, then age the live ones."""
     if dt <= 0.0:

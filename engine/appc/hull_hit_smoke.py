@@ -71,6 +71,10 @@ def maybe_emit(ship, point, normal, weapon_type, ship_instances=None,
     threshold = _HULL_SMOKE_ROLL.get(weapon_type)
     if threshold is None:
         return
+    from engine.rocks.rock import is_rock
+    if is_rock(ship):
+        # Hull smoke is a pressurised hull venting; a rock has none.
+        return
     if (particles.EffectController_GetEffectLevel()
             < particles.EffectController.MEDIUM):
         return

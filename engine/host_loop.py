@@ -5462,12 +5462,57 @@ def _ship_decals(ship, nif_path, reps):
         return []
 
 
-def _ship_load_key(nif_path, reps, decals=None):
-    """Model-cache key for a ship load. Bare NIF path when no registry swap
-    and no decals (byte-identical to the legacy key, so non-fed ships +
-    planets are unaffected); NIF path + a stable registry suffix otherwise,
-    so two hulls of the same class with DIFFERENT registries don't collapse
-    onto one handle.
+def _ship_model_source(ship, nif_path: str) -> tuple:
+    """(model path, load scale) for a ship: the rock catalogue's pick for a
+    stock BC asteroid NIF (engine/rocks/catalogue.py), else (nif_path, 1.0).
+    Never blocks spawn -- any catalogue fault falls back to the stock NIF."""
+    from engine.rocks import catalogue as rock_catalogue
+    try:
+        return rock_catalogue.ship_model_source(ship.GetName(), nif_path)
+    except Exception as e:
+        dev_mode.log_swallowed("rock catalogue redirect", e)
+        return nif_path, 1.0
+
+
+def _rock_model_override(ship):
+    """(model path, load scale) for a script-less rock (RockClass_Create /
+    DamageableObject_Create, engine/rocks/rock.py), else None -- the ship
+    then realises from its script's NIF as before. Never blocks spawn."""
+    from engine.rocks.rock import rock_model_override
+    try:
+        return rock_model_override(ship)
+    except Exception as e:
+        dev_mode.log_swallowed("rock model override", e)
+        return None
+
+
+_rock_fallback_warned: set = set()
+
+
+def _warn_rock_fallback(model_path, nif_path, exc: BaseException) -> None:
+    """One stderr line per catalogue model path whose load failed; the caller
+    then retries the stock NIF (the fallback `_ship_model_source` promises)."""
+    if model_path in _rock_fallback_warned:
+        return
+    _rock_fallback_warned.add(model_path)
+    print(f"[host_loop] rock catalogue: load_model({model_path}) raised "
+          f"{type(exc).__name__}: {exc}; falling back to stock {nif_path}",
+          file=sys.stderr, flush=True)
+
+
+def _ship_load_key(nif_path, reps, decals=None, scale: float = 1.0):
+    """Model-cache key for a ship load. Bare NIF path when no registry swap,
+    no decals and no rock-catalogue scale (byte-identical to the legacy key,
+    so non-fed ships + planets are unaffected); NIF path + a stable registry
+    suffix otherwise, so two hulls of the same class with DIFFERENT
+    registries don't collapse onto one handle.
+
+    `scale != 1.0` appends `#s=<scale %.6g>` to the string key before reps
+    and decals are folded in -- the same suffix `Model::source` uses on the
+    native side (native/src/renderer -- see catalogue.py's `load_scale`), so
+    two catalogue rocks picked for stock NIFs of different sizes (e.g.
+    asteroid1.nif vs asteroid3.nif) never collapse onto one cached handle
+    even when they share the same underlying rock.
 
     With decals the key becomes a hashable tuple `(str_key, "decals",
     specs)` carrying EVERY element of every spec -- shape, origin, axes,
@@ -5479,6 +5524,8 @@ def _ship_load_key(nif_path, reps, decals=None):
     AssetCache key folds the same geometry in (cache.cc decals_key).
     """
     key = nif_path
+    if scale != 1.0:
+        key += f"#s={scale:.6g}"
     if reps:
         key += "|" + ";".join(f"{old}={new}" for old, new in reps)
     if decals:
@@ -5648,6 +5695,28 @@ def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
     is exact here; it is not a general model radius."""
     hx, hy, hz = half_extents
     return max(abs(hx), abs(hy), abs(hz))
+
+
+def _seed_ship_radius(ship, extent: float, sphere_radius: float) -> None:
+    """Seed a gameplay GetRadius() (model units -> GU at BC_MODEL_SCALE) for a
+    ship that lacks one -- camera-follow distance, AI threat range, splash,
+    collisions. Leaves an authored (> 0) radius alone.
+
+    A ship gets the AABB corner distance (`extent`): its hull sits well inside
+    that, which collisions' COLLISION_RADIUS_SCALE compensates for. A ROCK
+    gets its bounding-sphere radius (`sphere_radius`, the planets' divisor,
+    _model_sphere_radius_from_aabb): its sphere IS its surface, collisions
+    apply no shrink to it, and the corner distance is ~1.7x too big for a
+    roughly spherical mesh. Both are unscaled: the collision and hit code
+    multiply by GetScale() (collisions.world_radius)."""
+    if ship.GetRadius() > 0.0:
+        return
+    from engine.rocks.rock import is_rock
+    r = sphere_radius if is_rock(ship) else extent
+    try:
+        ship.SetRadius(r * BC_MODEL_SCALE)
+    except Exception as _e:
+        dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
 
 
 def _rot_determinant(rot) -> float:
@@ -5957,27 +6026,38 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
-        nif_path = _ship_nif_path(ship, verbose=verbose)
-        if nif_path is None:
-            continue
+        _override = _rock_model_override(ship)
+        if _override is not None:
+            model_path, model_scale = _override
+            nif_path = model_path
+        else:
+            nif_path = _ship_nif_path(ship, verbose=verbose)
+            if nif_path is None:
+                continue
+            model_path, model_scale = _ship_model_source(ship, nif_path)
+        load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
         tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
         decals = _ship_decals(ship, nif_path, reps)
         try:
-            handle = r_.load_model(nif_path, tex_search, reps,
-                                    decals=decals or None)
+            try:
+                handle = r_.load_model(model_path, tex_search, reps,
+                                        decals=decals or None, **load_kwargs)
+            except Exception as e:
+                if model_path == nif_path:
+                    raise
+                # A catalogue rock that fails to load falls back to stock.
+                _warn_rock_fallback(model_path, nif_path, e)
+                handle = r_.load_model(nif_path, tex_search, reps,
+                                        decals=decals or None)
         except Exception as e:
             if verbose:
                 print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
                       f"raised: {type(e).__name__}: {e}", flush=True)
             continue
         center, half_extents = r_.model_aabb(handle)
-        extent = _model_extent_from_aabb(center, half_extents)
-        if ship.GetRadius() <= 0.0:
-            try:
-                ship.SetRadius(extent * BC_MODEL_SCALE)
-            except Exception as _e:
-                dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
+        _seed_ship_radius(ship, _model_extent_from_aabb(center, half_extents),
+                          _model_sphere_radius_from_aabb(center, half_extents))
         iid = r_.create_instance(handle)
         _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
@@ -6005,6 +6085,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         # shader and must stay rim-free (default ineligible).
         r_.set_rim_eligible(iid, True)
         r_.set_rim_strength(iid, _rim_strength_for(ship))
+        from engine.rocks.rock import is_rock
+        if is_rock(ship):
+            r_.set_surface_rock(iid, True)
 
         # Subsystem glow dimming (best-effort VFX); never block spawn.
         try:
@@ -6727,6 +6810,8 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import ship_death
         ship_death.reset()
+        from engine.rocks import death as _rock_death
+        _rock_death.reset()
         from engine.appc import debris_chunk as _debris_chunk
         _debris_chunk.clear(self.renderer)
         from engine.appc import hull_breakup as _hull_breakup
@@ -7028,9 +7113,16 @@ class _MissionLoader:
         r_ = self._c.renderer
 
         for ship in _iter_active_ships(verbose=self._verbose):
-            nif_path = _ship_nif_path(ship, verbose=self._verbose)
-            if nif_path is None:
-                continue
+            _override = _rock_model_override(ship)
+            if _override is not None:
+                model_path, model_scale = _override
+                nif_path = model_path
+            else:
+                nif_path = _ship_nif_path(ship, verbose=self._verbose)
+                if nif_path is None:
+                    continue
+                model_path, model_scale = _ship_model_source(ship, nif_path)
+            load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
             # BC ships split textures: a per-ship <NIFdir>/High for hull-specific
             # assets (Sovereign, FedStarbase) plus the class's SetTextureSharePath
             # shared dir (FedShips, CardShips, KlingShips, …). See FUN_0044f4a0.
@@ -7038,34 +7130,50 @@ class _MissionLoader:
             # Federation registry / hull-name swaps make the same NIF a distinct
             # model, so the handle cache is keyed by (nif, registry). The extent
             # is pure geometry — identical across registries — so it stays keyed
-            # by nif_path.
+            # by nif_path (or, for a rock-catalogue redirect, by the picked
+            # model path + its scale, since two stock NIFs of different sizes
+            # can pick the SAME rock and must not collapse onto one extent).
             reps = _ship_texture_replacements(ship)
             decals = _ship_decals(ship, nif_path, reps)
-            load_key = _ship_load_key(nif_path, reps, decals)
+            load_key = _ship_load_key(model_path, reps, decals, model_scale)
+            extent_key = (nif_path if model_scale == 1.0
+                         else f"{model_path}#s={model_scale:.6g}")
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
-                    handle = r_.load_model(nif_path, tex_search, reps,
-                                            decals=decals or None)
+                    try:
+                        handle = r_.load_model(model_path, tex_search, reps,
+                                                decals=decals or None, **load_kwargs)
+                    except Exception as e:
+                        if model_path == nif_path:
+                            raise
+                        # A catalogue rock that fails to load falls back to
+                        # stock, under the legacy load/extent keys.
+                        _warn_rock_fallback(model_path, nif_path, e)
+                        model_path, model_scale = nif_path, 1.0
+                        load_key = _ship_load_key(nif_path, reps, decals)
+                        extent_key = nif_path
+                        handle = self._c.nif_to_handle.get(load_key)
+                        if handle is None:
+                            handle = r_.load_model(nif_path, tex_search, reps,
+                                                    decals=decals or None)
                 except Exception as e:
                     if self._verbose:
                         print(f"[host_loop]   skip ship: load_model({nif_path}) raised: "
                               f"{type(e).__name__}: {e}", flush=True)
                     continue
                 self._c.nif_to_handle[load_key] = handle
-                if nif_path not in self._c.nif_to_extent:
+                if extent_key not in self._c.nif_to_extent:
                     center, half_extents = r_.model_aabb(handle)
-                    self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
-            extent = self._c.nif_to_extent.get(nif_path, 1.0)
-            # Seed a gameplay GetRadius() for shim ships that lack one
-            # (camera-follow distance, AI threat range, splash damage).
-            # Use the same flat NIF→world scale we render with so the
-            # gameplay radius matches the visible mesh bound.
-            if ship.GetRadius() <= 0.0:
-                try:
-                    ship.SetRadius(extent * BC_MODEL_SCALE)
-                except Exception as _e:
-                    dev_mode.log_swallowed("ship.SetRadius fallback", _e)
+                    self._c.nif_to_extent[extent_key] = _model_extent_from_aabb(center, half_extents)
+                    self._c.nif_to_sphere_radius[extent_key] = \
+                        _model_sphere_radius_from_aabb(center, half_extents)
+            extent = self._c.nif_to_extent.get(extent_key, 1.0)
+            # Seed a gameplay GetRadius() for shim ships that lack one, at
+            # the same flat NIF->world scale we render with (a rock from its
+            # bounding sphere -- see _seed_ship_radius).
+            _seed_ship_radius(ship, extent,
+                              self._c.nif_to_sphere_radius.get(extent_key, extent))
             iid = r_.create_instance(handle)
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
@@ -7093,6 +7201,9 @@ class _MissionLoader:
             # opaque shader and must stay rim-free (default ineligible).
             r_.set_rim_eligible(iid, True)
             r_.set_rim_strength(iid, _rim_strength_for(ship))
+            from engine.rocks.rock import is_rock
+            if is_rock(ship):
+                r_.set_surface_rock(iid, True)
 
             # Subsystem glow dimming (best-effort VFX). Ships missing a warp /
             # impulse / sensor subsystem simply register fewer regions; any
@@ -10959,6 +11070,15 @@ def run(mission_name: Optional[str] = None,
                         _player_dt,
                         ship_instances=(session.ship_instances if session is not None else None),
                     )
+
+                # Rock breakup, render side (rock-class spec §2): the death
+                # burst (crack flash, dust, light) and the tumbling chunks
+                # engine.rocks.death queued -- this frame's collision kills
+                # included.
+                with frame_profiler.scope("sim.rock_breakup"):
+                    from engine.rocks import chunks as rock_chunks, vfx as rock_vfx
+                    rock_vfx.pump()
+                    rock_chunks.pump(r, session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame

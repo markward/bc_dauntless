@@ -300,12 +300,19 @@ def test_resolve_collisions_resolves_each_set_pair_offset_once(monkeypatch):
     (set_a, set_b) per resolve_collisions call, not once per object PAIR --
     mirroring projectiles.update_all's per-call cache. Six objects spread
     over two regions give 15 pairs but only three distinct set pairs
-    (Ona1/Ona1, Ona1/Ona2, Ona2/Ona2)."""
+    (Ona1/Ona1, Ona1/Ona2, Ona2/Ona2).
+
+    Positions are 10 GU apart (not 1000, as before the broadphase spatial
+    hash landed): a same-set pair with no broadphase candidate never reaches
+    offset_between at all (correctly -- there is nothing to resolve), so the
+    within-set ships must stay close enough to share a hash cell for this
+    test to keep exercising the per-key cache rather than the broadphase
+    cull."""
     ona1 = load_region("Ona", "Ona1")
     ona2 = load_region("Ona", "Ona2")
-    objs = [_closing_ship(ona1, "A%d" % i, (i * 1000.0, 0.0, 0.0), 0.0)
+    objs = [_closing_ship(ona1, "A%d" % i, (i * 10.0, 0.0, 0.0), 0.0)
             for i in range(3)]
-    objs += [_closing_ship(ona2, "B%d" % i, (i * 1000.0, 0.0, 0.0), 0.0)
+    objs += [_closing_ship(ona2, "B%d" % i, (i * 10.0, 0.0, 0.0), 0.0)
              for i in range(3)]
     calls = []
     real = frames.offset_between

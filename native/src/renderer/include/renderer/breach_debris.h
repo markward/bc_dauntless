@@ -14,10 +14,12 @@ namespace renderer {
 /// drift via emit_life=10.0f).
 ///
 /// Returns an empty vector when no events are active or all have aged past
-/// kDebrisLife.
+/// kDebrisLife. When `surface_is_rock` is set, both emitters use grey-brown
+/// dust/grit colour keys instead of hot hull-metal grey / orange sparks.
 std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
     const scenegraph::BreachEventRing& ring,
     scenegraph::InstanceId             instance_id,
-    float                              now);
+    float                              now,
+    bool                               surface_is_rock = false);
 
 } // namespace renderer

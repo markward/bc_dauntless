@@ -5,6 +5,9 @@ add_library(assets STATIC
     src/decal_override.cc
     src/gl_handle.cc
     src/flip_frame.cc
+    src/gltf_load.cc
+    src/gltf_model_build.cc
+    src/hull_source.cc
     src/material_build.cc
     src/mesh_build.cc
     src/mesh_fix.cc
@@ -24,4 +27,4 @@ add_library(assets STATIC
 target_include_directories(assets PUBLIC include)
 target_compile_features(assets PUBLIC cxx_std_20)
 target_link_libraries(assets PUBLIC nif glm glad stb_image)
-target_link_libraries(assets PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(assets PRIVATE nlohmann_json::nlohmann_json cgltf)

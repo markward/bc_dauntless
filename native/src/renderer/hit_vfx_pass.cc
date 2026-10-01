@@ -51,15 +51,20 @@ constexpr TierConfig kTiers[3] = {
 };
 
 // Weapon-distinct spark tints + spread tuning (spec 3.4). weapon_kind:
-// 0 = phaser (cool white-blue, tight), 1 = torpedo/disruptor (hot orange, wide).
-constexpr glm::vec4 kSparkTint[2] = {
+// 0 = phaser (cool white-blue, tight), 1 = torpedo/disruptor (hot orange, wide),
+// 2 = rock dust (grey-brown grit, near-spherical; rock-class spec §2 -- a rock
+// sheds dust, never hot hull sparks). Kind 2 alone may draw WORLD-anchored at
+// world_pos when its instance is gone: the rock death burst outlives the rock.
+constexpr glm::vec4 kSparkTint[3] = {
     {0.78f, 0.86f, 1.00f, 1.0f},   // phaser — cool white-blue
     {1.00f, 0.55f, 0.18f, 1.0f},   // torpedo — hot orange
+    {0.46f, 0.42f, 0.36f, 1.0f},   // rock dust — grey-brown
 };
 // Spread tuning per kind, fed to rotate_jitter as a degree-scaled jitter
 // amplitude (NOT a literal half-angle; rotate_jitter adds sin(jitter*k)
-// offsets, so 120 yields ~50 deg max spread). phaser tight, torpedo wide.
-constexpr float kSparkConeDegByKind[2] = {40.0f, 120.0f};
+// offsets, so 120 yields ~50 deg max spread). phaser tight, torpedo wide,
+// rock dust widest.
+constexpr float kSparkConeDegByKind[3] = {40.0f, 120.0f, 170.0f};
 constexpr float kSparkSpeed      = 1.0f;    // GU/s initial speed (travel ≈ speed/damping ≈ 0.7 GU)
 constexpr float kSparkSize       = 0.12f;   // GU half-size of a spark point (decoupled from flash)
 constexpr float kSparkLife       = 3.0f;    // seconds — spark visibility, intentionally far longer than the flash
@@ -278,16 +283,23 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
 
-        // Spark burst (hull-anchored, detached, weapon-distinct).
+        // Spark burst (hull-anchored, detached, weapon-distinct; rock dust
+        // world-anchored when its instance is gone).
         if (v.spark_count > 0 && spark_texture_ && spark_texture_->id() != 0) {
             const scenegraph::Instance* inst = world.get(v.instance_id);
-            if (inst != nullptr) {
-                const glm::vec3 origin = hit_vfx_anchor_point(v, &inst->world);
-                glm::vec3 base = glm::mat3(inst->world) * v.body_normal;
+            const int kind = std::clamp(v.weapon_kind, 0, 2);
+            // Kinds 0/1 need the live hull; rock dust (2) falls back to the
+            // world-space position and normal.
+            if (inst != nullptr || kind == 2) {
+                const glm::mat4 anchor_world =
+                    inst != nullptr ? inst->world : glm::mat4(1.0f);
+                const glm::vec3 origin = inst != nullptr
+                    ? hit_vfx_anchor_point(v, &inst->world) : v.world_pos;
+                glm::vec3 base = inst != nullptr
+                    ? glm::mat3(inst->world) * v.body_normal : v.surface_normal;
                 float blen = glm::length(base);
                 base = (blen > 1e-6f) ? base / blen : cam_right;
 
-                const int kind = (v.weapon_kind == 0) ? 0 : 1;
                 glBindTexture(GL_TEXTURE_2D, spark_texture_->id());
                 shader.set_vec4("u_tint", kSparkTint[kind]);
                 const float cone = kSparkConeDegByKind[kind];
@@ -301,7 +313,7 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                 // so fast-moving sparks look longer than nearly-stopped ones.
                 const float spark_speed = kSparkSpeed * std::exp(-kSparkDamping * age);
                 const std::vector<glm::vec2> jitters =
-                    hit_vfx_spark_jitters(v, inst->world);
+                    hit_vfx_spark_jitters(v, anchor_world);
                 for (int i = 0; i < v.spark_count; ++i) {
                     const glm::vec2 jitter = jitters[static_cast<std::size_t>(i)];
                     const glm::vec3 dir =

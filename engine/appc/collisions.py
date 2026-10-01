@@ -36,11 +36,32 @@ COLLISION_GRIND_COEFF = 2.5      # sustained-contact (abrasion) damage, in hull
                                  # COEFF because this is a work RATE (linear in
                                  # slip speed, scaled by dt), not the quadratic
                                  # kinetic energy of an impact.
+kGrindMinDamageRate = 1.0        # hull pts/s: a grind whose damage / dt is
+                                 # below this applies NOTHING (no apply_hit, so
+                                 # no hit VFX, smoke, decal or carve). Kills the
+                                 # float-noise grinds (~1e-10 pts/s) a rock
+                                 # breakup's overlapping pieces produced every
+                                 # frame (3,520 hit-VFX spawns in 10 s, live
+                                 # test 2026-10-01). A RATE, not a per-call
+                                 # amount: tick_collisions runs per render
+                                 # frame, and a per-call cutoff would drop the
+                                 # calibrated grinds above (0.52/frame at
+                                 # 144 Hz) and the docking nudge (7.5 pts/s).
+                                 # Mass-dependent (damage scales with reduced
+                                 # mass): low-mass bodies' slow slips fall under.
 COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
                                  # rA+rB: objects close 20% of the bounding-
                                  # sphere gap before a hit registers, compensating
                                  # for hulls sitting well inside their generous
                                  # bounding spheres (e.g. Galaxy saucer+nacelles)
+
+# Broadphase spatial hash (see _candidate_pairs). Floor cell size in GU, so a
+# set of tiny bodies (rock chunks) doesn't degenerate into a huge number of
+# tiny cells; real conservativeness comes from 2x the largest radius in the
+# set, which is always >= the largest overlap reach any pair in that set can
+# have (see _candidate_pairs' docstring for the bound argument).
+kBroadphaseMinCellGU = 4.0
+_BROADPHASE = True
 
 # Scuff decal size band (GU). The decal radius is the contact chord
 # sqrt(2 * R_small * pen) clamped to this band; it is VISUAL ONLY and never
@@ -93,17 +114,102 @@ def _trace_own_hull(ship_instances, body: "_Body", boundary, n_out, reach: float
     return pt, (mesh_n if mesh_n is not None else n_out)
 
 
+def world_radius(obj) -> float:
+    """An object's bounding radius as DRAWN, in GU: GetRadius() x GetScale().
+
+    GetRadius() is SDK surface and stays UNSCALED -- missions read it, and
+    the host sets it from the model at GetScale() == 1 -- but every ship and
+    planet draws at GetRadius() x GetScale() (_ship_world_matrix /
+    _apply_live_world_transform). E1M2 scales its asteroids 3-8.5x, so a raw
+    GetRadius() collision let the player fly most of the way into a rock.
+
+    A DebrisChunk is the exception: its GetRadius() is already its world size,
+    and its GetScale() is the render scale of a SHARED model, not a size
+    factor. The scale is read through the class (TGObject.__getattr__ vends a
+    truthy _Stub for any unknown name) and a non-positive or unreadable scale
+    counts as 1."""
+    from engine.appc.debris_chunk import DebrisChunk
+    r = float(obj.GetRadius())
+    if isinstance(obj, DebrisChunk):
+        return r
+    fn = getattr(type(obj), "GetScale", None)
+    if fn is None:
+        return r
+    try:
+        s = float(fn(obj))
+    except (TypeError, ValueError):
+        return r
+    return r * s if s > 0.0 and math.isfinite(s) else r
+
+
+def _boundary_shrink(obj) -> float:
+    """COLLISION_RADIUS_SCALE for anything shaped like a ship -- its hull sits
+    well inside the bounding sphere -- and 1.0 for a rock, whose sphere IS
+    its surface (rock-class final review)."""
+    from engine.rocks.rock import is_rock
+    return 1.0 if is_rock(obj) else COLLISION_RADIUS_SCALE
+
+
+def contact_radius(obj) -> float:
+    """The radius a collision actually registers at: world_radius x the
+    object's boundary shrink. What _respond_pair's broad phase tests."""
+    return world_radius(obj) * _boundary_shrink(obj)
+
+
+def ghost_peer_gone(obj) -> bool:
+    """Whether a ghosted pair member has left the world: a DebrisChunk no
+    longer live, or anything dead or out of every set. Class-level lookups
+    (TGObject.__getattr__ vends a truthy _Stub for unknown names)."""
+    from engine.appc import debris_chunk
+    if obj is None:
+        return True
+    if isinstance(obj, debris_chunk.DebrisChunk):
+        return not any(c is obj for c in debris_chunk.live())
+    dead = getattr(type(obj), "IsDead", None)
+    from engine import dev_mode
+    try:
+        if dead is not None and dead(obj):
+            return True
+    except Exception as e:
+        dev_mode.log_swallowed("ghost peer IsDead", e)
+    from engine.systems import frames
+    return frames.containing_set(obj) is None
+
+
+def spheres_clear(a, b, margin: float) -> bool:
+    """Whether `a` and `b`'s CONTACT spheres (contact_radius, what
+    _respond_pair tests) are at least `margin` GU apart, compared in one
+    frame. A pair in no common frame cannot collide, so it counts as clear."""
+    from engine.systems import frames
+    off = frames.offset_between(frames.containing_set(a), frames.containing_set(b))
+    if off is None:
+        return True
+    pa = a.GetWorldLocation()
+    pb = _shifted(b.GetWorldLocation(), off)
+    dx, dy, dz = pb.x - pa.x, pb.y - pa.y, pb.z - pa.z
+    reach = contact_radius(a) + contact_radius(b) + float(margin)
+    return dx * dx + dy * dy + dz * dz >= reach * reach
+
+
 @dataclass
 class _Body:
     obj: object
     center: TGPoint3
-    radius: float
+    radius: float        # world_radius: GetRadius() x GetScale(). The
+                         # broadphase buckets on this (never smaller than
+                         # the contact radius, so it stays conservative).
     inv_mass: float
     is_movable: bool
     velocity: TGPoint3   # world thrust velocity + current overlay
     angular: TGPoint3    # WORLD-frame angular velocity (rad/s); zero for
                          # immovables. Body-frame at rest in ShipClass -- see
                          # _resolve_body for the rotation into world space.
+    shrink: float = COLLISION_RADIUS_SCALE   # see _boundary_shrink
+
+    @property
+    def contact(self) -> float:
+        """The contact radius: radius x shrink."""
+        return self.radius * self.shrink
 
 
 # b_offset for a pair in ONE set: B is already in A's coordinates.
@@ -184,7 +290,7 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
     from engine.appc.ships import ShipClass
     from engine.appc.debris_chunk import DebrisChunk
     center = position if position is not None else obj.GetWorldLocation()
-    radius = obj.GetRadius()
+    radius = world_radius(obj)
     if isinstance(obj, (ShipClass, DebrisChunk)) and not obj.IsImmobile():
         m = obj.GetMass()
         if m <= 0.0:
@@ -218,7 +324,8 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
     cv = _overlay_vec(obj)
     if cv is not None:
         v = v + cv
-    return _Body(obj, center, radius, inv_mass, movable, v, w)
+    return _Body(obj, center, radius, inv_mass, movable, v, w,
+                 _boundary_shrink(obj))
 
 
 def _ke_damage(inv_sum: float, v_rel: float) -> float:
@@ -259,16 +366,19 @@ def _deepest_piece_overlap(obj_a, obj_b, b_offset=_NO_OFFSET):
     if not has_hull_bounds(obj_a) or not has_hull_bounds(obj_b):
         return None
     # Each side is culled against the other's model-wide bound before anything
-    # is transformed into world space. GetRadius is the AABB corner distance,
-    # comfortably larger than any real reach, so the cull cannot drop a pair
-    # the loop below would have found.
+    # is transformed into world space. world_radius (GetRadius x GetScale) is
+    # the scaled AABB corner distance, comfortably larger than any real
+    # reach, so the cull cannot drop a pair the loop below would have found.
+    # The pieces themselves are cached at GetScale() == 1 and hull_bounds
+    # multiplies centre and radius by the live GetScale(), so they are
+    # already in the same scaled space.
     # B's location into A's frame for A's cull; A's into B's for B's cull.
     pieces_a = hull_spheres_near(obj_a, _shifted(obj_b.GetWorldLocation(), b_offset),
-                                 float(obj_b.GetRadius()))
+                                 world_radius(obj_b))
     if not pieces_a:
         return ()
     pieces_b = hull_spheres_near(obj_b, _shifted(obj_a.GetWorldLocation(), b_offset, -1.0),
-                                 float(obj_a.GetRadius()))
+                                 world_radius(obj_a))
     if not pieces_b:
         return ()
     if b_offset != _NO_OFFSET:
@@ -293,6 +403,111 @@ def _deepest_piece_overlap(obj_a, obj_b, b_offset=_NO_OFFSET):
     return best if best is not None else ()
 
 
+# Rocks vs raised shields (rock-class spec, "Rocks vs shields"): a rock
+# meeting a non-rock ship whose shields are up meets the ship's shield BUBBLE
+# -- the ellipsoid shield_bubble_entry detonates torpedoes on -- and the
+# ship's share of the damage cascades through the facing. Ship<->ship ramming
+# keeps bypassing shields (confirmed for ships, commit 4d999a50).
+_BUBBLE_MISS = object()   # shield regime, rock not touching the bubble
+
+
+def _shielded_against_rocks(obj) -> bool:
+    """A non-rock ship whose shields would stop a rock right now."""
+    from engine.appc.ships import ShipClass
+    from engine.rocks.rock import is_rock
+    from engine.appc.combat import shields_block
+    return (isinstance(obj, ShipClass) and not is_rock(obj)
+            and shields_block(obj))
+
+
+def _shield_pair(a: "_Body", b: "_Body"):
+    """(ship_body, rock_body, ship_is_a) for a rock meeting a shielded ship,
+    else None. Rock<->rock, debris and planets never qualify."""
+    from engine.rocks.rock import is_rock
+    rock_a, rock_b = is_rock(a.obj), is_rock(b.obj)
+    if rock_a == rock_b:
+        return None
+    ship, rock, ship_is_a = (b, a, False) if rock_a else (a, b, True)
+    if not _shielded_against_rocks(ship.obj):
+        return None
+    return ship, rock, ship_is_a
+
+
+def _closest_on_ellipsoid(e, y):
+    """Closest point on the axis-aligned ellipsoid with semi-axes `e` to a
+    point `y` OUTSIDE it (both relative to the centre).
+
+    The closest point x satisfies x_i = e_i^2 y_i / (e_i^2 + t) for the
+    unique t > 0 with sum (e_i y_i / (e_i^2 + t))^2 = 1 (Lagrange condition:
+    y - x parallel to the surface normal). That sum falls monotonically from
+    > 1 at t = 0 (y is outside) to < 1 at t = e_max |y|, so bisection on
+    [0, e_max |y|] converges to it."""
+    hi = max(e) * math.sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2])
+    lo = 0.0
+    for _ in range(64):
+        t = 0.5 * (lo + hi)
+        f = sum((e[i] * y[i] / (e[i] * e[i] + t)) ** 2 for i in range(3))
+        if f > 1.0:
+            lo = t
+        else:
+            hi = t
+    t = 0.5 * (lo + hi)
+    return tuple(e[i] * e[i] * y[i] / (e[i] * e[i] + t) for i in range(3))
+
+
+def _bubble_contact(ship: "_Body", rock: "_Body"):
+    """Rock sphere vs the ship's shield bubble, in the pair's (A) frame.
+
+    Returns None for "use the hull contact" -- no cached hull box (no bubble
+    geometry, as shield_bubble_entry), or the rock's centre already inside
+    the bubble (it arrived while the shields were down; a weapon fired from
+    inside the bubble meets the hull too). _BUBBLE_MISS when outside and not
+    touching. Else (point, normal, pen): the closest bubble point, the
+    bubble's outward surface normal there (ship -> rock), and the rock's
+    penetration past the bubble -- exact, not an inflated-ellipsoid
+    approximation (the offset surface of an ellipsoid is not an ellipsoid)."""
+    from engine.appc.combat import _hull_box_for, SHIELD_ELLIPSOID_AXIS_SCALE
+    box = _hull_box_for(ship.obj)
+    if box is None:
+        return None
+    (cx, cy, cz), half = box
+    e = tuple(h * SHIELD_ELLIPSOID_AXIS_SCALE for h in half)
+    R = ship.obj.GetWorldRotation()
+    cols = (R.GetCol(0), R.GetCol(1), R.GetCol(2))
+    dx = rock.center.x - ship.center.x
+    dy = rock.center.y - ship.center.y
+    dz = rock.center.z - ship.center.z
+    # World -> body (project on R's columns), relative to the bubble centre.
+    y = tuple(dx * c.x + dy * c.y + dz * c.z for c in cols)
+    y = (y[0] - cx, y[1] - cy, y[2] - cz)
+    if (y[0] / e[0]) ** 2 + (y[1] / e[1]) ** 2 + (y[2] / e[2]) ** 2 <= 1.0:
+        return None
+    r = rock.contact
+    if math.sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]) >= max(e) + r:
+        return _BUBBLE_MISS          # bubble lies inside the e_max sphere
+    x = _closest_on_ellipsoid(e, y)
+    v = (y[0] - x[0], y[1] - x[1], y[2] - x[2])
+    d = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    if d >= r:
+        return _BUBBLE_MISS
+    if d > 1e-12:
+        n = (v[0] / d, v[1] / d, v[2] / d)
+    else:                            # centre on the surface: gradient
+        g = (x[0] / e[0] ** 2, x[1] / e[1] ** 2, x[2] / e[2] ** 2)
+        gl = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+        n = (g[0] / gl, g[1] / gl, g[2] / gl)
+    # Body -> world: v_world = R . v_body.
+    def to_world(p):
+        return (p[0] * cols[0].x + p[1] * cols[1].x + p[2] * cols[2].x,
+                p[0] * cols[0].y + p[1] * cols[1].y + p[2] * cols[2].y,
+                p[0] * cols[0].z + p[1] * cols[1].z + p[2] * cols[2].z)
+    pw = to_world((x[0] + cx, x[1] + cy, x[2] + cz))
+    nw = to_world(n)
+    point = TGPoint3(ship.center.x + pw[0], ship.center.y + pw[1],
+                     ship.center.z + pw[2])
+    return point, nw, r - d
+
+
 def _contact_point_velocity(body: "_Body", cx: float, cy: float, cz: float):
     """Rigid-body velocity of the material point at (cx, cy, cz):
     ``v_cm + omega x r``, with ``r`` the arm from the body's centre.
@@ -313,7 +528,9 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
                    inv_sum: float, dt: float, ship_instances=None,
                    scuff_radius: float | None = None,
                    boundary_b=None, reach: float = 0.0,
-                   b_offset=_NO_OFFSET) -> None:
+                   b_offset=_NO_OFFSET, shielded_a: bool = False,
+                   shielded_b: bool = False, shield_pt_a=None,
+                   shield_pt_b=None) -> None:
     """Abrasion damage for a contact that is not closing.
 
     Physically this is friction work: force times sliding distance. We have no
@@ -335,6 +552,13 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     Every position here -- the contact, `boundary_b`, and `b.center` -- is in
     A's set-local frame (the caller passes B's A-frame view). `b_offset` is
     only used to hand B's trace back to B's own frame.
+
+    `shielded_a` / `shielded_b`: that side is a ship whose raised shields a
+    rock met (see _shield_contact) -- its abrasion drains its facing shield
+    instead of bypassing it. `shield_pt_*` is then the bubble point in THAT
+    side's own frame (the facing input), or None when the contact is the
+    hull (the facing comes from the hull point). False keeps the ramming
+    bypass.
     """
     if not (dt > 0.0):
         return
@@ -349,8 +573,8 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
         return
     mu = 1.0 / inv_sum
     damage = COLLISION_GRIND_COEFF * mu * slip * dt
-    if damage <= 0.0:
-        return
+    if damage <= 0.0 or damage / dt < kGrindMinDamageRate:
+        return   # dt > 0 here: the dt guard above already returned
 
     # Scuff tangent: the slip direction itself, sign per ship (each hull's
     # scratch runs the way the OTHER hull moved across it). No slip (pure
@@ -381,43 +605,28 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
         apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_a, decal_radius=scuff_radius, decal_dent=0.0,
-                  bypass_shields=True)
+                  bypass_shields=not shielded_a, shield_point=shield_pt_a)
     if b.is_movable:
         pt_b, n_b = _trace_own_hull(ship_instances, b,
                                     _shifted(boundary_b, b_offset, -1.0), n_ba, reach)
         apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_radius, decal_dent=0.0,
-                  bypass_shields=True)
+                  bypass_shields=not shielded_b, shield_point=shield_pt_b)
 
 
-def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
-                  b_offset=_NO_OFFSET):
-    """Resolve one body pair. On an approaching overlap: inject a
-    mass-weighted impulse into each movable body's overlay, de-penetrate
-    positions, and apply KE damage via combat.apply_hit. Returns the
-    (a.obj, b.obj, contact_point, v_rel) tuple if they collided, else None.
-
-    The `v_rel < 0` (approaching) gate is the debounce: once the impulse
-    reverses relative velocity, later frames read receding and do nothing
-    while the spheres still overlap (spec §5).
-
-    `b_offset` is frames.offset_between(set of a, set of b): the pair maths
-    runs in A's set-local coordinates, so every read of B's position adds it
-    and everything handed back to B's own side (its hull trace, its hit
-    point) subtracts it. The RETURNED contact is in A's frame; each
-    ET_OBJECT_COLLISION event carries the point in its DESTINATION's own
-    frame (see _emit_object_collision). Zero (the same set) takes today's
-    path on the same objects."""
-    if b_offset != _NO_OFFSET:
-        b = replace(b, center=_shifted(b.center, b_offset))   # B, seen from A
+def _hull_contact(a: "_Body", b: "_Body", b_offset=_NO_OFFSET):
+    """The pair's hull contact (B already in A's frame), or None: normal
+    (A -> B), penetration, the smaller contact radius (scuff size), each
+    side's contact boundary point, and the hull-trace reach."""
     dx = b.center.x - a.center.x
     dy = b.center.y - a.center.y
     dz = b.center.z - a.center.z
     dist2 = dx * dx + dy * dy + dz * dz
     # Effective boundary is scaled below the raw bounding-sphere sum so hulls
-    # visually close most of the gap before the hit registers (spec §4).
-    sum_r = (a.radius + b.radius) * COLLISION_RADIUS_SCALE
+    # visually close most of the gap before the hit registers (spec §4) --
+    # per body: a rock's shrink is 1.0 (see _boundary_shrink).
+    sum_r = a.contact + b.contact
     if dist2 >= sum_r * sum_r:
         return None
     dist = math.sqrt(dist2)
@@ -452,7 +661,7 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         cx, cy, cz = pa.x + nx * ra, pa.y + ny * ra, pa.z + nz * ra
     else:
         nx, ny, nz = dx / dist, dy / dist, dz / dist
-        eff_ra = a.radius * COLLISION_RADIUS_SCALE
+        eff_ra = a.contact
         cx, cy, cz = (a.center.x + nx * eff_ra,
                       a.center.y + ny * eff_ra,
                       a.center.z + nz * eff_ra)
@@ -461,9 +670,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     if narrowed:
         r_small = min(ra, rb)
     else:
-        r_small = min(a.radius, b.radius) * COLLISION_RADIUS_SCALE
+        r_small = min(a.contact, b.contact)
     pen = sum_r - dist
-    scuff_r = scuff_radius_gu(r_small, pen)
     # Each ship's contact BOUNDARY point (its piece surface facing the other):
     # a's is the contact itself; b's sits `pen` back along the normal. These
     # are what the hull traces start from and fall back to (_trace_own_hull).
@@ -471,7 +679,92 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     # narrow phase can sit ~1 GU off the hull.
     boundary_a = TGPoint3(cx, cy, cz)
     boundary_b = TGPoint3(cx - nx * pen, cy - ny * pen, cz - nz * pen)
-    trace_reach = 2.0 * sum_r
+    return (nx, ny, nz), pen, r_small, boundary_a, boundary_b, 2.0 * sum_r
+
+
+def _shield_contact(a: "_Body", b: "_Body"):
+    """Rock vs a shielded ship's bubble. Returns:
+
+      * None -- not a rock meeting raised shields: the plain hull contact,
+        both sides bypassing shields (ramming).
+      * _BUBBLE_MISS -- shields up, rock not touching the bubble: no contact.
+      * a bool (ship_is_a) -- shields up but no bubble to meet (see below):
+        the hull contact, with the ship's side cascading through shields.
+      * a tuple -- the bubble contact, same shape as _hull_contact plus the
+        bubble point and ship_is_a."""
+    pair = _shield_pair(a, b)
+    if pair is None:
+        return None
+    ship, rock, ship_is_a = pair
+    hit = _bubble_contact(ship, rock)
+    if hit is _BUBBLE_MISS:
+        return hit
+    if hit is None:
+        # Shields up but no bubble to meet: no cached hull box, or the rock
+        # is already inside the bubble. The hull is the contact; the ship's
+        # share still cascades through its shields, as a weapon's does.
+        return ship_is_a
+    point, (snx, sny, snz), pen = hit
+    s = 1.0 if ship_is_a else -1.0
+    nx, ny, nz = s * snx, s * sny, s * snz          # A -> B
+    # The ship's boundary is the bubble point; the rock's surface sits `pen`
+    # back along the ship -> rock normal (same relation as the hull case:
+    # boundary_b = boundary_a - n_ab * pen).
+    rock_pt = TGPoint3(point.x - snx * pen, point.y - sny * pen,
+                       point.z - snz * pen)
+    boundary_a, boundary_b = (point, rock_pt) if ship_is_a else (rock_pt, point)
+    from engine.appc.combat import bubble_bound_radius
+    reach = 2.0 * (bubble_bound_radius(ship.obj) + rock.contact)
+    return ((nx, ny, nz), pen, rock.contact, boundary_a, boundary_b, reach,
+            point, ship_is_a)
+
+
+def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
+                  b_offset=_NO_OFFSET):
+    """Resolve one body pair. On an approaching overlap: inject a
+    mass-weighted impulse into each movable body's overlay, de-penetrate
+    positions, and apply KE damage via combat.apply_hit. Returns the
+    (a.obj, b.obj, contact_point, v_rel) tuple if they collided, else None.
+
+    The `v_rel < 0` (approaching) gate is the debounce: once the impulse
+    reverses relative velocity, later frames read receding and do nothing
+    while the spheres still overlap (spec §5).
+
+    `b_offset` is frames.offset_between(set of a, set of b): the pair maths
+    runs in A's set-local coordinates, so every read of B's position adds it
+    and everything handed back to B's own side (its hull trace, its hit
+    point) subtracts it. The RETURNED contact is in A's frame; each
+    ET_OBJECT_COLLISION event carries the point in its DESTINATION's own
+    frame (see _emit_object_collision). Zero (the same set) takes today's
+    path on the same objects."""
+    if b_offset != _NO_OFFSET:
+        b = replace(b, center=_shifted(b.center, b_offset))   # B, seen from A
+    shielded = _shield_contact(a, b)
+    if shielded is _BUBBLE_MISS:
+        return None
+    if isinstance(shielded, tuple):
+        ((nx, ny, nz), pen, r_small, boundary_a, boundary_b, trace_reach,
+         bubble_pt, ship_is_a) = shielded
+        contact = bubble_pt
+        # The ship's side cascades through its facing; the point is handed
+        # over in that ship's own frame. The rock keeps the bypass.
+        shielded_a, shielded_b = ship_is_a, not ship_is_a
+        shield_pt_a = bubble_pt if ship_is_a else None
+        shield_pt_b = None if ship_is_a else _shifted(bubble_pt, b_offset, -1.0)
+    else:
+        hull = _hull_contact(a, b, b_offset)
+        if hull is None:
+            return None
+        (nx, ny, nz), pen, r_small, boundary_a, boundary_b, trace_reach = hull
+        contact = boundary_a
+        shield_pt_a = shield_pt_b = None
+        # A shielded pair with no bubble contact (see _shield_contact) still
+        # cascades the ship's share through its shields.
+        shielded_a = shielded is True       # None (unshielded pair) -> both
+        shielded_b = shielded is False      # False: today's ramming bypass
+    cx, cy, cz = boundary_a.x, boundary_a.y, boundary_a.z
+    # Scuff decal size from the contact geometry (visual only; see scuff_radius_gu).
+    scuff_r = scuff_radius_gu(r_small, pen)
 
     # Closing speed along the normal (negative = approaching). CENTRE-OF-MASS
     # velocity only, deliberately: this drives the impulse and the debounce,
@@ -511,7 +804,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         # velocity entirely.
         _grind_contact(a, b, cx, cy, cz, nx, ny, nz, inv_sum, dt,
                        ship_instances, scuff_r, boundary_b, trace_reach,
-                       b_offset)
+                       b_offset, shielded_a, shielded_b, shield_pt_a,
+                       shield_pt_b)
         return None
 
     # Mass-weighted impulse magnitude.
@@ -528,7 +822,6 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         cvb.z += j * b.inv_mass * nz
 
     # Positional de-penetration, split by inverse mass.
-    pen = sum_r - dist
     if a.is_movable:
         s = pen * a.inv_mass / inv_sum
         p = a.obj.GetTranslate()
@@ -541,33 +834,26 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
         p = b.obj.GetTranslate()
         b.obj.SetTranslateXYZ(p.x + nx * s, p.y + ny * s, p.z + nz * s)
 
-    # KE impact damage routed through the existing weapons path. Each ship's
-    # hit lands on its OWN hull: _trace_own_hull traces from just outside that
-    # ship's contact boundary back into it, refining point + normal to the
-    # mesh (host present) exactly as the weapons path does, and anchors at
-    # the boundary itself on a miss or headless. `contact` (a's boundary) is
-    # the nominal point returned for tests/debugging.
-    from engine.appc.combat import apply_hit
-    damage = _ke_damage(inv_sum, v_rel)
-    contact = boundary_a
-    n_ab = TGPoint3(nx, ny, nz)
-    n_ba = TGPoint3(-nx, -ny, -nz)
-    if a.is_movable:
-        pt_a, n_a = _trace_own_hull(ship_instances, a, boundary_a, n_ab, trace_reach)
-        apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
-                  ship_instances=ship_instances, weapon_type="collision",
-                  hit_tangent=tan_a, decal_radius=scuff_r, decal_dent=1.0,
-                  bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
-    if b.is_movable:
-        pt_b, n_b = _trace_own_hull(ship_instances, b,
-                                    _shifted(boundary_b, b_offset, -1.0), n_ba, trace_reach)
-        apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
-                  ship_instances=ship_instances, weapon_type="collision",
-                  hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
-                  bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
+    # Every collision event is posted BEFORE the impact damage. Order, not
+    # damage, is what this changes: event dispatch is synchronous, so a lethal
+    # hit applied first runs the victim's ET_OBJECT_EXPLODING handlers ahead
+    # of its collision events.
+    #
+    # ET_PLANET_COLLISION (chunks included, see the emitter): E1M2 otherwise
+    # counts an asteroid that struck Haven as a player kill (ObjectDestroyed
+    # -> AsteroidDestroyed) and PlanetCollision finds it already gone -- the
+    # Haven-hit / MissionLost beat never fires. Inference, not RE: BC routes
+    # planet contact through its own handler on this event
+    # (ShipClass::PlanetCollisionHandler), so the event cannot trail a death
+    # it may itself cause.
+    #
+    # ET_CLOAKED_COLLISION / ET_OBJECT_COLLISION, same reasoning: a lethal
+    # asteroid -> Facility strike in E1M2 used to explode the asteroid first,
+    # so ObjectCollision's AsteroidHitStation beat never saw the contact.
+    _emit_planet_collision(a.obj, b.obj)
 
-    # No SDK event when either party is a detached hull chunk. The impulse
-    # and damage above have already landed; only the event is withheld.
+    # No ET_OBJECT_COLLISION / ET_CLOAKED_COLLISION when either party is a
+    # detached hull chunk (the impulse and damage still land).
     # MissionLib.FriendlyFireCollisionHandler does ObjectClass_Cast on both
     # parties and calls .GetName() on the result OUTSIDE its try -- a
     # DebrisChunk is not an ObjectClass, casts to None, and every
@@ -575,14 +861,48 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0,
     # cloaked-collision line ("we hit a cloaked ship") is equally wrong for
     # debris. Lazy import, as _resolve_body does.
     from engine.appc.debris_chunk import DebrisChunk
-    if isinstance(a.obj, DebrisChunk) or isinstance(b.obj, DebrisChunk):
-        return (a.obj, b.obj, contact, v_rel)
+    if not (isinstance(a.obj, DebrisChunk) or isinstance(b.obj, DebrisChunk)):
+        # A cloaked hull is still physically present: BC fires
+        # ET_CLOAKED_COLLISION when something rams one
+        # (HelmMenuHandlers.CloakedCollision plays a line).
+        _emit_cloaked_collision(a.obj, b.obj)
+        _emit_object_collision(a.obj, b.obj, contact, abs(j), b_offset)
 
-    # A cloaked hull is still physically present: BC fires ET_CLOAKED_COLLISION
-    # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
-    _emit_cloaked_collision(a.obj, b.obj)
-
-    _emit_object_collision(a.obj, b.obj, contact, abs(j), b_offset)
+    # KE impact damage routed through the existing weapons path. Each ship's
+    # hit lands on its OWN hull: _trace_own_hull traces from just outside that
+    # ship's contact boundary back into it, refining point + normal to the
+    # mesh (host present) exactly as the weapons path does, and anchors at
+    # the boundary itself on a miss or headless. `contact` (a's boundary, or
+    # the bubble point for a shield bounce) is the nominal point returned for
+    # tests/debugging. A side holding a shield point (a rock met its raised
+    # shields) cascades through its facing; every other side keeps the
+    # kinetic-impact AddDamage primitive, which skips shields.
+    from engine.appc.combat import apply_hit
+    damage = _ke_damage(inv_sum, v_rel)
+    # The shield flash (a shielded side only -- a bypassing side absorbs
+    # nothing, so draws none) is ONE push: the single-impact seed, not the
+    # per-tick one a phaser or a grind frame uses, with the splash reach
+    # sized to the smaller body (the rock) -- live 2026-10-01, a rock bounced
+    # off the bubble with no visible flash at the per-tick seed.
+    from engine.appc.hit_feedback import SHIELD_SPLASH_REACH_PER_RADIUS
+    flash_r = r_small / SHIELD_SPLASH_REACH_PER_RADIUS
+    n_ab = TGPoint3(nx, ny, nz)
+    n_ba = TGPoint3(-nx, -ny, -nz)
+    if a.is_movable:
+        pt_a, n_a = _trace_own_hull(ship_instances, a, boundary_a, n_ab, trace_reach)
+        apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
+                  ship_instances=ship_instances, weapon_type="collision",
+                  hit_tangent=tan_a, decal_radius=scuff_r, decal_dent=1.0,
+                  bypass_shields=not shielded_a, shield_point=shield_pt_a,
+                  single_impact=True, shield_radius=flash_r)
+    if b.is_movable:
+        pt_b, n_b = _trace_own_hull(ship_instances, b,
+                                    _shifted(boundary_b, b_offset, -1.0), n_ba, trace_reach)
+        apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
+                  ship_instances=ship_instances, weapon_type="collision",
+                  hit_tangent=tan_b, decal_radius=scuff_r, decal_dent=1.0,
+                  bypass_shields=not shielded_b, shield_point=shield_pt_b,
+                  single_impact=True, shield_radius=flash_r)
 
     return (a.obj, b.obj, contact, v_rel)
 
@@ -611,9 +931,10 @@ def _emit_object_collision(obj_a, obj_b, contact, force,
     B's event gets the contact shifted back by `b_offset` (identity when zero,
     so a same-set pair posts the one contact to both).
 
-    Raise-safe, like _emit_cloaked_collision above: a failure here must not
-    abort collision response, which has already mutated positions and applied
-    damage by this point.
+    Posted BEFORE the impact damage (see _respond_pair). Raise-safe, like
+    _emit_cloaked_collision: a failure here must not abort collision
+    response, which has already mutated positions by this point and still
+    has the damage to apply.
     """
     import App
     from engine import dev_mode
@@ -629,6 +950,38 @@ def _emit_object_collision(obj_a, obj_b, contact, force,
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("emit ET_OBJECT_COLLISION", _e)
+
+
+def _emit_planet_collision(obj_a, obj_b) -> None:
+    """Broadcast ET_PLANET_COLLISION when exactly one party is a Planet (moons
+    and suns included: Sun subclasses Planet, and iter_collidables already
+    treats both as the same immovable anchor). Source = the planet,
+    destination = the object that struck it; ONE event per contact, on the
+    same impact-only path as ET_OBJECT_COLLISION, so a resting grind is
+    silent. Two planets never reach here (two immovables return early).
+
+    Evidence is SDK usage only -- the stbc-reference MCP was unavailable:
+    E1M2.PlanetCollision (E1M2.py:1308), the event's only SDK consumer, reads
+    Planet_Cast(GetSource()) and ShipClass_Cast(GetDestination()). BC's own
+    ShipClass::PlanetCollisionHandler (registered on this event in the
+    decompile) is unreconstructed; we post the event, we do not model what
+    that handler does. A DebrisChunk destination is safe: E1M2's
+    ShipClass_Cast gives None and it returns. Raise-safe."""
+    import App
+    from engine.appc.planet import Planet
+    from engine import dev_mode
+    a_planet, b_planet = isinstance(obj_a, Planet), isinstance(obj_b, Planet)
+    if a_planet == b_planet:
+        return
+    planet, other = (obj_a, obj_b) if a_planet else (obj_b, obj_a)
+    try:
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_PLANET_COLLISION)
+        evt.SetSource(planet)
+        evt.SetDestination(other)
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("emit ET_PLANET_COLLISION", _e)
 
 
 def _emit_cloaked_collision(obj_a, obj_b) -> None:
@@ -701,6 +1054,81 @@ def _apply_overlay_all(objects, dt: float) -> None:
         cv.z *= decay
 
 
+def _candidate_pairs(positions, radii, sets):
+    """Index pairs (i < k) that could touch, in the same order the old
+    all-pairs nested loop produced (sorted).
+
+    Same set: a uniform spatial hash. The cell size is
+    ``max(kBroadphaseMinCellGU, 2 x the largest radius in that set)`` -- any
+    pair that can overlap is at most ``ra + rb <= 2 * rmax`` apart (rmax the
+    largest radius in the set), so such a pair's cells differ by at most one
+    step on each axis and the 3x3x3 neighbourhood always covers it. `radii`
+    here is each body's whole-model bounding radius as drawn (world_radius:
+    GetRadius() x GetScale()), the same quantity _respond_pair's broad phase
+    and _deepest_piece_overlap's culls both key off (the per-body boundary
+    shrink is <= 1, so it only ever SHRINKS the effective reach from there),
+    so bucketing on it stays conservative.
+
+    Different sets: always a candidate -- resolve_collisions' own
+    frames.offset_between check decides afterwards whether the pair is even
+    comparable, exactly as it did before broadphase existed.
+
+    A non-finite coordinate (NaN or +-inf) cannot be floor-divided into a
+    cell index -- `int(nan // cell)` raises ValueError, `int(inf // cell)`
+    raises OverflowError, and the old all-pairs loop never crashed on either
+    (a NaN/inf distance compare just evaluates to a normal True/False). Such
+    a body is pulled out of the grid and paired against every other body in
+    its set instead: conservative (a superset of whatever the grid would
+    have found had the position been sane), and it can never silently drop a
+    pair the old loop would have reached."""
+    n = len(positions)
+    if not _BROADPHASE:
+        return [(i, k) for i in range(n) for k in range(i + 1, n)]
+    by_set: dict = {}
+    for i, s in enumerate(sets):
+        by_set.setdefault(s, []).append(i)
+    pairs = set()
+    for idxs in by_set.values():
+        if len(idxs) < 2:
+            continue
+        finite_idxs = []
+        nonfinite_idxs = []
+        for i in idxs:
+            p = positions[i]
+            if math.isfinite(p[0]) and math.isfinite(p[1]) and math.isfinite(p[2]):
+                finite_idxs.append(i)
+            else:
+                nonfinite_idxs.append(i)
+        cell = max(kBroadphaseMinCellGU, 2.0 * max(radii[i] for i in idxs))
+        grid: dict = {}
+        for i in finite_idxs:
+            p = positions[i]
+            key = (int(p[0] // cell), int(p[1] // cell), int(p[2] // cell))
+            grid.setdefault(key, []).append(i)
+        for (cx, cy, cz), members in grid.items():
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        other = grid.get((cx + dx, cy + dy, cz + dz))
+                        if not other:
+                            continue
+                        for i in members:
+                            for k in other:
+                                if i < k:
+                                    pairs.add((i, k))
+        for i in nonfinite_idxs:
+            for k in idxs:
+                if i != k:
+                    pairs.add((min(i, k), max(i, k)))
+    keys = list(by_set.keys())
+    for a in range(len(keys)):
+        for b in range(a + 1, len(keys)):
+            for i in by_set[keys[a]]:
+                for k in by_set[keys[b]]:
+                    pairs.add((min(i, k), max(i, k)))
+    return sorted(pairs)
+
+
 def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     """Snapshot every object into a _Body and resolve all unordered pairs.
     Returns the list of collision tuples from _respond_pair (for tests /
@@ -735,29 +1163,42 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     # collidables Plan 3 adds) -- the projectiles.update_all per-call cache.
     offsets: dict = {}
     hits = []
-    for i in range(len(bodies)):
-        for k in range(i + 1, len(bodies)):
-            a_obj, b_obj = bodies[i].obj, bodies[k].obj
-            # Different frames never interact: a planet left standing in the
-            # set you warped out of is not where your ship is, whatever the
-            # numbers say. One frame (the same set, or two regions of one
-            # system) compares in A's set-local coordinates.
-            key = (sets[i], sets[k])
-            if key in offsets:
-                b_offset = offsets[key]
-            else:
-                b_offset = offsets[key] = frames.offset_between(*key)
-            if b_offset is None:
-                continue
-            # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
-            # either side disabling the other exempts the pair.
-            if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
-                    or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
-                continue
-            hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt,
-                                b_offset=b_offset)
-            if hit is not None:
-                hits.append(hit)
+    pos_list = [(b.center.x, b.center.y, b.center.z) for b in bodies]
+    radii = [b.radius for b in bodies]   # world_radius, read once in _resolve_body; >= the contact radius _respond_pair tests
+    # A shielded ship meets a rock at its shield bubble, which can reach past
+    # the hull sphere (Galaxy forward semi-axis 5.58 vs sphere 4.03), so
+    # bucket it on a radius that bounds the bubble too. Only the broadphase
+    # sees this -- the _Body's own radius (contact geometry) is untouched --
+    # and only when a rock is present, so ship-only scenes are unchanged.
+    from engine.rocks.rock import is_rock
+    if any(is_rock(b.obj) for b in bodies):
+        from engine.appc.combat import _hull_box_for, bubble_bound_radius
+        for i, b in enumerate(bodies):
+            if (_shielded_against_rocks(b.obj)
+                    and _hull_box_for(b.obj) is not None):
+                radii[i] = max(radii[i], bubble_bound_radius(b.obj))
+    for i, k in _candidate_pairs(pos_list, radii, sets):
+        a_obj, b_obj = bodies[i].obj, bodies[k].obj
+        # Different frames never interact: a planet left standing in the
+        # set you warped out of is not where your ship is, whatever the
+        # numbers say. One frame (the same set, or two regions of one
+        # system) compares in A's set-local coordinates.
+        key = (sets[i], sets[k])
+        if key in offsets:
+            b_offset = offsets[key]
+        else:
+            b_offset = offsets[key] = frames.offset_between(*key)
+        if b_offset is None:
+            continue
+        # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
+        # either side disabling the other exempts the pair.
+        if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
+                or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
+            continue
+        hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt,
+                            b_offset=b_offset)
+        if hit is not None:
+            hits.append(hit)
     return hits
 
 

@@ -56,6 +56,16 @@ SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-ey
 # spec/ShieldFacingDamage.md §4.3) — the same split _play_audio already makes.
 SHIELD_IMPACT_INTENSITY = 0.325         # per phaser tick (and the default)
 SHIELD_IMPACT_INTENSITY_TORPEDO = 1.3   # one discrete impact
+# A rock striking raised shields (the only collision that reaches the shields:
+# ship and planet collisions bypass them). Tuned by eye live 2026-10-01 -- at
+# the torpedo seed the flash was invisible under the rock's breakup burst.
+SHIELD_IMPACT_INTENSITY_ROCK = 13.0
+
+# Python mirror of renderer kShieldSplashReachPerRadius (shield_state.h): the
+# splash reach in GU is `radius * this`, clamped to [0.6, 2.0]. Lets a caller
+# with a physical size (a rock's contact radius) ask for a reach directly.
+# MUST match shield_state.h.
+SHIELD_SPLASH_REACH_PER_RADIUS = 10.0
 
 
 # Smallest fraction of a hit the shields must actually absorb before the flash
@@ -78,20 +88,28 @@ SHIELD_IMPACT_INTENSITY_TORPEDO = 1.3   # one discrete impact
 SHIELD_IMPACT_MIN_ABSORBED_FRACTION = 0.05
 
 
-def shield_impact_intensity(weapon_type: str | None) -> float:
+def shield_impact_intensity(weapon_type: str | None,
+                            single_impact: bool = False) -> float:
     """Seed brightness for a shield flash from `weapon_type`.
 
     Anything that is not a torpedo — phaser, tractor, collision, unknown —
     takes the per-tick default. Torpedoes and the disruptor/pulse bolts that
-    share their payload path get the single-impact seed.
+    share their payload path get the single-impact seed, as does any hit the
+    caller flags `single_impact` (a collision's closing impact, which is one
+    push; its grind frames are per-frame pushes and keep the per-tick seed).
     """
-    return (SHIELD_IMPACT_INTENSITY_TORPEDO if weapon_type == "torpedo"
+    if single_impact and weapon_type == "collision":
+        return SHIELD_IMPACT_INTENSITY_ROCK
+    return (SHIELD_IMPACT_INTENSITY_TORPEDO
+            if single_impact or weapon_type == "torpedo"
             else SHIELD_IMPACT_INTENSITY)
 
 SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
 SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
+SPARK_KIND_ROCK = 2      # grey-brown dust and grit, near-spherical (any hit on a rock)
 
-_SPARK_BASE_COUNT = {SPARK_KIND_PHASER: 6, SPARK_KIND_TORPEDO: 12}
+_SPARK_BASE_COUNT = {SPARK_KIND_PHASER: 6, SPARK_KIND_TORPEDO: 12,
+                     SPARK_KIND_ROCK: 10}
 _SPARK_CRITICAL_MULT = 1.5
 
 
@@ -207,7 +225,9 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              allow_hull_carve: bool = True,
              tangent=None, decal_radius: float | None = None,
              decal_dent: float = 0.0,
-             shield_point=None) -> None:
+             shield_point=None,
+             single_impact: bool = False,
+             shield_radius: float | None = None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     The two visuals are INDEPENDENT, and a partially-absorbed shot shows both:
@@ -240,6 +260,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     0 = scrape). `decal_radius` overrides `radius` for the DECAL ONLY —
     the carve and everything else keep `radius` (spec §3: `r_hit` also sets
     the subsystem catchment, so it must not carry the scuff size).
+
+    `single_impact` marks a one-push hit (a collision's closing impact) for
+    the single-impact shield seed; `shield_radius` overrides `radius` for the
+    SHIELD FLASH ONLY, for the same catchment reason as `decal_radius`.
     """
     # Deferred — engine.appc.hit_vfx imports Severity from this module,
     # so a module-level import here would be circular.
@@ -291,12 +315,13 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     (0.0, 0.0, 0.0, 0.0),
                     # Scaled by how much the shields actually took, so a nearly
                     # drained arc fades out instead of flashing like a full one.
-                    shield_impact_intensity(weapon_type) * _absorbed_fraction,
+                    shield_impact_intensity(weapon_type, single_impact)
+                    * _absorbed_fraction,
                     # The weapon's DamageRadiusFactor sizes the procedural
                     # splash (renderer/shield_state.h shield_splash_reach).
-                    # Callers with no weapon — collisions, splash damage —
-                    # pass 0, which clamps up to the reach floor.
-                    float(radius),
+                    # A collision impact passes `shield_radius`, sized to the
+                    # body that struck; everything else keeps `radius`.
+                    float(radius if shield_radius is None else shield_radius),
                 )
 
     # 1b. Hull / critical impact — fires whenever damage got PAST the shields.
@@ -499,6 +524,14 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
     spark_count, weapon_kind = spark_params(
         weapon_type=weapon_type, severity=severity,
         absorbed_hull=absorbed_hull)
+    from engine.rocks.rock import is_rock
+    if is_rock(ship):
+        # Dust and grit, not hot metal (rock-class spec §2: no hull arcing).
+        weapon_kind = SPARK_KIND_ROCK
+        if spark_count:
+            spark_count = _SPARK_BASE_COUNT[SPARK_KIND_ROCK]
+            if severity == Severity.CRITICAL:
+                spark_count = int(spark_count * _SPARK_CRITICAL_MULT)
     body_point = body_normal = None
     instance_id = None
     # Resolve the hull anchor for EVERY hit that can have one, not just

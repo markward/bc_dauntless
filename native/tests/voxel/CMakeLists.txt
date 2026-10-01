@@ -11,16 +11,21 @@ add_executable(voxel_tests
     dual_contour_test.cc
     distance_field_test.cc
     dhv_test.cc
+    dvox_test.cc
     hull_volume_cache_test.cc
     field_brush_test.cc
     field_atlas_test.cc
     hull_connectivity_test.cc
+    catalogue_volume_agreement_test.cc
 )
-target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
+target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main
+    nlohmann_json::nlohmann_json)
 target_compile_definitions(voxel_tests PRIVATE
     OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
 target_include_directories(voxel_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/native/tests)  # support/content_root.h
+    ${CMAKE_SOURCE_DIR}/native/tests             # support/content_root.h
+    ${CMAKE_SOURCE_DIR}/native/tests/assets/cpu  # gltf_fixture.h
+)
 
 # Block parsers in libnif.a self-register via static initializers. Without
 # force-load the linker drops object files not otherwise referenced and the

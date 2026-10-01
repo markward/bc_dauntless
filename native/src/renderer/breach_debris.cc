@@ -2,6 +2,14 @@
 
 namespace renderer {
 
+// Rock debris (spec §2): dust and grit, never glowing hull fragments. Applied
+// to both emitters in place of the hull-metal / hot-spark keys below when
+// surface_is_rock is set.
+constexpr ParticleKey kRockChunk0{0.0f, 0.f, 0.42f, 0.38f, 0.33f};
+constexpr ParticleKey kRockChunk1{1.0f, 0.f, 0.26f, 0.24f, 0.22f};
+constexpr ParticleKey kRockGrit0 {0.0f, 0.f, 0.50f, 0.46f, 0.40f};
+constexpr ParticleKey kRockGrit1 {1.0f, 0.f, 0.30f, 0.28f, 0.25f};
+
 // Per active breach event we emit TWO billboard emitters that share the breach
 // origin/direction but read very differently:
 //   [0] hull chunks — a few grey SQUARE bits, alpha-blended, drift+fade ~10s.
@@ -10,7 +18,8 @@ namespace renderer {
 std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
     const scenegraph::BreachEventRing& ring,
     scenegraph::InstanceId             instance_id,
-    float                              now) {
+    float                              now,
+    bool                               surface_is_rock) {
 
     std::vector<ParticleEmitterDescriptor> out;
     for (const auto& ev : ring.slots()) {
@@ -66,8 +75,13 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.alpha_keys[1] = ParticleKey{0.85f, 1.0f};
             d.alpha_keys[2] = ParticleKey{1.0f,  0.0f};
             d.num_color_keys = 2;  // warm grey -> cool grey
-            d.color_keys[0] = ParticleKey{0.0f, 0.f, 0.45f, 0.38f, 0.32f};
-            d.color_keys[1] = ParticleKey{1.0f, 0.f, 0.22f, 0.22f, 0.24f};
+            if (surface_is_rock) {
+                d.color_keys[0] = kRockChunk0;
+                d.color_keys[1] = kRockChunk1;
+            } else {
+                d.color_keys[0] = ParticleKey{0.0f, 0.f, 0.45f, 0.38f, 0.32f};
+                d.color_keys[1] = ParticleKey{1.0f, 0.f, 0.22f, 0.22f, 0.24f};
+            }
             d.seed = seed01((ev.seed ^ 0x9e3779b97f4a7c15ull)
                                     ^ 0x517cc1b727220a95ull);
             d.texture_path = "data/square.tga";
@@ -102,8 +116,13 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.alpha_keys[0] = ParticleKey{0.0f, 1.0f};
             d.alpha_keys[1] = ParticleKey{1.0f, 0.0f};
             d.num_color_keys = 2;  // hot orange -> cooling red (additive = bright)
-            d.color_keys[0] = ParticleKey{0.0f, 0.f, 1.0f, 0.55f, 0.12f};
-            d.color_keys[1] = ParticleKey{1.0f, 0.f, 0.7f, 0.18f, 0.02f};
+            if (surface_is_rock) {
+                d.color_keys[0] = kRockGrit0;
+                d.color_keys[1] = kRockGrit1;
+            } else {
+                d.color_keys[0] = ParticleKey{0.0f, 0.f, 1.0f, 0.55f, 0.12f};
+                d.color_keys[1] = ParticleKey{1.0f, 0.f, 0.7f, 0.18f, 0.02f};
+            }
             d.seed = seed01((ev.seed ^ 0xa24baed4963ee407ull)
                                     ^ 0x2545f4914f6cdd1dull);
             d.texture_path = "data/spark.tga";

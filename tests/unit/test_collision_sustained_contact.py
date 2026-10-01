@@ -218,3 +218,94 @@ def test_grind_contact_is_refined_to_the_mesh_like_an_impact(monkeypatch):
     for _s, _hp, n in captured:
         assert (n.x, n.y, n.z) == (0.0, 0.0, 1.0), (
             f"grind used normal {n}, not the mesh surface normal")
+
+
+# ── Negligible grinds (tuned after live test 2026-10-01) ─────────────────────
+# A rock breakup's overlapping siblings ground at 1e-13..1e-12 damage per
+# frame -- float noise -- and every one of those calls spawned hit VFX, smoke
+# and a decal. A grind whose damage RATE (damage / dt) is below
+# kGrindMinDamageRate hull points per second applies nothing at all, ships
+# included. A rate, not a per-call amount: tick_collisions runs per render
+# frame, so a per-call cutoff would drop calibrated grinds at high frame rates.
+
+
+def _sliding(slip_gups, **kw):
+    """A Galaxy pair (mu = 60) in contact, b sliding tangentially past a."""
+    a = _ship(0.0, **kw)
+    b = _ship(1.5, **kw)
+    b.SetVelocity(TGPoint3(0.0, slip_gups, 0.0))
+    return a, b
+
+
+def test_grind_rate_threshold_dial():
+    from engine.appc import collisions
+    assert collisions.kGrindMinDamageRate == 1.0
+
+
+@pytest.mark.parametrize("hz", [60.0, 144.0])
+@pytest.mark.parametrize("slip", [0.5, 0.05])   # calibrated grind, docking nudge
+def test_calibrated_grinds_survive_at_any_frame_rate(damage_calls, hz, slip):
+    """COLLISION_GRIND_COEFF's calibration cases: 0.5 GU/s (75 pt/s) and the
+    0.05 GU/s docking nudge (7.5 pt/s) -- 0.52 and 0.052 per frame at 144 Hz,
+    under a per-call 1.0 but well above a 1.0 pt/s rate."""
+    a, b = _sliding(slip)
+    _grind(a, b, frames=int(hz), dt=1.0 / hz)
+    total = sum(d for _s, d in damage_calls)
+    assert total == pytest.approx(2.5 * 60.0 * slip * 2, rel=1e-6)  # both hulls, 1 s
+
+
+def test_float_noise_grind_calls_no_apply_hit(damage_calls):
+    a, b = _sliding(1e-12)
+    _grind(a, b, frames=120)
+    assert damage_calls == []
+
+
+def _real_pair(slip):
+    import App
+    from tests.unit.test_rock_class import _make
+    a = _make(App.GENUS_SHIP)
+    b = _make(App.GENUS_SHIP)
+    for s, x in ((a, 0.0), (b, 1.5)):
+        s.SetRadius(1.0)
+        s.SetTranslateXYZ(x, 0.0, 0.0)
+        s.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    b.SetVelocity(TGPoint3(0.0, slip, 0.0))
+    return a, b
+
+
+def _vfx_spy(monkeypatch):
+    from engine.appc import hit_vfx
+    spawns = []
+    real = hit_vfx.spawn
+    monkeypatch.setattr(hit_vfx, "spawn",
+                        lambda *a, **k: spawns.append(1) or real(*a, **k))
+    return spawns
+
+
+def test_float_noise_grind_spawns_no_hit_vfx(monkeypatch):
+    spawns = _vfx_spy(monkeypatch)
+    a, b = _real_pair(1e-12)
+    _grind(a, b, frames=60)
+    assert spawns == []
+
+
+def test_grind_above_threshold_behaves_exactly_as_before(monkeypatch):
+    """Same scenario with the threshold at 0 (the old code) and at its dial:
+    identical apply_hit calls, and hit VFX still spawn."""
+    import engine.appc.collisions as collisions
+    import engine.appc.combat as combat
+    spawns = _vfx_spy(monkeypatch)
+    real_apply = combat.apply_hit
+    runs = []
+    for threshold in (0.0, collisions.kGrindMinDamageRate):
+        monkeypatch.setattr(collisions, "kGrindMinDamageRate", threshold)
+        calls = []
+        monkeypatch.setattr(
+            combat, "apply_hit",
+            lambda ship, dmg, *a, **k: calls.append(dmg)
+            or real_apply(ship, dmg, *a, **k))
+        a, b = _real_pair(2.0)
+        _grind(a, b, frames=30)
+        runs.append(calls)
+    assert runs[0] and runs[0] == runs[1]
+    assert spawns

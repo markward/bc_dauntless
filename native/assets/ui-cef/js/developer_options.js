@@ -33,6 +33,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'normal_maps'});
         out.push({kind: 'ctrl', target: 'normal_flip_g'});
         out.push({kind: 'ctrl', target: 'normal_strength'});
+        out.push({kind: 'ctrl', target: 'rock_catalogue'});
     }
     return out;
 }
@@ -144,6 +145,8 @@ function _doRenderLightingBody(state, focusables) {
     html += _doValueRow('Normal Map Strength', 'normal_strength',
                         Number(s.normal_strength).toFixed(1) + '×',
                         isFoc('normal_strength'));
+    html += _doToggleRow('Catalogue Rocks (off = stock BC; applies to rocks loaded after toggling)',
+                         'rock_catalogue', s.rock_catalogue, isFoc('rock_catalogue'));
     return html;
 }
 

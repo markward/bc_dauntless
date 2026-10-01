@@ -401,6 +401,27 @@ class ObjectClass(TGEventHandlerObject):
         """
         get_store().set_rotation(*self._xform, matrix.as_tuple())
 
+    def RandomOrientation(self) -> None:
+        """SDK ObjectClass_RandomOrientation (Multi1.py places every asteroid
+        with it). A uniform random rotation (Shoemake's quaternion method)
+        drawn from App.g_kSystemWrapper.GetRandomNumber, so a mission that
+        seeds the wrapper (Multi1: SetRandomSeed(42)) gets the same field
+        every run. The draw sequence is ours, not BC's."""
+        import math
+        import App
+        n = 1 << 24
+        rnd = App.g_kSystemWrapper.GetRandomNumber
+        u1, u2, u3 = rnd(n) / n, rnd(n) / n, rnd(n) / n
+        a, b = math.sqrt(1.0 - u1), math.sqrt(u1)
+        x, y = a * math.sin(2 * math.pi * u2), a * math.cos(2 * math.pi * u2)
+        z, w = b * math.sin(2 * math.pi * u3), b * math.cos(2 * math.pi * u3)
+        m = TGMatrix3()
+        m.set_from_tuple((
+            1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+            2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+            2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)))
+        self.SetMatrixRotation(m)
+
     def GetRotation(self) -> TGMatrix3:
         result = TGMatrix3()
         result.set_from_tuple(get_store().get_rotation(*self._xform))
@@ -1032,8 +1053,13 @@ class DamageableObject(PhysicsObjectClass):
         _route_zero_crossing(self, subsystem, cur > 0.0 and new_cond <= 0.0)
         if new_cond <= 0.0 and _is_critical(subsystem) \
                 and not self.IsDying() and not self.IsDead():
-            from engine.appc import ship_death
-            ship_death.begin(self, killer=source)
+            from engine.rocks.rock import is_rock
+            if is_rock(self):
+                from engine.rocks import death as rock_death
+                rock_death.begin(self, killer=source)
+            else:
+                from engine.appc import ship_death
+                ship_death.begin(self, killer=source)
 
     def DestroySystem(self, subsystem) -> None:
         """Force a subsystem to zero condition (mirrors SDK
@@ -1049,8 +1075,13 @@ class DamageableObject(PhysicsObjectClass):
         _route_zero_crossing(self, subsystem, cur > 0.0)
         if _is_critical(subsystem) \
                 and not self.IsDying() and not self.IsDead():
-            from engine.appc import ship_death
-            ship_death.begin(self)
+            from engine.rocks.rock import is_rock
+            if is_rock(self):
+                from engine.rocks import death as rock_death
+                rock_death.begin(self)
+            else:
+                from engine.appc import ship_death
+                ship_death.begin(self)
 
 
 class ObjectGroup(TGEventHandlerObject):

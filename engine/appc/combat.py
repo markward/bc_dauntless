@@ -131,7 +131,9 @@ def _resolve_hit_point(ship_instances, ship,
     if not sphere_fallback:
         return fallback_point, None
     center = ship.GetWorldLocation()
-    radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+    # The sphere as drawn: GetRadius() x GetScale() (collisions.world_radius).
+    from engine.appc.collisions import world_radius
+    radius = world_radius(ship) if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
                              center, radius)
     if entry is not None:
@@ -614,7 +616,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
               bypass_shields: bool = False,
               shield_point=None,
               hit_tangent=None, decal_radius: float | None = None,
-              decal_dent: float = 0.0) -> None:
+              decal_dent: float = 0.0,
+              single_impact: bool = False,
+              shield_radius: float | None = None) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -685,6 +689,11 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               catchment / carve / WeaponHitEvent.
         decal_dent           — collision scuff impact weight: 1 crumples
                               (facets + dish), 0 scrapes (scratches).
+        single_impact        — a one-push hit (a collision's closing impact):
+                              the shield flash takes the single-impact seed,
+                              not the per-tick one. See hit_feedback.dispatch.
+        shield_radius        — shield-flash size override (DRF units); like
+                              decal_radius, never feeds the catchment.
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -866,6 +875,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             shield_point=shield_point,
             tangent=hit_tangent, decal_radius=decal_radius,
             decal_dent=decal_dent,
+            single_impact=single_impact, shield_radius=shield_radius,
         )
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)
@@ -909,7 +919,10 @@ def bubble_bound_radius(ship) -> float:
     half-extents are bounded by the bounding-sphere radius.
     """
     try:
-        radius = float(ship.GetRadius())
+        # Scaled (GetRadius x GetScale): it must contain the projectile loop's
+        # hull-sphere test, which uses the scaled radius.
+        from engine.appc.collisions import world_radius
+        radius = world_radius(ship)
     except Exception:
         # INFINITY, not 0.0. This bound is only ever used to REJECT a pair, so
         # the safe failure direction is "never reject". A 0.0 fallback culls

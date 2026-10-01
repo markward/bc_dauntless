@@ -83,6 +83,23 @@ def iter_ships(*, verbose: bool = False) -> Iterable:
                 yield obj
 
 
+def iter_non_rock_ships(*, verbose: bool = False) -> Iterable:
+    """iter_ships() minus rocks: the roster for the AI, motion and subsystem
+    loops, which a rock never pays for (rock-class spec §1)."""
+    from engine.rocks.rock import RockClass
+    for ship in iter_ships(verbose=verbose):
+        if not isinstance(ship, RockClass):
+            yield ship
+
+
+def iter_rocks() -> Iterable:
+    """Walk only the rocks (RockClass instances) among every live ship."""
+    from engine.rocks.rock import RockClass
+    for ship in iter_ships():
+        if isinstance(ship, RockClass):
+            yield ship
+
+
 def iter_active_ships(*, verbose: bool = False) -> Iterable:
     """Walk ShipClass objects in the ACTIVE set only (see active_set) — the
     RENDER roster. Falls back to every set when no active set is determinable

@@ -205,6 +205,12 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     if player is not None and not player_kept:
         game.SetPlayer(None)
 
+    # Rock deaths in flight: a dying rock would be retired (by name, from a
+    # set that is gone) in the next mission, and its queued chunk / VFX
+    # specs spawned there. Same reset the dev swap does (_drain_pending_swap).
+    from engine.rocks import death as rock_death
+    rock_death.reset()
+
     host_loop._reset_timers(keep=survivors)
     host_loop._reset_action_registry(keep=survivors)
     _drop_event_handlers(gone)

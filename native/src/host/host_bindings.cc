@@ -91,6 +91,7 @@
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
 #include <assets/decal_override.h>
+#include <assets/hull_source.h>
 #include <assets/mesh_fix.h>
 #include <assets/model_compose.h>
 #include <assets/texture.h>
@@ -549,7 +550,8 @@ scenegraph::ModelHandle load_model_impl(
     const std::string& nif_path,
     const py::object& texture_search_path,
     const py::object& texture_replacements,
-    const py::object& decals) {
+    const py::object& decals,
+    float scale) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -614,6 +616,16 @@ scenegraph::ModelHandle load_model_impl(
         }
     }
 
+    // Uniform import scale (glTF only): folded into rep_key only when it
+    // differs from the default, so every existing key (NIF loads, and glTF
+    // loads at scale 1.0) stays byte-identical. Formatted by the same helper
+    // as Model::source (%.6g) -- std::to_string's %f collapses tiny scales
+    // (1e-7 and 2e-7 both "0.000000") onto one handle.
+    if (scale != 1.0f) {
+        const std::string src = assets::hull_source_string(nif_path, scale);
+        rep_key += "|scale:" + src.substr(src.rfind("#s=") + 3);
+    }
+
     // Dedupe by (nif_path, replacements, decals): callers that load the same
     // NIF + registry + decal set for multiple ships get the same handle and
     // the underlying assets::AssetCache::load isn't even called a second
@@ -641,7 +653,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -1222,11 +1234,13 @@ void frame() {
                     [&](const scenegraph::Instance& inst) {
                         if (inst.breach_events.count() == 0) return;
                         auto vent = renderer::build_venting_descriptors(
-                            inst.breach_events, inst.id, g_decal_game_time);
+                            inst.breach_events, inst.id, g_decal_game_time,
+                            inst.surface_is_rock);
                         all_emitters.insert(all_emitters.end(),
                                             vent.begin(), vent.end());
                         auto debris = renderer::build_debris_descriptors(
-                            inst.breach_events, inst.id, g_decal_game_time);
+                            inst.breach_events, inst.id, g_decal_game_time,
+                            inst.surface_is_rock);
                         all_emitters.insert(all_emitters.end(),
                                             debris.begin(), debris.end());
                     });
@@ -2078,7 +2092,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("load_model", &load_model_impl,
           py::arg("nif_path"), py::arg("texture_search_path"),
           py::arg("texture_replacements") = py::none(),
-          py::arg("decals") = py::none());
+          py::arg("decals") = py::none(),
+          py::arg("scale") = 1.0f);
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -2816,6 +2831,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Fresnel rim intensity for a rim-eligible instance. Authored by "
           "the hardpoint stats' 'SpecularCoef'; defaults to 0.1 when the "
           "ship does not define one.");
+    m.def("set_surface_rock",
+          [](scenegraph::InstanceId id, bool rock) {
+              g_world.set_surface_rock(id, rock);
+          },
+          py::arg("id"), py::arg("rock"),
+          "Mark an instance as rock: rock craters, no venting, grey debris.");
     m.def("set_emissive_scale",
           [](scenegraph::InstanceId id, float scale) {
               g_world.set_emissive_scale(id, scale);
@@ -2860,7 +2881,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none(), py::none());
+                                            py::none(), py::none(), 1.0f);
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
@@ -4696,6 +4717,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "union of every CPU-side mesh vertex position in the model. (0,0,0) "
           "tuples on invalid handle or model with no retained CPU data.");
 
+    // Model::source -- the hull-volume cache key ("<path>" or
+    // "<path>#s=<scale %.6g>"). Empty for an invalid handle.
+    m.def("model_source",
+          [](scenegraph::ModelHandle h) -> std::string {
+              if (h == 0 || h > g_loaded_models.size()) return {};
+              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              return model ? model->source.string() : std::string{};
+          },
+          py::arg("model"),
+          "The loaded model's Model::source string (the .dhv/.dvox cache "
+          "key): the bare path, or '<path>#s=<scale>' for a scaled glTF. "
+          "Empty string for an invalid handle.");
+
+    // The one formatter for a scaled source string (float32, %.6g). Python
+    // must never format the scale itself -- the boot pre-bake's target has
+    // to be byte-identical to the Model::source the runtime keys on.
+    m.def("hull_source_string",
+          [](const std::string& path, float scale) -> std::string {
+              return assets::hull_source_string(path, scale);
+          },
+          py::arg("path"), py::arg("scale"),
+          "assets::hull_source_string: '<path>' when scale == 1.0, else "
+          "'<path>#s=<scale as float32 %.6g>'. Pure; no GL context needed.");
+
     m.def("model_bounds",
           [](scenegraph::ModelHandle h)
               -> std::vector<std::tuple<float, float, float, float>> {
@@ -5116,6 +5161,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           cinst->rim_eligible = inst->rim_eligible;
                           cinst->rim_strength = inst->rim_strength;
                           cinst->emissive_scale = inst->emissive_scale;
+                          cinst->surface_is_rock = inst->surface_is_rock;
                       }
                       if (g_instance_field_cache->split(id, child, c.cell_list)) {
                           d["instance_id"] = child;

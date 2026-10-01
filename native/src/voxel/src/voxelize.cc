@@ -1,6 +1,8 @@
 // native/src/voxel/src/voxelize.cc
 #include <voxel/voxelize.h>
 #include <assets/model.h>
+#include <assets/gltf.h>
+#include <assets/hull_source.h>
 #include <nif/block.h>
 #include <nif/file.h>
 #include <algorithm>
@@ -286,6 +288,31 @@ std::vector<Tri> collect_hull_triangles_from_nif(const nif::File& f) {
             accumulate_nif_tris(f, links, i, InspMat4::identity(), visited, out);
     }
     return out;
+}
+
+std::vector<Tri> collect_hull_triangles_from_source(
+        const std::filesystem::path& source) {
+    const assets::HullSource h = assets::split_hull_source(source);
+    if (!std::filesystem::exists(h.path)) return {};
+
+    if (assets::is_gltf_path(h.path)) {
+        const assets::gltf::CpuScene scene = assets::gltf::load_cpu(h.path, h.scale);
+        std::vector<Tri> out;
+        for (const auto& mesh : scene.meshes) {
+            for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                out.push_back({mesh.vertices[mesh.indices[i]].position,
+                               mesh.vertices[mesh.indices[i + 1]].position,
+                               mesh.vertices[mesh.indices[i + 2]].position});
+            }
+        }
+        return out;
+    }
+
+    nif::File f = nif::load(h.path);
+    std::vector<Tri> tris = collect_hull_triangles_from_nif(f);
+    if (h.scale != 1.0f)
+        for (auto& t : tris) { t.a *= h.scale; t.b *= h.scale; t.c *= h.scale; }
+    return tris;
 }
 
 void carve_sphere(VoxelVolume& v, glm::vec3 center_body, float radius) {

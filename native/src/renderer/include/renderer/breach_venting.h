@@ -14,10 +14,12 @@ namespace renderer {
 /// stop_age = kVentLife (emission cuts off at stop_age, per ParticlePass model).
 ///
 /// Returns an empty vector when no events are active, or when all active events
-/// have aged past kVentLife.
+/// have aged past kVentLife. A rock (surface_is_rock) has no pressurised hull
+/// to vent, so it always returns an empty vector.
 std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
     const scenegraph::BreachEventRing& ring,
     scenegraph::InstanceId             instance_id,
-    float                              now);
+    float                              now,
+    bool                               surface_is_rock = false);
 
 } // namespace renderer

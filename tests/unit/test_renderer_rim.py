@@ -25,6 +25,13 @@ def test_set_rim_strength_forwards(monkeypatch):
     fake.set_rim_strength.assert_called_once_with(7, 0.55)
 
 
+def test_set_surface_rock_forwards(monkeypatch):
+    fake = MagicMock()
+    monkeypatch.setattr(renderer, "_h", fake)
+    renderer.set_surface_rock(7, True)
+    fake.set_surface_rock.assert_called_once_with(7, True)
+
+
 def test_rim_strength_uses_specular_coef_when_authored():
     """loadspacehelper forwards the hardpoint stats' 'SpecularCoef' via
     SetSpecularKs; the rim intensity must read it back."""

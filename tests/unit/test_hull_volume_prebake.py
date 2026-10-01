@@ -250,11 +250,17 @@ def test_real_sdk_discovery_finds_the_starbase_and_the_galaxy():
     # here resolves to an alias loader there instead.
     before = set(sys.modules)
     try:
-        targets = {p.name: r for p, r in hull_volume.discover_bake_targets()}
+        all_targets = hull_volume.discover_bake_targets()
+        targets = {p.name: r for p, r in all_targets if isinstance(p, Path)}
         assert targets.get("Galaxy.nif") == 10.0
         assert targets.get("FedStarbase.nif") == 15.0
-        for p, _ in hull_volume.discover_bake_targets():
-            assert p.is_absolute() and p.is_file()
+        for p, _ in all_targets:
+            f = hull_volume._hull_file(p)
+            assert f.is_absolute() and f.is_file()
+        # Stock asteroids (SetDamageResolution 10) pre-bake catalogue rocks
+        # while the catalogue is enabled (the default).
+        rocks = [(p, r) for p, r in all_targets if isinstance(p, str)]
+        assert rocks and all("#s=" in p and r == 10.0 for p, r in rocks)
     finally:
         for name in set(sys.modules) - before:
             if name == "ships" or name.startswith("ships."):
@@ -302,3 +308,81 @@ def test_run_calls_the_prebake_after_sdk_and_foundation_setup():
     assert "_start_hull_prebake" in names
     assert names.index("_start_hull_prebake") > names.index("_setup_sdk")
     assert names.index("_start_hull_prebake") > names.index("load_plugins")
+
+
+# ── rock catalogue: stock asteroids pre-bake the catalogue rocks too ─────
+#
+# A stock asteroid NIF realises as a catalogue rock at the stock mesh's size
+# (engine/rocks/catalogue.py), so the runtime asks the cache for
+# "<rock>/lod0.gltf#s=<scale>", never the stock NIF. Measured cold bake of an
+# asteroid3-sized silicate major: ~3.9 s (Debug) -- so every rock the stock
+# asteroid could pick is pre-baked, at the stock asteroid's authored res.
+
+class _SourceStringRenderer(FakeRenderer):
+    def hull_source_string(self, path, scale):
+        return str(path) if scale == 1.0 else f"{path}#s={scale:.6g}"
+
+
+@pytest.fixture
+def asteroid_install(install, monkeypatch):
+    from engine.rocks import catalogue
+    saved = catalogue.enabled()
+    _write(install.sdk / "ships" / "Asteroid3.py", "# stub\n")
+    _write(install.sdk / "ships" / "Hardpoints" / "asteroid3h.py",
+           "A.SetDamageResolution(10.000000)\n")
+    _write(install.game / "data/Models/Misc/Asteroids/asteroid3.nif", "a" * 20)
+    install.modules["ships.Asteroid3"] = types.SimpleNamespace(
+        GetShipStats=lambda: {
+            "FilenameHigh": "data/Models/Misc/Asteroids/asteroid3.nif",
+            "HardpointFile": "asteroid3h"})
+    r = _SourceStringRenderer()
+    monkeypatch.setattr(hull_volume, "_renderer", r)
+    catalogue.set_enabled(True)
+    yield types.SimpleNamespace(install=install, renderer=r)
+    catalogue.set_enabled(saved)
+
+
+def _expected_rock_sources(r, stock):
+    from engine.rocks import catalogue
+    majors = [k for k in catalogue.load()
+              if k.kind == "major" and k.family == "silicate"]
+    assert majors, "committed catalogue has silicate majors"
+    return {r.hull_source_string(k.lod_paths[0], catalogue.load_scale(k, stock))
+            for k in majors}
+
+
+def test_discovery_adds_every_rock_a_stock_asteroid_can_pick(asteroid_install):
+    targets = hull_volume.discover_bake_targets()
+    expected = _expected_rock_sources(asteroid_install.renderer, "asteroid3.nif")
+    rock_targets = {t for t in targets if isinstance(t[0], str)}
+    assert rock_targets == {(s, 10.0) for s in expected}
+    # The stock NIF itself still pre-bakes (the toggle-off path).
+    stock = asteroid_install.install.game / "data/Models/Misc/Asteroids/asteroid3.nif"
+    assert (stock, 10.0) in targets
+
+
+def test_discovery_adds_no_rocks_when_catalogue_disabled(asteroid_install):
+    from engine.rocks import catalogue
+    catalogue.set_enabled(False)
+    targets = hull_volume.discover_bake_targets()
+    assert not any(isinstance(p, str) for p, _ in targets)
+
+
+def test_discovery_adds_no_rocks_for_a_mod_served_asteroid(asteroid_install, monkeypatch):
+    """A mod-served asteroid NIF is never redirected (R13), so no rock bakes."""
+    install = asteroid_install.install
+    mod_nif = install.game.parent / "mods" / "M" / "data/Models/Misc/Asteroids/asteroid3.nif"
+    _write(mod_nif, "m" * 20)
+    real = paths.game_asset
+    monkeypatch.setattr(paths, "game_asset",
+                        lambda rel: mod_nif if rel.endswith("asteroid3.nif") else real(rel))
+    targets = hull_volume.discover_bake_targets()
+    assert not any(isinstance(p, str) for p, _ in targets)
+
+
+def test_prebake_worker_bakes_rock_source_strings(asteroid_install):
+    t = hull_volume.prebake_all()
+    t.join(timeout=10)
+    baked = {p for p, _ in asteroid_install.renderer.calls}
+    expected = _expected_rock_sources(asteroid_install.renderer, "asteroid3.nif")
+    assert expected <= baked

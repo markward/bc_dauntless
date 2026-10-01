@@ -26,6 +26,13 @@ namespace renderer {
 class Pipeline;
 class CarveFieldCache;
 
+/// GL id of `model`'s first usable BASE-stage texture: walks `model.meshes`
+/// in order, following `mesh.material_index() -> materials[i].stages[Base]
+/// .texture_index -> textures[idx].id()`, and returns the first non-zero id.
+/// Every index is range-checked; 0 when no mesh has one. Used by render() to
+/// give a rock's crater interior the rock's own surface (rock-class Task 7).
+unsigned int find_base_texture_id(const assets::Model& model);
+
 /// Breach pass — real-hull-mesh interior surface (raymarched-breach-interior
 /// Task 3, round 3; supersedes both the hull-breach-2b/2c per-carve sphere
 /// scoop AND round 1/2's synthetic box proxy + entry search).
@@ -164,6 +171,12 @@ public:
     /// severance map, threaded down to draw_model_positions_only so the hull
     /// proxy is drawn at the pose the opaque pass drew. Without it a breach on
     /// a raised wing is rendered against where that wing sits at REST.
+    ///
+    /// `surface_is_rock` (scenegraph::Instance::surface_is_rock) switches the
+    /// crater interior from the pass-global Damage frames to `rock_tex` -- the
+    /// rock's own base-stage texture (find_base_texture_id), darkened -- and
+    /// suppresses the molten-rim emissive. `rock_tex` 0 on a rock falls back
+    /// to a flat rock colour. Ignored (both) when `surface_is_rock` is false.
     void draw_instance(std::uintptr_t instance_key,
                        const voxel::VoxelVolume& fill,
                        const InstanceFieldCache::Entry& field,
@@ -178,7 +191,9 @@ public:
                        float ambient_scale = 1.0f,
                        const scenegraph::HullCarveField* carve = nullptr,
                        const std::unordered_map<int, glm::mat4>*
-                           node_overrides = nullptr);
+                           node_overrides = nullptr,
+                       bool surface_is_rock = false,
+                       unsigned int rock_tex = 0);
 
     /// Number of PROXY SUBMISSIONS this pass instance has issued so far —
     /// one per `render()`/`draw_instance()` call that actually draws
@@ -240,7 +255,9 @@ private:
                          const scenegraph::HullCarveField* carve,  // tracked carve ring, or null
                          bool interior_shell = false,  // true = back-face interior shell
                          const std::unordered_map<int, glm::mat4>*
-                             node_overrides = nullptr);
+                             node_overrides = nullptr,
+                         bool surface_is_rock = false,  // crater = rock, not hull
+                         unsigned int rock_tex = 0);    // rock base texture (unit 4)
 
     // Draw the hull's BACK faces under the same stencil: the inside of the
     // plating on the far side of a hole. Without it a breach whose carve
@@ -266,7 +283,9 @@ private:
                              float ambient_scale,
                              const scenegraph::HullCarveField* carve,
                              const std::unordered_map<int, glm::mat4>*
-                                 node_overrides = nullptr);
+                                 node_overrides = nullptr,
+                             bool surface_is_rock = false,
+                             unsigned int rock_tex = 0);
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.

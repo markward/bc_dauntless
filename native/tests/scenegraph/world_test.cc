@@ -120,6 +120,15 @@ TEST(World, SetRimEligibleUpdatesField) {
     EXPECT_FALSE(w.get(id)->rim_eligible);
 }
 
+TEST(World, SurfaceRockDefaultsFalseAndSets) {
+    scenegraph::World w;
+    const auto id = w.create_instance(0);
+    ASSERT_NE(w.get(id), nullptr);
+    EXPECT_FALSE(w.get(id)->surface_is_rock);
+    w.set_surface_rock(id, true);
+    EXPECT_TRUE(w.get(id)->surface_is_rock);
+}
+
 TEST(World, CreateInstanceStampsIdOntoInstance) {
     scenegraph::World world;
     scenegraph::InstanceId id = world.create_instance(0);

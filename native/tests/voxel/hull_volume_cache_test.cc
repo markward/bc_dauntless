@@ -11,6 +11,7 @@
 
 #include <voxel/hull_volume_cache.h>
 #include <voxel/dhv.h>
+#include <assets/hull_source.h>
 
 #include <chrono>
 #include <cstdint>
@@ -19,6 +20,8 @@
 #include <sstream>
 #include <system_error>
 #include <thread>
+
+#include "gltf_fixture.h"
 
 namespace {
 
@@ -336,4 +339,12 @@ TEST(EnsureDhv, MissingSourceReportsFalse) {
                                    scratch_root() / "nope.nif", 10.0f, 2.0f))
         << "nothing to bake from: the worker must be able to count this "
            "as a skip rather than a success";
+}
+
+TEST(HullVolumeCache, HullVolumeCacheBakesGltf) {
+    auto root = tmpdir("hvc_root"); fs::create_directories(root);
+    auto p = write_cube_fixture(tmpdir("hvc_gltf"), 1.75f * 50.0f, nullptr);   // 50 model units half-extent
+    voxel::HullVolumeCache hvc(root);
+    const auto& f = hvc.get(assets::hull_source_string(p, 1.0f), 10.0f, 2.0f);
+    EXPECT_FALSE(f.empty());                           // today's nif::load path would yield EMPTY
 }

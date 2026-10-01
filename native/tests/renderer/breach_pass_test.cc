@@ -439,6 +439,50 @@ protected:
         return best;
     }
 
+    // A 1x1 RGBA texture of one solid colour, freed in TearDown. Stands in
+    // for a rock's base-stage texture: every triplanar sample reads the same
+    // colour, so the crater interior's hue is exactly what the pass did to it.
+    unsigned int make_solid_texture(unsigned char r, unsigned char g, unsigned char b) {
+        const unsigned char px[4] = {r, g, b, 255};
+        GLuint t = 0;
+        glGenTextures(1, &t);
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        field_textures_.push_back(t);
+        return t;
+    }
+
+    struct MeanRgb { float r = 0.f, g = 0.f, b = 0.f; int lit = 0; };
+
+    // Mean RGB over the LIT (non-black) pixels of the inner half of the
+    // framebuffer -- the same region read_inner_max() scans. Averaging only
+    // lit pixels keeps the interior's colour from being diluted by however
+    // much background happens to share the region.
+    MeanRgb read_inner_mean_rgb() const {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        std::vector<unsigned char> buf(kW * kH * 4);
+        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        MeanRgb m;
+        double r = 0, g = 0, b = 0;
+        for (int y = kH / 4; y < 3 * kH / 4; ++y) {
+            for (int x = kW / 4; x < 3 * kW / 4; ++x) {
+                const int i = (y * kW + x) * 4;
+                if (buf[i] + buf[i + 1] + buf[i + 2] == 0) continue;
+                r += buf[i]; g += buf[i + 1]; b += buf[i + 2];
+                ++m.lit;
+            }
+        }
+        if (m.lit > 0) {
+            m.r = static_cast<float>(r / m.lit);
+            m.g = static_cast<float>(g / m.lit);
+            m.b = static_cast<float>(b / m.lit);
+        }
+        return m;
+    }
+
     long long read_frame_sum() const {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
         std::vector<unsigned char> buf(kW * kH * 4);
@@ -1780,4 +1824,141 @@ TEST_F(BreachPassGLTest, SeveredNodeOverrideCollapsesOnlyThatNodesGeometry) {
            "collapse its geometry to a point with no rasterized area -- it "
            "must NOT still draw at its rest-pose position. child_max="
         << child_max;
+}
+
+// ── Rock crater interiors (rock-class Task 7) ────────────────────────────
+// A rock's crater shows the rock's OWN base-stage texture, darkened, with no
+// molten rim -- not the hull-interior Damage frames. See breach.frag's
+// u_interior_is_rock.
+
+TEST(FindBaseTextureId, ReturnsFirstMeshBaseStageTexture) {
+    assets::Model m;   // no meshes, no materials: nothing to find
+    EXPECT_EQ(renderer::find_base_texture_id(m), 0u);
+}
+
+TEST_F(BreachPassGLTest, FindBaseTextureIdReadsMaterialBaseStage) {
+    // make_surface_patch_model's mesh carries no material at all.
+    assets::Model m = make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    EXPECT_EQ(renderer::find_base_texture_id(m), 0u);
+
+    // Give it a material whose Base stage names a real texture: the mesh's
+    // material_index is -1, so a second, textured mesh is what must be found.
+    GLuint id = 0;
+    glGenTextures(1, &id);
+    m.textures.emplace_back(id, 1u, 1u, false);   // Texture owns + frees it
+    assets::Material mat;
+    mat.stages[static_cast<std::size_t>(assets::Material::StageSlot::Base)].texture_index = 0;
+    m.materials.push_back(mat);
+    assets::MeshCpu cpu;
+    cpu.material_index = 0;
+    for (int i = 0; i < 3; ++i) cpu.vertices.push_back({});
+    cpu.indices = {0, 1, 2};
+    m.meshes.push_back(assets::upload_mesh(cpu));
+    EXPECT_EQ(renderer::find_base_texture_id(m), static_cast<unsigned int>(id));
+
+    // An out-of-range texture index is guarded, not dereferenced.
+    m.materials[0].stages[static_cast<std::size_t>(assets::Material::StageSlot::Base)].texture_index = 7;
+    EXPECT_EQ(renderer::find_base_texture_id(m), 0u);
+}
+
+TEST_F(BreachPassGLTest, RockInteriorIgnoresDamageTexture) {
+    // Draw the same scene as a rock with a solid mid-grey base texture; the
+    // interior colour must not depend on the (animated) damage frame, must
+    // differ from the non-rock draw, and must stay grey.
+    const unsigned int grey = make_solid_texture(128, 128, 128);
+    auto draw = [&](bool rock, float age) {
+        clear_framebuffer();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        renderer::BreachPass pass;
+        voxel::VoxelVolume fill = solid_fill();
+        const voxel::DistanceField field = make_single_cavity_field();
+        const auto entry = make_field_entry(field);
+        const assets::Model patch =
+            make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+        scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+        mark_hull_cut();
+        pass.draw_instance(1, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                           age, glm::vec3(0.0f), 0.0f, test_lighting(),
+                           /*ambient_scale=*/1.0f, /*carve=*/nullptr,
+                           /*node_overrides=*/nullptr,
+                           rock, rock ? grey : 0u);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_inner_mean_rgb();
+    };
+    const auto rock_a = draw(true, scenegraph::kRimLife + 1.f);
+    const auto rock_b = draw(true, scenegraph::kRimLife + 1.f + 0.125f);  // next damage frame
+    const auto hull   = draw(false, scenegraph::kRimLife + 1.f);
+    ASSERT_GT(rock_a.lit, 0) << "rock interior drew nothing";
+    ASSERT_GT(hull.lit, 0) << "hull interior drew nothing";
+    EXPECT_NEAR(rock_a.r, rock_b.r, 2.0f);
+    EXPECT_NEAR(rock_a.g, rock_b.g, 2.0f);
+    EXPECT_GT(std::abs(rock_a.r - hull.r) + std::abs(rock_a.b - hull.b), 6.0f)
+        << "rock r,b=" << rock_a.r << "," << rock_a.b
+        << " hull r,b=" << hull.r << "," << hull.b
+        << " -- a rock crater must not shade like hull interior";
+    // Grey in, grey out: no channel dominates.
+    EXPECT_LT(std::abs(rock_a.r - rock_a.b), 8.0f)
+        << "rock r=" << rock_a.r << " b=" << rock_a.b;
+}
+
+TEST_F(BreachPassGLTest, RockHasNoMoltenRim) {
+    // A fresh breach (age 0, inside kRimLife) is brighter than a cold one on a
+    // hull (HotBreachBrighterThanCold). On a rock it must not be: rock does
+    // not glow molten. Same field/camera/fill/event as that test.
+    const voxel::DistanceField field = make_single_cavity_field();
+    const assets::Model patch = make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+    const unsigned int grey = make_solid_texture(128, 128, 128);
+
+    auto draw = [&](std::uintptr_t key, float age) {
+        clear_framebuffer();
+        mark_hull_cut();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        renderer::BreachPass pass;
+        voxel::VoxelVolume fill = rim_fill();
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(key, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                           age, kCavityHitPoint, 100.f,
+                           renderer::Lighting{}, 1.0f, nullptr, nullptr,
+                           /*surface_is_rock=*/true, grey);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        return read_frame_sum();
+    };
+    const long long cold_sum = draw(20, scenegraph::kRimLife + 1.f);
+    const long long hot_sum  = draw(21, 0.f);
+
+    // Mean per-pixel luminance (RGB sum / 3) may not rise by more than 3.
+    const double px = static_cast<double>(kW * kH);
+    EXPECT_LE(hot_sum / (3.0 * px), cold_sum / (3.0 * px) + 3.0)
+        << "hot rock sum=" << hot_sum << " cold rock sum=" << cold_sum
+        << " -- the molten-rim emissive must be suppressed on rocks";
+}
+
+TEST_F(BreachPassGLTest, RockWithNoBaseTextureUsesFlatWarmRockColour) {
+    // A rock whose model has no base texture (rock_tex 0) still draws its
+    // crater, in the flat warm rock colour (0.30, 0.28, 0.25) -- red above
+    // blue -- not the hull interior's blue-grey metal floor (blue above red).
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const auto entry = make_field_entry(field);
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    scenegraph::Camera cam = cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+    mark_hull_cut();
+    pass.draw_instance(1, fill, entry, patch, glm::mat4(1.0f), cam, *pipeline,
+                       scenegraph::kRimLife + 1.f, glm::vec3(0.0f), 0.0f, test_lighting(),
+                       1.0f, nullptr, nullptr, /*surface_is_rock=*/true, /*rock_tex=*/0u);
+    glFinish();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    const auto m = read_inner_mean_rgb();
+    ASSERT_GT(m.lit, 0) << "a textureless rock's crater drew nothing";
+    EXPECT_GT(m.r, m.b + 2.0f) << "r=" << m.r << " b=" << m.b;
 }
