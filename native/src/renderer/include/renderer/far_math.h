@@ -17,7 +17,7 @@ enum class Kind : std::uint8_t {
     ProceduralMinor,     // generator rock, catalogue fragment
 };
 
-// How much of each representation draws. Above p_min the three sum to 1.
+// How much of each representation draws. Above p_min the three sum to 1 for Explicit/ExplicitNoImpostor only; procedural kinds sum to 0 above their band.
 struct TierWeights { float mesh = 0.0f, impostor = 0.0f, speck = 0.0f; };
 
 TierWeights tier_weights(float p, Kind k, const TierDials& d);

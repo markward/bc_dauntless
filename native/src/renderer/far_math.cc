@@ -5,6 +5,14 @@
 namespace renderer::far {
 namespace {
 float sat(float x) { return std::clamp(x, 0.0f, 1.0f); }
+// Linear ramp from lo (0) to hi (1), clamped. A zero-width band (hi == lo,
+// reachable live by stepping the dev dials) would otherwise divide by zero
+// and NaN would sail straight through std::clamp; fall back to a hard step
+// (p >= hi => 1, else 0) instead.
+float band(float p, float lo, float hi) {
+    if (hi == lo) return p >= hi ? 1.0f : 0.0f;
+    return sat((p - lo) / (hi - lo));
+}
 // ∫ r^e dr from a to b (e may be -1).
 double int_pow(double a, double b, double e) {
     if (std::fabs(e + 1.0) < 1e-6) return std::log(b / a);
@@ -15,8 +23,8 @@ double int_pow(double a, double b, double e) {
 TierWeights tier_weights(float p, Kind k, const TierDials& d) {
     TierWeights w;
     if (!(p >= d.p_min)) return w;                         // haze / culled (NaN-safe)
-    const float f = sat((p - d.imp_lo) / (d.imp_hi - d.imp_lo));     // 1 = mesh
-    const float g = sat((p - d.speck_lo) / (d.speck_hi - d.speck_lo)); // 1 = not speck
+    const float f = band(p, d.imp_lo, d.imp_hi);     // 1 = mesh
+    const float g = band(p, d.speck_lo, d.speck_hi); // 1 = not speck
     switch (k) {
     case Kind::Explicit:
         w.mesh = f; w.impostor = (1.0f - f) * g; w.speck = 1.0f - g; break;

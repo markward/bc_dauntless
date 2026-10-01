@@ -67,6 +67,26 @@ TEST(FarMath, ProceduralRocksHaveNoMesh) {
     EXPECT_EQ(far::tier_weights(2.0f, far::Kind::ProceduralMinor, d).speck, 0.0f);
 }
 
+// A zero-width band (imp_hi == imp_lo and/or speck_hi == speck_lo, reachable
+// live by stepping the dev dials) must be a hard step, never 0/0 NaN.
+TEST(FarMath, ZeroWidthBandIsAHardStepNotNaN) {
+    far::TierDials d;
+    d.imp_hi = 12.0f; d.imp_lo = 12.0f;
+    d.speck_hi = 1.5f; d.speck_lo = 1.5f;
+    for (float p : {11.0f, 12.0f, 1.5f, 1.0f}) {
+        const auto w = far::tier_weights(p, far::Kind::Explicit, d);
+        EXPECT_TRUE(std::isfinite(w.mesh)) << p;
+        EXPECT_TRUE(std::isfinite(w.impostor)) << p;
+        EXPECT_TRUE(std::isfinite(w.speck)) << p;
+        EXPECT_NEAR(sum(w), 1.0f, 1e-6f) << p;
+    }
+    // At p == hi/lo exactly, the step should already read as "at or above".
+    auto w = far::tier_weights(12.0f, far::Kind::Explicit, d);
+    EXPECT_EQ(w.mesh, 1.0f);
+    w = far::tier_weights(1.5f, far::Kind::Explicit, d);
+    EXPECT_EQ(w.speck, 0.0f);  // 1.5 >= speck_hi==speck_lo => not speck (g == 1)
+}
+
 // Spec §1 distance table: 1080p, 35 deg vertical FOV => k ~= 1713.
 TEST(FarMath, PixelsPerGuMatchesTheSpecTable) {
     const glm::mat4 proj = glm::perspective(glm::radians(35.0f), 16.0f / 9.0f, 1.0f, 1.8e6f);
@@ -117,4 +137,18 @@ TEST(FarMath, PowerLawCdf) {
     EXPECT_EQ(far::power_law_cdf(pl, 0.01f), 0.0f);
     EXPECT_EQ(far::power_law_cdf(pl, 0.7f), 1.0f);
     EXPECT_GT(far::power_law_cdf(pl, 0.1f), 0.5f);   // steep: most rocks are small
+}
+
+// q == 1 takes power_law_cdf's own log branch (int_pow with e == -1):
+// CDF(r) = ln(r/r_min) / ln(r_max/r_min). Check it against the closed form
+// directly, and that it stays continuous against q slightly off 1.
+TEST(FarMath, PowerLawCdfLogBranchAtQEqualsOne) {
+    const far::PowerLaw pl{0.1f, 1.0f, 1.0f};
+    for (float r : {0.15f, 0.3f, 0.5f, 0.9f}) {
+        const float analytic = static_cast<float>(std::log(r / pl.r_min) /
+                                                    std::log(pl.r_max / pl.r_min));
+        EXPECT_NEAR(far::power_law_cdf(pl, r), analytic, 1e-5f) << r;
+    }
+    EXPECT_NEAR(far::power_law_cdf(pl, 0.5f),
+                far::power_law_cdf({0.1f, 1.0f, 1.0001f}, 0.5f), 1e-3f);
 }
