@@ -157,6 +157,7 @@ add_library(renderer STATIC
     sun_pass.cc
     dust_pass.cc
     far_math.cc
+    far_field.cc
     minor_field.cc
     minor_pass.cc
     nebula_pass.cc
