@@ -19,10 +19,21 @@ def decide_mode(argv=None) -> Optional[str]:
 
 
 def _write_rows(rows) -> None:
+    """Write every row. Any failure surfaces as a GateWriteError naming the
+    ship, so the panel's error line shows it. The catalog memo is dropped
+    even on failure: each successful write already mutated the mod index."""
     from engine.ship_catalog import gate_writer
-    for row in rows:
-        gate_writer.write_answers(row.mod, row.ship_id, row.attr, row.answers)
-    ship_catalog.invalidate()
+    try:
+        for row in rows:
+            try:
+                gate_writer.write_answers(row.mod, row.ship_id, row.attr, row.answers)
+            except gate_writer.GateWriteError:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- a zz file or bad dict, shown to the player
+                raise gate_writer.GateWriteError(
+                    "%s: %s: %s" % (row.ship_id, type(exc).__name__, exc)) from exc
+    finally:
+        ship_catalog.invalidate()
 
 
 def _build_panel(mode: str, error: str = ""):

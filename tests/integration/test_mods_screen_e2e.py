@@ -116,3 +116,29 @@ def test_clearing_variant_of_returns_the_ship_to_its_own_class(authored):
     assert ship_catalog.incomplete_ships() == []
     e = ship_catalog.entry("ShA")
     assert e is not None and e.title == "Alpha" and e.complete
+
+
+def test_a_failed_write_midway_still_refreshes_the_catalog_before_skip(authored, monkeypatch):
+    from engine.ship_catalog import gate_writer
+    authored({a: (n, "{'title':'%s',%s}" % (n, _BASE))
+              for a, n in (("ShA", "Alpha"), ("ShB", "Bravo"), ("ShC", "Charlie"))})
+    real, calls = gate_writer.write_answers, []
+
+    def flaky(mod, sid, attr, answers):
+        calls.append(sid)
+        if len(calls) == 2:
+            raise gate_writer.GateWriteError("%s: read-only" % sid)
+        return real(mod, sid, attr, answers)
+    monkeypatch.setattr(gate_writer, "write_answers", flaky)
+
+    def fill_continue_skip(panel):
+        for f in ("ShA", "ShB", "ShC"):
+            panel.dispatch_event("set:%s:era:all" % f)
+        panel.dispatch_event("continue")
+        assert panel.outcome is None and "read-only" in panel._error
+        panel.dispatch_event("skip")
+
+    assert mods_screen.run_mods_screen(fill_continue_skip, argv=[]) == "boot"
+    assert calls[0] == "ShA"
+    assert "sha" not in ship_catalog.skipped()
+    assert ship_catalog.entry("ShA") is not None

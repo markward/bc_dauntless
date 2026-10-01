@@ -111,3 +111,15 @@ class _FakePanel:
     @property
     def outcome(self):
         return self._outcome
+
+
+def test_write_rows_reports_any_row_failure_as_a_gate_write_error(monkeypatch):
+    from engine.ship_catalog import gate_writer
+    from engine.ui.mods_screen_panel import WriteRow
+
+    def boom(mod, sid, attr, answers):
+        raise NameError("name 'x' is not defined")
+    monkeypatch.setattr(gate_writer, "write_answers", boom)
+    with pytest.raises(gate_writer.GateWriteError) as info:
+        mods_screen._write_rows([WriteRow("M", "ShA", "ShA", {})])
+    assert "ShA" in str(info.value) and "name 'x' is not defined" in str(info.value)
