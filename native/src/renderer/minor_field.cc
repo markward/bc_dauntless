@@ -332,8 +332,14 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
             ? std::clamp(glm::dot(p - seg0, seg) / seg_len2, 0.0f, 1.0f) : 0.0f;
         return glm::length(p - (seg0 + seg * u));
     };
-    const float min_h = std::min({h.x, h.y, h.z});
-    const int n = std::clamp(static_cast<int>(std::ceil(travel / std::max(min_h, 0.05f))), 1, 32);
+    // Closest point on the OBB centred at `ck` to `p` (orientation fixed this frame).
+    auto closest_on_box = [&](const glm::vec3& ck, const glm::vec3& p) {
+        const glm::vec3 d = p - ck;
+        glm::vec3 q = ck;
+        for (int ax = 0; ax < 3; ++ax)
+            q += a[ax] * std::clamp(glm::dot(d, a[ax]), -h[ax], h[ax]);
+        return q;
+    };
 
     int touches = 0;
     for (auto& [id, cl] : clouds_) {
@@ -359,13 +365,30 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
             const glm::vec3 p = cl.pos[i];
             if (dist_to_segment(p) > radius + bound) continue;
 
-            // Sub-stepped box test, orientation from this frame; first hit wins.
-            for (int k = 1; k <= n; ++k) {
-                const glm::vec3 ck = seg0 + seg * (static_cast<float>(k) / n);
-                const glm::vec3 d = p - ck;
-                glm::vec3 q = ck;
-                for (int ax = 0; ax < 3; ++ax)
-                    q += a[ax] * std::clamp(glm::dot(d, a[ax]), -h[ax], h[ax]);
+            // Exact sweep: with the orientation fixed, f(s) = |p - box(lerp(seg0, c, s))|
+            // is convex in s, so golden-section search finds its minimum. No sub-step
+            // cap, so no tunnelling at any speed below teleport_gu.
+            auto f = [&](float u) {
+                const glm::vec3 ck = seg0 + seg * u;
+                return glm::length(p - closest_on_box(ck, p));
+            };
+            float s = 1.0f;
+            if (seg_len2 > 0.0f) {
+                constexpr float kInvPhi = 0.6180339887f;
+                float lo = 0.0f, hi = 1.0f;
+                float x1 = hi - kInvPhi * (hi - lo), x2 = lo + kInvPhi * (hi - lo);
+                float f1 = f(x1), f2 = f(x2);
+                for (int it = 0; it < 30; ++it) {
+                    if (f1 <= f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - kInvPhi * (hi - lo); f1 = f(x1); }
+                    else          { lo = x1; x1 = x2; f1 = f2; x2 = lo + kInvPhi * (hi - lo); f2 = f(x2); }
+                }
+                s = 0.5f * (lo + hi);
+                if (f(1.0f) <= f(s)) s = 1.0f;     // prefer the current pose on a tie
+            }
+            const glm::vec3 ck = seg0 + seg * s;
+            const glm::vec3 q = closest_on_box(ck, p);
+            const glm::vec3 d = p - ck;
+            {
                 const float gap = glm::length(p - q);
                 const bool inside = gap == 0.0f;
                 if (!inside && gap > radius) continue;
@@ -387,7 +410,6 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
                     sh.last_contact = t;
                 }
                 ++touches;
-                break;
             }
         }
     }

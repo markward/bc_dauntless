@@ -112,7 +112,9 @@ public:
     Stats stats() const { return stats_; }
     // Touches since the last drain (moved out).
     std::vector<Contact> drain_contacts() { return std::move(contacts_); }
-    void reset_player() { has_prev_ = false; }   // forget the previous pose
+    // Forget the previous pose. The host MUST call this whenever the player
+    // changes or disappears, or the next step sweeps from the stale pose (Task 8).
+    void reset_player() { has_prev_ = false; }
     // Test hook: render-space centre of minor `i` of cloud `id` after the last step.
     bool minor_position(std::uint32_t id, std::size_t i, glm::vec3& out) const;
 private:

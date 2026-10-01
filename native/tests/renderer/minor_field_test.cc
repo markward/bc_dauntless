@@ -330,17 +330,26 @@ TEST(MinorContact, SweptBoxHitsAMinorAPointTestWouldMiss) {
     auto f = field_with_fragments();
     f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
     auto in = looking_down_minus_z(0.0);
-    // 4,800 GU/s: 80 GU per frame. The sweep is capped at 32 sub-steps, so it
-    // is gap-free only while travel/32 <= 2 x (half_y 1.1 + radius 0.2) = 2.6 GU,
-    // i.e. up to ~83 GU per frame (12x dash speed). 80/32 = 2.5 GU spacing.
-    in.player = box_at({0, -40, -20});
+    in.player = box_at({0, -100, -20});
     f.step(in);
-    in.game_time = 1.0 / 60.0;
-    in.player = box_at({0, +40, -20});         // the end pose alone misses by 38 GU
+    in.game_time = 1.0 / 60.0;                 // 10,000 GU/s: 166 GU per frame
+    in.player = box_at({0, +66, -20});
     f.step(in);
     const auto c = f.drain_contacts();
     ASSERT_EQ(c.size(), 1u);
-    EXPECT_NEAR(c[0].rel_speed, 80.0f * 60.0f, 50.0f);
+    EXPECT_NEAR(c[0].rel_speed, 166.0f * 60.0f, 50.0f);
+}
+
+TEST(MinorContact, DashSpeedSweepHitsAt100kGups) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0, 0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, -833, -20});
+    f.step(in);
+    in.game_time = 1.0 / 60.0;                 // ~100,000 GU/s: 1,666 GU per frame
+    in.player = box_at({0, +833, -20});        // still below teleport_gu (20,000)
+    f.step(in);
+    EXPECT_EQ(f.drain_contacts().size(), 1u);
 }
 
 TEST(MinorContact, ShoveIsOutwardAndOffsetPersists) {
