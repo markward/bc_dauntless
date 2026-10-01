@@ -9073,6 +9073,76 @@ def record_course_selection(module) -> None:
         dev_mode.log_swallowed("announce course set", _e)
 
 
+def _run_preboot_panel(panel, view_w=1280, view_h=720):
+    """Pump one full-screen CEF panel before the game loop exists, until
+    `panel.outcome` is set or the window closes.
+
+    Shared by the first-run picker and the Mods screen. Everything the first
+    -run loop learned the hard way applies (see _run_first_run_screen's
+    history and tests/host/test_first_run_pump_loop.py): the scene pass is
+    off, the page-load handler re-invalidates the panel so its first payload
+    lands, and mouse moves/edges are forwarded because run()'s own
+    forwarding only exists inside the game loop. Added here: typed text and
+    editing keys are drained from the window every frame and forwarded to
+    CEF, and Escape is also offered to the panel (handle_key_esc).
+    """
+    try:
+        import _dauntless_host as _h
+    except ImportError:
+        _h = None
+
+    _set_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
+    if _set_handler is not None:
+        prefix = panel.name + "/"
+
+        def _dispatch(event: str) -> None:
+            if event.startswith(prefix):
+                panel.dispatch_event(event[len(prefix):])
+        _set_handler(_dispatch)
+
+    _set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
+    if _set_load_end is not None:
+        _set_load_end(panel.invalidate)
+
+    _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
+    _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+    _drain_text = getattr(_h, "drain_text_events", None) if _h else None
+    _send_key = getattr(_h, "cef_send_key_event", None) if _h else None
+    _esc_key = getattr(getattr(_h, "keys", None), "KEY_ESCAPE", 256) if _h else 256
+
+    r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+    try:
+        panel.invalidate()
+        while not r.should_close() and panel.outcome is None:
+            script = panel.render_payload()
+            if script is not None and _h is not None:
+                _h.cef_execute_javascript(script)
+            if _cef_send_mouse_move is not None:
+                _mx, _my = _forward_mouse_to_cef(_h, _cef_send_mouse_move, view_w, view_h)
+                if _cef_send_mouse_click is not None:
+                    if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        _cef_send_mouse_click(_mx, _my, 0, True)
+                    if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        _cef_send_mouse_click(_mx, _my, 0, False)
+            if _drain_text is not None and _send_key is not None:
+                for ev in _drain_text():
+                    _send_key(*ev)
+                    # (kind, code, scancode, action, mods): an Escape press.
+                    if ev[0] == 1 and ev[1] == _esc_key and ev[3] == 1 \
+                            and hasattr(panel, "handle_key_esc"):
+                        panel.handle_key_esc()
+            r.frame()
+    finally:
+        r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
+        if _set_load_end is not None:
+            _set_load_end(lambda: None)
+        if _h is not None:
+            try:
+                _h.cef_execute_javascript(panel.teardown_script)
+            except Exception as _e:
+                dev_mode.log_swallowed("pre-boot panel teardown", _e)
+
+
 def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     """Draw the "Select Bridge Commander Install" screen until the player
     continues or quits. Returns the best Resolution reached.
@@ -9102,89 +9172,13 @@ def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     matches the view CEF was actually initialised with, the same way
     run()'s own pause-menu mouse-forwarding uses its copies of those two
     locals.
+
+    The loop itself is `_run_preboot_panel`.
     """
     from engine.ui.first_run_panel import FirstRunPanel
 
-    try:
-        import _dauntless_host as _h
-    except ImportError:
-        _h = None  # bindings module not built; skip input handling.
-
     panel = FirstRunPanel(resolution, resolver=resolver)
-
-    _set_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
-    if _set_handler is not None:
-        def _dispatch(event: str) -> None:
-            prefix = panel.name + "/"
-            if event.startswith(prefix):
-                panel.dispatch_event(event[len(prefix):])
-        _set_handler(_dispatch)
-
-    # CreateBrowser is asynchronous (~340ms measured -- see cef_lifecycle.cc's
-    # execute_javascript()), and every cef_execute_javascript push is dropped
-    # silently until the page's own <script> tags have run. Without this
-    # handler the screen's only payload goes out on frame 1, is dropped, and
-    # nothing ever pushes again -- render_payload() diffs against its own
-    # cache and the snapshot never changes on its own. The load-end handler
-    # is what actually gets a payload onto the page: it fires once the
-    # browser reports the document loaded, and panel.invalidate() there
-    # drops the cache so the very next render_payload() re-emits into a page
-    # that can now receive it.
-    _set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
-    if _set_load_end is not None:
-        _set_load_end(panel.invalidate)
-
-    _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
-    _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
-
-    r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
-    try:
-        # Also invalidated by the load-end handler above once the page
-        # actually loads (which may land before or after this first
-        # iteration runs); kept here too since a fresh panel's _last_pushed
-        # already starts None, and FirstRunPanel is a public class other
-        # callers may hand a non-fresh one.
-        panel.invalidate()
-        while not r.should_close() and panel.outcome is None:
-            script = panel.render_payload()
-            if script is not None and _h is not None:
-                _h.cef_execute_javascript(script)
-            # Forward mouse move + left-click edges so Browse/Continue/Quit
-            # are actually clickable. Neither the spec nor the plan mention
-            # this: run()'s main loop only ever forwards mouse to CEF from
-            # INSIDE the game loop (pause menu, crew menus, ...), and this
-            # screen runs its own loop before that one exists. Mirrors
-            # run()'s pause-menu forwarding block (_forward_mouse_to_cef +
-            # the mouse_button_pressed/released edge pair), the only other
-            # place this project turns host cursor state into CEF input.
-            if _cef_send_mouse_move is not None:
-                _mx, _my = _forward_mouse_to_cef(
-                    _h, _cef_send_mouse_move, view_w, view_h)
-                if _cef_send_mouse_click is not None:
-                    if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
-                        _cef_send_mouse_click(_mx, _my, 0, True)
-                    if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
-                        _cef_send_mouse_click(_mx, _my, 0, False)
-            r.frame()
-    finally:
-        # Unguarded deliberately, unlike the JS call below: this only ever
-        # assigns two native globals (g_hologram_only_mode, g_hologram_bg),
-        # with no browser/CEF state to be torn down or absent -- there is no
-        # failure mode for it to swallow.
-        r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
-        if _set_load_end is not None:
-            # Replace rather than leave bound to this finished panel: run()
-            # registers its OWN load-end handler later (once the game loop
-            # exists), which would overwrite this anyway, but a bare no-op
-            # here means there is no window -- however unlikely -- where a
-            # reload could call back into a panel whose screen has ended.
-            _set_load_end(lambda: None)
-        if _h is not None:
-            try:
-                _h.cef_execute_javascript("setFirstRun(null);")
-            except Exception as _e:
-                dev_mode.log_swallowed("first-run screen teardown", _e)
-
+    _run_preboot_panel(panel, view_w, view_h)
     return panel.resolution
 
 
