@@ -112,10 +112,10 @@ def _chunk_breakup():
     from engine.appc import debris_chunk
     from engine.rocks import breakup, chunks, death
     rock = _make(App.GENUS_ASTEROID)
-    rock.SetRadius(2.0)                 # "Asteroid 5b" at 2.0: majors + chunks
+    rock.SetRadius(1.6)                 # "Asteroid 5b" at 1.6: 1 major + 2 chunks
     pSet = _in_set(rock, "Asteroid 5b")
     death.begin(rock)
-    n = sum(1 for p in breakup.plan("Asteroid 5b", 2.0) if p.tier == "major")
+    n = sum(1 for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "major")
     majors = [pSet.GetObject("Asteroid 5b-%d" % i) for i in range(1, n + 1)]
     r = FakeRenderer()
     chunks.pump(r, session=None)

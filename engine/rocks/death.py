@@ -165,12 +165,13 @@ def _break_up(rock, pSet, name, killer=None) -> None:
     parent_max = float(hull.GetMaxCondition()) if hull is not None else stats.size_hull(radius)
     parent_mass = float(rock.GetMass())
     family = rock.__dict__.get("_rock_family", "silicate")
-    gen = int(rock.__dict__.get("_rock_generation", 0)) + 1
+    parent_gen = int(rock.__dict__.get("_rock_generation", 0))
+    gen = parent_gen + 1
     _enqueue(_vfx_specs, [DeathVfxSpec((loc.x, loc.y, loc.z), radius, pSet)])
     major_i = 0
     pieces = []
     chunk_specs = []
-    for i, p in enumerate(breakup.plan(name, radius)):
+    for i, p in enumerate(breakup.plan(name, radius, generation=parent_gen)):
         d = TGPoint3(*p.offset)
         d.MultMatrixLeft(R)                  # body -> world
         at = (loc.x + d.x * radius * 0.5, loc.y + d.y * radius * 0.5,

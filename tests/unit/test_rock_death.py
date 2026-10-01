@@ -177,11 +177,11 @@ def test_piece_hull_scales_from_parent_max():
 def test_chunks_and_vfx_are_queued():
     from engine.rocks import breakup, death
     rock = _make(App.GENUS_ASTEROID)
-    rock.SetRadius(4.0)
+    rock.SetRadius(1.6)                  # 1 major + 2 chunks (see _big_rock)
     _in_set(rock, "Asteroid 5b")
     death.begin(rock)
-    n_chunks = sum(1 for p in breakup.plan("Asteroid 5b", 4.0) if p.tier == "chunk")
-    assert len(death.drain_chunk_specs()) == n_chunks
+    n_chunks = sum(1 for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "chunk")
+    assert n_chunks and len(death.drain_chunk_specs()) == n_chunks
     assert death.drain_chunk_specs() == []
     assert len(death.drain_death_vfx()) == 1
 
@@ -459,7 +459,7 @@ def test_scaled_hardpoint_rock_breaks_up_at_effective_radius(monkeypatch):
     planned = []
     real_plan = breakup.plan
     monkeypatch.setattr(breakup, "plan",
-                        lambda n, r: planned.append(r) or real_plan(n, r))
+                        lambda n, r, **k: planned.append(r) or real_plan(n, r, **k))
     rock = _make(App.GENUS_ASTEROID)
     rock.SetScale(5.0)
     pSet = _in_set(rock, "Asteroid 5b")
@@ -485,9 +485,9 @@ def _planet_at(x, pSet):
 
 
 def _big_rock(vx=5.0):
-    """2.0 GU: "Asteroid 5b" then breaks into both majors AND chunks."""
+    """1.6 GU: "Asteroid 5b" then breaks into both majors AND chunks."""
     rock = _make(App.GENUS_ASTEROID)
-    rock.SetRadius(2.0)
+    rock.SetRadius(1.6)
     pSet = _in_set(rock, "Asteroid 5b")
     rock.SetVelocity(TGPoint3(vx, 0.0, 0.0))
     return rock, pSet
@@ -499,7 +499,7 @@ def test_movable_killer_is_ghosted_against_pieces_and_chunks():
     ship = _make(App.GENUS_SHIP)
     _in_set(ship, "Ship", "RockTest")
     death.begin(rock, killer=ship)
-    pieces = _majors_of(pSet, "Asteroid 5b", 2.0)
+    pieces = _majors_of(pSet, "Asteroid 5b", 1.6)
     assert pieces
     for p in pieces:
         assert _pair_masked(p, ship)
@@ -521,9 +521,9 @@ def test_movable_killer_leaves_piece_velocity_untouched():
     ship.SetTranslateXYZ(10.0, 0.0, 0.0)     # dead ahead of the rock
     _in_set(ship, "Ship", "RockTest")
     death.begin(rock, killer=ship)
-    majors = [p for p in breakup.plan("Asteroid 5b", 2.0) if p.tier == "major"]
+    majors = [p for p in breakup.plan("Asteroid 5b", 1.6) if p.tier == "major"]
     sp = breakup.kSeparationSpeedGU
-    for i, piece in enumerate(_majors_of(pSet, "Asteroid 5b", 2.0)):
+    for i, piece in enumerate(_majors_of(pSet, "Asteroid 5b", 1.6)):
         v = piece.GetVelocityTG()
         assert abs(v.x - (5.0 + majors[i].offset[0] * sp)) < 1e-9
 
@@ -536,7 +536,7 @@ def test_planet_killer_is_ghosted_from_the_piece_side_only():
     rock, pSet = _big_rock()
     planet = _planet_at(60.0, pSet)
     death.begin(rock, killer=planet)
-    pieces = _majors_of(pSet, "Asteroid 5b", 2.0)
+    pieces = _majors_of(pSet, "Asteroid 5b", 1.6)
     for p in pieces:
         assert planet.GetObjID() in p._collision_disabled_ids
     assert "_collision_disabled_ids" not in planet.__dict__
@@ -567,7 +567,7 @@ def test_immovable_killer_strips_inward_velocity(kind):
         assert killer.IsImmobile()
     death.begin(rock, killer=killer)
     c = (60.0, 0.0, 0.0)
-    pieces = _majors_of(pSet, "Asteroid 5b", 2.0)
+    pieces = _majors_of(pSet, "Asteroid 5b", 1.6)
     assert pieces
     for p in pieces:
         v, at = p.GetVelocityTG(), p.GetWorldLocation()
@@ -585,7 +585,7 @@ def test_immovable_killer_keeps_outward_velocity():
     rock, pSet = _big_rock(vx=-5.0)          # receding from the planet at +x
     planet = _planet_at(60.0, pSet)
     death.begin(rock, killer=planet)
-    for p in _majors_of(pSet, "Asteroid 5b", 2.0):
+    for p in _majors_of(pSet, "Asteroid 5b", 1.6):
         assert p.GetVelocityTG().x < -5.0 + breakup.kSeparationSpeedGU + 1e-9
 
 
@@ -616,3 +616,27 @@ def test_a_set_less_dying_rock_is_logged_once(monkeypatch):
     for _ in range(3):
         death.begin(_make(App.GENUS_ASTEROID))
     assert logged.count("set-less dying rock: no breakup") == 1
+
+
+def test_generation_one_rock_breaks_into_chunks_and_dust_only():
+    """Tuned after live test 2026-10-01: no generation-2 rocks."""
+    from engine.rocks import breakup, death
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetRadius(4.0)
+    rock._rock_generation = 1
+    pSet = _in_set(rock, "Asteroid 5b-1")
+    death.begin(rock)
+    assert pSet.GetObject("Asteroid 5b-1-1") is None
+    specs = death.drain_chunk_specs()
+    assert 1 <= len(specs) <= breakup.kMaxChunksPerDeath
+
+
+def test_generation_zero_rock_spawns_at_most_three_majors():
+    from engine.rocks import death
+    for name in ("Asteroid 5b", "Asteroid 6b", "Asteroid 7a"):
+        rock = _make(App.GENUS_ASTEROID)
+        rock.SetRadius(8.0)
+        pSet = _in_set(rock, name)
+        death.begin(rock)
+        assert pSet.GetObject(name + "-1") is not None
+        assert pSet.GetObject(name + "-4") is None
