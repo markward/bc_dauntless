@@ -283,6 +283,10 @@ std::unordered_map<std::uint64_t, renderer::Aabb> g_minor_player_aabbs;
 // view or viewscreen RTT); the pass owns GL (atlases, VAOs) like g_minor_pass.
 renderer::far::FarField g_far_field;
 std::unique_ptr<renderer::FarPass> g_far_pass;
+// Atlas paths by catalogue index (far_set_catalogue). Like the FarField's
+// catalogue they outlive a session -- not mission content -- and init() hands
+// them to each new FarPass, so a catalogue pushed with the host down draws.
+std::vector<std::pair<std::string, std::string>> g_far_atlas_paths;
 bool g_far_enabled = true;
 // The last camera's build; reused across cameras so the vectors keep their
 // capacity. Its specks and g_minor_specks draw in ONE render_specks call.
@@ -882,6 +886,7 @@ void init(int width, int height, const std::string& title) {
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_minor_pass = std::make_unique<renderer::MinorPass>();
     g_far_pass = std::make_unique<renderer::FarPass>();
+    g_far_pass->set_atlas_paths(g_far_atlas_paths);
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
     g_system_nebula_pass = std::make_unique<renderer::SystemNebulaPass>();
@@ -4069,8 +4074,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Drop every cloud, fragment table and pending contact.");
 
     // ── Far tier (far-tier spec; engine/renderer.py façade) ────────────────
-    // Safe with the host down: CPU state only, except set_atlas_paths, which
-    // is skipped (nothing to hold paths) until init() has made the pass.
+    // Safe with the host down: CPU state only. Atlas paths are kept in
+    // g_far_atlas_paths and handed to the pass init() makes.
     m.def("far_set_catalogue",
           [](py::list entries, const std::vector<std::tuple<float, float, float>>& view_dirs) {
               std::vector<rf::CatalogueRock> rocks;
@@ -4092,7 +4097,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& t : view_dirs)
                   dirs.emplace_back(std::get<0>(t), std::get<1>(t), std::get<2>(t));
               g_far_field.set_catalogue(std::move(rocks), std::move(dirs));
-              if (g_far_pass) g_far_pass->set_atlas_paths(std::move(paths));
+              g_far_atlas_paths = std::move(paths);
+              if (g_far_pass) g_far_pass->set_atlas_paths(g_far_atlas_paths);
           },
           py::arg("entries"), py::arg("view_dirs"),
           "Catalogue for the far tier: [{'albedo', 'normal' (atlas paths, empty "

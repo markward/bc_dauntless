@@ -171,3 +171,34 @@ def test_an_active_source_walks_cells(host):
     s = h.far_stats()
     assert s["sources"] == 1 and s["cells"] > 0
     assert s["cached_cells"] > 0
+
+
+def test_a_catalogue_pushed_before_init_still_draws_impostors():
+    """FarField keeps its catalogue across sessions, but each init() makes a
+    fresh FarPass: the atlas paths must reach it too, or every impostor of a
+    catalogue pushed with the host down silently never draws."""
+    from engine.rocks import catalogue
+    major = catalogue.pick("x", kind="major", family="silicate")
+    h.far_set_catalogue(
+        [{"albedo": major.impostor_albedo, "normal": major.impostor_normal,
+          "avg_albedo": (0.4, 0.4, 0.4)}], [(0.0, 0.0, 1.0)])
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    try:
+        h.init(64, 64, "test_far_catalogue")
+    except RuntimeError as e:
+        pytest.skip(f"no GL context: {e}")
+    try:
+        # A wide impostor band so the DPI-dependent framebuffer (64 or 128 px)
+        # cannot push the rock out of it: r=1 at d=4 is ~14-28 px.
+        h.far_set_dials({"imp_hi": 1000.0, "imp_lo": 1.0, "speck_hi": 0.9,
+                         "speck_lo": 0.5})
+        rock = h.create_instance(_rock_model())
+        h.set_world_transform(rock, _row_major(0.0, 0.0, -4.0))
+        h.far_set_rocks([{"instance": rock, "index": 0, "radius_mu": 1.0}])
+        _look_down_minus_z()
+        h.frame()
+        s = h.far_stats()
+        assert s["impostors"] >= 1 and s["draw_calls"] >= 1
+    finally:
+        h.shutdown()
+        h.far_set_catalogue([], [])
