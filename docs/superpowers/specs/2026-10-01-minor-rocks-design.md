@@ -1,6 +1,7 @@
 # Minor rocks — design (modern asteroids, sub-project 3)
 
 **Date:** 2026-10-01
+**Status:** built, awaiting live check
 **Branch:** `feat/minor-rocks` (worktree `.claude/worktrees/minor-rocks`), forked
 from local `main` at `c0210aac` (sub-projects 1 and 2 merged, live-tested).
 **Roadmap:** `2026-09-30-modern-asteroids-roadmap.md`, "Sub-project 3: minors".
