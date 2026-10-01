@@ -164,6 +164,28 @@ def test_writer_error_is_shown_and_skip_still_works():
     assert p.outcome == "skip"
 
 
+def test_an_edit_clears_the_error_line():
+    p = gate(rec("DCMPA"), writer=lambda rows: None)
+    p._error = "Some answers did not take effect: DCMPA: era"
+    ev(p, "set", "DCMPA", "era", "all")
+    assert payload(p)["error"] == ""
+
+
+def test_continue_clears_a_stale_error_before_writing():
+    calls = []
+
+    def flaky(rows):
+        calls.append(rows)
+        if len(calls) == 1:
+            raise GateWriteError("first: Permission denied")
+    p = gate(rec("DCMPA"), writer=flaky)
+    ev(p, "set", "DCMPA", "era", "all")
+    ev(p, "continue")
+    assert "Permission denied" in payload(p)["error"]
+    ev(p, "continue")
+    assert p.outcome == "continue" and payload(p)["error"] == ""
+
+
 def test_home_mode_is_read_only_with_play():
     ro = rec("DCMPDone", values={"title": "Done", "era": ("DS9", "DS9"), "role": "tactical",
                                  "species": "Federation", "playable": True}, missing=())

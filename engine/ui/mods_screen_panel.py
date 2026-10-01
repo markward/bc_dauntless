@@ -127,6 +127,7 @@ class ModsScreenPanel(Panel):
                         if m.editable:
                             m.answers["class_default"] = False
                     r.answers["class_default"] = True
+                    self._error = ""
             return True
         if action.startswith("set:"):
             parts = action.split(":", 3)
@@ -139,6 +140,7 @@ class ModsScreenPanel(Panel):
             value = unquote(raw)
             for t in (self._ticked() if r.ticked else [r]):
                 self._apply(t, field, value)
+            self._error = ""
             return True
         return False
 
@@ -232,7 +234,10 @@ class ModsScreenPanel(Panel):
 
     # ── outcomes ────────────────────────────────────────────────────────
     def _on_continue(self) -> None:
-        if self._mode != "gate" or not self._ready():
+        if self._mode != "gate":
+            return
+        self._error = ""
+        if not self._ready():
             return
         flags = self._default_flags()
         rows = []
