@@ -21,7 +21,7 @@ def test_spec_defaults():
     assert d["max_debris_per_death"] == 40 and d["max_live_minors"] == 20000
     assert d["min_pixel_radius"] == 1.5 and d["lod0_pixel_radius"] == 24.0
     assert d["contact_margin_gu"] == 0.1 and d["shove_transfer"] == 0.6
-    assert d["shove_min_gu"] == 0.3 and d["shove_damp_seconds"] == 4.0
+    assert d["shove_min_gups"] == 0.3 and d["shove_damp_seconds"] == 4.0
     assert d["max_shoves_per_frame"] == 64 and d["teleport_gu"] == 20000.0
     assert d["debris_damp_seconds"] == 6.0
     assert d["cloud_fade_in_seconds"] == 1.5

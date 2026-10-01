@@ -28,7 +28,7 @@ DEFAULTS: dict = {
     "tumble_min": 0.05, "tumble_max": 0.6,
     "cloud_fade_in_seconds": 1.5,
     # §3 contact (native)
-    "contact_margin_gu": 0.1, "shove_transfer": 0.6, "shove_min_gu": 0.3,
+    "contact_margin_gu": 0.1, "shove_transfer": 0.6, "shove_min_gups": 0.3,
     "shove_damp_seconds": 4.0, "shove_tumble": 1.5,
     "max_shoves_per_frame": 64, "teleport_gu": 20000.0,
     "contact_cooldown_s": 0.5,
@@ -45,7 +45,7 @@ DEFAULTS: dict = {
 NATIVE_KEYS = frozenset({
     "min_pixel_radius", "lod0_pixel_radius", "tumble_min", "tumble_max",
     "cloud_fade_in_seconds", "contact_margin_gu", "shove_transfer",
-    "shove_min_gu", "shove_damp_seconds", "shove_tumble",
+    "shove_min_gups", "shove_damp_seconds", "shove_tumble",
     "max_shoves_per_frame", "teleport_gu", "contact_cooldown_s",
     "debris_damp_seconds",
 })
