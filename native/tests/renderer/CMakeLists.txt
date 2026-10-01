@@ -18,6 +18,7 @@ add_executable(renderer_tests
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
+    far_math_test.cc
     minor_field_test.cc
     minor_field_bench_test.cc
     minor_pass_test.cc
