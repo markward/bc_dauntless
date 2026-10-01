@@ -20,6 +20,7 @@ add_executable(renderer_tests
     dust_pass_test.cc
     far_math_test.cc
     far_field_test.cc
+    far_field_bench_test.cc
     minor_field_test.cc
     minor_field_bench_test.cc
     minor_pass_test.cc

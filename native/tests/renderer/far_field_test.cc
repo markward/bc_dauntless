@@ -3,6 +3,11 @@
 #include <gtest/gtest.h>
 #include <renderer/far_field.h>
 #include <cmath>
+#include <algorithm>
+#include <optional>
+#include <string>
+#include <glm/gtc/matrix_transform.hpp>
+#include <unordered_map>
 
 namespace far = renderer::far;
 
@@ -161,4 +166,199 @@ TEST(FarField, NoMajorsInAHalfBand) {
         n += static_cast<long long>(
             far::generate_cell(s, 1, 0, {static_cast<long long>(280000.0 / L) + i, 0, 0}, g).size());
     EXPECT_EQ(n, 0);
+}
+
+// Far tier spec §1-3: FarField::build — per-camera tiers, cell cache, budget.
+
+namespace {
+far::BuildInput camera_at(glm::vec3 eye_render, glm::vec3 target, float h = 1080.0f) {
+    far::BuildInput in;
+    in.view = glm::lookAt(eye_render, target, glm::vec3(0, 0, 1));
+    in.proj = glm::perspective(glm::radians(35.0f), 16.0f / 9.0f, 1.0f, 1.8e6f);
+    in.viewport_h = h;
+    return in;
+}
+far::FarField field_with_catalogue() {
+    far::FarField f;
+    std::vector<far::CatalogueRock> cat(8);
+    for (auto& c : cat) c.has_impostor = true;
+    cat[7].avg_albedo = glm::vec3(0.1f, 0.2f, 0.3f);
+    f.set_catalogue(cat, {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0},
+                          {0, 1, 0}, {0, -1, 0}, {0.6f, 0.8f, 0}, {-0.6f, -0.8f, 0}});
+    return f;
+}
+}  // namespace
+
+TEST(FarFieldBuild, FlaggedRockFadesThroughTheLadder) {
+    far::FarField f = field_with_catalogue();
+    f.set_rocks({{42, 7, 57.142857f}});
+    glm::mat4 world(1.0f);
+    float dist = 0.0f;
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    in.world_of = [&](std::uint64_t key, glm::mat4& w) {
+        if (key != 42) return false;
+        w = glm::translate(glm::mat4(1.0f), glm::vec3(0, dist, 0))
+          * glm::scale(glm::mat4(1.0f), glm::vec3(0.035f));   // r = 2 GU
+        return true;
+    };
+    far::FarOutput out;
+    dist = 100.0f;  f.build(in, out);                          // p ~ 34 px: mesh
+    ASSERT_EQ(out.fades.size(), 1u);
+    EXPECT_EQ(out.fades[0].second, 0.0f);
+    EXPECT_TRUE(out.impostors.empty());
+    dist = 1000.0f; f.build(in, out);                          // p ~ 3.4 px: impostor
+    EXPECT_EQ(out.fades[0].second, 1.0f);
+    ASSERT_EQ(out.impostors.size(), 1u);
+    EXPECT_EQ(out.impostors[0].rock, 7);
+    EXPECT_NEAR(out.impostors[0].items[0].centre_half.w, 2.0f * 1.02f, 1e-3f);
+    EXPECT_FLOAT_EQ(out.impostors[0].items[0].up_dither.w, -1.0f);
+    dist = 5000.0f; f.build(in, out);                          // p ~ 0.69 px: speck
+    EXPECT_TRUE(out.impostors.empty());
+    ASSERT_EQ(out.specks.size(), 1u);
+    EXPECT_EQ(out.specks[0].albedo, glm::vec3(0.1f, 0.2f, 0.3f));
+    EXPECT_FLOAT_EQ(out.specks[0].alpha, 1.0f);
+    dist = 20000.0f; f.build(in, out);                         // p ~ 0.17 px: gone
+    EXPECT_TRUE(out.specks.empty());
+    EXPECT_EQ(out.fades[0].second, 1.0f);
+}
+
+TEST(FarFieldBuild, ImpostorViewFacesTheEye) {
+    far::FarField f = field_with_catalogue();
+    f.set_rocks({{1, 0, 57.142857f}});
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    in.world_of = [](std::uint64_t, glm::mat4& w) {
+        w = glm::translate(glm::mat4(1.0f), glm::vec3(0, 800, 0))
+          * glm::scale(glm::mat4(1.0f), glm::vec3(0.035f));
+        return true;
+    };
+    far::FarOutput out;
+    f.build(in, out);
+    ASSERT_EQ(out.impostors.size(), 1u);
+    const auto& g = out.impostors[0].items[0];
+    // The baked view direction (cross(up, right)) must point back at the eye.
+    const glm::vec3 view_dir = glm::cross(glm::vec3(g.up_dither), glm::vec3(g.right_view));
+    EXPECT_GT(glm::dot(glm::normalize(view_dir), glm::vec3(0, -1, 0)), 0.99f);
+}
+
+TEST(FarFieldBuild, ViewBasisMatchesTheBakeRule) {
+    const auto b = far::make_view_basis(glm::normalize(glm::vec3(0.3f, 0.2f, 0.9f)));
+    EXPECT_NEAR(glm::dot(b.right, b.up), 0.0f, 1e-6f);
+    EXPECT_NEAR(glm::dot(glm::cross(b.up, b.right), b.dir), 1.0f, 1e-5f);
+    const auto p = far::make_view_basis(glm::vec3(0, 1, 0));   // pole: up_ref = +X
+    EXPECT_NEAR(glm::length(p.right), 1.0f, 1e-6f);
+}
+
+TEST(FarFieldBuild, GltfToBcIsAProperInvolution) {
+    const glm::mat3 M = far::gltf_to_bc();
+    EXPECT_NEAR(glm::determinant(M), 1.0f, 1e-6f);
+    EXPECT_EQ(M * M, glm::mat3(1.0f));
+    EXPECT_EQ(M * glm::vec3(1, 2, 3), glm::vec3(-1, 3, 2));
+}
+
+TEST(FarFieldBuild, OnlyTheViewedFrameSourcesGenerate) {
+    far::FarField f = field_with_catalogue();
+    auto s = vesuvi_like();
+    f.set_sources({s});
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    far::FarOutput out;
+    f.set_frame(std::string("Beol"), {280000.0, 0.0, 0.0});
+    f.build(in, out);
+    EXPECT_EQ(out.generated, 0);
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    f.build(in, out);
+    EXPECT_GT(out.generated, 0);
+    EXPECT_FALSE(out.specks.empty());
+    f.set_frame(std::nullopt, {0.0, 0.0, 0.0});
+    f.build(in, out);
+    EXPECT_EQ(out.generated, 0);
+}
+
+TEST(FarFieldBuild, BudgetTakesTheNearestCellsFirst) {
+    // The whole in-view Vesuvi-like enumeration holds only ~220 rocks, so the
+    // budget must sit well below that to bind (200 barely did: the walk reached
+    // the same farthest speck either way).
+    constexpr int kBudget = 50;
+    far::FarField f = field_with_catalogue();
+    f.set_sources({vesuvi_like()});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarDials d;
+    d.max_far_rocks = kBudget;
+    f.set_dials(d);
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    EXPECT_GE(out.generated, kBudget);
+    EXPECT_LT(out.generated, kBudget + 400);   // stops within one cell's worth
+    float maxd = 0.0f;
+    for (const auto& sp : out.specks) maxd = std::max(maxd, glm::length(sp.pos));
+    d.max_far_rocks = 60000;
+    f.set_dials(d);
+    far::FarOutput full;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), full);
+    ASSERT_GT(full.generated, 2 * kBudget);    // the budget really binds
+    EXPECT_LT(out.cells, full.cells);
+    float maxfull = 0.0f;
+    for (const auto& sp : full.specks) maxfull = std::max(maxfull, glm::length(sp.pos));
+    EXPECT_LT(maxd, maxfull);
+}
+
+TEST(FarFieldBuild, CameraOutsideTheSlabEnumeratesNothing) {
+    far::FarField f = field_with_catalogue();
+    f.set_sources({vesuvi_like()});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 200000.0});   // far above the plane
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    EXPECT_EQ(out.cells, 0);
+}
+
+TEST(FarFieldBuild, ViewscreenHeightShrinksTheRange) {
+    far::FarField f = field_with_catalogue();
+    f.set_sources({vesuvi_like()});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarOutput a, b;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}, 1080.0f), a);
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}, 360.0f), b);
+    EXPECT_LT(b.cells, a.cells);
+}
+
+TEST(FarFieldBuild, ClearKeepsTheCatalogue) {
+    far::FarField f = field_with_catalogue();
+    f.set_sources({vesuvi_like()});
+    f.set_rocks({{1, 0, 57.0f}});
+    f.clear();
+    EXPECT_EQ(f.source_count(), 0u);
+    EXPECT_EQ(f.rock_count(), 0u);
+    EXPECT_EQ(f.cached_cells(), 0u);
+    f.set_rocks({{1, 0, 57.142857f}});
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    in.world_of = [](std::uint64_t, glm::mat4& w) {
+        w = glm::translate(glm::mat4(1.0f), glm::vec3(0, 800, 0))
+          * glm::scale(glm::mat4(1.0f), glm::vec3(0.035f));
+        return true;
+    };
+    far::FarOutput out;
+    f.build(in, out);
+    EXPECT_EQ(out.impostors.size(), 1u);   // catalogue survived: impostor still available
+}
+
+TEST(FarFieldBuild, CellCacheIsCappedAndForgetsOnGeneratorChange) {
+    far::FarField f = field_with_catalogue();
+    f.set_sources({vesuvi_like()});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarDials d;
+    d.cell_cache_max = 40;
+    f.set_dials(d);
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    ASSERT_GT(out.cells, 40);                    // this frame walked past the cap
+    EXPECT_LE(f.cached_cells(), 40u);
+    d.cell_cache_max = 32768;
+    f.set_dials(d);                              // gen unchanged: cache kept
+    EXPECT_GT(f.cached_cells(), 0u);
+    d.gen.cells_per_range = 8;
+    f.set_dials(d);                              // gen changed: cache emptied
+    EXPECT_EQ(f.cached_cells(), 0u);
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    EXPECT_GT(f.cached_cells(), 0u);
+    f.set_sources({vesuvi_like()});
+    EXPECT_EQ(f.cached_cells(), 0u);
 }
