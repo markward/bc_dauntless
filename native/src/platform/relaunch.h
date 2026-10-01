@@ -18,6 +18,14 @@ std::vector<std::string> build_relaunch_argv(const std::string& exe,
                                              const std::vector<std::string>& original_args,
                                              const std::vector<std::string>& extra_args);
 
+/// `arg` quoted so the MSVC runtime's CommandLineToArgvW rules parse it back
+/// as one argument: wrapped in quotes when empty or holding a space, tab or
+/// quote; embedded quotes escaped; backslashes doubled only where they
+/// precede a quote (embedded or closing). Pure, so it builds and is tested
+/// on every platform; only Windows' relaunch() uses it (_spawnv joins argv
+/// with spaces and does not quote).
+std::string quote_windows_arg(const std::string& arg);
+
 /// POSIX: execv (returns only on failure, -1, with `error` set).
 /// Windows: _spawnv(_P_NOWAIT) then returns 0 (the caller exits).
 int relaunch(const std::vector<std::string>& argv, std::string& error);
