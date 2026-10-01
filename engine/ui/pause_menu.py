@@ -168,19 +168,21 @@ class PauseMenuModel:
 def default_pause_menu(*,
                       on_exit: _Handler,
                       on_configuration: _Handler,
-                      on_resume: _Handler) -> PauseMenuModel:
+                      on_resume: _Handler,
+                      on_quit_manage_mods: Optional[_Handler] = None) -> PauseMenuModel:
     """Build the dauntless default pause menu: Resume +
     Configuration + Exit Program.
 
     Row order is fixed at the ends: Resume is always first and Exit
     Program is always last, so the safe "back out" and the destructive
-    "quit" never drift mid-list as rows are added. Configuration and any
-    dev rows sit between them.
+    "quit" never drift mid-list as rows are added. Configuration, any
+    dev rows, and "Quit and Manage Mods" sit between them.
 
     Handlers are injected so the model has no compile-time dependency
     on the host loop. The host loop wires on_exit to a quit flag,
     on_configuration to ConfigurationPanel.open + pause-menu-hide
-    arbitration, and on_resume to the pause-controller toggle.
+    arbitration, on_resume to the pause-controller toggle, and
+    on_quit_manage_mods (when given) to the mod-screen relauncher.
 
     When dev_mode.is_enabled(), inserts one row per entry in
     dev_pause_menu_entries() — in registration order, no separator,
@@ -193,11 +195,16 @@ def default_pause_menu(*,
     m.add_item("Configuration", "configuration", on_configuration)
 
     if dev_mode.is_enabled():
-        used: set[str] = {"resume", "configuration", "exit"}
+        used: set[str] = {"resume", "configuration", "exit", "quit-manage-mods"}
         for label, handler in dev_mode.dev_pause_menu_entries():
             action_id = _slugify_action_id(label, used)
             used.add(action_id)
             m.add_item(label, action_id, handler)
+
+    if on_quit_manage_mods is not None:
+        # Sub-project 3: shuts down and relaunches into the pre-boot Mods
+        # screen (--mods). Destructive like Exit, so it sits beside it.
+        m.add_item("Quit and Manage Mods", "quit-manage-mods", on_quit_manage_mods)
 
     m.add_item("Exit Program",  "exit",          on_exit)
 

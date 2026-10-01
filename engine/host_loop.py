@@ -9955,10 +9955,20 @@ def run(mission_name: Optional[str] = None,
         controller.quick_battle_setup_panel = quick_battle_setup_panel
 
         from engine.ui.pause_menu import default_pause_menu
+        def _quit_and_manage_mods():
+            # host_main re-executes us with --mods after a normal shutdown.
+            try:
+                import _dauntless_host as _hh
+                _hh.request_relaunch(["--mods"])
+            except Exception as _e:
+                dev_mode.log_swallowed("request_relaunch", _e)
+            pause.request_quit()
+
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_configuration=configuration_panel.open,
             on_resume=pause.close,
+            on_quit_manage_mods=_quit_and_manage_mods,
         )
         # `registry` was created earlier (before the pause menu) so dev panels
         # could register their menu rows ahead of the snapshot; wire its legacy
