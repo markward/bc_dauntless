@@ -108,7 +108,19 @@ def test_frame_with_a_cloud_draws_it():
     try:
         h0, h1, bound_mu = _load_fragment(h)
         h.minors_set_fragments(0, [(h0, h1, bound_mu)])
-        h.minors_add_cloud(_desc())
+        # DPI-independent geometry: h.init(64, 64) asks for a 64x64 WINDOW,
+        # but the actual FRAMEBUFFER (what minors_step's pixel-radius cull
+        # uses) is DPI-scaled -- 64px on a non-Retina display, 128px on a
+        # Retina one. The _desc() default (point z=-20, r=0.3) sits at
+        # ~0.83 px on a 64px framebuffer, under min_pixel_radius (1.5), so
+        # the cloud was invisible whenever the OS happened to hand back an
+        # unscaled framebuffer. A near, large cloud (z=-5, r=1.0, tight
+        # shell so no minor's individual z offset can undo the margin)
+        # reads ~9-14 px even at 64px -- comfortably above the 1.5px floor
+        # at HALF that framebuffer size too, so the assertion still fails
+        # if drawing is genuinely broken, independent of display DPI.
+        h.minors_add_cloud(_desc(point=(0.0, 0.0, -5.0), shell_outer=1.0,
+                                 r_min=1.0, r_max=1.0))
         _look_down_minus_z(h)
         h.damage_decals_tick(1.0)
         h.frame()

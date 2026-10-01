@@ -1139,6 +1139,15 @@ TEST_F(HullFieldClipTest, DegenerateNormalWithGradientOnStaysFinite) {
 
     renderer::HdrTarget hdr;
     hdr.resize(kW, kH);
+    // HdrTarget::resize() binds its own colour/depth textures on whatever
+    // unit happens to be active (unit 0, left there by set_uniforms above),
+    // clobbering the u_base_color binding with the HDR target's own
+    // DEPTH24_STENCIL8 texture -- a sampling feedback loop once hdr.bind()
+    // attaches that same texture to the bound FBO (undefined behaviour,
+    // observed as an intermittent NaN readback). Re-bind the intended
+    // texture on unit 0 before drawing.
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, white_tex_);
     hdr.bind();
     glDisable(GL_DEPTH_TEST);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
