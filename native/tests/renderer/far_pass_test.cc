@@ -611,7 +611,7 @@ TEST_F(FarPassGLTest, FluxContinuityAtTwoPixels) {
     });
     const double speck = hdr_flux(target, [&] {
         pass.render_specks({renderer::SpeckGpu{centre, p, avg_albedo, 1.0f}}, cam, *pipeline, l,
-                           /*speck_gain=*/1.0f, kFluxSize, kFluxSize);
+                           /*ambient_scale=*/1.0f, /*speck_gain=*/1.0f, kFluxSize, kFluxSize);
     });
 
     std::printf("[far_pass_test] flux at p = 2 px: mesh %.4f impostor %.4f speck %.4f\n", mesh,
@@ -622,38 +622,147 @@ TEST_F(FarPassGLTest, FluxContinuityAtTwoPixels) {
     EXPECT_NEAR(speck, impostor, 0.25 * impostor);
 }
 
-// Premultiplied output: a speck over a white clear colour DARKENS it, and a
-// non-empty speck list is one draw call.
+// Premultiplied output, exactly: a lit speck with p < 1 (so a < 1 per texel)
+// over white reads c*a + (1 - a). Straight alpha would read c*a*a + (1 - a).
+// The ambient is scaled by ambient_scale as set_ambient_uniforms scales it.
+// A non-empty list is one draw; GL state, including the blend function, is
+// restored.
 TEST_F(FarPassGLTest, SpeckOccludesABrightBackground) {
+    renderer::HdrTarget target;            // first: resize binds on the ACTIVE unit
+    target.resize(kW, kH);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     const glm::vec3 centre(0.0f, 0.0f, 0.0f);
     const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
-    renderer::Lighting dark;          // no ambient, no sun: the speck's colour is 0
-    dark.ambient = glm::vec3(0.0f);
+    renderer::Lighting l;                  // ambient only: c = albedo * ambient * scale
+    l.ambient = glm::vec3(1.0f);
+    l.directional_count = 0;               // Lighting defaults to one sun
+    const float ambient_scale = 0.5f;
+    const glm::vec3 albedo(0.6f, 0.4f, 0.2f);
+    const float p = 0.8f;
+    const float a = 3.14159265f * p * p / 4.0f;
+    const glm::vec3 expect = albedo * ambient_scale * a + glm::vec3(1.0f - a);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, kW, kH);
+    target.bind();
     glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);     // a caller's blend function, to be kept
 
     renderer::FarPass pass;
     pass.reset_counts();
-    pass.render_specks({}, cam, *pipeline, dark, 1.0f, kW, kH);
+    pass.render_specks({}, cam, *pipeline, l, ambient_scale, 1.0f, kW, kH);
     EXPECT_EQ(pass.last_draw_calls(), 0) << "an empty list draws nothing";
-    pass.render_specks({renderer::SpeckGpu{centre, 4.0f, glm::vec3(0.4f), 1.0f}}, cam, *pipeline,
-                       dark, 1.0f, kW, kH);
+    pass.render_specks({renderer::SpeckGpu{centre, p, albedo, 1.0f}}, cam, *pipeline, l,
+                       ambient_scale, 1.0f, kW, kH);
     EXPECT_EQ(pass.last_draw_calls(), 1);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 
-    const auto px = read_frame();
-    const std::size_t c = (static_cast<std::size_t>(kH / 2) * kW + kW / 2) * 4;
-    EXPECT_LT(px[c], 40) << "the speck's centre covers the white background";
-    EXPECT_EQ(px[0], 255) << "a far corner is untouched";
+    std::vector<float> px(static_cast<std::size_t>(kW) * kH * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, target.fbo());
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, px.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    int touched = 0;
+    for (std::size_t i = 0; i < px.size(); i += 4) {
+        if (px[i] == 1.0f && px[i + 1] == 1.0f && px[i + 2] == 1.0f) continue;
+        ++touched;
+        for (int k = 0; k < 3; ++k)
+            EXPECT_NEAR(px[i + static_cast<std::size_t>(k)], expect[k], 2.0f / 255.0f)
+                << "texel " << i / 4 << " channel " << k;
+    }
+    EXPECT_EQ(touched, 4) << "p < 1: exactly the 2x2 block";
 
-    // State is restored: blending off, depth writes on.
+    // State is restored: blending off, depth writes on, the blend function kept.
     EXPECT_FALSE(glIsEnabled(GL_BLEND));
     GLboolean depth_write = GL_FALSE;
     glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
     EXPECT_TRUE(depth_write);
+    GLint src = 0, dst = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst);
+    EXPECT_EQ(src, GL_SRC_ALPHA);
+    EXPECT_EQ(dst, GL_ONE);
+    glBlendFunc(GL_ONE, GL_ZERO);
+}
+
+namespace {
+
+// Speck-only flux (sum r+g+b over a float readback) of one ambient-lit speck
+// of radius `p` px, its centre shifted by (ox, oy) framebuffer pixels from a
+// pixel corner (the 256x256 target's centre).
+struct SpeckFluxRig {
+    renderer::Pipeline& pipeline;
+    renderer::HdrTarget& target;
+    renderer::FarPass pass;
+    scenegraph::Camera cam = flux_camera(kLevelView, glm::vec3(0.0f), 100.0f);
+    renderer::Lighting light;
+    glm::vec3 albedo{0.5f, 0.4f, 0.3f};
+
+    explicit SpeckFluxRig(renderer::Pipeline& p, renderer::HdrTarget& t) : pipeline(p), target(t) {
+        light.ambient = glm::vec3(1.0f);
+        light.directional_count = 0;       // Lighting defaults to one sun
+    }
+
+    double flux(float p, float ox, float oy) {
+        const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kFluxSize));
+        const float gu_per_px = glm::length(cam.eye - cam.target) / k;
+        const glm::vec3 fwd = glm::normalize(cam.target - cam.eye);
+        const glm::vec3 right = glm::normalize(glm::cross(fwd, cam.up));
+        const glm::vec3 up = glm::cross(right, fwd);
+        const glm::vec3 pos = cam.target + (ox * right + oy * up) * gu_per_px;
+        return hdr_flux(target, [&] {
+            pass.render_specks({renderer::SpeckGpu{pos, p, albedo, 1.0f}}, cam, pipeline, light,
+                               1.0f, 1.0f, kFluxSize, kFluxSize);
+        });
+    }
+
+    // pi p^2 * sum(albedo * ambient): the flux an area-weighted speck owes.
+    double expected(float p) const {
+        return 3.14159265 * p * p * (albedo.r + albedo.g + albedo.b);
+    }
+};
+
+}  // namespace
+
+// Ruling R12: speck flux is pi p^2 * colour on both sides of the p = 1 seam
+// between the square and the disc, and through the band.
+TEST_F(FarPassGLTest, SpeckFluxScalesAsPSquaredAcrossTheSeam) {
+    renderer::HdrTarget target;
+    target.resize(kFluxSize, kFluxSize);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    SpeckFluxRig rig(*pipeline, target);
+    for (float p : {0.99f, 1.0f, 1.01f, 1.5f, 2.0f}) {
+        const double got = rig.flux(p, 0.0f, 0.0f);
+        std::printf("[far_pass_test] speck flux p %.2f: %.4f (expected %.4f, ratio %.4f)\n", p,
+                    got, rig.expected(p), got / rig.expected(p));
+        EXPECT_NEAR(got / rig.expected(p), 1.0, 0.05) << "p = " << p;
+    }
+}
+
+// Ruling R12: sub-pixel motion does not make a speck shimmer. 16 offsets (a
+// 4x4 grid of quarter pixels, including the exact half-pixel alignments) at
+// p = 1.0 and 1.5 (the ruling), and at 1.25, 1.75 and 1.9, where the disc
+// carries most of the square -> disc cross-fade: max/min flux <= 1.10.
+TEST_F(FarPassGLTest, SpeckFluxIsSteadyUnderSubPixelMotion) {
+    renderer::HdrTarget target;
+    target.resize(kFluxSize, kFluxSize);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    SpeckFluxRig rig(*pipeline, target);
+    for (float p : {1.0f, 1.25f, 1.5f, 1.75f, 1.9f}) {
+        double lo = 1e30, hi = 0.0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                const double f = rig.flux(p, 0.25f * i, 0.25f * j);
+                lo = std::min(lo, f);
+                hi = std::max(hi, f);
+            }
+        std::printf("[far_pass_test] speck shimmer p %.2f: min %.4f max %.4f max/min %.4f\n", p,
+                    lo, hi, hi / lo);
+        ASSERT_GT(lo, 0.0);
+        EXPECT_LE(hi / lo, 1.10) << "p = " << p;
+    }
 }

@@ -48,9 +48,12 @@ public:
     // One instanced draw of every speck (none when empty): premultiplied,
     // blended GL_ONE / GL_ONE_MINUS_SRC_ALPHA, depth-tested without depth
     // writes, unculled. `viewport_w/h` are the target's framebuffer pixels.
+    // `ambient_scale` scales the ambient exactly as render_impostors /
+    // configure_rock_program do (set_ambient_uniforms), so a filmic exterior
+    // dims a speck's ambient with its mesh's.
     void render_specks(const std::vector<SpeckGpu>& specks, const scenegraph::Camera& cam,
-                       Pipeline& pipeline, const Lighting& lighting, float speck_gain,
-                       int viewport_w, int viewport_h);
+                       Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
+                       float speck_gain, int viewport_w, int viewport_h);
 
     int last_draw_calls() const { return draw_calls_; }   // since the last reset_counts()
     void reset_counts() { draw_calls_ = 0; }

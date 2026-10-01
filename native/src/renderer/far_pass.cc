@@ -267,8 +267,9 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
 }
 
 void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegraph::Camera& cam,
-                            Pipeline& pipeline, const Lighting& lighting, float speck_gain,
-                            int viewport_w, int viewport_h) {
+                            Pipeline& pipeline, const Lighting& lighting,
+                            float ambient_scale, float speck_gain, int viewport_w,
+                            int viewport_h) {
     if (specks.empty()) return;
     ensure_geometry();   // the shared corner strip
     if (speck_vao_ == 0) {
@@ -304,7 +305,7 @@ void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegrap
     s.set_mat4("u_view", cam.view_matrix());
     s.set_mat4("u_proj", cam.proj_matrix());
     s.set_vec3("u_camera_pos_ws", glm::vec3(glm::inverse(cam.view_matrix())[3]));
-    set_ambient_uniforms(s, lighting, 1.0f);
+    set_ambient_uniforms(s, lighting, ambient_scale);
     s.set_int("u_dir_light_count", lighting.directional_count);
     if (lighting.directional_count > 0) {
         s.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
@@ -315,6 +316,18 @@ void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegrap
     s.set_float("u_speck_gain", speck_gain);
     s.set_vec2("u_viewport", glm::vec2(static_cast<float>(viewport_w),
                                        static_cast<float>(viewport_h)));
+    GLint vp[4] = {0, 0, 0, 0};            // the square kernel works in window coords
+    glGetIntegerv(GL_VIEWPORT, vp);
+    s.set_vec2("u_viewport_origin", glm::vec2(static_cast<float>(vp[0]), static_cast<float>(vp[1])));
+
+    // The blend function is QUERIED and put back as found, not reset to a
+    // guessed frame default: passes disagree on what that default is.
+    GLint blend_src_rgb = GL_ONE, blend_dst_rgb = GL_ZERO;
+    GLint blend_src_a = GL_ONE, blend_dst_a = GL_ZERO;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blend_dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dst_a);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // premultiplied
@@ -328,9 +341,12 @@ void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegrap
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    // Restore the frame defaults: cull on, depth writes on, blend off.
+    // Restore the frame defaults: cull on, depth writes on, blend off; and
+    // the blend function as it was found.
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
+    glBlendFuncSeparate(static_cast<GLenum>(blend_src_rgb), static_cast<GLenum>(blend_dst_rgb),
+                        static_cast<GLenum>(blend_src_a), static_cast<GLenum>(blend_dst_a));
     glDisable(GL_BLEND);
 }
 
