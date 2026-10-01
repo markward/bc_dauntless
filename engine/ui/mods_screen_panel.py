@@ -51,8 +51,8 @@ class ModsScreenPanel(Panel):
         super().__init__()
         self._mode = mode
         self._species = list(species)
-        self._stock = list(stock_classes)
-        self._stock_keys = {s.strip().lower() for s in self._stock}
+        self._stock = dict(stock_classes)   # title -> values dict (era/role/species/playable)
+        self._stock_keys = {t.strip().lower(): v for t, v in self._stock.items()}
         self._writer = writer
         suggest = suggest or catalog.suggestions
         self._rows = []
@@ -119,11 +119,13 @@ class ModsScreenPanel(Panel):
             return True
         if action.startswith("star:"):
             r = self._find(action[5:])
-            if r is not None and r.editable and r.class_key() and r.class_key() not in self._stock_keys:
-                for m in self._members(r.class_key()):
-                    if m.editable:
-                        m.answers["class_default"] = False
-                r.answers["class_default"] = True
+            if r is not None and r.editable:
+                key = r.class_key()
+                if key and key not in self._stock_keys and self._locked_default(key) is None:
+                    for m in self._members(key):
+                        if m.editable:
+                            m.answers["class_default"] = False
+                    r.answers["class_default"] = True
             return True
         if action.startswith("set:"):
             parts = action.split(":", 3)
@@ -173,17 +175,33 @@ class ModsScreenPanel(Panel):
     def _members(self, key: str) -> list:
         return [m for m in self._rows if m.class_key() == key]
 
+    def _locked_default(self, key: str):
+        """The read-only member of `key`'s class already marked
+        class_default, if any -- it is the class's FIXED default and no
+        editable member (nor the star control) may override it."""
+        if not key:
+            return None
+        for m in self._members(key):
+            if not m.editable and m.answers.get("class_default"):
+                return m
+        return None
+
     def _conflict(self, r: _Row) -> str:
         key = r.class_key()
         if not key:
             return ""
-        group = self._members(key)
-        if len(group) < 2:
+        members = [(m.answers.get("title") or m.file,
+                    {k: m.answers[k] for k in ("era", "role", "species", "playable")
+                     if m.answers.get(k) is not None}, ()) for m in self._members(key)]
+        stock_values = self._stock_keys.get(key)
+        if stock_values is not None:
+            title = next(t for t in self._stock if t.strip().lower() == key)
+            members.append((title, {k: stock_values[k] for k in
+                                     ("era", "role", "species", "playable")
+                                     if k in stock_values}, ()))
+        if len(members) < 2:
             return ""
-        _v, _m, errors = catalog.combine_class(
-            [(m.answers.get("title") or m.file,
-              {k: m.answers[k] for k in ("era", "role", "species", "playable")
-               if m.answers.get(k) is not None}, ()) for m in group])
+        _v, _m, errors = catalog.combine_class(members)
         return "; ".join(errors)
 
     def _default_flags(self) -> dict:
@@ -195,6 +213,11 @@ class ModsScreenPanel(Panel):
                 continue
             seen.add(key)
             group = self._members(key)
+            locked = self._locked_default(key)
+            if locked is not None:
+                for m in group:
+                    flags[m.file] = m is locked
+                continue
             idx = catalog.resolve_class_default(
                 [(m.answers.get("title") or m.file, bool(m.answers.get("class_default")))
                  for m in group], key)
@@ -259,6 +282,8 @@ class ModsScreenPanel(Panel):
                 "title": a.get("title"), "variant_of": a.get("variant_of"),
                 "is_default": flags.get(r.file, False),
                 "stock_class": bool(key) and key in self._stock_keys,
+                "star_locked": bool(key) and key not in self._stock_keys
+                               and self._locked_default(key) is not None,
                 "era": era_s, "role": a.get("role"), "species": a.get("species"),
                 "playable": a.get("playable"), "editable": r.editable, "ticked": r.ticked,
                 "missing": list(self._row_missing(r)) if r.editable else [],
@@ -275,7 +300,7 @@ class ModsScreenPanel(Panel):
             "rows": rows,
             "mods": [{"name": m["name"], "ships": m["ships"], "classes": len(m["keys"])}
                      for m in by_mod.values()],
-            "species": self._species, "stock_classes": self._stock,
+            "species": self._species, "stock_classes": sorted(self._stock),
             "eras": [{"id": e.id, "tag": e.tag, "name": e.name} for e in ERAS],
             "roles": [{"id": r.id, "label": r.label} for r in ROLES],
             "ticked": len(self._ticked()), "status": status,

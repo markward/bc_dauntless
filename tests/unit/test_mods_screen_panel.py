@@ -23,7 +23,8 @@ def rec(ship_id, mod="DCMPv2", values=None, missing=None, sub_menu=None, player=
 
 
 SPECIES = ["Federation", "Klingon"]
-STOCK = ["Galaxy", "Nebula"]
+_STOCK_VALUES = {"role": "tactical", "species": "Federation", "era": ("DS9", "DS9"), "playable": True}
+STOCK = {"Galaxy": dict(_STOCK_VALUES), "Nebula": dict(_STOCK_VALUES)}
 
 
 def gate(*editable, readonly=(), writer=None):
@@ -183,3 +184,46 @@ def test_quit_and_teardown():
     p = gate(rec("DCMPA"))
     ev(p, "quit")
     assert p.outcome == "quit" and p.teardown_script == "setModsScreen(null);"
+
+
+def _locked_class_rows():
+    # Non-matching read-only title on purpose: neither member's title equals
+    # or contains the class word "Defiant", so a correct fix must rely on
+    # the read-only member's own class_default flag, not a title-match
+    # fallback that would coincidentally pick the right row anyway.
+    ro = rec("ADefiant", mod="ModA", variant_of="Defiant", class_default=True,
+             values={"title": "Prime", "era": ("DS9", "DS9"), "role": "tactical",
+                     "species": "Federation", "playable": True}, missing=())
+    editable = rec("BValiant", mod="ModB", variant_of="Defiant", name="Valiant")
+    return editable, ro
+
+
+def test_readonly_locked_default_blocks_star():
+    editable, ro = _locked_class_rows()
+    p = gate(editable, readonly=[ro])
+    assert row(p, "ADefiant")["is_default"] and not row(p, "BValiant")["is_default"]
+    assert row(p, "BValiant")["star_locked"] is True
+    ev(p, "star", "BValiant")
+    assert row(p, "ADefiant")["is_default"] and not row(p, "BValiant")["is_default"]
+
+
+def test_readonly_locked_default_writes_false_for_editable_member():
+    editable, ro = _locked_class_rows()
+    written = []
+    p = gate(editable, readonly=[ro], writer=lambda rows: written.extend(rows))
+    ev(p, "set", "BValiant", "era", "all")
+    ev(p, "continue")
+    assert p.outcome == "continue"
+    (w,) = written
+    assert w.answers["class_default"] is False
+
+
+def test_stock_class_role_conflict_blocks_continue_and_clears():
+    p = gate(rec("LCvoyagerZZ", mod="LC", variant_of="Nebula"))
+    ev(p, "set", "LCvoyagerZZ", "era", "all")
+    ev(p, "set", "LCvoyagerZZ", "role", "station")
+    assert "role" in row(p, "LCvoyagerZZ")["conflict"]
+    assert payload(p)["can_continue"] is False
+    ev(p, "set", "LCvoyagerZZ", "role", "tactical")
+    assert row(p, "LCvoyagerZZ")["conflict"] == ""
+    assert payload(p)["can_continue"] is True
