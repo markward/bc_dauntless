@@ -1516,6 +1516,15 @@ def _reset_leakable_engine_globals():
             _mn.reset(None)
     except Exception:
         pass
+    # Fly-through response token buckets (engine/rocks/minor_contact.py):
+    # a test that drives the rate limiter would otherwise leave partially
+    # spent buckets for the next test's own rate-limit assertions.
+    try:
+        _mc = sys.modules.get("engine.rocks.minor_contact")
+        if _mc is not None:
+            _mc.reset()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds

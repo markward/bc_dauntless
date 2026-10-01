@@ -11086,6 +11086,8 @@ def run(mission_name: Optional[str] = None,
                 with frame_profiler.scope("sim.rock_breakup"):
                     from engine.rocks import vfx as rock_vfx
                     rock_vfx.pump()
+                    from engine.rocks import minor_contact
+                    minor_contact.pump(player, session=session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame
