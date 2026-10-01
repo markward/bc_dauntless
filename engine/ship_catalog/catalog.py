@@ -208,3 +208,46 @@ def _entry(stock_d, mod_ds, installed) -> CatalogEntry:
         raw_name=str(getattr(last, "name", "") or ""),
         raw_race=getattr(last, "race", None),
     )
+
+
+# ── species ────────────────────────────────────────────────────────────────
+
+_INSIGNIA_EXTS = (".svg", ".png", ".tga")
+
+
+def insignia_path(species):
+    """The species' emblem, first that exists (spec §4.4):
+    1. the committed <project assets>/insignias/<lowercased>.svg
+    2. data/Icons/Species/<Species>.{svg,png,tga} via the asset overlay,
+       which is how a mod that introduces a species ships its emblem
+    3. None -- the screen shows the flagship's icon.
+    Resolved at call time, never cached (paths rule)."""
+    from pathlib import Path
+    from engine import paths
+    if not isinstance(species, str) or not species.strip():
+        return None
+    name = species.strip()
+    committed = paths.project_asset_root() / "insignias" / ("%s.svg" % name.lower())
+    if committed.is_file():
+        return committed
+    for ext in _INSIGNIA_EXTS:
+        try:
+            p = Path(paths.game_asset("data/Icons/Species/%s%s" % (name, ext)))
+        except Exception:  # noqa: BLE001 -- unresolved game root
+            return None
+        if p.is_file():
+            return p
+    return None
+
+
+def species() -> list:
+    """STOCK_SPECIES in pill order, then any species an entry uses that the
+    table does not know, alphabetically, flagship None. Insignia resolved."""
+    from engine.ship_catalog.tables import STOCK_SPECIES, Species
+    known = {s.name.lower() for s in STOCK_SPECIES}
+    extra = sorted({e.species for e in _built().entries
+                    if e.species and e.species.lower() not in known},
+                   key=str.lower)
+    out = [s._replace(insignia=insignia_path(s.name)) for s in STOCK_SPECIES]
+    out += [Species(name, None, insignia_path(name)) for name in extra]
+    return out

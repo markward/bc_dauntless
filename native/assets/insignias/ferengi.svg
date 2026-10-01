@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xml:space="preserve" style="shape-rendering:geometricPrecision; text-rendering:geometricPrecision; image-rendering:optimizeQuality; fill-rule:evenodd; clip-rule:evenodd" viewBox="2121.68 1301.68 3680.64 3396.64" version="1.1" id="svg2" sodipodi:docname="ferengi.svg" inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg"><sodipodi:namedview id="namedview2" pagecolor="#ffffff" bordercolor="#000000" borderopacity="0.25" inkscape:showpageshadow="2" inkscape:pageopacity="0.0" inkscape:pagecheckerboard="0" inkscape:deskcolor="#d1d1d1" inkscape:document-units="mm" inkscape:zoom="0.32" inkscape:cx="-381.25" inkscape:cy="-360.9375" inkscape:window-width="944" inkscape:window-height="736" inkscape:window-x="0" inkscape:window-y="33" inkscape:window-maximized="0" inkscape:current-layer="Ebene_x0020_1"/>
+ <defs id="defs2">
+  <style type="text/css" id="style1">
+   
+    .fil1 {fill:#FBE3CF;fill-rule:nonzero}
+    .fil0 {fill:url(#id0)}
+   
+  </style>
+  <linearGradient id="id0" gradientUnits="userSpaceOnUse" x1="1642.38" y1="409.44" x2="6154.93" y2="5590.4">
+   <stop offset="0" style="stop-color:#EF7F1A" id="stop1"/>
+   <stop offset="1" style="stop-color:#DD6120" id="stop2"/>
+  </linearGradient>
+ </defs>
+ <g id="Ebene_x0020_1" inkscape:label="Ebene 1">
+  <metadata id="CorelCorpID_0Corel-Layer"/>
+  
+  <path class="fil1" d="M3775 3000c0,-126 -93,-229 -208,-229 -115,0 -208,102 -208,229 0,126 93,229 208,229 115,0 208,-102 208,-229zm123 -172c-58,-206 -221,-365 -424,-412l-270 531 -566 0 203 -223 219 -241 346 -380c42,14 82,32 121,54 232,128 402,375 449,671l-77 0zm-551 -933c448,123 782,546 802,1055l1517 0c-22,-839 -621,-1512 -1358,-1512l-1354 0 -696 1367 120 0 826 -938 146 25c-1,1 -2,2 -3,4zm551 1277c-58,206 -221,365 -424,412l-270 -531 -566 0 203 223 219 241 346 380c42,-14 82,-32 121,-54 232,-128 402,-375 449,-671l-77 0zm-548 936l-146 25 -826 -938 -120 0 696 1367 1354 0c737,0 1337,-673 1358,-1512l-1517 0c-19,509 -354,933 -802,1055 1,1 2,2 3,4z" id="path2" style="fill:#ff6600"/>
+ </g>
+</svg>

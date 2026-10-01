@@ -10,4 +10,5 @@ from engine.ship_catalog.tables import (  # noqa: F401
     STOCK_SPECIES, Era, Role, Species)
 from engine.ship_catalog.schema import Variant  # noqa: F401
 from engine.ship_catalog.catalog import (  # noqa: F401
-    CatalogEntry, entries, entry, incomplete, invalidate)
+    CatalogEntry, entries, entry, incomplete, insignia_path, invalidate,
+    species)
