@@ -46,6 +46,7 @@ class DiscSource:
     sphere_radius_gu: float = 0.0
     sphere_edge_frac: float = 0.2
     gain_scale: float = 1.0        # x the native haze_gain for this source
+    brightness: float = 1.0        # haze COLOUR only (ruling R16); alpha untouched
     pops: Optional[tuple] = None   # explicit populations; None = field_table's
 
 
@@ -117,6 +118,7 @@ def profile_belt(system_name: str):
         scale_height_min_gu=far_dials.get("scale_height_min_gu"),
         families={"silicate": 1.0},
         seed=seed,
+        brightness=float(far_dials.get("haze_brightness")),
     )
 
 
@@ -160,6 +162,7 @@ def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
         sphere_radius_gu=radius,
         sphere_edge_frac=float(far_dials.get("tile_haze_edge_frac")),
         gain_scale=float(far_dials.get("tile_haze_gain")) / float(far_dials.get("haze_gain")),
+        brightness=float(far_dials.get("tile_haze_brightness")),
         pops=(pop,),
     )
 
@@ -242,4 +245,5 @@ def to_native(source) -> dict:
         "sphere_radius_gu": source.sphere_radius_gu,
         "sphere_edge_frac": source.sphere_edge_frac,
         "gain_scale": source.gain_scale,
+        "brightness": source.brightness,
     }

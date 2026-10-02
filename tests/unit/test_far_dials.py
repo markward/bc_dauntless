@@ -38,3 +38,23 @@ def test_tile_haze_gain_is_the_cpp_derivation():
     assert far_dials.DEFAULTS["tile_haze_edge_frac"] == 0.2
     assert "tile_haze_gain" not in far_dials.NATIVE_KEYS
     assert "tile_haze_edge_frac" not in far_dials.NATIVE_KEYS
+
+
+def _cpp_constant(name):
+    src = (Path(__file__).parents[2] / "native/tests/renderer/far_field_test.cc").read_text()
+    m = re.search(r"%s\s*=\s*([0-9.e+-]+)f" % name, src)
+    assert m, name
+    return float(m.group(1))
+
+
+def test_haze_brightness_defaults_are_the_cpp_derivations():
+    """haze_brightness / tile_haze_brightness ARE kHazeBrightness /
+    kTileHazeBrightness in far_field_test.cc, where the
+    Default*BrightnessShowsTwentyFiveOverBlack tests derive them (25/255
+    displayed under the production lighting of Vesuvi mid-band and Beol 4's
+    Player Start). Read, not copied, so the two cannot drift. Python-owned:
+    they ride per source as `brightness`, never through far_set_dials."""
+    assert far_dials.DEFAULTS["haze_brightness"] == _cpp_constant("kHazeBrightness")
+    assert far_dials.DEFAULTS["tile_haze_brightness"] == _cpp_constant("kTileHazeBrightness")
+    assert "haze_brightness" not in far_dials.NATIVE_KEYS
+    assert "tile_haze_brightness" not in far_dials.NATIVE_KEYS

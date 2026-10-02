@@ -34,6 +34,16 @@ DEFAULTS: dict = {
     # from Beol 4's Player Start at its field (tau at gain 1 = 1.15e-5, so
     # gain = -ln 0.85 / tau = 14,136 -> 14,140).
     "tile_haze_gain": 14140.0, "tile_haze_edge_frac": 0.2,
+    # Haze brightness (Python, read at use; re-push sources; ruling R16). Sent
+    # per source as `brightness`: it scales the haze COLOUR only (alpha is
+    # the gains' job). Over black only colour shows, and the pipeline has no
+    # sRGB encode, so these are calibrated on the DISPLAYED value: 0.95 x
+    # mean(rgb) x 255 = 25 under the production lighting, by far_field_test.cc
+    # FarHaze.DefaultBeltBrightnessShowsTwentyFiveOverBlack (Vesuvi mid-band,
+    # tangential: 3.12/255 at 1 -> 8.0) and
+    # FarHazeSphere.DefaultTileBrightnessShowsTwentyFiveOverBlack (Beol 4
+    # Player Start -> field centre: 2.75/255 at 1 -> 9.1).
+    "haze_brightness": 8.0, "tile_haze_brightness": 9.1,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",

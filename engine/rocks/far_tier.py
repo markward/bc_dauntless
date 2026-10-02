@@ -9,7 +9,7 @@ Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
   far_set_sources     on a system change, a change in the viewed set's tile
                       sphere sources (set or field list), or a Python-owned
                       far_dials change (population + disc-shape + tile_haze
-                      keys feed density.to_native). Belts (system frame)
+                      + haze_brightness keys feed density.to_native). Belts (system frame)
                       first, then one view-space sphere per AsteroidField in
                       the viewed set (tile-field haze, added 2026-10-02).
   far_set_rocks       the flagged mission/breakup rocks, when the list changes

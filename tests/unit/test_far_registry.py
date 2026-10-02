@@ -268,6 +268,25 @@ def test_a_tile_haze_dial_change_repushes_the_sources():
     assert _source_pushes(r)[2][0]["sphere_edge_frac"] == far_dials.get("tile_haze_edge_frac")
 
 
+def test_a_brightness_dial_change_repushes_the_sources(monkeypatch):
+    from engine.rocks import far_dials
+    monkeypatch.setattr(far_tier, "frame_for", lambda v: ("Vesuvi", (0.0, 0.0, 0.0)))
+    view = _Set("Vesuvi1")
+    fields = [_Field(view)]
+    r = _R()
+    far_tier.reconcile_with(r, view, {}, fields)
+    far_dials._step("haze_brightness", +1)
+    far_tier.reconcile_with(r, view, {}, fields)
+    far_dials._step("tile_haze_brightness", -1)
+    far_tier.reconcile_with(r, view, {}, fields)
+    pushes = _source_pushes(r)
+    assert len(pushes) == 3
+    belt, tile = pushes[2]
+    assert belt["brightness"] == far_dials.get("haze_brightness")
+    assert tile["brightness"] == far_dials.get("tile_haze_brightness")
+    assert belt["brightness"] != tile["brightness"]
+
+
 def test_belts_and_tile_spheres_ride_together(monkeypatch):
     monkeypatch.setattr(far_tier, "frame_for", lambda v: ("Vesuvi", (0.0, 0.0, 0.0)))
     view = _Set("Vesuvi1")
