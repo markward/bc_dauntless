@@ -202,3 +202,40 @@ def test_a_catalogue_pushed_before_init_still_draws_impostors():
     finally:
         h.shutdown()
         h.far_set_catalogue([], [])
+
+
+def test_a_rock_whose_atlas_fails_to_load_keeps_its_mesh(host):
+    """A flagged rock whose impostor atlas cannot be read must not vanish in
+    the impostor band: the host learns of the failure that frame and the rock
+    is treated as having no impostor -- whole mesh (fade 0), no impostor."""
+    try:
+        h.far_set_catalogue(
+            [{"albedo": "/nonexistent/far_host_test/a0.png",
+              "normal": "/nonexistent/far_host_test/n0.png",
+              "avg_albedo": (0.4, 0.4, 0.4)}], [(0.0, 0.0, 1.0)])
+        # The wide impostor band of the catalogue-before-init test: r=1 at
+        # d=4 is ~14-28 px, inside it at either framebuffer height.
+        h.far_set_dials({"imp_hi": 1000.0, "imp_lo": 1.0, "speck_hi": 0.9,
+                         "speck_lo": 0.5})
+        rock = h.create_instance(_rock_model())
+        h.set_world_transform(rock, _row_major(0.0, 0.0, -4.0))
+        h.far_set_rocks([{"instance": rock, "index": 0, "radius_mu": 1.0}])
+        _look_down_minus_z()
+        h.frame()
+        assert h.far_debug_fade(rock) == 0.0
+        assert h.far_stats()["impostors"] == 0
+    finally:
+        h.far_set_dials({})
+        h.far_set_catalogue([], [])
+
+
+def test_a_hidden_flagged_rock_draws_no_speck_and_keeps_fade_zero(host):
+    rock = h.create_instance(_rock_model())
+    # The speck-band placement of test_a_speck_band_rock_draws_a_speck.
+    h.set_world_transform(rock, _row_major(0.0, 0.0, -60.0))
+    h.far_set_rocks([{"instance": rock, "index": -1, "radius_mu": 1.0}])
+    h.set_visible(rock, False)
+    _look_down_minus_z()
+    h.frame()
+    assert h.far_stats()["specks"] == 0
+    assert h.far_debug_fade(rock) == 0.0

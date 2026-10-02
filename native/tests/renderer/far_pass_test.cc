@@ -53,6 +53,8 @@
 #include <utility>
 #include <vector>
 
+#include "support/content_root.h"
+
 namespace {
 
 namespace far = renderer::far;
@@ -487,6 +489,42 @@ TEST_F(FarPassGLTest, DrawCountIsOnePerBinWithAnAtlas) {
     const auto none = draw_impostors(pass, {bins[1], bins[2]}, cam, l);
     EXPECT_EQ(pass.last_draw_calls(), 0);
     EXPECT_EQ(lit_pixels(none), 0);
+}
+
+// A failed atlas is not remembered across set_atlas_paths: paths that failed
+// once are retried after a new path list arrives (here, a real committed atlas).
+TEST_F(FarPassGLTest, SetAtlasPathsForgetsFailures) {
+    const std::string dir =
+        (test_support::project_root() / "native" / "assets" / "rocks" / "majors" /
+         "carbonaceous_01").string();
+    renderer::FarPass pass;
+    pass.set_atlas_paths({{"/nonexistent/far_pass_test/a0.png", "/nonexistent/far_pass_test/n0.png"}});
+    const glm::vec3 centre(0.0f, 0.0f, 0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    renderer::Lighting l;
+    l.ambient = glm::vec3(1.0f);
+    const std::vector<far::ImpostorBin> bins = {one_impostor_bin(0, kLevelView, centre, 0.5f)};
+
+    pass.reset_counts();
+    draw_impostors(pass, bins, cam, l);
+    ASSERT_EQ(pass.last_draw_calls(), 0) << "precondition: the missing atlas failed";
+
+    pass.set_atlas_paths({{dir + "/impostor_base.png", dir + "/impostor_normal.png"}});
+    pass.reset_counts();
+    draw_impostors(pass, bins, cam, l);
+    EXPECT_EQ(pass.last_draw_calls(), 1) << "new paths are tried, not the remembered failure";
+    EXPECT_TRUE(pass.atlas_loaded(0));
+}
+
+// has_atlas loads lazily and reports a missing file as false.
+TEST_F(FarPassGLTest, HasAtlasReportsAMissingFile) {
+    renderer::FarPass pass;
+    pass.set_atlas_paths({{"/nonexistent/far_pass_test/a0.png", "/nonexistent/far_pass_test/n0.png"}});
+    EXPECT_FALSE(pass.has_atlas(0));
+    EXPECT_FALSE(pass.has_atlas(5)) << "no path at all";
+    const Atlas atlas = sphere_atlas(kRed, kBlue);
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    EXPECT_TRUE(pass.has_atlas(0));
 }
 
 // dilate_coverage spreads colour into alpha-0 texels and never changes alpha.
@@ -939,4 +977,33 @@ TEST_F(FarPassGLTest, HazeDrawsOncePerSourceAndCapsAtFour) {
     EXPECT_EQ(src, GL_SRC_ALPHA);
     EXPECT_EQ(dst, GL_ONE);
     glBlendFunc(GL_ONE, GL_ZERO);
+}
+
+// A source with no populations (its catalogue family missing) has nothing to
+// march: no fullscreen draw for it, while a populated source still draws.
+TEST_F(FarPassGLTest, HazeSkipsASourceWithNoPopulations) {
+    renderer::HdrTarget scene, out;
+    scene.resize(kHazeSize, kHazeSize);
+    out.resize(kHazeSize, kHazeSize);
+    const scenegraph::Camera cam = haze_camera();
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kHazeSize));
+    renderer::Lighting l;
+    const far::FarDials dials;
+    far::DiscSource empty = haze_source();
+    empty.pops.clear();
+
+    out.bind();
+    glViewport(0, 0, kHazeSize, kHazeSize);
+    renderer::FarPass pass;
+    pass.reset_counts();
+    pass.render_haze({empty}, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l, 1.0f,
+                     scene.depth_texture(), inv_vp, k, dials);
+    EXPECT_EQ(pass.last_draw_calls(), 0);
+    pass.reset_counts();
+    pass.render_haze({empty, haze_source()}, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l,
+                     1.0f, scene.depth_texture(), inv_vp, k, dials);
+    EXPECT_EQ(pass.last_draw_calls(), 1);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

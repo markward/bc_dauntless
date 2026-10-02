@@ -330,6 +330,11 @@ void FarField::evict() {
     for (std::size_t i = 0; i < drop; ++i) cache_.erase(age[i].second);
 }
 
+void FarField::drop_impostor(int index) {
+    if (index >= 0 && static_cast<std::size_t>(index) < catalogue_.size())
+        catalogue_[static_cast<std::size_t>(index)].has_impostor = false;
+}
+
 void FarField::build(const BuildInput& in, FarOutput& out) {
     out.impostors.clear();
     out.specks.clear();

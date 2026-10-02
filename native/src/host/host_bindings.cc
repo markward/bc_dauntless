@@ -1252,11 +1252,25 @@ void frame() {
             in.game_time = g_decal_game_time;
             in.world_of = [](std::uint64_t key, glm::mat4& world) {
                 const scenegraph::Instance* inst = far_instance_of(key);
-                if (inst == nullptr) return false;
+                // A hidden rock is unplaceable: fade 0, no impostor or speck.
+                if (inst == nullptr || !inst->visible) return false;
                 world = inst->world;
                 return true;
             };
             g_far_field.build(in, g_far_out);
+            // Impostor availability is one truth: a bin whose atlas cannot
+            // load (loaded here, GL current, before space.opaque reads the
+            // fades) drops that rock's impostor in FarField, and THIS camera
+            // rebuilds, so the rock keeps its mesh instead of vanishing.
+            if (g_far_pass) {
+                bool dropped = false;
+                for (const auto& bin : g_far_out.impostors)
+                    if (!bin.items.empty() && !g_far_pass->has_atlas(bin.rock)) {
+                        g_far_field.drop_impostor(bin.rock);
+                        dropped = true;
+                    }
+                if (dropped) g_far_field.build(in, g_far_out);
+            }
             for (const auto& [key, fade] : g_far_out.fades)
                 if (scenegraph::Instance* inst = far_instance_of(key)) inst->far_fade = fade;
             g_far_generated += g_far_out.generated;

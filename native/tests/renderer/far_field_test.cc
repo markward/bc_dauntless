@@ -387,6 +387,31 @@ TEST(FarFieldBuild, FailedLookupGivesAFadeOfZero) {
     EXPECT_TRUE(out.specks.empty());
 }
 
+// A rock whose impostor atlas failed to load is told so (drop_impostor): it
+// becomes ExplicitNoImpostor, keeping its whole mesh (fade 0) in the impostor
+// band down to speck_hi, with no impostor bin, rather than vanishing.
+TEST(FarFieldBuild, DroppedImpostorKeepsTheMeshToSpeckHi) {
+    far::FarField f = field_with_catalogue();
+    f.set_rocks({{42, 7, 57.142857f}});
+    auto in = camera_at({0, 0, 0}, {0, 1, 0});
+    in.world_of = [](std::uint64_t, glm::mat4& w) {
+        w = glm::translate(glm::mat4(1.0f), glm::vec3(0, 1000, 0))
+          * glm::scale(glm::mat4(1.0f), glm::vec3(0.035f));   // p ~ 3.4 px: impostor band
+        return true;
+    };
+    far::FarOutput out;
+    f.build(in, out);
+    ASSERT_EQ(out.fades[0].second, 1.0f) << "precondition: an impostor-tier rock";
+    ASSERT_EQ(out.impostors.size(), 1u);
+    f.drop_impostor(7);
+    f.drop_impostor(99);                                      // out of range: ignored
+    f.build(in, out);
+    ASSERT_EQ(out.fades.size(), 1u);
+    EXPECT_EQ(out.fades[0].second, 0.0f);
+    EXPECT_TRUE(out.impostors.empty());
+    EXPECT_TRUE(out.specks.empty());
+}
+
 TEST(FarFieldBuild, FrustumCulledFlaggedRockKeepsItsFade) {
     far::FarField f = field_with_catalogue();
     f.set_rocks({{42, 7, 57.142857f}});

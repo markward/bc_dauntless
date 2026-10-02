@@ -56,8 +56,9 @@ public:
                        float speck_gain, int viewport_w, int viewport_h);
 
     // Belt haze (spec §2 "Haze"): one fullscreen-triangle draw of
-    // far_haze.frag per source in `active`, at most 4 (the rest are ignored,
-    // with one warning). `origin_sys` is the eye in system coordinates; the
+    // far_haze.frag per source in `active` that has populations, among the
+    // first 4 (the rest are ignored, with one warning; a population-less
+    // source has nothing to march and draws nothing). `origin_sys` is the eye in system coordinates; the
     // eye in render space is the camera's. `depth_texture` is the scene depth
     // the march stops at, reconstructed through `inv_view_proj`; `k` is the
     // spec's pixels-per-GU. A table longer than 32 rows uses its first 32 and
@@ -73,6 +74,10 @@ public:
     int last_draw_calls() const { return draw_calls_; }   // since the last reset_counts()
     void reset_counts() { draw_calls_ = 0; }
     bool atlas_loaded(int index) const { return atlases_.count(index) != 0; }
+    // Whether catalogue rock `index` can draw an impostor: loads its atlas now
+    // if needed (GL must be current). False for a missing/corrupt file or no
+    // path -- the host then tells FarField the rock has no impostor.
+    bool has_atlas(int index) { return atlas_for(index) != nullptr; }
 
     // TEST-ONLY: inject an atlas instead of loading files.
     void debug_set_atlas(int index, const assets::Image& albedo, const assets::Image& normal);

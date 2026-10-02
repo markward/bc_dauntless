@@ -127,6 +127,7 @@ FarPass::~FarPass() {
 
 void FarPass::set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal) {
     paths_ = std::move(albedo_normal);
+    failed_.clear();   // new paths: a failure is retried, not remembered
 }
 
 void FarPass::install_atlas(int index, assets::Image albedo, assets::Image normal) {
@@ -274,7 +275,10 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
                           const glm::mat4& inv_view_proj, float k, const far::FarDials& dials) {
     constexpr std::size_t kMaxSources = 4, kMaxRows = 32, kMaxPops = 2;
     constexpr int kMaxSteps = 64;   // far_haze.frag's loop bound
-    if (active.empty()) return;
+    // A source with no populations accumulates nothing: never march it.
+    if (std::none_of(active.begin(), active.end(),
+                     [](const far::DiscSource& src) { return !src.pops.empty(); }))
+        return;
     if (active.size() > kMaxSources && !warned_haze_cap_) {
         std::fprintf(stderr, "[far] haze: %zu sources, drawing the first %zu\n", active.size(),
                      kMaxSources);
@@ -324,6 +328,7 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
 
     for (std::size_t si = 0; si < active.size() && si < kMaxSources; ++si) {
         const far::DiscSource& src = active[si];
+        if (src.pops.empty()) continue;
         if (src.table.size() > kMaxRows && !warned_haze_table_) {
             std::fprintf(stderr, "[far] haze: source %u has %zu table rows, using the first %zu\n",
                          src.id, src.table.size(), kMaxRows);
