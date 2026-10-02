@@ -22,6 +22,22 @@ from engine.ui.ship_property_viewer import (
 from engine.ui import ship_property_viewer as _spv
 from engine.ui.spv_decals_pane import DecalsPaneMixin
 
+
+def _parse_set(action: str, key: str):
+    """(index, value) from a '<verb>_set:{"<key>": i, "value": v}' action, or
+    None when malformed or the value is not finite (json accepts NaN/Infinity
+    tokens -- typed values must never stage them)."""
+    try:
+        arg = json.loads(action.split(":", 1)[1])
+        index = int(arg[key])
+        value = float(arg["value"])
+    except (ValueError, KeyError, TypeError, IndexError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return index, value
+
+
 # Fraction of the view height the ship's bounding sphere should fill when the
 # viewer first frames the ship (1.0 = sphere touches top/bottom edges).
 SCREEN_FILL = 0.95
@@ -2404,7 +2420,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         "scale_copy", "scale_paste", "scale_uniform",
         "rotate_copy", "rotate_paste", "rotate_mirror", "mirror_element",
     )
-    _MOUNT_GIZMO_PREFIXES = ("coord_nudge:", "scale_nudge:", "rotate_nudge:")
+    _MOUNT_GIZMO_PREFIXES = ("coord_nudge:", "scale_nudge:", "rotate_nudge:",
+                             "coord_set:", "scale_set:", "rotate_set:")
 
     def _current_target_is_locked_mount(self) -> bool:
         """True when mount editing is locked AND the CURRENT transform
@@ -2791,6 +2808,20 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             t.set_position(tuple(p))
             self._last_pushed = None
             return True
+        if action.startswith("coord_set:"):
+            # A typed value (click-to-edit row): set one component absolutely.
+            parsed = _parse_set(action, "axis")
+            if parsed is None or parsed[0] not in (0, 1, 2):
+                return False
+            axis, value = parsed
+            t = self._edit_target()
+            pos = t.position() if t is not None else None
+            if pos is None:
+                return False
+            p = list(pos); p[axis] = value
+            t.set_position(tuple(p))
+            self._last_pushed = None
+            return True
         if action == "coord_copy":
             t = self._edit_target()
             pos = t.position() if t is not None else None
@@ -2830,6 +2861,19 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             if not (0 <= index < len(fields)):
                 return False
             t.set_scale_field(index, fields[index]["value"] + delta)
+            return True
+        if action.startswith("scale_set:"):
+            parsed = _parse_set(action, "index")
+            if parsed is None:
+                return False
+            index, value = parsed
+            t = self._scale_edit_target()
+            if t is None:
+                return False
+            _kind, fields = t.scale_kind()
+            if not (0 <= index < len(fields)):
+                return False
+            t.set_scale_field(index, value)
             return True
         if action == "scale_copy":
             t = self._scale_edit_target()
@@ -2873,6 +2917,20 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             if t is None or not (0 <= axis < len(t.rotate_spec()["fields"])):
                 return False
             t.rotate_nudge(axis, delta)
+            return True
+        if action.startswith("rotate_set:"):
+            # The Rotate rows show a per-target ACCUMULATOR of degrees nudged,
+            # not an absolute angle: typing v rotates by (v - shown), exactly
+            # what clicking the steppers until the row read v would do.
+            parsed = _parse_set(action, "axis")
+            if parsed is None:
+                return False
+            axis, value = parsed
+            t = self._rotate_edit_target()
+            spec = t.rotate_spec() if t is not None else None
+            if spec is None or not (0 <= axis < len(spec["fields"])):
+                return False
+            t.rotate_nudge(axis, value - spec["fields"][axis]["value"])
             return True
         if action == "rotate_copy":
             t = self._rotate_edit_target()
