@@ -368,10 +368,10 @@ they never saw the bug. A new test constructs through `details`.
   and forwards everything. Escape is also offered to the panel
   (`handle_key_esc`): in the gate it does nothing, and in home mode it acts as
   Play.
-- **In-game forwarding** needs focus arbitration so game keys cannot leak into
-  text fields. It is deliberately left to the first in-game text field
-  (sub-project 2). Until then, nothing in-game drains the queue, so the queue
-  simply stays at its cap.
+- **In-game forwarding** is built by
+  `2026-10-02-cef-text-input-keyboard-capture-design.md`: a native key gate,
+  page-reported focus and release triggers. The in-game host drains the queue
+  every frame and forwards it only while a field holds the keyboard.
 
 ## 7. Units
 
