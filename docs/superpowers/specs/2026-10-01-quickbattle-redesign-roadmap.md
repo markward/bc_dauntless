@@ -102,6 +102,13 @@ Sub-project 2 needs this gone regardless.
 
 The spike is the reference for every point below.
 
+- **Classes come from the catalog, never from BC's menus.** Group ships by
+  `engine.ship_catalog` class entries: the `variant_of` name chosen on the
+  Mods screen (sub-project 3), with the starred `class_default` as each
+  class's default ship. Do NOT read the old panel's widget tree or Foundation
+  `SubMenu`/`menuGroup`. That tree reflects the mod author's menus and ignores
+  the player's "Variant of" answers, which is why the old panel's nested
+  "Defiant Class" menu doesn't rename.
 - **Style:** the runtime **cp-\*** modal family (`configuration_panel.css`), not
   `docs/ui_designs/08` — Mark confirmed cp-\* is current.
 - **Off-screen CEF rules out three things**, verified in code: no HTML5
