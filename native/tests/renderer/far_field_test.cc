@@ -360,7 +360,11 @@ TEST(FarFieldBuild, CellCacheIsCappedAndForgetsOnGeneratorChange) {
     EXPECT_EQ(f.cached_cells(), 0u);
     f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
     EXPECT_GT(f.cached_cells(), 0u);
-    f.set_sources({vesuvi_like()});
+    f.set_sources({vesuvi_like()});              // the same belt re-pushed: kept
+    EXPECT_GT(f.cached_cells(), 0u);
+    auto changed = vesuvi_like();
+    changed.table.back().y = 0.1f;
+    f.set_sources({changed});                    // a different belt: emptied
     EXPECT_EQ(f.cached_cells(), 0u);
 }
 
@@ -693,4 +697,39 @@ TEST(FarHazeSphere, DefaultTileGainHitsTheStatedTarget) {
                                     glm::vec3(1.0f));
     std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeGain, h.alpha);
     EXPECT_NEAR(h.alpha, 0.15f, 0.03f);
+}
+
+TEST(FarFieldBuild, OnlyAProceduralDiscGenerates) {
+    far::FarField f = field_with_catalogue();
+    auto s = vesuvi_like();
+    s.shape = far::DiscSource::Shape::Sphere;   // procedural stays true, table non-empty
+    s.sphere_radius_gu = 1.0e6f;
+    f.set_sources({s});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    EXPECT_EQ(out.cells, 0);
+    EXPECT_EQ(out.generated, 0);
+}
+
+TEST(FarFieldBuild, ATileOnlyChangeKeepsTheBeltCellCache) {
+    far::FarField f = field_with_catalogue();
+    const auto belt = vesuvi_like();
+    auto tile = beol4_tile_field();
+    f.set_sources({belt, tile});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    const std::size_t cached = f.cached_cells();
+    ASSERT_GT(cached, 0u);
+    tile.centre += glm::dvec3(10.0, 0.0, 0.0);   // the field moved / re-pushed
+    tile.gain_scale = 3.0f;
+    f.set_sources({belt, tile});
+    EXPECT_EQ(f.cached_cells(), cached);
+    f.set_sources({belt});                       // the tile is gone
+    EXPECT_EQ(f.cached_cells(), cached);
+    auto moved = belt;
+    moved.seed += 1;                             // a belt change still forgets
+    f.set_sources({moved});
+    EXPECT_EQ(f.cached_cells(), 0u);
 }

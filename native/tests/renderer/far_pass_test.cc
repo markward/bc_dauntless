@@ -861,7 +861,7 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-        const std::vector<far::DiscSource> sources = {src};
+    const std::vector<far::DiscSource> sources = {src};
     const scenegraph::Camera cam = haze_camera();
     const glm::mat4 vp = cam.proj_matrix() * cam.view_matrix();
     const glm::mat4 inv_vp = glm::inverse(vp);

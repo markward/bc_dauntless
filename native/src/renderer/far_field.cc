@@ -102,6 +102,41 @@ std::uint64_t cell_key(std::uint32_t source, int pop, int cls, const glm::i64vec
     return mix(h, static_cast<std::uint64_t>(ijk.z));
 }
 
+// Only a procedural DISC with a table generates rocks: a sphere (tile field)
+// has real minors, and the cell filters below are disc-shaped.
+bool generates(const DiscSource& s) {
+    return s.procedural && s.shape == DiscSource::Shape::Disc && !s.table.empty();
+}
+
+bool same_pop(const Population& a, const Population& b) {
+    return a.kind == b.kind && a.density_at_1 == b.density_at_1 && a.a_lo == b.a_lo &&
+           a.a_hi == b.a_hi && a.size.r_min == b.size.r_min && a.size.r_max == b.size.r_max &&
+           a.size.q == b.size.q && a.rocks == b.rocks && a.weights == b.weights;
+}
+
+// Every input generate_cell / the cell walk reads.
+bool same_generator(const DiscSource& a, const DiscSource& b) {
+    if (!(a.id == b.id && a.frame == b.frame && a.centre == b.centre && a.normal == b.normal &&
+          a.table == b.table && a.outer_fade_gu == b.outer_fade_gu &&
+          a.scale_height_frac == b.scale_height_frac &&
+          a.scale_height_min_gu == b.scale_height_min_gu && a.seed == b.seed &&
+          a.explicit_regions == b.explicit_regions && a.pops.size() == b.pops.size()))
+        return false;
+    for (std::size_t i = 0; i < a.pops.size(); ++i)
+        if (!same_pop(a.pops[i], b.pops[i])) return false;
+    return true;
+}
+
+bool same_generators(const std::vector<DiscSource>& a, const std::vector<DiscSource>& b) {
+    std::vector<const DiscSource*> ga, gb;
+    for (const auto& s : a) if (generates(s)) ga.push_back(&s);
+    for (const auto& s : b) if (generates(s)) gb.push_back(&s);
+    if (ga.size() != gb.size()) return false;
+    for (std::size_t i = 0; i < ga.size(); ++i)
+        if (!same_generator(*ga[i], *gb[i])) return false;
+    return true;
+}
+
 bool same_gen(const GenParams& a, const GenParams& b) {
     return a.k_ref == b.k_ref && a.p_min == b.p_min && a.size_classes == b.size_classes &&
            a.cells_per_range == b.cells_per_range;
@@ -306,8 +341,9 @@ void FarField::set_catalogue(std::vector<CatalogueRock> cat, std::vector<glm::ve
 }
 
 void FarField::set_sources(std::vector<DiscSource> s) {
+    // A tile (non-generating) source change keeps the belt cells.
+    if (!same_generators(sources_, s)) cache_.clear();
     sources_ = std::move(s);
-    cache_.clear();
     refresh_active();
 }
 
@@ -441,7 +477,7 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
         const double half_diag_unit = std::sqrt(3.0) * 0.5;
         for (std::uint32_t si = 0; si < active_.size(); ++si) {
             const DiscSource& s = active_[si];
-            if (!s.procedural || s.table.empty()) continue;
+            if (!generates(s)) continue;
             const double rho_max = static_cast<double>(s.table.back().x) + s.outer_fade_gu;
             for (int pi = 0; pi < static_cast<int>(s.pops.size()); ++pi) {
                 const auto classes = size_classes(s.pops[static_cast<std::size_t>(pi)], dials_.gen);
