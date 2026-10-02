@@ -2,8 +2,10 @@
 //
 // Far tier (far-tier spec §1, §3): the screen-door crossfade between a rock's
 // mesh and its impostor lives in the SHARED opaque.frag. A mesh fading out
-// carries Instance::far_fade = d > 0 (keeps the UPPER 1 - d of the 4x4 Bayer
-// range); an impostor carries -d (keeps the LOWER d). Equal |d| must be exact
+// carries Instance::far_fade = d > 0 (keeps the UPPER 1 - d of the Bayer
+// range); an impostor carries -d (keeps the LOWER d). The Bayer cell is
+// chosen per 2x2 pixel group (a 4x4 matrix over groups: an 8x8 pixel
+// period), never per pixel. Equal |d| must be exact
 // complements, far_fade >= 1 must skip the mesh, and far_fade == 0 must leave
 // the production hull path byte-identical. u_coverage_cutout discards texels
 // whose base alpha is < 0.5 (impostor silhouettes).

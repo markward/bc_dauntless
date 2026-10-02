@@ -142,3 +142,25 @@ def test_set_active_selects_a_group_by_name():
     assert dev_dial_groups.active() == "b"
     assert dev_dial_groups.set_active("nope") is False
     assert dev_dial_groups.active() == "b"
+
+
+def test_start_on_far_dials_with_a_missing_dial_name_returns(monkeypatch):
+    """Final review 5: the select loop is bounded by the group's dial count.
+    A dial name the group lacks stops after one full cycle instead of
+    spinning forever."""
+    from engine.dev_missions import _far_tier_common as common
+    dev_dial_groups.register_group("rock fields", ("a", "b", "c"),
+                                   lambda: {"a": 1, "b": 2, "c": 3}, lambda d, s: None)
+    calls = []
+    real = dev_dial_groups.cycle_dial
+
+    def counting():
+        calls.append(1)
+        if len(calls) > 10:
+            raise RuntimeError("unbounded dial cycling")
+        real()
+
+    monkeypatch.setattr(dev_dial_groups, "cycle_dial", counting)
+    common.start_on_far_dials("no_such_dial")
+    assert len(calls) <= 3
+    assert dev_dial_groups.active() == "rock fields"

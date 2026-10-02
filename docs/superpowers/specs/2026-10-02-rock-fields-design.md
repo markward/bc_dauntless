@@ -236,6 +236,17 @@ handful of rulings that change this design's letter without changing its intent:
   is kept (headroom for denser dial settings) but the typical scene is far sparser
   than the design's prose suggested — tunable live via `mid_fill` / `mid_sprite_scale`
   without a rebuild.
+- **Final whole-branch review fixes.** (1) The near band has its **own** contact player
+  (`rockfield_set_player`, pushed every frame by `far_tier.reconcile`, None when
+  scope-hidden) instead of borrowing the minors' player — disabling Minor Rocks used to
+  silently stop scenery collisions and stream the band around the camera. (2) A large
+  rock that still penetrates the contact box at the current pose (`pen > 0`) reports
+  **every step**, cooldown or not; `collide_cooldown_s` only silences repeats once the
+  ship is clear, and Python's receding gate is the debounce (as `_respond_pair`).
+  (3) The mid band's near-band guard, level weight and dither use the **drawn sprite's**
+  distance (after jitter), so no sprite sits nearer than `mid_in_lo_gu`; selection is
+  still keyed by the tile. (4) Small-rock shoves use the bare hull box — only large
+  contacts inflate to the shield bubble.
 - **Filmic CA fringing left unchanged.** `filmic.frag`'s chromatic-aberration pass
   fringes the dither pattern on near/far mesh↔impostor edges. Investigated and left
   out of scope for this plan; reported for Mark's live check, not fixed here.
@@ -245,6 +256,13 @@ handful of rulings that change this design's letter without changing its intent:
 `./build/dauntless --developer` from the worktree, Developer missions:
 - Beol 4 field from outside: haze far, collection tiles as you close in, large rocks then
   gravel; no pops at 150/60/30 GU.
+- Approach to Beol 4 from 6,000 GU down to 600 GU: the small field is ONE cluster-snapped
+  L2 sprite (~2,000 GU across, its rocks drawn 30–150 GU) until it crossfades into ~37 L1
+  tiles. Check it reads as a clump of rocks, not a blob, and that the L2 → L1 hand-over
+  does not pop.
 - Inside Beol 4: density, collisions (shields up and down), dash through.
+- Shields-down collision damage at the defaults: a Galaxy at full impulse into an
+  r ≈ 1–1.5 GU rock loses ~16–24% hull. If that feels wrong, dial
+  `collide_damage_scale` (rock fields group).
 - Vesuvi belt: the same ladder at belt scale (sparse at the 0.05 floor).
 - Profiler `rock.*` scopes; frame rate acceptable.

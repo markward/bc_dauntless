@@ -45,11 +45,16 @@ def create_aimed_player(pSet, eye, target):
 
 
 def start_on_far_dials(dial="haze_brightness"):
-    """/ L O act on the "rock fields" group, with `dial` selected."""
+    """/ L O act on the "rock fields" group, with `dial` selected. A dial the
+    group lacks leaves the selection where one full cycle ends (where it
+    started): the loop is bounded by the group's dial count."""
     try:
         from engine import dev_dial_groups
         if dev_dial_groups.set_active("rock fields"):
+            first = dev_dial_groups.selected()
             while dev_dial_groups.selected() != dial:
                 dev_dial_groups.cycle_dial()
+                if dev_dial_groups.selected() == first:
+                    break        # every dial seen once: `dial` is not in the group
     except Exception:
         pass
