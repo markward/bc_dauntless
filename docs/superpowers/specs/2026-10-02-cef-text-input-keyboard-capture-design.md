@@ -222,12 +222,28 @@ half of §2.2/the original §3.0 queue description:
   four values are defined to equal `cef_key_event_type_t`'s, so the type cast
   is exact.
 - **The binding is now a batch:** `cef_send_text_events(events)` replaces
-  per-event `cef_send_key_event`. It walks one frame's whole drained list in
-  order, routes kind-2 (edit command) events to `ui_cef::edit_command`
-  directly, and feeds every kind-0/1 event through ONE process-wide,
-  host-owned `TextEventTranslator` — pairing depends on seeing a key and its
-  immediately-following char event in the same batch. `cef_reset_text_
-  translator()` is the new binding for `reset()`.
+  per-event `cef_send_key_event`. It walks one frame's whole drained list,
+  via `renderer::build_text_event_steps`, into an ordered sequence of steps
+  — a run of kind-0/1 events translated together (pairing depends on seeing
+  a key and its immediately-following char event in the same run) or one
+  kind-2 edit command — and executes each step in the batch's **original
+  order**. This matters: a naive two-pass split (every edit command first,
+  every translated key intent after, which is what an earlier revision of
+  this binding did) reorders a frame that holds both — a frame of `['-'
+  press, '-' char, Cmd+V]` would paste before the `-` was inserted, and a
+  typed character immediately followed by Cmd+Z would undo the wrong thing.
+  `build_text_event_steps` shares ONE process-wide, host-owned
+  `TextEventTranslator` across the whole batch (so pairing/held-key state
+  still carries correctly across edit commands in between), and
+  `cef_reset_text_translator()` is the new binding for `reset()`.
+- **Non-BMP codepoints are dropped, not truncated.** CEF's `character`/
+  `unmodified_character` fields are `char16_t`; a codepoint above `0xFFFF`
+  (e.g. an emoji) does not fit, and a naive `static_cast<char16_t>` would
+  wrap it to some other, wrong 16-bit value — which on macOS risks landing
+  back on `0` and retriggering the flags-changed trap this whole translator
+  exists to dodge. `TextEventTranslator::translate` drops any such char
+  event instead (lone or paired with a key): no intent emitted, and a
+  paired key is not remembered, so its later release is a no-op too.
 - **`engine/ui/text_capture.py`** sends the whole frame's queue in one
   `host_io.cef_send_text_events(events)` call instead of per-event sends, and
   calls `host_io.cef_reset_text_translator()` on every capture-boundary
@@ -453,9 +469,9 @@ value would edit a mount that the steppers and gizmo refuse to touch. A test in
 |---|---|
 | `native/src/renderer/{include/renderer/key_gate.h,key_gate.cc}` (new) | Pure gate and mask (§2.1) |
 | `native/src/renderer/window.{h,cc}` | Own the gate; `key_state` filtered; `set_key_capture` / `key_capture_active`; edit-command push in the key callback; queues EVERY key (§2.7), not just editing keys |
-| `native/src/renderer/{include/renderer/text_input.h,text_input.cc}` | `kTextEventEdit`, `EditCommand`, `edit_command_for`; `CefKeyType`, `CefKeyIntent`, `TextEventTranslator` (§2.7) |
+| `native/src/renderer/{include/renderer/text_input.h,text_input.cc}` | `kTextEventEdit`, `EditCommand`, `edit_command_for`; `CefKeyType`, `CefKeyIntent`, `TextEventTranslator`; `TextEventStep`, `build_text_event_steps` (order-preserving split around edit commands) (§2.7) |
 | `native/src/ui_cef/` (`cef_client.{h,cc}`, `cef_lifecycle.cc`, public header) | Capture-reset handler on `OnLoadStart` + `OnRenderProcessTerminated`; `edit_command(cmd)`; `send_key_intent` (§2.7, supersedes `send_key_event`) |
-| `native/src/host/host_bindings.cc` | Snapshot via `key_state`; `set_key_capture`, `key_capture_active`; `cef_send_text_events` batch binding + the process's one `TextEventTranslator`, `cef_reset_text_translator` (§2.7, supersedes per-event `cef_send_key_event`) |
+| `native/src/host/host_bindings.cc` | Snapshot via `key_state`; `set_key_capture`, `key_capture_active`; `cef_send_text_events` batch binding, built on `build_text_event_steps` + the process's one `TextEventTranslator`, `cef_reset_text_translator` (§2.7, supersedes per-event `cef_send_key_event`) |
 | `engine/host_io.py` | Wrappers and `_REQUIRED_BINDINGS`; `cef_send_text_events`/`cef_reset_text_translator` (§2.7) |
 | `native/assets/ui-cef/js/text_capture.js` (new), `index.html` | §3 |
 | `engine/ui/text_capture.py` (new) | `TextCaptureController` (§4.1-4.2) |
@@ -536,7 +552,26 @@ All of it runs under `scripts/check_tests.sh`.
    - a release with nothing held emits nothing; `reset()` forgets a held key;
    - Backspace/Enter/Escape carry their control characters;
    - a kind-2 event is never translated (the caller routes it to
-     `ui_cef::edit_command` instead).
+     `ui_cef::edit_command` instead);
+   - press+char+release all passed in a SINGLE `translate()` call still
+     pairs and releases correctly;
+   - Shift held alone emits nothing, and a Shift-modified letter (Shift
+     press, letter press+char, letter release, Shift release) emits only
+     the letter's KeyDown/Char/KeyUp;
+   - a printable key pressed with no following char, then released, emits
+     nothing for either;
+   - a char codepoint above `0xFFFF` emits nothing, whether lone or paired
+     with a key (and a paired key is not remembered: its later release is
+     also a no-op).
+9. **gtest `BuildTextEventSteps`** (`native/tests/renderer/text_input_test.cc`,
+   §2.7) — the ordering-regression guard:
+   - a batch of `['-' press, '-' char, Cmd+V edit, '1' press, '1' char]`
+     produces exactly three steps in that order: the `-` intents, then the
+     Paste edit command, then the `1` intents — proving the binding no
+     longer runs every edit command before every key intent;
+   - a batch with no edit commands produces exactly one key step;
+   - two adjacent edit commands each get their own step, with no empty key
+     step wedged between them.
 
 ## 8. Live check (Mark)
 

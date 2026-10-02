@@ -145,6 +145,7 @@ std::vector<CefKeyIntent> TextEventTranslator::translate(const std::vector<TextE
             // (below, via ++i) arrived with nothing to pair it to -- IME,
             // compose, or some other unusual input. One KeyDown+Char, no
             // KEYUP: there is no key to release.
+            if (e.code > 0xFFFF) continue;  // not representable in char16_t; drop it
             const char16_t c = static_cast<char16_t>(e.code);
             out.push_back({kKeyDownType, 0, 0, c, c, e.mods});
             out.push_back({CefKeyType::Char, 0, 0, c, c, e.mods});
@@ -158,11 +159,13 @@ std::vector<CefKeyIntent> TextEventTranslator::translate(const std::vector<TextE
         if (e.action != /*GLFW_RELEASE*/ 0) {
             // PRESS or REPEAT. Rule 1: immediately followed by its char.
             if (i + 1 < events.size() && events[i + 1].kind == kTextEventChar) {
-                const char16_t c = static_cast<char16_t>(events[i + 1].code);
+                const int raw = events[i + 1].code;
+                ++i;  // consume the char either way -- it belongs to this key
+                if (raw > 0xFFFF) continue;  // not representable; drop key+char, not remembered
+                const char16_t c = static_cast<char16_t>(raw);
                 out.push_back({kKeyDownType, vk, e.scancode, c, c, e.mods});
                 out.push_back({CefKeyType::Char, vk, e.scancode, c, c, e.mods});
                 held_[key] = c;
-                ++i;  // consume the char too
                 continue;
             }
             // Rule 2: no char, but a platform editing character.
@@ -199,6 +202,41 @@ std::vector<CefKeyIntent> TextEventTranslator::translate(const std::vector<TextE
 
 void TextEventTranslator::reset() noexcept {
     held_.clear();
+}
+
+std::vector<TextEventStep> build_text_event_steps(const std::vector<TextEvent>& events,
+                                                     TextEventTranslator& translator) {
+    std::vector<TextEventStep> steps;
+    std::vector<TextEvent> run;  // the kind-0/1 events since the last kind-2 (or the start)
+
+    // Translate and emit `run` as one step, in the SAME call to
+    // `translator.translate` -- that is what lets a key and its
+    // immediately-following char pair even though build_text_event_steps
+    // itself only sees them inside this one accumulated run. Skipped when
+    // empty so two adjacent edit commands get exactly one step apiece,
+    // not an empty key-step wedged between them.
+    const auto flush = [&]() {
+        if (run.empty()) return;
+        TextEventStep step;
+        step.is_edit_command = false;
+        step.intents = translator.translate(run);
+        steps.push_back(std::move(step));
+        run.clear();
+    };
+
+    for (const auto& e : events) {
+        if (e.kind == kTextEventEdit) {
+            flush();  // order: whatever key/char run came before this edit, first
+            TextEventStep step;
+            step.is_edit_command = true;
+            step.command = static_cast<EditCommand>(e.code);
+            steps.push_back(std::move(step));
+            continue;
+        }
+        run.push_back(e);
+    }
+    flush();
+    return steps;
 }
 
 EditCommand edit_command_for(char letter, int mods) noexcept {

@@ -6434,35 +6434,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](const std::vector<std::tuple<int, int, int, int, int>>& events) {
               static_assert(static_cast<int>(renderer::EditCommand::Redo) == 6,
                             "ui_cef::edit_command's numbering");
-              // Two passes over the same drained batch, in its original
-              // order: edit commands (kind 2) run on the focused frame
-              // directly -- they are never keys CEF sees, so they do not
-              // go through the translator -- and every other event feeds
-              // the ONE host-owned TextEventTranslator, whose pairing of a
-              // key with its immediately-following char depends on seeing
-              // the whole batch in order.
-              std::vector<renderer::TextEvent> key_and_char_events;
-              key_and_char_events.reserve(events.size());
+              // renderer::build_text_event_steps keeps edit commands (kind
+              // 2) and translated key/char runs (kind 0/1) in the SAME
+              // relative order the events were queued in -- NOT a two-pass
+              // "all edits, then all keys" split, which reordered a frame
+              // holding both (e.g. a typed character immediately followed
+              // by Cmd+Z would undo before the type it was meant to undo).
+              std::vector<renderer::TextEvent> text_events;
+              text_events.reserve(events.size());
               for (const auto& [kind, code, scancode, action, mods] : events) {
-                  if (kind == renderer::kTextEventEdit) {
-                      dauntless::ui_cef::edit_command(code);
+                  text_events.push_back({kind, code, scancode, action, mods});
+              }
+              for (auto& step : renderer::build_text_event_steps(text_events, g_text_translator)) {
+                  if (step.is_edit_command) {
+                      dauntless::ui_cef::edit_command(static_cast<int>(step.command));
                       continue;
                   }
-                  key_and_char_events.push_back({kind, code, scancode, action, mods});
-              }
-              for (const auto& intent : g_text_translator.translate(key_and_char_events)) {
-                  dauntless::ui_cef::send_key_intent(
-                      static_cast<int>(intent.type), intent.windows_key_code,
-                      intent.native_key_code, intent.character,
-                      intent.unmodified_character, intent.glfw_mods);
+                  for (const auto& intent : step.intents) {
+                      dauntless::ui_cef::send_key_intent(
+                          static_cast<int>(intent.type), intent.windows_key_code,
+                          intent.native_key_code, intent.character,
+                          intent.unmodified_character, intent.glfw_mods);
+                  }
               }
           },
           py::arg("events"),
-          "Forward one drain_text_events() batch to the CEF overlay. Kind 2 "
-          "(edit command) events run directly; every kind 0/1 event feeds "
-          "the process's single TextEventTranslator in order, whose output "
-          "(real KEYDOWN+CHAR / KEYUP pairs) is sent as CEF key events. "
-          "No-op with no browser.");
+          "Forward one drain_text_events() batch to the CEF overlay, in "
+          "order. Kind 2 (edit command) events run directly on the "
+          "focused frame; every kind 0/1 run between them feeds the "
+          "process's single TextEventTranslator, whose output (real "
+          "KEYDOWN+CHAR / KEYUP pairs) is sent as CEF key events -- "
+          "relative order against the edit commands is preserved. No-op "
+          "with no browser.");
 
     m.def("cef_reset_text_translator",
           []() { g_text_translator.reset(); },

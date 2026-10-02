@@ -87,7 +87,7 @@ struct CefKeyIntent {
 /// a page that never saw its KEYDOWN.
 ///
 /// Rules (see docs/superpowers/specs/2026-10-02-cef-text-input-keyboard-
-/// capture-design.md §2.5/§6 for the full writeup):
+/// capture-design.md §2.7 for the full writeup):
 ///   - a PRESS/REPEAT immediately followed by its char event pairs into
 ///     KeyDown+Char and remembers the character for the matching KEYUP;
 ///   - a PRESS/REPEAT of a key with no following char but a platform
@@ -101,8 +101,13 @@ struct CefKeyIntent {
 ///     itself misread as a key-down;
 ///   - a bare char with no preceding key (IME/compose) emits KeyDown+Char
 ///     with native_key_code 0 and is never remembered (so it has no KEYUP);
+///   - a char event (paired or bare) whose codepoint is above 0xFFFF (not
+///     representable in CEF's char16_t fields) emits nothing -- a key
+///     paired with one is dropped entirely, not remembered, same as a key
+///     with neither a char nor a platform character;
 ///   - kind-2 (edit command) events are not translated -- the caller routes
-///     those to ui_cef::edit_command directly.
+///     those to ui_cef::edit_command directly (see build_text_event_steps
+///     below for preserving relative order against a mixed batch).
 ///
 /// Off-Apple (unverified -- no reference client to check against): the
 /// key-down type is RawKeyDown rather than KeyDown (CEF's own Windows path
@@ -118,5 +123,31 @@ public:
 private:
     std::unordered_map<int, char16_t> held_;  // GLFW key -> character to replay on KEYUP
 };
+
+/// One step in a drained batch's send order: either a run of translated
+/// key intents, or one edit command. `build_text_event_steps` (below)
+/// returns these in the SAME relative order the events were queued in --
+/// that is the whole point of the type. A caller that instead ran every
+/// edit command first and every key intent after (as a naive two-pass
+/// split would) reorders a frame that holds, say, a typed character
+/// immediately followed by Cmd+Z: the undo would run before the type it
+/// was supposed to undo.
+struct TextEventStep {
+    bool is_edit_command;
+    EditCommand command;              // valid when is_edit_command
+    std::vector<CefKeyIntent> intents;  // valid when !is_edit_command
+};
+
+/// Splits one frame's drained `events` into ordered steps, feeding every
+/// contiguous run of kind 0/1 events through `translator` (so a key and
+/// its immediately-following char event still pair correctly -- pairing
+/// never needs to span a kind-2 event: window.cc's key callback returns
+/// early for a clipboard/undo chord, so a chord key is never also queued
+/// as kind 1) and emitting one step per kind-2 event in between, in the
+/// batch's original order. The caller (host_bindings.cc's
+/// cef_send_text_events) just walks the result and executes each step
+/// as it appears.
+std::vector<TextEventStep> build_text_event_steps(const std::vector<TextEvent>& events,
+                                                    TextEventTranslator& translator);
 
 }  // namespace renderer
