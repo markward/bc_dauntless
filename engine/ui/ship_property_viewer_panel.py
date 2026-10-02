@@ -2186,6 +2186,25 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
 
         down = btn_state(left)
 
+        # A viewport press while a CEF text field holds key capture is the
+        # click that blurs/commits a typed Move/Rotate/Scale row (coord_set
+        # / scale_set / rotate_set) -- it must start NOTHING here: no gizmo
+        # grab, no orbit, no pin pick on its eventual release. Treated
+        # exactly like a chrome press, so the bookkeeping below no-ops the
+        # whole gesture; the next press, once capture has ended, goes
+        # through the normal paths. This is the one place both the gizmo
+        # grab (_handle_gizmo_input) and the orbit/pick block below pass
+        # through, so guarding here closes both at once.
+        key_capture_active = getattr(h, "key_capture_active", None)
+        if (down and not self._lmb_down and key_capture_active is not None
+                and key_capture_active()):
+            self._lmb_down = True
+            self._chrome_press = True
+            self._drag_last = (x, y)
+            self._press_pos = (x, y)
+            self._drag_dist = 0.0
+            return
+
         # Transform-gizmo axis drag takes priority over orbit/pin: a press on a
         # gizmo shaft grabs that axis and drags the subsystem along it (orbit
         # suppressed, no pin pick on release). When no axis is grabbed this only
