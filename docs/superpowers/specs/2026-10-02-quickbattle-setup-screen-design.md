@@ -1,6 +1,6 @@
 # Quick Battle setup screen and battle start: Design
 
-**Status:** approved in brainstorm 2026-10-02, not yet implemented
+**Status:** implemented on `feat/qb-setup-screen`, awaiting live check (§8). Approved in brainstorm 2026-10-02. Sections below are corrected to what was BUILT where the build departed from the brainstorm text (§2, §3.2, §3.3, §4.1, §4.3, §4.4, §4.5, §6).
 **Date:** 2026-10-02
 **Programme:** sub-project 2 of `2026-10-01-quickbattle-redesign-roadmap.md`.
 Its "Standing decisions → Setup screen" bind this spec and are not restated in
@@ -121,7 +121,7 @@ Entry    { id, ship: <CatalogEntry.ship_id>, variant: <Variant.name> | None, pla
 - **Reconciliation** (on loading a preset, and on a catalog generation change):
   - an unknown ship's row is dropped;
   - an unknown variant goes back to `None`;
-  - an unknown or non-playable player ship becomes `Galaxy`.
+  - an unknown or non-playable player ship becomes `Galaxy` if it is installed and playable, else the **first playable ship** in the catalog. The player entry is **never dropped** — not even when its ship is uninstalled and no fallback exists (then it is left as is and logged), so the "exactly one player entry" invariant holds through any catalog change.
 
   Each drop is logged once.
 - **`battle_plan(scenario, catalog) -> BattlePlan`:**
@@ -159,20 +159,24 @@ drag-and-drop, no native `<select>`, no `title=` tooltips.
 Python owns all state:
 - the scenario and the add target;
 - the selected card (the sheet);
-- the Details draft, the rename in progress and the confirmation;
+- the Details draft and the confirmation (a pending confirmation is **modal**: every verb except `confirm`, `cancel`, `esc` and `close` is refused while it is up, so nothing can change the scenario its action was asked about);
 - the era and species filters;
 - the preset names, the current preset name, the dirty flag and `can_start`.
 
 The JS renders what it is sent. It owns only the open popover menu, which
-closes on re-render or an outside click (the `mods_screen.js` pattern).
+closes on re-render or an outside click (the `mods_screen.js` pattern), and
+**the rename in progress**: there is no rename-start verb. The page shows the
+inline field itself and reports only the committed result (`rename:<gid>:<urlenc>`,
+§3.5).
 
 ### 3.3 Pushes (Python → JS)
 
 - **`setQuickBattleCatalog(payload)`** is pushed when the screen opens and when the catalog generation changes. It carries:
   - **per class:** id, title, species, role, era span, playable, variants (name and playable), icon data URL (`ship_icons`), bio, and hull and shield total (or null);
   - the hull and shield maxima;
-  - the era, role and species tables. Each species row has an insignia `file://` URL, or else the flagship's icon.
-- **`setQuickBattleSetup(payload)`** carries the §3.2 state, and is skipped when unchanged (`_last_pushed`).
+  - the era, role and species tables. Each species row has an insignia `file://` URL, or else the flagship's icon;
+  - the Details tables, so the page never hard-codes a label: `allegiances` (`{id, label}`), `directions` (`{id, label}`), `distances` (`{id, label, km}`) and `difficulties` (`{id, label}` — Low / Medium / High).
+- **`setQuickBattleSetup(payload)`** carries the §3.2 state, and is skipped when unchanged (`_last_pushed`). Its `confirm` is `null` or `{title, name, body, ok, before, after}`: `body` is the whole sentence, and `before` / `after` are the text around `name`, so the page bolds the name **by position** (never by searching the sentence for it — "set" would hit "setup").
 - **Bio:** from `Ships.tgl`'s "‹name› Description", with the "Shield Rating" and "Hull Rating" lines stripped. With no entry the sheet shows "No description available."
 
 ### 3.4 Events (JS → Python)
@@ -224,7 +228,7 @@ With no text field focused, the game's Esc reaches the panel's `handle_key_esc`:
   - With no provider, or a provider returning `None`, every hook falls back to BC's original behaviour. This is how headless tests that fill `g_kEnemyList` directly keep working.
 - **`spawn.sync_sdk(qb, plan)`** runs on every scenario change outside a battle, and once at Start. It:
   - sets `g_sPlayerType` from the player order;
-  - writes `g_kFriendList` / `g_kEnemyList` as **preload manifests only**, in BC's 6-tuple shape. Neutrals are included, so `StartSimulationAction` preloads every model. Nothing of ours reads them back;
+  - writes `g_kFriendList` / `g_kEnemyList` as preload manifests, in BC's 6-tuple shape. Neutrals are included (in `g_kFriendList`), so `StartSimulationAction` preloads every model. **They are not write-only:** `StartSimulation2` runs `if len(g_kEnemyList) > 0: bWonOrLost = 0` right after `GenerateShips()` to arm the win, so our `generate_ships` writes the manifests too, from the plan it spawns — a hook-driven Start arms the win even if nothing called `sync_sdk` first. (BC's own fallback `GenerateShips` has no neutral concept, so with no provider a neutral manifest spawns as an ordinary friendly — accepted, since that path runs BC unmodified.);
   - enables or disables the XO's Start Simulation button from `can_start` (§3.7).
 
 ### 4.2 Start Battle (`_MissionLoader.start_quickbattle`, extended)
@@ -240,11 +244,13 @@ current plan.
 ### 4.3 The player
 
 - **Ship type:** `g_sPlayerType` is already right, because `sync_sdk` set it. `RecreatePlayer` (and the bridge hook around it) is untouched.
-- **Hull name and display name:** QuickBattle's reconcile step (`engine/host_loop.py`, the `session.mission_name == "QuickBattle"` block in `_reconcile_runtime_ships`) already applies a registry to every newly created, not-yet-realised player. Its `registry_texture.apply_class_default(_p)` call becomes `spawn.apply_player_identity(_p)`:
-  - it queues the player order's registry (§4.6) and sets its display name;
-  - with no provider or no plan, it falls back to `apply_class_default`.
+- **Hull name and display name** are applied by `spawn.apply_player_identity(player)` in two places:
+  - in `generate_ships`, before radii are seeded (so the registry-keyed model load matches the one realisation makes);
+  - in QuickBattle's reconcile step (`engine/host_loop.py`, the `session.mission_name == "QuickBattle"` block in `_reconcile_runtime_ships`), for every newly created, not-yet-realised player. That covers battle start, End Combat and a death outside the battle.
 
-  That covers battle start, End Combat and a death outside the battle.
+  It queues the player order's registry (§4.6) and sets its display name. It is idempotent (last write wins per texture slot). Fallbacks to `registry_texture.apply_class_default`: no provider or no plan, **or a class mismatch** — a live player whose `ships.<Leaf>` script is not the plan's player ship file never gets another ship's registry and name.
+
+  ⚠️ The reconcile block has **no `has_replacements` guard** (the brainstorm assumed one). BC's `MissionLib.CreatePlayerShip` pre-queues the class's default NCC on every Federation player it (re)creates, so that guard skipped every Fed player and the named ship never applied. The scenario's named player is authoritative over that default.
 - **"Set as player ship"** only changes the scenario (and, through `sync_sdk`, `g_sPlayerType`). The new ship appears at the next `RecreatePlayer`: at battle start, or after End Combat.
 
 ### 4.4 Placement (`placement.py`)
@@ -267,7 +273,8 @@ current plan.
 - **Facing:**
   - Enemy ships face the player: `AlignToVectors(toward player, player up)`, as BC does.
   - Friendly and neutral ships take the player's rotation.
-- **Occupied slots:** if `g_pSet.IsLocationEmptyTG(pt, 2·radius, 1)` fails, nudge outwards along the lateral axis by one radius, up to a bounded number of tries, then accept.
+- **Radii are seeded early.** Nothing is realised at `GenerateShips` time and a ship's `GetRadius()` is normally seeded only at realisation, so every created ship and the just-recreated player report **0** — spacing would collapse to the margin and hulls overlap. `spawn.set_radius_fn(fn)` registers the host's seeder (`_MissionLoader._seed_quickbattle_ship_radius`, registered at QuickBattle boot), which loads the class's model through the same runtime load realisation uses (the native load dedupe makes realisation's later call free) and seeds the radius. `generate_ships` seeds every created ship and the player before placement.
+- **Occupied slots:** `Set.IsLocationEmptyTG` is a stub that always reports empty, and two groups with the same direction and distance share an anchor. So each placement is also checked against a **within-call overlap list** (every ship placed so far in this `GenerateShips`, exact distance against both radii plus the margin). On a clash, nudge outwards along the lateral axis by `2·radius + margin` (never one radius — a zero radius would never move), up to a bounded number of tries, then accept.
 - **No randomness.** The same scenario and the same player pose give the same positions.
 
 ### 4.5 `GenerateShips` (ours, `spawn.py`)
@@ -291,7 +298,7 @@ hook. The replacement mirrors BC's preamble and then spawns.
    - **Neutral:** nothing more (D6).
 3. **Failure handling:**
    - If one ship fails to create or place, log it and continue with the rest.
-   - If the hook itself raises before spawning anything, call BC's original `GenerateShips` over the manifests and log loudly.
+   - Fall back to BC's original `GenerateShips` (over the manifests, logged loudly) **only if the hook raises before any ship is created**. Once a ship exists, any failure in the placement pass is logged and swallowed: falling back then would spawn BC's whole roster on top of ours.
 
 ### 4.6 Named ships
 
@@ -329,13 +336,14 @@ The engine's primary hull is the **first** `HullProperty` in the property set
 
 ```
 quickbattle_presets.json
-{ "version": 1,
+{ "version": <SettingsStore schema version>,
   "presets": { "<name>": { "saved_at": "<ISO 8601>", "scenario": { <scenario JSON> } } } }
 ```
 
 - `default_presets_path()` = `settings_store.default_settings_path().parent / "quickbattle_presets.json"`. It is resolved at use, never captured at import.
 - `SettingsStore` semantics: an absent file means no presets; a corrupt one is renamed `.corrupt`; writes are atomic. Failures are logged and swallowed.
-- API: `names()`, `load(name) -> Scenario | None` (reconciled), `save(name, scenario)`, `delete(name)`, `exists(name)`.
+- The top-level `version` is `SettingsStore`'s own schema version (the file is a `SettingsStore` file with one `presets` section), not a presets-format number.
+- API: `names()`, `load(name) -> Scenario | None` (**raw**, not reconciled — `presets.py` has no catalog dependency; the panel reconciles the loaded scenario against its catalog index before using it), `save(name, scenario)`, `delete(name)`, `exists(name)`.
 - Names are trimmed, and empty names are refused. Preset names sort with a case-insensitive sort.
 
 ## 7. Testing
@@ -363,6 +371,10 @@ the old panel's tests, and the revert hook's tests. The gate is
 3. Ambassador USS Excalibur as the player: hull name and display name.
 4. Win → End Combat → reopen: same setup, same player ship.
 5. Typing in Rename and preset names fires no game keys.
+
+## Open for Mark
+
+- **Enter on an UNCHANGED pre-filled preset name does nothing.** In the spike it overwrites the current preset. The page commits text on the DOM `change` event (§3.5), and an unchanged value fires no `change`. Fixing it needs a keyboard-capture contract extension (e.g. a commit event on Enter), not a page-only change.
 
 ## Out of scope
 
