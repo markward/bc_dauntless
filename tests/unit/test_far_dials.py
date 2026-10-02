@@ -58,3 +58,12 @@ def test_haze_brightness_defaults_are_the_cpp_derivations():
     assert far_dials.DEFAULTS["tile_haze_brightness"] == _cpp_constant("kTileHazeBrightness")
     assert "haze_brightness" not in far_dials.NATIVE_KEYS
     assert "tile_haze_brightness" not in far_dials.NATIVE_KEYS
+
+
+def test_the_look_dials_come_first_in_the_dial_keys_order():
+    """Mark tunes the look live with / L O; the haze and speck dials lead."""
+    from engine.rocks import far_dials
+    assert far_dials.DIAL_ORDER[:6] == (
+        "haze_brightness", "tile_haze_brightness", "haze_gain",
+        "tile_haze_gain", "speck_gain", "tile_haze_edge_frac")
+    assert sorted(far_dials.DIAL_ORDER) == sorted(far_dials.DEFAULTS)

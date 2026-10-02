@@ -9,8 +9,11 @@ registered group (nebula, at boot) is active by default.
 
 Each group supplies its dial order, a getter for its live values (for the
 print) and a step function `step(dial_name, direction)` that does the
-group's own clamping and pushes to native. Every press prints
-`[<group> dials] selected=<dial> {...}`.
+group's own clamping and pushes to native. Every / L O press prints one
+short line, `[<group>] <dial> = <value>   (dial i/n)`, after a blank line;
+switching groups prints the whole group framed, one dial per line, the
+selected one arrowed (Mark, 2026-10-02: the old one-line dict dump of every
+dial was unreadable in a busy terminal).
 """
 from typing import Callable
 
@@ -50,7 +53,7 @@ def cycle_active() -> str:
     global _active
     if _names:
         _active = (_active + 1) % len(_names)
-        _report()
+        _report_group()
     return active()
 
 
@@ -79,10 +82,38 @@ def push(direction: int) -> None:
     _report()
 
 
+def _fmt(v) -> str:
+    """Compact: whole floats lose their '.0'; others keep 4 significant figures."""
+    if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
+        return "%d" % v
+    if isinstance(v, float):
+        return "%.4g" % v
+    return str(v)
+
+
 def _report() -> None:
+    """One short line for the selected dial (on / L O), set off by a blank line
+    so it stands out among other terminal output."""
     grp = _group()
     if grp is not None:
-        print("[%s dials] selected=%s %s" % (active(), selected(), grp["get"]()))
+        name = selected()
+        print("\n[%s] %s = %s   (dial %d/%d)" % (
+            active(), name, _fmt(grp["get"]().get(name)),
+            grp["sel"] + 1, len(grp["order"])))
+
+
+def _report_group() -> None:
+    """On a group switch: every dial of the new group, one per line, the
+    selected one arrowed, framed by blank lines."""
+    grp = _group()
+    if grp is None:
+        return
+    vals = grp["get"]()
+    title = "── %s dials ──" % active()
+    width = max(len(k) for k in grp["order"])
+    rows = ["%s %-*s  %s" % ("→" if i == grp["sel"] else " ", width, k, _fmt(vals.get(k)))
+            for i, k in enumerate(grp["order"])]
+    print("\n" + "\n".join([title] + rows + ["─" * len(title)]) + "\n")
 
 
 def register_keys(_h) -> None:

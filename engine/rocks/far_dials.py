@@ -56,7 +56,10 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 _INT_FLOOR_1 = ("max_far_rocks", "cell_cache_max", "size_classes",
                "cells_per_range", "haze_steps", "max_cells_per_axis")
 
-DIAL_ORDER: tuple = tuple(DEFAULTS)
+# / L O order: the look dials Mark tunes live come first, the rest after.
+_LOOK_FIRST = ("haze_brightness", "tile_haze_brightness", "haze_gain",
+               "tile_haze_gain", "speck_gain", "tile_haze_edge_frac")
+DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)
 _FACTOR = 1.25
 
 _dials: dict = dict(DEFAULTS)
