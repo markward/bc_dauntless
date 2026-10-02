@@ -29,4 +29,21 @@ std::vector<glm::vec3> impostor_view_dirs();
 /// the mesh's own spherical UVs (nearest texel).
 Impostor bake_impostor(const assets::MeshCpu& mesh, const RockSurface& s, int view_size);
 
+/// One mesh of a multi-part bake.
+struct ImpostorPart {
+    const assets::MeshCpu* mesh;     // glTF frame, metres
+    const RockSurface* surface;
+    glm::mat4 xform;                 // part -> collection frame (glTF, metres)
+};
+
+/// Like bake_impostor but rasterises every part into the same 16 views (one
+/// shared z-buffer per view), framed on the union's bounding sphere about the
+/// origin. bake_impostor(mesh, s, n) is exactly
+/// bake_impostor_parts({{&mesh, &s, identity}}, n) -- one rasteriser.
+Impostor bake_impostor_parts(const std::vector<ImpostorPart>& parts, int view_size);
+
+/// Mean RGB (0..1) of the albedo atlas, each pixel weighted by its coverage
+/// (alpha). Zero when nothing is covered.
+glm::vec3 impostor_avg_albedo(const Impostor& imp);
+
 }  // namespace rockgen

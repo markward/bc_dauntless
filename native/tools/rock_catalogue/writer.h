@@ -35,6 +35,18 @@ struct RockRecord {
     std::string volume;
 };
 
+/// One baked rock collection's manifest data. Paths relative to the catalogue
+/// root (e.g. "collections/dense_00/impostor_base.png").
+struct CollectionRecord {
+    std::string id;        // "collections/dense_00"
+    std::string variant;   // "dense"
+    std::string impostor_albedo;
+    std::string impostor_normal;
+    int impostor_grid = 4;
+    int impostor_view_size = 0;
+    glm::vec3 avg_albedo{0.0f};   // coverage-weighted mean of the albedo atlas
+};
+
 /// Encode `image` as a PNG and write it to `path`. Throws std::runtime_error
 /// on an encode or write failure. Assumes stbi_write_png_compression_level
 /// has already been set by the caller (main() sets it once at startup).
@@ -51,11 +63,13 @@ void write_gltf_lod(const std::filesystem::path& dir, int lod_index,
 
 /// Write `out_dir/catalogue.json`: tool_version, recipe_fnv1a64_hex,
 /// impostor_view_dirs, contact_sheet_order (rocks' ids, in `rocks` order),
-/// and the rocks array itself.
+/// the rocks array itself, and the collections array (always present; empty
+/// when the recipe has none).
 void write_catalogue(const std::filesystem::path& out_dir, int tool_version,
                       const std::string& recipe_fnv1a64_hex,
                       const std::vector<glm::vec3>& impostor_view_dirs,
-                      const std::vector<RockRecord>& rocks);
+                      const std::vector<RockRecord>& rocks,
+                      const std::vector<CollectionRecord>& collections = {});
 
 /// Write `out_dir/review/contact_sheet.png`: a 4-column grid, one cell per
 /// rock (in `rocks` order), each cell showing `impostor_albedos[i]`'s view-0

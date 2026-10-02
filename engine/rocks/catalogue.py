@@ -34,6 +34,7 @@ _enabled = True
 _memo: dict[str, tuple] = {}
 _warned: set[str] = set()
 _memo_view_dirs: dict[str, tuple] = {}
+_memo_collections: dict[str, list] = {}
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,16 @@ class Rock:
     impostor_albedo: str
     impostor_normal: str
     volume: str
+
+
+@dataclass(frozen=True)
+class Collection:
+    """One baked rock-collection impostor (a cluster of rocks in one sprite)."""
+    id: str
+    variant: str
+    impostor_albedo: str
+    impostor_normal: str
+    avg_albedo: tuple
 
 
 def enabled() -> bool:
@@ -106,6 +117,28 @@ def impostor_view_dirs() -> tuple:
         pass
     _memo_view_dirs[key] = dirs
     return dirs
+
+
+def collections() -> list[Collection]:
+    """The manifest's baked rock collections, read at USE and memoised per
+    root like load(). Empty when the manifest has none (or is unreadable;
+    load() already warns about that)."""
+    root = catalogue_root()
+    key = str(root)
+    if key in _memo_collections:
+        return list(_memo_collections[key])
+    cols: list[Collection] = []
+    try:
+        man = json.loads((root / "catalogue.json").read_text())
+        cols = [Collection(id=c["id"], variant=c["variant"],
+                           impostor_albedo=str(root / c["impostor"]["albedo"]),
+                           impostor_normal=str(root / c["impostor"]["normal"]),
+                           avg_albedo=tuple(float(x) for x in c["avg_albedo"]))
+                for c in man.get("collections", [])]
+    except (OSError, ValueError, KeyError, TypeError):
+        cols = []
+    _memo_collections[key] = cols
+    return list(cols)
 
 
 def index_of_path(path) -> int:

@@ -139,3 +139,20 @@ def test_index_of_path_finds_a_real_rock_and_minus_one_for_unknown():
     rocks = rc.load()
     assert rc.index_of_path(rocks[0].lod_paths[0]) == 0
     assert rc.index_of_path("/no/such/rock/lod0.gltf") == -1
+
+
+def test_real_catalogue_collections():
+    rc._memo_collections.clear()
+    cols = rc.collections()
+    assert len(cols) == 48
+    assert {c.variant for c in cols} == {"sparse", "medium", "dense"}
+    root = rc.catalogue_root()
+    for c in cols:
+        assert Path(c.impostor_albedo).is_file() and Path(c.impostor_normal).is_file()
+        assert Path(c.impostor_albedo).is_relative_to(root)
+        assert len(c.avg_albedo) == 3 and all(0.0 < x < 1.0 for x in c.avg_albedo)
+
+
+def test_collections_empty_when_manifest_has_none(fake):
+    rc._memo_collections.clear()
+    assert rc.collections() == []
