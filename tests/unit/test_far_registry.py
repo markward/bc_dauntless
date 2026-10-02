@@ -23,6 +23,9 @@ def test_note_model_flags_catalogue_rocks_only(monkeypatch):
     rocks = catalogue.load()
     lod0 = rocks[3].lod_paths[0]
 
+    from pathlib import Path
+    from engine import paths
+    monkeypatch.setattr(paths, "game_root", lambda: Path("/x"))
     cat_rock = RockClass_Create(2.0, name="Cat Rock", kind="major")
     far_tier.note_model(cat_rock, lod0, 2.5)
     stock_rock = RockClass_Create(2.0, name="Stock Rock", kind="major")
@@ -40,6 +43,22 @@ def test_note_model_flags_catalogue_rocks_only(monkeypatch):
     assert flagged[1] == {"instance": 12, "index": -1,
                           "radius_mu": catalogue.STOCK_RADIUS_MU["asteroid1.nif"]}
     assert len(flagged) == 2
+
+
+def test_a_mods_own_stock_named_asteroid_is_not_flagged(monkeypatch):
+    """A mod overriding a stock asteroid NIF in place keeps its own mesh, of
+    unknown size: only a genuine stock NIF under the configured game root
+    gets STOCK_RADIUS_MU. The mod's rock stays unflagged (mesh at all
+    distances), and forgets an earlier stock note."""
+    from pathlib import Path
+    from engine import paths
+    from engine.rocks.rock import RockClass_Create
+    monkeypatch.setattr(paths, "game_root", lambda: Path("/bc"))
+    rock = RockClass_Create(2.0, name="Mod Rock", kind="major")
+    far_tier.note_model(rock, "/bc/data/Models/Misc/Asteroids/asteroid1.nif", 1.0)
+    assert far_tier.desired_rocks({rock: 1})[0]["index"] == -1
+    far_tier.note_model(rock, "/mods/X/data/Models/Misc/Asteroids/asteroid1.nif", 1.0)
+    assert far_tier.desired_rocks({rock: 1}) == []
 
 
 def test_a_rock_with_a_non_rock_model_is_not_flagged():
@@ -140,3 +159,35 @@ def test_reconcile_never_raises():
         def __getattr__(self, name):
             raise RuntimeError("renderer down")
     far_tier.reconcile(object(), _Boom())
+
+
+def test_a_failed_catalogue_push_is_retried(monkeypatch):
+    """The root counts as pushed only once far_set_catalogue succeeded; a
+    raising catalogue load or native call is swallowed and retried."""
+    from engine.rocks import catalogue
+    far_tier.reset(None)
+    calls = []
+
+    class _Flaky(_R):
+        def far_set_catalogue(self, *a):
+            calls.append(a)
+            if len(calls) == 1:
+                raise RuntimeError("native refused")
+
+    r = _Flaky()
+    far_tier.reconcile_with(r, None, {})
+    far_tier.reconcile_with(r, None, {})
+    assert len(calls) == 2
+    far_tier.reconcile_with(r, None, {})
+    assert len(calls) == 2, "pushed once it succeeded"
+
+    far_tier.reset(None)
+    real_load = catalogue.load
+
+    def boom():
+        raise RuntimeError("catalogue unreadable")
+    monkeypatch.setattr(catalogue, "load", boom)
+    far_tier.reconcile_with(r, None, {})          # must not raise
+    monkeypatch.setattr(catalogue, "load", real_load)
+    far_tier.reconcile_with(r, None, {})
+    assert len(calls) == 3, "a failed load is retried"

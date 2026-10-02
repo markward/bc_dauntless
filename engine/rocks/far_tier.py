@@ -44,9 +44,10 @@ def _swallow(what: str, e: BaseException) -> None:
 
 def note_model(ship, model_path: str, model_scale: float) -> None:
     """Record a realised rock's model. A catalogue rock -> (index, bound
-    radius in model units x load scale); a stock asteroid NIF -> (-1,
-    STOCK_RADIUS_MU). Anything else (a non-rock, a mod's own rock mesh) is
-    not recorded, and forgets an earlier note for the same ship."""
+    radius in model units x load scale); a stock asteroid NIF under the
+    configured game root -> (-1, STOCK_RADIUS_MU). Anything else (a non-rock,
+    a mod's own rock mesh, even one named like a stock NIF) is not recorded,
+    and forgets an earlier note for the same ship."""
     from engine.rocks import catalogue
     from engine.rocks.rock import is_rock
     if not is_rock(ship):
@@ -57,8 +58,10 @@ def note_model(ship, model_path: str, model_scale: float) -> None:
         _models[ship] = (idx, rock.bound_radius_m
                          * catalogue.MODEL_UNITS_PER_METRE * float(model_scale))
         return
+    # Only a genuine stock NIF under the configured game root has the stock
+    # radius; a mod's same-named mesh is its own size (R13's rule).
     stock = catalogue.stock_key(model_path)
-    if stock is not None:
+    if stock is not None and catalogue._under_game_root(model_path):
         _models[ship] = (-1, catalogue.STOCK_RADIUS_MU[stock])
         return
     _models.pop(ship, None)
@@ -125,14 +128,15 @@ def _push_catalogue(r) -> None:
     root = str(catalogue.catalogue_root())
     if root == _catalogue_root:
         return
-    _catalogue_root = root
-    entries = [{"albedo": rock.impostor_albedo, "normal": rock.impostor_normal,
-                "avg_albedo": tuple(rock.avg_albedo)}
-               for rock in catalogue.load()]
     try:
+        entries = [{"albedo": rock.impostor_albedo, "normal": rock.impostor_normal,
+                    "avg_albedo": tuple(rock.avg_albedo)}
+                   for rock in catalogue.load()]
         r.far_set_catalogue(entries, [tuple(d) for d in catalogue.impostor_view_dirs()])
     except Exception as e:
         _swallow("set_catalogue", e)
+        return
+    _catalogue_root = root   # pushed: only now, so a failure is retried
 
 
 def _push_dials(r) -> None:
