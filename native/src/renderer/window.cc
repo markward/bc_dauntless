@@ -85,8 +85,12 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
         auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
         if (!self) return;
         // Clipboard/undo chords first: resolve the LAYOUT's letter (an AZERTY
-        // Cmd+A is GLFW_KEY_Q) and queue a CefFrame command.
-        if (action != GLFW_RELEASE) {
+        // Cmd+A is GLFW_KEY_Q) and queue a CefFrame command. edit_command_for
+        // only ever returns non-None when the primary modifier (Cmd on
+        // macOS, Ctrl elsewhere) is held, so the glfwGetKeyName lookup is
+        // only worth doing then -- no behaviour change, just skips the
+        // lookup on every other key press.
+        if (action != GLFW_RELEASE && (mods & (GLFW_MOD_SUPER | GLFW_MOD_CONTROL))) {
             const char* name = glfwGetKeyName(key, scancode);
             if (name && name[0] && !name[1]) {
                 const EditCommand cmd = edit_command_for(name[0], mods);
@@ -220,10 +224,12 @@ void Window::set_key_capture(bool on) {
         return;
     }
     // Only keys the game has polled can matter: it reads keys only through
-    // key_state, and a key first polled after release never produces an edge
-    // (key_pressed's first query records prev = now). Scanning the full
-    // GLFW range instead would hit its code gaps, which raise
-    // GLFW_INVALID_ENUM.
+    // key_state, and polled_keys_ covers every key the game polled before
+    // release. The game polls its keys every frame, so a key first polled
+    // after release is one nobody was reading. (key_pressed reports a held
+    // key's first query as an edge -- pre-existing, out of scope here.)
+    // Scanning the full GLFW range instead would hit its code gaps, which
+    // raise GLFW_INVALID_ENUM.
     std::vector<int> down;
     if (handle_) {
         for (int k : polled_keys_) {

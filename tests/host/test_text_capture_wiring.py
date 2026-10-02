@@ -66,11 +66,17 @@ class _GatedHost:
         return raw
 
     def key_pressed(self, k):
+        # Mirrors native exactly (host_bindings.cc ~6221-6235): `prev` is
+        # read from the map BEFORE any insert, defaulting to False when the
+        # key has never been queried -- so a key already held on its FIRST
+        # query IS reported as a rising edge (`now && !prev` == `now`).
+        # Only on that first query does this write `now` into the map; every
+        # later query reads whatever end_frame()'s pre-poll snapshot left.
         now = self.key_state(k)
+        prev = self._prev.get(k, False)
         if k not in self._prev:
             self._prev[k] = now
-            return False
-        return now and not self._prev[k]
+        return now and not prev
 
     def end_frame(self):
         for k in self._prev:

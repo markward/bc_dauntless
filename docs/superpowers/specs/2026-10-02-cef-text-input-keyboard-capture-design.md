@@ -118,9 +118,11 @@ Consequences, which the gtests pin down:
     asked about (a `polled_keys_` set that `key_state` records), collects the
     ones that are down, and calls `gate_.release(down)`.
     - Only polled keys matter, because the game reads keys only through
-      `key_state`.
-    - A key first polled after release cannot produce an edge, since a first
-      `key_pressed` query records `prev = now`.
+      `key_state`. `polled_keys_` covers every key the game polled before
+      release, and the game polls its keys every frame, so a key first
+      polled after release is one nobody was reading. (Native `key_pressed`
+      reports a held key's first query as an edge — pre-existing, out of
+      scope for this spec.)
     - Scanning the full `GLFW_KEY_SPACE..GLFW_KEY_LAST` range instead would
       hit the gaps in GLFW's key codes, which raise `GLFW_INVALID_ENUM`.
 - **`Window` becomes the only file in `native/src` that calls `glfwGetKey`,**
