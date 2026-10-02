@@ -6,8 +6,12 @@ Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
   far_set_catalogue   once per catalogue root (impostor atlases + view dirs)
   far_set_dials       once, and again on a far_dials NATIVE-key change
   far_set_frame       EVERY frame -- the anchor moves on a region hand-off
-  far_set_sources     on a system change, or a Python-owned far_dials change
-                      (population + disc-shape keys feed density.to_native)
+  far_set_sources     on a system change, a change in the viewed set's tile
+                      sphere sources (set or field list), or a Python-owned
+                      far_dials change (population + disc-shape + tile_haze
+                      keys feed density.to_native). Belts (system frame)
+                      first, then one view-space sphere per AsteroidField in
+                      the viewed set (tile-field haze, added 2026-10-02).
   far_set_rocks       the flagged mission/breakup rocks, when the list changes
 
 A rock is flagged by `note_model` at realise time, with the model path and
@@ -32,6 +36,7 @@ _dials_pushed = False
 _dials_dirty = False
 _sources_dirty = False
 _system = _UNSET                 # system whose sources native holds
+_tiles = _UNSET                  # the tile DiscSources native holds
 _rocks_pushed = _UNSET           # the last far_set_rocks list
 
 
@@ -105,13 +110,14 @@ def on_dials_changed(names) -> None:
 def reset(r=None) -> None:
     """Forget everything (mission swap); r.far_clear() when given."""
     global _catalogue_root, _dials_pushed, _dials_dirty, _sources_dirty
-    global _system, _rocks_pushed
+    global _system, _rocks_pushed, _tiles
     _models.clear()
     _catalogue_root = None
     _dials_pushed = False
     _dials_dirty = False
     _sources_dirty = False
     _system = _UNSET
+    _tiles = _UNSET
     _rocks_pushed = _UNSET
     if fd.on_change() is on_dials_changed:
         fd.set_on_change(None)
@@ -153,26 +159,44 @@ def _push_dials(r) -> None:
         _swallow("set_dials", e)
 
 
-def _push_sources(r, system) -> None:
-    global _system, _sources_dirty
-    if system == _system and not _sources_dirty:
+def tile_sources(view_set, fields) -> list:
+    """One sphere DiscSource per AsteroidField of `fields` that lies in
+    `view_set` (a field whose containing set is another set: none), centred
+    in view space -- so an unmapped set (Multi7) hazes too."""
+    from engine.rocks import density, minors
+    from engine.systems import frames
+    out = []
+    for f in fields:
+        if f is None:
+            continue
+        fset = frames.containing_set(f)
+        if fset is not None and fset is not view_set:
+            continue
+        s = density.tile_field_source(f, view_set, minors._set_name(fset or view_set),
+                                      _ZERO)
+        if s is not None:
+            out.append(s)
+    return out
+
+
+def _push_sources(r, system, tiles) -> None:
+    global _system, _sources_dirty, _tiles
+    if system == _system and tiles == _tiles and not _sources_dirty:
         return
     _system = system
+    _tiles = tiles
     _sources_dirty = False
     try:
-        if system:
-            from engine.rocks import density
-            sources = [density.to_native(s)
-                       for s in density.sources_for_system(system)]
-        else:
-            sources = []
-        r.far_set_sources(sources)
+        from engine.rocks import density
+        belts = density.sources_for_system(system) if system else []
+        r.far_set_sources([density.to_native(s) for s in belts + list(tiles)])
     except Exception as e:
         _swallow("set_sources", e)
 
 
-def reconcile_with(r, view_set, rock_instances: dict) -> None:
-    """The testable core of `reconcile` (far-tier plan Task 10)."""
+def reconcile_with(r, view_set, rock_instances: dict, fields=()) -> None:
+    """The testable core of `reconcile` (far-tier plan Task 10). `fields`:
+    the viewed set's AsteroidFields (tile-field haze)."""
     global _rocks_pushed
     _push_catalogue(r)
     _push_dials(r)
@@ -181,7 +205,12 @@ def reconcile_with(r, view_set, rock_instances: dict) -> None:
         r.far_set_frame(system, anchor)
     except Exception as e:
         _swallow("set_frame", e)
-    _push_sources(r, system)
+    try:
+        tiles = tile_sources(view_set, fields)
+    except Exception as e:
+        _swallow("tile_sources", e)
+        tiles = []
+    _push_sources(r, system, tiles)
     rocks = desired_rocks(rock_instances)
     if rocks != _rocks_pushed:
         _rocks_pushed = rocks
@@ -193,9 +222,10 @@ def reconcile_with(r, view_set, rock_instances: dict) -> None:
 
 def reconcile(session, r) -> None:
     """Per frame, from host_loop._reconcile_scene: the viewed set's rocks
-    (realised, not scope-hidden, in the viewed frame) -- gathered exactly as
-    minors.reconcile does. Never raises."""
+    (realised, not scope-hidden, in the viewed frame) and AsteroidFields --
+    gathered exactly as minors.reconcile does. Never raises."""
     try:
+        import App
         from engine.rocks.rock import is_rock
         from engine.systems import frames
         view = frames.viewing_set()
@@ -210,10 +240,16 @@ def reconcile(session, r) -> None:
                     and frames.offset_between(view, pSet) is None):
                 continue
             rocks[ship] = iid
+        fields = []
+        if view is not None:
+            for o in view.GetClassObjectList(App.CT_ASTEROID_FIELD):
+                f = App.AsteroidField_Cast(o)
+                if f is not None:
+                    fields.append(f)
     except Exception as e:
         _swallow("gather", e)
         return
     try:
-        reconcile_with(r, view, rocks)
+        reconcile_with(r, view, rocks, fields)
     except Exception as e:
         _swallow("reconcile", e)

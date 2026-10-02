@@ -86,3 +86,76 @@ def test_to_native_drops_a_population_with_no_matching_rocks(monkeypatch, capsys
 
     err = capsys.readouterr().err
     assert err.count("[far]") == 1
+
+
+# ── Tile-field sphere sources (added 2026-10-02) ─────────────────────────────
+
+
+class _Loc:
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+
+class _Field:
+    """The AsteroidField surface minors.tile_spec reads (Beol 4's numbers)."""
+    def __init__(self, name="Asteroid Field 1", loc=(797.714355, 977.248474, 1268.854858),
+                 radius=1000.0, tiles=3, per_tile=15, size_factor=7.0):
+        self._name, self._loc, self._r = name, loc, radius
+        self._tiles, self._per, self._sf = tiles, per_tile, size_factor
+    def GetName(self): return self._name
+    def GetWorldLocation(self): return _Loc(*self._loc)
+    def GetFieldRadius(self): return self._r
+    def GetNumTilesPerAxis(self): return self._tiles
+    def GetNumAsteroidsPerTile(self): return self._per
+    def GetAsteroidSizeFactor(self): return self._sf
+
+
+def test_tile_field_source_is_a_view_space_sphere_from_the_tile_cloud():
+    from engine.rocks import minors
+    f = _Field()
+    s = density.tile_field_source(f, None, "Beol4", (0.0, 0.0, 0.0))
+    spec = minors.tile_spec(f, None, "Beol4", (0.0, 0.0, 0.0))
+    assert s.shape == "sphere" and s.procedural is False and s.view_space is True
+    assert s.centre_gu == spec.point
+    assert s.sphere_radius_gu == 1000.0
+    assert s.sphere_edge_frac == far_dials.get("tile_haze_edge_frac")
+    assert math.isclose(s.gain_scale,
+                        far_dials.get("tile_haze_gain") / far_dials.get("haze_gain"))
+    (pop,) = s.pops
+    assert pop.kind == 0 and pop.a_lo == 0.0 and pop.a_hi == 1.0
+    assert math.isclose(pop.density_at_1, 405 / (4.0 / 3.0 * math.pi * 1000.0 ** 3))
+    assert (pop.r_min, pop.r_max, pop.exponent) == (spec.r_min, spec.r_max, spec.size_exponent)
+    assert math.isclose(pop.r_max, 0.7) and pop.r_min == 0.05
+    assert dict(pop.families) == {"silicate": 1.0}
+
+
+def test_tile_field_source_follows_the_minor_dials():
+    from engine.rocks import minor_dials
+    minor_dials._dials = dict(minor_dials._dials, tile_count_mult=2.0)
+    try:
+        (pop,) = density.tile_field_source(_Field(), None, "Beol4", (0.0, 0.0, 0.0)).pops
+    finally:
+        minor_dials.reset()
+    assert math.isclose(pop.density_at_1, 810 / (4.0 / 3.0 * math.pi * 1000.0 ** 3))
+
+
+def test_an_empty_tile_field_has_no_source():
+    assert density.tile_field_source(_Field(per_tile=0), None, "X", (0.0, 0.0, 0.0)) is None
+
+
+def test_to_native_emits_the_sphere_keys_and_only_the_minor_population():
+    s = density.tile_field_source(_Field(), None, "Beol4", (0.0, 0.0, 0.0))
+    d = density.to_native(s)
+    assert d["shape"] == "sphere" and d["procedural"] is False and d["view_space"] is True
+    assert d["sphere_radius_gu"] == 1000.0 and d["sphere_edge_frac"] == 0.2
+    assert d["gain_scale"] == s.gain_scale
+    assert d["centre"] == s.centre_gu and d["table"] == []
+    (pop,) = d["populations"]
+    assert pop["kind"] == 0 and pop["rocks"]
+
+
+def test_a_belt_to_native_keeps_the_disc_defaults():
+    (s,) = density.sources_for_system("Vesuvi")
+    d = density.to_native(s)
+    assert (d["shape"], d["procedural"], d["view_space"], d["gain_scale"]) == \
+        ("disc", True, False, 1.0)

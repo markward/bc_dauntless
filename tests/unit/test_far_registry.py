@@ -191,3 +191,87 @@ def test_a_failed_catalogue_push_is_retried(monkeypatch):
     monkeypatch.setattr(catalogue, "load", real_load)
     far_tier.reconcile_with(r, None, {})
     assert len(calls) == 3, "a failed load is retried"
+
+
+# ── Tile-field haze (added 2026-10-02) ───────────────────────────────────────
+
+
+class _Loc:
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+
+class _Set:
+    def __init__(self, name):
+        self._name = name
+    def GetName(self):
+        return self._name
+
+
+class _Field:
+    def __init__(self, pSet, name="Asteroid Field 1", loc=(1.0, 2.0, 3.0), per_tile=15):
+        self._set, self._name, self._loc, self._per = pSet, name, loc, per_tile
+    def GetContainingSet(self): return self._set
+    def GetName(self): return self._name
+    def GetWorldLocation(self): return _Loc(*self._loc)
+    def GetFieldRadius(self): return 1000.0
+    def GetNumTilesPerAxis(self): return 3
+    def GetNumAsteroidsPerTile(self): return self._per
+    def GetAsteroidSizeFactor(self): return 7.0
+
+
+def _source_pushes(r):
+    return [a[0] for n, a in r.calls if n == "far_set_sources"]
+
+
+def test_one_sphere_source_per_field_in_the_viewed_set_only():
+    view, other = _Set("Multi7"), _Set("Elsewhere")
+    fields = [_Field(view, "F1", (10.0, 0.0, 0.0)), _Field(view, "F2", (0.0, 20.0, 0.0)),
+              _Field(other, "F3")]
+    r = _R()
+    far_tier.reconcile_with(r, view, {}, fields)
+    (pushed,) = _source_pushes(r)
+    assert [d["shape"] for d in pushed] == ["sphere", "sphere"]
+    assert [d["centre"] for d in pushed] == [(10.0, 0.0, 0.0), (0.0, 20.0, 0.0)]
+    assert all(d["view_space"] and not d["procedural"] for d in pushed)
+
+
+def test_tile_sources_are_pushed_only_on_change():
+    view = _Set("Multi7")
+    fields = [_Field(view)]
+    r = _R()
+    far_tier.reconcile_with(r, view, {}, fields)
+    far_tier.reconcile_with(r, view, {}, fields)
+    assert len(_source_pushes(r)) == 1
+    fields.append(_Field(view, "F2"))          # the field list changed
+    far_tier.reconcile_with(r, view, {}, fields)
+    assert len(_source_pushes(r)) == 2
+    assert len(_source_pushes(r)[1]) == 2
+    other = _Set("Other")                      # the viewed set changed
+    far_tier.reconcile_with(r, other, {}, [_Field(other)])
+    assert len(_source_pushes(r)) == 3
+
+
+def test_a_tile_haze_dial_change_repushes_the_sources():
+    from engine.rocks import far_dials
+    view = _Set("Multi7")
+    fields = [_Field(view)]
+    r = _R()
+    far_tier.reconcile_with(r, view, {}, fields)
+    far_dials._step("tile_haze_gain", +1)
+    far_tier.reconcile_with(r, view, {}, fields)
+    pushes = _source_pushes(r)
+    assert len(pushes) == 2
+    assert pushes[1][0]["gain_scale"] == far_dials.get("tile_haze_gain") / far_dials.get("haze_gain")
+    far_dials._step("tile_haze_edge_frac", -1)
+    far_tier.reconcile_with(r, view, {}, fields)
+    assert _source_pushes(r)[2][0]["sphere_edge_frac"] == far_dials.get("tile_haze_edge_frac")
+
+
+def test_belts_and_tile_spheres_ride_together(monkeypatch):
+    monkeypatch.setattr(far_tier, "frame_for", lambda v: ("Vesuvi", (0.0, 0.0, 0.0)))
+    view = _Set("Vesuvi1")
+    r = _R()
+    far_tier.reconcile_with(r, view, {}, [_Field(view)])
+    (pushed,) = _source_pushes(r)
+    assert [d["shape"] for d in pushed] == ["disc", "sphere"]

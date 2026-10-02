@@ -24,3 +24,17 @@ def test_registers_the_far_group_without_new_keys():
     from engine import dev_dial_groups
     far_dials.register()
     assert "far" in dev_dial_groups.groups()
+
+
+def test_tile_haze_gain_is_the_cpp_derivation():
+    """The default tile_haze_gain IS kTileHazeGain in far_field_test.cc,
+    where FarHazeSphere.DefaultTileGainHitsTheStatedTarget derives it (alpha
+    0.15 +- 0.03 from Beol 4's Player Start). Read, not copied, so the two
+    cannot drift."""
+    src = (Path(__file__).parents[2] / "native/tests/renderer/far_field_test.cc").read_text()
+    m = re.search(r"kTileHazeGain\s*=\s*([0-9.e+-]+)f", src)
+    assert m
+    assert far_dials.DEFAULTS["tile_haze_gain"] == float(m.group(1))
+    assert far_dials.DEFAULTS["tile_haze_edge_frac"] == 0.2
+    assert "tile_haze_gain" not in far_dials.NATIVE_KEYS
+    assert "tile_haze_edge_frac" not in far_dials.NATIVE_KEYS

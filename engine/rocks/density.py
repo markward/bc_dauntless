@@ -16,6 +16,7 @@ import math
 import sys
 import zlib
 from dataclasses import dataclass, field
+from typing import Optional
 
 MAX_TABLE_ROWS = 32   # far_haze.frag's u_table_* arrays
 
@@ -36,6 +37,16 @@ class DiscSource:
     families: dict
     seed: int
     explicit_regions: list = field(default_factory=list)   # [((x,y,z), r)]; sub-project 4
+    # Tile-field haze (2026-10-02): renderer::far::DiscSource's twins. A
+    # "sphere" is an AsteroidField: a == 1 inside, a linear ramp to 0 over
+    # the outer sphere_edge_frac of sphere_radius_gu; table unused.
+    shape: str = "disc"
+    procedural: bool = True        # False: native generates no rocks for it
+    view_space: bool = False       # centre_gu in the viewed set's view space
+    sphere_radius_gu: float = 0.0
+    sphere_edge_frac: float = 0.2
+    gain_scale: float = 1.0        # x the native haze_gain for this source
+    pops: Optional[tuple] = None   # explicit populations; None = field_table's
 
 
 def table_a(source, rho: float) -> float:
@@ -114,6 +125,45 @@ def sources_for_system(system_name: str) -> list:
     return [] if s is None else [s]
 
 
+def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
+    """An AsteroidField's sphere haze source, or None when it has no
+    minors. Built FROM minors.tile_spec -- the same count, radius, size law
+    and view-space centre as the field's tile cloud -- with one minor
+    population of the cloud's density count / (4/3 pi R^3)."""
+    from engine.rocks import far_dials, field_table, minors
+    spec = minors.tile_spec(field_obj, view_set, set_name, offset)
+    if spec is None:
+        return None
+    radius = float(spec.shell_outer)
+    family = minors._FAMILY_NAME.get(spec.family, "silicate")
+    pop = field_table.Population(
+        kind=0,
+        density_at_1=spec.count / (4.0 / 3.0 * math.pi * radius ** 3),
+        a_lo=0.0, a_hi=1.0,
+        r_min=spec.r_min, r_max=spec.r_max, exponent=spec.size_exponent,
+        families=((family, 1.0),))
+    seed = spec.seed & 0xffffffff
+    return DiscSource(
+        id=seed & 0x7fffffff,
+        frame=set_name,
+        centre_gu=tuple(spec.point),
+        normal=(0.0, 0.0, 1.0),
+        table=[],
+        outer_fade_gu=0.0,
+        scale_height_frac=0.0,
+        scale_height_min_gu=0.0,
+        families={family: 1.0},
+        seed=seed,
+        shape="sphere",
+        procedural=False,
+        view_space=True,
+        sphere_radius_gu=radius,
+        sphere_edge_frac=float(far_dials.get("tile_haze_edge_frac")),
+        gain_scale=float(far_dials.get("tile_haze_gain")) / float(far_dials.get("haze_gain")),
+        pops=(pop,),
+    )
+
+
 def _kind_name(pop) -> str:
     return "fragment" if pop.kind == 0 else "major"
 
@@ -158,10 +208,11 @@ def to_native(source) -> dict:
     populations at all is still emitted -- the haze and generator then
     simply find nothing to draw for it."""
     from engine.rocks import catalogue, field_table
-    minor, major = field_table.populations(source.families)
+    wanted = (source.pops if source.pops is not None
+              else field_table.populations(source.families))
     rocks = catalogue.load()
     pops = []
-    for pop in (minor, major):
+    for pop in wanted:
         native_pop = _population_native(pop, rocks)
         if native_pop is None:
             key = (source.frame, _kind_name(pop))
@@ -185,4 +236,10 @@ def to_native(source) -> dict:
         "seed": source.seed,
         "explicit_regions": [(tuple(c), r) for c, r in source.explicit_regions],
         "populations": pops,
+        "shape": source.shape,
+        "procedural": source.procedural,
+        "view_space": source.view_space,
+        "sphere_radius_gu": source.sphere_radius_gu,
+        "sphere_edge_frac": source.sphere_edge_frac,
+        "gain_scale": source.gain_scale,
     }
