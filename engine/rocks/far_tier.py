@@ -34,6 +34,7 @@ _UNSET = object()
 # ── Module state (all cleared by reset) ───────────────────────────────────────
 _models: dict = {}               # rock -> (catalogue index, radius_mu)
 _catalogue_root = None           # root whose catalogue native holds
+_near_pushed = 0                 # near-band entries (with LOD handles) in that push
 _dials_pushed = False
 _dials_dirty = False
 _sources_dirty = False
@@ -113,9 +114,10 @@ def on_dials_changed(names) -> None:
 def reset(r=None) -> None:
     """Forget everything (mission swap); r.far_clear() when given."""
     global _catalogue_root, _dials_pushed, _dials_dirty, _sources_dirty
-    global _system, _rocks_pushed, _tiles
+    global _system, _rocks_pushed, _tiles, _near_pushed
     _models.clear()
     _catalogue_root = None
+    _near_pushed = 0
     _dials_pushed = False
     _dials_dirty = False
     _sources_dirty = False
@@ -158,11 +160,23 @@ def _catalogue_entry(r, rock) -> dict:
     return e
 
 
+def _native_lost_near(r) -> bool:
+    """A host re-init (no mission swap) empties the native near catalogue:
+    its model handles died with the old session."""
+    if not _near_pushed:
+        return False
+    try:
+        return int(r.rockfield_catalogue_size()) == 0
+    except Exception as e:
+        _swallow("catalogue_size", e)
+        return False
+
+
 def _push_catalogue(r) -> None:
-    global _catalogue_root
+    global _catalogue_root, _near_pushed
     from engine.rocks import catalogue
     root = str(catalogue.catalogue_root())
-    if root == _catalogue_root:
+    if root == _catalogue_root and not _native_lost_near(r):
         return
     try:
         entries = [_catalogue_entry(r, rock) for rock in catalogue.load()]
@@ -171,6 +185,7 @@ def _push_catalogue(r) -> None:
         _swallow("set_catalogue", e)
         return
     _catalogue_root = root   # pushed: only now, so a failure is retried
+    _near_pushed = sum(1 for e in entries if "lod0" in e)
 
 
 def _push_dials(r) -> None:

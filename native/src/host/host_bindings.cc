@@ -317,8 +317,6 @@ std::vector<renderer::minors::Fragment> g_near_small_frags;
 std::vector<renderer::minors::Fragment> g_near_large_frags;
 // > 0: the player's contact box half extents x this (shields up).
 float g_near_shield_inflate = 0.0f;
-// The last stream centre (system), so a catalogue rebuilt mid-draw re-streams.
-glm::dvec3 g_near_centre_sys{0.0};
 // What the last frame built, summed over its drawn cameras.
 int g_near_meshes = 0;
 int g_near_billboards = 0;
@@ -887,7 +885,6 @@ void reset_frame_state() {
     g_near_field.reset_player();
     g_near_out = {};
     g_near_shield_inflate = 0.0f;
-    g_near_centre_sys = glm::dvec3(0.0);
     g_near_meshes = 0;
     g_near_billboards = 0;
 }
@@ -1149,8 +1146,7 @@ void step_near_field() {
     const glm::dvec3 centre_render = player
         ? glm::dvec3(player->world * glm::vec4(player->center_mu, 1.0f))
         : glm::dvec3(g_camera.eye);
-    g_near_centre_sys = centre_render + to_sys;
-    g_near_field.stream(g_near_centre_sys);
+    g_near_field.stream(centre_render + to_sys);
     renderer::rockfield::NearStepInput in;
     in.game_time = g_decal_game_time;
     in.render_origin = g_world.render_origin();
@@ -1159,24 +1155,6 @@ void step_near_field() {
     in.shield_inflate = g_near_shield_inflate;
     in.minor_dials = g_minor_field.dials();
     g_near_field.step(in);
-}
-
-// Hand NearField the catalogue lists minus `drop` (a catalogue index whose
-// impostor atlas failed to load): it keeps no near presence, as the far
-// build's drop_impostor leaves a flagged rock its mesh only.
-void near_drop_rock(int drop) {
-    auto prune = [drop](std::vector<int>& idx, std::vector<float>& bound,
-                        std::vector<renderer::minors::Fragment>& frags) {
-        for (std::size_t i = idx.size(); i-- > 0;)
-            if (idx[i] == drop) {
-                idx.erase(idx.begin() + static_cast<std::ptrdiff_t>(i));
-                bound.erase(bound.begin() + static_cast<std::ptrdiff_t>(i));
-                frags.erase(frags.begin() + static_cast<std::ptrdiff_t>(i));
-            }
-    };
-    prune(g_near_catalogue.small_rocks, g_near_catalogue.small_bound_mu, g_near_small_frags);
-    prune(g_near_catalogue.large_rocks, g_near_catalogue.large_bound_mu, g_near_large_frags);
-    g_near_field.set_catalogue(g_near_catalogue);
 }
 
 // The near band's bins: slot = index into the catalogue's class list.
@@ -1416,26 +1394,19 @@ void frame() {
             in.game_time = g_decal_game_time;
             in.lod0_pixel_radius = g_minor_field.dials().lod0_pixel_radius;
             g_near_field.build(in, g_near_out);
-            // A billboard whose atlas cannot load drops its rock from the
-            // near catalogue; re-stream and rebuild so this camera draws.
-            bool dropped = false;
-            for (const auto& bin : g_near_out.billboards)
-                if (!bin.items.empty() && !g_far_pass->has_atlas(bin.rock)) {
-                    near_drop_rock(bin.rock);
-                    dropped = true;
-                }
-            if (dropped) {
-                g_near_field.stream(g_near_centre_sys);
-                g_near_field.build(in, g_near_out);
-            }
             g_minor_pass->render(near_fragment, g_near_out.meshes, cam, *g_pipeline,
                                  [](std::uint64_t h) { return resolve_model(h); },
                                  g_lighting, ambient_scale, rim);
             g_far_draw_calls += g_minor_pass->last_draw_calls();
             g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
                                          ambient_scale, rim);
+            // A billboard bin whose atlas cannot load is skipped by
+            // render_impostors (its rock still draws in the mesh tier); the
+            // field is never mutated from the draw. Count what DREW.
             g_near_meshes += g_near_out.mesh_count;
-            g_near_billboards += g_near_out.billboard_count;
+            for (const auto& bin : g_near_out.billboards)
+                if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock))
+                    g_near_billboards += static_cast<int>(bin.items.size());
         }
         if (g_far_enabled && g_far_pass) {
             DAUNTLESS_FRAME_SCOPE("space.far.impostors");
@@ -4438,6 +4409,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Player/large near-rock touches since the last drain: [{'point', "
           "'normal' (rock -> ship), 'rock_centre': VIEW-space tuples, "
           "'rock_radius', 'rel_speed' (GU/s), 'pen'}, ...].");
+    m.def("rockfield_catalogue_size",
+          []() {
+              return g_near_catalogue.small_rocks.size() + g_near_catalogue.large_rocks.size();
+          },
+          "Rocks in the near catalogue (small + large). 0 after init(): its "
+          "model handles died with the old session, so far_tier re-pushes.");
     m.def("rockfield_set_shield_inflate",
           [](float scale) { g_near_shield_inflate = scale; },
           py::arg("scale"),

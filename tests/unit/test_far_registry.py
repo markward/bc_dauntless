@@ -370,3 +370,36 @@ def test_catalogue_entries_carry_near_band_kind_family_and_lod_handles():
     loads = [a for n, a in r.calls if n == "load_model"]
     assert len(loads) == len(handles)
     assert all(a[1:] == ([], None, None, 1.0) for a in loads)
+
+
+class _NearR(_R):
+    """A renderer whose native near catalogue can be emptied (host re-init)."""
+    def __init__(self):
+        super().__init__()
+        self.near_size = 0
+    def far_set_catalogue(self, entries, view_dirs):
+        self.calls.append(("far_set_catalogue", (entries, view_dirs)))
+        self.near_size = sum(1 for e in entries if "lod0" in e)
+    def rockfield_catalogue_size(self):
+        return self.near_size
+
+
+def test_an_emptied_native_near_catalogue_is_repushed():
+    r = _NearR()
+    far_tier.reconcile_with(r, None, {})
+    far_tier.reconcile_with(r, None, {})
+    assert _names(r).count("far_set_catalogue") == 1
+    r.near_size = 0                       # host shutdown + init
+    far_tier.reconcile_with(r, None, {})
+    assert _names(r).count("far_set_catalogue") == 2
+    assert r.near_size > 0
+
+
+def test_a_catalogue_without_near_rocks_is_not_repushed_every_frame(monkeypatch):
+    from engine.rocks import catalogue
+    monkeypatch.setattr(far_tier, "_NEAR_FAMILY", "no-such-family")
+    r = _NearR()
+    for _ in range(3):
+        far_tier.reconcile_with(r, None, {})
+    assert _names(r).count("far_set_catalogue") == 1
+    assert len(catalogue.load()) > 0

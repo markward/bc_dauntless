@@ -88,6 +88,7 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
+    "rockfield_catalogue_size",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -638,7 +639,9 @@ def far_stats() -> dict:
     """{"sources", "rocks", "impostors", "specks", "draw_calls"}, plus the
     near band's {"near_cells", "near_small", "near_large", "near_ghosted",
     "near_meshes", "near_billboards"}; impostors, specks, draw_calls and
-    near_meshes / near_billboards summed over the last frame's cameras."""
+    near_meshes / near_billboards summed over the last frame's cameras
+    (near_billboards counts only billboards that drew: an atlas that failed
+    to load draws none)."""
     return _h.far_stats()
 
 
@@ -653,6 +656,12 @@ def rockfield_drain_contacts() -> list:
     "normal", "rock_centre" (VIEW-space tuples), "rock_radius", "rel_speed",
     "pen"}, ...]."""
     return _h.rockfield_drain_contacts()
+
+
+def rockfield_catalogue_size() -> int:
+    """Rocks in the native near catalogue; 0 after a host init (its model
+    handles died with the old session)."""
+    return _h.rockfield_catalogue_size()
 
 
 def rockfield_set_shield_inflate(scale: float) -> None:

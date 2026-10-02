@@ -126,11 +126,6 @@ def test_a_player_sweeping_through_large_rocks_reports_contacts(host):
     assert c["rock_radius"] > 0.0 and c["rel_speed"] > 0.0 and c["pen"] >= 0.0
 
 
-def test_shield_inflate_accepts_a_scale(host):
-    host.rockfield_set_shield_inflate(1.5)
-    host.rockfield_set_shield_inflate(0.0)
-
-
 def _sweep_player(host, steps=31):
     from engine.rocks import catalogue
     rock = catalogue.pick("x", kind="fragment", family="silicate")
@@ -161,26 +156,108 @@ def test_small_near_rock_touches_ride_the_minor_contacts(host):
     assert large == []
 
 
-def test_a_near_rock_whose_atlas_fails_leaves_the_near_band(host):
-    """Ruling 2: a near billboard whose impostor atlas cannot load drops that
-    rock from the near catalogue, so no billboard of it is ever drawn."""
+def _catalogue_entries(atlas_ok):
     from engine import renderer
     from engine.rocks import catalogue
-    far_tier.reset()
     entries = []
     for i, rock in enumerate(catalogue.load()):
         e = far_tier._catalogue_entry(renderer, rock)
-        e["albedo"] = "/nonexistent/near_host_test/a%d.png" % i
-        e["normal"] = "/nonexistent/near_host_test/n%d.png" % i
+        if not atlas_ok:
+            e["albedo"] = "/nonexistent/near_host_test/a%d.png" % i
+            e["normal"] = "/nonexistent/near_host_test/n%d.png" % i
         entries.append(e)
-    host.far_set_catalogue(entries, [tuple(d) for d in catalogue.impostor_view_dirs()])
+    return entries, [tuple(d) for d in catalogue.impostor_view_dirs()]
+
+
+def _stream_with(host, entries, dirs):
+    host.far_clear()
+    host.far_set_catalogue(entries, dirs)
     host.far_set_dials({})
     host.far_set_sources([_sphere_source(radius=2000.0)])
     host.far_set_frame(None, (0.0, 0.0, 0.0))
     _set_camera_at_origin(host)
     host.frame()
     host.frame()
-    st = host.far_stats()
-    assert st["near_billboards"] == 0
-    assert st["near_small"] == 0 and st["near_large"] == 0   # every rock dropped
+    return host.far_stats()
+
+
+def test_a_near_rock_whose_atlas_fails_keeps_its_mesh_and_draws_no_billboard(host):
+    """Ruling 2 (revised): an atlas that cannot load never mutates the near
+    field from the draw -- the rock keeps its mesh tier and simply draws no
+    billboard; the streamed cells are exactly those of a good catalogue."""
+    far_tier.reset()
+    # The failing catalogue first: FarPass keeps an atlas it has loaded
+    # across set_atlas_paths, so a fresh session must meet the bad paths.
+    bad = _stream_with(host, *_catalogue_entries(atlas_ok=False))
+    good = _stream_with(host, *_catalogue_entries(atlas_ok=True))
+    assert good["near_billboards"] > 0
+    assert bad["near_meshes"] > 0
+    assert bad["near_billboards"] == 0
+    for k in ("near_cells", "near_small", "near_large", "near_ghosted"):
+        assert bad[k] == good[k], k
+    assert host.rockfield_drain_contacts() == []
     host.far_set_catalogue([], [])
+
+
+def test_near_cells_stream_around_the_player_not_the_camera(host):
+    """Centre = render origin + the player's render position + the far
+    anchor: with a non-zero origin and anchor, a small sphere around the
+    player's SYSTEM position streams, while the camera sits far outside it."""
+    _push_real_catalogue()
+    host.far_set_dials({})
+    anchor = (3000.0, -2000.0, 500.0)
+    # View-space sphere: system centre = anchor + centre = anchor.
+    host.far_set_sources([_sphere_source(radius=150.0)])
+    host.far_set_frame(None, anchor)
+    host.set_render_origin(1000.0, 0.0, 0.0)
+    from engine.rocks import catalogue
+    rock = catalogue.pick("x", kind="fragment", family="silicate")
+    ship = host.create_instance(
+        host.load_model(rock.lod_paths[0], [], None, decals=None, scale=1.0))
+    # VIEW translation 0 -> render (-1000, 0, 0) -> system = anchor.
+    host.set_world_transform(ship, _row_major(0.0, 0.0, 0.0, 0.05))
+    host.set_camera(eye=(5000.0, 0.0, 0.0), target=(5000.0, 0.0, -1.0),
+                    up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=0.1, far=1.0e7)
+    host.frame()
+    assert host.far_stats()["near_cells"] == 0      # no player: camera, outside
+    host.minors_set_player(ship)
+    host.frame()
+    assert host.far_stats()["near_cells"] > 0       # the player, inside
+    host.reset_render_origin()
+
+
+def _contacts_of_sweep(host, inflate):
+    host.far_clear()
+    host.minors_set_player(None)
+    host.far_set_dials({"near_large_density": 0.0005, "near_small_density": 0.0})
+    host.far_set_sources([_sphere_source(radius=2000.0)])
+    host.far_set_frame(None, (0.0, 0.0, 0.0))
+    _set_camera_at_origin(host)
+    host.rockfield_set_shield_inflate(inflate)
+    _minor, large = _sweep_player(host)
+    return large
+
+
+def test_shield_inflate_widens_the_contact_box(host):
+    """The same deterministic sweep touches more large rocks with the box
+    inflated (shields up) than with the bare hull box."""
+    _push_real_catalogue()
+    bare = _contacts_of_sweep(host, 0.0)
+    inflated = _contacts_of_sweep(host, 4.0)
+    assert len(inflated) > len(bare)
+    host.rockfield_set_shield_inflate(0.0)
+
+
+def test_host_reinit_repushes_the_near_catalogue(host):
+    """Model handles die with the session, so native empties the near
+    catalogue on init; far_tier must notice and push it again even with no
+    mission swap (its catalogue-root guard alone would skip it)."""
+    from engine import renderer
+    far_tier.reset()
+    far_tier.reconcile_with(renderer, None, {})
+    assert host.rockfield_catalogue_size() > 0
+    host.shutdown()
+    host.init(64, 64, "test_rock_near_reinit")
+    assert host.rockfield_catalogue_size() == 0
+    far_tier.reconcile_with(renderer, None, {})
+    assert host.rockfield_catalogue_size() > 0
