@@ -31,9 +31,10 @@ constexpr GLuint  kCentreAttrib = 7;   // impostor.vert a_centre_half..a_up_dith
 constexpr GLsizei kSpeckStride = static_cast<GLsizei>(sizeof(SpeckGpu));
 constexpr GLuint  kSpeckAttrib = 7;    // speck.vert a_pos_p, a_albedo_alpha = 7, 8
 constexpr int     kDilatePasses = 8;
-// The low-res haze composite's joint-bilateral depth-edge sharpness: the
-// value SystemNebulaPass uses for the same shader.
-constexpr float   kHazeUpsampleDepthSharpness = 64.0f;
+// The low-res haze composite's joint-bilateral depth-edge sharpness, on
+// RELATIVE linear depth (u_linear_depth = 1): a tap 10% deeper or nearer
+// than the pixel weighs exp(-1.6) ~ 0.2, another surface ~0.
+constexpr float   kHazeUpsampleDepthSharpness = 16.0f;
 
 // Atlas conventions. The bake (native/src/rockgen/src/impostor.cc) writes each
 // 128-px cell with screen y growing DOWN, and assets::upload_image does not
@@ -374,10 +375,13 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
     glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_a);
     glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dst_a);
     if (low_res) {
+        GLfloat prev_clear[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // put back as found
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, prev_clear);
         glBindFramebuffer(GL_FRAMEBUFFER, haze_fbo_);
         glViewport(0, 0, march_w, march_h);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
     }
     // Premultiplied OVER: the sources compose in the march target exactly as
     // they did straight into the HDR target.
@@ -458,7 +462,12 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
                                               1.0f / static_cast<float>(march_h)));
         up.set_vec2("u_full_texel", glm::vec2(1.0f / static_cast<float>(full_w),
                                               1.0f / static_cast<float>(full_h)));
+        // Relative linear depth (see nebula_upsample.frag): a tap on another
+        // surface differs by O(1), a same-surface neighbour by ~0.
         up.set_float("u_depth_sharpness", kHazeUpsampleDepthSharpness);
+        up.set_int("u_linear_depth", 1);
+        up.set_float("u_near", cam.near);
+        up.set_float("u_far", cam.far);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, haze_tex_);
         up.set_int("u_cloud", 0);
@@ -466,6 +475,8 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         glBindTexture(GL_TEXTURE_2D, depth_texture);
         up.set_int("u_depth", 1);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        // Per-program state shared with the system nebula: never leave it on.
+        up.set_int("u_linear_depth", 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);
     }

@@ -1016,12 +1016,47 @@ TEST_F(FarPassGLTest, StartRampHazeShaderMatchesTheCpuReference) {
     EXPECT_LT(ramped[1], ramped[0] - 0.02f) << "the occluder stops the march";
 }
 
+// Fix round 1: the shader clips the march to begin at the start, as
+// haze_column does. Sensitive setup: 4 steps, the production tile noise and a
+// hard step mid-chord (2,500 GU), where an unclipped march would spend half
+// its steps before the start and sample different noise.
+TEST_F(FarPassGLTest, StartClipHazeShaderMatchesTheCpuReference) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s;
+    s.id = 3; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
+    s.centre = origin_sys + glm::dvec3(0.0, 2500.0, 0.0);
+    s.sphere_radius_gu = 1000.0f; s.sphere_edge_frac = 0.2f;
+    s.gain_scale = 14140.0f / 270.0f;
+    s.brightness = 9.1f;
+    s.seed = 0xdeadbeefu;
+    s.noise_scale_gu = 250.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
+    s.steps = 4;
+    far::Population minors;
+    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.density_at_1 = 405.0f / (4.0f / 3.0f * 3.14159265f * 1.0e9f);
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
+    s.pops = {minors};
+    far::FarDials d = exact_haze_dials();
+    d.haze_start_gu = 2500.0f;
+    d.haze_start_ramp_gu = 0.0f;
+    HazePixels pix;
+    for (int y = 20; y <= 44; y += 4)
+        for (int x = 20; x <= 44; x += 4) pix.push_back({x, y});
+    float centre_alpha[2] = {0.0f, 0.0f};
+    haze_matches_cpu(*pipeline, s, origin_sys, 3000.0f, centre_alpha, pix, d);
+    EXPECT_GT(centre_alpha[0], 0.02f) << "the far half of the field hazes";
+}
+
 namespace {
 // Renders `src` at (w, h) with `dials` into a cleared target over a far
 // (depth-free) scene, using `pass`; returns the RGBA floats.
+// `occluder_gu` > 0: the left `split_x` columns of the scene depth are a
+// plane that far ahead (a near occluder), the rest open space.
 std::vector<float> render_haze_image(renderer::Pipeline& pipeline, renderer::FarPass& pass,
                                      const far::DiscSource& src, const glm::dvec3& origin_sys,
-                                     int w, int h, const far::FarDials& dials) {
+                                     int w, int h, const far::FarDials& dials,
+                                     float occluder_gu = 0.0f, int split_x = 0) {
     renderer::HdrTarget scene, out;   // HdrTarget::resize binds on the ACTIVE unit
     scene.resize(w, h);
     out.resize(w, h);
@@ -1040,6 +1075,15 @@ std::vector<float> render_haze_image(renderer::Pipeline& pipeline, renderer::Far
     glDepthMask(GL_TRUE);
     glClearDepth(1.0);
     glClear(GL_DEPTH_BUFFER_BIT);
+    if (occluder_gu > 0.0f) {
+        const glm::vec4 clip = cam.proj_matrix() * glm::vec4(0.0f, 0.0f, -occluder_gu, 1.0f);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, 0, split_x, h);
+        glClearDepth(static_cast<double>(clip.z / clip.w * 0.5f + 0.5f));
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glClearDepth(1.0);
+        glDisable(GL_SCISSOR_TEST);
+    }
     out.bind();
     glViewport(0, 0, w, h);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1112,6 +1156,61 @@ TEST_F(FarPassGLTest, HazeMarchesAtTheTargetSizeOverTheDivisor) {
     EXPECT_EQ(pass.last_haze_march_size(), glm::ivec2(1, 1));
 }
 
+// Fix round 1: depth edges. A near occluder (3,000 GU, before the default
+// 6,000 GU haze start, so it carries NO haze at full resolution) covers the
+// left half; open space with haze behind it on the right. At quarter
+// resolution the depth-aware upsample must not bleed haze onto the occluder:
+// occluder pixels >= 3 px from the edge get < 2/255 in every channel. And
+// next to the edge (8 px either side) full vs quarter stays bounded.
+TEST_F(FarPassGLTest, QuarterResHazeDoesNotBleedOntoANearOccluder) {
+    constexpr int W = 128, H = 64;
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s = haze_source(origin_sys);
+    s.table = {{0.0f, 1.0f}, {20000.0f, 1.0f}};
+    s.gain_scale = 8.0f;
+    s.brightness = 8.0f;
+    s.seed = 0xdeadbeefu;
+    s.noise_scale_gu = 4000.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
+    far::FarDials full;   // default start 6,000 / ramp 2,000
+    full.haze_res_divisor = 1;
+    far::FarDials quarter = full;
+    quarter.haze_res_divisor = 4;
+    renderer::FarPass pass;
+    // Every edge phase against the 4 px low-res grid: 64 is aligned; 66 (and
+    // 62) put a low-res texel's centre on the open side of an occluder pixel,
+    // which leaked 7.5/255 with the non-linear depth weight.
+    for (const int kSplit : {64, 65, 66, 67, 62}) {
+    const auto a = render_haze_image(*pipeline, pass, s, origin_sys, W, H, full, 3000.0f, kSplit);
+    const auto b = render_haze_image(*pipeline, pass, s, origin_sys, W, H, quarter, 3000.0f, kSplit);
+    float occ_full = 0.0f, occ_quarter = 0.0f, open_alpha = 0.0f;
+    double edge_sum = 0.0, edge_max = 0.0;
+    int edge_n = 0;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+            for (int c = 0; c < 4; ++c) {
+                const std::size_t i = (static_cast<std::size_t>(y) * W + x) * 4 + c;
+                if (x <= kSplit - 4) {   // >= 3 px from the edge (edge between 63 and 64)
+                    occ_full = std::max(occ_full, a[i]);
+                    occ_quarter = std::max(occ_quarter, b[i]);
+                }
+                if (x >= kSplit + 3 && c == 3) open_alpha = std::max(open_alpha, a[i]);
+                if (x >= kSplit - 8 && x < kSplit + 8) {
+                    const double d = std::fabs(a[i] - b[i]);
+                    edge_sum += d; edge_max = std::max(edge_max, d); ++edge_n;
+                }
+            }
+    const double edge_mean = edge_sum / edge_n;
+    std::printf("[far_pass_test] depth edge at %d: occluder max full %.5f quarter %.5f "
+                "(%.2f/255); open max alpha %.4f; edge band |full - quarter| mean %.5f "
+                "(%.2f/255) max %.5f\n", kSplit, occ_full, occ_quarter, occ_quarter * 255.0f,
+                open_alpha, edge_mean, edge_mean * 255.0, edge_max);
+    EXPECT_EQ(occ_full, 0.0f) << "the occluder sits before the haze start";
+    EXPECT_GT(open_alpha, 0.05f) << "real haze behind the edge";
+    EXPECT_LT(occ_quarter, 2.0f / 255.0f) << "haze bleeds onto the occluder, edge " << kSplit;
+    EXPECT_LT(edge_mean, 2.0 / 255.0) << "edge " << kSplit;
+    }
+}
+
 // The low-res path puts back what it changes: the caller's framebuffer,
 // viewport and blend function, active texture unit 0 -- and the documented
 // frame defaults (blend off, depth test and writes on).
@@ -1129,6 +1228,7 @@ TEST_F(FarPassGLTest, QuarterResHazeRestoresTheCallersState) {
     out.bind();
     glViewport(3, 5, kHazeSize - 7, kHazeSize - 9);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glClearColor(0.25f, 0.5f, 0.75f, 1.0f);   // the caller's clear colour, to be kept
     renderer::FarPass pass;
     pass.render_haze({haze_source()}, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l, 1.0f,
                      scene.depth_texture(), inv_vp, dials);
@@ -1150,6 +1250,11 @@ TEST_F(FarPassGLTest, QuarterResHazeRestoresTheCallersState) {
     GLboolean depth_write = GL_FALSE;
     glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
     EXPECT_TRUE(depth_write);
+    GLfloat clear[4] = {0, 0, 0, 0};
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, clear);
+    EXPECT_EQ(glm::vec4(clear[0], clear[1], clear[2], clear[3]),
+              glm::vec4(0.25f, 0.5f, 0.75f, 1.0f));
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glBlendFunc(GL_ONE, GL_ZERO);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

@@ -149,6 +149,12 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
     double t0 = 0.0, t1 = 0.0;
     steps = haze_steps_for(s, steps);
     if (steps < 1 || !haze_interval(s, origin, dir, t_max, slab_sigmas, t0, t1)) return out;
+    // The start clip (rock-fields Task 12 fix round 1): nothing before the
+    // start counts, so an interval ending there is empty and the march begins
+    // at it -- the whole step budget lands inside the haze. far_haze.frag's
+    // twin. start 0 is a no-op (t0 >= 0), keeping the unramped column exact.
+    if (ramp_gu > 0.0f ? t1 <= start_gu : t1 < start_gu) return out;
+    t0 = std::max(t0, static_cast<double>(start_gu));
     const double dt = (t1 - t0) / steps;
     float T = 1.0f;
     for (int i = 0; i < steps; ++i) {

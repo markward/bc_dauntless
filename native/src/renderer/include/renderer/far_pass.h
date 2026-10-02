@@ -73,7 +73,9 @@ public:
     // the caller's target through Pipeline::nebula_upsample_shader() (the
     // system nebula's depth-aware upsample); d == 1 marches straight into
     // the caller's target. Premultiplied blend, depth test and depth writes
-    // off; afterwards the framebuffer and viewport are as found, the active
+    // off; afterwards the framebuffer, viewport and clear colour are as found
+    // (the low-res target is cleared to 0 and the caller's clear colour put
+    // back), the active
     // texture unit is 0 (units 0 and 1 unbound), depth test and writes are
     // on, cull on, blending off, and the blend function is as found.
     void render_haze(const std::vector<far::DiscSource>& active, const glm::dvec3& origin_sys,

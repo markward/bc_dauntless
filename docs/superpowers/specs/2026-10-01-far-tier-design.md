@@ -494,7 +494,8 @@ as minors are. The cell cache is shared.
 and the cell cache. The atlases and catalogue table stay.
 
 **Profiling.** `DAUNTLESS_FRAME_SCOPE` scopes `space.far.build`,
-`space.far.impostors`, `space.far.specks` and `space.far.haze`.
+`space.far.impostors`, `space.far.specks` and `rock.haze` (renamed from
+`space.far.haze` by rock-fields Task 12).
 
 ### 4. Python integration
 

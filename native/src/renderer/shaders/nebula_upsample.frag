@@ -21,6 +21,26 @@ uniform sampler2D u_depth;        // full-res HDR depth
 uniform vec2 u_half_texel;        // 1 / half_res
 uniform vec2 u_full_texel;        // 1 / full_res
 uniform float u_depth_sharpness;  // higher = harder depth-edge snapping
+// 1: compare RELATIVE linear eye depth, |z_tap - z_full| / min(z_tap, z_full),
+// instead of the raw depth buffer value. With a far plane far beyond the near
+// one, raw depth crowds toward 1 at distance (an occluder 3,000 GU ahead and
+// open space differ by ~0.003), so the raw weight barely rejects a wrong-
+// surface tap. The far haze sets it (rock-fields Task 12 fix round 1) and
+// puts it back to 0; at 0 (the default) this shader is unchanged.
+uniform int   u_linear_depth;
+uniform float u_near;
+uniform float u_far;
+
+float linear_z(float d) {
+    float ndc = d * 2.0 - 1.0;
+    return 2.0 * u_near * u_far / (u_far + u_near - ndc * (u_far - u_near));
+}
+
+float depth_delta(float a, float b) {
+    if (u_linear_depth == 0) return abs(a - b);
+    float za = linear_z(a), zb = linear_z(b);
+    return abs(za - zb) / max(min(za, zb), 1e-6);
+}
 
 void main(){
     float d_full = texture(u_depth, v_uv).r;
@@ -50,7 +70,7 @@ void main(){
         // Depth weight: 1 when the tap is on the same surface, → 0 as depths
         // diverge (a hull edge). exp() keeps it smooth; the +1e-5 floor means
         // if all four are rejected (thin feature) it degrades to a plain blend.
-        float dw = exp(-abs(d_tap - d_full) * u_depth_sharpness);
+        float dw = exp(-depth_delta(d_tap, d_full) * u_depth_sharpness);
         float w  = bw[i] * dw + 1e-5;
         sum  += texture(u_cloud, uv) * w;
         wsum += w;

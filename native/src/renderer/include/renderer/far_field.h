@@ -100,8 +100,10 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin_sys, const glm:
 // negligible double count accepted for resolution independence.
 // Start ramp (rock-fields Task 12): each sample's dtau is multiplied by
 // haze_start_weight(t, start_gu, ramp_gu) -- the haze ramps in over the mid
-// band's L2 fade-out. start 0, ramp 0 (the defaults) is the unramped column,
-// bit for bit.
+// band's L2 fade-out. The interval is clipped to begin at start_gu (empty
+// when it ends before the start: t1 <= start, or t1 < start for ramp 0), so
+// all `steps` samples land inside the haze. start 0, ramp 0 (the defaults) is
+// the unramped column, bit for bit.
 HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
                        const glm::vec3& dir, float t_max, float slab_sigmas, int steps,
                        float gain, const glm::vec3& light, float start_gu = 0.0f,

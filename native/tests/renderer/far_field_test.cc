@@ -894,16 +894,21 @@ TEST(FarHazeStart, NothingBeforeTheStart) {
     EXPECT_LT(far_.alpha, whole.alpha);
 }
 
-// ramp == 0 is a hard step at start: a column ending just short of the start
-// is empty, while the sample just past it counts in full.
+// ramp == 0 is a hard step at start: the weight is 0 below it and 1 from
+// it on, and a column ending short of the start is empty while one reaching
+// just past it is not.
 TEST(FarHazeStart, ZeroRampIsAHardStep) {
+    EXPECT_EQ(far::haze_start_weight(4759.9f, 4760.0f, 0.0f), 0.0f);
+    EXPECT_EQ(far::haze_start_weight(4760.0f, 4760.0f, 0.0f), 1.0f);
+    EXPECT_EQ(far::haze_start_weight(4000.0f, 4000.0f, 1000.0f), 0.0f);
+    EXPECT_EQ(far::haze_start_weight(4500.0f, 4000.0f, 1000.0f), 0.5f);
+    EXPECT_EQ(far::haze_start_weight(5000.0f, 4000.0f, 1000.0f), 1.0f);
     const far::DiscSource s = full_sphere_20k();
-    // 48 midpoint samples over [0, 4800]: the last sample is at 4750.
     const auto before = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 4800.0f, 4.0f, 48,
-                                         1000.0f, glm::vec3(1), 4760.0f, 0.0f);
+                                         1000.0f, glm::vec3(1), 4801.0f, 0.0f);
     EXPECT_EQ(before.alpha, 0.0f);
     const auto after = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 4800.0f, 4.0f, 48,
-                                        1000.0f, glm::vec3(1), 4740.0f, 0.0f);
+                                        1000.0f, glm::vec3(1), 4799.0f, 0.0f);
     EXPECT_GT(after.alpha, 0.0f);
 }
 
@@ -929,4 +934,33 @@ TEST(FarHazeStart, DialDefaults) {
     EXPECT_EQ(d.haze_start_gu, 6000.0f);
     EXPECT_EQ(d.haze_start_ramp_gu, 2000.0f);
     EXPECT_EQ(d.haze_res_divisor, 4);
+}
+
+// Fix round 1 (controller ruling): the march interval is clipped to start at
+// the haze start, so the whole step budget lands inside the haze. With a hard
+// step, a noisy column from the eye equals the column marched from the start
+// point itself (same points, same steps) -- the noise is fixed to the field,
+// so an unclipped march (a third of its steps wasted before the start)
+// samples different points and differs.
+TEST(FarHazeStart, TheStepBudgetLandsInsideTheHaze) {
+    far::DiscSource s = full_sphere_20k();
+    s.seed = 77; s.noise_scale_gu = 800.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
+    const glm::vec3 dir(0, 1, 0);
+    const auto clipped = far::haze_column(s, glm::dvec3(0), dir, 19000.0f, 4.0f, 48,
+                                          1000.0f, glm::vec3(1), 6000.0f, 0.0f);
+    const auto from_start = far::haze_column(s, glm::dvec3(0.0, 6000.0, 0.0), dir, 13000.0f,
+                                             4.0f, 48, 1000.0f, glm::vec3(1));
+    std::printf("[FarHazeStart] clipped %.6f from-start %.6f\n", clipped.alpha, from_start.alpha);
+    EXPECT_GT(clipped.alpha, 0.0f);
+    EXPECT_NEAR(clipped.alpha, from_start.alpha, 1e-5f);
+    for (int c = 0; c < 3; ++c) EXPECT_NEAR(clipped.rgb[c], from_start.rgb[c], 1e-5f);
+}
+
+// An interval that ends at the start (ramp > 0) holds no haze: empty sample.
+TEST(FarHazeStart, AnIntervalEndingAtTheStartIsEmpty) {
+    const far::DiscSource s = full_sphere_20k();
+    const auto h = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 6000.0f, 4.0f, 48,
+                                    1000.0f, glm::vec3(1), 6000.0f, 2000.0f);
+    EXPECT_EQ(h.alpha, 0.0f);
+    EXPECT_EQ(h.rgb, glm::vec3(0.0f));
 }

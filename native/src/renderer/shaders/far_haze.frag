@@ -32,7 +32,10 @@
 // start_weight(t) = smoothstep(u_start_gu, u_start_gu + u_start_ramp_gu, t), a
 // hard step at u_start_gu when the ramp is 0 -- far_field.cc's
 // haze_start_weight, written out rather than GLSL smoothstep (undefined for
-// edge0 >= edge1). FarPassGLTest.StartRampHazeShaderMatchesTheCpuReference.
+// edge0 >= edge1). The interval is clipped to begin at u_start_gu (empty when
+// it ends before it), so every step lands inside the haze.
+// FarPassGLTest.StartRampHazeShaderMatchesTheCpuReference and
+// StartClipHazeShaderMatchesTheCpuReference pin both.
 // Output is PREMULTIPLIED (rgb, alpha = 1 - T); blend GL_ONE,
 // GL_ONE_MINUS_SRC_ALPHA.
 in vec2 v_uv;
@@ -268,6 +271,13 @@ void main() {
 
     float t0, t1;
     if (!haze_interval(dir, t_max, t0, t1)) { frag_color = vec4(0.0); return; }
+    // The start clip: haze_column's twin. Empty when the interval ends before
+    // the start; otherwise the march begins at it.
+    if (u_start_ramp_gu > 0.0 ? t1 <= u_start_gu : t1 < u_start_gu) {
+        frag_color = vec4(0.0);
+        return;
+    }
+    t0 = max(t0, u_start_gu);
 
     vec3 light = u_ambient_light;
     for (int i = 0; i < u_dir_light_count; ++i)
