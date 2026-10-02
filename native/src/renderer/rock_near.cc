@@ -100,6 +100,18 @@ bool reaches(const far::DiscSource& s, const glm::dvec3& c, double range) {
 
 constexpr NearClass kClasses[] = {NearClass::Small, NearClass::Large};
 
+// The streamed ranges of one class. A class never spans more than
+// kMaxCellsPerAxis cells per axis (Task 4 review): (billboard + margin) is
+// shrunk to 16 cells, never the cells widened -- a huge billboard_gu over a
+// tiny cell_gu would otherwise enumerate (2R/L)^3 cells in one stream().
+constexpr int kMaxCellsPerAxis = 33;
+struct StreamRanges { double gen, keep; };
+StreamRanges stream_ranges(const NearClassDials& cd, double margin) {
+    const double cap = 0.5 * (kMaxCellsPerAxis - 1) * static_cast<double>(cd.cell_gu);
+    const double keep = std::min(static_cast<double>(cd.billboard_gu) + std::max(margin, 0.0), cap);
+    return {std::min(static_cast<double>(cd.billboard_gu), keep), keep};
+}
+
 // Frustum planes (Gribb-Hartmann), normalised: copied from far_field.cc.
 struct Frustum {
     glm::vec4 planes[6];
@@ -196,7 +208,8 @@ void NearField::set_sources(const std::vector<far::DiscSource>& active) {
 void NearField::stream(const glm::dvec3& c) {
     // Drop cells past range + margin (hysteresis: a cell re-enters at range).
     for (auto it = cells_.begin(); it != cells_.end();) {
-        const double keep = class_dials(dials_, it->second.cls).billboard_gu + dials_.stream_margin_gu;
+        const double keep = stream_ranges(class_dials(dials_, it->second.cls),
+                                          dials_.stream_margin_gu).keep;
         if (!it->second.pinned && aabb_distance(c, it->second.lo, it->second.size) > keep)
             it = cells_.erase(it);
         else ++it;
@@ -205,7 +218,7 @@ void NearField::stream(const glm::dvec3& c) {
     for (const auto& s : sources_)
         for (NearClass cls : kClasses) {
             const NearClassDials& cd = class_dials(dials_, cls);
-            const double L = cd.cell_gu, R = cd.billboard_gu;
+            const double L = cd.cell_gu, R = stream_ranges(cd, dials_.stream_margin_gu).gen;
             if (!(L > 0.0) || !(R > 0.0) || !reaches(s, c, R)) continue;
             const glm::i64vec3 a(glm::floor((c - R) / L)), b(glm::floor((c + R) / L));
             for (auto i = a.x; i <= b.x; ++i)

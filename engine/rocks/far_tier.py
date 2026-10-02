@@ -3,7 +3,9 @@
 Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
 `reconcile_with` pushes, each only when it changed:
 
-  far_set_catalogue   once per catalogue root (impostor atlases + view dirs)
+  far_set_catalogue   once per catalogue root (impostor atlases + view dirs;
+                      kind/family/bound and, for the near band's silicate
+                      fragments and majors, lod0/lod1 model handles)
   far_set_dials       once, and again on a far_dials NATIVE-key change
   far_set_frame       EVERY frame -- the anchor moves on a region hand-off
   far_set_sources     on a system change, a change in the viewed set's tile
@@ -129,6 +131,33 @@ def reset(r=None) -> None:
             _swallow("clear", e)
 
 
+# The near band (rock fields) streams these: silicate fragments (small) and
+# majors (large). Only they get mesh handles.
+_NEAR_FAMILY = "silicate"
+_NEAR_KINDS = ("fragment", "major")
+
+
+def _catalogue_entry(r, rock) -> dict:
+    """One far_set_catalogue entry. A near-band rock (silicate fragment or
+    major with two LODs) also carries lod0/lod1 model handles, loaded exactly
+    as minors._ensure_fragments loads fragments; a failed load omits them
+    (the host then leaves that rock out of the near band)."""
+    from engine.rocks import catalogue
+    e = {"albedo": rock.impostor_albedo, "normal": rock.impostor_normal,
+         "avg_albedo": tuple(rock.avg_albedo), "kind": rock.kind,
+         "family": rock.family,
+         "bound_radius_mu": rock.bound_radius_m * catalogue.MODEL_UNITS_PER_METRE}
+    if (rock.family == _NEAR_FAMILY and rock.kind in _NEAR_KINDS
+            and len(rock.lod_paths) >= 2):
+        try:
+            e["lod0"] = r.load_model(rock.lod_paths[0], [], None, decals=None, scale=1.0)
+            e["lod1"] = r.load_model(rock.lod_paths[1], [], None, decals=None, scale=1.0)
+        except Exception as ex:
+            _swallow("load near rock", ex)
+            e.pop("lod0", None)
+    return e
+
+
 def _push_catalogue(r) -> None:
     global _catalogue_root
     from engine.rocks import catalogue
@@ -136,9 +165,7 @@ def _push_catalogue(r) -> None:
     if root == _catalogue_root:
         return
     try:
-        entries = [{"albedo": rock.impostor_albedo, "normal": rock.impostor_normal,
-                    "avg_albedo": tuple(rock.avg_albedo)}
-                   for rock in catalogue.load()]
+        entries = [_catalogue_entry(r, rock) for rock in catalogue.load()]
         r.far_set_catalogue(entries, [tuple(d) for d in catalogue.impostor_view_dirs()])
     except Exception as e:
         _swallow("set_catalogue", e)

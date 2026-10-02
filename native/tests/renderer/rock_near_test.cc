@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <renderer/rock_near.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <set>
 #include <glm/gtc/matrix_transform.hpp>
@@ -169,6 +170,41 @@ TEST(NearStream, StatsCountRocksPerClass) {
     EXPECT_EQ(f.stats().small, s);
     EXPECT_EQ(f.stats().large, l);
     EXPECT_GT(s, 0); EXPECT_GT(l, 0);
+}
+
+namespace {
+// A dial set whose span (billboard + margin) far exceeds 16 cells, per class.
+rockfield::NearDials wide_dials(float billboard_gu, float cell_gu) {
+    rockfield::NearDials d;
+    for (auto* c : {&d.small, &d.large}) {
+        c->cell_gu = cell_gu;
+        c->billboard_gu = billboard_gu;
+        c->mesh_gu = billboard_gu;
+        c->density = 1.0e-9f;   // generation cost is not what is measured
+    }
+    return d;
+}
+}
+
+TEST(NearStream, CellSpanIsCappedAt33PerAxis) {   // Task 4 review: cell-count cap
+    rockfield::NearField f;
+    f.set_dials(wide_dials(40.0f, 1.0f));   // uncapped: ~270k cells per class
+    f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    EXPECT_GT(f.stats().cells, 0);
+    EXPECT_LE(f.stats().cells, 2 * 33 * 33 * 33);
+}
+
+TEST(NearStream, HugeRangeTinyCellsStreamsPromptly) {
+    rockfield::NearField f;
+    f.set_dials(wide_dials(1.0e6f, 1.0f));
+    f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    const auto t0 = std::chrono::steady_clock::now();
+    f.stream(glm::dvec3(0.0));
+    f.stream(glm::dvec3(3.0, 0.0, 0.0));
+    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    EXPECT_LE(f.stats().cells, 2 * 33 * 33 * 33 + 2 * 3 * 34 * 34);   // + the kept margin slabs
+    EXPECT_LT(s, 2.0);
 }
 
 TEST(FarABound, SphereIsOneWhenTheCellReachesInsideElseZero) {

@@ -6,6 +6,14 @@ from engine.rocks import far_tier
 class _R:
     def __init__(self):
         self.calls = []
+        self._next_handle = 0
+    def load_model(self, nif_path, texture_search_path, texture_replacements=None,
+                   decals=None, scale=1.0):
+        """Mirrors engine.renderer.load_model: a fresh handle per load."""
+        self.calls.append(("load_model", (nif_path, texture_search_path,
+                                          texture_replacements, decals, scale)))
+        self._next_handle += 1
+        return self._next_handle
     def __getattr__(self, name):
         def rec(*a, **k):
             self.calls.append((name, a))
@@ -84,7 +92,8 @@ def test_catalogue_and_dials_pushed_once():
     (entries, dirs) = next(a for n, a in r.calls if n == "far_set_catalogue")
     from engine.rocks import catalogue
     assert len(entries) == len(catalogue.load())
-    assert set(entries[0]) == {"albedo", "normal", "avg_albedo"}
+    assert {"albedo", "normal", "avg_albedo", "kind", "family",
+            "bound_radius_mu"} <= set(entries[0])
     assert len(dirs) == len(catalogue.impostor_view_dirs())
 
 
@@ -335,3 +344,29 @@ def test_a_failing_field_gather_still_pushes_the_frame_and_rocks(monkeypatch):
     assert "far_set_frame" in _names(r)
     assert "far_set_rocks" in _names(r)
     assert _source_pushes(r) == [[]]
+
+
+def test_catalogue_entries_carry_near_band_kind_family_and_lod_handles():
+    """Rock fields Task 7: silicate fragments and majors carry lod0/lod1
+    handles loaded as minors loads fragments; other families none."""
+    from engine.rocks import catalogue
+    r = _R()
+    far_tier.reconcile_with(r, None, {})
+    (entries, _dirs) = next(a for n, a in r.calls if n == "far_set_catalogue")
+    rocks = catalogue.load()
+    handles = set()
+    for rock, e in zip(rocks, entries):
+        assert e["kind"] == rock.kind and e["family"] == rock.family
+        assert abs(e["bound_radius_mu"] - rock.bound_radius_m
+                   * catalogue.MODEL_UNITS_PER_METRE) < 1e-9
+        if rock.family == "silicate" and rock.kind in ("fragment", "major"):
+            assert isinstance(e["lod0"], int) and isinstance(e["lod1"], int)
+            assert e["lod0"] != e["lod1"]
+            handles.update((e["lod0"], e["lod1"]))
+        else:
+            assert "lod0" not in e and "lod1" not in e
+    assert any(e["kind"] == "fragment" and "lod0" in e for e in entries)
+    assert any(e["kind"] == "major" and "lod0" in e for e in entries)
+    loads = [a for n, a in r.calls if n == "load_model"]
+    assert len(loads) == len(handles)
+    assert all(a[1:] == ([], None, None, 1.0) for a in loads)

@@ -87,6 +87,7 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_catalogue", "far_set_rocks", "far_set_sources",
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
+    "rockfield_drain_contacts", "rockfield_set_shield_inflate",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -596,7 +597,10 @@ def minors_clear() -> None:
 
 def far_set_catalogue(entries: list, view_dirs: list) -> None:
     """Catalogue by index: [{"albedo", "normal", "avg_albedo"}, ...] plus the
-    impostor bake's view directions; empty atlas paths mean no impostor."""
+    impostor bake's view directions; empty atlas paths mean no impostor.
+    Optional per entry: "kind", "family", "lod0"/"lod1" model handles and
+    "bound_radius_mu" -- a silicate fragment / major with both handles
+    streams in the rock-fields near band."""
     _h.far_set_catalogue(entries, view_dirs)
 
 
@@ -631,14 +635,30 @@ def far_enabled() -> bool:
 
 
 def far_stats() -> dict:
-    """{"sources", "rocks", "impostors", "specks", "draw_calls"}; the last
-    three summed over the last frame's cameras."""
+    """{"sources", "rocks", "impostors", "specks", "draw_calls"}, plus the
+    near band's {"near_cells", "near_small", "near_large", "near_ghosted",
+    "near_meshes", "near_billboards"}; impostors, specks, draw_calls and
+    near_meshes / near_billboards summed over the last frame's cameras."""
     return _h.far_stats()
 
 
 def far_clear() -> None:
-    """Drop sources, flagged rocks and frame (keeps the catalogue)."""
+    """Drop sources, flagged rocks, frame and the near band's cells and
+    contacts (keeps the catalogue)."""
     _h.far_clear()
+
+
+def rockfield_drain_contacts() -> list:
+    """Player/large near-rock touches since the last drain: [{"point",
+    "normal", "rock_centre" (VIEW-space tuples), "rock_radius", "rel_speed",
+    "pen"}, ...]."""
+    return _h.rockfield_drain_contacts()
+
+
+def rockfield_set_shield_inflate(scale: float) -> None:
+    """> 0: the player's near-band contact box half extents x this (shields
+    up); <= 0: the bare hull box."""
+    _h.rockfield_set_shield_inflate(float(scale))
 
 
 def set_nebula_wake(points: list) -> None:

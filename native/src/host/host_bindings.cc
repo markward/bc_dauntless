@@ -37,6 +37,7 @@
 #include <renderer/minor_pass.h>
 #include <renderer/far_field.h>
 #include <renderer/far_pass.h>
+#include <renderer/rock_near.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_atmosphere.h>
@@ -301,6 +302,26 @@ std::vector<std::uint64_t> g_far_flagged_keys;
 int g_far_impostors = 0;
 int g_far_specks = 0;
 int g_far_draw_calls = 0;
+// Rock fields near band (docs/superpowers/specs/2026-10-02-rock-fields-design.md).
+// Pure CPU state streamed + stepped in frame()'s xform_sync block around the
+// player (or the main camera), built per DRAWN camera in render_space_geometry
+// and drawn through g_minor_pass (meshes) and g_far_pass (billboards). Gated
+// on g_far_enabled with the rest of the far tier.
+renderer::rockfield::NearField g_near_field;
+renderer::rockfield::NearOutput g_near_out;
+// What NearField was last handed (far_set_catalogue), and each list slot's
+// fragment (lod0/lod1 handles + bound) for the near FragmentLookup. Model
+// handles die with the session, so reset_frame_state empties all three.
+renderer::rockfield::NearCatalogue g_near_catalogue;
+std::vector<renderer::minors::Fragment> g_near_small_frags;
+std::vector<renderer::minors::Fragment> g_near_large_frags;
+// > 0: the player's contact box half extents x this (shields up).
+float g_near_shield_inflate = 0.0f;
+// The last stream centre (system), so a catalogue rebuilt mid-draw re-streams.
+glm::dvec3 g_near_centre_sys{0.0};
+// What the last frame built, summed over its drawn cameras.
+int g_near_meshes = 0;
+int g_near_billboards = 0;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
@@ -854,6 +875,21 @@ void reset_frame_state() {
     g_far_impostors = 0;
     g_far_specks = 0;
     g_far_draw_calls = 0;
+    // Near band: cells, contacts and sweep state belong to the old session,
+    // and the catalogue's model handles are reissued by the new one.
+    g_near_catalogue = {};
+    g_near_small_frags.clear();
+    g_near_large_frags.clear();
+    g_near_field.set_catalogue({});
+    g_near_field.set_sources({});
+    g_near_field.set_dials({});
+    g_near_field.clear();
+    g_near_field.reset_player();
+    g_near_out = {};
+    g_near_shield_inflate = 0.0f;
+    g_near_centre_sys = glm::dvec3(0.0);
+    g_near_meshes = 0;
+    g_near_billboards = 0;
 }
 
 void init(int width, int height, const std::string& title) {
@@ -1104,6 +1140,54 @@ void step_minor_field(float viewport_h) {
     g_minor_field.step(in);
 }
 
+// Near band: stream around the player's contact box (else the main camera
+// eye), then step its contacts against that box. System = render origin +
+// render position + the far frame's anchor, as the far haze computes it.
+void step_near_field() {
+    const auto player = minor_player_box();
+    const glm::dvec3 to_sys = g_world.render_origin() + g_far_field.anchor();
+    const glm::dvec3 centre_render = player
+        ? glm::dvec3(player->world * glm::vec4(player->center_mu, 1.0f))
+        : glm::dvec3(g_camera.eye);
+    g_near_centre_sys = centre_render + to_sys;
+    g_near_field.stream(g_near_centre_sys);
+    renderer::rockfield::NearStepInput in;
+    in.game_time = g_decal_game_time;
+    in.render_origin = g_world.render_origin();
+    in.anchor_sys = g_far_field.anchor();
+    in.player = player;
+    in.shield_inflate = g_near_shield_inflate;
+    in.minor_dials = g_minor_field.dials();
+    g_near_field.step(in);
+}
+
+// Hand NearField the catalogue lists minus `drop` (a catalogue index whose
+// impostor atlas failed to load): it keeps no near presence, as the far
+// build's drop_impostor leaves a flagged rock its mesh only.
+void near_drop_rock(int drop) {
+    auto prune = [drop](std::vector<int>& idx, std::vector<float>& bound,
+                        std::vector<renderer::minors::Fragment>& frags) {
+        for (std::size_t i = idx.size(); i-- > 0;)
+            if (idx[i] == drop) {
+                idx.erase(idx.begin() + static_cast<std::ptrdiff_t>(i));
+                bound.erase(bound.begin() + static_cast<std::ptrdiff_t>(i));
+                frags.erase(frags.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+    };
+    prune(g_near_catalogue.small_rocks, g_near_catalogue.small_bound_mu, g_near_small_frags);
+    prune(g_near_catalogue.large_rocks, g_near_catalogue.large_bound_mu, g_near_large_frags);
+    g_near_field.set_catalogue(g_near_catalogue);
+}
+
+// The near band's bins: slot = index into the catalogue's class list.
+const renderer::minors::Fragment* near_fragment(int family, int slot) {
+    const auto* frags = family == renderer::rockfield::kNearSmallFamily ? &g_near_small_frags
+                      : family == renderer::rockfield::kNearLargeFamily ? &g_near_large_frags
+                      : nullptr;
+    if (frags == nullptr || slot < 0 || slot >= static_cast<int>(frags->size())) return nullptr;
+    return &(*frags)[static_cast<std::size_t>(slot)];
+}
+
 void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
@@ -1154,9 +1238,15 @@ void frame() {
         g_far_impostors = 0;      // likewise the far tier's per-camera builds
         g_far_specks = 0;
         g_far_draw_calls = 0;
+        g_near_meshes = 0;
+        g_near_billboards = 0;
         if (g_minors_enabled) {
             DAUNTLESS_FRAME_SCOPE("space.minors.step");
             step_minor_field(static_cast<float>(fh));
+        }
+        if (g_far_enabled) {
+            DAUNTLESS_FRAME_SCOPE("rock.near.stream");
+            step_near_field();
         }
     }
 
@@ -1311,6 +1401,41 @@ void frame() {
                                  g_lighting, ambient_scale, rim);
             g_minor_draw_calls += g_minor_pass->last_draw_calls();
             g_minor_drawn += drawn;
+        }
+        // Near band for THIS camera: meshes through the minors' instanced
+        // draw, billboards through the far impostor draw (catalogue atlases
+        // FarPass already loads).
+        if (g_far_enabled && g_far_pass && g_minor_pass) {
+            DAUNTLESS_FRAME_SCOPE("rock.near.draw");
+            renderer::rockfield::NearBuildInput in;
+            in.view = cam.view_matrix();
+            in.proj = cam.proj_matrix();
+            in.viewport_h = target_h;
+            in.render_origin = g_world.render_origin();
+            in.anchor_sys = g_far_field.anchor();
+            in.game_time = g_decal_game_time;
+            in.lod0_pixel_radius = g_minor_field.dials().lod0_pixel_radius;
+            g_near_field.build(in, g_near_out);
+            // A billboard whose atlas cannot load drops its rock from the
+            // near catalogue; re-stream and rebuild so this camera draws.
+            bool dropped = false;
+            for (const auto& bin : g_near_out.billboards)
+                if (!bin.items.empty() && !g_far_pass->has_atlas(bin.rock)) {
+                    near_drop_rock(bin.rock);
+                    dropped = true;
+                }
+            if (dropped) {
+                g_near_field.stream(g_near_centre_sys);
+                g_near_field.build(in, g_near_out);
+            }
+            g_minor_pass->render(near_fragment, g_near_out.meshes, cam, *g_pipeline,
+                                 [](std::uint64_t h) { return resolve_model(h); },
+                                 g_lighting, ambient_scale, rim);
+            g_far_draw_calls += g_minor_pass->last_draw_calls();
+            g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
+                                         ambient_scale, rim);
+            g_near_meshes += g_near_out.mesh_count;
+            g_near_billboards += g_near_out.billboard_count;
         }
         if (g_far_enabled && g_far_pass) {
             DAUNTLESS_FRAME_SCOPE("space.far.impostors");
@@ -2473,6 +2598,49 @@ rf::FarDials far_dials_of(const py::dict& d) {
     f("haze_gain", o.haze_gain);
     i("haze_steps", o.haze_steps);
     return o;
+}
+
+// The near band's keys of the same dict (far_dials.py near_* +
+// collide_cooldown_s); an omitted key resets to its default. cell_gu is
+// floored at 1 GU (Task 4 review: with NearField::stream's 33-cells-per-axis
+// cap, a tiny cell would otherwise shrink the streamed range to nothing).
+renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
+    renderer::rockfield::NearDials o;
+    auto f = [&](const std::string& k, float& v) { if (d.contains(k)) v = d[k.c_str()].cast<float>(); };
+    auto i = [&](const std::string& k, int& v) { if (d.contains(k)) v = d[k.c_str()].cast<int>(); };
+    for (auto [name, c] : {std::pair<const char*, renderer::rockfield::NearClassDials*>{"small", &o.small},
+                           {"large", &o.large}}) {
+        const std::string p = std::string("near_") + name + "_";
+        f(p + "density", c->density);
+        f(p + "r_min", c->r_min);
+        f(p + "r_max", c->r_max);
+        f(p + "exponent", c->exponent);
+        f(p + "cell_gu", c->cell_gu);
+        f(p + "mesh_gu", c->mesh_gu);
+        f(p + "billboard_gu", c->billboard_gu);
+        i(p + "max", c->max_instances);
+        c->cell_gu = std::max(c->cell_gu, 1.0f);
+    }
+    f("near_fade_gu", o.fade_gu);
+    f("near_stream_margin_gu", o.stream_margin_gu);
+    f("collide_cooldown_s", o.collide_cooldown_s);
+    return o;
+}
+
+py::list near_contacts_list(const std::vector<renderer::rockfield::NearContact>& contacts) {
+    py::list out;
+    for (const auto& c : contacts) {
+        py::dict d;
+        d["point"] = py::make_tuple(c.point_view.x, c.point_view.y, c.point_view.z);
+        d["normal"] = py::make_tuple(c.normal.x, c.normal.y, c.normal.z);
+        d["rock_centre"] = py::make_tuple(c.rock_centre_view.x, c.rock_centre_view.y,
+                                          c.rock_centre_view.z);
+        d["rock_radius"] = c.rock_radius;
+        d["rel_speed"] = c.rel_speed;
+        d["pen"] = c.pen;
+        out.append(d);
+    }
+    return out;
 }
 
 py::list contacts_list(std::vector<mr::Contact> contacts) {
@@ -4061,8 +4229,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("minors_set_player",
           [](std::optional<scenegraph::InstanceId> iid) {
               // A new player (or none) must not be swept from the old pose.
-              if (!iid || !g_minor_player || !(*iid == *g_minor_player))
+              if (!iid || !g_minor_player || !(*iid == *g_minor_player)) {
                   g_minor_field.reset_player();
+                  g_near_field.reset_player();
+              }
               g_minor_player = iid;
           },
           py::arg("iid"),
@@ -4076,8 +4246,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool on) { g_minors_enabled = on; }, py::arg("enabled"));
     m.def("minors_enabled", []() { return g_minors_enabled; });
     m.def("minors_drain_contacts",
-          []() { return contacts_list(g_minor_field.drain_contacts()); },
-          "Player/minor touches since the last drain: [{'point': VIEW-space "
+          []() {
+              // Small near-band rocks are minors to the game: their shove
+              // touches ride the same list, after MinorField's.
+              auto out = g_minor_field.drain_contacts();
+              auto near_small = g_near_field.drain_small_contacts();
+              out.insert(out.end(), near_small.begin(), near_small.end());
+              return contacts_list(std::move(out));
+          },
+          "Player/minor touches since the last drain (MinorField's, then the "
+          "near band's small rocks): [{'point': VIEW-space "
           "(x,y,z), 'radius', 'rel_speed'}, ...].");
     m.def("minors_stats",
           []() {
@@ -4100,8 +4278,34 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](py::list entries, const std::vector<std::tuple<float, float, float>>& view_dirs) {
               std::vector<rf::CatalogueRock> rocks;
               std::vector<std::pair<std::string, std::string>> paths;
+              renderer::rockfield::NearCatalogue near;
+              std::vector<renderer::minors::Fragment> small_frags, large_frags;
               for (const auto& item : entries) {
                   const auto d = item.cast<py::dict>();
+                  const int index = static_cast<int>(rocks.size());
+                  // Near band: silicate fragments (small) and majors (large)
+                  // that carry both LOD handles.
+                  auto str = [&](const char* k) {
+                      return d.contains(k) && !d[k].is_none() ? d[k].cast<std::string>()
+                                                              : std::string();
+                  };
+                  const bool has_lods = d.contains("lod0") && !d["lod0"].is_none() &&
+                                        d.contains("lod1") && !d["lod1"].is_none();
+                  const std::string kind = str("kind");
+                  if (has_lods && str("family") == "silicate" &&
+                      (kind == "fragment" || kind == "major")) {
+                      renderer::minors::Fragment fr;
+                      fr.lod0 = d["lod0"].cast<std::uint64_t>();
+                      fr.lod1 = d["lod1"].cast<std::uint64_t>();
+                      fr.bound_radius_mu = d.contains("bound_radius_mu")
+                          ? d["bound_radius_mu"].cast<float>() : 0.0f;
+                      fr.albedo = vec3_of(d["avg_albedo"]);
+                      const bool small = kind == "fragment";
+                      (small ? near.small_rocks : near.large_rocks).push_back(index);
+                      (small ? near.small_bound_mu : near.large_bound_mu)
+                          .push_back(fr.bound_radius_mu);
+                      (small ? small_frags : large_frags).push_back(fr);
+                  }
                   auto albedo = d["albedo"].is_none() ? std::string()
                                                       : d["albedo"].cast<std::string>();
                   auto normal = d["normal"].is_none() ? std::string()
@@ -4116,14 +4320,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
               dirs.reserve(view_dirs.size());
               for (const auto& t : view_dirs)
                   dirs.emplace_back(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+              near.view_dirs_gltf = dirs;
               g_far_field.set_catalogue(std::move(rocks), std::move(dirs));
               g_far_atlas_paths = std::move(paths);
               if (g_far_pass) g_far_pass->set_atlas_paths(g_far_atlas_paths);
+              g_near_catalogue = std::move(near);
+              g_near_small_frags = std::move(small_frags);
+              g_near_large_frags = std::move(large_frags);
+              g_near_field.set_catalogue(g_near_catalogue);
           },
           py::arg("entries"), py::arg("view_dirs"),
           "Catalogue for the far tier: [{'albedo', 'normal' (atlas paths, empty "
           "or None = no impostor), 'avg_albedo': (r, g, b)}, ...] by catalogue "
-          "index, and the impostor bake's view directions (glTF axes).");
+          "index, and the impostor bake's view directions (glTF axes). "
+          "Optional per entry: 'kind' ('fragment' | 'major'), 'family', "
+          "'lod0'/'lod1' model handles, 'bound_radius_mu' -- a silicate "
+          "fragment / major with both handles streams in the near band.");
     m.def("far_set_rocks",
           [](py::list rocks) {
               std::vector<rf::FlaggedRock> out;
@@ -4155,6 +4367,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::vector<rf::DiscSource> out;
               for (const auto& item : sources) out.push_back(disc_source_of(item.cast<py::dict>()));
               g_far_field.set_sources(std::move(out));
+              g_near_field.set_sources(g_far_field.active_sources());
           },
           py::arg("sources"), "Disc density sources (DiscSource.to_native() dicts).");
     m.def("far_set_frame",
@@ -4162,12 +4375,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_far_field.set_frame(std::move(system),
                                     {std::get<0>(anchor), std::get<1>(anchor),
                                      std::get<2>(anchor)});
+              g_near_field.set_sources(g_far_field.active_sources());
           },
           py::arg("system"), py::arg("anchor"),
           "The viewed system (None: none) and the system position of view-space origin.");
     m.def("far_set_dials",
           [](py::dict d) {
               g_far_field.set_dials(far_dials_of(d));
+              g_near_field.set_dials(near_dials_of(d));
               g_minor_field.set_specks(g_far_enabled, g_far_field.dials().tiers.p_min);
           },
           py::arg("dials"),
@@ -4175,12 +4390,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("far_set_enabled",
           [](bool on) {
               g_far_enabled = on;
-              if (!on) far_zero_fades(g_far_flagged_keys);
+              if (!on) {
+                  far_zero_fades(g_far_flagged_keys);
+                  g_near_field.clear();   // re-streams when back on
+              }
               g_minor_field.set_specks(on, g_far_field.dials().tiers.p_min);
           },
           py::arg("enabled"),
           "Turn the far tier on or off. Off: no build, no draws, every flagged "
-          "rock back to mesh-only, and minors stop emitting specks.");
+          "rock back to mesh-only, minors stop emitting specks, and the near "
+          "band drops its cells.");
     m.def("far_enabled", []() { return g_far_enabled; });
     m.def("far_stats",
           []() {
@@ -4190,18 +4409,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["impostors"] = g_far_impostors;
               d["specks"] = g_far_specks;
               d["draw_calls"] = g_far_draw_calls;
+              const auto ns = g_near_field.stats();
+              d["near_cells"] = ns.cells;
+              d["near_small"] = ns.small;
+              d["near_large"] = ns.large;
+              d["near_ghosted"] = ns.ghosted;
+              d["near_meshes"] = g_near_meshes;
+              d["near_billboards"] = g_near_billboards;
               return d;
           },
-          "{'sources', 'rocks'} now; {'impostors', 'specks' (far + minor), "
+          "{'sources', 'rocks', 'near_cells', 'near_small', 'near_large', "
+          "'near_ghosted'} now; {'near_meshes', 'near_billboards'} built and "
+          "{'impostors', 'specks' (far + minor), "
           "'draw_calls'} summed over the cameras the last frame drew.");
     m.def("far_clear",
           []() {
               far_zero_fades(g_far_flagged_keys);
               g_far_flagged_keys.clear();
               g_far_field.clear();
+              g_near_field.set_sources(g_far_field.active_sources());
+              g_near_field.clear();
+              g_near_field.reset_player();
           },
-          "Drop sources, flagged rocks (back to mesh-only) and frame; keeps "
-          "the catalogue.");
+          "Drop sources, flagged rocks (back to mesh-only), frame and the near "
+          "band's cells, contacts and sweep state; keeps the catalogue.");
+    m.def("rockfield_drain_contacts",
+          []() { return near_contacts_list(g_near_field.drain_large_contacts()); },
+          "Player/large near-rock touches since the last drain: [{'point', "
+          "'normal' (rock -> ship), 'rock_centre': VIEW-space tuples, "
+          "'rock_radius', 'rel_speed' (GU/s), 'pen'}, ...].");
+    m.def("rockfield_set_shield_inflate",
+          [](float scale) { g_near_shield_inflate = scale; },
+          py::arg("scale"),
+          "> 0: the player's near-band contact box half extents x this "
+          "(shields up); <= 0: the bare hull box.");
     m.def("far_debug_active_sources",
           []() {
               py::list out;

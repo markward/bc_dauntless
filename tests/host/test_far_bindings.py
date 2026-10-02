@@ -49,7 +49,9 @@ def test_far_sources_round_trip_into_stats():
 
 
 def test_far_stats_keys():
-    assert set(h.far_stats()) == {"sources", "rocks", "impostors", "specks", "draw_calls"}
+    assert set(h.far_stats()) == {"sources", "rocks", "impostors", "specks", "draw_calls",
+                                  "near_cells", "near_small", "near_large",
+                                  "near_ghosted", "near_meshes", "near_billboards"}
 
 
 def test_far_set_dials_p_min_and_omitted_keys_reset():
@@ -319,4 +321,51 @@ def test_noise_contrast_is_clamped_to_zero_one_on_parse():
         h.far_set_frame("Vesuvi", (0.0, 0.0, 0.0))
         (s,) = h.far_debug_active_sources()
         assert s["noise_contrast"] == pytest.approx(kept)
+    h.far_clear()
+
+
+# ── Rock fields near band dials (rock-fields plan Task 7) ────────────────────
+
+
+def _near_sphere():
+    return _source(id=12, frame="", centre=(0.0, 0.0, 0.0), table=[], shape="sphere",
+                   procedural=False, view_space=True, sphere_radius_gu=2000.0,
+                   sphere_edge_frac=0.0, populations=[])
+
+
+def test_near_density_dials_reach_the_near_band(host):
+    from engine import renderer
+    from engine.rocks import far_tier
+    far_tier.reset()
+    far_tier._push_catalogue(renderer)   # the real catalogue, with LOD handles
+    h.far_set_sources([_near_sphere()])
+    h.far_set_frame(None, (0.0, 0.0, 0.0))
+    _look_down_minus_z()
+    h.far_set_dials({"near_small_density": 0.0})
+    h.frame()
+    s = h.far_stats()
+    assert s["near_cells"] > 0 and s["near_small"] == 0 and s["near_large"] > 0
+    h.far_set_dials({})   # omitted keys reset: small rocks come back
+    h.frame()
+    assert h.far_stats()["near_small"] > 0
+    h.far_clear()
+    h.far_set_catalogue([], [])
+    far_tier.reset()
+
+
+def test_a_tiny_near_cell_is_floored_and_the_span_capped(host):
+    """Task 4 review: cell_gu is floored at 1 GU on parse and a class spans
+    at most 33 cells per axis, so a huge range over tiny cells stays bounded."""
+    import time
+    h.far_set_sources([_near_sphere()])
+    h.far_set_frame(None, (0.0, 0.0, 0.0))
+    _look_down_minus_z()
+    h.far_set_dials({"near_small_cell_gu": 1.0e-4, "near_small_billboard_gu": 1.0e6,
+                     "near_large_cell_gu": 1.0e-4, "near_large_billboard_gu": 1.0e6,
+                     "near_small_density": 1.0e-9, "near_large_density": 1.0e-9})
+    t0 = time.monotonic()
+    h.frame()
+    assert time.monotonic() - t0 < 10.0
+    assert 0 < h.far_stats()["near_cells"] <= 2 * 33 ** 3
+    h.far_set_dials({})
     h.far_clear()
