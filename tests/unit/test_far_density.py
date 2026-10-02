@@ -180,8 +180,16 @@ def test_a_tile_field_source_carries_the_noise_dials():
         (250.0, 0.8, 3, 48)
 
 
-def test_a_belt_carries_no_noise_keys():
-    (s,) = density.sources_for_system("Vesuvi")
-    d = density.to_native(s)
-    for k in ("noise_scale_gu", "noise_contrast", "noise_octaves", "steps"):
-        assert k not in d, k
+def test_profile_belt_carries_belt_noise_dials():
+    """Rock-fields R1 (2026-10-02): every source's density is a(x) * m(x),
+    so a belt carries the belt noise dials, and to_native sends them."""
+    far_dials.reset()
+    (src,) = density.sources_for_system("Vesuvi")
+    assert src.noise_scale_gu == far_dials.get("belt_noise_scale_gu")
+    assert src.noise_contrast == far_dials.get("belt_noise_contrast")
+    assert src.noise_octaves == far_dials.get("belt_noise_octaves")
+    nat = density.to_native(src)
+    assert nat["noise_scale_gu"] == src.noise_scale_gu   # now sent for discs too
+    assert nat["noise_contrast"] == src.noise_contrast
+    assert nat["noise_octaves"] == src.noise_octaves
+    assert nat["steps"] == 0                               # the global haze_steps

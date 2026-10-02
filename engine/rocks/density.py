@@ -47,8 +47,9 @@ class DiscSource:
     sphere_edge_frac: float = 0.2
     gain_scale: float = 1.0        # x the native haze_gain for this source
     brightness: float = 1.0        # haze COLOUR only (ruling R16); alpha untouched
-    # Tile-field haze noise + march steps (sphere only, 2026-10-02): 0 = off /
-    # the native global haze_steps. Belts never send them.
+    # Haze noise (every shape since rock-fields R1, 2026-10-02) + march
+    # steps: 0 = off / the native global haze_steps. Belts set the
+    # belt_noise_* dials, tile fields the tile_haze_noise_* ones.
     noise_scale_gu: float = 0.0
     noise_contrast: float = 0.0
     noise_octaves: int = 0
@@ -125,6 +126,9 @@ def profile_belt(system_name: str):
         families={"silicate": 1.0},
         seed=seed,
         brightness=float(far_dials.get("haze_brightness")),
+        noise_scale_gu=float(far_dials.get("belt_noise_scale_gu")),
+        noise_contrast=float(far_dials.get("belt_noise_contrast")),
+        noise_octaves=int(far_dials.get("belt_noise_octaves")),
     )
 
 
@@ -256,11 +260,10 @@ def to_native(source) -> dict:
         "sphere_edge_frac": source.sphere_edge_frac,
         "gain_scale": source.gain_scale,
         "brightness": source.brightness,
+        # Every shape carries the noise (rock-fields R1); steps 0 = global.
+        "noise_scale_gu": source.noise_scale_gu,
+        "noise_contrast": source.noise_contrast,
+        "noise_octaves": source.noise_octaves,
+        "steps": source.steps,
     }
-    if source.shape == "sphere":
-        # Belts carry none: the parser's defaults leave them unchanged.
-        out.update(noise_scale_gu=source.noise_scale_gu,
-                   noise_contrast=source.noise_contrast,
-                   noise_octaves=source.noise_octaves,
-                   steps=source.steps)
     return out

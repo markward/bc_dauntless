@@ -931,7 +931,7 @@ TEST(FarHazeNoise, PatternIsFixedToTheField) {
     EXPECT_EQ(far::haze_noise_m(s, s.centre + off), m0);
 }
 
-TEST(FarHazeNoise, OffMeansOneAndBeltsNeverNoise) {
+TEST(FarHazeNoise, OffMeansOne) {
     far::DiscSource s = noisy_tile_field();
     s.noise_contrast = 0.0f;
     EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
@@ -939,9 +939,6 @@ TEST(FarHazeNoise, OffMeansOneAndBeltsNeverNoise) {
     EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
     s = noisy_tile_field(); s.noise_octaves = 0;
     EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
-    far::DiscSource belt = vesuvi_like();
-    belt.noise_scale_gu = 250.0f; belt.noise_contrast = 0.8f; belt.noise_octaves = 3;
-    EXPECT_EQ(far::haze_noise_m(belt, {278000.0, 10.0, 0.0}), 1.0f);
 }
 
 TEST(FarHazeNoise, ContrastZeroColumnIsByteIdenticalToNoNoise) {
@@ -960,14 +957,15 @@ TEST(FarHazeNoise, ContrastZeroColumnIsByteIdenticalToNoNoise) {
     EXPECT_NE(a.alpha, c.alpha);
 }
 
-TEST(FarHazeNoise, BeltColumnIgnoresTheNoiseKeys) {
+// Rock-fields R1 (2026-10-02): belts carry the noise too (they used to
+// ignore the keys).
+TEST(FarHazeNoise, BeltColumnCarriesTheNoiseKeys) {
     const far::DiscSource plain = vesuvi_like();
     far::DiscSource noisy = vesuvi_like();
-    noisy.noise_scale_gu = 250.0f; noisy.noise_contrast = 0.8f; noisy.noise_octaves = 3;
+    noisy.noise_scale_gu = 4000.0f; noisy.noise_contrast = 0.8f; noisy.noise_octaves = 3;
     const auto a = far::haze_column(plain, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}, 1.0e6f, 4.0f, 24, 270.0f, glm::vec3(0.3f));
     const auto b = far::haze_column(noisy, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}, 1.0e6f, 4.0f, 24, 270.0f, glm::vec3(0.3f));
-    EXPECT_EQ(a.alpha, b.alpha);
-    EXPECT_EQ(a.rgb, b.rgb);
+    EXPECT_NE(a.alpha, b.alpha);
 }
 
 TEST(FarHazeNoise, PerSourceStepsOverrideTheGlobalAndClampTo64) {
@@ -1027,5 +1025,61 @@ TEST(FarHazeNoise, TileNoiseKeepsTheMeanDisplayedHaze) {
                     seed, n, sum_noisy / n, sum_plain / n);
         EXPECT_EQ(n, 81);
         EXPECT_NEAR(sum_noisy / n, sum_plain / n, 1.0);
+    }
+}
+
+TEST(FarNoise, DiscSourcesNowCarryNoise) {
+    far::DiscSource s;                       // a disc
+    s.table = {{0.0f, 1.0f}, {50000.0f, 1.0f}};
+    s.noise_scale_gu = 1000.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3; s.seed = 7;
+    bool varied = false;
+    for (int i = 0; i < 64; ++i) {
+        const float m = far::haze_noise_m(s, glm::dvec3(i * 517.0, 300.0, 0.0));
+        EXPECT_GE(m, 0.0f);
+        EXPECT_LE(m, far::noise_m_bound(s));
+        if (std::fabs(m - 1.0f) > 0.05f) varied = true;
+    }
+    EXPECT_TRUE(varied);
+}
+
+TEST(FarNoise, OffIsExactlyOneForBothShapes) {
+    far::DiscSource d; d.noise_scale_gu = 0.0f; d.noise_contrast = 0.8f; d.noise_octaves = 3;
+    far::DiscSource sph = d; sph.shape = far::DiscSource::Shape::Sphere;
+    EXPECT_EQ(far::haze_noise_m(d, glm::dvec3(1, 2, 3)), 1.0f);
+    EXPECT_EQ(far::haze_noise_m(sph, glm::dvec3(1, 2, 3)), 1.0f);
+}
+
+TEST(FarNoise, FieldDensityIsAtimesM) {
+    far::DiscSource s; s.shape = far::DiscSource::Shape::Sphere;
+    s.sphere_radius_gu = 1000.0f; s.noise_scale_gu = 250.0f; s.noise_contrast = 0.8f;
+    s.noise_octaves = 3; s.seed = 11;
+    const glm::dvec3 x(120.0, -40.0, 33.0);
+    EXPECT_FLOAT_EQ(far::field_density(s, x), far::density_a(s, x) * far::haze_noise_m(s, x));
+}
+
+TEST(FarNoise, ContrastAboveOneIsClampedInTheBound) {
+    far::DiscSource s; s.noise_scale_gu = 10.0f; s.noise_contrast = 3.0f; s.noise_octaves = 2;
+    EXPECT_FLOAT_EQ(far::noise_m_bound(s), 2.0f);
+}
+
+// Golden values recorded 2026-10-02 from the code BEFORE the per-octave seed
+// hash refactor (haze_hash(seed) inside every lattice() call): the refactor
+// must be value-identical.
+TEST(FarNoise, OncePerOctaveSeedHashKeepsValues) {
+    const float a = far::haze_fbm(glm::vec3(0.3f, 1.7f, -2.2f), 3, 12345u);
+    const float b = far::haze_fbm(glm::vec3(10.1f, -4.0f, 0.5f), 5, 99u);
+    const float c = far::haze_value_noise(glm::vec3(-7.5f, 3.25f, 8.0f), 4242u);
+    EXPECT_EQ(a, 0x1.51d48ap-1f);   // 0.659824669
+    EXPECT_EQ(b, 0x1.65a954p-1f);   // 0.698557496
+    EXPECT_EQ(c, 0x1.15239ep-1f);   // 0.541287363
+}
+
+TEST(FarNoise, ContrastAboveOneIsClampedInM) {
+    far::DiscSource s; s.shape = far::DiscSource::Shape::Sphere;
+    s.noise_scale_gu = 10.0f; s.noise_contrast = 3.0f; s.noise_octaves = 2; s.seed = 5;
+    far::DiscSource one = s; one.noise_contrast = 1.0f;
+    for (int i = 0; i < 64; ++i) {
+        const glm::dvec3 x(i * 3.7, -i * 1.3, i * 0.9);
+        EXPECT_EQ(far::haze_noise_m(s, x), far::haze_noise_m(one, x));
     }
 }

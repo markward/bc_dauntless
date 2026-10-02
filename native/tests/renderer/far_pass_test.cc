@@ -1007,6 +1007,26 @@ TEST_F(FarPassGLTest, NoisySphereHazeShaderMatchesTheCpuReference) {
     EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees the field";
 }
 
+// Rock-fields R1 (2026-10-02): belts carry the noise too. A noisy Disc source
+// (the production belt noise: 4,000 GU, contrast 0.8, 3 octaves) centred on
+// the eye matches haze_column within 0.001, with and without an occluder.
+TEST_F(FarPassGLTest, NoisyDiscHazeShaderMatchesTheCpuReference) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s = haze_source(origin_sys);
+    s.table = {{0.0f, 1.0f}, {20000.0f, 1.0f}};
+    s.gain_scale = 4.0f;    // a visible column over the shorter chord
+    s.brightness = 8.0f;
+    s.seed = 0xdeadbeefu;
+    s.noise_scale_gu = 4000.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
+    HazePixels pix;
+    for (int y = 20; y <= 44; y += 4)
+        for (int x = 20; x <= 44; x += 4) pix.push_back({x, y});
+    float centre_alpha[2] = {0.0f, 0.0f};
+    const float max_diff = haze_matches_cpu(*pipeline, s, origin_sys, 10000.0f, centre_alpha, pix);
+    std::printf("[far_pass_test] noisy disc shader-vs-CPU max alpha diff %.6f\n", max_diff);
+    EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees the belt";
+}
+
 // One fullscreen draw per active source, at most 4; none for no sources. GL
 // state is restored: blend off, depth test and depth writes on, the caller's
 // blend function kept.

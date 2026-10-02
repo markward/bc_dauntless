@@ -94,3 +94,22 @@ def test_tile_haze_noise_dials():
     assert far_dials.step({**d, "tile_haze_noise_contrast": 0.0},
                           "tile_haze_noise_contrast", -1)["tile_haze_noise_contrast"] == 0.0
     assert far_dials.step(d, "tile_haze_steps", +1)["tile_haze_steps"] == 52
+
+
+def test_belt_noise_dials():
+    """Rock-fields R1 (2026-10-02): belts carry noise too; Python-owned."""
+    d = far_dials.DEFAULTS
+    assert d["belt_noise_scale_gu"] == 4000.0
+    assert d["belt_noise_contrast"] == 0.8
+    assert d["belt_noise_octaves"] == 3 and isinstance(d["belt_noise_octaves"], int)
+    for k in ("belt_noise_scale_gu", "belt_noise_contrast", "belt_noise_octaves"):
+        assert k not in far_dials.NATIVE_KEYS, k
+    assert far_dials.step({**d, "belt_noise_octaves": 1},
+                          "belt_noise_octaves", -1)["belt_noise_octaves"] == 1
+
+
+def test_noise_contrast_dials_clamp_to_one():
+    d = dict(far_dials.DEFAULTS, belt_noise_contrast=0.9)
+    assert far_dials.step(d, "belt_noise_contrast", +1)["belt_noise_contrast"] == 1.0
+    d = dict(far_dials.DEFAULTS, tile_haze_noise_contrast=0.9)
+    assert far_dials.step(d, "tile_haze_noise_contrast", +1)["tile_haze_noise_contrast"] == 1.0

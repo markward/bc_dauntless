@@ -307,3 +307,15 @@ def test_the_noise_keys_and_steps_round_trip():
     assert s["noise_contrast"] == pytest.approx(0.8)
     assert s["noise_octaves"] == 3 and s["steps"] == 48
     h.far_clear()
+
+
+def test_noise_contrast_is_clamped_to_zero_one_on_parse():
+    """Rock-fields R1 (2026-10-02): m's contrast lives in [0, 1]."""
+    for sent, kept in ((3.0, 1.0), (-0.5, 0.0), (0.4, 0.4)):
+        h.far_clear()
+        h.far_set_sources([_source(noise_scale_gu=4000.0, noise_contrast=sent,
+                                   noise_octaves=3)])
+        h.far_set_frame("Vesuvi", (0.0, 0.0, 0.0))
+        (s,) = h.far_debug_active_sources()
+        assert s["noise_contrast"] == pytest.approx(kept)
+    h.far_clear()

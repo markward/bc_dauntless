@@ -19,12 +19,15 @@
 // a linear ramp to 0 at u_sphere_r -- far_field.cc's sphere_a / the Sphere
 // branch of haze_interval. The march itself is shared.
 // FarPassGLTest.SphereHazeShaderMatchesTheCpuReference pins the sphere twin.
-// Tile-field noise (sphere only, 2026-10-02): the march density is scaled by
-// m(x) = max(0, 1 + u_noise_contrast * (2 fbm((x - centre) / u_noise_scale)
-// - 1)) -- 3D value noise from an integer (PCG) hash, no textures, fixed to
-// the field. haze_hash / value_noise / fbm / noise_m are far_field.cc's
-// haze_hash / haze_value_noise / haze_fbm / haze_noise_m: keep identical.
-// FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference pins them.
+// Haze noise (every shape since rock-fields R1, 2026-10-02): the march
+// density is scaled by m(x) = max(0, 1 + c * (2 fbm((x - centre) /
+// u_noise_scale) - 1)), c = clamp(u_noise_contrast, 0, 1) -- 3D value noise
+// from an integer (PCG) hash, no textures, fixed to the source. haze_hash /
+// value_noise / fbm / noise_m are far_field.cc's haze_hash /
+// haze_value_noise_h / haze_fbm / haze_noise_m: keep identical (the seed is
+// hashed once per octave in fbm and handed to lattice pre-hashed).
+// FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference and
+// NoisyDiscHazeShaderMatchesTheCpuReference pin them.
 // Output is PREMULTIPLIED (rgb, alpha = 1 - T); blend GL_ONE,
 // GL_ONE_MINUS_SRC_ALPHA.
 in vec2 v_uv;
@@ -128,24 +131,25 @@ uint haze_hash(uint v) {
     return (word >> 22u) ^ word;
 }
 
-// far_field.cc lattice(): the 24-bit hashed value at a lattice point.
-float lattice(ivec3 c, uint seed) {
-    uint h = haze_hash(uint(c.x) ^ haze_hash(uint(c.y) ^ haze_hash(uint(c.z) ^ haze_hash(seed))));
+// far_field.cc lattice(): the 24-bit hashed value at a lattice point. `hs`
+// is the PRE-HASHED seed (haze_hash(seed)).
+float lattice(ivec3 c, uint hs) {
+    uint h = haze_hash(uint(c.x) ^ haze_hash(uint(c.y) ^ haze_hash(uint(c.z) ^ hs)));
     return float(h >> 8u) / 16777215.0;
 }
 
 float lerp1(float a, float b, float t) { return a + (b - a) * t; }
 
-// renderer::far::haze_value_noise. Keep identical.
-float value_noise(vec3 p, uint seed) {
+// renderer::far::haze_value_noise_h (seed pre-hashed). Keep identical.
+float value_noise(vec3 p, uint hs) {
     vec3 fl = floor(p);
     vec3 f = p - fl;
     vec3 u = f * f * (3.0 - 2.0 * f);
     ivec3 c = ivec3(fl);
-    float x00 = lerp1(lattice(c, seed), lattice(c + ivec3(1, 0, 0), seed), u.x);
-    float x10 = lerp1(lattice(c + ivec3(0, 1, 0), seed), lattice(c + ivec3(1, 1, 0), seed), u.x);
-    float x01 = lerp1(lattice(c + ivec3(0, 0, 1), seed), lattice(c + ivec3(1, 0, 1), seed), u.x);
-    float x11 = lerp1(lattice(c + ivec3(0, 1, 1), seed), lattice(c + ivec3(1, 1, 1), seed), u.x);
+    float x00 = lerp1(lattice(c, hs), lattice(c + ivec3(1, 0, 0), hs), u.x);
+    float x10 = lerp1(lattice(c + ivec3(0, 1, 0), hs), lattice(c + ivec3(1, 1, 0), hs), u.x);
+    float x01 = lerp1(lattice(c + ivec3(0, 0, 1), hs), lattice(c + ivec3(1, 0, 1), hs), u.x);
+    float x11 = lerp1(lattice(c + ivec3(0, 1, 1), hs), lattice(c + ivec3(1, 1, 1), hs), u.x);
     return lerp1(lerp1(x00, x10, u.y), lerp1(x01, x11, u.y), u.z);
 }
 
@@ -157,7 +161,7 @@ float fbm(vec3 p, int octaves, uint seed) {
     vec3 q = p;
     for (int o = 0; o < kMaxOctaves; ++o) {
         if (o >= n) break;
-        sum += amp * value_noise(q, seed + uint(o) * 0x9E3779B9u);
+        sum += amp * value_noise(q, haze_hash(seed + uint(o) * 0x9E3779B9u));
         norm += amp;
         amp *= 0.5;
         q *= 2.0;
@@ -165,12 +169,13 @@ float fbm(vec3 p, int octaves, uint seed) {
     return sum / norm;
 }
 
-// renderer::far::haze_noise_m: 1 for a disc or with the noise off.
+// renderer::far::haze_noise_m: both shapes; 1 with the noise off.
 float noise_m(vec3 p) {
-    if (u_shape != 1 || !(u_noise_scale > 0.0) || u_noise_contrast == 0.0 || u_noise_octaves <= 0)
+    if (!(u_noise_scale > 0.0) || u_noise_contrast == 0.0 || u_noise_octaves <= 0)
         return 1.0;
+    float c = clamp(u_noise_contrast, 0.0, 1.0);
     float f = fbm((p - u_centre) / u_noise_scale, u_noise_octaves, uint(u_noise_seed));
-    return max(0.0, 1.0 + u_noise_contrast * (2.0 * f - 1.0));
+    return max(0.0, 1.0 + c * (2.0 * f - 1.0));
 }
 
 // renderer::far::density_a.

@@ -50,9 +50,15 @@ DEFAULTS: dict = {
     # the sphere's density x m(x) = max(0, 1 + contrast (2 fbm(x / scale) -
     # 1)), 3D value noise fixed to the field, mean m ~= 1 (so the gain and
     # brightness above keep their meaning). tile_haze_steps is the sphere's
-    # own march step count (the shader caps it at 64). Belts never noise.
+    # own march step count (the shader caps it at 64).
     "tile_haze_noise_scale_gu": 250.0, "tile_haze_noise_contrast": 0.8,
     "tile_haze_noise_octaves": 3, "tile_haze_steps": 48,
+    # Belt noise (Python, read at use; re-push sources; rock-fields R1,
+    # 2026-10-02): every source's density is a(x) * m(x), belts included --
+    # the near and mid bands sample it. Same m as the tile fields, at a belt's
+    # scale. Every *_noise_contrast steps within [0, 1].
+    "belt_noise_scale_gu": 4000.0, "belt_noise_contrast": 0.8,
+    "belt_noise_octaves": 3,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
@@ -64,13 +70,15 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 # tier, not shrink it).
 _INT_FLOOR_1 = ("max_far_rocks", "cell_cache_max", "size_classes",
                "cells_per_range", "haze_steps", "max_cells_per_axis",
-               "tile_haze_noise_octaves", "tile_haze_steps")
+               "tile_haze_noise_octaves", "tile_haze_steps",
+               "belt_noise_octaves")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("haze_brightness", "tile_haze_brightness", "haze_gain",
                "tile_haze_gain", "speck_gain", "tile_haze_edge_frac",
                "tile_haze_noise_scale_gu", "tile_haze_noise_contrast",
-               "tile_haze_noise_octaves")
+               "tile_haze_noise_octaves", "belt_noise_scale_gu",
+               "belt_noise_contrast", "belt_noise_octaves")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)
 _FACTOR = 1.25
 
@@ -99,7 +107,8 @@ def native() -> dict:
 def step(dials: dict, name: str, direction: int) -> dict:
     """Pure. Ints step by +-1 (+-10% when >= 10), floor 1 for the counts
     that must never silently delete the whole tier; floats x//1.25, and a
-    float at 0 steps to 0.01 going up."""
+    float at 0 steps to 0.01 going up. Every `*_noise_contrast` is clamped
+    to [0, 1] (m's bound is 1 + contrast)."""
     if name not in dials:
         raise ValueError("unknown far dial: %r" % (name,))
     out = dict(dials)
@@ -112,6 +121,8 @@ def step(dials: dict, name: str, direction: int) -> dict:
         out[name] = 0.01 if direction > 0 else 0.0
     else:
         out[name] = v * _FACTOR if direction > 0 else v / _FACTOR
+    if name.endswith("_noise_contrast"):
+        out[name] = min(1.0, max(0.0, out[name]))
     return out
 
 

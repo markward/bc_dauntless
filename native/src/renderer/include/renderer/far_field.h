@@ -45,10 +45,11 @@ struct DiscSource {
     float sphere_edge_frac = 0.2f;
     float gain_scale = 1.0f;      // multiplies FarDials::haze_gain for this source
     float brightness = 1.0f;      // scales the haze COLOUR only (alpha unchanged)
-    // Tile-field haze noise (sphere only; 2026-10-02): the march density is
+    // Haze noise (every shape since rock-fields, 2026-10-02): the density is
     // a(x) * m(x), m = max(0, 1 + noise_contrast * (2 fbm(x_local /
-    // noise_scale_gu) - 1)), x_local = x - centre (fixed to the field). Off
-    // (m == 1, byte-identical) when scale <= 0, contrast == 0 or octaves <= 0.
+    // noise_scale_gu) - 1)), x_local = x - centre (fixed to the field),
+    // contrast clamped to [0, 1]. Off (m == 1, byte-identical) when scale <= 0,
+    // contrast == 0 or octaves <= 0.
     float noise_scale_gu = 0.0f;
     float noise_contrast = 0.0f;
     int noise_octaves = 0;
@@ -94,19 +95,28 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
                        const glm::vec3& dir, float t_max, float slab_sigmas, int steps,
                        float gain, const glm::vec3& light);
 
-// ---- Haze noise (tile fields; keep identical with far_haze.frag) ----------
+// ---- Haze noise (every source; keep identical with far_haze.frag) --------
 
 // 32-bit PCG output hash.
 std::uint32_t haze_hash(std::uint32_t v);
 // 3D value noise in [0, 1]: hashed lattice values (seeded), trilinear with a
 // smoothstep fade.
 float haze_value_noise(const glm::vec3& p, std::uint32_t seed);
+// haze_value_noise with the seed already hashed (haze_hash(seed)):
+// haze_value_noise(p, seed) == haze_value_noise_h(p, haze_hash(seed)).
+float haze_value_noise_h(const glm::vec3& p, std::uint32_t hashed_seed);
 // `octaves` octaves of haze_value_noise (lacunarity 2, gain 0.5), normalised
 // to [0, 1]. octaves <= 0 gives 0.5.
 float haze_fbm(const glm::vec3& p, int octaves, std::uint32_t seed);
-// The density modulation m(x) at system point x (see DiscSource); exactly 1
-// for a disc or when the noise is off.
+// The density modulation m(x) at system point x (see DiscSource), for both
+// shapes; exactly 1 when the noise is off. noise_contrast is clamped to
+// [0, 1].
 float haze_noise_m(const DiscSource& s, const glm::dvec3& x_sys);
+// The ONE density every band samples (rock-fields spec R1): a(x) * m(x).
+float field_density(const DiscSource& s, const glm::dvec3& x_sys);
+// Upper bound of m for rejection sampling: 1 + clamp(noise_contrast, 0, 1)
+// when the noise is on, else 1.
+float noise_m_bound(const DiscSource& s);
 // The march steps for `s`: its own `steps` clamped to [1, 64] when set, else
 // `global_steps` unchanged.
 int haze_steps_for(const DiscSource& s, int global_steps);
