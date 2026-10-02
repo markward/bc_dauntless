@@ -2419,6 +2419,9 @@ rf::Population population_of(const py::dict& d) {
 }
 
 // Keys exactly DiscSource.to_native() (engine side, far-tier plan Task 9).
+// Optional (tile-field haze, 2026-10-02): shape ("disc" | "sphere"),
+// procedural, view_space, sphere_radius_gu, sphere_edge_frac, gain_scale --
+// a missing key keeps the DiscSource default (a disc source as before).
 rf::DiscSource disc_source_of(const py::dict& d) {
     rf::DiscSource s;
     s.id = d["id"].cast<std::uint32_t>();
@@ -2441,6 +2444,17 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     }
     for (const auto& pop : d["populations"].cast<py::list>())
         s.pops.push_back(population_of(pop.cast<py::dict>()));
+    if (d.contains("shape")) {
+        const auto shape = d["shape"].cast<std::string>();
+        if (shape == "disc") s.shape = rf::DiscSource::Shape::Disc;
+        else if (shape == "sphere") s.shape = rf::DiscSource::Shape::Sphere;
+        else throw py::value_error("far source shape must be 'disc' or 'sphere', not '" + shape + "'");
+    }
+    if (d.contains("procedural")) s.procedural = d["procedural"].cast<bool>();
+    if (d.contains("view_space")) s.view_space = d["view_space"].cast<bool>();
+    if (d.contains("sphere_radius_gu")) s.sphere_radius_gu = d["sphere_radius_gu"].cast<float>();
+    if (d.contains("sphere_edge_frac")) s.sphere_edge_frac = d["sphere_edge_frac"].cast<float>();
+    if (d.contains("gain_scale")) s.gain_scale = d["gain_scale"].cast<float>();
     return s;
 }
 
@@ -4201,6 +4215,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Drop sources, flagged rocks (back to mesh-only), frame and cell "
           "cache; keeps the catalogue.");
+    m.def("far_debug_active_sources",
+          []() {
+              py::list out;
+              for (const auto& src : g_far_field.active_sources()) {
+                  py::dict d;
+                  d["id"] = src.id;
+                  d["shape"] = src.shape == rf::DiscSource::Shape::Sphere ? "sphere" : "disc";
+                  d["procedural"] = src.procedural;
+                  d["view_space"] = src.view_space;
+                  d["centre"] = py::make_tuple(src.centre.x, src.centre.y, src.centre.z);
+                  d["sphere_radius_gu"] = src.sphere_radius_gu;
+                  d["sphere_edge_frac"] = src.sphere_edge_frac;
+                  d["gain_scale"] = src.gain_scale;
+                  out.append(d);
+              }
+              return out;
+          },
+          "TEST-ONLY: the active sources (system-coordinate centres). Never call "
+          "from game code.");
     m.def("far_debug_fade",
           [](scenegraph::InstanceId id) -> float {
               const scenegraph::Instance* inst = g_world.get(id);
