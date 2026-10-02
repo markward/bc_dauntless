@@ -280,3 +280,30 @@ def test_a_view_space_sphere_source_is_active_without_a_frame():
 def test_an_unknown_shape_is_rejected():
     with pytest.raises(ValueError):
         h.far_set_sources([_source(shape="cube")])
+
+
+# ── Tile-field haze noise + per-source steps (added 2026-10-02) ──────────────
+
+
+def test_a_source_without_the_noise_keys_has_no_noise_and_global_steps():
+    h.far_clear()
+    h.far_set_sources([_source()])
+    h.far_set_frame("Vesuvi", (0.0, 0.0, 0.0))
+    (s,) = h.far_debug_active_sources()
+    assert s["noise_scale_gu"] == 0.0 and s["noise_contrast"] == 0.0
+    assert s["noise_octaves"] == 0 and s["steps"] == 0
+    h.far_clear()
+
+
+def test_the_noise_keys_and_steps_round_trip():
+    h.far_clear()
+    h.far_set_sources([_source(
+        id=8, frame="", centre=(0.0, 0.0, 0.0), table=[], shape="sphere",
+        procedural=False, view_space=True, sphere_radius_gu=1000.0,
+        noise_scale_gu=250.0, noise_contrast=0.8, noise_octaves=3, steps=48)])
+    h.far_set_frame(None, (0.0, 0.0, 0.0))
+    (s,) = h.far_debug_active_sources()
+    assert s["noise_scale_gu"] == 250.0
+    assert s["noise_contrast"] == pytest.approx(0.8)
+    assert s["noise_octaves"] == 3 and s["steps"] == 48
+    h.far_clear()

@@ -2455,6 +2455,12 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     if (d.contains("sphere_edge_frac")) s.sphere_edge_frac = d["sphere_edge_frac"].cast<float>();
     if (d.contains("gain_scale")) s.gain_scale = d["gain_scale"].cast<float>();
     if (d.contains("brightness")) s.brightness = d["brightness"].cast<float>();
+    // Tile-field haze noise + per-source steps (2026-10-02): omitted = off /
+    // the global haze_steps.
+    if (d.contains("noise_scale_gu")) s.noise_scale_gu = d["noise_scale_gu"].cast<float>();
+    if (d.contains("noise_contrast")) s.noise_contrast = d["noise_contrast"].cast<float>();
+    if (d.contains("noise_octaves")) s.noise_octaves = d["noise_octaves"].cast<int>();
+    if (d.contains("steps")) s.steps = d["steps"].cast<int>();
     return s;
 }
 
@@ -4229,6 +4235,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["sphere_edge_frac"] = src.sphere_edge_frac;
                   d["gain_scale"] = src.gain_scale;
                   d["brightness"] = src.brightness;
+                  d["noise_scale_gu"] = src.noise_scale_gu;
+                  d["noise_contrast"] = src.noise_contrast;
+                  d["noise_octaves"] = src.noise_octaves;
+                  d["steps"] = src.steps;
                   out.append(d);
               }
               return out;
