@@ -1,7 +1,9 @@
 # Rock fields — design (modern asteroids, rethink of sub-project 3b)
 
 **Date:** 2026-10-02
-**Status:** design approved in conversation (sections 1–4); awaiting written-spec review
+**Status:** implemented on `feat/rock-fields` (Tasks 1–14 complete, local `check_tests.sh`
+green), **awaiting Mark's live check** — see "Live check" below and the "As built"
+section for what changed from this design during execution.
 **Branch:** `feat/rock-fields` (worktree `.claude/worktrees/rock-fields`), forked from
 `feat/far-tier` at `cfae60c9`. far-tier is NOT merged; both land together once rock
 fields are live-verified.
@@ -122,7 +124,13 @@ rock size. Small rocks: harmless shove + puff + grit + cosmetic flicker (today's
 While dashing or in the warp set: rocks stream, no collision responses.
 
 **Known limitations (recorded, cheap to lift later):** NPC ships and weapons pass through
-scenery rocks; AI does not avoid them; they cannot be targeted, scanned or broken.
+scenery rocks; AI does not avoid them; they cannot be targeted, scanned or broken; the
+headless sim never spawns scenery rocks at all (near/mid/haze are render-only, so a
+headless mission sees none of this); a contact only responds while the player's
+containing set IS the viewed set (a player seen from another region's camera gets no
+scenery collisions); and the "Rock Fields" dev toggle (Dev Options → Lighting, native
+key `far_tier`) also disables scenery collisions, because it gates the same native
+stream that both draws the near band and drains its contacts.
 
 ### 3. Mid tiles and baking
 
@@ -195,6 +203,42 @@ pointer to sub-project 4's `explicit_regions`.
   the promise, not rock identity, at 80 GU+.
 - **Collision-only rocks** can feel odd when NPCs or torpedoes pass through them.
 - **Densities are taste**: expect live tuning rounds.
+
+## As built
+
+Execution (`.superpowers/sdd/2026-10-02-rock-fields/progress.md`, Tasks 1–14) made a
+handful of rulings that change this design's letter without changing its intent:
+
+- **Cluster snap (Task 14).** §3 describes a tile grid picking its own sprite at the
+  tile centre. A `DiscSource`/sphere source smaller than its tile's own size (e.g. a
+  small `AsteroidField`) would otherwise never register at the tile-centre sample and
+  read as empty. `MidField` now **snaps**: a source with diameter < the tile size
+  replaces that tile's centre-density sprite with one sitting at the source's own
+  centre (jitter scaled to the source radius, not the tile) — one sprite, not two.
+  Belts are unaffected (they are large relative to a tile).
+- **Haze march clipping (Task 12).** The haze's ray march now early-outs when `t1 <=
+  start` and clips `t0 = max(t0, start)`, so the fixed step budget lands inside the
+  ramp where the haze actually exists, rather than spending steps on the dead zone
+  before `haze_start_gu`. `start = 0` (no hand-off) stays bit-identical to the
+  un-clipped form.
+- **Displayed-metric changes (Task 14).** The spec's single "haze visible from
+  outside" bar is now two assertions at two distances, because the mid band — not
+  the haze — carries the 3,000–8,000 GU range: a changed-pixel-share bar at 6,000 GU
+  (mid sprites) and a separate centre-mean bar at 8,000 GU (haze, unchanged
+  calibration). The Beol 4 "Player Start" viewpoint (2,079 GU) is now owned by mid
+  tiles, not haze.
+- **2×2-pixel dither (Task 14).** `opaque.frag`'s screen-door dither moved from
+  per-pixel to per **2×2 pixel group**, fixing a bug where half of a discarded quad
+  could still shade up to 159/255 wrong. The visible pattern is a coarser 8 px
+  screen-door than before — accepted; filed as a trade for correctness, not reverted.
+- **Mid sprite count vs the spec's estimate.** §3 estimated "2,000–4,000 sprites in
+  view"; at the shipped default tile sizes the real number is **~150**. The 4,000 cap
+  is kept (headroom for denser dial settings) but the typical scene is far sparser
+  than the design's prose suggested — tunable live via `mid_fill` / `mid_sprite_scale`
+  without a rebuild.
+- **Filmic CA fringing left unchanged.** `filmic.frag`'s chromatic-aberration pass
+  fringes the dither pattern on near/far mesh↔impostor edges. Investigated and left
+  out of scope for this plan; reported for Mark's live check, not fixed here.
 
 ## Live check (Mark)
 
