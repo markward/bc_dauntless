@@ -66,6 +66,10 @@ class TextCaptureController(Panel):
             if panel is not None and panel is not self and _is_open(panel):
                 self.owner = name
                 host_io.set_key_capture(True)
+                # A key held across the boundary (e.g. the click/Enter that
+                # triggered focus) must not replay a stale KEYUP into the
+                # field it never saw the KEYDOWN for.
+                host_io.cef_reset_text_translator()
             else:
                 if panel is None:
                     _log.warning(
@@ -75,11 +79,13 @@ class TextCaptureController(Panel):
                 # to an untagged field sends no blur first.
                 self.owner = None
                 host_io.set_key_capture(False)
+                host_io.cef_reset_text_translator()
                 self._blur_pending = True
             return True
         if action == "blur":
             self.owner = None
             host_io.set_key_capture(False)
+            host_io.cef_reset_text_translator()
             return True
         return False
 
@@ -103,6 +109,7 @@ class TextCaptureController(Panel):
             return
         self.owner = None
         host_io.set_key_capture(False)
+        host_io.cef_reset_text_translator()
         self._blur_pending = True
 
     def tick(self) -> None:
@@ -110,6 +117,7 @@ class TextCaptureController(Panel):
         if self.owner is not None and not host_io.key_capture_active():
             # Native reset: the page that held the field reloaded or died.
             self.owner = None
+            host_io.cef_reset_text_translator()
         if self.owner is not None:
             panel = self._registry.find(self.owner)
             if panel is None or not _is_open(panel):
@@ -120,6 +128,5 @@ class TextCaptureController(Panel):
         if _TRACE and events:  # TEMP diagnostic (DAUNTLESS_KEY_TRACE=1)
             print("[keytrace] t=%.4f owner=%s events=%r"
                   % (time.perf_counter(), self.owner, events), flush=True)
-        if self.owner is not None:
-            for ev in events:
-                host_io.cef_send_key_event(*ev)
+        if self.owner is not None and events:
+            host_io.cef_send_text_events(events)

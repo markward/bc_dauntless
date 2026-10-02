@@ -19,6 +19,8 @@ class _Host:
         self.capture_calls = []
         self.queue = []
         self.sent = []
+        self.batches = []
+        self.translator_resets = 0
 
     def set_key_capture(self, on):
         self.capture_calls.append(on)
@@ -31,8 +33,12 @@ class _Host:
         out, self.queue = self.queue, []
         return out
 
-    def cef_send_key_event(self, *ev):
-        self.sent.append(ev)
+    def cef_send_text_events(self, events):
+        self.batches.append(list(events))
+        self.sent.extend(events)
+
+    def cef_reset_text_translator(self):
+        self.translator_resets += 1
 
 
 class _Owner(Panel):
@@ -81,6 +87,9 @@ def test_focus_on_an_open_owner_captures(env):
     assert cap.owner == "probe"
     assert host.captured is True
     assert cap.render_payload() is None
+    # A key held across the boundary must not replay a stale KEYUP into a
+    # field that never saw its KEYDOWN.
+    assert host.translator_resets == 1
 
 
 @pytest.mark.parametrize("name", ["", "nope"])
@@ -185,6 +194,7 @@ def test_release_with_an_owner(env):
     assert cap.owner is None
     assert host.capture_calls[-1] is False
     assert cap.render_payload() == BLUR_SCRIPT
+    assert host.translator_resets == 2          # once on focus, once on release
 
 
 def test_release_without_an_owner_does_nothing(env):
@@ -192,6 +202,7 @@ def test_release_without_an_owner_does_nothing(env):
     cap.release()
     assert host.capture_calls == []
     assert cap.render_payload() is None
+    assert host.translator_resets == 0
 
 
 def test_queue_forwarded_only_while_captured(env):
@@ -203,10 +214,21 @@ def test_queue_forwarded_only_while_captured(env):
     host.queue = [(0, ord("-"), 0, 1, 0), (1, 259, 51, 1, 0)]
     cap.tick()
     assert host.sent == [(0, ord("-"), 0, 1, 0), (1, 259, 51, 1, 0)]
+    assert host.batches == [[(0, ord("-"), 0, 1, 0), (1, 259, 51, 1, 0)]]  # one call, whole list
     cap.dispatch_event("blur")
     host.queue = [(0, ord("x"), 0, 1, 0)]
     cap.tick()
     assert len(host.sent) == 2
+
+
+def test_native_reset_resets_the_translator_too(env):
+    host, _reg, _owner, cap = env
+    cap.dispatch_event("focus:probe")
+    host.translator_resets = 0                    # isolate from the focus-gain reset above
+    host.captured = False                          # page reloaded: native cleared it
+    cap.tick()
+    assert cap.owner is None
+    assert host.translator_resets == 1
 
 
 def test_headless_tick_is_a_noop(monkeypatch):

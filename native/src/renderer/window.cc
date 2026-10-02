@@ -100,7 +100,13 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
                 }
             }
         }
-        if (glfw_key_to_windows_vk(key) == 0) return;   // editing keys only
+        // Every key press/repeat/release is queued now, not just the
+        // editing-key subset: TextEventTranslator (renderer/text_input.h)
+        // needs to see a held key's RELEASE to emit its KEYUP, and it needs
+        // to see every PRESS to decide whether a following char event
+        // pairs with it. The game never reads this queue for bindings --
+        // only Window::key_state does, via glfwGetKey directly -- so
+        // widening it has no effect on gameplay input.
         self->text_events_.push({kTextEventKey, key, scancode, action, mods});
     });
 

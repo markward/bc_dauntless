@@ -77,11 +77,18 @@ void send_mouse_move(int x, int y);
 void send_mouse_click(int x, int y, int button, bool is_down);
 void send_mouse_wheel(int x, int y, int delta_y);
 
-// Keyboard forwarding for typed CEF fields. type: 0 = RAWKEYDOWN,
-// 1 = KEYUP, 2 = CHAR (character set). windows_vk is CEF's
-// windows_key_code (all platforms); native_code is the platform key code
-// (GLFW scancode). glfw_mods are GLFW_MOD_* bits. No-op with no browser.
-void send_key_event(int type, int windows_vk, int native_code, int character, int glfw_mods);
+// Keyboard forwarding for typed CEF fields: one already-paired
+// renderer::CefKeyIntent (renderer::TextEventTranslator's output). `type`
+// is a renderer::CefKeyType value, cast to cef_key_event_type_t (the two
+// enums share the same four values 0-3 by construction). windows_vk is
+// CEF's windows_key_code (all platforms, ignored by CEF on macOS);
+// native_code is the platform key code (GLFW scancode, or 0 for an
+// unpaired char). `character`/`unmodified_character` are the same value --
+// the translator never produces a CHAR intent whose unmodified differs
+// from its character. glfw_mods are GLFW_MOD_* bits. No-op with no browser.
+void send_key_intent(int type, int windows_vk, int native_code,
+                      char16_t character, char16_t unmodified_character,
+                      int glfw_mods);
 
 // Run an edit command on the focused frame: 1 SelectAll, 2 Copy, 3 Paste,
 // 4 Cut, 5 Undo, 6 Redo (renderer::EditCommand's values). No-op with no

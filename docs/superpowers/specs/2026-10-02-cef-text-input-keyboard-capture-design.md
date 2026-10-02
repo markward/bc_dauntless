@@ -189,6 +189,62 @@ never acts on them as key events. Run them directly instead.
 The queue's capacity and drop-oldest policy, the char and editing-key events,
 `glfw_key_to_windows_vk`, and the pre-boot loop all stay as they are.
 
+### 2.7 Superseded 2026-10-02: `TextEventTranslator` (arrows moving twice, typed characters dropped)
+
+A live trace found CEF's macOS key translator
+(`CefBrowserPlatformDelegateNativeMac::TranslateWebKeyEvent`) treats
+`character == 0 && unmodified_character == 0` as `NSEventTypeFlagsChanged` and
+**ignores the `KEYEVENT` type entirely** — so sending an editing key's press
+*and* release with `character = 0` (as §2.3/§2.5 originally did, one
+`cef_send_key_event` call per queued event) made both arrive in Blink as a
+key-down. One Right-arrow tap moved the caret twice. Typed characters, sent as
+bare `CHAR` events with `native_key_code = 0` and no preceding key-down, are
+not what a real keyboard produces either — the first one after a handled
+key-down was silently dropped.
+
+This supersedes §2.3's `cef_send_key_event` and the "queue every editing key"
+half of §2.2/the original §3.0 queue description:
+
+- **The key callback now queues every key** (`window.cc`), not just the
+  editing-key subset `glfw_key_to_windows_vk` recognizes. The edit-command
+  branch (§2.5) still short-circuits first and unchanged.
+- **`renderer::TextEventTranslator`** (`text_input.h`/`.cc`) is a pure,
+  stateful class that turns one frame's drained queue into CEF's own
+  KEYDOWN+CHAR / KEYUP sequence, with a non-zero character on every event it
+  emits on Apple — mirroring CEF's reference macOS OSR client
+  (`tests/cefclient/browser/text_input_client_osr_mac.mm`), which sends one
+  `KEYEVENT_KEYDOWN` and then the same event as `KEYEVENT_CHAR` per press,
+  and a `KEYEVENT_KEYUP` with the same character fields on release. It
+  remembers, per held key, the character to replay on that key's eventual
+  KEYUP (`held_`); `reset()` forgets everything, for a capture boundary.
+- **`cef_lifecycle` gains `send_key_intent`** (replacing `send_key_event`),
+  taking one already-paired `renderer::CefKeyIntent`. `renderer::CefKeyType`'s
+  four values are defined to equal `cef_key_event_type_t`'s, so the type cast
+  is exact.
+- **The binding is now a batch:** `cef_send_text_events(events)` replaces
+  per-event `cef_send_key_event`. It walks one frame's whole drained list in
+  order, routes kind-2 (edit command) events to `ui_cef::edit_command`
+  directly, and feeds every kind-0/1 event through ONE process-wide,
+  host-owned `TextEventTranslator` — pairing depends on seeing a key and its
+  immediately-following char event in the same batch. `cef_reset_text_
+  translator()` is the new binding for `reset()`.
+- **`engine/ui/text_capture.py`** sends the whole frame's queue in one
+  `host_io.cef_send_text_events(events)` call instead of per-event sends, and
+  calls `host_io.cef_reset_text_translator()` on every capture-boundary
+  transition (focus gained, blur, forced release, and the native-reset path)
+  so a key held across the boundary cannot replay a stale KEYUP into a field
+  that never saw its KEYDOWN.
+- **Off-Apple is unverified** (no reference client to check against there):
+  the key-down type becomes `RawKeyDown` rather than `KeyDown` (CEF's own
+  Windows path sends `RAWKEYDOWN`), and the CHAR half is skipped whenever the
+  platform character is 0 (arrows/Home/End/Delete carry no character off-
+  Apple; `windows_key_code` carries the key instead there, and the character
+  ==0 flags-changed rule that motivates all of this is macOS-only).
+
+See `native/src/renderer/include/renderer/text_input.h`'s `TextEventTranslator`
+doc comment for the exact rule set, and `native/tests/renderer/text_input_test.cc`
+for the gtest coverage (`TextEventTranslator.*`).
+
 ## 3. The page: `text_capture.js`
 
 `native/assets/ui-cef/js/text_capture.js` (new), loaded once by `index.html`
@@ -396,11 +452,11 @@ value would edit a mount that the steppers and gizmo refuse to touch. A test in
 | Unit | Job |
 |---|---|
 | `native/src/renderer/{include/renderer/key_gate.h,key_gate.cc}` (new) | Pure gate and mask (§2.1) |
-| `native/src/renderer/window.{h,cc}` | Own the gate; `key_state` filtered; `set_key_capture` / `key_capture_active`; edit-command push in the key callback |
-| `native/src/renderer/{include/renderer/text_input.h,text_input.cc}` | `kTextEventEdit`, `EditCommand`, `edit_command_for` |
-| `native/src/ui_cef/` (`cef_client.{h,cc}`, `cef_lifecycle.cc`, public header) | Capture-reset handler on `OnLoadStart` + `OnRenderProcessTerminated`; `edit_command(cmd)` |
-| `native/src/host/host_bindings.cc` | Snapshot via `key_state`; `set_key_capture`, `key_capture_active`; kind 2 in `cef_send_key_event`; wire the reset handler |
-| `engine/host_io.py` | Wrappers and `_REQUIRED_BINDINGS` |
+| `native/src/renderer/window.{h,cc}` | Own the gate; `key_state` filtered; `set_key_capture` / `key_capture_active`; edit-command push in the key callback; queues EVERY key (§2.7), not just editing keys |
+| `native/src/renderer/{include/renderer/text_input.h,text_input.cc}` | `kTextEventEdit`, `EditCommand`, `edit_command_for`; `CefKeyType`, `CefKeyIntent`, `TextEventTranslator` (§2.7) |
+| `native/src/ui_cef/` (`cef_client.{h,cc}`, `cef_lifecycle.cc`, public header) | Capture-reset handler on `OnLoadStart` + `OnRenderProcessTerminated`; `edit_command(cmd)`; `send_key_intent` (§2.7, supersedes `send_key_event`) |
+| `native/src/host/host_bindings.cc` | Snapshot via `key_state`; `set_key_capture`, `key_capture_active`; `cef_send_text_events` batch binding + the process's one `TextEventTranslator`, `cef_reset_text_translator` (§2.7, supersedes per-event `cef_send_key_event`) |
+| `engine/host_io.py` | Wrappers and `_REQUIRED_BINDINGS`; `cef_send_text_events`/`cef_reset_text_translator` (§2.7) |
 | `native/assets/ui-cef/js/text_capture.js` (new), `index.html` | §3 |
 | `engine/ui/text_capture.py` (new) | `TextCaptureController` (§4.1-4.2) |
 | `engine/ui/panel_registry.py` | `find(name)` |
@@ -465,6 +521,22 @@ All of it runs under `scripts/check_tests.sh`.
    - malformed JSON, a bad index or a non-finite value ⇒ rejected;
    - `rotate_set` applies `v - accumulator`;
    - on a locked mount, all three are refused, as the `*_nudge` actions are.
+8. **gtest `TextEventTranslator`** (`native/tests/renderer/text_input_test.cc`,
+   §2.7), Apple-guarded where the expected character is platform-specific:
+   - an arrow tap (press then release across two `translate()` calls) emits
+     exactly `[KeyDown, Char]` then `[KeyUp]`, never a KEYUP with character 0;
+   - a printable key's press+char pairs into `[KeyDown, Char]`, with
+     `native_key_code` the key event's scancode, not 0; three presses of the
+     same key each produce their own pair and their own KEYUP;
+   - a REPEAT produces another `[KeyDown, Char]` pair; still one KEYUP at
+     release;
+   - a modifier alone (Shift) emits nothing and is not remembered;
+   - a char with no preceding key emits `[KeyDown, Char]` with
+     `native_key_code` 0 and no KEYUP;
+   - a release with nothing held emits nothing; `reset()` forgets a held key;
+   - Backspace/Enter/Escape carry their control characters;
+   - a kind-2 event is never translated (the caller routes it to
+     `ui_cef::edit_command` instead).
 
 ## 8. Live check (Mark)
 

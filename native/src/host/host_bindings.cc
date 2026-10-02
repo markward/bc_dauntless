@@ -533,6 +533,14 @@ const assets::Model* resolve_model(scenegraph::ModelHandle h) {
 // rising edges. Only keys that have been queried via key_pressed appear
 // here; lookup misses (key never queried) are treated as "previously up".
 std::unordered_map<int, bool> g_prev_key_state;
+// One translator for the whole process: the OSR browser is a singleton
+// (ui_cef's own statics), so there is exactly one key-capture stream to
+// pair. cef_send_text_events feeds every drained frame's events through it
+// in order; cef_reset_text_translator forgets held keys at a capture
+// boundary (engine/ui/text_capture.py calls it on both focus gain and
+// release) so a key still down across that boundary can never emit an
+// orphaned KEYUP into a page that never saw its KEYDOWN.
+renderer::TextEventTranslator g_text_translator;
 // Mouse-button rising/falling-edge detection. Mirrors g_prev_key_state.
 std::unordered_map<int, bool> g_prev_mouse_state;
 std::unique_ptr<renderer::Pipeline> g_pipeline;
@@ -6152,9 +6160,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
               return out;
           },
-          "Typed characters and editing keys since the last call, oldest first, "
+          "Typed characters and key events since the last call, oldest first, "
           "as (kind, code, scancode, action, mods); kind 0 = char (code = "
-          "codepoint), 1 = key (code = GLFW key).");
+          "codepoint), 1 = key (code = GLFW key, every key not just editing "
+          "keys), 2 = edit command.");
 
     m.def("request_relaunch",
           [](std::vector<std::string> extra_args) {
@@ -6421,30 +6430,46 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Forward a mouse-wheel event to the CEF overlay. "
           "delta_y: positive scrolls up.");
 
-    m.def("cef_send_key_event",
-          [](int kind, int code, int scancode, int action, int mods) {
-              if (kind == renderer::kTextEventEdit) {
-                  static_assert(static_cast<int>(renderer::EditCommand::Redo) == 6,
-                                "ui_cef::edit_command's numbering");
-                  dauntless::ui_cef::edit_command(code);
-                  return;
+    m.def("cef_send_text_events",
+          [](const std::vector<std::tuple<int, int, int, int, int>>& events) {
+              static_assert(static_cast<int>(renderer::EditCommand::Redo) == 6,
+                            "ui_cef::edit_command's numbering");
+              // Two passes over the same drained batch, in its original
+              // order: edit commands (kind 2) run on the focused frame
+              // directly -- they are never keys CEF sees, so they do not
+              // go through the translator -- and every other event feeds
+              // the ONE host-owned TextEventTranslator, whose pairing of a
+              // key with its immediately-following char depends on seeing
+              // the whole batch in order.
+              std::vector<renderer::TextEvent> key_and_char_events;
+              key_and_char_events.reserve(events.size());
+              for (const auto& [kind, code, scancode, action, mods] : events) {
+                  if (kind == renderer::kTextEventEdit) {
+                      dauntless::ui_cef::edit_command(code);
+                      continue;
+                  }
+                  key_and_char_events.push_back({kind, code, scancode, action, mods});
               }
-              if (kind == renderer::kTextEventChar) {
-                  dauntless::ui_cef::send_key_event(2, 0, 0, code, mods);
-                  return;
-              }
-              const int vk = renderer::glfw_key_to_windows_vk(code);
-              if (vk == 0) return;
-              const bool up = action == GLFW_RELEASE;
-              dauntless::ui_cef::send_key_event(up ? 1 : 0, vk, scancode, 0, mods);
-              // Enter also needs its CHAR for the DOM to commit an <input>.
-              if (!up && code == GLFW_KEY_ENTER) {
-                  dauntless::ui_cef::send_key_event(2, vk, scancode, '\r', mods);
+              for (const auto& intent : g_text_translator.translate(key_and_char_events)) {
+                  dauntless::ui_cef::send_key_intent(
+                      static_cast<int>(intent.type), intent.windows_key_code,
+                      intent.native_key_code, intent.character,
+                      intent.unmodified_character, intent.glfw_mods);
               }
           },
-          py::arg("kind"), py::arg("code"), py::arg("scancode"), py::arg("action"), py::arg("mods"),
-          "Forward one drain_text_events() tuple to the CEF overlay as key "
-          "event(s). No-op with no browser.");
+          py::arg("events"),
+          "Forward one drain_text_events() batch to the CEF overlay. Kind 2 "
+          "(edit command) events run directly; every kind 0/1 event feeds "
+          "the process's single TextEventTranslator in order, whose output "
+          "(real KEYDOWN+CHAR / KEYUP pairs) is sent as CEF key events. "
+          "No-op with no browser.");
+
+    m.def("cef_reset_text_translator",
+          []() { g_text_translator.reset(); },
+          "Forget every key TextEventTranslator currently believes is "
+          "held. Call at a key-capture boundary (gained or released) so a "
+          "key still down across it cannot emit an orphaned KEYUP into a "
+          "page that never saw its KEYDOWN.");
 
     m.def("cef_set_event_handler",
           [](py::function callback) {
@@ -6508,7 +6533,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_send_mouse_move",  [](int, int) {});
     m.def("cef_send_mouse_click", [](int, int, int, bool) {});
     m.def("cef_send_mouse_wheel", [](int, int, int) {});
-    m.def("cef_send_key_event",   [](int, int, int, int, int) {});
+    m.def("cef_send_text_events",
+          [](const std::vector<std::tuple<int, int, int, int, int>>&) {});
+    m.def("cef_reset_text_translator", []() {});
     m.def("cef_set_event_handler",[](py::function) {});
     m.def("cef_set_load_end_handler", [](py::function) {});
 #endif

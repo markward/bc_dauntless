@@ -9082,9 +9082,11 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
     pins it, and the comments below carry the reasons): the scene pass is
     off, the page-load handler re-invalidates the panel so its first payload
     lands, and mouse moves/edges are forwarded because run()'s own
-    forwarding only exists inside the game loop. Added here: typed text and
-    editing keys are drained from the window every frame and forwarded to
-    CEF, and Escape is also offered to the panel (handle_key_esc).
+    forwarding only exists inside the game loop. Added here: every key and
+    typed character is drained from the window each frame and forwarded to
+    CEF in one batch (cef_send_text_events -- native pairs them into real
+    KEYDOWN+CHAR/KEYUP), and Escape is also offered to the panel
+    (handle_key_esc).
     """
     try:
         import _dauntless_host as _h
@@ -9117,7 +9119,7 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
     _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
     _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
     _drain_text = getattr(_h, "drain_text_events", None) if _h else None
-    _send_key = getattr(_h, "cef_send_key_event", None) if _h else None
+    _send_text_events = getattr(_h, "cef_send_text_events", None) if _h else None
     _esc_key = getattr(getattr(_h, "keys", None), "KEY_ESCAPE", 256) if _h else 256
 
     r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
@@ -9146,9 +9148,11 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
                         _cef_send_mouse_click(_mx, _my, 0, True)
                     if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                         _cef_send_mouse_click(_mx, _my, 0, False)
-            if _drain_text is not None and _send_key is not None:
-                for ev in _drain_text():
-                    _send_key(*ev)
+            if _drain_text is not None and _send_text_events is not None:
+                events = _drain_text()
+                if events:
+                    _send_text_events(events)
+                for ev in events:
                     # (kind, code, scancode, action, mods): an Escape press.
                     if ev[0] == 1 and ev[1] == _esc_key and ev[3] == 1 \
                             and hasattr(panel, "handle_key_esc"):

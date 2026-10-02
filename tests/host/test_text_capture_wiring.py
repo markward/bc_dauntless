@@ -52,6 +52,7 @@ class _GatedHost:
         self._prev = {}
         self.queue = []
         self.sent = []
+        self.translator_resets = 0
 
     # KeyGate::report
     def key_state(self, k):
@@ -98,8 +99,11 @@ class _GatedHost:
         out, self.queue = self.queue, []
         return out
 
-    def cef_send_key_event(self, *ev):
-        self.sent.append(ev)
+    def cef_send_text_events(self, events):
+        self.sent.extend(events)
+
+    def cef_reset_text_translator(self):
+        self.translator_resets += 1
 
 
 class _Owner(Panel):

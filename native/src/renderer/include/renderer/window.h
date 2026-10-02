@@ -108,8 +108,9 @@ public:
     /// headless capture the opposite of the truth.
     int swap_interval() const noexcept { return swap_interval_; }
 
-    /// Typed characters and editing keys since the last call (oldest first),
-    /// for forwarding to a CEF text field. Filled by GLFW callbacks during
+    /// Typed characters and every key press/repeat/release since the last
+    /// call (oldest first), for forwarding to a CEF text field via
+    /// renderer::TextEventTranslator. Filled by GLFW callbacks during
     /// poll_events(); bounded (see TextEventQueue).
     std::vector<TextEvent> drain_text_events();
 

@@ -1,19 +1,23 @@
 // native/src/renderer/include/renderer/text_input.h
 //
 // Typed text for CEF fields (Mods screen titles, class names). GLFW char and
-// key callbacks push here; the host drains once per frame and forwards to
+// key callbacks push here; the host drains once per frame, runs the queue
+// through TextEventTranslator, and forwards the result to
 // CefBrowserHost::SendKeyEvent. Game key bindings never read this -- they
 // poll glfwGetKey via Window::key_state. kind 2 carries edit commands.
 #pragma once
 
 #include <cstddef>
 #include <deque>
+#include <unordered_map>
 #include <vector>
 
 namespace renderer {
 
 constexpr int kTextEventChar = 0;   // code = Unicode codepoint
-constexpr int kTextEventKey = 1;    // code = GLFW key; only editing keys (glfw_key_to_windows_vk != 0)
+constexpr int kTextEventKey = 1;    // code = GLFW key; every key, not just editing keys --
+                                     // TextEventTranslator needs every PRESS/RELEASE to pair
+                                     // keys with their char and to know when to emit a KEYUP
 constexpr int kTextEventEdit = 2;   // code = EditCommand (Cmd/Ctrl + A/C/V/X/Z/Y)
 
 /// A clipboard/undo shortcut, run as a CefFrame command rather than a key
@@ -50,5 +54,69 @@ int glfw_key_to_windows_vk(int glfw_key) noexcept;
 /// glfwGetKeyName) with GLFW `mods`, or None. Primary modifier: SUPER on
 /// macOS, CONTROL elsewhere; any other of SUPER/CONTROL/ALT also held => None.
 EditCommand edit_command_for(char letter, int mods) noexcept;
+
+// ── TextEventTranslator ─────────────────────────────────────────────────
+//
+// Turns the raw per-frame TextEvent queue into the KEYDOWN+CHAR / KEYUP
+// sequence a real keyboard produces, with a non-zero character on every
+// event. That is load-bearing on macOS: CEF's native key translator
+// (CefBrowserPlatformDelegateNativeMac::TranslateWebKeyEvent) treats
+// character == 0 && unmodified_character == 0 as NSEventTypeFlagsChanged
+// and ignores the KEYEVENT type entirely -- so sending editing keys with
+// character 0 on both press AND release made both arrive in Blink as a
+// key-down (the live bug: one Right-arrow tap moved the caret twice).
+//
+// cef_key_event_type_t values, named here so text_input.{h,cc} does not
+// depend on the CEF SDK headers (only ui_cef does).
+enum class CefKeyType : int { RawKeyDown = 0, KeyDown = 1, KeyUp = 2, Char = 3 };
+
+struct CefKeyIntent {
+    CefKeyType type;
+    int windows_key_code;       // CEF's windows_key_code; ignored by CEF on macOS
+    int native_key_code;        // the queued scancode, or 0 for an unpaired char
+    char16_t character;
+    char16_t unmodified_character;
+    int glfw_mods;
+};
+
+/// Pure, stateful translator: one per CEF browser (host_bindings.cc keeps a
+/// single file-static instance). `translate` turns one frame's drained
+/// TextEvents, in order, into the CefKeyIntent sequence to send; `reset`
+/// forgets every key the translator currently believes is held, so a key
+/// still down across a capture boundary cannot emit an orphaned KEYUP into
+/// a page that never saw its KEYDOWN.
+///
+/// Rules (see docs/superpowers/specs/2026-10-02-cef-text-input-keyboard-
+/// capture-design.md §2.5/§6 for the full writeup):
+///   - a PRESS/REPEAT immediately followed by its char event pairs into
+///     KeyDown+Char and remembers the character for the matching KEYUP;
+///   - a PRESS/REPEAT of a key with no following char but a platform
+///     control character (arrows, Home/End/Delete, Backspace, Enter/KP
+///     Enter, Tab, Escape) emits that KeyDown(+Char on Apple; Apple's fn()
+///     table is never 0), and remembers it too;
+///   - a PRESS/REPEAT with neither (Shift alone, F-keys, a letter whose
+///     char Cocoa ate) emits nothing and is not remembered;
+///   - a RELEASE emits a KEYUP with the remembered character only if one
+///     is remembered -- never a KEYUP with character 0, which macOS would
+///     itself misread as a key-down;
+///   - a bare char with no preceding key (IME/compose) emits KeyDown+Char
+///     with native_key_code 0 and is never remembered (so it has no KEYUP);
+///   - kind-2 (edit command) events are not translated -- the caller routes
+///     those to ui_cef::edit_command directly.
+///
+/// Off-Apple (unverified -- no reference client to check against): the
+/// key-down type is RawKeyDown rather than KeyDown (CEF's own Windows path
+/// sends RAWKEYDOWN), and the CHAR half is skipped whenever the platform
+/// character is 0 (arrows/Home/End/Delete carry no character off-Apple;
+/// windows_key_code carries the key instead, and CEF's char==0 flags-
+/// changed rule is macOS-only so a 0-character KEYUP is harmless there).
+class TextEventTranslator {
+public:
+    std::vector<CefKeyIntent> translate(const std::vector<TextEvent>& events);
+    void reset() noexcept;
+
+private:
+    std::unordered_map<int, char16_t> held_;  // GLFW key -> character to replay on KEYUP
+};
 
 }  // namespace renderer
