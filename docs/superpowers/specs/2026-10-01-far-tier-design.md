@@ -134,6 +134,8 @@ below carry the corrected value in place; this is the index.
   sending it empty (§4 Python integration).
 - **R14 — `haze_gain` default.** Corrected from the originally drafted
   **143** to **270** (§2 Haze): the derivation now uses half the band chord.
+- **Tile-field haze (2026-10-02).** Every `AsteroidField` gets a view-space
+  sphere haze source, `tile_haze_gain` 26,860 (§2 Haze, "Tile-field haze").
 - **Measured, not designed.** Bench mean **0.015 ms** static / **0.10 ms** at
   100,000 GU/s; the Vesuvi band (a = 0.5) enumerates only **~220** speck-tier
   minors per camera — the haze carries the band, not speck density (§5
@@ -302,6 +304,33 @@ the roadmap's threshold.
   full chord and gave 143.)
 - The haze ignores explicit regions: real rocks below `p_min` are culled, so
   the haze still stands in for them.
+
+**Tile-field haze (added 2026-10-02).** From outside, a BC tile field (Beol 4:
+405 minors of 0.05–0.7 GU in a 1,000 GU sphere) showed ~20–30 sub-pixel
+specks, so every `AsteroidField` in the viewed set now gets a **sphere**
+haze source as well.
+- `DiscSource` gains `shape` (Disc | Sphere), `procedural` (false: `build`
+  generates no rocks — the field already has real minors), `view_space`
+  (centre in the viewed set's view space, active whenever pushed, frame key
+  or not, so unmapped sets like Multi7 haze too; `refresh_active` puts it in
+  system coordinates as centre + anchor), `sphere_radius_gu`,
+  `sphere_edge_frac` and `gain_scale` (× `haze_gain`). A disc is unchanged.
+- Sphere density: a = 1 within R(1 − edge_frac), a linear ramp to 0 at R.
+  The interval is the ray's chord through the sphere, clipped to [0, scene
+  depth]; the march (midpoint, `r_cut`, accumulation) is the disc's.
+  `haze_column` and `far_haze.frag` stay twins, pinned by
+  `FarPassGLTest.SphereHazeShaderMatchesTheCpuReference`.
+- Population: one minor population built FROM `minors.tile_spec` (the
+  field's own tile cloud): `density_at_1` = count / (4/3·π·R³), its r_min,
+  r_max and exponent, silicate (`density.tile_field_source`).
+- **Gain.** Python dial `tile_haze_gain` (sent as `gain_scale = tile_haze_gain
+  / haze_gain`), **default 26,860**, derived by
+  `FarHazeSphere.DefaultTileGainHitsTheStatedTarget`: from Beol 4's
+  "Player Start" (−593.7, 840.9, −269.3) looking at the field centre
+  (797.7, 977.2, 1268.9), k = 1713, p_min 0.25, edge 0.2, the CPU reference
+  measures τ = 6.05×10⁻⁶ per unit gain; alpha = 1 − e^(−gain·τ) exactly, so
+  gain = −ln 0.85 / τ = 26,862 → 26,860, alpha **0.150**. (At the belt's 270 it
+  would be ~0.0016.) `tile_haze_edge_frac` 0.2.
 
 **Frames.**
 - Python pushes the view→system offset (the viewed frame's `anchor_gu`) once a
