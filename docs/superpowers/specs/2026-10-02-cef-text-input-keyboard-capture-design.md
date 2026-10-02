@@ -114,8 +114,15 @@ Consequences, which the gtests pin down:
   and any callers that relied on it.
 - New `Window::set_key_capture(bool on)` and `Window::key_capture_active()`:
   - when `on`, it calls `gate_.capture()`;
-  - when off, it scans `GLFW_KEY_SPACE..GLFW_KEY_LAST` with `glfwGetKey`,
-    collects the keys that are down, and calls `gate_.release(down)`.
+  - when off, it reads `glfwGetKey` for every key `key_state` has ever been
+    asked about (a `polled_keys_` set that `key_state` records), collects the
+    ones that are down, and calls `gate_.release(down)`.
+    - Only polled keys matter, because the game reads keys only through
+      `key_state`.
+    - A key first polled after release cannot produce an edge, since a first
+      `key_pressed` query records `prev = now`.
+    - Scanning the full `GLFW_KEY_SPACE..GLFW_KEY_LAST` range instead would
+      hit the gaps in GLFW's key codes, which raise `GLFW_INVALID_ENUM`.
 - **`Window` becomes the only file in `native/src` that calls `glfwGetKey`,**
   and only inside `key_state` and `set_key_capture`.
 - The snapshot loop at `host_bindings.cc:1851` becomes
@@ -196,8 +203,14 @@ keys. All other logic stays in Python.
 Checkboxes, ranges and buttons never capture.
 
 **The owner** is the nearest ancestor carrying `data-panel`. Its value is the
-panel's registry `name`. An editable element with no owner logs
-`console.warn` and does not capture.
+panel's registry `name`.
+
+- **An untagged field** sends `kbd/focus:` with an empty owner. In game, Python
+  refuses it with a logged warning and pushes a blur, so a panel missing its
+  tag fails visibly (the field won't hold focus) rather than leaking keys.
+- **Pre-boot** is unaffected: its event handler routes only its own panel's
+  prefix and drops `kbd/` events. The Mods screen's untagged fields still get
+  the Esc and Enter behaviour below, which applies to every editable element.
 
 **Document listeners (capture phase):**
 
@@ -238,7 +251,9 @@ reference, `owner: Optional[str]` and `_blur_pending: bool`.
   - if `registry.find(name)` exists and is open, set `owner = name` and call
     `host_io.set_key_capture(True)`;
   - otherwise, refuse: leave capture off and set `_blur_pending`, which also
-    clears a field focused on a panel that is closing.
+    clears a field focused on a panel that is closing. An empty or unknown
+    name also logs a warning naming it, since that means a panel is missing
+    its `data-panel` tag.
 - **`blur`:** `owner = None` and `host_io.set_key_capture(False)`. Idempotent.
   It does not set `_blur_pending`; the page has already blurred.
 
@@ -321,12 +336,24 @@ Capture is automatic. No consumer calls `set_key_capture`.
   - It is pre-filled with the value at full precision, focused, and its text
     selected.
 - **Commit:** Enter, ✓, or clicking or tabbing elsewhere in the page.
-  - The value is parsed with `Number(...)`.
-  - If the result is not finite, the row reverts and nothing is sent.
+  - The text is trimmed and a decimal comma becomes a point (`1,5` → `1.5`).
+    It is then parsed with `Number(...)`.
+  - If the text is empty, or the result is not finite, the row reverts and
+    nothing is sent. Empty must be checked explicitly: `Number('')` is `0`, so
+    a cleared field would otherwise move the target to zero.
   - Otherwise the event in §5.2 is sent and the row swaps back. The new value
     arrives with Python's refresh.
 - **Abandon:** Esc, ✕, or a forced release (§4.1). The row swaps back showing
   the old value, and nothing is sent.
+- **How the row tells them apart.** The row listens for the input's `blur`
+  rather than `change`, because it must swap back on *every* exit. On blur:
+  - if the text equals the pre-filled text, it swaps back and sends nothing;
+  - otherwise it parses and commits.
+
+  Esc, ✕ and a forced release all restore the pre-filled text before
+  blurring, so they land in the first branch. That means no cancel flag is
+  needed, which matters because `text_capture.js`'s capture-phase Esc handler
+  stops propagation, so the row never sees the Esc keydown.
 - **✕ and ✓** call `preventDefault()` on `mousedown`, so pressing them does
   not blur the input before their `click` runs. Otherwise blur would commit
   before ✕ could abandon. Their clicks call
