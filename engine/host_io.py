@@ -58,6 +58,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_instance_node_transform",
     "clear_instance_node_overrides",
     "set_instance_node_hidden", "instance_model",
+    "drain_text_events", "cef_send_key_event", "request_relaunch",
     # Not a function: the InstanceId type itself. set_instance_transform_slot
     # isinstance-checks against it to tell a real render instance from a test
     # double's plain int, so a build without it is just as broken as one
@@ -215,6 +216,24 @@ def cursor_pos() -> Optional[Tuple[float, float]]:
     if _h is None:
         return None
     return _h.cursor_pos()
+
+
+def drain_text_events() -> List[Tuple[int, int, int, int, int]]:
+    """Typed characters and editing keys since the last call, oldest first, as
+    (kind, code, scancode, action, mods); kind 0 = char (code = codepoint),
+    1 = key (code = GLFW key). Empty when headless."""
+    if _h is None:
+        return []
+    return list(_h.drain_text_events())
+
+
+def cef_send_key_event(kind: int, code: int, scancode: int, action: int,
+                        mods: int) -> None:
+    """Forward one drain_text_events() tuple to the CEF overlay. No-op
+    headless or with no browser alive."""
+    if _h is None:
+        return
+    _h.cef_send_key_event(kind, code, scancode, action, mods)
 
 
 # ── Per-frame VFX descriptor lists ───────────────────────────────────────────
@@ -759,3 +778,13 @@ def clear_instance_node_overrides(iid) -> bool:
     if not isinstance(iid, _h.InstanceId):
         return False
     return bool(_h.clear_instance_node_overrides(iid))
+
+
+def request_relaunch(extra_args: List[str]) -> None:
+    """Ask host_main to re-execute the game after a clean shutdown, with the
+    original arguments plus `extra_args` (Quit and Manage Mods). Last call
+    wins. Only the dauntless binary honours the request after it shuts down;
+    headless / the pytest .so is a no-op."""
+    if _h is None:
+        return
+    _h.request_relaunch(list(extra_args))

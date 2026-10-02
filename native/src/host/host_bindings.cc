@@ -17,10 +17,12 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/transform_store.h"
+#include "platform/relaunch.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <renderer/window.h>
+#include <renderer/text_input.h>
 #include <renderer/pipeline.h>
 #include <renderer/bone_palette.h>
 #include <renderer/animation_update.h>
@@ -6121,6 +6123,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Return the accumulated mouse-wheel Y delta since the last call "
           "and reset the accumulator. Positive = scroll up.");
 
+    m.def("drain_text_events",
+          []() {
+              if (!g_window) {
+                  throw std::runtime_error("drain_text_events: init must be called first");
+              }
+              py::list out;
+              for (const auto& e : g_window->drain_text_events()) {
+                  out.append(py::make_tuple(e.kind, e.code, e.scancode, e.action, e.mods));
+              }
+              return out;
+          },
+          "Typed characters and editing keys since the last call, oldest first, "
+          "as (kind, code, scancode, action, mods); kind 0 = char (code = "
+          "codepoint), 1 = key (code = GLFW key).");
+
+    m.def("request_relaunch",
+          [](std::vector<std::string> extra_args) {
+              dauntless::platform::set_relaunch_request(std::move(extra_args));
+          },
+          py::arg("extra_args"),
+          "Ask host_main to re-execute the game after a clean shutdown, with the "
+          "original arguments plus `extra_args` (Quit and Manage Mods). Last call "
+          "wins. Only the dauntless binary honours it; the pytest .so just stores it.");
+
     m.def("consume_mouse_delta",
           []() {
               if (!g_window) {
@@ -6370,6 +6396,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Forward a mouse-wheel event to the CEF overlay. "
           "delta_y: positive scrolls up.");
 
+    m.def("cef_send_key_event",
+          [](int kind, int code, int scancode, int action, int mods) {
+              if (kind == renderer::kTextEventChar) {
+                  dauntless::ui_cef::send_key_event(2, 0, 0, code, mods);
+                  return;
+              }
+              const int vk = renderer::glfw_key_to_windows_vk(code);
+              if (vk == 0) return;
+              const bool up = action == GLFW_RELEASE;
+              dauntless::ui_cef::send_key_event(up ? 1 : 0, vk, scancode, 0, mods);
+              // Enter also needs its CHAR for the DOM to commit an <input>.
+              if (!up && code == GLFW_KEY_ENTER) {
+                  dauntless::ui_cef::send_key_event(2, vk, scancode, '\r', mods);
+              }
+          },
+          py::arg("kind"), py::arg("code"), py::arg("scancode"), py::arg("action"), py::arg("mods"),
+          "Forward one drain_text_events() tuple to the CEF overlay as key "
+          "event(s). No-op with no browser.");
+
     m.def("cef_set_event_handler",
           [](py::function callback) {
               // pybind11 manages the function's lifetime; ensure the
@@ -6432,6 +6477,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_send_mouse_move",  [](int, int) {});
     m.def("cef_send_mouse_click", [](int, int, int, bool) {});
     m.def("cef_send_mouse_wheel", [](int, int, int) {});
+    m.def("cef_send_key_event",   [](int, int, int, int, int) {});
     m.def("cef_set_event_handler",[](py::function) {});
     m.def("cef_set_load_end_handler", [](py::function) {});
 #endif

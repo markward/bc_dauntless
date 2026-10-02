@@ -44,6 +44,9 @@ class FirstRunPanel(Panel):
     store without touching the developer's real settings.json.
     """
 
+    # Pushed by host_loop._run_preboot_panel when the screen ends.
+    teardown_script = "setFirstRun(null);"
+
     def __init__(self, resolution, picker: Optional[Callable[[str, str], Optional[str]]] = None,
                  resolver: Optional[Callable[[Dict[str, str]], object]] = None):
         super().__init__()

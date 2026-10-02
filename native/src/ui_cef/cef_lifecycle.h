@@ -77,6 +77,12 @@ void send_mouse_move(int x, int y);
 void send_mouse_click(int x, int y, int button, bool is_down);
 void send_mouse_wheel(int x, int y, int delta_y);
 
+// Keyboard forwarding for typed CEF fields. type: 0 = RAWKEYDOWN,
+// 1 = KEYUP, 2 = CHAR (character set). windows_vk is CEF's
+// windows_key_code (all platforms); native_code is the platform key code
+// (GLFW scancode). glfw_mods are GLFW_MOD_* bits. No-op with no browser.
+void send_key_event(int type, int windows_vk, int native_code, int character, int glfw_mods);
+
 // JS→C++ event channel. The handler is invoked with the event name
 // when JS navigates to dauntless://event/<name>. The intercept lives
 // in CefRequestHandler::OnBeforeBrowse — fire-and-forget, no return

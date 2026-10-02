@@ -27,6 +27,14 @@ This sub-project decides:
 - A mod ship with no metadata comes out as *incomplete*, naming exactly which
   fields are missing.
 
+> **Amended by sub-project 3** (`2026-10-01-mod-ships-screen-design.md` §2):
+> - Ships group into classes by a free-text `variant_of` class name, with a
+>   `class_default`.
+> - `variants[0]` may be name-only.
+> - `Variant` gains `playable`.
+> - The API gains a per-ship level: `ShipRecord`, `ships()` and
+>   `incomplete_ships()`.
+
 ## Decisions taken in the brainstorm (2026-10-01)
 
 | # | Question | Decision |

@@ -391,6 +391,25 @@ void send_mouse_wheel(int x, int y, int delta_y) {
     host->SendMouseWheelEvent(ev, /*deltaX=*/0, /*deltaY=*/delta_y);
 }
 
+void send_key_event(int type, int windows_vk, int native_code, int character, int glfw_mods) {
+    if (!g_client || !g_client->browser()) return;
+    auto host = g_client->browser()->GetHost();
+    if (!host) return;
+    CefKeyEvent ev;
+    ev.type = type == 2 ? KEYEVENT_CHAR : (type == 1 ? KEYEVENT_KEYUP : KEYEVENT_RAWKEYDOWN);
+    ev.windows_key_code = windows_vk;
+    ev.native_key_code = native_code;
+    ev.character = static_cast<char16_t>(character);
+    ev.unmodified_character = static_cast<char16_t>(character);
+    uint32_t m = 0;
+    if (glfw_mods & 0x1) m |= EVENTFLAG_SHIFT_DOWN;    // GLFW_MOD_SHIFT
+    if (glfw_mods & 0x2) m |= EVENTFLAG_CONTROL_DOWN;  // GLFW_MOD_CONTROL
+    if (glfw_mods & 0x4) m |= EVENTFLAG_ALT_DOWN;      // GLFW_MOD_ALT
+    if (glfw_mods & 0x8) m |= EVENTFLAG_COMMAND_DOWN;  // GLFW_MOD_SUPER
+    ev.modifiers = m;
+    host->SendKeyEvent(ev);
+}
+
 void set_event_handler(std::function<void(const std::string&)> handler) {
     if (!g_client) return;
     g_client->set_event_handler(std::move(handler));

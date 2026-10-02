@@ -75,6 +75,19 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
         }
     });
 
+    glfwSetCharCallback(handle_, [](GLFWwindow* w, unsigned int codepoint) {
+        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
+            self->text_events_.push({kTextEventChar, static_cast<int>(codepoint), 0, GLFW_PRESS, 0});
+        }
+    });
+
+    glfwSetKeyCallback(handle_, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
+        if (glfw_key_to_windows_vk(key) == 0) return;   // editing keys only
+        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
+            self->text_events_.push({kTextEventKey, key, scancode, action, mods});
+        }
+    });
+
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
         glfwDestroyWindow(handle_);
         handle_ = nullptr;
@@ -116,7 +129,8 @@ Window::Window(Window&& other) noexcept
       last_cursor_x_(other.last_cursor_x_),
       last_cursor_y_(other.last_cursor_y_),
       cursor_seeded_(other.cursor_seeded_),
-      swap_interval_(other.swap_interval_) {
+      swap_interval_(other.swap_interval_),
+      text_events_(std::move(other.text_events_)) {
     other.handle_ = nullptr;
     other.crosshair_cursor_ = nullptr;
     other.scroll_y_accum_ = 0.0;
@@ -145,6 +159,7 @@ Window& Window::operator=(Window&& other) noexcept {
         last_cursor_y_  = other.last_cursor_y_;
         cursor_seeded_  = other.cursor_seeded_;
         swap_interval_  = other.swap_interval_;
+        text_events_    = std::move(other.text_events_);
         other.handle_ = nullptr;
         other.scroll_y_accum_ = 0.0;
         other.mouse_dx_accum_ = 0.0;
@@ -195,6 +210,10 @@ double Window::consume_scroll_y() noexcept {
 
 void Window::add_scroll_y(double dy) noexcept {
     scroll_y_accum_ += dy;
+}
+
+std::vector<TextEvent> Window::drain_text_events() {
+    return text_events_.drain();
 }
 
 void Window::cursor_pos(double* out_x, double* out_y) const noexcept {
