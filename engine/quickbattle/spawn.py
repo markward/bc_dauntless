@@ -267,11 +267,10 @@ def generate_ships(qb, plan) -> None:
     try:
         # Seed radii before placement reads GetRadius(): after ReplaceTexture,
         # so a registry-keyed model load matches the one realisation makes.
-        # The player's identity goes on first for the same reason (the
-        # reconcile block's has_replacements guard then leaves it alone).
-        from engine.appc import registry_texture
-        if not registry_texture.has_replacements(player):
-            apply_player_identity(player)
+        # The player's identity goes on first for the same reason; it
+        # overrides the "default NCC" CreatePlayerShip queued (last write wins
+        # per slot) and is idempotent with the reconcile block's repeat.
+        apply_player_identity(player, plan=plan)
         _seed_radius(player)
         for _order, ship in created:
             _seed_radius(ship)
@@ -345,13 +344,22 @@ def install_generate_ships_hook(qb) -> bool:
     return True
 
 
-def apply_player_identity(ship) -> bool:
+def apply_player_identity(ship, plan=None) -> bool:
     """Registry + display name for a freshly created player (called from
     host_loop's QuickBattle reconcile block, and by generate_ships before it
-    seeds radii). No plan -> BC's class default."""
+    seeds radii). Idempotent; overrides the "default NCC" BC's
+    MissionLib.CreatePlayerShip queues on every Federation player.
+
+    `plan` None -> `current_plan()`. No plan, or a live player whose class
+    (its `ships.<Leaf>` script) is not the plan's player ship -> BC's class
+    default, never another ship's registry and name."""
     from engine.appc import registry_texture
-    plan = current_plan()
     if plan is None:
+        plan = current_plan()
+    if plan is None:
+        return registry_texture.apply_class_default(ship)
+    cls = registry_texture._class_of(ship)
+    if cls is None or cls.lower() != str(plan.player.ship_file).lower():
         return registry_texture.apply_class_default(ship)
     try:
         import App

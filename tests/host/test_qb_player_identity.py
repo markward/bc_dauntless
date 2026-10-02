@@ -52,7 +52,15 @@ def test_player_keeps_ship_and_name_through_end_combat(qb):
     QB.EndSimulation()                                   # End Combat
     player = App.Game_GetCurrentGame().GetPlayer()
     assert QB.g_sPlayerType == "Ambassador"              # no revert
-    assert spawn.apply_player_identity(player)
+    # BC's MissionLib.CreatePlayerShip has already queued the class's "default
+    # NCC" (Ambassador -> Zhukov) and named the ship "Player": the identity
+    # must override both, not be skipped because a registry is queued.
+    assert not any(p.endswith("Excalibur.tga")
+                   for p in _new_paths(registry_texture.replacements_for(player)))
+    # Production path: the tick's runtime reconcile applies the identity to a
+    # new, not-yet-realised QuickBattle player just before realising it.
+    hl._reconcile_runtime_instances(hl.MissionSession(mission_name="QuickBattle"),
+                                    controller.renderer)
     reps = registry_texture.replacements_for(player)
     assert all(old == registry_texture.REGISTRY_OLD_NAME for old, _new in reps)
     assert any(p.endswith("Excalibur.tga") for p in _new_paths(reps))
@@ -141,3 +149,34 @@ def test_radius_seeder_reuses_the_realisation_model_handle(qb, monkeypatch):
     realised = calls[len(seeded):]
     assert realised
     assert set(seeded) <= set(realised)
+
+
+def test_identity_falls_back_when_live_player_class_differs_from_plan(qb):
+    """A live player whose class is not the plan's player ship (e.g. the boot
+    Galaxy while the plan names an Ambassador) must not be stamped with the
+    plan's registry or name: BC's class default applies instead."""
+    import App
+    from engine.appc import registry_texture
+    from engine.quickbattle import spawn
+    plan = _scenario_with_player("Ambassador", "USS Excalibur")
+    spawn.set_provider(lambda: plan)
+    player = App.Game_GetCurrentGame().GetPlayer()
+    assert registry_texture._class_of(player) == "Galaxy"
+    registry_texture.clear_for(player)
+    spawn.apply_player_identity(player)
+    paths = _new_paths(registry_texture.replacements_for(player))
+    assert any(p.endswith("Dauntless.tga") for p in paths)
+    assert not any(p.endswith("Excalibur.tga") for p in paths)
+    assert player.GetDisplayName() != "USS Excalibur"
+
+
+def test_identity_uses_the_plan_it_is_given(qb):
+    import App
+    from engine.appc import registry_texture
+    from engine.quickbattle import spawn
+    spawn.set_provider(None)
+    plan = _scenario_with_player("Galaxy", None)
+    player = App.Game_GetCurrentGame().GetPlayer()
+    registry_texture.clear_for(player)
+    assert spawn.apply_player_identity(player, plan=plan)
+    assert registry_texture.has_replacements(player)

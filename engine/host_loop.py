@@ -6325,17 +6325,17 @@ def _reconcile_runtime_instances(session, renderer, *,
     # RecreatePlayer destroy+recreate), so the rendered player often isn't the
     # one load_quickbattle saw. Apply the setup screen's named player ship
     # (registry + display name; BC's Federation "default NCC" when there is no
-    # plan) just before the ADD loop realizes it, so its hull reads a name
-    # rather than the stock Enterprise. Guarded to a QB session + a
-    # not-yet-realized player with no registry already queued, so it runs once
-    # per player and never overrides a scripted swap.
+    # plan) just before the ADD loop realizes it, so its hull reads the chosen
+    # name. NOT guarded on has_replacements: BC's MissionLib.CreatePlayerShip
+    # itself queues the class's default NCC on every Federation player it
+    # (re)creates, so that guard skipped every Fed player and the named ship
+    # never applied. apply_player_identity is idempotent (last write wins per
+    # texture slot), and runs only while the player is not yet realized.
     if session.mission_name == "QuickBattle":
-        from engine.appc import registry_texture
         from engine.quickbattle import spawn as _qb_spawn
         _g = Game_GetCurrentGame()
         _p = _g.GetPlayer() if _g is not None else None
-        if (_p is not None and _p not in session.ship_instances
-                and not registry_texture.has_replacements(_p)):
+        if _p is not None and _p not in session.ship_instances:
             _qb_spawn.apply_player_identity(_p)
 
     # SCOPE (system-frames Plan 3 Task 3, Ruling 4). Entering a star system
@@ -7149,9 +7149,13 @@ class _MissionLoader:
           * the class's extent already cached on the controller (any NIF
             _realize_session or an earlier seed loaded) -> no load at all;
           * otherwise load through _load_runtime_ship_model, the helper
-            realize_set_objects itself uses, so the native load_model dedupe
-            hands realisation this same handle -- one GPU load per model,
-            not two -- and cache the extent for the next ship of the class.
+            realize_set_objects itself uses, so both calls carry identical
+            arguments. What actually prevents a second load is the NATIVE
+            load_model dedupe (native/src/host/host_bindings.cc ~660,
+            load_model_impl), keyed by nif path + texture replacements +
+            decals + scale: realisation's call returns this same handle
+            without calling AssetCache::load again. The extent is cached for
+            the next ship of the class.
 
         Rocks take the sphere radius, via _seed_ship_radius's own rule."""
         if ship is None or ship.GetRadius() > 0.0:
