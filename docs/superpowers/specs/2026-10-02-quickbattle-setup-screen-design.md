@@ -44,7 +44,7 @@ ship included.
 | D5 | AI difficulty | **Per group:** Low / Medium / High in Details, default Medium. The player's group gets a Details form with only this row. Free in the SDK: `g_kShips` carries a per-ship level. |
 | D6 | Neutrals | **Inert:** in the mission's neutral group, no AI, no `g_kShips` entry, never counted toward the win, no Felix line. A neutral turning hostile when provoked is not built (BC scripts that per mission; it would change the win rule mid-battle). |
 | D7 | Win/lose | **BC's, unchanged:** every Enemy-group ship destroyed is a win (the battle continues until End Combat); player death is a loss. A battle with no enemy group has no win condition. |
-| D8 | Persistence | **Within a run only.** The current setup, filters and last-preset name live in memory: they survive battles, End Combat, Restart and closing the screen, but **not** quitting the game. Every launch starts from the default setup with the Galaxy. Only presets are on disk. |
+| D8 | Persistence | **Within a run only.** The current setup, filters and last-preset name live in memory: they survive battles, End Combat, Restart and closing the screen, but **not** quitting the game. Every launch starts from the default setup with the Galaxy. Only presets are on disk. ⚠️ Ruled 2026-10-02: this is about the **setup screen's memory**, not the **live ship**. Outside a battle the live player is always the home ship (Galaxy USS Dauntless) regardless of what the remembered setup names — see §4.3. |
 | D9 | Ship names | The object name stays BC-style and unique (`Galaxy-1`). The display name is the named ship (the row's pick, else the class default); a class without variants keeps `<Title>-N`. Duplicate picks get an ordinal: `USS Dauntless (2)`. The player gets the same treatment. Hulls without masks get the display name and render nameless. |
 | D10 | Small items | Deleting a group **with ships** asks first. Presets can be deleted (× per row, with confirmation). Loading a preset over unsaved changes asks first. Battles stay where the player is (no Change Combat Region). Start needs at least one non-player ship. |
 | D11 | Fidelity to the spike | **As close to the spike's UX as possible.** Markup, layout, spacing, states and copy are ported. The only additions are D5's Difficulty row and D10's confirmations and preset ×, each built from the spike's existing pieces. |
@@ -243,15 +243,38 @@ current plan.
 
 ### 4.3 The player
 
-- **Ship type:** `g_sPlayerType` is already right, because `sync_sdk` set it. `RecreatePlayer` (and the bridge hook around it) is untouched.
+**Mark's home-ship ruling (2026-10-02), a deliberate departure from BC:**
+outside a battle the player is always the **home ship, Galaxy USS
+Dauntless** — not the battle ship the scenario named. BC itself keeps the
+battle ship after `EndSimulation` (`g_sPlayerType` untouched); this engine
+does not. The setup screen keeps remembering the battle player ship
+regardless (D8 below) — only the *live* ship outside a battle changed.
+
+- **Ship type:** `QuickBattle.RecreatePlayer` is the one chokepoint every
+  player creation funnels through (`Initialize`, `StartSimulation2`,
+  `EndSimulation`, `ShipDestroyed`). `bridge_selection.install_quickbattle_
+  hook`'s wrap now also resolves `g_sPlayerType`, via a registered resolver
+  (`bridge_selection.set_player_type_resolver`,
+  `spawn.player_type_for_recreate`) consulted **before** it resolves
+  `g_sBridgeType`: the plan's player ship while `QB.bInSimulation` is true,
+  else `scenario.DEFAULT_PLAYER_SHIP` ("Galaxy"). `bInSimulation` is set to
+  1 by `StartSimulation2` and to 0 by `EndSimulation`, in both cases
+  **before** that same function's own `RecreatePlayer()` call — so this one
+  read covers Start, XO Restart (`EndSimulation` then a re-post of
+  `ET_START_SIMULATION`), End Combat and a death outside a battle alike.
+  `sync_sdk` no longer writes `g_sPlayerType` (it only ran outside a battle
+  anyway, where the home ship is now always correct regardless of what it
+  wrote). The resolver returns `None` — leaving `g_sPlayerType` untouched —
+  when no provider is registered, so BC's own flow is unchanged without the
+  setup screen.
 - **Hull name and display name** are applied by `spawn.apply_player_identity(player)` in two places:
   - in `generate_ships`, before radii are seeded (so the registry-keyed model load matches the one realisation makes);
   - in QuickBattle's reconcile step (`engine/host_loop.py`, the `session.mission_name == "QuickBattle"` block in `_reconcile_runtime_ships`), for every newly created, not-yet-realised player. That covers battle start, End Combat and a death outside the battle.
 
-  It queues the player order's registry (§4.6) and sets its display name. It is idempotent (last write wins per texture slot). Fallbacks to `registry_texture.apply_class_default`: no provider or no plan, **or a class mismatch** — a live player whose `ships.<Leaf>` script is not the plan's player ship file never gets another ship's registry and name.
+  While `QB.bInSimulation` is true AND the live ship's class matches the plan's player ship, it queues the player order's registry (§4.6) and sets its display name, same as before. In every other case — no provider, no plan, not currently in a battle, or a class mismatch — it falls back to the **home ship**: `registry_texture.apply_class_default` plus the ship catalog's class-default variant name for the Galaxy ("USS Dauntless"), never another ship's registry and name.
 
-  ⚠️ The reconcile block has **no `has_replacements` guard** (the brainstorm assumed one). BC's `MissionLib.CreatePlayerShip` pre-queues the class's default NCC on every Federation player it (re)creates, so that guard skipped every Fed player and the named ship never applied. The scenario's named player is authoritative over that default.
-- **"Set as player ship"** only changes the scenario (and, through `sync_sdk`, `g_sPlayerType`). The new ship appears at the next `RecreatePlayer`: at battle start, or after End Combat.
+  ⚠️ The reconcile block has **no `has_replacements` guard** (the brainstorm assumed one). BC's `MissionLib.CreatePlayerShip` pre-queues the class's default NCC on every Federation player it (re)creates, so that guard skipped every Fed player and the named ship never applied. The scenario's named player is authoritative over that default while a battle is running.
+- **"Set as player ship"** only changes the scenario. The new ship appears at the next `RecreatePlayer` that finds a battle running: at battle start, or at XO Restart.
 
 ### 4.4 Placement (`placement.py`)
 
@@ -358,7 +381,7 @@ quickbattle_presets.json
 | Panel | every verb; confirmations; Esc layers; dirty detection; filter counts; `can_start`; the XO Start button synced |
 | `spawn` (host) | `g_kShips` contents and AI levels; neutral membership with no `g_kShips` entry; `g_iNumEnemies`; the registry queued before realise; display names; failure isolation; the fallback to BC's original; idempotent install |
 | JS / HTML | source-shape tests: `data-panel`, `qbEscape`, no `<select>`, no `title=`, both entry points |
-| E2E (headless) | Start a scenario with Enemy fore Standard and Neutral port Close. Check positions and groups. Destroy all enemies → win sequence. Destroy the player → loss. End Combat → the player ship type is unchanged and the setup is intact. |
+| E2E (headless) | Start a scenario with Enemy fore Standard and Neutral port Close. Check positions and groups. Destroy all enemies → win sequence. Destroy the player → loss. End Combat → the live player reverts to the home ship (Galaxy, ruled 2026-10-02) and the remembered setup is intact. |
 
 Tests that encode removed behaviour are rewritten or deleted in the same change:
 the old panel's tests, and the revert hook's tests. The gate is
@@ -369,7 +392,7 @@ the old panel's tests, and the revert hook's tests. The gate is
 1. The screen beside the spike: layout, pills, catalog, sheet, scale bars, group menus, presets.
 2. Enemy fore Standard and Neutral port Close: placement, facing, neutral colours, neutrals inert.
 3. Ambassador USS Excalibur as the player: hull name and display name.
-4. Win → End Combat → reopen: same setup, same player ship.
+4. Win → End Combat → reopen: same remembered setup; the live player is back on the home ship (Galaxy USS Dauntless, ruled 2026-10-02), not the battle ship.
 5. Typing in Rename and preset names fires no game keys.
 
 ## Open for Mark

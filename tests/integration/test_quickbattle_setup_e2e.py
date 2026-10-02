@@ -103,16 +103,20 @@ def test_player_death_is_a_loss(world):
     assert QB.g_idTimer                               # loss timer posted (QuickBattle.py:3304)
 
 
-def test_end_combat_keeps_player_ship_and_setup(world):
+def test_end_combat_reverts_to_home_ship_but_keeps_the_setup(world):
+    """Mark's home-ship ruling, 2026-10-02: End Combat puts the player back
+    on the home ship (Galaxy), even though the setup screen keeps naming
+    the battle ship it was started with."""
     hl, _c, panel, QB = world
     import App
     _do(panel, "set-player:Sovereign", "add:Warbird")
     before = panel.scenario.to_json()
     _go(hl, panel)
+    assert QB.g_sPlayerType == "Sovereign"
     QB.EndSimulation()
     hl._process_object_deletions()
-    assert QB.g_sPlayerType == "Sovereign"
+    assert QB.g_sPlayerType == "Galaxy"
     assert panel.scenario.to_json() == before
     player = App.Game_GetCurrentGame().GetPlayer()
     assert player is not None
-    assert str(player.GetScript()).rsplit(".", 1)[-1] == "Sovereign"
+    assert str(player.GetScript()).rsplit(".", 1)[-1] == "Galaxy"

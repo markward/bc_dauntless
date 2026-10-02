@@ -38,7 +38,10 @@ def test_boot_installs_generate_ships_hook(qb):
     assert getattr(QB.GenerateShips, "_dauntless_qb_spawn_orig", None) is not None
 
 
-def test_player_keeps_ship_and_name_through_end_combat(qb):
+def test_end_combat_reverts_to_the_home_ship_but_keeps_the_setup(qb):
+    """Mark's home-ship ruling, 2026-10-02: outside a battle the player is
+    always the home ship (Galaxy USS Dauntless), even though the setup
+    screen's scenario keeps naming the battle ship it was started with."""
     hl, controller, QB = qb
     import App
     from engine.appc import registry_texture
@@ -51,20 +54,103 @@ def test_player_keeps_ship_and_name_through_end_combat(qb):
     assert QB.g_sPlayerType == "Ambassador"
     QB.EndSimulation()                                   # End Combat
     player = App.Game_GetCurrentGame().GetPlayer()
-    assert QB.g_sPlayerType == "Ambassador"              # no revert
-    # BC's MissionLib.CreatePlayerShip has already queued the class's "default
-    # NCC" (Ambassador -> Zhukov) and named the ship "Player": the identity
-    # must override both, not be skipped because a registry is queued.
-    assert not any(p.endswith("Excalibur.tga")
-                   for p in _new_paths(registry_texture.replacements_for(player)))
+    assert QB.g_sPlayerType == "Galaxy"                  # home ship, not the battle ship
+    assert str(player.GetScript()).rsplit(".", 1)[-1] == "Galaxy"
     # Production path: the tick's runtime reconcile applies the identity to a
     # new, not-yet-realised QuickBattle player just before realising it.
     hl._reconcile_runtime_instances(hl.MissionSession(mission_name="QuickBattle"),
                                     controller.renderer)
     reps = registry_texture.replacements_for(player)
     assert all(old == registry_texture.REGISTRY_OLD_NAME for old, _new in reps)
-    assert any(p.endswith("Excalibur.tga") for p in _new_paths(reps))
-    assert player.GetDisplayName() == "USS Excalibur"
+    assert any(p.endswith("Dauntless.tga") for p in _new_paths(reps))
+    assert not any(p.endswith("Excalibur.tga") for p in _new_paths(reps))
+    assert player.GetDisplayName() == "USS Dauntless"
+    # The setup screen's scenario / plan still name the Ambassador: it is
+    # only the LIVE ship that reverted, not the panel's remembered battle.
+    assert plan.player.ship_file == "Ambassador"
+
+
+def test_xo_restart_puts_the_scenario_ship_back(qb):
+    """RestartSimulation = EndSimulation() (home ship) then a re-post of
+    ET_START_SIMULATION (battle ship again) -- the same preload dance as the
+    first Start."""
+    hl, controller, QB = qb
+    import App
+    from engine.quickbattle import spawn
+    plan = _scenario_with_player("Ambassador", "USS Excalibur")
+    spawn.set_provider(lambda: plan)
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    assert QB.g_sPlayerType == "Ambassador"
+    evt = App.TGEvent_Create()
+    evt.SetEventType(QB.ET_RESTART_SIMULATION)
+    evt.SetDestination(QB.g_pXO)
+    App.g_kEventManager.AddEvent(evt)
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    assert QB.g_sPlayerType == "Ambassador"
+    player = App.Game_GetCurrentGame().GetPlayer()
+    assert str(player.GetScript()).rsplit(".", 1)[-1] == "Ambassador"
+
+
+def test_end_combat_after_a_renamed_galaxy_is_back_to_dauntless(qb):
+    """A Galaxy named USS Venture in battle reverts to USS Dauntless after
+    End Combat -- the class doesn't change, only the registry/name."""
+    hl, controller, QB = qb
+    import App
+    from engine.appc import registry_texture
+    from engine.quickbattle import spawn
+    plan = _scenario_with_player("Galaxy", "USS Venture")
+    spawn.set_provider(lambda: plan)
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    player = App.Game_GetCurrentGame().GetPlayer()
+    hl._reconcile_runtime_instances(hl.MissionSession(mission_name="QuickBattle"),
+                                    controller.renderer)
+    assert player.GetDisplayName() == "USS Venture"
+    QB.EndSimulation()                                   # End Combat
+    assert QB.g_sPlayerType == "Galaxy"
+    hl._reconcile_runtime_instances(hl.MissionSession(mission_name="QuickBattle"),
+                                    controller.renderer)
+    player = App.Game_GetCurrentGame().GetPlayer()
+    reps = registry_texture.replacements_for(player)
+    assert any(p.endswith("Dauntless.tga") for p in _new_paths(reps))
+    assert player.GetDisplayName() == "USS Dauntless"
+
+
+def test_death_outside_a_battle_recreates_the_home_ship(qb):
+    """ShipDestroyed's player-death branch calls RecreatePlayer directly
+    (not via the end-of-battle timer) only when bInSimulation is already 0
+    -- the rule must apply there too."""
+    hl, controller, QB = qb
+    import App
+    assert QB.bInSimulation == 0
+    evt = App.TGEvent_Create()
+    evt.SetDestination(App.Game_GetCurrentGame().GetPlayer())
+    QB.ShipDestroyed(None, evt)
+    assert QB.g_sPlayerType == "Galaxy"
+    player = App.Game_GetCurrentGame().GetPlayer()
+    assert str(player.GetScript()).rsplit(".", 1)[-1] == "Galaxy"
+
+
+def test_no_provider_leaves_g_sPlayerType_untouched(monkeypatch):
+    """With no provider registered at all, player_type_for_recreate must not
+    write g_sPlayerType -- BC's own RecreatePlayer flow is unchanged. Marks
+    g_sPlayerType with a value the home-ship rule would never itself choose
+    (Sovereign, not Galaxy) so a silent "always Galaxy" bug would be caught,
+    not accidentally match."""
+    from tests.host.test_quickbattle_boot import _fresh_quickbattle_loader
+    from engine.quickbattle import spawn
+    assert spawn._provider is None
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+    import QuickBattle.QuickBattle as QB
+    assert spawn.player_type_for_recreate(QB) is None
+    QB.g_sPlayerType = "Sovereign"
+    QB.RecreatePlayer()
+    assert QB.g_sPlayerType == "Sovereign"
 
 
 def test_no_plan_falls_back_to_class_default(qb):

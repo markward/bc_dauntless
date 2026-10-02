@@ -961,6 +961,15 @@ def _reset_leakable_engine_globals():
         _qb_spawn.set_radius_fn(None)
     except Exception:
         pass
+    # Same leak hazard, the home-ship RecreatePlayer resolver: a process
+    # global a test wires via bridge_selection.set_player_type_resolver(),
+    # which would otherwise make a later pure-unit bridge-hook test see a
+    # resolver it never registered itself.
+    try:
+        from engine import bridge_selection as _bsel
+        _bsel.set_player_type_resolver(None)
+    except Exception:
+        pass
     # (The SPV part-preview lock needs no reset of its own: the live lock is
     # computed on the panel from `articulation.dev_override()`, which the
     # `_articulation.reset()` above already clears. The module-level copy

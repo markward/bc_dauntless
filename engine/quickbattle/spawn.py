@@ -121,9 +121,17 @@ def _set_xo_start(qb, enabled) -> None:
 
 
 def sync_sdk(qb, plan) -> None:
+    """Manifests + XO Start enablement only. `g_sPlayerType` is NOT written
+    here any more (Mark's home-ship ruling, 2026-10-02): `sync_sdk` only
+    ever runs OUTSIDE a battle (the panel's `_after_change`, guarded on
+    `not bInSimulation`), and outside a battle the player is always the
+    home ship regardless of what the setup screen names -- the battle ship
+    is picked at the moment it matters, by `player_type_for_recreate`
+    inside the RecreatePlayer wrap (`bridge_selection.set_player_type_
+    resolver`), which reads `bInSimulation` live rather than trusting a
+    value written ahead of time."""
     if plan is None:
         return
-    qb.g_sPlayerType = plan.player.ship_file
     _write_manifests(qb, plan)
     if not getattr(qb, "bInSimulation", 0):
         _set_xo_start(qb, bool(plan.orders))
@@ -348,32 +356,101 @@ def install_generate_ships_hook(qb) -> bool:
     return True
 
 
+def _in_battle() -> bool:
+    """`QuickBattle.QuickBattle.bInSimulation`, read live (never cached):
+    StartSimulation2 sets it to 1 before ITS OWN RecreatePlayer and
+    EndSimulation sets it to 0 before ITS OWN RecreatePlayer, so this one
+    read covers Start, XO Restart (EndSimulation then Start), End Combat
+    and a death outside a battle alike. False (never raises) when the SDK
+    module isn't importable -- headless unit tests that build a player by
+    hand, never through the real QuickBattle cascade."""
+    try:
+        import QuickBattle.QuickBattle as QB
+    except Exception:
+        return False
+    return bool(getattr(QB, "bInSimulation", 0))
+
+
+def _home_display_name():
+    """BC's class-default variant name for the home ship (the Galaxy's is
+    "USS Dauntless"), read from the ship catalog so a mod's own class
+    default is honoured too. None if the catalog has nothing for it."""
+    from engine import ship_catalog
+    from engine.quickbattle import scenario
+    try:
+        e = ship_catalog.entry(scenario.DEFAULT_PLAYER_SHIP)
+    except Exception:
+        return None
+    if e is not None and e.variants:
+        return e.variants[0].name
+    return None
+
+
+def player_type_for_recreate(qb):
+    """g_sPlayerType for `qb.RecreatePlayer`, by Mark's home-ship ruling
+    (2026-10-02): the plan's player ship while a battle is actually running
+    (`qb.bInSimulation`), else the home ship -- Galaxy, "USS Dauntless"
+    (`scenario.DEFAULT_PLAYER_SHIP`). `bInSimulation` is the one decision
+    that covers every RecreatePlayer caller: StartSimulation2 sets it to 1
+    BEFORE its own RecreatePlayer, EndSimulation (and RestartSimulation,
+    which is EndSimulation then a re-post of ET_START_SIMULATION) sets it
+    to 0 BEFORE its own RecreatePlayer, and ShipDestroyed's player-death
+    branch calls RecreatePlayer directly only when bInSimulation is already
+    0 (the in-battle death instead arms the end-of-battle timer).
+
+    Returns None -- leave g_sPlayerType untouched -- when no plan provider
+    is registered at all, so BC's own flow is unchanged without the setup
+    screen. Consulted by `bridge_selection.install_quickbattle_hook` via
+    `bridge_selection.set_player_type_resolver`."""
+    if _provider is None:
+        return None
+    plan = current_plan()
+    if plan is not None and getattr(qb, "bInSimulation", 0):
+        return plan.player.ship_file
+    from engine.quickbattle import scenario
+    return scenario.DEFAULT_PLAYER_SHIP
+
+
 def apply_player_identity(ship, plan=None) -> bool:
     """Registry + display name for a freshly created player (called from
     host_loop's QuickBattle reconcile block, and by generate_ships before it
     seeds radii). Idempotent; overrides the "default NCC" BC's
     MissionLib.CreatePlayerShip queues on every Federation player.
 
-    `plan` None -> `current_plan()`. No plan, or a live player whose class
-    (its `ships.<Leaf>` script) is not the plan's player ship -> BC's class
-    default, never another ship's registry and name."""
+    Mark's home-ship ruling (2026-10-02): while a battle is actually
+    running (`_in_battle()`) AND the live ship's class (its `ships.<Leaf>`
+    script) matches the plan's player ship, the plan's registry and display
+    name apply -- same as before. In every other case -- no plan, not
+    currently in a battle (boot, End Combat, XO Restart's EndSimulation
+    half, a death outside a battle), or a live player whose class doesn't
+    match the plan -- the ship goes back to the home ship: BC's class
+    default registry plus its class-default display name ("USS Dauntless"
+    for the Galaxy), never another ship's registry and name. `plan` None ->
+    `current_plan()`."""
     from engine.appc import registry_texture
     if plan is None:
         plan = current_plan()
-    if plan is None:
-        return registry_texture.apply_class_default(ship)
-    cls = registry_texture._class_of(ship)
-    if cls is None or cls.lower() != str(plan.player.ship_file).lower():
-        return registry_texture.apply_class_default(ship)
-    try:
-        import App
-        p = plan.player
-        if p.registry:
-            ship.ReplaceTexture(registry_path(p.class_id, p.registry),
-                                registry_texture.REGISTRY_OLD_NAME)
-        if p.display_name:
-            ship.SetDisplayName(App.TGString(p.display_name))
-        return True
-    except Exception as e:
-        _log.warning("quickbattle: player identity failed: %s", e)
-        return False
+    if plan is not None and _in_battle():
+        cls = registry_texture._class_of(ship)
+        if cls is not None and cls.lower() == str(plan.player.ship_file).lower():
+            try:
+                import App
+                p = plan.player
+                if p.registry:
+                    ship.ReplaceTexture(registry_path(p.class_id, p.registry),
+                                        registry_texture.REGISTRY_OLD_NAME)
+                if p.display_name:
+                    ship.SetDisplayName(App.TGString(p.display_name))
+                return True
+            except Exception as e:
+                _log.warning("quickbattle: player identity failed: %s", e)
+                return False
+    applied = registry_texture.apply_class_default(ship)
+    name = _home_display_name()
+    if name:
+        try:
+            import App
+            ship.SetDisplayName(App.TGString(name))
+        except Exception as e:
+            _log.warning("quickbattle: home player name failed: %s", e)
+    return applied

@@ -41,9 +41,21 @@ Sub-project 4 follows 3.
 
 **Small fix (done on `feat/qb-setup-screen`, with sub-project 2):** delete the revert-on-End-Combat hook
 `_sync_quickbattle_player_revert` (`engine/host_loop.py`, commit `c6a21e63`).
-It resets the player ship after every battle. BC does not: `EndSimulation` calls
+It reset the player ship after every battle by a dedicated hook bolted onto
+host_loop. BC itself does not do that — `EndSimulation` calls
 `RecreatePlayer()` with `g_sPlayerType` untouched and leaves the rosters alone.
-Sub-project 2 needs this gone regardless.
+Sub-project 2 needs this specific hook gone regardless.
+
+⚠️ Superseded in effect, not reversed, by Mark's home-ship ruling
+(2026-10-02, `2026-10-02-quickbattle-setup-screen-design.md` §4.3): outside
+a battle the player is now **always** the home ship (Galaxy USS Dauntless),
+a deliberate DEPARTURE from BC's own "leave it alone" behaviour this fix
+once matched. The mechanism is not the deleted hook come back — it is
+`QuickBattle.RecreatePlayer`'s own resolution, via
+`bridge_selection.set_player_type_resolver` /
+`engine.quickbattle.spawn.player_type_for_recreate`, reading
+`QB.bInSimulation` live at the one chokepoint every player creation already
+funnels through. There is still no separate revert hook on host_loop.
 
 ## Standing decisions
 
@@ -176,7 +188,11 @@ The spike is the reference for every point below.
   named picks, player ship), not the era and species filters. Store them in a
   file beside `settings.json`, as `bridges.json` is (spike: localStorage).
 - **Persistence:** reopening the screen after a battle shows the exact same
-  setup, player ship included.
+  setup, player ship included. ⚠️ Ruled 2026-10-02: this is the **setup
+  screen's** memory, not the live ship — outside a battle the live player is
+  always the home ship (Galaxy USS Dauntless), regardless of what the
+  remembered setup names (`2026-10-02-quickbattle-setup-screen-design.md`
+  §4.3, D8).
 
 ### Mod metadata gate (sub-project 3)
 

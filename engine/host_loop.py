@@ -7010,15 +7010,21 @@ class _MissionLoader:
         if App.g_kConfigMapping.LoadConfigFile("Options.cfg") == 0:
             App.g_kConfigMapping.SaveConfigFile("Options.cfg")
 
-        # Ship->bridge matrix: wrap RecreatePlayer before the cascade's
-        # Initialize runs it, so even the boot player gets the pinned bridge.
+        # Ship->bridge matrix + home-ship player-type rule: wrap
+        # RecreatePlayer before the cascade's Initialize runs it, so even
+        # the boot player gets the pinned bridge. The player-type resolver
+        # is registered FIRST so install_quickbattle_hook sees it is live
+        # even when this controller has no bridge matrix at all (pins=None)
+        # -- that is what makes the home-ship rule apply with no pins
+        # installed (bridge_selection.install_quickbattle_hook docstring).
         import QuickBattle.QuickBattle as _QB
         from engine import bridge_selection as _bs
+        from engine.quickbattle import spawn as _qb_spawn
+        _bs.set_player_type_resolver(_qb_spawn.player_type_for_recreate)
         _bs.install_quickbattle_hook(_QB, self._c.bridge_pins)
         # Our GenerateShips (the setup screen's BattlePlan), plus the radius
         # seeder it runs before placement: nothing is realised at
         # GenerateShips time, so every ship would otherwise report radius 0.
-        from engine.quickbattle import spawn as _qb_spawn
         _qb_spawn.install_generate_ships_hook(_QB)
         _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)
 
@@ -12121,6 +12127,8 @@ def run(mission_name: Optional[str] = None,
         from engine.quickbattle import spawn as _qb_spawn
         _qb_spawn.set_provider(None)
         _qb_spawn.set_radius_fn(None)
+        from engine import bridge_selection as _bs
+        _bs.set_player_type_resolver(None)
         shutdown_audio()
         r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()

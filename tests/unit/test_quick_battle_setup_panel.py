@@ -494,13 +494,16 @@ def test_current_plan_none_when_catalog_empty(tmp_path):
 
 
 def test_changes_sync_the_sdk_outside_a_battle(tmp_path):
+    """sync_sdk no longer writes g_sPlayerType (Mark's home-ship ruling,
+    2026-10-02): outside a battle the player is always the home ship, picked
+    at RecreatePlayer time, not ahead of it by the setup screen."""
     from types import SimpleNamespace
     qb = SimpleNamespace(bInSimulation=0, g_dFriendlyShipTypeToDetails={},
                          g_dEnemyShipTypeToDetails={}, g_kEnemyList=[],
                          g_kFriendList=[], g_sPlayerType=None)
     p = _make(tmp_path, lambda: list(CATALOG), qb_module=qb)
     p.dispatch_event("add:Warbird")
-    assert qb.g_sPlayerType == "Galaxy" and [m[0] for m in qb.g_kEnemyList] == ["Warbird"]
+    assert qb.g_sPlayerType is None and [m[0] for m in qb.g_kEnemyList] == ["Warbird"]
     qb.bInSimulation = 1
     p.dispatch_event("add:Warbird")
     assert len(qb.g_kEnemyList) == 1             # no sync mid-battle
@@ -562,6 +565,9 @@ def test_close_drops_pending_confirm_and_draft(panel):
 
 
 def test_catalog_change_syncs_the_sdk(tmp_path):
+    """sync_sdk no longer writes g_sPlayerType (Mark's home-ship ruling,
+    2026-10-02) -- only the manifests/XO-start sync fires on a catalog
+    change."""
     from types import SimpleNamespace
     cat = list(CATALOG)
     qb = SimpleNamespace(bInSimulation=0, g_dFriendlyShipTypeToDetails={},
@@ -572,7 +578,7 @@ def test_catalog_change_syncs_the_sdk(tmp_path):
     assert [m[0] for m in qb.g_kEnemyList] == ["Warbird"]
     cat[:] = [c for c in cat if c.ship_id not in ("Warbird", "Galaxy")]
     p.render_payload()
-    assert qb.g_kEnemyList == [] and qb.g_sPlayerType == "Sovereign"
+    assert qb.g_kEnemyList == [] and qb.g_sPlayerType is None
 
 
 def test_set_player_never_raises_out_of_dispatch(panel, monkeypatch):
