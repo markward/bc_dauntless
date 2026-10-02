@@ -44,3 +44,40 @@ def test_run_leaves_no_bridge_controllers_registered(monkeypatch):
     assert bridge_character_anim.get_controller() is None
     assert bridge_character_walk.get_controller() is None
     assert bridge_camera_watch.get_controller() is None
+
+
+def test_run_leaves_no_quickbattle_spawn_hooks_registered(monkeypatch):
+    """engine.quickbattle.spawn._provider (the setup panel) and _radius_fn
+    (the loader, and through it the renderer) are process-global. Left
+    registered after run() returns they close over a dead panel/controller --
+    the same leaked-hook class as the warp and bridge-controller hooks above."""
+    GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships"
+                  / "Galaxy" / "Galaxy.nif")
+    if not GALAXY_NIF.is_file():
+        pytest.skip("BC assets not available")
+    monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
+    from engine import host_loop
+    from engine.quickbattle import spawn as qb_spawn
+    assert host_loop.run("Custom.Tutorial.Episode.M1Basic.M1Basic",
+                         max_ticks=2) == 0
+    assert qb_spawn._provider is None
+    assert qb_spawn._radius_fn is None
+
+
+def test_run_leaves_no_quickbattle_player_type_resolver_registered(monkeypatch):
+    """engine.bridge_selection._player_type_resolver (the home-ship rule,
+    set in load_quickbattle from engine.quickbattle.spawn.
+    player_type_for_recreate) is process-global like the hooks above -- left
+    registered after run() returns it would close over a dead controller's
+    plan provider. Only load_quickbattle (mission_name=None -- the
+    no-mission-name QuickBattle boot) ever sets it, so this drives THAT
+    boot path rather than the M1Basic mission the sibling tests use."""
+    GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships"
+                  / "Galaxy" / "Galaxy.nif")
+    if not GALAXY_NIF.is_file():
+        pytest.skip("BC assets not available")
+    monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
+    from engine import host_loop
+    from engine import bridge_selection
+    assert host_loop.run(max_ticks=2) == 0
+    assert bridge_selection._player_type_resolver is None

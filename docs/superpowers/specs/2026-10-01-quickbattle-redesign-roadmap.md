@@ -29,19 +29,33 @@ offers a flat catalog, two rosters and a player-ship pick
 
 | # | Sub-project | Depends on | Status |
 |---|---|---|---|
-| 1 | **Ship metadata**: the fields, where they live, stock defaults, how mods declare them, the catalog API the game reads | — | spec + plan written (branch `feat/qb-ship-metadata`): `2026-10-01-ship-metadata-catalog-design.md`, plan `docs/superpowers/plans/2026-10-01-ship-metadata-catalog.md` |
-| 2 | **Quick Battle setup screen and battle start**: the CEF screen, groups, presets, persistence, group spawning, named ships | 1 | not started |
-| 3 | **Mod metadata gate**, grown into a pre-boot **Mod Ships screen**: gate mode (supply missing metadata), read-only home mode (`--mods`, pause **Quit and Manage Mods** relaunch), CEF keyboard input, a class-by-name catalog model, and the shim `SubMenu` fix | 1 | implemented on `feat/qb-mod-gate`, awaiting live check |
+| 1 | **Ship metadata**: the fields, where they live, stock defaults, how mods declare them, the catalog API the game reads | — | **complete**, merged `acf76808`: `2026-10-01-ship-metadata-catalog-design.md` |
+| — | **In-game keyboard capture for CEF text fields** (prerequisite of 2, general infrastructure) | — | **complete**, merged `751fa00e`, live-verified: `2026-10-02-cef-text-input-keyboard-capture-design.md` |
+| 2 | **Quick Battle setup screen and battle start**: the CEF screen, groups, presets, persistence, group spawning, named ships | 1, keyboard capture | **implemented on `feat/qb-setup-screen`, awaiting live check**: `2026-10-02-quickbattle-setup-screen-design.md` |
+| 2c | **Scenario objectives**: a win/lose condition builder on the setup screen, saved in presets (e.g. "no more than X neutrals destroyed → lose", "an enemy within N km of Y → lose"). Needs its own brainstorm, not least a reference frame for "location Y" on a screen with no map (player start, another group, a specific ship). Will replace BC's fixed win/lose with an evaluator over conditions. | 2 | not started |
+| 3 | **Mod metadata gate**, grown into a pre-boot **Mod Ships screen**: gate mode (supply missing metadata), read-only home mode (`--mods`, pause **Quit and Manage Mods** relaunch), CEF keyboard input, a class-by-name catalog model, and the shim `SubMenu` fix | 1 | **complete**, merged `2948c98d` |
 | 4 | **Mod manager**: grows sub-project 3's home mode into a real manager, starting with enabling and disabling mods per mod (persisted, effective on relaunch), then whatever else is needed (load order, conflicts, editing complete ships' metadata) | 3 | not started |
 
 Sub-projects 2 and 3 are independent of each other; either can follow 1.
 Sub-project 4 follows 3.
 
-**Small fix, any time (Mark's call when):** delete the revert-on-End-Combat hook
+**Small fix (done on `feat/qb-setup-screen`, with sub-project 2):** delete the revert-on-End-Combat hook
 `_sync_quickbattle_player_revert` (`engine/host_loop.py`, commit `c6a21e63`).
-It resets the player ship after every battle. BC does not: `EndSimulation` calls
+It reset the player ship after every battle by a dedicated hook bolted onto
+host_loop. BC itself does not do that — `EndSimulation` calls
 `RecreatePlayer()` with `g_sPlayerType` untouched and leaves the rosters alone.
-Sub-project 2 needs this gone regardless.
+Sub-project 2 needs this specific hook gone regardless.
+
+⚠️ Superseded in effect, not reversed, by Mark's home-ship ruling
+(2026-10-02, `2026-10-02-quickbattle-setup-screen-design.md` §4.3): outside
+a battle the player is now **always** the home ship (Galaxy USS Dauntless),
+a deliberate DEPARTURE from BC's own "leave it alone" behaviour this fix
+once matched. The mechanism is not the deleted hook come back — it is
+`QuickBattle.RecreatePlayer`'s own resolution, via
+`bridge_selection.set_player_type_resolver` /
+`engine.quickbattle.spawn.player_type_for_recreate`, reading
+`QB.bInSimulation` live at the one chokepoint every player creation already
+funnels through. There is still no separate revert hook on host_loop.
 
 ## Standing decisions
 
@@ -174,7 +188,11 @@ The spike is the reference for every point below.
   named picks, player ship), not the era and species filters. Store them in a
   file beside `settings.json`, as `bridges.json` is (spike: localStorage).
 - **Persistence:** reopening the screen after a battle shows the exact same
-  setup, player ship included.
+  setup, player ship included. ⚠️ Ruled 2026-10-02: this is the **setup
+  screen's** memory, not the live ship — outside a battle the live player is
+  always the home ship (Galaxy USS Dauntless), regardless of what the
+  remembered setup names (`2026-10-02-quickbattle-setup-screen-design.md`
+  §4.3, D8).
 
 ### Mod metadata gate (sub-project 3)
 
@@ -217,6 +235,12 @@ The questions below are kept for the record.
   read, what is overridden, and what must keep working for the SDK?
 
 ### 2: Setup screen and battle start
+
+**Answered** in `2026-10-02-quickbattle-setup-screen-design.md` (its Decisions
+table): only `GenerateShips` is replaced; deterministic group placement; per-group
+difficulty; neutrals inert; BC's win/lose kept; the setup is remembered within a
+run only (presets on disk); named display names with ordinals. Objectives moved
+to 2c. The questions below are kept for the record.
 
 - **How much of SDK `QuickBattle.py` survives?** Today the panel drives BC's
   widgets and handlers (`StartSimulation2`, `GenerateShips`, `EndSimulation`).

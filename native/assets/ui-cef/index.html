@@ -174,31 +174,43 @@
       </div>
     </section>
 
-    <!-- Quick Battle Setup overlay (production — NOT dev-only).
-         setQuickBattleSetup({open, selected_tab, tabs}) drives state; clicks
-         fire dauntlessEvent('quick-battle-setup/<verb>[:<arg>]'). The Close
-         button fires 'quick-battle-setup/close'; Start fires
-         'quick-battle-setup/start'. ESC routes to handle_key_esc -> close.
-         Reuses the cp-* modal CSS (configuration_panel.css). Boot opens this
-         panel instead of auto-starting the battle. T1 = shell only; the body
-         is a "(ships)" placeholder until the ship accordion task. -->
-    <section id="quick-battle-setup">
-      <div class="cp-modal">
+    <!-- Quick Battle Setup (production — NOT dev-only). A port of the approved
+         design spike (spec 2026-10-02-quickbattle-setup-screen-design §3.1).
+         Python (engine/ui/quick_battle_setup_panel.py) owns every piece of
+         state and pushes setQuickBattleCatalog(payload) and
+         setQuickBattleSetup(payload); js/quick_battle_setup.js renders them
+         and reports clicks as dauntlessEvent('quick-battle-setup/<verb>').
+         The page owns only the open popover menu and a rename in progress.
+         ESC routes to handle_key_esc -> qbEscape(). data-panel is the
+         keyboard-capture contract for the rename and preset-name fields
+         (cef-text-input-keyboard-capture-design §4.4), so the menu, overlay
+         and toast live INSIDE the section. Reuses the cp-* modal chrome. -->
+    <section id="quick-battle-setup" data-panel="quick-battle-setup">
+      <div class="cp-modal qbs-modal">
         <div class="cp-header">Quick Battle Setup</div>
         <div class="cp-content">
-          <div class="cp-body" id="qbs-body"></div>
+          <aside id="qbs-groups" class="qbs-groups"></aside>
+          <main class="cp-body qbs-catalog">
+            <div id="qbs-eras" class="cp-segmented qbs-strip"></div>
+            <div id="qbs-species" class="cp-segmented qbs-strip qbs-species-strip"></div>
+            <div id="qbs-catalog" class="qbs-catalog-body"></div>
+          </main>
         </div>
-        <div class="cp-footer">
-          <button class="cp-done-button"
-                  onclick="dauntlessEvent('quick-battle-setup/close')">
-            Close
-          </button>
-          <button class="cp-done-button" id="qbs-start-button"
-                  onclick="dauntlessEvent('quick-battle-setup/start')">
-            Start
-          </button>
+        <div class="cp-footer qbs-footer">
+          <div class="qbs-presets">
+            <button class="cp-done-button qbs-preset-pick" id="qbs-preset-btn" data-action="preset-menu">Load preset ▾</button>
+            <button class="cp-done-button qbs-preset-add" id="qbs-save-btn" data-action="preset-save-menu" aria-label="Save current scenario as a preset">+</button>
+          </div>
+          <span id="qbs-summary" class="qbs-summary"></span>
+          <button class="cp-done-button" id="qbs-close" data-action="close">Close</button>
+          <button class="cp-done-button" id="qbs-start" data-action="start">Start Battle</button>
         </div>
+        <!-- Ship detail sheet: slides up from the modal's bottom edge. -->
+        <div id="qbs-sheet" class="qbs-sheet"></div>
       </div>
+      <div id="qbs-menu" class="qbs-menu" hidden></div>
+      <div id="qbs-overlay" class="qbs-overlay" hidden></div>
+      <div id="qbs-toast" class="qbs-toast" hidden></div>
     </section>
 
     <!-- Set Course (production). A 3D sector map drawn by a NATIVE GL pass
