@@ -29,9 +29,11 @@ offers a flat catalog, two rosters and a player-ship pick
 
 | # | Sub-project | Depends on | Status |
 |---|---|---|---|
-| 1 | **Ship metadata**: the fields, where they live, stock defaults, how mods declare them, the catalog API the game reads | — | spec + plan written (branch `feat/qb-ship-metadata`): `2026-10-01-ship-metadata-catalog-design.md`, plan `docs/superpowers/plans/2026-10-01-ship-metadata-catalog.md` |
-| 2 | **Quick Battle setup screen and battle start**: the CEF screen, groups, presets, persistence, group spawning, named ships | 1 | not started |
-| 3 | **Mod metadata gate**, grown into a pre-boot **Mod Ships screen**: gate mode (supply missing metadata), read-only home mode (`--mods`, pause **Quit and Manage Mods** relaunch), CEF keyboard input, a class-by-name catalog model, and the shim `SubMenu` fix | 1 | implemented on `feat/qb-mod-gate`, awaiting live check |
+| 1 | **Ship metadata**: the fields, where they live, stock defaults, how mods declare them, the catalog API the game reads | — | **complete**, merged `acf76808`: `2026-10-01-ship-metadata-catalog-design.md` |
+| — | **In-game keyboard capture for CEF text fields** (prerequisite of 2, general infrastructure) | — | **complete**, merged `751fa00e`, live-verified: `2026-10-02-cef-text-input-keyboard-capture-design.md` |
+| 2 | **Quick Battle setup screen and battle start**: the CEF screen, groups, presets, persistence, group spawning, named ships | 1, keyboard capture | spec written (branch `feat/qb-setup-screen`): `2026-10-02-quickbattle-setup-screen-design.md` |
+| 2c | **Scenario objectives**: a win/lose condition builder on the setup screen, saved in presets (e.g. "no more than X neutrals destroyed → lose", "an enemy within N km of Y → lose"). Needs its own brainstorm, not least a reference frame for "location Y" on a screen with no map (player start, another group, a specific ship). Will replace BC's fixed win/lose with an evaluator over conditions. | 2 | not started |
+| 3 | **Mod metadata gate**, grown into a pre-boot **Mod Ships screen**: gate mode (supply missing metadata), read-only home mode (`--mods`, pause **Quit and Manage Mods** relaunch), CEF keyboard input, a class-by-name catalog model, and the shim `SubMenu` fix | 1 | **complete**, merged `2948c98d` |
 | 4 | **Mod manager**: grows sub-project 3's home mode into a real manager, starting with enabling and disabling mods per mod (persisted, effective on relaunch), then whatever else is needed (load order, conflicts, editing complete ships' metadata) | 3 | not started |
 
 Sub-projects 2 and 3 are independent of each other; either can follow 1.
@@ -217,6 +219,12 @@ The questions below are kept for the record.
   read, what is overridden, and what must keep working for the SDK?
 
 ### 2: Setup screen and battle start
+
+**Answered** in `2026-10-02-quickbattle-setup-screen-design.md` (its Decisions
+table): only `GenerateShips` is replaced; deterministic group placement; per-group
+difficulty; neutrals inert; BC's win/lose kept; the setup is remembered within a
+run only (presets on disk); named display names with ordinals. Objectives moved
+to 2c. The questions below are kept for the record.
 
 - **How much of SDK `QuickBattle.py` survives?** Today the panel drives BC's
   widgets and handlers (`StartSimulation2`, `GenerateShips`, `EndSimulation`).
