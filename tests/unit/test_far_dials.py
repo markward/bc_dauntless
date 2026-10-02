@@ -17,6 +17,16 @@ _NEAR_CPP_DEFAULTS = {
 }
 
 
+# far_dials.py key -> rock_mid.h MidDials field (rock-fields Task 10).
+_MID_CPP_FIELDS = {
+    "mid_l0_tile_gu": "l0_tile_gu", "mid_l1_tile_gu": "l1_tile_gu",
+    "mid_l2_tile_gu": "l2_tile_gu", "mid_in_lo_gu": "in_lo_gu", "mid_in_hi_gu": "in_hi_gu",
+    "mid_l0_out_gu": "l0_out_gu", "mid_l1_out_gu": "l1_out_gu",
+    "mid_xfade_frac": "xfade_frac", "haze_handoff_gu": "handoff_gu",
+    "haze_handoff_band_gu": "handoff_band_gu", "mid_fill": "fill",
+    "mid_sprite_scale": "sprite_scale", "mid_max_sprites": "max_sprites",
+}
+
 def test_near_defaults_match_rock_near_h():
     """NearDials defaults (native/src/renderer/include/renderer/rock_near.h)
     MUST equal DEFAULTS; every near key is native (parsed in Task 7)."""
@@ -32,7 +42,7 @@ def test_native_defaults_match_the_cpp_header():
     """FarDials / TierDials defaults MUST equal DEFAULTS."""
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer").resolve()
     text = (hdr / "far_math.h").read_text() + (hdr / "far_field.h").read_text()
-    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS):
+    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_MID_CPP_FIELDS):
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % key, text)
         assert m, key
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
@@ -145,3 +155,23 @@ def test_noise_contrast_dials_clamp_to_one():
     assert far_dials.step(d, "belt_noise_contrast", +1)["belt_noise_contrast"] == 1.0
     d = dict(far_dials.DEFAULTS, tile_haze_noise_contrast=0.9)
     assert far_dials.step(d, "tile_haze_noise_contrast", +1)["tile_haze_noise_contrast"] == 1.0
+
+
+def test_mid_defaults_match_rock_mid_h():
+    """MidDials defaults (native/src/renderer/include/renderer/rock_mid.h)
+    MUST equal DEFAULTS; every mid key is native."""
+    hdr = (Path(__file__).parents[2]
+           / "native/src/renderer/include/renderer/rock_mid.h").resolve()
+    text = hdr.read_text()
+    for key, field in _MID_CPP_FIELDS.items():
+        assert key in far_dials.DEFAULTS, key
+        assert key in far_dials.NATIVE_KEYS, key
+        m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
+        assert m, field
+        assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
+    d = far_dials.DEFAULTS
+    assert (d["mid_l0_tile_gu"], d["mid_l1_tile_gu"], d["mid_l2_tile_gu"]) == (150.0, 600.0, 2400.0)
+    assert (d["haze_handoff_gu"], d["haze_handoff_band_gu"]) == (8000.0, 2000.0)
+    assert isinstance(d["mid_max_sprites"], int)
+    # The sprite cap floors at 1 (0 would silently delete the whole band).
+    assert far_dials.step({**d, "mid_max_sprites": 1}, "mid_max_sprites", -1)["mid_max_sprites"] == 1

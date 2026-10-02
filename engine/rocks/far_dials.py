@@ -75,6 +75,19 @@ DEFAULTS: dict = {
     # engine/rocks/scenery_contact.py): damage = KE damage x
     # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
     "collide_damage_scale": 1.0, "collide_ref_radius_gu": 5.0,
+    # Rock fields mid band (native; rock-fields Task 10). MUST equal MidDials
+    # in native/src/renderer/include/renderer/rock_mid.h. Three nested tile
+    # levels (150 / 600 / 2,400 GU cubes fixed in system coordinates): L0
+    # fades in over [mid_in_lo_gu, mid_in_hi_gu], each level boundary b
+    # crossfades over [b (1 - mid_xfade_frac), b], and L2 fades out over the
+    # last haze_handoff_band_gu before haze_handoff_gu. A tile shows a
+    # collection sprite with chance density x mid_fill; mid_max_sprites caps
+    # one camera build, nearest first.
+    "mid_l0_tile_gu": 150.0, "mid_l1_tile_gu": 600.0, "mid_l2_tile_gu": 2400.0,
+    "mid_in_lo_gu": 80.0, "mid_in_hi_gu": 150.0,
+    "mid_l0_out_gu": 600.0, "mid_l1_out_gu": 2400.0, "mid_xfade_frac": 0.25,
+    "haze_handoff_gu": 8000.0, "haze_handoff_band_gu": 2000.0,
+    "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
@@ -85,12 +98,17 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_density", "near_large_r_min", "near_large_r_max",
     "near_large_exponent", "near_large_cell_gu", "near_large_mesh_gu",
     "near_large_billboard_gu", "near_large_max",
-    "near_fade_gu", "near_stream_margin_gu", "collide_cooldown_s"})
+    "near_fade_gu", "near_stream_margin_gu", "collide_cooldown_s",
+    "mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",
+    "mid_in_hi_gu", "mid_l0_out_gu", "mid_l1_out_gu", "mid_xfade_frac",
+    "haze_handoff_gu", "haze_handoff_band_gu", "mid_fill", "mid_sprite_scale",
+    "mid_max_sprites"})
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
 _INT_FLOOR_1 = ("haze_steps", "tile_haze_noise_octaves", "tile_haze_steps",
-               "belt_noise_octaves", "near_small_max", "near_large_max")
+               "belt_noise_octaves", "near_small_max", "near_large_max",
+               "mid_max_sprites")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("haze_brightness", "tile_haze_brightness", "haze_gain",

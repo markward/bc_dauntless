@@ -10,16 +10,14 @@
 #include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <renderer/rock_random.h>
+#include "rock_field_common.h"
 
 namespace renderer::rockfield {
 namespace {
 using rockrand::Rng;
 
-// Restored from the retired far-tier belt generator (0fb9e591 far_field.cc).
-std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
-    Rng r{h ^ (v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2))};
-    return r.next();
-}
+using detail::mix;
+using detail::Frustum;
 
 // Knuth for small lambda; rounded normal approximation above 30.
 int poisson(Rng& r, double lambda) {
@@ -111,23 +109,6 @@ StreamRanges stream_ranges(const NearClassDials& cd, double margin) {
     const double keep = std::min(static_cast<double>(cd.billboard_gu) + std::max(margin, 0.0), cap);
     return {std::min(static_cast<double>(cd.billboard_gu), keep), keep};
 }
-
-// Frustum planes (Gribb-Hartmann), normalised: copied from far_field.cc.
-struct Frustum {
-    glm::vec4 planes[6];
-    explicit Frustum(const glm::mat4& vp) {
-        const glm::vec4 r0 = glm::row(vp, 0), r1 = glm::row(vp, 1),
-                        r2 = glm::row(vp, 2), r3 = glm::row(vp, 3);
-        planes[0] = r3 + r0; planes[1] = r3 - r0; planes[2] = r3 + r1;
-        planes[3] = r3 - r1; planes[4] = r3 + r2; planes[5] = r3 - r2;
-        for (auto& p : planes) p /= glm::length(glm::vec3(p));
-    }
-    bool sphere(const glm::vec3& c, float r) const {   // false: wholly outside a plane
-        for (const auto& pl : planes)
-            if (glm::dot(glm::vec3(pl), c) + pl.w < -r) return false;
-        return true;
-    }
-};
 
 // Rock -> render rotation, as MinorField poses fragment meshes (the loaded
 // catalogue mesh is already in BC axes; make_impostor maps to glTF itself).

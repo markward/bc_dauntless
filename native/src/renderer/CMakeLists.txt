@@ -163,6 +163,7 @@ add_library(renderer STATIC
     far_math.cc
     far_field.cc
     rock_near.cc
+    rock_mid.cc
     minor_field.cc
     minor_pass.cc
     rock_shading.cc
