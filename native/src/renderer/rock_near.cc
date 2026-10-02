@@ -4,7 +4,11 @@
 #include "renderer/rock_near.h"
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <tuple>
 #include <utility>
+#include <glm/gtc/matrix_access.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <renderer/rock_random.h>
 
 namespace renderer::rockfield {
@@ -95,7 +99,44 @@ bool reaches(const far::DiscSource& s, const glm::dvec3& c, double range) {
 }
 
 constexpr NearClass kClasses[] = {NearClass::Small, NearClass::Large};
+
+// Frustum planes (Gribb-Hartmann), normalised: copied from far_field.cc.
+struct Frustum {
+    glm::vec4 planes[6];
+    explicit Frustum(const glm::mat4& vp) {
+        const glm::vec4 r0 = glm::row(vp, 0), r1 = glm::row(vp, 1),
+                        r2 = glm::row(vp, 2), r3 = glm::row(vp, 3);
+        planes[0] = r3 + r0; planes[1] = r3 - r0; planes[2] = r3 + r1;
+        planes[3] = r3 - r1; planes[4] = r3 + r2; planes[5] = r3 - r2;
+        for (auto& p : planes) p /= glm::length(glm::vec3(p));
+    }
+    bool sphere(const glm::vec3& c, float r) const {   // false: wholly outside a plane
+        for (const auto& pl : planes)
+            if (glm::dot(glm::vec3(pl), c) + pl.w < -r) return false;
+        return true;
+    }
+};
+
+// Rock -> render rotation, as MinorField poses fragment meshes (the loaded
+// catalogue mesh is already in BC axes; make_impostor maps to glTF itself).
+glm::mat3 rotation(float angle, const glm::vec3& axis) {
+    return glm::mat3(glm::rotate(glm::mat4(1.0f), angle, axis));
+}
+
+float ramp_down(float d, float end, float fade) {   // 1 at end - fade, 0 at end
+    if (!(fade > 0.0f)) return d < end ? 1.0f : 0.0f;
+    if (d <= end - fade) return 1.0f;
+    if (d >= end) return 0.0f;
+    return (end - d) / fade;
+}
 }  // namespace
+
+NearWeights near_weights(float d, const NearClassDials& c, float fade_gu) {
+    NearWeights w;
+    w.mesh = ramp_down(d, c.mesh_gu, fade_gu);
+    w.billboard = std::min(1.0f - w.mesh, ramp_down(d, c.billboard_gu, fade_gu));
+    return w;
+}
 
 std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls,
                                          const glm::i64vec3& ijk, const NearDials& d,
@@ -196,6 +237,90 @@ void NearField::for_each(NearClass cls,
     for (const auto& [key, cell] : cells_) {
         if (cell.cls != cls) continue;
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) fn(rock_key(key, i), cell.rocks[i]);
+    }
+}
+
+void NearField::build(const NearBuildInput& in, NearOutput& out) const {
+    out.meshes.clear();
+    out.billboards.clear();
+    out.mesh_count = out.billboard_count = 0;
+
+    const float k = far::pixels_per_gu(in.proj, in.viewport_h);
+    const glm::vec3 eye = glm::vec3(glm::inverse(in.view)[3]);
+    const Frustum frustum(in.proj * in.view);
+    const glm::dvec3 to_render = in.anchor_sys + in.render_origin;
+    const float t = static_cast<float>(in.game_time);
+
+    std::map<std::tuple<int, int, int>, std::vector<minors::InstanceGpu>> mesh_bins;
+    std::map<int, std::vector<far::ImpostorGpu>> board_bins;
+
+    struct Cand { float d; glm::vec3 c; NearWeights w; const NearRock* rock; };
+    for (NearClass cls : kClasses) {
+        const NearClassDials& cd = class_dials(dials_, cls);
+        const bool small = cls == NearClass::Small;
+        const std::vector<int>& rocks = small ? cat_.small_rocks : cat_.large_rocks;
+        const std::vector<float>& bounds = small ? cat_.small_bound_mu : cat_.large_bound_mu;
+        const int family = small ? kNearSmallFamily : kNearLargeFamily;
+
+        std::vector<Cand> cands;
+        for (const auto& [key, cell] : cells_) {
+            if (cell.cls != cls) continue;
+            for (const NearRock& r : cell.rocks) {
+                const glm::vec3 c(r.pos_sys - to_render);
+                const float d = glm::length(c - eye);
+                const NearWeights w = near_weights(d, cd, dials_.fade_gu);
+                if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
+                if (!frustum.sphere(c, r.radius)) continue;
+                cands.push_back({d, c, w, &r});
+            }
+        }
+        // Nearest first so the cap drops the far end; ties by catalogue index
+        // and position keep the order independent of the cell map's order.
+        std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+            if (a.d != b.d) return a.d < b.d;
+            if (a.rock->rock != b.rock->rock) return a.rock->rock < b.rock->rock;
+            return std::tie(a.c.x, a.c.y, a.c.z) < std::tie(b.c.x, b.c.y, b.c.z);
+        });
+
+        int emitted = 0;
+        for (const Cand& cn : cands) {
+            if (emitted >= cd.max_instances) break;
+            const NearRock& r = *cn.rock;
+            const glm::mat3 R = rotation(r.phase + r.tumble_rate * t, r.tumble_axis);
+            if (cn.w.mesh > 0.0f) {
+                const auto it = std::find(rocks.begin(), rocks.end(), r.rock);
+                const std::size_t slot = static_cast<std::size_t>(it - rocks.begin());
+                if (it != rocks.end() && slot < bounds.size() && bounds[slot] > 0.0f) {
+                    const glm::mat3 rs = R * (r.radius / bounds[slot]);
+                    minors::InstanceGpu g;   // rows of [R*s | t]; glm is column-major: rs[col][row]
+                    g.row0 = {rs[0][0], rs[1][0], rs[2][0], cn.c.x};
+                    g.row1 = {rs[0][1], rs[1][1], rs[2][1], cn.c.y};
+                    g.row2 = {rs[0][2], rs[1][2], rs[2][2], cn.c.z};
+                    g.extra.x = cn.w.mesh < 1.0f ? 1.0f - cn.w.mesh : 0.0f;
+                    const int lod = r.radius * k / std::max(cn.d, 1e-3f) >= in.lod0_pixel_radius ? 0 : 1;
+                    mesh_bins[{family, static_cast<int>(slot), lod}].push_back(g);
+                    ++emitted;
+                }
+            }
+            if (cn.w.billboard > 0.0f && !cat_.view_dirs_gltf.empty() && emitted < cd.max_instances) {
+                const float dither = cn.w.billboard < 1.0f ? -cn.w.billboard : 0.0f;
+                board_bins[r.rock].push_back(
+                    far::make_impostor(cat_.view_dirs_gltf, eye, cn.c, R, r.radius, dither));
+                ++emitted;
+            }
+        }
+    }
+
+    for (auto& [key, items] : mesh_bins) {
+        minors::Bin b;
+        std::tie(b.family, b.slot, b.lod) = key;
+        out.mesh_count += static_cast<int>(items.size());
+        b.items = std::move(items);
+        out.meshes.push_back(std::move(b));
+    }
+    for (auto& [rock, items] : board_bins) {
+        out.billboard_count += static_cast<int>(items.size());
+        out.billboards.push_back(far::ImpostorBin{rock, std::move(items)});
     }
 }
 

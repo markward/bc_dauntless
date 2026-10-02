@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <glm/gtc/matrix_transform.hpp>
 using namespace renderer;
 namespace {
 far::DiscSource full_sphere() {          // density 1 everywhere within 10,000 GU, no noise
@@ -13,7 +14,10 @@ far::DiscSource full_sphere() {          // density 1 everywhere within 10,000 G
     s.sphere_radius_gu = 10000.0f; s.sphere_edge_frac = 0.0f; s.view_space = true;
     return s;
 }
-rockfield::NearCatalogue cat() { return {{1, 2, 3}, {10, 11}}; }
+rockfield::NearCatalogue cat() {
+    rockfield::NearCatalogue k; k.small_rocks = {1, 2, 3}; k.large_rocks = {10, 11};
+    return k;
+}
 }
 
 TEST(NearCells, DeterministicPerCell) {
@@ -149,7 +153,8 @@ TEST(NearStream, NonGeneratorDialKeepsCellsAndCatalogueClears) {
     rockfield::NearDials d; d.fade_gu = 8.0f; d.small.max_instances = 10;
     f.set_dials(d);
     EXPECT_EQ(f.stats().cells, first);
-    f.set_catalogue({{4}, {12}});
+    rockfield::NearCatalogue other; other.small_rocks = {4}; other.large_rocks = {12};
+    f.set_catalogue(other);
     EXPECT_EQ(f.stats().cells, 0);
 }
 
@@ -178,4 +183,198 @@ TEST(FarABound, DiscBoundsTheTable) {
     s.outer_fade_gu = 0.0f;
     EXPECT_GE(far::a_bound(s, glm::dvec3(1000.0, 0, 0), 50.0), 0.5f);
     EXPECT_EQ(far::a_bound(s, glm::dvec3(5000.0, 0, 0), 50.0), 0.0f);
+}
+
+// ---- Per-camera build (Task 5) -------------------------------------------
+namespace {
+// The catalogue with bounds and impostor view dirs: what build() needs.
+rockfield::NearCatalogue build_cat() {
+    rockfield::NearCatalogue k = cat();
+    k.small_bound_mu = {57.0f, 57.0f, 57.0f};
+    k.large_bound_mu = {57.0f, 57.0f};
+    k.view_dirs_gltf = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
+    return k;
+}
+bool is_small_rock(int rock) { const auto s = cat().small_rocks; return std::find(s.begin(), s.end(), rock) != s.end(); }
+rockfield::NearBuildInput looking_along_y(float fov_deg) {
+    rockfield::NearBuildInput in;
+    in.proj = glm::perspective(glm::radians(fov_deg), 1.0f, 0.01f, 1e5f);
+    in.view = glm::lookAt(glm::vec3(0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1));
+    return in;
+}
+glm::vec3 translation(const minors::InstanceGpu& g) { return {g.row0.w, g.row1.w, g.row2.w}; }
+glm::mat3 linear(const minors::InstanceGpu& g) {   // rows -> glm column-major
+    return glm::transpose(glm::mat3(glm::vec3(g.row0), glm::vec3(g.row1), glm::vec3(g.row2)));
+}
+}
+
+TEST(NearTiers, WeightsAtTheBoundaries) {
+    rockfield::NearClassDials c;  // small: 20 / 30, fade 4
+    auto w = [&](float d) { return rockfield::near_weights(d, c, 4.0f); };
+    EXPECT_EQ(w(10).mesh, 1.0f);  EXPECT_EQ(w(10).billboard, 0.0f);
+    EXPECT_NEAR(w(18).mesh + w(18).billboard, 1.0f, 1e-6f);   // inside the mesh->billboard fade
+    EXPECT_GT(w(18).mesh, 0.0f); EXPECT_GT(w(18).billboard, 0.0f);
+    EXPECT_EQ(w(20).mesh, 0.0f);  EXPECT_EQ(w(20).billboard, 1.0f);
+    EXPECT_EQ(w(25).billboard, 1.0f);
+    EXPECT_NEAR(w(28).billboard, 0.5f, 1e-5f);                // dithering in at the outer edge
+    EXPECT_EQ(w(30).mesh + w(30).billboard, 0.0f);
+    EXPECT_EQ(w(31).mesh + w(31).billboard, 0.0f);
+}
+
+TEST(NearBuild, OneTierPerRockOutsideFades) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    const rockfield::NearBuildInput in = looking_along_y(90.0f);
+    rockfield::NearOutput out;
+    f.build(in, out);
+    EXPECT_GT(out.mesh_count, 0);
+    EXPECT_GT(out.billboard_count, 0);
+    int meshes = 0, boards = 0;
+    for (const auto& b : out.meshes)
+        for (const auto& it : b.items) {
+            ++meshes;
+            const float d = glm::length(translation(it));
+            const float lim = b.family == rockfield::kNearSmallFamily ? 20.0f : 50.0f;
+            EXPECT_LE(d, lim + 1e-3f);
+            if (d < lim - 4.0f) EXPECT_EQ(it.extra.x, 0.0f);       // solid: byte-identical path
+            else EXPECT_GE(it.extra.x, 0.0f);                       // fading out: positive
+        }
+    for (const auto& b : out.billboards)
+        for (const auto& it : b.items) {
+            ++boards;
+            const float d = glm::length(glm::vec3(it.centre_half));
+            const float lo = is_small_rock(b.rock) ? 16.0f : 46.0f;   // mesh_gu - fade
+            const float hi = is_small_rock(b.rock) ? 30.0f : 60.0f;   // billboard_gu
+            EXPECT_GE(d, lo - 1e-3f);
+            EXPECT_LE(d, hi + 1e-3f);
+            EXPECT_LE(it.up_dither.w, 0.0f);
+            if (d > lo + 4.0f + 1e-3f && d < hi - 4.0f - 1e-3f)
+                EXPECT_EQ(it.up_dither.w, 0.0f);                  // weight 1: solid, exactly 0
+        }
+    EXPECT_EQ(meshes, out.mesh_count);
+    EXPECT_EQ(boards, out.billboard_count);
+}
+
+TEST(NearBuild, MeshItemCarriesFullScaleAndLodRule) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    rockfield::NearBuildInput in = looking_along_y(90.0f);
+    in.lod0_pixel_radius = 24.0f;
+    rockfield::NearOutput out;
+    f.build(in, out);
+    const float k = far::pixels_per_gu(in.proj, in.viewport_h);
+    int lod0 = 0, lod1 = 0;
+    for (const auto& b : out.meshes) {
+        const auto& rocks = b.family == rockfield::kNearSmallFamily ? cat().small_rocks : cat().large_rocks;
+        ASSERT_GE(b.slot, 0); ASSERT_LT(b.slot, static_cast<int>(rocks.size()));
+        const auto& cd = b.family == rockfield::kNearSmallFamily ? f.dials().small : f.dials().large;
+        for (const auto& it : b.items) {
+            const float s = glm::length(linear(it)[0]);
+            const float r = s * 57.0f;                          // radius = s * bound_mu
+            EXPECT_GE(r, cd.r_min - 1e-4f); EXPECT_LE(r, cd.r_max + 1e-4f);
+            const float d = glm::length(translation(it));
+            EXPECT_EQ(b.lod, r * k / d >= in.lod0_pixel_radius ? 0 : 1);
+            (b.lod == 0 ? lod0 : lod1)++;
+        }
+    }
+    EXPECT_GT(lod0 + lod1, 0);
+}
+
+TEST(NearBuild, MeshAndBillboardOfOneRockAgree) {   // same R for both tiers
+    rockfield::NearField f;
+    const auto k = build_cat();
+    f.set_catalogue(k); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    rockfield::NearBuildInput in = looking_along_y(90.0f);
+    in.game_time = 12.5;
+    rockfield::NearOutput out;
+    f.build(in, out);
+    int pairs = 0;
+    for (const auto& mb : out.meshes)
+        for (const auto& m : mb.items) {
+            if (!(m.extra.x > 0.0f)) continue;                   // only rocks in the fade band
+            for (const auto& bb : out.billboards)
+                for (const auto& b : bb.items) {
+                    if (glm::length(glm::vec3(b.centre_half) - translation(m)) > 1e-5f) continue;
+                    const glm::mat3 L = linear(m);
+                    const float s = glm::length(L[0]);
+                    const float r = s * 57.0f;
+                    const auto want = far::make_impostor(k.view_dirs_gltf, glm::vec3(0), translation(m),
+                                                         L / s, r, b.up_dither.w);
+                    EXPECT_NEAR(glm::length(glm::vec3(want.right_view) - glm::vec3(b.right_view)), 0.0f, 1e-4f);
+                    EXPECT_NEAR(glm::length(glm::vec3(want.up_dither) - glm::vec3(b.up_dither)), 0.0f, 1e-4f);
+                    EXPECT_EQ(want.right_view.w, b.right_view.w);
+                    EXPECT_NEAR(want.centre_half.w, b.centre_half.w, 1e-5f);
+                    EXPECT_NEAR(m.extra.x + b.up_dither.w, 0.0f, 1e-5f);   // (1 - w_mesh) == w_billboard
+                    ++pairs;
+                }
+        }
+    EXPECT_GT(pairs, 0);
+}
+
+TEST(NearBuild, NoViewDirsNoBillboards) {
+    rockfield::NearField f;
+    rockfield::NearCatalogue k = build_cat(); k.view_dirs_gltf.clear();
+    f.set_catalogue(k); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    rockfield::NearOutput out;
+    f.build(looking_along_y(90.0f), out);
+    EXPECT_GT(out.mesh_count, 0);
+    EXPECT_EQ(out.billboard_count, 0);
+    EXPECT_TRUE(out.billboards.empty());
+}
+
+TEST(NearBuild, RenderSpaceIsSystemMinusAnchorMinusOrigin) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(300.0, 0.0, 0.0));            // rocks streamed around system x = 300
+    rockfield::NearBuildInput in = looking_along_y(90.0f);
+    in.anchor_sys = glm::dvec3(200.0, 0.0, 0.0);
+    in.render_origin = glm::dvec3(100.0, 0.0, 0.0);   // eye at render 0 == system 300
+    rockfield::NearOutput out;
+    f.build(in, out);
+    EXPECT_GT(out.mesh_count, 0);
+    for (const auto& b : out.meshes)
+        for (const auto& it : b.items) EXPECT_LE(glm::length(translation(it)), 50.0f + 1e-3f);
+}
+
+TEST(NearBuild, BuildIsConstAcrossCameras) {   // Review Focus 3
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    const auto before = f.stats();
+    rockfield::NearBuildInput far_cam;
+    far_cam.proj = glm::perspective(glm::radians(10.0f), 1.0f, 0.01f, 1e6f);
+    far_cam.view = glm::lookAt(glm::vec3(5000, 0, 0), glm::vec3(5000, 1, 0), glm::vec3(0, 0, 1));
+    rockfield::NearOutput out;
+    out.mesh_count = 7;                                 // stale output is reset
+    const rockfield::NearField& cf = f;
+    cf.build(far_cam, out);
+    EXPECT_EQ(out.mesh_count + out.billboard_count, 0);    // nothing streamed out there
+    EXPECT_TRUE(out.meshes.empty());
+    EXPECT_EQ(f.stats().cells, before.cells);
+    EXPECT_EQ(f.stats().small, before.small);
+}
+
+TEST(NearBuild, InstanceCapHolds) {             // Review Focus 5
+    rockfield::NearDials d; d.small.max_instances = 50;
+    rockfield::NearField f; f.set_dials(d);
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    const rockfield::NearBuildInput in = looking_along_y(170.0f);
+    rockfield::NearOutput out; f.build(in, out);
+    int small = 0, large = 0, small_boards = 0;
+    for (const auto& b : out.meshes)
+        (b.family == rockfield::kNearSmallFamily ? small : large) += static_cast<int>(b.items.size());
+    for (const auto& b : out.billboards) {
+        const int n = static_cast<int>(b.items.size());
+        if (is_small_rock(b.rock)) { small += n; small_boards += n; } else large += n;
+    }
+    EXPECT_EQ(small, 50);                       // the cap binds, meshes + billboards together
+    EXPECT_GT(large, 0);                        // the other class is untouched
+    // Nearest first: ~270 small rocks lie within 20 GU in view, so 50 kept
+    // must all be near meshes -- no small billboard (>= 16 GU) survives.
+    EXPECT_EQ(small_boards, 0);
 }

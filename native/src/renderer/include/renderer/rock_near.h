@@ -9,6 +9,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include <renderer/far_field.h>
+#include <renderer/minor_field.h>
 
 namespace renderer::rockfield {
 
@@ -43,7 +44,37 @@ struct NearRock {
 struct NearCatalogue {               // pushed with far_set_catalogue
     std::vector<int> small_rocks;    // catalogue indices of silicate-family fragments
     std::vector<int> large_rocks;    // catalogue indices of silicate-family majors
+    // Model-unit bound radius at load scale 1, parallel to the index lists:
+    // a mesh item's scale is radius / bound. A missing or non-positive bound
+    // draws no mesh for that slot.
+    std::vector<float> small_bound_mu, large_bound_mu;
+    // The impostor bake's view directions (glTF frame, as FarField's). Empty:
+    // no billboards at all (far::make_impostor needs at least one).
+    std::vector<glm::vec3> view_dirs_gltf;
 };
+
+// Family codes in NearOutput::meshes bins, resolved by the host's FragmentLookup:
+constexpr int kNearSmallFamily = 1000;   // slot = index into NearCatalogue::small_rocks
+constexpr int kNearLargeFamily = 1001;   // slot = index into NearCatalogue::large_rocks
+
+struct NearBuildInput {
+    glm::mat4 view{1}, proj{1};
+    float viewport_h = 720.0f;
+    glm::dvec3 render_origin{0.0};   // view space of render space's origin
+    glm::dvec3 anchor_sys{0.0};      // system position of view space's origin (FarField::anchor())
+    double game_time = 0.0;
+    float lod0_pixel_radius = 24.0f; // minors' dial: lod0 above, lod1 below
+};
+struct NearOutput {
+    std::vector<minors::Bin> meshes;          // family kNearSmallFamily/kNearLargeFamily
+    std::vector<far::ImpostorBin> billboards; // .rock = catalogue index
+    int mesh_count = 0, billboard_count = 0;
+};
+struct NearWeights { float mesh = 0, billboard = 0; };
+// Pure tier rule for camera distance d (spec §2): mesh 1 below mesh_gu - fade,
+// ramps to 0 at mesh_gu; billboard = 1 - mesh up to billboard_gu - fade, then
+// ramps to 0 at billboard_gu; nothing beyond. fade_gu <= 0 is a hard step.
+NearWeights near_weights(float d, const NearClassDials& c, float fade_gu);
 
 // Pure: the rocks of one cell. Poisson(n_bound * L^3) candidates, each
 // accepted with probability density * field_density(x) / n_bound, where
@@ -69,6 +100,12 @@ public:
     NearStats stats() const;
     // Every rock currently streamed, per class (tests, build, contacts).
     void for_each(NearClass cls, const std::function<void(std::uint64_t key, const NearRock&)>& fn) const;
+    // Per drawn camera: every streamed rock in ONE tier (mesh or billboard)
+    // except inside a fade band, where both draw screen-door dithered (mesh
+    // extra.x = 1 - w, billboard dither = -w; weight 1 => exactly 0).
+    // Frustum-culled; per class at most max_instances items (meshes +
+    // billboards together), nearest first. Const: never streams.
+    void build(const NearBuildInput& in, NearOutput& out) const;
 private:
     struct Cell {
         NearClass cls;
