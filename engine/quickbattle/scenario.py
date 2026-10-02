@@ -9,9 +9,13 @@ Spec: docs/superpowers/specs/2026-10-02-quickbattle-setup-screen-design.md §2
 """
 from __future__ import annotations
 
+import logging
+import os
 import secrets
 from dataclasses import dataclass, field
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 ALLEGIANCES = ("friendly", "enemy", "neutral")
 DIRECTIONS = ("fore", "aft", "port", "starboard", "dorsal", "ventral")
@@ -240,3 +244,127 @@ def _strip_ids(s: Scenario) -> list:
 
 def same_setup(a: Scenario, b: Scenario) -> bool:
     return _strip_ids(a) == _strip_ids(b)
+
+
+# ── Catalog-aware: reconciliation and the battle plan (spec §2, §4.6) ──────
+
+def catalog_index(entries) -> dict:
+    return {e.ship_id.lower(): e for e in entries}
+
+
+def _lookup(index, ship_id):
+    return index.get((ship_id or "").lower())
+
+
+def resolve_variant(ce, name):
+    if not ce.variants:
+        return None
+    if name is None:
+        return ce.variants[0]
+    return next((v for v in ce.variants if v.name == name), None)
+
+
+def can_be_player(ce, variant_name) -> bool:
+    v = resolve_variant(ce, variant_name)
+    if v is not None and v.playable is not None:
+        return bool(v.playable)
+    return bool(ce.playable)
+
+
+def reconcile(scenario: "Scenario", index) -> list:
+    msgs = []
+    pe = scenario.player_entry()
+    ce = _lookup(index, pe.ship)
+    if ce is None or not can_be_player(ce, pe.variant):
+        msgs.append("player ship %r unavailable; using %s" % (pe.ship, DEFAULT_PLAYER_SHIP))
+        pe.ship, pe.variant = DEFAULT_PLAYER_SHIP, None
+    for g in scenario.groups:
+        for e in list(g.entries):
+            ce = _lookup(index, e.ship)
+            if ce is None:
+                msgs.append("ship %r is no longer installed; removed from %r" % (e.ship, g.name))
+                g.entries.remove(e)
+                continue
+            e.ship = ce.ship_id
+            if e.variant is not None and resolve_variant(ce, e.variant) is None:
+                msgs.append("named ship %r not found on %s; using class default"
+                            % (e.variant, ce.ship_id))
+                e.variant = None
+    for m in msgs:
+        _log.warning("quickbattle: %s", m)
+    return msgs
+
+
+@dataclass(frozen=True)
+class PlayerOrder:
+    ship_file: str
+    class_id: str
+    registry: Optional[str]
+    display_name: Optional[str]
+
+
+@dataclass(frozen=True)
+class SpawnOrder:
+    group_id: str
+    entry_id: str
+    ship_file: str
+    class_id: str
+    title: str
+    registry: Optional[str]
+    display_name: Optional[str]
+    allegiance: str
+    direction: Optional[str]
+    distance_gu: Optional[float]
+    ai_level: float
+
+
+@dataclass(frozen=True)
+class BattlePlan:
+    player: PlayerOrder
+    orders: tuple
+
+
+def _bc_default_stem(class_id):
+    from engine.appc.registry_texture import DEFAULT_REGISTRY_BY_CLASS
+    rel = DEFAULT_REGISTRY_BY_CLASS.get(class_id)
+    return os.path.splitext(os.path.basename(rel))[0] if rel else None
+
+
+def _resolve(ce, variant_name):
+    """(ship_file, registry_stem, display_name_before_ordinals) for one row."""
+    v = resolve_variant(ce, variant_name)
+    if v is not None and v.script:
+        return v.script, v.registry, v.name
+    if v is None or v is ce.variants[0]:
+        reg = (v.registry if v is not None else None) or _bc_default_stem(ce.ship_id)
+        return ce.ship_id, reg, (v.name if v is not None else None)
+    return ce.ship_id, v.registry, v.name
+
+
+def battle_plan(scenario: "Scenario", index) -> BattlePlan:
+    from engine.quickbattle import naming
+    from engine.units import GU_TO_KM
+
+    pe = scenario.player_entry()
+    pce = _lookup(index, pe.ship)
+    p_file, p_reg, p_name = _resolve(pce, pe.variant)
+    rows = []
+    for g in scenario.groups:
+        for e in g.entries:
+            if e.player:
+                continue
+            ce = _lookup(index, e.ship)
+            if ce is None:
+                continue
+            rows.append((g, e, ce) + _resolve(ce, e.variant))
+    names = naming.with_ordinals([p_name] + [r[5] for r in rows])
+    orders = []
+    for (g, e, ce, f, reg, _n), disp in zip(rows, names[1:]):
+        orders.append(SpawnOrder(
+            group_id=g.id, entry_id=e.id, ship_file=f, class_id=ce.ship_id,
+            title=ce.title or ce.ship_id, registry=reg, display_name=disp,
+            allegiance=g.allegiance, direction=g.direction,
+            distance_gu=(DISTANCE_KM[g.distance] / GU_TO_KM) if g.distance else None,
+            ai_level=DIFFICULTY_LEVEL[g.difficulty]))
+    return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
+                      orders=tuple(orders))
