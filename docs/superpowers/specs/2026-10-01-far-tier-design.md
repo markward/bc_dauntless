@@ -368,6 +368,28 @@ haze source as well.
   14,136 → 14,140, alpha **0.150**. (Before R16 removed the pixel cut it was
   26,860 at k = 1713.) `tile_haze_edge_frac` 0.2. Brightness: `tile_haze_brightness`
   9.1 (Calibration, above).
+- **Noise (added 2026-10-02, Mark live: "a grey ball no matter what").** A
+  sphere's march density is a(x)·m(x), m = max(0, 1 + contrast·(2·fbm(x_local
+  / scale) − 1)), x_local = sample − centre (fixed to the field: no shimmer
+  with camera motion). fbm: `octaves` octaves (cap 8) of 3D value noise,
+  lacunarity 2, gain 0.5, normalised to [0, 1]; lattice values from a 32-bit
+  PCG hash of the integer coords and the source `seed`, trilinear with a
+  smoothstep fade, no textures. m scales the rock density (the extinction),
+  not the `a` fed to `pop_density`, whose a_hi clamp would cut the bright
+  half. `far_field.cc` (`haze_value_noise`, `haze_fbm`, `haze_noise_m`) and
+  `far_haze.frag` are twins, pinned by
+  `FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference` (max alpha diff
+  1.1×10⁻⁴). E[m] = 1.005 over 20,000 points at contrast 0.8, 3 octaves, so
+  the gain and brightness keep their meaning. Native per-source
+  `noise_scale_gu`, `noise_contrast`, `noise_octaves` (0 = off, byte-identical)
+  and `steps` (0 = `haze_steps`; else clamped to [1, 64] on CPU and GPU).
+  Python dials `tile_haze_noise_scale_gu` 250, `tile_haze_noise_contrast` 0.8,
+  `tile_haze_noise_octaves` 3, `tile_haze_steps` 48; belts send none and never
+  noise. With noise a single ray no longer reads 25 ± 1/255 (24.2–26.1 across
+  seeds), so the calibration pins the MEAN over 81 view rays in the inner
+  half of the field's disc: within 1/255 of the noise-off mean (22.9/255),
+  `FarHazeNoise.TileNoiseKeepsTheMeanDisplayedHaze`. Brightness was not
+  retuned.
 
 **Frames.**
 - Python pushes the view→system offset (the viewed frame's `anchor_gu`) once a
@@ -461,8 +483,8 @@ disc (`clamp(p + 0.5 − r, 0, 1)` scaled by `p² / (p² + 1/12)`); between 1 an
 the two mix linearly. Measured: flux within 0.3% of π p² at every tested p
 (including p = 1, the square/disc seam), and sub-pixel-offset shimmer ≤ 4.6%
 across the whole band (the disc alone shimmers ~11% at p = 1 sampled at pixel
-centres — the reason for the cross-fade). `speck_gain` (default 1.0) is a
-dial. A flux-continuity test (§5) pins the speck to the lit mesh and the
+centres — the reason for the cross-fade). `speck_gain` (default 4.0 since 2026-10-02, Mark live: "about 4"; was
+1.0) is a dial. A flux-continuity test (§5) pins the speck to the lit mesh and the
 impostor at the hand-off.
 
 **Viewscreen RTT.** Every draw is rebuilt for the RTT's own camera and height,
