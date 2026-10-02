@@ -101,6 +101,15 @@ void set_event_handler(std::function<void(const std::string&)> handler);
 // re-emits state. Pass an empty function to disable.
 void set_load_end_handler(std::function<void()> handler);
 
+// Called (main thread) whenever the page that might hold a focused text field
+// goes away: main-frame load start (reload / navigation) and renderer-process
+// termination. The host wires it to Window::set_key_capture(false). Stored in
+// the lifecycle, not on the client, so it can be installed before
+// initialize().
+void set_capture_reset_handler(std::function<void()> handler);
+// Invoke the handler if one is installed. Used by DauntlessCefClient.
+void fire_capture_reset();
+
 // Called before window/GL teardown. Releases the browser and CEF.
 void shutdown();
 

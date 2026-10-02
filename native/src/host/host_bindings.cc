@@ -6332,6 +6332,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           });
 
 #ifdef DAUNTLESS_ENABLE_CEF
+    // A focused CEF text field holds the keyboard (Window::set_key_capture).
+    // If its page reloads or its renderer dies, take the keyboard back
+    // natively -- Python learns of it via key_capture_active().
+    dauntless::ui_cef::set_capture_reset_handler([]() {
+        if (g_window) g_window->set_key_capture(false);
+    });
+
     m.def("cef_initialize",
           [](int view_width, int view_height, const std::string& html_path,
              float device_scale_factor) {

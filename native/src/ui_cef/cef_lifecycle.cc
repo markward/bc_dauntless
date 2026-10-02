@@ -30,6 +30,7 @@ CefRefPtr<DauntlessCefApp>                g_app;
 CefRefPtr<DauntlessCefClient>             g_client;
 std::unique_ptr<CefCompositePass>         g_composite;
 bool                                      g_initialized = false;
+std::function<void()>                     g_capture_reset;
 
 // On macOS without a .app bundle, CEF's NSBundle-based path discovery
 // fails. We must tell CEF where its framework, locales, resources, and
@@ -435,6 +436,14 @@ void set_load_end_handler(std::function<void()> handler) {
     if (g_client) {
         g_client->set_load_end_handler(std::move(handler));
     }
+}
+
+void set_capture_reset_handler(std::function<void()> handler) {
+    g_capture_reset = std::move(handler);
+}
+
+void fire_capture_reset() {
+    if (g_capture_reset) g_capture_reset();
 }
 
 void shutdown() {
