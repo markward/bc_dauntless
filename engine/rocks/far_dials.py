@@ -58,15 +58,35 @@ DEFAULTS: dict = {
     # scale. Every *_noise_contrast steps within [0, 1].
     "belt_noise_scale_gu": 4000.0, "belt_noise_contrast": 0.8,
     "belt_noise_octaves": 3,
+    # Rock fields near band (native; rock-fields Task 4, parsed natively in
+    # Task 7). MUST equal NearDials in
+    # native/src/renderer/include/renderer/rock_near.h. Per class: density
+    # (rocks / GU^3 where the field density is 1), power-law sizes, cell
+    # edge, mesh / billboard camera distances (billboard = streamed radius)
+    # and the per-camera instance cap.
+    "near_small_density": 0.008, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
+    "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 20.0,
+    "near_small_billboard_gu": 30.0, "near_small_max": 4000,
+    "near_large_density": 1.25e-4, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
+    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 50.0,
+    "near_large_billboard_gu": 60.0, "near_large_max": 1000,
+    "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
-    "slab_sigmas", "speck_gain", "haze_gain", "haze_steps"})
+    "slab_sigmas", "speck_gain", "haze_gain", "haze_steps",
+    "near_small_density", "near_small_r_min", "near_small_r_max",
+    "near_small_exponent", "near_small_cell_gu", "near_small_mesh_gu",
+    "near_small_billboard_gu", "near_small_max",
+    "near_large_density", "near_large_r_min", "near_large_r_max",
+    "near_large_exponent", "near_large_cell_gu", "near_large_mesh_gu",
+    "near_large_billboard_gu", "near_large_max",
+    "near_fade_gu", "near_stream_margin_gu", "collide_cooldown_s"})
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
 _INT_FLOOR_1 = ("haze_steps", "tile_haze_noise_octaves", "tile_haze_steps",
-               "belt_noise_octaves")
+               "belt_noise_octaves", "near_small_max", "near_large_max")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("haze_brightness", "tile_haze_brightness", "haze_gain",

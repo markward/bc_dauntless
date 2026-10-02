@@ -3,11 +3,36 @@ from pathlib import Path
 from engine.rocks import far_dials
 
 
+# rock_near.h NearDials / NearClassDials defaults (rock-fields Task 4). The
+# header nests them (small.density, large.r_min, ...), so they are listed
+# here by hand: change rock_near.h and this table together.
+_NEAR_CPP_DEFAULTS = {
+    "near_small_density": 0.008, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
+    "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 20.0,
+    "near_small_billboard_gu": 30.0, "near_small_max": 4000,
+    "near_large_density": 1.0 / 8000.0, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
+    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 50.0,
+    "near_large_billboard_gu": 60.0, "near_large_max": 1000,
+    "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+}
+
+
+def test_near_defaults_match_rock_near_h():
+    """NearDials defaults (native/src/renderer/include/renderer/rock_near.h)
+    MUST equal DEFAULTS; every near key is native (parsed in Task 7)."""
+    for key, value in _NEAR_CPP_DEFAULTS.items():
+        assert key in far_dials.DEFAULTS, key
+        assert key in far_dials.NATIVE_KEYS, key
+        assert far_dials.DEFAULTS[key] == value, key
+    assert isinstance(far_dials.DEFAULTS["near_small_max"], int)
+    assert isinstance(far_dials.DEFAULTS["near_large_max"], int)
+
+
 def test_native_defaults_match_the_cpp_header():
     """FarDials / TierDials defaults MUST equal DEFAULTS."""
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer").resolve()
     text = (hdr / "far_math.h").read_text() + (hdr / "far_field.h").read_text()
-    for key in far_dials.NATIVE_KEYS:
+    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS):
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % key, text)
         assert m, key
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key

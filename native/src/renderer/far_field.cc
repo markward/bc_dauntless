@@ -14,23 +14,6 @@ void disc_coords(const DiscSource& s, const glm::dvec3& x, double& rho, double& 
     rho = glm::length(d - n * z);
 }
 
-// The largest `a` anywhere in the axis-aligned cube (centre c, half h).
-// No caller since the belt generator went (rock-fields, 2026-10-02); kept
-// for the near-band generator, which will expose it.
-[[maybe_unused]] float a_bound(const DiscSource& s, const glm::dvec3& c, double h) {
-    double rho, z;
-    disc_coords(s, c, rho, z);
-    const double hd = h * std::sqrt(3.0);
-    const float lo = static_cast<float>(std::max(0.0, rho - hd));
-    const float hi = static_cast<float>(rho + hd);
-    float amax = std::max(table_a(s, lo), table_a(s, hi));
-    for (const auto& row : s.table)
-        if (row.x >= lo && row.x <= hi) amax = std::max(amax, row.y);
-    const double zmin = std::max(0.0, std::fabs(z) - hd);
-    const double H = scale_height(s, hi);
-    return amax * static_cast<float>(std::exp(-0.5 * zmin * zmin / (H * H)));
-}
-
 // Frustum planes (Gribb-Hartmann), normalised: as MinorField::build_bins.
 struct Frustum {
     glm::vec4 planes[6];
@@ -86,6 +69,24 @@ float density_a(const DiscSource& s, const glm::dvec3& x) {
     disc_coords(s, x, rho, z);
     const double H = scale_height(s, static_cast<float>(rho));
     return table_a(s, static_cast<float>(rho)) * static_cast<float>(std::exp(-0.5 * z * z / (H * H)));
+}
+
+float a_bound(const DiscSource& s, const glm::dvec3& c, double h) {
+    const double hd = h * std::sqrt(3.0);   // the cube's bounding-sphere radius
+    if (s.shape == DiscSource::Shape::Sphere) {
+        const double R = s.sphere_radius_gu;
+        return (R > 0.0 && glm::length(c - s.centre) - hd < R) ? 1.0f : 0.0f;
+    }
+    double rho, z;
+    disc_coords(s, c, rho, z);
+    const float lo = static_cast<float>(std::max(0.0, rho - hd));
+    const float hi = static_cast<float>(rho + hd);
+    float amax = std::max(table_a(s, lo), table_a(s, hi));
+    for (const auto& row : s.table)
+        if (row.x >= lo && row.x <= hi) amax = std::max(amax, row.y);
+    const double zmin = std::max(0.0, std::fabs(z) - hd);
+    const double H = scale_height(s, hi);
+    return amax * static_cast<float>(std::exp(-0.5 * zmin * zmin / (H * H)));
 }
 
 float pop_density(const Population& p, float a) {

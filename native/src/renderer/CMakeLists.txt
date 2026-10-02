@@ -162,6 +162,7 @@ add_library(renderer STATIC
     dust_pass.cc
     far_math.cc
     far_field.cc
+    rock_near.cc
     minor_field.cc
     minor_pass.cc
     rock_shading.cc

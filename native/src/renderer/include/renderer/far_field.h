@@ -68,6 +68,12 @@ float table_a(const DiscSource& s, float rho);
 float scale_height(const DiscSource& s, float rho);
 float density_a(const DiscSource& s, const glm::dvec3& x_sys);
 float pop_density(const Population& p, float a);
+// An upper bound of density_a anywhere in the axis-aligned cube (centre
+// `centre`, half-edge `half`), tested on the cube's bounding sphere. Disc:
+// the table's max over the sphere's radial span times the Gaussian at its
+// nearest |z|. Sphere: 1 when the bounding sphere reaches inside
+// sphere_radius_gu, else 0. 0 means no point of the cube has density.
+float a_bound(const DiscSource& s, const glm::dvec3& centre, double half);
 
 // ---- Haze (spec §2 "Haze") ------------------------------------------------
 
