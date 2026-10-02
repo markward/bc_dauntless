@@ -298,7 +298,6 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
     s.set_float("u_k", k);
     s.set_float("u_p_min", dials.tiers.p_min);
     s.set_int("u_steps", std::clamp(dials.haze_steps, 1, kMaxSteps));
-    s.set_float("u_gain", dials.haze_gain);
     s.set_float("u_slab_sigmas", dials.slab_sigmas);
     // The light configure_rock_program / render_specks give a rock.
     set_ambient_uniforms(s, lighting, ambient_scale);
@@ -355,6 +354,10 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         // System -> render, in double before the cast.
         s.set_vec3("u_centre", glm::vec3(src.centre - origin_sys + glm::dvec3(eye_render)));
         s.set_vec3("u_normal", src.normal);
+        s.set_int("u_shape", src.shape == far::DiscSource::Shape::Sphere ? 1 : 0);
+        s.set_float("u_sphere_r", src.sphere_radius_gu);
+        s.set_float("u_sphere_edge", src.sphere_edge_frac);
+        s.set_float("u_gain", dials.haze_gain * src.gain_scale);   // haze_column's product
         s.set_float_array("u_table_r", tr, static_cast<int>(kMaxRows));
         s.set_float_array("u_table_a", ta, static_cast<int>(kMaxRows));
         s.set_int("u_table_n", rows);

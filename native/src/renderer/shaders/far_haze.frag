@@ -8,6 +8,12 @@
 // cross-section (with its q == 1 / q == 3 log branches) and the same
 // n * sigma-weighted albedo mix. FarPassGLTest.HazeShaderMatchesTheCpuReference
 // pins the two together.
+// Sphere sources (u_shape == 1, tile-field haze, added 2026-10-02): the
+// interval is the ray's chord through the sphere of radius u_sphere_r, clipped
+// to [0, scene depth], and a(x) is 1 within u_sphere_r * (1 - u_sphere_edge),
+// a linear ramp to 0 at u_sphere_r -- far_field.cc's sphere_a / the Sphere
+// branch of haze_interval. The march itself is shared.
+// FarPassGLTest.SphereHazeShaderMatchesTheCpuReference pins the sphere twin.
 // Output is PREMULTIPLIED (rgb, alpha = 1 - T); blend GL_ONE,
 // GL_ONE_MINUS_SRC_ALPHA.
 in vec2 v_uv;
@@ -18,6 +24,9 @@ uniform mat4  u_inv_vp;
 uniform vec3  u_eye;            // render space
 uniform vec3  u_centre;         // render space: centre - origin_sys + eye_render
 uniform vec3  u_normal;
+uniform int   u_shape;          // 0 disc, 1 sphere (DiscSource::Shape)
+uniform float u_sphere_r;
+uniform float u_sphere_edge;
 uniform float u_table_r[32];
 uniform float u_table_a[32];
 uniform int   u_table_n;
@@ -36,7 +45,7 @@ uniform vec3  u_pop_albedo[2];
 uniform float u_k;
 uniform float u_p_min;
 uniform int   u_steps;          // clamped to [1, kMaxSteps] by the host
-uniform float u_gain;
+uniform float u_gain;           // haze_gain * the source's gain_scale
 // Light: the same inputs speck.frag reads.
 uniform vec3 u_ambient_light;
 uniform int  u_dir_light_count;
@@ -88,8 +97,19 @@ float table_a(float rho) {
 
 float scale_height(float rho) { return max(u_h_frac * rho, u_h_min); }
 
+// renderer::far::sphere_a (far_field.cc).
+float sphere_a(vec3 p) {
+    float R = u_sphere_r;
+    float d = length(p - u_centre);
+    if (!(R > 0.0) || d >= R) return 0.0;
+    float inner = R * (1.0 - clamp(u_sphere_edge, 0.0, 1.0));
+    if (d <= inner) return 1.0;
+    return (R - d) / (R - inner);
+}
+
 // renderer::far::density_a.
 float density_a(vec3 p) {
+    if (u_shape == 1) return sphere_a(p);
     vec3 d = p - u_centre;
     float z = dot(d, u_normal);
     float rho = length(d - u_normal * z);
@@ -112,6 +132,21 @@ vec3 world_from_depth(vec2 uv, float d) {
 
 // renderer::far::haze_interval. Keep identical (see the header comment).
 bool haze_interval(vec3 dir, float t_max, out float t0, out float t1) {
+    t0 = 0.0;
+    t1 = 0.0;
+    if (u_shape == 1) {
+        float R = u_sphere_r;
+        if (!(R > 0.0)) return false;
+        vec3 d = u_eye - u_centre;
+        float qa = dot(dir, dir), qb = 2.0 * dot(d, dir), qc = dot(d, d) - R * R;
+        if (qa < 1e-12) return false;
+        float disc = qb * qb - 4.0 * qa * qc;
+        if (disc < 0.0) return false;
+        float sq = sqrt(disc);
+        t0 = max(0.0, (-qb - sq) / (2.0 * qa));
+        t1 = min(t_max, (-qb + sq) / (2.0 * qa));
+        return t1 > t0;
+    }
     if (u_table_n <= 0) return false;
     float R = u_table_r[u_table_n - 1] + max(0.0, u_outer_fade);
     float Z = u_slab_sigmas * scale_height(R);

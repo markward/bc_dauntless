@@ -847,11 +847,13 @@ glm::dvec3 unproject(const glm::dmat4& inv_vp, double u, double v, double d) {
 
 }  // namespace
 
-// far_haze.frag implements haze_column exactly: at 5 pixels of a 64x64
-// render, alpha agrees within 0.01 (asserted: 0.001) with a far depth (cleared to 1.0) and with
-// a near occluder (depth cleared to a plane 60,000 GU ahead), and the
-// premultiplied colour agrees too.
-TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
+namespace {
+// Draws `src` with far_haze.frag at 5 pixels of a 64x64 render, twice -- a far
+// depth (cleared to 1.0) and a near occluder (a plane near_gu ahead) -- and
+// asserts alpha and premultiplied colour agree with haze_column within 0.001.
+// centre_alpha[pass] = the CPU alpha at the centre pixel.
+void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
+                      const glm::dvec3& origin_sys, float near_gu, float centre_alpha[2]) {
     // Targets first: HdrTarget::resize binds on the ACTIVE unit.
     renderer::HdrTarget scene, out;
     scene.resize(kHazeSize, kHazeSize);
@@ -859,8 +861,7 @@ TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
-    const std::vector<far::DiscSource> sources = {haze_source()};
+        const std::vector<far::DiscSource> sources = {src};
     const scenegraph::Camera cam = haze_camera();
     const glm::mat4 vp = cam.proj_matrix() * cam.view_matrix();
     const glm::mat4 inv_vp = glm::inverse(vp);
@@ -874,13 +875,12 @@ TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
     l.directional_color[0] = glm::vec3(1.0f, 0.9f, 0.8f);
     const float ambient_scale = 0.7f;
 
-    // Depth of a plane 60,000 GU ahead.
-    const glm::vec4 clip = cam.proj_matrix() * glm::vec4(0.0f, 0.0f, -60000.0f, 1.0f);
+    // Depth of a plane near_gu ahead.
+    const glm::vec4 clip = cam.proj_matrix() * glm::vec4(0.0f, 0.0f, -near_gu, 1.0f);
     const float near_depth = clip.z / clip.w * 0.5f + 0.5f;
 
     const int pix[5][2] = {{32, 32}, {6, 6}, {57, 6}, {6, 57}, {57, 57}};
     float max_diff = 0.0f;
-    float centre_alpha[2] = {0.0f, 0.0f};
     for (int pass_i = 0; pass_i < 2; ++pass_i) {
         scene.bind();
         glViewport(0, 0, kHazeSize, kHazeSize);
@@ -897,7 +897,7 @@ TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::FarPass pass;
-        pass.render_haze(sources, origin_sys, cam, *pipeline, l, ambient_scale,
+        pass.render_haze(sources, origin_sys, cam, pipeline, l, ambient_scale,
                          scene.depth_texture(), inv_vp, k, dials);
         EXPECT_EQ(pass.last_draw_calls(), 1);
         EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
@@ -933,7 +933,40 @@ TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
         }
     }
     std::printf("[far_pass_test] haze shader-vs-CPU max alpha diff %.5f\n", max_diff);
+}
+}  // namespace
+
+// far_haze.frag implements haze_column exactly: at 5 pixels of a 64x64
+// render, alpha agrees within 0.01 (asserted: 0.001) with a far depth (cleared to 1.0) and with
+// a near occluder (depth cleared to a plane 60,000 GU ahead), and the
+// premultiplied colour agrees too.
+TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
+    float centre_alpha[2] = {0.0f, 0.0f};
+    haze_matches_cpu(*pipeline, haze_source(), glm::dvec3(278000.0, 0.0, 0.0), 60000.0f,
+                     centre_alpha);
     EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees real haze";
+    EXPECT_LT(centre_alpha[1], centre_alpha[0] - 0.03f) << "the occluder stops the march";
+}
+
+// Tile-field haze (2026-10-02): a Sphere source -- Beol 4's field at the
+// derived tile gain, 2,500 GU ahead -- matches haze_column within 0.001 too,
+// including gain_scale, pixels that miss the sphere, and an occluder inside it.
+TEST_F(FarPassGLTest, SphereHazeShaderMatchesTheCpuReference) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s;
+    s.id = 2; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
+    s.centre = origin_sys + glm::dvec3(0.0, 2500.0, 0.0);
+    s.sphere_radius_gu = 1000.0f; s.sphere_edge_frac = 0.2f;
+    s.gain_scale = 26860.0f / 270.0f;
+    far::Population minors;
+    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.density_at_1 = 405.0f / (4.0f / 3.0f * 3.14159265f * 1.0e9f);
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
+    s.pops = {minors};
+    float centre_alpha[2] = {0.0f, 0.0f};
+    haze_matches_cpu(*pipeline, s, origin_sys, 2600.0f, centre_alpha);
+    EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees the field";
     EXPECT_LT(centre_alpha[1], centre_alpha[0] - 0.03f) << "the occluder stops the march";
 }
 
