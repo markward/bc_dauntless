@@ -131,6 +131,7 @@ add_library(renderer STATIC
     asset_path.cc
     window.cc
     text_input.cc
+    key_gate.cc
     gl_caps.cc
     shader.cc
     bone_palette.cc

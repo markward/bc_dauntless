@@ -26,6 +26,7 @@
 #include "include/cef_display_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/cef_render_handler.h"
+#include "include/cef_request_handler.h"
 
 #include <cstdint>
 #include <functional>
@@ -38,7 +39,8 @@ class DauntlessCefClient : public CefClient,
                            public CefRenderHandler,
                            public CefLifeSpanHandler,
                            public CefDisplayHandler,
-                           public CefLoadHandler {
+                           public CefLoadHandler,
+                           public CefRequestHandler {
 public:
     DauntlessCefClient(int view_width, int view_height);
 
@@ -47,6 +49,7 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler>  GetDisplayHandler()  override { return this; }
     CefRefPtr<CefLoadHandler>     GetLoadHandler()     override { return this; }
+    CefRefPtr<CefRequestHandler>  GetRequestHandler()  override { return this; }
 
     // CefRenderHandler
     void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
@@ -91,6 +94,12 @@ public:
     void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    int httpStatusCode) override;
+
+    // CefRequestHandler
+    void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                   TerminationStatus status,
+                                   int error_code,
+                                   const CefString& error_string) override;
 
     // False until the OSR overlay's main frame has finished loading (and
     // again from the start of a reload until it completes). CreateBrowser is

@@ -30,6 +30,7 @@ CefRefPtr<DauntlessCefApp>                g_app;
 CefRefPtr<DauntlessCefClient>             g_client;
 std::unique_ptr<CefCompositePass>         g_composite;
 bool                                      g_initialized = false;
+std::function<void()>                     g_capture_reset;
 
 // On macOS without a .app bundle, CEF's NSBundle-based path discovery
 // fails. We must tell CEF where its framework, locales, resources, and
@@ -391,16 +392,22 @@ void send_mouse_wheel(int x, int y, int delta_y) {
     host->SendMouseWheelEvent(ev, /*deltaX=*/0, /*deltaY=*/delta_y);
 }
 
-void send_key_event(int type, int windows_vk, int native_code, int character, int glfw_mods) {
+void send_key_intent(int type, int windows_vk, int native_code,
+                      char16_t character, char16_t unmodified_character,
+                      int glfw_mods) {
     if (!g_client || !g_client->browser()) return;
     auto host = g_client->browser()->GetHost();
     if (!host) return;
+    // renderer::CefKeyType's four values (RawKeyDown/KeyDown/KeyUp/Char)
+    // are defined to match cef_key_event_type_t's KEYEVENT_* values 0-3 --
+    // see text_input.h's CefKeyType doc comment -- so this cast is exact,
+    // not a remap.
     CefKeyEvent ev;
-    ev.type = type == 2 ? KEYEVENT_CHAR : (type == 1 ? KEYEVENT_KEYUP : KEYEVENT_RAWKEYDOWN);
+    ev.type = static_cast<cef_key_event_type_t>(type);
     ev.windows_key_code = windows_vk;
     ev.native_key_code = native_code;
-    ev.character = static_cast<char16_t>(character);
-    ev.unmodified_character = static_cast<char16_t>(character);
+    ev.character = character;
+    ev.unmodified_character = unmodified_character;
     uint32_t m = 0;
     if (glfw_mods & 0x1) m |= EVENTFLAG_SHIFT_DOWN;    // GLFW_MOD_SHIFT
     if (glfw_mods & 0x2) m |= EVENTFLAG_CONTROL_DOWN;  // GLFW_MOD_CONTROL
@@ -408,6 +415,22 @@ void send_key_event(int type, int windows_vk, int native_code, int character, in
     if (glfw_mods & 0x8) m |= EVENTFLAG_COMMAND_DOWN;  // GLFW_MOD_SUPER
     ev.modifiers = m;
     host->SendKeyEvent(ev);
+}
+
+void edit_command(int cmd) {
+    if (!g_client || !g_client->browser()) return;
+    auto frame = g_client->browser()->GetFocusedFrame();
+    if (!frame) frame = g_client->browser()->GetMainFrame();
+    if (!frame) return;
+    switch (cmd) {
+        case 1: frame->SelectAll(); break;
+        case 2: frame->Copy(); break;
+        case 3: frame->Paste(); break;
+        case 4: frame->Cut(); break;
+        case 5: frame->Undo(); break;
+        case 6: frame->Redo(); break;
+        default: break;
+    }
 }
 
 void set_event_handler(std::function<void(const std::string&)> handler) {
@@ -419,6 +442,14 @@ void set_load_end_handler(std::function<void()> handler) {
     if (g_client) {
         g_client->set_load_end_handler(std::move(handler));
     }
+}
+
+void set_capture_reset_handler(std::function<void()> handler) {
+    g_capture_reset = std::move(handler);
+}
+
+void fire_capture_reset() {
+    if (g_capture_reset) g_capture_reset();
 }
 
 void shutdown() {

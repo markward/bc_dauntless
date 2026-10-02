@@ -290,7 +290,7 @@
          Close button fires dauntlessEvent('ship-property-viewer/cancel').
          The .dev-only class keeps it hidden outside --developer.
          Spec: docs/superpowers/specs/2026-06-08-ship-property-viewer-design.md -->
-    <div id="spv-root" class="spv-root dev-only">
+    <div id="spv-root" class="spv-root dev-only" data-panel="ship-property-viewer">
       <div class="spv-titlebar">
         <span class="spv-title">Ship Property Viewer</span>
         <span id="spv-pincount" class="spv-pincount"></span>
@@ -447,8 +447,8 @@
       <!-- Transform coordinate panel (top-right). Shown only while the Transform
            tool is active and something is selected; driven by payload.transform_coords.
            Rows are built by renderSPVToolPanels (a selected decal's steppers
-           are rescaled to its NIF units). Mouse-only steppers (no keyboard->CEF
-           forwarding). A decal hides the per-panel Mirror (can_mirror). -->
+           are rescaled to its NIF units). Steppers, plus click-the-value
+           to type one (spvBeginValueEdit). A decal hides the per-panel Mirror (can_mirror). -->
       <div id="spv-coords" class="spv-coords dev-only" style="display:none;">
         <div class="spv-coords__title">Position</div>
         <div id="spv-coord-rows"></div>
@@ -526,7 +526,8 @@
       </div>
       <!-- Part popups (spec section 7.3): the tree rows carry names only;
            a part's attributes are set here. Mouse-only steppers, like
-           #spv-radius (no keyboard->CEF forwarding). Anchor and Breakage
+           #spv-radius: mouse-only; typed input is available through the
+           text-capture contract (spec 2026-10-02) but not adopted here. Anchor and Breakage
            popups serve both Add and Edit -- the JS sets the title and the
            primary button's text. -->
       <div id="spv-part-anchor" class="spv-modal-backdrop" style="display:none;">
@@ -577,8 +578,9 @@
       <div id="spv-radius" class="spv-modal-backdrop" style="display:none;">
         <div class="spv-modal">
           <div class="spv-modal__title">Set Radius</div>
-          <!-- Mouse-only stepper (the engine has no keyboard->CEF forwarding yet,
-               so a typed field can't receive input). Buttons nudge the value. -->
+          <!-- Mouse-only stepper: mouse-only; typed input is available through
+               the text-capture contract (spec 2026-10-02) but not adopted
+               here. Buttons nudge the value. -->
           <div class="spv-radius-stepper">
             <button class="spv-step" onclick="shipPropertyViewerRadiusStep(-0.1)">&minus;0.1</button>
             <button class="spv-step" onclick="shipPropertyViewerRadiusStep(-0.01)">&minus;0.01</button>
@@ -613,7 +615,8 @@
            intensity slider. Mirrors #spv-light's shape-picker pattern but for
            independent subsystem-child light emitters (add_emitter/set_emitter).
            Mouse-only (canvas pointer-drag for the wheel; pointer-drag + +/-
-           steppers for intensity) — no keyboard->CEF forwarding exists.
+           steppers for intensity): mouse-only; typed input is available
+           through the text-capture contract (spec 2026-10-02) but not adopted here.
            Spec: docs/superpowers/sdd/2026-07-29-subsystem-light-emitters/task-10-brief.md -->
       <div id="spv-emitter" class="spv-modal-backdrop" style="display:none;">
         <div class="spv-modal">
@@ -1043,6 +1046,7 @@
 
     <script src="js/mission_picker.js"></script>
     <script src="js/pause_menu.js"></script>
+    <script src="js/text_capture.js"></script>
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>
     <script src="js/reticle_text.js"></script>

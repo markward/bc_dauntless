@@ -9082,9 +9082,11 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
     pins it, and the comments below carry the reasons): the scene pass is
     off, the page-load handler re-invalidates the panel so its first payload
     lands, and mouse moves/edges are forwarded because run()'s own
-    forwarding only exists inside the game loop. Added here: typed text and
-    editing keys are drained from the window every frame and forwarded to
-    CEF, and Escape is also offered to the panel (handle_key_esc).
+    forwarding only exists inside the game loop. Added here: every key and
+    typed character is drained from the window each frame and forwarded to
+    CEF in one batch (cef_send_text_events -- native pairs them into real
+    KEYDOWN+CHAR/KEYUP), and Escape is also offered to the panel
+    (handle_key_esc).
     """
     try:
         import _dauntless_host as _h
@@ -9117,7 +9119,7 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
     _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
     _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
     _drain_text = getattr(_h, "drain_text_events", None) if _h else None
-    _send_key = getattr(_h, "cef_send_key_event", None) if _h else None
+    _send_text_events = getattr(_h, "cef_send_text_events", None) if _h else None
     _esc_key = getattr(getattr(_h, "keys", None), "KEY_ESCAPE", 256) if _h else 256
 
     r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
@@ -9146,9 +9148,11 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
                         _cef_send_mouse_click(_mx, _my, 0, True)
                     if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                         _cef_send_mouse_click(_mx, _my, 0, False)
-            if _drain_text is not None and _send_key is not None:
-                for ev in _drain_text():
-                    _send_key(*ev)
+            if _drain_text is not None and _send_text_events is not None:
+                events = _drain_text()
+                if events:
+                    _send_text_events(events)
+                for ev in events:
                     # (kind, code, scancode, action, mods): an Escape press.
                     if ev[0] == 1 and ev[1] == _esc_key and ev[3] == 1 \
                             and hasattr(panel, "handle_key_esc"):
@@ -9918,6 +9922,16 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry()
         ai_inspector = _register_ai_inspector(registry)
 
+        # Keyboard capture for CEF text fields: while one has focus the native
+        # KeyGate makes every key read up. Registered as panel "kbd" so the
+        # page's kbd/focus / kbd/blur events route here. Spec:
+        # docs/superpowers/specs/2026-10-02-cef-text-input-keyboard-capture-design.md
+        from engine.ui.text_capture import TextCaptureController
+        text_capture = TextCaptureController(registry)
+        registry.register(text_capture)
+        # Trigger 4: a mission swap abandons any edit in progress.
+        controller.pre_swap_hooks.append(text_capture.release)
+
         # Configuration panel — production-visible pause-menu modal.
         # Settings persist across launches via engine.settings_store: the
         # store loads, apply_all pushes every STORED value through the same
@@ -10315,6 +10329,11 @@ def run(mission_name: Optional[str] = None,
             _mx, _my = 0, 0
             _cursor_in_panel = False
             if _h is not None:
+                # Text-field keyboard capture: release triggers 2-3, and the
+                # typed-text queue to CEF (drained every frame, forwarded only
+                # while a field holds the keyboard). First, so every key read
+                # below sees this frame's gate.
+                text_capture.tick()
                 # ESC priority: mission picker first (dev only), then the
                 # developer options panel (dev only), then the ship property
                 # viewer (dev only), then the configuration panel, then the
@@ -10669,6 +10688,11 @@ def run(mission_name: Optional[str] = None,
                             _cef_send_mouse_click(_mx, _my, 0, True)
                         if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
+                    elif host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        # Trigger 5: a click on the game world never reaches
+                        # CEF, so the page cannot blur on its own -- release
+                        # the keyboard (abandoning the edit) here.
+                        text_capture.release()
 
             frame_profiler.mark("sim")
             # --- Sim advance: fixed-timestep accumulator ---

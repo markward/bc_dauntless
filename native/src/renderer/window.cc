@@ -82,10 +82,32 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
     });
 
     glfwSetKeyCallback(handle_, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
-        if (glfw_key_to_windows_vk(key) == 0) return;   // editing keys only
-        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
-            self->text_events_.push({kTextEventKey, key, scancode, action, mods});
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
+        if (!self) return;
+        // Clipboard/undo chords first: resolve the LAYOUT's letter (an AZERTY
+        // Cmd+A is GLFW_KEY_Q) and queue a CefFrame command. edit_command_for
+        // only ever returns non-None when the primary modifier (Cmd on
+        // macOS, Ctrl elsewhere) is held, so the glfwGetKeyName lookup is
+        // only worth doing then -- no behaviour change, just skips the
+        // lookup on every other key press.
+        if (action != GLFW_RELEASE && (mods & (GLFW_MOD_SUPER | GLFW_MOD_CONTROL))) {
+            const char* name = glfwGetKeyName(key, scancode);
+            if (name && name[0] && !name[1]) {
+                const EditCommand cmd = edit_command_for(name[0], mods);
+                if (cmd != EditCommand::None) {
+                    self->text_events_.push({kTextEventEdit, static_cast<int>(cmd), scancode, action, mods});
+                    return;
+                }
+            }
         }
+        // Every key press/repeat/release is queued now, not just the
+        // editing-key subset: TextEventTranslator (renderer/text_input.h)
+        // needs to see a held key's RELEASE to emit its KEYUP, and it needs
+        // to see every PRESS to decide whether a following char event
+        // pairs with it. The game never reads this queue for bindings --
+        // only Window::key_state does, via glfwGetKey directly -- so
+        // widening it has no effect on gameplay input.
+        self->text_events_.push({kTextEventKey, key, scancode, action, mods});
     });
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
@@ -130,7 +152,9 @@ Window::Window(Window&& other) noexcept
       last_cursor_y_(other.last_cursor_y_),
       cursor_seeded_(other.cursor_seeded_),
       swap_interval_(other.swap_interval_),
-      text_events_(std::move(other.text_events_)) {
+      text_events_(std::move(other.text_events_)),
+      key_gate_(std::move(other.key_gate_)),
+      polled_keys_(std::move(other.polled_keys_)) {
     other.handle_ = nullptr;
     other.crosshair_cursor_ = nullptr;
     other.scroll_y_accum_ = 0.0;
@@ -160,6 +184,8 @@ Window& Window::operator=(Window&& other) noexcept {
         cursor_seeded_  = other.cursor_seeded_;
         swap_interval_  = other.swap_interval_;
         text_events_    = std::move(other.text_events_);
+        key_gate_       = std::move(other.key_gate_);
+        polled_keys_    = std::move(other.polled_keys_);
         other.handle_ = nullptr;
         other.scroll_y_accum_ = 0.0;
         other.mouse_dx_accum_ = 0.0;
@@ -192,9 +218,31 @@ void Window::window_size(int* w, int* h) const noexcept {
     else { *w = 0; *h = 0; }
 }
 
-bool Window::key_state(int glfw_key) const noexcept {
+bool Window::key_state(int glfw_key) noexcept {
     if (!handle_) return false;
-    return glfwGetKey(handle_, glfw_key) == GLFW_PRESS;
+    polled_keys_.insert(glfw_key);
+    return key_gate_.report(glfw_key, glfwGetKey(handle_, glfw_key) == GLFW_PRESS);
+}
+
+void Window::set_key_capture(bool on) {
+    if (on) {
+        key_gate_.capture();
+        return;
+    }
+    // Only keys the game has polled can matter: it reads keys only through
+    // key_state, and polled_keys_ covers every key the game polled before
+    // release. The game polls its keys every frame, so a key first polled
+    // after release is one nobody was reading. (key_pressed reports a held
+    // key's first query as an edge -- pre-existing, out of scope here.)
+    // Scanning the full GLFW range instead would hit its code gaps, which
+    // raise GLFW_INVALID_ENUM.
+    std::vector<int> down;
+    if (handle_) {
+        for (int k : polled_keys_) {
+            if (glfwGetKey(handle_, k) == GLFW_PRESS) down.push_back(k);
+        }
+    }
+    key_gate_.release(down);
 }
 
 bool Window::mouse_button_state(int glfw_button) const noexcept {

@@ -36,7 +36,7 @@ def cef(monkeypatch):
               "cef_send_mouse_move", "cef_send_mouse_click", "cursor_pos", "framebuffer_size"):
         setattr(mod, n, getattr(state, n))
     mod.drain_text_events = lambda: [state.queue.pop(0)] if state.queue else []
-    mod.cef_send_key_event = lambda *ev: state.sent_keys.append(ev)
+    mod.cef_send_text_events = lambda events: state.sent_keys.extend(events)
     mod.keys = types.SimpleNamespace(MOUSE_BUTTON_LEFT=0, KEY_ESCAPE=256)
     monkeypatch.setitem(sys.modules, "_dauntless_host", mod)
     state.page_loaded = True
