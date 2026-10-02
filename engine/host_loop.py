@@ -5039,6 +5039,18 @@ def _pump_minor_contact(player, session) -> None:
         dev_mode.log_swallowed("minor contact pump", e)
 
 
+def _pump_scenery_contact(player, session) -> None:
+    """Large scenery-rock touches (rock-fields Task 8): bounce + damage the
+    player. Sim side, beside the minor contacts; a raise never breaks the
+    frame."""
+    try:
+        from engine.rocks import scenery_contact
+        scenery_contact.pump(player, session=session)
+    except Exception as e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("scenery contact pump", e)
+
+
 def _veil_flares(r, flares, player):
     """Billboard flares see no fog (their visibility is one depth read), so
     under the system nebula pass they take the exact eye->star transmittance
@@ -6850,6 +6862,8 @@ class HostController:
         _far_tier.reset(self.renderer)
         from engine.rocks import minor_contact as _minor_contact
         _minor_contact.reset()
+        from engine.rocks import scenery_contact as _scenery_contact
+        _scenery_contact.reset()
         from engine.appc import hull_breakup as _hull_breakup
         _hull_breakup.reset()
         _explosion_lights.reset()
@@ -11130,6 +11144,7 @@ def run(mission_name: Optional[str] = None,
                     from engine.rocks import vfx as rock_vfx
                     rock_vfx.pump()
                     _pump_minor_contact(player, session=session)
+                    _pump_scenery_contact(player, session=session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame

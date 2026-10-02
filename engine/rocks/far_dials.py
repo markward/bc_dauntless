@@ -71,6 +71,10 @@ DEFAULTS: dict = {
     "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 50.0,
     "near_large_billboard_gu": 60.0, "near_large_max": 1000,
     "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    # Large-rock collision response (Python, read at use; rock-fields Task 8,
+    # engine/rocks/scenery_contact.py): damage = KE damage x
+    # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
+    "collide_damage_scale": 1.0, "collide_ref_radius_gu": 5.0,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",

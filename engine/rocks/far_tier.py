@@ -302,3 +302,11 @@ def reconcile(session, r) -> None:
         reconcile_with(r, view, rocks, fields)
     except Exception as e:
         _swallow("reconcile", e)
+    # The near band's player contact box: inflated to the shield bubble while
+    # shields are up (rock-fields Task 8, engine/rocks/scenery_contact.py).
+    try:
+        from engine.rocks import scenery_contact
+        r.rockfield_set_shield_inflate(
+            scenery_contact.shield_inflate(getattr(session, "player", None)))
+    except Exception as e:
+        _swallow("set_shield_inflate", e)

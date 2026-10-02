@@ -132,3 +132,21 @@ def test_boot_registers_the_far_dial_group_beside_the_minor_dials():
     far = src.find("_far_dials.register()")
     assert mnr >= 0 and far >= 0
     assert 0 < far - mnr < 200, "register the far group beside the minors'"
+
+
+def test_scenery_contact_pumps_beside_the_minor_contact():
+    """Large-rock touches (rock-fields Task 8) respond sim-side, at the same
+    call site as the minor contacts (the sim tick's rock-breakup scope)."""
+    src = inspect.getsource(hl)
+    mnr = src.find("_pump_minor_contact(player, session=session)")
+    scn = src.find("_pump_scenery_contact(player, session=session)")
+    assert mnr >= 0 and scn >= 0
+    assert 0 < scn - mnr < 200, "pump the scenery contacts beside the minors'"
+
+
+def test_a_mission_swap_resets_the_scenery_contacts():
+    src = inspect.getsource(hl.HostController)
+    mnr = src.find("_minor_contact.reset()")
+    scn = src.find("_scenery_contact.reset()")
+    assert mnr >= 0 and scn >= 0
+    assert 0 < scn - mnr < 200
