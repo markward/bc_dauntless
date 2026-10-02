@@ -420,14 +420,23 @@ def apply_player_identity(ship, plan=None) -> bool:
     Mark's home-ship ruling (2026-10-02): while a battle is actually
     running (`_in_battle()`) AND the live ship's class (its `ships.<Leaf>`
     script) matches the plan's player ship, the plan's registry and display
-    name apply -- same as before. In every other case -- no plan, not
-    currently in a battle (boot, End Combat, XO Restart's EndSimulation
-    half, a death outside a battle), or a live player whose class doesn't
-    match the plan -- the ship goes back to the home ship: BC's class
-    default registry plus its class-default display name ("USS Dauntless"
-    for the Galaxy), never another ship's registry and name. `plan` None ->
-    `current_plan()`."""
+    name apply -- same as before. In every other case -- not currently in a
+    battle (boot, End Combat, XO Restart's EndSimulation half, a death
+    outside a battle), or a live player whose class doesn't match the plan
+    -- the ship's REGISTRY goes back to the home ship (BC's class default),
+    never another ship's registry.
+
+    The home DISPLAY NAME ("USS Dauntless" for the Galaxy) is a separate,
+    narrower step: it only applies when `plan` is not None (a provider is
+    registered) AND the live ship's class is the home class itself
+    (`scenario.DEFAULT_PLAYER_SHIP`). With NO plan at all -- no provider
+    registered -- the name is left alone entirely, matching
+    `player_type_for_recreate`'s "no provider -> BC's own flow is
+    unchanged": a non-Galaxy player with no setup screen in play must never
+    be renamed to "USS Dauntless" just because its own class has no
+    registry default of its own. `plan` None -> `current_plan()`."""
     from engine.appc import registry_texture
+    from engine.quickbattle import scenario
     if plan is None:
         plan = current_plan()
     if plan is not None and _in_battle():
@@ -446,11 +455,14 @@ def apply_player_identity(ship, plan=None) -> bool:
                 _log.warning("quickbattle: player identity failed: %s", e)
                 return False
     applied = registry_texture.apply_class_default(ship)
-    name = _home_display_name()
-    if name:
-        try:
-            import App
-            ship.SetDisplayName(App.TGString(name))
-        except Exception as e:
-            _log.warning("quickbattle: home player name failed: %s", e)
+    if plan is not None:
+        cls = registry_texture._class_of(ship)
+        if cls is not None and cls.lower() == scenario.DEFAULT_PLAYER_SHIP.lower():
+            name = _home_display_name()
+            if name:
+                try:
+                    import App
+                    ship.SetDisplayName(App.TGString(name))
+                except Exception as e:
+                    _log.warning("quickbattle: home player name failed: %s", e)
     return applied

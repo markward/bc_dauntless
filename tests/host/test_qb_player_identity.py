@@ -123,9 +123,19 @@ def test_end_combat_after_a_renamed_galaxy_is_back_to_dauntless(qb):
 def test_death_outside_a_battle_recreates_the_home_ship(qb):
     """ShipDestroyed's player-death branch calls RecreatePlayer directly
     (not via the end-of-battle timer) only when bInSimulation is already 0
-    -- the rule must apply there too."""
+    -- the rule must apply there too, even with a real (non-home) plan
+    still registered from the battle that just ended via End Combat."""
     hl, controller, QB = qb
     import App
+    from engine.quickbattle import spawn
+    plan = _scenario_with_player("Ambassador", "USS Excalibur")
+    spawn.set_provider(lambda: plan)
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    assert QB.g_sPlayerType == "Ambassador"
+    QB.EndSimulation()                                   # End Combat: home ship
+    assert QB.g_sPlayerType == "Galaxy"
     assert QB.bInSimulation == 0
     evt = App.TGEvent_Create()
     evt.SetDestination(App.Game_GetCurrentGame().GetPlayer())
@@ -133,6 +143,39 @@ def test_death_outside_a_battle_recreates_the_home_ship(qb):
     assert QB.g_sPlayerType == "Galaxy"
     player = App.Game_GetCurrentGame().GetPlayer()
     assert str(player.GetScript()).rsplit(".", 1)[-1] == "Galaxy"
+
+
+def test_death_during_a_battle_ends_it_and_reverts_to_home_ship(qb):
+    """ShipDestroyed's in-battle player-death branch (bInSimulation == 1)
+    arms the end-of-battle timer (ET_END_SIMULATION) instead of calling
+    RecreatePlayer directly; ticking past it runs EndSimulationEvent ->
+    EndSimulation() -> RecreatePlayer(), landing on the home ship same as
+    End Combat."""
+    hl, controller, QB = qb
+    import App
+    from engine.appc import registry_texture
+    from engine.quickbattle import spawn
+    plan = _scenario_with_player("Ambassador", "USS Excalibur")
+    spawn.set_provider(lambda: plan)
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    assert QB.bInSimulation == 1
+    evt = App.TGEvent_Create()
+    evt.SetDestination(App.Game_GetCurrentGame().GetPlayer())
+    QB.ShipDestroyed(None, evt)
+    assert QB.g_idTimer != App.NULL_ID                   # loss timer armed, not an immediate RecreatePlayer
+    App.g_kTimerManager.tick(3.0)                        # past the 1s loss timer
+    assert QB.bInSimulation == 0
+    assert QB.g_sPlayerType == "Galaxy"
+    player = App.Game_GetCurrentGame().GetPlayer()
+    assert str(player.GetScript()).rsplit(".", 1)[-1] == "Galaxy"
+    hl._reconcile_runtime_instances(hl.MissionSession(mission_name="QuickBattle"),
+                                    controller.renderer)
+    player = App.Game_GetCurrentGame().GetPlayer()
+    reps = registry_texture.replacements_for(player)
+    assert any(p.endswith("Dauntless.tga") for p in _new_paths(reps))
+    assert player.GetDisplayName() == "USS Dauntless"
 
 
 def test_no_provider_leaves_g_sPlayerType_untouched(monkeypatch):
@@ -164,6 +207,29 @@ def test_no_plan_falls_back_to_class_default(qb):
     reps = registry_texture.replacements_for(player)
     assert reps
     assert any(p.endswith("Dauntless.tga") for p in _new_paths(reps))
+
+
+def test_no_provider_does_not_rename_a_non_galaxy_player(qb):
+    """Reviewer regression: the home branch (also reached with no plan at
+    all, `current_plan()` is None) must not rename a non-Galaxy player to
+    the Galaxy's "USS Dauntless" -- with no provider registered, BC's own
+    flow (including whatever display name it left the ship with) must be
+    completely unchanged. The class default REGISTRY still applies (BC's
+    own `MissionLib.CreatePlayerShip` would queue it too for an Ambassador);
+    only the NAME must stay untouched."""
+    hl, controller, QB = qb
+    import App
+    from engine.appc import registry_texture
+    from engine.quickbattle import spawn
+    spawn.set_provider(None)
+    QB.g_sPlayerType = "Ambassador"
+    QB.RecreatePlayer()
+    player = App.Game_GetCurrentGame().GetPlayer()
+    assert registry_texture._class_of(player) == "Ambassador"
+    before_name = player.GetDisplayName()
+    assert spawn.apply_player_identity(player)
+    assert player.GetDisplayName() == before_name
+    assert player.GetDisplayName() != "USS Dauntless"
 
 
 def test_revert_hook_is_gone():
@@ -257,12 +323,21 @@ def test_identity_falls_back_when_live_player_class_differs_from_plan(qb):
 
 
 def test_identity_uses_the_plan_it_is_given(qb):
+    """Must actually exercise the IN-BATTLE branch (the plan's own registry
+    and display name), not merely land in the home branch by accident --
+    `QB.bInSimulation` is set so the class match is live-tested."""
+    _hl, _c, QB = qb
     import App
     from engine.appc import registry_texture
     from engine.quickbattle import spawn
     spawn.set_provider(None)
-    plan = _scenario_with_player("Galaxy", None)
-    player = App.Game_GetCurrentGame().GetPlayer()
-    registry_texture.clear_for(player)
-    assert spawn.apply_player_identity(player, plan=plan)
-    assert registry_texture.has_replacements(player)
+    QB.bInSimulation = 1
+    try:
+        plan = _scenario_with_player("Galaxy", "USS Venture")
+        player = App.Game_GetCurrentGame().GetPlayer()
+        registry_texture.clear_for(player)
+        assert spawn.apply_player_identity(player, plan=plan)
+        assert registry_texture.has_replacements(player)
+        assert player.GetDisplayName() == "USS Venture"
+    finally:
+        QB.bInSimulation = 0

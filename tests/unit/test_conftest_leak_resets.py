@@ -25,3 +25,14 @@ def test_c_quickbattle_spawn_provider_leaks():
 def test_d_the_quickbattle_spawn_provider_did_not_leak():
     from engine.quickbattle import spawn
     assert spawn.current_plan() is None
+
+
+def test_e_quickbattle_player_type_resolver_leaks():
+    from engine import bridge_selection
+    bridge_selection.set_player_type_resolver(lambda qb: "leaked-type")
+    assert bridge_selection._player_type_resolver is not None
+
+
+def test_f_the_quickbattle_player_type_resolver_did_not_leak():
+    from engine import bridge_selection
+    assert bridge_selection._player_type_resolver is None
