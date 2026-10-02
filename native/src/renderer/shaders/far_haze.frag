@@ -28,6 +28,11 @@
 // hashed once per octave in fbm and handed to lattice pre-hashed).
 // FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference and
 // NoisyDiscHazeShaderMatchesTheCpuReference pin them.
+// Start ramp (rock-fields Task 12): each sample's dtau is multiplied by
+// start_weight(t) = smoothstep(u_start_gu, u_start_gu + u_start_ramp_gu, t), a
+// hard step at u_start_gu when the ramp is 0 -- far_field.cc's
+// haze_start_weight, written out rather than GLSL smoothstep (undefined for
+// edge0 >= edge1). FarPassGLTest.StartRampHazeShaderMatchesTheCpuReference.
 // Output is PREMULTIPLIED (rgb, alpha = 1 - T); blend GL_ONE,
 // GL_ONE_MINUS_SRC_ALPHA.
 in vec2 v_uv;
@@ -63,6 +68,8 @@ uniform int   u_noise_octaves;  // <= 0 = no noise; capped at kMaxOctaves
 uniform int   u_noise_seed;     // the source seed's bits (read as uint)
 uniform float u_gain;           // haze_gain * the source's gain_scale
 uniform float u_brightness;     // the source's brightness: colour only
+uniform float u_start_gu;       // the haze ramps in from here (GU along the ray)
+uniform float u_start_ramp_gu;  // over this many GU; 0 = a hard step
 // Light: the same inputs speck.frag reads.
 uniform vec3 u_ambient_light;
 uniform int  u_dir_light_count;
@@ -196,6 +203,13 @@ float pop_density(int i, float a) {
     return u_pop_density[i] * w;
 }
 
+// renderer::far::haze_start_weight. Keep identical.
+float start_weight(float t) {
+    if (!(u_start_ramp_gu > 0.0)) return t >= u_start_gu ? 1.0 : 0.0;
+    float u = clamp((t - u_start_gu) / u_start_ramp_gu, 0.0, 1.0);
+    return u * u * (3.0 - 2.0 * u);
+}
+
 vec3 world_from_depth(vec2 uv, float d) {
     vec4 w = u_inv_vp * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
     return w.xyz / w.w;
@@ -278,7 +292,7 @@ void main() {
         }
         if (!(sum > 0.0)) continue;
         // Noise scales the rock density, not a (haze_column's m).
-        float dtau = u_gain * sum * noise_m(x) * dt;
+        float dtau = u_gain * sum * noise_m(x) * dt * start_weight(t);
         float ext = exp(-dtau);
         rgb += T * (1.0 - ext) * (sum_albedo / sum) * light * u_brightness;
         T *= ext;

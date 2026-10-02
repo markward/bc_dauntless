@@ -10,6 +10,18 @@ difference far-tier-on minus far-tier-off, mean of the channels over a patch
 at the view centre, must be at least 20/255 (calibrated target 25/255 over
 black; here the clear colour sits behind it, so the expected difference is
 ~25 - alpha x background ~= 22).
+
+Rock-fields Task 12: the haze now ramps in over the mid band's L2 fade-out
+(haze_handoff_gu - haze_handoff_band_gu .. haze_handoff_gu, 6,000 .. 8,000
+GU) -- the near and mid bands own the look closer in. So Beol 4 is viewed
+from where the haze owns the WHOLE field: on the Player Start -> field-centre
+line, with the field's near surface at haze_handoff_gu (9,000 GU from the
+centre). From Player Start itself (2,079 GU) the field lies entirely before
+the start and the haze is correctly ~0. Measured 2026-10-02 (headless,
+640x600): 22.29/255 there (21.91 with the old unramped full-res haze), so
+tile_haze_brightness keeps its calibration; at 6,000 GU from the centre only
+2.0/255 (the ramp weights the chord's far half by ~0.19) -- recalibrating
+brightness to that would saturate the field at full ramp weight.
 """
 import math
 import os
@@ -20,7 +32,7 @@ h = pytest.importorskip("_dauntless_host")
 
 import App
 from engine import host_loop
-from engine.rocks import far_tier
+from engine.rocks import far_dials, far_tier
 from tests.helpers.fresh_world import _fresh_world
 
 FOV_Y = math.radians(30.0)   # settings.json fov_deg 30, vertical
@@ -81,7 +93,7 @@ def _light_and_camera(pSet, player, eye, target):
                  fov_y_rad=FOV_Y, near=1.0, far=1.0e7)
 
 
-def test_beol4_tile_field_haze_shows_from_player_start(host):
+def test_beol4_tile_field_haze_shows_from_the_handoff(host):
     _fresh_world()
     import Systems.Beol.Beol4 as beol4
     beol4.Initialize()
@@ -92,11 +104,16 @@ def test_beol4_tile_field_haze_shows_from_player_start(host):
     assert src["noise_contrast"] > 0.0 and src["noise_octaves"] > 0   # measured WITH noise
     start = pSet.GetObject("Player Start")
     loc = start.GetWorldLocation()
-    _light_and_camera(pSet, start, (loc.x, loc.y, loc.z),
-                      (797.714355, 977.248474, 1268.854858))
+    centre = (797.714355, 977.248474, 1268.854858)
+    # The field's near surface at the hand-off: the haze owns all of it.
+    dist = far_dials.get("haze_handoff_gu") + src["sphere_radius_gu"]
+    v = (loc.x - centre[0], loc.y - centre[1], loc.z - centre[2])
+    n = math.sqrt(sum(x * x for x in v))
+    eye = tuple(centre[i] + v[i] / n * dist for i in range(3))
+    _light_and_camera(pSet, start, eye, centre)
     on, off = _on_minus_off()
-    print(f"[far haze] Beol 4 Player Start: off {off:.1f} on {on:.1f} "
-          f"diff {on - off:.1f}/255")
+    print(f"[far haze] Beol 4 from {dist:.0f} GU (Player Start line): off {off:.1f} "
+          f"on {on:.1f} diff {on - off:.1f}/255")
     assert on - off >= 20.0
 
 

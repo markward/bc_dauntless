@@ -144,7 +144,7 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin, const glm::vec
 
 HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir,
                        float t_max, float slab_sigmas, int steps, float gain,
-                       const glm::vec3& light) {
+                       const glm::vec3& light, float start_gu, float ramp_gu) {
     HazeSample out;
     double t0 = 0.0, t1 = 0.0;
     steps = haze_steps_for(s, steps);
@@ -169,7 +169,10 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
         // would clamp a * m at a_hi and lose the bright half). m == 1 (an
         // exact multiply) when the noise is off.
         const float m = haze_noise_m(s, x);
-        const float dtau = gain * s.gain_scale * sum * m * static_cast<float>(dt);
+        // The start ramp multiplies LAST: with start 0 / ramp 0 it is an exact
+        // * 1, so the unramped column is reproduced bit for bit.
+        const float dtau = gain * s.gain_scale * sum * m * static_cast<float>(dt) *
+                           haze_start_weight(static_cast<float>(t), start_gu, ramp_gu);
         const float ext = std::exp(-dtau);
         // brightness scales the colour only; T (alpha) is untouched.
         out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light * s.brightness;
@@ -177,6 +180,12 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
     }
     out.alpha = 1.0f - T;
     return out;
+}
+
+float haze_start_weight(float t, float start_gu, float ramp_gu) {
+    if (!(ramp_gu > 0.0f)) return t >= start_gu ? 1.0f : 0.0f;
+    const float u = std::clamp((t - start_gu) / ramp_gu, 0.0f, 1.0f);
+    return u * u * (3.0f - 2.0f * u);
 }
 
 // ---- Haze noise (every source). far_haze.frag's haze_hash / value_noise /

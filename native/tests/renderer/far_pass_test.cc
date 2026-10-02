@@ -857,9 +857,19 @@ namespace {
 // Returns the max |alpha| difference.
 using HazePixels = std::vector<std::array<int, 2>>;
 const HazePixels kHazeDefaultPixels = {{32, 32}, {6, 6}, {57, 6}, {6, 57}, {57, 57}};
+// The exact pixel-compare path (rock-fields Task 12): full resolution and no
+// start ramp, so far_haze.frag draws straight into the target as before.
+far::FarDials exact_haze_dials() {
+    far::FarDials d;
+    d.haze_res_divisor = 1;
+    d.haze_start_gu = 0.0f;
+    d.haze_start_ramp_gu = 0.0f;
+    return d;
+}
 float haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
                        const glm::dvec3& origin_sys, float near_gu, float centre_alpha[2],
-                       const HazePixels& pix = kHazeDefaultPixels) {
+                       const HazePixels& pix = kHazeDefaultPixels,
+                       const far::FarDials& dials = exact_haze_dials()) {
     // Targets first: HdrTarget::resize binds on the ACTIVE unit.
     renderer::HdrTarget scene, out;
     scene.resize(kHazeSize, kHazeSize);
@@ -872,7 +882,6 @@ float haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
     const glm::mat4 vp = cam.proj_matrix() * cam.view_matrix();
     const glm::mat4 inv_vp = glm::inverse(vp);
     const glm::dmat4 inv_vp_d = glm::inverse(glm::dmat4(cam.proj_matrix()) * glm::dmat4(cam.view_matrix()));
-    const far::FarDials dials;
     renderer::Lighting l;
     l.ambient = glm::vec3(0.1f, 0.12f, 0.15f);
     l.directional_count = 1;
@@ -921,7 +930,8 @@ float haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
             glm::vec3 light = l.ambient * ambient_scale;
             light += l.directional_color[0] *
                      far::lambert_sphere_phase(glm::dot(l.directional_dir_ws[0], -dir));
-            const auto h = far::haze_column(sources[0], origin_sys, dir, t_max, dials.slab_sigmas, dials.haze_steps, dials.haze_gain, light);
+            const auto h = far::haze_column(sources[0], origin_sys, dir, t_max, dials.slab_sigmas, dials.haze_steps, dials.haze_gain, light,
+                                          dials.haze_start_gu, dials.haze_start_ramp_gu);
             const float* g = &px[idx * 4];
             std::printf("[far_pass_test] haze %s px (%d,%d): gpu a %.4f rgb (%.4f %.4f %.4f) | "
                         "cpu a %.4f rgb (%.4f %.4f %.4f)\n", pass_i == 0 ? "far " : "near",
@@ -975,6 +985,173 @@ TEST_F(FarPassGLTest, SphereHazeShaderMatchesTheCpuReference) {
     haze_matches_cpu(*pipeline, s, origin_sys, 2600.0f, centre_alpha);
     EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees the field";
     EXPECT_LT(centre_alpha[1], centre_alpha[0] - 0.03f) << "the occluder stops the march";
+}
+
+// Rock-fields Task 12: the start ramp in the shader is haze_column's. The
+// sphere scene above (chord 1,500 .. 3,500 GU) with the ramp over 2,000 ..
+// 3,000 GU -- inside the field, with the occluder (2,600 GU) inside the ramp --
+// matches within 0.001, at divisor 1 (the exact pixel compare path).
+TEST_F(FarPassGLTest, StartRampHazeShaderMatchesTheCpuReference) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s;
+    s.id = 2; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
+    s.centre = origin_sys + glm::dvec3(0.0, 2500.0, 0.0);
+    s.sphere_radius_gu = 1000.0f; s.sphere_edge_frac = 0.2f;
+    s.gain_scale = 14140.0f / 270.0f;
+    s.brightness = 9.1f;
+    far::Population minors;
+    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.density_at_1 = 405.0f / (4.0f / 3.0f * 3.14159265f * 1.0e9f);
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
+    s.pops = {minors};
+    far::FarDials d = exact_haze_dials();
+    d.haze_start_gu = 2000.0f;
+    d.haze_start_ramp_gu = 1000.0f;
+    float ramped[2] = {0.0f, 0.0f}, unramped[2] = {0.0f, 0.0f};
+    haze_matches_cpu(*pipeline, s, origin_sys, 2600.0f, ramped, kHazeDefaultPixels, d);
+    haze_matches_cpu(*pipeline, s, origin_sys, 2600.0f, unramped);
+    EXPECT_GT(ramped[0], 0.02f) << "the far part of the field still hazes";
+    EXPECT_LT(ramped[0], unramped[0] - 0.01f) << "the ramp removes the near part";
+    EXPECT_LT(ramped[1], ramped[0] - 0.02f) << "the occluder stops the march";
+}
+
+namespace {
+// Renders `src` at (w, h) with `dials` into a cleared target over a far
+// (depth-free) scene, using `pass`; returns the RGBA floats.
+std::vector<float> render_haze_image(renderer::Pipeline& pipeline, renderer::FarPass& pass,
+                                     const far::DiscSource& src, const glm::dvec3& origin_sys,
+                                     int w, int h, const far::FarDials& dials) {
+    renderer::HdrTarget scene, out;   // HdrTarget::resize binds on the ACTIVE unit
+    scene.resize(w, h);
+    out.resize(w, h);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    scenegraph::Camera cam = haze_camera();
+    cam.aspect = static_cast<float>(w) / static_cast<float>(h);
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    renderer::Lighting l;
+    l.ambient = glm::vec3(0.1f, 0.12f, 0.15f);
+    l.directional_count = 1;
+    l.directional_dir_ws[0] = glm::normalize(glm::vec3(1.0f, 0.3f, 0.5f));
+    l.directional_color[0] = glm::vec3(1.0f, 0.9f, 0.8f);
+    scene.bind();
+    glViewport(0, 0, w, h);
+    glDepthMask(GL_TRUE);
+    glClearDepth(1.0);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    out.bind();
+    glViewport(0, 0, w, h);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render_haze({src}, origin_sys, cam, pipeline, l, 0.7f, scene.depth_texture(), inv_vp,
+                     dials);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    std::vector<float> px(static_cast<std::size_t>(w) * h * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, out.fbo());
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_FLOAT, px.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return px;
+}
+}  // namespace
+
+// Rock-fields Task 12: the haze marches at quarter resolution and is
+// depth-aware upsampled. Over open space (no depth edges) the result is the
+// full-resolution haze to within 2/255 on average, in every channel -- at the
+// main view's size and again, through the SAME pass, at a different
+// (viewscreen-RTT-like) size, so the low-res target follows the target size.
+TEST_F(FarPassGLTest, QuarterResHazeMatchesFullResInOpenSpace) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s = haze_source(origin_sys);
+    s.table = {{0.0f, 1.0f}, {20000.0f, 1.0f}};
+    s.gain_scale = 4.0f;
+    s.brightness = 8.0f;
+    s.seed = 0xdeadbeefu;
+    s.noise_scale_gu = 4000.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
+    far::FarDials full = exact_haze_dials();
+    far::FarDials quarter = full;
+    quarter.haze_res_divisor = 4;
+    renderer::FarPass pass;
+    for (const auto& [w, h] : {std::pair<int, int>{64, 64}, std::pair<int, int>{96, 40},
+                               std::pair<int, int>{64, 64}}) {
+        const std::vector<float> a = render_haze_image(*pipeline, pass, s, origin_sys, w, h, full);
+        const std::vector<float> b = render_haze_image(*pipeline, pass, s, origin_sys, w, h, quarter);
+        double sum = 0.0, mean_alpha = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i) sum += std::fabs(a[i] - b[i]);
+        for (std::size_t i = 3; i < a.size(); i += 4) mean_alpha += a[i];
+        const double mad = sum / static_cast<double>(a.size());
+        mean_alpha /= static_cast<double>(a.size() / 4);
+        std::printf("[far_pass_test] quarter-res haze %dx%d: mean |full - quarter| %.5f "
+                    "(%.3f/255), mean full alpha %.4f\n", w, h, mad, mad * 255.0, mean_alpha);
+        EXPECT_GT(mean_alpha, 0.03) << "a real haze to compare";
+        EXPECT_LT(mad, 2.0 / 255.0) << w << "x" << h;
+    }
+}
+
+// The march resolution follows the TARGET each call (the viewscreen RTT is a
+// different size from the main view) at (w / d, h / d), at least 1x1; divisor
+// 1 marches at full size, and a divisor below 1 is floored to 1.
+TEST_F(FarPassGLTest, HazeMarchesAtTheTargetSizeOverTheDivisor) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    const far::DiscSource s = haze_source(origin_sys);
+    renderer::FarPass pass;
+    far::FarDials d = exact_haze_dials();
+    d.haze_res_divisor = 4;
+    render_haze_image(*pipeline, pass, s, origin_sys, 64, 64, d);
+    EXPECT_EQ(pass.last_haze_march_size(), glm::ivec2(16, 16));
+    render_haze_image(*pipeline, pass, s, origin_sys, 96, 40, d);
+    EXPECT_EQ(pass.last_haze_march_size(), glm::ivec2(24, 10));
+    d.haze_res_divisor = 1;
+    render_haze_image(*pipeline, pass, s, origin_sys, 96, 40, d);
+    EXPECT_EQ(pass.last_haze_march_size(), glm::ivec2(96, 40));
+    d.haze_res_divisor = 0;
+    render_haze_image(*pipeline, pass, s, origin_sys, 64, 64, d);
+    EXPECT_EQ(pass.last_haze_march_size(), glm::ivec2(64, 64));
+    d.haze_res_divisor = 200;
+    render_haze_image(*pipeline, pass, s, origin_sys, 64, 64, d);
+    EXPECT_EQ(pass.last_haze_march_size(), glm::ivec2(1, 1));
+}
+
+// The low-res path puts back what it changes: the caller's framebuffer,
+// viewport and blend function, active texture unit 0 -- and the documented
+// frame defaults (blend off, depth test and writes on).
+TEST_F(FarPassGLTest, QuarterResHazeRestoresTheCallersState) {
+    renderer::HdrTarget scene, out;
+    scene.resize(kHazeSize, kHazeSize);
+    out.resize(kHazeSize, kHazeSize);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    const scenegraph::Camera cam = haze_camera();
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    renderer::Lighting l;
+    far::FarDials dials;
+    ASSERT_EQ(dials.haze_res_divisor, 4);
+    out.bind();
+    glViewport(3, 5, kHazeSize - 7, kHazeSize - 9);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    renderer::FarPass pass;
+    pass.render_haze({haze_source()}, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l, 1.0f,
+                     scene.depth_texture(), inv_vp, dials);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    GLint fbo = 0, vp[4] = {0, 0, 0, 0}, unit = 0, src = 0, dst = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &unit);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst);
+    EXPECT_EQ(static_cast<GLuint>(fbo), out.fbo());
+    EXPECT_EQ(vp[0], 3); EXPECT_EQ(vp[1], 5);
+    EXPECT_EQ(vp[2], kHazeSize - 7); EXPECT_EQ(vp[3], kHazeSize - 9);
+    EXPECT_EQ(unit, GL_TEXTURE0);
+    EXPECT_EQ(src, GL_SRC_ALPHA);
+    EXPECT_EQ(dst, GL_ONE);
+    EXPECT_FALSE(glIsEnabled(GL_BLEND));
+    EXPECT_TRUE(glIsEnabled(GL_DEPTH_TEST));
+    GLboolean depth_write = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
+    EXPECT_TRUE(depth_write);
+    glBlendFunc(GL_ONE, GL_ZERO);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 // Tile-field haze noise (2026-10-02): the same sphere with the production

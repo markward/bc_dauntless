@@ -20,6 +20,12 @@ DEFAULTS: dict = {
     # speck_gain 4.0: Mark, live 2026-10-02 ("spec gain needs to come up to
     # about 4").
     "speck_gain": 4.0, "haze_gain": 270.0, "haze_steps": 24,
+    # Haze resolution (native; rock-fields Task 12): the haze marches at
+    # (w / d, h / d) and is depth-aware upsampled; 1 = full resolution. Its
+    # START is not a dial: far_tier derives FarDials::haze_start_gu /
+    # haze_start_ramp_gu from haze_handoff_gu / haze_handoff_band_gu, so the
+    # haze ramps in exactly over the mid band's L2 fade-out.
+    "haze_res_divisor": 4,
     # §2 populations + disc shape (Python, read at use; re-push sources)
     "minor_density_at_1": 9.67e-8, "minor_r_min": 0.05, "minor_r_max": 0.7,
     "minor_exponent": 2.5,
@@ -91,7 +97,7 @@ DEFAULTS: dict = {
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
-    "slab_sigmas", "speck_gain", "haze_gain", "haze_steps",
+    "slab_sigmas", "speck_gain", "haze_gain", "haze_steps", "haze_res_divisor",
     "near_small_density", "near_small_r_min", "near_small_r_max",
     "near_small_exponent", "near_small_cell_gu", "near_small_mesh_gu",
     "near_small_billboard_gu", "near_small_max",
@@ -106,7 +112,7 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
-_INT_FLOOR_1 = ("haze_steps", "tile_haze_noise_octaves", "tile_haze_steps",
+_INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "tile_haze_steps",
                "belt_noise_octaves", "near_small_max", "near_large_max",
                "mid_max_sprites")
 

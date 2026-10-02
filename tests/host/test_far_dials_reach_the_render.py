@@ -21,6 +21,7 @@ from tests.helpers.fresh_world import _fresh_world
 FOV_Y = math.radians(30.0)
 PATCH = 10
 CENTRE = (797.714355, 977.248474, 1268.854858)   # Beol 4 Asteroid Field 1
+FIELD_RADIUS_GU = 1000.0                          # its sphere source's radius
 
 
 @pytest.fixture
@@ -68,7 +69,16 @@ def _beol4():
     loc = start.GetWorldLocation()
     ambient, directionals = host_loop._aggregate_lights(pSet, start)
     h.set_lighting(tuple(ambient), [(tuple(d), tuple(c)) for d, c in directionals])
-    h.set_camera(eye=(loc.x, loc.y, loc.z), target=CENTRE, up=(0.0, 0.0, 1.0),
+    # Rock-fields Task 12: the haze starts at the mid band's hand-off, so from
+    # Player Start (2,079 GU from the 1,000 GU field) it is correctly ~0. View
+    # the field from its Player Start line with its near surface at
+    # haze_handoff_gu, where the haze owns all of it (as
+    # test_far_haze_displayed.py does).
+    dist = far_dials.get("haze_handoff_gu") + FIELD_RADIUS_GU
+    v = (loc.x - CENTRE[0], loc.y - CENTRE[1], loc.z - CENTRE[2])
+    n = math.sqrt(sum(x * x for x in v))
+    eye = tuple(CENTRE[i] + v[i] / n * dist for i in range(3))
+    h.set_camera(eye=eye, target=CENTRE, up=(0.0, 0.0, 1.0),
                  fov_y_rad=FOV_Y, near=1.0, far=1.0e7)
     return pSet, fields
 
@@ -107,6 +117,7 @@ def test_tile_haze_brightness_keys_change_the_displayed_haze(host):
     print(f"[far dials] brightness {far_dials.get('tile_haze_brightness'):.2f} "
           f"(native {src['brightness']:.2f}): haze {base:.1f} -> {brighter:.1f}/255")
     assert src["brightness"] == pytest.approx(far_dials.get("tile_haze_brightness"), rel=1e-5)
+    assert base > 10.0, "a real haze to scale"
     assert brighter > base * 1.8
 
 
@@ -118,4 +129,5 @@ def test_tile_haze_gain_keys_change_the_displayed_haze(host):
     thinner = _haze(pSet, fields)
     print(f"[far dials] gain {far_dials.get('tile_haze_gain'):.0f}: "
           f"haze {base:.1f} -> {thinner:.1f}/255")
+    assert base > 10.0, "a real haze to thin"
     assert thinner < base * 0.5

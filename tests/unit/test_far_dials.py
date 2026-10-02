@@ -175,3 +175,16 @@ def test_mid_defaults_match_rock_mid_h():
     assert isinstance(d["mid_max_sprites"], int)
     # The sprite cap floors at 1 (0 would silently delete the whole band).
     assert far_dials.step({**d, "mid_max_sprites": 1}, "mid_max_sprites", -1)["mid_max_sprites"] == 1
+
+
+def test_haze_res_divisor_is_a_native_int_dial_floored_at_one():
+    """Rock-fields Task 12: the haze marches at 1 / haze_res_divisor
+    resolution (FarDials::haze_res_divisor = 4). The start distance and ramp
+    are NOT dials: far_tier derives them from haze_handoff_*."""
+    d = far_dials.DEFAULTS
+    assert d["haze_res_divisor"] == 4
+    assert isinstance(d["haze_res_divisor"], int)
+    assert "haze_res_divisor" in far_dials.NATIVE_KEYS
+    assert far_dials.step({**d, "haze_res_divisor": 1}, "haze_res_divisor", -1)["haze_res_divisor"] == 1
+    for k in ("haze_start_gu", "haze_start_ramp_gu"):
+        assert k not in far_dials.DEFAULTS and k not in far_dials.NATIVE_KEYS, k

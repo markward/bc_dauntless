@@ -856,3 +856,77 @@ TEST(FarImpostor, MakeImpostorPicksTheViewNearestTheEye) {
     EXPECT_EQ(g.right_view.w, 2.0f);
     EXPECT_EQ(glm::vec3(g.centre_half), glm::vec3(0));
 }
+
+// ---- Haze start ramp (rock-fields Task 12) ---------------------------------
+
+namespace {
+// A full-density sphere of radius 20,000 GU around the origin, one population.
+far::DiscSource full_sphere_20k() {
+    far::DiscSource s;
+    s.id = 12; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
+    s.sphere_radius_gu = 20000.0f;
+    s.sphere_edge_frac = 0.0f;
+    far::Population minors;
+    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.density_at_1 = 1.0e-7f;
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
+    s.pops = {minors};
+    return s;
+}
+}  // namespace
+
+// The haze ramps in over [start, start + ramp] (the mid band's L2 fade-out):
+// a column that stops before the start accumulates nothing; one reaching past
+// it does.
+TEST(FarHazeStart, NothingBeforeTheStart) {
+    const far::DiscSource s = full_sphere_20k();
+    const auto near = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 5000.0f, 4.0f, 48,
+                                       1000.0f, glm::vec3(1), 6000.0f, 2000.0f);
+    EXPECT_EQ(near.alpha, 0.0f);
+    EXPECT_EQ(near.rgb, glm::vec3(0.0f));
+    const auto far_ = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 19000.0f, 4.0f, 48,
+                                       1000.0f, glm::vec3(1), 6000.0f, 2000.0f);
+    EXPECT_GT(far_.alpha, 0.0f);
+    // And less than the unramped column over the same interval.
+    const auto whole = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 19000.0f, 4.0f, 48,
+                                        1000.0f, glm::vec3(1));
+    EXPECT_LT(far_.alpha, whole.alpha);
+}
+
+// ramp == 0 is a hard step at start: a column ending just short of the start
+// is empty, while the sample just past it counts in full.
+TEST(FarHazeStart, ZeroRampIsAHardStep) {
+    const far::DiscSource s = full_sphere_20k();
+    // 48 midpoint samples over [0, 4800]: the last sample is at 4750.
+    const auto before = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 4800.0f, 4.0f, 48,
+                                         1000.0f, glm::vec3(1), 4760.0f, 0.0f);
+    EXPECT_EQ(before.alpha, 0.0f);
+    const auto after = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 4800.0f, 4.0f, 48,
+                                        1000.0f, glm::vec3(1), 4740.0f, 0.0f);
+    EXPECT_GT(after.alpha, 0.0f);
+}
+
+// start 0, ramp 0 is today's column, bit for bit.
+TEST(FarHazeStart, ZeroStartIsTodaysColumn) {
+    for (const far::DiscSource& s : {full_sphere_20k(), vesuvi_like()}) {
+        const glm::dvec3 eye = s.shape == far::DiscSource::Shape::Sphere
+                                   ? glm::dvec3(0.0) : glm::dvec3(278000.0, 0.0, 0.0);
+        const auto a = far::haze_column(s, eye, glm::vec3(0, 1, 0), 1.0e6f, 4.0f, 24, 270.0f,
+                                        glm::vec3(0.7f));
+        const auto b = far::haze_column(s, eye, glm::vec3(0, 1, 0), 1.0e6f, 4.0f, 24, 270.0f,
+                                        glm::vec3(0.7f), 0.0f, 0.0f);
+        EXPECT_GT(a.alpha, 0.0f);
+        EXPECT_EQ(a.alpha, b.alpha);
+        EXPECT_EQ(a.rgb, b.rgb);
+    }
+}
+
+// The FarDials defaults put the ramp exactly over the mid band's L2 fade-out
+// (haze_handoff_gu - haze_handoff_band_gu .. haze_handoff_gu = 6,000 .. 8,000).
+TEST(FarHazeStart, DialDefaults) {
+    const far::FarDials d;
+    EXPECT_EQ(d.haze_start_gu, 6000.0f);
+    EXPECT_EQ(d.haze_start_ramp_gu, 2000.0f);
+    EXPECT_EQ(d.haze_res_divisor, 4);
+}

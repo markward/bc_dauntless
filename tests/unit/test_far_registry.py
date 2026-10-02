@@ -108,6 +108,27 @@ def test_a_native_dial_change_repushes_the_dials():
     assert pushes[1]["haze_gain"] == far_dials.get("haze_gain")
 
 
+def test_pushed_dials_derive_the_haze_start_from_the_handoff():
+    """Rock-fields Task 12 (single source of truth): the haze ramps in over
+    the mid band's L2 fade-out, [haze_handoff_gu - haze_handoff_band_gu,
+    haze_handoff_gu], so the native haze_start_gu / haze_start_ramp_gu ride
+    the push derived from the hand-off dials -- and follow a change to them."""
+    from engine.rocks import far_dials
+    r = _R()
+    far_tier.reconcile_with(r, None, {})
+    first = next(a[0] for n, a in r.calls if n == "far_set_dials")
+    assert first["haze_start_gu"] == 6000.0
+    assert first["haze_start_ramp_gu"] == 2000.0
+    assert first["haze_res_divisor"] == 4
+    far_dials._step("haze_handoff_gu", +1)
+    far_tier.reconcile_with(r, None, {})
+    pushes = [a[0] for n, a in r.calls if n == "far_set_dials"]
+    assert len(pushes) == 2
+    handoff, band = far_dials.get("haze_handoff_gu"), far_dials.get("haze_handoff_band_gu")
+    assert pushes[1]["haze_start_gu"] == handoff - band
+    assert pushes[1]["haze_start_ramp_gu"] == band
+
+
 def test_frame_is_pushed_every_frame_and_sources_on_change(monkeypatch):
     monkeypatch.setattr(far_tier, "frame_for", lambda v: ("Vesuvi", (1.0, 2.0, 3.0)))
     r = _R()

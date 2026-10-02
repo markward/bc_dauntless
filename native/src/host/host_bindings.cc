@@ -1548,7 +1548,7 @@ void frame() {
         // draw, so the depth attachment is only read, never written.
         // render_haze restores depth test/writes on, cull on, blend off.
         if (g_far_enabled && g_far_pass && !g_far_field.active_sources().empty()) {
-            DAUNTLESS_FRAME_SCOPE("space.far.haze");
+            DAUNTLESS_FRAME_SCOPE("rock.haze");
             g_far_pass->reset_counts();
             const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
             const glm::dvec3 origin_sys =
@@ -2607,6 +2607,12 @@ rf::FarDials far_dials_of(const py::dict& d) {
     f("speck_gain", o.speck_gain);
     f("haze_gain", o.haze_gain);
     i("haze_steps", o.haze_steps);
+    // Rock-fields Task 12. haze_start_* arrive DERIVED from haze_handoff_*
+    // (engine/rocks/far_tier.py native_dials); the divisor floors at 1.
+    f("haze_start_gu", o.haze_start_gu);
+    f("haze_start_ramp_gu", o.haze_start_ramp_gu);
+    i("haze_res_divisor", o.haze_res_divisor);
+    o.haze_res_divisor = std::max(o.haze_res_divisor, 1);
     return o;
 }
 
@@ -4522,6 +4528,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("scale"),
           "> 0: the player's near-band contact box half extents x this "
           "(shields up); <= 0: the bare hull box.");
+    m.def("far_debug_haze_dials",
+          []() {
+              const auto& o = g_far_field.dials();
+              py::dict d;
+              d["haze_start_gu"] = py_float(o.haze_start_gu);
+              d["haze_start_ramp_gu"] = py_float(o.haze_start_ramp_gu);
+              d["haze_res_divisor"] = o.haze_res_divisor;
+              return d;
+          },
+          "TEST-ONLY: the native haze start / ramp / resolution divisor (rock-fields Task 12).");
     m.def("far_debug_active_sources",
           []() {
               py::list out;

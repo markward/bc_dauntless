@@ -31,6 +31,9 @@ constexpr GLuint  kCentreAttrib = 7;   // impostor.vert a_centre_half..a_up_dith
 constexpr GLsizei kSpeckStride = static_cast<GLsizei>(sizeof(SpeckGpu));
 constexpr GLuint  kSpeckAttrib = 7;    // speck.vert a_pos_p, a_albedo_alpha = 7, 8
 constexpr int     kDilatePasses = 8;
+// The low-res haze composite's joint-bilateral depth-edge sharpness: the
+// value SystemNebulaPass uses for the same shader.
+constexpr float   kHazeUpsampleDepthSharpness = 64.0f;
 
 // Atlas conventions. The bake (native/src/rockgen/src/impostor.cc) writes each
 // 128-px cell with screen y growing DOWN, and assets::upload_image does not
@@ -123,6 +126,38 @@ FarPass::~FarPass() {
     if (white_texture_ != 0) { GLuint t = white_texture_; glDeleteTextures(1, &t); }
     if (black_texture_ != 0) { GLuint t = black_texture_; glDeleteTextures(1, &t); }
     if (haze_vao_ != 0) { GLuint v = haze_vao_; glDeleteVertexArrays(1, &v); }
+    destroy_haze_target();
+}
+
+void FarPass::destroy_haze_target() {
+    if (haze_tex_ != 0) { GLuint t = haze_tex_; glDeleteTextures(1, &t); haze_tex_ = 0; }
+    if (haze_fbo_ != 0) { GLuint f = haze_fbo_; glDeleteFramebuffers(1, &f); haze_fbo_ = 0; }
+    haze_target_size_ = glm::ivec2(0, 0);
+}
+
+// SystemNebulaPass::ensure_half_targets, one target (no history): (re)made
+// only when the size changes -- the main view and the viewscreen RTT differ,
+// so a frame that draws both may resize twice. Binds the texture on the
+// ACTIVE unit and leaves the framebuffer binding to the caller (render_haze
+// rebinds both right after).
+void FarPass::ensure_haze_target(int w, int h) {
+    if (haze_fbo_ != 0 && haze_target_size_ == glm::ivec2(w, h)) return;
+    destroy_haze_target();
+    GLuint tex = 0, fbo = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    haze_tex_ = tex;
+    haze_fbo_ = fbo;
+    haze_target_size_ = glm::ivec2(w, h);
 }
 
 void FarPass::set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal) {
@@ -290,12 +325,35 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         haze_vao_ = v;
     }
 
+    // The caller's target: everything below puts back exactly this
+    // framebuffer and viewport. The viewport gives the full-res size.
+    GLint prev_fbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+    GLint prev_vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, prev_vp);
+    const int full_w = std::max(1, static_cast<int>(prev_vp[2]));
+    const int full_h = std::max(1, static_cast<int>(prev_vp[3]));
+    // Rock-fields Task 12: march at (w / d, h / d) into an RGBA16F target and
+    // composite it through the system nebula's depth-aware upsample; d == 1
+    // marches straight into the caller's target, as before.
+    const int divisor = std::max(1, dials.haze_res_divisor);
+    const bool low_res = divisor > 1;
+    const int march_w = low_res ? std::max(1, full_w / divisor) : full_w;
+    const int march_h = low_res ? std::max(1, full_h / divisor) : full_h;
+    haze_march_size_ = glm::ivec2(march_w, march_h);
+    // Texture creation binds on the ACTIVE unit (the HdrTarget::resize trap):
+    // unit 0, which the march rebinds to the depth texture below anyway.
+    glActiveTexture(GL_TEXTURE0);
+    if (low_res) ensure_haze_target(march_w, march_h);
+
     const glm::vec3 eye_render = glm::vec3(glm::inverse(cam.view_matrix())[3]);
     Shader& s = pipeline.far_haze_shader();
     s.use();
     s.set_mat4("u_inv_vp", inv_view_proj);
     s.set_vec3("u_eye", eye_render);
     s.set_float("u_slab_sigmas", dials.slab_sigmas);
+    s.set_float("u_start_gu", dials.haze_start_gu);
+    s.set_float("u_start_ramp_gu", dials.haze_start_ramp_gu);
     // The light configure_rock_program / render_specks give a rock.
     set_ambient_uniforms(s, lighting, ambient_scale);
     s.set_int("u_dir_light_count", lighting.directional_count);
@@ -315,6 +373,14 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
     glGetIntegerv(GL_BLEND_DST_RGB, &blend_dst_rgb);
     glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_a);
     glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dst_a);
+    if (low_res) {
+        glBindFramebuffer(GL_FRAMEBUFFER, haze_fbo_);
+        glViewport(0, 0, march_w, march_h);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    // Premultiplied OVER: the sources compose in the march target exactly as
+    // they did straight into the HDR target.
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // premultiplied
     glDisable(GL_DEPTH_TEST);
@@ -378,6 +444,30 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         s.set_vec3_array("u_pop_albedo", alb, static_cast<int>(kMaxPops));
         glDrawArrays(GL_TRIANGLES, 0, 3);
         ++draw_calls_;
+    }
+
+    if (low_res) {
+        // Depth-aware upsample (SystemNebulaPass's PASS B), premultiplied
+        // OVER the caller's target. The composite is not counted in
+        // draw_calls_ (one per marched source, as before).
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
+        glViewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
+        Shader& up = pipeline.nebula_upsample_shader();
+        up.use();
+        up.set_vec2("u_half_texel", glm::vec2(1.0f / static_cast<float>(march_w),
+                                              1.0f / static_cast<float>(march_h)));
+        up.set_vec2("u_full_texel", glm::vec2(1.0f / static_cast<float>(full_w),
+                                              1.0f / static_cast<float>(full_h)));
+        up.set_float("u_depth_sharpness", kHazeUpsampleDepthSharpness);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, haze_tex_);
+        up.set_int("u_cloud", 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, depth_texture);
+        up.set_int("u_depth", 1);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
     }
 
     glBindVertexArray(0);

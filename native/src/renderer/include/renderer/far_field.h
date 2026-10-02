@@ -98,9 +98,17 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin_sys, const glm:
 // (ruling R16): the whole cross-section at every distance, so the result does
 // not depend on the camera's k -- it also covers speck-tier rocks, a
 // negligible double count accepted for resolution independence.
+// Start ramp (rock-fields Task 12): each sample's dtau is multiplied by
+// haze_start_weight(t, start_gu, ramp_gu) -- the haze ramps in over the mid
+// band's L2 fade-out. start 0, ramp 0 (the defaults) is the unramped column,
+// bit for bit.
 HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
                        const glm::vec3& dir, float t_max, float slab_sigmas, int steps,
-                       float gain, const glm::vec3& light);
+                       float gain, const glm::vec3& light, float start_gu = 0.0f,
+                       float ramp_gu = 0.0f);
+// smoothstep(start_gu, start_gu + ramp_gu, t); a hard step (t >= start_gu ?
+// 1 : 0) when ramp_gu <= 0. far_haze.frag's start_weight: keep identical.
+float haze_start_weight(float t, float start_gu, float ramp_gu);
 
 // ---- Haze noise (every source; keep identical with far_haze.frag) --------
 
@@ -141,6 +149,16 @@ struct FarDials {
     float speck_gain = 4.0f;    // Mark, live 2026-10-02: "about 4"
     float haze_gain = 270.0f;   // R14: alpha ~0.15 forward from mid-band (spec §2)
     int haze_steps = 24;
+    // Rock-fields Task 12: the haze ramps in over [haze_start_gu,
+    // haze_start_gu + haze_start_ramp_gu] -- by default exactly the mid
+    // band's L2 fade-out (MidDials handoff_gu - handoff_band_gu ..
+    // handoff_gu). Python never sets these directly: engine/rocks/far_tier.py
+    // derives them from haze_handoff_gu / haze_handoff_band_gu.
+    float haze_start_gu = 6000.0f;
+    float haze_start_ramp_gu = 2000.0f;
+    // The haze marches at (w / d, h / d) and is depth-aware upsampled; 1 =
+    // straight into the target at full resolution. Floored at 1.
+    int haze_res_divisor = 4;
 };
 
 struct ImpostorGpu {

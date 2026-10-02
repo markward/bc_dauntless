@@ -210,9 +210,20 @@ def _push_dials(r) -> None:
     _dials_pushed = True
     _dials_dirty = False
     try:
-        r.far_set_dials(fd.native())
+        r.far_set_dials(native_dials())
     except Exception as e:
         _swallow("set_dials", e)
+
+
+def native_dials() -> dict:
+    """far_dials.native() plus the haze start the native FarDials needs,
+    DERIVED (rock-fields Task 12, single source of truth): the haze ramps in
+    over the mid band's L2 fade-out, [haze_handoff_gu - haze_handoff_band_gu,
+    haze_handoff_gu]."""
+    d = fd.native()
+    d["haze_start_gu"] = d["haze_handoff_gu"] - d["haze_handoff_band_gu"]
+    d["haze_start_ramp_gu"] = d["haze_handoff_band_gu"]
+    return d
 
 
 def tile_sources(view_set, fields) -> list:

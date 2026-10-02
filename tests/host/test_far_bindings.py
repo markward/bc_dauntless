@@ -62,6 +62,21 @@ def test_far_set_dials_p_min_and_omitted_keys_reset():
     assert h.frame_state_debug()["far_p_min"] == 0.25
 
 
+def test_far_set_dials_haze_start_and_divisor():
+    """Rock-fields Task 12: haze_start_gu / haze_start_ramp_gu /
+    haze_res_divisor parse natively; omitted keys reset (6000 / 2000 / 4) and
+    the divisor floors at 1."""
+    h.far_set_dials({"haze_start_gu": 100.0, "haze_start_ramp_gu": 50.0,
+                     "haze_res_divisor": 2})
+    assert h.far_debug_haze_dials() == {"haze_start_gu": 100.0, "haze_start_ramp_gu": 50.0,
+                                        "haze_res_divisor": 2}
+    h.far_set_dials({"haze_res_divisor": 0})
+    assert h.far_debug_haze_dials()["haze_res_divisor"] == 1
+    h.far_set_dials({})
+    assert h.far_debug_haze_dials() == {"haze_start_gu": 6000.0, "haze_start_ramp_gu": 2000.0,
+                                        "haze_res_divisor": 4}
+
+
 def test_far_set_catalogue_and_frame_accept_their_shapes():
     h.far_set_catalogue(
         [{"albedo": "a.png", "normal": "n.png", "avg_albedo": (0.3, 0.3, 0.3)},
