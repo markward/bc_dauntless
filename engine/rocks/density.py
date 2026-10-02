@@ -41,7 +41,7 @@ class DiscSource:
     # "sphere" is an AsteroidField: a == 1 inside, a linear ramp to 0 over
     # the outer sphere_edge_frac of sphere_radius_gu; table unused.
     shape: str = "disc"
-    procedural: bool = True        # False: native generates no rocks for it
+    procedural: bool = True        # False: not a belt (native generates no rocks for any source)
     view_space: bool = False       # centre_gu in the viewed set's view space
     sphere_radius_gu: float = 0.0
     sphere_edge_frac: float = 0.2
@@ -138,27 +138,41 @@ def sources_for_system(system_name: str) -> list:
 
 
 def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
-    """An AsteroidField's sphere haze source, or None when it has no
-    minors. Built FROM minors.tile_spec -- the same count, radius, size law
-    and view-space centre as the field's tile cloud -- with one minor
-    population of the cloud's density count / (4/3 pi R^3)."""
-    from engine.rocks import far_dials, field_table, minors
-    spec = minors.tile_spec(field_obj, view_set, set_name, offset)
-    if spec is None:
+    """An AsteroidField's sphere haze source, or None when it has no rocks.
+
+    One minor population of density count / (4/3 pi R^3), count = tiles^3 x
+    per-tile x tile_count_mult, sizes from the minor_dials tile_* keys, at
+    the field's location in VIEW space (`offset` = offset_between(view,
+    set)), seeded by crc32("tile:<set>:<name>"). These are the numbers the
+    retired tile minor cloud used: tile_haze_gain (14140) is calibrated on
+    them, so test_far_density pins them."""
+    from engine.rocks import far_dials, field_table
+    from engine.rocks import minor_dials as md
+    tiles = int(field_obj.GetNumTilesPerAxis())
+    count = int(round(tiles ** 3 * field_obj.GetNumAsteroidsPerTile()
+                      * md.get("tile_count_mult")))
+    radius = float(field_obj.GetFieldRadius())
+    if count <= 0 or radius <= 0.0:
         return None
-    radius = float(spec.shell_outer)
-    family = minors._FAMILY_NAME.get(spec.family, "silicate")
+    loc = field_obj.GetWorldLocation()
+    point = (loc.x + offset[0], loc.y + offset[1], loc.z + offset[2])
+    r_min = float(md.get("tile_r_min_gu"))
+    r_max = max(r_min, md.get("tile_r_per_size_factor")
+                * float(field_obj.GetAsteroidSizeFactor()))
+    family = "silicate"
     pop = field_table.Population(
         kind=0,
-        density_at_1=spec.count / (4.0 / 3.0 * math.pi * radius ** 3),
+        density_at_1=count / (4.0 / 3.0 * math.pi * radius ** 3),
         a_lo=0.0, a_hi=1.0,
-        r_min=spec.r_min, r_max=spec.r_max, exponent=spec.size_exponent,
+        r_min=r_min, r_max=r_max,
+        exponent=float(md.get("tile_size_exponent")),
         families=((family, 1.0),))
-    seed = spec.seed & 0xffffffff
+    key = "tile:%s:%s" % (set_name, field_obj.GetName())
+    seed = zlib.crc32(key.encode("utf-8")) & 0xffffffff
     return DiscSource(
         id=seed & 0x7fffffff,
         frame=set_name,
-        centre_gu=tuple(spec.point),
+        centre_gu=point,
         normal=(0.0, 0.0, 1.0),
         table=[],
         outer_fade_gu=0.0,

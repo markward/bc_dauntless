@@ -1,4 +1,7 @@
 import math
+
+import pytest
+
 from engine.rocks import density, far_dials, field_table
 
 
@@ -97,7 +100,8 @@ class _Loc:
 
 
 class _Field:
-    """The AsteroidField surface minors.tile_spec reads (Beol 4's numbers)."""
+    """The AsteroidField surface density.tile_field_source reads (Beol 4's
+    numbers; engine/appc/asteroid_field.py)."""
     def __init__(self, name="Asteroid Field 1", loc=(797.714355, 977.248474, 1268.854858),
                  radius=1000.0, tiles=3, per_tile=15, size_factor=7.0):
         self._name, self._loc, self._r = name, loc, radius
@@ -110,13 +114,39 @@ class _Field:
     def GetAsteroidSizeFactor(self): return self._sf
 
 
-def test_tile_field_source_is_a_view_space_sphere_from_the_tile_cloud():
-    from engine.rocks import minors
+# Characterization (rock-fields Task 2): captured from the code BEFORE the
+# tile minor clouds were removed. tile_haze_gain = 14140 was calibrated on
+# exactly these numbers, so they must never drift.
+EXPECTED_DENSITY = 9.668662792832643e-08     # 405 / (4/3 pi 1000^3)
+EXPECTED_SIZES = (0.05, 0.7000000000000001, 2.5)
+EXPECTED_SEED = 1807423987                   # crc32("tile:Beol4:Asteroid Field 1")
+
+
+def test_tile_field_source_values_are_pinned(monkeypatch):
+    from engine.rocks import minor_dials
+    far_dials.reset(); minor_dials.reset()
+    monkeypatch.setattr("engine.systems.frames.containing_set", lambda o: None)
+    s = density.tile_field_source(_Field(), None, "Beol4", (0.0, 0.0, 0.0))
+    (pop,) = s.pops
+    assert s.shape == "sphere" and s.procedural is False and s.view_space is True
+    assert s.centre_gu == (797.714355, 977.248474, 1268.854858)
+    assert s.sphere_radius_gu == 1000.0
+    assert pop.density_at_1 == pytest.approx(EXPECTED_DENSITY, rel=1e-12)
+    assert (pop.r_min, pop.r_max, pop.exponent) == pytest.approx(EXPECTED_SIZES)
+    assert s.seed == EXPECTED_SEED and s.id == EXPECTED_SEED & 0x7fffffff
+    assert dict(pop.families) == {"silicate": 1.0} and s.families == {"silicate": 1.0}
+
+
+def test_tile_field_source_centre_is_offset_into_view_space():
+    s = density.tile_field_source(_Field(), None, "Beol4", (10.0, -20.0, 30.0))
+    assert s.centre_gu == pytest.approx((807.714355, 957.248474, 1298.854858))
+
+
+def test_tile_field_source_is_a_view_space_sphere():
     f = _Field()
     s = density.tile_field_source(f, None, "Beol4", (0.0, 0.0, 0.0))
-    spec = minors.tile_spec(f, None, "Beol4", (0.0, 0.0, 0.0))
     assert s.shape == "sphere" and s.procedural is False and s.view_space is True
-    assert s.centre_gu == spec.point
+    assert s.centre_gu == (797.714355, 977.248474, 1268.854858)
     assert s.sphere_radius_gu == 1000.0
     assert s.sphere_edge_frac == far_dials.get("tile_haze_edge_frac")
     assert math.isclose(s.gain_scale,
@@ -125,7 +155,7 @@ def test_tile_field_source_is_a_view_space_sphere_from_the_tile_cloud():
     (pop,) = s.pops
     assert pop.kind == 0 and pop.a_lo == 0.0 and pop.a_hi == 1.0
     assert math.isclose(pop.density_at_1, 405 / (4.0 / 3.0 * math.pi * 1000.0 ** 3))
-    assert (pop.r_min, pop.r_max, pop.exponent) == (spec.r_min, spec.r_max, spec.size_exponent)
+    assert pop.exponent == 2.5
     assert math.isclose(pop.r_max, 0.7) and pop.r_min == 0.05
     assert dict(pop.families) == {"silicate": 1.0}
 

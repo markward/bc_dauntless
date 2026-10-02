@@ -13,10 +13,9 @@ from typing import Callable, Optional
 DEFAULTS: dict = {
     # §1 ladder (native)
     "imp_hi": 16.0, "imp_lo": 12.0, "speck_hi": 2.0, "speck_lo": 1.5, "p_min": 0.25,
-    # §2 generator (native)
-    "k_ref": 1713.0, "size_classes": 4, "cells_per_range": 4,
-    "max_far_rocks": 60000, "cell_cache_max": 32768, "slab_sigmas": 4.0,
-    "max_cells_per_axis": 17,
+    # §2 haze slab (native). The belt generator's dials went with it
+    # (rock-fields, 2026-10-02).
+    "slab_sigmas": 4.0,
     # §3 look (native)
     # speck_gain 4.0: Mark, live 2026-10-02 ("spec gain needs to come up to
     # about 4").
@@ -62,15 +61,11 @@ DEFAULTS: dict = {
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
-    "k_ref", "size_classes", "cells_per_range", "max_far_rocks",
-    "cell_cache_max", "slab_sigmas", "speck_gain", "haze_gain", "haze_steps",
-    "max_cells_per_axis"})
+    "slab_sigmas", "speck_gain", "haze_gain", "haze_steps"})
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
-_INT_FLOOR_1 = ("max_far_rocks", "cell_cache_max", "size_classes",
-               "cells_per_range", "haze_steps", "max_cells_per_axis",
-               "tile_haze_noise_octaves", "tile_haze_steps",
+_INT_FLOOR_1 = ("haze_steps", "tile_haze_noise_octaves", "tile_haze_steps",
                "belt_noise_octaves")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.

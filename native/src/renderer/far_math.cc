@@ -30,10 +30,6 @@ TierWeights tier_weights(float p, Kind k, const TierDials& d) {
         w.mesh = f; w.impostor = (1.0f - f) * g; w.speck = 1.0f - g; break;
     case Kind::ExplicitNoImpostor:
         w.mesh = g; w.speck = 1.0f - g; break;
-    case Kind::ProceduralMajor:
-        w.impostor = (1.0f - f) * g; w.speck = 1.0f - g; break;
-    case Kind::ProceduralMinor:
-        w.speck = 1.0f - g; break;
     }
     return w;
 }

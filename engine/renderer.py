@@ -631,13 +631,13 @@ def far_enabled() -> bool:
 
 
 def far_stats() -> dict:
-    """{"sources", "rocks", "cached_cells", "generated", "cells", "impostors",
-    "specks", "draw_calls"}; the last five summed over the last frame's cameras."""
+    """{"sources", "rocks", "impostors", "specks", "draw_calls"}; the last
+    three summed over the last frame's cameras."""
     return _h.far_stats()
 
 
 def far_clear() -> None:
-    """Drop sources, flagged rocks, frame and cell cache (keeps the catalogue)."""
+    """Drop sources, flagged rocks and frame (keeps the catalogue)."""
     _h.far_clear()
 
 

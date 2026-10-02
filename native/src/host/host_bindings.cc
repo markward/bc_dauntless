@@ -298,8 +298,6 @@ std::vector<renderer::SpeckGpu> g_far_speck_staging;
 // so a stale fade can never hide its mesh.
 std::vector<std::uint64_t> g_far_flagged_keys;
 // What the last frame built and drew, summed over its drawn cameras.
-int g_far_generated = 0;
-int g_far_cells = 0;
 int g_far_impostors = 0;
 int g_far_specks = 0;
 int g_far_draw_calls = 0;
@@ -841,7 +839,7 @@ void reset_frame_state() {
     // pass has no VAOs. It guards a future caller that resets mid-session.
     if (g_minor_pass) g_minor_pass->forget_models();
 
-    // Far tier: sources, flagged rocks, frame and cell cache belong to the old
+    // Far tier: sources, flagged rocks and frame belong to the old
     // session (the catalogue is not mission content and survives). Flagged
     // keys name instances of the old world, which init()/shutdown() have
     // already replaced, so there is no fade to write back here.
@@ -853,8 +851,6 @@ void reset_frame_state() {
     g_far_speck_staging.clear();
     g_far_flagged_keys.clear();
     g_minor_field.set_specks(true, g_far_field.dials().tiers.p_min);
-    g_far_generated = 0;
-    g_far_cells = 0;
     g_far_impostors = 0;
     g_far_specks = 0;
     g_far_draw_calls = 0;
@@ -1155,9 +1151,7 @@ void frame() {
         // hulls draw with: Instance anchors and the player's contact box.
         g_minor_draw_calls = 0;   // the draws below add to these, if they run
         g_minor_drawn = 0;
-        g_far_generated = 0;      // likewise the far tier's per-camera builds
-        g_far_cells = 0;
-        g_far_impostors = 0;
+        g_far_impostors = 0;      // likewise the far tier's per-camera builds
         g_far_specks = 0;
         g_far_draw_calls = 0;
         if (g_minors_enabled) {
@@ -1273,8 +1267,6 @@ void frame() {
             }
             for (const auto& [key, fade] : g_far_out.fades)
                 if (scenegraph::Instance* inst = far_instance_of(key)) inst->far_fade = fade;
-            g_far_generated += g_far_out.generated;
-            g_far_cells += g_far_out.cells;
             for (const auto& bin : g_far_out.impostors)
                 g_far_impostors += static_cast<int>(bin.items.size());
         }
@@ -2466,8 +2458,7 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     return s;
 }
 
-// An omitted key resets to its default (dials_of's convention). `p_min` sets
-// both the tier ladder's and the generator's.
+// An omitted key resets to its default (dials_of's convention).
 rf::FarDials far_dials_of(const py::dict& d) {
     rf::FarDials o;
     auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
@@ -2477,17 +2468,10 @@ rf::FarDials far_dials_of(const py::dict& d) {
     f("speck_hi", o.tiers.speck_hi);
     f("speck_lo", o.tiers.speck_lo);
     f("p_min", o.tiers.p_min);
-    o.gen.p_min = o.tiers.p_min;
-    f("k_ref", o.gen.k_ref);
-    i("size_classes", o.gen.size_classes);
-    i("cells_per_range", o.gen.cells_per_range);
-    i("max_far_rocks", o.max_far_rocks);
-    i("cell_cache_max", o.cell_cache_max);
     f("slab_sigmas", o.slab_sigmas);
     f("speck_gain", o.speck_gain);
     f("haze_gain", o.haze_gain);
     i("haze_steps", o.haze_steps);
-    i("max_cells_per_axis", o.max_cells_per_axis);
     return o;
 }
 
@@ -4187,8 +4171,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_minor_field.set_specks(g_far_enabled, g_far_field.dials().tiers.p_min);
           },
           py::arg("dials"),
-          "Set the native far dials; an omitted key resets to its default. "
-          "'p_min' sets both the tier ladder's and the generator's.");
+          "Set the native far dials; an omitted key resets to its default.");
     m.def("far_set_enabled",
           [](bool on) {
               g_far_enabled = on;
@@ -4204,25 +4187,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict d;
               d["sources"] = g_far_field.source_count();
               d["rocks"] = g_far_field.rock_count();
-              d["cached_cells"] = g_far_field.cached_cells();
-              d["generated"] = g_far_generated;
-              d["cells"] = g_far_cells;
               d["impostors"] = g_far_impostors;
               d["specks"] = g_far_specks;
               d["draw_calls"] = g_far_draw_calls;
               return d;
           },
-          "{'sources', 'rocks', 'cached_cells'} now; {'generated', 'cells', "
-          "'impostors', 'specks' (far + minor), 'draw_calls'} summed over the "
-          "cameras the last frame drew.");
+          "{'sources', 'rocks'} now; {'impostors', 'specks' (far + minor), "
+          "'draw_calls'} summed over the cameras the last frame drew.");
     m.def("far_clear",
           []() {
               far_zero_fades(g_far_flagged_keys);
               g_far_flagged_keys.clear();
               g_far_field.clear();
           },
-          "Drop sources, flagged rocks (back to mesh-only), frame and cell "
-          "cache; keeps the catalogue.");
+          "Drop sources, flagged rocks (back to mesh-only) and frame; keeps "
+          "the catalogue.");
     m.def("far_debug_active_sources",
           []() {
               py::list out;

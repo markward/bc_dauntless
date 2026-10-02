@@ -49,12 +49,11 @@ def test_far_sources_round_trip_into_stats():
 
 
 def test_far_stats_keys():
-    assert set(h.far_stats()) == {"sources", "rocks", "cached_cells", "generated",
-                                  "cells", "impostors", "specks", "draw_calls"}
+    assert set(h.far_stats()) == {"sources", "rocks", "impostors", "specks", "draw_calls"}
 
 
 def test_far_set_dials_p_min_and_omitted_keys_reset():
-    h.far_set_dials({"p_min": 0.5, "max_cells_per_axis": 9})
+    h.far_set_dials({"p_min": 0.5})
     assert h.frame_state_debug()["far_p_min"] == 0.5
     h.far_set_dials({})
     assert h.frame_state_debug()["far_p_min"] == 0.25
@@ -163,14 +162,16 @@ def test_a_speck_band_rock_draws_a_speck(host):
     assert s["rocks"] == 1
 
 
-def test_an_active_source_walks_cells(host):
+def test_an_active_belt_generates_no_rocks(host):
+    """Rock-fields (2026-10-02): the belt generator is gone; a belt is a
+    density source (haze) only."""
     h.far_set_sources([_source(table=[(0.0, 1.0), (226000.0, 1.0)])])
     h.far_set_frame("Vesuvi", (100000.0, 0.0, 0.0))
     _look_down_minus_z()
     h.frame()
     s = h.far_stats()
-    assert s["sources"] == 1 and s["cells"] > 0
-    assert s["cached_cells"] > 0
+    assert s["sources"] == 1
+    assert s["specks"] == 0 and s["impostors"] == 0
 
 
 def test_a_catalogue_pushed_before_init_still_draws_impostors():

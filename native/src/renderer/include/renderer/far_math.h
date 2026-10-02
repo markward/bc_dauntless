@@ -13,11 +13,9 @@ struct TierDials { float imp_hi = 16.0f, imp_lo = 12.0f, speck_hi = 2.0f,
 enum class Kind : std::uint8_t {
     Explicit,            // a flagged mission/breakup rock with an impostor atlas
     ExplicitNoImpostor,  // a flagged rock without one (stock BC mesh)
-    ProceduralMajor,     // generator rock, catalogue major
-    ProceduralMinor,     // generator rock, catalogue fragment
 };
 
-// How much of each representation draws. Above p_min the three sum to 1 for Explicit/ExplicitNoImpostor only; procedural kinds sum to 0 above their band.
+// How much of each representation draws. Above p_min the three sum to 1.
 struct TierWeights { float mesh = 0.0f, impostor = 0.0f, speck = 0.0f; };
 
 TierWeights tier_weights(float p, Kind k, const TierDials& d);

@@ -8,8 +8,7 @@
 namespace far = renderer::far;
 
 namespace {
-const far::Kind kAll[] = {far::Kind::Explicit, far::Kind::ExplicitNoImpostor,
-                          far::Kind::ProceduralMajor, far::Kind::ProceduralMinor};
+const far::Kind kAll[] = {far::Kind::Explicit, far::Kind::ExplicitNoImpostor};
 float sum(const far::TierWeights& w) { return w.mesh + w.impostor + w.speck; }
 }
 
@@ -49,22 +48,6 @@ TEST(FarMath, NoImpostorKeepsMeshToSpeckBand) {
     EXPECT_EQ(w.mesh, 1.0f); EXPECT_EQ(w.impostor, 0.0f);
     w = far::tier_weights(1.75f, far::Kind::ExplicitNoImpostor, d);
     EXPECT_NEAR(w.mesh, 0.5f, 1e-6f); EXPECT_NEAR(w.speck, 0.5f, 1e-6f);
-}
-
-TEST(FarMath, ProceduralRocksHaveNoMesh) {
-    const far::TierDials d;
-    for (float p : {0.3f, 1.0f, 1.75f, 5.0f, 14.0f, 40.0f}) {
-        EXPECT_EQ(far::tier_weights(p, far::Kind::ProceduralMajor, d).mesh, 0.0f);
-        EXPECT_EQ(far::tier_weights(p, far::Kind::ProceduralMinor, d).mesh, 0.0f);
-        EXPECT_EQ(far::tier_weights(p, far::Kind::ProceduralMinor, d).impostor, 0.0f);
-    }
-    // Procedural major impostor fades IN over imp_hi..imp_lo (no mesh to hand to).
-    EXPECT_NEAR(far::tier_weights(14.0f, far::Kind::ProceduralMajor, d).impostor, 0.5f, 1e-6f);
-    EXPECT_EQ(far::tier_weights(16.0f, far::Kind::ProceduralMajor, d).impostor, 0.0f);
-    // Procedural minor speck fades OUT over speck_lo..speck_hi.
-    EXPECT_EQ(far::tier_weights(1.0f, far::Kind::ProceduralMinor, d).speck, 1.0f);
-    EXPECT_NEAR(far::tier_weights(1.75f, far::Kind::ProceduralMinor, d).speck, 0.5f, 1e-6f);
-    EXPECT_EQ(far::tier_weights(2.0f, far::Kind::ProceduralMinor, d).speck, 0.0f);
 }
 
 // A zero-width band (imp_hi == imp_lo and/or speck_hi == speck_lo, reachable

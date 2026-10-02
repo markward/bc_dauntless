@@ -2,25 +2,15 @@
 real clouds, driving the REAL native MinorField step, and count every
 response the frame would fire.
 
-Both Beol4 (a tile field) and Multi1 (54 halos) place real objects through
-their own SDK region modules; the clouds below are the REAL
-`minors.desired_clouds` output for those objects, not hand-built descs.
-
-Density note (controller ruling, overriding the task-12 brief): Beol4's
-"Asteroid Field 1" is a 1000-GU-radius sphere holding ~8,100 minors even at
-`tile_count_mult=20` -- about 1.9e-6 minors/GU^3. A 63-GU flight through it
-sweeps only ~90 GU^3 of space, for an expected hit count near zero, so a
-straight unmodified flight can never "really meet minors". The IMPULSE case
-below keeps the field's real tile descriptor (count, position) but shrinks
-`shell_outer` to 20 GU before building the cloud spec -- same count, now
-~0.24 minors/GU^3, ~20 expected hits on a straight 63-GU path through the
-centre. The DASH case flies the REAL, uncompressed field at speed, muted, and
-asserts no hits are required.
+Multi1 (54 halos) places real objects through its own SDK region modules;
+the clouds below are the REAL `minors.desired_clouds` output for those
+objects, not hand-built descs. (The Beol4 tile-field cases went with the
+tile clouds themselves: rock-fields, 2026-10-02.)
 
 Multi1's halos are small (radius a few GU) and thin (a 1.1x-3.0x shell), so
 even the densest of the 54 meets only ~0.3 expected minors on a straight pass
 -- confirmed empirically (scale=1 below produced zero hits in every trial).
-Per the same ruling, the densest halo's `count` is scaled up (xN, see
+Per a controller ruling, the densest halo's `count` is scaled up (xN, see
 `_MULTI1_DENSEST_SCALE`) so the flight genuinely meets minors; every other
 halo is sent unscaled. This is a probe-only adjustment -- it does not change
 `engine/rocks/minors.py` or any shipped dial.
@@ -94,61 +84,6 @@ def _fly(field, speed_gups, start, seconds=10.0, muted=False, monkeypatch=None):
     return totals, calls
 
 
-def _beol4_field(compress):
-    """Real Beol4 "Asteroid Field 1" (SDK Systems.Beol.Beol4), tile_count_mult
-    bumped so a flight can meet it at all. `compress`: shrink the real
-    field's shell_outer to 20 GU before building the cloud spec (same count,
-    same centre) -- see module docstring."""
-    import _dauntless_host as h
-    _fresh_world()
-    import Systems.Beol.Beol4 as beol4
-    beol4.Initialize()
-    pSet = beol4.GetSet()
-    fields = [App.AsteroidField_Cast(o) for o in pSet.GetClassObjectList(App.CT_ASTEROID_FIELD)]
-    md.reset()
-    # Dense enough that a straight flight really meets minors.
-    md._dials["tile_count_mult"] = 20.0
-    if compress:
-        for fo in fields:
-            fo.SetFieldRadius(20.0)
-    specs = minors.desired_clouds(pSet, rock_instances={}, fields=fields)
-    f = h.MinorField()
-    f.set_fragments(0, [(1, 2, 57.142857)])
-    for i, (k, s) in enumerate(specs.items(), start=1):
-        f.add_cloud(_desc(s, i), 0.0)
-    centre = specs[next(iter(specs))].point
-    return f, centre
-
-
-def test_beol4_impulse_flythrough_stays_within_caps(monkeypatch):
-    """Full impulse (6.3 GU/s) through the compressed field: not muted, and
-    must really meet minors."""
-    mc.reset()
-    f, c = _beol4_field(compress=True)
-    speed = 6.3
-    start = (c[0], c[1] - speed * 5.0, c[2])          # crosses the centre at t = 5 s
-    totals, calls = _fly(f, speed, start, muted=False, monkeypatch=monkeypatch)
-    assert totals["puffs"] <= 6 * 10 + 6
-    assert totals["grits"] <= 4 * 10 + 4
-    assert totals["flickers"] <= 2 * 10 + 2
-    assert calls["grit"] > 0                          # it really met minors
-
-
-def test_beol4_dash_flythrough_stays_muted(monkeypatch):
-    """Dashing (2000 GU/s) through the REAL, uncompressed field: muted, no
-    responses required (the point is that a high-speed muted pass stays
-    silent and never crashes, not that it meets anything)."""
-    mc.reset()
-    f, c = _beol4_field(compress=False)
-    speed = 2000.0
-    start = (c[0], c[1] - speed * 5.0, c[2])
-    totals, calls = _fly(f, speed, start, muted=True, monkeypatch=monkeypatch)
-    assert totals["puffs"] <= 6 * 10 + 6
-    assert totals["grits"] <= 4 * 10 + 4
-    assert totals["flickers"] <= 2 * 10 + 2
-    assert calls == {"puff": 0, "grit": 0, "flicker": 0}
-
-
 def _multi1_field():
     """Real Multi1 (SDK Systems.Multi1.Multi1): 54 halos, one per realised
     rock. Point-anchored (see `_desc_point`); the densest halo's count is
@@ -197,12 +132,12 @@ def test_multi1_flythrough_stays_within_caps(monkeypatch):
 
 def test_flythrough_changes_no_game_state(monkeypatch):
     """No damage, no events: the probe never touches a ship object. Building
-    the real Beol4 set (region placements, waypoints) posts its own setup
+    the real Multi1 set (region placements, waypoints) posts its own setup
     events -- those are unrelated SDK world-building, not minor-rocks
     behaviour, so the capture starts only once the field is built and the
     flight (the thing under test) begins."""
     mc.reset()
-    f, c = _beol4_field(compress=True)
+    f, c = _multi1_field()
     posted = []
     monkeypatch.setattr(App.g_kEventManager, "AddEvent", lambda e: posted.append(e))
     _fly(f, 6.3, (c[0], c[1] - 31.5, c[2]), seconds=10.0, monkeypatch=monkeypatch)
