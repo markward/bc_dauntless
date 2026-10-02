@@ -37,6 +37,7 @@
 #include <renderer/minor_pass.h>
 #include <renderer/far_field.h>
 #include <renderer/far_pass.h>
+#include <renderer/rock_mid.h>
 #include <renderer/rock_near.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
@@ -320,6 +321,17 @@ float g_near_shield_inflate = 0.0f;
 // What the last frame built, summed over its drawn cameras.
 int g_near_meshes = 0;
 int g_near_billboards = 0;
+// Rock fields mid band: one baked collection sprite per tile, in three nested
+// tile levels. Pure CPU: fed the far tier's active sources, built per DRAWN
+// camera in render_space_geometry and drawn through g_far_pass (collection
+// atlases occupy the slots after the catalogue's). Gated on g_far_enabled.
+// The collections are not mission content (as the catalogue), so a session
+// reset keeps them.
+renderer::rockfield::MidField g_mid_field;
+renderer::rockfield::MidOutput g_mid_out;
+// What the last frame drew / examined, summed over its drawn cameras.
+int g_mid_sprites = 0;
+int g_mid_tiles = 0;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
@@ -887,6 +899,12 @@ void reset_frame_state() {
     g_near_shield_inflate = 0.0f;
     g_near_meshes = 0;
     g_near_billboards = 0;
+    // Mid band: sources and dials belong to the old session.
+    g_mid_field.set_sources({});
+    g_mid_field.set_dials({});
+    g_mid_out = {};
+    g_mid_sprites = 0;
+    g_mid_tiles = 0;
 }
 
 void init(int width, int height, const std::string& title) {
@@ -1218,6 +1236,8 @@ void frame() {
         g_far_draw_calls = 0;
         g_near_meshes = 0;
         g_near_billboards = 0;
+        g_mid_sprites = 0;
+        g_mid_tiles = 0;
         if (g_minors_enabled) {
             DAUNTLESS_FRAME_SCOPE("space.minors.step");
             step_minor_field(static_cast<float>(fh));
@@ -1407,6 +1427,25 @@ void frame() {
             for (const auto& bin : g_near_out.billboards)
                 if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock))
                     g_near_billboards += static_cast<int>(bin.items.size());
+        }
+        // Mid band for THIS camera: collection sprites through the far
+        // impostor draw. A bin whose atlas cannot load is skipped by
+        // render_impostors; nothing is mutated from the draw.
+        if (g_far_enabled && g_far_pass) {
+            DAUNTLESS_FRAME_SCOPE("rock.mid.draw");
+            renderer::rockfield::MidBuildInput in;
+            in.view = cam.view_matrix();
+            in.proj = cam.proj_matrix();
+            in.viewport_h = target_h;
+            in.render_origin = g_world.render_origin();
+            in.anchor_sys = g_far_field.anchor();
+            g_mid_field.build(in, g_mid_out);
+            g_far_pass->render_impostors(g_mid_out.sprites, cam, *g_pipeline, g_lighting,
+                                         ambient_scale, rim);
+            g_mid_tiles += g_mid_out.tiles;
+            for (const auto& bin : g_mid_out.sprites)
+                if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock))
+                    g_mid_sprites += static_cast<int>(bin.items.size());
         }
         if (g_far_enabled && g_far_pass) {
             DAUNTLESS_FRAME_SCOPE("space.far.impostors");
@@ -2595,6 +2634,28 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
     f("near_fade_gu", o.fade_gu);
     f("near_stream_margin_gu", o.stream_margin_gu);
     f("collide_cooldown_s", o.collide_cooldown_s);
+    return o;
+}
+
+// The mid band's keys of the same dict (far_dials.py mid_* + haze_handoff_*);
+// an omitted key resets to its default.
+renderer::rockfield::MidDials mid_dials_of(const py::dict& d) {
+    renderer::rockfield::MidDials o;
+    auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
+    auto i = [&](const char* k, int& v) { if (d.contains(k)) v = d[k].cast<int>(); };
+    f("mid_l0_tile_gu", o.l0_tile_gu);
+    f("mid_l1_tile_gu", o.l1_tile_gu);
+    f("mid_l2_tile_gu", o.l2_tile_gu);
+    f("mid_in_lo_gu", o.in_lo_gu);
+    f("mid_in_hi_gu", o.in_hi_gu);
+    f("mid_l0_out_gu", o.l0_out_gu);
+    f("mid_l1_out_gu", o.l1_out_gu);
+    f("mid_xfade_frac", o.xfade_frac);
+    f("haze_handoff_gu", o.handoff_gu);
+    f("haze_handoff_band_gu", o.handoff_band_gu);
+    f("mid_fill", o.fill);
+    f("mid_sprite_scale", o.sprite_scale);
+    i("mid_max_sprites", o.max_sprites);
     return o;
 }
 
@@ -4247,7 +4308,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // Safe with the host down: CPU state only. Atlas paths are kept in
     // g_far_atlas_paths and handed to the pass init() makes.
     m.def("far_set_catalogue",
-          [](py::list entries, const std::vector<std::tuple<float, float, float>>& view_dirs) {
+          [](py::list entries, const std::vector<std::tuple<float, float, float>>& view_dirs,
+             py::list collections) {
               std::vector<rf::CatalogueRock> rocks;
               std::vector<std::pair<std::string, std::string>> paths;
               renderer::rockfield::NearCatalogue near;
@@ -4293,6 +4355,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& t : view_dirs)
                   dirs.emplace_back(std::get<0>(t), std::get<1>(t), std::get<2>(t));
               near.view_dirs_gltf = dirs;
+              // Mid band: collection i draws from atlas slot len(entries) + i.
+              std::vector<renderer::rockfield::MidCollection> mid;
+              for (const auto& item : collections) {
+                  const auto d = item.cast<py::dict>();
+                  auto path = [&](const char* k) {
+                      return d.contains(k) && !d[k].is_none() ? d[k].cast<std::string>()
+                                                              : std::string();
+                  };
+                  const int variant = d["variant"].cast<int>();
+                  if (variant < 0 || variant > 2)
+                      throw py::value_error("collection variant must be 0, 1 or 2");
+                  mid.push_back({static_cast<int>(paths.size()), variant});
+                  paths.emplace_back(path("albedo"), path("normal"));
+              }
+              g_mid_field.set_view_dirs(dirs);
+              g_mid_field.set_collections(std::move(mid));
               g_far_field.set_catalogue(std::move(rocks), std::move(dirs));
               g_far_atlas_paths = std::move(paths);
               if (g_far_pass) g_far_pass->set_atlas_paths(g_far_atlas_paths);
@@ -4301,13 +4379,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_near_large_frags = std::move(large_frags);
               g_near_field.set_catalogue(g_near_catalogue);
           },
-          py::arg("entries"), py::arg("view_dirs"),
+          py::arg("entries"), py::arg("view_dirs"), py::arg("collections") = py::list(),
           "Catalogue for the far tier: [{'albedo', 'normal' (atlas paths, empty "
           "or None = no impostor), 'avg_albedo': (r, g, b)}, ...] by catalogue "
           "index, and the impostor bake's view directions (glTF axes). "
           "Optional per entry: 'kind' ('fragment' | 'major'), 'family', "
           "'lod0'/'lod1' model handles, 'bound_radius_mu' -- a silicate "
-          "fragment / major with both handles streams in the near band.");
+          "fragment / major with both handles streams in the near band. "
+          "collections: the mid band's baked collection impostors, "
+          "[{'albedo', 'normal', 'avg_albedo', 'variant' (0 sparse, 1 medium, "
+          "2 dense)}, ...]; collection i uses atlas slot len(entries) + i.");
     m.def("far_set_rocks",
           [](py::list rocks) {
               std::vector<rf::FlaggedRock> out;
@@ -4340,6 +4421,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& item : sources) out.push_back(disc_source_of(item.cast<py::dict>()));
               g_far_field.set_sources(std::move(out));
               g_near_field.set_sources(g_far_field.active_sources());
+              g_mid_field.set_sources(g_far_field.active_sources());
           },
           py::arg("sources"), "Disc density sources (DiscSource.to_native() dicts).");
     m.def("far_set_frame",
@@ -4348,6 +4430,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                     {std::get<0>(anchor), std::get<1>(anchor),
                                      std::get<2>(anchor)});
               g_near_field.set_sources(g_far_field.active_sources());
+              g_mid_field.set_sources(g_far_field.active_sources());
           },
           py::arg("system"), py::arg("anchor"),
           "The viewed system (None: none) and the system position of view-space origin.");
@@ -4355,6 +4438,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](py::dict d) {
               g_far_field.set_dials(far_dials_of(d));
               g_near_field.set_dials(near_dials_of(d));
+              g_mid_field.set_dials(mid_dials_of(d));
               g_minor_field.set_specks(g_far_enabled, g_far_field.dials().tiers.p_min);
           },
           py::arg("dials"),
@@ -4365,6 +4449,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!on) {
                   far_zero_fades(g_far_flagged_keys);
                   g_near_field.clear();   // re-streams when back on
+                  g_mid_out = {};         // no stale mid output
+                  g_mid_sprites = 0;
+                  g_mid_tiles = 0;
               }
               g_minor_field.set_specks(on, g_far_field.dials().tiers.p_min);
           },
@@ -4388,10 +4475,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["near_ghosted"] = ns.ghosted;
               d["near_meshes"] = g_near_meshes;
               d["near_billboards"] = g_near_billboards;
+              d["mid_sprites"] = g_mid_sprites;
+              d["mid_tiles"] = g_mid_tiles;
               return d;
           },
           "{'sources', 'rocks', 'near_cells', 'near_small', 'near_large', "
-          "'near_ghosted'} now; {'near_meshes', 'near_billboards'} built and "
+          "'near_ghosted'} now; {'near_meshes', 'near_billboards', "
+          "'mid_sprites' (drawn), 'mid_tiles' (examined)} built and "
           "{'impostors', 'specks' (far + minor), "
           "'draw_calls'} summed over the cameras the last frame drew.");
     m.def("far_clear",
@@ -4402,9 +4492,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_near_field.set_sources(g_far_field.active_sources());
               g_near_field.clear();
               g_near_field.reset_player();
+              g_mid_field.set_sources(g_far_field.active_sources());
+              g_mid_out = {};
+              g_mid_sprites = 0;
+              g_mid_tiles = 0;
           },
-          "Drop sources, flagged rocks (back to mesh-only), frame and the near "
-          "band's cells, contacts and sweep state; keeps the catalogue.");
+          "Drop sources, flagged rocks (back to mesh-only), frame, the near "
+          "band's cells, contacts and sweep state, and the mid band's output; "
+          "keeps the catalogue and collections.");
     m.def("rockfield_drain_contacts",
           []() { return near_contacts_list(g_near_field.drain_large_contacts()); },
           "Player/large near-rock touches since the last drain: [{'point', "

@@ -596,13 +596,16 @@ def minors_clear() -> None:
 # ── Far tier (docs/superpowers/specs/2026-10-01-far-tier-design.md) ──
 
 
-def far_set_catalogue(entries: list, view_dirs: list) -> None:
+def far_set_catalogue(entries: list, view_dirs: list, collections: list = ()) -> None:
     """Catalogue by index: [{"albedo", "normal", "avg_albedo"}, ...] plus the
     impostor bake's view directions; empty atlas paths mean no impostor.
     Optional per entry: "kind", "family", "lod0"/"lod1" model handles and
     "bound_radius_mu" -- a silicate fragment / major with both handles
-    streams in the rock-fields near band."""
-    _h.far_set_catalogue(entries, view_dirs)
+    streams in the rock-fields near band. `collections`: the rock-fields mid
+    band's baked collection impostors, [{"albedo", "normal", "avg_albedo",
+    "variant" (0 sparse, 1 medium, 2 dense)}, ...]; collection i draws from
+    atlas slot len(entries) + i. Empty: the mid band draws nothing."""
+    _h.far_set_catalogue(entries, view_dirs, list(collections))
 
 
 def far_set_rocks(rocks: list) -> None:

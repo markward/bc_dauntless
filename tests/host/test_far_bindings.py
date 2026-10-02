@@ -51,7 +51,8 @@ def test_far_sources_round_trip_into_stats():
 def test_far_stats_keys():
     assert set(h.far_stats()) == {"sources", "rocks", "impostors", "specks", "draw_calls",
                                   "near_cells", "near_small", "near_large",
-                                  "near_ghosted", "near_meshes", "near_billboards"}
+                                  "near_ghosted", "near_meshes", "near_billboards",
+                                  "mid_sprites", "mid_tiles"}
 
 
 def test_far_set_dials_p_min_and_omitted_keys_reset():
