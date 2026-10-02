@@ -57,6 +57,16 @@ def cycle_active() -> str:
     return active()
 
 
+def set_active(name: str) -> bool:
+    """Make `name` the active group (prints its dial list). False if unknown."""
+    global _active
+    if name not in _names:
+        return False
+    _active = _names.index(name)
+    _report_group()
+    return True
+
+
 def _group():
     return _groups.get(active())
 

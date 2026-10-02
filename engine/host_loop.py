@@ -3455,6 +3455,14 @@ def _developer_family_entry():
                 module_name="engine.dev_missions.system_preview",
                 dir_name="System Preview",
                 display_name="System Preview",
+            ), MissionEntry(
+                module_name="engine.dev_missions.far_tier_field",
+                dir_name="Far Tier Field",
+                display_name="Far Tier: Beol 4 field",
+            ), MissionEntry(
+                module_name="engine.dev_missions.far_tier_belt",
+                dir_name="Far Tier Belt",
+                display_name="Far Tier: Vesuvi belt",
             )],
         )],
     )
