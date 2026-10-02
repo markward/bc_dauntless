@@ -49,6 +49,67 @@ float ramp(double elapsed, float seconds) {
 
 }  // namespace
 
+SweepBox sweep_box_of(const PlayerBox& box, float margin_gu, float inflate) {
+    SweepBox b;
+    for (int k = 0; k < 3; ++k) {
+        const glm::vec3 col = glm::vec3(box.world[k]);
+        const float len = glm::length(col);
+        b.axes[k] = len > 0.0f ? col / len : glm::vec3(k == 0, k == 1, k == 2);
+        b.half[k] = len * box.half_mu[k] * inflate + margin_gu;
+    }
+    b.bound = glm::length(b.half);
+    return b;
+}
+
+glm::vec3 closest_on_box(const SweepBox& b, const glm::vec3& centre, const glm::vec3& p) {
+    const glm::vec3 d = p - centre;
+    glm::vec3 q = centre;
+    for (int ax = 0; ax < 3; ++ax)
+        q += b.axes[ax] * std::clamp(glm::dot(d, b.axes[ax]), -b.half[ax], b.half[ax]);
+    return q;
+}
+
+float sweep_min_distance(const SweepBox& b, const glm::vec3& seg0, const glm::vec3& seg,
+                         const glm::vec3& p, float& s_out) {
+    // With the orientation fixed, f(s) = |p - box(seg0 + seg*s)| is convex in
+    // s, so golden-section search finds its minimum. No sub-step cap, so no
+    // tunnelling at any speed.
+    auto f = [&](float u) {
+        const glm::vec3 ck = seg0 + seg * u;
+        return glm::length(p - closest_on_box(b, ck, p));
+    };
+    float s = 1.0f;
+    if (glm::dot(seg, seg) > 0.0f) {
+        constexpr float kInvPhi = 0.6180339887f;
+        float lo = 0.0f, hi = 1.0f;
+        float x1 = hi - kInvPhi * (hi - lo), x2 = lo + kInvPhi * (hi - lo);
+        float f1 = f(x1), f2 = f(x2);
+        for (int it = 0; it < 30; ++it) {
+            if (f1 <= f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - kInvPhi * (hi - lo); f1 = f(x1); }
+            else          { lo = x1; x1 = x2; f1 = f2; x2 = lo + kInvPhi * (hi - lo); f2 = f(x2); }
+        }
+        s = 0.5f * (lo + hi);
+        if (f(1.0f) <= f(s)) s = 1.0f;     // prefer the current pose on a tie
+    }
+    s_out = s;
+    return f(s);
+}
+
+void apply_shove(ShoveState& sh, const glm::vec3& push_dir, float rel_speed, double now,
+                 const Dials& d) {
+    sh.vel = push_dir * (std::max(rel_speed, 0.0f) * d.shove_transfer + d.shove_min_gups);
+    sh.spin_rate = std::max(sh.spin_rate, d.shove_tumble);   // re-touches do not ramp
+    if (now - sh.last_contact >= d.contact_cooldown_s) sh.last_contact = now;
+}
+
+void advance_shove(ShoveState& sh, float dt, const Dials& d) {
+    const float decay = std::pow(0.5f, dt / d.shove_damp_seconds);
+    sh.offset += sh.vel * dt;
+    sh.vel *= decay;
+    sh.spin += sh.spin_rate * dt;
+    sh.spin_rate *= decay;
+}
+
 std::vector<Minor> generate(const CloudDesc& d) {
     std::vector<Minor> out;
     const int n = std::max(0, d.count);
@@ -151,15 +212,11 @@ void MinorField::step(const StepInput& in) {
     // 1. Integrate every shove: the offset persists, velocity and spin decay.
     if (dt > 0.0) {
         const float fdt = static_cast<float>(dt);
-        const float decay = std::pow(0.5f, fdt / dials_.shove_damp_seconds);
         for (auto& [id, c] : clouds_) {
             (void)id;
             for (auto& [i, sh] : c.shoves) {
                 (void)i;
-                sh.offset += sh.vel * fdt;
-                sh.vel *= decay;
-                sh.spin += sh.spin_rate * fdt;
-                sh.spin_rate *= decay;
+                advance_shove(sh, fdt, dials_);
             }
         }
     }
@@ -294,14 +351,8 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
                               double t, double dt, float tau) {
     // OBB, render space: centre, unit axes, inflated half extents, bound.
     const glm::vec3 c = glm::vec3(box.world * glm::vec4(box.center_mu, 1.0f));
-    glm::vec3 a[3], h;
-    for (int k = 0; k < 3; ++k) {
-        const glm::vec3 col = glm::vec3(box.world[k]);
-        const float len = glm::length(col);
-        a[k] = len > 0.0f ? col / len : glm::vec3(k == 0, k == 1, k == 2);
-        h[k] = len * box.half_mu[k] + dials_.contact_margin_gu;
-    }
-    const float bound = glm::length(h);
+    const SweepBox sb = sweep_box_of(box, dials_.contact_margin_gu);
+    const float bound = sb.bound;
 
     // The previous centre lives in VIEW space so a moved render origin is not travel.
     const glm::dvec3 c_view = glm::dvec3(c) + render_origin;
@@ -328,14 +379,6 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
             ? std::clamp(glm::dot(p - seg0, seg) / seg_len2, 0.0f, 1.0f) : 0.0f;
         return glm::length(p - (seg0 + seg * u));
     };
-    // Closest point on the OBB centred at `ck` to `p` (orientation fixed this frame).
-    auto closest_on_box = [&](const glm::vec3& ck, const glm::vec3& p) {
-        const glm::vec3 d = p - ck;
-        glm::vec3 q = ck;
-        for (int ax = 0; ax < 3; ++ax)
-            q += a[ax] * std::clamp(glm::dot(d, a[ax]), -h[ax], h[ax]);
-        return q;
-    };
 
     int touches = 0;
     for (auto& [id, cl] : clouds_) {
@@ -361,26 +404,9 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
             const glm::vec3 p = cl.pos[i];
             if (dist_to_segment(p) > radius + bound) continue;
 
-            // Exact sweep: with the orientation fixed, f(s) = |p - box(lerp(seg0, c, s))|
-            // is convex in s, so golden-section search finds its minimum. No sub-step
-            // cap, so no tunnelling at any speed below teleport_gu.
-            auto f = [&](float u) {
-                const glm::vec3 ck = seg0 + seg * u;
-                return glm::length(p - closest_on_box(ck, p));
-            };
+            // Exact sweep (sweep_min_distance): no tunnelling below teleport_gu.
             float s = 1.0f;
-            if (seg_len2 > 0.0f) {
-                constexpr float kInvPhi = 0.6180339887f;
-                float lo = 0.0f, hi = 1.0f;
-                float x1 = hi - kInvPhi * (hi - lo), x2 = lo + kInvPhi * (hi - lo);
-                float f1 = f(x1), f2 = f(x2);
-                for (int it = 0; it < 30; ++it) {
-                    if (f1 <= f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - kInvPhi * (hi - lo); f1 = f(x1); }
-                    else          { lo = x1; x1 = x2; f1 = f2; x2 = lo + kInvPhi * (hi - lo); f2 = f(x2); }
-                }
-                s = 0.5f * (lo + hi);
-                if (f(1.0f) <= f(s)) s = 1.0f;     // prefer the current pose on a tie
-            }
+            sweep_min_distance(sb, seg0, seg, p, s);
             const glm::vec3 ck = seg0 + seg * s;
             const glm::vec3 d = p - ck;
             {
@@ -389,21 +415,21 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
                 float dl[3];
                 bool inside = true;
                 for (int ax = 0; ax < 3; ++ax) {
-                    dl[ax] = glm::dot(d, a[ax]);
-                    inside = inside && std::fabs(dl[ax]) <= h[ax];
+                    dl[ax] = glm::dot(d, sb.axes[ax]);
+                    inside = inside && std::fabs(dl[ax]) <= sb.half[ax];
                 }
                 glm::vec3 nrm, q, push;
                 if (inside) {
                     // Exit through the face of least penetration, ending one radius out.
                     int k = 0;
                     for (int ax = 1; ax < 3; ++ax)
-                        if (h[ax] - std::fabs(dl[ax]) < h[k] - std::fabs(dl[k])) k = ax;
-                    const float depth = h[k] - std::fabs(dl[k]);
-                    nrm = a[k] * (dl[k] >= 0.0f ? 1.0f : -1.0f);
+                        if (sb.half[ax] - std::fabs(dl[ax]) < sb.half[k] - std::fabs(dl[k])) k = ax;
+                    const float depth = sb.half[k] - std::fabs(dl[k]);
+                    nrm = sb.axes[k] * (dl[k] >= 0.0f ? 1.0f : -1.0f);
                     q = p + nrm * depth;                       // on that face
                     push = nrm * (depth + radius);
                 } else {
-                    q = closest_on_box(ck, p);
+                    q = closest_on_box(sb, ck, p);
                     const float gap = glm::length(p - q);
                     if (gap > radius) continue;
                     nrm = (p - q) / gap;
@@ -413,13 +439,9 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
                 Shove& sh = cl.shoves[static_cast<std::uint32_t>(i)];
                 sh.offset += push;                             // sit on the surface
                 cl.pos[i] += push;
-                sh.vel = nrm * (std::max(glm::dot(v_player, nrm), 0.0f) * dials_.shove_transfer
-                                + dials_.shove_min_gups);
-                sh.spin_rate = std::max(sh.spin_rate, dials_.shove_tumble);   // re-touches do not ramp
-                if (t - sh.last_contact >= dials_.contact_cooldown_s) {
-                    contacts_.push_back({glm::dvec3(q) + render_origin, radius, rel_speed});
-                    sh.last_contact = t;
-                }
+                const bool report = t - sh.last_contact >= dials_.contact_cooldown_s;
+                apply_shove(sh, nrm, glm::dot(v_player, nrm), t, dials_);
+                if (report) contacts_.push_back({glm::dvec3(q) + render_origin, radius, rel_speed});
                 ++touches;
             }
         }

@@ -170,6 +170,14 @@ ViewBasis make_view_basis(const glm::vec3& dir);
 // glTF -> BC model axes: (x,y,z) -> (-x,z,y). Proper (det +1) and its own inverse.
 glm::mat3 gltf_to_bc();
 
+// The impostor instance for a rock at render-space centre c, rotation R
+// (rock -> render), radius r, seen from `eye`, with signed dither `dither`
+// (0 = solid; >0 a mesh-side fade keeping the upper 1-d; <0 an impostor
+// fading in keeping the lower |d|). Chooses the baked view nearest the eye.
+// `view_dirs_gltf` must be non-empty.
+ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const glm::vec3& eye,
+                          const glm::vec3& c, const glm::mat3& R, float r, float dither);
+
 class FarField {
 public:
     void set_dials(const FarDials&);

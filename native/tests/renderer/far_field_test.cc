@@ -837,3 +837,22 @@ TEST(FarNoise, ContrastAboveOneIsClampedInM) {
         EXPECT_EQ(far::haze_noise_m(s, x), far::haze_noise_m(one, x));
     }
 }
+
+// rock-fields Task 3: the impostor emit, shared with the near band.
+TEST(FarImpostor, MakeImpostorDitherAndSize) {
+    const std::vector<glm::vec3> dirs = {glm::vec3(0, 0, 1), glm::vec3(0, 0, -1)};
+    const auto g = far::make_impostor(dirs, glm::vec3(0, 0, 10), glm::vec3(0), glm::mat3(1.0f),
+                                      2.0f, -0.25f);
+    EXPECT_FLOAT_EQ(g.centre_half.w, 2.0f * 1.02f);
+    EXPECT_FLOAT_EQ(g.up_dither.w, -0.25f);
+}
+
+TEST(FarImpostor, MakeImpostorPicksTheViewNearestTheEye) {
+    // Eye on BC +Y == glTF +Z (gltf_to_bc maps (x,y,z) -> (-x,z,y)).
+    const std::vector<glm::vec3> dirs = {glm::vec3(0, 0, -1), glm::vec3(1, 0, 0),
+                                         glm::vec3(0, 0, 1)};
+    const auto g = far::make_impostor(dirs, glm::vec3(0, 50, 0), glm::vec3(0), glm::mat3(1.0f),
+                                      1.0f, 0.0f);
+    EXPECT_EQ(g.right_view.w, 2.0f);
+    EXPECT_EQ(glm::vec3(g.centre_half), glm::vec3(0));
+}

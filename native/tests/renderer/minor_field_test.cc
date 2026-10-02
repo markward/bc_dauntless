@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 using namespace renderer::minors;
+namespace minors = renderer::minors;
 
 namespace {
 CloudDesc halo(std::uint32_t seed = 7) {
@@ -678,4 +679,89 @@ TEST(MinorField, SpeckBandReplacesTheCull) {
     f.build_bins(in.view, in.proj, in.viewport_h, bins, nullptr, &specks);
     EXPECT_TRUE(bins.empty());
     EXPECT_TRUE(specks.empty());
+}
+
+// ---- Shared helpers (rock-fields Task 3): the swept contact and shove
+// response MinorField::step_contact is built on, reused by the near band.
+
+TEST(MinorSweep, FindsAHitMidSegmentAtDashSpeed) {
+    minors::PlayerBox pb;                       // unit cube hull at origin
+    pb.half_mu = glm::vec3(1.0f);
+    const auto b = minors::sweep_box_of(pb, 0.0f);
+    // 1,000 GU in one step straight through a 2 GU rock 500 GU along +Y.
+    float s = -1.0f;
+    const float d = minors::sweep_min_distance(b, glm::vec3(0, -500, 0), glm::vec3(0, 1000, 0),
+                                               glm::vec3(0, 0, 0), s);
+    EXPECT_NEAR(d, 0.0f, 1e-3f);
+    EXPECT_NEAR(s, 0.5f, 2e-3f);
+}
+
+TEST(MinorSweep, InflateScalesHalfBeforeMargin) {
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f, 2.0f, 3.0f);
+    const auto b = minors::sweep_box_of(pb, 0.1f, 2.0f);
+    EXPECT_FLOAT_EQ(b.half.x, 2.1f);
+    EXPECT_FLOAT_EQ(b.half.z, 6.1f);
+}
+
+TEST(MinorSweep, BoxAxesAreUnitAndBoundIsHalfLength) {
+    minors::PlayerBox pb;
+    pb.half_mu = glm::vec3(1.0f, 2.0f, 3.0f);
+    pb.world = glm::rotate(glm::mat4(1.0f), 0.7f, glm::vec3(0, 0, 1)) *
+               glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+    const auto b = minors::sweep_box_of(pb, 0.5f);
+    for (int k = 0; k < 3; ++k) EXPECT_NEAR(glm::length(b.axes[k]), 1.0f, 1e-6f);
+    EXPECT_NEAR(b.half.y, 4.5f, 1e-5f);                  // 2 * 2 + 0.5
+    EXPECT_FLOAT_EQ(b.bound, glm::length(b.half));
+}
+
+TEST(MinorSweep, ClosestOnBoxClampsToTheFace) {
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    const auto b = minors::sweep_box_of(pb, 0.0f);
+    const glm::vec3 q = minors::closest_on_box(b, glm::vec3(10, 0, 0), glm::vec3(15, 0.5f, -3));
+    EXPECT_EQ(q, glm::vec3(11, 0.5f, -1));
+}
+
+TEST(MinorSweep, ZeroSegmentAndTiesPreferTheCurrentPose) {
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    const auto b = minors::sweep_box_of(pb, 0.0f);
+    float s = -1.0f;
+    float d = minors::sweep_min_distance(b, glm::vec3(0), glm::vec3(0), glm::vec3(3, 0, 0), s);
+    EXPECT_EQ(s, 1.0f);
+    EXPECT_FLOAT_EQ(d, 2.0f);
+    // Moving sideways past a rock that stays 2 GU off the face the whole way:
+    // f is flat, so the current pose (s = 1) wins.
+    s = -1.0f;
+    d = minors::sweep_min_distance(b, glm::vec3(0, -0.5f, 0), glm::vec3(0, 1, 0),
+                                   glm::vec3(3, 0, 0), s);
+    EXPECT_EQ(s, 1.0f);
+    EXPECT_FLOAT_EQ(d, 2.0f);
+}
+
+TEST(MinorShove, ApplyShoveSetsVelocitySpinAndCooldown) {
+    Dials dl;
+    minors::ShoveState sh;
+    const glm::vec3 n(0, 0, 1);
+    minors::apply_shove(sh, n, 2.0f, 10.0, dl);
+    EXPECT_EQ(sh.vel, n * (2.0f * dl.shove_transfer + dl.shove_min_gups));
+    EXPECT_EQ(sh.spin_rate, dl.shove_tumble);
+    EXPECT_EQ(sh.last_contact, 10.0);
+    // A receding touch keeps only the floor; within the cooldown the contact
+    // clock does not move; spin never ramps down.
+    sh.spin_rate = 9.0f;
+    minors::apply_shove(sh, n, -5.0f, 10.0 + 0.5 * dl.contact_cooldown_s, dl);
+    EXPECT_EQ(sh.vel, n * dl.shove_min_gups);
+    EXPECT_EQ(sh.spin_rate, 9.0f);
+    EXPECT_EQ(sh.last_contact, 10.0);
+}
+
+TEST(MinorShove, AdvanceShoveHalvesOverTheDampTime) {
+    Dials dl;
+    minors::ShoveState sh;
+    sh.vel = glm::vec3(1, 0, 0);
+    sh.spin_rate = 2.0f;
+    minors::advance_shove(sh, dl.shove_damp_seconds, dl);
+    EXPECT_FLOAT_EQ(sh.offset.x, dl.shove_damp_seconds);
+    EXPECT_FLOAT_EQ(sh.vel.x, 0.5f);
+    EXPECT_FLOAT_EQ(sh.spin, 2.0f * dl.shove_damp_seconds);
+    EXPECT_FLOAT_EQ(sh.spin_rate, 1.0f);
 }

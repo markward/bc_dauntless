@@ -274,6 +274,24 @@ glm::mat3 gltf_to_bc() {
     return glm::mat3(glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
 }
 
+ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const glm::vec3& eye,
+                          const glm::vec3& c, const glm::mat3& R, float r, float dither) {
+    const glm::mat3 M = gltf_to_bc();   // its own inverse: BC -> glTF here
+    const glm::vec3 to_eye = glm::transpose(R) * (eye - c);
+    const float len = glm::length(to_eye);
+    const glm::vec3 e_g = M * (len > 0.0f ? to_eye / len : glm::vec3(0, 0, 1));
+    std::size_t best = 0;
+    float best_dot = -2.0f;
+    for (std::size_t i = 0; i < view_dirs_gltf.size(); ++i) {
+        const float d = glm::dot(view_dirs_gltf[i], e_g);
+        if (d > best_dot) { best_dot = d; best = i; }
+    }
+    const ViewBasis b = make_view_basis(view_dirs_gltf[best]);
+    const glm::vec3 right_w = R * (M * b.right), up_w = R * (M * b.up);
+    return ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(right_w, static_cast<float>(best)),
+                       glm::vec4(up_w, dither)};
+}
+
 void FarField::set_dials(const FarDials& d) { dials_ = d; }
 
 void FarField::set_catalogue(std::vector<CatalogueRock> cat, std::vector<glm::vec3> view_dirs_gltf) {
@@ -328,7 +346,6 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
     const float k = pixels_per_gu(in.proj, in.viewport_h);
     const glm::vec3 eye = glm::vec3(glm::inverse(in.view)[3]);
     const Frustum frustum(in.proj * in.view);
-    const glm::mat3 M = gltf_to_bc();
     const TierDials& td = dials_.tiers;
 
     std::vector<std::vector<ImpostorGpu>> bins(catalogue_.size());
@@ -344,20 +361,7 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
     // Step 3: the baked view nearest the eye in the rock's own frame.
     auto emit_impostor = [&](int index, const glm::vec3& c, const glm::mat3& R, float r, float w) {
         if (!has_impostor(index) || view_dirs_.empty()) return;
-        const glm::vec3 to_eye = glm::transpose(R) * (eye - c);
-        const float len = glm::length(to_eye);
-        const glm::vec3 e_g = M * (len > 0.0f ? to_eye / len : glm::vec3(0, 0, 1));
-        std::size_t best = 0;
-        float best_dot = -2.0f;
-        for (std::size_t i = 0; i < view_dirs_.size(); ++i) {
-            const float d = glm::dot(view_dirs_[i], e_g);
-            if (d > best_dot) { best_dot = d; best = i; }
-        }
-        const ViewBasis b = make_view_basis(view_dirs_[best]);
-        const glm::vec3 right_w = R * (M * b.right), up_w = R * (M * b.up);
-        bins[static_cast<std::size_t>(index)].push_back(
-            ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(right_w, static_cast<float>(best)),
-                        glm::vec4(up_w, -w)});
+        bins[static_cast<std::size_t>(index)].push_back(make_impostor(view_dirs_, eye, c, R, r, -w));
     };
 
     // Step 2: flagged (explicit) rocks.

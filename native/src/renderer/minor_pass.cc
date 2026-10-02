@@ -31,10 +31,11 @@ namespace dauntless_normal_map {
 namespace renderer {
 namespace {
 
-static_assert(sizeof(minors::InstanceGpu) == 3 * 4 * sizeof(float),
-              "InstanceGpu must be three tightly packed vec4 rows");
+static_assert(sizeof(minors::InstanceGpu) == 4 * 4 * sizeof(float),
+              "InstanceGpu must be four tightly packed vec4s (three rows + extra)");
 constexpr GLsizei kInstanceStride = static_cast<GLsizei>(sizeof(minors::InstanceGpu));
-constexpr GLuint  kRow0Attrib = 7;     // minor.vert a_row0..a_row2 = 7..9
+constexpr GLuint  kRow0Attrib = 7;     // minor.vert a_row0..a_row2 = 7..9, a_extra = 10
+constexpr GLuint  kInstanceAttribs = 4;
 
 GLuint make_1x1(const std::uint8_t rgba[4]) {
     GLuint t = 0;
@@ -113,10 +114,10 @@ std::uint32_t MinorPass::vao_for(std::uint64_t handle, int mesh_index, std::uint
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
                           reinterpret_cast<void*>(offsetof(V, uv)));
-    // Rows 7/8/9 from the shared instance buffer, one per instance. The
-    // offset is re-pointed per bin in render().
+    // Rows 7/8/9 and extra 10 from the shared instance buffer, one per
+    // instance. The offset is re-pointed per bin in render().
     glBindBuffer(GL_ARRAY_BUFFER, instance_vbo_);
-    for (GLuint k = 0; k < 3; ++k) {
+    for (GLuint k = 0; k < kInstanceAttribs; ++k) {
         glEnableVertexAttribArray(kRow0Attrib + k);
         glVertexAttribPointer(kRow0Attrib + k, 4, GL_FLOAT, GL_FALSE, kInstanceStride,
                               reinterpret_cast<void*>(static_cast<std::uintptr_t>(k * 16)));
@@ -134,6 +135,18 @@ void MinorPass::render(const minors::MinorField& field, const scenegraph::Camera
 }
 
 void MinorPass::render(const minors::MinorField& field, const std::vector<minors::Bin>& bins,
+                       const scenegraph::Camera& cam, Pipeline& pipeline,
+                       const std::function<const assets::Model*(std::uint64_t)>& lookup,
+                       const Lighting& lighting, float ambient_scale, float rim_strength) {
+    const FragmentLookup fragments = [&field](int family, int slot) -> const minors::Fragment* {
+        const auto& frags = field.fragments(family);
+        if (slot < 0 || static_cast<std::size_t>(slot) >= frags.size()) return nullptr;
+        return &frags[static_cast<std::size_t>(slot)];
+    };
+    render(fragments, bins, cam, pipeline, lookup, lighting, ambient_scale, rim_strength);
+}
+
+void MinorPass::render(const FragmentLookup& fragments, const std::vector<minors::Bin>& bins,
                        const scenegraph::Camera& cam, Pipeline& pipeline,
                        const std::function<const assets::Model*(std::uint64_t)>& lookup,
                        const Lighting& lighting, float ambient_scale, float rim_strength) {
@@ -171,9 +184,9 @@ void MinorPass::render(const minors::MinorField& field, const std::vector<minors
     for (std::size_t b = 0; b < bins.size(); ++b) {
         const minors::Bin& bin = bins[b];
         if (bin.items.empty()) continue;
-        const auto& frags = field.fragments(bin.family);
-        if (bin.slot < 0 || static_cast<std::size_t>(bin.slot) >= frags.size()) continue;
-        const minors::Fragment& f = frags[static_cast<std::size_t>(bin.slot)];
+        const minors::Fragment* fp = fragments ? fragments(bin.family, bin.slot) : nullptr;
+        if (fp == nullptr) continue;
+        const minors::Fragment& f = *fp;
         const std::uint64_t handle = bin.lod == 0 ? f.lod0 : f.lod1;
         const assets::Model* model = lookup(handle);
         if (model == nullptr) continue;
@@ -199,7 +212,7 @@ void MinorPass::render(const minors::MinorField& field, const std::vector<minors
 
         glBindVertexArray(vao_for(handle, mesh_index, mesh.vbo(), mesh.ebo()));
         glBindBuffer(GL_ARRAY_BUFFER, instance_vbo_);
-        for (GLuint k = 0; k < 3; ++k) {
+        for (GLuint k = 0; k < kInstanceAttribs; ++k) {
             glVertexAttribPointer(
                 kRow0Attrib + k, 4, GL_FLOAT, GL_FALSE, kInstanceStride,
                 reinterpret_cast<void*>(static_cast<std::uintptr_t>(bin_offset[b] + k * 16)));

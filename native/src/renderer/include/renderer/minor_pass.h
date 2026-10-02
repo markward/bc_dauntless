@@ -21,6 +21,9 @@ namespace renderer {
 class Pipeline;
 struct Lighting;
 
+// Resolves a bin's (family, slot) to its fragment; nullptr skips the bin.
+using FragmentLookup = std::function<const minors::Fragment*(int family, int slot)>;
+
 class MinorPass {
 public:
     MinorPass() = default;
@@ -43,6 +46,14 @@ public:
                 const scenegraph::Camera& cam, Pipeline& pipeline,
                 const std::function<const assets::Model*(std::uint64_t)>& lookup,
                 const Lighting& lighting, float ambient_scale, float rim_strength);
+    // The general form: `fragments` resolves each bin's fragment, so a
+    // producer other than MinorField (the near band) can draw through this
+    // pass. Both overloads above forward here with a lookup over
+    // field.fragments(family). Each instance's extra.x is its dither.
+    void render(const FragmentLookup& fragments, const std::vector<minors::Bin>& bins,
+                const scenegraph::Camera& cam, Pipeline& pipeline,
+                const std::function<const assets::Model*(std::uint64_t)>& lookup,
+                const Lighting& lighting, float ambient_scale, float rim_strength);
 
     // Drop VAOs keyed on model handles (mission swap: handles are recycled).
     void forget_models();
@@ -53,7 +64,7 @@ private:
     std::uint32_t ensure_white_texture();
     std::uint32_t ensure_black_texture();
     // The VAO for (model handle, mesh index): the mesh's own vbo/ebo on
-    // attributes 0..2 plus the shared instance buffer on 7..9. Never the
+    // attributes 0..2 plus the shared instance buffer on 7..10. Never the
     // mesh's own VAO, which the opaque path still owns unmodified. A cached
     // VAO whose recorded vbo/ebo no longer match the mesh's is rebuilt (the
     // handle's mesh was re-uploaded).
