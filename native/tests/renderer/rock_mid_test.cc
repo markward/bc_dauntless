@@ -160,9 +160,8 @@ TEST(MidTiles, NoViewDirsEmitsNothing) {
     EXPECT_TRUE(out.sprites.empty());
 }
 
-TEST(MidTiles, NothingInsideTheNearBand) {
+TEST(MidTiles, NothingInsideTheNearBand) {   // final review 3: gated on the SPRITE
     rockfield::MidDials d; d.max_sprites = 1000000;
-    const float allowance = 0.25f * d.l0_tile_gu * std::sqrt(3.0f);
     // Eyes on and off tile corners, plus a render-origin / anchor shift.
     for (const glm::vec3 eye : {glm::vec3(0), glm::vec3(37, -12, 81), glm::vec3(75, 75, 75)}) {
         auto in = looking_along_y(170.0f, eye);
@@ -173,20 +172,43 @@ TEST(MidTiles, NothingInsideTheNearBand) {
         ASSERT_GT(out.count, 0);
         for (const auto& b : out.sprites)
             for (const auto& g : b.items)
-                EXPECT_GE(glm::length(glm::vec3(g.centre_half) - eye), d.in_lo_gu - allowance);
+                EXPECT_GE(glm::length(glm::vec3(g.centre_half) - eye), d.in_lo_gu);
     }
-    // A near band wider than a tile: tiles whose centres lie in [~65, 200)
-    // exist and must not emit (a jittered sprite sits within the allowance
-    // of its tile centre, so any such sprite would land inside the bound).
+    // A near band wider than a tile: no sprite inside it either.
     rockfield::MidDials big = d;
     big.in_lo_gu = 200.0f; big.in_hi_gu = 300.0f;
     auto in = looking_along_y(170.0f);
     rockfield::MidOutput out;
     field({full_sphere()}, big).build(in, out);
-    const float big_allowance = 0.25f * big.l0_tile_gu * std::sqrt(3.0f);
+    ASSERT_GT(out.count, 0);
     for (const auto& b : out.sprites)
         for (const auto& g : b.items)
-            EXPECT_GE(glm::length(glm::vec3(g.centre_half)), big.in_lo_gu - big_allowance);
+            EXPECT_GE(glm::length(glm::vec3(g.centre_half)), big.in_lo_gu);
+}
+
+TEST(MidTiles, WeightAndDitherFollowTheJitteredSprite) {   // final review 3
+    // Every emitted sprite's dither is its level's at |sprite - eye|; the
+    // level is found from the sprite's own tile size (0.5 T * 0.8..1.2 * 1.02).
+    rockfield::MidDials d; d.max_sprites = 1000000;
+    rockfield::MidOutput out;
+    field({full_sphere()}, d).build(looking_along_y(120.0f), out);
+    ASSERT_GT(out.count, 0);
+    int checked = 0;
+    for (const auto& b : out.sprites)
+        for (const auto& g : b.items) {
+            const float dist = glm::length(glm::vec3(g.centre_half));
+            const float half = g.centre_half.w / 1.02f;
+            int lvl = -1;
+            for (int l = 0; l < 3; ++l) {
+                const float T = l == 0 ? d.l0_tile_gu : (l == 1 ? d.l1_tile_gu : d.l2_tile_gu);
+                if (half >= 0.4f * T - 1e-2f && half <= 0.6f * T + 1e-2f) lvl = l;
+            }
+            ASSERT_GE(lvl, 0);
+            EXPECT_GT(rockfield::mid_level_weight(lvl, dist, d), 0.0f) << dist;
+            EXPECT_NEAR(g.up_dither.w, rockfield::mid_level_dither(lvl, dist, d), 1e-3f) << dist;
+            ++checked;
+        }
+    EXPECT_GT(checked, 100);
 }
 
 TEST(MidTiles, SpritesSizedFromTheirTile) {
@@ -234,12 +256,20 @@ TEST(MidTiles, TelephotoCapHolds) {   // Review Focus 5
     EXPECT_GT(out.count, 0);
     EXPECT_LT(out.tiles, 200000);
 
-    // Tiny tiles (a dial pushed down hard) stay bounded too.
-    m.l0_tile_gu = 1.0f; m.l1_tile_gu = 1.0f; m.l2_tile_gu = 1.0f;
+    // Small tiles (a dial pushed down hard) stay bounded by the per-axis
+    // cap: 10 GU tiles span at most 33 per axis, so every level reaches at
+    // most 160 GU per axis -- tiles beyond in_lo (80) exist and emit, but
+    // none of L0's 600, L1's 2,400 or L2's 8,000 GU reach survives.
+    m.l0_tile_gu = 10.0f; m.l1_tile_gu = 10.0f; m.l2_tile_gu = 10.0f;
     rockfield::MidOutput tiny;
     field({full_sphere(1e6f)}, m).build(looking_along_y(1.0f), tiny);
+    EXPECT_GT(tiny.tiles, 0);
+    EXPECT_GT(tiny.count, 0);
     EXPECT_LE(tiny.count, 300);
-    EXPECT_LT(tiny.tiles, 200000);
+    EXPECT_LE(tiny.tiles, 3 * 33 * 33 * 33);
+    const float capped = 0.5f * 32.0f * 10.0f * std::sqrt(3.0f) + 0.25f * 10.0f * std::sqrt(3.0f);
+    for (const auto& b : tiny.sprites)
+        for (const auto& g : b.items) EXPECT_LE(glm::length(glm::vec3(g.centre_half)), capped);
 }
 
 // ── Cluster snap (rock-fields Task 14 ruling) ─────────────────────────────────
@@ -332,9 +362,9 @@ TEST(MidSnap, LevelWeightAndDitherFollowTheSpriteDistance) {
         field({sphere_at(c, r)}, d).build(looking_at(eye, glm::vec3(c)), out);
         const auto items = items_of(out);
         ASSERT_EQ(items.size(), 1u);
-        // The snapped sprite's own point (the source centre, before the
-        // jitter -- as a tile sprite uses its tile centre), not the tile's.
-        const float dist = glm::length(glm::vec3(c) - eye);
+        // The snapped sprite's own drawn point (after the jitter), not the
+        // tile's centre nor the source centre.
+        const float dist = glm::length(glm::vec3(items[0].centre_half) - eye);
         EXPECT_NEAR(items[0].up_dither.w, rockfield::mid_level_dither(2, dist, d), 1e-4f);
         EXPECT_GT(items[0].up_dither.w, 0.0f);
     }
@@ -356,8 +386,10 @@ TEST(MidSnap, TheNearBandGuardStillApplies) {
 }
 
 TEST(MidSnap, LargeSpheresAndBeltsAreUnchanged) {
-    // Digests recorded BEFORE the snap existed: 2R >= every tile, and belts,
-    // never snap.
+    // 2R >= every tile, and belts, never snap. The snap digest (s) was
+    // recorded BEFORE the snap existed; a and b were re-recorded when the
+    // guard, weight and dither moved from the tile-centre distance to the
+    // jittered sprite's (final review 3) -- same tiles, same selection.
     rockfield::MidDials d; d.max_sprites = 1000000;
     rockfield::MidOutput a, b, s;
     field({full_sphere()}, d).build(looking_along_y(90.0f), a);
@@ -367,10 +399,10 @@ TEST(MidSnap, LargeSpheresAndBeltsAreUnchanged) {
         .build(looking_at(glm::vec3(c) + glm::vec3(0, -4000, 0), glm::vec3(c), 60.0f), s);
     std::printf("[mid snap digests] %.6f %.6f %.6f (counts %d %d %d)\n", digest(a), digest(b),
                 digest(s), a.count, b.count, s.count);
-    EXPECT_EQ(a.count, 268);
-    EXPECT_EQ(b.count, 82);
+    EXPECT_EQ(a.count, 254);
+    EXPECT_EQ(b.count, 77);
     EXPECT_EQ(s.count, 1);
-    EXPECT_NEAR(digest(a), 12423359.118230, 1e-3);
-    EXPECT_NEAR(digest(b), 6190764.412800, 1e-3);
+    EXPECT_NEAR(digest(a), 11570214.548270, 1e-3);
+    EXPECT_NEAR(digest(b), 5412515.457730, 1e-3);
     EXPECT_NEAR(digest(s), 5293.574110, 1e-3);
 }

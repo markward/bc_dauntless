@@ -57,8 +57,9 @@ public:
     // The far tier's active sources (FarField::active_sources(), system coords).
     void set_sources(const std::vector<far::DiscSource>& active);
     // Per drawn camera: every present tile of every level whose weight is
-    // > 0 at its centre distance, frustum-culled, at most max_sprites nearest
-    // first. Pure in its inputs (no state changes).
+    // > 0 at its (jittered) SPRITE's distance, never a sprite nearer than
+    // in_lo_gu, frustum-culled, at most max_sprites nearest first. Selection
+    // is keyed by the tile. Pure in its inputs (no state changes).
     void build(const MidBuildInput& in, MidOutput& out) const;
 
 private:

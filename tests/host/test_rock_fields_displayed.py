@@ -219,9 +219,9 @@ def test_rocks_visible_from_inside(host):
 
 
 def test_no_mid_sprite_within_the_near_band(host):
-    """The mid band never draws inside the near band's reach: a tile whose
-    centre is nearer than mid_in_lo_gu is skipped, so a sprite centre can
-    come at most the L0 tile's jitter (0.25 T per axis) closer than that."""
+    """The mid band never draws inside the near band's reach: the guard is
+    decided at the drawn (jittered) sprite's distance, so no sprite centre
+    is nearer than mid_in_lo_gu (final review 3)."""
     from engine.rocks import far_dials
     pSet, start, centre, radius = _beol4()
     eye = _inside(pSet, start, centre, radius)
@@ -231,8 +231,7 @@ def test_no_mid_sprite_within_the_near_band(host):
     # Render space IS view space here (no set_render_origin); the camera eye
     # is in it.
     nearest = min(math.dist(s["centre"], eye) for s in sprites)
-    jitter = 0.25 * far_dials.get("mid_l0_tile_gu") * math.sqrt(3.0)
-    floor = far_dials.get("mid_in_lo_gu") - jitter
+    floor = far_dials.get("mid_in_lo_gu")
     print(f"[rock fields] inside: {len(sprites)} mid sprites, nearest {nearest:.1f} GU "
           f"(floor {floor:.1f})")
     assert nearest >= floor

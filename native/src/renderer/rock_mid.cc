@@ -100,22 +100,18 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
     // One tile's sprite. `pos_sys` is the point the tile stands for (its
     // centre, or a snapped tile's source centre); the sprite is jittered by
     // up to +-jitter_gu per axis (0.25 T; a snap's 0.25 R) and its diameter
-    // is diameter_gu * scale * (0.8 + 0.4 u) (T; a snap's 2R).
+    // is diameter_gu * scale * (0.8 + 0.4 u) (T; a snap's 2R). Selection
+    // (presence, collection, jitter, size, spin) is keyed by the tile alone;
+    // the near-band guard, the level weight and the dither are decided at
+    // the DRAWN sprite's distance, so no sprite ever sits inside in_lo_gu.
     const auto emit = [&](int lvl, const glm::i64vec3& ijk, const glm::dvec3& pos_sys,
                           double jitter_gu, double diameter_gu, float r_cull) {
-        const float d = static_cast<float>(glm::length(pos_sys - eye_sys));
-        if (d < m.in_lo_gu) return;   // the near band's (no double drawing)
-        const float w = mid_level_weight(lvl, d, m);
-        if (!(w > 0.0f)) return;
-        const glm::vec3 c0(pos_sys - to_render);
-        if (!frustum.sphere(c0, r_cull)) return;
-        ++out.tiles;
-
-        double dens = 0.0;
-        for (const auto& s : sources_) dens += far::field_density(s, pos_sys);
-        dens = std::min(dens, 1.0);
-        const float df = static_cast<float>(dens) * m.fill;
-        const float chance = std::clamp(df, 0.0f, 1.0f);
+        // Cheap reject on the tile point: the jitter moves the sprite at
+        // most |jitter| = jitter_gu * sqrt(3) from it.
+        const LevelRamps lr = level_ramps(lvl, m);
+        const double reach_j = jitter_gu * std::sqrt(3.0);
+        const double d_tile = glm::length(pos_sys - eye_sys);
+        if (d_tile + reach_j < std::max(lr.lo_a, m.in_lo_gu) || d_tile - reach_j > lr.up_b) return;
 
         std::uint64_t h = mix(kTileSalt, static_cast<std::uint64_t>(lvl));
         h = mix(h, static_cast<std::uint64_t>(ijk.x));
@@ -124,6 +120,21 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
         rockrand::Rng rng{h};
         const float u0 = rng.unit(), u1 = rng.unit(), u2 = rng.unit(),
                     u3 = rng.unit(), u4 = rng.unit(), u5 = rng.unit();
+
+        const glm::vec3 c0(pos_sys - to_render);
+        const glm::vec3 c = c0 + (glm::vec3(u2, u3, u4) - 0.5f) * static_cast<float>(2.0 * jitter_gu);
+        const float d = glm::length(c - eye);
+        if (d < m.in_lo_gu) return;   // the near band's (no double drawing)
+        const float w = mid_level_weight(lvl, d, m);
+        if (!(w > 0.0f)) return;
+        if (!frustum.sphere(c0, r_cull)) return;
+        ++out.tiles;
+
+        double dens = 0.0;
+        for (const auto& s : sources_) dens += far::field_density(s, pos_sys);
+        dens = std::min(dens, 1.0);
+        const float df = static_cast<float>(dens) * m.fill;
+        const float chance = std::clamp(df, 0.0f, 1.0f);
         if (!(u0 < chance)) return;
 
         const int variant = df < 1.0f / 3.0f ? 0 : (df < 2.0f / 3.0f ? 1 : 2);
@@ -134,14 +145,11 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
         // The pick's remainder: a second uniform from u1 for the size.
         const float u1b = std::clamp(pick - static_cast<float>(idx), 0.0f, 1.0f);
 
-        const glm::vec3 c = c0 + (glm::vec3(u2, u3, u4) - 0.5f) * static_cast<float>(2.0 * jitter_gu);
         rockrand::Rng axis_rng{h ^ kAxisSalt};
         const glm::vec3 axis = rockrand::unit_vector(axis_rng);
         const glm::mat3 R(glm::rotate(glm::mat4(1.0f), u5 * 6.28318530718f, axis));
         const float half = 0.5f * static_cast<float>(diameter_gu) * sprite_scale * (0.8f + 0.4f * u1b);
-        // Weight and dither from the tile point's distance (as the gate above).
-        cands.push_back({glm::length(c - eye), pool[idx], c, R, half,
-                         mid_level_dither(lvl, d, m)});
+        cands.push_back({d, pool[idx], c, R, half, mid_level_dither(lvl, d, m)});
     };
 
     for (int lvl = 0; lvl < 3; ++lvl) {
@@ -174,8 +182,10 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
             emit(lvl, ijk, s.centre, 0.25 * R, 2.0 * R, r_cull);
         }
 
-        // weight > 0 only for tile-centre distances in (lo_a, up_b).
-        double reach = std::min(static_cast<double>(r.up_b), 0.5 * (kMaxTilesPerAxis - 1) * T);
+        // weight > 0 only for sprite distances in (lo_a, up_b); a sprite
+        // lies within 0.25 T * sqrt(3) of its tile centre.
+        double reach = std::min(static_cast<double>(r.up_b) + 0.25 * T * std::sqrt(3.0),
+                                0.5 * (kMaxTilesPerAxis - 1) * T);
         if (!(reach > 0.0)) continue;
         const glm::dvec3 lo_f = glm::floor((eye_sys - reach) / T);
         const glm::dvec3 hi_f = glm::floor((eye_sys + reach) / T);
