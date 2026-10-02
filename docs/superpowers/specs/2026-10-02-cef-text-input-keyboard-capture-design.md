@@ -1,6 +1,6 @@
 # In-game keyboard capture for CEF text inputs — Design
 
-**Status:** implemented on feat/cef-text-capture, awaiting live check (§8)
+**Status:** merged to main (751fa00e), live-verified 2026-10-02
 **Date:** 2026-10-02
 **Builds on:** `2026-10-01-mod-ships-screen-design.md` §6, which added native
 key capture (the `renderer::Window` char/key callbacks, the bounded text-event
