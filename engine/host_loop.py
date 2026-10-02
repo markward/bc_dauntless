@@ -9918,6 +9918,16 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry()
         ai_inspector = _register_ai_inspector(registry)
 
+        # Keyboard capture for CEF text fields: while one has focus the native
+        # KeyGate makes every key read up. Registered as panel "kbd" so the
+        # page's kbd/focus / kbd/blur events route here. Spec:
+        # docs/superpowers/specs/2026-10-02-cef-text-input-keyboard-capture-design.md
+        from engine.ui.text_capture import TextCaptureController
+        text_capture = TextCaptureController(registry)
+        registry.register(text_capture)
+        # Trigger 4: a mission swap abandons any edit in progress.
+        controller.pre_swap_hooks.append(text_capture.release)
+
         # Configuration panel — production-visible pause-menu modal.
         # Settings persist across launches via engine.settings_store: the
         # store loads, apply_all pushes every STORED value through the same
@@ -10315,6 +10325,11 @@ def run(mission_name: Optional[str] = None,
             _mx, _my = 0, 0
             _cursor_in_panel = False
             if _h is not None:
+                # Text-field keyboard capture: release triggers 2-3, and the
+                # typed-text queue to CEF (drained every frame, forwarded only
+                # while a field holds the keyboard). First, so every key read
+                # below sees this frame's gate.
+                text_capture.tick()
                 # ESC priority: mission picker first (dev only), then the
                 # developer options panel (dev only), then the ship property
                 # viewer (dev only), then the configuration panel, then the
@@ -10669,6 +10684,11 @@ def run(mission_name: Optional[str] = None,
                             _cef_send_mouse_click(_mx, _my, 0, True)
                         if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
+                    elif host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        # Trigger 5: a click on the game world never reaches
+                        # CEF, so the page cannot blur on its own -- release
+                        # the keyboard (abandoning the edit) here.
+                        text_capture.release()
 
             frame_profiler.mark("sim")
             # --- Sim advance: fixed-timestep accumulator ---
