@@ -21,6 +21,7 @@
 // GTEST_SKIP only when no GL context exists, pixel readback.
 
 #include <gtest/gtest.h>
+#include <array>
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -852,8 +853,13 @@ namespace {
 // depth (cleared to 1.0) and a near occluder (a plane near_gu ahead) -- and
 // asserts alpha and premultiplied colour agree with haze_column within 0.001.
 // centre_alpha[pass] = the CPU alpha at the centre pixel.
-void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
-                      const glm::dvec3& origin_sys, float near_gu, float centre_alpha[2]) {
+// `pixels` (default: the centre and four corners) are the pixels compared.
+// Returns the max |alpha| difference.
+using HazePixels = std::vector<std::array<int, 2>>;
+const HazePixels kHazeDefaultPixels = {{32, 32}, {6, 6}, {57, 6}, {6, 57}, {57, 57}};
+float haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
+                       const glm::dvec3& origin_sys, float near_gu, float centre_alpha[2],
+                       const HazePixels& pix = kHazeDefaultPixels) {
     // Targets first: HdrTarget::resize binds on the ACTIVE unit.
     renderer::HdrTarget scene, out;
     scene.resize(kHazeSize, kHazeSize);
@@ -878,7 +884,6 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
     const glm::vec4 clip = cam.proj_matrix() * glm::vec4(0.0f, 0.0f, -near_gu, 1.0f);
     const float near_depth = clip.z / clip.w * 0.5f + 0.5f;
 
-    const int pix[5][2] = {{32, 32}, {6, 6}, {57, 6}, {6, 57}, {57, 57}};
     float max_diff = 0.0f;
     for (int pass_i = 0; pass_i < 2; ++pass_i) {
         scene.bind();
@@ -927,10 +932,11 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
             EXPECT_NEAR(g[3], h.alpha, 0.001f) << "pixel " << p[0] << "," << p[1];
             for (int c = 0; c < 3; ++c) EXPECT_NEAR(g[c], h.rgb[c], 0.001f);
             max_diff = std::max(max_diff, std::fabs(g[3] - h.alpha));
-            if (p[0] == 32) centre_alpha[pass_i] = h.alpha;
+            if (p[0] == 32 && p[1] == 32) centre_alpha[pass_i] = h.alpha;
         }
     }
     std::printf("[far_pass_test] haze shader-vs-CPU max alpha diff %.5f\n", max_diff);
+    return max_diff;
 }
 }  // namespace
 
@@ -969,6 +975,36 @@ TEST_F(FarPassGLTest, SphereHazeShaderMatchesTheCpuReference) {
     haze_matches_cpu(*pipeline, s, origin_sys, 2600.0f, centre_alpha);
     EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees the field";
     EXPECT_LT(centre_alpha[1], centre_alpha[0] - 0.03f) << "the occluder stops the march";
+}
+
+// Tile-field haze noise (2026-10-02): the same sphere with the production
+// noise (250 GU, contrast 0.8, 3 octaves), its own 48 steps and a seed above
+// INT_MAX (the uint hash path) matches haze_column within 0.001 over a 7x7
+// grid of pixels across the field -- the GLSL value noise is the CPU's twin.
+TEST_F(FarPassGLTest, NoisySphereHazeShaderMatchesTheCpuReference) {
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource s;
+    s.id = 3; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
+    s.centre = origin_sys + glm::dvec3(0.0, 2500.0, 0.0);
+    s.sphere_radius_gu = 1000.0f; s.sphere_edge_frac = 0.2f;
+    s.gain_scale = 14140.0f / 270.0f;
+    s.brightness = 9.1f;
+    s.seed = 0xdeadbeefu;
+    s.noise_scale_gu = 250.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
+    s.steps = 48;
+    far::Population minors;
+    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.density_at_1 = 405.0f / (4.0f / 3.0f * 3.14159265f * 1.0e9f);
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
+    s.pops = {minors};
+    HazePixels pix;
+    for (int y = 20; y <= 44; y += 4)
+        for (int x = 20; x <= 44; x += 4) pix.push_back({x, y});
+    float centre_alpha[2] = {0.0f, 0.0f};
+    const float max_diff = haze_matches_cpu(*pipeline, s, origin_sys, 2600.0f, centre_alpha, pix);
+    std::printf("[far_pass_test] noisy sphere shader-vs-CPU max alpha diff %.6f\n", max_diff);
+    EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees the field";
 }
 
 // One fullscreen draw per active source, at most 4; none for no sources. GL

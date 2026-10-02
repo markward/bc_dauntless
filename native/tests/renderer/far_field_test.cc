@@ -866,3 +866,166 @@ TEST(FarFieldBuild, ATileOnlyChangeKeepsTheBeltCellCache) {
     f.set_sources({moved});
     EXPECT_EQ(f.cached_cells(), 0u);
 }
+
+// ---- Tile-field haze noise (2026-10-02) ------------------------------------
+// A tile field's sphere haze is modulated by 3D value-noise fbm FIXED to the
+// field (x relative to the centre), so it reads as a clumpy rock field, not a
+// smooth grey ball. m(x) = max(0, 1 + contrast * (2 fbm - 1)); belts never.
+
+namespace {
+far::DiscSource noisy_tile_field() {
+    far::DiscSource s = beol4_tile_field();
+    s.noise_scale_gu = 250.0f;
+    s.noise_contrast = 0.8f;
+    s.noise_octaves = 3;
+    return s;
+}
+}  // namespace
+
+TEST(FarHazeNoise, FbmIsDeterministicSeededAndInZeroOne) {
+    int differs = 0;
+    for (int i = 0; i < 200; ++i) {
+        const glm::vec3 p(0.37f * i - 11.0f, 1.13f * i + 0.5f, -0.71f * i + 3.0f);
+        const float a = far::haze_fbm(p, 3, 7u);
+        EXPECT_EQ(a, far::haze_fbm(p, 3, 7u));
+        EXPECT_GE(a, 0.0f);
+        EXPECT_LE(a, 1.0f);
+        if (std::fabs(a - far::haze_fbm(p, 3, 8u)) > 0.05f) ++differs;
+    }
+    EXPECT_GT(differs, 100);
+}
+
+TEST(FarHazeNoise, ValueNoiseHitsTheLatticeValuesAndIsContinuous) {
+    // At an integer point the trilinear blend is the corner's hashed value.
+    const float v = far::haze_value_noise(glm::vec3(3.0f, -2.0f, 5.0f), 11u);
+    EXPECT_NEAR(far::haze_value_noise(glm::vec3(3.0f + 1e-4f, -2.0f, 5.0f), 11u), v, 1e-3f);
+    EXPECT_NEAR(far::haze_value_noise(glm::vec3(3.0f - 1e-4f, -2.0f, 5.0f), 11u), v, 1e-3f);
+}
+
+TEST(FarHazeNoise, MeanModulationIsOne) {
+    const far::DiscSource s = noisy_tile_field();
+    std::uint64_t st = 12345;
+    auto u01 = [&]() {
+        st = st * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(st >> 11) / 9007199254740992.0;
+    };
+    double sum = 0.0, lo = 1e9, hi = -1e9;
+    const int n = 20000;
+    for (int i = 0; i < n; ++i) {
+        const glm::dvec3 p = s.centre + glm::dvec3(u01() - 0.5, u01() - 0.5, u01() - 0.5) * 2000.0;
+        const double m = far::haze_noise_m(s, p);
+        sum += m; lo = std::min(lo, m); hi = std::max(hi, m);
+    }
+    std::printf("[FarHazeNoise] mean m over %d points = %.4f (min %.3f max %.3f)\n", n,
+                sum / n, lo, hi);
+    EXPECT_NEAR(sum / n, 1.0, 0.05);
+    EXPECT_LT(lo, 0.7);   // it IS clumpy
+    EXPECT_GT(hi, 1.3);
+}
+
+TEST(FarHazeNoise, PatternIsFixedToTheField) {
+    far::DiscSource s = noisy_tile_field();
+    const glm::dvec3 off(123.0, -45.0, 300.0);
+    const float m0 = far::haze_noise_m(s, s.centre + off);
+    s.centre += glm::dvec3(5000.0, 0.0, -700.0);
+    EXPECT_EQ(far::haze_noise_m(s, s.centre + off), m0);
+}
+
+TEST(FarHazeNoise, OffMeansOneAndBeltsNeverNoise) {
+    far::DiscSource s = noisy_tile_field();
+    s.noise_contrast = 0.0f;
+    EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
+    s = noisy_tile_field(); s.noise_scale_gu = 0.0f;
+    EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
+    s = noisy_tile_field(); s.noise_octaves = 0;
+    EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
+    far::DiscSource belt = vesuvi_like();
+    belt.noise_scale_gu = 250.0f; belt.noise_contrast = 0.8f; belt.noise_octaves = 3;
+    EXPECT_EQ(far::haze_noise_m(belt, {278000.0, 10.0, 0.0}), 1.0f);
+}
+
+TEST(FarHazeNoise, ContrastZeroColumnIsByteIdenticalToNoNoise) {
+    const far::DiscSource plain = beol4_tile_field();
+    far::DiscSource zero = noisy_tile_field();
+    zero.noise_contrast = 0.0f;
+    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
+    const glm::vec3 dir = glm::vec3(glm::normalize(plain.centre - eye));
+    const auto a = far::haze_column(plain, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(0.3f));
+    const auto b = far::haze_column(zero, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(0.3f));
+    EXPECT_EQ(a.alpha, b.alpha);
+    EXPECT_EQ(a.rgb, b.rgb);
+    // And with noise on, the column changes.
+    const auto c = far::haze_column(noisy_tile_field(), eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f,
+                                    glm::vec3(0.3f));
+    EXPECT_NE(a.alpha, c.alpha);
+}
+
+TEST(FarHazeNoise, BeltColumnIgnoresTheNoiseKeys) {
+    const far::DiscSource plain = vesuvi_like();
+    far::DiscSource noisy = vesuvi_like();
+    noisy.noise_scale_gu = 250.0f; noisy.noise_contrast = 0.8f; noisy.noise_octaves = 3;
+    const auto a = far::haze_column(plain, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}, 1.0e6f, 4.0f, 24, 270.0f, glm::vec3(0.3f));
+    const auto b = far::haze_column(noisy, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}, 1.0e6f, 4.0f, 24, 270.0f, glm::vec3(0.3f));
+    EXPECT_EQ(a.alpha, b.alpha);
+    EXPECT_EQ(a.rgb, b.rgb);
+}
+
+TEST(FarHazeNoise, PerSourceStepsOverrideTheGlobalAndClampTo64) {
+    far::DiscSource s = noisy_tile_field();
+    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
+    const glm::vec3 dir = glm::vec3(glm::normalize(s.centre - eye));
+    const auto g48 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 48, 1.0e4f, glm::vec3(1.0f));
+    const auto g64 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 64, 1.0e4f, glm::vec3(1.0f));
+    s.steps = 48;
+    const auto o48 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(1.0f));
+    EXPECT_EQ(o48.alpha, g48.alpha);
+    s.steps = 500;
+    const auto o500 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(1.0f));
+    EXPECT_EQ(o500.alpha, g64.alpha);
+    EXPECT_EQ(far::haze_steps_for(s, 24), 64);
+    s.steps = 0;
+    EXPECT_EQ(far::haze_steps_for(s, 24), 24);
+}
+
+// The tile calibration with the production noise on (250 GU, contrast 0.8,
+// 3 octaves, 48 steps). A single ray is no longer 25 +- 1: through the
+// centre from Beol 4's Player Start it reads 24.2-26.1/255 across seeds (3:
+// 26.14). So, per the brief, the MEAN is pinned instead: over the 81 view
+// rays of a 21x21 grid inside the inner half of the field's disc, the noisy
+// mean is within 1/255 of the noise-off mean (22.87/255; noisy 22.2-23.7 over
+// the four seeds below). Brightness is NOT retuned for the noise --
+// DefaultTileBrightnessShowsTwentyFiveOverBlack (noise off) still defines it.
+TEST(FarHazeNoise, TileNoiseKeepsTheMeanDisplayedHaze) {
+    for (std::uint32_t seed : {3u, 7u, 1234567u, 0xdeadbeefu}) {
+        far::DiscSource s = noisy_tile_field();
+        s.seed = seed; s.steps = 48;
+        s.pops[0].albedo = kMinorAlbedo;
+        s.brightness = kTileHazeBrightness;
+        far::DiscSource plain = s;
+        plain.noise_contrast = 0.0f;
+        const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
+        const glm::vec3 fwd = glm::vec3(glm::normalize(s.centre - eye));
+        const far::ViewBasis b = far::make_view_basis(fwd);
+        const float ang = static_cast<float>(
+            std::asin(s.sphere_radius_gu / glm::length(s.centre - eye)));
+        double sum_noisy = 0.0, sum_plain = 0.0;
+        int n = 0;
+        for (int i = -10; i <= 10; ++i)
+            for (int j = -10; j <= 10; ++j) {
+                const float ax = ang * i / 10.0f, ay = ang * j / 10.0f;
+                if (ax * ax + ay * ay > 0.25f * ang * ang) continue;
+                const glm::vec3 d =
+                    glm::normalize(fwd + std::tan(ax) * b.right + std::tan(ay) * b.up);
+                const glm::vec3 L = light_for(beol4_player_start_light(), d);
+                sum_noisy += displayed_255(
+                    far::haze_column(s, eye, d, 1.0e6f, 4.0f, 24, kTileHazeGain, L).rgb);
+                sum_plain += displayed_255(
+                    far::haze_column(plain, eye, d, 1.0e6f, 4.0f, 24, kTileHazeGain, L).rgb);
+                ++n;
+            }
+        std::printf("[FarHazeNoise] seed %u: mean over %d rays noisy %.2f plain %.2f /255\n",
+                    seed, n, sum_noisy / n, sum_plain / n);
+        EXPECT_EQ(n, 81);
+        EXPECT_NEAR(sum_noisy / n, sum_plain / n, 1.0);
+    }
+}

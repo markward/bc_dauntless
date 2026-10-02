@@ -295,7 +295,6 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
     s.use();
     s.set_mat4("u_inv_vp", inv_view_proj);
     s.set_vec3("u_eye", eye_render);
-    s.set_int("u_steps", std::clamp(dials.haze_steps, 1, kMaxSteps));
     s.set_float("u_slab_sigmas", dials.slab_sigmas);
     // The light configure_rock_program / render_specks give a rock.
     set_ambient_uniforms(s, lighting, ambient_scale);
@@ -357,6 +356,12 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         s.set_float("u_sphere_edge", src.sphere_edge_frac);
         s.set_float("u_gain", dials.haze_gain * src.gain_scale);   // haze_column's product
         s.set_float("u_brightness", src.brightness);
+        // haze_column's far::haze_steps_for, clamped to the loop bound.
+        s.set_int("u_steps", std::clamp(far::haze_steps_for(src, dials.haze_steps), 1, kMaxSteps));
+        s.set_float("u_noise_scale", src.noise_scale_gu);
+        s.set_float("u_noise_contrast", src.noise_contrast);
+        s.set_int("u_noise_octaves", src.noise_octaves);
+        s.set_int("u_noise_seed", static_cast<int>(src.seed));   // bits; uint in GLSL
         s.set_float_array("u_table_r", tr, static_cast<int>(kMaxRows));
         s.set_float_array("u_table_a", ta, static_cast<int>(kMaxRows));
         s.set_int("u_table_n", rows);

@@ -19,6 +19,12 @@
 // a linear ramp to 0 at u_sphere_r -- far_field.cc's sphere_a / the Sphere
 // branch of haze_interval. The march itself is shared.
 // FarPassGLTest.SphereHazeShaderMatchesTheCpuReference pins the sphere twin.
+// Tile-field noise (sphere only, 2026-10-02): the march density is scaled by
+// m(x) = max(0, 1 + u_noise_contrast * (2 fbm((x - centre) / u_noise_scale)
+// - 1)) -- 3D value noise from an integer (PCG) hash, no textures, fixed to
+// the field. haze_hash / value_noise / fbm / noise_m are far_field.cc's
+// haze_hash / haze_value_noise / haze_fbm / haze_noise_m: keep identical.
+// FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference pins them.
 // Output is PREMULTIPLIED (rgb, alpha = 1 - T); blend GL_ONE,
 // GL_ONE_MINUS_SRC_ALPHA.
 in vec2 v_uv;
@@ -48,6 +54,10 @@ uniform float u_pop_rmax[2];
 uniform float u_pop_q[2];
 uniform vec3  u_pop_albedo[2];
 uniform int   u_steps;          // clamped to [1, kMaxSteps] by the host
+uniform float u_noise_scale;    // GU; <= 0 = no noise
+uniform float u_noise_contrast; // 0 = no noise
+uniform int   u_noise_octaves;  // <= 0 = no noise; capped at kMaxOctaves
+uniform int   u_noise_seed;     // the source seed's bits (read as uint)
 uniform float u_gain;           // haze_gain * the source's gain_scale
 uniform float u_brightness;     // the source's brightness: colour only
 // Light: the same inputs speck.frag reads.
@@ -58,6 +68,7 @@ uniform vec3 u_dir_light_color[4];
 
 const float PI = 3.14159265;
 const int kMaxSteps = 64;
+const int kMaxOctaves = 8;
 
 // renderer::far::lambert_sphere_phase (far_math.cc).
 float lambert_sphere_phase(float cos_alpha) {
@@ -108,6 +119,58 @@ float sphere_a(vec3 p) {
     float inner = R * (1.0 - clamp(u_sphere_edge, 0.0, 1.0));
     if (d <= inner) return 1.0;
     return (R - d) / (R - inner);
+}
+
+// renderer::far::haze_hash: 32-bit PCG output hash. Keep identical.
+uint haze_hash(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// far_field.cc lattice(): the 24-bit hashed value at a lattice point.
+float lattice(ivec3 c, uint seed) {
+    uint h = haze_hash(uint(c.x) ^ haze_hash(uint(c.y) ^ haze_hash(uint(c.z) ^ haze_hash(seed))));
+    return float(h >> 8u) / 16777215.0;
+}
+
+float lerp1(float a, float b, float t) { return a + (b - a) * t; }
+
+// renderer::far::haze_value_noise. Keep identical.
+float value_noise(vec3 p, uint seed) {
+    vec3 fl = floor(p);
+    vec3 f = p - fl;
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    ivec3 c = ivec3(fl);
+    float x00 = lerp1(lattice(c, seed), lattice(c + ivec3(1, 0, 0), seed), u.x);
+    float x10 = lerp1(lattice(c + ivec3(0, 1, 0), seed), lattice(c + ivec3(1, 1, 0), seed), u.x);
+    float x01 = lerp1(lattice(c + ivec3(0, 0, 1), seed), lattice(c + ivec3(1, 0, 1), seed), u.x);
+    float x11 = lerp1(lattice(c + ivec3(0, 1, 1), seed), lattice(c + ivec3(1, 1, 1), seed), u.x);
+    return lerp1(lerp1(x00, x10, u.y), lerp1(x01, x11, u.y), u.z);
+}
+
+// renderer::far::haze_fbm (lacunarity 2, gain 0.5, normalised). Keep identical.
+float fbm(vec3 p, int octaves, uint seed) {
+    int n = min(octaves, kMaxOctaves);
+    if (n <= 0) return 0.5;
+    float sum = 0.0, norm = 0.0, amp = 1.0;
+    vec3 q = p;
+    for (int o = 0; o < kMaxOctaves; ++o) {
+        if (o >= n) break;
+        sum += amp * value_noise(q, seed + uint(o) * 0x9E3779B9u);
+        norm += amp;
+        amp *= 0.5;
+        q *= 2.0;
+    }
+    return sum / norm;
+}
+
+// renderer::far::haze_noise_m: 1 for a disc or with the noise off.
+float noise_m(vec3 p) {
+    if (u_shape != 1 || !(u_noise_scale > 0.0) || u_noise_contrast == 0.0 || u_noise_octaves <= 0)
+        return 1.0;
+    float f = fbm((p - u_centre) / u_noise_scale, u_noise_octaves, uint(u_noise_seed));
+    return max(0.0, 1.0 + u_noise_contrast * (2.0 * f - 1.0));
 }
 
 // renderer::far::density_a.
@@ -198,7 +261,8 @@ void main() {
     for (int s = 0; s < kMaxSteps; ++s) {
         if (s >= u_steps) break;
         float t = t0 + (float(s) + 0.5) * dt;
-        float a = density_a(u_eye + dir * t);
+        vec3 x = u_eye + dir * t;
+        float a = density_a(x);
         float sum = 0.0;
         vec3 sum_albedo = vec3(0.0);
         for (int i = 0; i < 2; ++i) {
@@ -208,7 +272,8 @@ void main() {
             sum_albedo += ns * u_pop_albedo[i];
         }
         if (!(sum > 0.0)) continue;
-        float dtau = u_gain * sum * dt;
+        // Noise scales the rock density, not a (haze_column's m).
+        float dtau = u_gain * sum * noise_m(x) * dt;
         float ext = exp(-dtau);
         rgb += T * (1.0 - ext) * (sum_albedo / sum) * light * u_brightness;
         T *= ext;

@@ -45,6 +45,14 @@ struct DiscSource {
     float sphere_edge_frac = 0.2f;
     float gain_scale = 1.0f;      // multiplies FarDials::haze_gain for this source
     float brightness = 1.0f;      // scales the haze COLOUR only (alpha unchanged)
+    // Tile-field haze noise (sphere only; 2026-10-02): the march density is
+    // a(x) * m(x), m = max(0, 1 + noise_contrast * (2 fbm(x_local /
+    // noise_scale_gu) - 1)), x_local = x - centre (fixed to the field). Off
+    // (m == 1, byte-identical) when scale <= 0, contrast == 0 or octaves <= 0.
+    float noise_scale_gu = 0.0f;
+    float noise_contrast = 0.0f;
+    int noise_octaves = 0;
+    int steps = 0;                // haze march steps; 0 = FarDials::haze_steps
     glm::vec3 normal{0.0f, 0.0f, 1.0f};
     std::vector<glm::vec2> table; // (r_gu, a), sorted by r
     float outer_fade_gu = 20000.0f;
@@ -85,6 +93,23 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin_sys, const glm:
 HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
                        const glm::vec3& dir, float t_max, float slab_sigmas, int steps,
                        float gain, const glm::vec3& light);
+
+// ---- Haze noise (tile fields; keep identical with far_haze.frag) ----------
+
+// 32-bit PCG output hash.
+std::uint32_t haze_hash(std::uint32_t v);
+// 3D value noise in [0, 1]: hashed lattice values (seeded), trilinear with a
+// smoothstep fade.
+float haze_value_noise(const glm::vec3& p, std::uint32_t seed);
+// `octaves` octaves of haze_value_noise (lacunarity 2, gain 0.5), normalised
+// to [0, 1]. octaves <= 0 gives 0.5.
+float haze_fbm(const glm::vec3& p, int octaves, std::uint32_t seed);
+// The density modulation m(x) at system point x (see DiscSource); exactly 1
+// for a disc or when the noise is off.
+float haze_noise_m(const DiscSource& s, const glm::dvec3& x_sys);
+// The march steps for `s`: its own `steps` clamped to [1, 64] when set, else
+// `global_steps` unchanged.
+int haze_steps_for(const DiscSource& s, int global_steps);
 
 struct GenParams { float k_ref = 1713.0f, p_min = 0.25f; int size_classes = 4, cells_per_range = 4; };
 

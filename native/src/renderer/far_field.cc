@@ -239,12 +239,14 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
                        const glm::vec3& light) {
     HazeSample out;
     double t0 = 0.0, t1 = 0.0;
+    steps = haze_steps_for(s, steps);
     if (steps < 1 || !haze_interval(s, origin, dir, t_max, slab_sigmas, t0, t1)) return out;
     const double dt = (t1 - t0) / steps;
     float T = 1.0f;
     for (int i = 0; i < steps; ++i) {
         const double t = t0 + (i + 0.5) * dt;
-        const float a = density_a(s, origin + glm::dvec3(dir) * t);
+        const glm::dvec3 x = origin + glm::dvec3(dir) * t;
+        const float a = density_a(s, x);
         // No pixel cut (ruling R16): the WHOLE population cross-section, so
         // the haze does not depend on k (resolution / fov). far_haze.frag twin.
         float sum = 0.0f;
@@ -255,7 +257,11 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
             sum_albedo += ns * P.albedo;
         }
         if (!(sum > 0.0f)) continue;
-        const float dtau = gain * s.gain_scale * sum * static_cast<float>(dt);
+        // Tile-field noise scales the rock density, not `a` (pop_density
+        // would clamp a * m at a_hi and lose the bright half). m == 1 (an
+        // exact multiply) for belts and when the noise is off.
+        const float m = haze_noise_m(s, x);
+        const float dtau = gain * s.gain_scale * sum * m * static_cast<float>(dt);
         const float ext = std::exp(-dtau);
         // brightness scales the colour only; T (alpha) is untouched.
         out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light * s.brightness;
@@ -263,6 +269,71 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
     }
     out.alpha = 1.0f - T;
     return out;
+}
+
+// ---- Haze noise (tile fields). far_haze.frag's haze_hash / value_noise /
+// fbm / noise_m are the GLSL twins: keep identical (integer hash, 24-bit
+// lattice value, smoothstep fade, the same lerp order, octave seeds and the
+// 8-octave cap). FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference
+// pins them together.
+namespace {
+constexpr int kMaxNoiseOctaves = 8;      // far_haze.frag's fbm loop bound
+constexpr int kMaxHazeSteps = 64;        // far_haze.frag's march loop bound
+
+float lattice(std::int32_t x, std::int32_t y, std::int32_t z, std::uint32_t seed) {
+    const std::uint32_t h =
+        haze_hash(static_cast<std::uint32_t>(x) ^
+                  haze_hash(static_cast<std::uint32_t>(y) ^
+                            haze_hash(static_cast<std::uint32_t>(z) ^ haze_hash(seed))));
+    return static_cast<float>(h >> 8) / 16777215.0f;
+}
+float lerp(float a, float b, float t) { return a + (b - a) * t; }
+}  // namespace
+
+std::uint32_t haze_hash(std::uint32_t v) {
+    const std::uint32_t state = v * 747796405u + 2891336453u;
+    const std::uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float haze_value_noise(const glm::vec3& p, std::uint32_t seed) {
+    const glm::vec3 fl = glm::floor(p);
+    const glm::vec3 f = p - fl;
+    const glm::vec3 u = f * f * (3.0f - 2.0f * f);
+    const auto x = static_cast<std::int32_t>(fl.x), y = static_cast<std::int32_t>(fl.y),
+               z = static_cast<std::int32_t>(fl.z);
+    const float x00 = lerp(lattice(x, y, z, seed), lattice(x + 1, y, z, seed), u.x);
+    const float x10 = lerp(lattice(x, y + 1, z, seed), lattice(x + 1, y + 1, z, seed), u.x);
+    const float x01 = lerp(lattice(x, y, z + 1, seed), lattice(x + 1, y, z + 1, seed), u.x);
+    const float x11 = lerp(lattice(x, y + 1, z + 1, seed), lattice(x + 1, y + 1, z + 1, seed), u.x);
+    return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
+}
+
+float haze_fbm(const glm::vec3& p, int octaves, std::uint32_t seed) {
+    const int n = std::min(octaves, kMaxNoiseOctaves);
+    if (n <= 0) return 0.5f;
+    float sum = 0.0f, norm = 0.0f, amp = 1.0f;
+    glm::vec3 q = p;
+    for (int o = 0; o < n; ++o) {
+        sum += amp * haze_value_noise(q, seed + static_cast<std::uint32_t>(o) * 0x9E3779B9u);
+        norm += amp;
+        amp *= 0.5f;
+        q *= 2.0f;
+    }
+    return sum / norm;
+}
+
+float haze_noise_m(const DiscSource& s, const glm::dvec3& x) {
+    if (s.shape != DiscSource::Shape::Sphere || !(s.noise_scale_gu > 0.0f) ||
+        s.noise_contrast == 0.0f || s.noise_octaves <= 0)
+        return 1.0f;
+    const glm::vec3 local = glm::vec3(x - s.centre) / s.noise_scale_gu;
+    const float fbm = haze_fbm(local, s.noise_octaves, s.seed);
+    return std::max(0.0f, 1.0f + s.noise_contrast * (2.0f * fbm - 1.0f));
+}
+
+int haze_steps_for(const DiscSource& s, int global_steps) {
+    return s.steps > 0 ? std::clamp(s.steps, 1, kMaxHazeSteps) : global_steps;
 }
 
 std::vector<ClassBin> size_classes(const Population& p, const GenParams& g) {
