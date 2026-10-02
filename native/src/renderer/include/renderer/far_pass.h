@@ -60,8 +60,9 @@ public:
     // first 4 (the rest are ignored, with one warning; a population-less
     // source has nothing to march and draws nothing). `origin_sys` is the eye in system coordinates; the
     // eye in render space is the camera's. `depth_texture` is the scene depth
-    // the march stops at, reconstructed through `inv_view_proj`; `k` is the
-    // spec's pixels-per-GU. A table longer than 32 rows uses its first 32 and
+    // the march stops at, reconstructed through `inv_view_proj`. No pixel cut
+    // (ruling R16): the haze is independent of the camera's k, and each
+    // source's `brightness` scales its colour only. A table longer than 32 rows uses its first 32 and
     // warns once; at most 2 populations per source are marched, and
     // dials.haze_steps is clamped to [1, 64]. Premultiplied blend, depth test
     // and depth writes off; afterwards depth test and writes are on, blending
@@ -69,7 +70,7 @@ public:
     void render_haze(const std::vector<far::DiscSource>& active, const glm::dvec3& origin_sys,
                      const scenegraph::Camera& cam, Pipeline& pipeline, const Lighting& lighting,
                      float ambient_scale, unsigned depth_texture, const glm::mat4& inv_view_proj,
-                     float k, const far::FarDials& dials);
+                     const far::FarDials& dials);
 
     int last_draw_calls() const { return draw_calls_; }   // since the last reset_counts()
     void reset_counts() { draw_calls_ = 0; }

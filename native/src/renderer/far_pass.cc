@@ -272,7 +272,7 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
 void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm::dvec3& origin_sys,
                           const scenegraph::Camera& cam, Pipeline& pipeline,
                           const Lighting& lighting, float ambient_scale, unsigned depth_texture,
-                          const glm::mat4& inv_view_proj, float k, const far::FarDials& dials) {
+                          const glm::mat4& inv_view_proj, const far::FarDials& dials) {
     constexpr std::size_t kMaxSources = 4, kMaxRows = 32, kMaxPops = 2;
     constexpr int kMaxSteps = 64;   // far_haze.frag's loop bound
     // A source with no populations accumulates nothing: never march it.
@@ -295,8 +295,6 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
     s.use();
     s.set_mat4("u_inv_vp", inv_view_proj);
     s.set_vec3("u_eye", eye_render);
-    s.set_float("u_k", k);
-    s.set_float("u_p_min", dials.tiers.p_min);
     s.set_int("u_steps", std::clamp(dials.haze_steps, 1, kMaxSteps));
     s.set_float("u_slab_sigmas", dials.slab_sigmas);
     // The light configure_rock_program / render_specks give a rock.
@@ -358,6 +356,7 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         s.set_float("u_sphere_r", src.sphere_radius_gu);
         s.set_float("u_sphere_edge", src.sphere_edge_frac);
         s.set_float("u_gain", dials.haze_gain * src.gain_scale);   // haze_column's product
+        s.set_float("u_brightness", src.brightness);
         s.set_float_array("u_table_r", tr, static_cast<int>(kMaxRows));
         s.set_float_array("u_table_a", ta, static_cast<int>(kMaxRows));
         s.set_int("u_table_n", rows);

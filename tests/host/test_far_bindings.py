@@ -252,6 +252,7 @@ def test_a_source_without_the_sphere_keys_parses_as_today():
     assert s["shape"] == "disc"
     assert s["procedural"] is True and s["view_space"] is False
     assert s["gain_scale"] == 1.0
+    assert s["brightness"] == 1.0
     h.far_clear()
 
 
@@ -260,7 +261,7 @@ def test_a_view_space_sphere_source_is_active_without_a_frame():
     h.far_set_sources([_source(
         id=7, frame="", centre=(10.0, 20.0, 30.0), table=[], shape="sphere",
         procedural=False, view_space=True, sphere_radius_gu=1000.0,
-        sphere_edge_frac=0.25, gain_scale=99.5)])
+        sphere_edge_frac=0.25, gain_scale=99.5, brightness=9.1)])
     h.far_set_frame(None, (0.0, 0.0, 0.0))
     (s,) = h.far_debug_active_sources()
     assert s["id"] == 7 and s["shape"] == "sphere"
@@ -269,6 +270,7 @@ def test_a_view_space_sphere_source_is_active_without_a_frame():
     assert s["sphere_radius_gu"] == 1000.0
     assert s["sphere_edge_frac"] == 0.25
     assert s["gain_scale"] == pytest.approx(99.5)
+    assert s["brightness"] == pytest.approx(9.1)
     h.far_set_frame("Beol", (1.0, 2.0, 3.0))
     (s,) = h.far_debug_active_sources()
     assert s["centre"] == pytest.approx((11.0, 22.0, 33.0))

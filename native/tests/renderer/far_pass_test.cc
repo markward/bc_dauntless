@@ -866,7 +866,6 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
     const glm::mat4 vp = cam.proj_matrix() * cam.view_matrix();
     const glm::mat4 inv_vp = glm::inverse(vp);
     const glm::dmat4 inv_vp_d = glm::inverse(glm::dmat4(cam.proj_matrix()) * glm::dmat4(cam.view_matrix()));
-    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kHazeSize));
     const far::FarDials dials;
     renderer::Lighting l;
     l.ambient = glm::vec3(0.1f, 0.12f, 0.15f);
@@ -898,7 +897,7 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::FarPass pass;
         pass.render_haze(sources, origin_sys, cam, pipeline, l, ambient_scale,
-                         scene.depth_texture(), inv_vp, k, dials);
+                         scene.depth_texture(), inv_vp, dials);
         EXPECT_EQ(pass.last_draw_calls(), 1);
         EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
         std::vector<float> px(static_cast<std::size_t>(kHazeSize) * kHazeSize * 4);
@@ -917,8 +916,7 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
             glm::vec3 light = l.ambient * ambient_scale;
             light += l.directional_color[0] *
                      far::lambert_sphere_phase(glm::dot(l.directional_dir_ws[0], -dir));
-            const auto h = far::haze_column(sources[0], origin_sys, dir, t_max, k, dials.tiers.p_min,
-                                            dials.slab_sigmas, dials.haze_steps, dials.haze_gain, light);
+            const auto h = far::haze_column(sources[0], origin_sys, dir, t_max, dials.slab_sigmas, dials.haze_steps, dials.haze_gain, light);
             const float* g = &px[idx * 4];
             std::printf("[far_pass_test] haze %s px (%d,%d): gpu a %.4f rgb (%.4f %.4f %.4f) | "
                         "cpu a %.4f rgb (%.4f %.4f %.4f)\n", pass_i == 0 ? "far " : "near",
@@ -942,22 +940,25 @@ void haze_matches_cpu(renderer::Pipeline& pipeline, const far::DiscSource& src,
 // premultiplied colour agrees too.
 TEST_F(FarPassGLTest, HazeShaderMatchesTheCpuReference) {
     float centre_alpha[2] = {0.0f, 0.0f};
-    haze_matches_cpu(*pipeline, haze_source(), glm::dvec3(278000.0, 0.0, 0.0), 60000.0f,
-                     centre_alpha);
+    far::DiscSource s = haze_source();
+    s.brightness = 8.0f;   // colour only: the shader must scale rgb, not alpha
+    haze_matches_cpu(*pipeline, s, glm::dvec3(278000.0, 0.0, 0.0), 60000.0f, centre_alpha);
     EXPECT_GT(centre_alpha[0], 0.05f) << "the far view sees real haze";
     EXPECT_LT(centre_alpha[1], centre_alpha[0] - 0.03f) << "the occluder stops the march";
 }
 
 // Tile-field haze (2026-10-02): a Sphere source -- Beol 4's field at the
-// derived tile gain, 2,500 GU ahead -- matches haze_column within 0.001 too,
-// including gain_scale, pixels that miss the sphere, and an occluder inside it.
+// derived tile gain and brightness, 2,500 GU ahead -- matches haze_column
+// within 0.001 too, including gain_scale, brightness, pixels that miss the
+// sphere, and an occluder inside it.
 TEST_F(FarPassGLTest, SphereHazeShaderMatchesTheCpuReference) {
     const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
     far::DiscSource s;
     s.id = 2; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
     s.centre = origin_sys + glm::dvec3(0.0, 2500.0, 0.0);
     s.sphere_radius_gu = 1000.0f; s.sphere_edge_frac = 0.2f;
-    s.gain_scale = 26860.0f / 270.0f;
+    s.gain_scale = 14140.0f / 270.0f;
+    s.brightness = 9.1f;
     far::Population minors;
     minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
     minors.density_at_1 = 405.0f / (4.0f / 3.0f * 3.14159265f * 1.0e9f);
@@ -981,7 +982,6 @@ TEST_F(FarPassGLTest, HazeDrawsOncePerSourceAndCapsAtFour) {
     glBindTexture(GL_TEXTURE_2D, 0);
     const scenegraph::Camera cam = haze_camera();
     const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
-    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kHazeSize));
     renderer::Lighting l;
     const far::FarDials dials;
 
@@ -994,7 +994,7 @@ TEST_F(FarPassGLTest, HazeDrawsOncePerSourceAndCapsAtFour) {
         for (int i = 0; i < n; ++i) srcs.push_back(haze_source(glm::dvec3(1000.0 * i, 0.0, 0.0)));
         pass.reset_counts();
         pass.render_haze(srcs, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l, 1.0f,
-                         scene.depth_texture(), inv_vp, k, dials);
+                         scene.depth_texture(), inv_vp, dials);
         EXPECT_EQ(pass.last_draw_calls(), std::min(n, 4)) << n << " sources";
         EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
     }
@@ -1020,7 +1020,6 @@ TEST_F(FarPassGLTest, HazeSkipsASourceWithNoPopulations) {
     out.resize(kHazeSize, kHazeSize);
     const scenegraph::Camera cam = haze_camera();
     const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
-    const float k = far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(kHazeSize));
     renderer::Lighting l;
     const far::FarDials dials;
     far::DiscSource empty = haze_source();
@@ -1031,11 +1030,11 @@ TEST_F(FarPassGLTest, HazeSkipsASourceWithNoPopulations) {
     renderer::FarPass pass;
     pass.reset_counts();
     pass.render_haze({empty}, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l, 1.0f,
-                     scene.depth_texture(), inv_vp, k, dials);
+                     scene.depth_texture(), inv_vp, dials);
     EXPECT_EQ(pass.last_draw_calls(), 0);
     pass.reset_counts();
     pass.render_haze({empty, haze_source()}, glm::dvec3(278000.0, 0.0, 0.0), cam, *pipeline, l,
-                     1.0f, scene.depth_texture(), inv_vp, k, dials);
+                     1.0f, scene.depth_texture(), inv_vp, dials);
     EXPECT_EQ(pass.last_draw_calls(), 1);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
     glBindFramebuffer(GL_FRAMEBUFFER, 0);

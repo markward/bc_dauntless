@@ -235,8 +235,8 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin, const glm::vec
 }
 
 HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir,
-                       float t_max, float k, float p_min, float slab_sigmas, int steps,
-                       float gain, const glm::vec3& light) {
+                       float t_max, float slab_sigmas, int steps, float gain,
+                       const glm::vec3& light) {
     HazeSample out;
     double t0 = 0.0, t1 = 0.0;
     if (steps < 1 || !haze_interval(s, origin, dir, t_max, slab_sigmas, t0, t1)) return out;
@@ -245,18 +245,20 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
     for (int i = 0; i < steps; ++i) {
         const double t = t0 + (i + 0.5) * dt;
         const float a = density_a(s, origin + glm::dvec3(dir) * t);
-        const float r_cut = p_min * static_cast<float>(t) / k;
+        // No pixel cut (ruling R16): the WHOLE population cross-section, so
+        // the haze does not depend on k (resolution / fov). far_haze.frag twin.
         float sum = 0.0f;
         glm::vec3 sum_albedo(0.0f);
         for (const Population& P : s.pops) {
-            const float ns = pop_density(P, a) * cross_section_below(P.size, r_cut);
+            const float ns = pop_density(P, a) * mean_cross_section(P.size);
             sum += ns;
             sum_albedo += ns * P.albedo;
         }
         if (!(sum > 0.0f)) continue;
         const float dtau = gain * s.gain_scale * sum * static_cast<float>(dt);
         const float ext = std::exp(-dtau);
-        out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light;
+        // brightness scales the colour only; T (alpha) is untouched.
+        out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light * s.brightness;
         T *= ext;
     }
     out.alpha = 1.0f - T;

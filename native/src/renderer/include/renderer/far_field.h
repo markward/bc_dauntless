@@ -44,6 +44,7 @@ struct DiscSource {
     float sphere_radius_gu = 0.0f;
     float sphere_edge_frac = 0.2f;
     float gain_scale = 1.0f;      // multiplies FarDials::haze_gain for this source
+    float brightness = 1.0f;      // scales the haze COLOUR only (alpha unchanged)
     glm::vec3 normal{0.0f, 0.0f, 1.0f};
     std::vector<glm::vec2> table; // (r_gu, a), sorted by r
     float outer_fade_gu = 20000.0f;
@@ -72,14 +73,18 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin_sys, const glm:
                    float t_max, float slab_sigmas, double& t0, double& t1);
 
 // CPU twin of far_haze.frag (spec §2 "Haze"): march `steps` midpoint samples
-// over the ray's interval inside the disc's slab and outer radius, from t=0 to
-// t_max; at each, dtau = gain * sum_pop n(a) * cross_section_below(size,
-// p_min * t / k) * dt; rgb += T * (1 - exp(-dtau)) * albedo_mix * light;
-// T *= exp(-dtau). Returns premultiplied rgb and alpha = 1 - T. albedo_mix is
-// the populations' albedo weighted by n * sigma at the sample.
+// over the ray's interval inside the source (disc slab + outer radius, or the
+// sphere), from t=0 to t_max; at each, dtau = gain * s.gain_scale * sum_pop
+// n(a) * mean_cross_section(size) * dt; rgb += T * (1 - exp(-dtau)) *
+// albedo_mix * light * s.brightness; T *= exp(-dtau). Returns premultiplied
+// rgb and alpha = 1 - T (brightness touches the colour only). albedo_mix is
+// the populations' albedo weighted by n * sigma at the sample. No pixel cut
+// (ruling R16): the whole cross-section at every distance, so the result does
+// not depend on the camera's k -- it also covers speck-tier rocks, a
+// negligible double count accepted for resolution independence.
 HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
-                       const glm::vec3& dir, float t_max, float k, float p_min,
-                       float slab_sigmas, int steps, float gain, const glm::vec3& light);
+                       const glm::vec3& dir, float t_max, float slab_sigmas, int steps,
+                       float gain, const glm::vec3& light);
 
 struct GenParams { float k_ref = 1713.0f, p_min = 0.25f; int size_classes = 4, cells_per_range = 4; };
 

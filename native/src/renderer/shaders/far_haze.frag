@@ -8,6 +8,11 @@
 // cross-section (with its q == 1 / q == 3 log branches) and the same
 // n * sigma-weighted albedo mix. FarPassGLTest.HazeShaderMatchesTheCpuReference
 // pins the two together.
+// No pixel cut (ruling R16, 2026-10-02): every sample integrates the WHOLE
+// population cross-section (mean_cross_section), so the haze does not depend
+// on the camera's k (resolution, fov). u_brightness (the source's
+// DiscSource::brightness) scales the accumulated COLOUR only -- the
+// transmittance, and so alpha, is untouched.
 // Sphere sources (u_shape == 1, tile-field haze, added 2026-10-02): the
 // interval is the ray's chord through the sphere of radius u_sphere_r, clipped
 // to [0, scene depth], and a(x) is 1 within u_sphere_r * (1 - u_sphere_edge),
@@ -42,10 +47,9 @@ uniform float u_pop_rmin[2];
 uniform float u_pop_rmax[2];
 uniform float u_pop_q[2];
 uniform vec3  u_pop_albedo[2];
-uniform float u_k;
-uniform float u_p_min;
 uniform int   u_steps;          // clamped to [1, kMaxSteps] by the host
 uniform float u_gain;           // haze_gain * the source's gain_scale
+uniform float u_brightness;     // the source's brightness: colour only
 // Light: the same inputs speck.frag reads.
 uniform vec3 u_ambient_light;
 uniform int  u_dir_light_count;
@@ -68,13 +72,12 @@ float int_pow(float a, float b, float e) {
     return (pow(b, e + 1.0) - pow(a, e + 1.0)) / (e + 1.0);
 }
 
-// renderer::far::cross_section_below.
-float cross_section_below(int i, float r_cut) {
+// renderer::far::mean_cross_section (= cross_section_below at r_max).
+float mean_cross_section(int i) {
     float rmin = u_pop_rmin[i], rmax = u_pop_rmax[i];
-    float hi = min(r_cut, rmax);
-    if (hi <= rmin) return 0.0;
+    if (rmax <= rmin) return 0.0;
     float e = -u_pop_q[i];
-    return PI * int_pow(rmin, hi, e + 2.0) / int_pow(rmin, rmax, e);
+    return PI * int_pow(rmin, rmax, e + 2.0) / int_pow(rmin, rmax, e);
 }
 
 // renderer::far::table_a.
@@ -196,19 +199,18 @@ void main() {
         if (s >= u_steps) break;
         float t = t0 + (float(s) + 0.5) * dt;
         float a = density_a(u_eye + dir * t);
-        float r_cut = u_p_min * t / u_k;
         float sum = 0.0;
         vec3 sum_albedo = vec3(0.0);
         for (int i = 0; i < 2; ++i) {
             if (i >= u_pop_n) break;
-            float ns = pop_density(i, a) * cross_section_below(i, r_cut);
+            float ns = pop_density(i, a) * mean_cross_section(i);
             sum += ns;
             sum_albedo += ns * u_pop_albedo[i];
         }
         if (!(sum > 0.0)) continue;
         float dtau = u_gain * sum * dt;
         float ext = exp(-dtau);
-        rgb += T * (1.0 - ext) * (sum_albedo / sum) * light;
+        rgb += T * (1.0 - ext) * (sum_albedo / sum) * light * u_brightness;
         T *= ext;
     }
     frag_color = vec4(rgb, 1.0 - T);

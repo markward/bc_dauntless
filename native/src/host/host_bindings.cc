@@ -1428,9 +1428,7 @@ void frame() {
                 g_world.render_origin() + glm::dvec3(cam.eye) + g_far_field.anchor();
             g_far_pass->render_haze(
                 g_far_field.active_sources(), origin_sys, cam, *g_pipeline, g_lighting,
-                ambient_scale, target.depth_texture(), inv_vp,
-                renderer::far::pixels_per_gu(cam.proj_matrix(), static_cast<float>(vh)),
-                g_far_field.dials());
+                ambient_scale, target.depth_texture(), inv_vp, g_far_field.dials());
             g_far_draw_calls += g_far_pass->last_draw_calls();
         }
         // System-scale nebula: developer-only. Without --developer (or with
@@ -2420,8 +2418,9 @@ rf::Population population_of(const py::dict& d) {
 
 // Keys exactly DiscSource.to_native() (engine side, far-tier plan Task 9).
 // Optional (tile-field haze, 2026-10-02): shape ("disc" | "sphere"),
-// procedural, view_space, sphere_radius_gu, sphere_edge_frac, gain_scale --
-// a missing key keeps the DiscSource default (a disc source as before).
+// procedural, view_space, sphere_radius_gu, sphere_edge_frac, gain_scale;
+// brightness (haze colour only, ruling R16) -- a missing key keeps the
+// DiscSource default (a disc source as before, brightness 1).
 rf::DiscSource disc_source_of(const py::dict& d) {
     rf::DiscSource s;
     s.id = d["id"].cast<std::uint32_t>();
@@ -2455,6 +2454,7 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     if (d.contains("sphere_radius_gu")) s.sphere_radius_gu = d["sphere_radius_gu"].cast<float>();
     if (d.contains("sphere_edge_frac")) s.sphere_edge_frac = d["sphere_edge_frac"].cast<float>();
     if (d.contains("gain_scale")) s.gain_scale = d["gain_scale"].cast<float>();
+    if (d.contains("brightness")) s.brightness = d["brightness"].cast<float>();
     return s;
 }
 
@@ -4228,6 +4228,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["sphere_radius_gu"] = src.sphere_radius_gu;
                   d["sphere_edge_frac"] = src.sphere_edge_frac;
                   d["gain_scale"] = src.gain_scale;
+                  d["brightness"] = src.brightness;
                   out.append(d);
               }
               return out;

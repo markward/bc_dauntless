@@ -28,11 +28,12 @@ DEFAULTS: dict = {
     "outer_fade_gu": 20000.0,
     # Tile-field haze (Python, read at use; re-push sources). tile_haze_gain
     # is the EFFECTIVE gain of an AsteroidField's sphere source (sent as
-    # gain_scale = tile_haze_gain / haze_gain). Derived 2026-10-02 by
-    # far_field_test.cc FarHazeSphere.DefaultTileGainHitsTheStatedTarget:
-    # alpha 0.15 looking from Beol 4's Player Start at its field (tau at
-    # gain 1 = 6.05e-6, so gain = -ln 0.85 / tau = 26,862 -> 26,860).
-    "tile_haze_gain": 26860.0, "tile_haze_edge_frac": 0.2,
+    # gain_scale = tile_haze_gain / haze_gain). Re-derived 2026-10-02 after
+    # ruling R16 removed the pixel cut, by far_field_test.cc
+    # FarHazeSphere.DefaultTileGainHitsTheStatedTarget: alpha 0.15 looking
+    # from Beol 4's Player Start at its field (tau at gain 1 = 1.15e-5, so
+    # gain = -ln 0.85 / tau = 14,136 -> 14,140).
+    "tile_haze_gain": 14140.0, "tile_haze_edge_frac": 0.2,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
