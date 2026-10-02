@@ -135,7 +135,14 @@ below carry the corrected value in place; this is the index.
 - **R14 — `haze_gain` default.** Corrected from the originally drafted
   **143** to **270** (§2 Haze): the derivation now uses half the band chord.
 - **Tile-field haze (2026-10-02).** Every `AsteroidField` gets a view-space
-  sphere haze source, `tile_haze_gain` 26,860 (§2 Haze, "Tile-field haze").
+  sphere haze source (§2 Haze, "Tile-field haze").
+- **R16 — haze brightness, no pixel cut (2026-10-02).** The haze was
+  calibrated on alpha with light 1 and showed as ~1–4/255 in game: over black
+  only the premultiplied colour shows, the real light is ~0.2 and there is no
+  sRGB encode. A per-source `brightness` (colour only) is calibrated on the
+  DISPLAYED value, and the haze integrates the whole cross-section, so it no
+  longer depends on k (§2 Haze, "Calibration"). `tile_haze_gain` 26,860 →
+  14,140; `haze_gain` stays 270.
 - **Measured, not designed.** Bench mean **0.015 ms** static / **0.10 ms** at
   100,000 GU/s; the Vesuvi band (a = 0.5) enumerates only **~220** speck-tier
   minors per camera — the haze carries the band, not speck density (§5
@@ -192,10 +199,12 @@ expected.
 - **Minor lod1 → speck:** a hard switch at `speck_lo`. A 3 px mesh and a 3 px
   speck of the same flux are close, and it avoids widening the minor instance
   format. If it reads as a pop live, a per-instance fade is the fallback.
-- **Speck → haze:** a size cut, not a fade. The haze integrates exactly the
-  population below `p_min` at each depth (§2), so each (size, distance) pair is
-  drawn once. Explicit rocks below `p_min` are simply culled: their combined
-  light is negligible for every formation that exists.
+- **Speck → haze:** an overlap, not a fade (ruling R16). The haze integrates
+  the WHOLE population cross-section at every depth (§2), so it also covers
+  the speck-tier rocks — a negligible double count, accepted so that the haze
+  does not depend on resolution or FOV. Explicit rocks below `p_min` are
+  simply culled: their combined light is negligible for every formation that
+  exists.
 - **Impostor view choice:** the nearest of the 16 baked views to the eye
   direction in the rock's own frame. No blending between views; a tumbling rock
   under 12 px may visibly flip view (Risks).
@@ -282,17 +291,22 @@ the roadmap's threshold.
 **Haze.**
 - Per source, a march along the eye ray over its intersection with the disc's
   slab and outer radius, at most `haze_steps` (24), stopped at scene depth.
-- At each sample, the emission adds, per population, the **cross-section of
-  the rocks below** `r_cut(d) = p_min · d / k`:
-  `n(a) · ∫ π r² f(r) dr` over `[r_min, min(r_cut, r_max)]`, in closed form for
-  the truncated power law. This is the exact complement of the per-rock cull.
+- At each sample, the emission adds, per population, the **whole
+  cross-section** `n(a) · σ̄`, σ̄ = `∫ π r² f(r) dr` over `[r_min, r_max]`
+  (`mean_cross_section`, closed form for the truncated power law). **No pixel
+  cut (ruling R16, 2026-10-02):** it was drafted as the cross-section below
+  `r_cut(d) = p_min · d / k`, the exact complement of the per-rock cull, but
+  that made the haze 2–3× thinner on Retina (k 4,031 at 2,160 px against
+  1,713) and nearly empty near the eye. Now it also covers speck-tier rocks —
+  a negligible double count — and depends on neither k nor resolution.
 - Single scattering: the population's average albedo (the mean `avg_albedo` of
   its family's catalogue rocks) × the Lambert-sphere phase function of the
   sun–rock–eye angle × sun colour, plus the ambient term.
-- One dial, **`haze_gain`**, scales the optical depth: per step
-  `Δτ = haze_gain · Σ n·σ_below · ds`, colour += `T · (1 − e^(−Δτ)) · albedo ·
-  light`, `T *= e^(−Δτ)`, alpha = `1 − T`. Colour and alpha therefore stay
-  consistent (premultiplied).
+- Two dials. **`haze_gain`** (× the source's `gain_scale`) scales the optical
+  depth; the source's **`brightness`** scales the colour only: per step
+  `Δτ = haze_gain · gain_scale · Σ n·σ̄ · ds`, colour += `T · (1 − e^(−Δτ)) ·
+  albedo · light · brightness`, `T *= e^(−Δτ)`, alpha = `1 − T`
+  (premultiplied).
 - Physically, τ across a belt is about 10⁻⁵, which is invisible, so
   `haze_gain` is an explicit art dial, tuned live. **Default 270**, derived
   (amended 2026-10-01, ruling R14 during execution) from one target: from
@@ -301,7 +315,28 @@ the roadmap's threshold.
   cross-section 0.0659 GU². The eye sees HALF the 355,600 GU band chord
   (plus the 330k–360k fade tail); the CPU reference measures alpha 0.0825 at
   gain 143, so 270 = 143·ln(0.85)/ln(1 − 0.0825). (An earlier draft used the
-  full chord and gave 143.)
+  full chord and gave 143.) Re-measured with no cut (R16): alpha 0.1501 —
+  the cut only ever bit within ~5,000 GU of the eye.
+- **Calibration — on the DISPLAYED value (ruling R16).** Alpha alone shows
+  nothing over black space: only the premultiplied colour does, and that is
+  alpha × albedo (~0.42) × the real light (~0.2), ~3/255 at alpha 0.15. The
+  pipeline has no sRGB encode (`resolve.frag`: exposure 0.95, shoulder
+  identity below 0.82), so the displayed value is 0.95 · rgb · 255. The gains
+  set alpha ≈ 0.15; then `brightness` is solved so that the MEAN OF THE
+  CHANNELS displays **25/255** at each reference view under the scene's
+  production light (`host_loop._aggregate_lights`, key re-aimed from the star,
+  filmic ambient_scale 0.3) and the catalogue's minor albedo (0.440, 0.415,
+  0.379):
+  - Belt — Vesuvi mid-band, tangential, lit as a player in Vesuvi6: light
+    (0.199, 0.207, 0.222); 3.12/255 at brightness 1 → **`haze_brightness`
+    8.0** (`FarHaze.DefaultBeltBrightnessShowsTwentyFiveOverBlack`).
+  - Tile field — Beol 4 Player Start → field centre: light (0.164, 0.182,
+    0.211); 2.75/255 at brightness 1 → **`tile_haze_brightness` 9.1**
+    (`FarHazeSphere.DefaultTileBrightnessShowsTwentyFiveOverBlack`).
+  - Both are Python dials sent per source as `brightness`. The acceptance test
+    `tests/host/test_far_haze_displayed.py` renders both views through the real
+    host and post chain: far-on minus far-off ≈ 22/255 (≥ 20 asserted; the
+    test's clear colour sits behind the haze, so 25 − alpha × background).
 - The haze ignores explicit regions: real rocks below `p_min` are culled, so
   the haze still stands in for them.
 
@@ -317,20 +352,22 @@ haze source as well.
   `sphere_edge_frac` and `gain_scale` (× `haze_gain`). A disc is unchanged.
 - Sphere density: a = 1 within R(1 − edge_frac), a linear ramp to 0 at R.
   The interval is the ray's chord through the sphere, clipped to [0, scene
-  depth]; the march (midpoint, `r_cut`, accumulation) is the disc's.
+  depth]; the march (midpoint, whole cross-section, accumulation) is the
+  disc's.
   `haze_column` and `far_haze.frag` stay twins, pinned by
   `FarPassGLTest.SphereHazeShaderMatchesTheCpuReference`.
 - Population: one minor population built FROM `minors.tile_spec` (the
   field's own tile cloud): `density_at_1` = count / (4/3·π·R³), its r_min,
   r_max and exponent, silicate (`density.tile_field_source`).
 - **Gain.** Python dial `tile_haze_gain` (sent as `gain_scale = tile_haze_gain
-  / haze_gain`), **default 26,860**, derived by
+  / haze_gain`), **default 14,140**, derived by
   `FarHazeSphere.DefaultTileGainHitsTheStatedTarget`: from Beol 4's
   "Player Start" (−593.7, 840.9, −269.3) looking at the field centre
-  (797.7, 977.2, 1268.9), k = 1713, p_min 0.25, edge 0.2, the CPU reference
-  measures τ = 6.05×10⁻⁶ per unit gain; alpha = 1 − e^(−gain·τ) exactly, so
-  gain = −ln 0.85 / τ = 26,862 → 26,860, alpha **0.150**. (At the belt's 270 it
-  would be ~0.0016.) `tile_haze_edge_frac` 0.2.
+  (797.7, 977.2, 1268.9), edge 0.2, the CPU reference measures τ = 1.15×10⁻⁵
+  per unit gain; alpha = 1 − e^(−gain·τ) exactly, so gain = −ln 0.85 / τ =
+  14,136 → 14,140, alpha **0.150**. (Before R16 removed the pixel cut it was
+  26,860 at k = 1713.) `tile_haze_edge_frac` 0.2. Brightness: `tile_haze_brightness`
+  9.1 (Calibration, above).
 
 **Frames.**
 - Python pushes the view→system offset (the viewed frame's `anchor_gu`) once a
@@ -483,8 +520,11 @@ run with the sandbox disabled (they SKIP inside it).
   - **budget:** nearest cells first; only slab- and frustum-intersecting cells
     are enumerated
   - **haze integral:** the closed-form cross-section below `r_cut` matches
-    numeric integration, and haze + specks conserve the total cross-section
-    across the cut
+    numeric integration, and below + above `r_cut` is the mean; the haze
+    integrates the whole cross-section (R16), independent of k
+  - **haze display:** brightness scales colour, never alpha; at the default
+    gains and brightnesses the reference views display 25/255 under their
+    production light (and a host test renders both: ≥ 20/255 on minus off)
   - **fade:** `far_fade` is written per camera for flagged instances
   - **minors:** the speck output of `MinorField::build_bins` covers exactly the
     band it used to cull
@@ -527,15 +567,16 @@ run with the sandbox disabled (they SKIP inside it).
 
 `./build/dauntless --developer` from the worktree, then:
 
-- **E2M1 / Beol 4:** the tile field is visible as specks from the start
-  position.
+- **E2M1 / Beol 4:** the tile field is visible as specks and a faint haze
+  (~25/255 over black) from the start position.
 - **E1M2 at Vesuvi:** the belt band across the sky; the swarm rocks go mesh →
   impostor → speck as you pull away, with no visible pop; the bridge viewscreen
   shows the same.
 - **Dash** along the band: no shimmer, no stalls. Read `space.far.*` in the
   profiler (`` ` ``).
 - Expect tuning rounds on `/ L O` (group "far") for the thresholds,
-  `haze_gain`, `speck_gain` and the scale height.
+  `haze_gain`, `haze_brightness` / `tile_haze_brightness`, `speck_gain` and
+  the scale height.
 
 ## Out of scope
 
