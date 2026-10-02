@@ -18,7 +18,9 @@ DEFAULTS: dict = {
     "max_far_rocks": 60000, "cell_cache_max": 32768, "slab_sigmas": 4.0,
     "max_cells_per_axis": 17,
     # §3 look (native)
-    "speck_gain": 1.0, "haze_gain": 270.0, "haze_steps": 24,
+    # speck_gain 4.0: Mark, live 2026-10-02 ("spec gain needs to come up to
+    # about 4").
+    "speck_gain": 4.0, "haze_gain": 270.0, "haze_steps": 24,
     # §2 populations + disc shape (Python, read at use; re-push sources)
     "minor_density_at_1": 9.67e-8, "minor_r_min": 0.05, "minor_r_max": 0.7,
     "minor_exponent": 2.5,
@@ -44,6 +46,13 @@ DEFAULTS: dict = {
     # FarHazeSphere.DefaultTileBrightnessShowsTwentyFiveOverBlack (Beol 4
     # Player Start -> field centre: 2.75/255 at 1 -> 9.1).
     "haze_brightness": 8.0, "tile_haze_brightness": 9.1,
+    # Tile-field haze noise (Python, read at use; re-push sources; 2026-10-02):
+    # the sphere's density x m(x) = max(0, 1 + contrast (2 fbm(x / scale) -
+    # 1)), 3D value noise fixed to the field, mean m ~= 1 (so the gain and
+    # brightness above keep their meaning). tile_haze_steps is the sphere's
+    # own march step count (the shader caps it at 64). Belts never noise.
+    "tile_haze_noise_scale_gu": 250.0, "tile_haze_noise_contrast": 0.8,
+    "tile_haze_noise_octaves": 3, "tile_haze_steps": 48,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
@@ -54,11 +63,14 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
 _INT_FLOOR_1 = ("max_far_rocks", "cell_cache_max", "size_classes",
-               "cells_per_range", "haze_steps", "max_cells_per_axis")
+               "cells_per_range", "haze_steps", "max_cells_per_axis",
+               "tile_haze_noise_octaves", "tile_haze_steps")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("haze_brightness", "tile_haze_brightness", "haze_gain",
-               "tile_haze_gain", "speck_gain", "tile_haze_edge_frac")
+               "tile_haze_gain", "speck_gain", "tile_haze_edge_frac",
+               "tile_haze_noise_scale_gu", "tile_haze_noise_contrast",
+               "tile_haze_noise_octaves")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)
 _FACTOR = 1.25
 

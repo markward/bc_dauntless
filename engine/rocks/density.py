@@ -47,6 +47,12 @@ class DiscSource:
     sphere_edge_frac: float = 0.2
     gain_scale: float = 1.0        # x the native haze_gain for this source
     brightness: float = 1.0        # haze COLOUR only (ruling R16); alpha untouched
+    # Tile-field haze noise + march steps (sphere only, 2026-10-02): 0 = off /
+    # the native global haze_steps. Belts never send them.
+    noise_scale_gu: float = 0.0
+    noise_contrast: float = 0.0
+    noise_octaves: int = 0
+    steps: int = 0
     pops: Optional[tuple] = None   # explicit populations; None = field_table's
 
 
@@ -163,6 +169,10 @@ def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
         sphere_edge_frac=float(far_dials.get("tile_haze_edge_frac")),
         gain_scale=float(far_dials.get("tile_haze_gain")) / float(far_dials.get("haze_gain")),
         brightness=float(far_dials.get("tile_haze_brightness")),
+        noise_scale_gu=float(far_dials.get("tile_haze_noise_scale_gu")),
+        noise_contrast=float(far_dials.get("tile_haze_noise_contrast")),
+        noise_octaves=int(far_dials.get("tile_haze_noise_octaves")),
+        steps=int(far_dials.get("tile_haze_steps")),
         pops=(pop,),
     )
 
@@ -227,7 +237,7 @@ def to_native(source) -> dict:
                       file=sys.stderr)
             continue
         pops.append(native_pop)
-    return {
+    out = {
         "id": source.id,
         "frame": source.frame,
         "centre": tuple(source.centre_gu),
@@ -247,3 +257,10 @@ def to_native(source) -> dict:
         "gain_scale": source.gain_scale,
         "brightness": source.brightness,
     }
+    if source.shape == "sphere":
+        # Belts carry none: the parser's defaults leave them unchanged.
+        out.update(noise_scale_gu=source.noise_scale_gu,
+                   noise_contrast=source.noise_contrast,
+                   noise_octaves=source.noise_octaves,
+                   steps=source.steps)
+    return out

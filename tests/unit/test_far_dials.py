@@ -63,7 +63,34 @@ def test_haze_brightness_defaults_are_the_cpp_derivations():
 def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the haze and speck dials lead."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:6] == (
+    assert far_dials.DIAL_ORDER[:9] == (
         "haze_brightness", "tile_haze_brightness", "haze_gain",
-        "tile_haze_gain", "speck_gain", "tile_haze_edge_frac")
+        "tile_haze_gain", "speck_gain", "tile_haze_edge_frac",
+        "tile_haze_noise_scale_gu", "tile_haze_noise_contrast",
+        "tile_haze_noise_octaves")
     assert sorted(far_dials.DIAL_ORDER) == sorted(far_dials.DEFAULTS)
+
+
+def test_speck_gain_defaults_to_four():
+    """Mark, live 2026-10-02: "spec gain needs to come up to about 4"."""
+    assert far_dials.DEFAULTS["speck_gain"] == 4.0
+
+
+def test_tile_haze_noise_dials():
+    """Tile-field haze noise (2026-10-02): Python-owned, ride per source."""
+    d = far_dials.DEFAULTS
+    assert d["tile_haze_noise_scale_gu"] == 250.0
+    assert d["tile_haze_noise_contrast"] == 0.8
+    assert d["tile_haze_noise_octaves"] == 3
+    assert d["tile_haze_steps"] == 48
+    for k in ("tile_haze_noise_scale_gu", "tile_haze_noise_contrast",
+              "tile_haze_noise_octaves", "tile_haze_steps"):
+        assert k not in far_dials.NATIVE_KEYS, k
+    assert isinstance(d["tile_haze_noise_octaves"], int)
+    assert isinstance(d["tile_haze_steps"], int)
+    # Int counts floor at 1; the contrast (a float) may reach 0.
+    for k in ("tile_haze_noise_octaves", "tile_haze_steps"):
+        assert far_dials.step({**d, k: 1}, k, -1)[k] == 1, k
+    assert far_dials.step({**d, "tile_haze_noise_contrast": 0.0},
+                          "tile_haze_noise_contrast", -1)["tile_haze_noise_contrast"] == 0.0
+    assert far_dials.step(d, "tile_haze_steps", +1)["tile_haze_steps"] == 52

@@ -268,6 +268,25 @@ def test_a_tile_haze_dial_change_repushes_the_sources():
     assert _source_pushes(r)[2][0]["sphere_edge_frac"] == far_dials.get("tile_haze_edge_frac")
 
 
+def test_a_tile_haze_noise_dial_change_repushes_the_sources():
+    from engine.rocks import far_dials
+    view = _Set("Multi7")
+    fields = [_Field(view)]
+    r = _R()
+    far_tier.reconcile_with(r, view, {}, fields)
+    steps = [("tile_haze_noise_scale_gu", "noise_scale_gu"),
+             ("tile_haze_noise_contrast", "noise_contrast"),
+             ("tile_haze_noise_octaves", "noise_octaves"),
+             ("tile_haze_steps", "steps")]
+    for i, (dial, key) in enumerate(steps):
+        far_dials._step(dial, +1)
+        far_tier.reconcile_with(r, view, {}, fields)
+        pushes = _source_pushes(r)
+        assert len(pushes) == i + 2, dial
+        assert pushes[-1][0][key] == far_dials.get(dial), dial
+        assert far_dials.get(dial) != far_dials.DEFAULTS[dial], dial
+
+
 def test_a_brightness_dial_change_repushes_the_sources(monkeypatch):
     from engine.rocks import far_dials
     monkeypatch.setattr(far_tier, "frame_for", lambda v: ("Vesuvi", (0.0, 0.0, 0.0)))

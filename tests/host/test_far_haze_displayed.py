@@ -89,6 +89,7 @@ def test_beol4_tile_field_haze_shows_from_player_start(host):
     far_tier.reconcile_with(h, pSet, {}, _fields(pSet))
     (src,) = h.far_debug_active_sources()
     assert src["shape"] == "sphere" and src["brightness"] > 1.0
+    assert src["noise_contrast"] > 0.0 and src["noise_octaves"] > 0   # measured WITH noise
     start = pSet.GetObject("Player Start")
     loc = start.GetWorldLocation()
     _light_and_camera(pSet, start, (loc.x, loc.y, loc.z),

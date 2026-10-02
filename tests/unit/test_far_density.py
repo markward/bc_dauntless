@@ -167,3 +167,21 @@ def test_a_belt_carries_the_belt_haze_brightness():
     (s,) = density.sources_for_system("Vesuvi")
     assert s.brightness == far_dials.get("haze_brightness")
     assert density.to_native(s)["brightness"] == far_dials.get("haze_brightness")
+
+
+def test_a_tile_field_source_carries_the_noise_dials():
+    s = density.tile_field_source(_Field(), None, "Beol4", (0.0, 0.0, 0.0))
+    assert s.noise_scale_gu == far_dials.get("tile_haze_noise_scale_gu")
+    assert s.noise_contrast == far_dials.get("tile_haze_noise_contrast")
+    assert s.noise_octaves == far_dials.get("tile_haze_noise_octaves")
+    assert s.steps == far_dials.get("tile_haze_steps")
+    d = density.to_native(s)
+    assert (d["noise_scale_gu"], d["noise_contrast"], d["noise_octaves"], d["steps"]) == \
+        (250.0, 0.8, 3, 48)
+
+
+def test_a_belt_carries_no_noise_keys():
+    (s,) = density.sources_for_system("Vesuvi")
+    d = density.to_native(s)
+    for k in ("noise_scale_gu", "noise_contrast", "noise_octaves", "steps"):
+        assert k not in d, k

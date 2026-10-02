@@ -141,7 +141,7 @@ struct FarDials {
     int max_far_rocks = 60000;
     int cell_cache_max = 32768;
     float slab_sigmas = 4.0f;
-    float speck_gain = 1.0f;
+    float speck_gain = 4.0f;    // Mark, live 2026-10-02: "about 4"
     float haze_gain = 270.0f;   // R14: alpha ~0.15 forward from mid-band (spec §2)
     int haze_steps = 24;
     int max_cells_per_axis = 17;   // per class: enumeration spans at most this many cells per axis
