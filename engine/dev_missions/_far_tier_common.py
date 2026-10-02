@@ -44,12 +44,12 @@ def create_aimed_player(pSet, eye, target):
     return MissionLib.CreatePlayerShip("Galaxy", pSet, "player", "Far Tier View")
 
 
-def start_on_far_dials():
-    """/ L O act on the far group, first dial (haze_brightness)."""
+def start_on_far_dials(dial="haze_brightness"):
+    """/ L O act on the far group, with `dial` selected."""
     try:
         from engine import dev_dial_groups
         if dev_dial_groups.set_active("far"):
-            while dev_dial_groups.selected() != "haze_brightness":
+            while dev_dial_groups.selected() != dial:
                 dev_dial_groups.cycle_dial()
     except Exception:
         pass

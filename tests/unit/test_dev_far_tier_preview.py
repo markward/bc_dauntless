@@ -54,7 +54,7 @@ def test_both_missions_are_in_the_developer_picker_family():
     assert "engine.dev_missions.far_tier_belt" in names
 
 
-def test_field_mission_points_the_player_at_the_field_from_2500_gu():
+def test_field_mission_points_the_player_at_the_field_from_6000_gu():
     mh.setup_sdk()
     status, exc = mh.run_mission("engine.dev_missions.far_tier_field")
     assert status == "pass", exc
@@ -62,7 +62,7 @@ def test_field_mission_points_the_player_at_the_field_from_2500_gu():
     player = pSet.GetObject("player")
     pos = _loc(player)
     to_centre = tuple(c - p for c, p in zip(FIELD_CENTRE, pos))
-    assert math.dist(pos, FIELD_CENTRE) == pytest.approx(2500.0, abs=1.0)
+    assert math.dist(pos, FIELD_CENTRE) == pytest.approx(6000.0, abs=1.0)
     assert _dot(_unit(_forward(player)), _unit(to_centre)) > 0.9999
 
 
@@ -98,9 +98,11 @@ def test_belt_mission_puts_the_player_mid_band_looking_along_it():
     assert abs(fwd[2]) < 1e-3                     # in the system plane
 
 
-@pytest.mark.parametrize("module", ["engine.dev_missions.far_tier_field",
-                                    "engine.dev_missions.far_tier_belt"])
-def test_the_dial_keys_start_on_the_far_group(module):
+@pytest.mark.parametrize("module,dial", [
+    ("engine.dev_missions.far_tier_field", "tile_haze_brightness"),   # Beol 4: no belt
+    ("engine.dev_missions.far_tier_belt", "haze_brightness"),
+])
+def test_the_dial_keys_start_on_the_far_group(module, dial):
     from engine.rocks import far_dials, minor_dials
     dev_dial_groups.register_group("nebula", ("veil",), lambda: {"veil": 1.0},
                                    lambda d, s: None)
@@ -111,7 +113,7 @@ def test_the_dial_keys_start_on_the_far_group(module):
     status, exc = mh.run_mission(module)
     assert status == "pass", exc
     assert dev_dial_groups.active() == "far"
-    assert dev_dial_groups.selected() == "haze_brightness"
+    assert dev_dial_groups.selected() == dial
 
 
 def test_set_active_selects_a_group_by_name():

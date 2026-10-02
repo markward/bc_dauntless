@@ -2,11 +2,13 @@
 
 Loads Beol 4 through its SDK Initialize() (which places "Asteroid Field 1",
 centre (797.7, 977.2, 1268.9), radius 1,000 GU) and starts the player on the
-line from Beol 4's "Player Start" to the field centre, 2,500 GU from the
-centre (~1,500 GU outside the edge), nose on the centre: the whole tile haze
-and its specks are in view. One ~2 GU rock sits 250 GU ahead and 40 GU to
+line from Beol 4's "Player Start" to the field centre, 6,000 GU from the
+centre (~5,000 GU outside the edge), nose on the centre: the field is a
+distinct ball with black space around it (from 2,500 GU it filled ~80% of
+the view and read as grey space, not a cloud -- Mark, 2026-10-02). One ~2 GU rock sits 250 GU ahead and 40 GU to
 starboard -- a mesh at the start; backing away walks it down the ladder
-(impostor ~300 GU, speck ~2,000 GU). The / L O keys start on the "far" dials.
+(impostor ~300 GU, speck ~2,000 GU). The / L O keys start on the far group's tile_haze_brightness (the belt
+dials, haze_*, do nothing here: Beol 4 has no belt).
 
 --developer -> Load Mission... -> Developer -> Far Tier: Beol 4 field.
 """
@@ -18,7 +20,7 @@ import MissionLib
 from engine.dev_missions import _far_tier_common as common
 
 FIELD_CENTRE = (797.714355, 977.248474, 1268.854858)
-VIEW_DISTANCE_GU = 2500.0
+VIEW_DISTANCE_GU = 6000.0       # the 1,000 GU sphere spans ~19 deg of a 30 deg view
 ROCK_AHEAD_GU = 250.0
 ROCK_SIDE_GU = 40.0
 ROCK_SCALE = 9.0                 # Asteroidh1 (~0.24 GU) -> ~2 GU, Vesuvi 4 size
@@ -54,4 +56,4 @@ def Initialize(pMission):
     if rock is not None:
         rock.SetScale(ROCK_SCALE)
 
-    common.start_on_far_dials()
+    common.start_on_far_dials("tile_haze_brightness")
