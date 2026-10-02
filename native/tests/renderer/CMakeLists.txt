@@ -81,6 +81,7 @@ add_executable(renderer_tests
     debug_volume_pass_test.cc
     starmap_pass_test.cc
     text_input_test.cc
+    key_gate_test.cc
     ${CMAKE_SOURCE_DIR}/native/tests/support/content_root_test.cc
 )
 
