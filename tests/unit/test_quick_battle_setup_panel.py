@@ -398,6 +398,20 @@ def test_dirty_without_preset_follows_can_start(panel):
     assert _setup(panel)["dirty"]
 
 
+def test_dirty_without_preset_catches_player_change_before_load(panel):
+    # Spec D10: loading over unsaved changes asks first, even with no current
+    # preset -- changing the player ship alone does not touch can_start().
+    from engine.quickbattle import scenario as sc
+    other = sc.default_scenario()
+    other.add_ship(other.groups[1].id, "Warbird")
+    panel._presets.save("Beta", other)
+    assert not _setup(panel)["dirty"]          # a fresh panel is not dirty
+    panel.dispatch_event("set-player:Sovereign")
+    assert _setup(panel)["dirty"]
+    panel.dispatch_event("preset-load:Beta")
+    assert _setup(panel)["confirm"] is not None
+
+
 def test_close_verb_closes(panel):
     assert panel.dispatch_event("close")
     assert not panel.is_open()

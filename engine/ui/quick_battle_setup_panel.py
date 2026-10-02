@@ -219,6 +219,9 @@ class QuickBattleSetupPanel(Panel):
         # The reconcile may have changed the player or dropped rows; XO
         # Start/Restart bypass the panel, so the SDK must hear about it.
         # No recursion: the generation is already current.
+        # Safe to call from render_payload (CLAUDE.md warns against mutating
+        # game state there): it only fires on a catalog-generation change,
+        # sync_sdk is idempotent, and current_plan() re-syncs at use anyway.
         self._after_change()
 
     def _ce(self, ship_id):
@@ -301,7 +304,13 @@ class QuickBattleSetupPanel(Panel):
 
     def _dirty(self) -> bool:
         if self._preset is None:
-            return self._scenario.can_start()
+            # No current preset: compare against the default scenario
+            # (reconciled against the live catalog) rather than can_start(),
+            # which misses a player-ship change, a rename, or a new empty
+            # group (spec D10).
+            baseline = sc.default_scenario()
+            sc.reconcile(baseline, self._index)
+            return not sc.same_setup(self._scenario, baseline)
         return self._baseline is None or not sc.same_setup(self._scenario, self._baseline)
 
     @staticmethod

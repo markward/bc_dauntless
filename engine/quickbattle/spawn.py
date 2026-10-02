@@ -276,7 +276,11 @@ def generate_ships(qb, plan) -> None:
             _seed_radius(ship)
         ppos = _vec(player.GetWorldLocation())
         cols = _cols(player.GetWorldRotation())
-        placed: list = []
+        # Seed with the player so a group's anchor -- fixed depth from the
+        # player, independent of radius -- never nudges a ship toward or
+        # into it (Minor 3): "close" + large enough radii puts the anchor
+        # itself inside the player otherwise.
+        placed: list = [(ppos, player.GetRadius())]
         by_group: dict = {}
         for order, ship in created:
             by_group.setdefault(order.group_id, []).append((order, ship))

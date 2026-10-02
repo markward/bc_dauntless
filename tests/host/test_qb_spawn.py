@@ -391,6 +391,33 @@ def test_radius_fn_spaces_an_escort_from_the_player(qb):
         player.GetRadius() + escort.GetRadius() + placement.MARGIN_GU - 1e-6
 
 
+def _fake_radius_80(ship):
+    if ship.GetRadius() <= 0.0:
+        ship.SetRadius(80.0)
+
+
+def test_close_group_with_huge_radii_does_not_overlap_player(qb):
+    """generate_ships' `placed` overlap list starts empty, so a group's own
+    anchor -- a FIXED depth from the player, independent of radius -- can put
+    it inside the player once radii are big enough relative to the distance
+    band. "close" (20 km ~= 114.3 GU) with an 80 GU radius on both ships is
+    such a case: 80 + 80 + MARGIN_GU > 114.3. Only seeding `placed` with the
+    player before placement starts (Minor 3) makes `_place` nudge the group
+    clear of it."""
+    hl, controller, QB = qb
+    from engine.quickbattle import placement, spawn
+    spawn.set_radius_fn(_fake_radius_80)
+    _s, plan = _plan([("enemy", "fore", "close", "medium", ["Warbird"])])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    import App
+    player = App.Game_GetCurrentGame().GetPlayer()
+    ship = _ship("Warbird-1")
+    assert player.GetRadius() == 80.0 and ship.GetRadius() == 80.0
+    assert _dist(ship.GetWorldLocation(), player.GetWorldLocation()) >= \
+        player.GetRadius() + ship.GetRadius() + placement.MARGIN_GU - 1e-6
+
+
 def test_no_radius_fn_behaves_as_before(qb):
     hl, controller, QB = qb
     from engine.quickbattle import spawn

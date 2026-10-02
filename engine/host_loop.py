@@ -12114,6 +12114,13 @@ def run(mission_name: Optional[str] = None,
         for _mod in (bridge_cutscene, bridge_character_anim,
                      bridge_character_walk, bridge_camera_watch):
             _mod.clear_controller()
+        # The Quick Battle setup panel registers itself as the spawn
+        # provider, and the loader registers a radius seeder, for "the
+        # lifetime of run()" -- same leaked-hook risk as the warp hooks
+        # above: left installed, they close over a dead panel/controller.
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.set_provider(None)
+        _qb_spawn.set_radius_fn(None)
         shutdown_audio()
         r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()
