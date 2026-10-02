@@ -22,7 +22,10 @@ _radius_fn = None
 _SIDE = {"friendly": "Friendly", "enemy": "Enemy"}
 _FALLBACK = {"Friendly": ("QuickBattleFriendlyAI", "QBFriendlyGenericShipDestroyed"),
              "Enemy": ("QuickBattleAI", "QBEnemyGenericShipDestroyed")}
-_MAX_NUDGES = 8
+# Lateral steps tried on EACH side of a slot before giving up. Alternating
+# sides (0, +1, -1, +2, -2 ...) lets a second group at the same anchor spread
+# around the first instead of piling up on one side.
+_MAX_NUDGES = 16
 _PARALLEL_EPS = 0.999  # |dot(forward, up)| above this -> treat as (anti)parallel
 
 
@@ -183,8 +186,16 @@ def _overlaps(pos, radius, placed, margin) -> bool:
     return False
 
 
+def _nudge_offsets(max_nudges):
+    """0, +1, -1, +2, -2, ... +max, -max (in steps)."""
+    yield 0
+    for k in range(1, max_nudges + 1):
+        yield k
+        yield -k
+
+
 def _place(qb, ship, pos, lateral, placed) -> tuple:
-    """Place `ship` at `pos`, nudging along `lateral` until clear of both
+    """Place `ship` at `pos`, nudging either way along `lateral` until clear of both
     every ship placed so far THIS call (exact distance check) and the
     (stubbed) `IsLocationEmptyTG`. Returns the final world position so the
     caller can face the ship from where it actually ended up.
@@ -207,7 +218,7 @@ def _place(qb, ship, pos, lateral, placed) -> tuple:
     r = ship.GetRadius()
     step = 2.0 * r + placement.MARGIN_GU
     candidate = pos
-    for k in range(_MAX_NUDGES + 1):
+    for k in _nudge_offsets(_MAX_NUDGES):
         off = step * k
         candidate = (pos[0] + lateral[0] * off, pos[1] + lateral[1] * off,
                      pos[2] + lateral[2] * off)
@@ -215,6 +226,11 @@ def _place(qb, ship, pos, lateral, placed) -> tuple:
         if (not _overlaps(candidate, r, placed, placement.MARGIN_GU)
                 and qb.g_pSet.IsLocationEmptyTG(pt, 2.0 * r, 1)):
             break
+    else:
+        # Every candidate collided: the ship goes on the last one, overlapping.
+        # Say so, rather than silently stacking hulls.
+        _log.warning("quickbattle: no clear spot for %s within %d lateral steps "
+                     "either side; it overlaps another ship", ship.GetName(), _MAX_NUDGES)
     ship.SetTranslate(pt)
     placed.append((candidate, r))
     return candidate

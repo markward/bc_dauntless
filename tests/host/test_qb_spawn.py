@@ -250,6 +250,64 @@ def test_two_groups_at_the_same_anchor_dont_overlap(qb, monkeypatch):
             assert dist >= min_sep, (ships[i].GetName(), ships[j].GetName(), dist, min_sep)
 
 
+def test_two_full_groups_at_the_default_anchor_dont_overlap(qb, monkeypatch):
+    """Scenario.add_group() defaults every new group to fore/standard, so two
+    groups of five added without touching Details share one anchor. A nudge
+    that walks only +lateral, capped at 8 steps, runs out for the second
+    group's negative-side slots and drops two ships on the same point (found
+    in the post-merge review). Every pair must stay at least radius+radius
+    apart."""
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    import loadspacehelper
+    real = loadspacehelper.CreateShip
+
+    def sized(ship_file, *a, **k):
+        ship = real(ship_file, *a, **k)
+        if ship is not None:
+            ship.SetRadius(5.0)
+        return ship
+
+    monkeypatch.setattr(loadspacehelper, "CreateShip", sized)
+    _s, plan = _plan([("enemy", "fore", "standard", "medium", ["Galor"] * 5),
+                      ("enemy", "fore", "standard", "medium", ["Keldon"] * 5)])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+
+    ships = _non_player_ships(QB)
+    assert len(ships) == 10
+    for i in range(len(ships)):
+        for j in range(i + 1, len(ships)):
+            a, b = ships[i].GetWorldLocation(), ships[j].GetWorldLocation()
+            dist = math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
+            min_sep = ships[i].GetRadius() + ships[j].GetRadius()
+            assert dist >= min_sep, (ships[i].GetName(), ships[j].GetName(), dist, min_sep)
+
+
+def test_place_warns_when_every_candidate_is_taken(qb, caplog):
+    """When no lateral step on either side is clear, the ship still goes down
+    (on the last candidate) but the overlap is logged, never silent."""
+    _hl, _controller, QB = qb
+    from engine.quickbattle import placement, spawn
+
+    class Ship:
+        def GetRadius(self):
+            return 1.0
+
+        def GetName(self):
+            return "Crowded-1"
+
+        def SetTranslate(self, pt):
+            pass
+
+    step = 2.0 + placement.MARGIN_GU
+    taken = [((step * k, 200.0, 0.0), 1.0)
+             for k in range(-spawn._MAX_NUDGES, spawn._MAX_NUDGES + 1)]
+    with caplog.at_level("WARNING", logger="engine.quickbattle.spawn"):
+        spawn._place(QB, Ship(), (0.0, 200.0, 0.0), (1.0, 0.0, 0.0), list(taken))
+    assert any("no clear spot for Crowded-1" in r.getMessage() for r in caplog.records)
+
+
 def test_exception_after_creation_does_not_double_spawn(qb, monkeypatch):
     """Spec §4.5 step 3: fall back to BC's original GenerateShips only when
     the hook raises BEFORE spawning anything. An exception in the placement
