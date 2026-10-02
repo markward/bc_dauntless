@@ -207,6 +207,12 @@ function spvStepperRow(label, value, digits, unit, small, big, handler, index, k
 // cancel flag is needed (its capture-phase Esc handler stops propagation, so
 // the row never sees the Esc keydown anyway).
 var spvEdit = null;   // {row, html, kind, index, original, done}
+// The data renderSPVToolPanels was last called with, cached unconditionally
+// (same pattern as spvLastDecals/spvDecalRerender) so spvFinishValueEdit can
+// re-render once a row stops editing: spvShowPanel's edit-mode guard skips
+// rebuilding the panel being typed into, so a payload that arrived mid-edit
+// is otherwise never applied until some LATER Python change.
+var spvLastToolPanelsData = null;
 
 function spvParseValue(text) {
     var s = String(text).trim().replace(',', '.');
@@ -256,15 +262,22 @@ function spvFinishValueEdit(input) {
     ed.done = true;
     spvEdit = null;
     var text = input.value;
-    ed.row.innerHTML = ed.html;          // swap back; the next payload refreshes it
-    if (text === ed.original) return;    // Esc / Cancel / forced release / no change
-    var v = spvParseValue(text);
-    if (v === null) return;              // blank or not a number: revert
-    var verb = {coord: 'coord_set', scale: 'scale_set', rotate: 'rotate_set'}[ed.kind];
-    var arg = {};
-    arg[ed.kind === 'scale' ? 'index' : 'axis'] = ed.index;
-    arg.value = v;
-    dauntlessEvent('ship-property-viewer/' + verb + ':' + JSON.stringify(arg));
+    ed.row.innerHTML = ed.html;          // immediate visual swap-back
+    if (text !== ed.original) {          // not Esc / Cancel / forced release / no change
+        var v = spvParseValue(text);
+        if (v !== null) {                 // not blank / not a number
+            var verb = {coord: 'coord_set', scale: 'scale_set', rotate: 'rotate_set'}[ed.kind];
+            var arg = {};
+            arg[ed.kind === 'scale' ? 'index' : 'axis'] = ed.index;
+            arg.value = v;
+            dauntlessEvent('ship-property-viewer/' + verb + ':' + JSON.stringify(arg));
+        }
+    }
+    // Re-render from the cached payload on every exit path: spvShowPanel's
+    // edit-mode guard may have skipped a payload refresh for this panel
+    // while the row above was open, and that payload would otherwise never
+    // be applied until some later, unrelated Python change.
+    renderSPVToolPanels(spvLastToolPanelsData);
 }
 
 function spvShowPanel(prefix, panelId, values, rowsHtml) {
@@ -296,6 +309,7 @@ function spvShowPanel(prefix, panelId, values, rowsHtml) {
 }
 
 function renderSPVToolPanels(data) {
+    spvLastToolPanelsData = data;
     var coords = data.transform_coords;
     var rows = '';
     if (coords) {

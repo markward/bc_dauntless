@@ -59,7 +59,11 @@ def test_edit_buttons_do_not_steal_focus():
 
 def test_unchanged_text_sends_nothing_and_commit_routes_each_kind():
     body = _fn(JS.read_text(), "spvFinishValueEdit")
-    assert body.index("=== ed.original") < body.index("dauntlessEvent(")
+    # The "unchanged" check guards the commit branch (F3 refactor: an `if`
+    # block rather than an early `return`, so the re-render at the end of
+    # the function still runs on every exit path -- see
+    # test_finish_value_edit_rerenders_from_the_cached_payload).
+    assert body.index("!== ed.original") < body.index("dauntlessEvent(")
     for ev in ("coord_set", "scale_set", "rotate_set"):
         assert ev in body
 
@@ -91,3 +95,37 @@ def test_value_reads_as_clickable_and_input_is_styled():
     css = CSS.read_text()
     assert re.search(r"\.spv-coords__val\s*\{[^}]*cursor:\s*text", css)
     assert ".spv-coords__input" in css
+
+
+def test_finish_value_edit_rerenders_from_the_cached_payload():
+    """F3: spvShowPanel's edit-mode guard means a payload refresh that
+    arrives while a row is being typed into is skipped for that row's
+    panel. If spvFinishValueEdit does not re-render once the row swaps
+    back, that skipped payload is never applied until some LATER Python
+    change -- the panel reads stale until then. renderSPVToolPanels must
+    cache the data it was last called with (the same pattern as
+    spvDecalRerender/spvLastDecals), and spvFinishValueEdit must re-render
+    from that cache after clearing spvEdit, on every exit path (commit,
+    revert, and empty/non-finite rejection)."""
+    src = JS.read_text()
+
+    panels_body = _fn(src, "renderSPVToolPanels")
+    assert "spvLastToolPanelsData = data" in panels_body
+    # Cached unconditionally, before any of the three spvShowPanel calls
+    # (which is what makes the cache correct even while one of them is
+    # being skipped by the edit-mode guard).
+    assert (panels_body.index("spvLastToolPanelsData = data")
+            < panels_body.index("spvShowPanel("))
+
+    finish_body = _fn(src, "spvFinishValueEdit")
+    assert "renderSPVToolPanels(spvLastToolPanelsData)" in finish_body
+    # After spvEdit is cleared...
+    assert (finish_body.index("spvEdit = null")
+            < finish_body.index("renderSPVToolPanels(spvLastToolPanelsData)"))
+    # ...and on every exit path: the rerender call must not be nested
+    # inside the "text changed" / "value parsed" conditionals that guard
+    # the commit event, i.e. it sits at the same brace depth as the
+    # function body itself, after those conditionals close.
+    commit_idx = finish_body.index("dauntlessEvent(")
+    rerender_idx = finish_body.index("renderSPVToolPanels(spvLastToolPanelsData)")
+    assert rerender_idx > commit_idx
