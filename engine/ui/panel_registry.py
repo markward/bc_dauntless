@@ -46,6 +46,13 @@ class PanelRegistry:
             raise ValueError("duplicate panel name: " + panel.name)
         self._panels.append(panel)
 
+    def find(self, name: str) -> Optional[Panel]:
+        """The registered panel called `name`, or None."""
+        for p in self._panels:
+            if p.name == name:
+                return p
+        return None
+
     def render_all(self) -> List[str]:
         """Poll every panel that is due and collect the JS each emits.
 
