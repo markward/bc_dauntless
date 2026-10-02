@@ -130,7 +130,9 @@ Window::Window(Window&& other) noexcept
       last_cursor_y_(other.last_cursor_y_),
       cursor_seeded_(other.cursor_seeded_),
       swap_interval_(other.swap_interval_),
-      text_events_(std::move(other.text_events_)) {
+      text_events_(std::move(other.text_events_)),
+      key_gate_(std::move(other.key_gate_)),
+      polled_keys_(std::move(other.polled_keys_)) {
     other.handle_ = nullptr;
     other.crosshair_cursor_ = nullptr;
     other.scroll_y_accum_ = 0.0;
@@ -160,6 +162,8 @@ Window& Window::operator=(Window&& other) noexcept {
         cursor_seeded_  = other.cursor_seeded_;
         swap_interval_  = other.swap_interval_;
         text_events_    = std::move(other.text_events_);
+        key_gate_       = std::move(other.key_gate_);
+        polled_keys_    = std::move(other.polled_keys_);
         other.handle_ = nullptr;
         other.scroll_y_accum_ = 0.0;
         other.mouse_dx_accum_ = 0.0;
@@ -192,9 +196,29 @@ void Window::window_size(int* w, int* h) const noexcept {
     else { *w = 0; *h = 0; }
 }
 
-bool Window::key_state(int glfw_key) const noexcept {
+bool Window::key_state(int glfw_key) noexcept {
     if (!handle_) return false;
-    return glfwGetKey(handle_, glfw_key) == GLFW_PRESS;
+    polled_keys_.insert(glfw_key);
+    return key_gate_.report(glfw_key, glfwGetKey(handle_, glfw_key) == GLFW_PRESS);
+}
+
+void Window::set_key_capture(bool on) {
+    if (on) {
+        key_gate_.capture();
+        return;
+    }
+    // Only keys the game has polled can matter: it reads keys only through
+    // key_state, and a key first polled after release never produces an edge
+    // (key_pressed's first query records prev = now). Scanning the full
+    // GLFW range instead would hit its code gaps, which raise
+    // GLFW_INVALID_ENUM.
+    std::vector<int> down;
+    if (handle_) {
+        for (int k : polled_keys_) {
+            if (glfwGetKey(handle_, k) == GLFW_PRESS) down.push_back(k);
+        }
+    }
+    key_gate_.release(down);
 }
 
 bool Window::mouse_button_state(int glfw_button) const noexcept {

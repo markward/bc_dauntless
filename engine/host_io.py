@@ -59,6 +59,7 @@ _REQUIRED_BINDINGS = frozenset({
     "clear_instance_node_overrides",
     "set_instance_node_hidden", "instance_model",
     "drain_text_events", "cef_send_key_event", "request_relaunch",
+    "set_key_capture", "key_capture_active",
     # Not a function: the InstanceId type itself. set_instance_transform_slot
     # isinstance-checks against it to tell a real render instance from a test
     # double's plain int, so a build without it is just as broken as one
@@ -164,6 +165,22 @@ def key_pressed(key: int) -> bool:
     if _h is None:
         return False
     return _h.key_pressed(key)
+
+
+def set_key_capture(on: bool) -> None:
+    """Hand the keyboard to a focused CEF text field (True) or give it back
+    (False). Only engine.ui.text_capture calls this."""
+    if _h is None:
+        return
+    _h.set_key_capture(bool(on))
+
+
+def key_capture_active() -> bool:
+    """True while a CEF text field holds the keyboard (native clears it on
+    page load and renderer crash). False headless."""
+    if _h is None:
+        return False
+    return bool(_h.key_capture_active())
 
 
 def mouse_button_pressed(button: int) -> bool:

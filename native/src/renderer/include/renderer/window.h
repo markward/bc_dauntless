@@ -2,8 +2,10 @@
 #pragma once
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
+#include "renderer/key_gate.h"
 #include "renderer/text_input.h"
 
 struct GLFWwindow;
@@ -37,9 +39,17 @@ public:
     /// recover the device-pixel ratio.
     void window_size(int* w, int* h) const noexcept;
 
-    /// Cached state of a GLFW keyboard key. Returns true while the key is
-    /// held. State is updated by glfwPollEvents() (called by poll_events()).
-    bool key_state(int glfw_key) const noexcept;
+    /// State of a GLFW keyboard key AS THE GAME SEES IT: the raw GLFW level
+    /// filtered through the KeyGate (all keys up while a CEF text field holds
+    /// the keyboard; a key held across release stays up until released).
+    /// The ONLY raw key read in native/src -- tests/tools/test_raw_key_reads.py.
+    /// Not const: the gate's release mask updates as it observes releases.
+    bool key_state(int glfw_key) noexcept;
+
+    /// Hand the keyboard to (on) or take it back from (off) a CEF text field.
+    /// Off masks every polled key still physically down (KeyGate::release).
+    void set_key_capture(bool on);
+    bool key_capture_active() const noexcept { return key_gate_.captured(); }
 
     /// Cached state of a GLFW mouse button (GLFW_MOUSE_BUTTON_*). Returns
     /// true while the button is held. State is updated by poll_events().
@@ -114,6 +124,8 @@ private:
     double      last_cursor_y_  = 0.0;
     bool        cursor_seeded_  = false;  // false until first cursor-pos event
     TextEventQueue text_events_;
+    KeyGate key_gate_;
+    std::unordered_set<int> polled_keys_;   // every key key_state was asked about
 };
 
 }  // namespace renderer

@@ -1848,7 +1848,9 @@ void frame() {
     // rising edge. (Snapshotting AFTER poll would make now==prev for
     // every Python call, silently breaking key_pressed.)
     for (auto& [k, prev] : g_prev_key_state) {
-        prev = (glfwGetKey(g_window->native_handle(), k) == GLFW_PRESS);
+        // Through the gate, like every other key read: a raw glfwGetKey here
+        // would make prev disagree with key_pressed's gated `now`.
+        prev = g_window->key_state(k);
     }
     for (auto& [b, prev] : g_prev_mouse_state) {
         prev = (glfwGetMouseButton(g_window->native_handle(), b) == GLFW_PRESS);
@@ -6112,6 +6114,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("key"),
           "Returns true while the key is held.");
+
+    m.def("set_key_capture",
+          [](bool on) {
+              if (!g_window) {
+                  throw std::runtime_error("set_key_capture: init must be called first");
+              }
+              g_window->set_key_capture(on);
+          },
+          py::arg("on"),
+          "Hand the keyboard to a focused CEF text field (True) or give it back "
+          "(False). While captured every key_state/key_pressed reads False.");
+
+    m.def("key_capture_active",
+          []() { return g_window ? g_window->key_capture_active() : false; },
+          "True while a CEF text field holds the keyboard. Native resets it on "
+          "page load and on renderer crash.");
 
     m.def("consume_scroll_y",
           []() {
