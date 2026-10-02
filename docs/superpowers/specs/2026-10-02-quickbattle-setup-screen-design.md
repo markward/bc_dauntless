@@ -1,6 +1,6 @@
 # Quick Battle setup screen and battle start: Design
 
-**Status:** implemented on `feat/qb-setup-screen`, awaiting live check (§8). Approved in brainstorm 2026-10-02. Sections below are corrected to what was BUILT where the build departed from the brainstorm text (§2, §3.2, §3.3, §4.1, §4.3, §4.4, §4.5, §6).
+**Status:** merged to main (be043c1d), live-verified 2026-10-02. Approved in brainstorm 2026-10-02. Sections below are corrected to what was BUILT where the build departed from the brainstorm text (§2, §3.2, §3.3, §4.1, §4.3, §4.4, §4.5, §6).
 **Date:** 2026-10-02
 **Programme:** sub-project 2 of `2026-10-01-quickbattle-redesign-roadmap.md`.
 Its "Standing decisions → Setup screen" bind this spec and are not restated in
