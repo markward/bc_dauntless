@@ -10040,12 +10040,15 @@ def run(mission_name: Optional[str] = None,
             bridge_pins=controller.bridge_pins,
         )
 
-        # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).
-        # Production-visible (NOT dev-only). Boot opens this instead of
-        # auto-starting the battle (see the boot_quickbattle block above).
-        # The panel's Start drives the proven SP1 start path (start_quickbattle
-        # posts ET_START_SIMULATION to g_pXO -> StartSimulation -> ...), using
-        # whatever roster the player built via the panel's Add buttons.
+        # Quick Battle setup screen — a Python-owned state machine over the
+        # scenario (engine/quickbattle/scenario.py) and the ship catalog.
+        # Production-visible (NOT dev-only); opened from the XO config button
+        # via g_bDialogUp (_sync_quick_battle_panel). Constructing it registers
+        # it as the spawn provider (spawn.set_provider), so Start, and XO
+        # Start/Restart, which bypass the screen, all spawn the current
+        # scenario through our GenerateShips hook. The panel's Start drives the
+        # proven start path (start_quickbattle posts ET_START_SIMULATION to
+        # g_pXO -> StartSimulation -> ...).
         from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
         quick_battle_setup_panel = QuickBattleSetupPanel(
             on_start=lambda: controller.loader.start_quickbattle())
