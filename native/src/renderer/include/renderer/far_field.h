@@ -27,9 +27,23 @@ struct Population {
 };
 
 struct DiscSource {
+    // Disc: a belt (table + scale height). Sphere: a BC tile field
+    // (AsteroidField) -- a(x) = 1 within sphere_radius_gu * (1 -
+    // sphere_edge_frac) of the centre, a linear ramp to 0 at sphere_radius_gu
+    // (table / scale height unused). Tile-field haze, added 2026-10-02.
+    enum class Shape : std::uint8_t { Disc, Sphere };
     std::uint32_t id = 0;
     std::string frame;            // system name; active only when it is the viewed frame
-    glm::dvec3 centre{0.0};       // system coordinates
+    glm::dvec3 centre{0.0};       // system coordinates (view coordinates when view_space)
+    Shape shape = Shape::Disc;
+    bool procedural = true;       // false: FarField::build generates no rocks for it
+    // true: `centre` is in the viewed set's VIEW space and the source is
+    // active whenever it was pushed, frame key or not (refresh_active puts it
+    // into system coordinates as centre + anchor).
+    bool view_space = false;
+    float sphere_radius_gu = 0.0f;
+    float sphere_edge_frac = 0.2f;
+    float gain_scale = 1.0f;      // multiplies FarDials::haze_gain for this source
     glm::vec3 normal{0.0f, 0.0f, 1.0f};
     std::vector<glm::vec2> table; // (r_gu, a), sorted by r
     float outer_fade_gu = 20000.0f;

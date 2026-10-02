@@ -551,3 +551,146 @@ TEST(FarHaze, SpecksAndHazeConserveCrossSection) {
         }
     }
 }
+
+// ---- Tile-field haze: Sphere sources (added 2026-10-02) --------------------
+
+namespace {
+// Beol 4's tile field: 3^3 tiles x 15 asteroids in a 1,000 GU sphere, size
+// factor 7 (r_max 0.7), r_min 0.05, exponent 2.5; minors only, a == 1 inside.
+far::DiscSource beol4_tile_field() {
+    far::DiscSource s;
+    s.id = 99; s.frame = ""; s.seed = 3;
+    s.shape = far::DiscSource::Shape::Sphere;
+    s.procedural = false;
+    s.view_space = true;
+    s.centre = {797.714355, 977.248474, 1268.854858};
+    s.sphere_radius_gu = 1000.0f;
+    s.sphere_edge_frac = 0.2f;
+    far::Population minors;
+    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
+    minors.density_at_1 = static_cast<float>(27.0 * 15.0 / (4.0 / 3.0 * 3.14159265358979 * 1.0e9));
+    minors.size = {0.05f, 0.7f, 2.5f};
+    minors.rocks = {5}; minors.weights = {1.0f};
+    s.pops = {minors};
+    return s;
+}
+}  // namespace
+
+TEST(FarHazeSphere, DensityIsOneInsideAndRampsToZeroAtTheRadius) {
+    const far::DiscSource s = beol4_tile_field();
+    const glm::dvec3 c = s.centre, x(1.0, 0.0, 0.0);
+    EXPECT_EQ(far::density_a(s, c), 1.0f);
+    EXPECT_EQ(far::density_a(s, c + 799.0 * x), 1.0f);
+    EXPECT_NEAR(far::density_a(s, c + 900.0 * x), 0.5f, 1e-5f);
+    EXPECT_EQ(far::density_a(s, c + 1000.0 * x), 0.0f);
+    EXPECT_EQ(far::density_a(s, c + 1500.0 * x), 0.0f);
+}
+
+TEST(FarHazeSphere, IntervalIsTheChordClippedToTheRay) {
+    far::DiscSource s = beol4_tile_field();
+    s.centre = {0.0, 0.0, 0.0};
+    double t0 = 0, t1 = 0;
+    ASSERT_TRUE(far::haze_interval(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
+    EXPECT_NEAR(t0, 1000.0, 1e-6);
+    EXPECT_NEAR(t1, 3000.0, 1e-6);
+    // From inside: starts at the eye.
+    ASSERT_TRUE(far::haze_interval(s, {0.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
+    EXPECT_EQ(t0, 0.0);
+    EXPECT_NEAR(t1, 1000.0, 1e-6);
+    // Depth stop.
+    ASSERT_TRUE(far::haze_interval(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1500.0f, 4.0f, t0, t1));
+    EXPECT_NEAR(t1, 1500.0, 1e-6);
+    // Missing it, and pointing away from it.
+    EXPECT_FALSE(far::haze_interval(s, {-2000.0, 1001.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
+    EXPECT_FALSE(far::haze_interval(s, {-2000.0, 0.0, 0.0}, {-1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
+}
+
+TEST(FarHazeSphere, ColumnIsZeroOutsideThickestThroughTheCentreAndStopsAtDepth) {
+    far::DiscSource s = beol4_tile_field();
+    s.centre = {0.0, 0.0, 0.0};
+    const glm::vec3 L(1.0f);
+    auto col = [&](glm::dvec3 o, float t_max) {
+        return far::haze_column(s, o, {1.0f, 0.0f, 0.0f}, t_max, 1713.0f, 0.25f, 4.0f, 24,
+                                1.0e5f, L);
+    };
+    const auto centre = col({-2000.0, 0.0, 0.0}, 1.0e6f);
+    const auto graze = col({-2000.0, 900.0, 0.0}, 1.0e6f);
+    const auto miss = col({-2000.0, 1001.0, 0.0}, 1.0e6f);
+    const auto stopped = col({-2000.0, 0.0, 0.0}, 1050.0f);
+    EXPECT_GT(centre.alpha, 0.0f);
+    EXPECT_GT(graze.alpha, 0.0f);
+    EXPECT_GT(centre.alpha, 2.0f * graze.alpha);
+    EXPECT_EQ(miss.alpha, 0.0f);
+    EXPECT_EQ(miss.rgb, glm::vec3(0.0f));
+    EXPECT_LT(stopped.alpha, 0.1f * centre.alpha);
+}
+
+TEST(FarHazeSphere, GainScaleMultipliesTheGain) {
+    far::DiscSource s = beol4_tile_field();
+    s.centre = {0.0, 0.0, 0.0};
+    const auto a = far::haze_column(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 1713.0f,
+                                    0.25f, 4.0f, 24, 2.0e5f, glm::vec3(1.0f));
+    s.gain_scale = 2.0f;
+    const auto b = far::haze_column(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 1713.0f,
+                                    0.25f, 4.0f, 24, 1.0e5f, glm::vec3(1.0f));
+    EXPECT_NEAR(a.alpha, b.alpha, 1e-6f);
+    EXPECT_GT(b.alpha, 0.0f);
+}
+
+TEST(FarFieldBuild, ANonProceduralSourceGeneratesNoCells) {
+    far::FarField f = field_with_catalogue();
+    auto s = vesuvi_like();
+    s.procedural = false;
+    f.set_sources({s});
+    f.set_frame(std::string("Vesuvi"), {280000.0, 0.0, 0.0});
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
+    EXPECT_EQ(out.cells, 0);
+    EXPECT_EQ(out.generated, 0);
+    EXPECT_EQ(f.active_sources().size(), 1u);   // still hazes
+}
+
+TEST(FarFieldBuild, AViewSpaceSourceIgnoresTheFrameKeyAndRidesTheAnchor) {
+    far::FarField f = field_with_catalogue();
+    auto tile = beol4_tile_field();
+    tile.frame = "Nowhere";
+    auto belt = vesuvi_like();   // frame "Vesuvi": still keyed
+    f.set_sources({tile, belt});
+    f.set_frame(std::nullopt, {0.0, 0.0, 0.0});   // an unmapped set (Multi7)
+    ASSERT_EQ(f.active_sources().size(), 1u);
+    EXPECT_EQ(f.active_sources()[0].centre, tile.centre);
+    f.set_frame(std::string("Beol"), {5000.0, -3000.0, 7.0});
+    ASSERT_EQ(f.active_sources().size(), 1u);
+    EXPECT_EQ(f.active_sources()[0].id, tile.id);
+    EXPECT_EQ(f.active_sources()[0].centre, tile.centre + glm::dvec3(5000.0, -3000.0, 7.0));
+    f.set_frame(std::string("Vesuvi"), {1.0, 2.0, 3.0});
+    EXPECT_EQ(f.active_sources().size(), 2u);
+    far::FarOutput out;
+    f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);   // the sphere never enumerates
+}
+
+// Tile-field haze default gain (engine/rocks/far_dials.py "tile_haze_gain";
+// keep the two equal -- tests/unit/test_far_dials.py pins the Python side).
+// Derivation (2026-10-02): from Beol 4 "Player Start" (-593.717346,
+// 840.869934, -269.268738) looking at the tile field's centre, k = 1713,
+// p_min 0.25, 24 steps, Beol 4's numbers (beol4_tile_field). alpha is
+// 1 - exp(-gain * tau_1) exactly (T telescopes), so gain = -ln(0.85) / tau_1
+// for the target alpha 0.15. Measured tau_1 = 6.050e-6 => gain 26,862,
+// rounded to 26,860 (~100x the belt's 270; physical alpha at 270 is ~0.0016).
+constexpr float kTileHazeGain = 26860.0f;
+TEST(FarHazeSphere, DefaultTileGainHitsTheStatedTarget) {
+    const far::DiscSource s = beol4_tile_field();
+    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
+    const glm::vec3 dir = glm::vec3(glm::normalize(s.centre - eye));
+    // Measured at gain 1e4 (alpha ~0.06): at gain 1 alpha ~6e-6 is too
+    // close to float epsilon for 1 - T to carry tau_1 accurately.
+    const auto probe = far::haze_column(s, eye, dir, 1.0e6f, 1713.0f, 0.25f, 4.0f, 24, 1.0e4f,
+                                        glm::vec3(1.0f));
+    const double tau1 = -std::log(1.0 - static_cast<double>(probe.alpha)) / 1.0e4;
+    std::printf("[FarHazeSphere] tau at gain 1 = %.6e; gain for 0.15 = %.2f\n", tau1,
+                -std::log(0.85) / tau1);
+    const auto h = far::haze_column(s, eye, dir, 1.0e6f, 1713.0f, 0.25f, 4.0f, 24, kTileHazeGain,
+                                    glm::vec3(1.0f));
+    std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeGain, h.alpha);
+    EXPECT_NEAR(h.alpha, 0.15f, 0.03f);
+}

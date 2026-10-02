@@ -127,7 +127,19 @@ float scale_height(const DiscSource& s, float rho) {
     return std::max(s.scale_height_frac * rho, s.scale_height_min_gu);
 }
 
+// Sphere density (tile-field haze): 1 within R(1 - edge_frac), a linear
+// ramp to 0 at R. far_haze.frag's sphere_a is the GLSL twin.
+float sphere_a(const DiscSource& s, const glm::dvec3& x) {
+    const double R = s.sphere_radius_gu;
+    const double d = glm::length(x - s.centre);
+    if (!(R > 0.0) || d >= R) return 0.0f;
+    const double inner = R * (1.0 - std::clamp(static_cast<double>(s.sphere_edge_frac), 0.0, 1.0));
+    if (d <= inner) return 1.0f;
+    return static_cast<float>((R - d) / (R - inner));
+}
+
 float density_a(const DiscSource& s, const glm::dvec3& x) {
+    if (s.shape == DiscSource::Shape::Sphere) return sphere_a(s, x);
     double rho, z;
     disc_coords(s, x, rho, z);
     const double H = scale_height(s, static_cast<float>(rho));
@@ -142,6 +154,21 @@ float pop_density(const Population& p, float a) {
 
 bool haze_interval(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir_f,
                    float t_max, float slab_sigmas, double& t0, double& t1) {
+    if (s.shape == DiscSource::Shape::Sphere) {
+        // Ray |d + t dir| <= R, clipped to [0, t_max]. far_haze.frag twin.
+        const double R = s.sphere_radius_gu;
+        if (!(R > 0.0)) return false;
+        const glm::dvec3 dir(dir_f), d = origin - s.centre;
+        const double qa = glm::dot(dir, dir), qb = 2.0 * glm::dot(d, dir),
+                     qc = glm::dot(d, d) - R * R;
+        if (qa < 1e-12) return false;
+        const double disc = qb * qb - 4.0 * qa * qc;
+        if (disc < 0.0) return false;
+        const double sq = std::sqrt(disc);
+        t0 = std::max(0.0, (-qb - sq) / (2.0 * qa));
+        t1 = std::min(static_cast<double>(t_max), (-qb + sq) / (2.0 * qa));
+        return t1 > t0;
+    }
     if (s.table.empty()) return false;
     const double R = static_cast<double>(s.table.back().x) + std::max(0.0f, s.outer_fade_gu);
     const double Z = static_cast<double>(slab_sigmas) * scale_height(s, static_cast<float>(R));
@@ -192,7 +219,7 @@ HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm:
             sum_albedo += ns * P.albedo;
         }
         if (!(sum > 0.0f)) continue;
-        const float dtau = gain * sum * static_cast<float>(dt);
+        const float dtau = gain * s.gain_scale * sum * static_cast<float>(dt);
         const float ext = std::exp(-dtau);
         out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light;
         T *= ext;
@@ -303,9 +330,15 @@ void FarField::clear() {
 
 void FarField::refresh_active() {
     active_.clear();
-    if (!frame_) return;
-    for (const auto& s : sources_)
-        if (s.frame == *frame_) active_.push_back(s);
+    for (const auto& s : sources_) {
+        if (s.view_space) {
+            // View space -> system: + anchor (0 for an unmapped set).
+            active_.push_back(s);
+            active_.back().centre = s.centre + anchor_;
+        } else if (frame_ && s.frame == *frame_) {
+            active_.push_back(s);
+        }
+    }
 }
 
 const std::vector<FarRock>& FarField::fetch(const DiscSource& s, int pop, int cls,
@@ -408,7 +441,7 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
         const double half_diag_unit = std::sqrt(3.0) * 0.5;
         for (std::uint32_t si = 0; si < active_.size(); ++si) {
             const DiscSource& s = active_[si];
-            if (s.table.empty()) continue;
+            if (!s.procedural || s.table.empty()) continue;
             const double rho_max = static_cast<double>(s.table.back().x) + s.outer_fade_gu;
             for (int pi = 0; pi < static_cast<int>(s.pops.size()); ++pi) {
                 const auto classes = size_classes(s.pops[static_cast<std::size_t>(pi)], dials_.gen);
