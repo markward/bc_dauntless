@@ -474,17 +474,42 @@ TEST(NearContact, ReportsViewSpacePointNormalAndPen) {
     EXPECT_NEAR(c[0].rel_speed, 11.5f * 60.0f, 0.1f);
 }
 
-TEST(NearContact, CooldownSuppressesRepeats) {
+TEST(NearContact, APenetratingTouchReportsEveryStepInsideTheCooldown) {   // final review 2
+    // The ship keeps pushing into the rock: every step it still penetrates
+    // at the current pose (pen > 0) reports, cooldown or not -- Python's
+    // receding gate (v_rel >= 0) is the debounce, as collisions._respond_pair.
     rockfield::NearField f;
     f.debug_add_rock(rockfield::NearClass::Large, 9, rock_at({0, 0, 0}, 2.0f));
     rockfield::NearStepInput in;
     step_at(f, in, {0, -10, 0}, 1.0);                 // clear: face 9 GU from the centre
-    step_at(f, in, {0, -2.5f, 0}, 1.1);               // face 1.5 GU away: touch
+    int step = 0;
+    for (float y : {-2.5f, -2.4f, -2.3f, -2.3f}) {    // face 1.5 .. 1.3 GU away: pen > 0
+        step_at(f, in, {0, y, 0}, 1.0 + (++step) * kTick);
+        const auto c = f.drain_large_contacts();
+        ASSERT_EQ(c.size(), 1u) << "y " << y;
+        EXPECT_GT(c[0].pen, 0.0f);
+    }
+}
+
+TEST(NearContact, CooldownSuppressesRepeatsOnceClear) {
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 9, rock_at({0, 0, 0}, 2.0f));
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, -10, 0}, 1.0);
+    step_at(f, in, {0, -2.5f, 0}, 1.1);               // touch, pen 0.5
     EXPECT_EQ(f.drain_large_contacts().size(), 1u);
-    step_at(f, in, {0, -2.5f, 0}, 1.2);               // still touching, 0.1 s on
+    // Backing off: the sweep starts touching but ends clear (pen 0), 0.1 s on.
+    step_at(f, in, {0, -10, 0}, 1.2);
     EXPECT_TRUE(f.drain_large_contacts().empty());
-    step_at(f, in, {0, -2.5f, 0}, 1.7);               // 0.6 s after the first touch
-    EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+    // A dash straight through, ending clear on the far side, still inside
+    // the cooldown: suppressed.
+    step_at(f, in, {0, 10, 0}, 1.3);
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    // The same dash back 0.6 s after the last report: reported, pen 0.
+    step_at(f, in, {0, -10, 0}, 1.7);
+    const auto c = f.drain_large_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_EQ(c[0].pen, 0.0f);
 }
 
 TEST(NearContact, CarriesTheRockKeyAndRearmClearsItsCooldown) {   // Task 8 fix 1
@@ -502,7 +527,7 @@ TEST(NearContact, CarriesTheRockKeyAndRearmClearsItsCooldown) {   // Task 8 fix 
     step_at(f, in, {0, -2.5f, 0}, 1.1 + kTick);
     EXPECT_EQ(f.drain_large_contacts().size(), 1u);
     f.rearm(12345);                                   // an unknown key is a no-op
-    step_at(f, in, {0, -2.5f, 0}, 1.1 + 2 * kTick);   // no rearm of 9: cooled down
+    step_at(f, in, {0, -10, 0}, 1.1 + 2 * kTick);     // backs off clear: no rearm of 9, cooled down
     EXPECT_TRUE(f.drain_large_contacts().empty());
 }
 
@@ -625,6 +650,24 @@ TEST(NearContact, SmallRocksShoveAndReportMinorContacts) {
     ASSERT_EQ(out.mesh_count, 1);
     const glm::vec3 drawn = translation(out.meshes[0].items[0]);
     EXPECT_GT(glm::length(drawn - glm::vec3(0, 50, 0)), 0.2f);     // pushed off the ship's path
+}
+
+TEST(NearContact, SmallRockShoveUsesTheBareHullBox) {   // final review 4
+    // Rock radius 0.2 beside the sweep, 1.5 GU off its axis: the bare box
+    // (half 1 + contact margin 0.1) misses it by 0.2, the shield-inflated
+    // box (half sqrt(3)) would swallow it. Shields only widen LARGE contacts.
+    auto touches = [](float inflate) {
+        rockfield::NearField f;
+        f.set_catalogue(build_cat());
+        f.debug_add_rock(rockfield::NearClass::Small, 11, rock_at({1.5, 50, 0}, 0.2f, /*rock=*/1));
+        rockfield::NearStepInput in;
+        in.shield_inflate = inflate;
+        step_at(f, in, {0, 0, 0}, 1.0);
+        step_at(f, in, {0, 100, 0}, 1.0 + kTick);
+        return f.drain_small_contacts().size();
+    };
+    EXPECT_EQ(touches(0.0f), 0u);
+    EXPECT_EQ(touches(std::sqrt(3.0f)), 0u);
 }
 
 TEST(NearContact, ClearDropsContactsCooldownsGhosts) {   // Review Focus 1

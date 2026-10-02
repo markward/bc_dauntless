@@ -32,7 +32,7 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     NearClassDials large{1.0f / 8000.0f, 1.0f, 5.0f, 2.5f, 20.0f, 50.0f, 60.0f, 1000};
     float fade_gu = 4.0f;                 // dither band width at each tier edge
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
-    float collide_cooldown_s = 0.5f;      // per large rock
+    float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)
     float collide_margin_gu = 0.0f;
 };
 
@@ -106,7 +106,7 @@ struct NearStepInput {
     glm::dvec3 render_origin{0.0};
     glm::dvec3 anchor_sys{0.0};
     std::optional<minors::PlayerBox> player;   // RENDER space; unset: no contacts, sweep state reset
-    float shield_inflate = 0.0f;               // > 0: the box half extents x this (shields up)
+    float shield_inflate = 0.0f;               // > 0: the LARGE-rock box half extents x this (shields up)
     minors::Dials minor_dials;                 // shove + contact margin + teleport guard
 };
 
@@ -133,10 +133,13 @@ public:
 
     // Contacts (spec §2 "Collisions"). Per frame: advances small-rock shoves,
     // then sweeps the player's box from its previous pose to its current one.
-    // Large rocks: solid, fixed, player only -- a touch is reported once per
+    // Large rocks: solid, fixed, player only -- a touch is reported every
+    // step the rock still penetrates the box at the current pose (pen > 0;
+    // Python's receding gate debounces), else at most once per
     // collide_cooldown_s per rock; a rock that streams in (or is met on the
     // first posed step) already overlapping the box is ghosted until a step
-    // finds the box clear of it. Small rocks: the minors' harmless shove.
+    // finds the box clear of it. shield_inflate widens only this box. Small
+    // rocks: the minors' harmless shove, against the bare hull box.
     void step(const NearStepInput& in);
     std::vector<NearContact> drain_large_contacts() { return std::exchange(large_contacts_, {}); }
     std::vector<minors::Contact> drain_small_contacts() { return std::exchange(small_contacts_, {}); }

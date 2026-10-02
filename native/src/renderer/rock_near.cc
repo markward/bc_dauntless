@@ -403,9 +403,9 @@ void NearField::step(const NearStepInput& in) {
             ? std::clamp(glm::dot(p - seg0, seg) / seg_len2, 0.0f, 1.0f) : 0.0f;
         return glm::length(p - (seg0 + seg * u));
     };
+    // 3. Large rocks: solid, fixed, player only; the box inflated to the
+    // shield bubble while shields are up.
     const float inflate = in.shield_inflate > 0.0f ? in.shield_inflate : 1.0f;
-
-    // 3. Large rocks: solid, fixed, player only.
     const minors::SweepBox lb = minors::sweep_box_of(box, 0.0f, inflate);
     const float margin = dials_.collide_margin_gu;
     auto gap_now = [&](const glm::vec3& p) {   // rock centre to the shape at the current pose
@@ -435,8 +435,14 @@ void NearField::step(const NearStepInput& in) {
 
             float s = 1.0f;
             if (minors::sweep_min_distance(lb, seg0, seg, p, s) > reach) continue;
+            // Still penetrating at the current pose: report every step, so the
+            // ship cannot press into the rock unanswered -- Python's receding
+            // gate (v_rel >= 0) is the debounce, as collisions._respond_pair.
+            // The cooldown only silences repeats once the ship is clear.
+            const float pen = std::max(0.0f, r.radius - gap_now(p));
             if (auto it = large_last_.find(key);
-                it != large_last_.end() && t - it->second < dials_.collide_cooldown_s)
+                !(pen > 0.0f) && it != large_last_.end() &&
+                t - it->second < dials_.collide_cooldown_s)
                 continue;
             large_last_[key] = t;
 
@@ -452,7 +458,7 @@ void NearField::step(const NearStepInput& in) {
             nc.rock_centre_view = glm::dvec3(p) + in.render_origin;
             nc.rock_radius = r.radius;
             nc.rel_speed = rel_speed;
-            nc.pen = std::max(0.0f, r.radius - gap_now(p));
+            nc.pen = pen;
             nc.key = key;
             large_contacts_.push_back(nc);
             ++reported;
@@ -460,9 +466,10 @@ void NearField::step(const NearStepInput& in) {
     }
     seen_large_ = std::move(large_now);
 
-    // 4. Small rocks: the minors' harmless shove (MinorField::step_contact).
+    // 4. Small rocks: the minors' harmless shove (MinorField::step_contact),
+    // against the bare hull box -- shields widen only the large contacts.
     if (!(dt > 0.0)) return;
-    const minors::SweepBox sb = minors::sweep_box_of(box, md.contact_margin_gu, inflate);
+    const minors::SweepBox sb = minors::sweep_box_of(box, md.contact_margin_gu, 1.0f);
     int touches = 0;
     for (const auto& [ckey, cell] : cells_) {
         if (cell.cls != NearClass::Small) continue;
