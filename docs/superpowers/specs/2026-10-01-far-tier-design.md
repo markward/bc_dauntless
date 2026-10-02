@@ -132,8 +132,8 @@ below carry the corrected value in place; this is the index.
 - **Python — unmatched population dropped.** `density.to_native` drops, with
   one warning, a population whose family matches no catalogue rock, instead of
   sending it empty (§4 Python integration).
-- **R14 — `haze_gain` default.** Confirmed at **270**, as originally drafted
-  (§2 Haze); no change.
+- **R14 — `haze_gain` default.** Corrected from the originally drafted
+  **143** to **270** (§2 Haze): the derivation now uses half the band chord.
 - **Measured, not designed.** Bench mean **0.015 ms** static / **0.10 ms** at
   100,000 GU/s; the Vesuvi band (a = 0.5) enumerates only **~220** speck-tier
   minors per camera — the haze carries the band, not speck density (§5
@@ -372,7 +372,11 @@ more naturally next to the base-colour sample, measurably broke the
 `amb_d` NaN guard on this driver even with the cutout off
 (`HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite`).
 
-With both off the output is byte-identical (tested).
+With both off, a draw is byte-identical to one that never touched
+`u_dither_fade` (`FarDitherGLTest.ZeroFadeIsByteIdentical`: the same draw
+before and after a fade-0.5 draw). That test does not compare against the
+pre-branch `opaque.frag`; production identity rests on it plus the existing
+pixel suites (FrameTest, hull-clip) passing unchanged.
 
 **Atlases.**
 - Loaded once, lazily per catalogue rock, from `paths.project_asset_root()`
@@ -462,7 +466,8 @@ run with the sandbox disabled (they SKIP inside it).
   - **flux continuity:** the summed radiance of a mesh, an impostor and a speck
     of the same rock at p = 2 px agree within 25%
   - `opaque.frag` with `u_dither_fade = 0` and `u_coverage_cutout = 0` is
-    byte-identical to before
+    byte-identical to a draw that never set them (not a cross-revision
+    golden; the existing pixel suites cover the pre-branch output)
   - the dithered mesh and the inverse-dithered impostor together cover every
     pixel of the silhouette once
   - draw count = non-empty impostor bins + 1 speck draw + 1 per haze source
