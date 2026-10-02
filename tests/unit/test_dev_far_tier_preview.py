@@ -52,6 +52,7 @@ def test_both_missions_are_in_the_developer_picker_family():
     names = {m.module_name for m in _developer_family_entry().episodes[0].missions}
     assert "engine.dev_missions.far_tier_field" in names
     assert "engine.dev_missions.far_tier_belt" in names
+    assert "engine.dev_missions.rock_fields_inside" in names
 
 
 def test_field_mission_points_the_player_at_the_field_from_6000_gu():
@@ -81,6 +82,23 @@ def test_field_mission_puts_a_ladder_rock_ahead_of_the_player():
     assert 1.5 <= effective_radius(rock) <= 3.0     # a ~2 GU major
 
 
+def test_inside_beol4_mission_is_listed_and_starts_inside_the_field():
+    mh.setup_sdk()
+    status, exc = mh.run_mission("engine.dev_missions.rock_fields_inside")
+    assert status == "pass", exc
+    pSet = App.g_kSetManager.GetSet("Beol4")
+    player = pSet.GetObject("player")
+    field = pSet.GetObject("Asteroid Field 1")
+    centre = _loc(field)
+    radius = float(field.GetFieldRadius())
+    pos = _loc(player)
+    dist = math.dist(pos, centre)
+    assert dist < 1000.0
+    assert dist == pytest.approx(radius - 300.0, abs=1.0)
+    to_centre = tuple(c - p for c, p in zip(centre, pos))
+    assert _dot(_unit(_forward(player)), _unit(to_centre)) > 0.9999
+
+
 def test_belt_mission_puts_the_player_mid_band_looking_along_it():
     from engine.systems import frames
     mh.setup_sdk()
@@ -101,8 +119,9 @@ def test_belt_mission_puts_the_player_mid_band_looking_along_it():
 @pytest.mark.parametrize("module,dial", [
     ("engine.dev_missions.far_tier_field", "tile_haze_brightness"),   # Beol 4: no belt
     ("engine.dev_missions.far_tier_belt", "haze_brightness"),
+    ("engine.dev_missions.rock_fields_inside", "near_large_density"),
 ])
-def test_the_dial_keys_start_on_the_far_group(module, dial):
+def test_the_dial_keys_start_on_the_rock_fields_group(module, dial):
     from engine.rocks import far_dials, minor_dials
     dev_dial_groups.register_group("nebula", ("veil",), lambda: {"veil": 1.0},
                                    lambda d, s: None)
@@ -112,7 +131,7 @@ def test_the_dial_keys_start_on_the_far_group(module, dial):
     mh.setup_sdk()
     status, exc = mh.run_mission(module)
     assert status == "pass", exc
-    assert dev_dial_groups.active() == "far"
+    assert dev_dial_groups.active() == "rock fields"
     assert dev_dial_groups.selected() == dial
 
 

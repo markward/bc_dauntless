@@ -83,6 +83,6 @@ def test_js_has_a_minor_rocks_row_and_focusable():
 
 def test_js_has_a_far_tier_row_and_focusable():
     text = open(JS).read()
-    assert ("_doToggleRow('Far Tier', 'far_tier', s.far_tier, "
+    assert ("_doToggleRow('Rock Fields', 'far_tier', s.far_tier, "
             "isFoc('far_tier'))") in text
     assert "out.push({kind: 'ctrl', target: 'far_tier'});" in text

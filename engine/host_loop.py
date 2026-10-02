@@ -3463,6 +3463,10 @@ def _developer_family_entry():
                 module_name="engine.dev_missions.far_tier_belt",
                 dir_name="Far Tier Belt",
                 display_name="Far Tier: Vesuvi belt",
+            ), MissionEntry(
+                module_name="engine.dev_missions.rock_fields_inside",
+                dir_name="Rock Fields Inside",
+                display_name="Rock Fields: inside Beol 4",
             )],
         )],
     )

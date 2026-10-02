@@ -2,7 +2,7 @@
 
 Mark, 2026-10-02: "ARE YOU SURE the numbers I am playing with are actually
 changing the render?" This drives the dials through the SAME path the keys
-use (dev_dial_groups.push on the active "far" group -> far_dials._step ->
+use (dev_dial_groups.push on the active "rock fields" group -> far_dials._step ->
 far_tier.on_dials_changed), runs the per-frame reconcile the host loop runs,
 renders with the real `_dauntless_host`, and measures the displayed pixels.
 """
@@ -92,7 +92,7 @@ def _render(pSet, fields):
 
 def _press(dial, direction, times):
     """Exactly what / and L / O do once the far group is active."""
-    while dev_dial_groups.active() != "far":
+    while dev_dial_groups.active() != "rock fields":
         dev_dial_groups.cycle_active()
     while dev_dial_groups.selected() != dial:
         dev_dial_groups.cycle_dial()

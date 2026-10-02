@@ -5,8 +5,8 @@ as one dict (`renderer.far_set_dials`); the §2 population + disc-shape keys
 stay Python-owned and are read at use by engine/rocks/density.py and
 field_table.py, re-pushing sources on change (left to the caller, like
 minor_dials' rebuild hook). Not persisted; tuned live through the shared
-/ L O keys once Developer Options -> Lighting -> "Dial keys" selects "far"
-(engine/dev_dial_groups.py).
+/ L O keys once Developer Options -> Lighting -> "Dial keys" selects
+"rock fields" (engine/dev_dial_groups.py).
 """
 from typing import Callable, Optional
 
@@ -117,11 +117,14 @@ _INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "ti
                "mid_max_sprites")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
-_LOOK_FIRST = ("haze_brightness", "tile_haze_brightness", "haze_gain",
-               "tile_haze_gain", "speck_gain", "tile_haze_edge_frac",
-               "tile_haze_noise_scale_gu", "tile_haze_noise_contrast",
-               "tile_haze_noise_octaves", "belt_noise_scale_gu",
-               "belt_noise_contrast", "belt_noise_octaves")
+_LOOK_FIRST = ("near_small_density", "near_large_density",
+               "near_small_mesh_gu", "near_small_billboard_gu",
+               "near_large_mesh_gu", "near_large_billboard_gu",
+               "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
+               "mid_l1_out_gu", "haze_handoff_gu", "haze_brightness",
+               "tile_haze_brightness", "haze_gain", "tile_haze_gain",
+               "tile_haze_noise_contrast", "belt_noise_contrast",
+               "collide_damage_scale")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)
 _FACTOR = 1.25
 
@@ -188,4 +191,4 @@ def _step(name: str, direction: int) -> None:
 
 def register() -> None:
     from engine import dev_dial_groups
-    dev_dial_groups.register_group("far", DIAL_ORDER, current, _step)
+    dev_dial_groups.register_group("rock fields", DIAL_ORDER, current, _step)

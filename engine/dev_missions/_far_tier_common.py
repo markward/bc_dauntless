@@ -45,10 +45,10 @@ def create_aimed_player(pSet, eye, target):
 
 
 def start_on_far_dials(dial="haze_brightness"):
-    """/ L O act on the far group, with `dial` selected."""
+    """/ L O act on the "rock fields" group, with `dial` selected."""
     try:
         from engine import dev_dial_groups
-        if dev_dial_groups.set_active("far"):
+        if dev_dial_groups.set_active("rock fields"):
             while dev_dial_groups.selected() != dial:
                 dev_dial_groups.cycle_dial()
     except Exception:
