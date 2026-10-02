@@ -352,7 +352,8 @@ class QuickBattleSetupPanel(Panel):
                        for g in s.groups],
             "target": self._target, "selected": self._selected,
             "draft": dict(self._draft) if self._draft else None,
-            "confirm": ({k: self._confirm[k] for k in ("title", "name", "body", "ok")}
+            "confirm": ({k: self._confirm[k]
+                         for k in ("title", "name", "body", "ok", "before", "after")}
                         if self._confirm else None),
             "eras": [e for e in ERA_IDS if e in self._eras],
             "species": sorted(self._species, key=lambda n: (n.lower(), n)),
@@ -408,8 +409,12 @@ class QuickBattleSetupPanel(Panel):
             g = self._scenario.first_non_player_group() or self._scenario.player_group()
             self._target = g.id
 
-    def _ask(self, title, name, body, ok, action) -> bool:
-        self._confirm = {"title": title, "name": name, "body": body, "ok": ok,
+    def _ask(self, title, before, name, after, ok, action) -> bool:
+        """`body` is the whole sentence; `before`/`after` are the text around
+        the name, so the page bolds the name where the sentence names it
+        (never by searching -- "set" would hit "setup")."""
+        self._confirm = {"title": title, "name": name, "before": before,
+                         "after": after, "body": before + name + after, "ok": ok,
                          "action": action}
         return True
 
@@ -532,8 +537,8 @@ class QuickBattleSetupPanel(Panel):
         if not g.entries:
             delete()
             return True
-        return self._ask("Delete group?", g.name, "Delete %s and its %s?" % (
-            g.name, _plural(len(g.entries), "ship")), "Delete", delete)
+        return self._ask("Delete group?", "Delete ", g.name,
+                         " and its %s?" % _plural(len(g.entries), "ship"), "Delete", delete)
 
     # ship rows
     def _on_variant(self, arg) -> bool:
@@ -578,9 +583,8 @@ class QuickBattleSetupPanel(Panel):
 
         if self._presets.exists(name):
             return self._ask(
-                "Overwrite preset?", name,
-                "A preset named %s already exists. Replace it with the current scenario?"
-                % name, "Overwrite", save)
+                "Overwrite preset?", "A preset named ", name,
+                " already exists. Replace it with the current scenario?", "Overwrite", save)
         save()
         return True
 
@@ -604,8 +608,8 @@ class QuickBattleSetupPanel(Panel):
             self._after_change()
 
         if self._dirty():
-            return self._ask("Load preset?", name, "Your current setup has unsaved changes. "
-                             "Load %s anyway?" % name, "Load", load)
+            return self._ask("Load preset?", "Your current setup has unsaved changes. Load ",
+                             name, " anyway?", "Load", load)
         load()
         return True
 
@@ -620,8 +624,7 @@ class QuickBattleSetupPanel(Panel):
                 self._baseline = None
             self._last_pushed = None
 
-        return self._ask("Delete preset?", name, "Delete preset %s?" % name, "Delete",
-                         delete)
+        return self._ask("Delete preset?", "Delete preset ", name, "?", "Delete", delete)
 
     # dialogs
     def _on_confirm(self, _arg) -> bool:

@@ -26,6 +26,7 @@ var QBS = {
     presetAsk: null,     // {kind: 'save'|'load', name} awaiting its toast
     toastTimer: null,
     saveSent: false,     // the open save form has already sent preset-save
+    saveCancelled: false, // the open save form was abandoned by a click away
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -369,13 +370,13 @@ function renderFooter() {
 
 // ── render: the confirmation overlay (setup.confirm) ──────────────────────
 // The body bolds the subject's name, as the spike's "Overwrite preset?" does.
-// Everything is escaped; only the <b> around the name is markup.
+// Python splits the sentence around the name (before/name/after), so the bold
+// lands where the sentence names it. Everything is escaped; only the <b> is
+// markup.
 function renderConfirm() {
     var overlay = qbsEl('qbs-overlay'), c = QBS.setup.confirm;
     if (!c) { overlay.hidden = true; overlay.innerHTML = ''; return; }
-    var body = String(c.body || ''), name = String(c.name || ''), at = name ? body.indexOf(name) : -1;
-    var bodyHtml = at < 0 ? qbsEsc(body)
-        : qbsEsc(body.slice(0, at)) + '<b>' + qbsEsc(name) + '</b>' + qbsEsc(body.slice(at + name.length));
+    var bodyHtml = qbsEsc(c.before) + '<b>' + qbsEsc(c.name) + '</b>' + qbsEsc(c.after);
     overlay.innerHTML = '<div class="cp-modal qbs-confirm"><div class="cp-header">' + qbsEsc(c.title) + '</div>' +
         '<div class="cp-body"><p class="qbs-bio">' + bodyHtml + '</p></div>' +
         '<div class="cp-footer qbs-confirm__actions"><button class="cp-done-button" data-action="cancel">Cancel</button>' +
@@ -519,6 +520,7 @@ function qbsSaveMenu(anchor) {
         '<div class="qbs-form-actions"><button class="cp-done-button" data-action="preset-save-cancel">Cancel</button>' +
         '<button class="cp-done-button qbs-add" data-action="preset-save">Save</button></div></div>', true);
     QBS.saveSent = false;
+    QBS.saveCancelled = false;
     var inp = qbsEl('qbs-menu').querySelector('.qbs-preset-name');
     inp.addEventListener('change', function () { qbsSavePreset(inp.value); });
     // Esc (text_capture reverts, then blurs) or a click away ends the form.
@@ -530,11 +532,12 @@ function qbsSaveMenu(anchor) {
 }
 
 // ── text commits (keyboard-capture contract: commit on 'change') ──────────
-// Reached from the field's 'change' (Enter, or a click away) or from Save.
-// One send per form; the menu closes after the field's blur has finished.
+// Reached from the field's 'change' (Enter) or from Save. A click away has
+// already abandoned the edit (qbsMouseDown), so it never saves. One send per
+// form; the menu closes after the field's blur has finished.
 function qbsSavePreset(value) {
     var name = String(value || '').trim();
-    if (!name || QBS.saveSent) return;
+    if (!name || QBS.saveSent || QBS.saveCancelled) return;
     QBS.saveSent = true;
     QBS.presetAsk = { kind: 'save', name: name };
     dauntlessEvent('quick-battle-setup/preset-save:' + qbsEnc(name));
@@ -611,7 +614,6 @@ function qbsClick(ev) {
         dauntlessEvent('quick-battle-setup/preset-load:' + qbsEnc(arg));
         break;
     case 'preset-delete':
-        ev.stopPropagation();
         dauntlessEvent('quick-battle-setup/preset-delete:' + qbsEnc(arg));
         break;
     case 'preset-save': {
@@ -633,11 +635,27 @@ function qbsClick(ev) {
     if (done) qbsCloseMenu();
 }
 
-// The Save/Cancel buttons and menu rows must not blur the preset-name field
-// before their click runs (keyboard-capture spec §5.1).
+// Runs (capture phase) before focus moves, which is the only point where a
+// click away can be told from Enter without a key listener:
+//  - inside the popover, anything but the field keeps the focus on the field
+//    (Save/Cancel buttons and dead space; keyboard-capture spec §5.1);
+//  - outside it, while the preset-name field is focused, the edit is
+//    abandoned through text_capture's cancel path (revert, then blur, so no
+//    'change' fires) and flagged, so a click away never saves -- as in the
+//    spike, where only Enter or Save saved.
 function qbsMouseDown(ev) {
     var menu = qbsEl('qbs-menu');
-    if (menu && menu.contains(ev.target) && ev.target.closest('button')) ev.preventDefault();
+    if (!menu || menu.hidden) return;
+    if (menu.contains(ev.target)) {
+        if (!ev.target.closest('.qbs-preset-name')) ev.preventDefault();
+        return;
+    }
+    var ae = document.activeElement;
+    if (ae && ae.classList && ae.classList.contains('qbs-preset-name') && menu.contains(ae)) {
+        QBS.saveCancelled = true;
+        if (window.__dauntlessTextCancel) window.__dauntlessTextCancel(ae);
+        else ae.blur();
+    }
 }
 
 // ── entry points ──────────────────────────────────────────────────────────
@@ -672,6 +690,9 @@ function setQuickBattleSetup(payload) {
     if (QBS.renaming != null && !qbsGroup(QBS.renaming)) QBS.renaming = null;
     qbsRender();
     qbsPresetToast(prev, payload);
+    // A confirmation that went away without the preset change it guarded
+    // (Esc, Cancel, or refused) ends that request: no toast may fire later.
+    if (prev && prev.confirm && !payload.confirm) QBS.presetAsk = null;
     root.style.display = 'flex';
 }
 
@@ -700,7 +721,7 @@ function qbEscape() {
     var root = document.getElementById('quick-battle-setup');
     if (!root) return;
     document.addEventListener('click', qbsClick);
-    root.addEventListener('mousedown', qbsMouseDown);
+    root.addEventListener('mousedown', qbsMouseDown, true);
     // A plain mouse wheel only scrolls vertically; turn it sideways over the
     // single-line filter strips so they scroll without Shift or a trackpad.
     ['qbs-eras', 'qbs-species'].forEach(function (id) {

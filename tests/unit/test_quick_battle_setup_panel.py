@@ -260,7 +260,8 @@ def test_group_delete_confirm_copy(panel):
     panel.dispatch_event("group-delete:" + gid)
     c = _setup(panel)["confirm"]
     assert c == {"title": "Delete group?", "name": "Enemy group",
-                 "body": "Delete Enemy group and its 2 ships?", "ok": "Delete"}
+                 "body": "Delete Enemy group and its 2 ships?", "ok": "Delete",
+                 "before": "Delete ", "after": " and its 2 ships?"}
     panel.dispatch_event("cancel")
     assert _setup(panel)["confirm"] is None and panel.scenario.group(gid) is not None
 
@@ -272,19 +273,39 @@ def test_preset_confirm_copy(panel):
     assert _setup(panel)["confirm"] == {
         "title": "Overwrite preset?", "name": "Alpha",
         "body": "A preset named Alpha already exists. Replace it with the current scenario?",
-        "ok": "Overwrite"}
+        "ok": "Overwrite", "before": "A preset named ",
+        "after": " already exists. Replace it with the current scenario?"}
     panel.dispatch_event("cancel")
     panel.dispatch_event("add:Warbird")
     panel.dispatch_event("preset-load:Alpha")
     assert _setup(panel)["confirm"] == {
         "title": "Load preset?", "name": "Alpha",
         "body": "Your current setup has unsaved changes. Load Alpha anyway?",
-        "ok": "Load"}
+        "ok": "Load", "before": "Your current setup has unsaved changes. Load ",
+        "after": " anyway?"}
     panel.dispatch_event("cancel")
     panel.dispatch_event("preset-delete:Alpha")
     assert _setup(panel)["confirm"] == {
         "title": "Delete preset?", "name": "Alpha", "body": "Delete preset Alpha?",
-        "ok": "Delete"}
+        "ok": "Delete", "before": "Delete preset ", "after": "?"}
+
+
+def test_confirm_splits_body_around_the_name_not_a_substring_of_it(panel):
+    # A name that also occurs inside an earlier word ("set" in "setup") must
+    # be bolded where the sentence names it: the page bolds `name` between
+    # `before` and `after`, never by searching `body`.
+    panel.dispatch_event("add:Warbird")
+    panel.dispatch_event("preset-save:set")
+    panel.dispatch_event("add:Warbird")                 # dirty -> load confirms
+    panel.dispatch_event("preset-load:set")
+    c = _setup(panel)["confirm"]
+    assert c["before"] + c["name"] + c["after"] == c["body"]
+    assert c["before"] == "Your current setup has unsaved changes. Load "
+    panel.dispatch_event("cancel")
+    gid = _enemy(panel).id
+    panel.dispatch_event("group-delete:" + gid)
+    c = _setup(panel)["confirm"]
+    assert c["before"] + c["name"] + c["after"] == c["body"]
 
 
 def test_preset_load_when_clean_needs_no_confirm(panel):

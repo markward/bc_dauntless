@@ -63,3 +63,26 @@ def test_difficulty_segments_render_python_labels_low_medium_high():
 
 def test_css_scoped_and_prefixed():
     assert "qbx-" not in CSS and "qbs-" in CSS
+
+
+def test_save_form_click_away_abandons_instead_of_saving():
+    # A mousedown outside the popover while the preset-name field is focused
+    # abandons the edit (text_capture's cancel path) and the change handler
+    # honours that, so a click away never saves (only Enter or Save do).
+    assert re.search(r"addEventListener\('mousedown',\s*qbsMouseDown,\s*true\)", JS)
+    body = JS.split("function qbsMouseDown", 1)[1].split("\nfunction ", 1)[0]
+    assert "saveCancelled = true" in body and "__dauntlessTextCancel" in body
+    assert "preventDefault()" in body
+    save = JS.split("function qbsSavePreset", 1)[1].split("\nfunction ", 1)[0]
+    assert "saveCancelled" in save
+    assert "saveCancelled = false" in JS.split("function qbsSaveMenu", 1)[1].split("\nfunction ", 1)[0]
+
+
+def test_confirm_bolds_the_name_between_python_before_and_after():
+    assert re.search(r"qbsEsc\(c\.before\)\s*\+\s*'<b>'\s*\+\s*qbsEsc\(c\.name\)"
+                     r"\s*\+\s*'</b>'\s*\+\s*qbsEsc\(c\.after\)", JS)
+    assert "indexOf(name)" not in JS
+
+
+def test_no_noop_stop_propagation():
+    assert "stopPropagation" not in JS
