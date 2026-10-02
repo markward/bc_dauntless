@@ -86,7 +86,8 @@ def desired_rocks(rock_instances: dict) -> list:
 def frame_for(view_set) -> tuple:
     """(system name, the viewed region's anchor_gu) for a mapped region;
     (None, origin) for the warp set, a one-set frame (Multi*, Starbase 12,
-    QuickBattle) and None -- the far tier is off there."""
+    QuickBattle) and None. There no BELT is pushed; the viewed set's tile
+    haze (view-space spheres) and flagged rocks still draw."""
     from engine.systems import frames
     f = frames.frame_of(view_set)
     if f is None or f.key[0] != "system":
@@ -240,15 +241,21 @@ def reconcile(session, r) -> None:
                     and frames.offset_between(view, pSet) is None):
                 continue
             rocks[ship] = iid
-        fields = []
+    except Exception as e:
+        _swallow("gather", e)
+        return
+    # Fields in their own try: a failure costs only the tile haze, never
+    # the frame or rock pushes.
+    fields = []
+    try:
         if view is not None:
             for o in view.GetClassObjectList(App.CT_ASTEROID_FIELD):
                 f = App.AsteroidField_Cast(o)
                 if f is not None:
                     fields.append(f)
     except Exception as e:
-        _swallow("gather", e)
-        return
+        _swallow("gather fields", e)
+        fields = []
     try:
         reconcile_with(r, view, rocks, fields)
     except Exception as e:

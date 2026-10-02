@@ -275,3 +275,25 @@ def test_belts_and_tile_spheres_ride_together(monkeypatch):
     far_tier.reconcile_with(r, view, {}, [_Field(view)])
     (pushed,) = _source_pushes(r)
     assert [d["shape"] for d in pushed] == ["disc", "sphere"]
+
+
+def test_a_failing_field_gather_still_pushes_the_frame_and_rocks(monkeypatch):
+    """reconcile(): a view whose GetClassObjectList raises loses only its
+    tile haze -- far_set_frame and far_set_rocks still go out."""
+    from engine.systems import frames
+
+    class _BadView(_Set):
+        def GetClassObjectList(self, *a):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(frames, "viewing_set", lambda: _BadView("Multi7"))
+
+    class _Session:
+        ship_instances = {}
+        scope_hidden = ()
+
+    r = _R()
+    far_tier.reconcile(_Session(), r)
+    assert "far_set_frame" in _names(r)
+    assert "far_set_rocks" in _names(r)
+    assert _source_pushes(r) == [[]]
