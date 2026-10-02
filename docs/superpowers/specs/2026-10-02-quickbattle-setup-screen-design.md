@@ -59,9 +59,9 @@ testable without the engine.
 | `scenario.py` | Data model (§2), defaults, invariants, JSON round-trip, reconciliation against the catalog, `battle_plan()`. |
 | `presets.py` | `quickbattle_presets.json` beside `settings.json`, through `SettingsStore` (the `bridge_selection` pattern). |
 | `stats.py` | Hull and shield-total probe per catalog ship, plus the playable maxima (§5). |
-| `placement.py` | Pure placement maths (§4.3). No App calls: takes plain vectors and radii. |
+| `placement.py` | Pure placement maths (§4.4). No App calls: takes plain vectors and radii. |
 | `naming.py` | Object names and display names (D9). |
-| `spawn.py` | `install_generate_ships_hook(qb, provider)` and the player-variant step inside `RecreatePlayer` (§4). |
+| `spawn.py` | The provider, `sync_sdk`, `install_generate_ships_hook(qb)` and `apply_player_identity` (§4). |
 
 **Rewritten:**
 - `engine/ui/quick_battle_setup_panel.py`: a state machine over a `Scenario`, with no BC widget reads (§3).
@@ -194,7 +194,7 @@ All events are `dauntlessEvent('quick-battle-setup/<verb>')`, addressed by id:
 
 ### 3.5 Text fields
 
-Rename and the preset-name input follow the keyboard-capture contract (§4.4):
+Rename and the preset-name input follow the keyboard-capture contract (keyboard spec §4.4):
 - `data-panel="quick-battle-setup"` on the panel root;
 - commit on the DOM `change` event;
 - expect an edit to be abandoned on Esc, on panel close and on mission swap.
@@ -217,28 +217,37 @@ With no text field focused, the game's Esc reaches the panel's `handle_key_esc`:
 
 ## 4. Battle start
 
-### 4.1 Start Battle (`_MissionLoader.start_quickbattle`, extended)
+### 4.1 The provider and the SDK sync
+
+- **`spawn.set_provider(fn)`** registers a zero-argument callable that returns the **current** `BattlePlan`, or `None`. The panel registers itself at construction.
+  - The plan is computed at call time, never cached, so XO **Start Simulation** and **Restart** (which bypass the screen) spawn the current setup.
+  - With no provider, or a provider returning `None`, every hook falls back to BC's original behaviour. This is how headless tests that fill `g_kEnemyList` directly keep working.
+- **`spawn.sync_sdk(qb, plan)`** runs on every scenario change outside a battle, and once at Start. It:
+  - sets `g_sPlayerType` from the player order;
+  - writes `g_kFriendList` / `g_kEnemyList` as **preload manifests only**, in BC's 6-tuple shape. Neutrals are included, so `StartSimulationAction` preloads every model. Nothing of ours reads them back;
+  - enables or disables the XO's Start Simulation button from `can_start` (§3.7).
+
+### 4.2 Start Battle (`_MissionLoader.start_quickbattle`, extended)
 
 1. `_sync_quickbattle_spawn_set()`.
-2. Store the current battle plan where the hooks read it (the provider).
-3. Write `g_kFriendList` / `g_kEnemyList` as **preload manifests only**, in BC's 6-tuple shape. Neutrals are included, so `StartSimulationAction` preloads every model. Nothing of ours reads them back.
-4. Post `ET_START_SIMULATION` to `g_pXO`, as today.
+2. `spawn.sync_sdk(qb, provider())`.
+3. Post `ET_START_SIMULATION` to `g_pXO`, as today.
 
 BC then runs: loading text → preload → `StartSimulation2` → `RecreatePlayer()`
 → `GenerateShips()` (ours) → AI from `g_kShips` → red alert. Restart replays the
-same plan.
+current plan.
 
-### 4.2 The player
+### 4.3 The player
 
-`RecreatePlayer` is already wrapped by `install_quickbattle_hook`. The player
-step joins that wrap, in one function, and does **not** add a second wrapper:
-1. Before the original runs, set `g_sPlayerType` from the player order.
-2. After it, queue the player variant's registry, or the class default's (§4.5), and set its display name.
+- **Ship type:** `g_sPlayerType` is already right, because `sync_sdk` set it. `RecreatePlayer` (and the bridge hook around it) is untouched.
+- **Hull name and display name:** QuickBattle's reconcile step (`engine/host_loop.py`, the `session.mission_name == "QuickBattle"` block in `_reconcile_runtime_ships`) already applies a registry to every newly created, not-yet-realised player. Its `registry_texture.apply_class_default(_p)` call becomes `spawn.apply_player_identity(_p)`:
+  - it queues the player order's registry (§4.6) and sets its display name;
+  - with no provider or no plan, it falls back to `apply_class_default`.
 
-"Set as player ship" only changes the scenario. The new ship appears at the
-next `RecreatePlayer`: at battle start, or after End Combat.
+  That covers battle start, End Combat and a death outside the battle.
+- **"Set as player ship"** only changes the scenario (and, through `sync_sdk`, `g_sPlayerType`). The new ship appears at the next `RecreatePlayer`: at battle start, or after End Combat.
 
-### 4.3 Placement (`placement.py`)
+### 4.4 Placement (`placement.py`)
 
 - **Axes:** read from the player's world rotation **after** `RecreatePlayer`:
   - fore = `GetCol(1)`, aft = −fore
@@ -261,9 +270,9 @@ next `RecreatePlayer`: at battle start, or after End Combat.
 - **Occupied slots:** if `g_pSet.IsLocationEmptyTG(pt, 2·radius, 1)` fails, nudge outwards along the lateral axis by one radius, up to a bounded number of tries, then accept.
 - **No randomness.** The same scenario and the same player pose give the same positions.
 
-### 4.4 `GenerateShips` (ours, `spawn.py`)
+### 4.5 `GenerateShips` (ours, `spawn.py`)
 
-`install_generate_ships_hook(qb, provider)` replaces `qb.GenerateShips` at
+`install_generate_ships_hook(qb)` replaces `qb.GenerateShips` at
 module level. It is idempotent, and marked and unwrappable like the bridge
 hook. The replacement mirrors BC's preamble and then spawns.
 
@@ -272,8 +281,8 @@ hook. The replacement mirrors BC's preamble and then spawns.
    - **Create:**
      - `loadspacehelper.CreateShip(ship_file, g_pSet, "<Title>-N", "")`, with N a running index across the battle.
      - Then `SetDisplayName(display_name)`.
-     - If the order has a registry, `ReplaceTexture(<path>, "ID")` **before the ship is realised** (§4.5).
-   - **Place and face** (§4.3); update the proximity manager as BC does.
+     - If the order has a registry, `ReplaceTexture(<path>, "ID")` **before the ship is realised** (§4.6).
+   - **Place and face** (§4.4); update the proximity manager as BC does.
    - **Group membership:** `AddName` to the friendly, enemy or neutral group by allegiance.
    - **Friendly and enemy only:** `g_kShips[objID] = (ai_module, destroyed_line, side, ai_level)`.
      - `ai_module` and `destroyed_line` come from BC's detail tables (`g_dFriendlyShipTypeToDetails` / `g_dEnemyShipTypeToDetails`, stock plus Foundation-registered rows), looked up by the class's ship file.
@@ -284,7 +293,7 @@ hook. The replacement mirrors BC's preamble and then spawns.
    - If one ship fails to create or place, log it and continue with the rest.
    - If the hook itself raises before spawning anything, call BC's original `GenerateShips` over the manifests and log loudly.
 
-### 4.5 Named ships
+### 4.6 Named ships
 
 - **The registry path** is `Data/Models/Ships/<class model dir>/<Registry>.tga`, or the class's path in `registry_texture.DEFAULT_REGISTRY_BY_CLASS` when it is the class default.
 - Only the file stem matters to `hull_decals.resolve_registry`. The native loader resolves textures by basename, and a missing texture leaves the hull nameless.
