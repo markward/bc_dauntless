@@ -316,8 +316,13 @@ renderer::rockfield::NearOutput g_near_out;
 renderer::rockfield::NearCatalogue g_near_catalogue;
 std::vector<renderer::minors::Fragment> g_near_small_frags;
 std::vector<renderer::minors::Fragment> g_near_large_frags;
-// > 0: the player's contact box half extents x this (shields up).
+// > 0: the player's LARGE-rock contact box half extents x this (shields up).
 float g_near_shield_inflate = 0.0f;
+// The near band's own contact player (rockfield_set_player, pushed every
+// frame by far_tier.reconcile). Its own, not the minors' g_minor_player:
+// that one is pushed only while Minor Rocks is on and has a catalogue, and
+// scenery collisions must not hang off the minors toggle.
+std::optional<scenegraph::InstanceId> g_near_player;
 // What the last frame built, summed over its drawn cameras.
 int g_near_meshes = 0;
 int g_near_billboards = 0;
@@ -897,6 +902,7 @@ void reset_frame_state() {
     g_near_field.reset_player();
     g_near_out = {};
     g_near_shield_inflate = 0.0f;
+    g_near_player.reset();
     g_near_meshes = 0;
     g_near_billboards = 0;
     // Mid band: sources and dials belong to the old session.
@@ -1114,11 +1120,13 @@ void sync_instance_transforms_from_store() {
     });
 }
 
-// The player's contact box for this frame, or nullopt when there is no
-// player, its instance is gone, or its model is unresolved.
-std::optional<renderer::minors::PlayerBox> minor_player_box() {
-    if (!g_minor_player) return std::nullopt;
-    const scenegraph::Instance* inst = g_world.get(*g_minor_player);
+// A player's contact box for this frame, or nullopt when there is no
+// player, its instance is gone, or its model is unresolved. The hull AABB
+// cache is per model handle, shared by the minors' and the near band's player.
+std::optional<renderer::minors::PlayerBox> player_box_of(
+        const std::optional<scenegraph::InstanceId>& player) {
+    if (!player) return std::nullopt;
+    const scenegraph::Instance* inst = g_world.get(*player);
     if (inst == nullptr) return std::nullopt;
     auto it = g_minor_player_aabbs.find(inst->model_handle);
     if (it == g_minor_player_aabbs.end()) {
@@ -1148,18 +1156,20 @@ void step_minor_field(float viewport_h) {
         out = glm::vec3(inst->world[3]);
         return true;
     };
-    in.player = minor_player_box();
+    in.player = player_box_of(g_minor_player);
     // A player that vanished this frame must not be swept from its last pose
     // when it (or a successor) reappears.
     if (!in.player) g_minor_field.reset_player();
     g_minor_field.step(in);
 }
 
-// Near band: stream around the player's contact box (else the main camera
-// eye), then step its contacts against that box. System = render origin +
-// render position + the far frame's anchor, as the far haze computes it.
+// Near band: stream around its own player's contact box (else the main
+// camera eye), then step its contacts against that box. System = render
+// origin + render position + the far frame's anchor, as the far haze
+// computes it. A player that vanished is not swept from its last pose
+// (NearField::step resets the sweep on an unset player).
 void step_near_field() {
-    const auto player = minor_player_box();
+    const auto player = player_box_of(g_near_player);
     const glm::dvec3 to_sys = g_world.render_origin() + g_far_field.anchor();
     const glm::dvec3 centre_render = player
         ? glm::dvec3(player->world * glm::vec4(player->center_mu, 1.0f))
@@ -2814,6 +2824,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["far_rocks"]              = g_far_field.rock_count();
               d["far_enabled"]            = g_far_enabled;
               d["far_p_min"]              = py_float(g_far_field.dials().tiers.p_min);
+              d["near_player"]            = g_near_player.has_value();
               return d;
           },
           "Test-only snapshot of the per-frame state reset_frame_state() owns: "
@@ -4268,10 +4279,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("minors_set_player",
           [](std::optional<scenegraph::InstanceId> iid) {
               // A new player (or none) must not be swept from the old pose.
-              if (!iid || !g_minor_player || !(*iid == *g_minor_player)) {
+              if (!iid || !g_minor_player || !(*iid == *g_minor_player))
                   g_minor_field.reset_player();
-                  g_near_field.reset_player();
-              }
               g_minor_player = iid;
           },
           py::arg("iid"),
@@ -4498,13 +4507,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_near_field.set_sources(g_far_field.active_sources());
               g_near_field.clear();
               g_near_field.reset_player();
+              g_near_player.reset();
               g_mid_field.set_sources(g_far_field.active_sources());
               g_mid_out = {};
               g_mid_sprites = 0;
               g_mid_tiles = 0;
           },
           "Drop sources, flagged rocks (back to mesh-only), frame, the near "
-          "band's cells, contacts and sweep state, and the mid band's output; "
+          "band's cells, contacts, sweep state and player, and the mid band's output; "
           "keeps the catalogue and collections.");
     m.def("rockfield_drain_contacts",
           []() { return near_contacts_list(g_near_field.drain_large_contacts()); },
@@ -4523,6 +4533,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Rocks in the near catalogue (small + large). 0 after init(): its "
           "model handles died with the old session, so far_tier re-pushes.");
+    m.def("rockfield_set_player",
+          [](std::optional<scenegraph::InstanceId> iid) {
+              // A new player (or none) must not be swept from the old pose.
+              if (!iid || !g_near_player || !(*iid == *g_near_player))
+                  g_near_field.reset_player();
+              g_near_player = iid;
+          },
+          py::arg("iid"),
+          "The instance the near band streams around and whose hull box meets "
+          "its rocks, or None (stream around the main camera, no contacts).");
     m.def("rockfield_set_shield_inflate",
           [](float scale) { g_near_shield_inflate = scale; },
           py::arg("scale"),

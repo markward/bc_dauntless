@@ -446,3 +446,49 @@ def test_push_catalogue_passes_the_collections_as_the_third_argument():
         assert tuple(c["avg_albedo"]) == tuple(w.avg_albedo)
         assert c["variant"] == variant[w.variant]
     assert sorted({c["variant"] for c in cols}) == [0, 1, 2]
+
+
+# ── The near band's own contact player (final review 1) ───────────────────────
+
+def _player_pushes(r):
+    return [a[0] for n, a in r.calls if n == "rockfield_set_player"]
+
+
+class _Player:
+    pass
+
+
+def _session(player, instances, hidden=()):
+    class _S:
+        pass
+    s = _S()
+    s.player = player
+    s.ship_instances = instances
+    s.scope_hidden = hidden
+    return s
+
+
+def test_reconcile_pushes_the_session_player_to_the_near_band_every_frame():
+    """The near band no longer borrows the minors' player (which Minor Rocks
+    disabled never pushes): far_tier pushes the session player's instance
+    itself, every frame."""
+    p = _Player()
+    r = _R()
+    try:
+        far_tier.reconcile(_session(p, {p: 42}), r)
+        far_tier.reconcile(_session(p, {p: 42}), r)
+    finally:
+        far_tier.reset()
+    assert _player_pushes(r) == [42, 42]
+
+
+def test_a_scope_hidden_or_absent_player_pushes_none():
+    p = _Player()
+    r = _R()
+    try:
+        far_tier.reconcile(_session(p, {p: 42}, hidden=(42,)), r)   # cutscene elsewhere
+        far_tier.reconcile(_session(None, {p: 42}), r)               # no player
+        far_tier.reconcile(_session(p, {}), r)                       # not realised
+    finally:
+        far_tier.reset()
+    assert _player_pushes(r) == [None, None, None]

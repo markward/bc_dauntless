@@ -69,6 +69,7 @@ def _dirty_every_reachable_global(h):
     h.set_render_origin(1.0e6, -2.0, 3.0)
     h.minors_add_cloud(_minor_cloud())
     h.minors_set_player(iid)
+    h.rockfield_set_player(iid)
     h.minors_set_enabled(False)
     h.minors_set_dials({"shove_min_gups": 9.0})
     h.far_set_sources([_far_source()])
@@ -153,6 +154,8 @@ CLEAN = {
     "far_rocks": 0,
     "far_enabled": True,
     "far_p_min": 0.25,
+    # Rock fields: the near band's own contact player (rockfield_set_player).
+    "near_player": False,
 }
 
 

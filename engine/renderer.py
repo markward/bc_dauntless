@@ -88,7 +88,7 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
-    "rockfield_rearm", "rockfield_catalogue_size",
+    "rockfield_rearm", "rockfield_catalogue_size", "rockfield_set_player",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -671,6 +671,13 @@ def rockfield_catalogue_size() -> int:
     """Rocks in the native near catalogue; 0 after a host init (its model
     handles died with the old session)."""
     return _h.rockfield_catalogue_size()
+
+
+def rockfield_set_player(iid) -> None:
+    """The InstanceId the near band streams around and whose hull box meets
+    its rocks, or None (streams around the main camera, no contacts). The
+    near band's own player -- independent of minors_set_player."""
+    _h.rockfield_set_player(iid)
 
 
 def rockfield_set_shield_inflate(scale: float) -> None:

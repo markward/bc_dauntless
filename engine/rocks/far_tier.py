@@ -17,6 +17,9 @@ Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
                       the viewed set (tile-field haze, added 2026-10-02).
   far_set_rocks       the flagged mission/breakup rocks, when the list changes
 
+and `reconcile` pushes the near band's own contact player
+(rockfield_set_player, every frame) and its shield inflate.
+
 A rock is flagged by `note_model` at realise time, with the model path and
 scale that were ACTUALLY loaded: a catalogue rock carries its catalogue index
 (impostor) and bound radius; a stock asteroid NIF (the catalogue-off or
@@ -326,6 +329,19 @@ def reconcile(session, r) -> None:
         reconcile_with(r, view, rocks, fields)
     except Exception as e:
         _swallow("reconcile", e)
+    # The near band's OWN player, every frame: it streams around it and
+    # collides with it whether or not Minor Rocks is on (the minors' player
+    # is pushed only by minors.reconcile_with, which returns early when that
+    # tier is off). None when scope-hidden (a cutscene in another frame), as
+    # minors.reconcile does.
+    try:
+        player = getattr(session, "player", None)
+        iid = instances.get(player) if player is not None else None
+        if iid in hidden:
+            iid = None
+        r.rockfield_set_player(iid)
+    except Exception as e:
+        _swallow("set_player", e)
     # The near band's player contact box: inflated to the shield bubble while
     # shields are up (rock-fields Task 8, engine/rocks/scenery_contact.py).
     try:

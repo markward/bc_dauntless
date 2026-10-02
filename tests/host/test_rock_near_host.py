@@ -62,7 +62,9 @@ def host():
         h.far_clear()
         h.far_set_dials({})
         h.far_set_enabled(True)
+        h.minors_set_enabled(True)
         h.minors_set_player(None)
+        h.rockfield_set_player(None)
         h.shutdown()
         far_tier.reset()
 
@@ -70,7 +72,7 @@ def host():
 def test_near_bindings_are_on_the_facade():
     from engine import renderer
     for name in ("rockfield_drain_contacts", "rockfield_set_shield_inflate",
-                 "rockfield_rearm"):
+                 "rockfield_rearm", "rockfield_set_player"):
         assert callable(getattr(renderer, name))
 
 
@@ -112,7 +114,7 @@ def test_a_player_sweeping_through_large_rocks_reports_contacts(host):
     rock = catalogue.pick("x", kind="fragment", family="silicate")
     ship = host.create_instance(
         host.load_model(rock.lod_paths[0], [], None, decals=None, scale=1.0))
-    host.minors_set_player(ship)
+    host.rockfield_set_player(ship)
     contacts = []
     for i in range(31):
         host.damage_decals_tick(0.1 * i)
@@ -135,7 +137,7 @@ def _sweep_player(host, steps=31):
     rock = catalogue.pick("x", kind="fragment", family="silicate")
     ship = host.create_instance(
         host.load_model(rock.lod_paths[0], [], None, decals=None, scale=1.0))
-    host.minors_set_player(ship)
+    host.rockfield_set_player(ship)
     minor, large = [], []
     for i in range(steps):
         host.damage_decals_tick(0.1 * i)
@@ -224,15 +226,50 @@ def test_near_cells_stream_around_the_player_not_the_camera(host):
                     up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=0.1, far=1.0e7)
     host.frame()
     assert host.far_stats()["near_cells"] == 0      # no player: camera, outside
-    host.minors_set_player(ship)
+    host.minors_set_player(ship)                    # the MINORS' player is not the near band's
+    host.frame()
+    assert host.far_stats()["near_cells"] == 0
+    host.rockfield_set_player(ship)
     host.frame()
     assert host.far_stats()["near_cells"] > 0       # the player, inside
+    host.rockfield_set_player(None)                 # None: back to the camera, outside
+    host.frame()
+    assert host.far_stats()["near_cells"] == 0
     host.reset_render_origin()
+
+
+def test_disabling_minor_rocks_keeps_the_near_band_on_the_player(host):
+    """Final review 1: the near band has its OWN player. With Minor Rocks
+    disabled (minors.reconcile_with returns early and never pushes a minors
+    player), cells still stream around the player, not the camera, and a
+    large rock still reports a contact."""
+    host.minors_set_enabled(False)
+    host.minors_set_player(None)
+    _push_real_catalogue()
+    host.far_set_dials({"near_large_density": 0.002, "near_small_density": 0.0})
+    # A small sphere around the player's sweep; the camera sits outside it.
+    host.far_set_sources([_sphere_source(radius=400.0)])
+    host.far_set_frame(None, (0.0, 0.0, 0.0))
+    host.set_camera(eye=(5000.0, 0.0, 0.0), target=(5000.0, 0.0, -1.0),
+                    up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=0.1, far=1.0e7)
+    from engine.rocks import catalogue
+    rock = catalogue.pick("x", kind="fragment", family="silicate")
+    ship = host.create_instance(
+        host.load_model(rock.lod_paths[0], [], None, decals=None, scale=1.0))
+    host.rockfield_set_player(ship)
+    contacts = []
+    for i in range(31):
+        host.damage_decals_tick(0.1 * i)
+        host.set_world_transform(ship, _row_major(-150.0 + 10.0 * i, 0.0, 0.0, 0.05))
+        host.frame()
+        contacts += host.rockfield_drain_contacts()
+    assert host.far_stats()["near_cells"] > 0, "the near band did not stream around the player"
+    assert contacts, "no large contact with Minor Rocks disabled"
 
 
 def _contacts_of_sweep(host, inflate):
     host.far_clear()
-    host.minors_set_player(None)
+    host.rockfield_set_player(None)
     host.far_set_dials({"near_large_density": 0.0005, "near_small_density": 0.0})
     host.far_set_sources([_sphere_source(radius=2000.0)])
     host.far_set_frame(None, (0.0, 0.0, 0.0))
