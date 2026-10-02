@@ -87,6 +87,9 @@ class QuickBattleSetupPanel(Panel):
         self._eras = set(self._default_eras())
         self._species = {"Federation"}
         self._preset: Optional[str] = None
+        # The current preset as last saved or loaded, so `dirty` never reads
+        # the presets file per frame. None with no current preset.
+        self._baseline: Optional[sc.Scenario] = None
         self._pending_js = ""
 
         # Catalog: read lazily on first use (open, render or plan).
@@ -109,6 +112,13 @@ class QuickBattleSetupPanel(Panel):
         return "quick-battle-setup"
 
     @property
+    def poll_interval_s(self) -> float:
+        # The poll re-reads the catalog and rebuilds the setup snapshot; 10 Hz
+        # is plenty. Events, invalidate() and visibility flips mark the panel
+        # due, which bypasses this (PanelRegistry.render_all).
+        return 0.1
+
+    @property
     def scenario(self) -> sc.Scenario:
         return self._scenario
 
@@ -127,6 +137,9 @@ class QuickBattleSetupPanel(Panel):
         self.visible = True
 
     def close(self) -> None:
+        # A confirmation or draft must not outlive the screen it was asked on.
+        self._confirm = None
+        self._draft = None
         self._pending_js = ""
         self.visible = False
 
@@ -203,7 +216,10 @@ class QuickBattleSetupPanel(Panel):
         self._stats.reset()
         bios.reset()
         self._catalog_push_due = True
-        self._last_pushed = None
+        # The reconcile may have changed the player or dropped rows; XO
+        # Start/Restart bypass the panel, so the SDK must hear about it.
+        # No recursion: the generation is already current.
+        self._after_change()
 
     def _ce(self, ship_id):
         return self._index.get((ship_id or "").lower())
@@ -286,8 +302,11 @@ class QuickBattleSetupPanel(Panel):
     def _dirty(self) -> bool:
         if self._preset is None:
             return self._scenario.can_start()
-        saved = self._presets.load(self._preset)
-        return saved is None or not sc.same_setup(self._scenario, saved)
+        return self._baseline is None or not sc.same_setup(self._scenario, self._baseline)
+
+    @staticmethod
+    def _copy(scenario):
+        return sc.from_json(scenario.to_json())
 
     @staticmethod
     def _group_summary(g) -> str:
@@ -333,7 +352,7 @@ class QuickBattleSetupPanel(Panel):
                        for g in s.groups],
             "target": self._target, "selected": self._selected,
             "draft": dict(self._draft) if self._draft else None,
-            "confirm": ({k: self._confirm[k] for k in ("title", "body", "ok")}
+            "confirm": ({k: self._confirm[k] for k in ("title", "name", "body", "ok")}
                         if self._confirm else None),
             "eras": [e for e in ERA_IDS if e in self._eras],
             "species": sorted(self._species, key=lambda n: (n.lower(), n)),
@@ -364,11 +383,19 @@ class QuickBattleSetupPanel(Panel):
         return (prefix + out) or None
 
     # ── Dispatch ────────────────────────────────────────────────────────
+    _CONFIRM_VERBS = frozenset(("confirm", "cancel", "esc", "close"))
+
     def dispatch_event(self, action: str) -> bool:
         verb, _, arg = action.partition(":")
         handler = self._HANDLERS.get(verb)
         if handler is None:
             _log.warning("quick-battle-setup: unknown verb %r", action)
+            return False
+        if self._confirm is not None and verb not in self._CONFIRM_VERBS:
+            # A pending confirmation is modal: anything else could change the
+            # scenario its action was asked about.
+            _log.warning("quick-battle-setup: %r refused, a confirmation is pending",
+                         action)
             return False
         self._refresh_catalog()
         ok = bool(handler(self, arg))
@@ -381,8 +408,9 @@ class QuickBattleSetupPanel(Panel):
             g = self._scenario.first_non_player_group() or self._scenario.player_group()
             self._target = g.id
 
-    def _ask(self, title, body, ok, action) -> bool:
-        self._confirm = {"title": title, "body": body, "ok": ok, "action": action}
+    def _ask(self, title, name, body, ok, action) -> bool:
+        self._confirm = {"title": title, "name": name, "body": body, "ok": ok,
+                         "action": action}
         return True
 
     # filters and sheet
@@ -426,7 +454,11 @@ class QuickBattleSetupPanel(Panel):
         ce = self._ce(unquote(arg))
         if ce is None or not sc.can_be_player(ce, None):
             return False
-        self._scenario.set_player_ship(ce.ship_id)
+        try:
+            self._scenario.set_player_ship(ce.ship_id)
+        except Exception as e:                # never out of dispatch_event
+            _log.warning("quickbattle set-player %s failed: %s", ce.ship_id, e)
+            return False
         self._after_change()
         return True
 
@@ -500,7 +532,7 @@ class QuickBattleSetupPanel(Panel):
         if not g.entries:
             delete()
             return True
-        return self._ask("Delete group?", "Delete %s and its %s?" % (
+        return self._ask("Delete group?", g.name, "Delete %s and its %s?" % (
             g.name, _plural(len(g.entries), "ship")), "Delete", delete)
 
     # ship rows
@@ -541,11 +573,12 @@ class QuickBattleSetupPanel(Panel):
         def save():
             if self._presets.save(name, self._scenario):
                 self._preset = name
+                self._baseline = self._copy(self._scenario)
                 self._last_pushed = None
 
         if self._presets.exists(name):
             return self._ask(
-                "Overwrite preset?",
+                "Overwrite preset?", name,
                 "A preset named %s already exists. Replace it with the current scenario?"
                 % name, "Overwrite", save)
         save()
@@ -563,13 +596,15 @@ class QuickBattleSetupPanel(Panel):
             sc.reconcile(loaded, self._index)
             self._scenario = loaded
             self._preset = name
+            self._baseline = self._copy(loaded)
+            self._confirm = None
             self._target = (loaded.first_non_player_group() or loaded.player_group()).id
             self._draft = None
             self._selected = None
             self._after_change()
 
         if self._dirty():
-            return self._ask("Load preset?", "Your current setup has unsaved changes. "
+            return self._ask("Load preset?", name, "Your current setup has unsaved changes. "
                              "Load %s anyway?" % name, "Load", load)
         load()
         return True
@@ -582,9 +617,11 @@ class QuickBattleSetupPanel(Panel):
         def delete():
             if self._presets.delete(name) and self._preset == name:
                 self._preset = None
+                self._baseline = None
             self._last_pushed = None
 
-        return self._ask("Delete preset?", "Delete preset %s?" % name, "Delete", delete)
+        return self._ask("Delete preset?", name, "Delete preset %s?" % name, "Delete",
+                         delete)
 
     # dialogs
     def _on_confirm(self, _arg) -> bool:

@@ -259,7 +259,7 @@ def test_group_delete_confirm_copy(panel):
     panel.dispatch_event("add:Galaxy")
     panel.dispatch_event("group-delete:" + gid)
     c = _setup(panel)["confirm"]
-    assert c == {"title": "Delete group?",
+    assert c == {"title": "Delete group?", "name": "Enemy group",
                  "body": "Delete Enemy group and its 2 ships?", "ok": "Delete"}
     panel.dispatch_event("cancel")
     assert _setup(panel)["confirm"] is None and panel.scenario.group(gid) is not None
@@ -270,20 +270,21 @@ def test_preset_confirm_copy(panel):
     panel.dispatch_event("preset-save:Alpha")
     panel.dispatch_event("preset-save:Alpha")
     assert _setup(panel)["confirm"] == {
-        "title": "Overwrite preset?",
+        "title": "Overwrite preset?", "name": "Alpha",
         "body": "A preset named Alpha already exists. Replace it with the current scenario?",
         "ok": "Overwrite"}
     panel.dispatch_event("cancel")
     panel.dispatch_event("add:Warbird")
     panel.dispatch_event("preset-load:Alpha")
     assert _setup(panel)["confirm"] == {
-        "title": "Load preset?",
+        "title": "Load preset?", "name": "Alpha",
         "body": "Your current setup has unsaved changes. Load Alpha anyway?",
         "ok": "Load"}
     panel.dispatch_event("cancel")
     panel.dispatch_event("preset-delete:Alpha")
     assert _setup(panel)["confirm"] == {
-        "title": "Delete preset?", "body": "Delete preset Alpha?", "ok": "Delete"}
+        "title": "Delete preset?", "name": "Alpha", "body": "Delete preset Alpha?",
+        "ok": "Delete"}
 
 
 def test_preset_load_when_clean_needs_no_confirm(panel):
@@ -486,3 +487,94 @@ def test_unplannable_scenario_does_not_break_dispatch(tmp_path):
                          g_kFriendList=[], g_sPlayerType=None)
     p = _make(tmp_path, lambda: [_ce("Warbird", species="Romulan")], qb_module=qb)
     assert p.dispatch_event("add:Warbird")
+
+
+# ── Review fixes ────────────────────────────────────────────────────────────
+
+def test_pending_confirm_blocks_other_verbs_and_cannot_hit_a_new_scenario(panel):
+    """Reviewer repro: a group-delete confirm pending, then a clean preset
+    load, then confirm, deleted the LOADED preset's group."""
+    panel.dispatch_event("add:Warbird")
+    panel.dispatch_event("add:Warbird")
+    panel.dispatch_event("preset-save:A")
+    gid = _enemy(panel).id
+    panel.dispatch_event("group-delete:" + gid)
+    assert not panel.dispatch_event("preset-load:A")
+    assert not panel.dispatch_event("add:Warbird")
+    assert not panel.dispatch_event("group-new")
+    assert len(_enemy(panel).entries) == 2 and _setup(panel)["confirm"] is not None
+    panel.dispatch_event("cancel")
+    assert panel.dispatch_event("preset-load:A")
+    assert panel.dispatch_event("confirm") is False     # nothing pending any more
+    assert len(panel.scenario.groups) == 2
+
+
+def test_close_drops_pending_confirm_and_draft(panel):
+    panel.dispatch_event("details:" + _enemy(panel).id)
+    panel.dispatch_event("add:Warbird")
+    panel.dispatch_event("draft-cancel")
+    panel.dispatch_event("details:" + _enemy(panel).id)
+    panel.close()
+    panel.open()
+    assert _setup(panel)["draft"] is None
+    panel.dispatch_event("group-delete:" + _enemy(panel).id)
+    panel.close()
+    panel.open()
+    s = _setup(panel)
+    assert s["confirm"] is None
+    assert not panel.dispatch_event("confirm")
+    assert len(panel.scenario.groups) == 2
+
+
+def test_catalog_change_syncs_the_sdk(tmp_path):
+    from types import SimpleNamespace
+    cat = list(CATALOG)
+    qb = SimpleNamespace(bInSimulation=0, g_dFriendlyShipTypeToDetails={},
+                         g_dEnemyShipTypeToDetails={}, g_kEnemyList=[],
+                         g_kFriendList=[], g_sPlayerType=None)
+    p = _make(tmp_path, lambda: list(cat), qb_module=qb)
+    p.dispatch_event("add:Warbird")
+    assert [m[0] for m in qb.g_kEnemyList] == ["Warbird"]
+    cat[:] = [c for c in cat if c.ship_id not in ("Warbird", "Galaxy")]
+    p.render_payload()
+    assert qb.g_kEnemyList == [] and qb.g_sPlayerType == "Sovereign"
+
+
+def test_set_player_never_raises_out_of_dispatch(panel, monkeypatch):
+    def boom(ship):
+        raise RuntimeError("scenario broke")
+    monkeypatch.setattr(panel.scenario, "set_player_ship", boom)
+    assert panel.dispatch_event("set-player:Sovereign") is False
+
+
+def test_unplayable_catalog_plan_falls_back_to_bc(tmp_path):
+    from engine.quickbattle import spawn
+    p = _make(tmp_path, lambda: [_ce("FedStarbase", playable=False)])
+    assert not p.dispatch_event("set-player:FedStarbase")
+    assert spawn._provider == p.current_plan
+    assert spawn.current_plan() is None            # ValueError -> BC's fallback
+
+
+def test_dirty_does_not_reload_the_preset_every_frame(panel):
+    panel.dispatch_event("add:Warbird")
+    panel.dispatch_event("preset-save:Alpha")
+    calls = []
+    real = panel._presets.load
+    panel._presets.load = lambda name: calls.append(name) or real(name)
+    for _ in range(3):
+        panel.invalidate()
+        assert not _setup(panel)["dirty"]
+    panel.dispatch_event("add:Warbird")
+    assert _setup(panel)["dirty"]
+    assert calls == []
+    panel.dispatch_event("preset-delete:Alpha")
+    panel.dispatch_event("confirm")
+    assert _setup(panel)["dirty"]                      # no preset -> can_start
+
+
+def test_panel_is_throttled_but_events_still_bypass(panel):
+    assert 0.0 < panel.poll_interval_s <= 0.1
+    panel.consume_due()
+    panel.dispatch_event("add:Warbird")                # registry marks due itself;
+    panel.handle_key_esc()                             # esc marks due here
+    assert panel.consume_due()

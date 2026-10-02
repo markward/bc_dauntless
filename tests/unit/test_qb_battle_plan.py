@@ -98,3 +98,22 @@ def test_class_default_registry_falls_back_to_bc_default_table():
     plain_galaxy = _ce("Galaxy", variants=[Variant("USS Dauntless")])
     plan = sc.battle_plan(sc.default_scenario(), sc.catalog_index([plain_galaxy]))
     assert plan.player.registry == "Dauntless"
+
+
+def test_reconcile_without_galaxy_keeps_player_on_first_playable():
+    index = sc.catalog_index([STARBASE, AKIRA, WARBIRD])
+    s = sc.default_scenario()
+    msgs = sc.reconcile(s, index)
+    assert msgs
+    pe = s.player_entry()                       # never removed
+    assert (pe.ship, pe.variant) == ("Akira", None)
+    assert sc.battle_plan(s, index).player.class_id == "Akira"
+
+
+def test_reconcile_with_no_playable_entry_leaves_player_and_plan_raises():
+    index = sc.catalog_index([STARBASE])
+    s = sc.default_scenario()
+    msgs = sc.reconcile(s, index)
+    assert msgs and s.player_entry().ship == "Galaxy"
+    with pytest.raises(ValueError, match="Galaxy"):
+        sc.battle_plan(s, index)

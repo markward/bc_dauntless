@@ -271,16 +271,32 @@ def can_be_player(ce, variant_name) -> bool:
     return bool(ce.playable)
 
 
+def _fallback_player(index) -> Optional[str]:
+    """Galaxy if installed and playable, else the first playable entry in
+    `index` order; None when nothing is playable."""
+    ce = _lookup(index, DEFAULT_PLAYER_SHIP)
+    if ce is not None and can_be_player(ce, None):
+        return ce.ship_id
+    return next((c.ship_id for c in index.values() if can_be_player(c, None)), None)
+
+
 def reconcile(scenario: "Scenario", index) -> list:
     msgs = []
     pe = scenario.player_entry()
     ce = _lookup(index, pe.ship)
     if ce is None or not can_be_player(ce, pe.variant):
-        msgs.append("player ship %r unavailable; using %s" % (pe.ship, DEFAULT_PLAYER_SHIP))
-        pe.ship, pe.variant = DEFAULT_PLAYER_SHIP, None
+        fallback = _fallback_player(index)
+        if fallback is None:
+            msgs.append("player ship %r unavailable and no playable ship is installed"
+                        % pe.ship)
+        else:
+            msgs.append("player ship %r unavailable; using %s" % (pe.ship, fallback))
+            pe.ship, pe.variant = fallback, None
     for g in scenario.groups:
         for e in list(g.entries):
             ce = _lookup(index, e.ship)
+            if ce is None and e.player:
+                continue                     # the player entry is NEVER removed
             if ce is None:
                 msgs.append("ship %r is no longer installed; removed from %r" % (e.ship, g.name))
                 g.entries.remove(e)
@@ -347,6 +363,8 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
 
     pe = scenario.player_entry()
     pce = _lookup(index, pe.ship)
+    if pce is None:
+        raise ValueError("player ship %r is not in the ship catalog" % pe.ship)
     p_file, p_reg, p_name = _resolve(pce, pe.variant)
     rows = []
     for g in scenario.groups:
