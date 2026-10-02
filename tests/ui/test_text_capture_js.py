@@ -48,22 +48,35 @@ def test_editable_excludes_checkbox_range_and_buttons():
 
 def test_listeners_are_capture_phase():
     src = _src()
-    for ev in ("focusin", "focusout", "keydown"):
+    for ev in ("focusin", "blur", "keydown"):
         m = re.search(r"addEventListener\('%s',.*?\},\s*true\)" % ev, src, re.S)
         assert m, ev
 
 
+def test_release_is_reported_on_capture_phase_blur_not_focusout():
+    """Live bug (2026-10-02): the SPV row's own `blur` handler removes the
+    input from the DOM, and Chromium fires `blur` BEFORE `focusout` -- so a
+    document `focusout` listener never saw the detached field, `kbd/blur` was
+    never sent, and capture stuck on until the panel closed (no orbit, game
+    deaf). A capture-phase `blur` listener on the document runs before the
+    target's own handlers, while the field is still attached."""
+    src = _src()
+    assert "addEventListener('focusout'" not in src
+    block = src[src.index("addEventListener('blur'"):src.index("'keydown'")]
+    assert "dauntlessEvent('kbd/blur')" in block
+
+
 def test_focus_reports_owner_and_saves_value():
     src = _src()
-    block = src[src.index("'focusin'"):src.index("'focusout'")]
+    block = src[src.index("'focusin'"):src.index("addEventListener('blur'")]
     assert "saved.set(" in block
     assert "dauntlessEvent('kbd/focus:' + ownerOf(" in block
     assert "closest('[data-panel]')" in _fn(src, "ownerOf")
 
 
-def test_focusout_to_another_editable_sends_nothing():
+def test_blur_to_another_editable_sends_nothing():
     src = _src()
-    block = src[src.index("'focusout'"):src.index("'keydown'")]
+    block = src[src.index("addEventListener('blur'"):src.index("'keydown'")]
     assert block.index("isEditable(e.relatedTarget)") < block.index("dauntlessEvent('kbd/blur')")
 
 

@@ -291,7 +291,7 @@ panel's registry `name`.
 - **`focusin` on an editable element:** remember its current value (a `WeakMap`
   keyed by element; `textContent` for contenteditable), then call
   `dauntlessEvent('kbd/focus:' + owner)`.
-- **`focusout` from an editable element:** if `relatedTarget` is editable, do
+- **`blur` from an editable element (capture phase, not `focusout` — a panel may remove the field in its own blur handler, and a detached field's focusout never reaches the document):** if `relatedTarget` is editable, do
   nothing. Otherwise call `dauntlessEvent('kbd/blur')`.
 - **`keydown` on an editable element:**
   - **Esc:** restore the remembered value, `blur()`, `preventDefault()` and
@@ -345,7 +345,7 @@ load.
   and set `_blur_pending`;
 - if `owner` is `None`, do nothing.
 
-The page's resulting `focusout` sends `kbd/blur`, which is then a harmless
+The page's resulting `blur` sends `kbd/blur`, which is then a harmless
 no-op.
 
 ### 4.2 `tick()`: once per frame, top of the input block
@@ -526,7 +526,7 @@ All of it runs under `scripts/check_tests.sh`.
    `tests/ui/test_spv_value_edit_js.py`) check:
    - the editable selector excludes checkbox and range;
    - Esc restores before blurring;
-   - focusout checks `relatedTarget`;
+   - the capture-phase blur listener checks `relatedTarget`;
    - `__dauntlessBlurText` restores before blurring;
    - `index.html` loads `text_capture.js` and `#spv-root` carries `data-panel`;
    - the SPV ✕ and ✓ buttons call `preventDefault` on mousedown;

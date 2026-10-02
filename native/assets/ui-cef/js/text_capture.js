@@ -43,7 +43,13 @@
         dauntlessEvent('kbd/focus:' + ownerOf(el));
     }, true);
 
-    document.addEventListener('focusout', function (e) {
+    // Capture-phase `blur`, not `focusout`: Chromium fires blur BEFORE
+    // focusout, and a panel's own blur handler may remove the field from the
+    // DOM (the SPV value rows swap back on blur). A detached field's focusout
+    // never reaches the document, so the keyboard stayed captured until the
+    // panel closed. A document capture listener runs before the field's own
+    // handlers, while it is still attached.
+    document.addEventListener('blur', function (e) {
         if (!isEditable(e.target)) return;
         // Field -> field (Tab): the next focusin re-reports; keep capture.
         if (isEditable(e.relatedTarget)) return;
