@@ -241,3 +241,136 @@ TEST(MidTiles, TelephotoCapHolds) {   // Review Focus 5
     EXPECT_LE(tiny.count, 300);
     EXPECT_LT(tiny.tiles, 200000);
 }
+
+// ── Cluster snap (rock-fields Task 14 ruling) ─────────────────────────────────
+// A SPHERE source with 2R < a level's tile is smaller than one tile: point
+// sampling at tile centres would miss it (Beol 4's r 1,000 field in 2,400 GU
+// L2 tiles), so the tile containing its centre "snaps" to it.
+namespace {
+far::DiscSource sphere_at(glm::dvec3 c, float r, std::uint32_t id = 21) {
+    far::DiscSource s = full_sphere(r, id);
+    s.centre = c;
+    return s;
+}
+rockfield::MidBuildInput looking_at(glm::vec3 eye, glm::vec3 target, float fov_deg = 30.0f) {
+    rockfield::MidBuildInput in;
+    in.proj = glm::perspective(glm::radians(fov_deg), 1.0f, 0.01f, 1e7f);
+    in.view = glm::lookAt(eye, target, glm::vec3(0, 0, 1));
+    return in;
+}
+std::vector<far::ImpostorGpu> items_of(const rockfield::MidOutput& o) {
+    std::vector<far::ImpostorGpu> v;
+    for (const auto& b : o.sprites) v.insert(v.end(), b.items.begin(), b.items.end());
+    return v;
+}
+// Order-sensitive digest of a build: atlas slots and every float, rounded.
+double digest(const rockfield::MidOutput& o) {
+    double h = 0.0, k = 1.0;
+    for (const auto& b : o.sprites) {
+        h += k * b.rock; k += 0.37;
+        for (const auto& g : b.items) {
+            for (const glm::vec4* v : {&g.centre_half, &g.right_view, &g.up_dither})
+                for (int i = 0; i < 4; ++i) { h += k * std::round((*v)[i] * 100.0) / 100.0; k += 0.013; }
+        }
+    }
+    return h;
+}
+}  // namespace
+
+TEST(MidSnap, SmallSphereInsideOneL2TileGetsOneSpriteAtItsCentre) {
+    // r 600 (2R = 1,200 < 2,400): the L2 tile [0, 2400)^3 holds it, and its
+    // tile centre (1200, 1200, 1200) lies 1,212 GU away -- outside the sphere.
+    const glm::dvec3 c(500.0, 500.0, 500.0);
+    const float r = 600.0f;
+    const glm::vec3 eye = glm::vec3(c) + glm::vec3(0.0f, -6000.0f, 0.0f);
+    rockfield::MidDials d;
+    rockfield::MidOutput out;
+    field({sphere_at(c, r)}, d).build(looking_at(eye, glm::vec3(c)), out);
+    const auto items = items_of(out);
+    ASSERT_EQ(items.size(), 1u) << "tiles " << out.tiles;
+    const glm::vec3 p(items[0].centre_half);
+    EXPECT_LE(glm::length(p - glm::vec3(c)), 0.25f * r * std::sqrt(3.0f) + 1e-2f);
+    // half = R * scale * (0.8 + 0.4u), padded 1.02 by make_impostor.
+    EXPECT_GE(items[0].centre_half.w, 0.8f * r * 1.02f - 1e-2f);
+    EXPECT_LE(items[0].centre_half.w, 1.2f * r * 1.02f + 1e-2f);
+    // Full density at the centre => a dense collection.
+    ASSERT_EQ(out.sprites.size(), 1u);
+    EXPECT_GE(out.sprites[0].rock, 32);
+    EXPECT_LE(out.sprites[0].rock, 47);
+}
+
+TEST(MidSnap, ASnappedTileNeverPlacesTwo) {
+    // The tile centre (1200, 1200, 1200) lies INSIDE this r 1,000 sphere, so
+    // the centre-density path would place a sprite there too: the snap
+    // replaces it.
+    const glm::dvec3 c(1100.0, 1100.0, 1100.0);
+    const float r = 1000.0f;
+    const glm::vec3 eye = glm::vec3(c) + glm::vec3(0.0f, -6000.0f, 0.0f);
+    rockfield::MidOutput out;
+    field({sphere_at(c, r)}).build(looking_at(eye, glm::vec3(c)), out);
+    const auto items = items_of(out);
+    ASSERT_EQ(items.size(), 1u);
+    EXPECT_LE(glm::length(glm::vec3(items[0].centre_half) - glm::vec3(c)),
+              0.25f * r * std::sqrt(3.0f) + 1e-2f);
+}
+
+TEST(MidSnap, LevelWeightAndDitherFollowTheSpriteDistance) {
+    const glm::dvec3 c(500.0, 500.0, 500.0);
+    const float r = 600.0f;
+    rockfield::MidDials d;
+    // Past the hand-off: no level weight at the sprite => nothing.
+    {
+        const glm::vec3 eye = glm::vec3(c) + glm::vec3(0.0f, -9000.0f, 0.0f);
+        rockfield::MidOutput out;
+        field({sphere_at(c, r)}, d).build(looking_at(eye, glm::vec3(c)), out);
+        EXPECT_EQ(out.count, 0);
+    }
+    // In L2's fade-out (7,000 GU): dithered fading out, +(1 - w).
+    {
+        const glm::vec3 eye = glm::vec3(c) + glm::vec3(0.0f, -7000.0f, 0.0f);
+        rockfield::MidOutput out;
+        field({sphere_at(c, r)}, d).build(looking_at(eye, glm::vec3(c)), out);
+        const auto items = items_of(out);
+        ASSERT_EQ(items.size(), 1u);
+        // The snapped sprite's own point (the source centre, before the
+        // jitter -- as a tile sprite uses its tile centre), not the tile's.
+        const float dist = glm::length(glm::vec3(c) - eye);
+        EXPECT_NEAR(items[0].up_dither.w, rockfield::mid_level_dither(2, dist, d), 1e-4f);
+        EXPECT_GT(items[0].up_dither.w, 0.0f);
+    }
+}
+
+TEST(MidSnap, TheNearBandGuardStillApplies) {
+    // r 50 (2R = 100 < 150): snaps at L0. With the eye 40 GU from the centre
+    // (< in_lo 80) the near band owns it: no mid sprite.
+    const glm::dvec3 c(1000.0, 1000.0, 1000.0);
+    const glm::vec3 eye = glm::vec3(c) + glm::vec3(0.0f, -40.0f, 0.0f);
+    rockfield::MidOutput out;
+    field({sphere_at(c, 50.0f)}).build(looking_at(eye, glm::vec3(c), 90.0f), out);
+    EXPECT_EQ(out.count, 0);
+    // From 120 GU (in L0's range) it shows, once.
+    const glm::vec3 eye2 = glm::vec3(c) + glm::vec3(0.0f, -300.0f, 0.0f);
+    rockfield::MidOutput out2;
+    field({sphere_at(c, 50.0f)}).build(looking_at(eye2, glm::vec3(c), 90.0f), out2);
+    EXPECT_EQ(out2.count, 1);
+}
+
+TEST(MidSnap, LargeSpheresAndBeltsAreUnchanged) {
+    // Digests recorded BEFORE the snap existed: 2R >= every tile, and belts,
+    // never snap.
+    rockfield::MidDials d; d.max_sprites = 1000000;
+    rockfield::MidOutput a, b, s;
+    field({full_sphere()}, d).build(looking_along_y(90.0f), a);
+    field({flat_belt(0.3f)}, d).build(looking_along_y(90.0f, glm::vec3(5000, 0, 0)), b);
+    const glm::dvec3 c(1100.0, 1100.0, 1100.0);   // r 1,300: 2R = 2,600 > 2,400
+    field({sphere_at(c, 1300.0f)}, d)
+        .build(looking_at(glm::vec3(c) + glm::vec3(0, -4000, 0), glm::vec3(c), 60.0f), s);
+    std::printf("[mid snap digests] %.6f %.6f %.6f (counts %d %d %d)\n", digest(a), digest(b),
+                digest(s), a.count, b.count, s.count);
+    EXPECT_EQ(a.count, 268);
+    EXPECT_EQ(b.count, 82);
+    EXPECT_EQ(s.count, 1);
+    EXPECT_NEAR(digest(a), 12423359.118230, 1e-3);
+    EXPECT_NEAR(digest(b), 6190764.412800, 1e-3);
+    EXPECT_NEAR(digest(s), 5293.574110, 1e-3);
+}

@@ -1176,6 +1176,13 @@ bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
 // (a mesh fading out); v_dither < 0 keeps the LOWER |d| (an impostor fading in,
 // or out toward a speck). Exactly 0 = no dither: the production path is
 // byte-identical. The two signs at equal |d| are exact complements.
+// The pattern is laid over 2x2 pixel QUADS, never single pixels (rock-fields
+// Task 14): a quad is kept or discarded whole. A per-pixel discard leaves
+// partial quads, and every implicit-LOD texture() and dFdx/dFdy below
+// (perturb_normal, the decal gradients) is then undefined for the survivors
+// -- MEASURED on this driver: kept pixels shaded up to 159/255 off, which
+// drew dithered impostors as RGB-tinted smooth blobs
+// (FarPassGLTest.DitheredImpostorKeepsTheSolidShading).
 float bayer4(vec2 frag) {
     ivec2 p = ivec2(mod(frag, 4.0));
     const float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
@@ -1185,7 +1192,7 @@ float bayer4(vec2 frag) {
 
 void main() {
     if (v_dither != 0.0) {
-        float b = bayer4(gl_FragCoord.xy);
+        float b = bayer4(floor(gl_FragCoord.xy * 0.5));   // per 2x2 quad
         if (v_dither > 0.0 ? (b < v_dither) : (b >= -v_dither)) discard;
     }
     // Far tier: impostor coverage (base alpha < 0.5 is outside the silhouette).

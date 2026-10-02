@@ -1377,3 +1377,40 @@ TEST_F(FarPassGLTest, HazeSkipsASourceWithNoPopulations) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
+
+// Rock-fields Task 14: the screen-door dither only DISCARDS -- every pixel a
+// dithered impostor keeps must shade exactly as the solid impostor's pixel
+// there. (Live symptom: dithered mid collection sprites drew as RGB-tinted
+// smooth blobs.)
+TEST_F(FarPassGLTest, DitheredImpostorKeepsTheSolidShading) {
+    const glm::vec3 grey(150.0f, 150.0f, 150.0f);
+    const Atlas atlas = sphere_atlas(grey, grey);
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    const glm::vec3 centre(0.0f, 0.0f, 0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    renderer::Lighting l;
+    l.ambient = glm::vec3(0.2f);
+    l.directional_count = 1;
+    l.directional_dir_ws[0] = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    l.directional_color[0] = glm::vec3(1.0f);
+
+    const auto solid = draw_impostors(pass, {one_impostor_bin(0, kLevelView, centre, 1.0f)}, cam, l);
+    ASSERT_GT(lit_pixels(solid), kW * kH / 10);
+    for (const float dither : {-0.5f, 0.5f, -0.25f, 0.75f}) {
+        far::ImpostorBin bin = one_impostor_bin(0, kLevelView, centre, 1.0f);
+        bin.items[0].up_dither.w = dither;
+        const auto px = draw_impostors(pass, {bin}, cam, l);
+        int kept = 0, worst = 0;
+        for (int i = 0; i < kW * kH; ++i) {
+            if (!lit(px, i)) continue;
+            ++kept;
+            for (int k = 0; k < 3; ++k) {
+                const std::size_t j = static_cast<std::size_t>(i) * 4 + static_cast<std::size_t>(k);
+                worst = std::max(worst, std::abs(int(px[j]) - int(solid[j])));
+            }
+        }
+        EXPECT_GT(kept, 0) << "dither " << dither;
+        EXPECT_LE(worst, 2) << "dither " << dither << ": a kept pixel shades differently";
+    }
+}

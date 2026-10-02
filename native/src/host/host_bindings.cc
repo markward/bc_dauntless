@@ -4538,6 +4538,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return d;
           },
           "TEST-ONLY: the native haze start / ramp / resolution divisor (rock-fields Task 12).");
+    m.def("far_debug_mid_centres",
+          []() {
+              py::list out;
+              for (const auto& bin : g_mid_out.sprites)
+                  for (const auto& it : bin.items) {
+                      py::dict d;
+                      d["centre"] = py::make_tuple(it.centre_half.x, it.centre_half.y,
+                                                   it.centre_half.z);
+                      d["half"] = it.centre_half.w;
+                      d["atlas"] = bin.rock;
+                      d["view"] = it.right_view.w;
+                      d["dither"] = it.up_dither.w;
+                      out.append(d);
+                  }
+              return out;
+          },
+          "TEST-ONLY (rock-fields Task 14): the mid sprites the last drawn camera "
+          "built, [{'centre' (RENDER space), 'half' (GU), 'atlas' (FarPass slot), "
+          "'view' (baked view index), 'dither'}, ...]. Never call from game code.");
     m.def("far_debug_active_sources",
           []() {
               py::list out;
