@@ -98,6 +98,7 @@ struct NearContact {
     float rock_radius = 0.0f;
     float rel_speed = 0.0f;            // GU/s, the ship's sweep speed this step
     float pen = 0.0f;                  // rock_radius - distance(centre, shape) at the CURRENT pose, >= 0
+    std::uint64_t key = 0;             // the rock's key: NearField::rearm(key) clears its cooldown
 };
 
 struct NearStepInput {
@@ -140,6 +141,12 @@ public:
     std::vector<NearContact> drain_large_contacts() { return std::exchange(large_contacts_, {}); }
     std::vector<minors::Contact> drain_small_contacts() { return std::exchange(small_contacts_, {}); }
     void reset_player() { has_prev_ = false; }   // forget the previous pose
+    // Clear one large rock's touch cooldown, so its next touching step
+    // reports again. Python calls it when it rejects a reported touch for
+    // geometry (a shield-bubble miss: the inflated box touched, the
+    // ellipsoid did not), so the rock is not silenced for the cooldown while
+    // the ship closes on it. An unknown key is a no-op.
+    void rearm(std::uint64_t key) { large_last_.erase(key); }
     // TEST-ONLY: add a rock with an explicit key to a dedicated per-class
     // test cell that stream() never drops (only clear() removes it).
     void debug_add_rock(NearClass cls, std::uint64_t key, const NearRock& r);

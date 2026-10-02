@@ -88,7 +88,7 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
-    "rockfield_catalogue_size",
+    "rockfield_rearm", "rockfield_catalogue_size",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -654,8 +654,14 @@ def far_clear() -> None:
 def rockfield_drain_contacts() -> list:
     """Player/large near-rock touches since the last drain: [{"point",
     "normal", "rock_centre" (VIEW-space tuples), "rock_radius", "rel_speed",
-    "pen"}, ...]."""
+    "pen", "key" (int; rockfield_rearm)}, ...]."""
     return _h.rockfield_drain_contacts()
+
+
+def rockfield_rearm(key: int) -> None:
+    """Clear one large rock's touch cooldown, so its next touching step
+    reports again (scenery_contact rejected its touch for geometry)."""
+    _h.rockfield_rearm(int(key))
 
 
 def rockfield_catalogue_size() -> int:

@@ -487,6 +487,25 @@ TEST(NearContact, CooldownSuppressesRepeats) {
     EXPECT_EQ(f.drain_large_contacts().size(), 1u);
 }
 
+TEST(NearContact, CarriesTheRockKeyAndRearmClearsItsCooldown) {   // Task 8 fix 1
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 9, rock_at({0, 0, 0}, 2.0f));
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, -10, 0}, 1.0);
+    step_at(f, in, {0, -2.5f, 0}, 1.1);               // touch
+    const auto c = f.drain_large_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_EQ(c[0].key, 9u);
+    // Python rejected it for geometry (a shield-bubble miss): re-arm, and
+    // the next touching step reports again inside collide_cooldown_s.
+    f.rearm(c[0].key);
+    step_at(f, in, {0, -2.5f, 0}, 1.1 + kTick);
+    EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+    f.rearm(12345);                                   // an unknown key is a no-op
+    step_at(f, in, {0, -2.5f, 0}, 1.1 + 2 * kTick);   // no rearm of 9: cooled down
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+}
+
 TEST(NearContact, OverlapOnStreamInIsGhosted) {          // Review Focus 2
     rockfield::NearField f;
     minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);

@@ -69,7 +69,8 @@ def host():
 
 def test_near_bindings_are_on_the_facade():
     from engine import renderer
-    for name in ("rockfield_drain_contacts", "rockfield_set_shield_inflate"):
+    for name in ("rockfield_drain_contacts", "rockfield_set_shield_inflate",
+                 "rockfield_rearm"):
         assert callable(getattr(renderer, name))
 
 
@@ -121,7 +122,10 @@ def test_a_player_sweeping_through_large_rocks_reports_contacts(host):
     assert host.far_stats()["near_cells"] > 0
     assert contacts, "a dense 300 GU sweep touched no large rock"
     c = contacts[0]
-    assert set(c) == {"point", "normal", "rock_centre", "rock_radius", "rel_speed", "pen"}
+    assert set(c) == {"point", "normal", "rock_centre", "rock_radius", "rel_speed", "pen",
+                      "key"}
+    assert isinstance(c["key"], int)
+    host.rockfield_rearm(c["key"])     # accepted; clears that rock's cooldown
     assert len(c["point"]) == 3 and len(c["normal"]) == 3 and len(c["rock_centre"]) == 3
     assert c["rock_radius"] > 0.0 and c["rel_speed"] > 0.0 and c["pen"] >= 0.0
 

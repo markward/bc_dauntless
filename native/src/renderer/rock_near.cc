@@ -472,6 +472,7 @@ void NearField::step(const NearStepInput& in) {
             nc.rock_radius = r.radius;
             nc.rel_speed = rel_speed;
             nc.pen = std::max(0.0f, r.radius - gap_now(p));
+            nc.key = key;
             large_contacts_.push_back(nc);
             ++reported;
         }

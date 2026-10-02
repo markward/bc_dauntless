@@ -14,7 +14,7 @@ from engine.appc import combat
 from engine.appc.math import TGPoint3
 from engine.rocks import scenery_contact as sc, far_dials
 from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
-from tests.unit.test_rock_shield_collision import _ship
+from tests.helpers.shielded_ship import make_shielded_ship as _ship
 
 HALF = (0.5, 1.0, 0.25)
 
@@ -82,6 +82,8 @@ def test_hull_hit_bounces_and_damages(player_moving_up, calls):
     assert hit["bypass_shields"] is True and hit["weapon_type"] == "collision"
     assert hit["damage"] > 0.0
     assert hit["source"] is None and hit["single_impact"] is True
+    n = hit["normal"]                                  # headless: the outward normal
+    assert (n.x, n.y, n.z) == pytest.approx((0.0, 1.0, 0.0))
     # The overlay carries the impulse; the ship de-penetrated along -Y.
     cv = player_moving_up.__dict__["_collision_velocity"]
     assert cv.y == pytest.approx(out["impulse"][1])
@@ -93,6 +95,51 @@ def test_shield_up_bounces_at_the_bubble(player_moving_up_shielded, calls):
     assert out["shielded"] is True
     (hit,) = calls
     assert hit["bypass_shields"] is False and hit["shield_point"] is not None
+    assert out["impulse"][1] < 0.0                     # bounced back down -Y
+    n = hit["normal"]                                  # bubble normal, ship -> rock
+    assert (n.x, n.y, n.z) == pytest.approx((0.0, 1.0, 0.0), abs=1e-6)
+
+
+def test_a_bubble_miss_rearms_the_rock(player_moving_up_shielded, calls,
+                                       monkeypatch):
+    """The native band's inflated box touched but the ellipsoid did not:
+    the touch is dropped AND the rock's native cooldown cleared, so it can
+    report again as the ship closes (review fix 1)."""
+    rearmed = []
+    monkeypatch.setattr("engine.renderer.rockfield_rearm", rearmed.append)
+    c = dict(_contact(radius=1.0), key=77)   # 3 - 1.732 > 1: misses the bubble
+    assert sc.respond(player_moving_up_shielded, c) is None
+    assert rearmed == [77] and calls == []
+
+
+def test_receding_does_not_rearm(player_moving_down, calls, monkeypatch):
+    rearmed = []
+    monkeypatch.setattr("engine.renderer.rockfield_rearm", rearmed.append)
+    assert sc.respond(player_moving_down, dict(_contact(), key=5)) is None
+    assert rearmed == []
+
+
+def test_an_immobile_player_is_left_alone(player_moving_up, calls):
+    """_resolve_body zeroes an immobile ship's thrust velocity but still adds
+    its collision overlay, so a leftover overlay reads as approaching; an
+    immovable body (inv_mass 0) must never take the impulse, the push or
+    _ke_damage (which asserts inv_sum > 0)."""
+    player_moving_up.SetStatic(1)
+    player_moving_up._collision_velocity = TGPoint3(0.0, 6.0, 0.0)
+    assert sc.respond(player_moving_up, _contact()) is None
+    assert calls == []
+    assert player_moving_up._collision_velocity.y == 6.0
+    assert player_moving_up.GetTranslate().y == 0.0
+
+
+def test_hit_tangent_is_how_the_rock_moves_across_the_ship(calls):
+    """As _respond_pair's tan_a: the rock's velocity relative to the ship,
+    normal part removed -- minus the ship's own slip."""
+    ship = _player(6.0)
+    ship.SetVelocity(TGPoint3(2.0, 6.0, 0.0))
+    sc.respond(ship, _contact())
+    t = calls[0]["hit_tangent"]
+    assert (t.x, t.y, t.z) == pytest.approx((-1.0, 0.0, 0.0))
 
 
 def test_receding_does_nothing(player_moving_down, calls):

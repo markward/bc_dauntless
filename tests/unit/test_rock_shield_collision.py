@@ -19,12 +19,13 @@ import pytest
 
 from engine.appc import collisions
 from engine.appc.math import TGPoint3
-from engine.appc.ships import ShipClass, ShipClass_Create
-from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
+from engine.appc.ships import ShipClass
+from engine.appc.subsystems import ShieldSubsystem
 from tests.helpers.one_set import share_one_set
+from tests.helpers.shielded_ship import DEFAULT_HALF, make_shielded_ship as _ship
 
 S3 = math.sqrt(3.0)
-HALF = (1.0, 3.0, 0.5)
+HALF = DEFAULT_HALF
 SEMI = tuple(h * S3 for h in HALF)            # (1.732, 5.196, 0.866)
 HULL_R = math.sqrt(sum(h * h for h in HALF))  # 3.2
 ROCK_R = 1.0
@@ -39,26 +40,6 @@ def _isolate():
     App.g_kSetManager._sets.clear()
     yield
     App.g_kSetManager._sets.clear()
-
-
-def _ship(name="Target", face_max=1.0e5, hull_max=1.0e6, shields_up=True,
-          half=HALF, radius=None):
-    ship = ShipClass_Create(name)
-    hull = HullSubsystem("Hull")
-    hull.SetMaxCondition(hull_max)
-    ship._hull = hull
-    ss = ShieldSubsystem("Shield Generator")
-    ss.SetMaxCondition(100.0)
-    for f in range(ShieldSubsystem.NUM_SHIELDS):
-        ss.SetMaxShields(f, face_max)
-    ship.SetShieldSubsystem(ss)
-    ship.SetRadius(radius if radius is not None
-                   else math.sqrt(sum(h * h for h in half)))
-    ship.SetMass(1000.0)
-    ship._shield_hull_box = ((0.0, 0.0, 0.0), tuple(half))
-    ship.SetAlertLevel(ShipClass.YELLOW_ALERT if shields_up
-                       else ShipClass.GREEN_ALERT)
-    return ship
 
 
 def _rock(pos, vel, name="Rock"):

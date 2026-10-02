@@ -44,10 +44,27 @@ def _dot(a, b) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
+def _rearm(contact: dict) -> None:
+    """A touch rejected for GEOMETRY (the native band's inflated box touched,
+    the shield ellipsoid did not): clear that rock's native cooldown, or it
+    stays silent for collide_cooldown_s while the ship closes on it. Never
+    for the receding debounce or muting -- those are real touches."""
+    key = contact.get("key")
+    if key is None:
+        return
+    try:
+        from engine import renderer
+        renderer.rockfield_rearm(key)
+    except Exception as e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("scenery contact rearm", e)
+
+
 def respond(player, contact: dict, ship_instances=None):
     """Apply one large-rock touch. Returns {"shielded": bool, "damage": float,
     "impulse": (x, y, z)} when it responded, None when it did not (receding,
-    shield bubble missed, player not in the viewed set)."""
+    shield bubble missed -- which re-arms the rock natively --, immobile
+    player, player not in the viewed set)."""
     from engine.appc import collisions, combat
     from engine.appc.hit_feedback import SHIELD_SPLASH_REACH_PER_RADIUS
     from engine.rocks import far_dials
@@ -58,6 +75,8 @@ def respond(player, contact: dict, ship_instances=None):
         return None
     rock_r = float(contact["rock_radius"])
     ship = collisions._resolve_body(player)
+    if not ship.is_movable:
+        return None      # immobile (SetStatic / SetStationary): an anchor too
     rock = collisions._Body(None, TGPoint3(*contact["rock_centre"]), rock_r,
                             0.0, False, TGPoint3(0.0, 0.0, 0.0),
                             TGPoint3(0.0, 0.0, 0.0), 1.0)
@@ -69,6 +88,7 @@ def respond(player, contact: dict, ship_instances=None):
         shielded = True
         bubble = collisions._bubble_contact(ship, rock)
         if bubble is collisions._BUBBLE_MISS:
+            _rearm(contact)
             return None
     if bubble is not None:
         shield_point, n_out, pen = bubble
@@ -105,8 +125,10 @@ def respond(player, contact: dict, ship_instances=None):
     pt, hit_n = collisions._trace_own_hull(
         ship_instances, ship, point, n_out_ship,
         2.0 * (ship.contact + rock_r))
-    # Slip direction: the ship's velocity with its normal part removed.
-    tv = (v.x - v_rel * n[0], v.y - v_rel * n[1], v.z - v_rel * n[2])
+    # Slip direction, as _respond_pair's tan_a ("how b moves across a"):
+    # the rock's velocity relative to the ship, normal part removed -- the
+    # rock is still, so minus the ship's own tangential velocity.
+    tv = (v_rel * n[0] - v.x, v_rel * n[1] - v.y, v_rel * n[2] - v.z)
     tl = _dot(tv, tv) ** 0.5
     tangent = TGPoint3(tv[0] / tl, tv[1] / tl, tv[2] / tl) if tl > 1e-6 else None
     # source=None: scenery has no object; AddDamage's collision primitive

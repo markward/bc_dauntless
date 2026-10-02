@@ -2609,6 +2609,7 @@ py::list near_contacts_list(const std::vector<renderer::rockfield::NearContact>&
         d["rock_radius"] = c.rock_radius;
         d["rel_speed"] = c.rel_speed;
         d["pen"] = c.pen;
+        d["key"] = c.key;
         out.append(d);
     }
     return out;
@@ -4408,7 +4409,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           []() { return near_contacts_list(g_near_field.drain_large_contacts()); },
           "Player/large near-rock touches since the last drain: [{'point', "
           "'normal' (rock -> ship), 'rock_centre': VIEW-space tuples, "
-          "'rock_radius', 'rel_speed' (GU/s), 'pen'}, ...].");
+          "'rock_radius', 'rel_speed' (GU/s), 'pen', 'key' (int; "
+          "rockfield_rearm)}, ...].");
+    m.def("rockfield_rearm",
+          [](std::uint64_t key) { g_near_field.rearm(key); },
+          py::arg("key"),
+          "Clear one large rock's touch cooldown (Python rejected its touch "
+          "for geometry, e.g. a shield-bubble miss). Unknown key: no-op.");
     m.def("rockfield_catalogue_size",
           []() {
               return g_near_catalogue.small_rocks.size() + g_near_catalogue.large_rocks.size();
