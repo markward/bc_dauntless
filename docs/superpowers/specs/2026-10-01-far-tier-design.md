@@ -1,7 +1,7 @@
 # Far tier — design (modern asteroids, sub-project 3b)
 
 **Date:** 2026-10-01
-**Status:** design, awaiting review
+**Status:** built, awaiting live check
 **Branch:** `feat/far-tier` (worktree `.claude/worktrees/far-tier`), forked from
 local `main` at `6f8f4f14` (sub-projects 1, 2 and 3 merged and live-verified).
 **Roadmap:** `2026-09-30-modern-asteroids-roadmap.md`, "Sub-project 3b: far
@@ -102,6 +102,42 @@ Nothing here is simulated, targetable or an event source.
   1.0) are roadmap standing decisions, not BC behaviour.
 - **The far tier as a whole is a deliberate departure from BC**, which drew
   tile fields of ship-class rocks and nothing at a distance.
+
+## Amended during execution (2026-10-01/02)
+
+This design was built, not just reviewed; a handful of numbers and ordering
+rules changed on contact with the implementation and its tests. The sections
+below carry the corrected value in place; this is the index.
+
+- **R5/R8 — generator defaults.** `cells_per_range` is **4**, not the 8 first
+  proposed (§2 Generator); `cell_cache_max` is **32,768**, not 4,096 (§2
+  Generator).
+- **R7 — telephoto guard.** A new native dial, `max_cells_per_axis` (default
+  **17**), caps each class's cell enumeration at ≤17 cells per axis (§2
+  Generator): without it a telephoto camera (viewscreen zoom raises `k`) could
+  enumerate on the order of 530,000 cells for one class.
+- **R9 — discard ordering in `opaque.frag`.** The coverage-cutout discard sits
+  at the **top** of `main()`, beside the dither discard, not after the base
+  colour sample as first drafted (§3 `opaque.frag` uniforms): placed later it
+  measurably broke an existing NaN guard on this driver, cutout on or off.
+- **R12/R13 — speck coverage.** The speck cross-fades a floor()-aligned 2×2
+  square (p ≤ 1) to a flux-normalised AA disc (p ≥ 2), quad half-size
+  `max(p + 0.5, 1.5)` (§3 Speck shading): measured flux within 0.3% of π p²
+  and sub-pixel shimmer ≤ 4.6% across the whole band.
+- **R11 — ambient_scale on the far passes.** `render_specks` and `render_haze`
+  both take `ambient_scale`, exactly as the rock passes do (§3 `FarPass`).
+- **R6 — unplaceable flagged rock.** A flagged rock `build` cannot place this
+  frame gets `far_fade` **0** (mesh visible), never a stale hide (§3 Instance
+  fade).
+- **Python — unmatched population dropped.** `density.to_native` drops, with
+  one warning, a population whose family matches no catalogue rock, instead of
+  sending it empty (§4 Python integration).
+- **R14 — `haze_gain` default.** Confirmed at **270**, as originally drafted
+  (§2 Haze); no change.
+- **Measured, not designed.** Bench mean **0.015 ms** static / **0.10 ms** at
+  100,000 GU/s; the Vesuvi band (a = 0.5) enumerates only **~220** speck-tier
+  minors per camera — the haze carries the band, not speck density (§5
+  Performance).
 
 ## Design
 
@@ -217,9 +253,13 @@ the roadmap's threshold.
 **Generator (C++, deterministic).**
 - Each population is split into `size_classes` (default 4) log-spaced radius
   bins. Class c matters only out to `D_c = k_ref · r_max,c / p_min`, with
-  `k_ref` the main view's k (a smaller k, as on the RTT, needs less).
+  `k_ref` the main view's k (a smaller k, as on the RTT, needs less), **capped**
+  at `0.5 · max_cells_per_axis · L_c` (default **17** cells per axis, added
+  2026-10-02 — ruling R7, §5): a telephoto camera (viewscreen zoom raises k)
+  otherwise enumerates up to ~530k cells for one class.
 - Class c's rocks live in cubic cells of edge `L_c = D_c / cells_per_range`
-  (default 8), indexed by integer `ijk` in **system coordinates**.
+  (default **4**, amended 2026-10-02 — ruling R5, §5), indexed by integer
+  `ijk` in **system coordinates**.
 - A cell's contents are a pure function of `(source seed, population, class,
   ijk)`: a Poisson count from the density at the cell centre times L³ times the
   class's share of the size distribution (with `a` taken at the cell's
@@ -230,9 +270,9 @@ the roadmap's threshold.
   the frustum and the disc's ±`slab_sigmas` · H slab (default 4), nearest
   first, until `max_far_rocks` (60,000) rocks are generated. A rock inside an
   explicit region is skipped. Each survivor goes through the §1 ladder.
-- An LRU cache of generated cells (`cell_cache_max`, default 4,096 cells),
-  keyed on `(source, population, class, ijk)`, is shared by the main view and
-  the viewscreen.
+- An LRU cache of generated cells (`cell_cache_max`, default **32,768** cells,
+  amended 2026-10-02 — ruling R8, §5), keyed on `(source, population, class,
+  ijk)`, is shared by the main view and the viewscreen.
 - **Sub-project 4's promotion contract:** a seeded real rock is exactly a
   generator rock (same cell, same index, same position, size and mesh), so a
   rock crossing an explicit region's edge keeps its identity.
@@ -288,7 +328,10 @@ the roadmap's threshold.
 **Instance fade.** `scenegraph::Instance` gains `far_fade` (0 = mesh only). The
 host writes it from `build` before each camera's `space.opaque`.
 `submit_opaque_in_pass` skips an instance at 1 and sets `u_dither_fade` between.
-The shadow pass ignores it, so a far rock still casts.
+The shadow pass ignores it, so a far rock still casts. A flagged rock `build`
+cannot place yet (no world transform) gets fade **0** — mesh visible — rather
+than keeping whatever fade was last written, so a late-realised rock is never
+left hidden (amended 2026-10-02 — ruling R6, §5).
 
 **`FarPass`** (`native/src/renderer/far_pass.{h,cc}`):
 
@@ -311,12 +354,23 @@ The shadow pass ignores it, so a far rock still casts.
 - The pass sets the same lighting, shadow and rim uniforms as `MinorPass`,
   with every ship-only feature off (decals, carve, hull field, glow regions,
   dynamic lights, hull-name decals), and glow off.
+- `FarPass::render_specks` and `render_haze` both take an `ambient_scale`
+  parameter and apply it to the ambient term exactly as the rock passes do
+  (filmic exterior tone, amended 2026-10-02 — ruling R11, §5), so a speck or
+  the haze doesn't read as mis-lit against the same scene's ships and rocks.
 
 **`opaque.frag` gains two uniforms, both off by default:**
 - `u_dither_fade` (float, 0 = off): discard where the Bayer threshold is below
   it; with `u_dither_invert`, the complement.
 - `u_coverage_cutout` (int, 0 = off): discard where base alpha < 0.5. Needed
   because base alpha is otherwise the emissive mask.
+
+Both discards sit at the **top of `main()`**, beside each other, before the
+base/normal sample and the dFdx/dFdy block (amended 2026-10-02 — ruling R9,
+§5): a `u_coverage_cutout` discard placed *after* that block, where it reads
+more naturally next to the base-colour sample, measurably broke the
+`amb_d` NaN guard on this driver even with the cutout off
+(`HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite`).
 
 With both off the output is byte-identical (tested).
 
@@ -328,11 +382,18 @@ With both off the output is byte-identical (tested).
   unchanged.
 
 **Speck shading.** Colour = `avg_albedo · (sun_rgb · Φ(α) + ambient)`, with Φ
-the Lambert-sphere phase function of the phase angle α. Coverage = π p² over
-the sprite's pixel area (sprite ≥ 2 px across), so a speck dims smoothly as it
-shrinks and still darkens a bright nebula behind it. `speck_gain` (default 1.0)
-is a dial. A flux-continuity test (§5) pins the speck to the lit mesh at the
-hand-off.
+the Lambert-sphere phase function of the phase angle α. The sprite quad's
+half-size is `max(p + 0.5, 1.5)` px. Coverage cross-fades between two kernels,
+each of total flux exactly π p² (amended 2026-10-02 — rulings R12/R13, §5):
+below p = 1 a floor()-aligned 2×2 square (always exactly 4 texels, each
+`π p² / 4` — no sub-pixel shimmer at all); above p = 2 a flux-normalised AA
+disc (`clamp(p + 0.5 − r, 0, 1)` scaled by `p² / (p² + 1/12)`); between 1 and 2
+the two mix linearly. Measured: flux within 0.3% of π p² at every tested p
+(including p = 1, the square/disc seam), and sub-pixel-offset shimmer ≤ 4.6%
+across the whole band (the disc alone shimmers ~11% at p = 1 sampled at pixel
+centres — the reason for the cross-fade). `speck_gain` (default 1.0) is a
+dial. A flux-continuity test (§5) pins the speck to the lit mesh and the
+impostor at the hand-off.
 
 **Viewscreen RTT.** Every draw is rebuilt for the RTT's own camera and height,
 as minors are. The cell cache is shared.
@@ -347,7 +408,12 @@ and the cell cache. The atlases and catalogue table stay.
 
 - **`engine/rocks/density.py`:** `DiscSource`, `evaluate(source, point)`,
   `profile_belt(system)`.
-- **`engine/rocks/field_table.py`:** the population table (§2).
+- **`engine/rocks/field_table.py`:** the population table (§2). Built into a
+  native source by `density.to_native`, which drops (rather than sends empty)
+  any population whose `kind` + `families` matches no catalogue rock, with one
+  deduped stderr warning per `(system, kind)` (amended 2026-10-02 — ruling
+  rows "Python", §5): an empty-but-present population would otherwise render
+  every generated rock of it as catalogue index 0 regardless of kind/family.
 - **`engine/rocks/far_tier.py`:** the registry.
   - Pushes the catalogue table to native once (`far_set_catalogue`).
   - Pushes the viewed system's sources when the viewed frame changes, at the
@@ -417,7 +483,11 @@ run with the sandbox disabled (they SKIP inside it).
 - **Performance:** a ctest benchmark of `FarField::build` at the 60,000 budget,
   from inside the Vesuvi band and while dashing at 100,000 GU/s, *reports* its
   time and asserts nothing. Acceptance numbers are live, from the frame
-  profiler (`space.far.*`).
+  profiler (`space.far.*`). Measured (amended 2026-10-02): mean **0.015 ms**
+  static in the band, **0.10 ms** while dashing at 100,000 GU/s; the Vesuvi
+  band at a = 0.5 enumerates only **~220** speck-tier minors per camera (no
+  procedural majors there, §2) — it is the haze, not speck count, that carries
+  the band visually.
 
 ## Live check (Mark)
 

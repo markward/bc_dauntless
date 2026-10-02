@@ -44,7 +44,7 @@ Size decides how real a rock is.
 | 1 | **Rock catalogue**: glTF loader, offline generation tool, committed catalogue, BC scripts redirected to it | merged to local main, live-verified — spec `2026-09-30-rock-catalogue-design.md` |
 | 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | merged to local main (`c0210aac`), live-verified — spec `2026-09-30-rock-class-design.md` |
 | 3 | **Minors**: instancing, halos, tile fields, fly-through | merged to local main (`6f8f4f14`), live-verified — spec `2026-10-01-minor-rocks-design.md` |
-| 3b | **Far tier**: impostor/speck/haze ladder, disc density source, profile belts (render only) | design — spec `2026-10-01-far-tier-design.md`, branch `feat/far-tier` |
+| 3b | **Far tier**: impostor/speck/haze ladder, disc density source, profile belts (render only) | built, awaiting live check — spec `2026-10-01-far-tier-design.md`, branch `feat/far-tier` |
 | 4 | **Profile seeding** | not started — extends 3b's `DiscSource` (fills `explicit_regions`, promotes generator rocks) |
 | later | **Sensor occlusion by rocks** | play-test experiment |
 
