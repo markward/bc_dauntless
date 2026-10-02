@@ -63,6 +63,20 @@
         }
     }, true);
 
+    // TEMP diagnostic (DAUNTLESS_KEY_TRACE=1 sets the flag from Python): log
+    // every DOM key/input event an editable receives. Remove with the fix.
+    ['keydown', 'keypress', 'keyup', 'beforeinput', 'input'].forEach(function (type) {
+        document.addEventListener(type, function (e) {
+            if (!window.__DAUNTLESS_KEY_TRACE || !isEditable(e.target)) return;
+            var el = e.target;
+            console.log('[keytrace-dom] t=' + performance.now().toFixed(1) + ' ' + type
+                + ' key=' + JSON.stringify(e.key) + ' code=' + JSON.stringify(e.code)
+                + ' inputType=' + JSON.stringify(e.inputType) + ' data=' + JSON.stringify(e.data)
+                + ' value=' + JSON.stringify(valueOf(el))
+                + ' caret=' + (isField(el) ? el.selectionStart : '-'));
+        }, true);
+    });
+
     // Host-forced release (panel closed, mission swap, click on the game
     // world): abandon the edit.
     window.__dauntlessBlurText = function () {

@@ -23,6 +23,8 @@ Spec: docs/superpowers/specs/2026-10-02-cef-text-input-keyboard-capture-design.m
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Optional
 
 from engine import host_io
@@ -31,6 +33,11 @@ from engine.ui.panel import Panel
 _log = logging.getLogger(__name__)
 
 BLUR_SCRIPT = "window.__dauntlessBlurText&&window.__dauntlessBlurText()"
+
+# TEMP diagnostic for the "arrows move two places / '.' hit and miss" report:
+# DAUNTLESS_KEY_TRACE=1 prints every drained key event here and every DOM key
+# event in the page (text_capture.js). Remove once the root cause is fixed.
+_TRACE = os.environ.get("DAUNTLESS_KEY_TRACE") == "1"
 
 
 def _is_open(panel: Panel) -> bool:
@@ -46,6 +53,7 @@ class TextCaptureController(Panel):
         self._registry = registry
         self.owner: Optional[str] = None
         self._blur_pending = False
+        self._trace_pushed = False   # TEMP diagnostic
 
     @property
     def name(self) -> str:
@@ -76,10 +84,17 @@ class TextCaptureController(Panel):
         return False
 
     def render_payload(self) -> Optional[str]:
+        if _TRACE and not self._trace_pushed:  # TEMP diagnostic
+            self._trace_pushed = True
+            return "window.__DAUNTLESS_KEY_TRACE=true"
         if not self._blur_pending:
             return None
         self._blur_pending = False
         return BLUR_SCRIPT
+
+    def invalidate(self) -> None:
+        super().invalidate()
+        self._trace_pushed = False   # TEMP diagnostic: re-arm after a reload
 
     def release(self) -> None:
         """Forced release (panel gone, mission swap, click on the game world).
@@ -102,6 +117,9 @@ class TextCaptureController(Panel):
         # Drain EVERY frame, so keys typed in flight never arrive in a field
         # that gains focus later.
         events = host_io.drain_text_events()
+        if _TRACE and events:  # TEMP diagnostic (DAUNTLESS_KEY_TRACE=1)
+            print("[keytrace] t=%.4f owner=%s events=%r"
+                  % (time.perf_counter(), self.owner, events), flush=True)
         if self.owner is not None:
             for ev in events:
                 host_io.cef_send_key_event(*ev)
