@@ -83,6 +83,11 @@ void send_mouse_wheel(int x, int y, int delta_y);
 // (GLFW scancode). glfw_mods are GLFW_MOD_* bits. No-op with no browser.
 void send_key_event(int type, int windows_vk, int native_code, int character, int glfw_mods);
 
+// Run an edit command on the focused frame: 1 SelectAll, 2 Copy, 3 Paste,
+// 4 Cut, 5 Undo, 6 Redo (renderer::EditCommand's values). No-op with no
+// browser or an unknown value.
+void edit_command(int cmd);
+
 // JS→C++ event channel. The handler is invoked with the event name
 // when JS navigates to dauntless://event/<name>. The intercept lives
 // in CefRequestHandler::OnBeforeBrowse — fire-and-forget, no return

@@ -238,7 +238,8 @@ def cursor_pos() -> Optional[Tuple[float, float]]:
 def drain_text_events() -> List[Tuple[int, int, int, int, int]]:
     """Typed characters and editing keys since the last call, oldest first, as
     (kind, code, scancode, action, mods); kind 0 = char (code = codepoint),
-    1 = key (code = GLFW key). Empty when headless."""
+    1 = key (code = GLFW key), 2 = edit command (code = renderer::EditCommand).
+    Empty when headless."""
     if _h is None:
         return []
     return list(_h.drain_text_events())

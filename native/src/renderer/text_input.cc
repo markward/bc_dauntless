@@ -6,8 +6,9 @@
 namespace renderer {
 
 void TextEventQueue::push(const TextEvent& e) {
-    // Bounded: nothing drains in-game yet (sub-project 2 adds focus
-    // arbitration), so the oldest events fall off rather than growing.
+    // Bounded: the host drains every frame (engine/ui/text_capture.py); the
+    // cap only matters if a frame stalls, so the oldest events fall off
+    // rather than growing.
     if (q_.size() >= kCapacity) q_.pop_front();
     q_.push_back(e);
 }
@@ -32,6 +33,27 @@ int glfw_key_to_windows_vk(int glfw_key) noexcept {
         case GLFW_KEY_DOWN:      return 0x28;  // VK_DOWN
         case GLFW_KEY_DELETE:    return 0x2E;  // VK_DELETE
         default:                 return 0;
+    }
+}
+
+EditCommand edit_command_for(char letter, int mods) noexcept {
+#if defined(__APPLE__)
+    constexpr int kPrimary = GLFW_MOD_SUPER;
+#else
+    constexpr int kPrimary = GLFW_MOD_CONTROL;
+#endif
+    constexpr int kOthers = (GLFW_MOD_SUPER | GLFW_MOD_CONTROL | GLFW_MOD_ALT) & ~kPrimary;
+    if (!(mods & kPrimary) || (mods & kOthers)) return EditCommand::None;
+    const char c = (letter >= 'A' && letter <= 'Z') ? static_cast<char>(letter - 'A' + 'a') : letter;
+    if (mods & GLFW_MOD_SHIFT) return c == 'z' ? EditCommand::Redo : EditCommand::None;
+    switch (c) {
+        case 'a': return EditCommand::SelectAll;
+        case 'c': return EditCommand::Copy;
+        case 'v': return EditCommand::Paste;
+        case 'x': return EditCommand::Cut;
+        case 'z': return EditCommand::Undo;
+        case 'y': return EditCommand::Redo;
+        default:  return EditCommand::None;
     }
 }
 

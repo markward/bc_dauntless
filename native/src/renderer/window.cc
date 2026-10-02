@@ -82,10 +82,22 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
     });
 
     glfwSetKeyCallback(handle_, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
-        if (glfw_key_to_windows_vk(key) == 0) return;   // editing keys only
-        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
-            self->text_events_.push({kTextEventKey, key, scancode, action, mods});
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
+        if (!self) return;
+        // Clipboard/undo chords first: resolve the LAYOUT's letter (an AZERTY
+        // Cmd+A is GLFW_KEY_Q) and queue a CefFrame command.
+        if (action != GLFW_RELEASE) {
+            const char* name = glfwGetKeyName(key, scancode);
+            if (name && name[0] && !name[1]) {
+                const EditCommand cmd = edit_command_for(name[0], mods);
+                if (cmd != EditCommand::None) {
+                    self->text_events_.push({kTextEventEdit, static_cast<int>(cmd), scancode, action, mods});
+                    return;
+                }
+            }
         }
+        if (glfw_key_to_windows_vk(key) == 0) return;   // editing keys only
+        self->text_events_.push({kTextEventKey, key, scancode, action, mods});
     });
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {

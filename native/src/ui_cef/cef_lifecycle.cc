@@ -410,6 +410,22 @@ void send_key_event(int type, int windows_vk, int native_code, int character, in
     host->SendKeyEvent(ev);
 }
 
+void edit_command(int cmd) {
+    if (!g_client || !g_client->browser()) return;
+    auto frame = g_client->browser()->GetFocusedFrame();
+    if (!frame) frame = g_client->browser()->GetMainFrame();
+    if (!frame) return;
+    switch (cmd) {
+        case 1: frame->SelectAll(); break;
+        case 2: frame->Copy(); break;
+        case 3: frame->Paste(); break;
+        case 4: frame->Cut(); break;
+        case 5: frame->Undo(); break;
+        case 6: frame->Redo(); break;
+        default: break;
+    }
+}
+
 void set_event_handler(std::function<void(const std::string&)> handler) {
     if (!g_client) return;
     g_client->set_event_handler(std::move(handler));

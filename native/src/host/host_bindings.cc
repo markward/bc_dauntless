@@ -6416,6 +6416,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("cef_send_key_event",
           [](int kind, int code, int scancode, int action, int mods) {
+              if (kind == renderer::kTextEventEdit) {
+                  static_assert(static_cast<int>(renderer::EditCommand::Redo) == 6,
+                                "ui_cef::edit_command's numbering");
+                  dauntless::ui_cef::edit_command(code);
+                  return;
+              }
               if (kind == renderer::kTextEventChar) {
                   dauntless::ui_cef::send_key_event(2, 0, 0, code, mods);
                   return;

@@ -43,3 +43,44 @@ TEST(TextInput, QueueIsBoundedDroppingOldest) {
     EXPECT_EQ(out.front().code, 300 - static_cast<int>(TextEventQueue::kCapacity));
     EXPECT_EQ(out.back().code, 299);
 }
+
+using renderer::EditCommand;
+using renderer::edit_command_for;
+
+#if defined(__APPLE__)
+constexpr int kPrimary = GLFW_MOD_SUPER;
+constexpr int kWrong = GLFW_MOD_CONTROL;
+#else
+constexpr int kPrimary = GLFW_MOD_CONTROL;
+constexpr int kWrong = GLFW_MOD_SUPER;
+#endif
+
+TEST(EditCommand, PrimaryModifierLetters) {
+    EXPECT_EQ(edit_command_for('a', kPrimary), EditCommand::SelectAll);
+    EXPECT_EQ(edit_command_for('c', kPrimary), EditCommand::Copy);
+    EXPECT_EQ(edit_command_for('v', kPrimary), EditCommand::Paste);
+    EXPECT_EQ(edit_command_for('x', kPrimary), EditCommand::Cut);
+    EXPECT_EQ(edit_command_for('z', kPrimary), EditCommand::Undo);
+    EXPECT_EQ(edit_command_for('y', kPrimary), EditCommand::Redo);
+    EXPECT_EQ(edit_command_for('V', kPrimary), EditCommand::Paste);  // case-insensitive
+}
+
+TEST(EditCommand, ShiftZIsRedoAndOtherShiftLettersAreNothing) {
+    EXPECT_EQ(edit_command_for('z', kPrimary | GLFW_MOD_SHIFT), EditCommand::Redo);
+    EXPECT_EQ(edit_command_for('v', kPrimary | GLFW_MOD_SHIFT), EditCommand::None);
+}
+
+TEST(EditCommand, NoOrWrongOrExtraModifierIsNothing) {
+    EXPECT_EQ(edit_command_for('v', 0), EditCommand::None);
+    EXPECT_EQ(edit_command_for('v', GLFW_MOD_SHIFT), EditCommand::None);
+    EXPECT_EQ(edit_command_for('v', kWrong), EditCommand::None);
+    EXPECT_EQ(edit_command_for('v', kPrimary | GLFW_MOD_ALT), EditCommand::None);
+    EXPECT_EQ(edit_command_for('v', kPrimary | kWrong), EditCommand::None);
+    EXPECT_EQ(edit_command_for('q', kPrimary), EditCommand::None);
+}
+
+TEST(EditCommand, KindIsDistinctFromCharAndKey) {
+    EXPECT_EQ(renderer::kTextEventEdit, 2);
+    EXPECT_NE(renderer::kTextEventEdit, renderer::kTextEventChar);
+    EXPECT_NE(renderer::kTextEventEdit, renderer::kTextEventKey);
+}

@@ -21,6 +21,10 @@ def test_send_key_event_without_a_browser_is_a_noop():
     h.cef_send_key_event(1, 259, 51, 1, 0)           # GLFW_KEY_BACKSPACE
 
 
+def test_edit_command_without_a_browser_is_a_noop():
+    h.cef_send_key_event(2, 3, 9, 1, 8)               # Paste, no browser alive
+
+
 def test_capture_bindings_exist_and_are_required():
     for name in ("set_key_capture", "key_capture_active"):
         assert hasattr(h, name), name
