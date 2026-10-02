@@ -14,3 +14,14 @@ def test_b_the_explosion_light_did_not_leak():
     from engine.appc import explosion_lights
     assert explosion_lights._active == []
     assert explosion_lights._sequences == []
+
+
+def test_c_quickbattle_spawn_provider_leaks():
+    from engine.quickbattle import spawn
+    spawn.set_provider(lambda: "leaked-plan")
+    assert spawn.current_plan() == "leaked-plan"
+
+
+def test_d_the_quickbattle_spawn_provider_did_not_leak():
+    from engine.quickbattle import spawn
+    assert spawn.current_plan() is None

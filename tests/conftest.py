@@ -950,6 +950,16 @@ def _reset_leakable_engine_globals():
         _spv.reset_model_parts()
     except Exception:
         pass
+    # Quick Battle spawn provider: engine.quickbattle.spawn._provider is a
+    # process-global callable a test installs via set_provider(); without
+    # this a test that forgets its own teardown (or fails before reaching
+    # it) would leave a stale BattlePlan provider wired into GenerateShips
+    # for every later test that boots QuickBattle.
+    try:
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.set_provider(None)
+    except Exception:
+        pass
     # (The SPV part-preview lock needs no reset of its own: the live lock is
     # computed on the panel from `articulation.dev_override()`, which the
     # `_articulation.reset()` above already clears. The module-level copy
