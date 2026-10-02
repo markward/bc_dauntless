@@ -18,6 +18,7 @@ def qb(monkeypatch):
     spawn.install_generate_ships_hook(QB)      # Task 8 moves this into boot; idempotent
     yield hl, controller, QB
     spawn.set_provider(None)
+    spawn.set_radius_fn(None)
 
 
 def _plan(groups):
@@ -344,3 +345,58 @@ def test_neutral_group_keeps_players_heading(qb):
     pf = player.GetWorldRotation().GetCol(1)
     fwd = _ship("Transport-1").GetWorldRotation().GetCol(1)
     assert fwd.x * pf.x + fwd.y * pf.y + fwd.z * pf.z > 0.999
+
+
+def _fake_radius_5(ship):
+    if ship.GetRadius() <= 0.0:
+        ship.SetRadius(5.0)
+
+
+def _dist(a, b):
+    return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
+
+
+def test_radius_fn_spaces_a_group_by_seeded_radii(qb):
+    """At GenerateShips time nothing is realised yet, so every ship reports
+    GetRadius() == 0 unless the registered radius_fn seeds it first. With a
+    seeder giving 5 GU, two ships of one group sit >= 5 + 5 + MARGIN_GU apart."""
+    hl, controller, QB = qb
+    from engine.quickbattle import placement, spawn
+    spawn.set_radius_fn(_fake_radius_5)
+    _s, plan = _plan([("enemy", "fore", "standard", "medium", ["Warbird", "Galor"])])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    a, b = _ship("Warbird-1"), _ship("Galor-2")
+    assert a.GetRadius() == 5.0 and b.GetRadius() == 5.0
+    assert _dist(a.GetWorldLocation(), b.GetWorldLocation()) >= \
+        5.0 + 5.0 + placement.MARGIN_GU - 1e-6
+
+
+def test_radius_fn_spaces_an_escort_from_the_player(qb):
+    hl, controller, QB = qb
+    from engine import ship_catalog
+    from engine.quickbattle import placement, scenario as sc, spawn
+    spawn.set_radius_fn(_fake_radius_5)
+    s = sc.default_scenario()
+    s.delete_group(s.groups[1].id)
+    s.add_ship(s.player_group().id, "Akira")
+    plan = sc.battle_plan(s, sc.catalog_index(ship_catalog.entries()))
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    import App
+    player = App.Game_GetCurrentGame().GetPlayer()
+    assert player.GetRadius() == 5.0
+    escort = _ship("Akira-1")
+    assert _dist(escort.GetWorldLocation(), player.GetWorldLocation()) >= \
+        player.GetRadius() + escort.GetRadius() + placement.MARGIN_GU - 1e-6
+
+
+def test_no_radius_fn_behaves_as_before(qb):
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    spawn.set_radius_fn(None)
+    _s, plan = _plan([("enemy", "fore", "standard", "medium", ["Warbird"])])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    assert _ship("Warbird-1") is not None
+    assert _ship("Warbird-1").GetRadius() == 0.0

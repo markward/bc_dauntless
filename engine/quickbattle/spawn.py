@@ -18,6 +18,7 @@ from engine.quickbattle import placement
 
 _log = logging.getLogger(__name__)
 _provider = None
+_radius_fn = None
 _SIDE = {"friendly": "Friendly", "enemy": "Enemy"}
 _FALLBACK = {"Friendly": ("QuickBattleFriendlyAI", "QBFriendlyGenericShipDestroyed"),
              "Enemy": ("QuickBattleAI", "QBEnemyGenericShipDestroyed")}
@@ -28,6 +29,26 @@ _PARALLEL_EPS = 0.999  # |dot(forward, up)| above this -> treat as (anti)paralle
 def set_provider(fn) -> None:
     global _provider
     _provider = fn
+
+
+def set_radius_fn(fn) -> None:
+    """Register `fn(ship) -> None`, which seeds `ship`'s GetRadius() when it
+    is still 0. Nothing is realised at GenerateShips time -- the radius is
+    normally seeded at realisation (host_loop._seed_ship_radius) -- so without
+    this every ship, and the just-recreated player, reports 0 and placement
+    spacing collapses to MARGIN_GU. The host registers one at QuickBattle boot;
+    None (the default) leaves radii untouched."""
+    global _radius_fn
+    _radius_fn = fn
+
+
+def _seed_radius(ship) -> None:
+    if _radius_fn is None or ship is None:
+        return
+    try:
+        _radius_fn(ship)
+    except Exception as e:
+        _log.warning("quickbattle: radius seed failed for %s: %s", ship.GetName(), e)
 
 
 def current_plan():
@@ -244,6 +265,16 @@ def generate_ships(qb, plan) -> None:
     # (spec §4.5 step 3 says fall back only when the hook raises BEFORE
     # spawning anything -- the operative word is BEFORE).
     try:
+        # Seed radii before placement reads GetRadius(): after ReplaceTexture,
+        # so a registry-keyed model load matches the one realisation makes.
+        # The player's identity goes on first for the same reason (the
+        # reconcile block's has_replacements guard then leaves it alone).
+        from engine.appc import registry_texture
+        if not registry_texture.has_replacements(player):
+            apply_player_identity(player)
+        _seed_radius(player)
+        for _order, ship in created:
+            _seed_radius(ship)
         ppos = _vec(player.GetWorldLocation())
         cols = _cols(player.GetWorldRotation())
         placed: list = []
@@ -312,3 +343,25 @@ def install_generate_ships_hook(qb) -> bool:
     GenerateShips._dauntless_qb_spawn_orig = orig
     qb.GenerateShips = GenerateShips
     return True
+
+
+def apply_player_identity(ship) -> bool:
+    """Registry + display name for a freshly created player (called from
+    host_loop's QuickBattle reconcile block, and by generate_ships before it
+    seeds radii). No plan -> BC's class default."""
+    from engine.appc import registry_texture
+    plan = current_plan()
+    if plan is None:
+        return registry_texture.apply_class_default(ship)
+    try:
+        import App
+        p = plan.player
+        if p.registry:
+            ship.ReplaceTexture(registry_path(p.class_id, p.registry),
+                                registry_texture.REGISTRY_OLD_NAME)
+        if p.display_name:
+            ship.SetDisplayName(App.TGString(p.display_name))
+        return True
+    except Exception as e:
+        _log.warning("quickbattle: player identity failed: %s", e)
+        return False

@@ -5997,6 +5997,66 @@ def _cache_ship_hull_pieces(ship, handle, r_, iid=None) -> None:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
 
+def _runtime_ship_model_source(ship, *, verbose: bool = False):
+    """(model_path, nif_path, model_scale) for `ship`, or None when it has no
+    NIF. A rock-catalogue redirect's model_path differs from nif_path."""
+    _override = _rock_model_override(ship)
+    if _override is not None:
+        model_path, model_scale = _override
+        return model_path, model_path, model_scale
+    nif_path = _ship_nif_path(ship, verbose=verbose)
+    if nif_path is None:
+        return None
+    model_path, model_scale = _ship_model_source(ship, nif_path)
+    return model_path, nif_path, model_scale
+
+
+def _load_runtime_ship_model(ship, r_, *, verbose: bool = False):
+    """Load `ship`'s model exactly as `realize_set_objects` does:
+    `(handle, loaded_path, nif_path, model_scale)`, or None when it has no NIF
+    or the load raises. `loaded_path`/`model_scale` are what actually loaded
+    (a catalogue rock that fails falls back to its stock NIF at scale 1).
+
+    ONE helper for realize_set_objects AND the Quick Battle radius seeder
+    (`_MissionLoader._seed_quickbattle_ship_radius`), so the seeder's call is
+    argument-identical to realisation's -- the native load_model dedupes on
+    (path, replacements, decals, scale), and the realisation load then returns
+    the seeder's handle instead of building the model a second time."""
+    src = _runtime_ship_model_source(ship, verbose=verbose)
+    if src is None:
+        return None
+    model_path, nif_path, model_scale = src
+    load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
+    tex_search = _ship_texture_search(nif_path, ship)
+    reps = _ship_texture_replacements(ship)
+    decals = _ship_decals(ship, nif_path, reps)
+    try:
+        try:
+            handle = r_.load_model(model_path, tex_search, reps,
+                                    decals=decals or None, **load_kwargs)
+        except Exception as e:
+            if model_path == nif_path:
+                raise
+            # A catalogue rock that fails to load falls back to stock.
+            _warn_rock_fallback(model_path, nif_path, e)
+            handle = r_.load_model(nif_path, tex_search, reps,
+                                    decals=decals or None)
+            model_path, model_scale = nif_path, 1.0
+    except Exception as e:
+        if verbose:
+            print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
+                  f"raised: {type(e).__name__}: {e}", flush=True)
+        return None
+    return handle, model_path, nif_path, model_scale
+
+
+def _extent_key(model_path: str, nif_path: str, model_scale: float) -> str:
+    """HostController.nif_to_extent key: the NIF for a stock load, the picked
+    model + its scale for a rock-catalogue redirect (two stock NIFs of
+    different sizes can pick the SAME rock)."""
+    return nif_path if model_scale == 1.0 else f"{model_path}#s={model_scale:.6g}"
+
+
 def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                         include_planets: bool = True,
                         ships: Optional[Iterable] = None) -> None:
@@ -6037,35 +6097,10 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
-        _override = _rock_model_override(ship)
-        if _override is not None:
-            model_path, model_scale = _override
-            nif_path = model_path
-        else:
-            nif_path = _ship_nif_path(ship, verbose=verbose)
-            if nif_path is None:
-                continue
-            model_path, model_scale = _ship_model_source(ship, nif_path)
-        load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
-        tex_search = _ship_texture_search(nif_path, ship)
-        reps = _ship_texture_replacements(ship)
-        decals = _ship_decals(ship, nif_path, reps)
-        try:
-            try:
-                handle = r_.load_model(model_path, tex_search, reps,
-                                        decals=decals or None, **load_kwargs)
-            except Exception as e:
-                if model_path == nif_path:
-                    raise
-                # A catalogue rock that fails to load falls back to stock.
-                _warn_rock_fallback(model_path, nif_path, e)
-                handle = r_.load_model(nif_path, tex_search, reps,
-                                        decals=decals or None)
-        except Exception as e:
-            if verbose:
-                print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
-                      f"raised: {type(e).__name__}: {e}", flush=True)
+        loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
+        if loaded is None:
             continue
+        handle = loaded[0]
         center, half_extents = r_.model_aabb(handle)
         _seed_ship_radius(ship, _model_extent_from_aabb(center, half_extents),
                           _model_sphere_radius_from_aabb(center, half_extents))
@@ -6288,18 +6323,20 @@ def _reconcile_runtime_instances(session, renderer, *,
 
     # QuickBattle creates/recreates the player ship LATE (StartSimulation2 ->
     # RecreatePlayer destroy+recreate), so the rendered player often isn't the
-    # one load_quickbattle saw. Apply BC's Federation "default NCC" registry to
-    # the current player just before the ADD loop realizes it, so its hull reads
-    # a name (Galaxy -> Dauntless) rather than the stock Enterprise. Guarded to a
-    # QB session + a not-yet-realized player with no registry already queued, so
-    # it runs once per player and never overrides a scripted swap.
+    # one load_quickbattle saw. Apply the setup screen's named player ship
+    # (registry + display name; BC's Federation "default NCC" when there is no
+    # plan) just before the ADD loop realizes it, so its hull reads a name
+    # rather than the stock Enterprise. Guarded to a QB session + a
+    # not-yet-realized player with no registry already queued, so it runs once
+    # per player and never overrides a scripted swap.
     if session.mission_name == "QuickBattle":
         from engine.appc import registry_texture
+        from engine.quickbattle import spawn as _qb_spawn
         _g = Game_GetCurrentGame()
         _p = _g.GetPlayer() if _g is not None else None
         if (_p is not None and _p not in session.ship_instances
                 and not registry_texture.has_replacements(_p)):
-            registry_texture.apply_class_default(_p)
+            _qb_spawn.apply_player_identity(_p)
 
     # SCOPE (system-frames Plan 3 Task 3, Ruling 4). Entering a star system
     # loads all its regions (system_loader); a ship in Ona2 is as much in the
@@ -6709,38 +6746,6 @@ def _sync_quick_battle_panel(controller) -> None:
         panel.close()
 
 
-def _sync_quickbattle_player_revert(controller) -> None:
-    """Revert to the player's original ship when combat ends.
-
-    The player's ship outside the simulation is captured ONCE (the boot
-    QuickBattle default, before they pick anything). Every "Set As Player Ship"
-    pick — in config OR mid-combat — is temporary: when bInSimulation goes 1->0
-    (End Combat, panel or XO menu), restore g_sPlayerType to the original and
-    RecreatePlayer so the player is never left stuck on the ship they flew in
-    the sim. Fully guarded — a no-op when QuickBattle isn't active or the ship
-    is already the original."""
-    try:
-        import importlib
-        qb = importlib.import_module("QuickBattle.QuickBattle")
-        in_sim = bool(getattr(qb, "bInSimulation", 0))
-    except Exception:
-        return
-    # Capture the original (pre-pick) ship once, on the first tick.
-    if not hasattr(controller, "_qb_original_player_type"):
-        controller._qb_original_player_type = getattr(qb, "g_sPlayerType", None)
-    last = getattr(controller, "_qb_last_in_sim", False)
-    controller._qb_last_in_sim = in_sim
-    if last and not in_sim:                 # End Combat
-        orig = controller._qb_original_player_type
-        if orig is not None and getattr(qb, "g_sPlayerType", None) != orig:
-            qb.g_sPlayerType = orig
-            try:
-                qb.RecreatePlayer()
-            except Exception as _e:
-                import engine.dev_mode as _dev
-                _dev.log_swallowed("quickbattle player-ship revert", _e)
-
-
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -7010,6 +7015,12 @@ class _MissionLoader:
         import QuickBattle.QuickBattle as _QB
         from engine import bridge_selection as _bs
         _bs.install_quickbattle_hook(_QB, self._c.bridge_pins)
+        # Our GenerateShips (the setup screen's BattlePlan), plus the radius
+        # seeder it runs before placement: nothing is realised at
+        # GenerateShips time, so every ship would otherwise report radius 0.
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.install_generate_ships_hook(_QB)
+        _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)
 
         import QuickBattle.QuickBattleGame as _QBGame
         _QBGame.Initialize(game)
@@ -7121,11 +7132,49 @@ class _MissionLoader:
 
         # Spawn into the player's current system, not the booted-into one.
         self._sync_quickbattle_spawn_set()
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.sync_sdk(QB, _qb_spawn.current_plan())
 
         evt = App.TGEvent_Create()
         evt.SetEventType(QB.ET_START_SIMULATION)
         evt.SetDestination(QB.g_pXO)
         App.g_kEventManager.AddEvent(evt)
+
+    def _seed_quickbattle_ship_radius(self, ship) -> None:
+        """Give a just-created Quick Battle ship the GetRadius() realisation
+        would seed, BEFORE realisation (spawn.set_radius_fn; GenerateShips
+        places by radius). Battle ships and the recreated player are realised
+        later by the runtime reconcile (realize_set_objects), so:
+
+          * the class's extent already cached on the controller (any NIF
+            _realize_session or an earlier seed loaded) -> no load at all;
+          * otherwise load through _load_runtime_ship_model, the helper
+            realize_set_objects itself uses, so the native load_model dedupe
+            hands realisation this same handle -- one GPU load per model,
+            not two -- and cache the extent for the next ship of the class.
+
+        Rocks take the sphere radius, via _seed_ship_radius's own rule."""
+        if ship is None or ship.GetRadius() > 0.0:
+            return
+        src = _runtime_ship_model_source(ship, verbose=self._verbose)
+        if src is None:
+            return
+        key = _extent_key(*src)
+        if key not in self._c.nif_to_extent:
+            loaded = _load_runtime_ship_model(ship, self._c.renderer,
+                                              verbose=self._verbose)
+            if loaded is None:
+                return
+            handle, model_path, nif_path, model_scale = loaded
+            key = _extent_key(model_path, nif_path, model_scale)
+            center, half_extents = self._c.renderer.model_aabb(handle)
+            self._c.nif_to_extent.setdefault(
+                key, _model_extent_from_aabb(center, half_extents))
+            self._c.nif_to_sphere_radius.setdefault(
+                key, _model_sphere_radius_from_aabb(center, half_extents))
+        extent = self._c.nif_to_extent[key]
+        _seed_ship_radius(ship, extent,
+                          self._c.nif_to_sphere_radius.get(key, extent))
 
     def _realize_session(self, sess: MissionSession) -> MissionSession:
         import App
@@ -7155,8 +7204,7 @@ class _MissionLoader:
             reps = _ship_texture_replacements(ship)
             decals = _ship_decals(ship, nif_path, reps)
             load_key = _ship_load_key(model_path, reps, decals, model_scale)
-            extent_key = (nif_path if model_scale == 1.0
-                         else f"{model_path}#s={model_scale:.6g}")
+            extent_key = _extent_key(model_path, nif_path, model_scale)
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
@@ -10781,9 +10829,6 @@ def run(mission_name: Optional[str] = None,
             # panel: opens it when the player clicks the XO menu's config
             # button, closes it on Close/Start. Boot leaves it closed.
             _sync_quick_battle_panel(controller)
-            # Capture the player ship at combat start; revert to it on End
-            # Combat (so a mid-combat ship swap is temporary).
-            _sync_quickbattle_player_revert(controller)
             # The camera follows session.player; _sync_player_identity (just
             # below, and again in the scene reconcile after the sim) calls
             # this when the player's identity changed

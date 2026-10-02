@@ -958,6 +958,7 @@ def _reset_leakable_engine_globals():
     try:
         from engine.quickbattle import spawn as _qb_spawn
         _qb_spawn.set_provider(None)
+        _qb_spawn.set_radius_fn(None)
     except Exception:
         pass
     # (The SPV part-preview lock needs no reset of its own: the live lock is
