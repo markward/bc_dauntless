@@ -5,7 +5,10 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 #include <glm/glm.hpp>
 #include <renderer/far_field.h>
@@ -86,6 +89,26 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
 
 struct NearStats { int cells = 0; int small = 0; int large = 0; int ghosted = 0; };
 
+// One large-rock touch (spec §2 "Collisions"), drained by Python
+// (engine/rocks/scenery_contact.py). VIEW space; normal points rock -> ship.
+struct NearContact {
+    glm::dvec3 point_view{0.0};        // closest point on the ship's contact shape at first touch
+    glm::vec3 normal{0, 0, 1};
+    glm::dvec3 rock_centre_view{0.0};
+    float rock_radius = 0.0f;
+    float rel_speed = 0.0f;            // GU/s, the ship's sweep speed this step
+    float pen = 0.0f;                  // rock_radius - distance(centre, shape) at the CURRENT pose, >= 0
+};
+
+struct NearStepInput {
+    double game_time = 0.0;
+    glm::dvec3 render_origin{0.0};
+    glm::dvec3 anchor_sys{0.0};
+    std::optional<minors::PlayerBox> player;   // RENDER space; unset: no contacts, sweep state reset
+    float shield_inflate = 0.0f;               // > 0: the box half extents x this (shields up)
+    minors::Dials minor_dials;                 // shove + contact margin + teleport guard
+};
+
 class NearField {
 public:
     void set_dials(const NearDials&);      // a generator change clears every cell
@@ -106,18 +129,47 @@ public:
     // Frustum-culled; per class at most max_instances items (meshes +
     // billboards together), nearest first. Const: never streams.
     void build(const NearBuildInput& in, NearOutput& out) const;
+
+    // Contacts (spec §2 "Collisions"). Per frame: advances small-rock shoves,
+    // then sweeps the player's box from its previous pose to its current one.
+    // Large rocks: solid, fixed, player only -- a touch is reported once per
+    // collide_cooldown_s per rock; a rock that streams in (or is met on the
+    // first posed step) already overlapping the box is ghosted until a step
+    // finds the box clear of it. Small rocks: the minors' harmless shove.
+    void step(const NearStepInput& in);
+    std::vector<NearContact> drain_large_contacts() { return std::exchange(large_contacts_, {}); }
+    std::vector<minors::Contact> drain_small_contacts() { return std::exchange(small_contacts_, {}); }
+    void reset_player() { has_prev_ = false; }   // forget the previous pose
+    // TEST-ONLY: add a rock with an explicit key to a dedicated per-class
+    // test cell that stream() never drops (only clear() removes it).
+    void debug_add_rock(NearClass cls, std::uint64_t key, const NearRock& r);
 private:
     struct Cell {
         NearClass cls;
         std::vector<NearRock> rocks;
         glm::dvec3 lo{0.0};              // system-space AABB min corner
         double size = 0.0;               // edge (the class's cell_gu when generated)
+        bool pinned = false;             // the test cell: never streamed out
+        std::vector<std::uint64_t> keys; // pinned only: explicit rock keys
     };
+    std::uint64_t key_of(std::uint64_t cell_key, const Cell& c, std::size_t i) const;
     // key: mix(source id, class, i, j, k); rock key = mix(cell key, index + 1)
     std::unordered_map<std::uint64_t, Cell> cells_;
     NearDials dials_;
     NearCatalogue cat_;
     std::vector<far::DiscSource> sources_;
+
+    // Contact state (cleared by clear()).
+    double last_time_ = 0.0;
+    bool stepped_ = false;                       // last_time_ is valid
+    bool has_prev_ = false;
+    glm::dvec3 prev_center_sys_{0.0};            // player box centre, SYSTEM space
+    std::unordered_set<std::uint64_t> seen_large_;   // large rock keys at the last step
+    std::unordered_set<std::uint64_t> ghosts_;
+    std::unordered_map<std::uint64_t, double> large_last_;            // last reported touch
+    std::unordered_map<std::uint64_t, minors::ShoveState> shoves_;    // small rocks
+    std::vector<NearContact> large_contacts_;
+    std::vector<minors::Contact> small_contacts_;
 };
 
 }  // namespace renderer::rockfield

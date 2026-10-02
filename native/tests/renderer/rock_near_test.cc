@@ -378,3 +378,221 @@ TEST(NearBuild, InstanceCapHolds) {             // Review Focus 5
     // must all be near meshes -- no small billboard (>= 16 GU) survives.
     EXPECT_EQ(small_boards, 0);
 }
+
+// ---- Contacts (Task 6) ----------------------------------------------------
+namespace {
+constexpr double kTick = 1.0 / 60.0;
+minors::PlayerBox unit_box_at(const glm::vec3& p) {   // half extents 1 GU, render space
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    pb.world = glm::translate(glm::mat4(1.0f), p);
+    return pb;
+}
+rockfield::NearRock rock_at(const glm::dvec3& p, float radius, int rock = 10) {
+    rockfield::NearRock r; r.pos_sys = p; r.radius = radius; r.rock = rock;
+    return r;
+}
+// Pose the player at render `p` and step at game time `t`.
+void step_at(rockfield::NearField& f, rockfield::NearStepInput& in, const glm::vec3& p, double t) {
+    in.player = unit_box_at(p);
+    in.game_time = t;
+    f.step(in);
+}
+}
+
+TEST(NearContact, SweptHitAtDashSpeed) {
+    rockfield::NearField f;
+    rockfield::NearRock r; r.pos_sys = {0, 500, 0}; r.radius = 2.0f;
+    f.debug_add_rock(rockfield::NearClass::Large, 42, r);
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    rockfield::NearStepInput in; in.player = pb;
+    in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, 0, 0));
+    in.game_time = 1.0; f.step(in);
+    in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, 1000, 0));   // 1,000 GU in one step
+    in.game_time = 1.0 + 1.0 / 60.0; f.step(in);
+    const auto c = f.drain_large_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_NEAR(c[0].rock_radius, 2.0f, 1e-6f);
+    EXPECT_NEAR(c[0].rel_speed, 60000.0f, 10.0f);
+    // The rock centre lies on the sweep: the closest point is the centre
+    // itself, so the normal falls back to the reverse of the sweep.
+    EXPECT_NEAR(glm::length(c[0].normal - glm::vec3(0, -1, 0)), 0.0f, 1e-4f);
+    EXPECT_NEAR(glm::length(c[0].rock_centre_view - glm::dvec3(0, 500, 0)), 0.0, 1e-9);
+    EXPECT_EQ(c[0].pen, 0.0f);                       // 500 GU clear at the current pose
+    EXPECT_TRUE(f.drain_large_contacts().empty());   // drained
+}
+
+TEST(NearContact, ReportsViewSpacePointNormalAndPen) {
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 5, rock_at({150, 3, 0}, 2.0f));   // view (100,3,0), render (0,3,0)
+    rockfield::NearStepInput in;
+    in.anchor_sys = {50, 0, 0};
+    in.render_origin = {100, 0, 0};
+    step_at(f, in, {0, -10, 0}, 1.0);
+    step_at(f, in, {0, 1.5f, 0}, 1.0 + kTick);   // top face at y = 2.5: 0.5 GU from the centre
+    const auto c = f.drain_large_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_NEAR(glm::length(c[0].point_view - glm::dvec3(100, 2.5, 0)), 0.0, 1e-4);
+    EXPECT_NEAR(glm::length(c[0].rock_centre_view - glm::dvec3(100, 3, 0)), 0.0, 1e-9);
+    EXPECT_NEAR(glm::length(c[0].normal - glm::vec3(0, -1, 0)), 0.0f, 1e-4f);   // rock -> ship
+    EXPECT_NEAR(c[0].pen, 1.5f, 1e-4f);                                         // 2 - 0.5
+    EXPECT_NEAR(c[0].rel_speed, 11.5f * 60.0f, 0.1f);
+}
+
+TEST(NearContact, CooldownSuppressesRepeats) {
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 9, rock_at({0, 0, 0}, 2.0f));
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, -10, 0}, 1.0);                 // clear: face 9 GU from the centre
+    step_at(f, in, {0, -2.5f, 0}, 1.1);               // face 1.5 GU away: touch
+    EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+    step_at(f, in, {0, -2.5f, 0}, 1.2);               // still touching, 0.1 s on
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    step_at(f, in, {0, -2.5f, 0}, 1.7);               // 0.6 s after the first touch
+    EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+}
+
+TEST(NearContact, OverlapOnStreamInIsGhosted) {          // Review Focus 2
+    rockfield::NearField f;
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    rockfield::NearStepInput in; in.player = pb; in.game_time = 1.0;
+    rockfield::NearRock r; r.pos_sys = {0, 0.5, 0}; r.radius = 2.0f;   // inside the ship
+    f.debug_add_rock(rockfield::NearClass::Large, 7, r);
+    f.step(in);
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    EXPECT_EQ(f.stats().ghosted, 1);
+    in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, -20, 0)); in.game_time = 2.0; f.step(in);  // separate
+    EXPECT_EQ(f.stats().ghosted, 0);
+    in.player->world = glm::mat4(1); in.game_time = 3.0; f.step(in);   // come back: now it hits
+    EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+}
+
+TEST(NearContact, StreamInWithAPreviousPoseIsGhostedToo) {   // Review Focus 2
+    rockfield::NearField f;
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, 0, 0}, 1.0);                                   // pose known, no rocks
+    f.debug_add_rock(rockfield::NearClass::Large, 8, rock_at({0, 0.5, 0}, 2.0f));
+    step_at(f, in, {0, 0, 0}, 1.0 + kTick);                           // the rock streams in overlapping
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    EXPECT_EQ(f.stats().ghosted, 1);
+    step_at(f, in, {0, 0.1f, 0}, 1.0 + 2 * kTick);                    // still overlapping: still ghosted
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    EXPECT_EQ(f.stats().ghosted, 1);
+}
+
+TEST(NearContact, ShieldInflateTouchesEarlier) {
+    // Rock radius 1, centre 2.5 GU from a unit-half box's centre: the face
+    // gap is 1.5 (> 1) uninflated, 2.5 - sqrt(3) = 0.77 (<= 1) inflated.
+    auto touches = [](float inflate) {
+        rockfield::NearField f;
+        f.debug_add_rock(rockfield::NearClass::Large, 3, rock_at({0, 2.5, 0}, 1.0f));
+        rockfield::NearStepInput in;
+        in.shield_inflate = inflate;
+        step_at(f, in, {0, -20, 0}, 1.0);
+        step_at(f, in, {0, 0, 0}, 1.0 + kTick);
+        return f.drain_large_contacts().size();
+    };
+    EXPECT_EQ(touches(0.0f), 0u);
+    EXPECT_EQ(touches(std::sqrt(3.0f)), 1u);
+}
+
+TEST(NearContact, NoPlayerNoContactsAndSweepResets) {
+    // A rock sits on the old -> new segment. With the middle step posed the
+    // sweep hits it (control); with the middle step unposed nothing does.
+    auto run = [](bool pose_middle) {
+        rockfield::NearField f;
+        f.debug_add_rock(rockfield::NearClass::Large, 4, rock_at({0, 50, 0}, 2.0f));
+        rockfield::NearStepInput in;
+        step_at(f, in, {0, 0, 0}, 1.0);
+        if (pose_middle) {
+            step_at(f, in, {0, 0, 0}, 1.1);
+        } else {
+            in.player.reset();
+            in.game_time = 1.1;
+            f.step(in);
+            EXPECT_TRUE(f.drain_large_contacts().empty());
+        }
+        step_at(f, in, {0, 100, 0}, 1.2);
+        return f.drain_large_contacts().size();
+    };
+    EXPECT_EQ(run(true), 1u);
+    EXPECT_EQ(run(false), 0u);
+}
+
+TEST(NearContact, ResetPlayerForgetsThePose) {
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 4, rock_at({0, 50, 0}, 2.0f));
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, 0, 0}, 1.0);
+    f.reset_player();
+    step_at(f, in, {0, 100, 0}, 1.1);
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+}
+
+TEST(NearContact, TeleportGuardSweepsTheCurrentPoseOnly) {
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 4, rock_at({0, 500, 0}, 2.0f));
+    rockfield::NearStepInput in;
+    in.minor_dials.teleport_gu = 900.0f;
+    step_at(f, in, {0, 0, 0}, 1.0);
+    step_at(f, in, {0, 1000, 0}, 1.0 + kTick);   // 1,000 GU > teleport_gu
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+}
+
+TEST(NearContact, ContactsCappedPerClassPerStep) {
+    rockfield::NearField f;
+    for (int i = 0; i < 3; ++i)
+        f.debug_add_rock(rockfield::NearClass::Large, 100 + i, rock_at({0, 100.0 + 100.0 * i, 0}, 2.0f));
+    rockfield::NearStepInput in;
+    in.minor_dials.max_shoves_per_frame = 2;
+    step_at(f, in, {0, 0, 0}, 1.0);
+    step_at(f, in, {0, 1000, 0}, 1.0 + kTick);
+    EXPECT_EQ(f.drain_large_contacts().size(), 2u);
+}
+
+TEST(NearContact, SmallRocksShoveAndReportMinorContacts) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat());                                   // clears: add the rock after
+    f.debug_add_rock(rockfield::NearClass::Small, 11, rock_at({0, 50, 0}, 0.2f, /*rock=*/1));
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, 0, 0}, 1.0);
+    step_at(f, in, {0, 100, 0}, 1.0 + kTick);
+    const auto c = f.drain_small_contacts();
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_NEAR(c[0].radius, 0.2f, 1e-6f);
+    EXPECT_NEAR(c[0].rel_speed, 6000.0f, 1.0f);
+    EXPECT_TRUE(f.drain_large_contacts().empty());                  // small rocks never hit
+
+    rockfield::NearBuildInput b;
+    b.proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.01f, 1e5f);
+    b.view = glm::lookAt(glm::vec3(0, 45, 0), glm::vec3(0, 50, 0), glm::vec3(0, 0, 1));
+    rockfield::NearOutput out;
+    f.build(b, out);
+    ASSERT_EQ(out.mesh_count, 1);
+    const glm::vec3 drawn = translation(out.meshes[0].items[0]);
+    EXPECT_GT(glm::length(drawn - glm::vec3(0, 50, 0)), 0.2f);     // pushed off the ship's path
+}
+
+TEST(NearContact, ClearDropsContactsCooldownsGhosts) {   // Review Focus 1
+    rockfield::NearField f;
+    f.debug_add_rock(rockfield::NearClass::Large, 9, rock_at({0, 0, 0}, 2.0f));
+    f.debug_add_rock(rockfield::NearClass::Large, 10, rock_at({0, -9.5, 0}, 2.0f));   // overlaps the first pose
+    f.debug_add_rock(rockfield::NearClass::Small, 11, rock_at({0, -5, 0}, 0.2f, 1));
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, -10, 0}, 1.0);
+    EXPECT_EQ(f.stats().ghosted, 1);
+    step_at(f, in, {0, -2.5f, 0}, 1.0 + kTick);     // touches rock 9, shoves rock 11
+    // (do not drain)
+    f.clear();
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    EXPECT_TRUE(f.drain_small_contacts().empty());
+    const auto st = f.stats();
+    EXPECT_EQ(st.cells, 0); EXPECT_EQ(st.small, 0); EXPECT_EQ(st.large, 0); EXPECT_EQ(st.ghosted, 0);
+    int n = 0;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t, const rockfield::NearRock&) { ++n; });
+    EXPECT_EQ(n, 0);
+    // Cooldowns went too: the same rock, touched again at once, reports.
+    f.debug_add_rock(rockfield::NearClass::Large, 9, rock_at({0, 0, 0}, 2.0f));
+    step_at(f, in, {0, -10, 0}, 1.0 + 2 * kTick);  // the pose went with clear(): re-learn it
+    step_at(f, in, {0, -2.5f, 0}, 1.0 + 3 * kTick);
+    EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+}

@@ -197,7 +197,8 @@ void NearField::stream(const glm::dvec3& c) {
     // Drop cells past range + margin (hysteresis: a cell re-enters at range).
     for (auto it = cells_.begin(); it != cells_.end();) {
         const double keep = class_dials(dials_, it->second.cls).billboard_gu + dials_.stream_margin_gu;
-        if (aabb_distance(c, it->second.lo, it->second.size) > keep) it = cells_.erase(it);
+        if (!it->second.pinned && aabb_distance(c, it->second.lo, it->second.size) > keep)
+            it = cells_.erase(it);
         else ++it;
     }
     // Generate cells newly within range.
@@ -215,18 +216,41 @@ void NearField::stream(const glm::dvec3& c) {
                         if (aabb_distance(c, lo, L) > R) continue;
                         const std::uint64_t key = cell_key(s.id, cls, ijk);
                         if (cells_.count(key)) continue;
-                        cells_.emplace(key, Cell{cls, generate_near_cell(s, cls, ijk, dials_, cat_), lo, L});
+                        cells_.emplace(key, Cell{cls, generate_near_cell(s, cls, ijk, dials_, cat_), lo, L, false, {}});
                     }
         }
 }
 
 void NearField::clear() {
     cells_.clear();
+    stepped_ = false;
+    has_prev_ = false;
+    seen_large_.clear();
+    ghosts_.clear();
+    large_last_.clear();
+    shoves_.clear();
+    large_contacts_.clear();   // a pending touch would hit a dead mission's rock
+    small_contacts_.clear();
+}
+
+std::uint64_t NearField::key_of(std::uint64_t cell, const Cell& c, std::size_t i) const {
+    return c.pinned ? c.keys[i] : rock_key(cell, i);
+}
+
+void NearField::debug_add_rock(NearClass cls, std::uint64_t key, const NearRock& r) {
+    // Fixed keys outside the hashed space in practice; one test cell per class.
+    const std::uint64_t ck = 0x7E57CE11000000ull | static_cast<std::uint64_t>(cls);
+    Cell& c = cells_[ck];
+    c.cls = cls;
+    c.pinned = true;
+    c.rocks.push_back(r);
+    c.keys.push_back(key);
 }
 
 NearStats NearField::stats() const {
     NearStats st;
     st.cells = static_cast<int>(cells_.size());
+    st.ghosted = static_cast<int>(ghosts_.size());
     for (const auto& [key, cell] : cells_)
         (cell.cls == NearClass::Small ? st.small : st.large) += static_cast<int>(cell.rocks.size());
     return st;
@@ -236,7 +260,7 @@ void NearField::for_each(NearClass cls,
                          const std::function<void(std::uint64_t, const NearRock&)>& fn) const {
     for (const auto& [key, cell] : cells_) {
         if (cell.cls != cls) continue;
-        for (std::size_t i = 0; i < cell.rocks.size(); ++i) fn(rock_key(key, i), cell.rocks[i]);
+        for (std::size_t i = 0; i < cell.rocks.size(); ++i) fn(key_of(key, cell, i), cell.rocks[i]);
     }
 }
 
@@ -254,7 +278,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     std::map<std::tuple<int, int, int>, std::vector<minors::InstanceGpu>> mesh_bins;
     std::map<int, std::vector<far::ImpostorGpu>> board_bins;
 
-    struct Cand { float d; glm::vec3 c; NearWeights w; const NearRock* rock; };
+    struct Cand { float d; glm::vec3 c; NearWeights w; const NearRock* rock; float spin; };
     for (NearClass cls : kClasses) {
         const NearClassDials& cd = class_dials(dials_, cls);
         const bool small = cls == NearClass::Small;
@@ -265,13 +289,20 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         std::vector<Cand> cands;
         for (const auto& [key, cell] : cells_) {
             if (cell.cls != cls) continue;
-            for (const NearRock& r : cell.rocks) {
-                const glm::vec3 c(r.pos_sys - to_render);
+            for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
+                const NearRock& r = cell.rocks[i];
+                glm::vec3 c(r.pos_sys - to_render);
+                float spin = 0.0f;
+                if (small && !shoves_.empty())
+                    if (auto sh = shoves_.find(key_of(key, cell, i)); sh != shoves_.end()) {
+                        c += sh->second.offset;
+                        spin = sh->second.spin;
+                    }
                 const float d = glm::length(c - eye);
                 const NearWeights w = near_weights(d, cd, dials_.fade_gu);
                 if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
                 if (!frustum.sphere(c, r.radius)) continue;
-                cands.push_back({d, c, w, &r});
+                cands.push_back({d, c, w, &r, spin});
             }
         }
         // Nearest first so the cap drops the far end; ties by catalogue index
@@ -286,7 +317,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         for (const Cand& cn : cands) {
             if (emitted >= cd.max_instances) break;
             const NearRock& r = *cn.rock;
-            const glm::mat3 R = rotation(r.phase + r.tumble_rate * t, r.tumble_axis);
+            const glm::mat3 R = rotation(r.phase + r.tumble_rate * t + cn.spin, r.tumble_axis);
             if (cn.w.mesh > 0.0f) {
                 const auto it = std::find(rocks.begin(), rocks.end(), r.rock);
                 const std::size_t slot = static_cast<std::size_t>(it - rocks.begin());
@@ -321,6 +352,169 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     for (auto& [rock, items] : board_bins) {
         out.billboard_count += static_cast<int>(items.size());
         out.billboards.push_back(far::ImpostorBin{rock, std::move(items)});
+    }
+}
+
+void NearField::step(const NearStepInput& in) {
+    const double t = in.game_time;
+    // dt <= 0 is a paused frame (or the first): no touches, no integration.
+    const double dt = stepped_ ? t - last_time_ : 0.0;
+    last_time_ = t;
+    stepped_ = true;
+    const minors::Dials& md = in.minor_dials;
+    const glm::dvec3 to_render = in.anchor_sys + in.render_origin;
+
+    // 1. Shoves: forget rocks that left the stream, integrate the rest.
+    if (!shoves_.empty()) {
+        std::unordered_set<std::uint64_t> live;
+        for_each(NearClass::Small, [&](std::uint64_t key, const NearRock&) { live.insert(key); });
+        for (auto it = shoves_.begin(); it != shoves_.end();)
+            it = live.count(it->first) ? std::next(it) : shoves_.erase(it);
+        if (dt > 0.0)
+            for (auto& [key, sh] : shoves_) { (void)key; minors::advance_shove(sh, static_cast<float>(dt), md); }
+    }
+    // Large rocks streamed now: cooldowns and ghosts of the rest are dropped.
+    std::unordered_set<std::uint64_t> large_now;
+    for_each(NearClass::Large, [&](std::uint64_t key, const NearRock&) { large_now.insert(key); });
+    for (auto it = large_last_.begin(); it != large_last_.end();)
+        it = large_now.count(it->first) ? std::next(it) : large_last_.erase(it);
+    for (auto it = ghosts_.begin(); it != ghosts_.end();)
+        it = large_now.count(*it) ? std::next(it) : ghosts_.erase(it);
+
+    if (!in.player) {                    // no contacts; the next posed step starts afresh
+        has_prev_ = false;
+        seen_large_ = std::move(large_now);
+        return;
+    }
+
+    // 2. The sweep, render space. The previous centre is kept in SYSTEM space
+    // (where the rocks are fixed), so a moved origin or anchor is not travel.
+    const minors::PlayerBox& box = *in.player;
+    const glm::vec3 c = glm::vec3(box.world * glm::vec4(box.center_mu, 1.0f));
+    const bool had_prev = has_prev_;
+    const glm::vec3 prev_render = glm::vec3(prev_center_sys_ - to_render);
+    has_prev_ = true;
+    prev_center_sys_ = glm::dvec3(c) + to_render;
+
+    glm::vec3 seg0 = c, v_player{0.0f};
+    if (had_prev && dt > 0.0 && glm::length(c - prev_render) <= md.teleport_gu) {
+        seg0 = prev_render;
+        v_player = (c - prev_render) / static_cast<float>(dt);
+    }                                    // else teleport / no pose: current pose only
+    const float rel_speed = glm::length(v_player);
+    const glm::vec3 seg = c - seg0;
+    const float seg_len2 = glm::dot(seg, seg);
+    auto dist_to_segment = [&](const glm::vec3& p) {
+        const float u = seg_len2 > 0.0f
+            ? std::clamp(glm::dot(p - seg0, seg) / seg_len2, 0.0f, 1.0f) : 0.0f;
+        return glm::length(p - (seg0 + seg * u));
+    };
+    const float inflate = in.shield_inflate > 0.0f ? in.shield_inflate : 1.0f;
+
+    // 3. Large rocks: solid, fixed, player only.
+    const minors::SweepBox lb = minors::sweep_box_of(box, 0.0f, inflate);
+    const float margin = dials_.collide_margin_gu;
+    auto gap_now = [&](const glm::vec3& p) {   // rock centre to the shape at the current pose
+        return glm::length(p - minors::closest_on_box(lb, c, p));
+    };
+    int reported = 0;
+    for (const auto& [ckey, cell] : cells_) {
+        if (cell.cls != NearClass::Large) continue;
+        for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
+            const std::uint64_t key = key_of(ckey, cell, i);
+            const NearRock& r = cell.rocks[i];
+            const glm::vec3 p(r.pos_sys - to_render);
+            const float reach = r.radius + margin;
+
+            // Ghosting: met overlapping on arrival (stream-in or first posed
+            // step) => no touches until a step finds the box clear; the step
+            // that releases it reports nothing (the sweep starts inside).
+            const bool fresh = !had_prev || !seen_large_.count(key);
+            const bool ghost = ghosts_.count(key) > 0;
+            if (fresh || ghost) {
+                const bool overlap = glm::length(p - c) <= lb.bound + reach && gap_now(p) <= reach;
+                if (overlap) { ghosts_.insert(key); continue; }
+                if (ghost) { ghosts_.erase(key); continue; }
+            }
+            if (!(dt > 0.0) || reported >= md.max_shoves_per_frame) continue;
+            if (dist_to_segment(p) > lb.bound + reach) continue;
+
+            float s = 1.0f;
+            if (minors::sweep_min_distance(lb, seg0, seg, p, s) > reach) continue;
+            if (auto it = large_last_.find(key);
+                it != large_last_.end() && t - it->second < dials_.collide_cooldown_s)
+                continue;
+            large_last_[key] = t;
+
+            const glm::vec3 q = minors::closest_on_box(lb, seg0 + seg * s, p);
+            glm::vec3 nrm = q - p;               // rock -> ship
+            if (glm::length(nrm) > 1e-6f) nrm = glm::normalize(nrm);
+            else if (seg_len2 > 1e-12f) nrm = -glm::normalize(seg);
+            else if (glm::length(c - p) > 1e-6f) nrm = glm::normalize(c - p);
+            else nrm = glm::vec3(0.0f, 0.0f, 1.0f);
+            NearContact nc;
+            nc.point_view = glm::dvec3(q) + in.render_origin;
+            nc.normal = nrm;
+            nc.rock_centre_view = glm::dvec3(p) + in.render_origin;
+            nc.rock_radius = r.radius;
+            nc.rel_speed = rel_speed;
+            nc.pen = std::max(0.0f, r.radius - gap_now(p));
+            large_contacts_.push_back(nc);
+            ++reported;
+        }
+    }
+    seen_large_ = std::move(large_now);
+
+    // 4. Small rocks: the minors' harmless shove (MinorField::step_contact).
+    if (!(dt > 0.0)) return;
+    const minors::SweepBox sb = minors::sweep_box_of(box, md.contact_margin_gu, inflate);
+    int touches = 0;
+    for (const auto& [ckey, cell] : cells_) {
+        if (cell.cls != NearClass::Small) continue;
+        if (touches >= md.max_shoves_per_frame) break;
+        for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
+            if (touches >= md.max_shoves_per_frame) break;
+            const std::uint64_t key = key_of(ckey, cell, i);
+            const float radius = cell.rocks[i].radius;
+            glm::vec3 p(cell.rocks[i].pos_sys - to_render);
+            if (auto sh = shoves_.find(key); sh != shoves_.end()) p += sh->second.offset;
+            if (dist_to_segment(p) > radius + sb.bound) continue;
+
+            float s = 1.0f;
+            minors::sweep_min_distance(sb, seg0, seg, p, s);
+            const glm::vec3 ck = seg0 + seg * s;
+            const glm::vec3 d = p - ck;
+            // Inside is decided in box-local coordinates (float round-trip).
+            float dl[3];
+            bool inside = true;
+            for (int ax = 0; ax < 3; ++ax) {
+                dl[ax] = glm::dot(d, sb.axes[ax]);
+                inside = inside && std::fabs(dl[ax]) <= sb.half[ax];
+            }
+            glm::vec3 nrm, q, push;
+            if (inside) {
+                // Exit through the face of least penetration, ending one radius out.
+                int k = 0;
+                for (int ax = 1; ax < 3; ++ax)
+                    if (sb.half[ax] - std::fabs(dl[ax]) < sb.half[k] - std::fabs(dl[k])) k = ax;
+                const float depth = sb.half[k] - std::fabs(dl[k]);
+                nrm = sb.axes[k] * (dl[k] >= 0.0f ? 1.0f : -1.0f);
+                q = p + nrm * depth;
+                push = nrm * (depth + radius);
+            } else {
+                q = minors::closest_on_box(sb, ck, p);
+                const float gap = glm::length(p - q);
+                if (gap > radius) continue;
+                nrm = (p - q) / gap;
+                push = nrm * (radius - gap);
+            }
+            minors::ShoveState& sh = shoves_[key];
+            sh.offset += push;                   // sit on the surface
+            const bool report = t - sh.last_contact >= md.contact_cooldown_s;
+            minors::apply_shove(sh, nrm, glm::dot(v_player, nrm), t, md);
+            if (report) small_contacts_.push_back({glm::dvec3(q) + in.render_origin, radius, rel_speed});
+            ++touches;
+        }
     }
 }
 
