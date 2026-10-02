@@ -621,7 +621,23 @@
 /* Sized to its label: X/Y/Z stay 12px; a word label (Width, Depth, Radius…)
    takes its own width rather than overflowing under the first button. */
 .spv-coords__axis { flex: 0 0 auto; min-width: 12px; margin-right: 4px; white-space: nowrap; color: #ffd; }
-.spv-coords__val { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.spv-coords__val { flex: 1; text-align: center; font-variant-numeric: tabular-nums; cursor: text; }
+/* Click-to-edit: the input takes the steppers' + value's space; the axis
+   label stays. Buttons reuse .spv-step so they match the steppers. */
+.spv-coords__input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    color: inherit;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 214, 90, 0.6);
+    border-radius: 2px;
+    padding: 1px 4px;
+    outline: none;
+}
+.spv-coords__edit-btn { flex: 0 0 auto; }
 .spv-coords__actions { display: flex; gap: 6px; margin-top: 8px; }
 .spv-coords__btn {
     flex: 1;

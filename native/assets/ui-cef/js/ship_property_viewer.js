@@ -182,22 +182,96 @@ function spvStepLabel(delta, unit) {
     return (delta < 0 ? '&minus;' : '+') + mag + (unit || '');
 }
 
-function spvStepperRow(label, value, digits, unit, small, big, handler, index) {
+function spvStepperRow(label, value, digits, unit, small, big, handler, index, kind) {
     function b(delta) {
         return '<button class="spv-step" onclick="' + handler + '(' + index + ','
             + parseFloat(delta.toPrecision(6)) + ')">' + spvStepLabel(delta, unit) + '</button>';
     }
+    // Click the value to type one (spvBeginValueEdit): the row is swapped for
+    // an input + Cancel/OK while editing and restored after.
     return '<div class="spv-coords__row">'
         + '<span class="spv-coords__axis">' + escapeHtmlSPV(label) + '</span>'
         + b(-big) + b(-small)
-        + '<span class="spv-coords__val">' + value.toFixed(digits) + (unit || '') + '</span>'
+        + '<span class="spv-coords__val" onclick="spvBeginValueEdit(this,\'' + kind + '\','
+        + index + ',' + Number(value) + ')">' + value.toFixed(digits) + (unit || '') + '</span>'
         + b(small) + b(big)
         + '</div>';
+}
+
+// ── Click-to-edit values ────────────────────────────────────────────────────
+// One row at a time. While it edits, spvShowPanel leaves that panel alone so
+// a payload refresh or gizmo push can't destroy the input. The row commits on
+// its input's BLUR (Enter, OK, click/tab elsewhere in the page) -- unless the
+// text is unchanged, which is also how Esc, Cancel and a host-forced release
+// land: text_capture.js restores the pre-filled text before blurring, so no
+// cancel flag is needed (its capture-phase Esc handler stops propagation, so
+// the row never sees the Esc keydown anyway).
+var spvEdit = null;   // {row, html, kind, index, original, done}
+
+function spvParseValue(text) {
+    var s = String(text).trim().replace(',', '.');
+    if (s === '') return null;          // Number('') is 0: never commit a blank
+    var v = Number(s);
+    return isFinite(v) ? v : null;
+}
+
+function spvEditButton(label, cls, onClick) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'spv-step spv-coords__edit-btn ' + cls;
+    b.textContent = label;
+    // Keep focus in the input: a blur here would commit before Cancel runs.
+    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    b.addEventListener('click', onClick);
+    return b;
+}
+
+function spvBeginValueEdit(span, kind, index, value) {
+    if (spvEdit) return;
+    var row = span.parentNode;
+    var axis = row.querySelector('.spv-coords__axis');
+    var original = String(parseFloat(Number(value).toPrecision(12)));
+    spvEdit = {row: row, html: row.innerHTML, kind: kind, index: index,
+               original: original, done: false};
+    row.innerHTML = '';
+    row.appendChild(axis);
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'spv-coords__input';
+    input.setAttribute('inputmode', 'decimal');
+    input.value = original;
+    row.appendChild(input);
+    row.appendChild(spvEditButton('\u2715', 'spv-coords__edit-btn--cancel',
+        function () { __dauntlessTextCancel(input); }));
+    row.appendChild(spvEditButton('\u2713', 'spv-coords__edit-btn--ok',
+        function () { __dauntlessTextCommit(input); }));
+    input.addEventListener('blur', function () { spvFinishValueEdit(input); });
+    input.focus();
+    input.select();
+}
+
+function spvFinishValueEdit(input) {
+    var ed = spvEdit;
+    if (!ed || ed.done) return;
+    ed.done = true;
+    spvEdit = null;
+    var text = input.value;
+    ed.row.innerHTML = ed.html;          // swap back; the next payload refreshes it
+    if (text === ed.original) return;    // Esc / Cancel / forced release / no change
+    var v = spvParseValue(text);
+    if (v === null) return;              // blank or not a number: revert
+    var verb = {coord: 'coord_set', scale: 'scale_set', rotate: 'rotate_set'}[ed.kind];
+    var arg = {};
+    arg[ed.kind === 'scale' ? 'index' : 'axis'] = ed.index;
+    arg.value = v;
+    dauntlessEvent('ship-property-viewer/' + verb + ':' + JSON.stringify(arg));
 }
 
 function spvShowPanel(prefix, panelId, values, rowsHtml) {
     var el = document.getElementById(panelId);
     if (!el) return;
+    // A row in this panel is being typed into: leave it alone until it ends.
+    if (spvEdit && el.contains(spvEdit.row)) return;
     if (!values) {
         el.style.display = 'none';
         return;
@@ -228,7 +302,7 @@ function renderSPVToolPanels(data) {
         var k = coords.step_scale || 1;
         rows = [coords.x, coords.y, coords.z].map(function (v, i) {
             return spvStepperRow('XYZ'.charAt(i), v, 3, '', 0.01 * k, 0.1 * k,
-                                 'shipPropertyViewerCoordNudge', i);
+                                 'shipPropertyViewerCoordNudge', i, 'coord');
         }).join('');
     }
     spvShowPanel('spv-coord', 'spv-coords', coords, rows);
@@ -239,7 +313,7 @@ function renderSPVToolPanels(data) {
         rows = scale.fields.map(function (f, i) {
             var fk = f.step_scale || 1;
             return spvStepperRow(f.label, f.value, 3, '', 0.01 * fk, 0.1 * fk,
-                                 'shipPropertyViewerScaleNudge', i);
+                                 'shipPropertyViewerScaleNudge', i, 'scale');
         }).join('');
     }
     spvShowPanel('spv-scale', 'spv-scale', scale, rows);
@@ -249,7 +323,7 @@ function renderSPVToolPanels(data) {
     if (rotate) {
         rows = rotate.fields.map(function (f, i) {
             return spvStepperRow(f.label, f.value, 1, '&deg;', 1, 5,
-                                 'shipPropertyViewerRotateNudge', i);
+                                 'shipPropertyViewerRotateNudge', i, 'rotate');
         }).join('');
     }
     spvShowPanel('spv-rotate', 'spv-rotate', rotate, rows);
@@ -268,6 +342,10 @@ function renderSPVToolPanels(data) {
 // panel" (a JS keydown listener racing that would double-handle the same
 // key-press). The panel signals "ESC just closed an overlay" back to this
 // JS one-shot via payload.close_overlays (see setShipPropertyViewer above).
+// Exception: while a text field (e.g. a Move/Rotate/Scale value row) has
+// focus, Esc goes to the page instead. text_capture.js reverts and blurs the
+// field, and the host's ESC router reads nothing until that key is released
+// (native KeyGate).
 var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {}, spvPendingEdits = [];
 var spvRowLight = {};   // index -> light_region spec (or true) for light rows
 var spvLight = null;    // working spec while the modal is open
@@ -395,9 +473,10 @@ window.shipPropertyViewerCtxRemoveLight = function () {
     dauntlessEvent('ship-property-viewer/remove_light:' + spvCtxLightOf);
     spvHideOverlays();
 };
-// Radius is edited with a mouse-only stepper: the engine has no keyboard->CEF
-// forwarding, so a typed <input> can't receive characters. spvRadiusValue holds
-// the working value (2 decimal places, clamped > 0); the buttons nudge it.
+// Radius is edited with a mouse-only stepper: mouse-only; typed input is
+// available through the text-capture contract (spec 2026-10-02) but not
+// adopted here. spvRadiusValue holds the working value (2 decimal places,
+// clamped > 0); the buttons nudge it.
 var spvRadiusValue = 0;
 
 function spvRenderRadiusValue() {
@@ -424,8 +503,9 @@ window.shipPropertyViewerRadiusApply = function () {
 };
 window.shipPropertyViewerRadiusCancel = function () { spvHideOverlays(); };
 
-// Light is edited with a mouse-only shape picker + steppers: same reasoning as
-// the radius stepper above (no keyboard->CEF forwarding). light_region is
+// Light is edited with a mouse-only shape picker + steppers: mouse-only;
+// typed input is available through the text-capture contract (spec
+// 2026-10-02) but not adopted here. light_region is
 // baked-shaped (radius=[r], extent=[aft,fore], scale=[sx,sy,sz]); spvLight
 // holds the flattened working copy while the modal is open.
 
@@ -496,8 +576,9 @@ window.shipPropertyViewerLightCancel = function () { spvHideOverlays(); };
 
 // ── Light Emitter modal (Task 10) ───────────────────────────────────────────
 // Type picker (Point/Strip/Cone) + a canvas hue/sat colour wheel + an HDR
-// intensity slider, all mouse-only pointer-drag (no keyboard->CEF forwarding
-// exists — see #spv-radius / #spv-light above for the same constraint).
+// intensity slider, all mouse-only pointer-drag: mouse-only; typed input is
+// available through the text-capture contract (spec 2026-10-02) but not
+// adopted here — see #spv-radius / #spv-light above for the same constraint.
 // Colour/intensity are seeded on ADD directly into the add_emitter dispatch
 // (engine/ui/ship_property_viewer_panel.py's add_emitter handler accepts
 // optional color/intensity) rather than an echo-then-set round-trip.
@@ -1280,7 +1361,8 @@ window.shipPropertyViewerCtxRemoveNode = function () {
 // Same shape as #spv-radius: opening one from the menu hides only the menu
 // (the overlay the menu announced with overlay:1 stays open), and Apply /
 // Cancel close through spvHideOverlays(), which sends overlay:0. Mouse-only
-// steppers -- no keyboard->CEF forwarding exists. The popup's part name is
+// steppers: mouse-only; typed input is available through the text-capture
+// contract (spec 2026-10-02) but not adopted here. The popup's part name is
 // captured at open (spvPartPopupName), so a later right-click elsewhere
 // can't retarget an open popup.
 var spvPartPopupName = null, spvPartPopupMode = 'add';
