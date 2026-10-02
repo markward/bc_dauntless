@@ -38,6 +38,28 @@ def test_probe_restores_templates_on_failure(sdk, monkeypatch):
     assert mgr._local == before
 
 
+def test_probe_restores_articulated_part_snapshot(sdk):
+    """probe() reloads ships.Hardpoints.<leaf>, which re-fires
+    sdk_overrides.on_sdk_module_exec -> articulated_part.snapshot_for_leaf,
+    overwriting the process-wide _BY_LEAF[leaf] entry with freshly reloaded
+    parts. A live SPV session mutates those objects in place while it has
+    unsaved rig edits; a probe of the same leaf must never discard them."""
+    from engine.quickbattle import stats
+    from engine.appc import articulated_part
+
+    real_before = dict(articulated_part._BY_LEAF)
+    sentinel = object()
+    articulated_part._BY_LEAF["galaxy"] = (sentinel,)
+    before = dict(articulated_part._BY_LEAF)
+    try:
+        stats.probe("Galaxy")
+        assert articulated_part._BY_LEAF == before
+        assert articulated_part._BY_LEAF["galaxy"][0] is sentinel
+    finally:
+        articulated_part._BY_LEAF.clear()
+        articulated_part._BY_LEAF.update(real_before)
+
+
 def test_cache_and_playable_maxima(sdk):
     from engine.quickbattle import stats
     from engine import ship_catalog

@@ -4,8 +4,12 @@ Runs BC's own loader sequence (loadspacehelper.py:88-91) into a scratch set:
 ClearLocalTemplates -> reload the hardpoint module (our override pass fires in
 the SDK loader here) -> LoadPropertySet. So the values are mod- and
 override-aware, never parsed from hardpoint text. The primary hull is the FIRST
-HullProperty (engine/appc/ships.py:1238). The manager's local templates are
-snapshotted and restored in a finally: a live mission must never notice. Spec §5.
+HullProperty (engine/appc/ships.py:1238). The manager's local templates AND
+the per-leaf articulated-part snapshot (engine/appc/articulated_part.py's
+_BY_LEAF, re-populated as a side effect of the same reload via
+sdk_overrides.on_sdk_module_exec) are both snapshotted and restored in a
+finally: a live mission -- and a live Ship Property Viewer session holding
+unsaved rig edits -- must never notice. Spec §5.
 """
 from __future__ import annotations
 
@@ -26,8 +30,15 @@ class ShipStats:
 def probe(ship_file) -> Optional[ShipStats]:
     import App
     from engine.appc.properties import HullProperty, ShieldProperty, TGModelPropertySet
+    from engine.appc import articulated_part
     mgr = App.g_kModelPropertyManager
     snapshot = dict(mgr._local)
+    # The reload below re-enters sdk_overrides.on_sdk_module_exec, which also
+    # calls articulated_part.snapshot_for_leaf(leaf) -- overwriting the
+    # process-wide _BY_LEAF[leaf] entry with freshly reloaded parts. The SPV
+    # mutates those objects in place while it holds unsaved rig edits, so
+    # this second registry needs the same snapshot/restore as _local.
+    parts_snapshot = dict(articulated_part._BY_LEAF)
     try:
         ship_mod = importlib.import_module("ships." + ship_file)
         hp_file = ship_mod.GetShipStats()["HardpointFile"]
@@ -48,6 +59,8 @@ def probe(ship_file) -> Optional[ShipStats]:
     finally:
         mgr._local.clear()
         mgr._local.update(snapshot)
+        articulated_part._BY_LEAF.clear()
+        articulated_part._BY_LEAF.update(parts_snapshot)
 
 
 class StatsCache:
