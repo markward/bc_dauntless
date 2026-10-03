@@ -83,7 +83,10 @@ TEST(NearBench, InsideBeol4) {
     };
     for (int i = 0; i < kSteps; ++i) {
         const auto pose = rock_scenario::player_pose(i, kGups);
+        // The live call pattern: the host's far_set_frame re-pushes the same
+        // sources every frame, then the near band streams.
         auto t0 = std::chrono::steady_clock::now();
+        f.set_sources({rock_scenario::beol4_field()});
         f.stream(pose.pos);
         const double a = ms_since(t0);
         if (i == 0) { first_stream = a; } else { t_stream += a; w_stream = std::max(w_stream, a); }

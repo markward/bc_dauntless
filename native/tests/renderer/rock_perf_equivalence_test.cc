@@ -62,11 +62,14 @@ struct NearRun {
     std::uint64_t build = 0, contacts = 0, stream = 0;
     int contacts_large = 0, contacts_small = 0, builds = 0;
     int capped_steps = 0;   // steps whose large contacts hit max_shoves_per_frame
+    std::uint64_t full_passes = 0;   // NearField::full_stream_passes() at the end
 };
 
 // One scripted flight. `fast` raises the speed (contacts, cell churn);
 // `caps` makes the per-class instance caps and the per-step touch cap bind.
-NearRun run_near(bool fast, bool caps) {
+// `resend` re-pushes the SAME sources before every stream, as the host
+// does live (far_set_frame every frame calls NearField::set_sources).
+NearRun run_near(bool fast, bool caps, bool resend = false) {
     rockfield::NearField f;
     rockfield::NearDials dials;
     if (caps) {
@@ -113,6 +116,7 @@ NearRun run_near(bool fast, bool caps) {
             d2.small.billboard_gu = 30.0f; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f;
             f.set_dials(d2);
         }
+        if (resend) f.set_sources({rock_scenario::beol4_field()});
         f.stream(pose.pos);
         sin.game_time = 50.0 + i / 60.0;
         sin.render_origin = origin;
@@ -164,6 +168,7 @@ NearRun run_near(bool fast, bool caps) {
     }
     digest_stream(ds, f);
     run.build = db.h; run.contacts = dc.h; run.stream = ds.h;
+    run.full_passes = f.full_stream_passes();
     return run;
 }
 
@@ -228,11 +233,16 @@ far::DiscSource noisy_belt() {
 
 }  // namespace
 
-TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
+namespace {
+struct MidRun { std::uint64_t digest = 0; int sprites = 0, builds = 0; rockfield::MidCacheStats cache; };
+// `resend` re-pushes the SAME sources before every build, as the host does
+// live (far_set_frame every frame calls MidField::set_sources).
+MidRun run_mid(bool resend) {
     rockfield::MidField f;
     f.set_collections(rock_scenario::mid_collections());
     f.set_view_dirs(rock_scenario::view_dirs16());
-    f.set_sources({rock_scenario::beol4_field(), small_cluster()});
+    std::vector<far::DiscSource> sources{rock_scenario::beol4_field(), small_cluster()};
+    f.set_sources(sources);
     rockfield::MidBuildInput in;
     in.viewport_h = 1080.0f;
     rockfield::MidOutput out;
@@ -247,6 +257,7 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
         in.proj = glm::perspective(glm::radians(fov_deg), 16.0f / 9.0f, 0.1f, 1.0e6f);
         in.render_origin = origin;
         in.anchor_sys = anchor;
+        if (resend) f.set_sources(sources);
         f.build(in, out);
         digest_mid_out(d, out);
         sprites += out.count;
@@ -255,7 +266,7 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
     // MidField's sources are in system coordinates (the fields sit around
     // the system origin); view = system - anchor, render = view - origin.
     for (int phase = 0; phase < 5; ++phase) {
-        if (phase == 1) f.set_sources({rock_scenario::beol4_field(), small_cluster()});   // same
+        if (phase == 1) f.set_sources(sources);   // same
         if (phase == 2) {                                   // quarter tiles; the cap binds
             rockfield::MidDials m;
             m.l0_tile_gu /= 4.0f; m.l1_tile_gu /= 4.0f; m.l2_tile_gu /= 4.0f;
@@ -264,7 +275,8 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
         }
         if (phase == 3) {                                   // sources and collections change
             f.set_dials({});
-            f.set_sources({noisy_belt(), small_cluster(), rock_scenario::beol4_field()});
+            sources = {noisy_belt(), small_cluster(), rock_scenario::beol4_field()};
+            f.set_sources(sources);
             auto cols = rock_scenario::mid_collections();
             cols.resize(30);
             f.set_collections(cols);
@@ -272,7 +284,8 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
         if (phase == 4) {
             far::DiscSource moved = rock_scenario::beol4_field();
             moved.centre = {400.0, -200.0, 50.0};
-            f.set_sources({moved, noisy_belt()});
+            sources = {moved, noisy_belt()};
+            f.set_sources(sources);
             f.set_collections(rock_scenario::mid_collections());
         }
         for (int i = 0; i < 24; ++i) {
@@ -288,8 +301,89 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
                 build_at(glm::dvec3(1300.0, -1500.0, 0.0), {0, 1, -0.04f}, 8.0f, glm::dvec3(1250.0, -1500.0, 0.0));
         }
     }
-    std::printf("[mid equivalence] builds=0x%016" PRIx64 " (builds=%d sprites=%d)\n", d.h, builds,
-                sprites);
-    EXPECT_GT(sprites, 0);
-    EXPECT_EQ(d.h, 0x433d292793849a18ull) << "drawn mid sprites changed";
+    return {d.h, sprites, builds, f.cache_stats()};
+}
+}  // namespace
+
+TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
+    const MidRun r = run_mid(/*resend=*/false);
+    std::printf("[mid equivalence] builds=0x%016" PRIx64 " (builds=%d sprites=%d)\n", r.digest,
+                r.builds, r.sprites);
+    EXPECT_GT(r.sprites, 0);
+    EXPECT_EQ(r.digest, 0x433d292793849a18ull) << "drawn mid sprites changed";
+}
+
+// ---- The live call pattern (coordinator review 2026-10-03) -----------------
+// The host re-pushes the same sources EVERY frame (far_set_frame). That must
+// neither change a byte nor throw away the incremental state.
+
+TEST(RockPerfEquivalence, NearSameSourcesEveryFrameKeepsTheIncrementalStream) {
+    const NearRun base = run_near(/*fast=*/false, /*caps=*/false);
+    const NearRun live = run_near(/*fast=*/false, /*caps=*/false, /*resend=*/true);
+    expect_near("slow, sources every frame", live, 0x32b35fece022b324ull, 0xdf39b4a12bf4af85ull,
+                0x8d90bab75baf5c86ull);
+    // 720 streams x 2 classes at 6-25 GU/s: a full pass only every ~2 GU of
+    // travel (plus the dial changes) -- 1,440 if every frame were full.
+    EXPECT_EQ(live.full_passes, base.full_passes);
+    EXPECT_LT(live.full_passes, 360u);
+}
+
+TEST(RockPerfEquivalence, MidSameSourcesEveryFrameKeepsTheTileCache) {
+    const MidRun base = run_mid(/*resend=*/false);
+    const MidRun live = run_mid(/*resend=*/true);
+    EXPECT_EQ(live.digest, 0x433d292793849a18ull) << "drawn mid sprites changed";
+    EXPECT_EQ(live.cache.fills, base.cache.fills) << "re-pushing the same sources refilled the cache";
+}
+
+TEST(RockPerfEquivalence, MidMovedSourceStillClearsTheCache) {
+    // A real anchor move shifts a view-space source's system centre: the
+    // output must match a fresh field's.
+    rockfield::MidField a, b;
+    for (auto* f : {&a, &b}) {
+        f->set_collections(rock_scenario::mid_collections());
+        f->set_view_dirs(rock_scenario::view_dirs16());
+    }
+    rockfield::MidBuildInput in;
+    in.viewport_h = 1080.0f;
+    in.view = glm::lookAt(glm::vec3(0, -700, 0), glm::vec3(0), glm::vec3(0, 0, 1));
+    in.proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1.0e6f);
+    rockfield::MidOutput oa, ob;
+    a.set_sources({rock_scenario::beol4_field()});
+    a.build(in, oa);
+    far::DiscSource moved = rock_scenario::beol4_field();
+    moved.centre = {37.5, -12.0, 4.0};
+    a.set_sources({moved});
+    a.build(in, oa);
+    b.set_sources({moved});
+    b.build(in, ob);
+    Digest da, dbg;
+    digest_mid_out(da, oa);
+    digest_mid_out(dbg, ob);
+    EXPECT_EQ(da.h, dbg.h);
+    EXPECT_GT(oa.count, 0);
+}
+
+// Reviewer's repro: leaving a source's reach drops every cell; coming back
+// within the watch width of the last full pass must re-stream them all.
+TEST(RockPerfEquivalence, NearOutOfReachAndBackMatchesAFreshStream) {
+    for (bool resend : {false, true}) {
+        rockfield::NearField f, fresh;
+        for (auto* g : {&f, &fresh}) {
+            g->set_catalogue(rock_scenario::near_catalogue());
+            g->set_sources({rock_scenario::beol4_field()});
+        }
+        const glm::dvec3 P(0, -700, 0), back = P + glm::dvec3(0.5, 0, 0);
+        f.stream(P);
+        if (resend) f.set_sources({rock_scenario::beol4_field()});
+        f.stream(glm::dvec3(0, -5000, 0));   // out of reach: every cell dropped
+        EXPECT_EQ(f.stats().cells, 0);
+        if (resend) f.set_sources({rock_scenario::beol4_field()});
+        f.stream(back);
+        fresh.stream(back);
+        Digest a, b;
+        digest_stream(a, f);
+        digest_stream(b, fresh);
+        EXPECT_EQ(f.stats().cells, fresh.stats().cells) << "resend=" << resend;
+        EXPECT_EQ(a.h, b.h) << "resend=" << resend;
+    }
 }

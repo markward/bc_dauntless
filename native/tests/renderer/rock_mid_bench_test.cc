@@ -90,7 +90,10 @@ TEST(MidBench, InsideAndOutsideBeol4) {
             const glm::vec3 eye = cs.eye + glm::vec3(0, 0.1f * i, 0);   // 6 GU/s
             in.view = glm::lookAt(eye, glm::vec3(0), glm::vec3(0, 0, 1));
             in.proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1.0e6f);
+            // The live call pattern: far_set_frame re-pushes the same sources
+            // every frame before the draw.
             const auto t0 = std::chrono::steady_clock::now();
+            f.set_sources({rock_scenario::beol4_field()});
             f.build(in, out);
             const double ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - t0).count();

@@ -153,6 +153,9 @@ public:
     // TEST-ONLY: add a rock with an explicit key to a dedicated per-class
     // test cell that stream() never drops (only clear() removes it).
     void debug_add_rock(NearClass cls, std::uint64_t key, const NearRock& r);
+    // Diagnostics: full (non-incremental) stream passes run so far, per
+    // (source, class). Tests assert the live call pattern stays incremental.
+    std::uint64_t full_stream_passes() const { return full_stream_passes_; }
 private:
     struct Cell {
         NearClass cls;
@@ -191,6 +194,7 @@ private:
     bool drop_valid_ = false;
     glm::dvec3 drop_ref_{0.0};
     std::vector<std::uint64_t> drop_watch_;   // cells that may pass keep: near it, or new
+    std::uint64_t full_stream_passes_ = 0;
 
     // Contact state (cleared by clear()). Per-rock state carries its CELL
     // key, so pruning asks "is the cell still streamed" instead of

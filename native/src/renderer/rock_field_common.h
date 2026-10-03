@@ -4,8 +4,10 @@
 // beside it.
 #pragma once
 #include <cstdint>
+#include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_access.hpp>
+#include <renderer/far_field.h>
 #include <renderer/glm_exact.h>
 #include <renderer/rock_random.h>
 
@@ -15,6 +17,28 @@ namespace renderer::rockfield::detail {
 inline std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
     rockrand::Rng r{h ^ (v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2))};
     return r.next();
+}
+
+// Every DiscSource field far::field_density / far::a_bound / the bands'
+// RNG and cluster snap read (populations, haze look and frame keys shape
+// neither band). A view-space source's `centre` already includes the
+// anchor (FarField::active_sources), so a real anchor move compares unequal.
+inline bool same_generator(const far::DiscSource& a, const far::DiscSource& b) {
+    return a.id == b.id && a.seed == b.seed && a.shape == b.shape && a.centre == b.centre &&
+           a.sphere_radius_gu == b.sphere_radius_gu && a.sphere_edge_frac == b.sphere_edge_frac &&
+           a.noise_scale_gu == b.noise_scale_gu && a.noise_contrast == b.noise_contrast &&
+           a.noise_octaves == b.noise_octaves && a.normal == b.normal && a.table == b.table &&
+           a.outer_fade_gu == b.outer_fade_gu && a.scale_height_frac == b.scale_height_frac &&
+           a.scale_height_min_gu == b.scale_height_min_gu &&
+           a.explicit_regions == b.explicit_regions;
+}
+// Element-wise, order included (the first snapping source wins a tile).
+inline bool same_generators(const std::vector<far::DiscSource>& a,
+                            const std::vector<far::DiscSource>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!same_generator(a[i], b[i])) return false;
+    return true;
 }
 
 // Frustum planes (Gribb-Hartmann), normalised: as far_field.cc's.

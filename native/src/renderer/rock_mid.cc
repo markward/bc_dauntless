@@ -92,8 +92,10 @@ void MidField::set_view_dirs(std::vector<glm::vec3> v) {
     views_ = far::make_impostor_views(view_dirs_);
 }
 void MidField::set_sources(const std::vector<far::DiscSource>& active) {
+    // The host re-pushes the same sources every frame (far_set_frame): keep
+    // the cache unless a field the selection reads changed.
+    if (!detail::same_generators(active, sources_)) tile_cache_.clear();
     sources_ = active;
-    tile_cache_.clear();
 }
 
 std::size_t MidField::TileKeyHash::operator()(const TileKey& t) const {
@@ -279,7 +281,10 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
                                     const TileKey bkey{lvl, bi, bj, bk};
                                     auto it = tile_cache_.find(bkey);
                                     if (it == tile_cache_.end()) {
-                                        if (tile_cache_.size() >= kMaxCachedBlocks) tile_cache_.clear();
+                                        if (tile_cache_.size() >= kMaxCachedBlocks) {
+                                            tile_cache_.clear();
+                                            ++cache_stats_.evictions;
+                                        }
                                         it = tile_cache_.emplace(bkey, BlockSel{}).first;
                                     }
                                     block = &it->second;
@@ -288,6 +293,7 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
                                 TileSel& sel = block->tiles[static_cast<std::size_t>(local)];
                                 if (!(block->done >> local & 1u)) {
                                     sel = select(lvl, {i, j, k}, glm::dvec3(cx, cy, cz), 0.25 * T, T);
+                                    ++cache_stats_.fills;
                                     block->done |= std::uint64_t{1} << local;
                                 }
                                 emit(lvl, sel, c0);

@@ -49,6 +49,12 @@ struct MidOutput {
     int tiles = 0;                           // tiles examined: in a level's range and in the frustum
 };
 
+// Diagnostics of MidField's tile-selection cache (cumulative).
+struct MidCacheStats {
+    std::uint64_t fills = 0;       // tile selections computed (cache misses)
+    std::uint64_t evictions = 0;   // whole-cache clears at the size bound
+};
+
 class MidField {
 public:
     void set_dials(const MidDials&);
@@ -64,6 +70,7 @@ public:
     // in_lo_gu, frustum-culled, at most max_sprites nearest first. Selection
     // is keyed by the tile. Pure in its inputs (no state changes).
     void build(const MidBuildInput& in, MidOutput& out) const;
+    MidCacheStats cache_stats() const { return cache_stats_; }
 
 private:
     MidDials dials_;
@@ -77,7 +84,9 @@ private:
     // presence, collection, rotation and size -- depends only on (level,
     // tile index), the sources, the dials and the collections, never on the
     // camera, so it is computed once and reused until one of those changes
-    // (every setter clears it). Bounded: cleared when it grows past
+    // (set_dials and set_collections clear it; set_sources only when a source
+    // that shapes the density or the snaps changed; set_view_dirs never --
+    // selection does not use the view directions). Bounded: cleared when it grows past
     // kMaxCachedBlocks. A render-side cache, not game state.
     struct TileKey {
         int lvl; std::int64_t i, j, k;
@@ -99,6 +108,7 @@ private:
         std::uint64_t done = 0;
     };
     mutable std::unordered_map<TileKey, BlockSel, TileKeyHash> tile_cache_;   // key: block index
+    mutable MidCacheStats cache_stats_;
 };
 
 }  // namespace renderer::rockfield

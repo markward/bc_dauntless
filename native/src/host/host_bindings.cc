@@ -4492,11 +4492,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["near_billboards"] = g_near_billboards;
               d["mid_sprites"] = g_mid_sprites;
               d["mid_tiles"] = g_mid_tiles;
+              d["mid_cache_evictions"] = g_mid_field.cache_stats().evictions;
               return d;
           },
           "{'sources', 'rocks', 'near_cells', 'near_small', 'near_large', "
           "'near_ghosted'} now; {'near_meshes', 'near_billboards', "
-          "'mid_sprites' (drawn), 'mid_tiles' (examined)} built and "
+          "'mid_sprites' (drawn), 'mid_tiles' (examined)} built, "
+          "'mid_cache_evictions' (MidField tile-cache size-bound clears, cumulative) and "
           "{'impostors', 'specks' (far + minor), "
           "'draw_calls'} summed over the cameras the last frame drew.");
     m.def("far_clear",

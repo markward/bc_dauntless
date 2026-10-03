@@ -72,17 +72,8 @@ bool same_generator(const NearClassDials& a, const NearClassDials& b) {
            a.exponent == b.exponent && a.cell_gu == b.cell_gu;
 }
 
-// Every DiscSource field field_density / a_bound / the cell RNG reads.
-// (Populations, haze look and frame keys do not shape the near rocks.)
-bool same_generator(const far::DiscSource& a, const far::DiscSource& b) {
-    return a.id == b.id && a.seed == b.seed && a.shape == b.shape && a.centre == b.centre &&
-           a.sphere_radius_gu == b.sphere_radius_gu && a.sphere_edge_frac == b.sphere_edge_frac &&
-           a.noise_scale_gu == b.noise_scale_gu && a.noise_contrast == b.noise_contrast &&
-           a.noise_octaves == b.noise_octaves && a.normal == b.normal && a.table == b.table &&
-           a.outer_fade_gu == b.outer_fade_gu && a.scale_height_frac == b.scale_height_frac &&
-           a.scale_height_min_gu == b.scale_height_min_gu &&
-           a.explicit_regions == b.explicit_regions;
-}
+using detail::same_generator;
+using detail::same_generators;
 
 // Distance from p to the AABB [lo, lo + size].
 // (length(p - clamp(p, lo, lo + size)), bit for bit, as scalars: glm's
@@ -113,6 +104,9 @@ constexpr NearClass kClasses[] = {NearClass::Small, NearClass::Large};
 // shrunk to 16 cells, never the cells widened -- a huge billboard_gu over a
 // tiny cell_gu would otherwise enumerate (2R/L)^3 cells in one stream().
 constexpr int kMaxCellsPerAxis = 33;
+// (NearField::stream's full pass walks the box of R + kStreamWatchGu to
+// record its watch shell -- up to 35 cells per axis -- but generates only
+// within R, so the 33-per-axis generation cap holds.)
 struct StreamRanges { double gen, keep; };
 StreamRanges stream_ranges(const NearClassDials& cd, double margin) {
     const double cap = 0.5 * (kMaxCellsPerAxis - 1) * static_cast<double>(cd.cell_gu);
@@ -203,14 +197,11 @@ void NearField::invalidate_stream_watch() {
 }
 
 void NearField::set_sources(const std::vector<far::DiscSource>& active) {
-    const bool same = active.size() == sources_.size() &&
-                      std::equal(active.begin(), active.end(), sources_.begin(),
-                                 [](const far::DiscSource& a, const far::DiscSource& b) {
-                                     return same_generator(a, b);
-                                 });
+    // The host re-pushes the same sources every frame (far_set_frame): only
+    // a real change drops the cells and the incremental-stream state.
+    const bool same = same_generators(active, sources_);
     sources_ = active;
-    invalidate_stream_watch();
-    if (!same) clear();
+    if (!same) clear();   // clear() also invalidates the stream watch
 }
 
 void NearField::stream(const glm::dvec3& c) {
@@ -273,7 +264,15 @@ void NearField::stream(const glm::dvec3& c) {
         for (NearClass cls : kClasses) {
             const NearClassDials& cd = class_dials(dials_, cls);
             const double L = cd.cell_gu, R = stream_ranges(cd, dials_.stream_margin_gu).gen;
-            if (!(L > 0.0) || !(R > 0.0) || !reaches(s, c, R)) continue;
+            GenWatch& w = gen_watch_[si * 2 + static_cast<std::size_t>(cls)];
+            if (!(L > 0.0) || !(R > 0.0) || !reaches(s, c, R)) {
+                // Not tested this frame, so the watch cannot vouch for the
+                // cells the drop pass removes meanwhile (out of reach and
+                // back): the next reaching frame starts with a full pass.
+                w.valid = false;
+                w.has_ref = false;
+                continue;
+            }
             // A cell is generated when it lies in the box [floor((c - R) / L),
             // floor((c + R) / L)] AND within R of c. (The box test is not
             // redundant: a cell exactly R below c on an axis is outside it.)
@@ -282,7 +281,6 @@ void NearField::stream(const glm::dvec3& c) {
                 return ijk.x >= ga.x && ijk.x <= gb.x && ijk.y >= ga.y && ijk.y <= gb.y &&
                        ijk.z >= ga.z && ijk.z <= gb.z;
             };
-            GenWatch& w = gen_watch_[si * 2 + static_cast<std::size_t>(cls)];
             const double moved = glm::length(c - w.c_ref);
             if (w.valid && moved <= kStreamWatchGu) {
                 for (const glm::i64vec3& ijk : w.shell) {
@@ -298,6 +296,7 @@ void NearField::stream(const glm::dvec3& c) {
             // dash speed (the centre moved several watch widths since the
             // last pass) the next frame will not be inside this one's watch
             // either: skip recording the shell (w = 0 enumerates the R box).
+            ++full_stream_passes_;
             w.shell.clear();
             const bool record = !w.has_ref || moved <= 4.0 * kStreamWatchGu;
             const double Rw = R + (record ? kStreamWatchGu : 0.0);
