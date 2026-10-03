@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_access.hpp>
+#include <renderer/glm_exact.h>
 #include <renderer/rock_random.h>
 
 namespace renderer::rockfield::detail {
@@ -26,9 +27,10 @@ struct Frustum {
         planes[3] = r3 - r1; planes[4] = r3 + r2; planes[5] = r3 - r2;
         for (auto& p : planes) p /= glm::length(glm::vec3(p));
     }
+    // glm::dot(vec3(plane), c) + w < -r, bit for bit, as scalars (Debug build).
     bool sphere(const glm::vec3& c, float r) const {   // false: wholly outside a plane
         for (const auto& pl : planes)
-            if (glm::dot(glm::vec3(pl), c) + pl.w < -r) return false;
+            if (glm_exact::dot3(pl.x, pl.y, pl.z, c.x, c.y, c.z) + pl.w < -r) return false;
         return true;
     }
 };

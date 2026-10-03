@@ -174,6 +174,7 @@ private:
     std::unordered_map<std::uint64_t, Cell> cells_;
     NearDials dials_;
     NearCatalogue cat_;
+    far::ImpostorViews views_;   // make_impostor_views(cat_.view_dirs_gltf)
     std::vector<far::DiscSource> sources_;
 
     // Incremental streaming (rock-fields perf, 2026-10-03). After a full

@@ -204,6 +204,18 @@ glm::mat3 gltf_to_bc();
 ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const glm::vec3& eye,
                           const glm::vec3& c, const glm::mat3& R, float r, float dither);
 
+// The per-view part of make_impostor, computed once per view-direction set
+// (rock fields: per catalogue / view-dirs push, not per sprite).
+struct ImpostorViews {
+    std::vector<glm::vec3> dirs;                // glTF frame
+    std::vector<glm::vec3> right_bc, up_bc;     // gltf_to_bc() * make_view_basis(dir).right / .up
+};
+ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf);
+// Bit-identical to make_impostor(views.dirs, ...); `views.dirs` must be
+// non-empty. Scalar (renderer/glm_exact.h) for the Debug build's hot loops.
+ImpostorGpu make_impostor(const ImpostorViews& views, const glm::vec3& eye, const glm::vec3& c,
+                          const glm::mat3& R, float r, float dither);
+
 class FarField {
 public:
     void set_dials(const FarDials&);

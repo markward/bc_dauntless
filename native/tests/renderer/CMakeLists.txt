@@ -27,6 +27,7 @@ add_executable(renderer_tests
     rock_near_bench_test.cc
     rock_mid_bench_test.cc
     rock_perf_equivalence_test.cc
+    glm_exact_test.cc
     minor_pass_test.cc
     far_dither_test.cc
     far_pass_test.cc

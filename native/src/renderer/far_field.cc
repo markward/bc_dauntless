@@ -1,5 +1,6 @@
 // native/src/renderer/far_field.cc
 #include "renderer/far_field.h"
+#include <renderer/glm_exact.h>
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_access.hpp>
@@ -304,6 +305,42 @@ ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const gl
     }
     const ViewBasis b = make_view_basis(view_dirs_gltf[best]);
     const glm::vec3 right_w = R * (M * b.right), up_w = R * (M * b.up);
+    return ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(right_w, static_cast<float>(best)),
+                       glm::vec4(up_w, dither)};
+}
+
+ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf) {
+    const glm::mat3 M = gltf_to_bc();
+    ImpostorViews v;
+    v.dirs = view_dirs_gltf;
+    for (const glm::vec3& d : view_dirs_gltf) {
+        const ViewBasis b = make_view_basis(d);
+        v.right_bc.push_back(M * b.right);
+        v.up_bc.push_back(M * b.up);
+    }
+    return v;
+}
+
+ImpostorGpu make_impostor(const ImpostorViews& views, const glm::vec3& eye, const glm::vec3& c,
+                          const glm::mat3& R, float r, float dither) {
+    // make_impostor above, step for step (renderer/glm_exact.h replicas).
+    using glm_exact::dot3;
+    const glm::mat3 M = gltf_to_bc();
+    const glm::vec3 w(eye.x - c.x, eye.y - c.y, eye.z - c.z);
+    const glm::vec3 to_eye = glm_exact::mul_transposed(R, w);
+    const float len = std::sqrt(dot3(to_eye.x, to_eye.y, to_eye.z, to_eye.x, to_eye.y, to_eye.z));
+    const glm::vec3 u = len > 0.0f ? glm::vec3(to_eye.x / len, to_eye.y / len, to_eye.z / len)
+                                   : glm::vec3(0, 0, 1);
+    const glm::vec3 e_g = glm_exact::mul(M, u);
+    std::size_t best = 0;
+    float best_dot = -2.0f;
+    for (std::size_t i = 0; i < views.dirs.size(); ++i) {
+        const glm::vec3& vd = views.dirs[i];
+        const float d = dot3(vd.x, vd.y, vd.z, e_g.x, e_g.y, e_g.z);
+        if (d > best_dot) { best_dot = d; best = i; }
+    }
+    const glm::vec3 right_w = glm_exact::mul(R, views.right_bc[best]);
+    const glm::vec3 up_w = glm_exact::mul(R, views.up_bc[best]);
     return ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(right_w, static_cast<float>(best)),
                        glm::vec4(up_w, dither)};
 }

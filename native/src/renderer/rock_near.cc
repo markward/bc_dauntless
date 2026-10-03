@@ -19,6 +19,7 @@ using rockrand::Rng;
 
 using detail::mix;
 using detail::Frustum;
+using glm_exact::dot3;
 
 // Knuth for small lambda; rounded normal approximation above 30.
 int poisson(Rng& r, double lambda) {
@@ -84,9 +85,17 @@ bool same_generator(const far::DiscSource& a, const far::DiscSource& b) {
 }
 
 // Distance from p to the AABB [lo, lo + size].
+// (length(p - clamp(p, lo, lo + size)), bit for bit, as scalars: glm's
+// clamp is min(max(x, lo), hi) with max = x < y ? y : x, min = y < x ? y : x.)
 double aabb_distance(const glm::dvec3& p, const glm::dvec3& lo, double size) {
-    const glm::dvec3 q = glm::clamp(p, lo, lo + glm::dvec3(size));
-    return glm::length(p - q);
+    auto axis = [size](double x, double l) {
+        const double h = l + size;
+        const double m = x < l ? l : x;
+        const double q = h < m ? h : m;
+        return x - q;
+    };
+    const double dx = axis(p.x, lo.x), dy = axis(p.y, lo.y), dz = axis(p.z, lo.z);
+    return std::sqrt(glm_exact::dot3(dx, dy, dz, dx, dy, dz));
 }
 
 // False when no point within `range` of `c` can have density in `s`.
@@ -113,8 +122,9 @@ StreamRanges stream_ranges(const NearClassDials& cd, double margin) {
 
 // Rock -> render rotation, as MinorField poses fragment meshes (the loaded
 // catalogue mesh is already in BC axes; make_impostor maps to glTF itself).
+// (glm::mat3(glm::rotate(glm::mat4(1), angle, axis)), bit for bit.)
 glm::mat3 rotation(float angle, const glm::vec3& axis) {
-    return glm::mat3(glm::rotate(glm::mat4(1.0f), angle, axis));
+    return glm_exact::rotation(angle, axis);
 }
 
 // How far the centre may move from a full stream pass's reference before
@@ -182,6 +192,7 @@ void NearField::set_dials(const NearDials& d) {
 
 void NearField::set_catalogue(NearCatalogue c) {
     cat_ = std::move(c);
+    views_ = far::make_impostor_views(cat_.view_dirs_gltf);
     clear();
 }
 
@@ -368,6 +379,14 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     std::map<std::tuple<int, int, int>, std::vector<minors::InstanceGpu>> mesh_bins;
     std::map<int, std::vector<far::ImpostorGpu>> board_bins;
 
+    // Cells holding a shoved (small) rock: their rocks may sit off the cell,
+    // so they skip the cell broad phase and look up their shoves.
+    std::vector<std::uint64_t> shoved_cells;
+    shoved_cells.reserve(shoves_.size());
+    for (const auto& [key, sh] : shoves_) { (void)key; shoved_cells.push_back(sh.cell); }
+    std::sort(shoved_cells.begin(), shoved_cells.end());
+    const float eye_len = glm::length(eye);
+
     struct Cand { float d; glm::vec3 c; NearWeights w; const NearRock* rock; float spin; };
     for (NearClass cls : kClasses) {
         const NearClassDials& cd = class_dials(dials_, cls);
@@ -375,20 +394,44 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         const std::vector<int>& rocks = small ? cat_.small_rocks : cat_.large_rocks;
         const std::vector<float>& bounds = small ? cat_.small_bound_mu : cat_.large_bound_mu;
         const int family = small ? kNearSmallFamily : kNearLargeFamily;
+        // Neither tier draws at camera distance >= max(mesh_gu, billboard_gu).
+        const float d_max = std::max(cd.mesh_gu, cd.billboard_gu);
 
         std::vector<Cand> cands;
         for (const auto& [key, cell] : cells_) {
-            if (cell.cls != cls) continue;
+            if (cell.cls != cls || cell.rocks.empty()) continue;
+            const bool shoved = small && !shoved_cells.empty() &&
+                                std::binary_search(shoved_cells.begin(), shoved_cells.end(), key);
+            if (!cell.pinned && !shoved) {
+                // Cell broad phase: every rock centre lies within the cell's
+                // half-diagonal of its centre, so a cell wholly beyond d_max
+                // or wholly outside a frustum plane (by its largest rock's
+                // radius) holds no rock the per-rock tests below would keep.
+                const double h = 0.5 * cell.size;
+                const glm::vec3 cc(static_cast<float>(cell.lo.x + h - to_render.x),
+                                   static_cast<float>(cell.lo.y + h - to_render.y),
+                                   static_cast<float>(cell.lo.z + h - to_render.z));
+                const float half_diag = static_cast<float>(0.8660254037844386 * cell.size);
+                const float dx = cc.x - eye.x, dy = cc.y - eye.y, dz = cc.z - eye.z;
+                const float slack = 0.01f + 1e-5f * (std::fabs(cc.x) + std::fabs(cc.y) +
+                                                     std::fabs(cc.z) + eye_len);
+                if (std::sqrt(dot3(dx, dy, dz, dx, dy, dz)) - half_diag - slack >= d_max) continue;
+                if (!frustum.sphere(cc, half_diag + cell.r_max + slack)) continue;
+            }
             for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
                 const NearRock& r = cell.rocks[i];
-                glm::vec3 c(r.pos_sys - to_render);
+                // vec3(pos_sys - to_render) and length(c - eye), as scalars.
+                glm::vec3 c(static_cast<float>(r.pos_sys.x - to_render.x),
+                            static_cast<float>(r.pos_sys.y - to_render.y),
+                            static_cast<float>(r.pos_sys.z - to_render.z));
                 float spin = 0.0f;
-                if (small && !shoves_.empty())
+                if (shoved)
                     if (auto sh = shoves_.find(key_of(key, cell, i)); sh != shoves_.end()) {
                         c += sh->second.s.offset;
                         spin = sh->second.s.spin;
                     }
-                const float d = glm::length(c - eye);
+                const float ex = c.x - eye.x, ey = c.y - eye.y, ez = c.z - eye.z;
+                const float d = std::sqrt(dot3(ex, ey, ez, ex, ey, ez));
                 const NearWeights w = near_weights(d, cd, dials_.fade_gu);
                 if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
                 if (!frustum.sphere(c, r.radius)) continue;
@@ -426,7 +469,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
             if (cn.w.billboard > 0.0f && !cat_.view_dirs_gltf.empty() && emitted < cd.max_instances) {
                 const float dither = cn.w.billboard < 1.0f ? -cn.w.billboard : 0.0f;
                 board_bins[r.rock].push_back(
-                    far::make_impostor(cat_.view_dirs_gltf, eye, cn.c, R, r.radius, dither));
+                    far::make_impostor(views_, eye, cn.c, R, r.radius, dither));
                 ++emitted;
             }
         }
@@ -509,12 +552,23 @@ void NearField::step(const NearStepInput& in) {
     // half-diagonal of its centre, and dist_to_segment is 1-Lipschitz, so a
     // cell whose centre is farther than half-diagonal + reach (+ float slack)
     // from the sweep holds no rock the per-rock cull would keep.
-    const float seg_scale = glm::length(c) + glm::length(seg0);
+    // (Scalar code: a conservative bound needs no bit-exactness, only speed
+    // in this Debug build.)
+    const float seg_scale = std::fabs(c.x) + std::fabs(c.y) + std::fabs(c.z) +
+                            std::fabs(seg0.x) + std::fabs(seg0.y) + std::fabs(seg0.z);
     auto cell_lower_bound = [&](const Cell& cell) {
-        const glm::vec3 cc(cell.lo + 0.5 * cell.size - to_render);
+        const double h = 0.5 * cell.size;
+        const float px = static_cast<float>(cell.lo.x + h - to_render.x);
+        const float py = static_cast<float>(cell.lo.y + h - to_render.y);
+        const float pz = static_cast<float>(cell.lo.z + h - to_render.z);
+        const float wx = px - seg0.x, wy = py - seg0.y, wz = pz - seg0.z;
+        float u = 0.0f;
+        if (seg_len2 > 0.0f)
+            u = std::clamp((wx * seg.x + wy * seg.y + wz * seg.z) / seg_len2, 0.0f, 1.0f);
+        const float qx = wx - seg.x * u, qy = wy - seg.y * u, qz = wz - seg.z * u;
         const float half_diag = static_cast<float>(0.8660254037844386 * cell.size);
-        const float slack = 0.01f + 1e-5f * (glm::length(cc) + seg_scale);
-        return dist_to_segment(cc) - half_diag - slack;
+        const float slack = 0.01f + 1e-5f * (std::fabs(px) + std::fabs(py) + std::fabs(pz) + seg_scale);
+        return std::sqrt(qx * qx + qy * qy + qz * qz) - half_diag - slack;
     };
     // 3. Large rocks: solid, fixed, player only; the box inflated to the
     // shield bubble while shields are up.
