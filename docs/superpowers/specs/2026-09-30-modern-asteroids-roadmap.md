@@ -46,7 +46,7 @@ Size decides how real a rock is.
 | 3 | **Minors**: instancing, halos, tile fields, fly-through | merged to local main (`6f8f4f14`), live-verified — spec `2026-10-01-minor-rocks-design.md` |
 | 3b | **Far tier**: impostor/speck/haze ladder, disc density source, profile belts (render only) | built, awaiting live check — spec `2026-10-01-far-tier-design.md`, branch `feat/far-tier` |
 | 4 | **Profile seeding** | not started — extends 3b's `DiscSource` (fills `explicit_regions`, promotes generator rocks) |
-| later | **Sensor occlusion by rocks** | play-test experiment |
+| 5 | **Sensor occlusion by rocks** | promoted to a full project (sensor model) — no longer part of this roadmap |
 
 ## Standing decisions for sub-projects 2–4
 
@@ -158,11 +158,11 @@ Size decides how real a rock is.
   - sensible at dash speeds (2,000–100,000 GU/s)
   - sensible across region hand-offs (`handoff.hand_off`)
 
-### Later: sensor occlusion
+### Sub-project 5: sensor occlusion — promoted to a full project
 
-Rocks hiding ships behind them from sensors was **declined for now**. Explore it
-once the belts can be play-tested. A belt's general sensor penalty is authored in
-the profile's existing `sensors` column.
+Promoted 2026-10-03 to a full project of its own, the sensor model, which
+handles the rock occlusion along with the rest of sensing. It is no longer
+part of this roadmap.
 
 ## Performance
 
