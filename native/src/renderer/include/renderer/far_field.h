@@ -172,6 +172,13 @@ static_assert(sizeof(ImpostorGpu) == 48, "ImpostorGpu is a 48-byte GPU instance"
 
 struct ImpostorBin { int rock = 0; std::vector<ImpostorGpu> items; };
 
+// Rock fade (2026-10-03): a TRANSLUCENT impostor (FarPass::
+// render_impostors_blended) keeps its signed dither in up_dither.w and draws
+// with alpha = the coverage that dither's screen door would have kept: -d
+// fading in (d < 0), 1 - d fading out (d > 0), 1 when solid (d == 0).
+// opaque.frag's blend path computes exactly this; keep the two identical.
+float impostor_fade_alpha(float dither);
+
 struct FarOutput {
     std::vector<ImpostorBin> impostors;   // ascending catalogue index
     std::vector<SpeckGpu> specks;

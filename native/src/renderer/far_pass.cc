@@ -229,6 +229,20 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
                                const scenegraph::Camera& cam, Pipeline& pipeline,
                                const Lighting& lighting, float ambient_scale,
                                float rim_strength) {
+    draw_impostors(bins, cam, pipeline, lighting, ambient_scale, rim_strength, /*blended=*/false);
+}
+
+void FarPass::render_impostors_blended(const std::vector<far::ImpostorBin>& bins,
+                                       const scenegraph::Camera& cam, Pipeline& pipeline,
+                                       const Lighting& lighting, float ambient_scale,
+                                       float rim_strength) {
+    draw_impostors(bins, cam, pipeline, lighting, ambient_scale, rim_strength, /*blended=*/true);
+}
+
+void FarPass::draw_impostors(const std::vector<far::ImpostorBin>& bins,
+                             const scenegraph::Camera& cam, Pipeline& pipeline,
+                             const Lighting& lighting, float ambient_scale, float rim_strength,
+                             bool blended) {
     // Which bins draw: non-empty, with an atlas (loaded lazily here).
     std::vector<std::pair<const far::ImpostorBin*, const AtlasGpu*>> draws;
     for (const auto& bin : bins) {
@@ -282,6 +296,22 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
                  GL_STREAM_DRAW);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes), staging_.data());
 
+    // Translucent: premultiplied over, depth-tested, no depth writes. The
+    // blend function is QUERIED and put back as found (as render_specks).
+    GLint blend_src_rgb = GL_ONE, blend_dst_rgb = GL_ZERO;
+    GLint blend_src_a = GL_ONE, blend_dst_a = GL_ZERO;
+    if (blended) {
+        s.set_int("u_impostor_blend", 1);
+        glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src_rgb);
+        glGetIntegerv(GL_BLEND_DST_RGB, &blend_dst_rgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_a);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dst_a);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+    }
+
     glBindVertexArray(vao_);
     for (std::size_t d = 0; d < draws.size(); ++d) {
         for (GLuint k = 0; k < 3; ++k) {
@@ -298,8 +328,15 @@ void FarPass::render_impostors(const std::vector<far::ImpostorBin>& bins,
         ++draw_calls_;
     }
 
-    // The cutout is per-program state: never leave it on.
+    // The cutout and the blend mode are per-program state: never leave them on.
     s.set_int("u_coverage_cutout", 0);
+    if (blended) {
+        s.set_int("u_impostor_blend", 0);
+        glDepthMask(GL_TRUE);
+        glBlendFuncSeparate(static_cast<GLenum>(blend_src_rgb), static_cast<GLenum>(blend_dst_rgb),
+                            static_cast<GLenum>(blend_src_a), static_cast<GLenum>(blend_dst_a));
+        glDisable(GL_BLEND);
+    }
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glActiveTexture(GL_TEXTURE0);

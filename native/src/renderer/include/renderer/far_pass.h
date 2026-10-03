@@ -45,6 +45,20 @@ public:
                           Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                           float rim_strength);
 
+    // Rock fade (2026-10-03): the same draw, TRANSLUCENT -- for impostors
+    // fading in from (or out to) nothing, where the screen door read as a
+    // dot grid. Each item draws premultiplied with alpha =
+    // far::impostor_fade_alpha(up_dither.w) (opaque.frag's u_impostor_blend
+    // path: no dither discard; the coverage cutout stays), blended
+    // GL_ONE / GL_ONE_MINUS_SRC_ALPHA, depth-tested WITHOUT depth writes.
+    // Bins and items draw in the order given -- the caller sorts far to near.
+    // Afterwards blending is off with the blend function as found, depth
+    // test and writes are on, the active texture unit is 0 and no VAO is bound.
+    void render_impostors_blended(const std::vector<far::ImpostorBin>& bins,
+                                  const scenegraph::Camera& cam, Pipeline& pipeline,
+                                  const Lighting& lighting, float ambient_scale,
+                                  float rim_strength);
+
     // One instanced draw of every speck (none when empty): premultiplied,
     // blended GL_ONE / GL_ONE_MINUS_SRC_ALPHA, depth-tested without depth
     // writes, unculled. `viewport_w/h` are the target's framebuffer pixels.
@@ -99,6 +113,9 @@ public:
 private:
     struct AtlasGpu { assets::Texture albedo, normal; };
     const AtlasGpu* atlas_for(int index);   // lazy load; nullptr = none
+    void draw_impostors(const std::vector<far::ImpostorBin>& bins, const scenegraph::Camera& cam,
+                        Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
+                        float rim_strength, bool blended);
     void install_atlas(int index, assets::Image albedo, assets::Image normal);
     void ensure_geometry();
     void ensure_haze_target(int w, int h);

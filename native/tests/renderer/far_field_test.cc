@@ -974,3 +974,14 @@ TEST(FarHazeStart, AnIntervalEndingAtTheStartIsEmpty) {
     EXPECT_EQ(h.alpha, 0.0f);
     EXPECT_EQ(h.rgb, glm::vec3(0.0f));
 }
+
+// Rock fade (2026-10-03): a translucent impostor's alpha is the coverage its
+// signed dither would have kept -- |d| fading in (d < 0), 1 - d fading out
+// (d > 0), 1 when solid. impostor.vert/opaque.frag compute the same.
+TEST(FarImpostor, FadeAlphaIsTheDitherCoverage) {
+    EXPECT_EQ(far::impostor_fade_alpha(0.0f), 1.0f);
+    EXPECT_FLOAT_EQ(far::impostor_fade_alpha(-0.3f), 0.3f);
+    EXPECT_FLOAT_EQ(far::impostor_fade_alpha(0.3f), 0.7f);
+    EXPECT_EQ(far::impostor_fade_alpha(-1.0f), 1.0f);
+    EXPECT_EQ(far::impostor_fade_alpha(1.0f), 0.0f);
+}

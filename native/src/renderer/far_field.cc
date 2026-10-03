@@ -309,6 +309,12 @@ ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const gl
                        glm::vec4(up_w, dither)};
 }
 
+float impostor_fade_alpha(float dither) {
+    if (dither < 0.0f) return -dither;          // fading in: keeps the lower |d|
+    if (dither > 0.0f) return 1.0f - dither;    // fading out: keeps the upper 1 - d
+    return 1.0f;                                // solid
+}
+
 ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf) {
     const glm::mat3 M = gltf_to_bc();
     ImpostorViews v;

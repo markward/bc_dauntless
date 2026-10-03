@@ -1449,3 +1449,168 @@ TEST_F(FarPassGLTest, ImpostorDrawCpuCostPerBinReport) {
     }
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
+
+// ── Rock fade (2026-10-03): translucent impostors ─────────────────────────────
+// Distant rock impostors fade by real translucency, not the screen door:
+// render_impostors_blended draws premultiplied (alpha =
+// far::impostor_fade_alpha(up_dither.w)), depth-tested, without depth writes.
+namespace {
+renderer::Lighting fade_lighting() {
+    renderer::Lighting l;
+    l.ambient = glm::vec3(0.2f);
+    l.directional_count = 1;
+    l.directional_dir_ws[0] = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    l.directional_color[0] = glm::vec3(1.0f);
+    return l;
+}
+far::ImpostorBin bin_with(int rock, glm::vec3 centre, float r, float dither) {
+    far::ImpostorBin b = one_impostor_bin(rock, kLevelView, centre, r);
+    b.items[0].up_dither.w = dither;
+    return b;
+}
+// Pixels lit in `ref` whose 4-neighbours are lit too (no silhouette edge).
+std::vector<int> interior(const std::vector<unsigned char>& ref, int w, int h) {
+    auto on = [&](int x, int y) {
+        const std::size_t i = (static_cast<std::size_t>(y) * w + x) * 4;
+        return ref[i] + ref[i + 1] + ref[i + 2] > 0;
+    };
+    std::vector<int> v;
+    for (int y = 1; y < h - 1; ++y)
+        for (int x = 1; x < w - 1; ++x)
+            if (on(x, y) && on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))
+                v.push_back(y * w + x);
+    return v;
+}
+// Mean |luminance(p) - luminance(right neighbour)| over `px` (interior pixels).
+double neighbour_variation(const std::vector<unsigned char>& f, const std::vector<int>& px) {
+    double s = 0.0;
+    for (int i : px) {
+        const std::size_t a = static_cast<std::size_t>(i) * 4, b = a + 4;
+        s += std::abs((f[a] + f[a + 1] + f[a + 2]) - (f[b] + f[b + 1] + f[b + 2])) / 3.0;
+    }
+    return px.empty() ? 0.0 : s / static_cast<double>(px.size());
+}
+}  // namespace
+
+TEST_F(FarPassGLTest, BlendedImpostorIsTranslucentWithoutAGrid) {
+    const glm::vec3 grey(150.0f, 150.0f, 150.0f);
+    const Atlas atlas = sphere_atlas(grey, grey);
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    const glm::vec3 centre(0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    const renderer::Lighting l = fade_lighting();
+
+    const auto solid = draw_impostors(pass, {bin_with(0, centre, 1.0f, 0.0f)}, cam, l);
+    const std::vector<int> in = interior(solid, kW, kH);
+    ASSERT_GT(in.size(), static_cast<std::size_t>(kW * kH / 10));
+    const auto dithered = draw_impostors(pass, {bin_with(0, centre, 1.0f, -0.5f)}, cam, l);
+
+    for (const float dither : {-0.5f, 0.25f}) {   // alpha 0.5 (fading in), 0.75 (fading out)
+        const float alpha = far::impostor_fade_alpha(dither);
+        clear_framebuffer();
+        pass.render_impostors_blended({bin_with(0, centre, 1.0f, dither)}, cam, *pipeline, l, 1.0f, 0.0f);
+        EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+        const auto blended = read_frame();
+        int worst = 0;
+        for (int i : in)
+            for (int k = 0; k < 3; ++k) {
+                const std::size_t j = static_cast<std::size_t>(i) * 4 + static_cast<std::size_t>(k);
+                const int want = static_cast<int>(std::lround(alpha * solid[j]));
+                worst = std::max(worst, std::abs(int(blended[j]) - want));
+            }
+        EXPECT_LE(worst, 2) << "alpha " << alpha << ": not alpha x the solid shading over black";
+        if (dither < 0.0f) {
+            const double vb = neighbour_variation(blended, in), vd = neighbour_variation(dithered, in);
+            std::printf("[rock fade] neighbour variation: blended %.2f, dithered %.2f\n", vb, vd);
+            EXPECT_GT(vd, 20.0) << "precondition: the screen door shows a grid";
+            EXPECT_LT(vb, 0.1 * vd) << "a translucent impostor shows no grid";
+        }
+    }
+}
+
+TEST_F(FarPassGLTest, BlendedImpostorIsDepthTestedAndWritesNoDepth) {
+    const Atlas red = sphere_atlas(kRed, kRed), blue = sphere_atlas(kBlue, kBlue);
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, red.albedo, red.normal);
+    pass.debug_set_atlas(1, blue.albedo, blue.normal);
+    const glm::vec3 centre(0.0f);
+    const glm::vec3 nearer = centre + bc_view(kLevelView).dir * 2.0f;   // toward the eye
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    renderer::Lighting l;
+    l.ambient = glm::vec3(1.0f);
+
+    // An opaque rock in front: the translucent one behind it is hidden there.
+    const auto front_only = draw_impostors(pass, {bin_with(0, nearer, 0.4f, 0.0f)}, cam, l);
+    pass.render_impostors_blended({bin_with(1, centre, 1.0f, -0.5f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    const auto front_then_fade = read_frame();
+    int covered = 0, shown = 0;
+    for (int i = 0; i < kW * kH; ++i) {
+        const std::size_t j = static_cast<std::size_t>(i) * 4;
+        if (lit(front_only, i)) {
+            ++covered;
+            for (int k = 0; k < 3; ++k) EXPECT_EQ(front_then_fade[j + k], front_only[j + k]) << i;
+        } else if (lit(front_then_fade, i)) {
+            ++shown;
+        }
+    }
+    EXPECT_GT(covered, 50);
+    EXPECT_GT(shown, 50) << "the translucent rock shows around the opaque one";
+
+    // A translucent rock in front writes no depth: an opaque rock drawn
+    // after it, behind it, still lands everywhere it covers.
+    const auto back_only = draw_impostors(pass, {bin_with(1, centre, 1.0f, 0.0f)}, cam, l);
+    clear_framebuffer();
+    pass.render_impostors_blended({bin_with(0, nearer, 0.4f, -0.5f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    pass.render_impostors({bin_with(1, centre, 1.0f, 0.0f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    const auto fade_then_back = read_frame();
+    int overlap = 0;
+    for (int i = 0; i < kW * kH; ++i) {
+        if (!lit(back_only, i)) continue;
+        ++overlap;
+        const std::size_t j = static_cast<std::size_t>(i) * 4;
+        for (int k = 0; k < 3; ++k) EXPECT_EQ(fade_then_back[j + k], back_only[j + k]) << i;
+    }
+    EXPECT_GT(overlap, 50);
+}
+
+TEST_F(FarPassGLTest, BlendedImpostorsRestoreStateAndLeaveTheOpaquePathUnchanged) {
+    const Atlas atlas = sphere_atlas(kRed, kBlue);
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    const glm::vec3 centre(0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    const renderer::Lighting l = fade_lighting();
+    const auto solid = draw_impostors(pass, {bin_with(0, centre, 1.0f, 0.0f)}, cam, l);
+    const auto dithered = draw_impostors(pass, {bin_with(0, centre, 1.0f, -0.5f)}, cam, l);
+
+    clear_framebuffer();
+    glDisable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+    glActiveTexture(GL_TEXTURE3);
+    pass.render_impostors_blended({bin_with(0, centre, 1.0f, -0.5f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    GLint src_rgb = 0, dst_rgb = 0, src_a = 0, dst_a = 0, unit = 0, vao = -1;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dst_a);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &unit);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+    EXPECT_EQ(src_rgb, GL_SRC_ALPHA);
+    EXPECT_EQ(dst_rgb, GL_ONE);
+    EXPECT_EQ(src_a, GL_ZERO);
+    EXPECT_EQ(dst_a, GL_ONE_MINUS_SRC_ALPHA);
+    EXPECT_FALSE(glIsEnabled(GL_BLEND));
+    EXPECT_TRUE(glIsEnabled(GL_DEPTH_TEST));
+    GLboolean depth_write = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
+    EXPECT_TRUE(depth_write);
+    EXPECT_EQ(unit, GL_TEXTURE0);
+    EXPECT_EQ(vao, 0);
+    glBlendFunc(GL_ONE, GL_ZERO);
+
+    // The blend mode is per-draw program state: never left on.
+    EXPECT_EQ(draw_impostors(pass, {bin_with(0, centre, 1.0f, 0.0f)}, cam, l), solid);
+    EXPECT_EQ(draw_impostors(pass, {bin_with(0, centre, 1.0f, -0.5f)}, cam, l), dithered);
+}

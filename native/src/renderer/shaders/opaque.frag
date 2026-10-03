@@ -8,6 +8,11 @@ in vec3 v_position_ws;
 // with alpha < 0.5 (impostor silhouettes); 0 = the production path.
 flat in float v_dither;
 uniform int u_coverage_cutout;
+// Rock fade (2026-10-03): != 0 only inside FarPass::render_impostors_blended.
+// The dither discard is skipped and the output is premultiplied (rgb * a, a)
+// with a = far::impostor_fade_alpha(v_dither): the coverage the screen door
+// would have kept. 0 (every other draw): byte-identical.
+uniform int u_impostor_blend;
 
 uniform sampler2D u_base_color;
 uniform vec3 u_diffuse_color;
@@ -1195,7 +1200,7 @@ float bayer4(vec2 frag) {
 }
 
 void main() {
-    if (v_dither != 0.0) {
+    if (v_dither != 0.0 && u_impostor_blend == 0) {
         float b = bayer4(floor(gl_FragCoord.xy * 0.5));   // per 2x2 pixel group
         if (v_dither > 0.0 ? (b < v_dither) : (b >= -v_dither)) discard;
     }
@@ -1577,4 +1582,8 @@ void main() {
         if (code != 0) out_alpha = float(code);
     }
     frag_color = vec4(final_color, out_alpha);
+    if (u_impostor_blend != 0) {   // far::impostor_fade_alpha: keep identical
+        float a = v_dither < 0.0 ? -v_dither : (v_dither > 0.0 ? 1.0 - v_dither : 1.0);
+        frag_color = vec4(final_color * a, a);
+    }
 }
