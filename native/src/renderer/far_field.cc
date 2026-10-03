@@ -309,6 +309,86 @@ ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const gl
                        glm::vec4(up_w, dither)};
 }
 
+int impostor_grid_for(std::size_t view_count) {
+    if (view_count < 4) return 0;
+    const int g = static_cast<int>(std::lround(std::sqrt(static_cast<double>(view_count))));
+    return static_cast<std::size_t>(g) * static_cast<std::size_t>(g) == view_count ? g : 0;
+}
+
+namespace {
+float sgn_nz(float v) { return v >= 0.0f ? 1.0f : -1.0f; }   // sign, +1 at 0
+}  // namespace
+
+glm::vec2 oct_encode(const glm::vec3& d) {
+    const float l1 = std::abs(d.x) + std::abs(d.y) + std::abs(d.z);
+    const glm::vec3 p = l1 > 0.0f ? d / l1 : glm::vec3(0, 1, 0);
+    if (p.y >= 0.0f) return glm::vec2(p.x, p.z);
+    return glm::vec2((1.0f - std::abs(p.z)) * sgn_nz(p.x), (1.0f - std::abs(p.x)) * sgn_nz(p.z));
+}
+
+glm::vec3 oct_decode(const glm::vec2& f) {
+    // Copied in native/src/rockgen/src/impostor.cc and the impostor shader.
+    glm::vec3 n(f.x, 1.0f - std::abs(f.x) - std::abs(f.y), f.y);
+    if (n.y < 0.0f) {
+        const float x = (1.0f - std::abs(f.y)) * sgn_nz(f.x);
+        const float z = (1.0f - std::abs(f.x)) * sgn_nz(f.y);
+        n.x = x;
+        n.z = z;
+    }
+    n = glm::normalize(n);
+    return n + glm::vec3(0.0f);   // -0 -> +0: mirror twins stay bit-identical
+}
+
+glm::vec3 oct_view_dir(int view, int grid) {
+    // (2i - (grid-1)) / (grid-1): exactly -1 and 1 at the ends and exactly
+    // antisymmetric, so mirror twins decode from exactly negated points.
+    const int i = view % grid, j = view / grid;
+    const float span = static_cast<float>(grid - 1);
+    return oct_decode(glm::vec2(static_cast<float>(2 * i - (grid - 1)) / span,
+                                static_cast<float>(2 * j - (grid - 1)) / span));
+}
+
+std::vector<glm::vec3> oct_view_dirs(int grid) {
+    std::vector<glm::vec3> v;
+    if (grid < 2) return v;
+    v.reserve(static_cast<std::size_t>(grid * grid));
+    for (int k = 0; k < grid * grid; ++k) v.push_back(oct_view_dir(k, grid));
+    return v;
+}
+
+ViewBlend view_blend(const glm::vec3& eye_dir_gltf, int grid) {
+    ViewBlend b;
+    if (grid < 2) return b;
+    const glm::vec2 f = oct_encode(eye_dir_gltf);
+    const float span = static_cast<float>(grid - 1);
+    const float gx = std::clamp((f.x * 0.5f + 0.5f) * span, 0.0f, span);
+    const float gy = std::clamp((f.y * 0.5f + 0.5f) * span, 0.0f, span);
+    const int i0 = std::min(static_cast<int>(gx), grid - 2);
+    const int j0 = std::min(static_cast<int>(gy), grid - 2);
+    const float fx = gx - static_cast<float>(i0), fy = gy - static_cast<float>(j0);
+    auto idx = [grid](int i, int j) { return j * grid + i; };
+    if (fx + fy <= 1.0f) {   // lower-left triangle of the cell
+        b.view[0] = idx(i0, j0);         b.w[0] = 1.0f - fx - fy;
+        b.view[1] = idx(i0 + 1, j0);     b.w[1] = fx;
+        b.view[2] = idx(i0, j0 + 1);     b.w[2] = fy;
+    } else {                 // upper-right
+        b.view[0] = idx(i0 + 1, j0 + 1); b.w[0] = fx + fy - 1.0f;
+        b.view[1] = idx(i0, j0 + 1);     b.w[1] = 1.0f - fx;
+        b.view[2] = idx(i0 + 1, j0);     b.w[2] = 1.0f - fy;
+    }
+    // Rounding residue (an encoded baked direction lands a few ulps off its
+    // grid point) is dropped, so a baked direction is exactly one view. The
+    // step this adds is below 1e-5 of a weight -- invisible in 8 bits.
+    float kept = 0.0f;
+    for (float& w : b.w) { if (w < 1e-5f) w = 0.0f; kept += w; }
+    for (float& w : b.w) w /= kept;   // kept >= 1 - 2e-5: one weight is >= 1/3
+    // The heaviest view first (FarPass may skip near-zero tails).
+    for (int a = 0; a < 2; ++a)
+        for (int c = a + 1; c < 3; ++c)
+            if (b.w[c] > b.w[a]) { std::swap(b.w[a], b.w[c]); std::swap(b.view[a], b.view[c]); }
+    return b;
+}
+
 float impostor_fade_alpha(float dither) {
     if (dither < 0.0f) return -dither;          // fading in: keeps the lower |d|
     if (dither > 0.0f) return 1.0f - dither;    // fading out: keeps the upper 1 - d

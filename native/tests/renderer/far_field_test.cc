@@ -6,6 +6,10 @@
 #include <cstdio>
 #include <algorithm>
 #include <optional>
+#include <array>
+#include <map>
+#include <set>
+#include <cstdint>
 #include <string>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -865,6 +869,131 @@ TEST(FarImpostor, MakeImpostorPicksTheViewNearestTheEye) {
                                       1.0f, 0.0f);
     EXPECT_EQ(g.right_view.w, 2.0f);
     EXPECT_EQ(glm::vec3(g.centre_half), glm::vec3(0));
+}
+
+// ---- Octahedral view blend (rock-blend, 2026-10-03) -------------------------
+
+namespace {
+// A ViewBlend as weight per DISTINCT direction: the oct layout's mirrored
+// border views share a direction (and so a picture), so the blend at a fold
+// may name either twin. Keyed by the direction's bits.
+using DirWeights = std::map<std::array<float, 3>, float>;
+DirWeights by_direction(const far::ViewBlend& b, int grid) {
+    DirWeights m;
+    for (int k = 0; k < 3; ++k) {
+        if (b.w[k] == 0.0f) continue;
+        const glm::vec3 d = far::oct_view_dir(b.view[k], grid);
+        m[{d.x, d.y, d.z}] += b.w[k];
+    }
+    return m;
+}
+float l1(const DirWeights& a, const DirWeights& b) {
+    float s = 0.0f;
+    for (const auto& [k, v] : a) { auto it = b.find(k); s += std::abs(v - (it == b.end() ? 0.0f : it->second)); }
+    for (const auto& [k, v] : b) if (!a.count(k)) s += std::abs(v);
+    return s;
+}
+glm::vec3 rot(const glm::vec3& axis, float angle, const glm::vec3& v) {
+    return glm::mat3(glm::rotate(glm::mat4(1.0f), angle, axis)) * v;
+}
+}  // namespace
+
+TEST(FarImpostorBlend, GridIsTheSquareRootOfTheViewCount) {
+    EXPECT_EQ(far::impostor_grid_for(64), 8);
+    EXPECT_EQ(far::impostor_grid_for(16), 4);
+    EXPECT_EQ(far::impostor_grid_for(6), 0);
+    EXPECT_EQ(far::impostor_grid_for(1), 0);
+    EXPECT_EQ(far::impostor_grid_for(0), 0);
+}
+
+TEST(FarImpostorBlend, OctViewsAreUnitAndMirrorTwinsAreBitIdentical) {
+    const int N = 8;
+    const auto dirs = far::oct_view_dirs(N);
+    ASSERT_EQ(dirs.size(), 64u);
+    for (const auto& d : dirs) EXPECT_NEAR(glm::length(d), 1.0f, 1e-6f);
+    auto at = [&](int i, int j) { return dirs[static_cast<std::size_t>(j * N + i)]; };
+    for (int k = 0; k < N; ++k) {   // each border edge folds onto itself, mirrored
+        EXPECT_EQ(at(k, 0), at(N - 1 - k, 0)) << k;
+        EXPECT_EQ(at(k, N - 1), at(N - 1 - k, N - 1)) << k;
+        EXPECT_EQ(at(0, k), at(0, N - 1 - k)) << k;
+        EXPECT_EQ(at(N - 1, k), at(N - 1, N - 1 - k)) << k;
+    }
+    EXPECT_EQ(at(0, 0), glm::vec3(0.0f, -1.0f, 0.0f));   // every corner is the -y pole
+    EXPECT_EQ(at(N - 1, N - 1), at(0, 0));
+    // 36 interior + 4 edges x 3 + 1 pole distinct directions.
+    std::set<std::array<float, 3>> distinct;
+    for (const auto& d : dirs) distinct.insert({d.x, d.y, d.z});
+    EXPECT_EQ(distinct.size(), 49u);
+    for (std::size_t v = 0; v < dirs.size(); ++v)
+        EXPECT_NEAR(glm::length(far::oct_decode(far::oct_encode(dirs[v])) - dirs[v]), 0.0f, 1e-6f) << v;
+}
+
+TEST(FarImpostorBlend, ABakedDirectionIsExactlyThatView) {
+    for (int N : {4, 8}) {
+        const auto dirs = far::oct_view_dirs(N);
+        ASSERT_EQ(dirs.size(), static_cast<std::size_t>(N * N));
+        for (std::size_t v = 0; v < dirs.size(); ++v) {
+            const auto m = by_direction(far::view_blend(dirs[v], N), N);
+            ASSERT_EQ(m.size(), 1u) << "N " << N << " view " << v;
+            EXPECT_EQ(m.begin()->first, (std::array<float, 3>{dirs[v].x, dirs[v].y, dirs[v].z}));
+            EXPECT_NEAR(m.begin()->second, 1.0f, 1e-5f) << v;
+        }
+    }
+}
+
+TEST(FarImpostorBlend, WeightsAreNonNegativeAndSumToOne) {
+    std::uint32_t s = 12345u;
+    auto u = [&]() { s = s * 1664525u + 1013904223u; return (s >> 8) / 16777216.0f * 2.0f - 1.0f; };
+    for (int n = 0; n < 20000; ++n) {
+        glm::vec3 d(u(), u(), u());
+        if (glm::length(d) < 1e-3f) continue;
+        d = glm::normalize(d);
+        const far::ViewBlend b = far::view_blend(d, 8);
+        float sum = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            EXPECT_GE(b.w[k], 0.0f);
+            EXPECT_GE(b.view[k], 0); EXPECT_LT(b.view[k], 64);
+            sum += b.w[k];
+        }
+        EXPECT_NEAR(sum, 1.0f, 1e-5f);
+    }
+}
+
+// A small rotation of the eye changes the weights a little -- everywhere,
+// including across the oct map's folds and through both poles. A snap to
+// another view would change them by up to 2 in one step.
+TEST(FarImpostorBlend, WeightsAreContinuousInTheEyeDirection) {
+    const float step = 1e-3f;
+    const glm::vec3 axes[] = {{0, 0, 1}, {1, 0, 0}, {0, 1, 0}, glm::normalize(glm::vec3(1, 1, 0)),
+                              glm::normalize(glm::vec3(0.3f, -0.8f, 0.5f)), glm::normalize(glm::vec3(-1, 0.2f, 1))};
+    float worst = 0.0f;
+    for (const glm::vec3& axis : axes) {
+        // A start perpendicular to the axis: a great circle through the folds.
+        glm::vec3 start = glm::cross(axis, glm::vec3(0.31f, 0.52f, 0.79f));
+        start = glm::normalize(start);
+        DirWeights prev = by_direction(far::view_blend(start, 8), 8);
+        for (int i = 1; i <= static_cast<int>(6.2832f / step); ++i) {
+            const DirWeights cur = by_direction(far::view_blend(rot(axis, step * i, start), 8), 8);
+            const float d = l1(prev, cur);
+            worst = std::max(worst, d);
+            ASSERT_LT(d, 50.0f * step) << "axis (" << axis.x << " " << axis.y << " " << axis.z << ") step " << i;
+            prev = cur;
+        }
+    }
+    std::printf("[view_blend] worst L1 weight change per 1e-3 rad: %.5f\n", worst);
+}
+
+// A full turn about any axis returns the same weights: the loop closes.
+TEST(FarImpostorBlend, AFullRevolutionReturnsTheSameWeights) {
+    const glm::vec3 axis = glm::normalize(glm::vec3(0.2f, 0.9f, -0.4f));
+    const glm::vec3 eye = glm::normalize(glm::vec3(0.7f, -0.1f, 0.4f));
+    const int steps = 240;
+    for (int i = 0; i <= steps; ++i) {
+        const float a = 6.2831853f * static_cast<float>(i) / steps;
+        const auto w0 = by_direction(far::view_blend(rot(axis, a, eye), 8), 8);
+        const auto w1 = by_direction(far::view_blend(rot(axis, a + 6.2831853f, eye), 8), 8);
+        EXPECT_LT(l1(w0, w1), 1e-4f) << i;
+    }
 }
 
 // ---- Haze start ramp (rock-fields Task 12) ---------------------------------

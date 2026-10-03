@@ -203,6 +203,35 @@ ViewBasis make_view_basis(const glm::vec3& dir);
 // glTF -> BC model axes: (x,y,z) -> (-x,z,y). Proper (det +1) and its own inverse.
 glm::mat3 gltf_to_bc();
 
+// ---- Octahedral view layout + blend (rock-blend, 2026-10-03) --------------
+// The impostor bake's views are the grid points of an octahedral map of the
+// sphere (glTF frame, pole axis +y), CORNER-sampled: view v = j * grid + i
+// sits at oct (a, b) = (-1 + 2i/(grid-1), -1 + 2j/(grid-1)) and is atlas cell
+// (i, j). Corner sampling puts grid points ON the map's folds (the square's
+// border and its corners), so the border views come in mirror pairs with
+// bit-identical directions -- the price of a lookup with no search: the
+// eye's oct point lies in one grid cell, and the cell's triangle around it
+// gives the 3 views and their barycentric weights. Continuous everywhere,
+// including across the folds (on a fold the weights reduce to the
+// edge-linear blend of two border views, the same from either side).
+// Copied in native/src/rockgen/src/impostor.cc (oct_decode), not linked.
+
+// sqrt(view_count) if it is a whole number >= 2, else 0 (no usable layout).
+int impostor_grid_for(std::size_t view_count);
+// The oct-map point of unit direction d (glTF frame), in [-1, 1]^2.
+glm::vec2 oct_encode(const glm::vec3& d);
+// The unit direction of oct-map point f (the inverse of oct_encode).
+glm::vec3 oct_decode(const glm::vec2& f);
+// View `view`'s direction (glTF frame) for a grid x grid layout.
+glm::vec3 oct_view_dir(int view, int grid);
+std::vector<glm::vec3> oct_view_dirs(int grid);
+
+// Up to three baked views and weights (>= 0, summing to 1) for an eye in
+// unit direction `eye_dir_gltf` from the rock's centre (rock glTF frame).
+// Exactly one weight is 1 at a baked direction. Unused slots weigh 0.
+struct ViewBlend { int view[3] = {0, 0, 0}; float w[3] = {1.0f, 0.0f, 0.0f}; };
+ViewBlend view_blend(const glm::vec3& eye_dir_gltf, int grid);
+
 // The impostor instance for a rock at render-space centre c, rotation R
 // (rock -> render), radius r, seen from `eye`, with signed dither `dither`
 // (0 = solid; >0 a mesh-side fade keeping the upper 1-d; <0 an impostor
