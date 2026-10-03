@@ -548,7 +548,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         for (const Cand& cn : cands) {
             if (emitted >= cd.max_instances) break;
             const NearRock& r = *cn.rock;
-            const glm::mat3 R = rotation(r.phase + r.tumble_rate * t + cn.spin, r.tumble_axis);
+            const glm::mat3 R = rotation(r.phase + r.tumble_rate * eff_.tumble_scale * t + cn.spin, r.tumble_axis);
             if (cn.w.mesh > 0.0f) {
                 const auto it = std::find(rocks.begin(), rocks.end(), r.rock);
                 const std::size_t slot = static_cast<std::size_t>(it - rocks.begin());

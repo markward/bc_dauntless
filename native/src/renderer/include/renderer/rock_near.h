@@ -46,6 +46,10 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // dither (Mark, live 2026-10-03: the dithered hand-off read as rocks
     // "checkerboarding in"). > 0 = the old dithered crossfade.
     float handoff_fade_gu = 0.0f;
+    // Multiplies every near rock's tumble rate (mesh and billboard alike, so
+    // the hand-off stays matched). 0.05: interim while billboards snap
+    // between their 16 baked views (Mark, live 2026-10-03).
+    float tumble_scale = 0.05f;
     // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
     // is a real rock). With large_far_gu > large.billboard_gu the large
     // class's SAME rocks stream on past billboard_gu as billboards (no

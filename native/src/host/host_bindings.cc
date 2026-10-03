@@ -2715,6 +2715,7 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
     }
     f("near_fade_gu", o.fade_gu);
     f("near_handoff_fade_gu", o.handoff_fade_gu);
+    f("near_tumble_scale", o.tumble_scale);
     f("near_large_far_gu", o.large_far_gu);          // the far shell (rock-real Part 1)
     f("near_large_far_fade_gu", o.large_far_fade_gu);
     f("near_large_min_px", o.large_min_px);

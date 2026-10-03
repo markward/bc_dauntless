@@ -100,6 +100,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
     // Part 1, 2026-10-03): 20 GU cells, no far shell, a 1000 cap.
     dials.large.cell_gu = 20.0f; dials.large_far_gu = 0.0f; dials.large.max_instances = 1000;
     dials.handoff_fade_gu = dials.fade_gu;   // pinned: the recorded digests used the dithered hand-off
+    dials.tumble_scale = 1.0f;               // pinned: and the full tumble rate
     if (caps) {
         dials.small.max_instances = 60;
         dials.large.max_instances = 12;
