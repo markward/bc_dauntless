@@ -4,6 +4,9 @@
 // fixed in system coordinates, chosen from the same density field the near
 // band samples (far::field_density).
 #pragma once
+#include <array>
+#include <cstdint>
+#include <unordered_map>
 #include <vector>
 #include <glm/glm.hpp>
 #include <renderer/far_field.h>
@@ -66,7 +69,36 @@ private:
     MidDials dials_;
     std::vector<MidCollection> collections_;
     std::vector<glm::vec3> view_dirs_;
+    far::ImpostorViews views_;   // make_impostor_views(view_dirs_)
     std::vector<far::DiscSource> sources_;
+
+    // Per-tile selection cache (rock-fields perf, 2026-10-03): everything a
+    // regular tile's sprite takes from the tile alone -- its jitter, its
+    // presence, collection, rotation and size -- depends only on (level,
+    // tile index), the sources, the dials and the collections, never on the
+    // camera, so it is computed once and reused until one of those changes
+    // (every setter clears it). Bounded: cleared when it grows past
+    // kMaxCachedBlocks. A render-side cache, not game state.
+    struct TileKey {
+        int lvl; std::int64_t i, j, k;
+        bool operator==(const TileKey& o) const { return lvl == o.lvl && i == o.i && j == o.j && k == o.k; }
+    };
+    struct TileKeyHash { std::size_t operator()(const TileKey& t) const; };
+    struct TileSel {
+        glm::vec3 jitter{0.0f};   // sprite centre - tile centre (render-space float)
+        bool present = false;
+        int atlas = 0;
+        glm::mat3 R{1.0f};
+        float half = 0.0f;
+    };
+    // Cached per block of kBlock^3 tiles (one hash lookup per block, not per
+    // tile); `done` has bit (local index) set once that tile's entry is filled.
+    static constexpr int kBlock = 4;
+    struct BlockSel {
+        std::array<TileSel, kBlock * kBlock * kBlock> tiles;
+        std::uint64_t done = 0;
+    };
+    mutable std::unordered_map<TileKey, BlockSel, TileKeyHash> tile_cache_;   // key: block index
 };
 
 }  // namespace renderer::rockfield
