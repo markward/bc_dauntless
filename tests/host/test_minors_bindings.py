@@ -104,7 +104,12 @@ def _look_down_minus_z(h):
 def test_frame_with_a_cloud_draws_it():
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     import _dauntless_host as h
-    h.init(64, 64, "test_minors_frame")
+    # 256, not 64: the cull is in framebuffer pixels, and the framebuffer is
+    # the window times the display's backing scale. At 64 the r=0.3 minors at
+    # 20 GU are 1.66 px on Retina (2x) but 0.83 px on a 1x monitor -- under
+    # min_pixel_radius (1.5), so the test failed whenever the window opened on
+    # an external 1x display. 256 gives 3.3 px at 1x.
+    h.init(256, 256, "test_minors_frame")
     try:
         h0, h1, bound_mu = _load_fragment(h)
         h.minors_set_fragments(0, [(h0, h1, bound_mu)])
