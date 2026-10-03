@@ -509,6 +509,7 @@ def report_lines() -> list[str]:
     lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f, %s)"
                  % (_frames, EMA_ALPHA, cap))
     lines.append(scene_summary())
+    lines.append(rock_summary())
     # Both numbers, each labelled: the costs beside them are EMA-smoothed, so
     # dividing one of those by a single frame's raw tick count mixes an
     # instantaneous value into an average.
@@ -659,4 +660,38 @@ def scene_summary() -> str:
     # reader cannot mistake an idle capture for a representative one.
     if projectiles == 0 and damaged == 0:
         line += "   <- IDLE: no combat in this capture"
+    return line
+
+
+# ── Rock load ────────────────────────────────────────────────────────────────
+# Rock fields (docs/superpowers/specs/2026-10-02-rock-fields-design.md): how
+# many rocks the LAST frame held and drew, per band and per representation,
+# so a slow rock.* scope can be read against its load. Counts are the native
+# far_stats / minors_stats snapshots (summed over that frame's drawn cameras),
+# not EMA-smoothed like the timings around them.
+
+def rock_summary() -> str:
+    """One line: near (streamed / drawn as meshes and billboards), mid
+    sprites, far impostors + specks, minor rocks, and draw calls. Never
+    raises."""
+    try:
+        from engine import renderer
+        on = bool(renderer.far_enabled())
+        f = renderer.far_stats()
+        m = renderer.minors_stats()
+    except Exception:
+        return "  rocks: unavailable"
+    line = ("  rocks: near cells %d (small %d, large %d, ghosted %d) -> "
+            "meshes %d, billboards %d | mid %d sprites (%d tiles) | "
+            "far impostors %d, specks %d | minors %d/%d drawn | "
+            "draw calls %d rock + %d minor"
+            % (f.get("near_cells", 0), f.get("near_small", 0),
+               f.get("near_large", 0), f.get("near_ghosted", 0),
+               f.get("near_meshes", 0), f.get("near_billboards", 0),
+               f.get("mid_sprites", 0), f.get("mid_tiles", 0),
+               f.get("impostors", 0), f.get("specks", 0),
+               m.get("drawn", 0), m.get("minors", 0),
+               f.get("draw_calls", 0), m.get("draw_calls", 0)))
+    if not on:
+        line += "   <- ROCK FIELDS OFF"
     return line
