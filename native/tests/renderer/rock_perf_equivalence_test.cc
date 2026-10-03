@@ -40,18 +40,6 @@ void digest_near_out(Digest& d, const rockfield::NearOutput& o) {
     }
 }
 
-void digest_contacts(Digest& d, rockfield::NearField& f) {
-    const auto large = f.drain_large_contacts();
-    d.pod(large.size());
-    for (const auto& c : large) {
-        d.pod(c.point_view); d.pod(c.normal); d.pod(c.rock_centre_view);
-        d.pod(c.rock_radius); d.pod(c.rel_speed); d.pod(c.pen); d.pod(c.key);
-    }
-    const auto small = f.drain_small_contacts();
-    d.pod(small.size());
-    for (const auto& c : small) { d.pod(c.point_view); d.pod(c.radius); d.pod(c.rel_speed); }
-}
-
 // The streamed set, order-independent (the cell map's order is not output).
 void digest_stream(Digest& d, const rockfield::NearField& f) {
     const auto st = f.stats();

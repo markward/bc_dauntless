@@ -161,23 +161,53 @@ private:
         double size = 0.0;               // edge (the class's cell_gu when generated)
         bool pinned = false;             // the test cell: never streamed out
         std::vector<std::uint64_t> keys; // pinned only: explicit rock keys
+        float r_max = 0.0f;              // largest rock radius (broad phase)
+        // Large cells: the step that last saw this cell (0 = none) and how
+        // many of its rocks it saw then -- a rock is "fresh" (ghost test)
+        // unless the previous step saw it.
+        std::uint64_t seen_step = 0;
+        std::size_t seen_rocks = 0;
     };
     std::uint64_t key_of(std::uint64_t cell_key, const Cell& c, std::size_t i) const;
+    void invalidate_stream_watch();
     // key: mix(source id, class, i, j, k); rock key = mix(cell key, index + 1)
     std::unordered_map<std::uint64_t, Cell> cells_;
     NearDials dials_;
     NearCatalogue cat_;
     std::vector<far::DiscSource> sources_;
 
-    // Contact state (cleared by clear()).
+    // Incremental streaming (rock-fields perf, 2026-10-03). After a full
+    // pass at c_ref, only cells whose distance from c_ref lies within
+    // kStreamWatchGu of a threshold can change state while the centre stays
+    // within kStreamWatchGu of c_ref (distance to a box is 1-Lipschitz).
+    struct GenWatch {                     // per (source, class)
+        bool has_ref = false;             // c_ref is the last full pass's centre
+        bool valid = false;               // ... and `shell` was recorded there
+        glm::dvec3 c_ref{0.0};
+        std::vector<glm::i64vec3> shell;  // R - w < dist(c_ref) <= R + w, (i, j, k) order
+    };
+    std::vector<GenWatch> gen_watch_;     // sources_.size() * 2
+    bool drop_valid_ = false;
+    glm::dvec3 drop_ref_{0.0};
+    std::vector<std::uint64_t> drop_watch_;   // cells that may pass keep: near it, or new
+
+    // Contact state (cleared by clear()). Per-rock state carries its CELL
+    // key, so pruning asks "is the cell still streamed" instead of
+    // re-collecting every streamed rock's key each step.
+    struct Shove { minors::ShoveState s; std::uint64_t cell = 0; };
+    struct Touch { double t = 0.0; std::uint64_t cell = 0; };
     double last_time_ = 0.0;
     bool stepped_ = false;                       // last_time_ is valid
     bool has_prev_ = false;
     glm::dvec3 prev_center_sys_{0.0};            // player box centre, SYSTEM space
-    std::unordered_set<std::uint64_t> seen_large_;   // large rock keys at the last step
-    std::unordered_set<std::uint64_t> ghosts_;
-    std::unordered_map<std::uint64_t, double> large_last_;            // last reported touch
-    std::unordered_map<std::uint64_t, minors::ShoveState> shoves_;    // small rocks
+    std::uint64_t step_count_ = 1;               // Cell::seen_step clock (0 = never)
+    // Large cells dropped since the last step that had seen them: a cell
+    // regenerated before the next step keeps its "seen" state (as the rock
+    // keys did when seen-ness was a key set).
+    std::unordered_map<std::uint64_t, std::size_t> dropped_seen_;
+    std::unordered_map<std::uint64_t, std::uint64_t> ghosts_;   // rock key -> cell key
+    std::unordered_map<std::uint64_t, Touch> large_last_;       // last reported touch
+    std::unordered_map<std::uint64_t, Shove> shoves_;           // small rocks
     std::vector<NearContact> large_contacts_;
     std::vector<minors::Contact> small_contacts_;
 };
