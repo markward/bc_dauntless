@@ -25,6 +25,14 @@ def _source(**kw):
     return d
 
 
+def _view_dirs():
+    # The bake's view layout (rock-blend: 64 octahedral views). The native
+    # side derives the blend from the layout, so a lone direction is no
+    # usable layout and draws no impostors.
+    from engine.rocks import catalogue
+    return [tuple(d) for d in catalogue.impostor_view_dirs()]
+
+
 def test_far_bindings_are_on_the_facade():
     from engine import renderer
     for name in ("far_set_catalogue", "far_set_rocks", "far_set_sources",
@@ -201,7 +209,7 @@ def test_a_catalogue_pushed_before_init_still_draws_impostors():
     major = catalogue.pick("x", kind="major", family="silicate")
     h.far_set_catalogue(
         [{"albedo": major.impostor_albedo, "normal": major.impostor_normal,
-          "avg_albedo": (0.4, 0.4, 0.4)}], [(0.0, 0.0, 1.0)])
+          "avg_albedo": (0.4, 0.4, 0.4)}], _view_dirs())
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     try:
         h.init(64, 64, "test_far_catalogue")
@@ -232,7 +240,7 @@ def test_a_rock_whose_atlas_fails_to_load_keeps_its_mesh(host):
         h.far_set_catalogue(
             [{"albedo": "/nonexistent/far_host_test/a0.png",
               "normal": "/nonexistent/far_host_test/n0.png",
-              "avg_albedo": (0.4, 0.4, 0.4)}], [(0.0, 0.0, 1.0)])
+              "avg_albedo": (0.4, 0.4, 0.4)}], _view_dirs())
         # The wide impostor band of the catalogue-before-init test: r=1 at
         # d=4 is ~14-28 px, inside it at either framebuffer height.
         h.far_set_dials({"imp_hi": 1000.0, "imp_lo": 1.0, "speck_hi": 0.9,
