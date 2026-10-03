@@ -48,12 +48,16 @@ def host():
         pytest.skip(f"no GL context: {e}")
     far_tier.reset()
     h.dust_set_enabled(False)
+    # Rock-real Part 1 strip-back (2026-10-03): haze is off by default,
+    # independent of far_set_enabled. This whole file measures the haze.
+    h.rock_haze_set_enabled(True)
     try:
         yield h
     finally:
         far_tier.reset()
         h.far_clear()
         h.far_set_enabled(True)
+        h.rock_haze_set_enabled(False)
         h.dust_set_enabled(True)
         h.shutdown()
 

@@ -50,6 +50,11 @@ def host():
         pytest.skip(f"no GL context: {e}")
     far_tier.reset()
     h.dust_set_enabled(False)
+    # Rock-real Part 1 strip-back (2026-10-03): mid and haze are off by
+    # default, independent of far_set_enabled. This file's acceptance
+    # covers the whole band-by-band stack, so both are on for its duration.
+    h.rock_mid_set_enabled(True)
+    h.rock_haze_set_enabled(True)
     try:
         yield h
     finally:
@@ -57,6 +62,8 @@ def host():
         h.far_clear()
         h.far_set_dials({})
         h.far_set_enabled(True)
+        h.rock_mid_set_enabled(False)
+        h.rock_haze_set_enabled(False)
         h.dust_set_enabled(True)
         h.minors_set_player(None)
         h.shutdown()

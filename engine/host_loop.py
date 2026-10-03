@@ -4962,6 +4962,14 @@ def _push_dust_profile(r, player, warp_streaking) -> None:
     if player is not None and not warp_streaking:
         from engine.systems import profile as _profile
         dust = _profile.sample_for_object(player).dust
+        # Rock fields: x field_dust_mult dust inside a field (Mark, live
+        # 2026-10-03); only while the Rock Fields toggle is on.
+        try:
+            if r.far_enabled():
+                dust = _far_tier.dust_profile_in_field(
+                    dust, _far_tier.field_strength_at(player))
+        except Exception:
+            pass
     r.set_dust_profile(dust)
 
 

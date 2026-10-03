@@ -41,7 +41,11 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // to 250 GU and ~2,300 in a 90 degree one; 4000 also covers the live dial
     // at 400 GU (~3,200 at 60 degrees), which 1000 would cut nearest-first.
     NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 90.0f, 4000};
-    float fade_gu = 4.0f;                 // dither band width at each tier edge
+    float fade_gu = 4.0f;                 // outer (translucent) fade band at each billboard edge
+    // Mesh <-> billboard hand-off width. 0 = a hard swap, no screen-door
+    // dither (Mark, live 2026-10-03: the dithered hand-off read as rocks
+    // "checkerboarding in"). > 0 = the old dithered crossfade.
+    float handoff_fade_gu = 0.0f;
     // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
     // is a real rock). With large_far_gu > large.billboard_gu the large
     // class's SAME rocks stream on past billboard_gu as billboards (no
@@ -126,6 +130,8 @@ struct NearWeights { float mesh = 0, billboard = 0; };
 // ramps to 0 at mesh_gu; billboard = 1 - mesh up to billboard_gu - fade, then
 // ramps to 0 at billboard_gu; nothing beyond. fade_gu <= 0 is a hard step.
 NearWeights near_weights(float d, const NearClassDials& c, float fade_gu);
+// As above with a separate mesh <-> billboard hand-off width.
+NearWeights near_weights(float d, const NearClassDials& c, float fade_gu, float handoff_fade_gu);
 // Width of the pixel-floor fade-in (px above large_min_px).
 constexpr float kNearPixelFadeBand = 1.0f;
 // Pure tier rule of the LARGE class at camera distance d and on-screen

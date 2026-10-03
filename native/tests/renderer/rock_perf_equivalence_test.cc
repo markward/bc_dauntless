@@ -99,6 +99,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
     // ... and to the large class as it was before the far shell (rock-real
     // Part 1, 2026-10-03): 20 GU cells, no far shell, a 1000 cap.
     dials.large.cell_gu = 20.0f; dials.large_far_gu = 0.0f; dials.large.max_instances = 1000;
+    dials.handoff_fade_gu = dials.fade_gu;   // pinned: the recorded digests used the dithered hand-off
     if (caps) {
         dials.small.max_instances = 60;
         dials.large.max_instances = 12;
@@ -140,7 +141,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
         }
         if (i == 480) {
             rockfield::NearDials d2 = f.dials();
-            d2.small.billboard_gu = 30.0f; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f;
+            d2.small.billboard_gu = 30.0f; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f; d2.handoff_fade_gu = 6.0f;
             f.set_dials(d2);
         }
         if (resend) f.set_sources({rock_scenario::beol4_field()});

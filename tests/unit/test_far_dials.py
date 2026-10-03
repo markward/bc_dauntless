@@ -23,7 +23,7 @@ _NEAR_CPP_DEFAULTS = {
     # rock-real review: the far shell shrinks at dash speed and regrows
     # (NearDials far_shell_max_step_gu / far_shell_regrow_gu).
     "near_far_shell_max_step_gu": 25.0, "near_far_shell_regrow_gu": 20.0,
-    "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    "near_fade_gu": 4.0, "near_handoff_fade_gu": 0.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 
 
@@ -37,13 +37,19 @@ _MID_CPP_FIELDS = {
     "mid_sprite_scale": "sprite_scale", "mid_max_sprites": "max_sprites",
 }
 
+# TEMPORARY (Mark, 2026-10-03): the near-only strip-back turns the far shell
+# off from Python while the native default keeps the feature's 250 GU. Remove
+# this exemption when the far shell is back on.
+_STRIP_BACK = {"near_large_far_gu": 0.0}
+
+
 def test_near_defaults_match_rock_near_h():
     """NearDials defaults (native/src/renderer/include/renderer/rock_near.h)
     MUST equal DEFAULTS; every near key is native (parsed in Task 7)."""
     for key, value in _NEAR_CPP_DEFAULTS.items():
         assert key in far_dials.DEFAULTS, key
         assert key in far_dials.NATIVE_KEYS, key
-        assert far_dials.DEFAULTS[key] == value, key
+        assert far_dials.DEFAULTS[key] == _STRIP_BACK.get(key, value), key
     assert isinstance(far_dials.DEFAULTS["near_small_max"], int)
     assert isinstance(far_dials.DEFAULTS["near_large_max"], int)
 

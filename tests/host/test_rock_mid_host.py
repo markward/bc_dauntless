@@ -50,12 +50,17 @@ def host():
         h.init(64, 64, "test_rock_mid")
     except RuntimeError as e:
         pytest.skip(f"no GL context: {e}")
+    # Rock-real Part 1 strip-back (2026-10-03): the mid band is off by
+    # default, independent of far_set_enabled. Every test in this file
+    # exercises the mid band specifically, so enable it for the duration.
+    h.rock_mid_set_enabled(True)
     try:
         yield h
     finally:
         h.far_clear()
         h.far_set_dials({})
         h.far_set_enabled(True)
+        h.rock_mid_set_enabled(False)
         h.minors_set_player(None)
         h.shutdown()
         far_tier.reset()
@@ -145,6 +150,9 @@ def test_mid_fades_draw_translucent_in_their_own_scope(host):
     _field(host)
     _look_from(host, (0.0, 0.0, 1500.0))
     host.profiler_set_enabled(True)
+    # This test's ordering assertion needs the haze scope too (off by
+    # default, independent of the mid band this file's fixture enables).
+    host.rock_haze_set_enabled(True)
     try:
         for _ in range(6):
             host.frame()
@@ -159,3 +167,4 @@ def test_mid_fades_draw_translucent_in_their_own_scope(host):
         assert order.index("rock.fade.draw") > order.index("rock.haze"), order
     finally:
         host.profiler_set_enabled(False)
+        host.rock_haze_set_enabled(False)

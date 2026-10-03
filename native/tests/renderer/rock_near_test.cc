@@ -326,6 +326,7 @@ TEST(NearBuild, OneTierPerRockOutsideFades) {
 // first, each bin's items farthest first.
 TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
     rockfield::NearField f;
+    { rockfield::NearDials pd; pd.handoff_fade_gu = pd.fade_gu; f.set_dials(pd); }   // pinned: dithered hand-off
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     rockfield::NearOutput out;
@@ -408,6 +409,7 @@ TEST(NearBuild, MeshItemCarriesFullScaleAndLodRule) {
 
 TEST(NearBuild, MeshAndBillboardOfOneRockAgree) {   // same R for both tiers
     rockfield::NearField f;
+    { rockfield::NearDials pd; pd.handoff_fade_gu = pd.fade_gu; f.set_dials(pd); }   // pinned: dithered hand-off
     const auto k = build_cat();
     f.set_catalogue(k); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
@@ -841,6 +843,7 @@ TEST(NearFarLarge, DefaultsAreTheBrief) {
 TEST(NearFarLarge, WeightsBeyondTheBillboardRange) {
     rockfield::NearDials d;   // mesh 60, billboard 90, far 400 (fade 40), floor 1.5 px
     d.large_far_gu = 400.0f;  // pinned: the literal distances below
+    d.handoff_fade_gu = d.fade_gu;   // pinned: the dithered hand-off
     auto w = [&](float dist, float px = 100.0f) { return rockfield::near_large_weights(dist, px, d); };
     EXPECT_EQ(w(30).mesh, 1.0f);   EXPECT_EQ(w(30).billboard, 0.0f);
     EXPECT_NEAR(w(58).mesh + w(58).billboard, 1.0f, 1e-6f);    // the hand-off is unchanged
@@ -1145,7 +1148,8 @@ TEST(NearFarLarge, TheDrawnShellNeverPassesTheStreamedReach) {
 }
 
 TEST(NearFarLarge, ThePixelFloorDoesNotPopWhereTheMeshEnds) {
-    const rockfield::NearDials d;   // mesh 60, fade 4, floor 1.5
+    rockfield::NearDials d;   // mesh 60, fade 4, floor 1.5
+    d.handoff_fade_gu = d.fade_gu;   // pinned: the dithered hand-off
     auto w = [&](float dist) { return rockfield::near_large_weights(dist, 0.5f, d); };
     // A rock under the floor: the hand-off is untouched, and the billboard
     // then blends down to 0 over [mesh_gu, mesh_gu + fade_gu] -- continuous.

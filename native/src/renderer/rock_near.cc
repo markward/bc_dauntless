@@ -165,17 +165,21 @@ float ramp_down(float d, float end, float fade) {   // 1 at end - fade, 0 at end
 }  // namespace
 
 NearWeights near_weights(float d, const NearClassDials& c, float fade_gu) {
+    return near_weights(d, c, fade_gu, fade_gu);
+}
+
+NearWeights near_weights(float d, const NearClassDials& c, float fade_gu, float handoff_fade_gu) {
     NearWeights w;
-    w.mesh = ramp_down(d, c.mesh_gu, fade_gu);
+    w.mesh = ramp_down(d, c.mesh_gu, handoff_fade_gu);
     w.billboard = std::min(1.0f - w.mesh, ramp_down(d, c.billboard_gu, fade_gu));
     return w;
 }
 
 NearWeights near_large_weights(float d, float px, const NearDials& dials) {
     const NearClassDials& c = dials.large;
-    if (!far_shell_on(dials)) return near_weights(d, c, dials.fade_gu);
+    if (!far_shell_on(dials)) return near_weights(d, c, dials.fade_gu, dials.handoff_fade_gu);
     NearWeights w;
-    w.mesh = ramp_down(d, c.mesh_gu, dials.fade_gu);
+    w.mesh = ramp_down(d, c.mesh_gu, dials.handoff_fade_gu);
     w.billboard = std::min(1.0f - w.mesh, ramp_down(d, dials.large_far_gu, dials.large_far_fade_gu));
     // The pixel floor blends in over [mesh_gu, mesh_gu + fade_gu]: 1 at the
     // mesh edge (the hand-off is untouched), the floor ramp beyond.
@@ -526,7 +530,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 const float ex = c.x - eye.x, ey = c.y - eye.y, ez = c.z - eye.z;
                 const float d = std::sqrt(dot3(ex, ey, ez, ex, ey, ez));
                 const NearWeights w = shell ? near_large_weights(d, r.radius * k / std::max(d, 1e-3f), eff_)
-                                            : near_weights(d, cd, eff_.fade_gu);
+                                            : near_weights(d, cd, eff_.fade_gu, eff_.handoff_fade_gu);
                 if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
                 if (!frustum.sphere(c, r.radius)) continue;
                 cands.push_back({d, c, w, &r, spin});

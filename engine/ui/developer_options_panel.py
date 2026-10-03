@@ -39,6 +39,24 @@ def _far_enabled() -> bool:
         return True
 
 
+def _rock_mid_enabled() -> bool:
+    """renderer.rock_mid_enabled(), or False (the native default) when the
+    renderer is unavailable -- this panel is constructed in headless tests."""
+    try:
+        return bool(renderer.rock_mid_enabled())
+    except Exception:
+        return False
+
+
+def _rock_haze_enabled() -> bool:
+    """renderer.rock_haze_enabled(), or False (the native default) when the
+    renderer is unavailable -- this panel is constructed in headless tests."""
+    try:
+        return bool(renderer.rock_haze_enabled())
+    except Exception:
+        return False
+
+
 def _frame_profiler():
     """Imported lazily. engine.core.frame_profiler reaches the native timer
     through host_io, and this panel is constructed in tests that never build
@@ -80,6 +98,8 @@ class DeveloperOptionsPanel(Panel):
         self._rock_catalogue = rock_catalogue.enabled()
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
+        self._rock_mid = _rock_mid_enabled()
+        self._rock_haze = _rock_haze_enabled()
         self._dial_group = dev_dial_groups.active() or "nebula"
         # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
         # profiler at startup, so a hard-coded False would show OFF while it
@@ -108,6 +128,8 @@ class DeveloperOptionsPanel(Panel):
         self._dial_group = dev_dial_groups.active() or "nebula"
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
+        self._rock_mid = _rock_mid_enabled()
+        self._rock_haze = _rock_haze_enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -133,6 +155,7 @@ class DeveloperOptionsPanel(Panel):
             self._normal_maps, self._normal_flip_g, self._normal_strength,
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
+            self._rock_mid, self._rock_haze,
         )
         if snapshot == self._last_pushed:
             return None
@@ -159,6 +182,8 @@ class DeveloperOptionsPanel(Panel):
                 "dial_group": self._dial_group,
                 "minor_rocks": self._minor_rocks,
                 "far_tier": self._far_tier,
+                "rock_mid": self._rock_mid,
+                "rock_haze": self._rock_haze,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -240,6 +265,14 @@ class DeveloperOptionsPanel(Panel):
             renderer.far_set_enabled(not self._far_tier)
             self._far_tier = not self._far_tier
             return True
+        if action == "toggle:rock_mid":
+            renderer.rock_mid_set_enabled(not self._rock_mid)
+            self._rock_mid = not self._rock_mid
+            return True
+        if action == "toggle:rock_haze":
+            renderer.rock_haze_set_enabled(not self._rock_haze)
+            self._rock_haze = not self._rock_haze
+            return True
         if action == "action:dial_group":
             self._dial_group = dev_dial_groups.cycle_active() or "nebula"
             return True
@@ -279,6 +312,7 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
                     ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue"),
                     ("ctrl", "minor_rocks"), ("ctrl", "far_tier"),
+                    ("ctrl", "rock_mid"), ("ctrl", "rock_haze"),
                     ("ctrl", "dial_group")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler")]

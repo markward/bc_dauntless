@@ -120,6 +120,7 @@ def reset(r=None) -> None:
     global _catalogue_root, _dials_pushed, _dials_dirty, _sources_dirty
     global _system, _rocks_pushed, _tiles, _near_pushed
     _models.clear()
+    _belt_cache.clear()
     _catalogue_root = None
     _near_pushed = 0
     _dials_pushed = False
@@ -350,3 +351,72 @@ def reconcile(session, r) -> None:
             scenery_contact.shield_inflate(getattr(session, "player", None)))
     except Exception as e:
         _swallow("set_shield_inflate", e)
+
+
+# ── Space dust inside rock fields (Mark, live 2026-10-03) ─────────────────────
+
+_DUST_MAX_MULT = 10.0   # renderer DustPass::kMaxDensityMult (profile 1 -> x10)
+
+
+def source_strength(source, point_view: tuple, anchor: tuple) -> float:
+    """The source's a(x) at `point_view` (viewed-set coordinates): a sphere
+    (BC tile field) is 1 inside R(1 - edge) ramping to 0 at R; a belt is
+    density.evaluate at the system point anchor + point_view."""
+    if source.shape == "sphere":
+        d = sum((p - c) ** 2 for p, c in zip(point_view, source.centre_gu)) ** 0.5
+        R = float(source.sphere_radius_gu)
+        if R <= 0.0 or d >= R:
+            return 0.0
+        inner = R * (1.0 - min(1.0, max(0.0, float(source.sphere_edge_frac))))
+        return 1.0 if d <= inner else (R - d) / (R - inner)
+    from engine.rocks import density
+    sys_pt = tuple(a + p for a, p in zip(anchor, point_view))
+    return min(1.0, max(0.0, density.evaluate(source, sys_pt)))
+
+
+def dust_profile_in_field(profile_dust: float, strength: float) -> float:
+    """The dust-profile value to push so the dust density is multiplied by
+    field_dust_mult at full field strength (linear in between), capped at
+    the dust pass's x10. density_mult = 1 + 9 * profile."""
+    mult = float(fd.get("field_dust_mult"))
+    if strength <= 0.0 or mult <= 1.0:
+        return profile_dust
+    base = 1.0 + (_DUST_MAX_MULT - 1.0) * profile_dust
+    target = min(1.0, (mult * base - 1.0) / (_DUST_MAX_MULT - 1.0))
+    return profile_dust + min(1.0, strength) * (target - profile_dust)
+
+
+_belt_cache: dict = {}
+
+
+def field_strength_at(player) -> float:
+    """The strongest rock-field a(x) at the player among the viewed set's
+    tile fields (as last pushed) and its system's belt. 0 when unknown.
+    Never raises."""
+    try:
+        from engine.systems import frames
+        view = frames.viewing_set()
+        pset = frames.containing_set(player)
+        loc = player.GetWorldLocation()
+        p = (loc.x, loc.y, loc.z)
+        if pset is not None and pset is not view:
+            off = frames.offset_between(view, pset)
+            if off is None:
+                return 0.0
+            p = tuple(a + b for a, b in zip(p, off))
+        system, anchor = frame_for(view)
+        best = 0.0
+        tiles = _tiles if _tiles is not _UNSET else []
+        for s in tiles:
+            best = max(best, source_strength(s, p, anchor))
+        if system:
+            if system not in _belt_cache:
+                from engine.rocks import density
+                _belt_cache.clear()
+                _belt_cache[system] = density.sources_for_system(system)
+            for s in _belt_cache[system]:
+                best = max(best, source_strength(s, p, anchor))
+        return best
+    except Exception as e:
+        _swallow("field_strength_at", e)
+        return 0.0

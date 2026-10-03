@@ -35,6 +35,9 @@ def host():
     far_dials.reset()
     dev_dial_groups.reset()
     h.dust_set_enabled(False)
+    # Rock-real Part 1 strip-back (2026-10-03): haze is off by default,
+    # independent of far_set_enabled. These tests measure the haze itself.
+    h.rock_haze_set_enabled(True)
     try:
         yield h
     finally:
@@ -43,6 +46,7 @@ def host():
         dev_dial_groups.reset()
         h.far_clear()
         h.far_set_enabled(True)
+        h.rock_haze_set_enabled(False)
         h.dust_set_enabled(True)
         h.shutdown()
 

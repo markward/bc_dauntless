@@ -290,6 +290,13 @@ std::unique_ptr<renderer::FarPass> g_far_pass;
 // them to each new FarPass, so a catalogue pushed with the host down draws.
 std::vector<std::pair<std::string, std::string>> g_far_atlas_paths;
 bool g_far_enabled = true;
+// Rock-real Part 1 (2026-10-03) strip-back: two toggles INDEPENDENT of
+// g_far_enabled (the master switch, which still disables everything when
+// off). Each gates only its own band's build + every draw of it (solid and
+// fading). Off by default while rock fields are rebuilt band by band
+// (Mark, 2026-10-03).
+bool g_rock_mid_enabled = false;
+bool g_rock_haze_enabled = false;
 // The last camera's build; reused across cameras so the vectors keep their
 // capacity. Its specks and g_minor_specks draw in ONE render_specks call.
 renderer::far::FarOutput g_far_out;
@@ -884,6 +891,11 @@ void reset_frame_state() {
     g_far_field.clear();
     g_far_field.set_dials({});
     g_far_enabled = true;
+    // Rock-real Part 1 strip-back (Mark, 2026-10-03): off by default while
+    // rock fields are rebuilt band by band -- independent of g_far_enabled
+    // above, which still gates everything when off.
+    g_rock_mid_enabled = false;
+    g_rock_haze_enabled = false;
     g_far_out = {};
     g_minor_specks.clear();
     g_far_speck_staging.clear();
@@ -1456,8 +1468,12 @@ void frame() {
         }
         // Mid band for THIS camera: collection sprites through the far
         // impostor draw. A bin whose atlas cannot load is skipped by
-        // render_impostors; nothing is mutated from the draw.
-        if (g_far_enabled && g_far_pass) {
+        // render_impostors; nothing is mutated from the draw. Gated on
+        // g_rock_mid_enabled too (rock-real Part 1 strip-back, 2026-10-03):
+        // off skips the build AND every draw (solid and fading -- the
+        // fading list was already cleared for this camera above, so a
+        // skipped build leaves nothing stale for rock.fade.draw to replay).
+        if (g_far_enabled && g_far_pass && g_rock_mid_enabled) {
             DAUNTLESS_FRAME_SCOPE("rock.mid.draw");
             renderer::rockfield::MidBuildInput in;
             in.view = cam.view_matrix();
@@ -1579,7 +1595,10 @@ void frame() {
         // and system_nebula below: depth test AND depth writes off for the
         // draw, so the depth attachment is only read, never written.
         // render_haze restores depth test/writes on, cull on, blend off.
-        if (g_far_enabled && g_far_pass && !g_far_field.active_sources().empty()) {
+        // Gated on g_rock_haze_enabled too (rock-real Part 1 strip-back,
+        // 2026-10-03): off skips the draw for every camera.
+        if (g_far_enabled && g_far_pass && g_rock_haze_enabled &&
+            !g_far_field.active_sources().empty()) {
             DAUNTLESS_FRAME_SCOPE("rock.haze");
             g_far_pass->reset_counts();
             const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
@@ -2695,6 +2714,7 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
         c->cell_gu = std::max(c->cell_gu, 1.0f);
     }
     f("near_fade_gu", o.fade_gu);
+    f("near_handoff_fade_gu", o.handoff_fade_gu);
     f("near_large_far_gu", o.large_far_gu);          // the far shell (rock-real Part 1)
     f("near_large_far_fade_gu", o.large_far_fade_gu);
     f("near_large_min_px", o.large_min_px);
@@ -4528,6 +4548,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "rock back to mesh-only, minors stop emitting specks, and the near "
           "band drops its cells.");
     m.def("far_enabled", []() { return g_far_enabled; });
+    // Rock-real Part 1 strip-back (Mark, 2026-10-03): two toggles
+    // independent of far_set_enabled above (that master switch still gates
+    // everything when off). Off: skip that band's build and every draw of
+    // it (solid and fading); its stats read back 0. No side effects beyond
+    // that -- unlike far_set_enabled, there is no stale state to clear,
+    // because reset_frame_state()/far_set_enabled(false) already own that.
+    m.def("rock_mid_set_enabled",
+          [](bool on) { g_rock_mid_enabled = on; }, py::arg("enabled"),
+          "Turn the rock-fields mid band's build and draws on or off, "
+          "independent of far_set_enabled. Off: no build, no draws (solid "
+          "or fading), mid_sprites/mid_fading/mid_tiles read back 0.");
+    m.def("rock_mid_enabled", []() { return g_rock_mid_enabled; });
+    m.def("rock_haze_set_enabled",
+          [](bool on) { g_rock_haze_enabled = on; }, py::arg("enabled"),
+          "Turn the rock-fields belt haze draw on or off, independent of "
+          "far_set_enabled. Off: rock.haze never runs for any camera.");
+    m.def("rock_haze_enabled", []() { return g_rock_haze_enabled; });
     m.def("far_stats",
           []() {
               py::dict d;
