@@ -77,6 +77,7 @@ TEST(NearBench, InsideBeol4) {
     double t_stream = 0, w_stream = 0, t_step = 0, w_step = 0, t_build = 0, w_build = 0;
     double first_stream = 0;
     int meshes = 0, boards = 0, small_c = 0, large_c = 0;
+    long far_boards = 0, fading = 0;   // billboards beyond large.billboard_gu (the far shell)
     rockfield::NearStats st;
     auto ms_since = [](auto t0) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -104,16 +105,23 @@ TEST(NearBench, InsideBeol4) {
         f.build(bin, out);
         const double c = ms_since(t0);
         t_build += c; w_build = std::max(w_build, c);
-        meshes += out.mesh_count; boards += out.billboard_count;
+        meshes += out.mesh_count; boards += out.billboard_count; fading += out.billboard_fading_count;
+        const glm::vec3 eye = glm::vec3(glm::inverse(bin.view)[3]);
+        for (const auto* list : {&out.billboards, &out.billboards_fading})
+            for (const auto& b : *list)
+                for (const auto& it : b.items)
+                    if (glm::length(glm::vec3(it.centre_half) - eye) > f.dials().large.billboard_gu) ++far_boards;
         st = f.stats();
     }
     std::printf("[near bench beol4] %d frames at %.0f GU/s: first stream=%.3f ms; stream mean=%.3f "
                 "worst=%.3f ms; step mean=%.3f worst=%.3f ms; build mean=%.3f worst=%.3f ms; "
                 "cells=%d small=%d large=%d; per frame meshes=%.1f billboards=%.1f; "
-                "contacts large=%d small=%d\n",
+                "contacts large=%d small=%d; far shell (large_far_gu=%.0f): far billboards=%.1f "
+                "fading=%.1f per frame\n",
                 kSteps, kGups, first_stream, t_stream / (kSteps - 1), w_stream, t_step / kSteps,
                 w_step, t_build / kSteps, w_build, st.cells, st.small, st.large,
                 static_cast<double>(meshes) / kSteps, static_cast<double>(boards) / kSteps,
-                large_c, small_c);
+                large_c, small_c, f.dials().large_far_gu, static_cast<double>(far_boards) / kSteps,
+                static_cast<double>(fading) / kSteps);
     EXPECT_GT(st.small, 0);
 }

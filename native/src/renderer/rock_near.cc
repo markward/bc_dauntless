@@ -99,6 +99,23 @@ bool reaches(const far::DiscSource& s, const glm::dvec3& c, double range) {
 
 constexpr NearClass kClasses[] = {NearClass::Small, NearClass::Large};
 
+// The far shell (rock-real Part 1): the large class streams and draws on to
+// large_far_gu only when that lies beyond its billboard_gu.
+bool far_shell_on(const NearDials& d) { return d.large_far_gu > d.large.billboard_gu; }
+
+// A class's outer draw distance, which is also its streamed radius.
+float reach_gu(const NearDials& d, NearClass cls) {
+    if (cls == NearClass::Large && far_shell_on(d)) return d.large_far_gu;
+    return class_dials(d, cls).billboard_gu;
+}
+
+// 0 at or below floor_px, 1 at floor_px + kNearPixelFadeBand and above.
+float pixel_ramp(float px, float floor_px) {
+    if (!(px > floor_px)) return 0.0f;
+    const float t = (px - floor_px) / kNearPixelFadeBand;
+    return t < 1.0f ? t : 1.0f;
+}
+
 // The streamed ranges of one class. A class never spans more than
 // kMaxCellsPerAxis cells per axis (Task 4 review): (billboard + margin) is
 // shrunk to 16 cells, never the cells widened -- a huge billboard_gu over a
@@ -108,10 +125,12 @@ constexpr int kMaxCellsPerAxis = 33;
 // record its watch shell -- up to 35 cells per axis -- but generates only
 // within R, so the 33-per-axis generation cap holds.)
 struct StreamRanges { double gen, keep; };
-StreamRanges stream_ranges(const NearClassDials& cd, double margin) {
+StreamRanges stream_ranges(const NearDials& d, NearClass cls) {
+    const NearClassDials& cd = class_dials(d, cls);
+    const double reach = reach_gu(d, cls);
     const double cap = 0.5 * (kMaxCellsPerAxis - 1) * static_cast<double>(cd.cell_gu);
-    const double keep = std::min(static_cast<double>(cd.billboard_gu) + std::max(margin, 0.0), cap);
-    return {std::min(static_cast<double>(cd.billboard_gu), keep), keep};
+    const double keep = std::min(reach + std::max(static_cast<double>(d.stream_margin_gu), 0.0), cap);
+    return {std::min(reach, keep), keep};
 }
 
 // Rock -> render rotation, as MinorField poses fragment meshes (the loaded
@@ -140,6 +159,16 @@ NearWeights near_weights(float d, const NearClassDials& c, float fade_gu) {
     NearWeights w;
     w.mesh = ramp_down(d, c.mesh_gu, fade_gu);
     w.billboard = std::min(1.0f - w.mesh, ramp_down(d, c.billboard_gu, fade_gu));
+    return w;
+}
+
+NearWeights near_large_weights(float d, float px, const NearDials& dials) {
+    const NearClassDials& c = dials.large;
+    if (!far_shell_on(dials)) return near_weights(d, c, dials.fade_gu);
+    NearWeights w;
+    w.mesh = ramp_down(d, c.mesh_gu, dials.fade_gu);
+    w.billboard = std::min(1.0f - w.mesh, ramp_down(d, dials.large_far_gu, dials.large_far_fade_gu));
+    if (!(w.mesh > 0.0f)) w.billboard *= pixel_ramp(px, dials.large_min_px);
     return w;
 }
 
@@ -213,7 +242,7 @@ void NearField::stream(const glm::dvec3& c) {
     // within kStreamWatchGu of that pass, only those cells (and cells
     // generated since) can change state, so only they are re-tested.
     auto keep_of = [&](NearClass cls) {
-        return stream_ranges(class_dials(dials_, cls), dials_.stream_margin_gu).keep;
+        return stream_ranges(dials_, cls).keep;
     };
     if (!drop_valid_ || glm::length(c - drop_ref_) > kStreamWatchGu) {
         drop_watch_.clear();
@@ -263,7 +292,7 @@ void NearField::stream(const glm::dvec3& c) {
         const far::DiscSource& s = sources_[si];
         for (NearClass cls : kClasses) {
             const NearClassDials& cd = class_dials(dials_, cls);
-            const double L = cd.cell_gu, R = stream_ranges(cd, dials_.stream_margin_gu).gen;
+            const double L = cd.cell_gu, R = stream_ranges(dials_, cls).gen;
             GenWatch& w = gen_watch_[si * 2 + static_cast<std::size_t>(cls)];
             if (!(L > 0.0) || !(R > 0.0) || !reaches(s, c, R)) {
                 // Not tested this frame, so the watch cannot vouch for the
@@ -381,7 +410,8 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     // Translucent billboards (rock fade), by class draw rank then rock: rank
     // 0 is the class with the larger billboard_gu (the farther band).
     std::map<int, std::vector<far::ImpostorGpu>> fade_bins[2];
-    const bool large_first = dials_.large.billboard_gu >= dials_.small.billboard_gu;
+    const bool large_first = reach_gu(dials_, NearClass::Large) >= reach_gu(dials_, NearClass::Small);
+    const bool far_shell = far_shell_on(dials_);
 
     // Cells holding a shoved (small) rock: their rocks may sit off the cell,
     // so they skip the cell broad phase and look up their shoves.
@@ -398,8 +428,9 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         const std::vector<int>& rocks = small ? cat_.small_rocks : cat_.large_rocks;
         const std::vector<float>& bounds = small ? cat_.small_bound_mu : cat_.large_bound_mu;
         const int family = small ? kNearSmallFamily : kNearLargeFamily;
-        // Neither tier draws at camera distance >= max(mesh_gu, billboard_gu).
-        const float d_max = std::max(cd.mesh_gu, cd.billboard_gu);
+        // Neither tier draws at camera distance >= max(mesh_gu, reach).
+        const float d_max = std::max(cd.mesh_gu, reach_gu(dials_, cls));
+        const bool shell = !small && far_shell;   // the large class's far-shell rule
 
         std::vector<Cand> cands;
         for (const auto& [key, cell] : cells_) {
@@ -419,8 +450,12 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 const float dx = cc.x - eye.x, dy = cc.y - eye.y, dz = cc.z - eye.z;
                 const float slack = 0.01f + 1e-5f * (std::fabs(cc.x) + std::fabs(cc.y) +
                                                      std::fabs(cc.z) + eye_len);
-                if (std::sqrt(dot3(dx, dy, dz, dx, dy, dz)) - half_diag - slack >= d_max) continue;
+                const float d_lo = std::sqrt(dot3(dx, dy, dz, dx, dy, dz)) - half_diag - slack;
+                if (d_lo >= d_max) continue;
                 if (!frustum.sphere(cc, half_diag + cell.r_max + slack)) continue;
+                // The pixel floor, whole cell: beyond the mesh range every
+                // rock's on-screen radius is at most r_max * k / d_lo.
+                if (shell && d_lo > cd.mesh_gu && !(cell.r_max * k / d_lo > dials_.large_min_px)) continue;
             }
             for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
                 const NearRock& r = cell.rocks[i];
@@ -436,7 +471,8 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                     }
                 const float ex = c.x - eye.x, ey = c.y - eye.y, ez = c.z - eye.z;
                 const float d = std::sqrt(dot3(ex, ey, ez, ex, ey, ez));
-                const NearWeights w = near_weights(d, cd, dials_.fade_gu);
+                const NearWeights w = shell ? near_large_weights(d, r.radius * k / std::max(d, 1e-3f), dials_)
+                                            : near_weights(d, cd, dials_.fade_gu);
                 if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
                 if (!frustum.sphere(c, r.radius)) continue;
                 cands.push_back({d, c, w, &r, spin});
@@ -511,6 +547,7 @@ void NearField::step(const NearStepInput& in) {
     const double dt = stepped_ ? t - last_time_ : 0.0;
     last_time_ = t;
     stepped_ = true;
+    last_step_large_cells_tested_ = 0;
     const minors::Dials& md = in.minor_dials;
     const glm::dvec3 to_render = in.anchor_sys + in.render_origin;
     // The seen clock: a large cell the previous step saw has seen_step == prev.
@@ -595,6 +632,19 @@ void NearField::step(const NearStepInput& in) {
     auto gap_now = [&](const glm::vec3& p) {   // rock centre to the shape at the current pose
         return glm::length(p - minors::closest_on_box(lb, c, p));
     };
+    // A cheaper first cut (the far shell streams thousands of large cells):
+    // the sweep's SYSTEM-space AABB widened by everything a rock of the cell
+    // could reach, plus a generous float slack. A cell box that misses it
+    // holds no rock within reach of any point of the sweep, which is exactly
+    // what cell_lower_bound rejects -- conservative, so nothing changes.
+    const glm::dvec3 sw0 = glm::dvec3(seg0) + to_render, sw1 = glm::dvec3(c) + to_render;
+    const glm::dvec3 sw_lo = glm::min(sw0, sw1), sw_hi = glm::max(sw0, sw1);
+    auto sweep_box_meets = [&](const Cell& cell) {
+        const double e = static_cast<double>(lb.bound + cell.r_max + margin) + 0.05 + 1e-4 * seg_scale;
+        return !(cell.lo.x > sw_hi.x + e || cell.lo.x + cell.size < sw_lo.x - e ||
+                 cell.lo.y > sw_hi.y + e || cell.lo.y + cell.size < sw_lo.y - e ||
+                 cell.lo.z > sw_hi.z + e || cell.lo.z + cell.size < sw_lo.z - e);
+    };
     int reported = 0;
     for (auto& [ckey, cell] : cells_) {
         if (cell.cls != NearClass::Large) continue;
@@ -604,12 +654,13 @@ void NearField::step(const NearStepInput& in) {
         cell.seen_step = now;
         cell.seen_rocks = cell.rocks.size();
         if (cell.rocks.empty()) continue;
-        if (!cell.pinned && cell_lower_bound(cell) > lb.bound + cell.r_max + margin) {
+        if (!cell.pinned && (!sweep_box_meets(cell) || cell_lower_bound(cell) > lb.bound + cell.r_max + margin)) {
             // No rock here overlaps or is swept: only a ghost is released.
             if (!ghosts_.empty())
                 for (std::size_t i = 0; i < cell.rocks.size(); ++i) ghosts_.erase(key_of(ckey, cell, i));
             continue;
         }
+        ++last_step_large_cells_tested_;
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
             const std::uint64_t key = key_of(ckey, cell, i);
             const NearRock& r = cell.rocks[i];

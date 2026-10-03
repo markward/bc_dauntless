@@ -14,8 +14,12 @@ _NEAR_CPP_DEFAULTS = {
     "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 15.0,
     "near_small_billboard_gu": 30.0, "near_small_max": 4000,
     "near_large_density": 1.0 / 16000.0, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
-    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 60.0,
-    "near_large_billboard_gu": 90.0, "near_large_max": 1000,
+    # rock-real Part 1, 2026-10-03: near_large_cell_gu 20 -> 50, near_large_max
+    # 1000 -> 4000, and the far shell (near_large_far_gu / _far_fade_gu /
+    # _min_px: NearDials large_far_gu / large_far_fade_gu / large_min_px).
+    "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
+    "near_large_billboard_gu": 90.0, "near_large_max": 4000,
+    "near_large_far_gu": 250.0, "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5,
     "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 
@@ -119,10 +123,10 @@ def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the rock-fields look dials
     lead (rock-fields Task 13: near/mid/haze population, then absorption)."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:18] == (
+    assert far_dials.DIAL_ORDER[:19] == (
         "near_small_density", "near_large_density", "near_small_mesh_gu",
         "near_small_billboard_gu", "near_large_mesh_gu", "near_large_billboard_gu",
-        "mid_fill", "mid_sprite_scale", "mid_l0_out_gu", "mid_l1_out_gu",
+        "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu", "mid_l1_out_gu",
         "haze_handoff_gu", "haze_brightness", "tile_haze_brightness",
         "haze_gain", "tile_haze_gain", "tile_haze_noise_contrast",
         "belt_noise_contrast", "collide_damage_scale")

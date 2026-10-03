@@ -33,8 +33,26 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     NearClassDials small{};
     // density 1.25e-4 -> 6.25e-5, mesh_gu 50 -> 60, billboard_gu 60 -> 90:
     // Mark, live 2026-10-03 (fewer big asteroids but visible a bit further).
-    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 20.0f, 60.0f, 90.0f, 1000};
+    // cell_gu 20 -> 50, max_instances 1000 -> 4000: rock-real Part 1,
+    // 2026-10-03 (streaming the large class out to large_far_gu in 20 GU
+    // cells would hit the 33-per-axis cap -- this redefines which large rocks
+    // exist, still deterministic; a full-density field holds ~3,200 large
+    // rocks in a 60 degree view out to 400 GU, which 1000 would cut).
+    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 90.0f, 4000};
     float fade_gu = 4.0f;                 // dither band width at each tier edge
+    // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
+    // is a real rock). With large_far_gu > large.billboard_gu the large
+    // class's SAME rocks stream on past billboard_gu as billboards (no
+    // fade at billboard_gu) out to large_far_gu, fading out translucent
+    // over the last large_far_fade_gu. A large billboard (no mesh weight)
+    // whose on-screen radius is at or below large_min_px draws nothing and
+    // fades in over the next kNearPixelFadeBand px. large_far_gu <=
+    // large.billboard_gu: the shell is off -- exactly the old rule.
+    // 250, not the 400 GU target: in the Beol 4 inside bench (Debug) the
+    // shell cost +1.5 ms CPU per frame at 400, +0.7 at 300, ~+0.4 at 250.
+    float large_far_gu = 250.0f;
+    float large_far_fade_gu = 40.0f;
+    float large_min_px = 1.5f;
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
     float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)
     float collide_margin_gu = 0.0f;
@@ -92,6 +110,15 @@ struct NearWeights { float mesh = 0, billboard = 0; };
 // ramps to 0 at mesh_gu; billboard = 1 - mesh up to billboard_gu - fade, then
 // ramps to 0 at billboard_gu; nothing beyond. fade_gu <= 0 is a hard step.
 NearWeights near_weights(float d, const NearClassDials& c, float fade_gu);
+// Width of the pixel-floor fade-in (px above large_min_px).
+constexpr float kNearPixelFadeBand = 1.0f;
+// Pure tier rule of the LARGE class at camera distance d and on-screen
+// radius px (pixels). Shell off (large_far_gu <= large.billboard_gu):
+// near_weights(d, large, fade_gu). On: the mesh weight as near_weights; the
+// billboard 1 - mesh up to large_far_gu - large_far_fade_gu, ramping to 0 at
+// large_far_gu; where the mesh weight is 0, times the pixel-floor ramp
+// (0 at large_min_px, 1 at large_min_px + kNearPixelFadeBand).
+NearWeights near_large_weights(float d, float px, const NearDials& dials);
 
 // Pure: the rocks of one cell. Poisson(n_bound * L^3) candidates, each
 // accepted with probability density * field_density(x) / n_bound, where
@@ -170,6 +197,9 @@ public:
     // Diagnostics: full (non-incremental) stream passes run so far, per
     // (source, class). Tests assert the live call pattern stays incremental.
     std::uint64_t full_stream_passes() const { return full_stream_passes_; }
+    // Diagnostics: large cells the last posed step tested rock by rock (the
+    // rest were rejected whole by the cell broad phase).
+    int last_step_large_cells_tested() const { return last_step_large_cells_tested_; }
 private:
     struct Cell {
         NearClass cls;
@@ -209,6 +239,7 @@ private:
     glm::dvec3 drop_ref_{0.0};
     std::vector<std::uint64_t> drop_watch_;   // cells that may pass keep: near it, or new
     std::uint64_t full_stream_passes_ = 0;
+    int last_step_large_cells_tested_ = 0;
 
     // Contact state (cleared by clear()). Per-rock state carries its CELL
     // key, so pruning asks "is the cell still streamed" instead of

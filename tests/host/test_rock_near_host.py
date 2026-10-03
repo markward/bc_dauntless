@@ -310,3 +310,24 @@ def test_outer_fade_billboards_are_counted_as_fading(host):
     _stream_at_origin(host)
     st = host.far_stats()
     assert 0 < st["near_fading"] < st["near_billboards"], st
+
+
+def test_the_far_shell_dials_reach_the_near_band(host):
+    """rock-real Part 1 (2026-10-03): near_large_far_gu streams the large
+    class's rocks on past near_large_billboard_gu; far_set_dials parses it
+    (and its fade / pixel floor) natively."""
+    _stream_at_origin(host)
+    shell = host.far_stats()
+    host.far_set_dials({"near_large_far_gu": 0.0})   # off: the old 90 GU reach
+    host.frame()
+    off = host.far_stats()
+    assert shell["near_large"] > 5 * off["near_large"], (shell, off)
+    # (Billboard counts are not compared: in this 64-line viewport the pixel
+    # floor hides nearly all of the far shell.)
+    # A pixel floor no rock clears draws no billboard beyond the mesh range.
+    host.far_set_dials({"near_large_min_px": 1.0e6, "near_small_density": 0.0})
+    host.frame()
+    floored = host.far_stats()
+    host.far_set_dials({"near_small_density": 0.0})
+    host.frame()
+    assert floored["near_billboards"] < host.far_stats()["near_billboards"]

@@ -284,6 +284,29 @@ handful of rulings that change this design's letter without changing its intent:
   the widened near large billboard range). `engine/rocks/far_dials.py` DEFAULTS
   (mirrored in `rock_near.h` / `rock_mid.h`) is the live source of truth for
   these dials, not the numbers above.
+- **Every big-asteroid silhouette is a real rock (rock-real Part 1, 2026-10-03).**
+  Mark, live: flying at a big-asteroid billboard, it faded out and nothing real
+  stood behind it — it was a rock painted into a mid collection sprite. The large
+  class now has a **far shell**: with `near_large_far_gu` > `near_large_billboard_gu`
+  its SAME rocks (same generator, density, field) stream on past 90 GU as billboards
+  (no fade at 90 any more) out to `near_large_far_gu`, fading out translucent over the
+  last `near_large_far_fade_gu` (40); a large billboard (no mesh weight) at or below
+  `near_large_min_px` (1.5) on screen draws nothing and fades in over the next 1 px
+  (`near_large_weights`). Each rock is in exactly one representation per camera
+  (mesh / mesh↔billboard hand-off / billboard / gone); a far billboard flown at
+  becomes a near billboard then a mesh, by key. Large cells are now 50 GU
+  (`near_large_cell_gu` 20 → 50, so 250 + margin stays under the 33-per-axis cap —
+  this redefines which large rocks exist, still deterministic) and the large cap
+  `near_large_max` 1000 → 4000. The step's large-cell loop has a cheap system-space
+  AABB pre-cut, so the far shell costs contacts no per-rock work. **Default 250, not
+  the 400 target:** Beol 4 inside bench (`NearBench.InsideBeol4`, Debug): stream +
+  step + build 0.36 ms before → 0.73 ms at 250 (~425 far billboards per frame,
+  ~5,500 large rocks streamed); 400 measured 1.92 ms, 300 1.01 ms. Mid sprites keep
+  starting at `mid_in_lo_gu` and now overlap the far shell (boulders in front of
+  gravel clouds; Part 2 removes the big rocks from the collections). Translucent
+  ordering: the near list (far shell fading at 210–250 GU) draws after the mid list,
+  so a far-shell rock fading out behind a mid sprite fading in at 100–170 GU blends
+  in the wrong order where they overlap (both alpha < 1: accepted).
 
 ## Live check (Mark)
 

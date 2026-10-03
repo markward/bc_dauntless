@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <set>
 #include <glm/gtc/matrix_transform.hpp>
 using namespace renderer;
@@ -89,6 +90,10 @@ TEST(NearCells, SphereCellOutsideTheRadiusIsEmpty) {
 
 TEST(NearStream, BoundedAndDropsCellsBehind) {
     rockfield::NearField f;
+    // Pinned to the pre-far-shell large range (rock-real Part 1 streams ~2,300
+    // more 50 GU large cells out to large_far_gu; NearFarLarge covers that).
+    rockfield::NearDials d; d.large_far_gu = 0.0f; d.large.cell_gu = 20.0f;
+    f.set_dials(d);
     f.set_catalogue(cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     const int first = f.stats().cells;
@@ -243,6 +248,8 @@ rockfield::NearBuildInput looking_along_y(float fov_deg) {
     return in;
 }
 glm::vec3 translation(const minors::InstanceGpu& g) { return {g.row0.w, g.row1.w, g.row2.w}; }
+// The rock radius a billboard carries (far::make_impostor pads it by 1.02).
+float radius_of(const far::ImpostorGpu& it) { return it.centre_half.w / 1.02f; }
 glm::mat3 linear(const minors::InstanceGpu& g) {   // rows -> glm column-major
     return glm::transpose(glm::mat3(glm::vec3(g.row0), glm::vec3(g.row1), glm::vec3(g.row2)));
 }
@@ -273,6 +280,7 @@ TEST(NearBuild, OneTierPerRockOutsideFades) {
     rockfield::NearDials d;
     d.small.mesh_gu = 20.0f; d.small.billboard_gu = 30.0f;
     d.large.mesh_gu = 50.0f; d.large.billboard_gu = 60.0f;
+    d.large_far_gu = 0.0f;   // and the far shell off (NearFarLarge covers it)
     f.set_dials(d);
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
@@ -321,12 +329,22 @@ TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
     rockfield::NearOutput out;
     f.build(looking_along_y(90.0f), out);
     const auto& dl = f.dials();
+    const rockfield::NearBuildInput in90 = looking_along_y(90.0f);
+    const float kpx = far::pixels_per_gu(in90.proj, in90.viewport_h);
+    // Each class's rule: the large class has the far shell (rock-real Part 1).
+    auto weights = [&](int rock, const far::ImpostorGpu& it) {
+        const float d = glm::length(glm::vec3(it.centre_half));
+        return is_small_rock(rock) ? rockfield::near_weights(d, dl.small, dl.fade_gu)
+                                   : rockfield::near_large_weights(d, radius_of(it) * kpx / d, dl);
+    };
+    auto outer = [&](int rock) { return is_small_rock(rock) ? dl.small.billboard_gu : dl.large_far_gu; };
+    auto outer_fade = [&](int rock) { return is_small_rock(rock) ? dl.fade_gu : dl.large_far_fade_gu; };
     int solid = 0, handoff = 0, fading = 0;
     for (const auto& b : out.billboards)
         for (const auto& it : b.items) {
             const auto& cd = is_small_rock(b.rock) ? dl.small : dl.large;
             const float d = glm::length(glm::vec3(it.centre_half));
-            const auto w = rockfield::near_weights(d, cd, dl.fade_gu);
+            const auto w = weights(b.rock, it);
             if (it.up_dither.w == 0.0f) { ++solid; EXPECT_EQ(w.billboard, 1.0f) << d; continue; }
             ++handoff;   // dithered: only while the mesh still draws
             EXPECT_GT(w.mesh, 0.0f) << d;
@@ -335,16 +353,18 @@ TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
     float prev_band = 1e30f;
     for (const auto& b : out.billboards_fading) {
         ASSERT_FALSE(b.items.empty());
-        const auto& cd = is_small_rock(b.rock) ? dl.small : dl.large;
-        EXPECT_LE(cd.billboard_gu, prev_band) << "the farther band's bins draw first";
-        prev_band = cd.billboard_gu;
+        EXPECT_LE(outer(b.rock), prev_band) << "the farther band's bins draw first";
+        prev_band = outer(b.rock);
         float prev_d = 1e30f;
         for (const auto& it : b.items) {
             ++fading;
             const float d = glm::length(glm::vec3(it.centre_half));
-            const auto w = rockfield::near_weights(d, cd, dl.fade_gu);
+            const auto w = weights(b.rock, it);
             EXPECT_EQ(w.mesh, 0.0f) << d;
-            EXPECT_GE(d, cd.billboard_gu - dl.fade_gu - 1e-3f);
+            // Fading in from the outer edge, or (large) up from the pixel floor.
+            const bool ramping_px = !is_small_rock(b.rock) &&
+                radius_of(it) * kpx / d < dl.large_min_px + rockfield::kNearPixelFadeBand;
+            if (!ramping_px) EXPECT_GE(d, outer(b.rock) - outer_fade(b.rock) - 1e-3f);
             EXPECT_LT(it.up_dither.w, 0.0f);
             EXPECT_NEAR(far::impostor_fade_alpha(it.up_dither.w), w.billboard, 1e-5f) << d;
             EXPECT_LE(d, prev_d + 1e-4f) << "far to near within a bin";
@@ -769,4 +789,277 @@ TEST(NearContact, ClearDropsContactsCooldownsGhosts) {   // Review Focus 1
     step_at(f, in, {0, -10, 0}, 1.0 + 2 * kTick);  // the pose went with clear(): re-learn it
     step_at(f, in, {0, -2.5f, 0}, 1.0 + 3 * kTick);
     EXPECT_EQ(f.drain_large_contacts().size(), 1u);
+}
+
+// ---- Far large billboards (rock-real Part 1, 2026-10-03) -------------------
+// Every big-asteroid silhouette is a real rock: the large class's SAME rocks
+// stream on past near_large_billboard_gu as billboards out to large_far_gu,
+// fading out (translucent) over the last large_far_fade_gu, and a billboard
+// whose on-screen radius falls below large_min_px fades out instead of
+// drawing. The step's contacts only ever look at cells near the player.
+namespace {
+// A camera at `eye` looking at `at`, 60 degree vertical FOV, 1080 lines.
+rockfield::NearBuildInput camera(const glm::vec3& eye, const glm::vec3& at, float viewport_h = 1080.0f) {
+    rockfield::NearBuildInput in;
+    in.proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1e6f);
+    in.view = glm::lookAt(eye, at, glm::vec3(0, 0, 1));
+    in.viewport_h = viewport_h;
+    return in;
+}
+// How one rock (render centre `c`) is drawn in `out`.
+struct Seen { int meshes = 0, solid = 0, dithered = 0, fading = 0; float alpha = 0.0f; };
+Seen seen_at(const rockfield::NearOutput& out, const glm::vec3& c) {
+    Seen s;
+    auto same = [&](const glm::vec3& p) { return glm::length(p - c) < 1e-3f; };
+    for (const auto& b : out.meshes)
+        for (const auto& it : b.items)
+            if (b.family == rockfield::kNearLargeFamily && same(translation(it))) ++s.meshes;
+    for (const auto& b : out.billboards)
+        for (const auto& it : b.items)
+            if (same(glm::vec3(it.centre_half))) (it.up_dither.w == 0.0f ? s.solid : s.dithered)++;
+    for (const auto& b : out.billboards_fading)
+        for (const auto& it : b.items)
+            if (same(glm::vec3(it.centre_half))) { ++s.fading; s.alpha = far::impostor_fade_alpha(it.up_dither.w); }
+    return s;
+}
+}
+
+TEST(NearFarLarge, DefaultsAreTheBrief) {
+    const rockfield::NearDials d;
+    // 250, not the brief's 400 target: 400 cost +1.5 ms per frame in the
+    // Beol 4 inside bench (NearBench.InsideBeol4, Debug), 250 ~ +0.4.
+    EXPECT_EQ(d.large_far_gu, 250.0f);
+    EXPECT_EQ(d.large_far_fade_gu, 40.0f);
+    EXPECT_EQ(d.large_min_px, 1.5f);
+    EXPECT_EQ(d.large.cell_gu, 50.0f);   // 400 GU of 20 GU cells would hit the 33-per-axis cap
+    EXPECT_EQ(d.large.billboard_gu, 90.0f);
+    EXPECT_EQ(d.large.mesh_gu, 60.0f);
+}
+
+TEST(NearFarLarge, WeightsBeyondTheBillboardRange) {
+    rockfield::NearDials d;   // mesh 60, billboard 90, far 400 (fade 40), floor 1.5 px
+    d.large_far_gu = 400.0f;  // pinned: the literal distances below
+    auto w = [&](float dist, float px = 100.0f) { return rockfield::near_large_weights(dist, px, d); };
+    EXPECT_EQ(w(30).mesh, 1.0f);   EXPECT_EQ(w(30).billboard, 0.0f);
+    EXPECT_NEAR(w(58).mesh + w(58).billboard, 1.0f, 1e-6f);    // the hand-off is unchanged
+    EXPECT_EQ(w(75).billboard, 1.0f);
+    EXPECT_EQ(w(88).billboard, 1.0f);   // no fade at billboard_gu any more: the far shell continues
+    EXPECT_EQ(w(90).billboard, 1.0f);
+    EXPECT_EQ(w(250).billboard, 1.0f);  EXPECT_EQ(w(250).mesh, 0.0f);
+    EXPECT_EQ(w(360).billboard, 1.0f);
+    EXPECT_NEAR(w(380).billboard, 0.5f, 1e-5f);                 // fading out over the last 40 GU
+    EXPECT_EQ(w(400).billboard, 0.0f);
+    EXPECT_EQ(w(450).billboard, 0.0f);
+    // The pixel floor: nothing below 1.5 px, a 1 px ramp in, 1 above.
+    EXPECT_EQ(w(250, 1.4f).billboard, 0.0f);
+    EXPECT_EQ(w(250, 1.5f).billboard, 0.0f);
+    EXPECT_NEAR(w(250, 2.0f).billboard, 0.5f, 1e-5f);
+    EXPECT_EQ(w(250, 2.5f).billboard, 1.0f);
+    EXPECT_NEAR(w(380, 2.0f).billboard, 0.25f, 1e-5f);          // both fades multiply
+    // Far shell off (large_far_gu <= billboard_gu): exactly the old rule.
+    rockfield::NearDials off = d; off.large_far_gu = 0.0f;
+    for (float dist : {10.0f, 58.0f, 75.0f, 88.0f, 90.0f, 200.0f})
+        for (float px : {0.5f, 100.0f}) {
+            const auto a = rockfield::near_large_weights(dist, px, off);
+            const auto b = rockfield::near_weights(dist, off.large, off.fade_gu);
+            EXPECT_EQ(a.mesh, b.mesh) << dist;
+            EXPECT_EQ(a.billboard, b.billboard) << dist;
+        }
+}
+
+TEST(NearFarLarge, StreamsTheSameLargeRocksOutToTheFarRange) {
+    rockfield::NearField on, off;
+    rockfield::NearDials d_off; d_off.large_far_gu = 0.0f;   // same generator, far shell off
+    off.set_dials(d_off);
+    for (auto* f : {&on, &off}) { f->set_catalogue(cat()); f->set_sources({full_sphere()}); f->stream(glm::dvec3(0.0)); }
+    std::map<std::uint64_t, glm::dvec3> near_on, near_off;
+    double farthest = 0.0;
+    on.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
+        const double dist = glm::length(r.pos_sys);
+        farthest = std::max(farthest, dist);
+        if (dist < 85.0) near_on[k] = r.pos_sys;
+    });
+    off.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
+        if (glm::length(r.pos_sys) < 85.0) near_off[k] = r.pos_sys;
+    });
+    EXPECT_FALSE(near_on.empty());
+    EXPECT_EQ(near_on, near_off) << "the far shell must not change which rocks are near";
+    // The 33-cells-per-axis cap does not bind: rocks stream all the way out.
+    EXPECT_GT(farthest, on.dials().large_far_gu - 5.0);
+    EXPECT_GT(on.stats().large, 10 * off.stats().large);
+}
+
+TEST(NearFarLarge, FarBillboardsFillTheShellAndFadeOutTranslucent) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    const auto in = camera(glm::vec3(0), glm::vec3(0, 1, 0));
+    rockfield::NearOutput out;
+    f.build(in, out);
+    const auto& dl = f.dials();
+    const float k = far::pixels_per_gu(in.proj, in.viewport_h);
+    int solid_far = 0, fading_far = 0;
+    for (const auto& b : out.billboards)
+        for (const auto& it : b.items) {
+            if (is_small_rock(b.rock)) continue;
+            const float d = glm::length(glm::vec3(it.centre_half));
+            EXPECT_LT(d, dl.large_far_gu - dl.large_far_fade_gu + 1e-3f);
+            if (d > dl.large.billboard_gu + 1.0f) { ++solid_far; EXPECT_EQ(it.up_dither.w, 0.0f) << d; }
+        }
+    for (const auto& b : out.billboards_fading)
+        for (const auto& it : b.items) {
+            if (is_small_rock(b.rock)) continue;
+            const float d = glm::length(glm::vec3(it.centre_half));
+            EXPECT_GE(d, dl.large_far_gu - dl.large_far_fade_gu - 1e-3f) << "only the outer fade is translucent";
+            EXPECT_LE(d, dl.large_far_gu + 1e-3f);
+            const auto w = rockfield::near_large_weights(d, radius_of(it) * k / d, dl);
+            EXPECT_NEAR(far::impostor_fade_alpha(it.up_dither.w), w.billboard, 1e-5f) << d;
+            ++fading_far;
+        }
+    EXPECT_GT(solid_far, 50);
+    EXPECT_GT(fading_far, 10);
+    for (const auto& b : out.meshes)
+        for (const auto& it : b.items) EXPECT_LE(glm::length(translation(it)), dl.large.mesh_gu + 1e-3f);
+}
+
+// Fly at a rock first seen as a far billboard: the SAME rock (by key and
+// position) becomes a near billboard, then a mesh.
+TEST(NearFarLarge, AFarBillboardApproachedIsTheRockThatBecomesAMesh) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    std::uint64_t key = 0; glm::dvec3 pos(0.0); double best = 1e9;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
+        const double dist = glm::length(r.pos_sys);
+        const double off_axis = glm::length(glm::dvec2(r.pos_sys.x, r.pos_sys.z));
+        if (dist > 170.0 && dist < 200.0 && r.pos_sys.y > 0.0 && off_axis < best) { best = off_axis; key = k; pos = r.pos_sys; }
+    });
+    ASSERT_NE(key, 0u);
+    ASSERT_GT(f.dials().large_far_gu - f.dials().large_far_fade_gu, 200.0f);
+    const glm::dvec3 dir = glm::normalize(pos);
+    // Stand-off distances from the rock: far billboard, near billboard, mesh.
+    const struct { double d; int meshes, solid, fading; } stages[] = {
+        {185.0, 0, 1, 0}, {130.0, 0, 1, 0}, {75.0, 0, 1, 0}, {30.0, 1, 0, 0}};
+    for (const auto& st : stages) {
+        const glm::dvec3 eye = pos - dir * st.d;
+        f.stream(eye);
+        int found = 0;
+        f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
+            if (k == key) { ++found; EXPECT_EQ(r.pos_sys, pos); }
+        });
+        ASSERT_EQ(found, 1) << "the rock streamed out at " << st.d;
+        // Render space == system space here (anchor 0, origin 0).
+        const auto in = camera(glm::vec3(eye), glm::vec3(pos));
+        rockfield::NearOutput out;
+        f.build(in, out);
+        const Seen s = seen_at(out, glm::vec3(pos));
+        EXPECT_EQ(s.meshes, st.meshes) << st.d;
+        EXPECT_EQ(s.solid, st.solid) << st.d;
+        EXPECT_EQ(s.fading, st.fading) << st.d;
+        EXPECT_EQ(s.dithered, 0) << st.d;
+    }
+}
+
+TEST(NearFarLarge, OneRepresentationPerRockPerCamera) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    for (const auto& in : {camera(glm::vec3(0), glm::vec3(0, 1, 0)),
+                           camera(glm::vec3(0), glm::vec3(1, 0.2f, -0.1f), 200.0f)}) {
+        rockfield::NearOutput out;
+        f.build(in, out);
+        int drawn = 0, handoffs = 0;
+        f.for_each(rockfield::NearClass::Large, [&](std::uint64_t, const rockfield::NearRock& r) {
+            const Seen s = seen_at(out, glm::vec3(r.pos_sys));
+            const int n = s.meshes + s.solid + s.dithered + s.fading;
+            if (n == 0) return;
+            ++drawn;
+            if (n == 2) {   // only the mesh <-> billboard hand-off draws twice
+                ++handoffs;
+                EXPECT_EQ(s.meshes, 1); EXPECT_EQ(s.dithered, 1);
+                return;
+            }
+            EXPECT_EQ(n, 1);
+        });
+        EXPECT_GT(drawn, 100);
+    }
+}
+
+TEST(NearFarLarge, PixelFloorSkipsAndFadesTinyFarBillboards) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    // 120 lines at 60 degrees: k ~= 104 px/GU-at-1-GU, so a 1 GU rock is
+    // 1.5 px at ~70 GU and most of the far shell is under the floor.
+    const auto in = camera(glm::vec3(0), glm::vec3(0, 1, 0), 120.0f);
+    const float k = far::pixels_per_gu(in.proj, in.viewport_h);
+    const auto& dl = f.dials();
+    rockfield::NearOutput out;
+    f.build(in, out);
+    int ramping = 0;
+    auto check = [&](const std::vector<far::ImpostorBin>& bins, bool fading) {
+        for (const auto& b : bins)
+            for (const auto& it : b.items) {
+                if (is_small_rock(b.rock)) continue;
+                const float d = glm::length(glm::vec3(it.centre_half));
+                const float px = radius_of(it) * k / d;
+                if (!(d > dl.large.mesh_gu)) continue;
+                EXPECT_GT(px, dl.large_min_px) << "a billboard below the pixel floor drew, d " << d;
+                if (px < dl.large_min_px + 1.0f) {
+                    EXPECT_TRUE(fading) << "a ramping billboard must be translucent";
+                    ++ramping;
+                }
+            }
+    };
+    check(out.billboards, false);
+    check(out.billboards_fading, true);
+    EXPECT_GT(ramping, 0);
+    // The floor bound: in-view rocks beyond 90 GU exist that drew nothing.
+    int skipped = 0;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t, const rockfield::NearRock& r) {
+        const glm::vec3 c(r.pos_sys);
+        const float d = glm::length(c);
+        if (d < 100.0f || d > 200.0f || c.y < 0.9f * d) return;   // well inside the view
+        const Seen s = seen_at(out, c);
+        if (s.meshes + s.solid + s.dithered + s.fading == 0) ++skipped;
+    });
+    EXPECT_GT(skipped, 0);
+}
+
+TEST(NearFarLarge, TheStepOnlyTestsLargeCellsNearThePlayer) {
+    rockfield::NearField f;
+    f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    ASSERT_GT(f.stats().cells, 500);
+    rockfield::NearStepInput in;
+    step_at(f, in, {0, 0, 0}, 1.0);
+    step_at(f, in, {0, 1, 0}, 1.0 + kTick);
+    EXPECT_GT(f.last_step_large_cells_tested(), 0);
+    EXPECT_LE(f.last_step_large_cells_tested(), 8);   // the 50 GU cells around a 1 GU sweep
+}
+
+TEST(NearFarLarge, CollisionsNearThePlayerAreUnchanged) {
+    // The default dials: a sweep through the nearest large rock reports it
+    // (by key), and nothing from the far shell ever reports.
+    rockfield::NearField f;
+    f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    std::uint64_t key = 0; glm::dvec3 pos(0.0); double best = 1e9;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
+        const double dist = glm::length(r.pos_sys);
+        if (dist > 10.0 && dist < best) { best = dist; key = k; pos = r.pos_sys; }
+    });
+    ASSERT_NE(key, 0u);
+    ASSERT_LT(best, 60.0);
+    const glm::vec3 a = glm::vec3(pos) - glm::vec3(0, 20, 0), b = glm::vec3(pos) + glm::vec3(0, 20, 0);
+    rockfield::NearStepInput in;
+    step_at(f, in, a, 1.0);
+    step_at(f, in, b, 1.0 + kTick);
+    const auto c = f.drain_large_contacts();
+    bool hit = false;
+    for (const auto& x : c) {
+        hit = hit || x.key == key;
+        EXPECT_LT(glm::length(glm::dvec3(x.rock_centre_view) - pos), 40.0);
+    }
+    EXPECT_TRUE(hit);
 }

@@ -82,8 +82,18 @@ DEFAULTS: dict = {
     # near_large_billboard_gu 60 -> 90: Mark, live 2026-10-03 (fewer big
     # asteroids but visible a bit further).
     "near_large_density": 6.25e-5, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
-    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 60.0,
-    "near_large_billboard_gu": 90.0, "near_large_max": 1000,
+    # near_large_cell_gu 20 -> 50, near_large_max 1000 -> 4000 and the far
+    # shell: rock-real Part 1, 2026-10-03 (every big-asteroid silhouette is a
+    # real rock). With near_large_far_gu > near_large_billboard_gu the SAME
+    # large rocks stream on as billboards out to near_large_far_gu, fading
+    # out translucent over the last near_large_far_fade_gu; a large billboard
+    # at or below near_large_min_px on screen draws nothing (1 px fade-in
+    # above it). 250, not the 400 target: 400 cost +1.5 ms CPU per frame in
+    # the Beol 4 inside bench, 250 ~ +0.4. 50 GU cells keep 250 (+ margin)
+    # under the 33-cells-per-axis cap.
+    "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
+    "near_large_billboard_gu": 90.0, "near_large_max": 4000,
+    "near_large_far_gu": 250.0, "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5,
     "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,
     # engine/rocks/scenery_contact.py): damage = KE damage x
@@ -114,6 +124,7 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_density", "near_large_r_min", "near_large_r_max",
     "near_large_exponent", "near_large_cell_gu", "near_large_mesh_gu",
     "near_large_billboard_gu", "near_large_max",
+    "near_large_far_gu", "near_large_far_fade_gu", "near_large_min_px",
     "near_fade_gu", "near_stream_margin_gu", "collide_cooldown_s",
     "mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",
     "mid_in_hi_gu", "mid_l0_out_gu", "mid_l1_out_gu", "mid_xfade_frac",
@@ -130,7 +141,7 @@ _INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "ti
 _LOOK_FIRST = ("near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
-               "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
+               "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
                "mid_l1_out_gu", "haze_handoff_gu", "haze_brightness",
                "tile_haze_brightness", "haze_gain", "tile_haze_gain",
                "tile_haze_noise_contrast", "belt_noise_contrast",
