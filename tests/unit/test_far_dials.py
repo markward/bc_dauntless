@@ -20,6 +20,9 @@ _NEAR_CPP_DEFAULTS = {
     "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
     "near_large_billboard_gu": 90.0, "near_large_max": 4000,
     "near_large_far_gu": 250.0, "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5,
+    # rock-real review: the far shell shrinks at dash speed and regrows
+    # (NearDials far_shell_max_step_gu / far_shell_regrow_gu).
+    "near_far_shell_max_step_gu": 25.0, "near_far_shell_regrow_gu": 20.0,
     "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 

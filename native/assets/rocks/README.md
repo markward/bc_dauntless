@@ -34,7 +34,9 @@ all fragments) keep them reading as rock clouds, baked at `view_size` 176
 (704 px atlases: 48 x 2 maps = 1.89x the memory of the original 128 px bake;
 a 128 px bake left 1-2 px parts magnified ~7x at L0 into blocky noise).
 `tests/tools/test_rock_catalogue_drift.py` pins both the size bound and the
-2x memory budget.
+2x memory budget. GPU cost of the collection atlases once all are loaded:
+48 x 2 x 704^2 RGBA8 = 181.5 MiB (~190 MB), ~242 MiB (~254 MB) with the
+mip chain FarPass generates (x 4/3).
 
 ## Regenerating
 

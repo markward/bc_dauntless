@@ -411,7 +411,11 @@ TEST(RockPerfEquivalence, MidMovedSourceStillClearsTheCache) {
 TEST(RockPerfEquivalence, NearOutOfReachAndBackMatchesAFreshStream) {
     for (bool resend : {false, true}) {
         rockfield::NearField f, fresh;
+        // The far shell off: a jump shrinks it (NearDials::far_shell_max_step_gu),
+        // which a fresh field's first stream does not -- not what this pins.
+        rockfield::NearDials no_shell; no_shell.large_far_gu = 0.0f;
         for (auto* g : {&f, &fresh}) {
+            g->set_dials(no_shell);
             g->set_catalogue(rock_scenario::near_catalogue());
             g->set_sources({rock_scenario::beol4_field()});
         }

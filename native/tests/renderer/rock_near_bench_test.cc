@@ -30,6 +30,7 @@ TEST(NearBench, StreamAt100kGups) {
     in.viewport_h = 1080.0f;
     rockfield::NearOutput out;
     double stream_total = 0.0, stream_worst = 0.0, build_total = 0.0, build_worst = 0.0;
+    int stream_worst_at = 0;
     int max_cells = 0, max_small = 0, max_large = 0;
     for (int step = 0; step < kSteps; ++step) {
         // View space IS system space (anchor 0); the eye flies along +y.
@@ -44,6 +45,7 @@ TEST(NearBench, StreamAt100kGups) {
         f.build(in, out);
         const double ms_build = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
+        if (ms_stream > stream_worst) stream_worst_at = step;
         stream_total += ms_stream; stream_worst = std::max(stream_worst, ms_stream);
         build_total += ms_build; build_worst = std::max(build_worst, ms_build);
         const auto st = f.stats();
@@ -52,10 +54,24 @@ TEST(NearBench, StreamAt100kGups) {
         max_large = std::max(max_large, st.large);
     }
     std::printf("[near bench] %d steps at %.0f GU/s / %.0f Hz: stream mean=%.3f ms "
-                "worst=%.3f ms; build mean=%.3f ms worst=%.3f ms; max cells=%d "
+                "worst=%.3f ms (frame %d); build mean=%.3f ms worst=%.3f ms; max cells=%d "
                 "small=%d large=%d\n",
-                kSteps, kGups, kHz, stream_total / kSteps, stream_worst,
+                kSteps, kGups, kHz, stream_total / kSteps, stream_worst, stream_worst_at,
                 build_total / kSteps, build_worst, max_cells, max_small, max_large);
+    // Then slow again (6 GU/s): the far shell regrows in bounded steps
+    // (NearDials::far_shell_regrow_gu) -- the worst frame of the regrow.
+    glm::dvec3 eye(0.0, -500000.0 + kSteps * kGups / kHz, 0.0);
+    double regrow_worst = 0.0, regrow_total = 0.0;
+    int regrow_frames = 0;
+    while (f.large_reach_gu() < f.dials().large_far_gu && regrow_frames < 100) {
+        eye.y += 0.1;
+        const auto t0 = std::chrono::steady_clock::now();
+        f.stream(eye);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        regrow_worst = std::max(regrow_worst, ms); regrow_total += ms; ++regrow_frames;
+    }
+    std::printf("[near bench] far shell regrow after the dash: %d frames, stream mean=%.3f ms worst=%.3f ms; "
+                "large=%d\n", regrow_frames, regrow_total / std::max(regrow_frames, 1), regrow_worst, f.stats().large);
     EXPECT_GT(max_cells, 0);   // the run streamed at all (not a time assertion)
 }
 

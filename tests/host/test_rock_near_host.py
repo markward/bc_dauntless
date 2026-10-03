@@ -331,3 +331,16 @@ def test_the_far_shell_dials_reach_the_near_band(host):
     host.far_set_dials({"near_small_density": 0.0})
     host.frame()
     assert floored["near_billboards"] < host.far_stats()["near_billboards"]
+
+
+def test_a_dash_shrinks_the_far_shell(host):
+    """rock-real review: a stream centre that jumps more than
+    near_far_shell_max_step_gu since the last frame shrinks the large reach
+    to near_large_billboard_gu (far_set_dials parses the dial)."""
+    _stream_at_origin(host)
+    shell = host.far_stats()["near_large"]
+    host.far_set_dials({"near_far_shell_max_step_gu": 0.5})
+    host.set_camera(eye=(5.0, 0.0, 0.0), target=(5.0, 0.0, -1.0),
+                    up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=0.1, far=1.0e7)
+    host.frame()   # 5 GU in one frame: a "dash" at this dial
+    assert host.far_stats()["near_large"] * 5 < shell

@@ -307,6 +307,24 @@ handful of rulings that change this design's letter without changing its intent:
   ordering: the near list (far shell fading at 210–250 GU) draws after the mid list,
   so a far-shell rock fading out behind a mid sprite fading in at 100–170 GU blends
   in the wrong order where they overlap (both alpha < 1: accepted).
+  **Review follow-ups (2026-10-03).** (1) *Dash:* the shell is visual only and
+  flashed past at dash speed while being regenerated every frame. A `stream()`
+  whose centre moved more than `near_far_shell_max_step_gu` (25 GU = 1,500 GU/s at
+  60 Hz, 3.75× in-system warp's 6.7 GU/frame, still above it down to 16 fps)
+  shrinks the large reach to `near_large_billboard_gu` (drawn by the old rule);
+  slower streams regrow it by at most `near_far_shell_regrow_gu` (20) each, so it
+  returns over ~8 frames, never in one hitch. `NearField::clear()` restarts with the
+  whole shell (a source change mid-dash costs that one frame). `NearBench.
+  StreamAt100kGups`, Debug, isolated runs: before stream mean 2.8–3.1 ms, worst
+  3.3–4.1 ms (the reviewer's 3.36 / 30.1 ms were measured under the gate's load);
+  after mean 0.86–0.93 ms, worst 2.7–3.0 ms — frame 0, the initial whole-shell
+  stream; the regrow afterwards: 9 frames, mean ~0.41, worst 0.82–0.90 ms.
+  Beol 4 build worst: 0.61–0.67 ms in six isolated runs; the reviewer's 5.5 ms was
+  not reproduced (presumably machine load during the gate — not proven).
+  (2) The drawn shell is clamped to the streamed reach (`large_far_gu` past the
+  33-cells-per-axis cap fades out at the cap instead of cutting).
+  (3) The pixel floor blends in over [`mesh_gu`, `mesh_gu` + `fade_gu`], so no
+  rock pops where its mesh ends at any viewport size.
 
 ## Live check (Mark)
 

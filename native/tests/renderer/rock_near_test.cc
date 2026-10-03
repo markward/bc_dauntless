@@ -8,6 +8,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 #include <glm/gtc/matrix_transform.hpp>
 using namespace renderer;
 namespace {
@@ -111,6 +112,7 @@ TEST(NearStream, SameStateRegardlessOfPath) {   // returning to a place gives th
     for (auto* f : {&a, &b}) { f->set_catalogue(cat()); f->set_sources({full_sphere()}); }
     a.stream(glm::dvec3(0.0));
     b.stream(glm::dvec3(900.0, 0, 0)); b.stream(glm::dvec3(0.0));
+    for (int i = 0; i < 10; ++i) b.stream(glm::dvec3(0.0));   // the jump shrank the far shell: regrow it
     std::set<std::uint64_t> ka, kb;
     a.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock&) { ka.insert(k); });
     b.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock&) { kb.insert(k); });
@@ -940,8 +942,11 @@ TEST(NearFarLarge, AFarBillboardApproachedIsTheRockThatBecomesAMesh) {
     // Stand-off distances from the rock: far billboard, near billboard, mesh.
     const struct { double d; int meshes, solid, fading; } stages[] = {
         {185.0, 0, 1, 0}, {130.0, 0, 1, 0}, {75.0, 0, 1, 0}, {30.0, 1, 0, 0}};
+    glm::dvec3 cur(0.0);   // fly in, 5 GU per stream (flight speed keeps the far shell)
     for (const auto& st : stages) {
         const glm::dvec3 eye = pos - dir * st.d;
+        while (glm::length(eye - cur) > 5.0) { cur += glm::normalize(eye - cur) * 5.0; f.stream(cur); }
+        cur = eye;
         f.stream(eye);
         int found = 0;
         f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
@@ -1003,7 +1008,9 @@ TEST(NearFarLarge, PixelFloorSkipsAndFadesTinyFarBillboards) {
                 if (is_small_rock(b.rock)) continue;
                 const float d = glm::length(glm::vec3(it.centre_half));
                 const float px = radius_of(it) * k / d;
-                if (!(d > dl.large.mesh_gu)) continue;
+                // (Over [mesh_gu, mesh_gu + fade_gu] the floor blends in from 1:
+                // no pop where the mesh ends.)
+                if (!(d > dl.large.mesh_gu + dl.fade_gu)) continue;
                 EXPECT_GT(px, dl.large_min_px) << "a billboard below the pixel floor drew, d " << d;
                 if (px < dl.large_min_px + 1.0f) {
                     EXPECT_TRUE(fading) << "a ramping billboard must be translucent";
@@ -1039,27 +1046,113 @@ TEST(NearFarLarge, TheStepOnlyTestsLargeCellsNearThePlayer) {
 }
 
 TEST(NearFarLarge, CollisionsNearThePlayerAreUnchanged) {
-    // The default dials: a sweep through the nearest large rock reports it
-    // (by key), and nothing from the far shell ever reports.
+    // A short flight through dense large rocks, the same 50 GU cells with the
+    // far shell on and off: every step drains the same large contacts.
+    // (Per step, sorted by key: the cell map's order differs between fields.)
+    auto flight = [](float far_gu) {
+        rockfield::NearDials d; d.large_far_gu = far_gu; d.large.density = 2.0e-3f;
+        rockfield::NearField f; f.set_dials(d);
+        f.set_catalogue(cat()); f.set_sources({full_sphere()});
+        std::vector<std::vector<std::tuple<std::uint64_t, float, float, float, float>>> steps;
+        rockfield::NearStepInput in;
+        for (int i = 0; i < 240; ++i) {
+            const glm::vec3 p(-120.0f + 1.0f * i, 0.3f * i, 0.0f);
+            f.stream(glm::dvec3(p));
+            in.player = unit_box_at(p);
+            in.player->half_mu = glm::vec3(3.0f);
+            in.game_time = 1.0 + i * kTick;
+            f.step(in);
+            std::vector<std::tuple<std::uint64_t, float, float, float, float>> c;
+            for (const auto& x : f.drain_large_contacts())
+                c.emplace_back(x.key, x.pen, x.rel_speed, x.normal.x + x.normal.y + x.normal.z,
+                               static_cast<float>(x.point_view.x + x.point_view.y + x.point_view.z));
+            std::sort(c.begin(), c.end());
+            steps.push_back(std::move(c));
+        }
+        return steps;
+    };
+    const auto on = flight(rockfield::NearDials{}.large_far_gu), off = flight(0.0f);
+    std::size_t n = 0;
+    for (const auto& s : on) n += s.size();
+    EXPECT_GT(n, 3u) << "the flight must touch rocks";
+    EXPECT_EQ(on, off);
+}
+
+// ---- Far shell at dash speed (rock-real review, 2026-10-03) ---------------
+// The far shell is visual only and flashes past at dash speed: a stream that
+// moved more than far_shell_max_step_gu since the last one shrinks the large
+// class back to its pre-shell reach (billboard_gu); slower streams regrow it
+// by at most far_shell_regrow_gu each, so it never comes back in one hitch.
+TEST(NearFarLarge, DashShrinksTheShellAndItRegrowsInBoundedSteps) {
     rockfield::NearField f;
-    f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    const auto& d = f.dials();
+    EXPECT_EQ(d.far_shell_max_step_gu, 25.0f);
+    EXPECT_EQ(d.far_shell_regrow_gu, 20.0f);
     f.stream(glm::dvec3(0.0));
-    std::uint64_t key = 0; glm::dvec3 pos(0.0); double best = 1e9;
-    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) {
-        const double dist = glm::length(r.pos_sys);
-        if (dist > 10.0 && dist < best) { best = dist; key = k; pos = r.pos_sys; }
-    });
-    ASSERT_NE(key, 0u);
-    ASSERT_LT(best, 60.0);
-    const glm::vec3 a = glm::vec3(pos) - glm::vec3(0, 20, 0), b = glm::vec3(pos) + glm::vec3(0, 20, 0);
-    rockfield::NearStepInput in;
-    step_at(f, in, a, 1.0);
-    step_at(f, in, b, 1.0 + kTick);
-    const auto c = f.drain_large_contacts();
-    bool hit = false;
-    for (const auto& x : c) {
-        hit = hit || x.key == key;
-        EXPECT_LT(glm::length(glm::dvec3(x.rock_centre_view) - pos), 40.0);
+    EXPECT_EQ(f.large_reach_gu(), d.large_far_gu);                // a first stream: the whole shell
+    // In-system warp, 400 GU/s at 60 Hz: the shell stays.
+    for (int i = 1; i <= 30; ++i) f.stream(glm::dvec3(0.0, i * 400.0 / 60.0, 0.0));
+    EXPECT_EQ(f.large_reach_gu(), d.large_far_gu);
+    // A dash, 100,000 GU/s at 60 Hz: the pre-shell reach, drawn by the old rule.
+    glm::dvec3 c(0.0, 200.0, 0.0);
+    for (int i = 0; i < 3; ++i) { c.y += 1666.7; f.stream(c); }
+    EXPECT_EQ(f.large_reach_gu(), d.large.billboard_gu);
+    double farthest = 0.0;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t, const rockfield::NearRock& r) {
+        farthest = std::max(farthest, glm::length(r.pos_sys - c)); });
+    EXPECT_LT(farthest, d.large.billboard_gu + d.stream_margin_gu + 1.7321 * d.large.cell_gu + 1.0);
+    rockfield::NearOutput out;
+    f.build(camera(glm::vec3(c), glm::vec3(c) + glm::vec3(0, 1, 0)), out);
+    for (const auto* list : {&out.billboards, &out.billboards_fading})
+        for (const auto& b : *list)
+            for (const auto& it : b.items)
+                EXPECT_LE(glm::length(glm::vec3(it.centre_half) - glm::vec3(c)), d.large.billboard_gu + 1e-2f);
+    // Slow again: regrows in steps of at most 20 GU, back to the whole shell.
+    float prev = f.large_reach_gu();
+    int streams = 0;
+    while (f.large_reach_gu() < d.large_far_gu && streams < 100) {
+        c.y += 0.1; f.stream(c); ++streams;
+        EXPECT_LE(f.large_reach_gu() - prev, d.far_shell_regrow_gu + 1e-3f);
+        EXPECT_GE(f.large_reach_gu(), prev);
+        prev = f.large_reach_gu();
     }
-    EXPECT_TRUE(hit);
+    EXPECT_EQ(f.large_reach_gu(), d.large_far_gu);
+    EXPECT_GE(streams, 7);   // (250 - 90) / 20 = 8 regrow steps
+}
+
+TEST(NearFarLarge, TheDrawnShellNeverPassesTheStreamedReach) {
+    // A live dial past the 33-cells-per-axis cap: 2,000 GU of 20 GU cells
+    // streams only 320 GU; the drawn shell ends (faded) there too.
+    rockfield::NearDials d; d.large_far_gu = 2000.0f; d.large.cell_gu = 20.0f;
+    rockfield::NearField f; f.set_dials(d);
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    EXPECT_EQ(f.large_reach_gu(), 320.0f);
+    rockfield::NearOutput out;
+    f.build(camera(glm::vec3(0), glm::vec3(0, 1, 0)), out);
+    int fading = 0;
+    for (const auto* list : {&out.billboards, &out.billboards_fading})
+        for (const auto& b : *list)
+            for (const auto& it : b.items) {
+                if (is_small_rock(b.rock)) continue;
+                const float dist = glm::length(glm::vec3(it.centre_half));
+                EXPECT_LE(dist, 320.0f + 1e-3f);
+                if (list == &out.billboards) EXPECT_LT(dist, 320.0f - d.large_far_fade_gu + 1e-3f);
+                else if (dist > 290.0f) ++fading;
+            }
+    EXPECT_GT(fading, 0) << "the clamped edge must fade, not cut";
+}
+
+TEST(NearFarLarge, ThePixelFloorDoesNotPopWhereTheMeshEnds) {
+    const rockfield::NearDials d;   // mesh 60, fade 4, floor 1.5
+    auto w = [&](float dist) { return rockfield::near_large_weights(dist, 0.5f, d); };
+    // A rock under the floor: the hand-off is untouched, and the billboard
+    // then blends down to 0 over [mesh_gu, mesh_gu + fade_gu] -- continuous.
+    EXPECT_NEAR(w(59.999f).mesh + w(59.999f).billboard, 1.0f, 1e-3f);
+    EXPECT_EQ(w(60.0f).billboard, 1.0f);
+    EXPECT_NEAR(w(62.0f).billboard, 0.5f, 1e-5f);
+    EXPECT_EQ(w(64.0f).billboard, 0.0f);
+    for (float x = 55.0f; x < 66.0f; x += 0.01f)
+        EXPECT_LT(std::fabs(w(x + 0.01f).billboard - w(x).billboard), 0.01f) << x;
 }

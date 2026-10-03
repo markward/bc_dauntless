@@ -36,23 +36,39 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // cell_gu 20 -> 50, max_instances 1000 -> 4000: rock-real Part 1,
     // 2026-10-03 (streaming the large class out to large_far_gu in 20 GU
     // cells would hit the 33-per-axis cap -- this redefines which large rocks
-    // exist, still deterministic; a full-density field holds ~3,200 large
-    // rocks in a 60 degree view out to 400 GU, which 1000 would cut).
+    // exist, still deterministic). The 4000 cap at the 250 GU default: a
+    // full-density field holds ~770 large rocks in a 60 degree 16:9 view out
+    // to 250 GU and ~2,300 in a 90 degree one; 4000 also covers the live dial
+    // at 400 GU (~3,200 at 60 degrees), which 1000 would cut nearest-first.
     NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 90.0f, 4000};
     float fade_gu = 4.0f;                 // dither band width at each tier edge
     // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
     // is a real rock). With large_far_gu > large.billboard_gu the large
     // class's SAME rocks stream on past billboard_gu as billboards (no
     // fade at billboard_gu) out to large_far_gu, fading out translucent
-    // over the last large_far_fade_gu. A large billboard (no mesh weight)
-    // whose on-screen radius is at or below large_min_px draws nothing and
-    // fades in over the next kNearPixelFadeBand px. large_far_gu <=
-    // large.billboard_gu: the shell is off -- exactly the old rule.
+    // over the last large_far_fade_gu. A large billboard whose on-screen
+    // radius is at or below large_min_px draws nothing past mesh_gu +
+    // fade_gu and fades in over the next kNearPixelFadeBand px (see
+    // near_large_weights). large_far_gu <= large.billboard_gu: the shell is
+    // off -- exactly the old rule. The drawn shell never passes the streamed
+    // reach (NearField::large_reach_gu: clamped by the 33-cells-per-axis cap,
+    // shrunk at dash speed).
     // 250, not the 400 GU target: in the Beol 4 inside bench (Debug) the
     // shell cost +1.5 ms CPU per frame at 400, +0.7 at 300, ~+0.4 at 250.
     float large_far_gu = 250.0f;
     float large_far_fade_gu = 40.0f;
     float large_min_px = 1.5f;
+    // The far shell at dash speed (rock-real review, 2026-10-03): visual
+    // only, it flashes past, yet regenerating it every frame cost ~3 ms per
+    // dash frame. A stream() whose centre moved more than
+    // far_shell_max_step_gu since the last shrinks the large reach back to
+    // billboard_gu (the pre-shell range, drawn by the old rule); each later
+    // stream regrows it by at most far_shell_regrow_gu, so it comes back
+    // over several frames, never in one hitch. 25 GU per stream is 1,500
+    // GU/s at 60 Hz -- 3.75x in-system warp (400 GU/s = 6.7 GU per frame),
+    // still above it down to 16 fps; a 100,000 GU/s dash is 1,667 GU/frame.
+    float far_shell_max_step_gu = 25.0f;
+    float far_shell_regrow_gu = 20.0f;
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
     float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)
     float collide_margin_gu = 0.0f;
@@ -116,8 +132,10 @@ constexpr float kNearPixelFadeBand = 1.0f;
 // radius px (pixels). Shell off (large_far_gu <= large.billboard_gu):
 // near_weights(d, large, fade_gu). On: the mesh weight as near_weights; the
 // billboard 1 - mesh up to large_far_gu - large_far_fade_gu, ramping to 0 at
-// large_far_gu; where the mesh weight is 0, times the pixel-floor ramp
-// (0 at large_min_px, 1 at large_min_px + kNearPixelFadeBand).
+// large_far_gu, times a pixel-floor factor that blends from 1 at mesh_gu to
+// the pixel-floor ramp (0 at large_min_px, 1 at large_min_px +
+// kNearPixelFadeBand) at mesh_gu + fade_gu -- so the hand-off (d < mesh_gu)
+// is untouched and nothing pops where the mesh ends, at any viewport size.
 NearWeights near_large_weights(float d, float px, const NearDials& dials);
 
 // Pure: the rocks of one cell. Poisson(n_bound * L^3) candidates, each
@@ -161,7 +179,14 @@ public:
     // Generate cells newly in range of `centre_sys`, drop cells out of range +
     // stream_margin_gu. Range per class = billboard_gu.
     void stream(const glm::dvec3& centre_sys);
-    void clear();                          // cells, contacts, sweep state, cooldowns, ghosts
+    // The large class's current streamed reach = its drawn outer edge:
+    // billboard_gu with the far shell off or shrunk at dash speed, else the
+    // (regrowing) shell, never past the 33-cells-per-axis cap.
+    float large_reach_gu() const;
+    // The dials build() draws by: dials() with the large far shell set to
+    // what is streamed (large_far_gu = large_reach_gu() when the shell is on).
+    const NearDials& effective_dials() const { return eff_; }
+    void clear();                          // cells, contacts, sweep state, cooldowns, ghosts, far-shell state
     NearStats stats() const;
     // Every rock currently streamed, per class (tests, build, contacts).
     void for_each(NearClass cls, const std::function<void(std::uint64_t key, const NearRock&)>& fn) const;
@@ -220,6 +245,11 @@ private:
     // key: mix(source id, class, i, j, k); rock key = mix(cell key, index + 1)
     std::unordered_map<std::uint64_t, Cell> cells_;
     NearDials dials_;
+    NearDials eff_;                       // dials_ with the streamed far shell
+    float shell_far_ = -1.0f;             // the streamed shell edge; < 0: not yet streamed
+    bool has_last_centre_ = false;
+    glm::dvec3 last_centre_{0.0};
+    void update_effective();
     NearCatalogue cat_;
     far::ImpostorViews views_;   // make_impostor_views(cat_.view_dirs_gltf)
     std::vector<far::DiscSource> sources_;
