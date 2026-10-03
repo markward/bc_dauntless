@@ -1584,6 +1584,7 @@ void main() {
     frag_color = vec4(final_color, out_alpha);
     if (u_impostor_blend != 0) {   // far::impostor_fade_alpha: keep identical
         float a = v_dither < 0.0 ? -v_dither : (v_dither > 0.0 ? 1.0 - v_dither : 1.0);
-        frag_color = vec4(final_color * a, a);
+        // A non-finite probe's cause code (u_nan_debug) survives in alpha.
+        frag_color = vec4(final_color * a, (u_nan_debug != 0 && out_alpha != 1.0) ? out_alpha : a);
     }
 }

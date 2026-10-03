@@ -150,7 +150,12 @@ def test_mid_fades_draw_translucent_in_their_own_scope(host):
             host.frame()
         st = host.far_stats()
         assert 0 < st["mid_fading"] < st["mid_sprites"], st
-        names = {s["name"] for s in host.profiler_scopes()}
-        assert "rock.fade.draw" in names, sorted(names)
+        order = [s["name"] for s in host.profiler_scopes()]
+        assert "rock.fade.draw" in order, order
+        # Coordinator ruling (fix round 1): the fades draw in phase 2,
+        # straight AFTER the belt haze (which marches to a depth a fading
+        # rock never writes), not before it.
+        assert "rock.haze" in order, order
+        assert order.index("rock.fade.draw") > order.index("rock.haze"), order
     finally:
         host.profiler_set_enabled(False)

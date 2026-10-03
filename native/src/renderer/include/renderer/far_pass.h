@@ -52,6 +52,11 @@ public:
     // path: no dither discard; the coverage cutout stays), blended
     // GL_ONE / GL_ONE_MINUS_SRC_ALPHA, depth-tested WITHOUT depth writes.
     // Bins and items draw in the order given -- the caller sorts far to near.
+    // The host draws these in phase 2, straight after render_haze (the haze
+    // marches to scene depth, which these never write). Silhouette-edge 2x2
+    // quads (partial under the per-pixel coverage cutout) shade differently
+    // from render_impostors' -- MEASURED; undefined derivatives, as for the
+    // dithered draw. A pixel's NaN-probe cause code (u_nan_debug) stays in alpha.
     // Afterwards blending is off with the blend function as found, depth
     // test and writes are on, the active texture unit is 0 and no VAO is bound.
     void render_impostors_blended(const std::vector<far::ImpostorBin>& bins,

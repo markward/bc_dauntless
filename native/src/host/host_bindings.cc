@@ -1338,6 +1338,10 @@ void frame() {
         const float rim = dauntless_rim::enabled()
             ? 0.1f * dauntless_rim::strength_scale() : 0.0f;
         if (g_far_pass) g_far_pass->reset_counts();
+        // The translucent lists are drawn by render_space_vfx (rock.fade.draw)
+        // for THIS camera: never replay a list a skipped build left behind.
+        g_near_out.billboards_fading.clear();
+        g_mid_out.sprites_fading.clear();
         // Far tier build for THIS camera, before the hull draw: it writes each
         // flagged rock's far_fade, which space.opaque reads (dither / skip).
         if (g_far_enabled) {
@@ -1436,7 +1440,7 @@ void frame() {
             g_far_draw_calls += g_minor_pass->last_draw_calls();
             g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
                                          ambient_scale, rim);
-            // billboards_fading draw translucent in rock.fade.draw below.
+            // billboards_fading draw translucent in render_space_vfx (rock.fade.draw).
             // A billboard bin whose atlas cannot load is skipped by
             // render_impostors (its rock still draws in the mesh tier); the
             // field is never mutated from the draw. Count what DREW.
@@ -1464,7 +1468,7 @@ void frame() {
             g_mid_field.build(in, g_mid_out);
             g_far_pass->render_impostors(g_mid_out.sprites, cam, *g_pipeline, g_lighting,
                                          ambient_scale, rim);
-            // sprites_fading draw translucent in rock.fade.draw below.
+            // sprites_fading draw translucent in render_space_vfx (rock.fade.draw).
             g_mid_tiles += g_mid_out.tiles;
             for (const auto& bin : g_mid_out.sprites)
                 if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock))
@@ -1505,20 +1509,6 @@ void frame() {
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_instance_field_cache.get(),
                                   g_decal_game_time, g_lighting, ambient_scale);
-        }
-        // Rock fade (2026-10-03): the near and mid impostors fading in from
-        // (or out to) nothing, TRANSLUCENT -- after every opaque writer
-        // (hull, rocks, impostors, breach) so they depth-test against all of
-        // it, without writing depth. Far to near: the mid band (never nearer
-        // than mid in_lo_gu) before the near band (never beyond its largest
-        // billboard_gu), each list already sorted far to near by its build.
-        // Leaves blending off, depth test/writes on.
-        if (g_far_enabled && g_far_pass) {
-            DAUNTLESS_FRAME_SCOPE("rock.fade.draw");
-            g_far_pass->render_impostors_blended(g_mid_out.sprites_fading, cam, *g_pipeline,
-                                                 g_lighting, ambient_scale, rim);
-            g_far_pass->render_impostors_blended(g_near_out.billboards_fading, cam, *g_pipeline,
-                                                 g_lighting, ambient_scale, rim);
         }
         // Far + minor specks in ONE instanced draw, after every opaque writer
         // (hull, minors, impostors, breach) so they depth-test against all of
@@ -1598,6 +1588,31 @@ void frame() {
             g_far_pass->render_haze(
                 g_far_field.active_sources(), origin_sys, cam, *g_pipeline, g_lighting,
                 ambient_scale, target.depth_texture(), inv_vp, g_far_field.dials());
+            g_far_draw_calls += g_far_pass->last_draw_calls();
+        }
+        // Rock fade (2026-10-03): the near and mid impostors fading in from
+        // (or out to) nothing, TRANSLUCENT, built for THIS camera by
+        // render_space_geometry. Here in phase 2, straight AFTER the belt
+        // haze, into the resolved single-sample target against its depth
+        // (depth test on, no depth writes, premultiplied): the haze marches
+        // to the scene depth, which a fading rock never writes, so drawn
+        // before it the haze fogged the rock and popped when it turned solid.
+        // Every phase-1 writer (hull, rocks, impostors, breach, specks,
+        // shields) is underneath; dust (drawn above) is attenuated where a
+        // fading rock lies behind it (accepted). No MSAA (accepted). Far to
+        // near: the mid band (never nearer than mid in_lo_gu) before the near
+        // band (never beyond its largest billboard_gu), each list already
+        // sorted far to near by its build. Leaves blending off, depth
+        // test/writes on.
+        if (g_far_enabled && g_far_pass) {
+            DAUNTLESS_FRAME_SCOPE("rock.fade.draw");
+            g_far_pass->reset_counts();
+            const float rim = dauntless_rim::enabled()
+                ? 0.1f * dauntless_rim::strength_scale() : 0.0f;   // as render_space_geometry
+            g_far_pass->render_impostors_blended(g_mid_out.sprites_fading, cam, *g_pipeline,
+                                                 g_lighting, ambient_scale, rim);
+            g_far_pass->render_impostors_blended(g_near_out.billboards_fading, cam, *g_pipeline,
+                                                 g_lighting, ambient_scale, rim);
             g_far_draw_calls += g_far_pass->last_draw_calls();
         }
         // System-scale nebula: developer-only. Without --developer (or with

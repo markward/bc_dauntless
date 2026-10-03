@@ -49,6 +49,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -1613,4 +1614,162 @@ TEST_F(FarPassGLTest, BlendedImpostorsRestoreStateAndLeaveTheOpaquePathUnchanged
     // The blend mode is per-draw program state: never left on.
     EXPECT_EQ(draw_impostors(pass, {bin_with(0, centre, 1.0f, 0.0f)}, cam, l), solid);
     EXPECT_EQ(draw_impostors(pass, {bin_with(0, centre, 1.0f, -0.5f)}, cam, l), dithered);
+}
+
+// Coordinator ruling (rock fade fix round 1): the fading impostors draw in
+// phase 2, straight AFTER the belt haze, into the resolved target against
+// its depth. The haze marches to the scene depth a fading rock never wrote,
+// so it must not composite over the rock: the result is the premultiplied
+// rock over the hazed background, a * rock + (1 - a) * hazed. And an opaque
+// rock in front (depth written in phase 1) still hides it.
+TEST_F(FarPassGLTest, FadingImpostorAfterTheHazeIsOverTheHazedBackground) {
+    constexpr int W = 64, H = 64;
+    const glm::vec3 grey(150.0f, 150.0f, 150.0f);
+    const Atlas atlas = sphere_atlas(grey, grey);
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    const glm::dvec3 origin_sys(278000.0, 0.0, 0.0);
+    far::DiscSource src = haze_source(origin_sys);
+    src.table = {{0.0f, 1.0f}, {20000.0f, 1.0f}};
+    src.gain_scale = 8.0f;
+    src.brightness = 8.0f;
+    const far::FarDials dials = exact_haze_dials();
+    const glm::vec3 centre(0.0f);
+    scenegraph::Camera cam;
+    cam.eye = centre + bc_view(kLevelView).dir * 2000.0f;
+    cam.target = centre;
+    cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.fov_y_rad = glm::radians(60.0f);
+    cam.aspect = 1.0f;
+    cam.near = 10.0f;
+    cam.far = 1.0e6f;
+    const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    renderer::Lighting l;
+    l.ambient = glm::vec3(1.0f);
+
+    renderer::HdrTarget t;
+    t.resize(W, H);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    const auto clear = [&] {
+        t.bind();
+        glViewport(0, 0, W, H);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    };
+    const auto read = [&] {
+        std::vector<float> px(static_cast<std::size_t>(W) * H * 4);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo());
+        glReadPixels(0, 0, W, H, GL_RGBA, GL_FLOAT, px.data());
+        t.bind();
+        return px;
+    };
+    const auto haze = [&] {
+        pass.render_haze({src}, origin_sys, cam, *pipeline, l, 1.0f, t.depth_texture(), inv_vp,
+                         dials);
+        t.bind();
+    };
+    const auto lit_f = [&](const std::vector<float>& f, int x, int y) {
+        const std::size_t i = (static_cast<std::size_t>(y) * W + x) * 4;
+        return f[i] + f[i + 1] + f[i + 2] > 0.0f;
+    };
+
+    clear();
+    pass.render_impostors({bin_with(0, centre, 500.0f, 0.0f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    const auto rock = read();
+    clear();
+    haze();
+    const auto hazed = read();
+    const float a = 0.5f;
+    clear();
+    haze();
+    pass.render_impostors_blended({bin_with(0, centre, 500.0f, -a)}, cam, *pipeline, l, 1.0f, 0.0f);
+    const auto faded = read();
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+
+    int n = 0;
+    float worst = 0.0f, haze_seen = 0.0f;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            // >= 3 px inside the silhouette: the coverage cutout's per-pixel
+            // discard leaves partial 2x2 quads at the edge, whose derivative
+            // shading is undefined and MEASURED to differ between the depth-
+            // writing and the blended draw (a pre-existing limit, far_pass.h).
+            bool inside = true;
+            for (int dy = -3; dy <= 3 && inside; ++dy)
+                for (int dx = -3; dx <= 3 && inside; ++dx) {
+                    const int xx = x + dx, yy = y + dy;
+                    inside = xx >= 0 && yy >= 0 && xx < W && yy < H && lit_f(rock, xx, yy);
+                }
+            if (!inside) continue;
+            ++n;
+            const std::size_t i = (static_cast<std::size_t>(y) * W + x) * 4;
+            haze_seen = std::max(haze_seen, hazed[i + 3]);
+            for (int c = 0; c < 3; ++c) {
+                const float want = a * rock[i + c] + (1.0f - a) * hazed[i + c];
+                worst = std::max(worst, std::fabs(faded[i + c] - want) / std::max(want, 0.05f));
+            }
+        }
+    std::printf("[rock fade] over haze: %d interior px, worst rel err %.4f, haze alpha %.3f\n", n,
+                worst, haze_seen);
+    ASSERT_GT(n, 30);
+    EXPECT_GT(haze_seen, 0.05f) << "precondition: real haze behind the rock";
+    EXPECT_LT(worst, 0.01f) << "the fading rock is not a * rock + (1 - a) * hazed";
+
+    // An opaque rock in front (phase 1, depth written), then the haze, then
+    // the fading rock behind it: the opaque rock's pixels do not change.
+    const glm::vec3 nearer = centre + bc_view(kLevelView).dir * 600.0f;
+    clear();
+    pass.render_impostors({bin_with(0, nearer, 150.0f, 0.0f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    const auto front = read();
+    haze();
+    const auto front_hazed = read();
+    pass.render_impostors_blended({bin_with(0, centre, 500.0f, -a)}, cam, *pipeline, l, 1.0f, 0.0f);
+    const auto front_hazed_faded = read();
+    int covered = 0, changed = 0;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            if (!lit_f(front, x, y)) continue;
+            ++covered;
+            const std::size_t i = (static_cast<std::size_t>(y) * W + x) * 4;
+            for (int c = 0; c < 4; ++c) changed += front_hazed_faded[i + c] != front_hazed[i + c];
+        }
+    EXPECT_GT(covered, 20);
+    EXPECT_EQ(changed, 0) << "the fading rock drew over an opaque rock in front of it";
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+namespace dauntless_nan_debug { void set_enabled(bool); }
+
+// The non-finite probe (u_nan_debug) parks a cause code in alpha; the blend
+// path must not overwrite it with the fade alpha.
+TEST_F(FarPassGLTest, BlendedImpostorKeepsTheNanDebugCauseCode) {
+    const Atlas atlas = sphere_atlas(kRed, kBlue);
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, atlas.albedo, atlas.normal);
+    const glm::vec3 centre(0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    renderer::Lighting l;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    l.ambient = glm::vec3(nan);                           // poisons the lit colour
+    l.directional_count = 0;
+    renderer::HdrTarget t;
+    t.resize(kW, kH);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    t.bind();
+    glViewport(0, 0, kW, kH);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    dauntless_nan_debug::set_enabled(true);
+    pass.render_impostors_blended({bin_with(0, centre, 1.0f, -0.5f)}, cam, *pipeline, l, 1.0f, 0.0f);
+    dauntless_nan_debug::set_enabled(false);
+    std::vector<float> px(static_cast<std::size_t>(kW) * kH * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo());
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, px.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    const float centre_alpha = px[(static_cast<std::size_t>(kH / 2) * kW + kW / 2) * 4 + 3];
+    EXPECT_GE(centre_alpha, 1.5f) << "the cause code was overwritten by the fade alpha";
 }

@@ -254,8 +254,10 @@ handful of rulings that change this design's letter without changing its intent:
   grid over black space. Now every mid-sprite fade (L0 in, the level crossfades, L2
   out) and the near billboards' OUTER fade at `billboard_gu` draw **translucent**
   (`NearOutput::billboards_fading`, `MidOutput::sprites_fading`;
-  `FarPass::render_impostors_blended`, profiler scope `rock.fade.draw`, after every
-  opaque writer: depth-tested, no depth writes, premultiplied). Alpha is the coverage
+  `FarPass::render_impostors_blended`, profiler scope `rock.fade.draw`, in phase 2
+  straight after `rock.haze`, into the resolved target: depth-tested, no depth writes,
+  premultiplied, no MSAA — before the haze, the haze marched through the depth a
+  fading rock never writes, fogged it and popped when it turned solid). Alpha is the coverage
   the item's signed dither would have kept (`far::impostor_fade_alpha`), so every
   item is byte-identical to before — only which list it is in changed. The screen
   door stays ONLY where two representations overlap and must complement: the near
@@ -265,6 +267,10 @@ handful of rulings that change this design's letter without changing its intent:
   first. Two overlapping fading sprites of DIFFERENT bins in the SAME band can blend
   in the wrong order (both alpha < 1, similar grey: accepted). Cost: the band split
   roughly doubles mid draw calls (Beol 4 inside: 18 → 34 bins, ~4.5 µs CPU each).
+  **Live check:** where an L_n sprite (alpha 1 − x) and an L_n+1 sprite (alpha x)
+  overlap mid-crossfade, "over" covers 1 − x(1 − x) — a 25% coverage dip at the
+  midpoint (the screen door's complementary patterns had none); watch for a darker
+  ring at 450–600 / 1,800–2,400 GU.
 - **Filmic CA fringing left unchanged.** `filmic.frag`'s chromatic-aberration pass
   fringes the dither pattern on near/far mesh↔impostor edges. Investigated and left
   out of scope for this plan; reported for Mark's live check, not fixed here.
