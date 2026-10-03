@@ -115,7 +115,7 @@ class _Field:
 
 
 # Characterization (rock-fields Task 2): captured from the code BEFORE the
-# tile minor clouds were removed. tile_haze_gain = 14140 was calibrated on
+# tile minor clouds were removed. tile_haze_gain (derived 14,140, live 131,700) is tuned on
 # exactly these numbers, so they must never drift.
 EXPECTED_DENSITY = 9.668662792832643e-08     # 405 / (4/3 pi 1000^3)
 EXPECTED_SIZES = (0.05, 0.7000000000000001, 2.5)

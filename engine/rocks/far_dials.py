@@ -39,8 +39,11 @@ DEFAULTS: dict = {
     # ruling R16 removed the pixel cut, by far_field_test.cc
     # FarHazeSphere.DefaultTileGainHitsTheStatedTarget: alpha 0.15 looking
     # from Beol 4's Player Start at its field (tau at gain 1 = 1.15e-5, so
-    # gain = -ln 0.85 / tau = 14,136 -> 14,140).
-    "tile_haze_gain": 14140.0, "tile_haze_edge_frac": 0.2,
+    # gain = -ln 0.85 / tau = 14,136 -> 14,140). The DEFAULT is Mark's live
+    # choice 2026-10-03 ("this works well"): 131,700 = 9.3x that derivation
+    # (Player Start column alpha ~0.78), kTileHazeGain in far_field_test.cc.
+    # tile_haze_brightness below stays calibrated at the 14,140 derivation.
+    "tile_haze_gain": 131700.0, "tile_haze_edge_frac": 0.2,
     # Haze brightness (Python, read at use; re-push sources; ruling R16). Sent
     # per source as `brightness`: it scales the haze COLOUR only (alpha is
     # the gains' job). Over black only colour shows, and the pipeline has no

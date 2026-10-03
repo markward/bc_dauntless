@@ -574,17 +574,22 @@ TEST(FarFieldBuild, AViewSpaceSourceIgnoresTheFrameKeyAndRidesTheAnchor) {
     EXPECT_EQ(f.active_sources().size(), 2u);
 }
 
-// Tile-field haze default gain (engine/rocks/far_dials.py "tile_haze_gain";
-// keep the two equal -- tests/unit/test_far_dials.py pins the Python side).
-// Derivation (re-derived 2026-10-02 after ruling R16 removed the pixel cut):
+// Tile-field haze gains.
+// kTileHazeGain is the DEFAULT (engine/rocks/far_dials.py "tile_haze_gain";
+// keep the two equal -- tests/unit/test_far_dials.py pins the Python side):
+// Mark's live choice 2026-10-03 ("this works well"), 131,700 = 9.3x the
+// derivation below, so the Player Start column reaches alpha ~0.78.
+// kTileHazeCalibrationGain is the DERIVED gain the brightness calibration
+// was made at (re-derived 2026-10-02 after ruling R16 removed the pixel cut):
 // from Beol 4 "Player Start" (-593.717346, 840.869934, -269.268738) looking
 // at the tile field's centre, 24 steps, Beol 4's numbers (beol4_tile_field).
 // alpha is 1 - exp(-gain * tau_1) exactly (T telescopes), so gain =
 // -ln(0.85) / tau_1 for the target alpha 0.15. Measured tau_1 = 1.1497e-5 =>
 // gain 14,136, rounded to 14,140. (With the old r_cut at k = 1713 it was
 // 26,860; with no cut the haze no longer depends on k at all.)
-constexpr float kTileHazeGain = 14140.0f;
-TEST(FarHazeSphere, DefaultTileGainHitsTheStatedTarget) {
+constexpr float kTileHazeCalibrationGain = 14140.0f;
+constexpr float kTileHazeGain = 131700.0f;
+TEST(FarHazeSphere, TileGainsHitTheirStatedTargets) {
     const far::DiscSource s = beol4_tile_field();
     const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
     const glm::vec3 dir = glm::vec3(glm::normalize(s.centre - eye));
@@ -595,15 +600,20 @@ TEST(FarHazeSphere, DefaultTileGainHitsTheStatedTarget) {
     const double tau1 = -std::log(1.0 - static_cast<double>(probe.alpha)) / 1.0e4;
     std::printf("[FarHazeSphere] tau at gain 1 = %.6e; gain for 0.15 = %.2f\n", tau1,
                 -std::log(0.85) / tau1);
+    const auto c = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain,
+                                    glm::vec3(1.0f));
+    std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeCalibrationGain,
+                c.alpha);
+    EXPECT_NEAR(c.alpha, 0.15f, 0.03f);
     const auto h = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeGain,
                                     glm::vec3(1.0f));
     std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeGain, h.alpha);
-    EXPECT_NEAR(h.alpha, 0.15f, 0.03f);
+    EXPECT_NEAR(h.alpha, 0.78f, 0.03f);
 }
 
 
 // Tile-field brightness (engine/rocks/far_dials.py "tile_haze_brightness").
-// At the tile gain the reference view's alpha is 0.15 and its colour at
+// At the calibration gain the reference view's alpha is 0.15 and its colour at
 // brightness 1 shows as 2.75/255; 25 / 2.75 = 9.09 => 9.1.
 constexpr float kTileHazeBrightness = 9.1f;
 TEST(FarHazeSphere, DefaultTileBrightnessShowsTwentyFiveOverBlack) {
@@ -615,7 +625,7 @@ TEST(FarHazeSphere, DefaultTileBrightnessShowsTwentyFiveOverBlack) {
     const glm::vec3 L = light_for(beol4_player_start_light(), dir);
     std::printf("[FarHazeSphere] Beol 4 light (%.4f %.4f %.4f)\n", L.r, L.g, L.b);
     EXPECT_NEAR(L.r, 0.163660f, 1e-4f);   // the production value (see the fixture)
-    const auto h = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeGain, L);
+    const auto h = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain, L);
     std::printf("[FarHazeSphere] tile displayed %.2f/255 (alpha %.4f)\n", displayed_255(h.rgb),
                 h.alpha);
     EXPECT_NEAR(displayed_255(h.rgb), 25.0f, 1.0f);
@@ -770,9 +780,9 @@ TEST(FarHazeNoise, TileNoiseKeepsTheMeanDisplayedHaze) {
                     glm::normalize(fwd + std::tan(ax) * b.right + std::tan(ay) * b.up);
                 const glm::vec3 L = light_for(beol4_player_start_light(), d);
                 sum_noisy += displayed_255(
-                    far::haze_column(s, eye, d, 1.0e6f, 4.0f, 24, kTileHazeGain, L).rgb);
+                    far::haze_column(s, eye, d, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain, L).rgb);
                 sum_plain += displayed_255(
-                    far::haze_column(plain, eye, d, 1.0e6f, 4.0f, 24, kTileHazeGain, L).rgb);
+                    far::haze_column(plain, eye, d, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain, L).rgb);
                 ++n;
             }
         std::printf("[FarHazeNoise] seed %u: mean over %d rays noisy %.2f plain %.2f /255\n",

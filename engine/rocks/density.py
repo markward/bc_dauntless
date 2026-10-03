@@ -144,7 +144,7 @@ def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
     per-tile x tile_count_mult, sizes from the minor_dials tile_* keys, at
     the field's location in VIEW space (`offset` = offset_between(view,
     set)), seeded by crc32("tile:<set>:<name>"). These are the numbers the
-    retired tile minor cloud used: tile_haze_gain (14140) is calibrated on
+    retired tile minor cloud used: tile_haze_gain (derived 14,140; live default 131,700) is tuned on
     them, so test_far_density pins them."""
     from engine.rocks import far_dials, field_table
     from engine.rocks import minor_dials as md
