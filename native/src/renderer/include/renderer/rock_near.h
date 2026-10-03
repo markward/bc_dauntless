@@ -19,17 +19,21 @@ namespace renderer::rockfield {
 enum class NearClass : std::uint8_t { Small = 0, Large = 1 };
 
 struct NearClassDials {
-    float density = 0.008f;     // rocks / GU^3 where field_density == 1
+    // density 0.008 -> 0.010, mesh_gu 20 -> 15: Mark, live 2026-10-03
+    // (slightly more small rocks, as billboards closer in).
+    float density = 0.010f;     // rocks / GU^3 where field_density == 1
     float r_min = 0.05f, r_max = 0.5f, exponent = 2.5f;
     float cell_gu = 10.0f;
-    float mesh_gu = 20.0f;      // mesh out to here (camera distance)
+    float mesh_gu = 15.0f;      // mesh out to here (camera distance)
     float billboard_gu = 30.0f; // billboard out to here; streamed radius
     int max_instances = 4000;   // per camera build
 };
 
 struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     NearClassDials small{};
-    NearClassDials large{1.0f / 8000.0f, 1.0f, 5.0f, 2.5f, 20.0f, 50.0f, 60.0f, 1000};
+    // density 1.25e-4 -> 6.25e-5, mesh_gu 50 -> 60, billboard_gu 60 -> 90:
+    // Mark, live 2026-10-03 (fewer big asteroids but visible a bit further).
+    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 20.0f, 60.0f, 90.0f, 1000};
     float fade_gu = 4.0f;                 // dither band width at each tier edge
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
     float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)

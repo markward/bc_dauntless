@@ -90,6 +90,12 @@ struct NearRun {
 NearRun run_near(bool fast, bool caps, bool resend = false) {
     rockfield::NearField f;
     rockfield::NearDials dials;
+    // Pinned to the near_* defaults in effect when these digests were
+    // recorded (before the 2026-10-03 look retune), so the digests below do
+    // not need re-recording when far_dials.py / rock_near.h's defaults move.
+    dials.small.density = 0.008f; dials.small.mesh_gu = 20.0f;
+    dials.large.density = 1.0f / 8000.0f; dials.large.mesh_gu = 50.0f;
+    dials.large.billboard_gu = 60.0f;
     if (caps) {
         dials.small.max_instances = 60;
         dials.large.max_instances = 12;
@@ -267,6 +273,13 @@ MidRun run_mid(bool resend) {
     f.set_view_dirs(rock_scenario::view_dirs16());
     std::vector<far::DiscSource> sources{rock_scenario::beol4_field(), small_cluster()};
     f.set_sources(sources);
+    // Pinned to the mid_in_lo_gu/mid_in_hi_gu defaults in effect when these
+    // digests were recorded (before the 2026-10-03 look retune), so the
+    // digests below do not need re-recording when far_dials.py / rock_mid.h's
+    // defaults move.
+    rockfield::MidDials pinned0;
+    pinned0.in_lo_gu = 80.0f; pinned0.in_hi_gu = 150.0f;
+    f.set_dials(pinned0);
     rockfield::MidBuildInput in;
     in.viewport_h = 1080.0f;
     rockfield::MidOutput out;
@@ -294,12 +307,13 @@ MidRun run_mid(bool resend) {
         if (phase == 1) f.set_sources(sources);   // same
         if (phase == 2) {                                   // quarter tiles; the cap binds
             rockfield::MidDials m;
+            m.in_lo_gu = 80.0f; m.in_hi_gu = 150.0f;        // pinned, see above
             m.l0_tile_gu /= 4.0f; m.l1_tile_gu /= 4.0f; m.l2_tile_gu /= 4.0f;
             m.max_sprites = 300; m.fill = 0.7f; m.sprite_scale = 1.3f;
             f.set_dials(m);
         }
         if (phase == 3) {                                   // sources and collections change
-            f.set_dials({});
+            f.set_dials(pinned0);
             sources = {noisy_belt(), small_cluster(), rock_scenario::beol4_field()};
             f.set_sources(sources);
             auto cols = rock_scenario::mid_collections();

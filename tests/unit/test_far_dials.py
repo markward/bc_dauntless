@@ -7,12 +7,15 @@ from engine.rocks import far_dials
 # header nests them (small.density, large.r_min, ...), so they are listed
 # here by hand: change rock_near.h and this table together.
 _NEAR_CPP_DEFAULTS = {
-    "near_small_density": 0.008, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
-    "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 20.0,
+    # Mark, live 2026-10-03: near_small_density 0.008 -> 0.010, near_small_mesh_gu
+    # 20 -> 15; near_large_density 1.25e-4 -> 6.25e-5, near_large_mesh_gu 50 -> 60,
+    # near_large_billboard_gu 60 -> 90.
+    "near_small_density": 0.010, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
+    "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 15.0,
     "near_small_billboard_gu": 30.0, "near_small_max": 4000,
-    "near_large_density": 1.0 / 8000.0, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
-    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 50.0,
-    "near_large_billboard_gu": 60.0, "near_large_max": 1000,
+    "near_large_density": 1.0 / 16000.0, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
+    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 60.0,
+    "near_large_billboard_gu": 90.0, "near_large_max": 1000,
     "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 
@@ -183,6 +186,8 @@ def test_mid_defaults_match_rock_mid_h():
         assert m, field
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
     d = far_dials.DEFAULTS
+    # Mark, live 2026-10-03: mid_in_lo_gu 80 -> 100, mid_in_hi_gu 150 -> 170.
+    assert (d["mid_in_lo_gu"], d["mid_in_hi_gu"]) == (100.0, 170.0)
     assert (d["mid_l0_tile_gu"], d["mid_l1_tile_gu"], d["mid_l2_tile_gu"]) == (150.0, 600.0, 2400.0)
     assert (d["haze_handoff_gu"], d["haze_handoff_band_gu"]) == (8000.0, 2000.0)
     assert isinstance(d["mid_max_sprites"], int)

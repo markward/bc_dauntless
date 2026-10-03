@@ -46,6 +46,10 @@ TEST(NearCells, DensityFollowsField) {     // a 0.05 belt floor gets ~5%
     far::DiscSource belt; belt.id = 5; belt.seed = 1; belt.table = {{0.0f, 0.05f}, {1e6f, 0.05f}};
     belt.scale_height_min_gu = 1e6f;        // flat in z near the plane
     rockfield::NearDials d;
+    // Pinned to the pre-2026-10-03 default (0.008 x cell_gu^3 10^3 = 8 per
+    // cell at field density 1) so this expectation stays valid regardless of
+    // far_dials.py's current near_small_density.
+    d.small.density = 0.008f;
     double n = 0; const int cells = 2000;
     for (int i = 0; i < cells; ++i)
         n += rockfield::generate_near_cell(belt, rockfield::NearClass::Small, {i, 3, 0}, d, cat()).size();
@@ -246,6 +250,10 @@ glm::mat3 linear(const minors::InstanceGpu& g) {   // rows -> glm column-major
 
 TEST(NearTiers, WeightsAtTheBoundaries) {
     rockfield::NearClassDials c;  // small: 20 / 30, fade 4
+    // Pinned to the pre-2026-10-03 near_small_mesh_gu default (20) so the
+    // literal distances below stay valid regardless of rock_near.h's
+    // current default.
+    c.mesh_gu = 20.0f; c.billboard_gu = 30.0f;
     auto w = [&](float d) { return rockfield::near_weights(d, c, 4.0f); };
     EXPECT_EQ(w(10).mesh, 1.0f);  EXPECT_EQ(w(10).billboard, 0.0f);
     EXPECT_NEAR(w(18).mesh + w(18).billboard, 1.0f, 1e-6f);   // inside the mesh->billboard fade
@@ -259,6 +267,13 @@ TEST(NearTiers, WeightsAtTheBoundaries) {
 
 TEST(NearBuild, OneTierPerRockOutsideFades) {
     rockfield::NearField f;
+    // Pinned to the pre-2026-10-03 defaults (small mesh_gu 20, large mesh_gu
+    // 50 / billboard_gu 60) so the literal 20/50/16/46/30/60 thresholds below
+    // stay valid regardless of rock_near.h's current defaults.
+    rockfield::NearDials d;
+    d.small.mesh_gu = 20.0f; d.small.billboard_gu = 30.0f;
+    d.large.mesh_gu = 50.0f; d.large.billboard_gu = 60.0f;
+    f.set_dials(d);
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     const rockfield::NearBuildInput in = looking_along_y(90.0f);
@@ -416,6 +431,10 @@ TEST(NearBuild, NoViewDirsNoBillboards) {
 
 TEST(NearBuild, RenderSpaceIsSystemMinusAnchorMinusOrigin) {
     rockfield::NearField f;
+    // Pinned to the pre-2026-10-03 large.mesh_gu default (50) so the <= 50
+    // GU bound below stays valid regardless of rock_near.h's current default.
+    rockfield::NearDials d; d.large.mesh_gu = 50.0f;
+    f.set_dials(d);
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(300.0, 0.0, 0.0));            // rocks streamed around system x = 300
     rockfield::NearBuildInput in = looking_along_y(90.0f);
@@ -448,6 +467,10 @@ TEST(NearBuild, BuildIsConstAcrossCameras) {   // Review Focus 3
 
 TEST(NearBuild, InstanceCapHolds) {             // Review Focus 5
     rockfield::NearDials d; d.small.max_instances = 50;
+    // Pinned to the pre-2026-10-03 small mesh_gu/billboard_gu defaults (20/30)
+    // so "~270 small rocks within 20 GU" below stays valid regardless of
+    // rock_near.h's current near_small_mesh_gu.
+    d.small.mesh_gu = 20.0f; d.small.billboard_gu = 30.0f;
     rockfield::NearField f; f.set_dials(d);
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));

@@ -15,7 +15,9 @@ namespace renderer::rockfield {
 
 struct MidDials {   // defaults MUST equal far_dials.py mid_* / haze_handoff_* keys
     float l0_tile_gu = 150.0f, l1_tile_gu = 600.0f, l2_tile_gu = 2400.0f;
-    float in_lo_gu = 80.0f, in_hi_gu = 150.0f;     // L0 fades in over [in_lo, in_hi]
+    // in_lo_gu 80 -> 100, in_hi_gu 150 -> 170: Mark, live 2026-10-03 (keeps
+    // mid sprites outside the widened near_large_billboard_gu, 90).
+    float in_lo_gu = 100.0f, in_hi_gu = 170.0f;    // L0 fades in over [in_lo, in_hi]
     float l0_out_gu = 600.0f, l1_out_gu = 2400.0f; // level boundaries
     float xfade_frac = 0.25f;                      // boundary b crossfades over [b(1-f), b]
     float handoff_gu = 8000.0f, handoff_band_gu = 2000.0f;  // L2 fades out over [handoff-band, handoff]

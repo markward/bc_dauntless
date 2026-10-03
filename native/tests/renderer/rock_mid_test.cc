@@ -62,6 +62,10 @@ int total(const rockfield::MidOutput& o) {
 
 TEST(MidLevels, WeightsCrossfadeAndSumToOneInside) {
     rockfield::MidDials m;
+    // Pinned to the pre-2026-10-03 defaults (in_lo_gu 80, in_hi_gu 150, so
+    // their midpoint is 115) so the literals below stay valid regardless of
+    // rock_mid.h's current defaults.
+    m.in_lo_gu = 80.0f; m.in_hi_gu = 150.0f;
     for (float d : {200.0f, 500.0f, 560.0f, 1000.0f, 2000.0f, 3000.0f, 5000.0f}) {
         const float s = rockfield::mid_level_weight(0, d, m) + rockfield::mid_level_weight(1, d, m) +
                         rockfield::mid_level_weight(2, d, m);
@@ -75,6 +79,10 @@ TEST(MidLevels, WeightsCrossfadeAndSumToOneInside) {
 
 TEST(MidLevels, DitherSignFollowsTheFadeDirection) {
     rockfield::MidDials m;
+    // Pinned to the pre-2026-10-03 defaults (in_lo_gu 80, in_hi_gu 150) so
+    // the literal distances below stay valid regardless of rock_mid.h's
+    // current defaults.
+    m.in_lo_gu = 80.0f; m.in_hi_gu = 150.0f;
     // Fading IN (lower ramp): -w.
     EXPECT_NEAR(rockfield::mid_level_dither(0, 115.0f, m), -0.5f, 1e-5f);
     EXPECT_NEAR(rockfield::mid_level_dither(1, 525.0f, m), -0.5f, 1e-5f);
@@ -406,7 +414,11 @@ TEST(MidSnap, LargeSpheresAndBeltsAreUnchanged) {
     // recorded BEFORE the snap existed; a and b were re-recorded when the
     // guard, weight and dither moved from the tile-centre distance to the
     // jittered sprite's (final review 3) -- same tiles, same selection.
+    // Pinned to the pre-2026-10-03 in_lo_gu/in_hi_gu defaults (80/150) so the
+    // recorded digests below stay valid regardless of rock_mid.h's current
+    // defaults.
     rockfield::MidDials d; d.max_sprites = 1000000;
+    d.in_lo_gu = 80.0f; d.in_hi_gu = 150.0f;
     rockfield::MidOutput a, b, s;
     const auto in_a = looking_along_y(90.0f);
     const auto in_b = looking_along_y(90.0f, glm::vec3(5000, 0, 0));

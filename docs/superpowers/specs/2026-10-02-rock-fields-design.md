@@ -274,6 +274,16 @@ handful of rulings that change this design's letter without changing its intent:
 - **Filmic CA fringing left unchanged.** `filmic.frag`'s chromatic-aberration pass
   fringes the dither pattern on near/far mesh↔impostor edges. Investigated and left
   out of scope for this plan; reported for Mark's live check, not fixed here.
+- **Look retune (Mark, live 2026-10-03): fewer big asteroids, visible a bit
+  further; slightly more small rocks, as billboards closer in.** Supersedes the
+  20/30/50/60 GU boundaries and the mid L0 "~80–150 GU" fade-in quoted above:
+  `near_small_density` 0.008 → 0.010, `near_small_mesh_gu` 20 → 15 (billboards
+  start closer in); `near_large_density` 1.25e-4 → 6.25e-5, `near_large_mesh_gu`
+  50 → 60, `near_large_billboard_gu` 60 → 90 (fewer, but visible further);
+  `mid_in_lo_gu` 80 → 100 and `mid_in_hi_gu` 150 → 170 (keeps mid sprites outside
+  the widened near large billboard range). `engine/rocks/far_dials.py` DEFAULTS
+  (mirrored in `rock_near.h` / `rock_mid.h`) is the live source of truth for
+  these dials, not the numbers above.
 
 ## Live check (Mark)
 

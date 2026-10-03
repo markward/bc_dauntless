@@ -73,12 +73,17 @@ DEFAULTS: dict = {
     # (rocks / GU^3 where the field density is 1), power-law sizes, cell
     # edge, mesh / billboard camera distances (billboard = streamed radius)
     # and the per-camera instance cap.
-    "near_small_density": 0.008, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
-    "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 20.0,
+    # near_small_density 0.008 -> 0.010, near_small_mesh_gu 20 -> 15:
+    # Mark, live 2026-10-03 (slightly more small rocks, as billboards closer in).
+    "near_small_density": 0.010, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
+    "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 15.0,
     "near_small_billboard_gu": 30.0, "near_small_max": 4000,
-    "near_large_density": 1.25e-4, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
-    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 50.0,
-    "near_large_billboard_gu": 60.0, "near_large_max": 1000,
+    # near_large_density 1.25e-4 -> 6.25e-5, near_large_mesh_gu 50 -> 60,
+    # near_large_billboard_gu 60 -> 90: Mark, live 2026-10-03 (fewer big
+    # asteroids but visible a bit further).
+    "near_large_density": 6.25e-5, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
+    "near_large_exponent": 2.5, "near_large_cell_gu": 20.0, "near_large_mesh_gu": 60.0,
+    "near_large_billboard_gu": 90.0, "near_large_max": 1000,
     "near_fade_gu": 4.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,
     # engine/rocks/scenery_contact.py): damage = KE damage x
@@ -93,7 +98,9 @@ DEFAULTS: dict = {
     # collection sprite with chance density x mid_fill; mid_max_sprites caps
     # one camera build, nearest first.
     "mid_l0_tile_gu": 150.0, "mid_l1_tile_gu": 600.0, "mid_l2_tile_gu": 2400.0,
-    "mid_in_lo_gu": 80.0, "mid_in_hi_gu": 150.0,
+    # mid_in_lo_gu 80 -> 100, mid_in_hi_gu 150 -> 170: Mark, live 2026-10-03
+    # (keeps mid sprites outside the widened near_large_billboard_gu, 90).
+    "mid_in_lo_gu": 100.0, "mid_in_hi_gu": 170.0,
     "mid_l0_out_gu": 600.0, "mid_l1_out_gu": 2400.0, "mid_xfade_frac": 0.25,
     "haze_handoff_gu": 8000.0, "haze_handoff_band_gu": 2000.0,
     "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,
