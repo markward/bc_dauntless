@@ -46,11 +46,13 @@ def test_run_leaves_no_bridge_controllers_registered(monkeypatch):
     assert bridge_camera_watch.get_controller() is None
 
 
-def test_run_leaves_no_quickbattle_spawn_hooks_registered(monkeypatch):
-    """engine.quickbattle.spawn._provider (the setup panel) and _radius_fn
-    (the loader, and through it the renderer) are process-global. Left
-    registered after run() returns they close over a dead panel/controller --
-    the same leaked-hook class as the warp and bridge-controller hooks above."""
+def test_run_leaves_no_quickbattle_spawn_provider_registered(monkeypatch):
+    """engine.quickbattle.spawn._provider (the setup panel) is process-global.
+    Left registered after run() returns it closes over a dead panel -- the same
+    leaked-hook class as the warp and bridge-controller hooks above. The panel
+    is built for EVERY mission, so a mission run is a real test of it.
+    (_radius_fn is only set by the QuickBattle boot; its check lives in the
+    QuickBattle-boot test below, where it is actually installed.)"""
     GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships"
                   / "Galaxy" / "Galaxy.nif")
     if not GALAXY_NIF.is_file():
@@ -61,17 +63,18 @@ def test_run_leaves_no_quickbattle_spawn_hooks_registered(monkeypatch):
     assert host_loop.run("Custom.Tutorial.Episode.M1Basic.M1Basic",
                          max_ticks=2) == 0
     assert qb_spawn._provider is None
-    assert qb_spawn._radius_fn is None
 
 
-def test_run_leaves_no_quickbattle_player_type_resolver_registered(monkeypatch):
-    """engine.bridge_selection._player_type_resolver (the home-ship rule,
-    set in load_quickbattle from engine.quickbattle.spawn.
-    player_type_for_recreate) is process-global like the hooks above -- left
-    registered after run() returns it would close over a dead controller's
-    plan provider. Only load_quickbattle (mission_name=None -- the
-    no-mission-name QuickBattle boot) ever sets it, so this drives THAT
-    boot path rather than the M1Basic mission the sibling tests use."""
+def test_run_leaves_no_quickbattle_hooks_registered_after_qb_boot(monkeypatch):
+    """The QuickBattle boot installs three process-global hooks:
+    bridge_selection._player_type_resolver (the home-ship rule) and
+    spawn._radius_fn (the loader's radius seed) in load_quickbattle, plus
+    spawn._provider (the setup panel). Left registered after run() returns
+    they close over a dead controller. Only load_quickbattle (mission_name=
+    None -- the no-mission-name QuickBattle boot) sets the first two, so this
+    drives THAT boot path rather than the M1Basic mission the sibling tests
+    use -- an M1Basic run never installs _radius_fn, so asserting it there
+    proved nothing (post-merge review)."""
     GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships"
                   / "Galaxy" / "Galaxy.nif")
     if not GALAXY_NIF.is_file():
@@ -79,5 +82,8 @@ def test_run_leaves_no_quickbattle_player_type_resolver_registered(monkeypatch):
     monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
     from engine import host_loop
     from engine import bridge_selection
+    from engine.quickbattle import spawn as qb_spawn
     assert host_loop.run(max_ticks=2) == 0
     assert bridge_selection._player_type_resolver is None
+    assert qb_spawn._radius_fn is None
+    assert qb_spawn._provider is None
