@@ -1,12 +1,14 @@
 // native/tests/renderer/far_pass_test.cc
 //
 // FarPass (far-tier spec §3, "Impostor geometry"): each distant catalogue rock
-// is ONE quad per instance, posed in its chosen baked view's plane, drawn by
-// impostor.vert LINKED WITH the existing opaque.frag and textured from the
-// rock's 16-view impostor atlas. These tests pin:
-//   * the atlas's row order against the quad (u_uv_flip_y) -- AtlasOrientation;
-//   * the atlas normal's green axis against opaque.frag's derivative tangent
-//     frame (u_normal_flip_g) -- LightingSide;
+// is ONE camera-facing quad per instance, drawn by impostor.vert LINKED WITH
+// the existing opaque.frag (compiled with IMPOSTOR_VIEWS) and textured from
+// the rock's 64-view impostor atlas, blending the views around the eye
+// (rock-blend, 2026-10-03; impostor_blend_gl_test.cc pins the blend). These
+// tests pin:
+//   * the atlas's row order against the screen (u_uv_flip_y) -- AtlasOrientation;
+//   * the sense of the atlas normal (n.right, n.up, n.dir) as opaque.frag
+//     rebuilds it -- LightingSide;
 //   * that an impostor of a sphere looks like the sphere's mesh drawn through
 //     draw_model from the baked direction -- MatchesTheMeshWithinTolerance;
 //   * one instanced draw per non-empty bin that has an atlas.
@@ -67,37 +69,31 @@ constexpr int kH = 128;
 
 // Every catalogue rock's bound radius at load scale 1 (constraints.md).
 constexpr float kBoundMu = 57.142857f;
-// The bake's per-view cell size.
-constexpr int kViewSize = 128;
-// A near-level baked view: dir.y (glTF) = 1 - 2 * 7.5 / 16 = 0.0625.
-constexpr int kLevelView = 7;
+// The bake's per-view cell size and grid (rock-blend: 8x8 octahedral, 64 px).
+constexpr int kViewSize = 64;
+constexpr int kGrid = 8;
+// A near-level baked view: oct (i, j) = (4, 6), (a, b) = (1/7, 5/7), so
+// dir (glTF) = (1, 1, 5) / sqrt(27), dir.y = 0.19 (an even grid has no
+// exactly level view).
+constexpr int kLevelView = 6 * kGrid + 4;
 
 const glm::vec3 kRed(200.0f, 60.0f, 40.0f);
 const glm::vec3 kBlue(40.0f, 70.0f, 200.0f);
 
-// rockgen's impostor_view_dirs(): 16 Fibonacci-sphere directions, glTF frame.
-std::vector<glm::vec3> view_dirs() {
-    std::vector<glm::vec3> dirs;
-    for (int i = 0; i < 16; ++i) {
-        const float y = 1.0f - 2.0f * (static_cast<float>(i) + 0.5f) / 16.0f;
-        const float r = std::sqrt(std::max(0.0f, 1.0f - y * y));
-        const float phi = static_cast<float>(i) * 2.399963229728653f;
-        dirs.emplace_back(std::cos(phi) * r, y, std::sin(phi) * r);
-    }
-    return dirs;
-}
+// rockgen's impostor_view_dirs(): the 8x8 octahedral layout, glTF frame.
+std::vector<glm::vec3> view_dirs() { return far::oct_view_dirs(kGrid); }
 
 struct Atlas {
     assets::Image albedo;
     assets::Image normal;
 };
 
-// The 16-view atlas of a sphere of radius kBoundMu (glTF frame) whose upper
+// The 64-view atlas of a sphere of radius kBoundMu (glTF frame) whose upper
 // hemisphere (glTF +y == BC +Z) is `upper` and lower is `lower`, laid out as
-// rockgen's bake_impostor lays it out: view v in cell (v % 4, v / 4), half
+// rockgen's bake_impostor lays it out: view v in cell (v % 8, v / 8), half
 // extent = radius * 1.02, screen y DOWN, normal = (n.right, n.up, n.dir).
 Atlas sphere_atlas(glm::vec3 upper, glm::vec3 lower) {
-    const int canvas = 4 * kViewSize;
+    const int canvas = kGrid * kViewSize;
     Atlas a;
     for (assets::Image* img : {&a.albedo, &a.normal}) {
         img->width = img->height = static_cast<std::uint32_t>(canvas);
@@ -107,10 +103,10 @@ Atlas sphere_atlas(glm::vec3 upper, glm::vec3 lower) {
     const float R = kBoundMu;
     const float half = R * 1.02f;
     const auto dirs = view_dirs();
-    for (int view = 0; view < 16; ++view) {
+    for (int view = 0; view < kGrid * kGrid; ++view) {
         const far::ViewBasis b = far::make_view_basis(dirs[static_cast<std::size_t>(view)]);
-        const int ox = (view % 4) * kViewSize;
-        const int oy = (view / 4) * kViewSize;
+        const int ox = (view % kGrid) * kViewSize;
+        const int oy = (view / kGrid) * kViewSize;
         for (int py = 0; py < kViewSize; ++py) {
             for (int px = 0; px < kViewSize; ++px) {
                 // Inverse of the bake's screen mapping at the pixel centre.
@@ -222,15 +218,14 @@ BcView bc_view(int view) {
     return {M * b.dir, M * b.right, M * b.up};
 }
 
-// One impostor of radius `r` at `centre`, viewed from baked view `view`,
-// fully on (dither weight 1).
+// One impostor of radius `r` at `centre` (identity rotation), seen from
+// baked view `view`'s direction -- far::make_impostor, so exactly that one
+// view at weight 1 -- fully on (dither weight 1).
 far::ImpostorBin one_impostor_bin(int rock, int view, glm::vec3 centre, float r) {
-    const BcView v = bc_view(view);
     far::ImpostorBin bin;
     bin.rock = rock;
-    bin.items.push_back(far::ImpostorGpu{glm::vec4(centre, r * 1.02f),
-                                         glm::vec4(v.right, static_cast<float>(view)),
-                                         glm::vec4(v.up, -1.0f)});
+    bin.items.push_back(far::make_impostor(view_dirs(), centre + bc_view(view).dir * 8.0f, centre,
+                                           glm::mat3(1.0f), r, -1.0f));
     return bin;
 }
 
@@ -336,8 +331,8 @@ TEST_F(FarPassGLTest, AtlasOrientation) {
     ASSERT_TRUE(pass.atlas_loaded(0));
 
     const glm::vec3 centre(0.0f, 0.0f, 0.0f);
-    ASSERT_LT(std::abs(bc_view(kLevelView).dir.z), 0.1f) << "precondition: a near-level view";
-    ASSERT_GT(bc_view(kLevelView).up.z, 0.99f) << "precondition: the view's up is BC +Z";
+    ASSERT_LT(std::abs(bc_view(kLevelView).dir.z), 0.2f) << "precondition: a near-level view";
+    ASSERT_GT(bc_view(kLevelView).up.z, 0.98f) << "precondition: the view's up is BC +Z";
     const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
 
     renderer::Lighting l;            // flat ambient only: the colour is the albedo
@@ -352,11 +347,14 @@ TEST_F(FarPassGLTest, AtlasOrientation) {
             if (!lit(px, y * kW + x)) continue;
             const bool red = px[i] > px[i + 2] + 40;
             const bool blue = px[i + 2] > px[i] + 40;
-            const bool upper = y >= kH / 2;   // readback row 0 is the BOTTOM
+            // Readback row 0 is the BOTTOM. The view looks 11 degrees down
+            // (an even oct grid has no level view), which drops the equator
+            // ~5 px below centre: compare bands clear of it.
+            const bool upper = y >= kH / 2 + 8, lower = y < kH / 2 - 8;
             red_up += upper && red;
             blue_up += upper && blue;
-            red_down += !upper && red;
-            blue_down += !upper && blue;
+            red_down += lower && red;
+            blue_down += lower && blue;
         }
     EXPECT_GT(red_up, 10 * std::max(1, blue_up)) << "upper half of the screen is red";
     EXPECT_GT(blue_down, 10 * std::max(1, red_down)) << "lower half of the screen is blue";
@@ -1401,7 +1399,7 @@ TEST_F(FarPassGLTest, DitheredImpostorKeepsTheSolidShading) {
     ASSERT_GT(lit_pixels(solid), kW * kH / 10);
     for (const float dither : {-0.5f, 0.5f, -0.25f, 0.75f}) {
         far::ImpostorBin bin = one_impostor_bin(0, kLevelView, centre, 1.0f);
-        bin.items[0].up_dither.w = dither;
+        bin.items[0].axis_y_dither.w = dither;
         const auto px = draw_impostors(pass, {bin}, cam, l);
         int kept = 0, worst = 0;
         for (int i = 0; i < kW * kH; ++i) {
@@ -1454,7 +1452,7 @@ TEST_F(FarPassGLTest, ImpostorDrawCpuCostPerBinReport) {
 // ── Rock fade (2026-10-03): translucent impostors ─────────────────────────────
 // Distant rock impostors fade by real translucency, not the screen door:
 // render_impostors_blended draws premultiplied (alpha =
-// far::impostor_fade_alpha(up_dither.w)), depth-tested, without depth writes.
+// far::impostor_fade_alpha(axis_y_dither.w)), depth-tested, without depth writes.
 namespace {
 renderer::Lighting fade_lighting() {
     renderer::Lighting l;
@@ -1466,7 +1464,7 @@ renderer::Lighting fade_lighting() {
 }
 far::ImpostorBin bin_with(int rock, glm::vec3 centre, float r, float dither) {
     far::ImpostorBin b = one_impostor_bin(rock, kLevelView, centre, r);
-    b.items[0].up_dither.w = dither;
+    b.items[0].axis_y_dither.w = dither;
     return b;
 }
 // Pixels lit in `ref` whose 4-neighbours are lit too (no silhouette edge).

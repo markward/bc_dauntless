@@ -293,20 +293,7 @@ glm::mat3 gltf_to_bc() {
 
 ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const glm::vec3& eye,
                           const glm::vec3& c, const glm::mat3& R, float r, float dither) {
-    const glm::mat3 M = gltf_to_bc();   // its own inverse: BC -> glTF here
-    const glm::vec3 to_eye = glm::transpose(R) * (eye - c);
-    const float len = glm::length(to_eye);
-    const glm::vec3 e_g = M * (len > 0.0f ? to_eye / len : glm::vec3(0, 0, 1));
-    std::size_t best = 0;
-    float best_dot = -2.0f;
-    for (std::size_t i = 0; i < view_dirs_gltf.size(); ++i) {
-        const float d = glm::dot(view_dirs_gltf[i], e_g);
-        if (d > best_dot) { best_dot = d; best = i; }
-    }
-    const ViewBasis b = make_view_basis(view_dirs_gltf[best]);
-    const glm::vec3 right_w = R * (M * b.right), up_w = R * (M * b.up);
-    return ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(right_w, static_cast<float>(best)),
-                       glm::vec4(up_w, dither)};
+    return make_impostor(make_impostor_views(view_dirs_gltf), eye, c, R, r, dither);
 }
 
 int impostor_grid_for(std::size_t view_count) {
@@ -396,46 +383,37 @@ float impostor_fade_alpha(float dither) {
 }
 
 ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf) {
-    const glm::mat3 M = gltf_to_bc();
     ImpostorViews v;
     v.dirs = view_dirs_gltf;
-    for (const glm::vec3& d : view_dirs_gltf) {
-        const ViewBasis b = make_view_basis(d);
-        v.right_bc.push_back(M * b.right);
-        v.up_bc.push_back(M * b.up);
-    }
+    v.grid = impostor_grid_for(view_dirs_gltf.size());
     return v;
 }
 
 ImpostorGpu make_impostor(const ImpostorViews& views, const glm::vec3& eye, const glm::vec3& c,
                           const glm::mat3& R, float r, float dither) {
-    // make_impostor above, step for step (renderer/glm_exact.h replicas).
-    using glm_exact::dot3;
-    const glm::mat3 M = gltf_to_bc();
-    const glm::vec3 w(eye.x - c.x, eye.y - c.y, eye.z - c.z);
-    const glm::vec3 to_eye = glm_exact::mul_transposed(R, w);
-    const float len = std::sqrt(dot3(to_eye.x, to_eye.y, to_eye.z, to_eye.x, to_eye.y, to_eye.z));
-    const glm::vec3 u = len > 0.0f ? glm::vec3(to_eye.x / len, to_eye.y / len, to_eye.z / len)
-                                   : glm::vec3(0, 0, 1);
-    const glm::vec3 e_g = glm_exact::mul(M, u);
-    std::size_t best = 0;
-    float best_dot = -2.0f;
-    for (std::size_t i = 0; i < views.dirs.size(); ++i) {
-        const glm::vec3& vd = views.dirs[i];
-        const float d = dot3(vd.x, vd.y, vd.z, e_g.x, e_g.y, e_g.z);
-        if (d > best_dot) { best_dot = d; best = i; }
-    }
-    const glm::vec3 right_w = glm_exact::mul(R, views.right_bc[best]);
-    const glm::vec3 up_w = glm_exact::mul(R, views.up_bc[best]);
-    return ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(right_w, static_cast<float>(best)),
-                       glm::vec4(up_w, dither)};
+    // The rock's glTF axes in render space: Q = R * gltf_to_bc(), whose
+    // columns are -R[0], R[2], R[1] ((x,y,z)_gltf -> (-x,z,y)_BC).
+    const glm::vec3 qx(-R[0].x, -R[0].y, -R[0].z);
+    const glm::vec3& qy = R[2];
+    const glm::vec3& qz = R[1];
+    const float wx = eye.x - c.x, wy = eye.y - c.y, wz = eye.z - c.z;
+    glm::vec3 e(qx.x * wx + qx.y * wy + qx.z * wz, qy.x * wx + qy.y * wy + qy.z * wz,
+                qz.x * wx + qz.y * wy + qz.z * wz);   // transpose(Q) * (eye - c)
+    const float len = std::sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
+    e = len > 0.0f ? glm::vec3(e.x / len, e.y / len, e.z / len) : glm::vec3(0.0f, 1.0f, 0.0f);
+    const ViewBlend b = view_blend(e, views.grid);
+    return ImpostorGpu{glm::vec4(c, r * 1.02f), glm::vec4(qx, static_cast<float>(views.grid)),
+                       glm::vec4(qy, dither),
+                       glm::vec4(static_cast<float>(b.view[0]), static_cast<float>(b.view[1]),
+                                 static_cast<float>(b.view[2]), 0.0f),
+                       glm::vec4(b.w[0], b.w[1], b.w[2], 0.0f)};
 }
 
 void FarField::set_dials(const FarDials& d) { dials_ = d; }
 
 void FarField::set_catalogue(std::vector<CatalogueRock> cat, std::vector<glm::vec3> view_dirs_gltf) {
     catalogue_ = std::move(cat);
-    view_dirs_ = std::move(view_dirs_gltf);
+    views_ = make_impostor_views(view_dirs_gltf);
 }
 
 void FarField::set_sources(std::vector<DiscSource> s) {
@@ -497,10 +475,10 @@ void FarField::build(const BuildInput& in, FarOutput& out) {
         return index >= 0 && static_cast<std::size_t>(index) < catalogue_.size() &&
                catalogue_[static_cast<std::size_t>(index)].has_impostor;
     };
-    // Step 3: the baked view nearest the eye in the rock's own frame.
+    // Step 3: the baked views around the eye in the rock's own frame, blended.
     auto emit_impostor = [&](int index, const glm::vec3& c, const glm::mat3& R, float r, float w) {
-        if (!has_impostor(index) || view_dirs_.empty()) return;
-        bins[static_cast<std::size_t>(index)].push_back(make_impostor(view_dirs_, eye, c, R, r, -w));
+        if (!has_impostor(index) || views_.grid < 2) return;
+        bins[static_cast<std::size_t>(index)].push_back(make_impostor(views_, eye, c, R, r, -w));
     };
 
     // Step 2: flagged (explicit) rocks.

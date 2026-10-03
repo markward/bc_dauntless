@@ -18,17 +18,8 @@
 
 namespace rock_scenario {
 
-// rockgen's impostor_view_dirs(): 16 Fibonacci-sphere directions, glTF frame.
-inline std::vector<glm::vec3> view_dirs16() {
-    std::vector<glm::vec3> dirs;
-    for (int i = 0; i < 16; ++i) {
-        const float y = 1.0f - 2.0f * (static_cast<float>(i) + 0.5f) / 16.0f;
-        const float r = std::sqrt(std::max(0.0f, 1.0f - y * y));
-        const float phi = static_cast<float>(i) * 2.399963229728653f;
-        dirs.emplace_back(std::cos(phi) * r, y, std::sin(phi) * r);
-    }
-    return dirs;
-}
+// rockgen's impostor_view_dirs(): the 64-view (8x8) octahedral layout, glTF frame.
+inline std::vector<glm::vec3> view_dirs64() { return renderer::far::oct_view_dirs(8); }
 
 // Beol 4's "Asteroid Field 1" as density.py pushes it: a sphere with the
 // tile_haze_edge_frac / tile_haze_noise_* defaults, centred at the origin.
@@ -50,7 +41,7 @@ inline renderer::rockfield::NearCatalogue near_catalogue() {
     c.small_bound_mu = {57.1f, 50.0f, 55.0f, 60.0f, 52.0f, 57.1f, 49.0f, 58.0f};
     c.large_rocks = {40, 41, 42, 43};
     c.large_bound_mu = {57.1f, 61.0f, 54.0f, 57.1f};
-    c.view_dirs_gltf = view_dirs16();
+    c.view_dirs_gltf = view_dirs64();
     return c;
 }
 

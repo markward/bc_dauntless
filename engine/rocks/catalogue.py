@@ -103,8 +103,9 @@ def load() -> tuple[Rock, ...]:
 
 
 def impostor_view_dirs() -> tuple:
-    """The 16 impostor bake view directions (far-tier plan Task 9), read
-    from catalogue.json at USE and memoised per root like load()."""
+    """The 64 impostor bake view directions (an 8x8 octahedral layout,
+    rock-blend 2026-10-03; far-tier plan Task 9), read from catalogue.json at
+    USE and memoised per root like load()."""
     root = catalogue_root()
     key = str(root)
     if key in _memo_view_dirs:

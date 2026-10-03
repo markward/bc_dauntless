@@ -113,7 +113,7 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
     out.sprites.clear();
     out.sprites_fading.clear();
     out.count = out.fading = out.tiles = 0;
-    if (view_dirs_.empty() || sources_.empty() || collections_.empty() || dials_.max_sprites <= 0)
+    if (views_.grid < 2 || sources_.empty() || collections_.empty() || dials_.max_sprites <= 0)
         return;
 
     const MidDials& m = dials_;

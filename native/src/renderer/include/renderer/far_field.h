@@ -163,17 +163,23 @@ struct FarDials {
     int haze_res_divisor = 4;
 };
 
+// One impostor instance (rock-blend, 2026-10-03). The shader draws a
+// camera-facing quad and samples the three blended views at the rock-frame
+// point each fragment's view ray crosses that view's image plane, so it needs
+// the rock's own axes, not a per-view basis.
 struct ImpostorGpu {
-    glm::vec4 centre_half;   // xyz render, w half-size GU
-    glm::vec4 right_view;    // xyz right_w, w = view index
-    glm::vec4 up_dither;     // xyz up_w, w = signed dither
+    glm::vec4 centre_half;     // xyz render, w half-size GU (the bake's half extent)
+    glm::vec4 axis_x_grid;     // xyz: the rock's glTF +x axis in render space; w: atlas grid (views per side)
+    glm::vec4 axis_y_dither;   // xyz: the rock's glTF +y axis in render space; w: signed dither
+    glm::vec4 views;           // xyz: the three blended view indices (far::view_blend); w: 0
+    glm::vec4 weights;         // xyz: their weights (sum 1, heaviest first); w: 0
 };
-static_assert(sizeof(ImpostorGpu) == 48, "ImpostorGpu is a 48-byte GPU instance");
+static_assert(sizeof(ImpostorGpu) == 80, "ImpostorGpu is an 80-byte GPU instance");
 
 struct ImpostorBin { int rock = 0; std::vector<ImpostorGpu> items; };
 
 // Rock fade (2026-10-03): a TRANSLUCENT impostor (FarPass::
-// render_impostors_blended) keeps its signed dither in up_dither.w and draws
+// render_impostors_blended) keeps its signed dither in axis_y_dither.w and draws
 // with alpha = the coverage that dither's screen door would have kept: -d
 // fading in (d < 0), 1 - d fading out (d > 0), 1 when solid (d == 0).
 // opaque.frag's blend path computes exactly this; keep the two identical.
@@ -235,20 +241,20 @@ ViewBlend view_blend(const glm::vec3& eye_dir_gltf, int grid);
 // The impostor instance for a rock at render-space centre c, rotation R
 // (rock -> render), radius r, seen from `eye`, with signed dither `dither`
 // (0 = solid; >0 a mesh-side fade keeping the upper 1-d; <0 an impostor
-// fading in keeping the lower |d|). Chooses the baked view nearest the eye.
-// `view_dirs_gltf` must be non-empty.
+// fading in keeping the lower |d|). Blends the baked views around the eye
+// (far::view_blend). `view_dirs_gltf` must be an oct layout (square count).
 ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const glm::vec3& eye,
                           const glm::vec3& c, const glm::mat3& R, float r, float dither);
 
-// The per-view part of make_impostor, computed once per view-direction set
-// (rock fields: per catalogue / view-dirs push, not per sprite).
+// The per-view-set part of make_impostor, computed once per view-direction
+// set (rock fields: per catalogue / view-dirs push, not per sprite).
 struct ImpostorViews {
-    std::vector<glm::vec3> dirs;                // glTF frame
-    std::vector<glm::vec3> right_bc, up_bc;     // gltf_to_bc() * make_view_basis(dir).right / .up
+    std::vector<glm::vec3> dirs;   // glTF frame
+    int grid = 0;                  // impostor_grid_for(dirs.size()); 0: unusable, draw no impostors
 };
 ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf);
-// Bit-identical to make_impostor(views.dirs, ...); `views.dirs` must be
-// non-empty. Scalar (renderer/glm_exact.h) for the Debug build's hot loops.
+// Identical to make_impostor(views.dirs, ...); views.grid must be >= 2.
+// Scalar for the Debug build's hot loops.
 ImpostorGpu make_impostor(const ImpostorViews& views, const glm::vec3& eye, const glm::vec3& c,
                           const glm::mat3& R, float r, float dither);
 
@@ -276,7 +282,7 @@ private:
 
     FarDials dials_;
     std::vector<CatalogueRock> catalogue_;
-    std::vector<glm::vec3> view_dirs_;
+    ImpostorViews views_;
     std::vector<DiscSource> sources_;
     std::vector<DiscSource> active_;     // sources_ whose frame is the viewed one
     std::vector<FlaggedRock> rocks_;

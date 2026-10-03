@@ -27,7 +27,8 @@ namespace renderer {
 namespace {
 
 constexpr GLsizei kInstanceStride = static_cast<GLsizei>(sizeof(far::ImpostorGpu));
-constexpr GLuint  kCentreAttrib = 7;   // impostor.vert a_centre_half..a_up_dither = 7..9
+constexpr GLuint  kCentreAttrib = 7;   // impostor.vert a_centre_half..a_weights = 7..11
+constexpr GLuint  kImpostorAttribs = static_cast<GLuint>(sizeof(far::ImpostorGpu) / 16);
 constexpr GLsizei kSpeckStride = static_cast<GLsizei>(sizeof(SpeckGpu));
 constexpr GLuint  kSpeckAttrib = 7;    // speck.vert a_pos_p, a_albedo_alpha = 7, 8
 constexpr int     kDilatePasses = 8;
@@ -37,16 +38,15 @@ constexpr int     kDilatePasses = 8;
 constexpr float   kHazeUpsampleDepthSharpness = 16.0f;
 
 // Atlas conventions. The bake (native/src/rockgen/src/impostor.cc) writes each
-// 128-px cell with screen y growing DOWN, and assets::upload_image does not
-// flip rows, so atlas row 0 (t = 0) is the TOP of a view.
+// cell with screen y growing DOWN, and assets::upload_image does not flip
+// rows, so atlas row 0 (t = 0) is the TOP of a view.
 //  - u_uv_flip_y = 0: pinned by FarPassGLTest.AtlasOrientation (1 shows the
 //    rock upside down).
-//  - u_normal_flip_g = 1: pinned by FarPassGLTest.LightingSide. opaque.frag's
-//    derivative tangent frame takes B along +v, which on the quad is -up, while
-//    the atlas green stores n.up -- so green is flipped (0 lights the rock from
-//    the wrong side).
+//  - The atlas normal is (n.right, n.up, n.dir) of its view; opaque.frag's
+//    IMPOSTOR_VIEWS path rebuilds it in render space from the view's basis
+//    (no tangent frame, so no green flip). Its sense is pinned by
+//    FarPassGLTest.LightingSide.
 constexpr int kUvFlipY = 0;
-constexpr int kNormalFlipG = 1;
 
 GLuint make_1x1(const std::uint8_t rgba[4]) {
     GLuint t = 0;
@@ -199,8 +199,8 @@ const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
 void FarPass::ensure_geometry() {
     if (vao_ != 0) return;
     // Strip order (-1,-1), (-1,+1), (+1,-1), (+1,+1): the first triangle's
-    // normal is up x right, which points toward the eye along the baked view,
-    // so the quad is front-facing (CCW) under the pipeline's back-face cull.
+    // normal is up x right, which impostor.vert points at the eye, so the
+    // quad is front-facing (CCW) under the pipeline's back-face cull.
     const float corners[8] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f};
     GLuint vao = 0, vbo = 0, ibo = 0;
     glGenVertexArrays(1, &vao);
@@ -212,7 +212,7 @@ void FarPass::ensure_geometry() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
     glBindBuffer(GL_ARRAY_BUFFER, ibo);
-    for (GLuint k = 0; k < 3; ++k) {
+    for (GLuint k = 0; k < kImpostorAttribs; ++k) {
         glEnableVertexAttribArray(kCentreAttrib + k);
         glVertexAttribPointer(kCentreAttrib + k, 4, GL_FLOAT, GL_FALSE, kInstanceStride,
                               reinterpret_cast<void*>(static_cast<std::uintptr_t>(k * 16)));
@@ -272,9 +272,7 @@ void FarPass::draw_impostors(const std::vector<far::ImpostorBin>& bins,
     s.set_int("u_specular_map", 2);
     s.set_int("u_specular_enabled", 0);
     s.set_int("u_normal_map", 4);
-    s.set_int("u_normal_enabled", 1);
-    s.set_float("u_normal_strength", 1.0f);
-    s.set_int("u_normal_flip_g", kNormalFlipG);
+    s.set_int("u_normal_enabled", 0);   // IMPOSTOR_VIEWS blends the atlas normal itself
     s.set_int("u_coverage_cutout", 1);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, black_texture_);
@@ -314,7 +312,7 @@ void FarPass::draw_impostors(const std::vector<far::ImpostorBin>& bins,
 
     glBindVertexArray(vao_);
     for (std::size_t d = 0; d < draws.size(); ++d) {
-        for (GLuint k = 0; k < 3; ++k) {
+        for (GLuint k = 0; k < kImpostorAttribs; ++k) {
             glVertexAttribPointer(
                 kCentreAttrib + k, 4, GL_FLOAT, GL_FALSE, kInstanceStride,
                 reinterpret_cast<void*>(static_cast<std::uintptr_t>(offset[d] + k * 16)));

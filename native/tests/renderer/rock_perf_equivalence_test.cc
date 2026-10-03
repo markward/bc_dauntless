@@ -21,6 +21,18 @@
 // every byte and the order; the split itself is pinned by
 // NearBuild.OuterFadeBillboardsAreTranslucent and
 // MidFade.EveryFadeIsTranslucentAndDrawsFarToNear.
+//
+// Rock blend (2026-10-03): the impostor instance changed shape (48 -> 80
+// bytes: the rock's axes and a 3-view blend over the 64-view octahedral
+// layout, instead of one nearest view's posed basis over 16 Fibonacci
+// views), so the BUILD digests (near slow/fast/caps, mid) were re-recorded
+// DELIBERATELY from the rock-blend implementation. Nothing else moved: the
+// contacts and stream digests are still the ee82c35c values, the mesh bins
+// are unchanged, and MidSnap.LargeSpheresAndBeltsAreUnchanged re-encodes
+// each new mid instance into the pre-blend one and still matches its
+// pre-blend recording -- same sprites, poses, dithers and order. (The bytes
+// here cannot be re-encoded that way: the instance keeps two of the rock's
+// axes and the third, rebuilt by a cross product, is not bit-exact.)
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cinttypes>
@@ -218,7 +230,7 @@ TEST(RockPerfEquivalence, NearSlowFlightMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/false, /*caps=*/false);
     EXPECT_GT(r.contacts_large + r.contacts_small, 0) << "the run must exercise contacts";
     EXPECT_GT(r.fading, 0) << "the run must build translucent billboards (the merge)";
-    expect_near("slow", r, 0x32b35fece022b324ull, 0xdf39b4a12bf4af85ull, 0x8d90bab75baf5c86ull);
+    expect_near("slow", r, 0xc86a10f0db0d5e9eull, 0xdf39b4a12bf4af85ull, 0x8d90bab75baf5c86ull);
 }
 
 TEST(RockPerfEquivalence, NearFastFlightMatchesTheRecordedDigests) {
@@ -226,13 +238,13 @@ TEST(RockPerfEquivalence, NearFastFlightMatchesTheRecordedDigests) {
     EXPECT_GT(r.contacts_large, 0);
     EXPECT_GT(r.contacts_small, 0);
     EXPECT_GT(r.fading, 0) << "the run must build translucent billboards (the merge)";
-    expect_near("fast", r, 0x3c17112b6b47cbdaull, 0x9368168741730520ull, 0x9d8b4ece39601a8bull);
+    expect_near("fast", r, 0xaa13b01220ad54fbull, 0x9368168741730520ull, 0x9d8b4ece39601a8bull);
 }
 
 TEST(RockPerfEquivalence, NearCapsBindingMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/true, /*caps=*/true);
     EXPECT_GT(r.capped_steps, 0) << "the per-step touch cap must bind";
-    expect_near("caps", r, 0x6a7ff5fc17713837ull, 0xefbcbac817d4349cull, 0x9e23d1b0ea412383ull);
+    expect_near("caps", r, 0xaf6e541d06b59f8cull, 0xefbcbac817d4349cull, 0x9e23d1b0ea412383ull);
 }
 
 // ---- Mid band ---------------------------------------------------------------
@@ -275,7 +287,7 @@ struct MidRun { std::uint64_t digest = 0; int sprites = 0, builds = 0; rockfield
 MidRun run_mid(bool resend) {
     rockfield::MidField f;
     f.set_collections(rock_scenario::mid_collections());
-    f.set_view_dirs(rock_scenario::view_dirs16());
+    f.set_view_dirs(rock_scenario::view_dirs64());
     std::vector<far::DiscSource> sources{rock_scenario::beol4_field(), small_cluster()};
     f.set_sources(sources);
     // Pinned to the mid_in_lo_gu/mid_in_hi_gu defaults in effect when these
@@ -355,7 +367,7 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
                 r.builds, r.sprites);
     EXPECT_GT(r.sprites, 0);
     EXPECT_GT(r.fading, 0) << "the run must build translucent sprites";
-    EXPECT_EQ(r.digest, 0x433d292793849a18ull) << "drawn mid sprites changed";
+    EXPECT_EQ(r.digest, 0x20de9ab27334d780ull) << "drawn mid sprites changed";
 }
 
 // ---- The live call pattern (coordinator review 2026-10-03) -----------------
@@ -365,7 +377,7 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
 TEST(RockPerfEquivalence, NearSameSourcesEveryFrameKeepsTheIncrementalStream) {
     const NearRun base = run_near(/*fast=*/false, /*caps=*/false);
     const NearRun live = run_near(/*fast=*/false, /*caps=*/false, /*resend=*/true);
-    expect_near("slow, sources every frame", live, 0x32b35fece022b324ull, 0xdf39b4a12bf4af85ull,
+    expect_near("slow, sources every frame", live, 0xc86a10f0db0d5e9eull, 0xdf39b4a12bf4af85ull,
                 0x8d90bab75baf5c86ull);
     // 720 streams x 2 classes at 6-25 GU/s: a full pass only every ~2 GU of
     // travel (plus the dial changes) -- 1,440 if every frame were full.
@@ -376,7 +388,7 @@ TEST(RockPerfEquivalence, NearSameSourcesEveryFrameKeepsTheIncrementalStream) {
 TEST(RockPerfEquivalence, MidSameSourcesEveryFrameKeepsTheTileCache) {
     const MidRun base = run_mid(/*resend=*/false);
     const MidRun live = run_mid(/*resend=*/true);
-    EXPECT_EQ(live.digest, 0x433d292793849a18ull) << "drawn mid sprites changed";
+    EXPECT_EQ(live.digest, 0x20de9ab27334d780ull) << "drawn mid sprites changed";
     EXPECT_EQ(live.cache.fills, base.cache.fills) << "re-pushing the same sources refilled the cache";
 }
 
@@ -386,7 +398,7 @@ TEST(RockPerfEquivalence, MidMovedSourceStillClearsTheCache) {
     rockfield::MidField a, b;
     for (auto* f : {&a, &b}) {
         f->set_collections(rock_scenario::mid_collections());
-        f->set_view_dirs(rock_scenario::view_dirs16());
+        f->set_view_dirs(rock_scenario::view_dirs64());
     }
     rockfield::MidBuildInput in;
     in.viewport_h = 1080.0f;

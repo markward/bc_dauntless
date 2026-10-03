@@ -2,6 +2,7 @@
 // Far tier spec §2: sources, haze and the per-camera build (flagged rocks).
 #include <gtest/gtest.h>
 #include <renderer/far_field.h>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
@@ -76,8 +77,7 @@ far::FarField field_with_catalogue() {
     std::vector<far::CatalogueRock> cat(8);
     for (auto& c : cat) c.has_impostor = true;
     cat[7].avg_albedo = glm::vec3(0.1f, 0.2f, 0.3f);
-    f.set_catalogue(cat, {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0},
-                          {0, 1, 0}, {0, -1, 0}, {0.6f, 0.8f, 0}, {-0.6f, -0.8f, 0}});
+    f.set_catalogue(cat, far::oct_view_dirs(8));
     return f;
 }
 }  // namespace
@@ -104,7 +104,7 @@ TEST(FarFieldBuild, FlaggedRockFadesThroughTheLadder) {
     ASSERT_EQ(out.impostors.size(), 1u);
     EXPECT_EQ(out.impostors[0].rock, 7);
     EXPECT_NEAR(out.impostors[0].items[0].centre_half.w, 2.0f * 1.02f, 1e-3f);
-    EXPECT_FLOAT_EQ(out.impostors[0].items[0].up_dither.w, -1.0f);
+    EXPECT_FLOAT_EQ(out.impostors[0].items[0].axis_y_dither.w, -1.0f);
     dist = 5000.0f; f.build(in, out);                          // p ~ 0.69 px: speck
     EXPECT_TRUE(out.impostors.empty());
     ASSERT_EQ(out.specks.size(), 1u);
@@ -128,9 +128,14 @@ TEST(FarFieldBuild, ImpostorViewFacesTheEye) {
     f.build(in, out);
     ASSERT_EQ(out.impostors.size(), 1u);
     const auto& g = out.impostors[0].items[0];
-    // The baked view direction (cross(up, right)) must point back at the eye.
-    const glm::vec3 view_dir = glm::cross(glm::vec3(g.up_dither), glm::vec3(g.right_view));
-    EXPECT_GT(glm::dot(glm::normalize(view_dir), glm::vec3(0, -1, 0)), 0.99f);
+    // The blended views surround the eye's direction in the rock's frame:
+    // their weighted direction points back at the eye.
+    const glm::vec3 ax(g.axis_x_grid), ay(g.axis_y_dither);
+    const glm::mat3 Q(ax, ay, glm::cross(ax, ay));   // rock glTF -> render
+    EXPECT_EQ(g.axis_x_grid.w, 8.0f);
+    glm::vec3 dir(0.0f);
+    for (int k = 0; k < 3; ++k) dir += g.weights[k] * (Q * far::oct_view_dir(static_cast<int>(g.views[k]), 8));
+    EXPECT_GT(glm::dot(glm::normalize(dir), glm::vec3(0, -1, 0)), 0.97f);
 }
 
 TEST(FarFieldBuild, ViewBasisMatchesTheBakeRule) {
@@ -854,21 +859,43 @@ TEST(FarNoise, ContrastAboveOneIsClampedInM) {
 
 // rock-fields Task 3: the impostor emit, shared with the near band.
 TEST(FarImpostor, MakeImpostorDitherAndSize) {
-    const std::vector<glm::vec3> dirs = {glm::vec3(0, 0, 1), glm::vec3(0, 0, -1)};
-    const auto g = far::make_impostor(dirs, glm::vec3(0, 0, 10), glm::vec3(0), glm::mat3(1.0f),
-                                      2.0f, -0.25f);
+    const auto g = far::make_impostor(far::oct_view_dirs(8), glm::vec3(0, 0, 10), glm::vec3(0),
+                                      glm::mat3(1.0f), 2.0f, -0.25f);
     EXPECT_FLOAT_EQ(g.centre_half.w, 2.0f * 1.02f);
-    EXPECT_FLOAT_EQ(g.up_dither.w, -0.25f);
+    EXPECT_FLOAT_EQ(g.axis_y_dither.w, -0.25f);
 }
 
-TEST(FarImpostor, MakeImpostorPicksTheViewNearestTheEye) {
-    // Eye on BC +Y == glTF +Z (gltf_to_bc maps (x,y,z) -> (-x,z,y)).
-    const std::vector<glm::vec3> dirs = {glm::vec3(0, 0, -1), glm::vec3(1, 0, 0),
-                                         glm::vec3(0, 0, 1)};
-    const auto g = far::make_impostor(dirs, glm::vec3(0, 50, 0), glm::vec3(0), glm::mat3(1.0f),
-                                      1.0f, 0.0f);
-    EXPECT_EQ(g.right_view.w, 2.0f);
-    EXPECT_EQ(glm::vec3(g.centre_half), glm::vec3(0));
+// rock-blend: the instance carries the rock's glTF axes in render space
+// (gltf_to_bc maps (x,y,z) -> (-x,z,y), then R), the grid, and the
+// view_blend of the eye's direction in the rock's glTF frame.
+TEST(FarImpostor, MakeImpostorCarriesTheRockAxesAndTheBlend) {
+    const glm::mat3 R(glm::rotate(glm::mat4(1.0f), 0.7f, glm::normalize(glm::vec3(0.2f, -0.5f, 0.8f))));
+    const glm::vec3 c(3.0f, -2.0f, 1.0f), eye(-40.0f, 25.0f, 9.0f);
+    const auto g = far::make_impostor(far::oct_view_dirs(8), eye, c, R, 1.5f, 0.0f);
+    const glm::mat3 Q = R * far::gltf_to_bc();
+    EXPECT_NEAR(glm::length(glm::vec3(g.axis_x_grid) - Q[0]), 0.0f, 1e-6f);
+    EXPECT_NEAR(glm::length(glm::vec3(g.axis_y_dither) - Q[1]), 0.0f, 1e-6f);
+    EXPECT_EQ(g.axis_x_grid.w, 8.0f);
+    EXPECT_EQ(glm::vec3(g.centre_half), c);
+    const far::ViewBlend want = far::view_blend(glm::normalize(glm::transpose(Q) * (eye - c)), 8);
+    for (int k = 0; k < 3; ++k) {
+        EXPECT_EQ(g.views[k], static_cast<float>(want.view[k])) << k;
+        EXPECT_NEAR(g.weights[k], want.w[k], 1e-5f) << k;
+    }
+    EXPECT_EQ(g.views.w, 0.0f);
+    EXPECT_EQ(g.weights.w, 0.0f);
+}
+
+TEST(FarImpostor, AnEyeOnABakedViewIsThatViewAlone) {
+    // Eye on BC +Y == glTF +Z (gltf_to_bc maps (x,y,z) -> (-x,z,y)): oct
+    // (0, 0) after the y < 0 fold is not a grid point for an even grid, so
+    // use the -y pole (glTF -Y == BC -Z), every grid corner.
+    const auto g = far::make_impostor(far::oct_view_dirs(8), glm::vec3(0, 0, -50), glm::vec3(0),
+                                      glm::mat3(1.0f), 1.0f, 0.0f);
+    EXPECT_EQ(far::oct_view_dir(static_cast<int>(g.views.x), 8), glm::vec3(0, -1, 0));
+    EXPECT_FLOAT_EQ(g.weights.x, 1.0f);
+    EXPECT_EQ(g.weights.y, 0.0f);
+    EXPECT_EQ(g.weights.z, 0.0f);
 }
 
 // ---- Octahedral view blend (rock-blend, 2026-10-03) -------------------------
@@ -994,6 +1021,26 @@ TEST(FarImpostorBlend, AFullRevolutionReturnsTheSameWeights) {
         const auto w1 = by_direction(far::view_blend(rot(axis, a + 6.2831853f, eye), 8), 8);
         EXPECT_LT(l1(w0, w1), 1e-4f) << i;
     }
+}
+
+// Report only: the CPU cost of one billboard instance (view_blend + the
+// rock axes), the per-sprite work of the near / mid / far builds.
+TEST(FarImpostorBlend, MakeImpostorCostReport) {
+    const far::ImpostorViews views = far::make_impostor_views(far::oct_view_dirs(8));
+    std::vector<glm::mat3> Rs;
+    for (int i = 0; i < 256; ++i)
+        Rs.emplace_back(glm::rotate(glm::mat4(1.0f), 0.37f * i, glm::normalize(glm::vec3(0.3f, std::sin(i * 1.0f), 0.8f))));
+    constexpr int kCalls = 200000;
+    float sink = 0.0f;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kCalls; ++i) {
+        const auto g = far::make_impostor(views, glm::vec3(10.0f, -40.0f, 3.0f), glm::vec3(0.01f * i, 0, 0),
+                                          Rs[static_cast<std::size_t>(i) & 255u], 1.0f, 0.0f);
+        sink += g.weights.x;
+    }
+    const double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() / kCalls;
+    std::printf("[impostor blend] make_impostor: %.1f ns per billboard (checksum %.1f)\n", ns, sink);
+    EXPECT_GT(sink, 0.0f);
 }
 
 // ---- Haze start ramp (rock-fields Task 12) ---------------------------------

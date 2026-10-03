@@ -18,7 +18,7 @@ TEST(NearBench, StreamAt100kGups) {
     rockfield::NearCatalogue cat;
     cat.small_rocks = {1, 2, 3}; cat.large_rocks = {10, 11};
     cat.small_bound_mu = {1.0f, 1.0f, 1.0f}; cat.large_bound_mu = {1.0f, 1.0f};
-    cat.view_dirs_gltf = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
+    cat.view_dirs_gltf = renderer::far::oct_view_dirs(8);
     rockfield::NearField f;
     f.set_catalogue(cat);
     f.set_sources({s});

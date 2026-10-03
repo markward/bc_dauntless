@@ -50,7 +50,7 @@ struct MidOutput {
     std::vector<far::ImpostorBin> sprites;
     // Rock fade (2026-10-03): every sprite in a fade (L0 in, the level
     // crossfades, L2 out), drawn TRANSLUCENT (FarPass::
-    // render_impostors_blended; alpha = far::impostor_fade_alpha(up_dither.w)
+    // render_impostors_blended; alpha = far::impostor_fade_alpha(axis_y_dither.w)
     // = the level weight; the item keeps mid_level_dither). Far to near: by
     // fade band (the far end of the ramp the sprite is on) farthest first,
     // then atlas ascending; each bin's items farthest first.
@@ -71,8 +71,9 @@ public:
     void set_dials(const MidDials&);
     const MidDials& dials() const { return dials_; }
     void set_collections(std::vector<MidCollection>);   // atlas_index = FarPass atlas slot
-    // The collection bake's view directions (glTF frame, as FarField's).
-    // Empty: build() emits nothing (far::make_impostor needs at least one).
+    // The collection bake's view directions (glTF frame, as FarField's): an
+    // octahedral layout (a square count). Otherwise -- empty included --
+    // build() emits nothing.
     void set_view_dirs(std::vector<glm::vec3> view_dirs_gltf);
     // The far tier's active sources (FarField::active_sources(), system coords).
     void set_sources(const std::vector<far::DiscSource>& active);

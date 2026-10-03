@@ -2,6 +2,7 @@
 // Rock fields (docs/superpowers/specs/2026-10-02-rock-fields-design.md §3):
 // the mid band's nested collection tiles.
 #include <gtest/gtest.h>
+#include <utility>
 #include <renderer/rock_mid.h>
 #include "rock_fade_merge.h"
 #include <algorithm>
@@ -27,7 +28,7 @@ std::vector<rockfield::MidCollection> collections() {
     return c;
 }
 std::vector<glm::vec3> view_dirs() {
-    return {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
+    return far::oct_view_dirs(8);
 }
 rockfield::MidField field(const std::vector<far::DiscSource>& sources,
                           const rockfield::MidDials& d = {}) {
@@ -127,8 +128,8 @@ TEST(MidTiles, DeterministicAndDensityDriven) {
             const auto& x = ma[i].items[j];
             const auto& y = mb[i].items[j];
             EXPECT_EQ(x.centre_half, y.centre_half);
-            EXPECT_EQ(x.right_view, y.right_view);
-            EXPECT_EQ(x.up_dither, y.up_dither);
+            EXPECT_EQ(x.axis_x_grid, y.axis_x_grid);
+            EXPECT_EQ(x.axis_y_dither, y.axis_y_dither);
         }
     }
     // Full density => every sprite is a dense (variant 2) collection, slots 32..47.
@@ -227,7 +228,7 @@ TEST(MidTiles, WeightAndDitherFollowTheJitteredSprite) {   // final review 3
             }
             ASSERT_GE(lvl, 0);
             EXPECT_GT(rockfield::mid_level_weight(lvl, dist, d), 0.0f) << dist;
-            EXPECT_NEAR(g.up_dither.w, rockfield::mid_level_dither(lvl, dist, d), 1e-3f) << dist;
+            EXPECT_NEAR(g.axis_y_dither.w, rockfield::mid_level_dither(lvl, dist, d), 1e-3f) << dist;
             ++checked;
         }
     EXPECT_GT(checked, 100);
@@ -245,7 +246,7 @@ TEST(MidTiles, SpritesSizedFromTheirTile) {
         for (const auto& g : b.items) {
             EXPECT_GE(g.centre_half.w, lo);
             EXPECT_LE(g.centre_half.w, hi);
-            EXPECT_GE(g.up_dither.w, -1.0f); EXPECT_LE(g.up_dither.w, 1.0f);
+            EXPECT_GE(g.axis_y_dither.w, -1.0f); EXPECT_LE(g.axis_y_dither.w, 1.0f);
         }
 }
 
@@ -315,14 +316,41 @@ std::vector<far::ImpostorGpu> items_of(const rockfield::MidOutput& o) {
     for (const auto& b : merged(o)) v.insert(v.end(), b.items.begin(), b.items.end());
     return v;
 }
+// The pre-blend (before rock-blend, 2026-10-03) instance's view vec4s for
+// `g`: the baked view nearest the eye among the six axis directions these
+// digests were recorded with, its basis posed by the rock's rotation R --
+// recovered from the new instance's rock axes (R = Q * gltf_to_bc(), Q's
+// third column their cross product). So the digest below still pins
+// everything the pre-blend build emitted: same sprites, places, sizes,
+// rotations, dithers and order.
+std::pair<glm::vec4, glm::vec4> legacy_view(const far::ImpostorGpu& g, const glm::vec3& eye) {
+    const std::vector<glm::vec3> dirs = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
+    const glm::vec3 q0(g.axis_x_grid), q1(g.axis_y_dither);
+    const glm::mat3 M = far::gltf_to_bc();
+    const glm::mat3 R = glm::mat3(q0, q1, glm::cross(q0, q1)) * M;
+    const glm::vec3 c(g.centre_half);
+    const glm::vec3 to_eye = glm::transpose(R) * (eye - c);
+    const float len = glm::length(to_eye);
+    const glm::vec3 e_g = M * (len > 0.0f ? to_eye / len : glm::vec3(0, 0, 1));
+    std::size_t best = 0;
+    float best_dot = -2.0f;
+    for (std::size_t i = 0; i < dirs.size(); ++i)
+        if (glm::dot(dirs[i], e_g) > best_dot) { best_dot = glm::dot(dirs[i], e_g); best = i; }
+    const far::ViewBasis b = far::make_view_basis(dirs[best]);
+    return {glm::vec4(R * (M * b.right), static_cast<float>(best)), glm::vec4(R * (M * b.up), g.axis_y_dither.w)};
+}
+
 // Order-sensitive digest of a build (solid + translucent, merged in the
-// build's order from `in`'s eye): atlas slots and every float, rounded.
+// build's order from `in`'s eye): atlas slots and every float of the
+// pre-blend instance (legacy_view), rounded.
 double digest(const rockfield::MidOutput& o, const rockfield::MidBuildInput& in) {
+    const glm::vec3 eye = glm::vec3(glm::inverse(in.view)[3]);
     double h = 0.0, k = 1.0;
     for (const auto& b : merged(o, in)) {
         h += k * b.rock; k += 0.37;
         for (const auto& g : b.items) {
-            for (const glm::vec4* v : {&g.centre_half, &g.right_view, &g.up_dither})
+            const auto [right_view, up_dither] = legacy_view(g, eye);
+            for (const glm::vec4* v : {&g.centre_half, &right_view, &up_dither})
                 for (int i = 0; i < 4; ++i) { h += k * std::round((*v)[i] * 100.0) / 100.0; k += 0.013; }
         }
     }
@@ -389,8 +417,8 @@ TEST(MidSnap, LevelWeightAndDitherFollowTheSpriteDistance) {
         // The snapped sprite's own drawn point (after the jitter), not the
         // tile's centre nor the source centre.
         const float dist = glm::length(glm::vec3(items[0].centre_half) - eye);
-        EXPECT_NEAR(items[0].up_dither.w, rockfield::mid_level_dither(2, dist, d), 1e-4f);
-        EXPECT_GT(items[0].up_dither.w, 0.0f);
+        EXPECT_NEAR(items[0].axis_y_dither.w, rockfield::mid_level_dither(2, dist, d), 1e-4f);
+        EXPECT_GT(items[0].axis_y_dither.w, 0.0f);
     }
 }
 
@@ -448,7 +476,7 @@ TEST(MidFade, EveryFadeIsTranslucentAndDrawsFarToNear) {
     field({full_sphere()}, d).build(looking_along_y(120.0f), out);
     int solid = 0, fading = 0;
     for (const auto& b : out.sprites)
-        for (const auto& g : b.items) { ++solid; EXPECT_EQ(g.up_dither.w, 0.0f); }
+        for (const auto& g : b.items) { ++solid; EXPECT_EQ(g.axis_y_dither.w, 0.0f); }
     // The far end of the fade band holding distance `dist`.
     const auto band_of = [&](float dist) {
         for (float e : {d.in_hi_gu, d.l0_out_gu, d.l1_out_gu, d.handoff_gu})
@@ -468,7 +496,7 @@ TEST(MidFade, EveryFadeIsTranslucentAndDrawsFarToNear) {
             EXPECT_EQ(band_of(dist), band) << "one band per bin";
             EXPECT_LE(dist, prev_d + 1e-3f) << "far to near within a bin";
             prev_d = dist;
-            ASSERT_NE(g.up_dither.w, 0.0f);
+            ASSERT_NE(g.axis_y_dither.w, 0.0f);
             const float half = g.centre_half.w / 1.02f;
             int lvl = -1;
             for (int l = 0; l < 3; ++l) {
@@ -478,7 +506,7 @@ TEST(MidFade, EveryFadeIsTranslucentAndDrawsFarToNear) {
             ASSERT_GE(lvl, 0);
             const float w = rockfield::mid_level_weight(lvl, dist, d);
             EXPECT_GT(w, 0.0f); EXPECT_LT(w, 1.0f);
-            EXPECT_NEAR(far::impostor_fade_alpha(g.up_dither.w), w, 1e-3f) << dist;
+            EXPECT_NEAR(far::impostor_fade_alpha(g.axis_y_dither.w), w, 1e-3f) << dist;
         }
     }
     EXPECT_GT(solid, 0);

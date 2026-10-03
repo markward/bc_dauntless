@@ -239,7 +239,7 @@ rockfield::NearCatalogue build_cat() {
     rockfield::NearCatalogue k = cat();
     k.small_bound_mu = {57.0f, 57.0f, 57.0f};
     k.large_bound_mu = {57.0f, 57.0f};
-    k.view_dirs_gltf = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
+    k.view_dirs_gltf = renderer::far::oct_view_dirs(8);
     return k;
 }
 bool is_small_rock(int rock) { const auto s = cat().small_rocks; return std::find(s.begin(), s.end(), rock) != s.end(); }
@@ -309,9 +309,9 @@ TEST(NearBuild, OneTierPerRockOutsideFades) {
             const float hi = is_small_rock(b.rock) ? 30.0f : 60.0f;   // billboard_gu
             EXPECT_GE(d, lo - 1e-3f);
             EXPECT_LE(d, hi + 1e-3f);
-            EXPECT_LE(it.up_dither.w, 0.0f);
+            EXPECT_LE(it.axis_y_dither.w, 0.0f);
             if (d > lo + 4.0f + 1e-3f && d < hi - 4.0f - 1e-3f)
-                EXPECT_EQ(it.up_dither.w, 0.0f);                  // weight 1: solid, exactly 0
+                EXPECT_EQ(it.axis_y_dither.w, 0.0f);                  // weight 1: solid, exactly 0
         }
     for (const auto& b : out.billboards_fading) boards += static_cast<int>(b.items.size());
     EXPECT_EQ(meshes, out.mesh_count);
@@ -348,7 +348,7 @@ TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
             const auto& cd = is_small_rock(b.rock) ? dl.small : dl.large;
             const float d = glm::length(glm::vec3(it.centre_half));
             const auto w = weights(b.rock, it);
-            if (it.up_dither.w == 0.0f) { ++solid; EXPECT_EQ(w.billboard, 1.0f) << d; continue; }
+            if (it.axis_y_dither.w == 0.0f) { ++solid; EXPECT_EQ(w.billboard, 1.0f) << d; continue; }
             ++handoff;   // dithered: only while the mesh still draws
             EXPECT_GT(w.mesh, 0.0f) << d;
             EXPECT_LT(d, cd.mesh_gu + 1e-3f);
@@ -368,8 +368,8 @@ TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
             const bool ramping_px = !is_small_rock(b.rock) &&
                 radius_of(it) * kpx / d < dl.large_min_px + rockfield::kNearPixelFadeBand;
             if (!ramping_px) EXPECT_GE(d, outer(b.rock) - outer_fade(b.rock) - 1e-3f);
-            EXPECT_LT(it.up_dither.w, 0.0f);
-            EXPECT_NEAR(far::impostor_fade_alpha(it.up_dither.w), w.billboard, 1e-5f) << d;
+            EXPECT_LT(it.axis_y_dither.w, 0.0f);
+            EXPECT_NEAR(far::impostor_fade_alpha(it.axis_y_dither.w), w.billboard, 1e-5f) << d;
             EXPECT_LE(d, prev_d + 1e-4f) << "far to near within a bin";
             prev_d = d;
         }
@@ -428,12 +428,12 @@ TEST(NearBuild, MeshAndBillboardOfOneRockAgree) {   // same R for both tiers
                     const float s = glm::length(L[0]);
                     const float r = s * 57.0f;
                     const auto want = far::make_impostor(k.view_dirs_gltf, glm::vec3(0), translation(m),
-                                                         L / s, r, b.up_dither.w);
-                    EXPECT_NEAR(glm::length(glm::vec3(want.right_view) - glm::vec3(b.right_view)), 0.0f, 1e-4f);
-                    EXPECT_NEAR(glm::length(glm::vec3(want.up_dither) - glm::vec3(b.up_dither)), 0.0f, 1e-4f);
-                    EXPECT_EQ(want.right_view.w, b.right_view.w);
+                                                         L / s, r, b.axis_y_dither.w);
+                    EXPECT_NEAR(glm::length(glm::vec3(want.axis_x_grid) - glm::vec3(b.axis_x_grid)), 0.0f, 1e-4f);
+                    EXPECT_NEAR(glm::length(glm::vec3(want.axis_y_dither) - glm::vec3(b.axis_y_dither)), 0.0f, 1e-4f);
+                    EXPECT_EQ(want.axis_x_grid.w, b.axis_x_grid.w);
                     EXPECT_NEAR(want.centre_half.w, b.centre_half.w, 1e-5f);
-                    EXPECT_NEAR(m.extra.x + b.up_dither.w, 0.0f, 1e-5f);   // (1 - w_mesh) == w_billboard
+                    EXPECT_NEAR(m.extra.x + b.axis_y_dither.w, 0.0f, 1e-5f);   // (1 - w_mesh) == w_billboard
                     ++pairs;
                 }
         }
@@ -820,10 +820,10 @@ Seen seen_at(const rockfield::NearOutput& out, const glm::vec3& c) {
             if (b.family == rockfield::kNearLargeFamily && same(translation(it))) ++s.meshes;
     for (const auto& b : out.billboards)
         for (const auto& it : b.items)
-            if (same(glm::vec3(it.centre_half))) (it.up_dither.w == 0.0f ? s.solid : s.dithered)++;
+            if (same(glm::vec3(it.centre_half))) (it.axis_y_dither.w == 0.0f ? s.solid : s.dithered)++;
     for (const auto& b : out.billboards_fading)
         for (const auto& it : b.items)
-            if (same(glm::vec3(it.centre_half))) { ++s.fading; s.alpha = far::impostor_fade_alpha(it.up_dither.w); }
+            if (same(glm::vec3(it.centre_half))) { ++s.fading; s.alpha = far::impostor_fade_alpha(it.axis_y_dither.w); }
     return s;
 }
 }
@@ -909,7 +909,7 @@ TEST(NearFarLarge, FarBillboardsFillTheShellAndFadeOutTranslucent) {
             if (is_small_rock(b.rock)) continue;
             const float d = glm::length(glm::vec3(it.centre_half));
             EXPECT_LT(d, dl.large_far_gu - dl.large_far_fade_gu + 1e-3f);
-            if (d > dl.large.billboard_gu + 1.0f) { ++solid_far; EXPECT_EQ(it.up_dither.w, 0.0f) << d; }
+            if (d > dl.large.billboard_gu + 1.0f) { ++solid_far; EXPECT_EQ(it.axis_y_dither.w, 0.0f) << d; }
         }
     for (const auto& b : out.billboards_fading)
         for (const auto& it : b.items) {
@@ -918,7 +918,7 @@ TEST(NearFarLarge, FarBillboardsFillTheShellAndFadeOutTranslucent) {
             EXPECT_GE(d, dl.large_far_gu - dl.large_far_fade_gu - 1e-3f) << "only the outer fade is translucent";
             EXPECT_LE(d, dl.large_far_gu + 1e-3f);
             const auto w = rockfield::near_large_weights(d, radius_of(it) * k / d, dl);
-            EXPECT_NEAR(far::impostor_fade_alpha(it.up_dither.w), w.billboard, 1e-5f) << d;
+            EXPECT_NEAR(far::impostor_fade_alpha(it.axis_y_dither.w), w.billboard, 1e-5f) << d;
             ++fading_far;
         }
     EXPECT_GT(solid_far, 50);

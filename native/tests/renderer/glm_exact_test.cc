@@ -68,14 +68,7 @@ TEST(GlmExact, RotationMatchesGlmRotate) {
 // far::make_impostor with precomputed views (the rock-field hot loops) is
 // bit-identical to the plain one for the same view directions.
 TEST(GlmExact, MakeImpostorWithViewsMatchesThePlainOne) {
-    std::vector<glm::vec3> dirs;
-    for (int i = 0; i < 16; ++i) {   // rockgen's 16 Fibonacci directions
-        const float y = 1.0f - 2.0f * (static_cast<float>(i) + 0.5f) / 16.0f;
-        const float r = std::sqrt(std::max(0.0f, 1.0f - y * y));
-        const float phi = static_cast<float>(i) * 2.399963229728653f;
-        dirs.emplace_back(std::cos(phi) * r, y, std::sin(phi) * r);
-    }
-    dirs.push_back({0.0f, 1.0f, 0.0f});   // the make_view_basis pole branch
+    const std::vector<glm::vec3> dirs = far::oct_view_dirs(8);   // rockgen's 64 views
     const far::ImpostorViews views = far::make_impostor_views(dirs);
     Gen g;
     for (int n = 0; n < 50000; ++n) {

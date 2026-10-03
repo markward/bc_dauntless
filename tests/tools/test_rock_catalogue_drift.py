@@ -30,6 +30,19 @@ def test_manifest_lists_every_collection():
         assert (ROCKS / c["impostor"]["albedo"]).is_file()
         assert (ROCKS / c["impostor"]["normal"]).is_file()
 
+# rock-blend (2026-10-03): every impostor is the 8x8 (64-view) octahedral
+# layout the renderer blends over, at the atlas size of the old 4x4 bake (half
+# the resolution per view): 512 px rocks, 704 px collections.
+def test_impostors_are_64_views_at_the_old_atlas_size():
+    man = json.loads((ROCKS / "catalogue.json").read_text())
+    assert len(man["impostor_view_dirs"]) == 64
+    for r in man["rocks"]:
+        assert r["impostor"]["grid"] == 8, r["id"]
+        assert r["impostor"]["grid"] * r["impostor"]["view_size"] == 512, r["id"]
+    for c in man["collections"]:
+        assert c["impostor"]["grid"] == 8, c["id"]
+        assert c["impostor"]["grid"] * c["impostor"]["view_size"] == 704, c["id"]
+
 def test_samples_regenerate_byte_identical(tmp_path):
     args = [str(BIN), "--recipe", str(ROCKS / "recipe.json"), "--out", str(tmp_path)]
     for s in SAMPLES: args += ["--only", s]

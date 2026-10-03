@@ -111,7 +111,9 @@ A belt at Vesuvi's 0.05 floor gets 5% of this.
 
 **Rendering (reuse).** Meshes via the minors' instanced draw (`MinorPass`, catalogue
 fragments for small, majors for large; lod0/lod1 by pixel size; slow cosmetic tumble).
-Billboards via the far-tier impostor draw (16 baked views, lit through `opaque.frag`).
+Billboards via the far-tier impostor draw (64 baked views on an 8x8 octahedral grid,
+blended 3 at a time so a tumble is a smooth closed loop -- rock-blend 2026-10-03; lit
+through `opaque.frag`).
 Mesh → billboard via the existing screen-door dither; the outer 30 GU / 60 GU edges
 **fade in translucent** (alpha-blended, rock fade 2026-10-03 — originally a dither-in),
 so rocks arrive softly.

@@ -1,6 +1,8 @@
 // native/src/renderer/pipeline.cc
 #include "renderer/pipeline.h"
 
+#include <string>
+
 #include <glad/glad.h>
 
 #include "embedded_opaque_vs.h"
@@ -73,6 +75,17 @@
 
 namespace renderer {
 
+namespace {
+// `src` with "#define <name> 1" inserted right after its #version line.
+std::string with_define(const char* src, const char* name) {
+    std::string out(src);
+    const std::size_t eol = out.find('\n');
+    out.insert(eol == std::string::npos ? out.size() : eol + 1,
+               std::string("#define ") + name + " 1\n");
+    return out;
+}
+}  // namespace
+
 Pipeline::Pipeline() {
     opaque_ = std::make_unique<Shader>(shader_src::opaque_vs, shader_src::opaque_fs);
     skinned_ = std::make_unique<Shader>(shader_src::skinned_vs, shader_src::opaque_fs);
@@ -81,7 +94,11 @@ Pipeline::Pipeline() {
     minor_ = std::make_unique<Shader>(shader_src::minor_vs, shader_src::opaque_fs);
     // Far-tier impostors: a quad per instance, the SAME opaque.frag (far-tier
     // spec §3), so its fixed sampler units are assigned with opaque's too.
-    impostor_ = std::make_unique<Shader>(shader_src::impostor_vs, shader_src::opaque_fs);
+    // Rock-blend (2026-10-03): compiled with IMPOSTOR_VIEWS, which adds the
+    // blended multi-view sampling; every other program compiles the
+    // unchanged source.
+    impostor_ = std::make_unique<Shader>(shader_src::impostor_vs,
+                                         with_define(shader_src::opaque_fs, "IMPOSTOR_VIEWS"));
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the

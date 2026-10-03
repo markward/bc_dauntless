@@ -20,7 +20,7 @@ TEST(MidBench, VastBelt) {
         for (int i = 0; i < 16; ++i) cols.push_back({v * 16 + i, v});
     rockfield::MidField f;
     f.set_collections(cols);
-    f.set_view_dirs({{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}});
+    f.set_view_dirs(renderer::far::oct_view_dirs(8));
     f.set_sources({b});
 
     rockfield::MidBuildInput in;
@@ -77,7 +77,7 @@ TEST(MidBench, VastBelt) {
 TEST(MidBench, InsideAndOutsideBeol4) {
     rockfield::MidField f;
     f.set_collections(rock_scenario::mid_collections());
-    f.set_view_dirs(rock_scenario::view_dirs16());
+    f.set_view_dirs(rock_scenario::view_dirs64());
     f.set_sources({rock_scenario::beol4_field()});
     rockfield::MidBuildInput in;
     in.viewport_h = 1080.0f;

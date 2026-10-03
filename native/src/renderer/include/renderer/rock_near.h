@@ -47,8 +47,9 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // "checkerboarding in"). > 0 = the old dithered crossfade.
     float handoff_fade_gu = 0.0f;
     // Multiplies every near rock's tumble rate (mesh and billboard alike, so
-    // the hand-off stays matched). 0.05: interim while billboards snap
-    // between their 16 baked views (Mark, live 2026-10-03).
+    // the hand-off stays matched). 0.05: interim while billboards snapped
+    // between their 16 baked views (Mark, live 2026-10-03). Billboards now
+    // blend between 64 views (rock-blend), so the dial may go back up live.
     float tumble_scale = 0.05f;
     // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
     // is a real rock). With large_far_gu > large.billboard_gu the large
@@ -97,8 +98,9 @@ struct NearCatalogue {               // pushed with far_set_catalogue
     // a mesh item's scale is radius / bound. A missing or non-positive bound
     // draws no mesh for that slot.
     std::vector<float> small_bound_mu, large_bound_mu;
-    // The impostor bake's view directions (glTF frame, as FarField's). Empty:
-    // no billboards at all (far::make_impostor needs at least one).
+    // The impostor bake's view directions (glTF frame, as FarField's): an
+    // octahedral layout (a square count). Otherwise -- empty included -- no
+    // billboards at all.
     std::vector<glm::vec3> view_dirs_gltf;
 };
 
@@ -121,7 +123,7 @@ struct NearOutput {
     std::vector<far::ImpostorBin> billboards;
     // Rock fade (2026-10-03): billboards fading in from nothing at
     // billboard_gu, drawn TRANSLUCENT (FarPass::render_impostors_blended;
-    // alpha = far::impostor_fade_alpha(up_dither.w) = the billboard weight).
+    // alpha = far::impostor_fade_alpha(axis_y_dither.w) = the billboard weight).
     // Far to near: the class with the larger billboard_gu first, then by
     // catalogue index; each bin's items farthest first.
     std::vector<far::ImpostorBin> billboards_fading;

@@ -48,7 +48,7 @@ public:
     // Rock fade (2026-10-03): the same draw, TRANSLUCENT -- for impostors
     // fading in from (or out to) nothing, where the screen door read as a
     // dot grid. Each item draws premultiplied with alpha =
-    // far::impostor_fade_alpha(up_dither.w) (opaque.frag's u_impostor_blend
+    // far::impostor_fade_alpha(axis_y_dither.w) (opaque.frag's u_impostor_blend
     // path: no dither discard; the coverage cutout stays), blended
     // GL_ONE / GL_ONE_MINUS_SRC_ALPHA, depth-tested WITHOUT depth writes.
     // Bins and items draw in the order given -- the caller sorts far to near.

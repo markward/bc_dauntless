@@ -564,7 +564,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                     ++emitted;
                 }
             }
-            if (cn.w.billboard > 0.0f && !cat_.view_dirs_gltf.empty() && emitted < cd.max_instances) {
+            if (cn.w.billboard > 0.0f && views_.grid >= 2 && emitted < cd.max_instances) {
                 const float dither = cn.w.billboard < 1.0f ? -cn.w.billboard : 0.0f;
                 // Only the hand-off against this rock's own mesh keeps the
                 // screen door (the two must complement exactly); fading in

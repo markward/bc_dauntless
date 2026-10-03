@@ -125,13 +125,21 @@ def test_real_catalogue_loads():
     assert {r.family for r in rocks} == {"silicate", "carbonaceous", "icy", "metallic"}
 
 
-def test_impostor_view_dirs_are_16_unit_vectors():
+def test_impostor_view_dirs_are_the_64_view_octahedral_layout():
+    # rock-blend (2026-10-03): the renderer derives the blend from the layout
+    # (renderer::far::oct_view_dir), so the catalogue's directions must BE it:
+    # view v = 8j + i at oct ((2i-7)/7, (2j-7)/7), glTF frame, pole axis +y.
     rc._memo_view_dirs.clear()
     dirs = rc.impostor_view_dirs()
-    assert len(dirs) == 16
-    for d in dirs:
-        length = sum(c * c for c in d) ** 0.5
-        assert abs(length - 1.0) < 1e-3
+    assert len(dirs) == 64
+    for v, d in enumerate(dirs):
+        i, j = v % 8, v // 8
+        a, b = (2 * i - 7) / 7, (2 * j - 7) / 7
+        x, y, z = a, 1 - abs(a) - abs(b), b
+        if y < 0:
+            x, z = (1 - abs(b)) * (1 if a >= 0 else -1), (1 - abs(a)) * (1 if b >= 0 else -1)
+        n = (x * x + y * y + z * z) ** 0.5
+        assert all(abs(c - w / n) < 1e-6 for c, w in zip(d, (x, y, z))), (v, d)
 
 
 def test_index_of_path_finds_a_real_rock_and_minus_one_for_unknown():

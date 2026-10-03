@@ -1,6 +1,6 @@
 // native/src/rockgen/src/impostor.cc
 //
-// 16-view CPU impostor rasteriser. Single-threaded: correctness (a shared,
+// 64-view (8x8 octahedral) CPU impostor rasteriser. Single-threaded: correctness (a shared,
 // per-view z-buffer resolving overlapping triangles) matters more here than
 // bake speed, and a fixed triangle-then-pixel iteration order is already
 // deterministic without needing disjoint row bands.
@@ -14,8 +14,6 @@
 
 namespace rockgen {
 namespace {
-
-constexpr float kFibonacciAngle = 2.399963229728653f;
 
 /// The orthonormal basis of a camera that LOOKS FROM `dir` toward the
 /// origin: `right`/`up` span the screen plane, `dir` itself is "out of the
@@ -102,14 +100,35 @@ std::uint8_t sample_nearest(const assets::Image& img, const glm::vec2& uv, int c
 
 }  // namespace
 
+namespace {
+float sgn_nz(float v) { return v >= 0.0f ? 1.0f : -1.0f; }
+
+/// Copy of native/src/renderer/far_field.cc:oct_decode (not linked): the unit
+/// direction of octahedral-map point (a, b), glTF frame, pole axis +y.
+glm::vec3 oct_decode(float a, float b) {
+    glm::vec3 n(a, 1.0f - std::abs(a) - std::abs(b), b);
+    if (n.y < 0.0f) {
+        const float x = (1.0f - std::abs(b)) * sgn_nz(a);
+        const float z = (1.0f - std::abs(a)) * sgn_nz(b);
+        n.x = x;
+        n.z = z;
+    }
+    n = glm::normalize(n);
+    return n + glm::vec3(0.0f);   // -0 -> +0: mirror twins stay bit-identical
+}
+}  // namespace
+
 std::vector<glm::vec3> impostor_view_dirs() {
+    // renderer::far::oct_view_dir's layout: view v = j * grid + i at oct
+    // ((2i - (grid-1)) / (grid-1), (2j - (grid-1)) / (grid-1)).
+    constexpr int grid = kImpostorGrid;
+    const float span = static_cast<float>(grid - 1);
     std::vector<glm::vec3> dirs;
-    dirs.reserve(16);
-    for (int i = 0; i < 16; ++i) {
-        const float y = 1.0f - 2.0f * (static_cast<float>(i) + 0.5f) / 16.0f;
-        const float r = std::sqrt(std::max(0.0f, 1.0f - y * y));
-        const float phi = static_cast<float>(i) * kFibonacciAngle;
-        dirs.emplace_back(std::cos(phi) * r, y, std::sin(phi) * r);
+    dirs.reserve(grid * grid);
+    for (int v = 0; v < grid * grid; ++v) {
+        const int i = v % grid, j = v / grid;
+        dirs.push_back(oct_decode(static_cast<float>(2 * i - (grid - 1)) / span,
+                                  static_cast<float>(2 * j - (grid - 1)) / span));
     }
     return dirs;
 }
@@ -121,9 +140,9 @@ Impostor bake_impostor(const assets::MeshCpu& mesh, const RockSurface& s, int vi
 Impostor bake_impostor_parts(const std::vector<ImpostorPart>& parts, int view_size) {
     Impostor out;
     out.view_dirs = impostor_view_dirs();
-    out.grid = 4;
+    out.grid = kImpostorGrid;
     out.view_size = view_size;
-    const int canvas = 4 * view_size;
+    const int canvas = kImpostorGrid * view_size;
 
     out.albedo.width = out.albedo.height = static_cast<std::uint32_t>(canvas);
     out.albedo.format = assets::Image::Format::RGBA8;
@@ -151,12 +170,12 @@ Impostor bake_impostor_parts(const std::vector<ImpostorPart>& parts, int view_si
     const float half_extent = max_r * 1.02f;
     if (half_extent <= 0.0f) return out;
 
-    for (int view = 0; view < 16; ++view) {
+    for (int view = 0; view < kImpostorGrid * kImpostorGrid; ++view) {
         const ViewBasis basis = make_basis(out.view_dirs[view]);
         std::vector<float> depth(static_cast<size_t>(view_size) * static_cast<size_t>(view_size),
                                  -std::numeric_limits<float>::infinity());
-        const int ox = (view % 4) * view_size;
-        const int oy = (view / 4) * view_size;
+        const int ox = (view % kImpostorGrid) * view_size;
+        const int oy = (view / kImpostorGrid) * view_size;
 
         for (size_t pi = 0; pi < parts.size(); ++pi) {
             const assets::MeshCpu& mesh = *parts[pi].mesh;

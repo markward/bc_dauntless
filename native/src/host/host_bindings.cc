@@ -4667,15 +4667,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                    it.centre_half.z);
                       d["half"] = it.centre_half.w;
                       d["atlas"] = bin.rock;
-                      d["view"] = it.right_view.w;
-                      d["dither"] = it.up_dither.w;
+                      d["view"] = it.views.x;   // the heaviest blended view
+                      d["dither"] = it.axis_y_dither.w;
                       out.append(d);
                   }
               return out;
           },
           "TEST-ONLY (rock-fields Task 14): the mid sprites the last drawn camera "
           "built, solid then translucent, [{'centre' (RENDER space), 'half' (GU), "
-          "'atlas' (FarPass slot), 'view' (baked view index), 'dither' (signed; "
+          "'atlas' (FarPass slot), 'view' (heaviest blended view index), 'dither' (signed; "
           "!= 0: translucent)}, ...]. Never call from game code.");
     m.def("far_debug_active_sources",
           []() {

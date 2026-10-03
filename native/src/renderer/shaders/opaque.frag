@@ -1192,6 +1192,84 @@ bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
 // dither derivative-safe, NOT the shader: the coverage-cutout discard just
 // below is still per pixel, so a silhouette edge can still leave partial
 // quads (it tests a texture alpha, not a quad-aligned pattern).
+// Rock impostors blend between baked views (rock-blend, 2026-10-03). Compiled
+// ONLY into the impostor program (Pipeline prepends "#define IMPOSTOR_VIEWS"
+// to this source for it), so every other program sees exactly the old
+// source. impostor.vert draws a camera-facing quad; for each of the three
+// blended views (far::view_blend) the fragment's view ray is intersected with
+// that view's image plane through the rock's centre, and the cell is sampled
+// there. Albedo and normal are blended coverage-weighted; coverage is the
+// weighted sum, tested against a per-pixel threshold so a silhouette that
+// differs between two views cross-dissolves instead of popping.
+#ifdef IMPOSTOR_VIEWS
+flat in vec4 v_imp_centre_half;   // xyz render centre, w half extent
+flat in vec4 v_imp_axis_x_grid;   // xyz rock glTF +x (render), w atlas grid
+flat in vec3 v_imp_axis_y;        // rock glTF +y (render)
+flat in vec3 v_imp_views;
+flat in vec3 v_imp_weights;
+uniform int u_uv_flip_y;          // pinned by FarPassGLTest.AtlasOrientation
+vec4 g_imp_base;                  // blended albedo, a = blended coverage
+vec3 g_imp_normal_ws;             // blended normal (render space)
+
+float imp_sgn(float v) { return v >= 0.0 ? 1.0 : -1.0; }
+// far::oct_decode (glTF frame, pole axis +y).
+vec3 imp_oct_decode(vec2 f) {
+    vec3 n = vec3(f.x, 1.0 - abs(f.x) - abs(f.y), f.y);
+    if (n.y < 0.0) n.xz = vec2((1.0 - abs(f.y)) * imp_sgn(f.x), (1.0 - abs(f.x)) * imp_sgn(f.y));
+    return normalize(n);
+}
+// far::make_view_basis: the bake camera's screen axes for view direction d.
+void imp_basis(vec3 d, out vec3 right, out vec3 up) {
+    vec3 up_ref = abs(d.y) > 0.99 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    right = normalize(cross(up_ref, -d));
+    up = cross(-d, right);
+}
+// The coverage threshold, in [0.25, 0.75]: interleaved gradient noise, so a
+// part of the silhouette only one blended view covers (coverage = its weight)
+// thins out continuously as that weight falls.
+float imp_cover_threshold(vec2 frag) {
+    return 0.25 + 0.5 * fract(52.9829189 * fract(dot(frag, vec2(0.06711056, 0.00583715))));
+}
+void impostor_blend() {
+    vec3 ax = v_imp_axis_x_grid.xyz, ay = v_imp_axis_y;
+    mat3 Q = mat3(ax, ay, cross(ax, ay));   // rock glTF -> render
+    mat3 Qt = transpose(Q);
+    float h = v_imp_centre_half.w;
+    vec3 pl = Qt * (v_position_ws - v_imp_centre_half.xyz);
+    vec3 rl = Qt * normalize(v_position_ws - u_camera_pos_ws);
+    int grid = int(v_imp_axis_x_grid.w + 0.5);
+    float n_side = float(grid), span = float(grid - 1);
+    // Half an atlas texel, in cell units: never filter across into a neighbour.
+    vec2 inset = 0.5 * n_side / vec2(textureSize(u_base_color, 0));
+    vec3 rgb = vec3(0.0), nsum = vec3(0.0);
+    float cov = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        int view = int(v_imp_views[k] + 0.5);
+        int i = view % grid, j = view / grid;
+        vec3 d = imp_oct_decode(vec2(float(2 * i - (grid - 1)), float(2 * j - (grid - 1))) / span);
+        vec3 right, up;
+        imp_basis(d, right, up);
+        float rd = dot(rl, d);
+        float ok = abs(rd) > 1e-4 ? 1.0 : 0.0;
+        vec3 q = pl - rl * (dot(pl, d) / (ok > 0.0 ? rd : 1.0));
+        vec2 st = vec2(dot(q, right), dot(q, up)) / h;
+        float sy = (u_uv_flip_y != 0) ? -st.y : st.y;
+        float inside = (abs(st.x) <= 1.0 && abs(st.y) <= 1.0) ? ok : 0.0;
+        vec2 local = clamp(vec2(st.x, -sy) * 0.5 + 0.5, inset, vec2(1.0) - inset);
+        vec2 uv = (vec2(float(i), float(j)) + local) / n_side;
+        vec4 alb = texture(u_base_color, uv);
+        vec3 nv = texture(u_normal_map, uv).rgb * 2.0 - 1.0;
+        float wa = v_imp_weights[k] * alb.a * inside;
+        rgb += wa * alb.rgb;
+        cov += wa;
+        nsum += wa * (nv.x * right + nv.y * up + nv.z * d);
+    }
+    g_imp_base = vec4(cov > 0.0 ? rgb / cov : vec3(0.0), cov);
+    vec3 nw = Q * nsum;
+    g_imp_normal_ws = dot(nw, nw) > 1e-12 ? normalize(nw) : normalize(v_normal_ws);
+}
+#endif
+
 float bayer4(vec2 frag) {
     ivec2 p = ivec2(mod(frag, 4.0));
     const float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
@@ -1209,7 +1287,12 @@ void main() {
     // placed after the dFdx/dFdy block MEASURED to break the amb_d NaN guard on
     // this driver even with the cutout off (HullClipTest /
     // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
+#ifdef IMPOSTOR_VIEWS
+    impostor_blend();
+    if (u_coverage_cutout != 0 && g_imp_base.a < imp_cover_threshold(gl_FragCoord.xy)) discard;
+#else
     if (u_coverage_cutout != 0 && texture(u_base_color, v_uv).a < 0.5) discard;
+#endif
     vec3 n = normalize(v_normal_ws);
     vec3 V = normalize(u_camera_pos_ws - v_position_ws);
 
@@ -1230,7 +1313,12 @@ void main() {
     // undefined in non-uniform control flow), used by textureGrad below.
     vec3 dpdx_d = dFdx(p_body);
     vec3 dpdy_d = dFdy(p_body);
+#ifdef IMPOSTOR_VIEWS
+    n_shade = g_imp_normal_ws;
+    vec4 base = g_imp_base;
+#else
     vec4 base = texture(u_base_color, v_uv);
+#endif
     // Far tier: a texel kept by the coverage cutout (top of main) is forced
     // opaque so it never reads as an emissive mask.
     if (u_coverage_cutout != 0) { base.a = 1.0; }
