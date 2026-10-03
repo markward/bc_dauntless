@@ -44,8 +44,17 @@ struct MidBuildInput {
     glm::dvec3 anchor_sys{0};      // system position of view space's origin (FarField::anchor())
 };
 struct MidOutput {
-    std::vector<far::ImpostorBin> sprites;   // .rock = atlas index, ascending
-    int count = 0;                           // sprites emitted (after the cap)
+    // .rock = atlas index, ascending. Weight-1 sprites only: solid, dither 0.
+    std::vector<far::ImpostorBin> sprites;
+    // Rock fade (2026-10-03): every sprite in a fade (L0 in, the level
+    // crossfades, L2 out), drawn TRANSLUCENT (FarPass::
+    // render_impostors_blended; alpha = far::impostor_fade_alpha(up_dither.w)
+    // = the level weight; the item keeps mid_level_dither). Far to near: by
+    // fade band (the far end of the ramp the sprite is on) farthest first,
+    // then atlas ascending; each bin's items farthest first.
+    std::vector<far::ImpostorBin> sprites_fading;
+    int count = 0;                           // sprites emitted (after the cap), both lists
+    int fading = 0;                          // of which in sprites_fading
     int tiles = 0;                           // tiles examined: in a level's range and in the frustum
 };
 

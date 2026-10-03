@@ -681,14 +681,19 @@ def rock_summary() -> str:
         m = renderer.minors_stats()
     except Exception:
         return "  rocks: unavailable"
+    # "fading": of the billboards / sprites drawn, how many drew translucent
+    # (rock fade, scope rock.fade.draw) rather than solid or dithered.
     line = ("  rocks: near cells %d (small %d, large %d, ghosted %d) -> "
-            "meshes %d, billboards %d | mid %d sprites (%d tiles) | "
+            "meshes %d, billboards %d, fading %d | "
+            "mid %d sprites (%d tiles), fading %d | "
             "far impostors %d, specks %d | minors %d/%d drawn | "
             "draw calls %d rock + %d minor"
             % (f.get("near_cells", 0), f.get("near_small", 0),
                f.get("near_large", 0), f.get("near_ghosted", 0),
                f.get("near_meshes", 0), f.get("near_billboards", 0),
+               f.get("near_fading", 0),
                f.get("mid_sprites", 0), f.get("mid_tiles", 0),
+               f.get("mid_fading", 0),
                f.get("impostors", 0), f.get("specks", 0),
                m.get("drawn", 0), m.get("minors", 0),
                f.get("draw_calls", 0), m.get("draw_calls", 0)))

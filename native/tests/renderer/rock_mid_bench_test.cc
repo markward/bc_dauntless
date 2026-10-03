@@ -57,7 +57,8 @@ TEST(MidBench, VastBelt) {
                         names[k], eye.x, eye.y, eye.z, total / kBuilds, worst, out.count,
                         out.tiles, d.max_sprites);
             int n = 0;
-            for (const auto& bin : out.sprites) n += static_cast<int>(bin.items.size());
+            for (const auto* list : {&out.sprites, &out.sprites_fading})   // solid + translucent
+                for (const auto& bin : *list) n += static_cast<int>(bin.items.size());
             EXPECT_GT(n, 0) << "the belt drew nothing";
             EXPECT_EQ(n, out.count);
             EXPECT_LE(n, d.max_sprites);
@@ -101,7 +102,7 @@ TEST(MidBench, InsideAndOutsideBeol4) {
         }
         std::printf("[mid bench beol4] %s: build mean=%.3f ms worst=%.3f ms sprites=%d tiles=%d "
                     "bins=%zu\n", cs.name, total / kBuilds, worst, out.count, out.tiles,
-                    out.sprites.size());
+                    out.sprites.size() + out.sprites_fading.size());
     }
     EXPECT_GE(out.count, 0);
 }

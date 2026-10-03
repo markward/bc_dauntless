@@ -135,3 +135,22 @@ def test_mid_dials_reach_the_native_field(host):
     host.far_set_dials({})
     host.frame()
     assert host.far_stats()["mid_sprites"] > 0
+
+
+def test_mid_fades_draw_translucent_in_their_own_scope(host):
+    """Rock fade (2026-10-03): from 1,500 GU the r 1,000 field spans the
+    L0/L1 (450-600 GU) and L1/L2 (1,800-2,400 GU) crossfades, so some drawn
+    sprites are fading -- counted in mid_fading (a part of mid_sprites) and
+    drawn by the blended draw, profiled as rock.fade.draw."""
+    _field(host)
+    _look_from(host, (0.0, 0.0, 1500.0))
+    host.profiler_set_enabled(True)
+    try:
+        for _ in range(6):
+            host.frame()
+        st = host.far_stats()
+        assert 0 < st["mid_fading"] < st["mid_sprites"], st
+        names = {s["name"] for s in host.profiler_scopes()}
+        assert "rock.fade.draw" in names, sorted(names)
+    finally:
+        host.profiler_set_enabled(False)

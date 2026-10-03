@@ -113,7 +113,8 @@ A belt at Vesuvi's 0.05 floor gets 5% of this.
 fragments for small, majors for large; lod0/lod1 by pixel size; slow cosmetic tumble).
 Billboards via the far-tier impostor draw (16 baked views, lit through `opaque.frag`).
 Mesh → billboard via the existing screen-door dither; the outer 30 GU / 60 GU edges
-**dither in**, so rocks arrive softly.
+**fade in translucent** (alpha-blended, rock fade 2026-10-03 — originally a dither-in),
+so rocks arrive softly.
 
 **Collisions.** Large rocks: solid, fixed, **player only**, using the minors' exact swept
 contact (ship box vs rock sphere; no tunnelling below the teleport guard). Native reports
@@ -247,6 +248,23 @@ handful of rulings that change this design's letter without changing its intent:
   distance (after jitter), so no sprite sits nearer than `mid_in_lo_gu`; selection is
   still keyed by the tile. (4) Small-rock shoves use the bare hull box — only large
   contacts inflate to the shield bubble.
+- **Rock fade: alpha instead of the screen door for distant impostors (2026-10-03).**
+  Mark, live inside Beol 4: distant asteroids showed a checkerboard dot grid — in a
+  dense field many impostors are always mid-fade, and the 8 px screen door reads as a
+  grid over black space. Now every mid-sprite fade (L0 in, the level crossfades, L2
+  out) and the near billboards' OUTER fade at `billboard_gu` draw **translucent**
+  (`NearOutput::billboards_fading`, `MidOutput::sprites_fading`;
+  `FarPass::render_impostors_blended`, profiler scope `rock.fade.draw`, after every
+  opaque writer: depth-tested, no depth writes, premultiplied). Alpha is the coverage
+  the item's signed dither would have kept (`far::impostor_fade_alpha`), so every
+  item is byte-identical to before — only which list it is in changed. The screen
+  door stays ONLY where two representations overlap and must complement: the near
+  mesh ↔ billboard hand-off and the far tier's flagged-rock mesh ↔ impostor ladder.
+  Order: mid fading before near fading; mid bins by fade band farthest first, then
+  atlas; near bins by class (larger `billboard_gu` first), then rock; items farthest
+  first. Two overlapping fading sprites of DIFFERENT bins in the SAME band can blend
+  in the wrong order (both alpha < 1, similar grey: accepted). Cost: the band split
+  roughly doubles mid draw calls (Beol 4 inside: 18 → 34 bins, ~4.5 µs CPU each).
 - **Filmic CA fringing left unchanged.** `filmic.frag`'s chromatic-aberration pass
   fringes the dither pattern on near/far mesh↔impostor edges. Investigated and left
   out of scope for this plan; reported for Mark's live check, not fixed here.

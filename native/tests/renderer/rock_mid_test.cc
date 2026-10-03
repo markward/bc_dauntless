@@ -3,6 +3,7 @@
 // the mid band's nested collection tiles.
 #include <gtest/gtest.h>
 #include <renderer/rock_mid.h>
+#include "rock_fade_merge.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -43,9 +44,18 @@ rockfield::MidBuildInput looking_along_y(float fov_deg, glm::vec3 eye = glm::vec
     in.view = glm::lookAt(eye, eye + glm::vec3(0, 1, 0), glm::vec3(0, 0, 1));
     return in;
 }
+// The build's solid + translucent sprites as the one list it emitted before
+// the rock-fade split (rock_fade_merge.h), ordered as the build ordered them
+// from `in`'s eye.
+std::vector<far::ImpostorBin> merged(const rockfield::MidOutput& o,
+                                     const rockfield::MidBuildInput& in = {}) {
+    const glm::vec3 eye = glm::vec3(glm::inverse(in.view)[3]);
+    return rock_fade_merge::merge(o.sprites, o.sprites_fading,
+                                  [eye](const glm::vec3& c) { return glm::length(c - eye); });
+}
 int total(const rockfield::MidOutput& o) {
     int n = 0;
-    for (const auto& b : o.sprites) n += static_cast<int>(b.items.size());
+    for (const auto& b : merged(o)) n += static_cast<int>(b.items.size());
     return n;
 }
 }  // namespace
@@ -99,23 +109,26 @@ TEST(MidTiles, DeterministicAndDensityDriven) {
     EXPECT_NEAR(ratio, 0.05, 0.03) << belt.count << " / " << full_a.count;
 
     ASSERT_EQ(full_a.sprites.size(), full_b.sprites.size());
-    for (std::size_t i = 0; i < full_a.sprites.size(); ++i) {
-        EXPECT_EQ(full_a.sprites[i].rock, full_b.sprites[i].rock);
-        ASSERT_EQ(full_a.sprites[i].items.size(), full_b.sprites[i].items.size());
-        for (std::size_t j = 0; j < full_a.sprites[i].items.size(); ++j) {
-            const auto& x = full_a.sprites[i].items[j];
-            const auto& y = full_b.sprites[i].items[j];
+    ASSERT_EQ(full_a.sprites_fading.size(), full_b.sprites_fading.size());
+    const auto ma = merged(full_a), mb = merged(full_b);
+    ASSERT_EQ(ma.size(), mb.size());
+    for (std::size_t i = 0; i < ma.size(); ++i) {
+        EXPECT_EQ(ma[i].rock, mb[i].rock);
+        ASSERT_EQ(ma[i].items.size(), mb[i].items.size());
+        for (std::size_t j = 0; j < ma[i].items.size(); ++j) {
+            const auto& x = ma[i].items[j];
+            const auto& y = mb[i].items[j];
             EXPECT_EQ(x.centre_half, y.centre_half);
             EXPECT_EQ(x.right_view, y.right_view);
             EXPECT_EQ(x.up_dither, y.up_dither);
         }
     }
     // Full density => every sprite is a dense (variant 2) collection, slots 32..47.
-    for (const auto& b : full_a.sprites) {
+    for (const auto& b : merged(full_a)) {
         EXPECT_GE(b.rock, 32); EXPECT_LE(b.rock, 47);
     }
     // A sparse belt => sparse collections only, slots 0..15.
-    for (const auto& b : belt.sprites) {
+    for (const auto& b : merged(belt)) {
         EXPECT_GE(b.rock, 0); EXPECT_LE(b.rock, 15);
     }
 }
@@ -130,9 +143,10 @@ TEST(MidTiles, OverlappingSourcesDoNotDoublePlace) {
     field({full_sphere(100000.0f, 3), full_sphere(100000.0f, 8)}, d).build(in, two);
     ASSERT_GT(one.count, 0);
     EXPECT_EQ(one.count, two.count);
-    ASSERT_EQ(one.sprites.size(), two.sprites.size());
-    for (std::size_t i = 0; i < one.sprites.size(); ++i)
-        ASSERT_EQ(one.sprites[i].items.size(), two.sprites[i].items.size());
+    const auto m1 = merged(one), m2 = merged(two);
+    ASSERT_EQ(m1.size(), m2.size());
+    for (std::size_t i = 0; i < m1.size(); ++i)
+        ASSERT_EQ(m1[i].items.size(), m2[i].items.size());
 }
 
 TEST(MidTiles, VoidsShowNothing) {
@@ -141,13 +155,13 @@ TEST(MidTiles, VoidsShowNothing) {
     out.count = 99;
     field({}).build(in, out);
     EXPECT_EQ(out.count, 0);
-    EXPECT_TRUE(out.sprites.empty());
+    EXPECT_TRUE(merged(out).empty());
 
     // A source whose density is zero everywhere in range: nothing either.
     rockfield::MidOutput empty_belt;
     field({flat_belt(0.0f)}).build(in, empty_belt);
     EXPECT_EQ(empty_belt.count, 0);
-    EXPECT_TRUE(empty_belt.sprites.empty());
+    EXPECT_TRUE(merged(empty_belt).empty());
 }
 
 TEST(MidTiles, NoViewDirsEmitsNothing) {
@@ -157,7 +171,7 @@ TEST(MidTiles, NoViewDirsEmitsNothing) {
     rockfield::MidOutput out;
     f.build(looking_along_y(90.0f), out);
     EXPECT_EQ(out.count, 0);
-    EXPECT_TRUE(out.sprites.empty());
+    EXPECT_TRUE(merged(out).empty());
 }
 
 TEST(MidTiles, NothingInsideTheNearBand) {   // final review 3: gated on the SPRITE
@@ -170,7 +184,7 @@ TEST(MidTiles, NothingInsideTheNearBand) {   // final review 3: gated on the SPR
         rockfield::MidOutput out;
         field({full_sphere()}, d).build(in, out);
         ASSERT_GT(out.count, 0);
-        for (const auto& b : out.sprites)
+        for (const auto& b : merged(out))
             for (const auto& g : b.items)
                 EXPECT_GE(glm::length(glm::vec3(g.centre_half) - eye), d.in_lo_gu);
     }
@@ -181,7 +195,7 @@ TEST(MidTiles, NothingInsideTheNearBand) {   // final review 3: gated on the SPR
     rockfield::MidOutput out;
     field({full_sphere()}, big).build(in, out);
     ASSERT_GT(out.count, 0);
-    for (const auto& b : out.sprites)
+    for (const auto& b : merged(out))
         for (const auto& g : b.items)
             EXPECT_GE(glm::length(glm::vec3(g.centre_half)), big.in_lo_gu);
 }
@@ -194,7 +208,7 @@ TEST(MidTiles, WeightAndDitherFollowTheJitteredSprite) {   // final review 3
     field({full_sphere()}, d).build(looking_along_y(120.0f), out);
     ASSERT_GT(out.count, 0);
     int checked = 0;
-    for (const auto& b : out.sprites)
+    for (const auto& b : merged(out))
         for (const auto& g : b.items) {
             const float dist = glm::length(glm::vec3(g.centre_half));
             const float half = g.centre_half.w / 1.02f;
@@ -219,7 +233,7 @@ TEST(MidTiles, SpritesSizedFromTheirTile) {
     // half = 0.5 * tile * scale * (0.8 + 0.4u), make_impostor pads by 1.02.
     const float lo = 0.5f * d.l0_tile_gu * 0.8f * 1.02f - 1e-3f;
     const float hi = 0.5f * d.l2_tile_gu * 1.2f * 1.02f + 1e-3f;
-    for (const auto& b : out.sprites)
+    for (const auto& b : merged(out))
         for (const auto& g : b.items) {
             EXPECT_GE(g.centre_half.w, lo);
             EXPECT_LE(g.centre_half.w, hi);
@@ -234,7 +248,7 @@ TEST(MidTiles, CapKeepsTheNearest) {
     field({full_sphere()}, d).build(in, all);
     ASSERT_GT(all.count, 100);
     std::vector<float> dists;
-    for (const auto& b : all.sprites)
+    for (const auto& b : merged(all))
         for (const auto& g : b.items) dists.push_back(glm::length(glm::vec3(g.centre_half)));
     std::sort(dists.begin(), dists.end());
 
@@ -242,7 +256,7 @@ TEST(MidTiles, CapKeepsTheNearest) {
     rockfield::MidOutput capped;
     field({full_sphere()}, d).build(in, capped);
     EXPECT_EQ(capped.count, 50);
-    for (const auto& b : capped.sprites)
+    for (const auto& b : merged(capped))
         for (const auto& g : b.items)
             EXPECT_LE(glm::length(glm::vec3(g.centre_half)), dists[49] + 1e-3f);
 }
@@ -268,7 +282,7 @@ TEST(MidTiles, TelephotoCapHolds) {   // Review Focus 5
     EXPECT_LE(tiny.count, 300);
     EXPECT_LE(tiny.tiles, 3 * 33 * 33 * 33);
     const float capped = 0.5f * 32.0f * 10.0f * std::sqrt(3.0f) + 0.25f * 10.0f * std::sqrt(3.0f);
-    for (const auto& b : tiny.sprites)
+    for (const auto& b : merged(tiny))
         for (const auto& g : b.items) EXPECT_LE(glm::length(glm::vec3(g.centre_half)), capped);
 }
 
@@ -290,13 +304,14 @@ rockfield::MidBuildInput looking_at(glm::vec3 eye, glm::vec3 target, float fov_d
 }
 std::vector<far::ImpostorGpu> items_of(const rockfield::MidOutput& o) {
     std::vector<far::ImpostorGpu> v;
-    for (const auto& b : o.sprites) v.insert(v.end(), b.items.begin(), b.items.end());
+    for (const auto& b : merged(o)) v.insert(v.end(), b.items.begin(), b.items.end());
     return v;
 }
-// Order-sensitive digest of a build: atlas slots and every float, rounded.
-double digest(const rockfield::MidOutput& o) {
+// Order-sensitive digest of a build (solid + translucent, merged in the
+// build's order from `in`'s eye): atlas slots and every float, rounded.
+double digest(const rockfield::MidOutput& o, const rockfield::MidBuildInput& in) {
     double h = 0.0, k = 1.0;
-    for (const auto& b : o.sprites) {
+    for (const auto& b : merged(o, in)) {
         h += k * b.rock; k += 0.37;
         for (const auto& g : b.items) {
             for (const glm::vec4* v : {&g.centre_half, &g.right_view, &g.up_dither})
@@ -324,9 +339,10 @@ TEST(MidSnap, SmallSphereInsideOneL2TileGetsOneSpriteAtItsCentre) {
     EXPECT_GE(items[0].centre_half.w, 0.8f * r * 1.02f - 1e-2f);
     EXPECT_LE(items[0].centre_half.w, 1.2f * r * 1.02f + 1e-2f);
     // Full density at the centre => a dense collection.
-    ASSERT_EQ(out.sprites.size(), 1u);
-    EXPECT_GE(out.sprites[0].rock, 32);
-    EXPECT_LE(out.sprites[0].rock, 47);
+    const auto bins = merged(out);
+    ASSERT_EQ(bins.size(), 1u);
+    EXPECT_GE(bins[0].rock, 32);
+    EXPECT_LE(bins[0].rock, 47);
 }
 
 TEST(MidSnap, ASnappedTileNeverPlacesTwo) {
@@ -392,17 +408,69 @@ TEST(MidSnap, LargeSpheresAndBeltsAreUnchanged) {
     // jittered sprite's (final review 3) -- same tiles, same selection.
     rockfield::MidDials d; d.max_sprites = 1000000;
     rockfield::MidOutput a, b, s;
-    field({full_sphere()}, d).build(looking_along_y(90.0f), a);
-    field({flat_belt(0.3f)}, d).build(looking_along_y(90.0f, glm::vec3(5000, 0, 0)), b);
+    const auto in_a = looking_along_y(90.0f);
+    const auto in_b = looking_along_y(90.0f, glm::vec3(5000, 0, 0));
     const glm::dvec3 c(1100.0, 1100.0, 1100.0);   // r 1,300: 2R = 2,600 > 2,400
-    field({sphere_at(c, 1300.0f)}, d)
-        .build(looking_at(glm::vec3(c) + glm::vec3(0, -4000, 0), glm::vec3(c), 60.0f), s);
-    std::printf("[mid snap digests] %.6f %.6f %.6f (counts %d %d %d)\n", digest(a), digest(b),
-                digest(s), a.count, b.count, s.count);
+    const auto in_s = looking_at(glm::vec3(c) + glm::vec3(0, -4000, 0), glm::vec3(c), 60.0f);
+    field({full_sphere()}, d).build(in_a, a);
+    field({flat_belt(0.3f)}, d).build(in_b, b);
+    field({sphere_at(c, 1300.0f)}, d).build(in_s, s);
+    std::printf("[mid snap digests] %.6f %.6f %.6f (counts %d %d %d)\n", digest(a, in_a),
+                digest(b, in_b), digest(s, in_s), a.count, b.count, s.count);
     EXPECT_EQ(a.count, 254);
     EXPECT_EQ(b.count, 77);
     EXPECT_EQ(s.count, 1);
-    EXPECT_NEAR(digest(a), 11570214.548270, 1e-3);
-    EXPECT_NEAR(digest(b), 5412515.457730, 1e-3);
-    EXPECT_NEAR(digest(s), 5293.574110, 1e-3);
+    EXPECT_NEAR(digest(a, in_a), 11570214.548270, 1e-3);
+    EXPECT_NEAR(digest(b, in_b), 5412515.457730, 1e-3);
+    EXPECT_NEAR(digest(s, in_s), 5293.574110, 1e-3);
+}
+
+// Rock fade (2026-10-03): EVERY mid fade -- L0 fading in, the level
+// crossfades, L2 fading out -- is translucent (sprites_fading, alpha = the
+// level weight, the dither coverage far::impostor_fade_alpha); only weight-1
+// sprites stay in sprites, solid (dither exactly 0). Fading bins draw far to
+// near: a fade band's bins before a nearer band's, each bin farthest first.
+TEST(MidFade, EveryFadeIsTranslucentAndDrawsFarToNear) {
+    rockfield::MidDials d; d.max_sprites = 1000000;
+    rockfield::MidOutput out;
+    field({full_sphere()}, d).build(looking_along_y(120.0f), out);
+    int solid = 0, fading = 0;
+    for (const auto& b : out.sprites)
+        for (const auto& g : b.items) { ++solid; EXPECT_EQ(g.up_dither.w, 0.0f); }
+    // The far end of the fade band holding distance `dist`.
+    const auto band_of = [&](float dist) {
+        for (float e : {d.in_hi_gu, d.l0_out_gu, d.l1_out_gu, d.handoff_gu})
+            if (dist <= e + 1e-2f) return e;
+        return 1e30f;
+    };
+    float prev_band = 1e30f;
+    for (const auto& b : out.sprites_fading) {
+        ASSERT_FALSE(b.items.empty());
+        const float band = band_of(glm::length(glm::vec3(b.items.front().centre_half)));
+        EXPECT_LE(band, prev_band) << "a farther band's bins draw first";
+        prev_band = band;
+        float prev_d = 1e30f;
+        for (const auto& g : b.items) {
+            ++fading;
+            const float dist = glm::length(glm::vec3(g.centre_half));
+            EXPECT_EQ(band_of(dist), band) << "one band per bin";
+            EXPECT_LE(dist, prev_d + 1e-3f) << "far to near within a bin";
+            prev_d = dist;
+            ASSERT_NE(g.up_dither.w, 0.0f);
+            const float half = g.centre_half.w / 1.02f;
+            int lvl = -1;
+            for (int l = 0; l < 3; ++l) {
+                const float T = l == 0 ? d.l0_tile_gu : (l == 1 ? d.l1_tile_gu : d.l2_tile_gu);
+                if (half >= 0.4f * T - 1e-2f && half <= 0.6f * T + 1e-2f) lvl = l;
+            }
+            ASSERT_GE(lvl, 0);
+            const float w = rockfield::mid_level_weight(lvl, dist, d);
+            EXPECT_GT(w, 0.0f); EXPECT_LT(w, 1.0f);
+            EXPECT_NEAR(far::impostor_fade_alpha(g.up_dither.w), w, 1e-3f) << dist;
+        }
+    }
+    EXPECT_GT(solid, 0);
+    EXPECT_GT(fading, 0);
+    EXPECT_EQ(fading, out.fading);
+    EXPECT_EQ(solid + fading, out.count);
 }

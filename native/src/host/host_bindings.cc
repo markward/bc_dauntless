@@ -325,7 +325,8 @@ float g_near_shield_inflate = 0.0f;
 std::optional<scenegraph::InstanceId> g_near_player;
 // What the last frame built, summed over its drawn cameras.
 int g_near_meshes = 0;
-int g_near_billboards = 0;
+int g_near_billboards = 0;   // solid/dithered + translucent
+int g_near_fading = 0;       // translucent (rock fade): drawn in rock.fade.draw
 // Rock fields mid band: one baked collection sprite per tile, in three nested
 // tile levels. Pure CPU: fed the far tier's active sources, built per DRAWN
 // camera in render_space_geometry and drawn through g_far_pass (collection
@@ -335,7 +336,8 @@ int g_near_billboards = 0;
 renderer::rockfield::MidField g_mid_field;
 renderer::rockfield::MidOutput g_mid_out;
 // What the last frame drew / examined, summed over its drawn cameras.
-int g_mid_sprites = 0;
+int g_mid_sprites = 0;       // solid + translucent
+int g_mid_fading = 0;        // translucent (rock fade): drawn in rock.fade.draw
 int g_mid_tiles = 0;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
@@ -905,11 +907,13 @@ void reset_frame_state() {
     g_near_player.reset();
     g_near_meshes = 0;
     g_near_billboards = 0;
+    g_near_fading = 0;
     // Mid band: sources and dials belong to the old session.
     g_mid_field.set_sources({});
     g_mid_field.set_dials({});
     g_mid_out = {};
     g_mid_sprites = 0;
+    g_mid_fading = 0;
     g_mid_tiles = 0;
 }
 
@@ -1246,7 +1250,9 @@ void frame() {
         g_far_draw_calls = 0;
         g_near_meshes = 0;
         g_near_billboards = 0;
+        g_near_fading = 0;
         g_mid_sprites = 0;
+        g_mid_fading = 0;
         g_mid_tiles = 0;
         if (g_minors_enabled) {
             DAUNTLESS_FRAME_SCOPE("space.minors.step");
@@ -1430,6 +1436,7 @@ void frame() {
             g_far_draw_calls += g_minor_pass->last_draw_calls();
             g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
                                          ambient_scale, rim);
+            // billboards_fading draw translucent in rock.fade.draw below.
             // A billboard bin whose atlas cannot load is skipped by
             // render_impostors (its rock still draws in the mesh tier); the
             // field is never mutated from the draw. Count what DREW.
@@ -1437,6 +1444,11 @@ void frame() {
             for (const auto& bin : g_near_out.billboards)
                 if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock))
                     g_near_billboards += static_cast<int>(bin.items.size());
+            for (const auto& bin : g_near_out.billboards_fading)
+                if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock)) {
+                    g_near_billboards += static_cast<int>(bin.items.size());
+                    g_near_fading += static_cast<int>(bin.items.size());
+                }
         }
         // Mid band for THIS camera: collection sprites through the far
         // impostor draw. A bin whose atlas cannot load is skipped by
@@ -1452,10 +1464,16 @@ void frame() {
             g_mid_field.build(in, g_mid_out);
             g_far_pass->render_impostors(g_mid_out.sprites, cam, *g_pipeline, g_lighting,
                                          ambient_scale, rim);
+            // sprites_fading draw translucent in rock.fade.draw below.
             g_mid_tiles += g_mid_out.tiles;
             for (const auto& bin : g_mid_out.sprites)
                 if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock))
                     g_mid_sprites += static_cast<int>(bin.items.size());
+            for (const auto& bin : g_mid_out.sprites_fading)
+                if (!bin.items.empty() && g_far_pass->has_atlas(bin.rock)) {
+                    g_mid_sprites += static_cast<int>(bin.items.size());
+                    g_mid_fading += static_cast<int>(bin.items.size());
+                }
         }
         if (g_far_enabled && g_far_pass) {
             DAUNTLESS_FRAME_SCOPE("space.far.impostors");
@@ -1487,6 +1505,20 @@ void frame() {
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_instance_field_cache.get(),
                                   g_decal_game_time, g_lighting, ambient_scale);
+        }
+        // Rock fade (2026-10-03): the near and mid impostors fading in from
+        // (or out to) nothing, TRANSLUCENT -- after every opaque writer
+        // (hull, rocks, impostors, breach) so they depth-test against all of
+        // it, without writing depth. Far to near: the mid band (never nearer
+        // than mid in_lo_gu) before the near band (never beyond its largest
+        // billboard_gu), each list already sorted far to near by its build.
+        // Leaves blending off, depth test/writes on.
+        if (g_far_enabled && g_far_pass) {
+            DAUNTLESS_FRAME_SCOPE("rock.fade.draw");
+            g_far_pass->render_impostors_blended(g_mid_out.sprites_fading, cam, *g_pipeline,
+                                                 g_lighting, ambient_scale, rim);
+            g_far_pass->render_impostors_blended(g_near_out.billboards_fading, cam, *g_pipeline,
+                                                 g_lighting, ambient_scale, rim);
         }
         // Far + minor specks in ONE instanced draw, after every opaque writer
         // (hull, minors, impostors, breach) so they depth-test against all of
@@ -4466,6 +4498,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_near_field.clear();   // re-streams when back on
                   g_mid_out = {};         // no stale mid output
                   g_mid_sprites = 0;
+                  g_mid_fading = 0;
                   g_mid_tiles = 0;
               }
               g_minor_field.set_specks(on, g_far_field.dials().tiers.p_min);
@@ -4490,14 +4523,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["near_ghosted"] = ns.ghosted;
               d["near_meshes"] = g_near_meshes;
               d["near_billboards"] = g_near_billboards;
+              d["near_fading"] = g_near_fading;
               d["mid_sprites"] = g_mid_sprites;
+              d["mid_fading"] = g_mid_fading;
               d["mid_tiles"] = g_mid_tiles;
               d["mid_cache_evictions"] = g_mid_field.cache_stats().evictions;
               return d;
           },
           "{'sources', 'rocks', 'near_cells', 'near_small', 'near_large', "
           "'near_ghosted'} now; {'near_meshes', 'near_billboards', "
-          "'mid_sprites' (drawn), 'mid_tiles' (examined)} built, "
+          "'near_fading' (of the billboards, translucent), "
+          "'mid_sprites' (drawn), 'mid_fading' (of the sprites, translucent), "
+          "'mid_tiles' (examined)} built, "
           "'mid_cache_evictions' (MidField tile-cache size-bound clears, cumulative) and "
           "{'impostors', 'specks' (far + minor), "
           "'draw_calls'} summed over the cameras the last frame drew.");
@@ -4513,6 +4550,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_mid_field.set_sources(g_far_field.active_sources());
               g_mid_out = {};
               g_mid_sprites = 0;
+              g_mid_fading = 0;
               g_mid_tiles = 0;
           },
           "Drop sources, flagged rocks (back to mesh-only), frame, the near "
@@ -4563,7 +4601,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("far_debug_mid_centres",
           []() {
               py::list out;
-              for (const auto& bin : g_mid_out.sprites)
+              for (const auto* list : {&g_mid_out.sprites, &g_mid_out.sprites_fading})
+                for (const auto& bin : *list)
                   for (const auto& it : bin.items) {
                       py::dict d;
                       d["centre"] = py::make_tuple(it.centre_half.x, it.centre_half.y,
@@ -4577,8 +4616,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return out;
           },
           "TEST-ONLY (rock-fields Task 14): the mid sprites the last drawn camera "
-          "built, [{'centre' (RENDER space), 'half' (GU), 'atlas' (FarPass slot), "
-          "'view' (baked view index), 'dither'}, ...]. Never call from game code.");
+          "built, solid then translucent, [{'centre' (RENDER space), 'half' (GU), "
+          "'atlas' (FarPass slot), 'view' (baked view index), 'dither' (signed; "
+          "!= 0: translucent)}, ...]. Never call from game code.");
     m.def("far_debug_active_sources",
           []() {
               py::list out;

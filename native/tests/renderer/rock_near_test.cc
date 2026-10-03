@@ -288,8 +288,59 @@ TEST(NearBuild, OneTierPerRockOutsideFades) {
             if (d > lo + 4.0f + 1e-3f && d < hi - 4.0f - 1e-3f)
                 EXPECT_EQ(it.up_dither.w, 0.0f);                  // weight 1: solid, exactly 0
         }
+    for (const auto& b : out.billboards_fading) boards += static_cast<int>(b.items.size());
     EXPECT_EQ(meshes, out.mesh_count);
-    EXPECT_EQ(boards, out.billboard_count);
+    EXPECT_EQ(boards, out.billboard_count);   // solid/dithered + translucent
+}
+
+// Rock fade (2026-10-03): only the close mesh <-> billboard hand-off keeps
+// the screen door. A billboard fading in from nothing at billboard_gu goes
+// to billboards_fading, translucent with alpha = its weight (the dither
+// coverage, far::impostor_fade_alpha); weight 1 stays solid (dither 0) in
+// billboards. Fading bins draw far to near: the class whose band is farther
+// first, each bin's items farthest first.
+TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
+    rockfield::NearField f;
+    f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
+    f.stream(glm::dvec3(0.0));
+    rockfield::NearOutput out;
+    f.build(looking_along_y(90.0f), out);
+    const auto& dl = f.dials();
+    int solid = 0, handoff = 0, fading = 0;
+    for (const auto& b : out.billboards)
+        for (const auto& it : b.items) {
+            const auto& cd = is_small_rock(b.rock) ? dl.small : dl.large;
+            const float d = glm::length(glm::vec3(it.centre_half));
+            const auto w = rockfield::near_weights(d, cd, dl.fade_gu);
+            if (it.up_dither.w == 0.0f) { ++solid; EXPECT_EQ(w.billboard, 1.0f) << d; continue; }
+            ++handoff;   // dithered: only while the mesh still draws
+            EXPECT_GT(w.mesh, 0.0f) << d;
+            EXPECT_LT(d, cd.mesh_gu + 1e-3f);
+        }
+    float prev_band = 1e30f;
+    for (const auto& b : out.billboards_fading) {
+        ASSERT_FALSE(b.items.empty());
+        const auto& cd = is_small_rock(b.rock) ? dl.small : dl.large;
+        EXPECT_LE(cd.billboard_gu, prev_band) << "the farther band's bins draw first";
+        prev_band = cd.billboard_gu;
+        float prev_d = 1e30f;
+        for (const auto& it : b.items) {
+            ++fading;
+            const float d = glm::length(glm::vec3(it.centre_half));
+            const auto w = rockfield::near_weights(d, cd, dl.fade_gu);
+            EXPECT_EQ(w.mesh, 0.0f) << d;
+            EXPECT_GE(d, cd.billboard_gu - dl.fade_gu - 1e-3f);
+            EXPECT_LT(it.up_dither.w, 0.0f);
+            EXPECT_NEAR(far::impostor_fade_alpha(it.up_dither.w), w.billboard, 1e-5f) << d;
+            EXPECT_LE(d, prev_d + 1e-4f) << "far to near within a bin";
+            prev_d = d;
+        }
+    }
+    EXPECT_GT(solid, 0);
+    EXPECT_GT(handoff, 0);
+    EXPECT_GT(fading, 0);
+    EXPECT_EQ(fading, out.billboard_fading_count);
+    EXPECT_EQ(solid + handoff + fading, out.billboard_count);
 }
 
 TEST(NearBuild, MeshItemCarriesFullScaleAndLodRule) {
@@ -360,6 +411,7 @@ TEST(NearBuild, NoViewDirsNoBillboards) {
     EXPECT_GT(out.mesh_count, 0);
     EXPECT_EQ(out.billboard_count, 0);
     EXPECT_TRUE(out.billboards.empty());
+    EXPECT_TRUE(out.billboards_fading.empty());
 }
 
 TEST(NearBuild, RenderSpaceIsSystemMinusAnchorMinusOrigin) {
@@ -404,10 +456,11 @@ TEST(NearBuild, InstanceCapHolds) {             // Review Focus 5
     int small = 0, large = 0, small_boards = 0;
     for (const auto& b : out.meshes)
         (b.family == rockfield::kNearSmallFamily ? small : large) += static_cast<int>(b.items.size());
-    for (const auto& b : out.billboards) {
-        const int n = static_cast<int>(b.items.size());
-        if (is_small_rock(b.rock)) { small += n; small_boards += n; } else large += n;
-    }
+    for (const auto* list : {&out.billboards, &out.billboards_fading})
+        for (const auto& b : *list) {
+            const int n = static_cast<int>(b.items.size());
+            if (is_small_rock(b.rock)) { small += n; small_boards += n; } else large += n;
+        }
     EXPECT_EQ(small, 50);                       // the cap binds, meshes + billboards together
     EXPECT_GT(large, 0);                        // the other class is untouched
     // Nearest first: ~270 small rocks lie within 20 GU in view, so 50 kept

@@ -70,8 +70,18 @@ struct NearBuildInput {
 };
 struct NearOutput {
     std::vector<minors::Bin> meshes;          // family kNearSmallFamily/kNearLargeFamily
-    std::vector<far::ImpostorBin> billboards; // .rock = catalogue index
-    int mesh_count = 0, billboard_count = 0;
+    // .rock = catalogue index. Solid (weight 1, dither 0) and the mesh <->
+    // billboard hand-off (screen-door dithered against its mesh).
+    std::vector<far::ImpostorBin> billboards;
+    // Rock fade (2026-10-03): billboards fading in from nothing at
+    // billboard_gu, drawn TRANSLUCENT (FarPass::render_impostors_blended;
+    // alpha = far::impostor_fade_alpha(up_dither.w) = the billboard weight).
+    // Far to near: the class with the larger billboard_gu first, then by
+    // catalogue index; each bin's items farthest first.
+    std::vector<far::ImpostorBin> billboards_fading;
+    int mesh_count = 0;
+    int billboard_count = 0;          // every billboard: billboards + billboards_fading
+    int billboard_fading_count = 0;   // billboards_fading only
 };
 struct NearWeights { float mesh = 0, billboard = 0; };
 // Pure tier rule for camera distance d (spec §2): mesh 1 below mesh_gu - fade,

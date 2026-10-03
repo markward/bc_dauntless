@@ -367,7 +367,8 @@ void NearField::for_each(NearClass cls,
 void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     out.meshes.clear();
     out.billboards.clear();
-    out.mesh_count = out.billboard_count = 0;
+    out.billboards_fading.clear();
+    out.mesh_count = out.billboard_count = out.billboard_fading_count = 0;
 
     const float k = far::pixels_per_gu(in.proj, in.viewport_h);
     const glm::vec3 eye = glm::vec3(glm::inverse(in.view)[3]);
@@ -377,6 +378,10 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
 
     std::map<std::tuple<int, int, int>, std::vector<minors::InstanceGpu>> mesh_bins;
     std::map<int, std::vector<far::ImpostorGpu>> board_bins;
+    // Translucent billboards (rock fade), by class draw rank then rock: rank
+    // 0 is the class with the larger billboard_gu (the farther band).
+    std::map<int, std::vector<far::ImpostorGpu>> fade_bins[2];
+    const bool large_first = dials_.large.billboard_gu >= dials_.small.billboard_gu;
 
     // Cells holding a shoved (small) rock: their rocks may sit off the cell,
     // so they skip the cell broad phase and look up their shoves.
@@ -467,8 +472,13 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
             }
             if (cn.w.billboard > 0.0f && !cat_.view_dirs_gltf.empty() && emitted < cd.max_instances) {
                 const float dither = cn.w.billboard < 1.0f ? -cn.w.billboard : 0.0f;
-                board_bins[r.rock].push_back(
-                    far::make_impostor(views_, eye, cn.c, R, r.radius, dither));
+                // Only the hand-off against this rock's own mesh keeps the
+                // screen door (the two must complement exactly); fading in
+                // from nothing at billboard_gu is translucent.
+                const bool translucent = dither != 0.0f && !(cn.w.mesh > 0.0f);
+                auto& bin = translucent ? fade_bins[small == large_first ? 1 : 0][r.rock]
+                                        : board_bins[r.rock];
+                bin.push_back(far::make_impostor(views_, eye, cn.c, R, r.radius, dither));
                 ++emitted;
             }
         }
@@ -485,6 +495,14 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         out.billboard_count += static_cast<int>(items.size());
         out.billboards.push_back(far::ImpostorBin{rock, std::move(items)});
     }
+    for (auto& rank : fade_bins)
+        for (auto& [rock, items] : rank) {
+            // Emitted nearest first: blended back to front, farthest first.
+            std::reverse(items.begin(), items.end());
+            out.billboard_count += static_cast<int>(items.size());
+            out.billboard_fading_count += static_cast<int>(items.size());
+            out.billboards_fading.push_back(far::ImpostorBin{rock, std::move(items)});
+        }
 }
 
 void NearField::step(const NearStepInput& in) {

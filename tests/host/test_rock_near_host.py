@@ -302,3 +302,11 @@ def test_host_reinit_repushes_the_near_catalogue(host):
     assert host.rockfield_catalogue_size() == 0
     far_tier.reconcile_with(renderer, None, {})
     assert host.rockfield_catalogue_size() > 0
+
+
+def test_outer_fade_billboards_are_counted_as_fading(host):
+    """Rock fade (2026-10-03): billboards fading in at billboard_gu draw
+    translucent -- near_fading, a part of near_billboards."""
+    _stream_at_origin(host)
+    st = host.far_stats()
+    assert 0 < st["near_fading"] < st["near_billboards"], st

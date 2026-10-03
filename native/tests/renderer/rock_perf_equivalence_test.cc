@@ -13,12 +13,22 @@
 // toolchain's floating point. If a compiler/flag change (never an algorithm
 // change) moves one, re-record it by checking out ee82c35c's rock_near.cc /
 // rock_mid.cc, running this test, and pasting the printed values.
+//
+// Rock fade (2026-10-03): the builds now split their impostors into a
+// solid/dithered list and a translucent list without changing any item. The
+// digests below hash the two lists MERGED back into the one list the builds
+// emitted before (rock_fade_merge.h), so these recorded values still pin
+// every byte and the order; the split itself is pinned by
+// NearBuild.OuterFadeBillboardsAreTranslucent and
+// MidFade.EveryFadeIsTranslucentAndDrawsFarToNear.
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <tuple>
 #include <vector>
+#include <renderer/glm_exact.h>
+#include "rock_fade_merge.h"
 #include "rock_scenario.h"
 
 using namespace renderer;
@@ -26,15 +36,22 @@ using rock_scenario::Digest;
 
 namespace {
 
-void digest_near_out(Digest& d, const rockfield::NearOutput& o) {
+// `view`: the build's camera -- the merge orders by the distance the build
+// sorted on (NearField::build's scalar length from inverse(view)'s eye).
+void digest_near_out(Digest& d, const rockfield::NearOutput& o, const glm::mat4& view) {
     d.pod(o.mesh_count); d.pod(o.billboard_count);
     d.pod(o.meshes.size());
     for (const auto& b : o.meshes) {
         d.pod(b.family); d.pod(b.slot); d.pod(b.lod); d.pod(b.items.size());
         d.bytes(b.items.data(), b.items.size() * sizeof(minors::InstanceGpu));
     }
-    d.pod(o.billboards.size());
-    for (const auto& b : o.billboards) {
+    const glm::vec3 eye = glm::vec3(glm::inverse(view)[3]);
+    const auto boards = rock_fade_merge::merge(o.billboards, o.billboards_fading, [eye](const glm::vec3& c) {
+        const float ex = c.x - eye.x, ey = c.y - eye.y, ez = c.z - eye.z;
+        return std::sqrt(glm_exact::dot3(ex, ey, ez, ex, ey, ez));
+    });
+    d.pod(boards.size());
+    for (const auto& b : boards) {
         d.pod(b.rock); d.pod(b.items.size());
         d.bytes(b.items.data(), b.items.size() * sizeof(far::ImpostorGpu));
     }
@@ -63,6 +80,7 @@ struct NearRun {
     int contacts_large = 0, contacts_small = 0, builds = 0;
     int capped_steps = 0;   // steps whose large contacts hit max_shoves_per_frame
     std::uint64_t full_passes = 0;   // NearField::full_stream_passes() at the end
+    int fading = 0;                  // translucent billboards built (the merge is exercised)
 };
 
 // One scripted flight. `fast` raises the speed (contacts, cell churn);
@@ -154,14 +172,15 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
         bin.anchor_sys = anchor;
         bin.game_time = sin.game_time;
         f.build(bin, out);
-        digest_near_out(db, out);
+        digest_near_out(db, out, bin.view);
+        run.fading += out.billboard_fading_count;
         ++run.builds;
         if (i % 9 == 0) {   // a second camera: looking back, telephoto
             const glm::vec3 eye = glm::vec3(render) + glm::vec3(0, 0, 2.0f);
             bin.view = glm::lookAt(eye, eye - pose.fwd * 10.0f + glm::vec3(0.3f, 0, 0), glm::vec3(0, 0, 1));
             bin.proj = glm::perspective(glm::radians(20.0f), 1.0f, 0.1f, 1.0e5f);
             f.build(bin, out);
-            digest_near_out(db, out);
+            digest_near_out(db, out, bin.view);
             ++run.builds;
         }
         if (i % 60 == 0) digest_stream(ds, f);
@@ -187,6 +206,7 @@ void expect_near(const char* name, const NearRun& r, std::uint64_t build, std::u
 TEST(RockPerfEquivalence, NearSlowFlightMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/false, /*caps=*/false);
     EXPECT_GT(r.contacts_large + r.contacts_small, 0) << "the run must exercise contacts";
+    EXPECT_GT(r.fading, 0) << "the run must build translucent billboards (the merge)";
     expect_near("slow", r, 0x32b35fece022b324ull, 0xdf39b4a12bf4af85ull, 0x8d90bab75baf5c86ull);
 }
 
@@ -194,6 +214,7 @@ TEST(RockPerfEquivalence, NearFastFlightMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/true, /*caps=*/false);
     EXPECT_GT(r.contacts_large, 0);
     EXPECT_GT(r.contacts_small, 0);
+    EXPECT_GT(r.fading, 0) << "the run must build translucent billboards (the merge)";
     expect_near("fast", r, 0x3c17112b6b47cbdaull, 0x9368168741730520ull, 0x9d8b4ece39601a8bull);
 }
 
@@ -206,9 +227,12 @@ TEST(RockPerfEquivalence, NearCapsBindingMatchesTheRecordedDigests) {
 // ---- Mid band ---------------------------------------------------------------
 namespace {
 
-void digest_mid_out(Digest& d, const rockfield::MidOutput& o) {
-    d.pod(o.count); d.pod(o.tiles); d.pod(o.sprites.size());
-    for (const auto& b : o.sprites) {
+void digest_mid_out(Digest& d, const rockfield::MidOutput& o, const glm::mat4& view) {
+    const glm::vec3 eye = glm::vec3(glm::inverse(view)[3]);
+    const auto sprites = rock_fade_merge::merge(o.sprites, o.sprites_fading,
+                                                [eye](const glm::vec3& c) { return glm::length(c - eye); });
+    d.pod(o.count); d.pod(o.tiles); d.pod(sprites.size());
+    for (const auto& b : sprites) {
         d.pod(b.rock); d.pod(b.items.size());
         d.bytes(b.items.data(), b.items.size() * sizeof(far::ImpostorGpu));
     }
@@ -234,7 +258,7 @@ far::DiscSource noisy_belt() {
 }  // namespace
 
 namespace {
-struct MidRun { std::uint64_t digest = 0; int sprites = 0, builds = 0; rockfield::MidCacheStats cache; };
+struct MidRun { std::uint64_t digest = 0; int sprites = 0, builds = 0; rockfield::MidCacheStats cache; int fading = 0; };
 // `resend` re-pushes the SAME sources before every build, as the host does
 // live (far_set_frame every frame calls MidField::set_sources).
 MidRun run_mid(bool resend) {
@@ -247,7 +271,7 @@ MidRun run_mid(bool resend) {
     in.viewport_h = 1080.0f;
     rockfield::MidOutput out;
     Digest d;
-    int sprites = 0, builds = 0;
+    int sprites = 0, builds = 0, fading = 0;
     const glm::dvec3 anchor(-2.5e4, 1.2e4, -300.0);
     auto build_at = [&](const glm::dvec3& eye_sys, const glm::vec3& look_dir, float fov_deg,
                         const glm::dvec3& origin) {
@@ -259,8 +283,9 @@ MidRun run_mid(bool resend) {
         in.anchor_sys = anchor;
         if (resend) f.set_sources(sources);
         f.build(in, out);
-        digest_mid_out(d, out);
+        digest_mid_out(d, out, in.view);
         sprites += out.count;
+        fading += out.fading;
         ++builds;
     };
     // MidField's sources are in system coordinates (the fields sit around
@@ -301,7 +326,7 @@ MidRun run_mid(bool resend) {
                 build_at(glm::dvec3(1300.0, -1500.0, 0.0), {0, 1, -0.04f}, 8.0f, glm::dvec3(1250.0, -1500.0, 0.0));
         }
     }
-    return {d.h, sprites, builds, f.cache_stats()};
+    return {d.h, sprites, builds, f.cache_stats(), fading};
 }
 }  // namespace
 
@@ -310,6 +335,7 @@ TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
     std::printf("[mid equivalence] builds=0x%016" PRIx64 " (builds=%d sprites=%d)\n", r.digest,
                 r.builds, r.sprites);
     EXPECT_GT(r.sprites, 0);
+    EXPECT_GT(r.fading, 0) << "the run must build translucent sprites";
     EXPECT_EQ(r.digest, 0x433d292793849a18ull) << "drawn mid sprites changed";
 }
 
@@ -357,8 +383,8 @@ TEST(RockPerfEquivalence, MidMovedSourceStillClearsTheCache) {
     b.set_sources({moved});
     b.build(in, ob);
     Digest da, dbg;
-    digest_mid_out(da, oa);
-    digest_mid_out(dbg, ob);
+    digest_mid_out(da, oa, in.view);
+    digest_mid_out(dbg, ob, in.view);
     EXPECT_EQ(da.h, dbg.h);
     EXPECT_GT(oa.count, 0);
 }

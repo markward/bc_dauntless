@@ -62,6 +62,7 @@ struct Cand {
     glm::vec3 c;         // render space, jittered
     glm::mat3 R;
     float half, dither;
+    float band;          // fading (dither != 0): the far end of its ramp; 0 when solid
 };
 }  // namespace
 
@@ -110,7 +111,8 @@ std::size_t MidField::TileKeyHash::operator()(const TileKey& t) const {
 
 void MidField::build(const MidBuildInput& in, MidOutput& out) const {
     out.sprites.clear();
-    out.count = out.tiles = 0;
+    out.sprites_fading.clear();
+    out.count = out.fading = out.tiles = 0;
     if (view_dirs_.empty() || sources_.empty() || collections_.empty() || dials_.max_sprites <= 0)
         return;
 
@@ -169,15 +171,23 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
     // The near-band guard, the level weight and the dither are decided at
     // the DRAWN sprite's distance, so no sprite ever sits inside in_lo_gu.
     // The caller has already frustum-culled the tile point c0.
-    const auto emit = [&](int lvl, const TileSel& sel, const glm::vec3& c0) {
+    // `r` is the level's ramps: the weight and dither are mid_level_weight /
+    // mid_level_dither's, computed once here from the same two ramps.
+    const auto emit = [&](const LevelRamps& r, const TileSel& sel, const glm::vec3& c0) {
         const glm::vec3 c = c0 + sel.jitter;
         const float d = glm::length(c - eye);
         if (d < m.in_lo_gu) return;   // the near band's (no double drawing)
-        const float w = mid_level_weight(lvl, d, m);
+        const float lo = ramp(r.lo_a, r.lo_b, d), up = ramp(r.up_a, r.up_b, d);
+        const float w = lo * (1.0f - up);
         if (!(w > 0.0f)) return;
         ++out.tiles;
         if (!sel.present) return;
-        cands.push_back({d, sel.atlas, c, sel.R, sel.half, mid_level_dither(lvl, d, m)});
+        // Fading (dither != 0, drawn translucent): `band` is the far end of
+        // the ramp it is on -- its lower ramp fading in, its upper fading out.
+        float dither = 0.0f, band = 0.0f;
+        if (lo < 1.0f) { dither = -w; band = r.lo_b; }
+        else if (up > 0.0f) { dither = 1.0f - w; band = r.up_b; }
+        cands.push_back({d, sel.atlas, c, sel.R, sel.half, dither, band});
     };
 
     for (int lvl = 0; lvl < 3; ++lvl) {
@@ -216,7 +226,7 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
             if (too_near_or_far(glm::length(s.centre - eye_sys), (0.25 * R) * std::sqrt(3.0))) continue;
             const glm::vec3 c0(s.centre - to_render);
             if (!frustum.sphere(c0, r_cull)) continue;
-            emit(lvl, select(lvl, ijk, s.centre, 0.25 * R, 2.0 * R), c0);
+            emit(r, select(lvl, ijk, s.centre, 0.25 * R, 2.0 * R), c0);
         }
 
         // weight > 0 only for sprite distances in (lo_a, up_b); a sprite
@@ -296,7 +306,7 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
                                     ++cache_stats_.fills;
                                     block->done |= std::uint64_t{1} << local;
                                 }
-                                emit(lvl, sel, c0);
+                                emit(r, sel, c0);
                             }
                 }
     }
@@ -311,13 +321,37 @@ void MidField::build(const MidBuildInput& in, MidOutput& out) const {
     if (cands.size() > static_cast<std::size_t>(m.max_sprites))
         cands.resize(static_cast<std::size_t>(m.max_sprites));
 
-    std::map<int, std::vector<far::ImpostorGpu>> bins;
+    std::map<int, std::vector<far::ImpostorGpu>> bins;   // solid, by atlas
     for (const Cand& cn : cands)
-        bins[cn.atlas].push_back(far::make_impostor(views_, eye, cn.c, cn.R, cn.half, cn.dither));
+        if (cn.dither == 0.0f)
+            bins[cn.atlas].push_back(far::make_impostor(views_, eye, cn.c, cn.R, cn.half, cn.dither));
     for (auto& [atlas, items] : bins) {
         out.count += static_cast<int>(items.size());
         out.sprites.push_back(far::ImpostorBin{atlas, std::move(items)});
     }
+    // Translucent (rock fade), blended back to front: walk the candidates
+    // farthest first; each run of one fade band becomes that band's bins in
+    // atlas order, each bin's items farthest first. The bands are disjoint
+    // distance ranges with the default dials, so this is (band farthest
+    // first, atlas); dials that overlap two bands only split a band into
+    // more, still far-to-near, runs.
+    std::map<int, std::vector<far::ImpostorGpu>> run;
+    float run_band = -1.0f;
+    const auto flush = [&] {
+        for (auto& [atlas, items] : run) {
+            out.count += static_cast<int>(items.size());
+            out.fading += static_cast<int>(items.size());
+            out.sprites_fading.push_back(far::ImpostorBin{atlas, std::move(items)});
+        }
+        run.clear();
+    };
+    for (std::size_t i = cands.size(); i-- > 0;) {
+        const Cand& cn = cands[i];
+        if (cn.dither == 0.0f) continue;
+        if (cn.band != run_band) { flush(); run_band = cn.band; }
+        run[cn.atlas].push_back(far::make_impostor(views_, eye, cn.c, cn.R, cn.half, cn.dither));
+    }
+    flush();
 }
 
 }  // namespace renderer::rockfield
