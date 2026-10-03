@@ -68,3 +68,37 @@ TEST(MidBench, VastBelt) {
         }
     }
 }
+
+// The live load Mark profiled ("Rock Fields: inside Beol 4", ee82c35c):
+// inside (300 GU in from the edge, looking at the centre) and outside
+// (6,000 GU off, looking at the field). REPORTS MidField::build per call.
+#include "rock_scenario.h"
+TEST(MidBench, InsideAndOutsideBeol4) {
+    rockfield::MidField f;
+    f.set_collections(rock_scenario::mid_collections());
+    f.set_view_dirs(rock_scenario::view_dirs16());
+    f.set_sources({rock_scenario::beol4_field()});
+    rockfield::MidBuildInput in;
+    in.viewport_h = 1080.0f;
+    rockfield::MidOutput out;
+    struct Case { const char* name; glm::vec3 eye; };
+    const Case cases[] = {{"inside", {0, -700, 0}}, {"outside", {0, -6000, 0}}};
+    for (const Case& cs : cases) {
+        constexpr int kBuilds = 120;
+        double total = 0, worst = 0;
+        for (int i = 0; i < kBuilds; ++i) {
+            const glm::vec3 eye = cs.eye + glm::vec3(0, 0.1f * i, 0);   // 6 GU/s
+            in.view = glm::lookAt(eye, glm::vec3(0), glm::vec3(0, 0, 1));
+            in.proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1.0e6f);
+            const auto t0 = std::chrono::steady_clock::now();
+            f.build(in, out);
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+            total += ms; worst = std::max(worst, ms);
+        }
+        std::printf("[mid bench beol4] %s: build mean=%.3f ms worst=%.3f ms sprites=%d tiles=%d "
+                    "bins=%zu\n", cs.name, total / kBuilds, worst, out.count, out.tiles,
+                    out.sprites.size());
+    }
+    EXPECT_GE(out.count, 0);
+}

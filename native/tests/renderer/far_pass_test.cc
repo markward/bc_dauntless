@@ -45,6 +45,7 @@
 #include <scenegraph/world.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1413,4 +1414,38 @@ TEST_F(FarPassGLTest, DitheredImpostorKeepsTheSolidShading) {
         EXPECT_GT(kept, 0) << "dither " << dither;
         EXPECT_LE(worst, 2) << "dither " << dither << ": a kept pixel shades differently";
     }
+}
+
+// Rock-fields perf (2026-10-03): REPORTS the CPU cost of render_impostors at
+// the mid band's live Beol 4 load (~85 sprites over 18 collection atlases)
+// against the same sprites in ONE bin, to decide whether packing the
+// collection atlases into one texture is worth it. Asserts nothing about time.
+TEST_F(FarPassGLTest, ImpostorDrawCpuCostPerBinReport) {
+    const Atlas atlas = sphere_atlas(kRed, kBlue);
+    renderer::FarPass pass;
+    for (int i = 0; i < 18; ++i) pass.debug_set_atlas(i, atlas.albedo, atlas.normal);
+    const scenegraph::Camera cam = view_camera(kLevelView, glm::vec3(0.0f), 8.0f);
+    renderer::Lighting l;
+    l.ambient = glm::vec3(1.0f);
+    std::vector<far::ImpostorBin> many, one(1);
+    for (int b = 0; b < 18; ++b) {
+        far::ImpostorBin bin = one_impostor_bin(b, kLevelView, glm::vec3(0.1f * b, 0, 0), 0.05f);
+        for (int k = 0; k < 4; ++k) bin.items.push_back(bin.items.front());
+        many.push_back(bin);
+        for (const auto& it : bin.items) one[0].items.push_back(it);
+    }
+    clear_framebuffer();
+    for (const auto* set : {&many, &one}) {
+        pass.render_impostors(*set, cam, *pipeline, l, 1.0f, 0.0f);   // warm (programs, buffers)
+        glFinish();
+        constexpr int kCalls = 200;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kCalls; ++i) pass.render_impostors(*set, cam, *pipeline, l, 1.0f, 0.0f);
+        const double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count() / kCalls;
+        glFinish();
+        std::printf("[impostor draw bench] %zu bins, %zu sprites: render_impostors CPU %.4f ms/call\n",
+                    set->size(), set == &many ? std::size_t{90} : one[0].items.size(), ms);
+    }
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }

@@ -58,3 +58,59 @@ TEST(NearBench, StreamAt100kGups) {
                 build_total / kSteps, build_worst, max_cells, max_small, max_large);
     EXPECT_GT(max_cells, 0);   // the run streamed at all (not a time assertion)
 }
+
+// The live load Mark profiled ("Rock Fields: inside Beol 4", ee82c35c): the
+// player 300 GU inside a 1,000 GU tile field, the default dials, flying at
+// ~6 GU/s at 60 Hz with a chase camera. REPORTS per-call ms of
+// NearField::stream / step / build (asserts nothing about time).
+#include "rock_scenario.h"
+TEST(NearBench, InsideBeol4) {
+    rockfield::NearField f;
+    f.set_catalogue(rock_scenario::near_catalogue());
+    f.set_sources({rock_scenario::beol4_field()});
+    constexpr int kSteps = 600;
+    constexpr double kGups = 6.0;
+    rockfield::NearBuildInput bin;
+    bin.viewport_h = 1080.0f;
+    rockfield::NearStepInput sin;
+    rockfield::NearOutput out;
+    double t_stream = 0, w_stream = 0, t_step = 0, w_step = 0, t_build = 0, w_build = 0;
+    double first_stream = 0;
+    int meshes = 0, boards = 0, small_c = 0, large_c = 0;
+    rockfield::NearStats st;
+    auto ms_since = [](auto t0) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    };
+    for (int i = 0; i < kSteps; ++i) {
+        const auto pose = rock_scenario::player_pose(i, kGups);
+        auto t0 = std::chrono::steady_clock::now();
+        f.stream(pose.pos);
+        const double a = ms_since(t0);
+        if (i == 0) { first_stream = a; } else { t_stream += a; w_stream = std::max(w_stream, a); }
+        sin.game_time = 100.0 + i / 60.0;
+        sin.player = rock_scenario::galaxy_box(glm::vec3(pose.pos), pose.fwd);
+        t0 = std::chrono::steady_clock::now();
+        f.step(sin);
+        const double b = ms_since(t0);
+        t_step += b; w_step = std::max(w_step, b);
+        large_c += static_cast<int>(f.drain_large_contacts().size());
+        small_c += static_cast<int>(f.drain_small_contacts().size());
+        rock_scenario::chase_camera(pose, bin.view, bin.proj);
+        bin.game_time = sin.game_time;
+        t0 = std::chrono::steady_clock::now();
+        f.build(bin, out);
+        const double c = ms_since(t0);
+        t_build += c; w_build = std::max(w_build, c);
+        meshes += out.mesh_count; boards += out.billboard_count;
+        st = f.stats();
+    }
+    std::printf("[near bench beol4] %d frames at %.0f GU/s: first stream=%.3f ms; stream mean=%.3f "
+                "worst=%.3f ms; step mean=%.3f worst=%.3f ms; build mean=%.3f worst=%.3f ms; "
+                "cells=%d small=%d large=%d; per frame meshes=%.1f billboards=%.1f; "
+                "contacts large=%d small=%d\n",
+                kSteps, kGups, first_stream, t_stream / (kSteps - 1), w_stream, t_step / kSteps,
+                w_step, t_build / kSteps, w_build, st.cells, st.small, st.large,
+                static_cast<double>(meshes) / kSteps, static_cast<double>(boards) / kSteps,
+                large_c, small_c);
+    EXPECT_GT(st.small, 0);
+}
