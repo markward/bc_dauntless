@@ -2,721 +2,721 @@
  "collections": [
   {
    "avg_albedo": [
-    0.43658778071403503,
-    0.4116731286048889,
-    0.37676912546157837
+    0.43951115012168884,
+    0.4144226014614105,
+    0.37929120659828186
    ],
    "id": "collections/sparse_00",
    "impostor": {
     "albedo": "collections/sparse_00/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_00/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4394839406013489,
-    0.41441041231155396,
-    0.37927740812301636
+    0.43919074535369873,
+    0.4141262471675873,
+    0.3790338635444641
    ],
    "id": "collections/sparse_01",
    "impostor": {
     "albedo": "collections/sparse_01/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_01/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4417402744293213,
-    0.41652706265449524,
-    0.38123658299446106
+    0.4392531216144562,
+    0.41418182849884033,
+    0.37907788157463074
    ],
    "id": "collections/sparse_02",
    "impostor": {
     "albedo": "collections/sparse_02/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_02/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4393637478351593,
-    0.41427260637283325,
-    0.37918078899383545
+    0.4393397271633148,
+    0.41426995396614075,
+    0.3791627883911133
    ],
    "id": "collections/sparse_03",
    "impostor": {
     "albedo": "collections/sparse_03/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_03/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4393344223499298,
-    0.414251446723938,
-    0.3791431486606598
+    0.4393434524536133,
+    0.4142712354660034,
+    0.37916299700737
    ],
    "id": "collections/sparse_04",
    "impostor": {
     "albedo": "collections/sparse_04/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_04/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.439345121383667,
-    0.4142645597457886,
-    0.3791583180427551
+    0.43938878178596497,
+    0.4143187999725342,
+    0.37919917702674866
    ],
    "id": "collections/sparse_05",
    "impostor": {
     "albedo": "collections/sparse_05/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_05/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.44056087732315063,
-    0.4153968393802643,
-    0.38017967343330383
+    0.4393157660961151,
+    0.4142419695854187,
+    0.3791387379169464
    ],
    "id": "collections/sparse_06",
    "impostor": {
     "albedo": "collections/sparse_06/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_06/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4370773434638977,
-    0.4121250808238983,
-    0.37720799446105957
+    0.43950939178466797,
+    0.41441991925239563,
+    0.3793245255947113
    ],
    "id": "collections/sparse_07",
    "impostor": {
     "albedo": "collections/sparse_07/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_07/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.44002312421798706,
-    0.4149487018585205,
-    0.3797610402107239
+    0.43927255272865295,
+    0.41419517993927,
+    0.37908631563186646
    ],
    "id": "collections/sparse_08",
    "impostor": {
     "albedo": "collections/sparse_08/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_08/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.44138383865356445,
-    0.4161930978298187,
-    0.3809342086315155
+    0.439320832490921,
+    0.4142614006996155,
+    0.3791426420211792
    ],
    "id": "collections/sparse_09",
    "impostor": {
     "albedo": "collections/sparse_09/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_09/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.43944695591926575,
-    0.41434580087661743,
-    0.3792482912540436
+    0.4391675889492035,
+    0.41408810019493103,
+    0.37899747490882874
    ],
    "id": "collections/sparse_10",
    "impostor": {
     "albedo": "collections/sparse_10/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_10/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4335877597332001,
-    0.4088321030139923,
-    0.3741849958896637
+    0.43968436121940613,
+    0.41458189487457275,
+    0.37944746017456055
    ],
    "id": "collections/sparse_11",
    "impostor": {
     "albedo": "collections/sparse_11/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_11/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4393143653869629,
-    0.4142571985721588,
-    0.379151850938797
+    0.4389684498310089,
+    0.4139195680618286,
+    0.37883618474006653
    ],
    "id": "collections/sparse_12",
    "impostor": {
     "albedo": "collections/sparse_12/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_12/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4350903630256653,
-    0.41026583313941956,
-    0.3754986524581909
+    0.4391362965106964,
+    0.4140802025794983,
+    0.3789882957935333
    ],
    "id": "collections/sparse_13",
    "impostor": {
     "albedo": "collections/sparse_13/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_13/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.43787822127342224,
-    0.41292324662208557,
-    0.37792521715164185
+    0.439181387424469,
+    0.41411447525024414,
+    0.3790346384048462
    ],
    "id": "collections/sparse_14",
    "impostor": {
     "albedo": "collections/sparse_14/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_14/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.4391338527202606,
-    0.41406896710395813,
-    0.3789967894554138
+    0.4394531846046448,
+    0.4143778085708618,
+    0.379260390996933
    ],
    "id": "collections/sparse_15",
    "impostor": {
     "albedo": "collections/sparse_15/impostor_base.png",
     "grid": 4,
     "normal": "collections/sparse_15/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "sparse"
   },
   {
    "avg_albedo": [
-    0.440152645111084,
-    0.41504448652267456,
-    0.3798801600933075
+    0.4392792880535126,
+    0.4142131507396698,
+    0.3791091740131378
    ],
    "id": "collections/medium_00",
    "impostor": {
     "albedo": "collections/medium_00/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_00/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4397236704826355,
-    0.41463392972946167,
-    0.3795125186443329
+    0.4391390085220337,
+    0.41408035159111023,
+    0.37898245453834534
    ],
    "id": "collections/medium_01",
    "impostor": {
     "albedo": "collections/medium_01/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_01/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4375160336494446,
-    0.4125309884548187,
-    0.37756165862083435
+    0.43913254141807556,
+    0.41407421231269836,
+    0.37897399067878723
    ],
    "id": "collections/medium_02",
    "impostor": {
     "albedo": "collections/medium_02/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_02/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.44039884209632874,
-    0.4152674078941345,
-    0.3800736963748932
+    0.4395517408847809,
+    0.4144560396671295,
+    0.3793295919895172
    ],
    "id": "collections/medium_03",
    "impostor": {
     "albedo": "collections/medium_03/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_03/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4396062195301056,
-    0.41451606154441833,
-    0.37937623262405396
+    0.4393537938594818,
+    0.4142712354660034,
+    0.37917160987854004
    ],
    "id": "collections/medium_04",
    "impostor": {
     "albedo": "collections/medium_04/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_04/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.44043397903442383,
-    0.4153074622154236,
-    0.38011348247528076
+    0.43916672468185425,
+    0.41409987211227417,
+    0.3790154755115509
    ],
    "id": "collections/medium_05",
    "impostor": {
     "albedo": "collections/medium_05/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_05/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.43957382440567017,
-    0.4144631028175354,
-    0.37933236360549927
+    0.4389457702636719,
+    0.4139147102832794,
+    0.3788245618343353
    ],
    "id": "collections/medium_06",
    "impostor": {
     "albedo": "collections/medium_06/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_06/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4406331479549408,
-    0.41549283266067505,
-    0.38027265667915344
+    0.4392107427120209,
+    0.414153516292572,
+    0.379039466381073
    ],
    "id": "collections/medium_07",
    "impostor": {
     "albedo": "collections/medium_07/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_07/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4386584460735321,
-    0.41362109780311584,
-    0.37854135036468506
+    0.43940412998199463,
+    0.4143209755420685,
+    0.3792129456996918
    ],
    "id": "collections/medium_08",
    "impostor": {
     "albedo": "collections/medium_08/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_08/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4376257658004761,
-    0.41264575719833374,
-    0.37767571210861206
+    0.4393736720085144,
+    0.4142981469631195,
+    0.3791932165622711
    ],
    "id": "collections/medium_09",
    "impostor": {
     "albedo": "collections/medium_09/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_09/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4399661123752594,
-    0.4148631691932678,
-    0.3797075152397156
+    0.4394545257091522,
+    0.4143798351287842,
+    0.37925460934638977
    ],
    "id": "collections/medium_10",
    "impostor": {
     "albedo": "collections/medium_10/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_10/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.43946051597595215,
-    0.41435128450393677,
-    0.37923887372016907
+    0.4394800662994385,
+    0.41440099477767944,
+    0.37929221987724304
    ],
    "id": "collections/medium_11",
    "impostor": {
     "albedo": "collections/medium_11/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_11/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4406461715698242,
-    0.41550517082214355,
-    0.38028863072395325
+    0.43936607241630554,
+    0.41429516673088074,
+    0.3791818618774414
    ],
    "id": "collections/medium_12",
    "impostor": {
     "albedo": "collections/medium_12/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_12/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4390544891357422,
-    0.41398531198501587,
-    0.3789086639881134
+    0.4389246106147766,
+    0.4138728380203247,
+    0.3787863850593567
    ],
    "id": "collections/medium_13",
    "impostor": {
     "albedo": "collections/medium_13/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_13/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.43738552927970886,
-    0.41242608428001404,
-    0.37746530771255493
+    0.43914979696273804,
+    0.4140847623348236,
+    0.37898945808410645
    ],
    "id": "collections/medium_14",
    "impostor": {
     "albedo": "collections/medium_14/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_14/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4409431517124176,
-    0.4158087372779846,
-    0.38055479526519775
+    0.43895387649536133,
+    0.413911372423172,
+    0.3788241446018219
    ],
    "id": "collections/medium_15",
    "impostor": {
     "albedo": "collections/medium_15/impostor_base.png",
     "grid": 4,
     "normal": "collections/medium_15/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "medium"
   },
   {
    "avg_albedo": [
-    0.4375513792037964,
-    0.41257035732269287,
-    0.37761327624320984
+    0.43932831287384033,
+    0.4142496883869171,
+    0.37914764881134033
    ],
    "id": "collections/dense_00",
    "impostor": {
     "albedo": "collections/dense_00/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_00/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.43859782814979553,
-    0.41355323791503906,
-    0.37852999567985535
+    0.4391520321369171,
+    0.41408658027648926,
+    0.3789965808391571
    ],
    "id": "collections/dense_01",
    "impostor": {
     "albedo": "collections/dense_01/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_01/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.43776291608810425,
-    0.4127727150917053,
-    0.3777911067008972
+    0.43931663036346436,
+    0.4142419695854187,
+    0.3791385293006897
    ],
    "id": "collections/dense_02",
    "impostor": {
     "albedo": "collections/dense_02/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_02/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.44075238704681396,
-    0.4155748188495636,
-    0.38037794828414917
+    0.439505398273468,
+    0.4144219160079956,
+    0.37930020689964294
    ],
    "id": "collections/dense_03",
    "impostor": {
     "albedo": "collections/dense_03/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_03/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4391508400440216,
-    0.4140843451023102,
-    0.37900444865226746
+    0.4392535090446472,
+    0.4141872525215149,
+    0.3790864050388336
    ],
    "id": "collections/dense_04",
    "impostor": {
     "albedo": "collections/dense_04/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_04/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4388503432273865,
-    0.4137904942035675,
-    0.37871888279914856
+    0.43913042545318604,
+    0.41406431794166565,
+    0.37898334860801697
    ],
    "id": "collections/dense_05",
    "impostor": {
     "albedo": "collections/dense_05/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_05/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4412786662578583,
-    0.4160929322242737,
-    0.3808419406414032
+    0.4395456612110138,
+    0.41446295380592346,
+    0.3793419301509857
    ],
    "id": "collections/dense_06",
    "impostor": {
     "albedo": "collections/dense_06/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_06/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4382978677749634,
-    0.41329425573349,
-    0.37825021147727966
+    0.4393571615219116,
+    0.41429153084754944,
+    0.3791719973087311
    ],
    "id": "collections/dense_07",
    "impostor": {
     "albedo": "collections/dense_07/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_07/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.43976402282714844,
-    0.41466861963272095,
-    0.37953561544418335
+    0.4394286572933197,
+    0.41434964537620544,
+    0.3792377710342407
    ],
    "id": "collections/dense_08",
    "impostor": {
     "albedo": "collections/dense_08/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_08/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4400569200515747,
-    0.4149506688117981,
-    0.3797778785228729
+    0.43918219208717346,
+    0.4141165614128113,
+    0.379021018743515
    ],
    "id": "collections/dense_09",
    "impostor": {
     "albedo": "collections/dense_09/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_09/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.440990686416626,
-    0.4158081114292145,
-    0.3805793523788452
+    0.43920156359672546,
+    0.41414082050323486,
+    0.3790395259857178
    ],
    "id": "collections/dense_10",
    "impostor": {
     "albedo": "collections/dense_10/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_10/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.43740609288215637,
-    0.41243472695350647,
-    0.37749844789505005
+    0.4391261637210846,
+    0.41406115889549255,
+    0.3789747655391693
    ],
    "id": "collections/dense_11",
    "impostor": {
     "albedo": "collections/dense_11/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_11/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.43483006954193115,
-    0.40999412536621094,
-    0.37526610493659973
+    0.43918123841285706,
+    0.4141208529472351,
+    0.3790298402309418
    ],
    "id": "collections/dense_12",
    "impostor": {
     "albedo": "collections/dense_12/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_12/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4389306604862213,
-    0.4138748347759247,
-    0.378801554441452
+    0.439166396856308,
+    0.4140940308570862,
+    0.3790006935596466
    ],
    "id": "collections/dense_13",
    "impostor": {
     "albedo": "collections/dense_13/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_13/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.4364558756351471,
-    0.4115508794784546,
-    0.3766643702983856
+    0.43946871161460876,
+    0.4143783152103424,
+    0.37926411628723145
    ],
    "id": "collections/dense_14",
    "impostor": {
     "albedo": "collections/dense_14/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_14/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   },
   {
    "avg_albedo": [
-    0.43691378831863403,
-    0.4119851291179657,
-    0.3770701289176941
+    0.43937933444976807,
+    0.4143088757991791,
+    0.37919607758522034
    ],
    "id": "collections/dense_15",
    "impostor": {
     "albedo": "collections/dense_15/impostor_base.png",
     "grid": 4,
     "normal": "collections/dense_15/impostor_normal.png",
-    "view_size": 128
+    "view_size": 176
    },
    "variant": "dense"
   }
@@ -842,7 +842,7 @@
    -0.3450997471809387
   ]
  ],
- "recipe_fnv1a64": "b0b93207cc708558",
+ "recipe_fnv1a64": "8ec566d2e5081d72",
  "rocks": [
   {
    "avg_albedo": [

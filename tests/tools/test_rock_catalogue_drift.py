@@ -46,3 +46,30 @@ def test_manifest_recipe_hash_matches_recipe():
     for b in (ROCKS / "recipe.json").read_bytes():
         h ^= b; h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
     assert man["recipe_fnv1a64"] == f"{h:016x}"
+
+# rock-real Part 2 (2026-10-03): a mid collection sprite must never picture a
+# rock that reads as a big asteroid -- nothing real stands behind a sprite.
+# The largest L0 sprite (mid_l0_tile_gu / 2 x mid_sprite_scale x 1.2, the top
+# of rock_mid.cc's 0.8..1.2 size jitter) maps the collection's unit radius to
+# GU; its largest part must stay within the smallest real large rock.
+_L0_JITTER_MAX = 1.2   # rock_mid.cc: half = 0.5 * diameter * sprite_scale * (0.8 + 0.4 u)
+# The collection atlases before Part 2: 48 collections x 2 maps x 512^2 RGBA8.
+_ATLAS_BYTES_BEFORE = 48 * 2 * 512 * 512 * 4
+
+
+def test_collection_parts_are_gravel_at_l0():
+    from engine.rocks import far_dials
+    d = far_dials.DEFAULTS
+    recipe = json.loads((ROCKS / "recipe.json").read_text())
+    size_max = recipe["collections"]["size"][1]
+    half_gu = 0.5 * d["mid_l0_tile_gu"] * d["mid_sprite_scale"] * _L0_JITTER_MAX
+    assert size_max * half_gu <= d["near_large_r_min"] + 1e-9, (size_max * half_gu)
+
+
+def test_collection_atlases_cost_at_most_twice_the_original():
+    man = json.loads((ROCKS / "catalogue.json").read_text())
+    total = 0
+    for c in man["collections"]:
+        side = c["impostor"]["grid"] * c["impostor"]["view_size"]
+        total += 2 * side * side * 4   # albedo + normal, RGBA8
+    assert total <= 2 * _ATLAS_BYTES_BEFORE, total / _ATLAS_BYTES_BEFORE
