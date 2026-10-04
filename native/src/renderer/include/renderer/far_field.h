@@ -105,6 +105,15 @@ float field_density(const DiscSource& s, const glm::dvec3& x_sys);
 float noise_m_bound(const DiscSource& s);
 // A sphere source's outermost reach: sphere_radius_gu / (1 - shape_warp).
 double sphere_outer_r(const DiscSource& s);
+// True when a and b give the same density and the same rocks: every field
+// field_density, a_bound, noise_m_bound, sphere_outer_r and the rock-fields
+// generators (cell RNG seeds, explicit-region cut) read -- shape, centre,
+// normal, table, outer fade, scale height, sphere radius and edge, noise
+// scale / contrast / octaves / sharpness, shape warp and its scale, seed,
+// explicit regions. Not id, frame, flags or populations (no generator reads
+// them; the puffs' colour is compared by PuffField itself). The ONE change
+// test the near band, the speck band and the puffs share.
+bool same_density(const DiscSource& a, const DiscSource& b);
 
 // ---- Per-camera build (spec §1-3) ----------------------------------------
 

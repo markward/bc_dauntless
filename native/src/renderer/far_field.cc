@@ -177,6 +177,18 @@ double sphere_outer_r(const DiscSource& s) {
     return s.shape_warp_scale_gu > 0.0f ? s.sphere_radius_gu / (1.0 - w) : s.sphere_radius_gu;
 }
 
+bool same_density(const DiscSource& a, const DiscSource& b) {
+    return a.seed == b.seed && a.shape == b.shape && a.centre == b.centre &&
+           a.sphere_radius_gu == b.sphere_radius_gu && a.sphere_edge_frac == b.sphere_edge_frac &&
+           a.noise_scale_gu == b.noise_scale_gu && a.noise_contrast == b.noise_contrast &&
+           a.noise_octaves == b.noise_octaves && a.noise_sharpness == b.noise_sharpness &&
+           a.shape_warp == b.shape_warp && a.shape_warp_scale_gu == b.shape_warp_scale_gu &&
+           a.normal == b.normal && a.table == b.table && a.outer_fade_gu == b.outer_fade_gu &&
+           a.scale_height_frac == b.scale_height_frac &&
+           a.scale_height_min_gu == b.scale_height_min_gu &&
+           a.explicit_regions == b.explicit_regions;
+}
+
 ViewBasis make_view_basis(const glm::vec3& dir) {
     // Copy of native/src/rockgen/src/impostor.cc:make_basis — the bake's rule.
     const glm::vec3 up_ref = (std::abs(dir.y) > 0.99f) ? glm::vec3(1.0f, 0.0f, 0.0f)

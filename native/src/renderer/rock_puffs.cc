@@ -61,8 +61,13 @@ std::vector<PuffGpu> place_puffs(const far::DiscSource& s, const PuffDials& d,
     const float bound = far::noise_m_bound(s);
     const glm::vec3 albedo = s.pops.empty() ? glm::vec3(0.4f) : s.pops.front().albedo;
     rockrand::Rng r{detail::mix(s.seed, 0x9077ffull)};
-    const int max_tries = d.count * 60;
-    for (int t = 0; t < max_tries && static_cast<int>(out.size()) < d.count; ++t) {
+    // The samples fill the cube of the OUTER reach, whose volume grows as
+    // (Ro / R)^3 under shape warp while the field's own stays ~R^3: the try
+    // budget grows with it, so a warped field still places `count` puffs.
+    const double vol = std::max(1.0, (Ro / R) * (Ro / R) * (Ro / R));
+    const double tries = static_cast<double>(d.count) * 60.0 * vol;
+    const long long max_tries = static_cast<long long>(std::min(tries, 4.0e8));
+    for (long long t = 0; t < max_tries && static_cast<int>(out.size()) < d.count; ++t) {
         const glm::dvec3 q(2.0 * r.unit() - 1.0, 2.0 * r.unit() - 1.0, 2.0 * r.unit() - 1.0);
         const float accept = r.unit();
         const float size_u = r.unit();
@@ -87,18 +92,17 @@ void PuffField::set_dials(const PuffDials& d) {
 }
 
 void PuffField::set_sources(const std::vector<far::DiscSource>& active) {
-    bool same = active.size() == sources_.size();
-    for (std::size_t i = 0; same && i < active.size(); ++i)
-        same = active[i].seed == sources_[i].seed && active[i].centre == sources_[i].centre &&
-               active[i].sphere_radius_gu == sources_[i].sphere_radius_gu &&
-               active[i].noise_scale_gu == sources_[i].noise_scale_gu &&
-               active[i].noise_contrast == sources_[i].noise_contrast &&
-               active[i].noise_sharpness == sources_[i].noise_sharpness &&
-               active[i].shape_warp == sources_[i].shape_warp &&
-               active[i].shape_warp_scale_gu == sources_[i].shape_warp_scale_gu;
-    if (same) return;
+    // far::same_density (and the source list) decide where puffs land; the
+    // first population's albedo is their colour. The sources are stored
+    // either way, so a later set_dials rebuild never reads a stale copy.
+    bool same = detail::same_generators(active, sources_);
+    for (std::size_t i = 0; same && i < active.size(); ++i) {
+        const glm::vec3 a = active[i].pops.empty() ? glm::vec3(0.4f) : active[i].pops.front().albedo;
+        const glm::vec3 b = sources_[i].pops.empty() ? glm::vec3(0.4f) : sources_[i].pops.front().albedo;
+        same = a == b;
+    }
     sources_ = active;
-    rebuild();
+    if (!same) rebuild();
 }
 
 void PuffField::clear() {

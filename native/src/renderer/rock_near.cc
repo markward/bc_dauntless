@@ -90,11 +90,13 @@ double aabb_distance(const glm::dvec3& p, const glm::dvec3& lo, double size) {
     return std::sqrt(glm_exact::dot3(dx, dy, dz, dx, dy, dz));
 }
 
-// False when no point within `range` of `c` can have density in `s`.
+// False when no point within `range` of `c` can have density in `s`. A
+// sphere reaches out to far::sphere_outer_r (its shape warp's lobes), not
+// just sphere_radius_gu (equal when unwarped).
 bool reaches(const far::DiscSource& s, const glm::dvec3& c, double range) {
     if (s.shape == far::DiscSource::Shape::Sphere)
         return s.sphere_radius_gu > 0.0f &&
-               glm::length(c - s.centre) <= static_cast<double>(s.sphere_radius_gu) + range;
+               glm::length(c - s.centre) <= far::sphere_outer_r(s) + range;
     return far::a_bound(s, c, range) > 0.0f;
 }
 
