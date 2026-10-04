@@ -62,7 +62,7 @@ def test_far_stats_keys():
                                   "near_ghosted", "near_meshes", "near_billboards",
                                   "near_fading", "mid_sprites", "mid_fading",
                                   "mid_tiles", "mid_cache_evictions",
-                                  "speck_cells", "band_specks"}
+                                  "speck_cells", "band_specks", "puffs"}
 
 
 def test_far_set_dials_p_min_and_omitted_keys_reset():

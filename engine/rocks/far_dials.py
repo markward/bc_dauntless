@@ -148,6 +148,14 @@ DEFAULTS: dict = {
     "speck_out_gu": 1500.0, "speck_out_fade_gu": 400.0,
     "speck_keep_d0_gu": 350.0, "speck_keep_band": 0.25, "speck_keep_power": 3.0,
     "speck_restream_gu": 50.0, "speck_band_gain": 0.25,
+    # Puffs (SPIKE, native; MUST equal PuffDials in rock_puffs.h): the far
+    # look of a tile field as puff_count soft lit billboards placed by its
+    # density, radius puff_size_frac x field radius x [0.6, 1.4], peak alpha
+    # puff_opacity, fading in over [puff_start_gu, + puff_ramp_gu] and out
+    # within puff_near_fade x their radius. Replaces the volumetric haze.
+    "puff_count": 400, "puff_size_frac": 0.18, "puff_opacity": 0.35,
+    "puff_brightness": 8.0, "puff_start_gu": 800.0, "puff_ramp_gu": 800.0,
+    "puff_near_fade": 1.5,
     "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,
 }
 
@@ -167,16 +175,19 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "haze_handoff_gu", "haze_handoff_band_gu", "mid_fill", "mid_sprite_scale",
     "mid_max_sprites",
     "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
-    "speck_keep_power", "speck_restream_gu", "speck_band_gain"})
+    "speck_keep_power", "speck_restream_gu", "speck_band_gain",
+    "puff_count", "puff_size_frac", "puff_opacity", "puff_brightness",
+    "puff_start_gu", "puff_ramp_gu", "puff_near_fade"})
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
 _INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "tile_haze_steps",
                "belt_noise_octaves", "near_small_max", "near_large_max",
-               "mid_max_sprites")
+               "mid_max_sprites", "puff_count")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
-_LOOK_FIRST = ("tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
+_LOOK_FIRST = ("puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
+               "tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
                "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
                "haze_handoff_gu", "haze_handoff_band_gu",
                "near_small_density", "near_large_density",

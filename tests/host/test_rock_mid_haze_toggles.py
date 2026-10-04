@@ -118,6 +118,7 @@ def host():
         pytest.skip(f"no GL context: {e}")
     far_tier.reset()
     h.dust_set_enabled(False)
+    h.rock_puffs_set_enabled(False)   # spike/rock-specks: these measure the haze alone
     try:
         yield h
     finally:
@@ -134,7 +135,7 @@ def host():
 
 def test_mid_and_haze_default_off(host):
     assert h.rock_mid_enabled() is False
-    assert h.rock_haze_enabled() is True    # spike/rock-specks: haze back on
+    assert h.rock_haze_enabled() is False   # spike/rock-specks: puffs replace it
 
 
 # ── Mid band ──────────────────────────────────────────────────────────────

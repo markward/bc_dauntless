@@ -61,6 +61,20 @@ _SPECK_CPP_FIELDS = {
     "speck_keep_band": "keep_band", "speck_restream_gu": "restream_gu",
     "speck_band_gain": "gain",
 }
+_PUFF_CPP_FIELDS = {
+    "puff_count": "count", "puff_size_frac": "size_frac", "puff_opacity": "opacity",
+    "puff_brightness": "brightness", "puff_start_gu": "start_gu",
+    "puff_ramp_gu": "ramp_gu", "puff_near_fade": "near_fade",
+}
+
+
+def test_puff_defaults_match_rock_puffs_h():
+    text = (Path(__file__).parents[2]
+            / "native/src/renderer/include/renderer/rock_puffs.h").read_text()
+    for key, field in _PUFF_CPP_FIELDS.items():
+        m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
+        assert m, key
+        assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
 
 
 def test_speck_band_defaults_match_rock_speck_h():
@@ -76,7 +90,7 @@ def test_native_defaults_match_the_cpp_header():
     """FarDials / TierDials defaults MUST equal DEFAULTS."""
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer").resolve()
     text = (hdr / "far_math.h").read_text() + (hdr / "far_field.h").read_text()
-    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_MID_CPP_FIELDS) - set(_SPECK_CPP_FIELDS):
+    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_MID_CPP_FIELDS) - set(_SPECK_CPP_FIELDS) - set(_PUFF_CPP_FIELDS):
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % key, text)
         assert m, key
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
@@ -109,7 +123,7 @@ def test_dial_group_is_rock_fields_with_look_dials_first(monkeypatch):
                         lambda name, order, cur, step: registered.setdefault(name, order))
     far_dials.register()
     assert list(registered) == ["rock fields"]
-    assert registered["rock fields"][0] == "tile_shape_warp"
+    assert registered["rock fields"][0] == "puff_opacity"
 
 
 def test_tile_haze_gain_is_the_cpp_derivation():
@@ -150,7 +164,8 @@ def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the rock-fields look dials
     lead (rock-fields Task 13: near/mid/haze population, then absorption)."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:25] == (
+    assert far_dials.DIAL_ORDER[:29] == (
+        "puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
         "tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
         "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
         "haze_handoff_gu", "haze_handoff_band_gu",

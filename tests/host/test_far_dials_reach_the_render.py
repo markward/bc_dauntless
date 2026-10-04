@@ -38,6 +38,7 @@ def host():
     # Rock-real Part 1 strip-back (2026-10-03): haze is off by default,
     # independent of far_set_enabled. These tests measure the haze itself.
     h.rock_haze_set_enabled(True)
+    h.rock_puffs_set_enabled(False)   # spike/rock-specks: measure the haze alone
     try:
         yield h
     finally:
@@ -47,6 +48,7 @@ def host():
         h.far_clear()
         h.far_set_enabled(True)
         h.rock_haze_set_enabled(False)
+        h.rock_puffs_set_enabled(True)
         h.dust_set_enabled(True)
         h.shutdown()
 

@@ -54,6 +54,8 @@ embed_shader(SHADER_SPECK_VS shaders/speck.vert speck_vs)
 embed_shader(SHADER_SPECK_FS shaders/speck.frag speck_fs)
 embed_shader(SHADER_ROCK_SPECK_VS shaders/rock_speck.vert rock_speck_vs)
 embed_shader(SHADER_ROCK_SPECK_FS shaders/rock_speck.frag rock_speck_fs)
+embed_shader(SHADER_ROCK_PUFF_VS shaders/rock_puff.vert rock_puff_vs)
+embed_shader(SHADER_ROCK_PUFF_FS shaders/rock_puff.frag rock_puff_fs)
 embed_shader(SHADER_FAR_HAZE_FS shaders/far_haze.frag far_haze_fs)
 embed_shader(SHADER_BACKDROP_VS shaders/backdrop.vert backdrop_vs)
 embed_shader(SHADER_BACKDROP_FS shaders/backdrop.frag backdrop_fs)
@@ -167,6 +169,7 @@ add_library(renderer STATIC
     rock_near.cc
     rock_mid.cc
     rock_speck.cc
+    rock_puffs.cc
     minor_field.cc
     minor_pass.cc
     rock_shading.cc

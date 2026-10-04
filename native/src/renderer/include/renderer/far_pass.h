@@ -21,6 +21,7 @@
 #include <renderer/far_field.h>
 #include <renderer/speck.h>
 #include <renderer/rock_speck.h>
+#include <renderer/rock_puffs.h>
 
 namespace scenegraph { struct Camera; }
 
@@ -88,6 +89,13 @@ public:
                             Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                             float speck_gain, int viewport_w, int viewport_h);
     int rock_speck_count() const { return rock_speck_count_; }
+    // Rock-field puffs (SPIKE, rock_puffs.h): upload on change, draw every
+    // frame. Premultiplied over, depth-tested, no depth writes, unculled.
+    void upload_rock_puffs(const std::vector<rockfield::PuffGpu>& puffs);
+    void render_rock_puffs(const glm::vec3& offset, const rockfield::PuffDials& d,
+                           const scenegraph::Camera& cam, Pipeline& pipeline,
+                           const Lighting& lighting, float ambient_scale);
+    int rock_puff_count() const { return rock_puff_count_; }
 
     // Belt haze (spec §2 "Haze"): one fullscreen-triangle draw of
     // far_haze.frag per source in `active` that has populations, among the
@@ -155,6 +163,9 @@ private:
     std::uint32_t rock_speck_vao_ = 0;
     std::uint32_t rock_speck_vbo_ = 0;
     int rock_speck_count_ = 0;
+    std::uint32_t rock_puff_vao_ = 0;
+    std::uint32_t rock_puff_vbo_ = 0;
+    int rock_puff_count_ = 0;
     std::uint32_t white_texture_ = 0;
     std::uint32_t black_texture_ = 0;
     std::uint32_t haze_vao_ = 0;            // empty: the fullscreen triangle
