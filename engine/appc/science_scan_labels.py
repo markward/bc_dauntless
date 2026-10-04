@@ -22,17 +22,40 @@ import App
 from engine.appc import unknown_labels
 
 
+# Sentinel for "obj had no instance-level GetDisplayName override" -- distinct
+# from any real value (including None), so it can't collide with one.
+_NO_PRIOR_OVERRIDE = object()
+
+
 @contextmanager
 def _display_name_as(obj, label):
-    """Temporarily make obj.GetDisplayName() answer *label* (instance attr)."""
+    """Temporarily make obj.GetDisplayName() answer *label* (instance attr).
+
+    Save/restore, not a blind delete: a caller may already have its own
+    instance-level GetDisplayName override in place, and this context can
+    also be entered reentrantly on the SAME object (e.g. a wrapped
+    CreateScanButton call nested inside a wrapped ExitedSet call during one
+    event dispatch). An unconditional `del obj.GetDisplayName` in `finally`
+    would either permanently destroy a pre-existing override, or -- in the
+    nested case -- have the INNER call's cleanup delete the attribute the
+    OUTER call still relies on for the rest of its own `with` block.
+
+    Checked via `obj.__dict__`, not `getattr`/`hasattr`: every ObjectClass
+    has a class-level GetDisplayName method, so a getattr-based check would
+    always see "an override" and never restore to the class method.
+    """
+    prior = obj.__dict__.get("GetDisplayName", _NO_PRIOR_OVERRIDE)
     obj.GetDisplayName = lambda: label
     try:
         yield
     finally:
-        try:
-            del obj.GetDisplayName
-        except AttributeError:
-            pass
+        if prior is _NO_PRIOR_OVERRIDE:
+            try:
+                del obj.GetDisplayName
+            except AttributeError:
+                pass
+        else:
+            obj.GetDisplayName = prior
 
 
 def _unknown_label(obj):

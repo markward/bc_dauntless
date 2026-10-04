@@ -272,7 +272,10 @@ class STMenu(ObjectClass):
         renamed button must already be filed under that key, or the dedupe
         check misses it and a duplicate row gets added.
 
-        Silent no-op (returns None) when ``old_label`` isn't a button here."""
+        Silent no-op (returns None) when ``old_label`` isn't a button here.
+        Same tradeoff ``AddChild`` documents: if ``new_label`` already keys
+        another button here, that entry is overwritten in ``_buttons``
+        (the ``_children`` list still carries both)."""
         button = self._buttons.pop(str(old_label), None)
         if button is None:
             return None
