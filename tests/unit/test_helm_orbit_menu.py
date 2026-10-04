@@ -17,6 +17,7 @@ from engine.appc.subsystems import SensorSubsystem
 from engine.appc.sets import SetClass
 from engine.appc.planet import Planet_Create, Sun_Create
 from engine.core.game import Game, _set_current_game
+from tests.helpers.sensor_time import settle_identification
 import Bridge.HelmMenuHandlers as H
 
 
@@ -221,8 +222,17 @@ def _set_with_starbase_nav():
     return s, player, sensors, nav_point
 
 
-def test_setup_nav_points_menu_enables_and_populates_the_row():
+def test_setup_nav_points_menu_enables_and_populates_the_row(monkeypatch):
     """THE E1M1 repro, through the real SDK function."""
+    # SetupNavPointsMenuFromSet:1124 calls pSensors.IdentifyObject(pNavPoint),
+    # which ARMS a deferred identification relative to the REAL game clock
+    # (sensor_contacts._now()) rather than committing immediately. Pin that
+    # clock so settle_identification's own tick()s below are measured against
+    # a known baseline, not whatever game time happened to leak in from
+    # earlier tests in a full-suite run.
+    from engine.appc import sensor_contacts
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
+
     helm, nav = _helm_menu_with_nav_submenu()
     s, player, sensors, nav_point = _set_with_starbase_nav()
 
@@ -235,7 +245,10 @@ def test_setup_nav_points_menu_enables_and_populates_the_row():
     # The two calls that decide whether the row can be clicked at all.
     assert nav.IsOpenable() == 1
     assert nav.IsEnabled() == 1
-    # SetupNavPointsMenuFromSet:1117 identifies each nav point to the player.
+    # IdentifyObject now ARMS a deferred identification (BC's RE'd dwell)
+    # rather than committing immediately, so settle the contact manager
+    # forward before asserting.
+    settle_identification(player)
     assert sensors.IsObjectKnown(nav_point) == 1
 
 

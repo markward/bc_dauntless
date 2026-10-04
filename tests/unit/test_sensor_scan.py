@@ -85,11 +85,17 @@ def test_scan_all_objects_returns_playable_sequence():
     seq.Play()   # must not raise
 
 
-def test_scan_identifies_all_in_set_ignoring_range():
+def test_scan_identifies_all_in_set_ignoring_range(monkeypatch):
     """Active scan reveals the whole area — including an out-of-range contact
     the passive sweep would skip — once each contact's dwell has elapsed.
     ScanAllObjects spaces the three contacts' identifications one dwell apart,
-    so settling the last one needs n * dwell game-time to pass."""
+    so settling the last one needs n * dwell game-time to pass. IdentifyObject
+    arms its deferred identification relative to the REAL game clock
+    (sensor_contacts._now()) when no explicit now_gt is given, so pin it to a
+    known value -- otherwise the tick()s below are comparing against whatever
+    game time happened to leak in from other tests, not the fixture's own
+    timeline."""
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
 
@@ -116,7 +122,8 @@ def test_scan_identifies_all_in_set_ignoring_range():
     assert _identified.count(haven) == 1
 
 
-def test_scan_excludes_player_and_non_contacts():
+def test_scan_excludes_player_and_non_contacts(monkeypatch):
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     from engine.appc.objects import ObjectClass
@@ -132,7 +139,8 @@ def test_scan_excludes_player_and_non_contacts():
     assert _identified == []
 
 
-def test_scan_does_not_refire_for_known_contacts():
+def test_scan_does_not_refire_for_known_contacts(monkeypatch):
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     target = ShipClass_Create("BirdOfPrey")
@@ -163,7 +171,8 @@ def test_scan_with_no_ship_returns_empty_sequence():
 # IdentifyObject (single-target "Scan Object" path)
 # --------------------------------------------------------------------------
 
-def test_identify_object_marks_one_known_and_broadcasts_once():
+def test_identify_object_marks_one_known_and_broadcasts_once(monkeypatch):
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     target = ShipClass_Create("BirdOfPrey")
