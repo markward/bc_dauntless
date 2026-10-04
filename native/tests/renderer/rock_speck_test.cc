@@ -518,3 +518,38 @@ TEST(ReviewFixes, PuffsPlaceTheirCountAtHighWarp) {
     EXPECT_EQ(p.size(), 60u);
     for (const auto& x : pos) EXPECT_GT(far::field_density(s, x), 0.0f);
 }
+
+// After a dash the near billboards regrow from the mesh range back out to
+// billboard_gu over ~17 frames, and the shader fades specks in at that
+// REGROWING edge. The band must already hold those rocks: every rock of a
+// cell wholly between the mesh range and the full billboard edge is a speck.
+TEST(SpeckBand, HoldsTheRocksInsideTheBillboardEdgeForTheDashRegrow) {
+    rockfield::SpeckBand b;
+    setup(b);
+    b.stream(glm::dvec3(0.0), 0.0f);
+    ASSERT_TRUE(b.finish());
+    std::set<std::tuple<float, float, float, float>> got;
+    for (const auto& g : b.instances()) {
+        const glm::dvec3 p = glm::dvec3(g.pos) + b.origin_sys();
+        got.insert({static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z), g.radius});
+    }
+    rockfield::NearDials nd;
+    const double L = nd.large.cell_gu;
+    int checked = 0;
+    for (int i = -9; i <= 9; ++i)
+        for (int j = -9; j <= 9; ++j)
+            for (int k = -9; k <= 9; ++k) {
+                const glm::dvec3 lo = glm::dvec3(i, j, k) * L;
+                const double dn = glm::length(glm::max(glm::max(lo, -(lo + L)), glm::dvec3(0.0)));
+                const double df = glm::length(glm::max(glm::abs(lo), glm::abs(lo + L)));
+                if (dn < nd.large.mesh_gu + nd.fade_gu || df > nd.large.billboard_gu - nd.fade_gu) continue;
+                for (const auto& r : rockfield::generate_near_cell(full_sphere(), rockfield::NearClass::Large,
+                                                                   {i, j, k}, nd, cat())) {
+                    EXPECT_TRUE(got.count({static_cast<float>(r.pos_sys.x), static_cast<float>(r.pos_sys.y),
+                                           static_cast<float>(r.pos_sys.z), r.radius}))
+                        << "cell " << i << "," << j << "," << k;
+                    ++checked;
+                }
+            }
+    EXPECT_GT(checked, 500);
+}

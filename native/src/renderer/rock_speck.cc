@@ -244,7 +244,12 @@ SpeckBand::Result SpeckBand::rebuild(Job job, const std::atomic<bool>& cancel) {
     const double margin = job.margin;
     const double cap = 0.5 * (kSpeckMaxCellsPerAxis - 1) * L;
     const double r_out = std::min(static_cast<double>(dials_.out_gu) + margin, cap);
-    const double r_in = static_cast<double>(lg.billboard_gu) - near_.fade_gu - margin;
+    // From the MESH range, not the billboard edge: after a dash the billboards
+    // regrow from mesh_gu out to billboard_gu over ~17 frames and the shader
+    // fades specks in at that regrowing edge (u_in_gu = the effective edge),
+    // so those rocks must already be here. Inside the edge they cost only a
+    // vertex each -- rock_speck.vert drops them at alpha 0.
+    const double r_in = static_cast<double>(lg.mesh_gu) - near_.fade_gu - margin;
     // Checked per column: clear(), a source / generator change and the
     // destructor stop a rebuild in flight within one column's work.
     auto stopped = [&c]() { Result r; r.origin = c; r.cancelled = true; return r; };
