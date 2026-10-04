@@ -246,6 +246,8 @@ public:
     // Diagnostics: large cells the last posed step tested rock by rock (the
     // rest were rejected whole by the cell broad phase).
     int last_step_large_cells_tested() const { return last_step_large_cells_tested_; }
+    // Diagnostics: cells (either class) the last posed step examined at all.
+    int last_step_cells_examined() const { return last_step_cells_examined_; }
 private:
     struct Cell {
         NearClass cls;
@@ -255,9 +257,14 @@ private:
         bool pinned = false;             // the test cell: never streamed out
         std::vector<std::uint64_t> keys; // pinned only: explicit rock keys
         float r_max = 0.0f;              // largest rock radius (broad phase)
-        // Large cells: the step that last saw this cell (0 = none) and how
-        // many of its rocks it saw then -- a rock is "fresh" (ghost test)
-        // unless the previous step saw it.
+        // Large cells: a rock is "fresh" (ghost test) unless the previous
+        // step saw it. Every step sees every large cell, so a streamed cell
+        // was seen by step S exactly when S > born (the step clock when it
+        // was generated; one less when it was regenerated before the next
+        // step had a chance to miss it -- the old eager per-step stamp, kept
+        // lazily). The pinned test cell, whose rocks grow, keeps the stamp:
+        // the step that last saw it (0 = none) and how many rocks it saw then.
+        std::uint64_t born = 0;
         std::uint64_t seen_step = 0;
         std::size_t seen_rocks = 0;
         glm::i64vec3 ijk{0};             // streamed cells: the cell index (its block)
@@ -323,6 +330,7 @@ private:
     std::uint64_t full_stream_passes_ = 0;
     int last_stream_cells_tested_ = 0;
     int last_step_large_cells_tested_ = 0;
+    int last_step_cells_examined_ = 0;
 
     // Contact state (cleared by clear()). Per-rock state carries its CELL
     // key, so pruning asks "is the cell still streamed" instead of

@@ -378,8 +378,8 @@ void NearField::stream(const glm::dvec3& c) {
     };
     const auto drop = [&](std::unordered_map<std::uint64_t, Cell>::iterator it) {
         const Cell& cell = it->second;
-        if (cell.cls == NearClass::Large && cell.seen_step == step_count_)
-            dropped_seen_[it->first] = cell.seen_rocks;
+        if (cell.cls == NearClass::Large && cell.born < step_count_)   // the last step saw it
+            dropped_seen_[it->first] = cell.rocks.size();
         block_remove(it->first, cell);
         return cells_.erase(it);
     };
@@ -424,10 +424,8 @@ void NearField::stream(const glm::dvec3& c) {
         std::stable_sort(cell.by_radius.begin(), cell.by_radius.end(), [&](std::uint32_t a, std::uint32_t b) {
             return cell.rocks[a].radius > cell.rocks[b].radius;
         });
-        if (const auto ds = dropped_seen_.find(key); ds != dropped_seen_.end()) {
-            cell.seen_step = step_count_;
-            cell.seen_rocks = ds->second;
-        }
+        cell.born = step_count_;
+        if (dropped_seen_.count(key)) cell.born = step_count_ - 1;   // seen by the last step, as it was
         block_add(key, cells_.emplace(key, std::move(cell)).first->second);
         heap_push(drop_heap_, {path_s_ + std::max(0.0, keep_of(cls) - d), key});
     };
@@ -895,6 +893,7 @@ void NearField::step(const NearStepInput& in) {
     last_time_ = t;
     stepped_ = true;
     last_step_large_cells_tested_ = 0;
+    last_step_cells_examined_ = 0;
     const minors::Dials& md = in.minor_dials;
     const glm::dvec3 to_render = in.anchor_sys + in.render_origin;
     // The seen clock: a large cell the previous step saw has seen_step == prev.
@@ -918,12 +917,11 @@ void NearField::step(const NearStepInput& in) {
 
     if (!in.player) {                    // no contacts; the next posed step starts afresh
         has_prev_ = false;
-        for (auto& [ckey, cell] : cells_) {
-            (void)ckey;
-            if (cell.cls != NearClass::Large) continue;
-            cell.seen_step = now;
-            cell.seen_rocks = cell.rocks.size();
-        }
+        for (const std::uint64_t key : pinned_)   // streamed cells are seen lazily (Cell::born)
+            if (auto it = cells_.find(key); it != cells_.end() && it->second.cls == NearClass::Large) {
+                it->second.seen_step = now;
+                it->second.seen_rocks = it->second.rocks.size();
+            }
         return;
     }
 
@@ -992,22 +990,80 @@ void NearField::step(const NearStepInput& in) {
                  cell.lo.y > sw_hi.y + e || cell.lo.y + cell.size < sw_lo.y - e ||
                  cell.lo.z > sw_hi.z + e || cell.lo.z + cell.size < sw_lo.z - e);
     };
-    int reported = 0;
-    for (auto& [ckey, cell] : cells_) {
-        if (cell.cls != NearClass::Large) continue;
-        // A rock is fresh unless the previous posed step saw it.
-        const bool cell_seen = had_prev && cell.seen_step == prev;
-        const std::size_t seen_rocks = cell.seen_rocks;
-        cell.seen_step = now;
-        cell.seen_rocks = cell.rocks.size();
-        if (cell.rocks.empty()) continue;
-        if (!cell.pinned && (!sweep_box_meets(cell) || cell_lower_bound(cell) > lb.bound + cell.r_max + margin)) {
-            // No rock here overlaps or is swept: only a ghost is released.
-            if (!ghosts_.empty())
-                for (std::size_t i = 0; i < cell.rocks.size(); ++i) ghosts_.erase(key_of(ckey, cell, i));
-            continue;
+    // The cells the sweep can reach, found a block at a time: a cell box the
+    // first cuts reject is never examined. A block's box and r_max bound its
+    // cells', so its cut (`extra`: the class's reach beyond r_max) is
+    // conservative. Pinned cells are always examined.
+    const double box_slack = 0.05 + 1e-4 * seg_scale;
+    using CellRef = std::pair<std::uint64_t, Cell*>;
+    const auto near_sweep = [&](NearClass cls, double extra, std::vector<CellRef>& out) {
+        for (auto& [bkey, b] : blocks_[static_cast<int>(cls)]) {
+            (void)bkey;
+            const double e = extra + static_cast<double>(b.r_max) + box_slack;
+            if (b.lo.x > sw_hi.x + e || b.hi.x < sw_lo.x - e || b.lo.y > sw_hi.y + e ||
+                b.hi.y < sw_lo.y - e || b.lo.z > sw_hi.z + e || b.hi.z < sw_lo.z - e)
+                continue;
+            for (const CellRef& r : b.cells) out.push_back(r);
         }
+        for (const std::uint64_t key : pinned_)
+            if (auto it = cells_.find(key); it != cells_.end() && it->second.cls == cls)
+                out.emplace_back(key, &it->second);
+    };
+    // Cells are processed in the cell map's order -- the old loops' order,
+    // which decides the contacts' order and which ones a per-step cap keeps.
+    // Only cells holding a rock within the sweep's reach (`active`) can add
+    // a contact or count toward a cap; when at most one is active the order
+    // is not output, else the active ones are put in map order (one walk).
+    const auto in_map_order = [&](std::vector<CellRef>& v) {
+        if (v.size() < 2) return;
+        std::vector<CellRef> sorted;
+        sorted.reserve(v.size());
+        for (auto it = cells_.begin(); it != cells_.end() && sorted.size() < v.size(); ++it)
+            for (const CellRef& r : v)
+                if (r.second == &it->second) { sorted.push_back(r); break; }
+        v.swap(sorted);
+    };
+
+    int reported = 0;
+    std::vector<CellRef> large_cells, tested, active;
+    near_sweep(NearClass::Large, static_cast<double>(lb.bound + margin), large_cells);
+    last_step_cells_examined_ += static_cast<int>(large_cells.size());
+    for (const CellRef& ref : large_cells) {
+        const Cell& cell = *ref.second;
+        if (cell.rocks.empty()) continue;
+        if (!cell.pinned && (!sweep_box_meets(cell) || cell_lower_bound(cell) > lb.bound + cell.r_max + margin))
+            continue;
         ++last_step_large_cells_tested_;
+        tested.push_back(ref);
+    }
+    // A cell no rock of which overlaps or is swept: only a ghost is released.
+    if (!ghosts_.empty()) {
+        std::vector<std::uint64_t> keep_cells;
+        for (const CellRef& ref : tested) keep_cells.push_back(ref.first);
+        std::sort(keep_cells.begin(), keep_cells.end());
+        for (auto it = ghosts_.begin(); it != ghosts_.end();)
+            it = std::binary_search(keep_cells.begin(), keep_cells.end(), it->second) ? std::next(it)
+                                                                                     : ghosts_.erase(it);
+    }
+    const auto large_active = [&](const CellRef& ref) {
+        if (!(dt > 0.0)) return false;
+        for (const NearRock& r : ref.second->rocks)
+            if (!(dist_to_segment(glm::vec3(r.pos_sys - to_render)) > lb.bound + r.radius + margin)) return true;
+        return false;
+    };
+    const auto process_large = [&](std::uint64_t ckey, Cell& cell) {
+        // A rock is fresh unless the previous posed step saw it.
+        bool cell_seen;
+        std::size_t seen_rocks;
+        if (cell.pinned) {
+            cell_seen = had_prev && cell.seen_step == prev;
+            seen_rocks = cell.seen_rocks;
+            cell.seen_step = now;
+            cell.seen_rocks = cell.rocks.size();
+        } else {
+            cell_seen = had_prev && cell.born < prev;
+            seen_rocks = cell.rocks.size();
+        }
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
             const std::uint64_t key = key_of(ckey, cell, i);
             const NearRock& r = cell.rocks[i];
@@ -1057,7 +1113,21 @@ void NearField::step(const NearStepInput& in) {
             large_contacts_.push_back(nc);
             ++reported;
         }
+    };
+    // Inactive cells only ghost (per rock, order-free); then the active ones.
+    for (const CellRef& ref : tested) {
+        if (large_active(ref)) active.push_back(ref);
+        else process_large(ref.first, *ref.second);
     }
+    in_map_order(active);
+    for (const CellRef& ref : active) process_large(ref.first, *ref.second);
+    // The pinned test cell's stamp, when the cuts skipped it (no rocks).
+    for (const std::uint64_t key : pinned_)
+        if (auto it = cells_.find(key); it != cells_.end() && it->second.cls == NearClass::Large &&
+                                        it->second.seen_step != now) {
+            it->second.seen_step = now;
+            it->second.seen_rocks = it->second.rocks.size();
+        }
 
     // 4. Small rocks: the minors' harmless shove (MinorField::step_contact),
     // against the bare hull box -- shields widen only the large contacts.
@@ -1082,10 +1152,22 @@ void NearField::step(const NearStepInput& in) {
         }
         return m;
     };
-    int touches = 0;
-    for (const auto& [ckey, cell] : cells_) {
-        if (cell.cls != NearClass::Small) continue;
-        if (touches >= md.max_shoves_per_frame) break;
+    // Candidates: the blocks near the sweep (unshoved reach), every cell
+    // holding a shoved rock (its reach is wider), and the pinned cell.
+    std::vector<CellRef> small_cells;
+    near_sweep(NearClass::Small, static_cast<double>(sb.bound), small_cells);
+    for (std::size_t i = 0; i < shove_reach.size(); ++i) {
+        if (i > 0 && shove_reach[i - 1].first == shove_reach[i].first) continue;
+        if (auto it = cells_.find(shove_reach[i].first); it != cells_.end() && it->second.cls == NearClass::Small)
+            small_cells.emplace_back(it->first, &it->second);
+    }
+    std::sort(small_cells.begin(), small_cells.end());
+    small_cells.erase(std::unique(small_cells.begin(), small_cells.end()), small_cells.end());
+    last_step_cells_examined_ += static_cast<int>(small_cells.size());
+    active.clear();
+    for (const CellRef& ref : small_cells) {
+        const std::uint64_t ckey = ref.first;
+        const Cell& cell = *ref.second;
         if (cell.rocks.empty()) continue;
         if (!cell.pinned) {
             // Cheap first cut (Mark, 2026-10-04: thousands of small cells at
@@ -1102,6 +1184,20 @@ void NearField::step(const NearStepInput& in) {
                 continue;
             if (cell_lower_bound(cell) - shove > cell.r_max + sb.bound) continue;
         }
+        // Active: a rock within the per-rock cull below (the only way in).
+        for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
+            glm::vec3 p(cell.rocks[i].pos_sys - to_render);
+            if (!shoves_.empty())
+                if (auto sh = shoves_.find(key_of(ckey, cell, i)); sh != shoves_.end()) p += sh->second.s.offset;
+            if (!(dist_to_segment(p) > cell.rocks[i].radius + sb.bound)) { active.push_back(ref); break; }
+        }
+    }
+    in_map_order(active);
+    int touches = 0;
+    for (const CellRef& ref : active) {
+        const std::uint64_t ckey = ref.first;
+        const Cell& cell = *ref.second;
+        if (touches >= md.max_shoves_per_frame) break;
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
             if (touches >= md.max_shoves_per_frame) break;
             const std::uint64_t key = key_of(ckey, cell, i);

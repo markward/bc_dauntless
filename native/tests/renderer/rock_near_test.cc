@@ -1266,3 +1266,75 @@ TEST(NearPerf, NoMarginZigzagStreamsExactlyTheCellsInRange) {
     }
     EXPECT_LT(f.full_stream_passes(), 40u);   // the zigzag stayed incremental
 }
+
+TEST(NearPerf, StepExaminesOnlyCellsNearTheSweep) {
+    rockfield::NearField f;
+    f.set_catalogue(rock_scenario::near_catalogue());
+    f.set_sources({rock_scenario::beol4_field()});
+    rockfield::NearStepInput in;
+    for (int i = 0; i < 3; ++i) {
+        const auto pose = rock_scenario::player_pose(i, 6.0);
+        f.stream(pose.pos);
+        in.game_time = 10.0 + i / 60.0;
+        in.player = rock_scenario::galaxy_box(glm::vec3(pose.pos), pose.fwd);
+        f.step(in);
+    }
+    ASSERT_GT(f.stats().cells, 3000);
+    // The blocks around a 0.1 GU sweep: a few hundred cells at most, not every streamed one.
+    EXPECT_LT(f.last_step_cells_examined(), 600) << "of " << f.stats().cells;
+}
+
+// Streamed (not pinned) large cells are "seen" lazily (Cell::born): pin both
+// halves of the old per-step stamp on real streamed rocks.
+namespace {
+struct StreamedRock { std::uint64_t key; glm::vec3 pos; float radius; };
+StreamedRock large_rock_near_origin(const rockfield::NearDials& d) {
+    rockfield::NearField g;
+    g.set_dials(d); g.set_catalogue(cat()); g.set_sources({full_sphere()});
+    g.stream(glm::dvec3(0.0));
+    StreamedRock best{0, glm::vec3(1e9f), 0.0f};
+    g.for_each(rockfield::NearClass::Large, [&](std::uint64_t key, const rockfield::NearRock& r) {
+        if (glm::length(glm::vec3(r.pos_sys)) < glm::length(best.pos)) best = {key, glm::vec3(r.pos_sys), r.radius};
+    });
+    return best;
+}
+rockfield::NearDials dense_large() {
+    rockfield::NearDials d;
+    d.large_far_gu = 0.0f;
+    d.large.density = 2.0e-3f;
+    return d;
+}
+}  // namespace
+
+TEST(NearPerf, AStreamedLargeRockArrivingOverlappingIsGhosted) {
+    const rockfield::NearDials d = dense_large();
+    const StreamedRock rock = large_rock_near_origin(d);
+    ASSERT_GT(rock.radius, 0.0f);
+    rockfield::NearField f;
+    f.set_dials(d); f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    rockfield::NearStepInput in;
+    f.stream(glm::dvec3(0.0, 5000.0, 0.0));          // the rock's cell is not streamed
+    step_at(f, in, rock.pos, 1.0);                    // pose known, no rock there yet
+    f.stream(glm::dvec3(0.0));                        // it streams in, overlapping the box
+    step_at(f, in, rock.pos, 1.0 + kTick);
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+    EXPECT_GE(f.stats().ghosted, 1);
+}
+
+TEST(NearPerf, ALargeCellDroppedAndRestreamedBetweenStepsStaysSeen) {
+    const rockfield::NearDials d = dense_large();
+    const StreamedRock rock = large_rock_near_origin(d);
+    ASSERT_GT(rock.radius, 0.0f);
+    rockfield::NearField f;
+    f.set_dials(d); f.set_catalogue(cat()); f.set_sources({full_sphere()});
+    rockfield::NearStepInput in;
+    const glm::vec3 away = rock.pos + glm::vec3(rock.radius + 3.0f, 0.0f, 0.0f);
+    f.stream(glm::dvec3(0.0));
+    step_at(f, in, away, 1.0);                        // the step sees the rock, clear of it
+    step_at(f, in, away, 1.0 + kTick);
+    f.stream(glm::dvec3(0.0, 5000.0, 0.0));          // dropped ...
+    f.stream(glm::dvec3(0.0));                        // ... and back before the next step
+    step_at(f, in, rock.pos, 1.0 + 2 * kTick);        // the ship flies into it: a touch, not a ghost
+    EXPECT_FALSE(f.drain_large_contacts().empty());
+    EXPECT_EQ(f.stats().ghosted, 0);
+}
