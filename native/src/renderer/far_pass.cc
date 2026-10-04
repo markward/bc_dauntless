@@ -479,6 +479,10 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         s.set_float("u_noise_contrast", src.noise_contrast);
         s.set_int("u_noise_octaves", src.noise_octaves);
         s.set_int("u_noise_seed", static_cast<int>(src.seed));   // bits; uint in GLSL
+        s.set_float("u_noise_sharpness", src.noise_sharpness);
+        s.set_float("u_shape_warp", src.shape_warp);
+        s.set_float("u_shape_warp_scale", src.shape_warp_scale_gu);
+        s.set_float("u_sphere_outer", static_cast<float>(far::sphere_outer_r(src)));
         s.set_float_array("u_table_r", tr, static_cast<int>(kMaxRows));
         s.set_float_array("u_table_a", ta, static_cast<int>(kMaxRows));
         s.set_int("u_table_n", rows);

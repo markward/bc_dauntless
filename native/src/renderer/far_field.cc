@@ -55,9 +55,16 @@ float scale_height(const DiscSource& s, float rho) {
 
 // Sphere density (tile-field haze): 1 within R(1 - edge_frac), a linear
 // ramp to 0 at R. far_haze.frag's sphere_a is the GLSL twin.
+float sphere_warp_factor(const DiscSource& s, const glm::dvec3& x) {
+    if (!(s.shape_warp > 0.0f) || !(s.shape_warp_scale_gu > 0.0f)) return 1.0f;
+    const glm::vec3 local = glm::vec3(x - s.centre) / s.shape_warp_scale_gu;
+    const float n = 2.0f * haze_fbm(local, 2, s.seed ^ 0xA5A5A5A5u) - 1.0f;
+    return 1.0f + std::min(s.shape_warp, 0.9f) * n;
+}
+
 float sphere_a(const DiscSource& s, const glm::dvec3& x) {
     const double R = s.sphere_radius_gu;
-    const double d = glm::length(x - s.centre);
+    const double d = glm::length(x - s.centre) * static_cast<double>(sphere_warp_factor(s, x));
     if (!(R > 0.0) || d >= R) return 0.0f;
     const double inner = R * (1.0 - std::clamp(static_cast<double>(s.sphere_edge_frac), 0.0, 1.0));
     if (d <= inner) return 1.0f;
@@ -75,7 +82,7 @@ float density_a(const DiscSource& s, const glm::dvec3& x) {
 float a_bound(const DiscSource& s, const glm::dvec3& c, double h) {
     const double hd = h * std::sqrt(3.0);   // the cube's bounding-sphere radius
     if (s.shape == DiscSource::Shape::Sphere) {
-        const double R = s.sphere_radius_gu;
+        const double R = sphere_outer_r(s);
         return (R > 0.0 && glm::length(c - s.centre) - hd < R) ? 1.0f : 0.0f;
     }
     double rho, z;
@@ -100,7 +107,7 @@ bool haze_interval(const DiscSource& s, const glm::dvec3& origin, const glm::vec
                    float t_max, float slab_sigmas, double& t0, double& t1) {
     if (s.shape == DiscSource::Shape::Sphere) {
         // Ray |d + t dir| <= R, clipped to [0, t_max]. far_haze.frag twin.
-        const double R = s.sphere_radius_gu;
+        const double R = sphere_outer_r(s);
         if (!(R > 0.0)) return false;
         const glm::dvec3 dir(dir_f), d = origin - s.centre;
         const double qa = glm::dot(dir, dir), qb = 2.0 * glm::dot(d, dir),
@@ -259,7 +266,8 @@ float haze_noise_m(const DiscSource& s, const glm::dvec3& x) {
         return 1.0f;
     const float contrast = std::clamp(s.noise_contrast, 0.0f, 1.0f);
     const glm::vec3 local = glm::vec3(x - s.centre) / s.noise_scale_gu;
-    const float fbm = haze_fbm(local, s.noise_octaves, s.seed);
+    float fbm = haze_fbm(local, s.noise_octaves, s.seed);
+    if (s.noise_sharpness != 1.0f) fbm = std::clamp(0.5f + (fbm - 0.5f) * s.noise_sharpness, 0.0f, 1.0f);
     return std::max(0.0f, 1.0f + contrast * (2.0f * fbm - 1.0f));
 }
 
@@ -271,6 +279,11 @@ float noise_m_bound(const DiscSource& s) {
     if (!(s.noise_scale_gu > 0.0f) || s.noise_contrast == 0.0f || s.noise_octaves <= 0)
         return 1.0f;
     return 1.0f + std::clamp(s.noise_contrast, 0.0f, 1.0f);
+}
+
+double sphere_outer_r(const DiscSource& s) {
+    const double w = std::clamp(static_cast<double>(s.shape_warp), 0.0, 0.9);
+    return s.shape_warp_scale_gu > 0.0f ? s.sphere_radius_gu / (1.0 - w) : s.sphere_radius_gu;
 }
 
 int haze_steps_for(const DiscSource& s, int global_steps) {

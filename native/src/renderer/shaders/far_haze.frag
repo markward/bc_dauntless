@@ -69,6 +69,10 @@ uniform float u_noise_scale;    // GU; <= 0 = no noise
 uniform float u_noise_contrast; // 0 = no noise
 uniform int   u_noise_octaves;  // <= 0 = no noise; capped at kMaxOctaves
 uniform int   u_noise_seed;     // the source seed's bits (read as uint)
+uniform float u_noise_sharpness;   // DiscSource::noise_sharpness (1 = off)
+uniform float u_shape_warp;        // DiscSource::shape_warp (0 = off)
+uniform float u_shape_warp_scale;  // GU; <= 0 = off
+uniform float u_sphere_outer;      // far::sphere_outer_r
 uniform float u_gain;           // haze_gain * the source's gain_scale
 uniform float u_brightness;     // the source's brightness: colour only
 uniform float u_start_gu;       // the haze ramps in from here (GU along the ray)
@@ -124,10 +128,18 @@ float table_a(float rho) {
 
 float scale_height(float rho) { return max(u_h_frac * rho, u_h_min); }
 
+float fbm(vec3 p, int octaves, uint seed);
+// renderer::far::sphere_warp_factor. Keep identical.
+float sphere_warp_factor(vec3 p) {
+    if (!(u_shape_warp > 0.0) || !(u_shape_warp_scale > 0.0)) return 1.0;
+    float n = 2.0 * fbm((p - u_centre) / u_shape_warp_scale, 2, uint(u_noise_seed) ^ 0xA5A5A5A5u) - 1.0;
+    return 1.0 + min(u_shape_warp, 0.9) * n;
+}
+
 // renderer::far::sphere_a (far_field.cc).
 float sphere_a(vec3 p) {
     float R = u_sphere_r;
-    float d = length(p - u_centre);
+    float d = length(p - u_centre) * sphere_warp_factor(p);
     if (!(R > 0.0) || d >= R) return 0.0;
     float inner = R * (1.0 - clamp(u_sphere_edge, 0.0, 1.0));
     if (d <= inner) return 1.0;
@@ -185,6 +197,7 @@ float noise_m(vec3 p) {
         return 1.0;
     float c = clamp(u_noise_contrast, 0.0, 1.0);
     float f = fbm((p - u_centre) / u_noise_scale, u_noise_octaves, uint(u_noise_seed));
+    if (u_noise_sharpness != 1.0) f = clamp(0.5 + (f - 0.5) * u_noise_sharpness, 0.0, 1.0);
     return max(0.0, 1.0 + c * (2.0 * f - 1.0));
 }
 
@@ -223,7 +236,7 @@ bool haze_interval(vec3 dir, float t_max, out float t0, out float t1) {
     t0 = 0.0;
     t1 = 0.0;
     if (u_shape == 1) {
-        float R = u_sphere_r;
+        float R = u_sphere_outer;
         if (!(R > 0.0)) return false;
         vec3 d = u_eye - u_centre;
         float qa = dot(dir, dir), qb = 2.0 * dot(d, dir), qc = dot(d, d) - R * R;

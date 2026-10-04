@@ -597,7 +597,7 @@ TEST(FarFieldBuild, AViewSpaceSourceIgnoresTheFrameKeyAndRidesTheAnchor) {
 // gain 14,136, rounded to 14,140. (With the old r_cut at k = 1713 it was
 // 26,860; with no cut the haze no longer depends on k at all.)
 constexpr float kTileHazeCalibrationGain = 14140.0f;
-constexpr float kTileHazeGain = 131700.0f;
+constexpr float kTileHazeGain = 17676.47f;   // Mark, live 2026-10-04 (spike/rock-specks): was 131,700
 TEST(FarHazeSphere, TileGainsHitTheirStatedTargets) {
     const far::DiscSource s = beol4_tile_field();
     const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
@@ -617,7 +617,7 @@ TEST(FarHazeSphere, TileGainsHitTheirStatedTargets) {
     const auto h = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeGain,
                                     glm::vec3(1.0f));
     std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeGain, h.alpha);
-    EXPECT_NEAR(h.alpha, 0.78f, 0.03f);
+    EXPECT_NEAR(h.alpha, 0.18f, 0.03f);
 }
 
 

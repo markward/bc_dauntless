@@ -68,7 +68,13 @@ void SpeckBand::set_catalogue(const NearCatalogue& c, std::vector<glm::vec3> lar
 void SpeckBand::set_sources(const std::vector<far::DiscSource>& active) {
     bool same = active.size() == sources_.size();
     for (std::size_t i = 0; same && i < active.size(); ++i)
-        same = active[i].seed == sources_[i].seed && active[i].centre == sources_[i].centre;
+        same = active[i].seed == sources_[i].seed && active[i].centre == sources_[i].centre &&
+               active[i].sphere_radius_gu == sources_[i].sphere_radius_gu &&
+               active[i].noise_scale_gu == sources_[i].noise_scale_gu &&
+               active[i].noise_contrast == sources_[i].noise_contrast &&
+               active[i].noise_sharpness == sources_[i].noise_sharpness &&
+               active[i].shape_warp == sources_[i].shape_warp &&
+               active[i].shape_warp_scale_gu == sources_[i].shape_warp_scale_gu;
     sources_ = active;
     if (!same) clear();
 }

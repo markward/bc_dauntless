@@ -43,7 +43,9 @@ DEFAULTS: dict = {
     # choice 2026-10-03 ("this works well"): 131,700 = 9.3x that derivation
     # (Player Start column alpha ~0.78), kTileHazeGain in far_field_test.cc.
     # tile_haze_brightness below stays calibrated at the 14,140 derivation.
-    "tile_haze_gain": 131700.0, "tile_haze_edge_frac": 0.2,
+    # 131,700 -> 17,676.47 (9 dial steps down; Player Start column alpha
+    # ~0.18): Mark, live 2026-10-04 on spike/rock-specks ("works better").
+    "tile_haze_gain": 17676.47, "tile_haze_edge_frac": 0.2,
     # Haze brightness (Python, read at use; re-push sources; ruling R16). Sent
     # per source as `brightness`: it scales the haze COLOUR only (alpha is
     # the gains' job). Over black only colour shows, and the pipeline has no
@@ -61,6 +63,13 @@ DEFAULTS: dict = {
     # own march step count (the shader caps it at 64).
     "tile_haze_noise_scale_gu": 250.0, "tile_haze_noise_contrast": 0.8,
     "tile_haze_noise_octaves": 3, "tile_haze_steps": 48,
+    # spike/rock-specks (Python, read at use; re-push sources): the tile
+    # field's ONE density (haze AND rocks) gets clumps/voids and a lumpy
+    # outline. tile_noise_sharpness stretches the noise (1 = off);
+    # tile_shape_warp (0 = off, < 0.9) warps the sphere's edge at
+    # tile_shape_warp_scale_frac x the field radius.
+    "tile_noise_sharpness": 2.5, "tile_shape_warp": 0.35,
+    "tile_shape_warp_scale_frac": 0.6,
     # Belt noise (Python, read at use; re-push sources; rock-fields R1,
     # 2026-10-02): every source's density is a(x) * m(x), belts included --
     # the near and mid bands sample it. Same m as the tile fields, at a belt's
@@ -167,14 +176,15 @@ _INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "ti
                "mid_max_sprites")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
-_LOOK_FIRST = ("speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
+_LOOK_FIRST = ("tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
+               "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
                "haze_handoff_gu", "haze_handoff_band_gu",
                "near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
                "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
                "mid_l1_out_gu", "haze_brightness",
-               "tile_haze_brightness", "haze_gain", "tile_haze_gain",
+               "haze_gain", "tile_haze_gain",
                "tile_haze_noise_contrast", "belt_noise_contrast",
                "collide_damage_scale")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)

@@ -117,8 +117,8 @@ def test_pushed_dials_derive_the_haze_start_from_the_handoff():
     r = _R()
     far_tier.reconcile_with(r, None, {})
     first = next(a[0] for n, a in r.calls if n == "far_set_dials")
-    assert first["haze_start_gu"] == 6000.0
-    assert first["haze_start_ramp_gu"] == 2000.0
+    assert first["haze_start_gu"] == 600.0      # spike/rock-specks: 1500 - 900
+    assert first["haze_start_ramp_gu"] == 900.0
     assert first["haze_res_divisor"] == 4
     far_dials._step("haze_handoff_gu", +1)
     far_tier.reconcile_with(r, None, {})

@@ -2711,6 +2711,9 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     if (d.contains("noise_contrast"))
         s.noise_contrast = std::clamp(d["noise_contrast"].cast<float>(), 0.0f, 1.0f);
     if (d.contains("noise_octaves")) s.noise_octaves = d["noise_octaves"].cast<int>();
+    if (d.contains("noise_sharpness")) s.noise_sharpness = std::max(0.0f, d["noise_sharpness"].cast<float>());
+    if (d.contains("shape_warp")) s.shape_warp = std::clamp(d["shape_warp"].cast<float>(), 0.0f, 0.9f);
+    if (d.contains("shape_warp_scale_gu")) s.shape_warp_scale_gu = d["shape_warp_scale_gu"].cast<float>();
     if (d.contains("steps")) s.steps = d["steps"].cast<int>();
     return s;
 }

@@ -109,7 +109,7 @@ def test_dial_group_is_rock_fields_with_look_dials_first(monkeypatch):
                         lambda name, order, cur, step: registered.setdefault(name, order))
     far_dials.register()
     assert list(registered) == ["rock fields"]
-    assert registered["rock fields"][0] == "speck_band_gain"
+    assert registered["rock fields"][0] == "tile_shape_warp"
 
 
 def test_tile_haze_gain_is_the_cpp_derivation():
@@ -150,13 +150,14 @@ def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the rock-fields look dials
     lead (rock-fields Task 13: near/mid/haze population, then absorption)."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:23] == (
+    assert far_dials.DIAL_ORDER[:25] == (
+        "tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
         "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
         "haze_handoff_gu", "haze_handoff_band_gu",
         "near_small_density", "near_large_density", "near_small_mesh_gu",
         "near_small_billboard_gu", "near_large_mesh_gu", "near_large_billboard_gu",
         "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu", "mid_l1_out_gu",
-        "haze_brightness", "tile_haze_brightness",
+        "haze_brightness",
         "haze_gain", "tile_haze_gain", "tile_haze_noise_contrast",
         "belt_noise_contrast", "collide_damage_scale")
     assert sorted(far_dials.DIAL_ORDER) == sorted(far_dials.DEFAULTS)

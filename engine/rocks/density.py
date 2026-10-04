@@ -53,6 +53,11 @@ class DiscSource:
     noise_scale_gu: float = 0.0
     noise_contrast: float = 0.0
     noise_octaves: int = 0
+    # spike/rock-specks: clump sharpness (1 = off) and the sphere outline
+    # warp (0 = off; scale in GU). renderer::far::DiscSource's twins.
+    noise_sharpness: float = 1.0
+    shape_warp: float = 0.0
+    shape_warp_scale_gu: float = 0.0
     steps: int = 0
     pops: Optional[tuple] = None   # explicit populations; None = field_table's
 
@@ -190,6 +195,9 @@ def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
         noise_scale_gu=float(far_dials.get("tile_haze_noise_scale_gu")),
         noise_contrast=float(far_dials.get("tile_haze_noise_contrast")),
         noise_octaves=int(far_dials.get("tile_haze_noise_octaves")),
+        noise_sharpness=float(far_dials.get("tile_noise_sharpness")),
+        shape_warp=float(far_dials.get("tile_shape_warp")),
+        shape_warp_scale_gu=radius * float(far_dials.get("tile_shape_warp_scale_frac")),
         steps=int(far_dials.get("tile_haze_steps")),
         pops=(pop,),
     )
@@ -278,6 +286,9 @@ def to_native(source) -> dict:
         "noise_scale_gu": source.noise_scale_gu,
         "noise_contrast": source.noise_contrast,
         "noise_octaves": source.noise_octaves,
+        "noise_sharpness": source.noise_sharpness,
+        "shape_warp": source.shape_warp,
+        "shape_warp_scale_gu": source.shape_warp_scale_gu,
         "steps": source.steps,
     }
     return out

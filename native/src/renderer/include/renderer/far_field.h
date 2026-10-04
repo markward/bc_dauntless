@@ -54,6 +54,16 @@ struct DiscSource {
     float noise_scale_gu = 0.0f;
     float noise_contrast = 0.0f;
     int noise_octaves = 0;
+    // spike/rock-specks (2026-10-04), both off by default (byte-identical):
+    // noise_sharpness stretches the fbm about 0.5 before m (clamped to
+    // [0, 1]), so > 1 opens voids and packs clumps; m's bound is unchanged.
+    // shape_warp (sphere only, < 0.9) scales the distance from the centre by
+    // 1 + shape_warp * (2 fbm(x_local / shape_warp_scale_gu, 2 octaves) - 1),
+    // so the outline is lumpy instead of a sphere; the field then reaches out
+    // to sphere_radius_gu / (1 - shape_warp) (sphere_outer_r).
+    float noise_sharpness = 1.0f;
+    float shape_warp = 0.0f;
+    float shape_warp_scale_gu = 0.0f;
     int steps = 0;                // haze march steps; 0 = FarDials::haze_steps
     glm::vec3 normal{0.0f, 0.0f, 1.0f};
     std::vector<glm::vec2> table; // (r_gu, a), sorted by r
@@ -134,6 +144,8 @@ float field_density(const DiscSource& s, const glm::dvec3& x_sys);
 // Upper bound of m for rejection sampling: 1 + clamp(noise_contrast, 0, 1)
 // when the noise is on, else 1.
 float noise_m_bound(const DiscSource& s);
+// A sphere source's outermost reach: sphere_radius_gu / (1 - shape_warp).
+double sphere_outer_r(const DiscSource& s);
 // The march steps for `s`: its own `steps` clamped to [1, 64] when set, else
 // `global_steps` unchanged.
 int haze_steps_for(const DiscSource& s, int global_steps);
