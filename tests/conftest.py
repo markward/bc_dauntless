@@ -1444,6 +1444,13 @@ def _reset_leakable_engine_globals():
         reset_concealment_state()
     except Exception:
         pass
+    # Sensor dials: module-level state, so a test that steps a dial up or down
+    # would otherwise leave it changed for every later test.
+    try:
+        from engine.appc import sensor_dials
+        sensor_dials.reset()
+    except Exception:
+        pass
     # Damage-geometry switches (App.DamageableObject_*Enabled): in Dauntless
     # damage is always on, but the setters are honoured so a mission can
     # suppress damage for a cutscene. Module-level state, so a test that flips

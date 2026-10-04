@@ -1378,6 +1378,12 @@ class SensorSubsystem(PoweredSubsystem):
     def GetMaxProbes(self) -> int:                   return self._max_probes
     def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
 
+    def GetIdentificationTime(self) -> float:
+        """BC's identification dwell (RE'd: a hard-coded 4.0 s, no setter);
+        here the live `identification_time_s` dial."""
+        from engine.appc import sensor_dials
+        return sensor_dials.get("identification_time_s")
+
     def IsObjectKnown(self, obj) -> int:
         """Returns 1 if *obj* is in the known-contacts set, 0 otherwise.
 

@@ -9951,6 +9951,8 @@ def run(mission_name: Optional[str] = None,
                 _minor_dials.register()
                 from engine.rocks import far_dials as _far_dials
                 _far_dials.register()
+                from engine.appc import sensor_dials as _sensor_dials
+                _sensor_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
