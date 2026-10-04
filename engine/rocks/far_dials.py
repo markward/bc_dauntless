@@ -102,7 +102,7 @@ DEFAULTS: dict = {
     "field_dust_mult": 10.0,
     "near_large_far_gu": 0.0,   # far shell OFF during the near-only strip-back (Mark, 2026-10-03)
     "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5,
-    "near_small_min_px": 1.5,
+    "near_small_min_px": 2.5,   # Mark, live 2026-10-04 (3x ranges)
     # The far shell at dash speed (rock-real review, 2026-10-03): a stream
     # whose centre moved more than near_far_shell_max_step_gu since the last
     # (25 GU = 1,500 GU/s at 60 Hz, 3.75x in-system warp) shrinks the large

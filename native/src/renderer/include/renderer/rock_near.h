@@ -69,7 +69,7 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     float large_min_px = 1.5f;
     // The same pixel floor for small rocks (Mark, live 2026-10-04: most small
     // billboards at 30-45 GU are under a pixel; skip them and their cells).
-    float small_min_px = 1.5f;
+    float small_min_px = 2.5f;
     // The far shell at dash speed (rock-real review, 2026-10-03): visual
     // only, it flashes past, yet regenerating it every frame cost ~3 ms per
     // dash frame. A stream() whose centre moved more than
