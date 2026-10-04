@@ -511,8 +511,8 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 if (!frustum.sphere(cc, half_diag + cell.r_max + slack)) continue;
                 // The pixel floor, whole cell: beyond the mesh range every
                 // rock's on-screen radius is at most r_max * k / d_lo.
-                if (shell && d_lo > cd.mesh_gu + std::max(eff_.fade_gu, 0.0f) &&
-                    !(cell.r_max * k / d_lo > eff_.large_min_px))
+                if ((shell || small) && d_lo > cd.mesh_gu + std::max(eff_.fade_gu, 0.0f) &&
+                    !(cell.r_max * k / d_lo > (small ? eff_.small_min_px : eff_.large_min_px)))
                     continue;
             }
             for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
@@ -529,8 +529,15 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                     }
                 const float ex = c.x - eye.x, ey = c.y - eye.y, ez = c.z - eye.z;
                 const float d = std::sqrt(dot3(ex, ey, ez, ex, ey, ez));
-                const NearWeights w = shell ? near_large_weights(d, r.radius * k / std::max(d, 1e-3f), eff_)
-                                            : near_weights(d, cd, eff_.fade_gu, eff_.handoff_fade_gu);
+                NearWeights w = shell ? near_large_weights(d, r.radius * k / std::max(d, 1e-3f), eff_)
+                                      : near_weights(d, cd, eff_.fade_gu, eff_.handoff_fade_gu);
+                if (small) {   // the small pixel floor, blended in past the mesh edge (no pop)
+                    const float fade = eff_.fade_gu;
+                    const float tt = fade > 0.0f ? std::clamp((d - cd.mesh_gu) / fade, 0.0f, 1.0f)
+                                                 : (d > cd.mesh_gu ? 1.0f : 0.0f);
+                    w.billboard *= 1.0f - tt * (1.0f - pixel_ramp(r.radius * k / std::max(d, 1e-3f),
+                                                                   eff_.small_min_px));
+                }
                 if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
                 if (!frustum.sphere(c, r.radius)) continue;
                 cands.push_back({d, c, w, &r, spin});
@@ -798,10 +805,21 @@ void NearField::step(const NearStepInput& in) {
         if (cell.cls != NearClass::Small) continue;
         if (touches >= md.max_shoves_per_frame) break;
         if (cell.rocks.empty()) continue;
-        if (!cell.pinned &&
-            cell_lower_bound(cell) - (shove_reach.empty() ? 0.0f : cell_shove_reach(ckey)) >
-                cell.r_max + sb.bound)
-            continue;
+        if (!cell.pinned) {
+            // Cheap first cut (Mark, 2026-10-04: thousands of small cells at
+            // the 45 GU range): the sweep's system-space AABB widened by the
+            // cell's reach and its largest shove, as the large loop's
+            // sweep_box_meets. Conservative, so the order and every contact
+            // are unchanged.
+            const float shove = shove_reach.empty() ? 0.0f : cell_shove_reach(ckey);
+            const double e = static_cast<double>(sb.bound + cell.r_max) + shove + 0.05 + 1e-4 * seg_scale;
+            if (!(e < std::numeric_limits<double>::infinity()) ? false :
+                (cell.lo.x > sw_hi.x + e || cell.lo.x + cell.size < sw_lo.x - e ||
+                 cell.lo.y > sw_hi.y + e || cell.lo.y + cell.size < sw_lo.y - e ||
+                 cell.lo.z > sw_hi.z + e || cell.lo.z + cell.size < sw_lo.z - e))
+                continue;
+            if (cell_lower_bound(cell) - shove > cell.r_max + sb.bound) continue;
+        }
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
             if (touches >= md.max_shoves_per_frame) break;
             const std::uint64_t key = key_of(ckey, cell, i);

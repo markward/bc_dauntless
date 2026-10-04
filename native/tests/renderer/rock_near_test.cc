@@ -327,7 +327,7 @@ TEST(NearBuild, OneTierPerRockOutsideFades) {
 // first, each bin's items farthest first.
 TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
     rockfield::NearField f;
-    { rockfield::NearDials pd; pd.handoff_fade_gu = pd.fade_gu; f.set_dials(pd); }   // pinned: dithered hand-off
+    { rockfield::NearDials pd; pd.handoff_fade_gu = pd.fade_gu; pd.small_min_px = 0.0f; f.set_dials(pd); }   // pinned: dithered hand-off, no small pixel floor
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     rockfield::NearOutput out;

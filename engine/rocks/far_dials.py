@@ -102,6 +102,7 @@ DEFAULTS: dict = {
     "field_dust_mult": 10.0,
     "near_large_far_gu": 0.0,   # far shell OFF during the near-only strip-back (Mark, 2026-10-03)
     "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5,
+    "near_small_min_px": 1.5,
     # The far shell at dash speed (rock-real review, 2026-10-03): a stream
     # whose centre moved more than near_far_shell_max_step_gu since the last
     # (25 GU = 1,500 GU/s at 60 Hz, 3.75x in-system warp) shrinks the large
@@ -138,7 +139,7 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_density", "near_large_r_min", "near_large_r_max",
     "near_large_exponent", "near_large_cell_gu", "near_large_mesh_gu",
     "near_large_billboard_gu", "near_large_max",
-    "near_large_far_gu", "near_large_far_fade_gu", "near_large_min_px",
+    "near_large_far_gu", "near_large_far_fade_gu", "near_large_min_px", "near_small_min_px",
     "near_far_shell_max_step_gu", "near_far_shell_regrow_gu",
     "near_fade_gu", "near_handoff_fade_gu", "near_tumble_scale", "near_stream_margin_gu", "collide_cooldown_s",
     "mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",

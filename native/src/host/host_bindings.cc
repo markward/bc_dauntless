@@ -2719,6 +2719,7 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
     f("near_large_far_gu", o.large_far_gu);          // the far shell (rock-real Part 1)
     f("near_large_far_fade_gu", o.large_far_fade_gu);
     f("near_large_min_px", o.large_min_px);
+    f("near_small_min_px", o.small_min_px);
     f("near_far_shell_max_step_gu", o.far_shell_max_step_gu);
     f("near_far_shell_regrow_gu", o.far_shell_regrow_gu);
     f("near_stream_margin_gu", o.stream_margin_gu);
