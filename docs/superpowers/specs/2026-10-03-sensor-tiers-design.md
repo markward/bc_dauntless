@@ -128,9 +128,12 @@ One idea: *the placeholder name an unidentified contact shows.*
   `ResetAffiliationColors` (called by E2M2/E2M6 after regrouping) must keep unknown rows
   `UNKNOWN`, or a mission regroup would reveal allegiance. Unknown rows show no subsystem
   rows (falls out of `subsystems_targetable`).
-- **Payloads.** `target_list_view` and `sensors_panel` rows gain a `label` field (the
-  caption). `name` stays `ship.GetName()` — it is the selection/click key and must never
-  change with identification. `target_list.js` / `sensors.js` display `label`.
+- **Payloads.** `target_list_view` rows gain a `label` field (the caption, from a new
+  engine-only `STSubsystemMenu.GetCaption()`). `name` stays `ship.GetName()` — it is the
+  selection/click key and must never change with identification. `target_list.js`
+  displays `label`. `GetLabel()` keeps returning the REAL display name, because
+  `STTargetMenu.GetSubmenuW` resolves rows by it for E2M0/E1M2 tutorial arrows. The radar
+  draws no names (only a hidden `data-name` key), so it needs no label field.
 - **Radar.** Unknown blips use the `UNKNOWN` affiliation colour (grey).
 - **`g_kRadarUnknownColor`** gets a real definition on the App module (the SDK's
   `LoadInterface.py:140` sets it; the shim must not answer with a stub before then).
