@@ -87,10 +87,15 @@ stbc-reference MCP was unreachable 2026-10-03).
   (`engine/appc/planet.py`) is an exact segment-vs-sphere test already used for AI line of
   sight; `_dauntless_host.ray_trace_mesh` is available as an exact narrow phase if spheres
   prove too coarse.
-- **Field membership is a point query**, not a march: the radial profile's `asteroids`
-  column (`engine/rocks/density.py` has the disc table) plus BC tile-field spheres. The
-  sphere shape and the fbm term `m` have no Python twin today; the far-tier `DiscSource`
-  (`native/src/renderer/include/renderer/far_field.h`) is the authority to port or bind.
+- **Field membership is a point query**, not a march. Since rock-fields merged
+  (2026-10-04) there is one: `engine/rocks/far_tier.field_strength_at(obj)` returns the
+  strongest field `a(x)` (tile fields + the system's belt) and already drives the in-field
+  dust. ⚠️ Its tile fields are those **last pushed for the VIEWED set**
+  (`frames.viewing_set()`), so it answers 0 for a set nobody is viewing — fine for
+  contacts in the player's set, wrong for AI-vs-AI elsewhere. Sub-project 2 must either
+  accept that (stated reason) or give it a set-explicit form. Per-source evaluation is
+  `far_tier.source_strength(s, p, anchor)`; belts come from
+  `density.sources_for_system(system)`.
 - **Re-identification audit (2026-10-03):** safe to re-fire — HelmMenuHandlers (existing
   button check), ScienceMenuHandlers (`GetButtonW` guard), E2M0, E2M1, E2M2, E2M6, E6M3,
   E3M2. **Unsafe — E5M2 `ShipIdentified` (:610)** replays dialogue and re-adds a removed
@@ -100,8 +105,11 @@ stbc-reference MCP was unreachable 2026-10-03).
   remain scannable (decision 11).
 - **Cost:** measure with the frame profiler (`docs/engine/frame-profiler.md`,
   `engine.dev_missions.combat_stress`), CPU only — GPU timing is dead on this Mac.
-- **The asteroids roadmap's "Later: sensor occlusion" entry** (on `feat/rock-fields`)
-  redirects here once merged.
+- **The asteroids roadmap** (`2026-09-30-modern-asteroids-roadmap.md`) already marks its
+  sub-project 5 as promoted to this project (merged 2026-10-04). Rock fields now consist of
+  the near band, the speck band and puffs; the volumetric haze and mid band were deleted,
+  so there is no haze optical depth to reuse — consistent with decision 7 (fields do not
+  occlude).
 
 ## Later / parked
 

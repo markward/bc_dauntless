@@ -62,7 +62,7 @@
 **Files:**
 - Create: `engine/appc/sensor_dials.py`
 - Modify: `engine/appc/subsystems.py` (`SensorSubsystem`, after `SetMaxProbes` ~line 1379)
-- Modify: `engine/host_loop.py:9904-9906` (dial registration block)
+- Modify: `engine/host_loop.py:~9949-9953` (boot dial registration block, after `_far_dials.register()`)
 - Modify: `tests/conftest.py` (autouse `_reset_leakable_engine_globals`, beside `reset_concealment_state` ~line 1443)
 - Test: `tests/unit/test_sensor_dials.py`
 
@@ -106,8 +106,7 @@ def test_registered_group_steps_the_live_dial():
     sensor_dials.reset()
     sensor_dials.register()
     assert "sensors" in dev_dial_groups.groups()
-    while dev_dial_groups.active() != "sensors":
-        dev_dial_groups.cycle_active()
+    assert dev_dial_groups.set_active("sensors") is True
     dev_dial_groups.push(+1)       # selected dial is the first: identification time
     assert sensor_dials.get("identification_time_s") == 4.5
 
@@ -200,7 +199,7 @@ In `SensorSubsystem` (`engine/appc/subsystems.py`), after `SetMaxProbes`:
         return sensor_dials.get("identification_time_s")
 ```
 
-In `engine/host_loop.py`, in the boot dial-registration block (where `_minor_dials.register()` is called, ~line 9906), add:
+In `engine/host_loop.py`, in the boot dial-registration block, directly after `_far_dials.register()` (~line 9953), add:
 
 ```python
                 from engine.appc import sensor_dials as _sensor_dials
@@ -879,7 +878,9 @@ def player_knows(obj) -> bool:
 def _contacts(player):
     """Ships and planets in the player's set, minus the player — exactly the
     filter the old passive sweep used (contact_index buckets ships only, and
-    planets must still be identifiable)."""
+    planets must still be identifiable). RockClass asteroids are ShipClass and
+    are included, as they were before; rock-field scenery rocks are not set
+    objects and never appear here."""
     from engine.appc.ships import ShipClass
     from engine.appc.planet import Planet
     pset = player.GetContainingSet() if implements(player, "GetContainingSet") else None
@@ -1062,7 +1063,7 @@ git commit -m "feat(sensors): player-only contact manager with bands, proximity 
 **Files:**
 - Modify: `engine/appc/subsystems.py` (`SensorSubsystem.IdentifyObject`, `ScanAllObjects`)
 - Modify: `engine/appc/sensor_identification.py` (delete `identify_contacts`, `identify_all_in_set`; `ScanAllObjectsAction` schedules; update module docstring)
-- Modify: `engine/host_loop.py` — the identification block (~lines 11053-11065), `_reset_sensor_state` (~4436-4462), the `_last_identify_gt` global (~4754)
+- Modify: `engine/host_loop.py` — the identification block (~lines 11100-11112), `_reset_sensor_state` (~4450-4475), the `_last_identify_gt` global (~4767)
 - Modify: `tests/unit/test_sensor_identification.py`, `tests/unit/test_sensor_scan.py`, `tests/integration/test_hail_button_population.py:213`, `tests/integration/test_e1m2_scan_area.py`
 - Test: `tests/unit/test_sensor_scan_dwell.py`
 
@@ -1247,7 +1248,7 @@ In `_reset_sensor_state`, remove `_last_identify_gt` from the `global` line and 
     unknown_labels.reset()
 ```
 
-Delete the module-level `_last_identify_gt = None  # float | None` (~line 4754) and its docstring mention ("the identification clock") — grep `_last_identify_gt` afterwards: zero hits.
+Delete the module-level `_last_identify_gt = None  # float | None` (~line 4767) and its docstring mention ("the identification clock") — grep `_last_identify_gt` afterwards: zero hits.
 
 Update existing tests:
 - `tests/unit/test_sensor_identification.py`: every `sensor_identification.identify_contacts(player)` becomes `settle_identification(player)` (from `tests.helpers.sensor_time`), and fixtures must set the current game player as in Task 4. The "in range" test's contact at 1000 GU is exactly half of 2000 — the near test is `<=`, so it still identifies; leave a comment saying so. Rename the test module docstring to describe the passive dwell. Keep the cloak tests (cloak bubble distances are well inside half range).
@@ -1470,7 +1471,7 @@ git commit -m "feat(sensors): unidentified contacts list as grey Unknown N witho
 **Files:**
 - Create: `engine/appc/science_scan_labels.py`
 - Modify: `engine/appc/sensor_identification.py` (`_identify_one`: rename + release before posting)
-- Modify: `engine/host_loop.py:~280` (install beside `install_ai_sensor_gate()`) and `_reset_sensor_state` (re-install, idempotent)
+- Modify: `engine/host_loop.py:~281` (install beside `install_ai_sensor_gate()`) and `_reset_sensor_state` (re-install, idempotent)
 - Test: `tests/integration/test_science_scan_unknown_labels.py`
 
 **Interfaces:**
@@ -1626,7 +1627,7 @@ If instance assignment of `GetDisplayName` does not take effect on `ShipClass` (
         dev_mode.log_swallowed("identify unknown-label rename", _e)
 ```
 
-`engine/host_loop.py` beside `install_ai_sensor_gate()` (~line 280):
+`engine/host_loop.py` beside `install_ai_sensor_gate()` (~line 281):
 
 ```python
     from engine.appc import science_scan_labels
