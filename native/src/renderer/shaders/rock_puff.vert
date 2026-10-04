@@ -1,5 +1,5 @@
 #version 410 core
-// Rock-field puffs (SPIKE, rock_puffs.h): a camera-facing quad of the puff's
+// Rock-field puffs (rock_puffs.h): a camera-facing quad of the puff's
 // world radius; alpha = opacity * weight * distance fade-in * near fade-out.
 layout(location = 0) in vec2 a_corner;        // (+-1, +-1)
 layout(location = 7) in vec4 a_pos_r;         // xyz relative to the field origin, w radius (GU)

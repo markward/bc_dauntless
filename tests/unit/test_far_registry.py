@@ -284,20 +284,20 @@ def test_a_tile_shape_dial_change_repushes_the_sources():
     pushes = _source_pushes(r)
     assert len(pushes) == 2
     assert pushes[1][0]["shape_warp"] == far_dials.get("tile_shape_warp")
-    far_dials._step("tile_haze_edge_frac", -1)
+    far_dials._step("tile_edge_frac", -1)
     far_tier.reconcile_with(r, view, {}, fields)
-    assert _source_pushes(r)[2][0]["sphere_edge_frac"] == far_dials.get("tile_haze_edge_frac")
+    assert _source_pushes(r)[2][0]["sphere_edge_frac"] == far_dials.get("tile_edge_frac")
 
 
-def test_a_tile_haze_noise_dial_change_repushes_the_sources():
+def test_a_tile_noise_dial_change_repushes_the_sources():
     from engine.rocks import far_dials
     view = _Set("Multi7")
     fields = [_Field(view)]
     r = _R()
     far_tier.reconcile_with(r, view, {}, fields)
-    steps = [("tile_haze_noise_scale_gu", "noise_scale_gu"),
-             ("tile_haze_noise_contrast", "noise_contrast"),
-             ("tile_haze_noise_octaves", "noise_octaves")]
+    steps = [("tile_noise_scale_gu", "noise_scale_gu"),
+             ("tile_noise_contrast", "noise_contrast"),
+             ("tile_noise_octaves", "noise_octaves")]
     for i, (dial, key) in enumerate(steps):
         far_dials._step(dial, +1)
         far_tier.reconcile_with(r, view, {}, fields)

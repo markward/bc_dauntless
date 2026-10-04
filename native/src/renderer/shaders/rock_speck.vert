@@ -1,5 +1,5 @@
 #version 410 core
-// Rock-field speck band (SPIKE, rock_speck.h): speck.vert's screen quad, with
+// Rock-field speck band (rock_speck.h): speck.vert's screen quad, with
 // the on-screen radius and the alpha computed here per frame, so the CPU only
 // rebuilds the instance buffer when the band re-streams. Shaded by speck.frag.
 // alpha = inner hand-off (rises over the near billboards' outer fade band, so

@@ -312,50 +312,18 @@ def test_outer_fade_billboards_are_counted_as_fading(host):
     assert 0 < st["near_fading"] < st["near_billboards"], st
 
 
-# The far shell only exists past near_large_billboard_gu; since the 3x ranges
-# (2026-10-04, billboard 270 > the native 250 shell default) these tests pin
-# the large billboard range at its 90 GU so a 250 GU shell is on. Every
-# far_set_dials call must repeat it (an omitted key resets to its default).
-_SHELL = {"near_large_billboard_gu": 90.0}
+def _billboards_with(host, d):
+    host.far_set_dials(d)
+    host.frame()
+    return host.far_stats()["near_billboards"]
 
 
-def _dials(host, d=None):
-    host.far_set_dials(dict(_SHELL, **(d or {})))
-
-
-def test_the_far_shell_dials_reach_the_near_band(host):
-    """rock-real Part 1 (2026-10-03): near_large_far_gu streams the large
-    class's rocks on past near_large_billboard_gu; far_set_dials parses it
-    (and its fade / pixel floor) natively."""
+def test_the_pixel_floor_dials_reach_the_near_band(host):
+    """near_large_min_px / near_small_min_px parse natively: a floor no rock
+    clears draws no billboard of that class past the mesh range."""
     _stream_at_origin(host)   # (pushes far_set_dials({}): pin after it)
-    _dials(host)
-    host.frame()
-    shell = host.far_stats()
-    _dials(host, {"near_large_far_gu": 0.0})   # off: the old 90 GU reach
-    host.frame()
-    off = host.far_stats()
-    assert shell["near_large"] > 5 * off["near_large"], (shell, off)
-    # (Billboard counts are not compared: in this 64-line viewport the pixel
-    # floor hides nearly all of the far shell.)
-    # A pixel floor no rock clears draws no billboard beyond the mesh range.
-    _dials(host, {"near_large_min_px": 1.0e6, "near_small_density": 0.0})
-    host.frame()
-    floored = host.far_stats()
-    _dials(host, {"near_small_density": 0.0})
-    host.frame()
-    assert floored["near_billboards"] < host.far_stats()["near_billboards"]
-
-
-def test_a_dash_shrinks_the_far_shell(host):
-    """rock-real review: a stream centre that jumps more than
-    near_far_shell_max_step_gu since the last frame shrinks the large reach
-    to near_large_billboard_gu (far_set_dials parses the dial)."""
-    _stream_at_origin(host)   # (pushes far_set_dials({}): pin after it)
-    _dials(host)
-    host.frame()
-    shell = host.far_stats()["near_large"]
-    _dials(host, {"near_far_shell_max_step_gu": 0.5})
-    host.set_camera(eye=(5.0, 0.0, 0.0), target=(5.0, 0.0, -1.0),
-                    up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=0.1, far=1.0e7)
-    host.frame()   # 5 GU in one frame: a "dash" at this dial
-    assert host.far_stats()["near_large"] * 5 < shell
+    for cls, other in (("large", "small"), ("small", "large")):
+        only = {"near_%s_density" % other: 0.0}
+        base = _billboards_with(host, dict(only, **{"near_%s_min_px" % cls: 0.0}))
+        floored = _billboards_with(host, dict(only, **{"near_%s_min_px" % cls: 1.0e6}))
+        assert floored < base, (cls, floored, base)

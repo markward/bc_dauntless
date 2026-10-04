@@ -36,6 +36,8 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'rock_catalogue'});
         out.push({kind: 'ctrl', target: 'minor_rocks'});
         out.push({kind: 'ctrl', target: 'far_tier'});
+        out.push({kind: 'ctrl', target: 'rock_specks'});
+        out.push({kind: 'ctrl', target: 'rock_puffs'});
         out.push({kind: 'ctrl', target: 'dial_group'});
     }
     return out;
@@ -152,6 +154,8 @@ function _doRenderLightingBody(state, focusables) {
                          'rock_catalogue', s.rock_catalogue, isFoc('rock_catalogue'));
     html += _doToggleRow('Minor Rocks', 'minor_rocks', s.minor_rocks, isFoc('minor_rocks'));
     html += _doToggleRow('Rock Fields', 'far_tier', s.far_tier, isFoc('far_tier'));
+    html += _doToggleRow('Rock Specks', 'rock_specks', s.rock_specks, isFoc('rock_specks'));
+    html += _doToggleRow('Rock Puffs', 'rock_puffs', s.rock_puffs, isFoc('rock_puffs'));
     html += _doValueRow('Dial keys (/ L O act on)', 'dial_group',
                         String(s.dial_group), isFoc('dial_group'));
     return html;

@@ -2,7 +2,7 @@
 // Test-only: the "Rock Fields: inside Beol 4" load (engine/dev_missions/
 // rock_fields_inside.py) rebuilt in C++ for the rock-fields perf benches and
 // equivalence digests -- a tile field of radius 1,000 GU with the default
-// tile_haze_* noise and edge (engine/rocks/far_dials.py), the player 300 GU
+// tile_noise_* noise and tile_edge_frac edge (engine/rocks/far_dials.py), the player 300 GU
 // inside its edge, flying slowly toward its centre. Not an installed header.
 #pragma once
 #include <cmath>
@@ -21,7 +21,7 @@ namespace rock_scenario {
 inline std::vector<glm::vec3> view_dirs64() { return renderer::far::oct_view_dirs(8); }
 
 // Beol 4's "Asteroid Field 1" as density.py pushes it: a sphere with the
-// tile_haze_edge_frac / tile_haze_noise_* defaults, centred at the origin.
+// tile_edge_frac / tile_noise_* defaults, centred at the origin.
 inline renderer::far::DiscSource beol4_field() {
     renderer::far::DiscSource s;
     s.id = 7; s.seed = 4242u;

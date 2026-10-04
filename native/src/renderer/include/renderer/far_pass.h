@@ -74,7 +74,7 @@ public:
                        Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                        float speck_gain, int viewport_w, int viewport_h);
 
-    // Rock-field speck band (SPIKE, rock_speck.h): upload the band's
+    // Rock-field speck band (rock_speck.h): upload the band's
     // instances when it re-streams; draw them every frame (GPU-side radius
     // and alpha, rock_speck.vert). Same blend/depth state as render_specks.
     struct RockSpeckDraw {
@@ -87,7 +87,7 @@ public:
                             Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                             float speck_gain, int viewport_w, int viewport_h);
     int rock_speck_count() const { return rock_speck_count_; }
-    // Rock-field puffs (SPIKE, rock_puffs.h): upload on change, draw every
+    // Rock-field puffs (rock_puffs.h): upload on change, draw every
     // frame. Premultiplied over, depth-tested, no depth writes, unculled.
     void upload_rock_puffs(const std::vector<rockfield::PuffGpu>& puffs);
     void render_rock_puffs(const glm::vec3& offset, const rockfield::PuffDials& d,

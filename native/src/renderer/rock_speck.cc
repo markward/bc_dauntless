@@ -1,5 +1,5 @@
 // native/src/renderer/rock_speck.cc
-// Rock fields, speck band (SPIKE, spike/rock-specks, 2026-10-04). See rock_speck.h.
+// Rock fields, speck band (2026-10-04). See rock_speck.h.
 #include "renderer/rock_speck.h"
 #include <algorithm>
 #include <cmath>

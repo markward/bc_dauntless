@@ -1,5 +1,5 @@
 // native/src/renderer/include/renderer/rock_puffs.h
-// Rock fields, far look as PUFFS (SPIKE, spike/rock-specks 2026-10-04): a
+// Rock fields, far look as PUFFS (2026-10-04): a
 // few hundred large, soft, sun-lit billboards per tile field (and per belt),
 // placed by
 // rejection-sampling the field's own density (far::field_density), so the

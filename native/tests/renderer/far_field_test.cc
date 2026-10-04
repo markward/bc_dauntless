@@ -275,7 +275,7 @@ far::DiscSource beol4_tile_field() {
 }
 }  // namespace
 
-TEST(FarHazeSphere, DensityIsOneInsideAndRampsToZeroAtTheRadius) {
+TEST(FarFieldSphere, DensityIsOneInsideAndRampsToZeroAtTheRadius) {
     const far::DiscSource s = beol4_tile_field();
     const glm::dvec3 c = s.centre, x(1.0, 0.0, 0.0);
     EXPECT_EQ(far::density_a(s, c), 1.0f);
@@ -330,27 +330,27 @@ far::DiscSource noisy_tile_field() {
 }
 }  // namespace
 
-TEST(FarHazeNoise, FbmIsDeterministicSeededAndInZeroOne) {
+TEST(FarFieldNoise, FbmIsDeterministicSeededAndInZeroOne) {
     int differs = 0;
     for (int i = 0; i < 200; ++i) {
         const glm::vec3 p(0.37f * i - 11.0f, 1.13f * i + 0.5f, -0.71f * i + 3.0f);
-        const float a = far::haze_fbm(p, 3, 7u);
-        EXPECT_EQ(a, far::haze_fbm(p, 3, 7u));
+        const float a = far::field_fbm(p, 3, 7u);
+        EXPECT_EQ(a, far::field_fbm(p, 3, 7u));
         EXPECT_GE(a, 0.0f);
         EXPECT_LE(a, 1.0f);
-        if (std::fabs(a - far::haze_fbm(p, 3, 8u)) > 0.05f) ++differs;
+        if (std::fabs(a - far::field_fbm(p, 3, 8u)) > 0.05f) ++differs;
     }
     EXPECT_GT(differs, 100);
 }
 
-TEST(FarHazeNoise, ValueNoiseHitsTheLatticeValuesAndIsContinuous) {
+TEST(FarFieldNoise, ValueNoiseHitsTheLatticeValuesAndIsContinuous) {
     // At an integer point the trilinear blend is the corner's hashed value.
-    const float v = far::haze_value_noise(glm::vec3(3.0f, -2.0f, 5.0f), 11u);
-    EXPECT_NEAR(far::haze_value_noise(glm::vec3(3.0f + 1e-4f, -2.0f, 5.0f), 11u), v, 1e-3f);
-    EXPECT_NEAR(far::haze_value_noise(glm::vec3(3.0f - 1e-4f, -2.0f, 5.0f), 11u), v, 1e-3f);
+    const float v = far::field_value_noise(glm::vec3(3.0f, -2.0f, 5.0f), 11u);
+    EXPECT_NEAR(far::field_value_noise(glm::vec3(3.0f + 1e-4f, -2.0f, 5.0f), 11u), v, 1e-3f);
+    EXPECT_NEAR(far::field_value_noise(glm::vec3(3.0f - 1e-4f, -2.0f, 5.0f), 11u), v, 1e-3f);
 }
 
-TEST(FarHazeNoise, MeanModulationIsOne) {
+TEST(FarFieldNoise, MeanModulationIsOne) {
     const far::DiscSource s = noisy_tile_field();
     std::uint64_t st = 12345;
     auto u01 = [&]() {
@@ -361,32 +361,32 @@ TEST(FarHazeNoise, MeanModulationIsOne) {
     const int n = 20000;
     for (int i = 0; i < n; ++i) {
         const glm::dvec3 p = s.centre + glm::dvec3(u01() - 0.5, u01() - 0.5, u01() - 0.5) * 2000.0;
-        const double m = far::haze_noise_m(s, p);
+        const double m = far::field_noise_m(s, p);
         sum += m; lo = std::min(lo, m); hi = std::max(hi, m);
     }
-    std::printf("[FarHazeNoise] mean m over %d points = %.4f (min %.3f max %.3f)\n", n,
+    std::printf("[FarFieldNoise] mean m over %d points = %.4f (min %.3f max %.3f)\n", n,
                 sum / n, lo, hi);
     EXPECT_NEAR(sum / n, 1.0, 0.05);
     EXPECT_LT(lo, 0.7);   // it IS clumpy
     EXPECT_GT(hi, 1.3);
 }
 
-TEST(FarHazeNoise, PatternIsFixedToTheField) {
+TEST(FarFieldNoise, PatternIsFixedToTheField) {
     far::DiscSource s = noisy_tile_field();
     const glm::dvec3 off(123.0, -45.0, 300.0);
-    const float m0 = far::haze_noise_m(s, s.centre + off);
+    const float m0 = far::field_noise_m(s, s.centre + off);
     s.centre += glm::dvec3(5000.0, 0.0, -700.0);
-    EXPECT_EQ(far::haze_noise_m(s, s.centre + off), m0);
+    EXPECT_EQ(far::field_noise_m(s, s.centre + off), m0);
 }
 
-TEST(FarHazeNoise, OffMeansOne) {
+TEST(FarFieldNoise, OffMeansOne) {
     far::DiscSource s = noisy_tile_field();
     s.noise_contrast = 0.0f;
-    EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
+    EXPECT_EQ(far::field_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
     s = noisy_tile_field(); s.noise_scale_gu = 0.0f;
-    EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
+    EXPECT_EQ(far::field_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
     s = noisy_tile_field(); s.noise_octaves = 0;
-    EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
+    EXPECT_EQ(far::field_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
 }
 
 TEST(FarNoise, DiscSourcesNowCarryNoise) {
@@ -395,7 +395,7 @@ TEST(FarNoise, DiscSourcesNowCarryNoise) {
     s.noise_scale_gu = 1000.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3; s.seed = 7;
     bool varied = false;
     for (int i = 0; i < 64; ++i) {
-        const float m = far::haze_noise_m(s, glm::dvec3(i * 517.0, 300.0, 0.0));
+        const float m = far::field_noise_m(s, glm::dvec3(i * 517.0, 300.0, 0.0));
         EXPECT_GE(m, 0.0f);
         EXPECT_LE(m, far::noise_m_bound(s));
         if (std::fabs(m - 1.0f) > 0.05f) varied = true;
@@ -406,8 +406,8 @@ TEST(FarNoise, DiscSourcesNowCarryNoise) {
 TEST(FarNoise, OffIsExactlyOneForBothShapes) {
     far::DiscSource d; d.noise_scale_gu = 0.0f; d.noise_contrast = 0.8f; d.noise_octaves = 3;
     far::DiscSource sph = d; sph.shape = far::DiscSource::Shape::Sphere;
-    EXPECT_EQ(far::haze_noise_m(d, glm::dvec3(1, 2, 3)), 1.0f);
-    EXPECT_EQ(far::haze_noise_m(sph, glm::dvec3(1, 2, 3)), 1.0f);
+    EXPECT_EQ(far::field_noise_m(d, glm::dvec3(1, 2, 3)), 1.0f);
+    EXPECT_EQ(far::field_noise_m(sph, glm::dvec3(1, 2, 3)), 1.0f);
 }
 
 TEST(FarNoise, FieldDensityIsAtimesM) {
@@ -415,7 +415,7 @@ TEST(FarNoise, FieldDensityIsAtimesM) {
     s.sphere_radius_gu = 1000.0f; s.noise_scale_gu = 250.0f; s.noise_contrast = 0.8f;
     s.noise_octaves = 3; s.seed = 11;
     const glm::dvec3 x(120.0, -40.0, 33.0);
-    EXPECT_FLOAT_EQ(far::field_density(s, x), far::density_a(s, x) * far::haze_noise_m(s, x));
+    EXPECT_FLOAT_EQ(far::field_density(s, x), far::density_a(s, x) * far::field_noise_m(s, x));
 }
 
 TEST(FarNoise, ContrastAboveOneIsClampedInTheBound) {
@@ -424,12 +424,12 @@ TEST(FarNoise, ContrastAboveOneIsClampedInTheBound) {
 }
 
 // Golden values recorded 2026-10-02 from the code BEFORE the per-octave seed
-// hash refactor (haze_hash(seed) inside every lattice() call): the refactor
+// hash refactor (field_hash(seed) inside every lattice() call): the refactor
 // must be value-identical.
 TEST(FarNoise, OncePerOctaveSeedHashKeepsValues) {
-    const float a = far::haze_fbm(glm::vec3(0.3f, 1.7f, -2.2f), 3, 12345u);
-    const float b = far::haze_fbm(glm::vec3(10.1f, -4.0f, 0.5f), 5, 99u);
-    const float c = far::haze_value_noise(glm::vec3(-7.5f, 3.25f, 8.0f), 4242u);
+    const float a = far::field_fbm(glm::vec3(0.3f, 1.7f, -2.2f), 3, 12345u);
+    const float b = far::field_fbm(glm::vec3(10.1f, -4.0f, 0.5f), 5, 99u);
+    const float c = far::field_value_noise(glm::vec3(-7.5f, 3.25f, 8.0f), 4242u);
     EXPECT_EQ(a, 0x1.51d48ap-1f);   // 0.659824669
     EXPECT_EQ(b, 0x1.65a954p-1f);   // 0.698557496
     EXPECT_EQ(c, 0x1.15239ep-1f);   // 0.541287363
@@ -441,7 +441,7 @@ TEST(FarNoise, ContrastAboveOneIsClampedInM) {
     far::DiscSource one = s; one.noise_contrast = 1.0f;
     for (int i = 0; i < 64; ++i) {
         const glm::dvec3 x(i * 3.7, -i * 1.3, i * 0.9);
-        EXPECT_EQ(far::haze_noise_m(s, x), far::haze_noise_m(one, x));
+        EXPECT_EQ(far::field_noise_m(s, x), far::field_noise_m(one, x));
     }
 }
 

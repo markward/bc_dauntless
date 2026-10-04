@@ -1,5 +1,5 @@
 // native/src/renderer/rock_puffs.cc
-// Rock fields, far look as puffs (SPIKE). See rock_puffs.h.
+// Rock fields, far look as puffs. See rock_puffs.h.
 #include "renderer/rock_puffs.h"
 #include <algorithm>
 #include <cmath>

@@ -52,7 +52,7 @@ struct DiscSource {
     float noise_scale_gu = 0.0f;
     float noise_contrast = 0.0f;
     int noise_octaves = 0;
-    // spike/rock-specks (2026-10-04), both off by default (byte-identical):
+    // Field shape (2026-10-04), both off by default (byte-identical):
     // noise_sharpness stretches the fbm about 0.5 before m (clamped to
     // [0, 1]), so > 1 opens voids and packs clumps; m's bound is unchanged.
     // shape_warp (sphere only, < 0.9) scales the distance from the centre by
@@ -84,20 +84,20 @@ float a_bound(const DiscSource& s, const glm::dvec3& centre, double half);
 // ---- Field noise (every source) ------------------------------------------
 
 // 32-bit PCG output hash.
-std::uint32_t haze_hash(std::uint32_t v);
+std::uint32_t field_hash(std::uint32_t v);
 // 3D value noise in [0, 1]: hashed lattice values (seeded), trilinear with a
 // smoothstep fade.
-float haze_value_noise(const glm::vec3& p, std::uint32_t seed);
-// haze_value_noise with the seed already hashed (haze_hash(seed)):
-// haze_value_noise(p, seed) == haze_value_noise_h(p, haze_hash(seed)).
-float haze_value_noise_h(const glm::vec3& p, std::uint32_t hashed_seed);
-// `octaves` octaves of haze_value_noise (lacunarity 2, gain 0.5), normalised
+float field_value_noise(const glm::vec3& p, std::uint32_t seed);
+// field_value_noise with the seed already hashed (field_hash(seed)):
+// field_value_noise(p, seed) == field_value_noise_h(p, field_hash(seed)).
+float field_value_noise_h(const glm::vec3& p, std::uint32_t hashed_seed);
+// `octaves` octaves of field_value_noise (lacunarity 2, gain 0.5), normalised
 // to [0, 1]. octaves <= 0 gives 0.5.
-float haze_fbm(const glm::vec3& p, int octaves, std::uint32_t seed);
+float field_fbm(const glm::vec3& p, int octaves, std::uint32_t seed);
 // The density modulation m(x) at system point x (see DiscSource), for both
 // shapes; exactly 1 when the noise is off. noise_contrast is clamped to
 // [0, 1].
-float haze_noise_m(const DiscSource& s, const glm::dvec3& x_sys);
+float field_noise_m(const DiscSource& s, const glm::dvec3& x_sys);
 // The ONE density every band samples (rock-fields spec R1): a(x) * m(x).
 float field_density(const DiscSource& s, const glm::dvec3& x_sys);
 // Upper bound of m for rejection sampling: 1 + clamp(noise_contrast, 0, 1)

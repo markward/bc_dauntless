@@ -312,7 +312,7 @@ HandoffStats measure_handoff(ImpostorBlendGLTest& t, renderer::Pipeline& pipelin
 
 }  // namespace
 
-// The hard mesh <-> billboard swap (near_handoff_fade_gu 0): at the swap
+// The hard mesh <-> billboard swap: at the swap
 // distance the billboard should look like the mesh it replaces. Measured on
 // two catalogue rocks at their class's default swap (large: mesh_gu 60, small:
 // mesh_gu 15) at the on-screen size a 1080p 60-degree view gives them.

@@ -58,7 +58,7 @@ float scale_height(const DiscSource& s, float rho) {
 float sphere_warp_factor(const DiscSource& s, const glm::dvec3& x) {
     if (!(s.shape_warp > 0.0f) || !(s.shape_warp_scale_gu > 0.0f)) return 1.0f;
     const glm::vec3 local = glm::vec3(x - s.centre) / s.shape_warp_scale_gu;
-    const float n = 2.0f * haze_fbm(local, 2, s.seed ^ 0xA5A5A5A5u) - 1.0f;
+    const float n = 2.0f * field_fbm(local, 2, s.seed ^ 0xA5A5A5A5u) - 1.0f;
     return 1.0f + std::min(s.shape_warp, 0.9f) * n;
 }
 
@@ -102,29 +102,29 @@ float a_bound(const DiscSource& s, const glm::dvec3& c, double h) {
 namespace {
 constexpr int kMaxNoiseOctaves = 8;      // fbm octave cap
 
-// `hs` is the PRE-HASHED seed (haze_hash(seed)), hashed once per octave by
+// `hs` is the PRE-HASHED seed (field_hash(seed)), hashed once per octave by
 // the caller rather than in each of the 8 lattice calls per noise sample.
 float lattice(std::int32_t x, std::int32_t y, std::int32_t z, std::uint32_t hs) {
     const std::uint32_t h =
-        haze_hash(static_cast<std::uint32_t>(x) ^
-                  haze_hash(static_cast<std::uint32_t>(y) ^
-                            haze_hash(static_cast<std::uint32_t>(z) ^ hs)));
+        field_hash(static_cast<std::uint32_t>(x) ^
+                  field_hash(static_cast<std::uint32_t>(y) ^
+                            field_hash(static_cast<std::uint32_t>(z) ^ hs)));
     return static_cast<float>(h >> 8) / 16777215.0f;
 }
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
 }  // namespace
 
-std::uint32_t haze_hash(std::uint32_t v) {
+std::uint32_t field_hash(std::uint32_t v) {
     const std::uint32_t state = v * 747796405u + 2891336453u;
     const std::uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
 }
 
-float haze_value_noise(const glm::vec3& p, std::uint32_t seed) {
-    return haze_value_noise_h(p, haze_hash(seed));
+float field_value_noise(const glm::vec3& p, std::uint32_t seed) {
+    return field_value_noise_h(p, field_hash(seed));
 }
 
-float haze_value_noise_h(const glm::vec3& p, std::uint32_t seed) {
+float field_value_noise_h(const glm::vec3& p, std::uint32_t seed) {
     const glm::vec3 fl = glm::floor(p);
     const glm::vec3 f = p - fl;
     const glm::vec3 u = f * f * (3.0f - 2.0f * f);
@@ -137,14 +137,14 @@ float haze_value_noise_h(const glm::vec3& p, std::uint32_t seed) {
     return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
 }
 
-float haze_fbm(const glm::vec3& p, int octaves, std::uint32_t seed) {
+float field_fbm(const glm::vec3& p, int octaves, std::uint32_t seed) {
     const int n = std::min(octaves, kMaxNoiseOctaves);
     if (n <= 0) return 0.5f;
     float sum = 0.0f, norm = 0.0f, amp = 1.0f;
     glm::vec3 q = p;
     for (int o = 0; o < n; ++o) {
-        const std::uint32_t hs = haze_hash(seed + static_cast<std::uint32_t>(o) * 0x9E3779B9u);
-        sum += amp * haze_value_noise_h(q, hs);
+        const std::uint32_t hs = field_hash(seed + static_cast<std::uint32_t>(o) * 0x9E3779B9u);
+        sum += amp * field_value_noise_h(q, hs);
         norm += amp;
         amp *= 0.5f;
         q *= 2.0f;
@@ -152,18 +152,18 @@ float haze_fbm(const glm::vec3& p, int octaves, std::uint32_t seed) {
     return sum / norm;
 }
 
-float haze_noise_m(const DiscSource& s, const glm::dvec3& x) {
+float field_noise_m(const DiscSource& s, const glm::dvec3& x) {
     if (!(s.noise_scale_gu > 0.0f) || s.noise_contrast == 0.0f || s.noise_octaves <= 0)
         return 1.0f;
     const float contrast = std::clamp(s.noise_contrast, 0.0f, 1.0f);
     const glm::vec3 local = glm::vec3(x - s.centre) / s.noise_scale_gu;
-    float fbm = haze_fbm(local, s.noise_octaves, s.seed);
+    float fbm = field_fbm(local, s.noise_octaves, s.seed);
     if (s.noise_sharpness != 1.0f) fbm = std::clamp(0.5f + (fbm - 0.5f) * s.noise_sharpness, 0.0f, 1.0f);
     return std::max(0.0f, 1.0f + contrast * (2.0f * fbm - 1.0f));
 }
 
 float field_density(const DiscSource& s, const glm::dvec3& x) {
-    return density_a(s, x) * haze_noise_m(s, x);
+    return density_a(s, x) * field_noise_m(s, x);
 }
 
 float noise_m_bound(const DiscSource& s) {

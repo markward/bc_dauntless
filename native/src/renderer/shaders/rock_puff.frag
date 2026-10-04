@@ -1,5 +1,5 @@
 #version 410 core
-// Rock-field puffs (SPIKE): a soft, noise-broken blob, lit like the speck
+// Rock-field puffs: a soft, noise-broken blob, lit like the speck
 // band (Lambert sphere phase toward the sun). PREMULTIPLIED, blended
 // GL_ONE, GL_ONE_MINUS_SRC_ALPHA, depth-tested, no depth writes.
 in vec2 v_corner;

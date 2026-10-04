@@ -147,7 +147,7 @@ def test_tile_field_source_is_a_view_space_sphere():
     assert s.shape == "sphere" and s.procedural is False and s.view_space is True
     assert s.centre_gu == (797.714355, 977.248474, 1268.854858)
     assert s.sphere_radius_gu == 1000.0
-    assert s.sphere_edge_frac == far_dials.get("tile_haze_edge_frac")
+    assert s.sphere_edge_frac == far_dials.get("tile_edge_frac")
     (pop,) = s.pops
     assert pop.kind == 0 and pop.a_lo == 0.0 and pop.a_hi == 1.0
     assert math.isclose(pop.density_at_1, 405 / (4.0 / 3.0 * math.pi * 1000.0 ** 3))
@@ -190,9 +190,9 @@ def test_a_belt_to_native_keeps_the_disc_defaults():
 
 def test_a_tile_field_source_carries_the_noise_dials():
     s = density.tile_field_source(_Field(), None, "Beol4", (0.0, 0.0, 0.0))
-    assert s.noise_scale_gu == far_dials.get("tile_haze_noise_scale_gu")
-    assert s.noise_contrast == far_dials.get("tile_haze_noise_contrast")
-    assert s.noise_octaves == far_dials.get("tile_haze_noise_octaves")
+    assert s.noise_scale_gu == far_dials.get("tile_noise_scale_gu")
+    assert s.noise_contrast == far_dials.get("tile_noise_contrast")
+    assert s.noise_octaves == far_dials.get("tile_noise_octaves")
     d = density.to_native(s)
     assert (d["noise_scale_gu"], d["noise_contrast"], d["noise_octaves"]) == (250.0, 0.8, 3)
 

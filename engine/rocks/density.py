@@ -18,7 +18,7 @@ import zlib
 from dataclasses import dataclass, field
 from typing import Optional
 
-MAX_TABLE_ROWS = 32   # rows sent per source (the old haze shader's cap, kept)
+MAX_TABLE_ROWS = 32   # rows sent per source
 
 _warned_truncate: set = set()
 _warned_no_match: set = set()
@@ -46,11 +46,11 @@ class DiscSource:
     sphere_radius_gu: float = 0.0
     sphere_edge_frac: float = 0.2
     # Field noise (every shape since rock-fields R1, 2026-10-02): 0 = off.
-    # Belts set the belt_noise_* dials, tile fields the tile_haze_noise_* ones.
+    # Belts set the belt_noise_* dials, tile fields the tile_noise_* ones.
     noise_scale_gu: float = 0.0
     noise_contrast: float = 0.0
     noise_octaves: int = 0
-    # spike/rock-specks: clump sharpness (1 = off) and the sphere outline
+    # Clump sharpness (1 = off) and the sphere outline
     # warp (0 = off; scale in GU). renderer::far::DiscSource's twins.
     noise_sharpness: float = 1.0
     shape_warp: float = 0.0
@@ -183,10 +183,10 @@ def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
         procedural=False,
         view_space=True,
         sphere_radius_gu=radius,
-        sphere_edge_frac=float(far_dials.get("tile_haze_edge_frac")),
-        noise_scale_gu=float(far_dials.get("tile_haze_noise_scale_gu")),
-        noise_contrast=float(far_dials.get("tile_haze_noise_contrast")),
-        noise_octaves=int(far_dials.get("tile_haze_noise_octaves")),
+        sphere_edge_frac=float(far_dials.get("tile_edge_frac")),
+        noise_scale_gu=float(far_dials.get("tile_noise_scale_gu")),
+        noise_contrast=float(far_dials.get("tile_noise_contrast")),
+        noise_octaves=int(far_dials.get("tile_noise_octaves")),
         noise_sharpness=float(far_dials.get("tile_noise_sharpness")),
         shape_warp=float(far_dials.get("tile_shape_warp")),
         shape_warp_scale_gu=radius * float(far_dials.get("tile_shape_warp_scale_frac")),

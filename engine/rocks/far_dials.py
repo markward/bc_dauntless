@@ -26,13 +26,13 @@ DEFAULTS: dict = {
     "outer_fade_gu": 20000.0,
     # Tile-field shape (Python, read at use; re-push sources): the outer
     # fraction of an AsteroidField's radius over which its density ramps to 0.
-    "tile_haze_edge_frac": 0.2,
+    "tile_edge_frac": 0.2,
     # Tile-field noise (Python, read at use; re-push sources; 2026-10-02):
     # the sphere's density x m(x) = max(0, 1 + contrast (2 fbm(x / scale) -
     # 1)), 3D value noise fixed to the field, mean m ~= 1.
-    "tile_haze_noise_scale_gu": 250.0, "tile_haze_noise_contrast": 0.8,
-    "tile_haze_noise_octaves": 3,
-    # spike/rock-specks (Python, read at use; re-push sources): the tile
+    "tile_noise_scale_gu": 250.0, "tile_noise_contrast": 0.8,
+    "tile_noise_octaves": 3,
+    # Tile-field shape (Python, read at use; re-push sources; 2026-10-04): the tile
     # field's ONE density (puffs AND rocks) gets clumps/voids and a lumpy
     # outline. tile_noise_sharpness stretches the noise (1 = off);
     # tile_shape_warp (0 = off, < 0.9) warps the sphere's edge at
@@ -60,17 +60,11 @@ DEFAULTS: dict = {
     # near_large_billboard_gu 60 -> 90: Mark, live 2026-10-03 (fewer big
     # asteroids but visible a bit further).
     "near_large_density": 6.25e-5, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
-    # near_large_cell_gu 20 -> 50, near_large_max 1000 -> 4000 and the far
-    # shell: rock-real Part 1, 2026-10-03 (every big-asteroid silhouette is a
-    # real rock). With near_large_far_gu > near_large_billboard_gu the SAME
-    # large rocks stream on as billboards out to near_large_far_gu, fading
-    # out translucent over the last near_large_far_fade_gu; a large billboard
-    # at or below near_large_min_px on screen draws nothing (1 px fade-in
-    # above it, blended in from the mesh edge). 250, not the 400 target:
-    # 400 cost +1.5 ms CPU per frame in the Beol 4 inside bench, 250 ~ +0.4.
-    # 50 GU cells keep 250 (+ margin) under the 33-cells-per-axis cap;
-    # near_large_max 4000 covers a full-density field's ~770 large rocks in a
-    # 60 degree view at 250 GU (~2,300 at 90 degrees, ~3,200 at 400 GU).
+    # near_large_cell_gu 20 -> 50, near_large_max 1000 -> 4000: rock-real
+    # Part 1, 2026-10-03 (every big-asteroid silhouette is a real rock). 50 GU
+    # cells keep the large reach (+ margin) under the 33-cells-per-axis cap;
+    # near_large_max 4000 covers a full-density field's ~3,200 large rocks in
+    # a 60 degree view at 400 GU.
     "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
     "near_large_billboard_gu": 405.0, "near_large_max": 4000,   # 3x, then +50% large only (Mark, live 2026-10-04)
     # Space dust inside rock fields (Python, read at use; Mark, live
@@ -78,21 +72,16 @@ DEFAULTS: dict = {
     # full field density (tile field interior or a=1 belt), ramping with the
     # field's a(x) at the player. 1.0 = off.
     "field_dust_mult": 10.0,
-    "near_large_far_gu": 0.0,   # far shell OFF during the near-only strip-back (Mark, 2026-10-03)
-    "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5,
+    # Pixel floors: a billboard past mesh range at or below its class's
+    # floor (on-screen radius, px) draws nothing, fading in over the next px.
+    "near_large_min_px": 1.5,
     "near_small_min_px": 2.5,   # Mark, live 2026-10-04 (3x ranges)
-    # The far shell at dash speed (rock-real review, 2026-10-03): a stream
-    # whose centre moved more than near_far_shell_max_step_gu since the last
-    # (25 GU = 1,500 GU/s at 60 Hz, 3.75x in-system warp) shrinks the large
-    # reach to near_large_billboard_gu; it regrows by at most
-    # near_far_shell_regrow_gu per stream once slower (no one-frame hitch).
-    "near_far_shell_max_step_gu": 25.0, "near_far_shell_regrow_gu": 20.0,
-    "near_fade_gu": 4.0, "near_handoff_fade_gu": 0.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    "near_fade_gu": 4.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,
     # engine/rocks/scenery_contact.py): damage = KE damage x
     # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
     "collide_damage_scale": 1.0, "collide_ref_radius_gu": 5.0,
-    # Speck band (SPIKE, native; MUST equal SpeckDials in rock_speck.h): the
+    # Speck band (native; MUST equal SpeckDials in rock_speck.h): the
     # near band's large rocks past their billboard edge as lit specks, out to
     # speck_out_gu (fading over speck_out_fade_gu). Beyond speck_keep_d0_gu
     # whole cells thin as (d0 / d)^speck_keep_power, fading over speck_keep_band of their
@@ -101,11 +90,11 @@ DEFAULTS: dict = {
     "speck_out_gu": 1500.0, "speck_out_fade_gu": 400.0,
     "speck_keep_d0_gu": 420.0, "speck_keep_band": 0.25, "speck_keep_power": 3.0,
     "speck_restream_gu": 50.0, "speck_band_gain": 0.25,
-    # Puffs (SPIKE, native; MUST equal PuffDials in rock_puffs.h): the far
+    # Puffs (native; MUST equal PuffDials in rock_puffs.h): the far
     # look of a tile field as puff_count soft lit billboards placed by its
     # density, radius puff_size_frac x field radius x [0.6, 1.4], peak alpha
     # puff_opacity, fading in over [puff_start_gu, + puff_ramp_gu] and out
-    # within puff_near_fade x their radius. Replaces the volumetric haze.
+    # within puff_near_fade x their radius.
     "puff_count": 400, "puff_size_frac": 0.18, "puff_opacity": 0.04698,
     "puff_brightness": 8.0, "puff_start_gu": 800.0, "puff_ramp_gu": 800.0,
     "puff_near_fade": 1.5,
@@ -122,9 +111,8 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_density", "near_large_r_min", "near_large_r_max",
     "near_large_exponent", "near_large_cell_gu", "near_large_mesh_gu",
     "near_large_billboard_gu", "near_large_max",
-    "near_large_far_gu", "near_large_far_fade_gu", "near_large_min_px", "near_small_min_px",
-    "near_far_shell_max_step_gu", "near_far_shell_regrow_gu",
-    "near_fade_gu", "near_handoff_fade_gu", "near_tumble_scale", "near_dash_collapse_step_gu", "near_stream_margin_gu", "collide_cooldown_s",
+    "near_large_min_px", "near_small_min_px",
+    "near_fade_gu", "near_tumble_scale", "near_dash_collapse_step_gu", "near_stream_margin_gu", "collide_cooldown_s",
     "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
     "speck_keep_power", "speck_restream_gu", "speck_band_gain",
     "puff_count", "puff_size_frac", "puff_opacity", "puff_brightness",
@@ -133,19 +121,18 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
-_INT_FLOOR_1 = ("tile_haze_noise_octaves",
+_INT_FLOOR_1 = ("tile_noise_octaves",
                "belt_noise_octaves", "near_small_max", "near_large_max",
                "puff_count", "puff_belt_count")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
+               "puff_belt_count", "puff_belt_size_h",
                "tile_shape_warp", "tile_noise_sharpness",
                "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
                "near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
-               "near_large_far_gu",
-               "tile_haze_noise_contrast", "belt_noise_contrast",
                "collide_damage_scale")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)
 _FACTOR = 1.25

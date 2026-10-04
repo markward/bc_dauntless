@@ -1,5 +1,5 @@
 // native/tests/renderer/rock_speck_test.cc
-// Rock-field speck band (SPIKE, spike/rock-specks 2026-10-04).
+// Rock-field speck band (2026-10-04).
 #include <gtest/gtest.h>
 #include <chrono>
 #include <cstdio>

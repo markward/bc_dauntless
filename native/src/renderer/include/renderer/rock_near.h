@@ -34,18 +34,16 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // density 1.25e-4 -> 6.25e-5, mesh_gu 50 -> 60, billboard_gu 60 -> 90:
     // Mark, live 2026-10-03 (fewer big asteroids but visible a bit further).
     // cell_gu 20 -> 50, max_instances 1000 -> 4000: rock-real Part 1,
-    // 2026-10-03 (streaming the large class out to large_far_gu in 20 GU
+    // 2026-10-03 (streaming the large class out to hundreds of GU in 20 GU
     // cells would hit the 33-per-axis cap -- this redefines which large rocks
-    // exist, still deterministic). The 4000 cap at the 250 GU default: a
-    // full-density field holds ~770 large rocks in a 60 degree 16:9 view out
-    // to 250 GU and ~2,300 in a 90 degree one; 4000 also covers the live dial
-    // at 400 GU (~3,200 at 60 degrees), which 1000 would cut nearest-first.
+    // exist, still deterministic). A full-density field holds ~770 large
+    // rocks in a 60 degree 16:9 view out to 250 GU and ~3,200 out to 400 GU,
+    // which 1000 would cut nearest-first.
     NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 405.0f, 4000};   // billboard 270 -> 405 (Mark, live 2026-10-04, +50%)
-    float fade_gu = 4.0f;                 // outer (translucent) fade band at each billboard edge
-    // Mesh <-> billboard hand-off width. 0 = a hard swap, no screen-door
-    // dither (Mark, live 2026-10-03: the dithered hand-off read as rocks
-    // "checkerboarding in"). > 0 = the old dithered crossfade.
-    float handoff_fade_gu = 0.0f;
+    // Outer (translucent) fade band at each billboard edge. The mesh <->
+    // billboard hand-off at mesh_gu is a hard swap (Mark, live 2026-10-03: a
+    // dithered crossfade read as rocks "checkerboarding in").
+    float fade_gu = 4.0f;
     // Multiplies every near rock's tumble rate (mesh and billboard alike, so
     // the hand-off stays matched). 0.05: interim while billboards snapped
     // between their 16 baked views (Mark, live 2026-10-03). Billboards now
@@ -55,36 +53,14 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // dash: both classes' billboards collapse to the mesh range and regrow
     // once slow. <= 0 = off (Mark, 2026-10-04: dash streaming cost ~16 ms).
     float dash_collapse_step_gu = 25.0f;
-    // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
-    // is a real rock). With large_far_gu > large.billboard_gu the large
-    // class's SAME rocks stream on past billboard_gu as billboards (no
-    // fade at billboard_gu) out to large_far_gu, fading out translucent
-    // over the last large_far_fade_gu. A large billboard whose on-screen
-    // radius is at or below large_min_px draws nothing past mesh_gu +
-    // fade_gu and fades in over the next kNearPixelFadeBand px (see
-    // near_large_weights). large_far_gu <= large.billboard_gu: the shell is
-    // off -- exactly the old rule. The drawn shell never passes the streamed
-    // reach (NearField::large_reach_gu: clamped by the 33-cells-per-axis cap,
-    // shrunk at dash speed).
-    // 250, not the 400 GU target: in the Beol 4 inside bench (Debug) the
-    // shell cost +1.5 ms CPU per frame at 400, +0.7 at 300, ~+0.4 at 250.
-    float large_far_gu = 250.0f;
-    float large_far_fade_gu = 40.0f;
+    // Pixel floors: past mesh_gu + fade_gu a billboard whose on-screen
+    // radius is at or below its class's floor draws nothing, fading in over
+    // the next kNearPixelFadeBand px (blended in from the mesh edge, so
+    // nothing pops where the mesh ends); its cells and blocks are skipped
+    // whole. 0 = off. small_min_px: Mark, live 2026-10-04 (most small
+    // billboards at 30-45 GU are under a pixel).
     float large_min_px = 1.5f;
-    // The same pixel floor for small rocks (Mark, live 2026-10-04: most small
-    // billboards at 30-45 GU are under a pixel; skip them and their cells).
     float small_min_px = 2.5f;
-    // The far shell at dash speed (rock-real review, 2026-10-03): visual
-    // only, it flashes past, yet regenerating it every frame cost ~3 ms per
-    // dash frame. A stream() whose centre moved more than
-    // far_shell_max_step_gu since the last shrinks the large reach back to
-    // billboard_gu (the pre-shell range, drawn by the old rule); each later
-    // stream regrows it by at most far_shell_regrow_gu, so it comes back
-    // over several frames, never in one hitch. 25 GU per stream is 1,500
-    // GU/s at 60 Hz -- 3.75x in-system warp (400 GU/s = 6.7 GU per frame),
-    // still above it down to 16 fps; a 100,000 GU/s dash is 1,667 GU/frame.
-    float far_shell_max_step_gu = 25.0f;
-    float far_shell_regrow_gu = 20.0f;
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
     float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)
     float collide_margin_gu = 0.0f;
@@ -125,8 +101,8 @@ struct NearBuildInput {
 };
 struct NearOutput {
     std::vector<minors::Bin> meshes;          // family kNearSmallFamily/kNearLargeFamily
-    // .rock = catalogue index. Solid (weight 1, dither 0) and the mesh <->
-    // billboard hand-off (screen-door dithered against its mesh).
+    // .rock = catalogue index. Solid (weight 1, dither 0): the mesh <->
+    // billboard hand-off is a hard swap.
     std::vector<far::ImpostorBin> billboards;
     // Rock fade (2026-10-03): billboards fading in from nothing at
     // billboard_gu, drawn TRANSLUCENT (FarPass::render_impostors_blended;
@@ -142,23 +118,19 @@ struct NearOutput {
     int cells_tested = 0, rocks_tested = 0;
 };
 struct NearWeights { float mesh = 0, billboard = 0; };
-// Pure tier rule for camera distance d (spec §2): mesh 1 below mesh_gu - fade,
-// ramps to 0 at mesh_gu; billboard = 1 - mesh up to billboard_gu - fade, then
+// Pure tier rule for camera distance d (spec §2): mesh 1 below mesh_gu, 0
+// from it (a hard swap); billboard = 1 - mesh up to billboard_gu - fade, then
 // ramps to 0 at billboard_gu; nothing beyond. fade_gu <= 0 is a hard step.
 NearWeights near_weights(float d, const NearClassDials& c, float fade_gu);
-// As above with a separate mesh <-> billboard hand-off width.
-NearWeights near_weights(float d, const NearClassDials& c, float fade_gu, float handoff_fade_gu);
-// Width of the pixel-floor fade-in (px above large_min_px).
+// Width of the pixel-floor fade-in (px above the floor).
 constexpr float kNearPixelFadeBand = 1.0f;
-// Pure tier rule of the LARGE class at camera distance d and on-screen
-// radius px (pixels). Shell off (large_far_gu <= large.billboard_gu):
-// near_weights(d, large, fade_gu). On: the mesh weight as near_weights; the
-// billboard 1 - mesh up to large_far_gu - large_far_fade_gu, ramping to 0 at
-// large_far_gu, times a pixel-floor factor that blends from 1 at mesh_gu to
-// the pixel-floor ramp (0 at large_min_px, 1 at large_min_px +
-// kNearPixelFadeBand) at mesh_gu + fade_gu -- so the hand-off (d < mesh_gu)
-// is untouched and nothing pops where the mesh ends, at any viewport size.
-NearWeights near_large_weights(float d, float px, const NearDials& dials);
+// As above for on-screen radius px (pixels) with the pixel floor min_px
+// (<= 0: none): the billboard weight times a factor that blends from 1 at
+// mesh_gu to the floor ramp (0 at min_px, 1 at min_px + kNearPixelFadeBand)
+// at mesh_gu + fade_gu -- so the swap (d < mesh_gu) is untouched and nothing
+// pops where the mesh ends, at any viewport size. NearField::build applies
+// exactly this per class (small_min_px / large_min_px).
+NearWeights near_weights(float d, float px, const NearClassDials& c, float fade_gu, float min_px);
 
 // Pure: the rocks of one cell. Poisson(n_bound * L^3) candidates, each
 // accepted with probability density * field_density(x) / n_bound, where
@@ -201,20 +173,19 @@ public:
     // Generate cells newly in range of `centre_sys`, drop cells out of range +
     // stream_margin_gu. Range per class = billboard_gu.
     void stream(const glm::dvec3& centre_sys);
-    // The large class's current streamed reach = its drawn outer edge:
-    // billboard_gu with the far shell off or shrunk at dash speed, else the
-    // (regrowing) shell, never past the 33-cells-per-axis cap.
+    // The large class's current billboard reach = its streamed, drawn outer
+    // edge: billboard_gu, collapsed toward mesh_gu at dash speed.
     float large_reach_gu() const;
-    // The dials build() draws by: dials() with the large far shell set to
-    // what is streamed (large_far_gu = large_reach_gu() when the shell is on).
+    // The dials build() draws by: dials() with both classes' billboard_gu
+    // as streamed (collapsed toward mesh_gu at dash speed).
     const NearDials& effective_dials() const { return eff_; }
-    void clear();                          // cells, contacts, sweep state, cooldowns, ghosts, far-shell state
+    void clear();                          // cells, contacts, sweep state, cooldowns, ghosts, dash state
     NearStats stats() const;
     // Every rock currently streamed, per class (tests, build, contacts).
     void for_each(NearClass cls, const std::function<void(std::uint64_t key, const NearRock&)>& fn) const;
-    // Per drawn camera: every streamed rock in ONE tier (mesh or billboard)
-    // except inside a fade band, where both draw screen-door dithered (mesh
-    // extra.x = 1 - w, billboard dither = -w; weight 1 => exactly 0).
+    // Per drawn camera: every streamed rock in ONE tier (mesh or billboard);
+    // a billboard in its outer fade band draws translucent
+    // (billboards_fading).
     // Frustum-culled; per class at most max_instances items (meshes +
     // billboards together), nearest first. Const: never streams.
     void build(const NearBuildInput& in, NearOutput& out) const;
@@ -300,8 +271,7 @@ private:
     // key: mix(source id, class, i, j, k); rock key = mix(cell key, index + 1)
     std::unordered_map<std::uint64_t, Cell> cells_;
     NearDials dials_;
-    NearDials eff_;                       // dials_ with the streamed far shell
-    float shell_far_ = -1.0f;             // the streamed shell edge; < 0: not yet streamed
+    NearDials eff_;                       // dials_ with the dash collapse applied
     // Billboard reach at dash speed (Mark, 2026-10-04: the 3x ranges cost
     // ~16 ms/frame regenerating ~46k rocks per dash frame). 1 = full
     // billboard ranges; a dash-speed stream drops it to 0 (both classes

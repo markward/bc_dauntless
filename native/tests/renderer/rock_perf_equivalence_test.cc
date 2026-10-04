@@ -110,10 +110,10 @@ NearRun run_near(bool fast, bool caps, bool resend = false,
     dials.large.billboard_gu = 60.0f;
     dials.small.billboard_gu = 30.0f;        // pinned: before the 2026-10-04 1.5x range
     dials.small_min_px = 0.0f;               // pinned: no small pixel floor then
-    // ... and to the large class as it was before the far shell (rock-real
-    // Part 1, 2026-10-03): 20 GU cells, no far shell, a 1000 cap.
-    dials.large.cell_gu = 20.0f; dials.large_far_gu = 0.0f; dials.large.max_instances = 1000;
-    dials.handoff_fade_gu = dials.fade_gu;   // pinned: the recorded digests used the dithered hand-off
+    // ... and to the large class as it was before rock-real Part 1
+    // (2026-10-03): 20 GU cells, a 1000 cap.
+    dials.large.cell_gu = 20.0f; dials.large.max_instances = 1000;
+    dials.large_min_px = 0.0f;               // pinned: no large pixel floor then
     dials.tumble_scale = 1.0f;               // pinned: and the full tumble rate
     dials.dash_collapse_step_gu = 0.0f;      // pinned: recorded before the dash collapse
     if (current) dials = *current;
@@ -159,7 +159,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false,
         }
         if (i == 480) {
             rockfield::NearDials d2 = f.dials();
-            d2.small.billboard_gu = small_billboard0; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f; d2.handoff_fade_gu = 6.0f;
+            d2.small.billboard_gu = small_billboard0; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f;
             f.set_dials(d2);
         }
         if (resend) f.set_sources({rock_scenario::beol4_field()});
@@ -231,11 +231,19 @@ void expect_near(const char* name, const NearRun& r, std::uint64_t build, std::u
 
 }  // namespace
 
+// The dithered mesh <-> billboard hand-off and the far shell were removed
+// (rock-fields cleanup, 2026-10-04): the hand-off is a hard swap. The
+// ee82c35c / 26573330 BUILD digests had recorded the dithered hand-off (these
+// runs throughout, the 3x runs from frame 480), so the build digests below
+// were recorded DELIBERATELY from the implementation BEFORE that removal
+// (78e2ede7's rock_near.cc) running these same scripted flights with the hard
+// swap throughout -- the new implementation reproduces them byte for byte.
+// The contacts and stream digests are still the ee82c35c / 26573330 values.
 TEST(RockPerfEquivalence, NearSlowFlightMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/false, /*caps=*/false);
     EXPECT_GT(r.contacts_large + r.contacts_small, 0) << "the run must exercise contacts";
     EXPECT_GT(r.fading, 0) << "the run must build translucent billboards (the merge)";
-    expect_near("slow", r, 0xc86a10f0db0d5e9eull, 0xdf39b4a12bf4af85ull, 0x8d90bab75baf5c86ull);
+    expect_near("slow", r, 0xcf75dd8cbcd5999aull, 0xdf39b4a12bf4af85ull, 0x8d90bab75baf5c86ull);
 }
 
 TEST(RockPerfEquivalence, NearFastFlightMatchesTheRecordedDigests) {
@@ -243,32 +251,33 @@ TEST(RockPerfEquivalence, NearFastFlightMatchesTheRecordedDigests) {
     EXPECT_GT(r.contacts_large, 0);
     EXPECT_GT(r.contacts_small, 0);
     EXPECT_GT(r.fading, 0) << "the run must build translucent billboards (the merge)";
-    expect_near("fast", r, 0xaa13b01220ad54fbull, 0x9368168741730520ull, 0x9d8b4ece39601a8bull);
+    expect_near("fast", r, 0xae618554dad28eaeull, 0x9368168741730520ull, 0x9d8b4ece39601a8bull);
 }
 
 TEST(RockPerfEquivalence, NearCapsBindingMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/true, /*caps=*/true);
     EXPECT_GT(r.capped_steps, 0) << "the per-step touch cap must bind";
-    expect_near("caps", r, 0xaf6e541d06b59f8cull, 0xefbcbac817d4349cull, 0x9e23d1b0ea412383ull);
+    expect_near("caps", r, 0xe50f5e7fcf2e6d29ull, 0xefbcbac817d4349cull, 0x9e23d1b0ea412383ull);
 }
 
 // ---- Near band at the 3x ranges (rock-perf2, 2026-10-04) -------------------
 // NearField::build / stream / step were restructured (cell blocks, a cheaper
 // incremental stream) at the 2026-10-04 defaults. These digests were recorded
 // from the implementation BEFORE that work (feat/rock-fields 26573330) over
-// the same scripted flights at those defaults -- the far shell off (as the
-// defaults are: large_far_gu 250 < large.billboard_gu 270) and on (400 GU) --
-// and pin every drawn byte, every contact and the streamed set.
+// the same scripted flights at those defaults (the far shell, since removed,
+// was off: large_far_gu 250 < large.billboard_gu 270), and pin every drawn
+// byte, every contact and the streamed set. (The build digests were
+// re-recorded at the hard swap from 78e2ede7, as the runs above.)
 namespace {
 rockfield::NearDials defaults_2026_10_04() {
     rockfield::NearDials d;   // the 26573330 defaults, spelled out so a later retune does not move them
     d.small.density = 0.010f; d.small.r_min = 0.05f; d.small.r_max = 0.5f; d.small.exponent = 2.5f;
     d.small.cell_gu = 10.0f; d.small.mesh_gu = 15.0f; d.small.billboard_gu = 90.0f; d.small.max_instances = 4000;
     d.large = {1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 270.0f, 4000};
-    d.fade_gu = 4.0f; d.handoff_fade_gu = 0.0f; d.tumble_scale = 0.05f;
+    d.fade_gu = 4.0f; d.tumble_scale = 0.05f;
     d.dash_collapse_step_gu = 0.0f;   // recorded before the dash collapse
-    d.large_far_gu = 250.0f; d.large_far_fade_gu = 40.0f; d.large_min_px = 1.5f; d.small_min_px = 2.5f;
-    d.far_shell_max_step_gu = 25.0f; d.far_shell_regrow_gu = 20.0f; d.stream_margin_gu = 10.0f;
+    d.large_min_px = 1.5f; d.small_min_px = 2.5f;
+    d.stream_margin_gu = 10.0f;
     d.collide_cooldown_s = 0.5f; d.collide_margin_gu = 0.0f;
     return d;
 }
@@ -278,21 +287,10 @@ TEST(RockPerfEquivalence, NearAtThe3xDefaultsMatchesTheRecordedDigests) {
     const rockfield::NearDials d = defaults_2026_10_04();
     const NearRun slow = run_near(/*fast=*/false, /*caps=*/false, /*resend=*/true, &d);
     EXPECT_GT(slow.contacts_small, 0) << "the run must exercise contacts";
-    expect_near("3x slow", slow, 0x3e904f4a857b1c83ull, 0xb669fef7715dcb4cull, 0xc2f3ca13f18b478dull);
+    expect_near("3x slow", slow, 0xa5594a70587a10b3ull, 0xb669fef7715dcb4cull, 0xc2f3ca13f18b478dull);
     const NearRun fast = run_near(/*fast=*/true, /*caps=*/false, /*resend=*/true, &d);
     EXPECT_GT(fast.contacts_large + fast.contacts_small, 0);
-    expect_near("3x fast", fast, 0x3914d12f59dbaf30ull, 0x89637c4bb7afc399ull, 0xd4f19ee8b0d55df2ull);
-}
-
-TEST(RockPerfEquivalence, NearAtThe3xDefaultsShellOnMatchesTheRecordedDigests) {
-    rockfield::NearDials d = defaults_2026_10_04();
-    d.large_far_gu = 400.0f;
-    const NearRun fast = run_near(/*fast=*/true, /*caps=*/false, /*resend=*/true, &d);
-    EXPECT_GT(fast.fading, 0);
-    expect_near("3x shell on, fast", fast, 0x53611b760c5e63b7ull, 0x89637c4bb7afc399ull, 0xcbecc782b816bd0eull);
-    // (No caps run here: the caps dials' densities at the 3x ranges take
-    // ~30 s in Debug. NearCapsBindingMatchesTheRecordedDigests pins the
-    // nearest-first cap and the touch cap.)
+    expect_near("3x fast", fast, 0x239ca7552b1ea1e6ull, 0x89637c4bb7afc399ull, 0xd4f19ee8b0d55df2ull);
 }
 
 // ---- The live call pattern (coordinator review 2026-10-03) -----------------
@@ -302,7 +300,7 @@ TEST(RockPerfEquivalence, NearAtThe3xDefaultsShellOnMatchesTheRecordedDigests) {
 TEST(RockPerfEquivalence, NearSameSourcesEveryFrameKeepsTheIncrementalStream) {
     const NearRun base = run_near(/*fast=*/false, /*caps=*/false);
     const NearRun live = run_near(/*fast=*/false, /*caps=*/false, /*resend=*/true);
-    expect_near("slow, sources every frame", live, 0xc86a10f0db0d5e9eull, 0xdf39b4a12bf4af85ull,
+    expect_near("slow, sources every frame", live, 0xcf75dd8cbcd5999aull, 0xdf39b4a12bf4af85ull,
                 0x8d90bab75baf5c86ull);
     // 720 streams x 2 classes at 6-25 GU/s: a full pass only every ~2 GU of
     // travel (plus the dial changes) -- 1,440 if every frame were full.
@@ -315,11 +313,11 @@ TEST(RockPerfEquivalence, NearSameSourcesEveryFrameKeepsTheIncrementalStream) {
 TEST(RockPerfEquivalence, NearOutOfReachAndBackMatchesAFreshStream) {
     for (bool resend : {false, true}) {
         rockfield::NearField f, fresh;
-        // The far shell off: a jump shrinks it (NearDials::far_shell_max_step_gu),
+        // The dash collapse off: a jump collapses the billboards,
         // which a fresh field's first stream does not -- not what this pins.
-        rockfield::NearDials no_shell; no_shell.large_far_gu = 0.0f; no_shell.dash_collapse_step_gu = 0.0f;
+        rockfield::NearDials no_dash; no_dash.dash_collapse_step_gu = 0.0f;
         for (auto* g : {&f, &fresh}) {
-            g->set_dials(no_shell);
+            g->set_dials(no_dash);
             g->set_catalogue(rock_scenario::near_catalogue());
             g->set_sources({rock_scenario::beol4_field()});
         }

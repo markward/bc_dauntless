@@ -87,6 +87,8 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_catalogue", "far_set_rocks", "far_set_sources",
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
+    "rock_specks_set_enabled", "rock_specks_enabled",
+    "rock_puffs_set_enabled", "rock_puffs_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
     "rockfield_rearm", "rockfield_catalogue_size", "rockfield_set_player",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
@@ -633,6 +635,29 @@ def far_set_enabled(enabled: bool) -> None:
 def far_enabled() -> bool:
     """Whether the far tier builds and draws."""
     return _h.far_enabled()
+
+
+def rock_specks_set_enabled(enabled: bool) -> None:
+    """Turn the rock-fields speck band (the near band's large rocks past
+    their billboard range as specks) on or off; far_set_enabled still gates
+    it."""
+    _h.rock_specks_set_enabled(bool(enabled))
+
+
+def rock_specks_enabled() -> bool:
+    """Whether the rock-fields speck band draws."""
+    return _h.rock_specks_enabled()
+
+
+def rock_puffs_set_enabled(enabled: bool) -> None:
+    """Turn the rock-fields puffs (a field's far look) on or off;
+    far_set_enabled still gates them."""
+    _h.rock_puffs_set_enabled(bool(enabled))
+
+
+def rock_puffs_enabled() -> bool:
+    """Whether the rock-fields puffs draw."""
+    return _h.rock_puffs_enabled()
 
 
 def far_stats() -> dict:

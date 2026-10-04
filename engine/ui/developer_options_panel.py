@@ -39,6 +39,24 @@ def _far_enabled() -> bool:
         return True
 
 
+def _rock_specks_enabled() -> bool:
+    """renderer.rock_specks_enabled(), or True (the native default) when the
+    renderer is unavailable -- this panel is constructed in headless tests."""
+    try:
+        return bool(renderer.rock_specks_enabled())
+    except Exception:
+        return True
+
+
+def _rock_puffs_enabled() -> bool:
+    """renderer.rock_puffs_enabled(), or True (the native default) when the
+    renderer is unavailable -- this panel is constructed in headless tests."""
+    try:
+        return bool(renderer.rock_puffs_enabled())
+    except Exception:
+        return True
+
+
 def _frame_profiler():
     """Imported lazily. engine.core.frame_profiler reaches the native timer
     through host_io, and this panel is constructed in tests that never build
@@ -80,6 +98,8 @@ class DeveloperOptionsPanel(Panel):
         self._rock_catalogue = rock_catalogue.enabled()
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
+        self._rock_specks = _rock_specks_enabled()
+        self._rock_puffs = _rock_puffs_enabled()
         self._dial_group = dev_dial_groups.active() or "nebula"
         # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
         # profiler at startup, so a hard-coded False would show OFF while it
@@ -108,6 +128,8 @@ class DeveloperOptionsPanel(Panel):
         self._dial_group = dev_dial_groups.active() or "nebula"
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
+        self._rock_specks = _rock_specks_enabled()
+        self._rock_puffs = _rock_puffs_enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -133,6 +155,7 @@ class DeveloperOptionsPanel(Panel):
             self._normal_maps, self._normal_flip_g, self._normal_strength,
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
+            self._rock_specks, self._rock_puffs,
         )
         if snapshot == self._last_pushed:
             return None
@@ -159,6 +182,8 @@ class DeveloperOptionsPanel(Panel):
                 "dial_group": self._dial_group,
                 "minor_rocks": self._minor_rocks,
                 "far_tier": self._far_tier,
+                "rock_specks": self._rock_specks,
+                "rock_puffs": self._rock_puffs,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -240,6 +265,14 @@ class DeveloperOptionsPanel(Panel):
             renderer.far_set_enabled(not self._far_tier)
             self._far_tier = not self._far_tier
             return True
+        if action == "toggle:rock_specks":
+            renderer.rock_specks_set_enabled(not self._rock_specks)
+            self._rock_specks = not self._rock_specks
+            return True
+        if action == "toggle:rock_puffs":
+            renderer.rock_puffs_set_enabled(not self._rock_puffs)
+            self._rock_puffs = not self._rock_puffs
+            return True
         if action == "action:dial_group":
             self._dial_group = dev_dial_groups.cycle_active() or "nebula"
             return True
@@ -279,6 +312,7 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
                     ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue"),
                     ("ctrl", "minor_rocks"), ("ctrl", "far_tier"),
+                    ("ctrl", "rock_specks"), ("ctrl", "rock_puffs"),
                     ("ctrl", "dial_group")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler")]

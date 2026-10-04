@@ -291,12 +291,12 @@ std::unique_ptr<renderer::FarPass> g_far_pass;
 // them to each new FarPass, so a catalogue pushed with the host down draws.
 std::vector<std::pair<std::string, std::string>> g_far_atlas_paths;
 bool g_far_enabled = true;
-// Rock-field puffs (SPIKE): soft lit billboards placed by the field density,
+// Rock-field puffs: soft lit billboards placed by the field density,
 // drawn in the MSAA pass after every opaque writer.
 bool g_rock_puffs_enabled = true;
 renderer::rockfield::PuffField g_puff_field;
 int g_rock_puffs_drawn = 0;
-// Rock-field speck band (SPIKE, spike/rock-specks 2026-10-04): the near
+// Rock-field speck band (2026-10-04): the near
 // band's large rocks past their billboard edge as GPU-faded specks.
 bool g_rock_specks_enabled = true;
 renderer::rockfield::SpeckBand g_speck_band;
@@ -1505,7 +1505,7 @@ void frame() {
                                       target_w, static_cast<int>(target_h));
             g_far_specks += static_cast<int>(g_far_speck_staging.size());
         }
-        // Puffs (SPIKE): soft lit billboards, depth-tested in the MSAA pass so
+        // Puffs: soft lit billboards, depth-tested in the MSAA pass so
         // a hull in front antialiases against them like any geometry.
         if (g_far_enabled && g_far_pass && g_rock_puffs_enabled) {
             DAUNTLESS_FRAME_SCOPE("rock.puffs.draw");
@@ -1516,7 +1516,7 @@ void frame() {
                                           g_lighting, ambient_scale);
             g_rock_puffs_drawn += g_far_pass->rock_puff_count();
         }
-        // Speck band (SPIKE): one instanced draw, radius + alpha on the GPU.
+        // Speck band: one instanced draw, radius + alpha on the GPU.
         // Phase 1, after every opaque writer AND the puffs: a speck writes no
         // depth, so drawn first every puff blended over it, nearer or not.
         if (g_far_enabled && g_far_pass && g_rock_specks_enabled && !g_speck_band.hidden()) {
@@ -2675,21 +2675,16 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
         c->cell_gu = std::max(c->cell_gu, 1.0f);
     }
     f("near_fade_gu", o.fade_gu);
-    f("near_handoff_fade_gu", o.handoff_fade_gu);
     f("near_tumble_scale", o.tumble_scale);
     f("near_dash_collapse_step_gu", o.dash_collapse_step_gu);
-    f("near_large_far_gu", o.large_far_gu);          // the far shell (rock-real Part 1)
-    f("near_large_far_fade_gu", o.large_far_fade_gu);
     f("near_large_min_px", o.large_min_px);
     f("near_small_min_px", o.small_min_px);
-    f("near_far_shell_max_step_gu", o.far_shell_max_step_gu);
-    f("near_far_shell_regrow_gu", o.far_shell_regrow_gu);
     f("near_stream_margin_gu", o.stream_margin_gu);
     f("collide_cooldown_s", o.collide_cooldown_s);
     return o;
 }
 
-// The speck band's keys of the same dict (far_dials.py speck_*; SPIKE).
+// The speck band's keys of the same dict (far_dials.py speck_*).
 renderer::rockfield::SpeckDials speck_dials_of(const py::dict& d) {
     renderer::rockfield::SpeckDials o;
     auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
@@ -2703,7 +2698,7 @@ renderer::rockfield::SpeckDials speck_dials_of(const py::dict& d) {
     return o;
 }
 
-// The puffs' keys of the same dict (far_dials.py puff_*; SPIKE).
+// The puffs' keys of the same dict (far_dials.py puff_*).
 renderer::rockfield::PuffDials puff_dials_of(const py::dict& d) {
     renderer::rockfield::PuffDials o;
     auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
@@ -4506,10 +4501,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("far_enabled", []() { return g_far_enabled; });
     m.def("rock_specks_set_enabled",
           [](bool on) { g_rock_specks_enabled = on; if (!on) g_speck_band.clear(); },
-          py::arg("enabled"), "SPIKE: the rock-field speck band on or off.");
+          py::arg("enabled"), "The rock-field speck band on or off.");
     m.def("rock_specks_enabled", []() { return g_rock_specks_enabled; });
     m.def("rock_puffs_set_enabled", [](bool on) { g_rock_puffs_enabled = on; },
-          py::arg("enabled"), "SPIKE: the rock-field puffs on or off.");
+          py::arg("enabled"), "The rock-field puffs on or off.");
     m.def("rock_puffs_enabled", []() { return g_rock_puffs_enabled; });
     m.def("far_stats",
           []() {

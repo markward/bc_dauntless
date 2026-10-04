@@ -127,6 +127,7 @@ def test_render_payload_shape(panel):
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
         "minor_rocks": True, "far_tier": True,
+        "rock_specks": True, "rock_puffs": True,
     }
 
 
@@ -479,6 +480,55 @@ def test_far_tier_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
     p = DeveloperOptionsPanel()
     p.open()
     assert _body(p.render_payload())["settings"]["far_tier"] is True
+
+
+# ── Rock specks / puffs toggles (rock-fields cleanup, 2026-10-04) ─────────
+# Independent of far_tier (which still gates both when off); ON by default.
+
+_ROCK_TOGGLES = ("rock_specks", "rock_puffs")
+
+
+@pytest.mark.parametrize("name", _ROCK_TOGGLES)
+def test_rock_band_toggle_flips_the_real_renderer_flag(panel, name):
+    """Drives renderer.<name>_set_enabled, not just a local mirror."""
+    from engine import renderer
+
+    get = getattr(renderer, name + "_enabled")
+    set_ = getattr(renderer, name + "_set_enabled")
+    p, _ = panel
+    saved = get()
+    try:
+        p.open()
+        p.dispatch_event("tab:lighting")
+        p.render_payload()
+        assert p.dispatch_event("toggle:" + name) is True
+        assert get() is (not saved)
+        assert _body(p.render_payload())["settings"][name] is (not saved)
+        p.dispatch_event("toggle:" + name)
+        assert get() is saved
+    finally:
+        set_(saved)
+
+
+@pytest.mark.parametrize("name", _ROCK_TOGGLES)
+def test_rock_band_ctrl_is_a_lighting_tab_focusable(panel, name):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", name) in p._focusables()
+
+
+@pytest.mark.parametrize("name", _ROCK_TOGGLES)
+def test_rock_band_defaults_on_when_the_renderer_is_unavailable(monkeypatch, name):
+    from engine import renderer
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    def boom():
+        raise RuntimeError("renderer not initialised")
+    monkeypatch.setattr(renderer, name + "_enabled", boom)
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert _body(p.render_payload())["settings"][name] is True
 
 
 # ── Diagnostics tab: the frame profiler ─────────────────────────────────────

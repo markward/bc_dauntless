@@ -1,5 +1,5 @@
 #version 410 core
-// Rock-field speck band (SPIKE): speck.frag's flux-conserving coverage, plus
+// Rock-field speck band: speck.frag's flux-conserving coverage, plus
 // a lit-sphere mode for big specks. Below 1.5 px radius the light is the
 // disc-mean Lambert sphere phase (exactly speck.frag); from 3 px up it is
 // per pixel on a sphere (view-space normal from the disc), so a near speck

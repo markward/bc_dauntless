@@ -1,5 +1,5 @@
 // native/src/renderer/include/renderer/rock_speck.h
-// Rock fields, speck band (SPIKE, spike/rock-specks, 2026-10-04): the near
+// Rock fields, speck band (2026-10-04): the near
 // band's LARGE rocks -- the same generator, cells and seeds, so the same
 // rocks -- carried on past the large billboard edge as lit specks (the far
 // tier's flux-conserving speck shading), thinned whole cell at a time with

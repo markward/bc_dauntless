@@ -58,19 +58,19 @@ TEST(NearBench, StreamAt100kGups) {
                 "small=%d large=%d\n",
                 kSteps, kGups, kHz, stream_total / kSteps, stream_worst, stream_worst_at,
                 build_total / kSteps, build_worst, max_cells, max_small, max_large);
-    // Then slow again (6 GU/s): the far shell regrows in bounded steps
-    // (NearDials::far_shell_regrow_gu) -- the worst frame of the regrow.
+    // Then slow again (6 GU/s): the billboards collapsed by the dash regrow
+    // over several streams -- the worst frame of the regrow.
     glm::dvec3 eye(0.0, -500000.0 + kSteps * kGups / kHz, 0.0);
     double regrow_worst = 0.0, regrow_total = 0.0;
     int regrow_frames = 0;
-    while (f.large_reach_gu() < f.dials().large_far_gu && regrow_frames < 100) {
+    while (f.large_reach_gu() < f.dials().large.billboard_gu && regrow_frames < 100) {
         eye.y += 0.1;
         const auto t0 = std::chrono::steady_clock::now();
         f.stream(eye);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         regrow_worst = std::max(regrow_worst, ms); regrow_total += ms; ++regrow_frames;
     }
-    std::printf("[near bench] far shell regrow after the dash: %d frames, stream mean=%.3f ms worst=%.3f ms; "
+    std::printf("[near bench] billboard regrow after the dash: %d frames, stream mean=%.3f ms worst=%.3f ms; "
                 "large=%d\n", regrow_frames, regrow_total / std::max(regrow_frames, 1), regrow_worst, f.stats().large);
     EXPECT_GT(max_cells, 0);   // the run streamed at all (not a time assertion)
 }
@@ -95,7 +95,7 @@ void bench_inside_beol4(const char* label, const rockfield::NearDials& dials) {
     double t_stream = 0, w_stream = 0, t_step = 0, w_step = 0, t_build = 0, w_build = 0;
     double first_stream = 0;
     int meshes = 0, boards = 0, small_c = 0, large_c = 0;
-    long far_boards = 0, fading = 0;   // billboards beyond large.billboard_gu (the far shell)
+    long fading = 0;
     rockfield::NearStats st;
     auto ms_since = [](auto t0) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -124,41 +124,18 @@ void bench_inside_beol4(const char* label, const rockfield::NearDials& dials) {
         const double c = ms_since(t0);
         t_build += c; w_build = std::max(w_build, c);
         meshes += out.mesh_count; boards += out.billboard_count; fading += out.billboard_fading_count;
-        const glm::vec3 eye = glm::vec3(glm::inverse(bin.view)[3]);
-        for (const auto* list : {&out.billboards, &out.billboards_fading})
-            for (const auto& b : *list)
-                for (const auto& it : b.items)
-                    if (glm::length(glm::vec3(it.centre_half) - eye) > f.dials().large.billboard_gu) ++far_boards;
         st = f.stats();
     }
     std::printf("[near bench beol4 %s] %d frames at %.0f GU/s: first stream=%.3f ms; stream mean=%.3f "
                 "worst=%.3f ms; step mean=%.3f worst=%.3f ms; build mean=%.3f worst=%.3f ms; "
                 "cells=%d small=%d large=%d; per frame meshes=%.1f billboards=%.1f; "
-                "contacts large=%d small=%d; far shell (large_far_gu=%.0f): far billboards=%.1f "
-                "fading=%.1f per frame\n",
+                "contacts large=%d small=%d; fading=%.1f per frame\n",
                 label, kSteps, kGups, first_stream, t_stream / (kSteps - 1), w_stream, t_step / kSteps,
                 w_step, t_build / kSteps, w_build, st.cells, st.small, st.large,
                 static_cast<double>(meshes) / kSteps, static_cast<double>(boards) / kSteps,
-                large_c, small_c, f.dials().large_far_gu, static_cast<double>(far_boards) / kSteps,
-                static_cast<double>(fading) / kSteps);
+                large_c, small_c, static_cast<double>(fading) / kSteps);
     EXPECT_GT(st.small, 0);
 }
 }  // namespace
 
-// (At the 3x ranges the default large_far_gu 250 lies inside
-// large.billboard_gu 270, so the defaults run with the far shell off too.)
 TEST(NearBench, InsideBeol4) { bench_inside_beol4("defaults", rockfield::NearDials{}); }
-
-// The far shell on: large rocks stream and draw on to 400 GU.
-TEST(NearBench, InsideBeol4ShellOn) {
-    rockfield::NearDials d;
-    d.large_far_gu = 400.0f;
-    bench_inside_beol4("shell on 400", d);
-}
-
-// As the game runs it today (Mark, live 2026-10-04): the far shell off.
-TEST(NearBench, InsideBeol4ShellOff) {
-    rockfield::NearDials d;
-    d.large_far_gu = 0.0f;
-    bench_inside_beol4("shell off", d);
-}
