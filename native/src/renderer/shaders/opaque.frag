@@ -13,6 +13,12 @@ uniform int u_coverage_cutout;
 // with a = far::impostor_fade_alpha(v_dither): the coverage the screen door
 // would have kept. 0 (every other draw): byte-identical.
 uniform int u_impostor_blend;
+// Impostor silhouette by MSAA alpha-to-coverage (Mark, live 2026-10-04:
+// the screen-fixed noise threshold shimmered as rocks moved). 1 = the draw
+// enabled GL_SAMPLE_ALPHA_TO_COVERAGE on a multisampled target: keep every
+// pixel with any coverage and output the coverage as alpha. 0 = the
+// screen-noise coverage dissolve (single-sampled target). Set only by FarPass's solid impostor draw.
+uniform int u_alpha_to_coverage;
 
 uniform sampler2D u_base_color;
 uniform vec3 u_diffuse_color;
@@ -1289,7 +1295,9 @@ void main() {
     // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
 #ifdef IMPOSTOR_VIEWS
     impostor_blend();
-    if (u_coverage_cutout != 0 && g_imp_base.a < imp_cover_threshold(gl_FragCoord.xy)) discard;
+    if (u_coverage_cutout != 0 &&
+        g_imp_base.a < (u_alpha_to_coverage != 0 ? 0.02 : imp_cover_threshold(gl_FragCoord.xy)))
+        discard;
 #else
     if (u_coverage_cutout != 0 && texture(u_base_color, v_uv).a < 0.5) discard;
 #endif
@@ -1670,6 +1678,10 @@ void main() {
         if (code != 0) out_alpha = float(code);
     }
     frag_color = vec4(final_color, out_alpha);
+#ifdef IMPOSTOR_VIEWS
+    if (u_alpha_to_coverage != 0 && out_alpha == 1.0)   // sharpened coverage -> MSAA samples
+        frag_color.a = clamp((g_imp_base.a - 0.5) * 3.0 + 0.5, 0.0, 1.0);
+#endif
     if (u_impostor_blend != 0) {   // far::impostor_fade_alpha: keep identical
         float a = v_dither < 0.0 ? -v_dither : (v_dither > 0.0 ? 1.0 - v_dither : 1.0);
         // A non-finite probe's cause code (u_nan_debug) survives in alpha.

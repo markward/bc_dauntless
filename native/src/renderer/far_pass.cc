@@ -310,6 +310,14 @@ void FarPass::draw_impostors(const std::vector<far::ImpostorBin>& bins,
         glDepthMask(GL_FALSE);
     }
 
+    // Solid impostors on a multisampled target: the silhouette goes through
+    // alpha-to-coverage (smooth MSAA edge, no screen-fixed noise to shimmer).
+    GLint fb_samples = 0;
+    if (!blended) glGetIntegerv(GL_SAMPLES, &fb_samples);
+    const bool a2c = !blended && fb_samples > 1;
+    s.set_int("u_alpha_to_coverage", a2c ? 1 : 0);
+    if (a2c) glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+
     glBindVertexArray(vao_);
     for (std::size_t d = 0; d < draws.size(); ++d) {
         for (GLuint k = 0; k < kImpostorAttribs; ++k) {
@@ -328,6 +336,8 @@ void FarPass::draw_impostors(const std::vector<far::ImpostorBin>& bins,
 
     // The cutout and the blend mode are per-program state: never leave them on.
     s.set_int("u_coverage_cutout", 0);
+    if (a2c) glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    s.set_int("u_alpha_to_coverage", 0);
     if (blended) {
         s.set_int("u_impostor_blend", 0);
         glDepthMask(GL_TRUE);
