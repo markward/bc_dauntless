@@ -280,6 +280,9 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc.ai_sensor_gate import install_ai_sensor_gate
     install_ai_sensor_gate()
 
+    from engine.appc import science_scan_labels
+    science_scan_labels.install()
+
     import App
 
     # Default destination for fire events.
@@ -4477,6 +4480,11 @@ def _reset_sensor_state() -> None:
     from engine.appc import sensor_contacts, unknown_labels
     sensor_contacts.reset()
     unknown_labels.reset()
+    # Re-apply the Science Scan Object unknown-label wrap. The SDK module may
+    # be re-imported across a mission swap; install() is idempotent (checks
+    # the _unknown_labelled flag before wrapping).
+    from engine.appc import science_scan_labels
+    science_scan_labels.install()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:

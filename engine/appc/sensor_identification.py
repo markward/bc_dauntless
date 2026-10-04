@@ -57,6 +57,20 @@ def _identify_one(sensors, obj) -> bool:
         dev_mode.log_swallowed("identify display-name", _e)
 
     sensors.AddKnownObject(obj)
+
+    # Before the event: Science's ShipIdentified de-dupes a newly-identified
+    # contact's Scan Object button by its REAL name (CreateScanButton's
+    # GetButtonW(pObject.GetDisplayName())), so the placeholder button must
+    # already carry that name -- rename THEN release, or the dedupe check
+    # misses the (still "Unknown N"-keyed) button and adds a duplicate
+    # (spec Sec6).
+    try:
+        from engine.appc import science_scan_labels, unknown_labels
+        science_scan_labels.rename_on_identify(obj)
+        unknown_labels.release(obj)
+    except Exception as _e:
+        dev_mode.log_swallowed("identify unknown-label rename", _e)
+
     try:
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_SENSORS_SHIP_IDENTIFIED)
