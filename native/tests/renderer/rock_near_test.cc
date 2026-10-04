@@ -1120,6 +1120,43 @@ TEST(NearPerf, NoMarginZigzagStreamsExactlyTheCellsInRange) {
     EXPECT_LT(f.full_stream_passes(), 40u);   // the zigzag stayed incremental
 }
 
+TEST(NearPerf, SlowFlightRecordsTheWatchOnEveryFullPass) {
+    // A large class with 50 GU cells has an 8 GU watch width. Flying at
+    // 1 GU per stream, the centre leaves the watch after ~8 streams: that
+    // full pass must record the next watch (this frame's travel is slow),
+    // so the flight costs one full pass per ~9 streams. Deciding "dash
+    // speed" from the travel since the LAST FULL PASS (always > 8 GU when a
+    // watch of width 8 expires) skipped recording, so every expiry cost a
+    // second full pass the next frame.
+    rockfield::NearDials d;
+    d.small.billboard_gu = 0.0f;   // the large class alone streams
+    d.large.cell_gu = 50.0f;
+    d.large.billboard_gu = 200.0f;
+    d.stream_margin_gu = 10.0f;
+    d.dash_collapse_step_gu = 0.0f;
+    rockfield::NearField f;
+    f.set_dials(d);
+    f.set_catalogue(rock_scenario::near_catalogue());
+    f.set_sources({rock_scenario::beol4_field()});
+    const glm::dvec3 base(3.0, -640.0, 2.0);
+    constexpr int kStreams = 180;
+    for (int i = 0; i < kStreams; ++i) f.stream(base + glm::dvec3(0.0, 1.0 * i, 0.0));
+    ASSERT_GT(f.stats().large, 0) << "precondition: the flight is inside the field";
+    EXPECT_LE(f.full_stream_passes(), static_cast<std::uint64_t>(kStreams / 8 + 2));
+    rockfield::NearField fresh;
+    fresh.set_dials(d);
+    fresh.set_catalogue(rock_scenario::near_catalogue());
+    fresh.set_sources({rock_scenario::beol4_field()});
+    fresh.stream(base + glm::dvec3(0.0, 1.0 * (kStreams - 1), 0.0));
+    // (The flown field also keeps cells within the stream margin behind.)
+    std::set<std::uint64_t> flown;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock&) { flown.insert(k); });
+    int missing = 0;
+    fresh.for_each(rockfield::NearClass::Large,
+                   [&](std::uint64_t k, const rockfield::NearRock&) { missing += flown.count(k) ? 0 : 1; });
+    EXPECT_EQ(missing, 0);
+}
+
 TEST(NearPerf, StepExaminesOnlyCellsNearTheSweep) {
     rockfield::NearField f;
     f.set_catalogue(rock_scenario::near_catalogue());
@@ -1189,4 +1226,72 @@ TEST(NearPerf, ALargeCellDroppedAndRestreamedBetweenStepsStaysSeen) {
     step_at(f, in, rock.pos, 1.0 + 2 * kTick);        // the ship flies into it: a touch, not a ghost
     EXPECT_FALSE(f.drain_large_contacts().empty());
     EXPECT_EQ(f.stats().ghosted, 0);
+}
+
+TEST(NearPerf, RandomFlightStreamsEveryCellInRangeAndNoneBeyondKeep) {
+    // The incremental stream against fresh fields, frame by frame, over a
+    // flight mixing slow drift, medium steps, dash jumps (the collapse on),
+    // out-of-reach hops and non-generator dial changes: every cell within the
+    // EFFECTIVE generation range exists, and none beyond its keep range.
+    rockfield::NearDials d;
+    d.small.billboard_gu = 30.0f; d.small.mesh_gu = 12.0f;
+    d.large.billboard_gu = 120.0f; d.large.mesh_gu = 50.0f;
+    d.stream_margin_gu = 5.0f;
+    d.dash_collapse_step_gu = 25.0f;
+    auto keys = [](const rockfield::NearField& f) {
+        std::set<std::uint64_t> k;
+        for (auto cls : {rockfield::NearClass::Small, rockfield::NearClass::Large})
+            f.for_each(cls, [&](std::uint64_t key, const rockfield::NearRock&) { k.insert(key); });
+        return k;
+    };
+    auto fresh_keys = [&](const rockfield::NearDials& fd, const glm::dvec3& c) {
+        rockfield::NearField g;
+        g.set_dials(fd);
+        g.set_catalogue(rock_scenario::near_catalogue());
+        g.set_sources({rock_scenario::beol4_field()});
+        g.stream(c);
+        return keys(g);
+    };
+    rockfield::NearField f;
+    f.set_dials(d);
+    f.set_catalogue(rock_scenario::near_catalogue());
+    f.set_sources({rock_scenario::beol4_field()});
+    std::uint64_t h = 0x9E3779B97F4A7C15ull;
+    auto unit = [&h]() {
+        h ^= h << 13; h ^= h >> 7; h ^= h << 17;
+        return static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0);
+    };
+    glm::dvec3 c(5.0, -620.0, 3.0);
+    int dashes = 0, slow = 0;
+    for (int i = 0; i < 400; ++i) {
+        const double u = unit();
+        double step = u < 0.75 ? 0.05 + 1.5 * unit() : u < 0.9 ? 4.0 + 10.0 * unit() : 30.0 + 150.0 * unit();
+        dashes += step > 25.0 ? 1 : 0;
+        slow += step < 2.0 ? 1 : 0;
+        glm::dvec3 dir(unit() - 0.5, unit() - 0.5, 0.3 * (unit() - 0.5));
+        dir = glm::normalize(dir);
+        if (glm::length(c + dir * step) > 700.0) dir = -dir;   // stay inside the field
+        c += dir * step;
+        if (i == 150) c += glm::dvec3(0.0, 0.0, 5000.0);       // out of every source's reach
+        if (i == 151) c -= glm::dvec3(0.0, 0.0, 5000.0);       // ... and back
+        if (i == 220) {
+            rockfield::NearDials d2 = f.dials();
+            d2.large.billboard_gu = 140.0f; d2.stream_margin_gu = 8.0f;
+            f.set_dials(d2);
+        }
+        f.stream(c);
+        const std::set<std::uint64_t> have = keys(f);
+        rockfield::NearDials need = f.effective_dials();
+        need.dash_collapse_step_gu = 0.0f;
+        for (const std::uint64_t k : fresh_keys(need, c))
+            ASSERT_TRUE(have.count(k)) << "frame " << i << ": a cell in range was not streamed";
+        rockfield::NearDials keep = need;   // generate out to the keep range
+        for (auto* cd : {&keep.small, &keep.large}) cd->billboard_gu += keep.stream_margin_gu;
+        keep.stream_margin_gu = 0.0f;
+        const std::set<std::uint64_t> allowed = fresh_keys(keep, c);
+        for (const std::uint64_t k : have)
+            ASSERT_TRUE(allowed.count(k)) << "frame " << i << ": a cell beyond keep was kept";
+    }
+    EXPECT_GT(dashes, 10);
+    EXPECT_GT(slow, 100);
 }

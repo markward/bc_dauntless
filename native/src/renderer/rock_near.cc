@@ -144,8 +144,9 @@ glm::mat3 rotation(float angle, const glm::vec3& axis) {
 // path-length heaps make a frame's work independent of it; a wider watch
 // means rarer full passes, each walking a slightly larger box).
 double watch_gu(double L) { return std::clamp(0.5 * L, 2.0, 8.0); }
-// A full pass records its watch shell only when the centre moved at most
-// this far since the last one (at dash speed the next frame is outside it).
+// A full pass records its watch shell (and the drop pass its heap) only when
+// the centre moved at most this far since the last stream (at dash speed the
+// next frame is outside it).
 constexpr double kStreamRecordMaxMoveGu = 8.0;
 // Slack for the Lipschitz bounds against double rounding in aabb_distance.
 constexpr double kStreamEps = 1e-6;
@@ -473,15 +474,18 @@ void NearField::stream(const glm::dvec3& c) {
             }
             // Full pass over the cells within R + w (a superset of the old
             // R box, same (i, j, k) order), generating those within R. At
-            // dash speed (the centre moved several watch widths since the
-            // last pass) the next frame will not be inside this one's watch
-            // either: skip recording the shell (w = 0 enumerates the R box).
+            // dash speed (THIS frame's travel past kStreamRecordMaxMoveGu, as
+            // the drop pass decides) the next frame will not be inside this
+            // one's watch either: skip recording the shell (w = 0 enumerates
+            // the R box). (Not the travel since the last full pass: a watch
+            // of width 8 GU always expires more than 8 GU from its centre,
+            // so slow flight would never record one -- 2026-10-04 review.)
             // A cell within R of c_prev (and in its box) exists already when
             // the last stream left this watch complete: no lookup.
             ++full_stream_passes_;
             w.shell.clear();
             w.heap.clear();
-            const bool record = !w.has_ref || moved <= kStreamRecordMaxMoveGu;
+            const bool record = !(step_s > kStreamRecordMaxMoveGu);
             const double Rw = R + (record ? ww : 0.0);
             const bool known_prev = w.prev_complete;
             const glm::i64vec3 pa(glm::floor((w.c_prev - R) / L)), pb(glm::floor((w.c_prev + R) / L));

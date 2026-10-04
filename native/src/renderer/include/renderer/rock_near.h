@@ -85,9 +85,9 @@ struct NearCatalogue {               // pushed with far_set_catalogue
     // a mesh item's scale is radius / bound. A missing or non-positive bound
     // draws no mesh for that slot.
     std::vector<float> small_bound_mu, large_bound_mu;
-    // The impostor bake's view directions (glTF frame, as FarField's): an
-    // octahedral layout (a square count). Otherwise -- empty included -- no
-    // billboards at all.
+    // The impostor bake's view directions (glTF frame, as FarField's): the
+    // octahedral layout far::oct_view_dirs(N) (far::make_impostor_views).
+    // Otherwise -- empty included -- no billboards at all.
     std::vector<glm::vec3> view_dirs_gltf;
 };
 
@@ -237,8 +237,9 @@ private:
         std::vector<std::uint64_t> keys; // pinned only: explicit rock keys
         float r_max = 0.0f;              // largest rock radius (broad phase)
         // Large cells: a rock is "fresh" (ghost test) unless the previous
-        // step saw it. Every step sees every large cell, so a streamed cell
-        // was seen by step S exactly when S > born (the step clock when it
+        // step saw it. Every step counts as seeing every large cell, culled
+        // or not (the old eager stamp), so a streamed cell was seen by step
+        // S exactly when S > born (the step clock when it
         // was generated; one less when it was regenerated before the next
         // step had a chance to miss it -- the old eager per-step stamp, kept
         // lazily). The pinned test cell, whose rocks grow, keeps the stamp:
