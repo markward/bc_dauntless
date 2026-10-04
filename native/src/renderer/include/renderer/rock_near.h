@@ -25,7 +25,7 @@ struct NearClassDials {
     float r_min = 0.05f, r_max = 0.5f, exponent = 2.5f;
     float cell_gu = 10.0f;
     float mesh_gu = 15.0f;      // mesh out to here (camera distance)
-    float billboard_gu = 30.0f; // billboard out to here; streamed radius
+    float billboard_gu = 45.0f; // billboard out to here; streamed radius
     int max_instances = 4000;   // per camera build
 };
 
@@ -40,7 +40,7 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // full-density field holds ~770 large rocks in a 60 degree 16:9 view out
     // to 250 GU and ~2,300 in a 90 degree one; 4000 also covers the live dial
     // at 400 GU (~3,200 at 60 degrees), which 1000 would cut nearest-first.
-    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 90.0f, 4000};
+    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 135.0f, 4000};
     float fade_gu = 4.0f;                 // outer (translucent) fade band at each billboard edge
     // Mesh <-> billboard hand-off width. 0 = a hard swap, no screen-door
     // dither (Mark, live 2026-10-03: the dithered hand-off read as rocks

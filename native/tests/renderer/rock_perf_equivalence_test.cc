@@ -108,6 +108,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
     dials.small.density = 0.008f; dials.small.mesh_gu = 20.0f;
     dials.large.density = 1.0f / 8000.0f; dials.large.mesh_gu = 50.0f;
     dials.large.billboard_gu = 60.0f;
+    dials.small.billboard_gu = 30.0f;        // pinned: before the 2026-10-04 1.5x range
     // ... and to the large class as it was before the far shell (rock-real
     // Part 1, 2026-10-03): 20 GU cells, no far shell, a 1000 cap.
     dials.large.cell_gu = 20.0f; dials.large_far_gu = 0.0f; dials.large.max_instances = 1000;

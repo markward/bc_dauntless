@@ -94,6 +94,7 @@ TEST(NearStream, BoundedAndDropsCellsBehind) {
     // Pinned to the pre-far-shell large range (rock-real Part 1 streams ~2,300
     // more 50 GU large cells out to large_far_gu; NearFarLarge covers that).
     rockfield::NearDials d; d.large_far_gu = 0.0f; d.large.cell_gu = 20.0f;
+    d.small.billboard_gu = 30.0f; d.large.billboard_gu = 90.0f;   // pinned: pre-2026-10-04 ranges
     f.set_dials(d);
     f.set_catalogue(cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
@@ -836,7 +837,7 @@ TEST(NearFarLarge, DefaultsAreTheBrief) {
     EXPECT_EQ(d.large_far_fade_gu, 40.0f);
     EXPECT_EQ(d.large_min_px, 1.5f);
     EXPECT_EQ(d.large.cell_gu, 50.0f);   // 400 GU of 20 GU cells would hit the 33-per-axis cap
-    EXPECT_EQ(d.large.billboard_gu, 90.0f);
+    EXPECT_EQ(d.large.billboard_gu, 135.0f);   // 1.5x (Mark, live 2026-10-04)
     EXPECT_EQ(d.large.mesh_gu, 60.0f);
 }
 
@@ -874,7 +875,9 @@ TEST(NearFarLarge, WeightsBeyondTheBillboardRange) {
 
 TEST(NearFarLarge, StreamsTheSameLargeRocksOutToTheFarRange) {
     rockfield::NearField on, off;
-    rockfield::NearDials d_off; d_off.large_far_gu = 0.0f;   // same generator, far shell off
+    rockfield::NearDials d_on; d_on.large.billboard_gu = 90.0f;     // pinned: pre-2026-10-04 range
+    on.set_dials(d_on);
+    rockfield::NearDials d_off = d_on; d_off.large_far_gu = 0.0f;   // same generator, far shell off
     off.set_dials(d_off);
     for (auto* f : {&on, &off}) { f->set_catalogue(cat()); f->set_sources({full_sphere()}); f->stream(glm::dvec3(0.0)); }
     std::map<std::uint64_t, glm::dvec3> near_on, near_off;
@@ -1088,6 +1091,7 @@ TEST(NearFarLarge, CollisionsNearThePlayerAreUnchanged) {
 // by at most far_shell_regrow_gu each, so it never comes back in one hitch.
 TEST(NearFarLarge, DashShrinksTheShellAndItRegrowsInBoundedSteps) {
     rockfield::NearField f;
+    { rockfield::NearDials pd; pd.large.billboard_gu = 90.0f; f.set_dials(pd); }   // pinned: pre-2026-10-04 range
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     const auto& d = f.dials();
     EXPECT_EQ(d.far_shell_max_step_gu, 25.0f);
