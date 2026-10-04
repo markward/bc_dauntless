@@ -45,6 +45,11 @@ def _scene():
     enemy.SetTranslateXYZ(0, 50, 0)
     enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
     pSet.AddObjectToSet(enemy, "Enemy")
+    # These fixtures test the CLOAK gate on subsystems_targetable, not the
+    # identification gate — identify the contact up front so cloak is the
+    # only thing under test (Task 6 added a second producer: an
+    # unidentified contact also suppresses subsystems).
+    player.GetSensorSubsystem().AddKnownObject(enemy)
     menu = STTargetMenu_CreateW("Targets")
     menu.RebuildShipMenus(pSet)
     # These fixtures author no BaseSensorRange, so the observer falls back to
