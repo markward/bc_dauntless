@@ -23,7 +23,7 @@ _NEAR_CPP_DEFAULTS = {
     # rock-real review: the far shell shrinks at dash speed and regrows
     # (NearDials far_shell_max_step_gu / far_shell_regrow_gu).
     "near_far_shell_max_step_gu": 25.0, "near_far_shell_regrow_gu": 20.0,
-    "near_fade_gu": 4.0, "near_handoff_fade_gu": 0.0, "near_tumble_scale": 0.05, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    "near_fade_gu": 4.0, "near_handoff_fade_gu": 0.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 
 

@@ -308,6 +308,13 @@ void NearField::set_catalogue(NearCatalogue c) {
 
 void NearField::update_effective() {
     eff_ = dials_;
+    if (dash_frac_ < 1.0f) {   // dash speed: billboards pulled in toward the mesh range
+        for (NearClassDials* cd : {&eff_.small, &eff_.large})
+            if (cd->billboard_gu > cd->mesh_gu)
+                cd->billboard_gu = cd->mesh_gu + dash_frac_ * (cd->billboard_gu - cd->mesh_gu);
+        eff_.large_far_gu = 0.0f;   // and no far shell while dashing
+        return;
+    }
     if (!far_shell_on(dials_)) return;
     const float full = full_shell_far(dials_);
     const float f = shell_far_ < 0.0f ? full : std::min(shell_far_, full);
@@ -333,6 +340,19 @@ void NearField::set_sources(const std::vector<far::DiscSource>& active) {
 }
 
 void NearField::stream(const glm::dvec3& c) {
+    // Dash speed: both classes' billboard reach collapses to the mesh range
+    // and regrows once slow (never on the first stream after a clear()).
+    {
+        constexpr float kDashRegrowPerStream = 0.06f;   // ~17 streams back to full
+        const bool dashing = dials_.dash_collapse_step_gu > 0.0f && has_last_centre_ &&
+                             glm::length(c - last_centre_) > dials_.dash_collapse_step_gu;
+        const float next = dashing ? 0.0f : std::min(1.0f, dash_frac_ + kDashRegrowPerStream);
+        if (next != dash_frac_) {
+            dash_frac_ = next;
+            update_effective();
+            invalidate_stream_watch();   // the ranges moved
+        }
+    }
     // The far shell at dash speed (NearDials::far_shell_max_step_gu): shrink
     // to the pre-shell reach, regrow in bounded steps once slow again.
     if (far_shell_on(dials_)) {
@@ -547,6 +567,7 @@ void NearField::clear() {
     // A fresh start, as a new field: the next stream gets the whole far shell
     // (a source change mid-dash costs that one frame, then shrinks again).
     shell_far_ = -1.0f;
+    dash_frac_ = 1.0f;
     has_last_centre_ = false;
     update_effective();
     stepped_ = false;

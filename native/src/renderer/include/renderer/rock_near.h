@@ -51,6 +51,10 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // between their 16 baked views (Mark, live 2026-10-03). Billboards now
     // blend between 64 views (rock-blend), so the dial may go back up live.
     float tumble_scale = 0.05f;
+    // A stream whose centre moved more than this since the last one is a
+    // dash: both classes' billboards collapse to the mesh range and regrow
+    // once slow. <= 0 = off (Mark, 2026-10-04: dash streaming cost ~16 ms).
+    float dash_collapse_step_gu = 25.0f;
     // Far shell (rock-real Part 1, 2026-10-03: every big-asteroid silhouette
     // is a real rock). With large_far_gu > large.billboard_gu the large
     // class's SAME rocks stream on past billboard_gu as billboards (no
@@ -298,6 +302,11 @@ private:
     NearDials dials_;
     NearDials eff_;                       // dials_ with the streamed far shell
     float shell_far_ = -1.0f;             // the streamed shell edge; < 0: not yet streamed
+    // Billboard reach at dash speed (Mark, 2026-10-04: the 3x ranges cost
+    // ~16 ms/frame regenerating ~46k rocks per dash frame). 1 = full
+    // billboard ranges; a dash-speed stream drops it to 0 (both classes
+    // stream only to mesh_gu); slow streams regrow it by kDashRegrowPerStream.
+    float dash_frac_ = 1.0f;
     bool has_last_centre_ = false;
     glm::dvec3 last_centre_{0.0};
     void update_effective();

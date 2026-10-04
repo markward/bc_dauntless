@@ -109,7 +109,7 @@ DEFAULTS: dict = {
     # reach to near_large_billboard_gu; it regrows by at most
     # near_far_shell_regrow_gu per stream once slower (no one-frame hitch).
     "near_far_shell_max_step_gu": 25.0, "near_far_shell_regrow_gu": 20.0,
-    "near_fade_gu": 4.0, "near_handoff_fade_gu": 0.0, "near_tumble_scale": 0.05, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    "near_fade_gu": 4.0, "near_handoff_fade_gu": 0.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,
     # engine/rocks/scenery_contact.py): damage = KE damage x
     # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
@@ -141,7 +141,7 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_billboard_gu", "near_large_max",
     "near_large_far_gu", "near_large_far_fade_gu", "near_large_min_px", "near_small_min_px",
     "near_far_shell_max_step_gu", "near_far_shell_regrow_gu",
-    "near_fade_gu", "near_handoff_fade_gu", "near_tumble_scale", "near_stream_margin_gu", "collide_cooldown_s",
+    "near_fade_gu", "near_handoff_fade_gu", "near_tumble_scale", "near_dash_collapse_step_gu", "near_stream_margin_gu", "collide_cooldown_s",
     "mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",
     "mid_in_hi_gu", "mid_l0_out_gu", "mid_l1_out_gu", "mid_xfade_frac",
     "haze_handoff_gu", "haze_handoff_band_gu", "mid_fill", "mid_sprite_scale",

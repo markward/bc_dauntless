@@ -118,6 +118,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false,
     dials.large.cell_gu = 20.0f; dials.large_far_gu = 0.0f; dials.large.max_instances = 1000;
     dials.handoff_fade_gu = dials.fade_gu;   // pinned: the recorded digests used the dithered hand-off
     dials.tumble_scale = 1.0f;               // pinned: and the full tumble rate
+    dials.dash_collapse_step_gu = 0.0f;      // pinned: recorded before the dash collapse
     if (current) dials = *current;
     if (caps) {
         dials.small.max_instances = 60;
@@ -268,6 +269,7 @@ rockfield::NearDials defaults_2026_10_04() {
     d.small.cell_gu = 10.0f; d.small.mesh_gu = 15.0f; d.small.billboard_gu = 90.0f; d.small.max_instances = 4000;
     d.large = {1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 270.0f, 4000};
     d.fade_gu = 4.0f; d.handoff_fade_gu = 0.0f; d.tumble_scale = 0.05f;
+    d.dash_collapse_step_gu = 0.0f;   // recorded before the dash collapse
     d.large_far_gu = 250.0f; d.large_far_fade_gu = 40.0f; d.large_min_px = 1.5f; d.small_min_px = 2.5f;
     d.far_shell_max_step_gu = 25.0f; d.far_shell_regrow_gu = 20.0f; d.stream_margin_gu = 10.0f;
     d.collide_cooldown_s = 0.5f; d.collide_margin_gu = 0.0f;
@@ -476,7 +478,7 @@ TEST(RockPerfEquivalence, NearOutOfReachAndBackMatchesAFreshStream) {
         rockfield::NearField f, fresh;
         // The far shell off: a jump shrinks it (NearDials::far_shell_max_step_gu),
         // which a fresh field's first stream does not -- not what this pins.
-        rockfield::NearDials no_shell; no_shell.large_far_gu = 0.0f;
+        rockfield::NearDials no_shell; no_shell.large_far_gu = 0.0f; no_shell.dash_collapse_step_gu = 0.0f;
         for (auto* g : {&f, &fresh}) {
             g->set_dials(no_shell);
             g->set_catalogue(rock_scenario::near_catalogue());

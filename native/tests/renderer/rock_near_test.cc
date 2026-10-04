@@ -113,7 +113,7 @@ TEST(NearStream, SameStateRegardlessOfPath) {   // returning to a place gives th
     for (auto* f : {&a, &b}) { f->set_catalogue(cat()); f->set_sources({full_sphere()}); }
     a.stream(glm::dvec3(0.0));
     b.stream(glm::dvec3(900.0, 0, 0)); b.stream(glm::dvec3(0.0));
-    for (int i = 0; i < 10; ++i) b.stream(glm::dvec3(0.0));   // the jump shrank the far shell: regrow it
+    for (int i = 0; i < 20; ++i) b.stream(glm::dvec3(0.0));   // the jump collapsed the billboards (and far shell): regrow them
     std::set<std::uint64_t> ka, kb;
     a.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock&) { ka.insert(k); });
     b.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock&) { kb.insert(k); });
@@ -1093,7 +1093,7 @@ TEST(NearFarLarge, CollisionsNearThePlayerAreUnchanged) {
 // by at most far_shell_regrow_gu each, so it never comes back in one hitch.
 TEST(NearFarLarge, DashShrinksTheShellAndItRegrowsInBoundedSteps) {
     rockfield::NearField f;
-    { rockfield::NearDials pd; pd.large.billboard_gu = 90.0f; f.set_dials(pd); }   // pinned: pre-2026-10-04 range
+    { rockfield::NearDials pd; pd.large.billboard_gu = 90.0f; pd.dash_collapse_step_gu = 0.0f; f.set_dials(pd); }   // pinned: pre-2026-10-04 range
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     const auto& d = f.dials();
     EXPECT_EQ(d.far_shell_max_step_gu, 25.0f);
