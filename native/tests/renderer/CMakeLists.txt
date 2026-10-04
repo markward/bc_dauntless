@@ -22,6 +22,7 @@ add_executable(renderer_tests
     far_field_test.cc
     rock_near_test.cc
     rock_speck_test.cc
+    rock_puff_gl_test.cc
     minor_field_test.cc
     minor_field_bench_test.cc
     rock_near_bench_test.cc

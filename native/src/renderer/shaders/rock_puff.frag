@@ -15,6 +15,13 @@ uniform vec3 u_dir_light_color[4];
 uniform float u_brightness;
 out vec4 frag_color;
 
+// Fill cut (2026-10-04, see rock_puff.vert): a fragment whose alpha cannot
+// reach kMinAlpha is discarded BEFORE the noise. alpha = v_alpha * body *
+// (0.55 + 0.9 n) with body <= exp(-3 rr) and n <= 1, so kAlphaMax * v_alpha *
+// exp(-3 rr) bounds it. Keep both constants identical with rock_puff.vert.
+const float kMinAlpha = 1.0 / 2048.0;
+const float kAlphaMax = 1.45;
+
 const float PI = 3.14159265;
 
 float lambert_sphere_phase(float cos_alpha) {
@@ -39,6 +46,7 @@ float fbm2(vec2 p) {
 void main() {
     float rr = dot(v_corner, v_corner);
     if (rr >= 1.0) discard;
+    if (kAlphaMax * v_alpha * exp(-3.0 * rr) < kMinAlpha) discard;
     // Soft core with a noise-eaten edge: no visible card or circle.
     float n = fbm2(v_corner * 2.2 + v_seed.xy);
     float body = exp(-3.0 * rr) * smoothstep(1.0, 0.55, rr + 0.35 * (n - 0.5));
