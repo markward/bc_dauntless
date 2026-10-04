@@ -511,7 +511,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 if (!frustum.sphere(cc, half_diag + cell.r_max + slack)) continue;
                 // The pixel floor, whole cell: beyond the mesh range every
                 // rock's on-screen radius is at most r_max * k / d_lo.
-                if ((shell || small) && d_lo > cd.mesh_gu + std::max(eff_.fade_gu, 0.0f) &&
+                if ((shell || (small && eff_.small_min_px > 0.0f)) && d_lo > cd.mesh_gu + std::max(eff_.fade_gu, 0.0f) &&
                     !(cell.r_max * k / d_lo > (small ? eff_.small_min_px : eff_.large_min_px)))
                     continue;
             }
@@ -531,7 +531,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 const float d = std::sqrt(dot3(ex, ey, ez, ex, ey, ez));
                 NearWeights w = shell ? near_large_weights(d, r.radius * k / std::max(d, 1e-3f), eff_)
                                       : near_weights(d, cd, eff_.fade_gu, eff_.handoff_fade_gu);
-                if (small) {   // the small pixel floor, blended in past the mesh edge (no pop)
+                if (small && eff_.small_min_px > 0.0f) {   // the small pixel floor (0 = off), blended in past the mesh edge
                     const float fade = eff_.fade_gu;
                     const float tt = fade > 0.0f ? std::clamp((d - cd.mesh_gu) / fade, 0.0f, 1.0f)
                                                  : (d > cd.mesh_gu ? 1.0f : 0.0f);
