@@ -1208,3 +1208,61 @@ TEST(NearPerf, BuildStopsAtTheFirstRockUnderThePixelFloor) {
     EXPECT_LT(fr.out.rocks_tested, (st.small + st.large) / 10)
         << "small=" << st.small << " large=" << st.large;
 }
+
+TEST(NearPerf, SlowFlightStreamTestsOnlyCellsNearTheThresholds) {
+    // At 6 GU/s a frame moves 0.1 GU: only cells within ~0.1 GU of a
+    // generate or keep threshold can change state, a few dozen of the
+    // ~5,000 streamed. (A full pass -- a dial change, a jump -- tests more.)
+    rockfield::NearField f;
+    f.set_catalogue(rock_scenario::near_catalogue());
+    f.set_sources({rock_scenario::beol4_field()});
+    f.stream(rock_scenario::player_pose(0, 6.0).pos);
+    long tested = 0;
+    int frames = 0, worst = 0;
+    for (int i = 1; i <= 240; ++i) {
+        const std::uint64_t full = f.full_stream_passes();
+        f.stream(rock_scenario::player_pose(i, 6.0).pos);
+        if (f.full_stream_passes() != full) continue;
+        tested += f.last_stream_cells_tested();
+        worst = std::max(worst, f.last_stream_cells_tested());
+        ++frames;
+    }
+    ASSERT_GT(frames, 100);
+    EXPECT_LT(tested / frames, 150) << "worst " << worst;
+}
+
+TEST(NearPerf, NoMarginZigzagStreamsExactlyTheCellsInRange) {
+    // stream_margin_gu 0: keep == the generation range, so a zigzag inside
+    // one watch window drops cells and must generate them again -- the
+    // incremental stream's narrowest case. Every frame's set must equal a
+    // fresh field's at the same centre.
+    rockfield::NearDials d;
+    d.stream_margin_gu = 0.0f;
+    d.large_far_gu = 0.0f;
+    d.small.billboard_gu = 40.0f;
+    d.large.billboard_gu = 120.0f;
+    auto keys = [](const rockfield::NearField& f) {
+        std::set<std::uint64_t> k;
+        for (auto cls : {rockfield::NearClass::Small, rockfield::NearClass::Large})
+            f.for_each(cls, [&](std::uint64_t key, const rockfield::NearRock&) { k.insert(key); });
+        return k;
+    };
+    rockfield::NearField f;
+    f.set_dials(d);
+    f.set_catalogue(rock_scenario::near_catalogue());
+    f.set_sources({rock_scenario::beol4_field()});
+    const glm::dvec3 base(3.0, -640.0, 2.0);
+    for (int i = 0; i < 120; ++i) {
+        const double t = i * 0.37;
+        const glm::dvec3 c = base + glm::dvec3(3.0 * std::sin(t), 0.02 * i + 2.5 * std::cos(1.3 * t),
+                                               1.5 * std::sin(2.1 * t));
+        f.stream(c);
+        rockfield::NearField fresh;
+        fresh.set_dials(d);
+        fresh.set_catalogue(rock_scenario::near_catalogue());
+        fresh.set_sources({rock_scenario::beol4_field()});
+        fresh.stream(c);
+        ASSERT_EQ(keys(f), keys(fresh)) << "frame " << i;
+    }
+    EXPECT_LT(f.full_stream_passes(), 40u);   // the zigzag stayed incremental
+}

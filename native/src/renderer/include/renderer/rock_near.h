@@ -240,6 +240,9 @@ public:
     // Diagnostics: full (non-incremental) stream passes run so far, per
     // (source, class). Tests assert the live call pattern stays incremental.
     std::uint64_t full_stream_passes() const { return full_stream_passes_; }
+    // Diagnostics: cells whose distance the last stream() tested (the drop
+    // and the generation passes together).
+    int last_stream_cells_tested() const { return last_stream_cells_tested_; }
     // Diagnostics: large cells the last posed step tested rock by rock (the
     // rest were rejected whole by the cell broad phase).
     int last_step_large_cells_tested() const { return last_step_large_cells_tested_; }
@@ -289,21 +292,36 @@ private:
     far::ImpostorViews views_;   // make_impostor_views(cat_.view_dirs_gltf)
     std::vector<far::DiscSource> sources_;
 
-    // Incremental streaming (rock-fields perf, 2026-10-03). After a full
-    // pass at c_ref, only cells whose distance from c_ref lies within
-    // kStreamWatchGu of a threshold can change state while the centre stays
-    // within kStreamWatchGu of c_ref (distance to a box is 1-Lipschitz).
+    // Incremental streaming (rock-fields perf, 2026-10-03; rock-perf2,
+    // 2026-10-04). After a full pass at c_ref, only cells whose distance from
+    // c_ref lies within the watch width w (rock_near.cc watch_gu) of a
+    // threshold can change state while the centre stays within w of c_ref
+    // (distance to a box is 1-Lipschitz). Each such cell -- and every streamed cell, for the keep
+    // threshold -- waits in a min-heap keyed by the path length (path_s_, the
+    // centre's summed travel) at which it could first cross its next
+    // threshold, so a frame re-tests only the cells its own travel reached.
+    struct Due {
+        double due;                       // path_s_ at which to re-test
+        std::uint64_t id;                 // shell index (generation) or cell key (drop)
+        bool operator>(const Due& o) const { return due > o.due; }
+    };
     struct GenWatch {                     // per (source, class)
         bool has_ref = false;             // c_ref is the last full pass's centre
         bool valid = false;               // ... and `shell` was recorded there
         glm::dvec3 c_ref{0.0};
         std::vector<glm::i64vec3> shell;  // R - w < dist(c_ref) <= R + w, (i, j, k) order
+        std::vector<Due> heap;            // over shell indices
+        // Every cell within R of (and in the box of) c_prev exists: the last
+        // stream() that tested this watch left it so.
+        bool prev_complete = false;
+        glm::dvec3 c_prev{0.0};
     };
     std::vector<GenWatch> gen_watch_;     // sources_.size() * 2
-    bool drop_valid_ = false;
-    glm::dvec3 drop_ref_{0.0};
-    std::vector<std::uint64_t> drop_watch_;   // cells that may pass keep: near it, or new
+    bool drop_valid_ = false;             // drop_heap_ holds every non-pinned cell
+    std::vector<Due> drop_heap_;          // over cell keys
+    double path_s_ = 0.0;                 // the centre's travel since the last invalidation
     std::uint64_t full_stream_passes_ = 0;
+    int last_stream_cells_tested_ = 0;
     int last_step_large_cells_tested_ = 0;
 
     // Contact state (cleared by clear()). Per-rock state carries its CELL

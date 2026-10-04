@@ -126,9 +126,9 @@ float full_shell_far(const NearDials& d);
 // shrunk to 16 cells, never the cells widened -- a huge billboard_gu over a
 // tiny cell_gu would otherwise enumerate (2R/L)^3 cells in one stream().
 constexpr int kMaxCellsPerAxis = 33;
-// (NearField::stream's full pass walks the box of R + kStreamWatchGu to
-// record its watch shell -- up to 35 cells per axis -- but generates only
-// within R, so the 33-per-axis generation cap holds.)
+// (NearField::stream's full pass walks the box of R + watch_gu(L) <= R + L / 2
+// (or 2 GU) to record its watch shell -- up to 35 cells per axis -- but
+// generates only within R, so the 33-per-axis generation cap holds.)
 struct StreamRanges { double gen, keep; };
 float full_shell_far(const NearDials& d) {
     const double cap = 0.5 * (kMaxCellsPerAxis - 1) * static_cast<double>(d.large.cell_gu);
@@ -153,9 +153,20 @@ glm::mat3 rotation(float angle, const glm::vec3& axis) {
 // How far the centre may move from a full stream pass's reference before
 // the next full pass (NearField::stream's incremental path). Larger: fewer
 // full passes, more watched cells per frame.
-constexpr double kStreamWatchGu = 2.0;
+// The watch width of a class with cell edge L: half a cell, 2 to 8 GU (the
+// path-length heaps make a frame's work independent of it; a wider watch
+// means rarer full passes, each walking a slightly larger box).
+double watch_gu(double L) { return std::clamp(0.5 * L, 2.0, 8.0); }
+// A full pass records its watch shell only when the centre moved at most
+// this far since the last one (at dash speed the next frame is outside it).
+constexpr double kStreamRecordMaxMoveGu = 8.0;
 // Slack for the Lipschitz bounds against double rounding in aabb_distance.
 constexpr double kStreamEps = 1e-6;
+// NearField::stream's path-length heaps: the slack a due is popped early by
+// (rounding of the summed travel), and the travel after which the watch
+// starts afresh (bounding that rounding).
+constexpr double kStreamPathSlackGu = 0.01;
+constexpr double kStreamPathRebaseGu = 1.0e5;
 
 // Cells per block edge (NearField::Block): ~40 GU small blocks, ~100 GU large.
 constexpr std::int64_t block_cells(NearClass cls) { return cls == NearClass::Small ? 4 : 2; }
@@ -303,7 +314,8 @@ float NearField::large_reach_gu() const { return reach_gu(eff_, NearClass::Large
 void NearField::invalidate_stream_watch() {
     gen_watch_.clear();
     drop_valid_ = false;
-    drop_watch_.clear();
+    drop_heap_.clear();
+    path_s_ = 0.0;   // every due keyed by it is gone
 }
 
 void NearField::set_sources(const std::vector<far::DiscSource>& active) {
@@ -332,54 +344,76 @@ void NearField::stream(const glm::dvec3& c) {
             invalidate_stream_watch();   // the large ranges moved
         }
     }
+    if (has_last_centre_) path_s_ += glm::length(c - last_centre_);
     has_last_centre_ = true;
     last_centre_ = c;
+    last_stream_cells_tested_ = 0;
+    // Bound the path length (its rounding) by starting the watch afresh.
+    if (path_s_ > kStreamPathRebaseGu) invalidate_stream_watch();
+    const auto tested_distance = [this](const glm::dvec3& p, const glm::dvec3& lo, double size) {
+        ++last_stream_cells_tested_;
+        return aabb_distance(p, lo, size);
+    };
+    // A heap entry is due once path_s_ reaches it, with slack for rounding:
+    // re-testing early is harmless, late never happens.
+    const double now_s = path_s_ + kStreamPathSlackGu;
+    const auto heap_push = [](std::vector<Due>& h, const Due& e) {
+        h.push_back(e);
+        std::push_heap(h.begin(), h.end(), std::greater<Due>());
+    };
+    const auto heap_pop = [](std::vector<Due>& h) {
+        std::pop_heap(h.begin(), h.end(), std::greater<Due>());
+        const Due e = h.back();
+        h.pop_back();
+        return e;
+    };
 
     // Byte-for-byte the effect of: drop every non-pinned cell farther than
     // its class's keep range, then (sources outer, classes inner, cells in
     // (i, j, k) order) generate every missing cell within the generation
-    // range. A full pass does exactly that and records which cells sit
-    // within kStreamWatchGu of either threshold; while the centre stays
-    // within kStreamWatchGu of that pass, only those cells (and cells
-    // generated since) can change state, so only they are re-tested.
+    // range. Drop: every streamed cell waits until the centre's travel could
+    // have carried it past keep (keep - d), then is re-tested.
     auto keep_of = [&](NearClass cls) {
         return stream_ranges(eff_, cls).keep;
     };
-    if (!drop_valid_ || glm::length(c - drop_ref_) > kStreamWatchGu) {
-        drop_watch_.clear();
+    const auto drop = [&](std::unordered_map<std::uint64_t, Cell>::iterator it) {
+        const Cell& cell = it->second;
+        if (cell.cls == NearClass::Large && cell.seen_step == step_count_)
+            dropped_seen_[it->first] = cell.seen_rocks;
+        block_remove(it->first, cell);
+        return cells_.erase(it);
+    };
+    if (!drop_valid_) {
+        drop_heap_.clear();
         for (auto it = cells_.begin(); it != cells_.end();) {
             const Cell& cell = it->second;
+            if (cell.pinned) { ++it; continue; }
             const double keep = keep_of(cell.cls);
-            const double d = cell.pinned ? 0.0 : aabb_distance(c, cell.lo, cell.size);
-            if (!cell.pinned && d > keep) {
-                if (cell.cls == NearClass::Large && cell.seen_step == step_count_)
-                    dropped_seen_[it->first] = cell.seen_rocks;
-                block_remove(it->first, cell);
-                it = cells_.erase(it);
-                continue;
-            }
-            if (!cell.pinned && d > keep - kStreamWatchGu - kStreamEps) drop_watch_.push_back(it->first);
+            const double d = tested_distance(c, cell.lo, cell.size);
+            if (d > keep) { it = drop(it); continue; }
+            drop_heap_.push_back({path_s_ + (keep - d), it->first});
             ++it;
         }
-        drop_ref_ = c;
+        std::make_heap(drop_heap_.begin(), drop_heap_.end(), std::greater<Due>());
         drop_valid_ = true;
     } else {
-        for (const std::uint64_t key : drop_watch_) {
-            const auto it = cells_.find(key);
+        std::vector<Due> again;
+        while (!drop_heap_.empty() && drop_heap_.front().due <= now_s) {
+            const Due e = heap_pop(drop_heap_);
+            const auto it = cells_.find(e.id);
             if (it == cells_.end() || it->second.pinned) continue;
-            const Cell& cell = it->second;
-            if (aabb_distance(c, cell.lo, cell.size) > keep_of(cell.cls)) {
-                if (cell.cls == NearClass::Large && cell.seen_step == step_count_)
-                    dropped_seen_[it->first] = cell.seen_rocks;
-                block_remove(it->first, cell);
-                cells_.erase(it);
-            }
+            const double keep = keep_of(it->second.cls);
+            const double d = tested_distance(c, it->second.lo, it->second.size);
+            if (d > keep) drop(it);
+            else again.push_back({path_s_ + (keep - d), e.id});
         }
+        for (const Due& e : again) heap_push(drop_heap_, e);
     }
 
     if (gen_watch_.size() != sources_.size() * 2) gen_watch_.assign(sources_.size() * 2, GenWatch{});
+    // d: the cell's distance from c (it is within the generation range).
     auto generate = [&](const far::DiscSource& s, NearClass cls, const glm::i64vec3& ijk,
-                        const glm::dvec3& lo, double L) {
+                        const glm::dvec3& lo, double L, double d) {
         const std::uint64_t key = cell_key(s.id, cls, ijk);
         if (cells_.count(key)) return;
         Cell cell{cls, generate_near_cell(s, cls, ijk, dials_, cat_), lo, L, false, {}};
@@ -395,13 +429,14 @@ void NearField::stream(const glm::dvec3& c) {
             cell.seen_rocks = ds->second;
         }
         block_add(key, cells_.emplace(key, std::move(cell)).first->second);
-        if (drop_valid_) drop_watch_.push_back(key);
+        heap_push(drop_heap_, {path_s_ + std::max(0.0, keep_of(cls) - d), key});
     };
     for (std::size_t si = 0; si < sources_.size(); ++si) {
         const far::DiscSource& s = sources_[si];
         for (NearClass cls : kClasses) {
             const NearClassDials& cd = class_dials(eff_, cls);
-            const double L = cd.cell_gu, R = stream_ranges(eff_, cls).gen;
+            const StreamRanges ranges = stream_ranges(eff_, cls);
+            const double L = cd.cell_gu, R = ranges.gen, keep = ranges.keep;
             GenWatch& w = gen_watch_[si * 2 + static_cast<std::size_t>(cls)];
             if (!(L > 0.0) || !(R > 0.0) || !reaches(s, c, R)) {
                 // Not tested this frame, so the watch cannot vouch for the
@@ -409,6 +444,7 @@ void NearField::stream(const glm::dvec3& c) {
                 // back): the next reaching frame starts with a full pass.
                 w.valid = false;
                 w.has_ref = false;
+                w.prev_complete = false;
                 continue;
             }
             // A cell is generated when it lies in the box [floor((c - R) / L),
@@ -419,14 +455,32 @@ void NearField::stream(const glm::dvec3& c) {
                 return ijk.x >= ga.x && ijk.x <= gb.x && ijk.y >= ga.y && ijk.y <= gb.y &&
                        ijk.z >= ga.z && ijk.z <= gb.z;
             };
+            // When a watched cell must next be re-tested: once the travel could
+            // bring it within R (outside now), at once while it is within R
+            // but outside the box, else once it could have passed keep (and
+            // been dropped, to be generated again).
+            const auto due_of = [&](double d, bool box) {
+                if (d > R) return path_s_ + (d - R);
+                if (!box) return path_s_;
+                return path_s_ + std::max(0.0, keep - d);
+            };
             const double moved = glm::length(c - w.c_ref);
-            if (w.valid && moved <= kStreamWatchGu) {
-                for (const glm::i64vec3& ijk : w.shell) {
-                    if (!in_box(ijk)) continue;
+            const double ww = watch_gu(L);
+            if (w.valid && moved <= ww) {
+                std::vector<std::uint64_t> due;
+                while (!w.heap.empty() && w.heap.front().due <= now_s) due.push_back(heap_pop(w.heap).id);
+                std::sort(due.begin(), due.end());   // shell order is (i, j, k) order
+                for (const std::uint64_t idx : due) {
+                    const glm::i64vec3& ijk = w.shell[idx];
                     const glm::dvec3 lo = glm::dvec3(ijk) * L;
-                    if (aabb_distance(c, lo, L) > R) continue;
-                    generate(s, cls, ijk, lo, L);
+                    const double d = tested_distance(c, lo, L);
+                    const bool box = in_box(ijk);
+                    if (d <= R && box) generate(s, cls, ijk, lo, L, d);
+                    w.heap.push_back({due_of(d, box), idx});
+                    std::push_heap(w.heap.begin(), w.heap.end(), std::greater<Due>());
                 }
+                w.c_prev = c;
+                w.prev_complete = true;
                 continue;
             }
             // Full pass over the cells within R + w (a superset of the old
@@ -434,25 +488,39 @@ void NearField::stream(const glm::dvec3& c) {
             // dash speed (the centre moved several watch widths since the
             // last pass) the next frame will not be inside this one's watch
             // either: skip recording the shell (w = 0 enumerates the R box).
+            // A cell within R of c_prev (and in its box) exists already when
+            // the last stream left this watch complete: no lookup.
             ++full_stream_passes_;
             w.shell.clear();
-            const bool record = !w.has_ref || moved <= 4.0 * kStreamWatchGu;
-            const double Rw = R + (record ? kStreamWatchGu : 0.0);
+            w.heap.clear();
+            const bool record = !w.has_ref || moved <= kStreamRecordMaxMoveGu;
+            const double Rw = R + (record ? ww : 0.0);
+            const bool known_prev = w.prev_complete;
+            const glm::i64vec3 pa(glm::floor((w.c_prev - R) / L)), pb(glm::floor((w.c_prev + R) / L));
             const glm::i64vec3 a(glm::floor((c - Rw) / L)), b(glm::floor((c + Rw) / L));
             for (auto i = a.x; i <= b.x; ++i)
                 for (auto j = a.y; j <= b.y; ++j)
                     for (auto k = a.z; k <= b.z; ++k) {
                         const glm::i64vec3 ijk(i, j, k);
                         const glm::dvec3 lo = glm::dvec3(ijk) * L;
-                        const double d = aabb_distance(c, lo, L);
-                        if (record && d > R - kStreamWatchGu - kStreamEps && d <= Rw + kStreamEps)
+                        const double d = tested_distance(c, lo, L);
+                        const bool box = in_box(ijk);
+                        if (record && d > R - ww - kStreamEps && d <= Rw + kStreamEps) {
+                            w.heap.push_back({due_of(d, box), w.shell.size()});
                             w.shell.push_back(ijk);
-                        if (d > R || !in_box(ijk)) continue;
-                        generate(s, cls, ijk, lo, L);
+                        }
+                        if (d > R || !box) continue;
+                        if (known_prev && i >= pa.x && i <= pb.x && j >= pa.y && j <= pb.y && k >= pa.z &&
+                            k <= pb.z && tested_distance(w.c_prev, lo, L) <= R)
+                            continue;
+                        generate(s, cls, ijk, lo, L, d);
                     }
+            std::make_heap(w.heap.begin(), w.heap.end(), std::greater<Due>());
             w.c_ref = c;
             w.has_ref = true;
             w.valid = record;
+            w.c_prev = c;
+            w.prev_complete = true;
         }
     }
 }
