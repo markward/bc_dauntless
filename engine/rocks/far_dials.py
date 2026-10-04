@@ -156,6 +156,9 @@ DEFAULTS: dict = {
     "puff_count": 400, "puff_size_frac": 0.18, "puff_opacity": 0.04698,
     "puff_brightness": 8.0, "puff_start_gu": 800.0, "puff_ramp_gu": 800.0,
     "puff_near_fade": 1.5,
+    # Belts: puff_belt_count per belt, radius puff_belt_size_h x the local
+    # scale height (rock_puffs.h belt_count / belt_size_h).
+    "puff_belt_count": 2000, "puff_belt_size_h": 1.2,
     "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,
 }
 
@@ -177,13 +180,14 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
     "speck_keep_power", "speck_restream_gu", "speck_band_gain",
     "puff_count", "puff_size_frac", "puff_opacity", "puff_brightness",
-    "puff_start_gu", "puff_ramp_gu", "puff_near_fade"})
+    "puff_start_gu", "puff_ramp_gu", "puff_near_fade",
+    "puff_belt_count", "puff_belt_size_h"})
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
 _INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "tile_haze_steps",
                "belt_noise_octaves", "near_small_max", "near_large_max",
-               "mid_max_sprites", "puff_count")
+               "mid_max_sprites", "puff_count", "puff_belt_count")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",

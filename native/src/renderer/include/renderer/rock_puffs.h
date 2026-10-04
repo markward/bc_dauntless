@@ -1,6 +1,7 @@
 // native/src/renderer/include/renderer/rock_puffs.h
 // Rock fields, far look as PUFFS (SPIKE, spike/rock-specks 2026-10-04): a
-// few hundred large, soft, sun-lit billboards per tile field, placed by
+// few hundred large, soft, sun-lit billboards per tile field (and per belt),
+// placed by
 // rejection-sampling the field's own density (far::field_density), so the
 // field's clumps and lumpy outline come from where the puffs land. Drawn in
 // the main (MSAA) pass after every opaque writer, depth-tested without depth
@@ -24,6 +25,10 @@ struct PuffDials {   // defaults MUST equal far_dials.py DEFAULTS puff_* keys
     float start_gu = 800.0f;      // puffs fade in from here (camera distance) ...
     float ramp_gu = 800.0f;       // ... over this many GU
     float near_fade = 1.5f;       // and fade out within near_fade x their radius
+    // Belts (disc sources): belt_count puffs per belt, each of radius
+    // belt_size_h x the local scale height (a belt has no field radius).
+    int belt_count = 2000;
+    float belt_size_h = 1.2f;
 };
 
 struct PuffGpu {
@@ -34,8 +39,10 @@ struct PuffGpu {
 };
 static_assert(sizeof(PuffGpu) == 32, "PuffGpu is a 32-byte GPU instance");
 
-// Pure: one source's puffs in SYSTEM coordinates (pos relative to (0,0,0));
-// none for a disc (belt) source.
+// Pure: one source's puffs in SYSTEM coordinates (pos relative to (0,0,0)),
+// rejection-sampled from far::field_density: a tile field (sphere) within
+// its outer reach, a belt (disc) within its cylinder (last table row + outer
+// fade, +-3 scale heights there).
 std::vector<PuffGpu> place_puffs(const far::DiscSource& s, const PuffDials& d,
                                  std::vector<glm::dvec3>* pos_sys);
 

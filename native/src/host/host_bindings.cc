@@ -2824,6 +2824,8 @@ renderer::rockfield::PuffDials puff_dials_of(const py::dict& d) {
     f("puff_start_gu", o.start_gu);
     f("puff_ramp_gu", o.ramp_gu);
     f("puff_near_fade", o.near_fade);
+    if (d.contains("puff_belt_count")) o.belt_count = std::clamp(d["puff_belt_count"].cast<int>(), 0, 50000);
+    f("puff_belt_size_h", o.belt_size_h);
     return o;
 }
 

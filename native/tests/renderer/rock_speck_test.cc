@@ -6,6 +6,7 @@
 #include <set>
 #include <tuple>
 #include <renderer/rock_speck.h>
+#include <renderer/rock_puffs.h>
 
 using namespace renderer;
 namespace {
@@ -110,4 +111,31 @@ TEST(SpeckBand, DashHidesAndSlowShowsAgain) {
     b.stream(glm::dvec3(505.0, 0.0, 0.0), 25.0f);
     EXPECT_FALSE(b.hidden());
     EXPECT_TRUE(b.finish());
+}
+
+TEST(Puffs, BeltPuffsFollowTheBeltDensity) {
+    far::DiscSource belt; belt.id = 5; belt.seed = 7;
+    belt.table = {{0.0f, 0.0f}, {9000.0f, 0.0f}, {10000.0f, 1.0f}, {11000.0f, 0.0f}};
+    belt.outer_fade_gu = 0.0f;
+    rockfield::PuffDials d; d.belt_count = 300;
+    std::vector<glm::dvec3> pos;
+    const auto p = rockfield::place_puffs(belt, d, &pos);
+    ASSERT_EQ(p.size(), 300u);
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const double rho = glm::length(glm::dvec2(pos[i]));
+        EXPECT_GT(rho, 9000.0); EXPECT_LT(rho, 11000.0);
+        EXPECT_GT(p[i].radius, 0.0f);
+    }
+    std::vector<glm::dvec3> pos2;
+    const auto q = rockfield::place_puffs(belt, d, &pos2);
+    EXPECT_EQ(pos, pos2);   // deterministic
+}
+
+TEST(Puffs, TileFieldPuffsStayInsideTheField) {
+    far::DiscSource s = full_sphere(); s.sphere_radius_gu = 1000.0f;
+    rockfield::PuffDials d;
+    std::vector<glm::dvec3> pos;
+    const auto p = rockfield::place_puffs(s, d, &pos);
+    ASSERT_EQ(p.size(), static_cast<std::size_t>(d.count));
+    for (const auto& x : pos) EXPECT_LE(glm::length(x - s.centre), 1000.0 + 1e-6);
 }

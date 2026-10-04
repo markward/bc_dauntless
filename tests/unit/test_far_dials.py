@@ -65,6 +65,7 @@ _PUFF_CPP_FIELDS = {
     "puff_count": "count", "puff_size_frac": "size_frac", "puff_opacity": "opacity",
     "puff_brightness": "brightness", "puff_start_gu": "start_gu",
     "puff_ramp_gu": "ramp_gu", "puff_near_fade": "near_fade",
+    "puff_belt_count": "belt_count", "puff_belt_size_h": "belt_size_h",
 }
 
 
