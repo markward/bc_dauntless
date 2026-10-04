@@ -133,6 +133,9 @@ struct NearOutput {
     int mesh_count = 0;
     int billboard_count = 0;          // every billboard: billboards + billboards_fading
     int billboard_fading_count = 0;   // billboards_fading only
+    // Diagnostics (tests, benches): cells whose per-cell broad phase ran and
+    // rocks whose per-rock test ran in this build (both classes).
+    int cells_tested = 0, rocks_tested = 0;
 };
 struct NearWeights { float mesh = 0, billboard = 0; };
 // Pure tier rule for camera distance d (spec §2): mesh 1 below mesh_gu - fade,
@@ -254,7 +257,24 @@ private:
         // unless the previous step saw it.
         std::uint64_t seen_step = 0;
         std::size_t seen_rocks = 0;
+        glm::i64vec3 ijk{0};             // streamed cells: the cell index (its block)
+        // Streamed cells: rock indices, largest radius first (build's
+        // pixel-floor early-out). Empty for the pinned test cell.
+        std::vector<std::uint32_t> by_radius;
     };
+    // Streamed cells grouped per class into blocks of kBlockCells^3 cells
+    // (aligned in cell index space, every source together), so build and
+    // step reject far-away cells a block at a time. A block's box and r_max
+    // only grow while it lives (conservative); an empty block is erased.
+    struct Block {
+        glm::dvec3 lo{0.0}, hi{0.0};     // system-space AABB of its cells
+        float r_max = 0.0f;              // largest rock radius of its cells
+        std::vector<std::pair<std::uint64_t, Cell*>> cells;   // unordered
+    };
+    std::unordered_map<std::uint64_t, Block> blocks_[2];      // per class
+    std::vector<std::uint64_t> pinned_;                       // the test cells' keys
+    void block_add(std::uint64_t key, Cell& c);
+    void block_remove(std::uint64_t key, const Cell& c);
     std::uint64_t key_of(std::uint64_t cell_key, const Cell& c, std::size_t i) const;
     void invalidate_stream_watch();
     // key: mix(source id, class, i, j, k); rock key = mix(cell key, index + 1)

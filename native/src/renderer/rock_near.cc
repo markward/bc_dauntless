@@ -4,6 +4,7 @@
 #include "renderer/rock_near.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <tuple>
@@ -156,6 +157,55 @@ constexpr double kStreamWatchGu = 2.0;
 // Slack for the Lipschitz bounds against double rounding in aabb_distance.
 constexpr double kStreamEps = 1e-6;
 
+// Cells per block edge (NearField::Block): ~40 GU small blocks, ~100 GU large.
+constexpr std::int64_t block_cells(NearClass cls) { return cls == NearClass::Small ? 4 : 2; }
+
+std::int64_t floor_div(std::int64_t a, std::int64_t b) {
+    const std::int64_t q = a / b;
+    return (a % b != 0 && a < 0) ? q - 1 : q;
+}
+
+std::uint64_t block_key(NearClass cls, const glm::i64vec3& ijk) {
+    const std::int64_t K = block_cells(cls);
+    return mix_ijk(0x0B10C0u, cls, glm::i64vec3(floor_div(ijk.x, K), floor_div(ijk.y, K), floor_div(ijk.z, K)));
+}
+
+// std::sort(v, less) for a `less` ordering by the float member d first (d >=
+// 0 and never NaN, so its bit patterns order as the values): an LSD radix
+// sort on d's bits, then each run of equal d sorted by `less` itself. The
+// same order (up to wholly equivalent items), far cheaper in a Debug build.
+template <class T, class Less>
+void sort_by_distance(std::vector<T>& v, Less less) {
+    const std::size_t n = v.size();
+    if (n < 64) { std::sort(v.begin(), v.end(), less); return; }
+    std::vector<std::uint64_t> a(n), b(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        std::uint32_t bits;
+        std::memcpy(&bits, &v[i].d, sizeof bits);
+        a[i] = (static_cast<std::uint64_t>(bits) << 32) | static_cast<std::uint64_t>(i);
+    }
+    std::uint64_t* src = a.data();
+    std::uint64_t* dst = b.data();
+    for (int shift = 32; shift < 64; shift += 8) {
+        std::size_t count[257] = {};
+        for (std::size_t i = 0; i < n; ++i) ++count[((src[i] >> shift) & 0xFFu) + 1];
+        for (int k = 0; k < 256; ++k) count[k + 1] += count[k];
+        for (std::size_t i = 0; i < n; ++i) dst[count[(src[i] >> shift) & 0xFFu]++] = src[i];
+        std::swap(src, dst);
+    }
+    std::vector<T> out(n);
+    T* o = out.data();
+    const T* in = v.data();
+    for (std::size_t i = 0; i < n; ++i) o[i] = in[src[i] & 0xFFFFFFFFu];
+    for (std::size_t i = 0; i < n;) {
+        std::size_t j = i + 1;
+        while (j < n && (src[j] >> 32) == (src[i] >> 32)) ++j;
+        if (j - i > 1) std::sort(out.begin() + static_cast<std::ptrdiff_t>(i), out.begin() + static_cast<std::ptrdiff_t>(j), less);
+        i = j;
+    }
+    v.swap(out);
+}
+
 float ramp_down(float d, float end, float fade) {   // 1 at end - fade, 0 at end
     if (!(fade > 0.0f)) return d < end ? 1.0f : 0.0f;
     if (d <= end - fade) return 1.0f;
@@ -304,6 +354,7 @@ void NearField::stream(const glm::dvec3& c) {
             if (!cell.pinned && d > keep) {
                 if (cell.cls == NearClass::Large && cell.seen_step == step_count_)
                     dropped_seen_[it->first] = cell.seen_rocks;
+                block_remove(it->first, cell);
                 it = cells_.erase(it);
                 continue;
             }
@@ -320,6 +371,7 @@ void NearField::stream(const glm::dvec3& c) {
             if (aabb_distance(c, cell.lo, cell.size) > keep_of(cell.cls)) {
                 if (cell.cls == NearClass::Large && cell.seen_step == step_count_)
                     dropped_seen_[it->first] = cell.seen_rocks;
+                block_remove(it->first, cell);
                 cells_.erase(it);
             }
         }
@@ -332,11 +384,17 @@ void NearField::stream(const glm::dvec3& c) {
         if (cells_.count(key)) return;
         Cell cell{cls, generate_near_cell(s, cls, ijk, dials_, cat_), lo, L, false, {}};
         for (const NearRock& r : cell.rocks) cell.r_max = std::max(cell.r_max, r.radius);
+        cell.ijk = ijk;
+        cell.by_radius.resize(cell.rocks.size());
+        for (std::size_t i = 0; i < cell.rocks.size(); ++i) cell.by_radius[i] = static_cast<std::uint32_t>(i);
+        std::stable_sort(cell.by_radius.begin(), cell.by_radius.end(), [&](std::uint32_t a, std::uint32_t b) {
+            return cell.rocks[a].radius > cell.rocks[b].radius;
+        });
         if (const auto ds = dropped_seen_.find(key); ds != dropped_seen_.end()) {
             cell.seen_step = step_count_;
             cell.seen_rocks = ds->second;
         }
-        cells_.emplace(key, std::move(cell));
+        block_add(key, cells_.emplace(key, std::move(cell)).first->second);
         if (drop_valid_) drop_watch_.push_back(key);
     };
     for (std::size_t si = 0; si < sources_.size(); ++si) {
@@ -401,6 +459,8 @@ void NearField::stream(const glm::dvec3& c) {
 
 void NearField::clear() {
     cells_.clear();
+    for (auto& b : blocks_) b.clear();
+    pinned_.clear();
     invalidate_stream_watch();
     // A fresh start, as a new field: the next stream gets the whole far shell
     // (a source change mid-dash costs that one frame, then shrinks again).
@@ -421,9 +481,28 @@ std::uint64_t NearField::key_of(std::uint64_t cell, const Cell& c, std::size_t i
     return c.pinned ? c.keys[i] : rock_key(cell, i);
 }
 
+void NearField::block_add(std::uint64_t key, Cell& c) {
+    Block& b = blocks_[static_cast<int>(c.cls)][block_key(c.cls, c.ijk)];
+    const glm::dvec3 hi = c.lo + glm::dvec3(c.size);
+    if (b.cells.empty()) { b.lo = c.lo; b.hi = hi; b.r_max = c.r_max; }
+    else { b.lo = glm::min(b.lo, c.lo); b.hi = glm::max(b.hi, hi); b.r_max = std::max(b.r_max, c.r_max); }
+    b.cells.emplace_back(key, &c);
+}
+
+void NearField::block_remove(std::uint64_t key, const Cell& c) {
+    auto& blocks = blocks_[static_cast<int>(c.cls)];
+    const auto it = blocks.find(block_key(c.cls, c.ijk));
+    if (it == blocks.end()) return;
+    auto& v = it->second.cells;
+    for (std::size_t i = 0; i < v.size(); ++i)
+        if (v[i].first == key) { v[i] = v.back(); v.pop_back(); break; }
+    if (v.empty()) blocks.erase(it);
+}
+
 void NearField::debug_add_rock(NearClass cls, std::uint64_t key, const NearRock& r) {
     // Fixed keys outside the hashed space in practice; one test cell per class.
     const std::uint64_t ck = 0x7E57CE11000000ull | static_cast<std::uint64_t>(cls);
+    if (!cells_.count(ck)) pinned_.push_back(ck);
     Cell& c = cells_[ck];
     c.cls = cls;
     c.pinned = true;
@@ -454,6 +533,7 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     out.billboards.clear();
     out.billboards_fading.clear();
     out.mesh_count = out.billboard_count = out.billboard_fading_count = 0;
+    out.cells_tested = out.rocks_tested = 0;
 
     const float k = far::pixels_per_gu(in.proj, in.viewport_h);
     const glm::vec3 eye = glm::vec3(glm::inverse(in.view)[3]);
@@ -466,6 +546,19 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
     // Translucent billboards (rock fade), by class draw rank then rock: rank
     // 0 is the class with the larger billboard_gu (the farther band).
     std::map<int, std::vector<far::ImpostorGpu>> fade_bins[2];
+    // The map entry per rock, looked up once per build (a handful of rocks).
+    struct BinCache {
+        std::map<int, std::vector<far::ImpostorGpu>>* bins;
+        std::vector<std::pair<int, std::vector<far::ImpostorGpu>*>> hit;
+        std::vector<far::ImpostorGpu>& get(int rock) {
+            const auto* h = hit.data();
+            for (std::size_t i = 0, n = hit.size(); i < n; ++i)
+                if (h[i].first == rock) return *h[i].second;
+            hit.emplace_back(rock, &(*bins)[rock]);
+            return *hit.back().second;
+        }
+    };
+    BinCache board_cache{&board_bins, {}}, fade_cache[2] = {{&fade_bins[0], {}}, {&fade_bins[1], {}}};
     const bool large_first = reach_gu(eff_, NearClass::Large) >= reach_gu(eff_, NearClass::Small);
     const bool far_shell = far_shell_on(eff_);
 
@@ -489,10 +582,23 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
         const bool shell = !small && far_shell;   // the large class's far-shell rule
 
         std::vector<Cand> cands;
-        for (const auto& [key, cell] : cells_) {
-            if (cell.cls != cls || cell.rocks.empty()) continue;
-            const bool shoved = small && !shoved_cells.empty() &&
-                                std::binary_search(shoved_cells.begin(), shoved_cells.end(), key);
+        std::size_t n_cands = 0;   // cands[0, n_cands) (grown by hand: a Debug-build hot path)
+        const float floor_px = small ? eff_.small_min_px : eff_.large_min_px;
+        const bool pixel_floor = shell || (small && eff_.small_min_px > 0.0f);
+        const float floor_from = cd.mesh_gu + std::max(eff_.fade_gu, 0.0f);   // the floor applies whole past here
+        const float fade_gu = eff_.fade_gu, handoff = eff_.handoff_fade_gu;
+        const float mesh_in = cd.mesh_gu - handoff, board_in = cd.billboard_gu - fade_gu;   // ramp_down's end - fade
+        // One cell: the broad phase, then the per-rock tests (pinned and
+        // shoved cells skip the broad phase: a shoved rock may sit off its cell).
+        // `of`: the frustum planes the cell's block straddles (the cell lies
+        // inside the others with room to spare).
+        const auto visit = [&](std::uint64_t key, const Cell& cell, bool shoved, unsigned of) {
+            ++out.cells_tested;
+            // Past floor_from, a cell's rocks visited largest first stop at the
+            // first under the pixel floor: every later one is as small or
+            // smaller and at least as far (>= d_lo), so has a zero weight.
+            float cut_d_lo = 0.0f;
+            unsigned planes = 0x3Fu;   // the frustum planes each rock is tested on
             if (!cell.pinned && !shoved) {
                 // Cell broad phase: every rock centre lies within the cell's
                 // half-diagonal of its centre, so a cell wholly beyond d_max
@@ -507,45 +613,153 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 const float slack = 0.01f + 1e-5f * (std::fabs(cc.x) + std::fabs(cc.y) +
                                                      std::fabs(cc.z) + eye_len);
                 const float d_lo = std::sqrt(dot3(dx, dy, dz, dx, dy, dz)) - half_diag - slack;
-                if (d_lo >= d_max) continue;
-                if (!frustum.sphere(cc, half_diag + cell.r_max + slack)) continue;
+                if (d_lo >= d_max) return;
+                if (!frustum.sphere_on(cc, half_diag + cell.r_max + slack, of)) return;
+                // Only the planes the cell straddles can reject one of its rocks.
+                planes = frustum.straddled(cc, half_diag + slack, of);
                 // The pixel floor, whole cell: beyond the mesh range every
                 // rock's on-screen radius is at most r_max * k / d_lo.
-                if ((shell || (small && eff_.small_min_px > 0.0f)) && d_lo > cd.mesh_gu + std::max(eff_.fade_gu, 0.0f) &&
-                    !(cell.r_max * k / d_lo > (small ? eff_.small_min_px : eff_.large_min_px)))
-                    continue;
+                if (pixel_floor && d_lo > floor_from) {
+                    if (!(cell.r_max * k / d_lo > floor_px)) return;
+                    cut_d_lo = d_lo;
+                }
             }
-            for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
-                const NearRock& r = cell.rocks[i];
-                // vec3(pos_sys - to_render) and length(c - eye), as scalars.
-                glm::vec3 c(static_cast<float>(r.pos_sys.x - to_render.x),
-                            static_cast<float>(r.pos_sys.y - to_render.y),
-                            static_cast<float>(r.pos_sys.z - to_render.z));
+            const std::size_t n = cell.rocks.size();
+            const NearRock* rock_p = cell.rocks.data();
+            const bool ordered = cut_d_lo > 0.0f && cell.by_radius.size() == n;
+            for (std::size_t j = 0; j < n; ++j) {
+                const std::size_t i = ordered ? cell.by_radius[j] : j;
+                const NearRock& r = rock_p[i];
+                if (ordered && !(r.radius * k / cut_d_lo > floor_px)) break;
+                ++out.rocks_tested;
+                // vec3(pos_sys - to_render) and length(c - eye), as scalars
+                // (hand-inlined throughout: this loop is the build's hot path
+                // in the Debug build, where every helper is a call).
+                float cx = static_cast<float>(r.pos_sys.x - to_render.x);
+                float cy = static_cast<float>(r.pos_sys.y - to_render.y);
+                float cz = static_cast<float>(r.pos_sys.z - to_render.z);
                 float spin = 0.0f;
                 if (shoved)
                     if (auto sh = shoves_.find(key_of(key, cell, i)); sh != shoves_.end()) {
-                        c += sh->second.s.offset;
+                        cx += sh->second.s.offset.x;
+                        cy += sh->second.s.offset.y;
+                        cz += sh->second.s.offset.z;
                         spin = sh->second.s.spin;
                     }
-                const float ex = c.x - eye.x, ey = c.y - eye.y, ez = c.z - eye.z;
-                const float d = std::sqrt(dot3(ex, ey, ez, ex, ey, ez));
-                NearWeights w = shell ? near_large_weights(d, r.radius * k / std::max(d, 1e-3f), eff_)
-                                      : near_weights(d, cd, eff_.fade_gu, eff_.handoff_fade_gu);
+                const float ex = cx - eye.x, ey = cy - eye.y, ez = cz - eye.z;
+                const float exx = ex * ex;   // glm_exact::dot3
+                const float eyy = ey * ey;
+                const float ezz = ez * ez;
+                const float d = std::sqrt(exx + eyy + ezz);
+                // Neither tier draws at d >= d_max (the weights below are 0 there).
+                if (!(d < d_max)) continue;
+                NearWeights w;
+                if (shell) {
+                    w = near_large_weights(d, r.radius * k / std::max(d, 1e-3f), eff_);
+                } else {
+                    // near_weights(d, cd, fade_gu, handoff_fade_gu), op for op.
+                    w.mesh = !(handoff > 0.0f) ? (d < cd.mesh_gu ? 1.0f : 0.0f)
+                           : d <= mesh_in ? 1.0f : d >= cd.mesh_gu ? 0.0f : (cd.mesh_gu - d) / handoff;
+                    const float bb = !(fade_gu > 0.0f) ? (d < cd.billboard_gu ? 1.0f : 0.0f)
+                                   : d <= board_in ? 1.0f : d >= cd.billboard_gu ? 0.0f
+                                   : (cd.billboard_gu - d) / fade_gu;
+                    const float rest = 1.0f - w.mesh;
+                    w.billboard = bb < rest ? bb : rest;   // std::min(rest, bb)
+                }
                 if (small && eff_.small_min_px > 0.0f) {   // the small pixel floor (0 = off), blended in past the mesh edge
-                    const float fade = eff_.fade_gu;
-                    const float tt = fade > 0.0f ? std::clamp((d - cd.mesh_gu) / fade, 0.0f, 1.0f)
-                                                 : (d > cd.mesh_gu ? 1.0f : 0.0f);
-                    w.billboard *= 1.0f - tt * (1.0f - pixel_ramp(r.radius * k / std::max(d, 1e-3f),
-                                                                   eff_.small_min_px));
+                    float tt;
+                    if (fade_gu > 0.0f) {   // std::clamp((d - mesh_gu) / fade, 0, 1)
+                        const float v = (d - cd.mesh_gu) / fade_gu;
+                        tt = v < 0.0f ? 0.0f : (1.0f < v ? 1.0f : v);
+                    } else {
+                        tt = d > cd.mesh_gu ? 1.0f : 0.0f;
+                    }
+                    const float px = r.radius * k / (d < 1e-3f ? 1e-3f : d);   // std::max(d, 1e-3f)
+                    float ramp = 0.0f;                                          // pixel_ramp(px, floor)
+                    if (px > eff_.small_min_px) {
+                        const float u = (px - eff_.small_min_px) / kNearPixelFadeBand;
+                        ramp = u < 1.0f ? u : 1.0f;
+                    }
+                    w.billboard *= 1.0f - tt * (1.0f - ramp);
                 }
                 if (!(w.mesh > 0.0f) && !(w.billboard > 0.0f)) continue;
-                if (!frustum.sphere(c, r.radius)) continue;
-                cands.push_back({d, c, w, &r, spin});
+                if (planes != 0) {   // frustum.sphere_on(c, radius, planes)
+                    bool out_of_view = false;
+                    for (unsigned pi = 0, m = planes; m != 0; ++pi, m >>= 1) {
+                        if (!(m & 1u)) continue;
+                        const glm::vec4& pl = frustum.planes[pi];
+                        const float px_ = pl.x * cx;
+                        const float py_ = pl.y * cy;
+                        const float pz_ = pl.z * cz;
+                        if (px_ + py_ + pz_ + pl.w < -r.radius) { out_of_view = true; break; }
+                    }
+                    if (out_of_view) continue;
+                }
+                if (n_cands == cands.size()) cands.resize(2 * n_cands + 256);
+                Cand& cn = cands.data()[n_cands++];
+                cn.d = d;
+                cn.c.x = cx; cn.c.y = cy; cn.c.z = cz;
+                cn.w = w;
+                cn.rock = &r;
+                cn.spin = spin;
+            }
+        };
+        const auto is_shoved = [&](std::uint64_t key) {
+            return small && !shoved_cells.empty() &&
+                   std::binary_search(shoved_cells.begin(), shoved_cells.end(), key);
+        };
+        // The blocks holding a shoved cell: only their cells need the lookup.
+        std::vector<std::uint64_t> shoved_blocks;
+        if (small)
+            for (const std::uint64_t key : shoved_cells)
+                if (const auto it = cells_.find(key); it != cells_.end() && !it->second.pinned)
+                    shoved_blocks.push_back(block_key(it->second.cls, it->second.ijk));
+        std::sort(shoved_blocks.begin(), shoved_blocks.end());
+        // The test cells and shoved cells, each once, outside the blocks.
+        // (The candidates are sorted below, so the visiting order is not output.)
+        for (const std::uint64_t key : pinned_) {
+            const auto it = cells_.find(key);
+            if (it != cells_.end() && it->second.cls == cls && !it->second.rocks.empty())
+                visit(key, it->second, is_shoved(key), 0x3Fu);
+        }
+        if (small)
+            for (std::size_t si = 0; si < shoved_cells.size(); ++si) {
+                const std::uint64_t key = shoved_cells[si];
+                if (si > 0 && shoved_cells[si - 1] == key) continue;
+                const auto it = cells_.find(key);
+                if (it == cells_.end() || it->second.pinned || it->second.cls != cls || it->second.rocks.empty())
+                    continue;
+                visit(key, it->second, true, 0x3Fu);
+            }
+        // Block broad phase: as the cell one, over the block's bounding
+        // sphere (its box's half-diagonal) widened by its largest rock and a
+        // float slack that grows with the block -- conservative, so a block
+        // is rejected only when every cell in it would be.
+        for (const auto& [bkey, b] : blocks_[static_cast<int>(cls)]) {
+            const glm::dvec3 bc = 0.5 * (b.lo + b.hi);
+            const glm::vec3 cc(static_cast<float>(bc.x - to_render.x), static_cast<float>(bc.y - to_render.y),
+                               static_cast<float>(bc.z - to_render.z));
+            const glm::dvec3 ext = b.hi - b.lo;
+            const float rad = static_cast<float>(0.5 * std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z));
+            const float dx = cc.x - eye.x, dy = cc.y - eye.y, dz = cc.z - eye.z;
+            const float slack = 0.05f + 1e-5f * (std::fabs(cc.x) + std::fabs(cc.y) + std::fabs(cc.z) +
+                                                 eye_len + rad);
+            const float d_lo = std::sqrt(dx * dx + dy * dy + dz * dz) - rad - slack;
+            if (d_lo >= d_max) continue;
+            if (!frustum.sphere(cc, rad + b.r_max + slack)) continue;
+            const unsigned of = frustum.straddled(cc, rad + slack);
+            if (pixel_floor && d_lo > floor_from && !(b.r_max * k / d_lo > floor_px)) continue;
+            const bool any_shoved = !shoved_blocks.empty() &&
+                                    std::binary_search(shoved_blocks.begin(), shoved_blocks.end(), bkey);
+            for (const auto& [key, cp] : b.cells) {
+                if (cp->rocks.empty() || (any_shoved && is_shoved(key))) continue;
+                visit(key, *cp, false, of);
             }
         }
         // Nearest first so the cap drops the far end; ties by catalogue index
         // and position keep the order independent of the cell map's order.
-        std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+        cands.resize(n_cands);
+        sort_by_distance(cands, [](const Cand& a, const Cand& b) {
             if (a.d != b.d) return a.d < b.d;
             if (a.rock->rock != b.rock->rock) return a.rock->rock < b.rock->rock;
             return std::tie(a.c.x, a.c.y, a.c.z) < std::tie(b.c.x, b.c.y, b.c.z);
@@ -577,8 +791,8 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 // screen door (the two must complement exactly); fading in
                 // from nothing at billboard_gu is translucent.
                 const bool translucent = dither != 0.0f && !(cn.w.mesh > 0.0f);
-                auto& bin = translucent ? fade_bins[small == large_first ? 1 : 0][r.rock]
-                                        : board_bins[r.rock];
+                auto& bin = translucent ? fade_cache[small == large_first ? 1 : 0].get(r.rock)
+                                        : board_cache.get(r.rock);
                 bin.push_back(far::make_impostor(views_, eye, cn.c, R, r.radius, dither));
                 ++emitted;
             }

@@ -57,6 +57,27 @@ struct Frustum {
             if (glm_exact::dot3(pl.x, pl.y, pl.z, c.x, c.y, c.z) + pl.w < -r) return false;
         return true;
     }
+    // The planes the sphere (c, r) does NOT lie wholly inside (bit i = plane
+    // i). A point within r - rp - (rounding) of c passes sphere(p, rp) on
+    // every other plane, so sphere_on(p, rp, mask) == sphere(p, rp) for it.
+    unsigned straddled(const glm::vec3& c, float r, unsigned of = 0x3Fu) const {
+        unsigned m = 0;
+        for (unsigned i = 0; i < 6; ++i) {
+            if (!(of >> i & 1u)) continue;   // known inside (a parent sphere's mask)
+            const glm::vec4& pl = planes[i];
+            if (!(pl.x * c.x + pl.y * c.y + pl.z * c.z + pl.w >= r)) m |= 1u << i;
+        }
+        return m;
+    }
+    // sphere(), testing only the planes in `mask`.
+    bool sphere_on(const glm::vec3& c, float r, unsigned mask) const {
+        for (unsigned i = 0; mask != 0; ++i, mask >>= 1) {
+            if (!(mask & 1u)) continue;
+            const glm::vec4& pl = planes[i];
+            if (glm_exact::dot3(pl.x, pl.y, pl.z, c.x, c.y, c.z) + pl.w < -r) return false;
+        }
+        return true;
+    }
 };
 
 }  // namespace renderer::rockfield::detail

@@ -1167,3 +1167,44 @@ TEST(NearFarLarge, ThePixelFloorDoesNotPopWhereTheMeshEnds) {
     for (float x = 55.0f; x < 66.0f; x += 0.01f)
         EXPECT_LT(std::fabs(w(x + 0.01f).billboard - w(x).billboard), 0.01f) << x;
 }
+
+// ---- Near band CPU at the 3x ranges (rock-perf2, 2026-10-04) ----------------
+// What build/stream/step produce is pinned by RockPerfEquivalence; these pin
+// that the work stays local.
+#include "rock_scenario.h"
+namespace {
+struct Beol4Frame {
+    rockfield::NearField f;
+    rockfield::NearBuildInput bin;
+    rockfield::NearOutput out;
+    Beol4Frame() {
+        f.set_catalogue(rock_scenario::near_catalogue());
+        f.set_sources({rock_scenario::beol4_field()});
+        bin.viewport_h = 1080.0f;
+        const auto pose = rock_scenario::player_pose(30, 6.0);
+        f.stream(pose.pos);
+        rock_scenario::chase_camera(pose, bin.view, bin.proj);
+        f.build(bin, out);
+    }
+};
+}  // namespace
+
+TEST(NearPerf, BuildVisitsOnlyTheCellsOfBlocksInView) {
+    Beol4Frame fr;
+    const int cells = fr.f.stats().cells;
+    ASSERT_GT(cells, 3000);
+    ASSERT_GT(fr.out.billboard_count, 100);
+    // Every streamed cell was tested before the blocks (4,851 of 4,868 here);
+    // the blocks of a chase camera's 60 x 92 degree view hold under half.
+    EXPECT_LT(fr.out.cells_tested, cells / 2) << "of " << cells;
+}
+
+TEST(NearPerf, BuildStopsAtTheFirstRockUnderThePixelFloor) {
+    Beol4Frame fr;
+    const auto st = fr.f.stats();
+    // Most small rocks at 30-90 GU are under the 2.5 px floor: within a cell
+    // they are visited largest first and the rest skipped at the first one
+    // under it (6,823 rocks were tested here before; ~2,900 after).
+    EXPECT_LT(fr.out.rocks_tested, (st.small + st.large) / 10)
+        << "small=" << st.small << " large=" << st.large;
+}
