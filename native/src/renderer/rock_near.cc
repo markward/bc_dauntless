@@ -176,9 +176,15 @@ std::int64_t floor_div(std::int64_t a, std::int64_t b) {
     return (a % b != 0 && a < 0) ? q - 1 : q;
 }
 
+// The block index packed into 3 x 21 bits (wrapping far beyond any
+// streamed range: blocks 2^21 apart would share a key, harmlessly -- a key
+// only groups cells, the cells keep their own boxes).
 std::uint64_t block_key(NearClass cls, const glm::i64vec3& ijk) {
     const std::int64_t K = block_cells(cls);
-    return mix_ijk(0x0B10C0u, cls, glm::i64vec3(floor_div(ijk.x, K), floor_div(ijk.y, K), floor_div(ijk.z, K)));
+    const std::uint64_t bx = static_cast<std::uint64_t>(floor_div(ijk.x, K)) & 0x1FFFFFu;
+    const std::uint64_t by = static_cast<std::uint64_t>(floor_div(ijk.y, K)) & 0x1FFFFFu;
+    const std::uint64_t bz = static_cast<std::uint64_t>(floor_div(ijk.z, K)) & 0x1FFFFFu;
+    return (bx << 42) | (by << 21) | bz;
 }
 
 // std::sort(v, less) for a `less` ordering by the float member d first (d >=
@@ -344,16 +350,14 @@ void NearField::stream(const glm::dvec3& c) {
             invalidate_stream_watch();   // the large ranges moved
         }
     }
-    if (has_last_centre_) path_s_ += glm::length(c - last_centre_);
+    const double step_s = has_last_centre_ ? glm::length(c - last_centre_) : 0.0;
+    path_s_ += step_s;
     has_last_centre_ = true;
     last_centre_ = c;
     last_stream_cells_tested_ = 0;
     // Bound the path length (its rounding) by starting the watch afresh.
     if (path_s_ > kStreamPathRebaseGu) invalidate_stream_watch();
-    const auto tested_distance = [this](const glm::dvec3& p, const glm::dvec3& lo, double size) {
-        ++last_stream_cells_tested_;
-        return aabb_distance(p, lo, size);
-    };
+    // (Counted inline, not through a wrapper: the dash pass runs this per cell.)
     // A heap entry is due once path_s_ reaches it, with slack for rounding:
     // re-testing early is harmless, late never happens.
     const double now_s = path_s_ + kStreamPathSlackGu;
@@ -383,19 +387,24 @@ void NearField::stream(const glm::dvec3& c) {
         block_remove(it->first, cell);
         return cells_.erase(it);
     };
+    // At dash speed (this frame's travel past kStreamRecordMaxMoveGu) the
+    // heap would pop nearly every cell: test them all directly instead and
+    // keep no heap until the travel slows again.
+    if (step_s > kStreamRecordMaxMoveGu) drop_valid_ = false;
     if (!drop_valid_) {
+        const bool record = !(step_s > kStreamRecordMaxMoveGu);
         drop_heap_.clear();
         for (auto it = cells_.begin(); it != cells_.end();) {
             const Cell& cell = it->second;
             if (cell.pinned) { ++it; continue; }
             const double keep = keep_of(cell.cls);
-            const double d = tested_distance(c, cell.lo, cell.size);
+            const double d = (++last_stream_cells_tested_, aabb_distance(c, cell.lo, cell.size));
             if (d > keep) { it = drop(it); continue; }
-            drop_heap_.push_back({path_s_ + (keep - d), it->first});
+            if (record) drop_heap_.push_back({path_s_ + (keep - d), it->first});
             ++it;
         }
         std::make_heap(drop_heap_.begin(), drop_heap_.end(), std::greater<Due>());
-        drop_valid_ = true;
+        drop_valid_ = record;
     } else {
         std::vector<Due> again;
         while (!drop_heap_.empty() && drop_heap_.front().due <= now_s) {
@@ -403,7 +412,7 @@ void NearField::stream(const glm::dvec3& c) {
             const auto it = cells_.find(e.id);
             if (it == cells_.end() || it->second.pinned) continue;
             const double keep = keep_of(it->second.cls);
-            const double d = tested_distance(c, it->second.lo, it->second.size);
+            const double d = (++last_stream_cells_tested_, aabb_distance(c, it->second.lo, it->second.size));
             if (d > keep) drop(it);
             else again.push_back({path_s_ + (keep - d), e.id});
         }
@@ -419,15 +428,22 @@ void NearField::stream(const glm::dvec3& c) {
         Cell cell{cls, generate_near_cell(s, cls, ijk, dials_, cat_), lo, L, false, {}};
         for (const NearRock& r : cell.rocks) cell.r_max = std::max(cell.r_max, r.radius);
         cell.ijk = ijk;
-        cell.by_radius.resize(cell.rocks.size());
-        for (std::size_t i = 0; i < cell.rocks.size(); ++i) cell.by_radius[i] = static_cast<std::uint32_t>(i);
-        std::stable_sort(cell.by_radius.begin(), cell.by_radius.end(), [&](std::uint32_t a, std::uint32_t b) {
-            return cell.rocks[a].radius > cell.rocks[b].radius;
-        });
+        if (const std::size_t n = cell.rocks.size(); n <= 16) {
+            // Largest radius first, ties by index (an insertion sort: a handful).
+            std::uint32_t o[16];
+            const NearRock* rk = cell.rocks.data();
+            for (std::size_t i = 0; i < n; ++i) {
+                std::size_t j = i;
+                while (j > 0 && rk[o[j - 1]].radius < rk[i].radius) { o[j] = o[j - 1]; --j; }
+                o[j] = static_cast<std::uint32_t>(i);
+            }
+            for (std::size_t i = 0; i < n; ++i) cell.by_radius4 |= static_cast<std::uint64_t>(o[i]) << (4 * i);
+            cell.ordered = true;
+        }
         cell.born = step_count_;
-        if (dropped_seen_.count(key)) cell.born = step_count_ - 1;   // seen by the last step, as it was
+        if (!dropped_seen_.empty() && dropped_seen_.count(key)) cell.born = step_count_ - 1;   // seen by the last step, as it was
         block_add(key, cells_.emplace(key, std::move(cell)).first->second);
-        heap_push(drop_heap_, {path_s_ + std::max(0.0, keep_of(cls) - d), key});
+        if (drop_valid_) heap_push(drop_heap_, {path_s_ + std::max(0.0, keep_of(cls) - d), key});
     };
     for (std::size_t si = 0; si < sources_.size(); ++si) {
         const far::DiscSource& s = sources_[si];
@@ -471,7 +487,7 @@ void NearField::stream(const glm::dvec3& c) {
                 for (const std::uint64_t idx : due) {
                     const glm::i64vec3& ijk = w.shell[idx];
                     const glm::dvec3 lo = glm::dvec3(ijk) * L;
-                    const double d = tested_distance(c, lo, L);
+                    const double d = (++last_stream_cells_tested_, aabb_distance(c, lo, L));
                     const bool box = in_box(ijk);
                     if (d <= R && box) generate(s, cls, ijk, lo, L, d);
                     w.heap.push_back({due_of(d, box), idx});
@@ -501,7 +517,7 @@ void NearField::stream(const glm::dvec3& c) {
                     for (auto k = a.z; k <= b.z; ++k) {
                         const glm::i64vec3 ijk(i, j, k);
                         const glm::dvec3 lo = glm::dvec3(ijk) * L;
-                        const double d = tested_distance(c, lo, L);
+                        const double d = (++last_stream_cells_tested_, aabb_distance(c, lo, L));
                         const bool box = in_box(ijk);
                         if (record && d > R - ww - kStreamEps && d <= Rw + kStreamEps) {
                             w.heap.push_back({due_of(d, box), w.shell.size()});
@@ -509,7 +525,7 @@ void NearField::stream(const glm::dvec3& c) {
                         }
                         if (d > R || !box) continue;
                         if (known_prev && i >= pa.x && i <= pb.x && j >= pa.y && j <= pb.y && k >= pa.z &&
-                            k <= pb.z && tested_distance(w.c_prev, lo, L) <= R)
+                            k <= pb.z && (++last_stream_cells_tested_, aabb_distance(w.c_prev, lo, L)) <= R)
                             continue;
                         generate(s, cls, ijk, lo, L, d);
                     }
@@ -548,20 +564,36 @@ std::uint64_t NearField::key_of(std::uint64_t cell, const Cell& c, std::size_t i
 }
 
 void NearField::block_add(std::uint64_t key, Cell& c) {
-    Block& b = blocks_[static_cast<int>(c.cls)][block_key(c.cls, c.ijk)];
-    const glm::dvec3 hi = c.lo + glm::dvec3(c.size);
-    if (b.cells.empty()) { b.lo = c.lo; b.hi = hi; b.r_max = c.r_max; }
-    else { b.lo = glm::min(b.lo, c.lo); b.hi = glm::max(b.hi, hi); b.r_max = std::max(b.r_max, c.r_max); }
+    c.block = block_key(c.cls, c.ijk);
+    Block& b = blocks_[static_cast<int>(c.cls)][c.block];
+    // (Scalar min/max: this runs per generated cell, thousands per dash frame.)
+    const double hx = c.lo.x + c.size, hy = c.lo.y + c.size, hz = c.lo.z + c.size;
+    if (b.cells.empty()) {
+        b.lo = c.lo;
+        b.hi.x = hx; b.hi.y = hy; b.hi.z = hz;
+        b.r_max = c.r_max;
+    } else {
+        if (c.lo.x < b.lo.x) b.lo.x = c.lo.x;
+        if (c.lo.y < b.lo.y) b.lo.y = c.lo.y;
+        if (c.lo.z < b.lo.z) b.lo.z = c.lo.z;
+        if (hx > b.hi.x) b.hi.x = hx;
+        if (hy > b.hi.y) b.hi.y = hy;
+        if (hz > b.hi.z) b.hi.z = hz;
+        if (c.r_max > b.r_max) b.r_max = c.r_max;
+    }
+    c.block_slot = b.cells.size();
     b.cells.emplace_back(key, &c);
 }
 
 void NearField::block_remove(std::uint64_t key, const Cell& c) {
+    (void)key;
     auto& blocks = blocks_[static_cast<int>(c.cls)];
-    const auto it = blocks.find(block_key(c.cls, c.ijk));
+    const auto it = blocks.find(c.block);
     if (it == blocks.end()) return;
     auto& v = it->second.cells;
-    for (std::size_t i = 0; i < v.size(); ++i)
-        if (v[i].first == key) { v[i] = v.back(); v.pop_back(); break; }
+    v[c.block_slot] = v.back();               // swap-remove, the moved cell learns its slot
+    v[c.block_slot].second->block_slot = c.block_slot;
+    v.pop_back();
     if (v.empty()) blocks.erase(it);
 }
 
@@ -692,9 +724,9 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
             }
             const std::size_t n = cell.rocks.size();
             const NearRock* rock_p = cell.rocks.data();
-            const bool ordered = cut_d_lo > 0.0f && cell.by_radius.size() == n;
+            const bool ordered = cut_d_lo > 0.0f && cell.ordered;
             for (std::size_t j = 0; j < n; ++j) {
-                const std::size_t i = ordered ? cell.by_radius[j] : j;
+                const std::size_t i = ordered ? static_cast<std::size_t>(cell.by_radius4 >> (4 * j) & 15u) : j;
                 const NearRock& r = rock_p[i];
                 if (ordered && !(r.radius * k / cut_d_lo > floor_px)) break;
                 ++out.rocks_tested;

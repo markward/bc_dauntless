@@ -267,10 +267,16 @@ private:
         std::uint64_t born = 0;
         std::uint64_t seen_step = 0;
         std::size_t seen_rocks = 0;
-        glm::i64vec3 ijk{0};             // streamed cells: the cell index (its block)
-        // Streamed cells: rock indices, largest radius first (build's
-        // pixel-floor early-out). Empty for the pinned test cell.
-        std::vector<std::uint32_t> by_radius;
+        glm::i64vec3 ijk{0};             // streamed cells: the cell index
+        std::uint64_t block = 0;         // streamed cells: its block's key ...
+        std::size_t block_slot = 0;      // ... and its index in Block::cells
+        // Streamed cells of at most 16 rocks (nearly all): rock indices,
+        // largest radius first, packed 4 bits each -- build's pixel-floor
+        // early-out (no allocation per cell: thousands are generated per
+        // dash frame). ordered = false: no order (the pinned test cell, or
+        // more than 16 rocks), every rock is tested.
+        bool ordered = false;
+        std::uint64_t by_radius4 = 0;
     };
     // Streamed cells grouped per class into blocks of kBlockCells^3 cells
     // (aligned in cell index space, every source together), so build and
