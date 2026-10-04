@@ -84,6 +84,13 @@ _REQUIRED_BINDINGS = frozenset({
     "minors_fade_out", "minors_set_fragments", "minors_set_player",
     "minors_set_dials", "minors_set_enabled", "minors_enabled",
     "minors_drain_contacts", "minors_stats", "minors_clear",
+    "far_set_catalogue", "far_set_rocks", "far_set_sources",
+    "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
+    "far_stats", "far_clear",
+    "rock_specks_set_enabled", "rock_specks_enabled",
+    "rock_puffs_set_enabled", "rock_puffs_enabled",
+    "rockfield_drain_contacts", "rockfield_set_shield_inflate",
+    "rockfield_rearm", "rockfield_catalogue_size", "rockfield_set_player",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -586,6 +593,119 @@ def minors_stats() -> dict:
 def minors_clear() -> None:
     """Drop every cloud, fragment table and pending contact."""
     _h.minors_clear()
+
+
+# ── Far tier (docs/superpowers/specs/2026-10-01-far-tier-design.md) ──
+
+
+def far_set_catalogue(entries: list, view_dirs: list) -> None:
+    """Catalogue by index: [{"albedo", "normal", "avg_albedo"}, ...] plus the
+    impostor bake's view directions; empty atlas paths mean no impostor.
+    Optional per entry: "kind", "family", "lod0"/"lod1" model handles and
+    "bound_radius_mu" -- a silicate fragment / major with both handles
+    streams in the rock-fields near band."""
+    _h.far_set_catalogue(entries, view_dirs)
+
+
+def far_set_rocks(rocks: list) -> None:
+    """Flagged rocks: [{"instance", "index", "radius_mu"}, ...]; replaces the list."""
+    _h.far_set_rocks(rocks)
+
+
+def far_set_sources(sources: list) -> None:
+    """Disc density sources as DiscSource.to_native() dicts."""
+    _h.far_set_sources(sources)
+
+
+def far_set_frame(system, anchor) -> None:
+    """The viewed system (None: none) and view-space origin's system position."""
+    _h.far_set_frame(system, anchor)
+
+
+def far_set_dials(d: dict) -> None:
+    """Set the native far dials; an omitted key resets to its default."""
+    _h.far_set_dials(d)
+
+
+def far_set_enabled(enabled: bool) -> None:
+    """Turn the far tier's build and draws on or off."""
+    _h.far_set_enabled(bool(enabled))
+
+
+def far_enabled() -> bool:
+    """Whether the far tier builds and draws."""
+    return _h.far_enabled()
+
+
+def rock_specks_set_enabled(enabled: bool) -> None:
+    """Turn the rock-fields speck band (the near band's large rocks past
+    their billboard range as specks) on or off; far_set_enabled still gates
+    it."""
+    _h.rock_specks_set_enabled(bool(enabled))
+
+
+def rock_specks_enabled() -> bool:
+    """Whether the rock-fields speck band draws."""
+    return _h.rock_specks_enabled()
+
+
+def rock_puffs_set_enabled(enabled: bool) -> None:
+    """Turn the rock-fields puffs (a field's far look) on or off;
+    far_set_enabled still gates them."""
+    _h.rock_puffs_set_enabled(bool(enabled))
+
+
+def rock_puffs_enabled() -> bool:
+    """Whether the rock-fields puffs draw."""
+    return _h.rock_puffs_enabled()
+
+
+def far_stats() -> dict:
+    """{"sources", "rocks", "impostors", "specks", "draw_calls"}, plus the
+    near band's {"near_cells", "near_small", "near_large", "near_ghosted",
+    "near_meshes", "near_billboards"}; impostors, specks, draw_calls and
+    near_meshes / near_billboards summed over the last frame's cameras
+    (near_billboards counts only billboards that drew: an atlas that failed
+    to load draws none)."""
+    return _h.far_stats()
+
+
+def far_clear() -> None:
+    """Drop sources, flagged rocks, frame and the near band's cells and
+    contacts (keeps the catalogue)."""
+    _h.far_clear()
+
+
+def rockfield_drain_contacts() -> list:
+    """Player/large near-rock touches since the last drain: [{"point",
+    "normal", "rock_centre" (VIEW-space tuples), "rock_radius", "rel_speed",
+    "pen", "key" (int; rockfield_rearm)}, ...]."""
+    return _h.rockfield_drain_contacts()
+
+
+def rockfield_rearm(key: int) -> None:
+    """Clear one large rock's touch cooldown, so its next touching step
+    reports again (scenery_contact rejected its touch for geometry)."""
+    _h.rockfield_rearm(int(key))
+
+
+def rockfield_catalogue_size() -> int:
+    """Rocks in the native near catalogue; 0 after a host init (its model
+    handles died with the old session)."""
+    return _h.rockfield_catalogue_size()
+
+
+def rockfield_set_player(iid) -> None:
+    """The InstanceId the near band streams around and whose hull box meets
+    its rocks, or None (streams around the main camera, no contacts). The
+    near band's own player -- independent of minors_set_player."""
+    _h.rockfield_set_player(iid)
+
+
+def rockfield_set_shield_inflate(scale: float) -> None:
+    """> 0: the player's near-band contact box half extents x this (shields
+    up); <= 0: the bare hull box."""
+    _h.rockfield_set_shield_inflate(float(scale))
 
 
 def set_nebula_wake(points: list) -> None:

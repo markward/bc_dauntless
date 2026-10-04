@@ -50,17 +50,6 @@ def test_dying_rock_has_no_halo(monkeypatch):
     assert minors.halo_spec(_Rock("a"), iid=1) is None
 
 
-def test_tile_spec_beol4_is_405_minors():
-    from engine.appc.asteroid_field import AsteroidField
-    f = AsteroidField()
-    f.SetName("Asteroid Field 1")
-    f.SetFieldRadius(1000.0); f.SetNumTilesPerAxis(3)
-    f.SetNumAsteroidsPerTile(15); f.SetAsteroidSizeFactor(7.0)
-    s = minors.tile_spec(f, view_set=None, set_name="Beol4", offset=(0, 0, 0))
-    assert s.count == 405 and s.shell_outer == 1000.0
-    assert s.r_max == pytest.approx(0.7) and s.anchor == "point"
-
-
 def test_no_catalogue_means_no_clouds(monkeypatch):
     from engine.rocks import catalogue
     monkeypatch.setattr(catalogue, "load", lambda: ())
@@ -175,7 +164,8 @@ def _field(name="Asteroid Field 1", x=0.0, y=0.0, z=0.0):
 
 def test_every_desc_carries_every_native_key():
     r = _Rec()
-    minors.reconcile_with(r, None, {_Rock("A"): 5}, [_field()], None)
+    minors.register_free_cloud(_free("B"))
+    minors.reconcile_with(r, None, {_Rock("A"): 5}, [], None)
     keys = {"id", "anchor", "instance", "point", "velocity", "t0",
             "shell_inner", "shell_outer", "falloff", "count", "r_min",
             "r_max", "size_exponent", "family", "seed", "orbit_rate",
@@ -188,27 +178,6 @@ def test_every_desc_carries_every_native_key():
     halo = next(d for d in descs if d["anchor"] == "instance")
     assert halo["instance"] == 5
     assert halo["seed"] == zlib.crc32(b"halo:A")
-
-
-def test_tile_point_is_the_field_location_plus_offset_and_seeded_by_name():
-    f = _field(x=10.0, y=20.0, z=30.0)
-    s = minors.tile_spec(f, view_set=None, set_name="Vesuvi1",
-                         offset=(1.0, 2.0, 3.0))
-    assert s.point == pytest.approx((11.0, 22.0, 33.0))
-    assert s.key == "tile:Vesuvi1:Asteroid Field 1"
-    assert s.seed == zlib.crc32(b"tile:Vesuvi1:Asteroid Field 1")
-    assert s.shell_inner == 0.0 and s.falloff == 0.0
-    assert s.family == md.FAMILY_INDEX["silicate"]
-    assert s.instance is None
-
-
-def test_empty_or_radiusless_field_has_no_tile_cloud():
-    f = _field()
-    f.SetNumAsteroidsPerTile(0)
-    assert minors.tile_spec(f, None, "S", (0, 0, 0)) is None
-    g = _field()
-    g.SetFieldRadius(0.0)
-    assert minors.tile_spec(g, None, "S", (0, 0, 0)) is None
 
 
 def test_fragments_load_once_per_family_and_reload_after_reset():
@@ -225,6 +194,9 @@ def test_fragments_load_once_per_family_and_reload_after_reset():
     assert len(entries) == len(icy)
     assert entries[0][2] == pytest.approx(
         icy[0].bound_radius_m * catalogue.MODEL_UNITS_PER_METRE)
+    # Far tier: the 4th element is the rock's speck albedo.
+    assert all(len(e) == 4 for e in entries)
+    assert [e[3] for e in entries] == [tuple(c.avg_albedo) for c in icy]
     loads = r.named("load_model")
     assert loads[0][1] == icy[0].lod_paths[0] and loads[1][1] == icy[0].lod_paths[1]
     assert loads[0][3].get("scale") == 1.0
@@ -282,17 +254,6 @@ def test_only_a_shape_dial_rebuilds_a_cloud():
     minors.reconcile_with(r, None, {_Rock("A"): 1}, [], None)
     assert ("minors_remove_cloud", old) in r.calls
     assert r.named("minors_add_cloud")[-1][1]["count"] == 160
-
-
-def test_a_shape_dial_rebuilds_only_the_clouds_it_shapes():
-    r = _Rec()
-    minors.reconcile_with(r, None, {_Rock("A"): 1}, [_field()], None)
-    ids = minors.native_ids()
-    md._step("tile_count_mult", +1)
-    minors.reconcile_with(r, None, {_Rock("A"): 1}, [_field()], None)
-    assert r.named("minors_remove_cloud") == [
-        ("minors_remove_cloud", ids["tile::Asteroid Field 1"])]
-    assert minors.native_ids()["halo::A"] == ids["halo::A"]
 
 
 def _free(name, pSet=None, p0=(1.0, 2.0, 3.0), v=(0.5, 0.0, 0.0), t0=7.0):
@@ -366,25 +327,28 @@ def test_free_cloud_in_another_frame_is_not_sent_until_viewed():
     assert "free:B:Rock 3" in minors.native_ids()
 
 
-def test_tile_fields_of_another_frame_are_skipped():
+def test_asteroid_fields_get_no_minor_cloud():
+    """Rock-fields (Task 2): a BC AsteroidField is a density source (its
+    near band, puffs and specks), never a 405-minor tile cloud."""
     from engine.appc.sets import SetClass
-    a, b = SetClass(), SetClass()
-    a.SetName("A"); b.SetName("B")
-    fa, fb = _field("FA"), _field("FB")
-    a.AddObjectToSet(fa, "FA"); b.AddObjectToSet(fb, "FB")
-    specs = minors.desired_clouds(a, rock_instances={}, fields=[fa, fb])
-    assert set(specs) == {"tile:A:FA"}
+    a = SetClass()
+    a.SetName("A")
+    fa = _field("FA")
+    a.AddObjectToSet(fa, "FA")
+    for view in (None, a):
+        desired = minors.desired_clouds(view_set=view, rock_instances={}, fields=[fa])
+        assert not any(k.startswith("tile:") for k in desired)
 
 
 def test_a_new_view_set_does_not_fade_in():
     from engine.appc.sets import SetClass
     a, b = SetClass(), SetClass()
     a.SetName("A"); b.SetName("B")
-    fa, fb = _field("FA"), _field("FB")
-    a.AddObjectToSet(fa, "FA"); b.AddObjectToSet(fb, "FB")
+    minors.register_free_cloud(_free("RA", pSet=a))
+    minors.register_free_cloud(_free("RB", pSet=b))
     r = _Rec()
-    minors.reconcile_with(r, a, {}, [fa], None)
-    minors.reconcile_with(r, b, {}, [fb], None)
+    minors.reconcile_with(r, a, {}, [], None)
+    minors.reconcile_with(r, b, {}, [], None)
     descs = [c[1] for c in r.named("minors_add_cloud")]
     assert [d["fade_in"] for d in descs] == [False, False]
 
@@ -441,16 +405,16 @@ def test_reconcile_adapter_reads_the_session():
 
 
 def test_a_changed_spec_is_removed_and_re_added():
-    """No dial hook involved: the field MOVED, so its point changed."""
+    """No dial hook involved: the rock GREW, so its halo's numbers changed."""
     r = _Rec()
-    f = _field()
-    minors.reconcile_with(r, None, {}, [f], None)
+    rock = _Rock("A", r=4.0)
+    minors.reconcile_with(r, None, {rock: 1}, [], None)
     (old,) = minors.native_ids().values()
-    f.SetTranslateXYZ(5.0, 0.0, 0.0)
-    minors.reconcile_with(r, None, {}, [f], None)
+    rock._r = 5.0
+    minors.reconcile_with(r, None, {rock: 1}, [], None)
     (new,) = minors.native_ids().values()
     assert ("minors_remove_cloud", old) in r.calls and new != old
-    assert r.named("minors_add_cloud")[-1][1]["point"] == (5.0, 0.0, 0.0)
+    assert r.named("minors_add_cloud")[-1][1]["count"] == 200    # 8 x 25
 
 
 def test_drain_frame_with_the_dying_rock_still_listed_detaches_not_removes(

@@ -2,7 +2,7 @@
   "tool_version": 1,
   "seed": 20260930,
   "bound_radius_m": 100.0,
-  "impostor_view_size": 128,
+  "impostor_view_size": 64,
   "volume_dims": 48,
   "major":    {"lod_subdivisions": [4, 3, 2], "texture_size": 1024},
   "fragment": {"lod_subdivisions": [3, 2], "texture_size": 256, "cuts": [2, 4]},

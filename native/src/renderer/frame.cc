@@ -1161,6 +1161,9 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     const GLuint black = ensure_black_texture();
 
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
+        // Far tier (far-tier spec §3): a mesh fully handed to its impostor is
+        // not drawn at all.
+        if (inst.far_fade >= 1.0f) return;
         const assets::Model* m = lookup(inst.model_handle);
         const float rim_strength =
             (dauntless_rim::enabled() && inst.rim_eligible)
@@ -1173,6 +1176,15 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             select_instance_dynamic_lights(inst, m, dyn_lights, lights);
         const InstanceFieldCache::Entry* field_entry =
             field_cache != nullptr ? field_cache->get(inst.id) : nullptr;
+        // Far tier: a fading mesh screen-doors against its impostor. Set on
+        // both programs (draw_model picks one); reset only when set, so a
+        // far_fade-0 instance leaves every uniform untouched.
+        if (inst.far_fade != 0.0f) {
+            shader.use();
+            shader.set_float("u_dither_fade", inst.far_fade);
+            pipeline.skinned_shader().use();
+            pipeline.skinned_shader().set_float("u_dither_fade", inst.far_fade);
+        }
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
@@ -1182,6 +1194,12 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           /*carve_invert=*/false, field_entry,
                           &inst.node_overrides,
                           instance_decal_override(inst.id));
+        if (inst.far_fade != 0.0f) {
+            shader.use();
+            shader.set_float("u_dither_fade", 0.0f);
+            pipeline.skinned_shader().use();
+            pipeline.skinned_shader().set_float("u_dither_fade", 0.0f);
+        }
     });
 }
 
@@ -1205,6 +1223,8 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
         // slot) would silently skip this stencil pass; if HullCarveField
         // ever gains a clear() this condition needs a field.count()-style
         // check added alongside it.
+        // Far tier: a mesh drawn as its impostor has no hull to stamp.
+        if (inst.far_fade >= 1.0f) return;
         if (inst.carve.count() > 0) carved.push_back(&inst);
     });
     if (carved.empty()) return;

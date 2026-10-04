@@ -1538,12 +1538,35 @@ def _reset_leakable_engine_globals():
         _md.reset()
     except Exception:
         pass
+    try:
+        from engine.rocks import far_dials as _fd
+        _fd.reset()
+    except Exception:
+        pass
+    # far-tier density warnings (engine/rocks/density.py): one-shot "[far]"
+    # prints are deduped per (system[, kind]) -- clear so a test asserting
+    # on a fresh warning isn't silenced by an earlier test's own dedup set.
+    try:
+        from engine.rocks import density as _density
+        _density._warned_truncate.clear()
+        _density._warned_no_match.clear()
+    except Exception:
+        pass
     # Minor-cloud registry (engine/rocks/minors.py): held ids, free clouds and
     # the fragment memo would otherwise carry one test's clouds into the next.
     try:
         _mn = sys.modules.get("engine.rocks.minors")
         if _mn is not None:
             _mn.reset(None)
+    except Exception:
+        pass
+    # Far-tier registry (engine/rocks/far_tier.py): noted rock models and
+    # the push memos would otherwise make the next test's first reconcile
+    # skip pushes it expects.
+    try:
+        _ft = sys.modules.get("engine.rocks.far_tier")
+        if _ft is not None:
+            _ft.reset(None)
     except Exception:
         pass
     # Fly-through response token buckets (engine/rocks/minor_contact.py):

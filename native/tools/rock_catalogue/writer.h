@@ -50,16 +50,16 @@ void write_gltf_lod(const std::filesystem::path& dir, int lod_index,
                      int tool_version);
 
 /// Write `out_dir/catalogue.json`: tool_version, recipe_fnv1a64_hex,
-/// impostor_view_dirs, contact_sheet_order (rocks' ids, in `rocks` order),
-/// and the rocks array itself.
+/// impostor_view_dirs, contact_sheet_order (rocks' ids, in `rocks` order) and
+/// the rocks array itself.
 void write_catalogue(const std::filesystem::path& out_dir, int tool_version,
                       const std::string& recipe_fnv1a64_hex,
                       const std::vector<glm::vec3>& impostor_view_dirs,
                       const std::vector<RockRecord>& rocks);
 
 /// Write `out_dir/review/contact_sheet.png`: a 4-column grid, one cell per
-/// rock (in `rocks` order), each cell showing `impostor_albedos[i]`'s view-0
-/// tile (its top-left `view_size`-square block) over a 12px strip beneath
+/// rock (in `rocks` order), each cell showing `impostor_albedos[i]`'s
+/// tile (the view_size-square block of a view from above, cell (grid/2-1, grid/2-1)) over a 12px strip beneath
 /// filled with `family_colors_b[i]` (the family's second palette colour).
 /// `rocks`, `impostor_albedos` and `family_colors_b` must be the same length.
 void write_contact_sheet(const std::filesystem::path& out_dir,

@@ -538,3 +538,83 @@ TEST_F(MinorPassGLTest, ReuploadedMeshUnderTheSameHandleDrawsTheNewGeometry) {
     for (std::size_t i = 0; i < a.size(); ++i) differing += a[i] != b[i] ? 1 : 0;
     EXPECT_EQ(differing, 0) << "a stale VAO drew the old mesh";
 }
+
+// ---- rock-fields Task 3: the fragment-table overload and per-instance
+// dither (InstanceGpu::extra.x -> minor.vert a_extra -> v_dither).
+namespace {
+// One instance of the cube at `centre`, corner radius `r`, no rotation.
+minors::InstanceGpu cube_instance(glm::vec3 centre, float r, float dither) {
+    const float s = r / kBoundMu;
+    minors::InstanceGpu g;
+    g.row0 = {s, 0, 0, centre.x};
+    g.row1 = {0, s, 0, centre.y};
+    g.row2 = {0, 0, s, centre.z};
+    g.extra = {dither, 0, 0, 0};
+    return g;
+}
+}  // namespace
+
+TEST_F(MinorPassGLTest, InstanceDitherDiscardsAboutHalf) {
+    const assets::Model cube = make_cube_model(kCubeHalf);
+    const glm::vec3 centre(0.0f, 0.0f, -3.0f);
+    const scenegraph::Camera cam = test_camera(centre);
+    const renderer::Lighting lighting = test_lighting();
+    const minors::Fragment frag{handle_of(cube), handle_of(cube), kBoundMu};
+    const renderer::FragmentLookup frags =
+        [&](int family, int slot) -> const minors::Fragment* {
+            return family == 0 && slot == 0 ? &frag : nullptr;
+        };
+    auto draw = [&](renderer::MinorPass& pass, float dither) {
+        std::vector<minors::Bin> bins(1);
+        bins[0].items.push_back(cube_instance(centre, 2.0f, dither));
+        clear_framebuffer();
+        pass.render(frags, bins, cam, *pipeline,
+                    [](std::uint64_t h) { return lookup_handle(h); },
+                    lighting, 1.0f, 0.0f);
+        EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+        EXPECT_EQ(pass.last_draw_calls(), 1);
+        return read_frame();
+    };
+    renderer::MinorPass pass;
+    const int solid = lit_pixels(draw(pass, 0.0f));
+    const int half = lit_pixels(draw(pass, 0.5f));
+    ASSERT_GT(solid, kW * kH / 2) << "the cube should fill most of the view";
+    EXPECT_GE(half, solid * 4 / 10);
+    EXPECT_LE(half, solid * 6 / 10);
+}
+
+// The fragment-table overload with extra == 0 draws exactly what the
+// field overload draws (which MatchesDrawModelPixelForPixel ties to
+// draw_model): the dither attribute changes nothing at 0.
+TEST_F(MinorPassGLTest, ZeroDitherIsByteIdentical) {
+    const assets::Model cube = make_cube_model(kCubeHalf);
+    const glm::vec3 centre(0.0f, 0.0f, -3.0f);
+    const scenegraph::Camera cam = test_camera(centre);
+    const renderer::Lighting lighting = test_lighting();
+
+    minors::MinorField field;
+    set_family(field, cube, 1);
+    one_minor_cloud(field, centre, 0.5f, /*phase=*/0.7f);
+    field.step(step_input(cam));
+    ASSERT_EQ(field.bins().size(), 1u);
+    ASSERT_EQ(field.bins()[0].items[0].extra, glm::vec4(0.0f));
+
+    renderer::MinorPass pass;
+    const auto a = draw_minors(pass, field, cam, lighting);
+
+    clear_framebuffer();
+    pass.render(
+        [&](int family, int slot) -> const minors::Fragment* {
+            const auto& f = field.fragments(family);
+            return slot >= 0 && static_cast<std::size_t>(slot) < f.size() ? &f[slot] : nullptr;
+        },
+        field.bins(), cam, *pipeline, [](std::uint64_t h) { return lookup_handle(h); },
+        lighting, 1.0f, 0.0f);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    const auto b = read_frame();
+
+    ASSERT_GT(lit_pixels(a), kW * kH / 20);
+    int differing = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) differing += a[i] != b[i] ? 1 : 0;
+    EXPECT_EQ(differing, 0);
+}

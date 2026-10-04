@@ -4,16 +4,15 @@ Python owns the cloud LIST; native (renderer.minors_*) owns the instances.
 Every frame `reconcile` derives the desired clouds from the viewed set --
 
   halo:<set>:<rock>    one per realised RockClass, anchored to its instance
-  tile:<set>:<field>   one per BC AsteroidField, a uniform sphere at a point
   free:<set>:<rock>    a dead rock's halo + breakup debris, drifting freely
                        (queued by rocks/death.py through register_free_cloud)
 
 -- and sends native only the difference (adds / removes by key). A spec whose
-numbers change (a SHAPE dial -- halo_* / tile_* -- or a view change moving a
+numbers change (a SHAPE dial -- halo_* -- or a view change moving a
 point) is removed and re-added; every other dial is read at use and never
 rebuilds a cloud (a rebuild would wipe its shove wake). Free clouds live here per set and are re-sent when their set is
 viewed again; over the live-minor budget the oldest free cloud fades out and
-is dropped. Halos and tile fields are never evicted.
+is dropped. Halos are never evicted.
 
 Every native call is wrapped: rendering can never break the frame. Nothing
 here reads a path or the catalogue at import.
@@ -171,33 +170,6 @@ def halo_spec(rock, iid) -> Optional[CloudSpec]:
         **_halo_numbers(radius))
 
 
-def tile_spec(field_obj, view_set, set_name: str, offset: tuple) -> Optional[CloudSpec]:
-    """A BC AsteroidField as a uniform sphere of minors, at the field's
-    location expressed in VIEW space (`offset` = offset_between(view, set))."""
-    tiles = int(field_obj.GetNumTilesPerAxis())
-    count = int(round(tiles ** 3 * field_obj.GetNumAsteroidsPerTile()
-                      * md.get("tile_count_mult")))
-    radius = float(field_obj.GetFieldRadius())
-    if count <= 0 or radius <= 0.0:
-        return None
-    loc = field_obj.GetWorldLocation()
-    name = field_obj.GetName()
-    key = "tile:%s:%s" % (set_name, name)
-    r_min = float(md.get("tile_r_min_gu"))
-    return CloudSpec(
-        key=key, anchor="point", instance=None,
-        point=(loc.x + offset[0], loc.y + offset[1], loc.z + offset[2]),
-        velocity=_ZERO, t0=0.0,
-        shell_inner=0.0, shell_outer=radius, falloff=0.0, count=count,
-        r_min=r_min,
-        r_max=max(r_min, md.get("tile_r_per_size_factor")
-                  * float(field_obj.GetAsteroidSizeFactor())),
-        size_exponent=float(md.get("tile_size_exponent")),
-        family=md.FAMILY_INDEX["silicate"],
-        seed=zlib.crc32(key.encode("utf-8")),
-        orbit_rate=float(md.get("tile_orbit_rate")))
-
-
 def _halo_key(set_name: str, rock_name: str) -> str:
     return "halo:%s:%s" % (set_name, rock_name)
 
@@ -236,22 +208,13 @@ def _free_cloud_spec(spec: FreeCloudSpec, view_set) -> Optional[CloudSpec]:
 
 
 def desired_clouds(view_set, rock_instances: dict, fields: list) -> dict:
-    """{key: CloudSpec} for the viewed set: a halo per rock, a tile cloud per
-    field in the viewed SET, and every free cloud whose set is in it."""
+    """{key: CloudSpec} for the viewed set: a halo per rock and every free
+    cloud whose set is in it. `fields` (BC AsteroidFields) get NO cloud: since
+    rock-fields (2026-10-02) a field is a density source of the far tier
+    (engine/rocks/density.py:tile_field_source), not a cloud of minors."""
     out: dict = {}
     for rock, iid in rock_instances.items():
         s = halo_spec(rock, iid)
-        if s is not None:
-            out[s.key] = s
-    from engine.systems import frames
-    for f in fields:
-        if f is None:
-            continue
-        fset = frames.containing_set(f)
-        off = _offset(view_set, fset)
-        if off is None:
-            continue
-        s = tile_spec(f, view_set, _set_name(fset), off)
         if s is not None:
             out[s.key] = s
     for entries in _free.values():
@@ -393,7 +356,8 @@ def _ensure_fragments(r, families) -> None:
                 _swallow("load fragment", e)
                 continue
             entries.append((h0, h1, rock.bound_radius_m
-                            * catalogue.MODEL_UNITS_PER_METRE))
+                            * catalogue.MODEL_UNITS_PER_METRE,
+                            tuple(rock.avg_albedo)))   # the speck's colour
         try:
             r.minors_set_fragments(idx, entries)
         except Exception as e:
