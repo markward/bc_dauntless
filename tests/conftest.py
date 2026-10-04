@@ -1458,6 +1458,14 @@ def _reset_leakable_engine_globals():
         unknown_labels.reset()
     except Exception:
         pass
+    # Contact manager: weak-keyed module globals (bands, pending identifications,
+    # the tracked player), so a test that ticks it would otherwise leave bands
+    # and a scheduled identification armed for the next, unrelated test.
+    try:
+        from engine.appc import sensor_contacts
+        sensor_contacts.reset()
+    except Exception:
+        pass
     # Damage-geometry switches (App.DamageableObject_*Enabled): in Dauntless
     # damage is always on, but the setters are honoured so a mission can
     # suppress damage for a cutscene. Module-level state, so a test that flips

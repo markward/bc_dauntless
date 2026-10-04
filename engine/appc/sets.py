@@ -248,6 +248,8 @@ class SetClass(TGEventHandlerObject):
             contact_index.on_removed(self, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
+            from engine.appc import sensor_contacts
+            sensor_contacts.on_exited_set(self, obj)
             from engine.appc.objects import ObjectGroup
             ObjectGroup.broadcast_membership(obj, entered=False)
             self._clear_containing_set(obj)
@@ -260,6 +262,8 @@ class SetClass(TGEventHandlerObject):
             contact_index.on_removed(self, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
+            from engine.appc import sensor_contacts
+            sensor_contacts.on_exited_set(self, obj)
             from engine.appc.objects import ObjectGroup, broadcast_object_deleted
             ObjectGroup.broadcast_membership(obj, entered=False)
             broadcast_object_deleted(obj)
