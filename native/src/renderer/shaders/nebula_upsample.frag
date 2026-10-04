@@ -42,11 +42,13 @@ float depth_delta(float a, float b) {
     return abs(za - zb) / max(min(za, zb), 1e-6);
 }
 
-void main(){
-    float d_full = texture(u_depth, v_uv).r;
+uniform int u_edge_aa;   // 1: antialias the cloud's own depth edges (far haze; spike/rock-specks)
 
-    // Four half-res tap centres around this full-res pixel + the bilinear
-    // fraction within the cell.
+// The joint-bilateral blend of the four low-res taps around v_uv, matched to
+// depth d_ref. With u_edge_aa, a pixel whose four taps all sit on another
+// surface widens to the 4x4 low-res neighbourhood before giving up, so a thin
+// strip of space beside a hull still finds its haze.
+vec4 bilateral(float d_ref) {
     vec2 hp   = v_uv / u_half_texel - 0.5;
     vec2 fr   = fract(hp);
     vec2 base = (floor(hp) + 0.5) * u_half_texel;
@@ -64,18 +66,62 @@ void main(){
 
     vec4  sum  = vec4(0.0);
     float wsum = 0.0;
+    float dsum = 0.0;
     for(int i = 0; i < 4; i++){
         vec2  uv    = base + offs[i];
         float d_tap = texture(u_depth, uv).r;
         // Depth weight: 1 when the tap is on the same surface, → 0 as depths
         // diverge (a hull edge). exp() keeps it smooth; the +1e-5 floor means
         // if all four are rejected (thin feature) it degrades to a plain blend.
-        float dw = exp(-depth_delta(d_tap, d_full) * u_depth_sharpness);
+        float dw = exp(-depth_delta(d_tap, d_ref) * u_depth_sharpness);
         float w  = bw[i] * dw + 1e-5;
         sum  += texture(u_cloud, uv) * w;
         wsum += w;
+        dsum += bw[i] * dw;
     }
+    if (u_edge_aa != 0 && dsum < 0.05) {
+        vec4  s2 = vec4(0.0);
+        float w2 = 0.0;
+        for (int y = -1; y <= 2; ++y)
+            for (int x = -1; x <= 2; ++x) {
+                vec2 uv = base + vec2(float(x), float(y)) * u_half_texel;
+                float dw = exp(-depth_delta(texture(u_depth, uv).r, d_ref) * u_depth_sharpness);
+                s2 += texture(u_cloud, uv) * dw;
+                w2 += dw;
+            }
+        if (w2 > 0.05) return s2 / w2;
+    }
+    return sum / wsum;
+}
 
-    // Premultiplied OVER: composited by GL_ONE, GL_ONE_MINUS_SRC_ALPHA.
-    frag = sum / wsum;
+void main(){
+    float d_full = texture(u_depth, v_uv).r;
+    if (u_edge_aa == 0) { frag = bilateral(d_full); return; }
+
+    // Edge AA: the hull's own edge pixels were resolved from MSAA (part hull,
+    // part space) but the depth says one or the other, so the haze would cut
+    // on the pixel grid. Where the 3x3 neighbourhood holds two surfaces,
+    // blend the haze matched to each by a tent-weighted coverage of the far
+    // one (centre 1/4, edges 1/8, corners 1/16) -- a ~1 px soft haze edge.
+    float d_far = d_full, d_near = d_full;
+    float dn[9];
+    int k = 0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            float d = texture(u_depth, v_uv + vec2(float(x), float(y)) * u_full_texel).r;
+            dn[k++] = d;
+            d_far = max(d_far, d);
+            d_near = min(d_near, d);
+        }
+    if (depth_delta(d_far, d_near) * u_depth_sharpness < 1.0) { frag = bilateral(d_full); return; }
+    float cov = 0.0;
+    k = 0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            float w = (x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0) / 16.0;
+            bool far_side = depth_delta(dn[k], d_far) < depth_delta(dn[k], d_near);
+            cov += far_side ? w : 0.0;
+            ++k;
+        }
+    frag = mix(bilateral(d_near), bilateral(d_far), cov);
 }

@@ -3,6 +3,7 @@
 #include "renderer/far_pass.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -517,6 +518,9 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         // surface differs by O(1), a same-surface neighbour by ~0.
         up.set_float("u_depth_sharpness", kHazeUpsampleDepthSharpness);
         up.set_int("u_linear_depth", 1);
+        // Soft haze edge on MSAA-resolved hulls (spike); DAUNTLESS_HAZE_EDGE_AA=0 = off.
+        const char* edge_env = std::getenv("DAUNTLESS_HAZE_EDGE_AA");
+        up.set_int("u_edge_aa", (edge_env != nullptr && edge_env[0] == '0') ? 0 : 1);
         up.set_float("u_near", cam.near);
         up.set_float("u_far", cam.far);
         glActiveTexture(GL_TEXTURE0);
@@ -528,6 +532,7 @@ void FarPass::render_haze(const std::vector<far::DiscSource>& active, const glm:
         glDrawArrays(GL_TRIANGLES, 0, 3);
         // Per-program state shared with the system nebula: never leave it on.
         up.set_int("u_linear_depth", 0);
+        up.set_int("u_edge_aa", 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);
     }
