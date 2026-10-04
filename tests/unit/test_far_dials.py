@@ -12,13 +12,13 @@ _NEAR_CPP_DEFAULTS = {
     # near_large_billboard_gu 60 -> 90.
     "near_small_density": 0.010, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
     "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 15.0,
-    "near_small_billboard_gu": 45.0, "near_small_max": 4000,
+    "near_small_billboard_gu": 90.0, "near_small_max": 4000,
     "near_large_density": 1.0 / 16000.0, "near_large_r_min": 1.0, "near_large_r_max": 5.0,
     # rock-real Part 1, 2026-10-03: near_large_cell_gu 20 -> 50, near_large_max
     # 1000 -> 4000, and the far shell (near_large_far_gu / _far_fade_gu /
     # _min_px: NearDials large_far_gu / large_far_fade_gu / large_min_px).
     "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
-    "near_large_billboard_gu": 135.0, "near_large_max": 4000,
+    "near_large_billboard_gu": 270.0, "near_large_max": 4000,
     "near_large_far_gu": 250.0, "near_large_far_fade_gu": 40.0, "near_large_min_px": 1.5, "near_small_min_px": 1.5,
     # rock-real review: the far shell shrinks at dash speed and regrows
     # (NearDials far_shell_max_step_gu / far_shell_regrow_gu).

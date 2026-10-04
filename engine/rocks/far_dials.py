@@ -77,7 +77,7 @@ DEFAULTS: dict = {
     # Mark, live 2026-10-03 (slightly more small rocks, as billboards closer in).
     "near_small_density": 0.010, "near_small_r_min": 0.05, "near_small_r_max": 0.5,
     "near_small_exponent": 2.5, "near_small_cell_gu": 10.0, "near_small_mesh_gu": 15.0,
-    "near_small_billboard_gu": 45.0, "near_small_max": 4000,   # 1.5x (Mark, live 2026-10-04)
+    "near_small_billboard_gu": 90.0, "near_small_max": 4000,   # 3x (Mark, live 2026-10-04)
     # near_large_density 1.25e-4 -> 6.25e-5, near_large_mesh_gu 50 -> 60,
     # near_large_billboard_gu 60 -> 90: Mark, live 2026-10-03 (fewer big
     # asteroids but visible a bit further).
@@ -94,7 +94,7 @@ DEFAULTS: dict = {
     # near_large_max 4000 covers a full-density field's ~770 large rocks in a
     # 60 degree view at 250 GU (~2,300 at 90 degrees, ~3,200 at 400 GU).
     "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
-    "near_large_billboard_gu": 135.0, "near_large_max": 4000,   # 1.5x (Mark, live 2026-10-04)
+    "near_large_billboard_gu": 270.0, "near_large_max": 4000,   # 3x (Mark, live 2026-10-04)
     # Space dust inside rock fields (Python, read at use; Mark, live
     # 2026-10-03): the dust pass's density is multiplied by up to this at
     # full field density (tile field interior or a=1 belt), ramping with the

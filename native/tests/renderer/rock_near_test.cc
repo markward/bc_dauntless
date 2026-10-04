@@ -837,7 +837,7 @@ TEST(NearFarLarge, DefaultsAreTheBrief) {
     EXPECT_EQ(d.large_far_fade_gu, 40.0f);
     EXPECT_EQ(d.large_min_px, 1.5f);
     EXPECT_EQ(d.large.cell_gu, 50.0f);   // 400 GU of 20 GU cells would hit the 33-per-axis cap
-    EXPECT_EQ(d.large.billboard_gu, 135.0f);   // 1.5x (Mark, live 2026-10-04)
+    EXPECT_EQ(d.large.billboard_gu, 270.0f);   // 3x (Mark, live 2026-10-04)
     EXPECT_EQ(d.large.mesh_gu, 60.0f);
 }
 
@@ -899,6 +899,7 @@ TEST(NearFarLarge, StreamsTheSameLargeRocksOutToTheFarRange) {
 
 TEST(NearFarLarge, FarBillboardsFillTheShellAndFadeOutTranslucent) {
     rockfield::NearField f;
+    { rockfield::NearDials pd; pd.large.billboard_gu = 90.0f; f.set_dials(pd); }   // pinned: the shell begins past a 90 GU billboard range
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     const auto in = camera(glm::vec3(0), glm::vec3(0, 1, 0));
@@ -998,6 +999,7 @@ TEST(NearFarLarge, OneRepresentationPerRockPerCamera) {
 
 TEST(NearFarLarge, PixelFloorSkipsAndFadesTinyFarBillboards) {
     rockfield::NearField f;
+    { rockfield::NearDials pd; pd.large.billboard_gu = 90.0f; f.set_dials(pd); }   // pinned: the shell begins past a 90 GU billboard range
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     // 120 lines at 60 degrees: k ~= 104 px/GU-at-1-GU, so a 1 GU rock is
@@ -1154,6 +1156,7 @@ TEST(NearFarLarge, TheDrawnShellNeverPassesTheStreamedReach) {
 TEST(NearFarLarge, ThePixelFloorDoesNotPopWhereTheMeshEnds) {
     rockfield::NearDials d;   // mesh 60, fade 4, floor 1.5
     d.handoff_fade_gu = d.fade_gu;   // pinned: the dithered hand-off
+    d.large.billboard_gu = 90.0f;    // pinned: the shell begins past a 90 GU billboard range
     auto w = [&](float dist) { return rockfield::near_large_weights(dist, 0.5f, d); };
     // A rock under the floor: the hand-off is untouched, and the billboard
     // then blends down to 0 over [mesh_gu, mesh_gu + fade_gu] -- continuous.
