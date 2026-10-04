@@ -37,6 +37,8 @@ TEST(SpeckBand, KeepAlphaIsOneInsideD0AndFallsBeyond) {
 TEST(SpeckBand, SpecksInsideD0AreExactlyTheNearBandsLargeRocks) {
     rockfield::SpeckBand b;
     setup(b);
+    rockfield::SpeckDials sd; sd.keep_d0_gu = 600.0f;   // a band of whole cells past the billboard edge
+    b.set_dials(sd);
     b.stream(glm::dvec3(0.0), 0.0f);
     ASSERT_TRUE(b.finish());
     std::set<std::tuple<float, float, float, float>> got;
@@ -49,13 +51,13 @@ TEST(SpeckBand, SpecksInsideD0AreExactlyTheNearBandsLargeRocks) {
     rockfield::NearDials nd;
     const double L = nd.large.cell_gu;
     int checked = 0;
-    for (int i = -8; i <= 8; ++i)
-        for (int j = -8; j <= 8; ++j)
-            for (int k = -8; k <= 8; ++k) {
+    for (int i = -12; i <= 12; ++i)
+        for (int j = -12; j <= 12; ++j)
+            for (int k = -12; k <= 12; ++k) {
                 const glm::dvec3 lo = glm::dvec3(i, j, k) * L;
                 const double dn = glm::length(glm::max(glm::max(lo, -(lo + L)), glm::dvec3(0.0)));
                 const double df = glm::length(glm::max(glm::abs(lo), glm::abs(lo + L)));
-                if (dn < nd.large.billboard_gu || df > rockfield::SpeckDials{}.keep_d0_gu) continue;
+                if (dn < nd.large.billboard_gu || df > sd.keep_d0_gu) continue;
                 for (const auto& r : rockfield::generate_near_cell(full_sphere(), rockfield::NearClass::Large,
                                                                    {i, j, k}, nd, cat())) {
                     const glm::dvec3 p = r.pos_sys;
@@ -94,7 +96,7 @@ TEST(SpeckBand, FullDensityCountIsBoundedAndRestreamIsIncremental) {
                 "(%d cells generated), 60 GU restream %.1f ms (%d generated)\n",
                 b.instances().size(), b.cells(), ms0, first_cells, ms1,
                 b.last_stream_cells_generated());
-    EXPECT_LT(b.instances().size(), 100000u);
+    EXPECT_LT(b.instances().size(), 160000u);   // keep_d0 420 (behind the 405 GU billboards)
     EXPECT_LT(b.last_stream_cells_generated(), first_cells / 4);
 }
 

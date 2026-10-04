@@ -103,7 +103,7 @@ DEFAULTS: dict = {
     # near_large_max 4000 covers a full-density field's ~770 large rocks in a
     # 60 degree view at 250 GU (~2,300 at 90 degrees, ~3,200 at 400 GU).
     "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
-    "near_large_billboard_gu": 270.0, "near_large_max": 4000,   # 3x (Mark, live 2026-10-04)
+    "near_large_billboard_gu": 405.0, "near_large_max": 4000,   # 3x, then +50% large only (Mark, live 2026-10-04)
     # Space dust inside rock fields (Python, read at use; Mark, live
     # 2026-10-03): the dust pass's density is multiplied by up to this at
     # full field density (tile field interior or a=1 belt), ramping with the
@@ -146,14 +146,14 @@ DEFAULTS: dict = {
     # hash. Re-streamed every speck_restream_gu of travel. speck_band_gain
     # multiplies speck_gain for this band only.
     "speck_out_gu": 1500.0, "speck_out_fade_gu": 400.0,
-    "speck_keep_d0_gu": 350.0, "speck_keep_band": 0.25, "speck_keep_power": 3.0,
+    "speck_keep_d0_gu": 420.0, "speck_keep_band": 0.25, "speck_keep_power": 3.0,
     "speck_restream_gu": 50.0, "speck_band_gain": 0.25,
     # Puffs (SPIKE, native; MUST equal PuffDials in rock_puffs.h): the far
     # look of a tile field as puff_count soft lit billboards placed by its
     # density, radius puff_size_frac x field radius x [0.6, 1.4], peak alpha
     # puff_opacity, fading in over [puff_start_gu, + puff_ramp_gu] and out
     # within puff_near_fade x their radius. Replaces the volumetric haze.
-    "puff_count": 400, "puff_size_frac": 0.18, "puff_opacity": 0.35,
+    "puff_count": 400, "puff_size_frac": 0.18, "puff_opacity": 0.04698,
     "puff_brightness": 8.0, "puff_start_gu": 800.0, "puff_ramp_gu": 800.0,
     "puff_near_fade": 1.5,
     "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,

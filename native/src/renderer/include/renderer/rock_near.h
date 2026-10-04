@@ -40,7 +40,7 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // full-density field holds ~770 large rocks in a 60 degree 16:9 view out
     // to 250 GU and ~2,300 in a 90 degree one; 4000 also covers the live dial
     // at 400 GU (~3,200 at 60 degrees), which 1000 would cut nearest-first.
-    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 270.0f, 4000};
+    NearClassDials large{1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 405.0f, 4000};   // billboard 270 -> 405 (Mark, live 2026-10-04, +50%)
     float fade_gu = 4.0f;                 // outer (translucent) fade band at each billboard edge
     // Mesh <-> billboard hand-off width. 0 = a hard swap, no screen-door
     // dither (Mark, live 2026-10-03: the dithered hand-off read as rocks

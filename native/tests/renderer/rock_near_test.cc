@@ -837,13 +837,14 @@ TEST(NearFarLarge, DefaultsAreTheBrief) {
     EXPECT_EQ(d.large_far_fade_gu, 40.0f);
     EXPECT_EQ(d.large_min_px, 1.5f);
     EXPECT_EQ(d.large.cell_gu, 50.0f);   // 400 GU of 20 GU cells would hit the 33-per-axis cap
-    EXPECT_EQ(d.large.billboard_gu, 270.0f);   // 3x (Mark, live 2026-10-04)
+    EXPECT_EQ(d.large.billboard_gu, 405.0f);   // 3x, then +50% (Mark, live 2026-10-04)
     EXPECT_EQ(d.large.mesh_gu, 60.0f);
 }
 
 TEST(NearFarLarge, WeightsBeyondTheBillboardRange) {
     rockfield::NearDials d;   // mesh 60, billboard 90, far 400 (fade 40), floor 1.5 px
     d.large_far_gu = 400.0f;  // pinned: the literal distances below
+    d.large.billboard_gu = 90.0f;    // pinned: the shell starts past it
     d.handoff_fade_gu = d.fade_gu;   // pinned: the dithered hand-off
     auto w = [&](float dist, float px = 100.0f) { return rockfield::near_large_weights(dist, px, d); };
     EXPECT_EQ(w(30).mesh, 1.0f);   EXPECT_EQ(w(30).billboard, 0.0f);
@@ -1134,6 +1135,7 @@ TEST(NearFarLarge, TheDrawnShellNeverPassesTheStreamedReach) {
     // A live dial past the 33-cells-per-axis cap: 2,000 GU of 20 GU cells
     // streams only 320 GU; the drawn shell ends (faded) there too.
     rockfield::NearDials d; d.large_far_gu = 2000.0f; d.large.cell_gu = 20.0f;
+    d.large.billboard_gu = 90.0f;   // pinned: the shell starts past it
     rockfield::NearField f; f.set_dials(d);
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));

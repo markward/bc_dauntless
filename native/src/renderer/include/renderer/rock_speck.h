@@ -28,7 +28,7 @@ struct SpeckDials {   // defaults MUST equal far_dials.py DEFAULTS speck_* keys
     // rock is kept inside keep_d0_gu, so the hand-off from the billboards is
     // the same rocks. Power 2: on-screen density per unit depth flat (count
     // linear in range); 3: count grows as log(range).
-    float keep_d0_gu = 350.0f;
+    float keep_d0_gu = 420.0f;    // >= the large billboard edge (405): the hand-off stays the same rocks
     float keep_power = 3.0f;
     float keep_band = 0.25f;
     float restream_gu = 50.0f;    // rebuild the instance buffer after this much travel

@@ -19,7 +19,7 @@ namespace renderer::rockfield {
 struct PuffDials {   // defaults MUST equal far_dials.py DEFAULTS puff_* keys
     int count = 400;              // per tile field
     float size_frac = 0.18f;      // puff radius = size_frac x field radius x [0.6, 1.4]
-    float opacity = 0.35f;        // peak alpha of one puff at full density
+    float opacity = 0.04698f; // Mark, live 2026-10-04 (was 0.35)       // peak alpha of one puff at full density
     float brightness = 8.0f;      // colour only (the haze needed ~9: albedo 0.4 x phase-lit)
     float start_gu = 800.0f;      // puffs fade in from here (camera distance) ...
     float ramp_gu = 800.0f;       // ... over this many GU
