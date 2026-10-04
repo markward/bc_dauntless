@@ -74,7 +74,10 @@ DEFAULTS: dict = {
     "field_dust_mult": 10.0,
     # Pixel floors: a billboard past mesh range at or below its class's
     # floor (on-screen radius, px) draws nothing, fading in over the next px.
-    "near_large_min_px": 1.5,
+    # near_large_min_px 1.5 -> 0 (2026-10-04 review I1): the speck band's
+    # hand-off has no pixel floor, so a floored large billboard left a gap
+    # before its speck. 0 = off.
+    "near_large_min_px": 0.0,
     "near_small_min_px": 2.5,   # Mark, live 2026-10-04 (3x ranges)
     "near_fade_gu": 4.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,

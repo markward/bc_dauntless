@@ -58,8 +58,12 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     // the next kNearPixelFadeBand px (blended in from the mesh edge, so
     // nothing pops where the mesh ends); its cells and blocks are skipped
     // whole. 0 = off. small_min_px: Mark, live 2026-10-04 (most small
-    // billboards at 30-45 GU are under a pixel).
-    float large_min_px = 1.5f;
+    // billboards at 30-45 GU are under a pixel). large_min_px 1.5 -> 0
+    // (2026-10-04 review I1): the speck band's hand-off knows nothing of a
+    // floor, so a floored large billboard left a gap before its speck --
+    // off restores what Mark verified live. The floor code stays for a
+    // non-zero dial.
+    float large_min_px = 0.0f;
     float small_min_px = 2.5f;
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
     float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)

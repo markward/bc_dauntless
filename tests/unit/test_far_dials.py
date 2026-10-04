@@ -18,7 +18,8 @@ _NEAR_CPP_DEFAULTS = {
     # 1000 -> 4000; the pixel floors (NearDials large_min_px / small_min_px).
     "near_large_exponent": 2.5, "near_large_cell_gu": 50.0, "near_large_mesh_gu": 60.0,
     "near_large_billboard_gu": 405.0, "near_large_max": 4000,
-    "near_large_min_px": 1.5, "near_small_min_px": 2.5,
+    # near_large_min_px 1.5 -> 0: review I1, 2026-10-04 (the speck hand-off has no floor).
+    "near_large_min_px": 0.0, "near_small_min_px": 2.5,
     "near_fade_gu": 4.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
 }
 

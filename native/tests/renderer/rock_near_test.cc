@@ -321,7 +321,7 @@ TEST(NearBuild, OneTierPerRockOutsideFades) {
 // class whose band is farther first, each bin's items farthest first.
 TEST(NearBuild, OuterFadeBillboardsAreTranslucent) {
     rockfield::NearField f;
-    { rockfield::NearDials pd; pd.small_min_px = 0.0f; f.set_dials(pd); }   // pinned: no small pixel floor
+    { rockfield::NearDials pd; pd.small_min_px = 0.0f; pd.large_min_px = 1.5f; f.set_dials(pd); }   // pinned: no small floor, a large one
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     rockfield::NearOutput out;
@@ -827,7 +827,7 @@ Seen seen_at(const rockfield::NearOutput& out, const glm::vec3& c) {
 
 TEST(NearLarge, DefaultsAreTheBrief) {
     const rockfield::NearDials d;
-    EXPECT_EQ(d.large_min_px, 1.5f);
+    EXPECT_EQ(d.large_min_px, 0.0f);   // off: the speck hand-off has no floor (review I1)
     EXPECT_EQ(d.small_min_px, 2.5f);
     EXPECT_EQ(d.large.cell_gu, 50.0f);   // 400 GU of 20 GU cells would hit the 33-per-axis cap
     EXPECT_EQ(d.large.billboard_gu, 405.0f);   // 3x, then +50% (Mark, live 2026-10-04)
@@ -920,6 +920,7 @@ TEST(NearLarge, OneRepresentationPerRockPerCamera) {
 
 TEST(NearLarge, PixelFloorSkipsAndFadesTinyFarBillboards) {
     rockfield::NearField f;
+    { rockfield::NearDials pd; pd.large_min_px = 1.5f; f.set_dials(pd); }   // pinned: a non-zero floor
     f.set_catalogue(build_cat()); f.set_sources({full_sphere()});
     f.stream(glm::dvec3(0.0));
     // 120 lines at 60 degrees: k ~= 104 px/GU-at-1-GU, so a 1 GU rock is
@@ -1005,7 +1006,8 @@ TEST(NearLarge, DashCollapsesBillboardsToTheMeshRangeAndRegrows) {
 }
 
 TEST(NearLarge, ThePixelFloorDoesNotPopWhereTheMeshEnds) {
-    rockfield::NearDials d;   // mesh 60, fade 4, floor 1.5
+    rockfield::NearDials d;   // mesh 60, fade 4
+    d.large_min_px = 1.5f;    // pinned: a non-zero floor
     auto w = [&](float dist) {
         return rockfield::near_weights(dist, 0.5f, d.large, d.fade_gu, d.large_min_px);
     };
