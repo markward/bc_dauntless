@@ -1452,6 +1452,75 @@ class SensorSubsystem(PoweredSubsystem):
         from engine.appc import sensor_identification
         sensor_identification._identify_one(self, pTarget)
 
+    # ── Range bands + visibility (BC RE'd: sensor-subsystem.md) ───────────
+    def _owner_ship(self):
+        ship = self.GetParentShip()
+        if ship is None and hasattr(self, "_climb_to_ship"):
+            ship = self._climb_to_ship()
+        return ship
+
+    def GetSensorRange(self) -> float:
+        """BC's GetSensorRange: base x normal-power% x condition%, 0 when
+        offline. Delegates to the one rule, sensor_detection.effective_sensor_range."""
+        ship = self._owner_ship()
+        if ship is None:
+            return 0.0
+        from engine.appc.sensor_detection import effective_sensor_range
+        return float(effective_sensor_range(ship))
+
+    def _band_distance(self, obj):
+        """Centre distance owner->obj in GU, or None when not in the same set."""
+        ship = self._owner_ship()
+        if ship is None or obj is None:
+            return None
+        pset = ship.GetContainingSet()
+        if pset is None or obj.GetContainingSet() is not pset:
+            return None
+        ox, oy, oz = _get_xyz(ship)
+        tx, ty, tz = _get_xyz(obj)
+        return ((tx - ox) ** 2 + (ty - oy) ** 2 + (tz - oz) ** 2) ** 0.5
+
+    def IsObjectNear(self, obj) -> int:
+        """Within near_fraction (BC: half) of sensor range. Pure distance."""
+        from engine.appc import sensor_dials
+        d = self._band_distance(obj)
+        r = self.GetSensorRange()
+        return 1 if (d is not None and r > 0.0
+                     and d <= r * sensor_dials.get("near_fraction")) else 0
+
+    def IsObjectFar(self, obj) -> int:
+        """Within full sensor range. Pure distance."""
+        d = self._band_distance(obj)
+        r = self.GetSensorRange()
+        return 1 if (d is not None and r > 0.0 and d <= r) else 0
+
+    def IsObjectVisible(self, obj) -> int:
+        """BC's IsObjectVisible (@0x005671D0), probes omitted. NOT the target
+        list's gate (that is sensor_detection.can_detect) — only SDK callers
+        that ask this directly use it. Order is BC's: power, absolute cloak,
+        same set, nebula jam, over-boost, range, (jam) , memory."""
+        ship = self._owner_ship()
+        if ship is None or obj is None:
+            return 0
+        if self.GetSensorRange() <= 0.0:
+            return 0
+        from engine.appc.sensor_detection import is_hidden_by_cloak
+        if is_hidden_by_cloak(obj):
+            return 0
+        pset = ship.GetContainingSet()
+        if pset is None or obj.GetContainingSet() is not pset:
+            return 0
+        from engine.appc import contact_index
+        jammed = any(n.IsObjectInNebula(ship) or n.IsObjectInNebula(obj)
+                     for n in contact_index.nebulae_in(pset))
+        if not jammed and self.GetNormalPowerPercentage() > 1.2:
+            return 1
+        if self.IsObjectFar(obj):
+            return 1
+        if jammed:
+            return 0
+        return self.IsObjectKnown(obj)
+
 
 class ImpulseEngineSubsystem(PoweredSubsystem):
     """Live impulse-engine state.  Speed/accel limits come from the
