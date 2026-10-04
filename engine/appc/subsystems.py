@@ -1416,9 +1416,10 @@ class SensorSubsystem(PoweredSubsystem):
         ``pSeq = pSensors.ScanAllObjects(); pSeq.Play()`` — E1M2 with no None
         guard — so this must ALWAYS return a real, playable ``TGSequence``.
 
-        The sequence carries a single script action that, when played, identifies
-        every contact in the scanning ship's set (see
-        ``sensor_identification.identify_all_in_set``). Deferring the work into
+        The sequence carries a single script action that, when played, arms a
+        scan identification for every unknown contact in the scanning ship's
+        set, one identification time apart (see
+        ``sensor_identification.schedule_area_scan``). Deferring the work into
         the played action matches the SDK contract that playing the sequence *is*
         the scan; it also de-dupes against the passive per-tick sweep."""
         import App
@@ -1437,12 +1438,15 @@ class SensorSubsystem(PoweredSubsystem):
         return seq
 
     def IdentifyObject(self, pTarget) -> None:
-        """Single-target scan (Science menu "Scan Object" via
-        ``Actions.ShipScriptActions.ScanObject``): mark *pTarget* known and
-        broadcast ``ET_SENSORS_SHIP_IDENTIFIED`` once. De-duped, so re-scanning
-        an already-known contact is a no-op."""
-        from engine.appc import sensor_identification
-        sensor_identification._identify_one(self, pTarget)
+        """Single-target scan (Science "Scan Object" via
+        ``Actions.ShipScriptActions.ScanObject``). BC (RE'd) schedules a
+        DEFERRED identification on its player-only contact manager, so this
+        arms one identification-time later rather than identifying at once.
+        Player-only, like BC's; a no-op on any other ship's sensors."""
+        from engine.appc import sensor_contacts
+        if self._owner_ship() is not sensor_contacts.current_player():
+            return
+        sensor_contacts.schedule_scan(pTarget, self.GetIdentificationTime())
 
     def ForceObjectIdentified(self, pTarget) -> None:
         """SDK ``HelmMenuHandlers.SetupOrbitMenuFromSet`` marks orbitable

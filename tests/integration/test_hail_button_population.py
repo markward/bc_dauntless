@@ -187,7 +187,7 @@ def test_identification_localizes_display_name():
     """A contact created after mission load still gets its localized name: the
     sensor-identification pass applies it just before the Hail/target row."""
     from engine.appc.subsystems import SensorSubsystem
-    from engine.appc import sensor_identification
+    from tests.helpers.sensor_time import settle_identification
 
     campaign_db = App.g_kLocalizationManager.Load("data/TGL/Maelstrom/Maelstrom.tgl")
     if campaign_db is None or not campaign_db.HasString("Haven"):
@@ -210,7 +210,7 @@ def test_identification_localizes_display_name():
         haven.SetTranslateXYZ(1000.0, 0.0, 0.0)
         pSet.AddObjectToSet(haven, "Haven")
 
-        sensor_identification.identify_contacts(player)
+        settle_identification(player)
 
         assert sensors.IsObjectKnown(haven) == 1
         assert haven.GetDisplayName() == "Vesuvi 6 - Haven"

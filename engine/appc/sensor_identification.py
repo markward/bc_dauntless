@@ -1,8 +1,14 @@
 """Sensor contact identification — feeds the SDK bridge menus.
 
-Each tick the player's sensors identify newly-detectable contacts in the
-player's set: mark them known (``SensorSubsystem.AddKnownObject``) and broadcast
-``ET_SENSORS_SHIP_IDENTIFIED``. That drives the SDK's
+The player-only contact manager (``engine.appc.sensor_contacts``) walks the
+player's set, buckets contacts into near/far bands, and arms a passive
+identification once a contact is near and detectable — due one
+identification time (BC: 4.0 s) later. Scans (``SensorSubsystem.IdentifyObject``,
+``ScanAllObjects``) arm the same deferred identification, unconditional on
+range/detectability, so a scan always lands once its dwell elapses.
+``_identify_one`` in this module is the single commit point for all three
+paths: it marks the contact known (``SensorSubsystem.AddKnownObject``) and
+broadcasts ``ET_SENSORS_SHIP_IDENTIFIED``. That drives the SDK's
 ``Bridge/HelmMenuHandlers.ShipIdentified`` (per-target Hail / fleet-command
 buttons) and ``ScienceMenuHandlers.ShipIdentified`` (scan buttons), and unlocks
 target-info panels that gate on ``IsObjectKnown``.
@@ -12,18 +18,12 @@ fleet* ships (``IsObjectKnown`` was always 0), so planets, stations and neutral
 contacts never received a hail button — clicking the empty "Hail" menu did
 nothing. See docs/plans and the E1M2 hail investigation.
 
-Detection is range-gated and BC-faithful: a contact stays unknown until it comes
-within the player's effective sensor range. Range / nebula / cloak gating reuses
-``sensor_detection.can_detect`` (already used by the target list and AI target
-selection), so identification and the rest of the sensor surface agree.
-
 Identification is one-shot per contact: ``AddKnownObject`` de-dupes so each
 contact fires the identify event once, and a contact stays known once seen
 (the SDK's ``ExitedSet`` removes its button on ``ET_EXITED_SET`` at set exit).
 """
 
 import App
-from engine.appc.sensor_detection import can_detect
 import engine.dev_mode as dev_mode
 
 
@@ -31,10 +31,11 @@ def _identify_one(sensors, obj) -> bool:
     """Identify a single contact to *sensors*: localize its display name, mark
     it known, and broadcast ``ET_SENSORS_SHIP_IDENTIFIED`` once.
 
-    Shared by the passive per-tick sweep (``identify_contacts``), the active
-    area scan (``identify_all_in_set`` / ``SensorSubsystem.ScanAllObjects``) and
-    the single-target scan (``SensorSubsystem.IdentifyObject``). De-dupes on
-    ``IsObjectKnown`` so the three paths can never double-fire for one contact.
+    The single commit point for every identification path: the passive
+    per-tick dwell and both scan paths (``SensorSubsystem.IdentifyObject``,
+    ``ScanAllObjects`` via ``schedule_area_scan``), all funneled through
+    ``engine.appc.sensor_contacts``. De-dupes on ``IsObjectKnown`` so no path
+    can ever double-fire for one contact.
 
     Returns True if *obj* was newly identified, False if it was already known,
     None/invalid, or *sensors* is None."""
@@ -85,107 +86,37 @@ def _resolve_sensors_and_set(player):
     return sensors, pSet
 
 
-def identify_contacts(player) -> None:
-    """Identify newly-detectable contacts in *player*'s set to the player's
-    sensors, firing ET_SENSORS_SHIP_IDENTIFIED for each. Cheap on steady state:
-    only objects not already known and inside sensor range do any work."""
-    sensors, pSet = _resolve_sensors_and_set(player)
-    if sensors is None:
-        return
-
-    try:
-        player_id = player.GetObjID()
-    except Exception:
-        player_id = None
-
-    # Only real sensor contacts are identified — ships/stations (ShipClass) and
-    # celestial bodies (Planet, incl. colonies like E1M2's Haven). A set also
-    # holds lights, placement markers ("Player Start", "* Location"), and grids;
-    # firing ET_SENSORS_SHIP_IDENTIFIED for those would spam the bridge Hail /
-    # scan menus with non-contacts. (Lazy import to avoid an import cycle.)
-    from engine.appc.ships import ShipClass
-    from engine.appc.planet import Planet
-
-    for obj in pSet.GetObjectList():
-        if obj is None or obj is player:
-            continue
-        if not isinstance(obj, (ShipClass, Planet)):
-            continue
-        # Skip the player itself (id compare guards against a re-added handle).
-        try:
-            if player_id is not None and obj.GetObjID() == player_id:
-                continue
-        except Exception:
-            continue
-        # Already identified — the known-set de-dupes so we fire once per contact.
-        if sensors.IsObjectKnown(obj):
-            continue
-        # BC-faithful gate: unknown until inside effective sensor range (also
-        # honours nebula concealment and cloak). Guard so one bad handle can't
-        # abort the whole sweep.
-        try:
-            detectable = can_detect(player, obj)
-        except Exception as _e:
-            dev_mode.log_swallowed("sensor identify can_detect", _e)
-            continue
-        if not detectable:
-            continue
-
-        _identify_one(sensors, obj)
-
-
-def identify_all_in_set(player) -> int:
-    """Active area scan: identify EVERY ship/station/planet in *player*'s set,
-    ignoring sensor range — an active scan reveals the whole area, which is what
-    distinguishes it from the passive per-tick sweep (``identify_contacts``).
-
-    Reuses the same per-contact core (``_identify_one``), which de-dupes on
-    ``IsObjectKnown``: contacts already identified in-range by the passive sweep
-    are skipped, so the two paths never double-fire; the active scan only *adds*
-    the out-of-range contacts. Returns the count newly identified.
-
-    Drives ``SensorSubsystem.ScanAllObjects`` (Science menu "Scan Area" and
-    E1M2's ScanComplete)."""
+def schedule_area_scan(player) -> int:
+    """Active area scan: arm a scan identification for every unknown ship /
+    station / planet in *player*'s set, ignoring range, one identification
+    time apart (BC's ScanAllObjects spaces its scan actions by
+    GetIdentificationTime). Returns how many were armed."""
     sensors, pSet = _resolve_sensors_and_set(player)
     if sensors is None:
         return 0
-
-    try:
-        player_id = player.GetObjID()
-    except Exception:
-        player_id = None
-
-    # Same contact filter as the passive sweep — ships/stations + celestial
-    # bodies only, never lights / placement markers / grids.
     from engine.appc.ships import ShipClass
     from engine.appc.planet import Planet
-
-    count = 0
+    from engine.appc import sensor_contacts
+    dwell = sensors.GetIdentificationTime()
+    n = 0
     for obj in pSet.GetObjectList():
-        if obj is None or obj is player:
+        if obj is None or obj is player or not isinstance(obj, (ShipClass, Planet)):
             continue
-        if not isinstance(obj, (ShipClass, Planet)):
+        if sensors.IsObjectKnown(obj):
             continue
-        try:
-            if player_id is not None and obj.GetObjID() == player_id:
-                continue
-        except Exception:
-            continue
-        if _identify_one(sensors, obj):
-            count += 1
-    return count
+        n += 1
+        sensor_contacts.schedule_scan(obj, dwell * n)
+    return n
 
 
 def ScanAllObjectsAction(pAction, iShipID) -> int:
-    """TGScriptAction entry played by the ``ScanAllObjects`` sequence.
-
-    Re-looks up the scanning ship by id (SDK idiom, matching
-    ``Actions.ShipScriptActions.ScanObject``) and identifies every contact in
-    its set. Returns 0 so ``TGScriptAction.Play`` auto-completes the action."""
+    """TGScriptAction entry played by the ScanAllObjects sequence. Re-looks up
+    the scanning ship by id (SDK idiom) and arms the area scan. Returns 0 so
+    TGScriptAction.Play auto-completes."""
     try:
         ship = App.TGObject_GetTGObjectPtr(iShipID)
         if ship is not None:
-            identify_all_in_set(ship)
+            schedule_area_scan(ship)
     except Exception as _e:
         dev_mode.log_swallowed("ScanAllObjectsAction", _e)
     return 0

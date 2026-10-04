@@ -1,20 +1,25 @@
-"""Sensor contact identification pass.
+"""Sensor contact identification commit (``_identify_one``), driven through the
+player-only contact manager's passive dwell (``engine.appc.sensor_contacts``).
 
 Regression: nothing ever called SensorSubsystem.AddKnownObject or fired
 ET_SENSORS_SHIP_IDENTIFIED, so IsObjectKnown was always 0 and the SDK's
 Bridge/HelmMenuHandlers.ObjectEnteredSet only ever identified commandable fleet
 ships. Planets/stations/neutrals never got a Hail button -> hailing did nothing.
 
-identify_contacts marks newly-detectable contacts known and broadcasts the
-SDK's identify event, gated (BC-faithful) by sensor_detection.can_detect.
+The passive dwell marks newly-detectable contacts known one identification
+time after they enter near band, gated (BC-faithful) by
+sensor_detection.can_detect. ``tests.helpers.sensor_time.settle_identification``
+drives the manager through one sweep plus one full dwell, which is all any of
+these tests need.
 """
 import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.appc.sets import SetClass
 from engine.appc.planet import Planet_Create
-from engine.appc import sensor_identification
+from engine.core.game import Game, _set_current_game
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
+from tests.helpers.sensor_time import settle_identification
 
 _identified: list = []
 
@@ -39,6 +44,11 @@ def _player_in_set(base_range=2000.0, at=(0.0, 0.0, 0.0)):
     sensors.SetBaseSensorRange(base_range)
     player.SetSensorSubsystem(sensors)
     s.AddObjectToSet(player, "player")
+    # The contact manager is player-only and reads the CURRENT GAME player
+    # (same idiom as tests/unit/test_sensor_contacts.py::_world).
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
     return s, player, sensors
 
 
@@ -46,16 +56,19 @@ def test_in_range_contact_is_identified_once():
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     target = ShipClass_Create("BirdOfPrey")
-    target.SetTranslateXYZ(1000.0, 0.0, 0.0)   # inside 2000 GU
+    # Exactly half of the 2000 GU range -- the near-band boundary. The near
+    # check is `<=`, so a contact sitting exactly on the boundary still gets
+    # identified.
+    target.SetTranslateXYZ(1000.0, 0.0, 0.0)
     s.AddObjectToSet(target, "Bird")
 
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(target) == 1
     assert target in _identified
     assert _identified.count(target) == 1
 
-    # A second sweep must not re-fire for an already-known contact.
-    sensor_identification.identify_contacts(player)
+    # A second settle must not re-fire for an already-known contact.
+    settle_identification(player, start_gt=100.0)
     assert _identified.count(target) == 1
 
 
@@ -66,7 +79,7 @@ def test_out_of_range_contact_not_identified():
     target.SetTranslateXYZ(50000.0, 0.0, 0.0)   # far outside range
     s.AddObjectToSet(target, "Bird")
 
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(target) == 0
     assert _identified == []
 
@@ -91,21 +104,24 @@ def test_cloaked_contact_inside_the_bubble_is_identified():
 
     The identification sweep gates on sensor_detection.can_detect, and cloak is
     now a flat floor plus a percentage of effective sensor range rather than an
-    absolute. A cloaked ship inside the player's bubble IS identified: it joins the known set and the callout fires. Deliberate
-    divergence from BC — if this fails, ask "was the change reverted?".
+    absolute. A cloaked ship inside the player's bubble IS identified: it joins
+    the known set and the callout fires. The cloak bubble distances here are
+    well inside half the 2000 GU sensor range, so they land in the near band
+    regardless of cloak. Deliberate divergence from BC — if this fails, ask
+    "was the change reverted?".
     """
     player, sensors, target = _cloaked_contact_in_set(inside_gu())
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(target) == 1
     assert target in _identified
 
 
 def test_cloaked_contact_outside_the_bubble_is_not_identified():
-    """The bubble boundary holds: well inside the 2000 GU sensor reach but
-    outside the cloak bubble, a cloaked ship stays unknown and silent, exactly
-    as in stock BC."""
+    """The bubble boundary holds: well inside the 2000 GU sensor reach (so still
+    in near band) but outside the cloak bubble, a cloaked ship stays unknown
+    and silent, exactly as in stock BC."""
     player, sensors, target = _cloaked_contact_in_set(outside_gu())
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(target) == 0
     assert _identified == []
 
@@ -116,7 +132,7 @@ def test_cloaked_contact_is_never_identified_with_the_contest_off(monkeypatch):
     import engine.appc.sensor_detection as sd
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     player, sensors, target = _cloaked_contact_in_set(inside_gu())
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(target) == 0
     assert _identified == []
 
@@ -124,7 +140,7 @@ def test_cloaked_contact_is_never_identified_with_the_contest_off(monkeypatch):
 def test_player_not_identified_to_itself():
     _subscribe()
     s, player, sensors = _player_in_set()
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(player) == 0
     assert player not in _identified
 
@@ -138,7 +154,7 @@ def test_hailable_planet_becomes_identified_in_range():
     haven.SetTranslateXYZ(1500.0, 0.0, 0.0)
     s.AddObjectToSet(haven, "Haven")
 
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(haven) == 1
     assert haven in _identified
 
@@ -158,7 +174,7 @@ def test_non_contact_objects_are_not_identified():
     marker.SetTranslateXYZ(100.0, 0.0, 0.0)
     s.AddObjectToSet(marker, "Player Start")
 
-    sensor_identification.identify_contacts(player)
+    settle_identification(player)
     assert sensors.IsObjectKnown(grid) == 0
     assert sensors.IsObjectKnown(marker) == 0
     assert _identified == []
@@ -197,7 +213,10 @@ def test_no_sensor_subsystem_is_noop():
     player = ShipClass_Create("Galaxy")
     player._sensor_subsystem = None   # force the no-sensor path
     s.AddObjectToSet(player, "player")
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
     other = ShipClass_Create("BirdOfPrey")
     s.AddObjectToSet(other, "Bird")
-    sensor_identification.identify_contacts(player)   # must not raise
+    settle_identification(player)   # must not raise
     assert _identified == []
