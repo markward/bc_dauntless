@@ -12,6 +12,34 @@ as the field's look, the 405-minor tile clouds, the procedural belt speck/impost
 generator, the full-resolution haze). Everything else in that spec stands.
 **Roadmap:** `2026-09-30-modern-asteroids-roadmap.md` (3b, 4).
 
+## ⚠️ Baseline as built (2026-10-04) — read this first
+
+After two days of live tuning, Mark settled a baseline on branch `spike/rock-specks`
+that **replaces the mid band and the haze** described below. The sections after this one
+are the original design and its history; where they disagree, this section wins.
+
+| Range (camera distance) | What draws | Code |
+|---|---|---|
+| 0–15 / 0–60 GU (small / large) | real rock meshes | `rock_near.{h,cc}` |
+| to 90 / 405 GU (small / large) | octahedral billboards (64 views, 3-view blend, alpha-to-coverage on MSAA), hard mesh↔billboard swap, per-class pixel floors, dash collapse | `rock_near.{h,cc}`, `far_pass.cc` |
+| 405–1,500 GU | **speck band**: the SAME large rocks (same generator, cells, seeds) as GPU-faded lit specks; whole 50 GU cells thin as (420/d)³; rebuilt on a worker thread every 50 GU | `rock_speck.{h,cc}`, `shaders/rock_speck.*` |
+| 800 GU outward | **puffs**: ~400 soft, sun-lit billboards per tile field (2,000 per belt) placed by rejection-sampling the field density; drawn in the MSAA pass, depth-tested | `rock_puffs.{h,cc}`, `shaders/rock_puff.*` |
+
+- **One density for everything.** Rocks, specks and puffs all read `far::field_density`. A
+  tile field's sphere carries `noise_sharpness` 2.5 (real clumps and voids) and
+  `shape_warp` 0.35 (a lumpy outline) — the fix for "a giant grey ball".
+- **Why puffs, not the haze.** The volumetric haze was composited after the MSAA resolve
+  against one-sample depth, so every hull silhouette in front of it stepped, and its
+  disc/ball read never went away. Billboards in the main pass antialias like geometry
+  and cost one draw call. Deleted with it: the mid band (48 baked collection sprites),
+  the large far shell and the dithered hand-off.
+- **Mark's live values** (now the defaults): large billboards 405 GU (large only — "they're
+  the noticeable ones"), `puff_opacity` 0.04698, `field_dust_mult` 10.
+- **Toggles:** Developer Options → Lighting → Rock Fields (master), Rock Specks, Rock Puffs.
+  Dials: "rock fields" group on `/ L O`, look dials first.
+- **Cost (Debug, in game, Beol 4 approach):** near stream 0.1–0.25 ms, near draw
+  0.4–0.7 ms, puffs 0.25–0.46 ms (fill-bound; trimmed since), specks ~0.06 ms.
+
 ## Why a rethink
 
 Live testing of far-tier (Mark, 2026-10-02) showed:
