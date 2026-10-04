@@ -16,6 +16,10 @@ uniform mat4 u_bones[128];   // size must equal renderer::kMaxBones (bone_palett
 out vec3 v_normal_ws;
 out vec2 v_uv;
 out vec3 v_position_ws;
+// Far tier (far-tier spec §3): screen-door fade, read by opaque.frag. An
+// unset uniform is 0 = no dither.
+uniform float u_dither_fade;
+flat out float v_dither;
 
 void main() {
     mat4 skin = a_bone_weights.x * u_bones[a_bone_indices.x]
@@ -30,4 +34,5 @@ void main() {
     v_uv          = a_uv;
     v_position_ws = ws.xyz;
     gl_Position   = u_proj * u_view * ws;
+    v_dither      = u_dither_fade;
 }

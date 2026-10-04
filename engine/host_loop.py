@@ -30,6 +30,7 @@ import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine import manual_aim
+from engine.rocks import far_tier as _far_tier
 from engine.appc.windows import TacticalControlWindow
 from engine.ui.letterbox import LetterboxAnimator
 from engine.appc.character_position_zoom import (
@@ -3454,6 +3455,18 @@ def _developer_family_entry():
                 module_name="engine.dev_missions.system_preview",
                 dir_name="System Preview",
                 display_name="System Preview",
+            ), MissionEntry(
+                module_name="engine.dev_missions.far_tier_field",
+                dir_name="Far Tier Field",
+                display_name="Far Tier: Beol 4 field",
+            ), MissionEntry(
+                module_name="engine.dev_missions.far_tier_belt",
+                dir_name="Far Tier Belt",
+                display_name="Far Tier: Vesuvi belt",
+            ), MissionEntry(
+                module_name="engine.dev_missions.rock_fields_inside",
+                dir_name="Rock Fields Inside",
+                display_name="Rock Fields: inside Beol 4",
             )],
         )],
     )
@@ -4949,6 +4962,14 @@ def _push_dust_profile(r, player, warp_streaking) -> None:
     if player is not None and not warp_streaking:
         from engine.systems import profile as _profile
         dust = _profile.sample_for_object(player).dust
+        # Rock fields: x field_dust_mult dust inside a field (Mark, live
+        # 2026-10-03); only while the Rock Fields toggle is on.
+        try:
+            if r.far_enabled():
+                dust = _far_tier.dust_profile_in_field(
+                    dust, _far_tier.field_strength_at(player))
+        except Exception:
+            pass
     r.set_dust_profile(dust)
 
 
@@ -5028,6 +5049,18 @@ def _pump_minor_contact(player, session) -> None:
     except Exception as e:
         from engine import dev_mode
         dev_mode.log_swallowed("minor contact pump", e)
+
+
+def _pump_scenery_contact(player, session) -> None:
+    """Large scenery-rock touches (rock-fields Task 8): bounce + damage the
+    player. Sim side, beside the minor contacts; a raise never breaks the
+    frame."""
+    try:
+        from engine.rocks import scenery_contact
+        scenery_contact.pump(player, session=session)
+    except Exception as e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("scenery contact pump", e)
 
 
 def _veil_flares(r, flares, player):
@@ -6100,11 +6133,14 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
         if loaded is None:
             continue
-        handle = loaded[0]
+        handle, model_path, _nif_path, model_scale = loaded
         center, half_extents = r_.model_aabb(handle)
         _seed_ship_radius(ship, _model_extent_from_aabb(center, half_extents),
                           _model_sphere_radius_from_aabb(center, half_extents))
         iid = r_.create_instance(handle)
+        # Far tier (far-tier plan Task 10): flag a rock by the model it
+        # ACTUALLY loaded -- the stock NIF at 1.0 after a fallback.
+        _far_tier.note_model(ship, model_path, model_scale)
         _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
@@ -6652,6 +6688,9 @@ def _reconcile_scene(session, renderer, *, nif_cache=None,
     # rocks the scope reconcile just realised. Never raises.
     from engine.rocks import minors as _minors
     _minors.reconcile(session, renderer)
+    # Far tier (far-tier plan Task 10): frame, sources and flagged rocks for
+    # the same viewed set. Never raises.
+    _far_tier.reconcile(session, renderer)
     _reconcile_celestial_instances(
         session, renderer, nif_cache=nif_cache, verbose=verbose)
     _check_mapped_bodies_untouched(_frames.viewing_set())
@@ -6836,8 +6875,11 @@ class HostController:
         _debris_chunk.clear(self.renderer)
         from engine.rocks import minors as _minors
         _minors.reset(self.renderer)
+        _far_tier.reset(self.renderer)
         from engine.rocks import minor_contact as _minor_contact
         _minor_contact.reset()
+        from engine.rocks import scenery_contact as _scenery_contact
+        _scenery_contact.reset()
         from engine.appc import hull_breakup as _hull_breakup
         _hull_breakup.reset()
         _explosion_lights.reset()
@@ -7252,6 +7294,9 @@ class _MissionLoader:
             _seed_ship_radius(ship, extent,
                               self._c.nif_to_sphere_radius.get(extent_key, extent))
             iid = r_.create_instance(handle)
+            # Far tier: the model ACTUALLY loaded (stock NIF at 1.0 after a
+            # fallback -- model_path/model_scale were reset there).
+            _far_tier.note_model(ship, model_path, model_scale)
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
@@ -9904,6 +9949,8 @@ def run(mission_name: Optional[str] = None,
                 dev_nebula_dials.register(_h)
                 from engine.rocks import minor_dials as _minor_dials
                 _minor_dials.register()
+                from engine.rocks import far_dials as _far_dials
+                _far_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
@@ -11238,6 +11285,7 @@ def run(mission_name: Optional[str] = None,
                     from engine.rocks import vfx as rock_vfx
                     rock_vfx.pump()
                     _pump_minor_contact(player, session=session)
+                    _pump_scenery_contact(player, session=session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame

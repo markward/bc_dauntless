@@ -8,6 +8,7 @@ pick at the stock mesh's size; everything else loads unchanged.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import zlib
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ _STOCK_DIR = ("data", "models", "misc", "asteroids")
 _enabled = True
 _memo: dict[str, tuple] = {}
 _warned: set[str] = set()
+_memo_view_dirs: dict[str, tuple] = {}
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,34 @@ def load() -> tuple[Rock, ...]:
                   f"stock BC asteroid models will load", file=sys.stderr)
     _memo[key] = rocks
     return rocks
+
+
+def impostor_view_dirs() -> tuple:
+    """The 64 impostor bake view directions (an 8x8 octahedral layout,
+    rock-blend 2026-10-03; far-tier plan Task 9), read from catalogue.json at
+    USE and memoised per root like load()."""
+    root = catalogue_root()
+    key = str(root)
+    if key in _memo_view_dirs:
+        return _memo_view_dirs[key]
+    dirs: tuple = ()
+    try:
+        man = json.loads((root / "catalogue.json").read_text())
+        dirs = tuple(tuple(float(c) for c in d) for d in man.get("impostor_view_dirs", []))
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    _memo_view_dirs[key] = dirs
+    return dirs
+
+
+def index_of_path(path) -> int:
+    """The position in load() of the rock whose lod_paths[0] normalises to
+    `path`, or -1."""
+    target = os.path.normpath(str(path))
+    for i, r in enumerate(load()):
+        if r.lod_paths and os.path.normpath(r.lod_paths[0]) == target:
+            return i
+    return -1
 
 
 def pick(key: str, kind: str = "major", family: str = "silicate") -> Optional[Rock]:

@@ -1,12 +1,21 @@
 // native/src/renderer/pipeline.cc
 #include "renderer/pipeline.h"
 
+#include <string>
+
 #include <glad/glad.h>
 
 #include "embedded_opaque_vs.h"
 #include "embedded_opaque_fs.h"
 #include "embedded_skinned_vs.h"
 #include "embedded_minor_vs.h"
+#include "embedded_impostor_vs.h"
+#include "embedded_speck_vs.h"
+#include "embedded_speck_fs.h"
+#include "embedded_rock_speck_vs.h"
+#include "embedded_rock_speck_fs.h"
+#include "embedded_rock_puff_vs.h"
+#include "embedded_rock_puff_fs.h"
 #include "embedded_backdrop_vs.h"
 #include "embedded_backdrop_fs.h"
 #include "embedded_sun_vs.h"
@@ -69,12 +78,30 @@
 
 namespace renderer {
 
+namespace {
+// `src` with "#define <name> 1" inserted right after its #version line.
+std::string with_define(const char* src, const char* name) {
+    std::string out(src);
+    const std::size_t eol = out.find('\n');
+    out.insert(eol == std::string::npos ? out.size() : eol + 1,
+               std::string("#define ") + name + " 1\n");
+    return out;
+}
+}  // namespace
+
 Pipeline::Pipeline() {
     opaque_ = std::make_unique<Shader>(shader_src::opaque_vs, shader_src::opaque_fs);
     skinned_ = std::make_unique<Shader>(shader_src::skinned_vs, shader_src::opaque_fs);
     // Minor rocks: per-instance model matrix, the SAME opaque.frag (minor-rocks
     // spec §2), so its fixed sampler units are assigned with opaque's below.
     minor_ = std::make_unique<Shader>(shader_src::minor_vs, shader_src::opaque_fs);
+    // Far-tier impostors: a quad per instance, the SAME opaque.frag (far-tier
+    // spec §3), so its fixed sampler units are assigned with opaque's too.
+    // Rock-blend (2026-10-03): compiled with IMPOSTOR_VIEWS, which adds the
+    // blended multi-view sampling; every other program compiles the
+    // unchanged source.
+    impostor_ = std::make_unique<Shader>(shader_src::impostor_vs,
+                                         with_define(shader_src::opaque_fs, "IMPOSTOR_VIEWS"));
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the
@@ -84,7 +111,7 @@ Pipeline::Pipeline() {
     // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
     // Same for the hull-decal masks: u_decal_mask0..3 live on units 8..11
     // (draw_model binds the textures there once per model, frame.cc).
-    for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get()}) {
+    for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get(), impostor_.get()}) {
         sh->use();
         sh->set_int("u_scuff_map", 7);
         sh->set_int("u_decal_mask0", 8);
@@ -92,6 +119,10 @@ Pipeline::Pipeline() {
         sh->set_int("u_decal_mask2", 10);
         sh->set_int("u_decal_mask3", 11);
     }
+    // Far-tier specks: a lit, area-weighted screen quad per sub-1.5-px rock.
+    speck_ = std::make_unique<Shader>(shader_src::speck_vs, shader_src::speck_fs);
+    rock_speck_ = std::make_unique<Shader>(shader_src::rock_speck_vs, shader_src::rock_speck_fs);
+    rock_puff_ = std::make_unique<Shader>(shader_src::rock_puff_vs, shader_src::rock_puff_fs);
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);

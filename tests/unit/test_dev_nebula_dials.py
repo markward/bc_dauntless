@@ -54,7 +54,7 @@ def test_slash_cycles_the_selected_dial_through_all_seven(capsys):
         ["veil", "floor", "g", "lane_contrast", "near_range", "conceal_cap",
          "godray_gain"])
     assert seen[-1] == seen[0], "cycling wraps"
-    assert "[nebula dials]" in capsys.readouterr().out
+    assert "[nebula] veil = " in capsys.readouterr().out
 
 
 def test_l_and_o_step_the_selected_dial_and_push_the_native_dials(monkeypatch, capsys):
@@ -74,7 +74,7 @@ def test_l_and_o_step_the_selected_dial_and_push_the_native_dials(monkeypatch, c
                                                  "godray_gain"}
     _press(_Keys.KEY_L)
     assert pushed[-1]["g"] == pytest.approx(0.6)
-    assert "[nebula dials]" in capsys.readouterr().out
+    assert "[nebula] g = 0.6   (dial 3/7)" in capsys.readouterr().out
 
 
 def test_veil_steps_multiplicatively_and_stays_a_transmittance():

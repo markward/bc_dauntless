@@ -274,11 +274,14 @@ void write_contact_sheet(const fs::path& out_dir, const std::vector<RockRecord>&
         const int ox = col * view_size;
         const int oy = row * cell_h;
 
+        // The cell of a view from above (+y): (grid/2 - 1, grid/2 - 1) -- view
+        // 0 of the octahedral layout is the -y pole, the rock's underside.
         const assets::Image& src = impostor_albedos[i];
+        const int cell = std::max(0, rocks[i].impostor_grid / 2 - 1) * view_size;
         for (int y = 0; y < view_size; ++y) {
             for (int x = 0; x < view_size; ++x) {
-                const std::size_t src_i =
-                    (static_cast<std::size_t>(y) * src.width + static_cast<std::size_t>(x)) * 4;
+                const std::size_t src_i = (static_cast<std::size_t>(cell + y) * src.width +
+                                           static_cast<std::size_t>(cell + x)) * 4;
                 const std::size_t dst_i =
                     (static_cast<std::size_t>(oy + y) * width + static_cast<std::size_t>(ox + x)) * 4;
                 for (int c = 0; c < 4; ++c) canvas[dst_i + c] = src.pixels[src_i + c];

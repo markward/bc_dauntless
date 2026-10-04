@@ -37,7 +37,7 @@ def test_layout_and_manifest(tmp_path):
     man = json.loads((out / "catalogue.json").read_text())
     ids = [r["id"] for r in man["rocks"]]
     assert ids == ["majors/silicate_01", "fragments/silicate_01"]
-    assert len(man["impostor_view_dirs"]) == 16
+    assert len(man["impostor_view_dirs"]) == 64
     for rock in man["rocks"]:
         for rel in rock["lods"] + [rock["volume"], rock["impostor"]["albedo"], rock["impostor"]["normal"]]:
             assert (out / rel).is_file(), rel

@@ -18,9 +18,20 @@ add_executable(renderer_tests
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
+    far_math_test.cc
+    far_field_test.cc
+    rock_near_test.cc
+    rock_speck_test.cc
+    rock_puff_gl_test.cc
     minor_field_test.cc
     minor_field_bench_test.cc
+    rock_near_bench_test.cc
+    rock_perf_equivalence_test.cc
+    glm_exact_test.cc
     minor_pass_test.cc
+    far_dither_test.cc
+    far_pass_test.cc
+    impostor_blend_gl_test.cc
     nebula_atmosphere_test.cc
     system_nebula_pass_test.cc
     motion_blur_shutter_test.cc

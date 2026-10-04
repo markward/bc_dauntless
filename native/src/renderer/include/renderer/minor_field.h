@@ -12,6 +12,8 @@
 
 #include <glm/glm.hpp>
 
+#include <renderer/speck.h>
+
 namespace renderer::minors {
 
 enum class Anchor : std::uint8_t { Instance, Point, Free };
@@ -65,9 +67,16 @@ struct Dials {   // defaults MUST equal engine/rocks/minor_dials.py DEFAULTS
     float debris_damp_seconds = 6.0f;
 };
 
-struct Fragment { std::uint64_t lod0 = 0, lod1 = 0; float bound_radius_mu = 57.142857f; };
+struct Fragment {
+    std::uint64_t lod0 = 0, lod1 = 0;
+    float bound_radius_mu = 57.142857f;
+    glm::vec3 albedo{0.4f};    // catalogue avg_albedo: the colour of its speck
+};
 
-struct InstanceGpu { glm::vec4 row0, row1, row2; };   // rows of [R·s | t], render space
+// rows of [R·s | t], render space; `extra.x` is the signed screen-door dither
+// (opaque.frag's v_dither: 0 = solid, byte-identical; yzw reserved, 0).
+struct InstanceGpu { glm::vec4 row0, row1, row2; glm::vec4 extra{0.0f}; };
+static_assert(sizeof(InstanceGpu) == 64, "InstanceGpu is four tightly packed vec4s");
 
 struct Bin { int family = 0; int slot = 0; int lod = 0; std::vector<InstanceGpu> items; };
 
@@ -80,6 +89,35 @@ struct PlayerBox {
     glm::vec3 center_mu{0.0f};    // model-space AABB centre
     glm::vec3 half_mu{1.0f};      // model-space AABB half extents
 };
+
+// The player's oriented contact box in RENDER space for one step.
+struct SweepBox {
+    glm::vec3 axes[3];     // unit
+    glm::vec3 half;        // GU, already inflated by any margin
+    float bound = 0.0f;    // |half|
+};
+// Axes and half extents of `box` posed by its world (which carries scale);
+// `inflate` scales the half extents before `margin_gu` is added.
+SweepBox sweep_box_of(const PlayerBox& box, float margin_gu, float inflate = 1.0f);
+// Closest point on the box centred at `centre`.
+glm::vec3 closest_on_box(const SweepBox& b, const glm::vec3& centre, const glm::vec3& p);
+// Exact swept distance (golden-section; f is convex for a fixed orientation):
+// the minimum over s in [0,1] of |p - closest_on_box(seg0 + seg*s)|; `s_out`
+// gets the minimiser (ties prefer s = 1, the current pose).
+float sweep_min_distance(const SweepBox& b, const glm::vec3& seg0, const glm::vec3& seg,
+                         const glm::vec3& p, float& s_out);
+
+// A shoved minor's persistent response (spec §3).
+struct ShoveState { glm::vec3 offset{0.0f}, vel{0.0f}; float spin = 0.0f, spin_rate = 0.0f;
+                    double last_contact = -1e9; };
+// One touch: velocity along unit `push_dir` from the closing speed
+// `rel_speed` (= v_player . push_dir; receding clamps to the floor), spin
+// raised to at least shove_tumble, and the contact clock restarted when the
+// cooldown has run out. The caller moves `offset` (the positional push).
+void apply_shove(ShoveState&, const glm::vec3& push_dir, float rel_speed, double now,
+                 const Dials&);
+// Integrate one step: the offset persists, velocity and spin decay.
+void advance_shove(ShoveState&, float dt, const Dials&);
 
 // One player/minor touch, drained by Python (engine/rocks/minor_contact.py).
 struct Contact { glm::dvec3 point_view{0.0}; float radius = 0.0f; float rel_speed = 0.0f; };
@@ -115,8 +153,14 @@ public:
     // bin once per drawn target (main view, bridge viewscreen RTT) with that
     // target's own camera and height. `drawn` (optional) gets the instance
     // count. step() bins into bins() through this same function.
+    // `specks` (optional, cleared first): with set_specks(true, p_min), every
+    // in-frustum minor with p_min <= pixel_r < min_pixel_radius -- the band
+    // culled otherwise -- becomes one far-tier speck (far-tier spec §3).
     void build_bins(const glm::mat4& view, const glm::mat4& proj, float viewport_h,
-                    std::vector<Bin>& out, int* drawn = nullptr) const;
+                    std::vector<Bin>& out, int* drawn = nullptr,
+                    std::vector<SpeckGpu>* specks = nullptr) const;
+    // Far tier: draw the sub-min_pixel_radius band as specks (off by default).
+    void set_specks(bool on, float p_min) { specks_on_ = on; speck_p_min_ = p_min; }
     Stats stats() const { return stats_; }
     // Clouds held right now (stats().clouds is as of the last step).
     std::size_t cloud_count() const { return clouds_.size(); }
@@ -131,8 +175,7 @@ public:
     // test can pose a minor exactly (minor_pass_test.cc). No-op when absent.
     void debug_set_phase(std::uint32_t id, std::size_t i, float phase);
 private:
-    struct Shove { glm::vec3 offset{0.0f}, vel{0.0f}; float spin = 0.0f, spin_rate = 0.0f;
-                   double last_contact = -1e9; };
+    using Shove = ShoveState;
     struct Cloud {
         CloudDesc desc; std::vector<Minor> minors;
         std::unordered_map<std::uint32_t, Shove> shoves;
@@ -142,6 +185,8 @@ private:
         glm::vec3 anchor_render{0.0f}; bool anchor_ok = false;
     };
     Dials dials_;
+    bool specks_on_ = false;
+    float speck_p_min_ = 0.25f;
     std::unordered_map<int, std::vector<Fragment>> fragments_;
     std::map<std::uint32_t, Cloud> clouds_;     // ordered: deterministic bins
     std::vector<Bin> bins_;

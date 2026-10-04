@@ -85,6 +85,8 @@ struct Instance {
     /// no venting, grey-brown debris. Default false.
     bool surface_is_rock = false;
 
+    float far_fade = 0.0f;  // far tier: 0 = mesh, 1 = skip, between = dithered (far-tier spec §3)
+
     /// Scales the ship's self-illumination (material emissive + glow map) at
     /// draw time. 1.0 = normal; 0.0 = no self-light, used for destroyed ships
     /// so a dead hull goes dark in space (diffuse-lit, specular, and rim

@@ -7,9 +7,13 @@ about where the 16.67 ms goes was a guess.
 
 ## Using it
 
-Launch with `--developer` and press **`` ` ``** (backtick). One switch drives
-both halves; a report is written to stderr every `REPORT_EVERY` (120) frames.
-Press it again to stop.
+Launch with `--developer`, open the pause menu's **Developer Options →
+Diagnostics** tab, and toggle the frame profiler row. One switch drives both
+halves; a report is written to stderr every `REPORT_EVERY` (120) frames.
+Toggle it again to stop. (It used to live on backtick (`` ` ``) with no
+on-screen state and no confirmation — `engine/dev_keybindings.py` moved it
+after one stray keypress buried every other diagnostic line in the terminal
+for the rest of a session, with no obvious way back.)
 
 For an unattended capture:
 
@@ -313,6 +317,12 @@ ships at lower frequency; (c) move hot paths to C++.
 * **Never assume the swap interval.** A hidden window already defaults to 0, so
   the original hard-coded "present is the vsync wait" note told every headless
   capture the opposite of the truth. It is read from the context now.
+* **This doc does not keep an exhaustive scope registry — read the call sites.**
+  Features add their own `DAUNTLESS_FRAME_SCOPE`/`scope()` names as they ship and
+  nest under whichever phase calls them; e.g. the rock-fields bands
+  (`host_bindings.cc`) add `rock.near.stream`, `rock.near.draw`,
+  `rock.fade.draw` (the translucent impostor fades), `rock.puffs.draw` and
+  `rock.specks.draw`, alongside the earlier far-tier `space.far.*` scopes.
 
 ## Tests
 

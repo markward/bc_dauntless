@@ -7,6 +7,7 @@ layout(location = 2) in vec2 a_uv;
 layout(location = 7) in vec4 a_row0;   // rows of [R*s | t], RENDER space
 layout(location = 8) in vec4 a_row1;
 layout(location = 9) in vec4 a_row2;
+layout(location = 10) in vec4 a_extra; // x = signed dither (0 = solid); yzw unused
 
 uniform mat4 u_view;
 uniform mat4 u_proj;
@@ -14,6 +15,7 @@ uniform mat4 u_proj;
 out vec3 v_normal_ws;
 out vec2 v_uv;
 out vec3 v_position_ws;
+flat out float v_dither;   // opaque.frag's screen-door dither, per instance
 
 void main() {
     mat4 model = transpose(mat4(a_row0, a_row1, a_row2, vec4(0.0, 0.0, 0.0, 1.0)));
@@ -22,4 +24,5 @@ void main() {
     v_uv = a_uv;
     v_position_ws = ws.xyz;
     gl_Position = u_proj * u_view * ws;
+    v_dither = a_extra.x;
 }

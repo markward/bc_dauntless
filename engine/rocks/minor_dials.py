@@ -17,10 +17,10 @@ DEFAULTS: dict = {
     "halo_per_gu2": 8.0, "halo_min": 12, "halo_max": 400,
     "halo_r_min_gu": 0.03, "halo_r_max_frac": 0.15, "halo_r_max_gu": 1.0,
     "halo_size_exponent": 2.5, "halo_orbit_rate": 0.02,
-    # §1 tile field
+    # §1 tile field: no cloud since rock-fields (2026-10-02); these size the
+    # field's far-tier density source (engine/rocks/density.py).
     "tile_count_mult": 1.0, "tile_r_min_gu": 0.05,
     "tile_r_per_size_factor": 0.1, "tile_size_exponent": 2.5,
-    "tile_orbit_rate": 0.0,
     # §1 budget
     "max_live_minors": 20000, "free_cloud_fade_seconds": 2.0,
     # §2 render (native)

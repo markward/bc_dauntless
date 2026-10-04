@@ -10,25 +10,62 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <vector>
 
-TEST(Impostor, SixteenFixedViews) {
+// rock-blend (2026-10-03): 64 views, the corner-sampled points of an 8x8
+// octahedral map (glTF frame, pole axis +y) -- renderer::far::oct_view_dir's
+// layout, which the renderer blends between.
+TEST(Impostor, SixtyFourOctahedralViews) {
     auto d = rockgen::impostor_view_dirs();
-    ASSERT_EQ(d.size(), 16u);
+    ASSERT_EQ(d.size(), 64u);
     for (auto& v : d) EXPECT_NEAR(glm::length(v), 1.0f, 1e-5f);
     EXPECT_EQ(d, rockgen::impostor_view_dirs());
+    auto at = [&](int i, int j) { return d[static_cast<size_t>(j * 8 + i)]; };
+    EXPECT_EQ(at(0, 0), glm::vec3(0.0f, -1.0f, 0.0f));   // the corners: the -y pole
+    for (int k = 0; k < 8; ++k) {                       // border views: mirror twins
+        EXPECT_EQ(at(k, 0), at(7 - k, 0)) << k;
+        EXPECT_EQ(at(7, k), at(7, 7 - k)) << k;
+    }
+    // An interior point: oct (a, b) = (1/7, 3/7) -> (a, 1 - |a| - |b|, b) normalised.
+    EXPECT_NEAR(glm::length(at(4, 5) - glm::normalize(glm::vec3(1.0f, 3.0f, 3.0f))), 0.0f, 1e-6f);
 }
 
 TEST(Impostor, CoverageInEveryCell) {
     auto r = rockgen::parse_recipe(kMini); auto s = rockgen::expand_recipe(r);
     auto lods = rockgen::generate_rock_lods(s[0]);
     auto surf = rockgen::generate_rock_surface(s[0]);
-    auto imp = rockgen::bake_impostor(lods[1], surf, 32);
+    auto imp = rockgen::bake_impostor(lods[1], surf, 16);
+    ASSERT_EQ(imp.grid, 8);
+    ASSERT_EQ(imp.view_dirs.size(), 64u);
     ASSERT_EQ(imp.albedo.width, 128u);
-    for (int cell = 0; cell < 16; ++cell) {
-        int cx = (cell % 4) * 32 + 16, cy = (cell / 4) * 32 + 16;   // cell centre is on the rock
+    for (int cell = 0; cell < 64; ++cell) {
+        int cx = (cell % 8) * 16 + 8, cy = (cell / 8) * 16 + 8;   // cell centre is on the rock
         EXPECT_GT(imp.albedo.pixels[(cy * 128 + cx) * 4 + 3], 0) << cell;
-        EXPECT_EQ(imp.albedo.pixels[((cell / 4) * 32 * 128 + (cell % 4) * 32) * 4 + 3], 0) << cell; // corner empty
+        EXPECT_EQ(imp.albedo.pixels[((cell / 8) * 16 * 128 + (cell % 8) * 16) * 4 + 3], 0) << cell; // corner empty
     }
+}
+
+// Mirror-twin views share a direction, so their cells are the same picture,
+// byte for byte (the renderer may blend either twin at a fold).
+TEST(Impostor, MirrorTwinCellsAreIdentical) {
+    auto r = rockgen::parse_recipe(kMini); auto s = rockgen::expand_recipe(r);
+    auto lods = rockgen::generate_rock_lods(s[0]);
+    auto surf = rockgen::generate_rock_surface(s[0]);
+    const int vs = 16;
+    auto imp = rockgen::bake_impostor(lods[1], surf, vs);
+    const int canvas = 8 * vs;
+    auto cell_bytes = [&](const assets::Image& img, int i, int j) {
+        std::vector<std::uint8_t> out;
+        for (int y = 0; y < vs; ++y)
+            for (int x = 0; x < vs * 4; ++x)
+                out.push_back(img.pixels[static_cast<size_t>((j * vs + y) * canvas * 4 + i * vs * 4 + x)]);
+        return out;
+    };
+    for (int k = 0; k < 8; ++k) {
+        EXPECT_EQ(cell_bytes(imp.albedo, k, 0), cell_bytes(imp.albedo, 7 - k, 0)) << k;
+        EXPECT_EQ(cell_bytes(imp.normal, 0, k), cell_bytes(imp.normal, 0, 7 - k)) << k;
+    }
+    EXPECT_EQ(cell_bytes(imp.albedo, 0, 0), cell_bytes(imp.albedo, 7, 7));
 }
 
 // A flat, origin-centred rectangle (world y=0 plane) split into two
@@ -74,7 +111,7 @@ TEST(Impostor, NoCracksOnSharedEdges) {
 
     const int view_size = 31;   // odd: the origin lands on a PIXEL CENTRE
     auto imp = rockgen::bake_impostor(mesh, flat, view_size);
-    ASSERT_EQ(imp.albedo.width, static_cast<std::uint32_t>(4 * view_size));
+    ASSERT_EQ(imp.albedo.width, static_cast<std::uint32_t>(8 * view_size));
 
     // View 0 occupies canvas cell (0, 0). This 12x12 block is centred on the
     // view (and hence on the shared diagonal) with a wide margin inside the

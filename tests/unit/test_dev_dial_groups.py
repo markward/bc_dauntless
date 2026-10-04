@@ -78,3 +78,41 @@ def test_register_keys_claims_exactly_slash_l_o(monkeypatch):
         keys = _Keys
     g.register_keys(_H)
     assert sorted(claimed) == [1, 2, 3]
+
+
+# ── Readable output (Mark, 2026-10-02: the one-line dict dump was unreadable) ──
+
+def test_slash_and_steps_print_one_short_line_for_the_selected_dial(capsys):
+    log = []
+    _group("far", ("puff_opacity", "puff_brightness", "speck_gain"), log)
+    capsys.readouterr()
+    g.cycle_dial()
+    out = capsys.readouterr().out
+    assert out == "\n[far] puff_brightness = 1   (dial 2/3)\n"
+    g.push(+1)
+    out = capsys.readouterr().out
+    assert out == "\n[far] puff_brightness = 2   (dial 2/3)\n"
+
+
+def test_switching_group_prints_a_framed_list_marking_the_selection(capsys):
+    log = []
+    _group("nebula", ("veil",), log)
+    _group("far", ("puff_opacity", "speck_gain"), log)
+    capsys.readouterr()
+    g.cycle_active()
+    out = capsys.readouterr().out
+    lines = out.split("\n")
+    assert lines[0] == ""                          # blank line above the block
+    assert lines[1] == "── far dials ──"
+    assert lines[2].startswith("→ puff_opacity") and lines[2].rstrip().endswith("1")
+    assert lines[3].startswith("  speck_gain")
+    assert lines[4].startswith("──")
+    assert out.endswith("\n\n")                    # blank line below the block
+
+
+def test_values_print_compactly():
+    assert g._fmt(14140.0) == "14140"
+    assert g._fmt(0.106300440576) == "0.1063"
+    assert g._fmt(8.0) == "8"
+    assert g._fmt(2.5e-08) == "2.5e-08"
+    assert g._fmt(17) == "17"

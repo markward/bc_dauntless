@@ -49,6 +49,13 @@ embed_shader(SHADER_OPAQUE_VS shaders/opaque.vert opaque_vs)
 embed_shader(SHADER_OPAQUE_FS shaders/opaque.frag opaque_fs)
 embed_shader(SHADER_SKINNED_VS shaders/skinned.vert skinned_vs)
 embed_shader(SHADER_MINOR_VS shaders/minor.vert minor_vs)
+embed_shader(SHADER_IMPOSTOR_VS shaders/impostor.vert impostor_vs)
+embed_shader(SHADER_SPECK_VS shaders/speck.vert speck_vs)
+embed_shader(SHADER_SPECK_FS shaders/speck.frag speck_fs)
+embed_shader(SHADER_ROCK_SPECK_VS shaders/rock_speck.vert rock_speck_vs)
+embed_shader(SHADER_ROCK_SPECK_FS shaders/rock_speck.frag rock_speck_fs)
+embed_shader(SHADER_ROCK_PUFF_VS shaders/rock_puff.vert rock_puff_vs)
+embed_shader(SHADER_ROCK_PUFF_FS shaders/rock_puff.frag rock_puff_fs)
 embed_shader(SHADER_BACKDROP_VS shaders/backdrop.vert backdrop_vs)
 embed_shader(SHADER_BACKDROP_FS shaders/backdrop.frag backdrop_fs)
 embed_shader(SHADER_SUN_VS shaders/sun.vert sun_vs)
@@ -158,8 +165,15 @@ add_library(renderer STATIC
     backdrop_pass.cc
     sun_pass.cc
     dust_pass.cc
+    far_math.cc
+    far_field.cc
+    rock_near.cc
+    rock_speck.cc
+    rock_puffs.cc
     minor_field.cc
     minor_pass.cc
+    rock_shading.cc
+    far_pass.cc
     nebula_pass.cc
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc
