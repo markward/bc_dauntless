@@ -80,8 +80,10 @@ TEST(NearBench, StreamAt100kGups) {
 // ~6 GU/s at 60 Hz with a chase camera. REPORTS per-call ms of
 // NearField::stream / step / build (asserts nothing about time).
 #include "rock_scenario.h"
-TEST(NearBench, InsideBeol4) {
+namespace {
+void bench_inside_beol4(const char* label, const rockfield::NearDials& dials) {
     rockfield::NearField f;
+    f.set_dials(dials);
     f.set_catalogue(rock_scenario::near_catalogue());
     f.set_sources({rock_scenario::beol4_field()});
     constexpr int kSteps = 600;
@@ -129,15 +131,34 @@ TEST(NearBench, InsideBeol4) {
                     if (glm::length(glm::vec3(it.centre_half) - eye) > f.dials().large.billboard_gu) ++far_boards;
         st = f.stats();
     }
-    std::printf("[near bench beol4] %d frames at %.0f GU/s: first stream=%.3f ms; stream mean=%.3f "
+    std::printf("[near bench beol4 %s] %d frames at %.0f GU/s: first stream=%.3f ms; stream mean=%.3f "
                 "worst=%.3f ms; step mean=%.3f worst=%.3f ms; build mean=%.3f worst=%.3f ms; "
                 "cells=%d small=%d large=%d; per frame meshes=%.1f billboards=%.1f; "
                 "contacts large=%d small=%d; far shell (large_far_gu=%.0f): far billboards=%.1f "
                 "fading=%.1f per frame\n",
-                kSteps, kGups, first_stream, t_stream / (kSteps - 1), w_stream, t_step / kSteps,
+                label, kSteps, kGups, first_stream, t_stream / (kSteps - 1), w_stream, t_step / kSteps,
                 w_step, t_build / kSteps, w_build, st.cells, st.small, st.large,
                 static_cast<double>(meshes) / kSteps, static_cast<double>(boards) / kSteps,
                 large_c, small_c, f.dials().large_far_gu, static_cast<double>(far_boards) / kSteps,
                 static_cast<double>(fading) / kSteps);
     EXPECT_GT(st.small, 0);
+}
+}  // namespace
+
+// (At the 3x ranges the default large_far_gu 250 lies inside
+// large.billboard_gu 270, so the defaults run with the far shell off too.)
+TEST(NearBench, InsideBeol4) { bench_inside_beol4("defaults", rockfield::NearDials{}); }
+
+// The far shell on: large rocks stream and draw on to 400 GU.
+TEST(NearBench, InsideBeol4ShellOn) {
+    rockfield::NearDials d;
+    d.large_far_gu = 400.0f;
+    bench_inside_beol4("shell on 400", d);
+}
+
+// As the game runs it today (Mark, live 2026-10-04): the far shell off.
+TEST(NearBench, InsideBeol4ShellOff) {
+    rockfield::NearDials d;
+    d.large_far_gu = 0.0f;
+    bench_inside_beol4("shell off", d);
 }

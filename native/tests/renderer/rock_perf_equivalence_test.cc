@@ -99,7 +99,10 @@ struct NearRun {
 // `caps` makes the per-class instance caps and the per-step touch cap bind.
 // `resend` re-pushes the SAME sources before every stream, as the host
 // does live (far_set_frame every frame calls NearField::set_sources).
-NearRun run_near(bool fast, bool caps, bool resend = false) {
+// `current`: start from the given dials (the near-perf2 runs at the
+// defaults of 2026-10-04) instead of the pinned ee82c35c ones.
+NearRun run_near(bool fast, bool caps, bool resend = false,
+                 const rockfield::NearDials* current = nullptr) {
     rockfield::NearField f;
     rockfield::NearDials dials;
     // Pinned to the near_* defaults in effect when these digests were
@@ -115,6 +118,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
     dials.large.cell_gu = 20.0f; dials.large_far_gu = 0.0f; dials.large.max_instances = 1000;
     dials.handoff_fade_gu = dials.fade_gu;   // pinned: the recorded digests used the dithered hand-off
     dials.tumble_scale = 1.0f;               // pinned: and the full tumble rate
+    if (current) dials = *current;
     if (caps) {
         dials.small.max_instances = 60;
         dials.large.max_instances = 12;
@@ -122,6 +126,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
         dials.large.density = 2.0e-3f;
     }
     f.set_dials(dials);
+    const float small_billboard0 = dials.small.billboard_gu;
     f.set_catalogue(rock_scenario::near_catalogue());
     f.set_sources({rock_scenario::beol4_field()});
     rockfield::NearStepInput sin;
@@ -156,7 +161,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false) {
         }
         if (i == 480) {
             rockfield::NearDials d2 = f.dials();
-            d2.small.billboard_gu = 30.0f; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f; d2.handoff_fade_gu = 6.0f;
+            d2.small.billboard_gu = small_billboard0; d2.stream_margin_gu = 10.0f; d2.fade_gu = 6.0f; d2.handoff_fade_gu = 6.0f;
             f.set_dials(d2);
         }
         if (resend) f.set_sources({rock_scenario::beol4_field()});
@@ -247,6 +252,48 @@ TEST(RockPerfEquivalence, NearCapsBindingMatchesTheRecordedDigests) {
     const NearRun r = run_near(/*fast=*/true, /*caps=*/true);
     EXPECT_GT(r.capped_steps, 0) << "the per-step touch cap must bind";
     expect_near("caps", r, 0xaf6e541d06b59f8cull, 0xefbcbac817d4349cull, 0x9e23d1b0ea412383ull);
+}
+
+// ---- Near band at the 3x ranges (rock-perf2, 2026-10-04) -------------------
+// NearField::build / stream / step were restructured (cell blocks, a cheaper
+// incremental stream) at the 2026-10-04 defaults. These digests were recorded
+// from the implementation BEFORE that work (feat/rock-fields 26573330) over
+// the same scripted flights at those defaults -- the far shell off (as the
+// defaults are: large_far_gu 250 < large.billboard_gu 270) and on (400 GU) --
+// and pin every drawn byte, every contact and the streamed set.
+namespace {
+rockfield::NearDials defaults_2026_10_04() {
+    rockfield::NearDials d;   // the 26573330 defaults, spelled out so a later retune does not move them
+    d.small.density = 0.010f; d.small.r_min = 0.05f; d.small.r_max = 0.5f; d.small.exponent = 2.5f;
+    d.small.cell_gu = 10.0f; d.small.mesh_gu = 15.0f; d.small.billboard_gu = 90.0f; d.small.max_instances = 4000;
+    d.large = {1.0f / 16000.0f, 1.0f, 5.0f, 2.5f, 50.0f, 60.0f, 270.0f, 4000};
+    d.fade_gu = 4.0f; d.handoff_fade_gu = 0.0f; d.tumble_scale = 0.05f;
+    d.large_far_gu = 250.0f; d.large_far_fade_gu = 40.0f; d.large_min_px = 1.5f; d.small_min_px = 2.5f;
+    d.far_shell_max_step_gu = 25.0f; d.far_shell_regrow_gu = 20.0f; d.stream_margin_gu = 10.0f;
+    d.collide_cooldown_s = 0.5f; d.collide_margin_gu = 0.0f;
+    return d;
+}
+}  // namespace
+
+TEST(RockPerfEquivalence, NearAtThe3xDefaultsMatchesTheRecordedDigests) {
+    const rockfield::NearDials d = defaults_2026_10_04();
+    const NearRun slow = run_near(/*fast=*/false, /*caps=*/false, /*resend=*/true, &d);
+    EXPECT_GT(slow.contacts_small, 0) << "the run must exercise contacts";
+    expect_near("3x slow", slow, 0x3e904f4a857b1c83ull, 0xb669fef7715dcb4cull, 0xc2f3ca13f18b478dull);
+    const NearRun fast = run_near(/*fast=*/true, /*caps=*/false, /*resend=*/true, &d);
+    EXPECT_GT(fast.contacts_large + fast.contacts_small, 0);
+    expect_near("3x fast", fast, 0x3914d12f59dbaf30ull, 0x89637c4bb7afc399ull, 0xd4f19ee8b0d55df2ull);
+}
+
+TEST(RockPerfEquivalence, NearAtThe3xDefaultsShellOnMatchesTheRecordedDigests) {
+    rockfield::NearDials d = defaults_2026_10_04();
+    d.large_far_gu = 400.0f;
+    const NearRun fast = run_near(/*fast=*/true, /*caps=*/false, /*resend=*/true, &d);
+    EXPECT_GT(fast.fading, 0);
+    expect_near("3x shell on, fast", fast, 0x53611b760c5e63b7ull, 0x89637c4bb7afc399ull, 0xcbecc782b816bd0eull);
+    // (No caps run here: the caps dials' densities at the 3x ranges take
+    // ~30 s in Debug. NearCapsBindingMatchesTheRecordedDigests pins the
+    // nearest-first cap and the touch cap.)
 }
 
 // ---- Mid band ---------------------------------------------------------------
