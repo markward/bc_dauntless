@@ -166,7 +166,6 @@ add_library(renderer STATIC
     far_math.cc
     far_field.cc
     rock_near.cc
-    rock_mid.cc
     rock_speck.cc
     rock_puffs.cc
     minor_field.cc

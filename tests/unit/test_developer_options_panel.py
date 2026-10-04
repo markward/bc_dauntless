@@ -127,7 +127,6 @@ def test_render_payload_shape(panel):
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
         "minor_rocks": True, "far_tier": True,
-        "rock_mid": False,
     }
 
 
@@ -480,48 +479,6 @@ def test_far_tier_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
     p = DeveloperOptionsPanel()
     p.open()
     assert _body(p.render_payload())["settings"]["far_tier"] is True
-
-
-# ── Rock mid band toggle (rock-real Part 1 strip-back, 2026-10-03) ----------
-# Independent of far_tier and OFF by default while rock fields are
-# rebuilt band by band.
-
-def test_rock_mid_toggle_flips_the_real_renderer_flag(panel):
-    """Drives renderer.rock_mid_set_enabled, not just a local mirror."""
-    from engine import renderer
-
-    p, _ = panel
-    saved = renderer.rock_mid_enabled()
-    try:
-        p.open()
-        p.dispatch_event("tab:lighting")
-        p.render_payload()
-        assert p.dispatch_event("toggle:rock_mid") is True
-        assert renderer.rock_mid_enabled() is (not saved)
-        assert _body(p.render_payload())["settings"]["rock_mid"] is (not saved)
-        p.dispatch_event("toggle:rock_mid")
-        assert renderer.rock_mid_enabled() is saved
-    finally:
-        renderer.rock_mid_set_enabled(saved)
-
-
-def test_rock_mid_ctrl_is_a_lighting_tab_focusable(panel):
-    p, _ = panel
-    p.open()
-    p.dispatch_event("tab:lighting")
-    assert ("ctrl", "rock_mid") in p._focusables()
-
-
-def test_rock_mid_defaults_off_when_the_renderer_is_unavailable(monkeypatch):
-    from engine import renderer
-    from engine.ui.developer_options_panel import DeveloperOptionsPanel
-
-    def boom():
-        raise RuntimeError("renderer not initialised")
-    monkeypatch.setattr(renderer, "rock_mid_enabled", boom)
-    p = DeveloperOptionsPanel()
-    p.open()
-    assert _body(p.render_payload())["settings"]["rock_mid"] is False
 
 
 # ── Diagnostics tab: the frame profiler ─────────────────────────────────────

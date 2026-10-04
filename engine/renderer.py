@@ -87,7 +87,6 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_catalogue", "far_set_rocks", "far_set_sources",
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
-    "rock_mid_set_enabled", "rock_mid_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
     "rockfield_rearm", "rockfield_catalogue_size", "rockfield_set_player",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
@@ -597,16 +596,13 @@ def minors_clear() -> None:
 # ── Far tier (docs/superpowers/specs/2026-10-01-far-tier-design.md) ──
 
 
-def far_set_catalogue(entries: list, view_dirs: list, collections: list = ()) -> None:
+def far_set_catalogue(entries: list, view_dirs: list) -> None:
     """Catalogue by index: [{"albedo", "normal", "avg_albedo"}, ...] plus the
     impostor bake's view directions; empty atlas paths mean no impostor.
     Optional per entry: "kind", "family", "lod0"/"lod1" model handles and
     "bound_radius_mu" -- a silicate fragment / major with both handles
-    streams in the rock-fields near band. `collections`: the rock-fields mid
-    band's baked collection impostors, [{"albedo", "normal", "avg_albedo",
-    "variant" (0 sparse, 1 medium, 2 dense)}, ...]; collection i draws from
-    atlas slot len(entries) + i. Empty: the mid band draws nothing."""
-    _h.far_set_catalogue(entries, view_dirs, list(collections))
+    streams in the rock-fields near band."""
+    _h.far_set_catalogue(entries, view_dirs)
 
 
 def far_set_rocks(rocks: list) -> None:
@@ -637,18 +633,6 @@ def far_set_enabled(enabled: bool) -> None:
 def far_enabled() -> bool:
     """Whether the far tier builds and draws."""
     return _h.far_enabled()
-
-
-def rock_mid_set_enabled(enabled: bool) -> None:
-    """Turn the rock-fields mid band's build and draws on or off,
-    independent of far_set_enabled (that master switch still gates
-    everything when off)."""
-    _h.rock_mid_set_enabled(bool(enabled))
-
-
-def rock_mid_enabled() -> bool:
-    """Whether the rock-fields mid band builds and draws."""
-    return _h.rock_mid_enabled()
 
 
 def far_stats() -> dict:

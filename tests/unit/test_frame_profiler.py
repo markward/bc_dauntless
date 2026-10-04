@@ -622,13 +622,13 @@ def test_reset_clears_the_report_interval_and_tick_count():
 _FAR = {"sources": 2, "rocks": 1, "impostors": 3, "specks": 40, "draw_calls": 61,
         "near_cells": 312, "near_small": 640, "near_large": 48, "near_ghosted": 1,
         "near_meshes": 410, "near_billboards": 270, "near_fading": 30,
-        "mid_sprites": 152, "mid_tiles": 180, "mid_fading": 60}
+        "band_specks": 900, "speck_cells": 75, "puffs": 400}
 _MINORS = {"clouds": 4, "minors": 2300, "drawn": 2100, "bins": 9, "draw_calls": 12}
 
 
 def test_rock_summary_states_every_band_and_the_draw_calls(monkeypatch):
     """The 'how many rocks, drawn how' line Mark asked for: near (streamed and
-    drawn as meshes / billboards), mid sprites, far impostors + specks, minors,
+    drawn as meshes / billboards), speck band, puffs, far impostors + specks, minors,
     and the draw calls each side issued -- all from the last frame's stats."""
     from engine import renderer
     monkeypatch.setattr(renderer, "far_enabled", lambda: True)
@@ -636,22 +636,22 @@ def test_rock_summary_states_every_band_and_the_draw_calls(monkeypatch):
     monkeypatch.setattr(renderer, "minors_stats", lambda: dict(_MINORS))
     line = fp.rock_summary()
     for piece in ("cells 312", "small 640", "large 48", "ghosted 1",
-                  "meshes 410", "billboards 270", "mid 152 sprites (180 tiles)",
+                  "meshes 410", "billboards 270", "speck band 900 (75 cells)", "puffs 400",
                   "impostors 3", "specks 40", "minors 2100/2300 drawn",
                   "draw calls 61 rock + 12 minor"):
         assert piece in line, (piece, line)
 
 
 def test_rock_summary_states_the_translucent_fades(monkeypatch):
-    """Rock fade (2026-10-03): how many of the drawn billboards / mid sprites
-    drew translucent (fading) rather than solid or dithered."""
+    """Rock fade (2026-10-03): how many of the drawn billboards drew
+    translucent (fading) rather than solid or dithered."""
     from engine import renderer
     monkeypatch.setattr(renderer, "far_enabled", lambda: True)
     monkeypatch.setattr(renderer, "far_stats", lambda: dict(_FAR))
     monkeypatch.setattr(renderer, "minors_stats", lambda: dict(_MINORS))
     line = fp.rock_summary()
-    for piece in ("billboards 270, fading 30", "mid 152 sprites (180 tiles), fading 60"):
-        assert piece in line, (piece, line)
+    assert "billboards 270, fading 30" in line, line
+    assert "mid" not in line, line
 
 
 def test_rock_summary_says_when_the_tier_is_off(monkeypatch):

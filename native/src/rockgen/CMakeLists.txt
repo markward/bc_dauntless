@@ -3,7 +3,6 @@ add_library(rockgen STATIC
     src/shape.cc
     src/surface.cc
     src/impostor.cc
-    src/collection.cc
 )
 target_include_directories(rockgen PUBLIC include)
 target_compile_features(rockgen PUBLIC cxx_std_20)

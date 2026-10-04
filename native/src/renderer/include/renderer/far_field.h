@@ -36,7 +36,7 @@ struct DiscSource {
     Shape shape = Shape::Disc;
     // false: not a belt (a tile field). Since rock-fields (2026-10-02) the
     // far tier generates no rocks for ANY source; the flag rides along for
-    // the near/mid bands.
+    // the rock-fields bands.
     bool procedural = true;
     // true: `centre` is in the viewed set's VIEW space and the source is
     // active whenever it was pushed, frame key or not (refresh_active puts it

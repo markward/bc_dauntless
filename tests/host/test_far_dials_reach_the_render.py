@@ -38,7 +38,6 @@ def host():
     # These tests measure the puffs (the field's far look) alone.
     h.rock_puffs_set_enabled(True)
     h.rock_specks_set_enabled(False)
-    h.rock_mid_set_enabled(False)
     try:
         yield h
     finally:

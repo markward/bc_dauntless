@@ -233,7 +233,7 @@ TEST(FarFieldBuild, FrustumCulledFlaggedRockKeepsItsFade) {
 
 // Rock-fields (2026-10-02): the belt generator is gone. A procedural belt is
 // a density source only -- the far tier emits no rocks of its own for it
-// (the near/mid bands of the rock-fields spec replace it).
+// (the rock-fields near band, specks and puffs replace it).
 TEST(FarField, NoProceduralRocksFromABelt) {
     far::FarField f;
     far::DiscSource belt; belt.id = 1; belt.frame = "Vesuvi";

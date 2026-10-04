@@ -808,8 +808,7 @@ TEST_F(FarPassGLTest, SpeckFluxIsSteadyUnderSubPixelMotion) {
 
 // Rock-fields Task 14: the screen-door dither only DISCARDS -- every pixel a
 // dithered impostor keeps must shade exactly as the solid impostor's pixel
-// there. (Live symptom: dithered mid collection sprites drew as RGB-tinted
-// smooth blobs.)
+// there. (Live symptom: dithered sprites drew as RGB-tinted smooth blobs.)
 TEST_F(FarPassGLTest, DitheredImpostorKeepsTheSolidShading) {
     const glm::vec3 grey(150.0f, 150.0f, 150.0f);
     const Atlas atlas = sphere_atlas(grey, grey);
@@ -844,9 +843,9 @@ TEST_F(FarPassGLTest, DitheredImpostorKeepsTheSolidShading) {
 }
 
 // Rock-fields perf (2026-10-03): REPORTS the CPU cost of render_impostors at
-// the mid band's live Beol 4 load (~85 sprites over 18 collection atlases)
-// against the same sprites in ONE bin, to decide whether packing the
-// collection atlases into one texture is worth it. Asserts nothing about time.
+// ~85 sprites over 18 atlases against the same sprites in ONE bin, to decide
+// whether packing atlases into one texture is worth it. Asserts nothing about
+// time.
 TEST_F(FarPassGLTest, ImpostorDrawCpuCostPerBinReport) {
     const Atlas atlas = sphere_atlas(kRed, kBlue);
     renderer::FarPass pass;

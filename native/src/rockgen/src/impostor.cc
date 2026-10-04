@@ -151,7 +151,7 @@ Impostor bake_impostor_parts(const std::vector<ImpostorPart>& parts, int view_si
     out.normal.format = assets::Image::Format::RGBA8;
     out.normal.pixels.assign(static_cast<size_t>(canvas) * canvas * 4, 0);
 
-    // Every part's vertices in the collection frame. An identity xform is
+    // Every part's vertices in the bake frame. An identity xform is
     // exact (x*1 + y*0 + z*0 + 0), so a one-part identity bake sees the very
     // positions bake_impostor always rasterised. Normals take the linear part
     // un-normalised: the per-pixel normalise below absorbs a uniform scale.
@@ -248,19 +248,6 @@ Impostor bake_impostor_parts(const std::vector<ImpostorPart>& parts, int view_si
         }
     }
     return out;
-}
-
-glm::vec3 impostor_avg_albedo(const Impostor& imp) {
-    const std::vector<std::uint8_t>& px = imp.albedo.pixels;
-    double sum[3] = {0.0, 0.0, 0.0}, weight = 0.0;
-    for (size_t i = 0; i + 3 < px.size(); i += 4) {
-        const double a = px[i + 3] / 255.0;
-        for (int c = 0; c < 3; ++c) sum[c] += a * (px[i + c] / 255.0);
-        weight += a;
-    }
-    if (weight <= 0.0) return glm::vec3(0.0f);
-    return glm::vec3(static_cast<float>(sum[0] / weight), static_cast<float>(sum[1] / weight),
-                     static_cast<float>(sum[2] / weight));
 }
 
 }  // namespace rockgen

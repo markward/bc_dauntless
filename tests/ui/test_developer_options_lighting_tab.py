@@ -86,10 +86,3 @@ def test_js_has_a_far_tier_row_and_focusable():
     assert ("_doToggleRow('Rock Fields', 'far_tier', s.far_tier, "
             "isFoc('far_tier'))") in text
     assert "out.push({kind: 'ctrl', target: 'far_tier'});" in text
-
-
-def test_js_has_a_rock_mid_row_and_focusable():
-    text = open(JS).read()
-    assert ("_doToggleRow('Rock Mid Band', 'rock_mid', s.rock_mid, "
-            "isFoc('rock_mid'))") in text
-    assert "out.push({kind: 'ctrl', target: 'rock_mid'});" in text

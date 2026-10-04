@@ -4,12 +4,9 @@
 //
 // Turns a rockgen recipe into on-disk rocks: per rock, lod<N>.gltf/.bin,
 // base.png, normal.png, impostor_base.png, impostor_normal.png, volume.dvox,
-// plus, per recipe rock collection, collections/<variant>_<NN>/impostor_base.png
-// and impostor_normal.png (one impostor of a whole arranged cluster of the
-// collection family's rocks), plus a catalogue.json manifest and a
-// review/contact_sheet.png (rocks only) -- unless --only was given, in which
-// case only the named rock(s)/collection(s) are (re)written and the
-// manifest/contact sheet are left untouched (a drift check must never
+// plus a catalogue.json manifest and a review/contact_sheet.png -- unless
+// --only was given, in which case only the named rock(s) are (re)written and
+// the manifest/contact sheet are left untouched (a drift check must never
 // rewrite them).
 //
 // Deterministic: same recipe bytes in, byte-identical files out (rockgen's
@@ -19,7 +16,6 @@
 
 #include "writer.h"
 
-#include <rockgen/collection.h>
 #include <rockgen/impostor.h>
 #include <rockgen/recipe.h>
 #include <rockgen/shape.h>
@@ -34,7 +30,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <map>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -116,29 +111,19 @@ int main(int argc, char** argv) {
     }
 
     const std::vector<rockgen::RockSpec> all_specs = rockgen::expand_recipe(recipe);
-    const std::vector<rockgen::CollectionSpec> all_collections =
-        rockgen::expand_collections(recipe);
 
     std::vector<rockgen::RockSpec> selected;
-    std::vector<rockgen::CollectionSpec> selected_collections;
     if (only_ids.empty()) {
         selected = all_specs;
-        selected_collections = all_collections;
     } else {
         for (const auto& want : only_ids) {
             auto it = std::find_if(all_specs.begin(), all_specs.end(),
                                     [&](const rockgen::RockSpec& s) { return s.id == want; });
-            if (it != all_specs.end()) {
-                selected.push_back(*it);
-                continue;
-            }
-            auto ct = std::find_if(all_collections.begin(), all_collections.end(),
-                                    [&](const rockgen::CollectionSpec& c) { return c.id == want; });
-            if (ct == all_collections.end()) {
+            if (it == all_specs.end()) {
                 std::cerr << "rock_catalogue: unknown --only id: " << want << "\n";
                 return 1;
             }
-            selected_collections.push_back(*ct);
+            selected.push_back(*it);
         }
     }
 
@@ -153,14 +138,6 @@ int main(int argc, char** argv) {
     // explicitly: a future stb_image_write bump must not silently change the
     // committed catalogue's bytes.
     stbi_write_png_compression_level = 8;
-
-    // lod1 + surface per rock (index into all_specs), kept only for rocks a
-    // collection uses: filled while writing rocks, generated on demand
-    // otherwise (an --only collection run writes no rocks).
-    std::map<std::size_t, std::pair<assets::MeshCpu, rockgen::RockSurface>> part_cache;
-    auto in_collection_family = [&](const rockgen::RockSpec& s) {
-        return !all_collections.empty() && s.family->name == recipe.collections.family;
-    };
 
     std::vector<rock_catalogue::RockRecord> records;
     std::vector<assets::Image> impostor_albedos;
@@ -212,56 +189,11 @@ int main(int argc, char** argv) {
             impostor_albedos.push_back(imp.albedo);
             family_colors_b.push_back(spec.family->color_b);
             records.push_back(std::move(rec));
-
-            if (in_collection_family(spec)) {
-                const std::size_t idx = static_cast<std::size_t>(
-                    std::find_if(all_specs.begin(), all_specs.end(),
-                                 [&](const rockgen::RockSpec& s) { return s.id == spec.id; }) -
-                    all_specs.begin());
-                part_cache.emplace(idx, std::make_pair(lods.at(1), surf));
-            }
-        }
-
-        std::vector<rock_catalogue::CollectionRecord> collection_records;
-        for (const auto& col : selected_collections) {
-            const std::vector<rockgen::CollectionPart> parts =
-                rockgen::arrange_collection(recipe, all_specs, col);
-            for (const auto& p : parts) {
-                if (part_cache.count(p.rock)) continue;
-                const rockgen::RockSpec& rs = all_specs.at(p.rock);
-                part_cache.emplace(p.rock, std::make_pair(rockgen::generate_rock_lods(rs).at(1),
-                                                          rockgen::generate_rock_surface(rs)));
-            }
-            std::vector<rockgen::ImpostorPart> ip;
-            ip.reserve(parts.size());
-            for (const auto& p : parts) {
-                const auto& e = part_cache.at(p.rock);
-                ip.push_back({&e.first, &e.second,
-                              rockgen::part_xform(p, all_specs.at(p.rock).bound_radius_m)});
-            }
-            const rockgen::Impostor imp =
-                rockgen::bake_impostor_parts(ip, recipe.collections.view_size);
-
-            const fs::path col_dir = out_dir / col.id;
-            fs::create_directories(col_dir, ec);
-            rock_catalogue::write_png(col_dir / "impostor_base.png", imp.albedo);
-            rock_catalogue::write_png(col_dir / "impostor_normal.png", imp.normal);
-
-            rock_catalogue::CollectionRecord crec;
-            crec.id = col.id;
-            crec.variant = col.variant;
-            crec.impostor_albedo = col.id + "/impostor_base.png";
-            crec.impostor_normal = col.id + "/impostor_normal.png";
-            crec.impostor_grid = imp.grid;
-            crec.impostor_view_size = imp.view_size;
-            crec.avg_albedo = rockgen::impostor_avg_albedo(imp);
-            collection_records.push_back(std::move(crec));
         }
 
         if (only_ids.empty()) {
             rock_catalogue::write_catalogue(out_dir, recipe.tool_version, recipe_hash_hex,
-                                             rockgen::impostor_view_dirs(), records,
-                                             collection_records);
+                                             rockgen::impostor_view_dirs(), records);
             rock_catalogue::write_contact_sheet(out_dir, records, impostor_albedos,
                                                  family_colors_b);
         }

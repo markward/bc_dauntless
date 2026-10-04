@@ -89,7 +89,7 @@ def test_catalogue_and_dials_pushed_once():
     far_tier.reconcile_with(r, None, {})
     assert _names(r).count("far_set_catalogue") == 1
     assert _names(r).count("far_set_dials") == 1
-    (entries, dirs, _cols) = next(a for n, a in r.calls if n == "far_set_catalogue")
+    (entries, dirs) = next(a for n, a in r.calls if n == "far_set_catalogue")
     from engine.rocks import catalogue
     assert len(entries) == len(catalogue.load())
     assert {"albedo", "normal", "avg_albedo", "kind", "family",
@@ -344,7 +344,7 @@ def test_catalogue_entries_carry_near_band_kind_family_and_lod_handles():
     from engine.rocks import catalogue
     r = _R()
     far_tier.reconcile_with(r, None, {})
-    (entries, _dirs, _cols) = next(a for n, a in r.calls if n == "far_set_catalogue")
+    (entries, _dirs) = next(a for n, a in r.calls if n == "far_set_catalogue")
     rocks = catalogue.load()
     handles = set()
     for rock, e in zip(rocks, entries):
@@ -369,9 +369,9 @@ class _NearR(_R):
     def __init__(self):
         super().__init__()
         self.near_size = 0
-    def far_set_catalogue(self, entries, view_dirs, collections=()):
-        """Mirrors the real signature (optional collections)."""
-        self.calls.append(("far_set_catalogue", (entries, view_dirs, collections)))
+    def far_set_catalogue(self, entries, view_dirs):
+        """Mirrors the real signature."""
+        self.calls.append(("far_set_catalogue", (entries, view_dirs)))
         self.near_size = sum(1 for e in entries if "lod0" in e)
     def rockfield_catalogue_size(self):
         return self.near_size
@@ -396,27 +396,6 @@ def test_a_catalogue_without_near_rocks_is_not_repushed_every_frame(monkeypatch)
         far_tier.reconcile_with(r, None, {})
     assert _names(r).count("far_set_catalogue") == 1
     assert len(catalogue.load()) > 0
-
-
-def test_push_catalogue_passes_the_collections_as_the_third_argument():
-    """Rock fields Task 11: every baked collection, in manifest order, as
-    {"albedo", "normal", "avg_albedo", "variant" (0 sparse, 1 medium,
-    2 dense)} -- the mid band's sprites."""
-    from engine.rocks import catalogue
-    r = _R()
-    far_tier.reconcile_with(r, None, {})
-    args = next(a for n, a in r.calls if n == "far_set_catalogue")
-    assert len(args) == 3
-    cols = args[2]
-    want = catalogue.collections()
-    assert len(cols) == len(want) == 48
-    variant = {"sparse": 0, "medium": 1, "dense": 2}
-    for c, w in zip(cols, want):
-        assert set(c) == {"albedo", "normal", "avg_albedo", "variant"}
-        assert c["albedo"] == w.impostor_albedo and c["normal"] == w.impostor_normal
-        assert tuple(c["avg_albedo"]) == tuple(w.avg_albedo)
-        assert c["variant"] == variant[w.variant]
-    assert sorted({c["variant"] for c in cols}) == [0, 1, 2]
 
 
 # ── The near band's own contact player (final review 1) ───────────────────────

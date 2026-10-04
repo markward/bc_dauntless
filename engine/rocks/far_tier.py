@@ -5,8 +5,7 @@ Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
 
   far_set_catalogue   once per catalogue root (impostor atlases + view dirs;
                       kind/family/bound and, for the near band's silicate
-                      fragments and majors, lod0/lod1 model handles; plus
-                      the mid band's baked collections)
+                      fragments and majors, lod0/lod1 model handles)
   far_set_dials       once, and again on a far_dials NATIVE-key change
   far_set_frame       EVERY frame -- the anchor moves on a region hand-off
   far_set_sources     on a system change, a change in the viewed set's tile
@@ -165,17 +164,6 @@ def _catalogue_entry(r, rock) -> dict:
     return e
 
 
-# The mid band's collection variants, as native MidCollection::variant.
-_VARIANTS = {"sparse": 0, "medium": 1, "dense": 2}
-
-
-def _collection_entry(c) -> dict:
-    """One far_set_catalogue collection: a baked rock-collection impostor
-    the mid band places in its tiles (atlas slot after the catalogue's)."""
-    return {"albedo": c.impostor_albedo, "normal": c.impostor_normal,
-            "avg_albedo": tuple(c.avg_albedo), "variant": _VARIANTS[c.variant]}
-
-
 def _native_lost_near(r) -> bool:
     """A host re-init (no mission swap) empties the native near catalogue:
     its model handles died with the old session."""
@@ -196,8 +184,7 @@ def _push_catalogue(r) -> None:
         return
     try:
         entries = [_catalogue_entry(r, rock) for rock in catalogue.load()]
-        r.far_set_catalogue(entries, [tuple(d) for d in catalogue.impostor_view_dirs()],
-                            [_collection_entry(c) for c in catalogue.collections()])
+        r.far_set_catalogue(entries, [tuple(d) for d in catalogue.impostor_view_dirs()])
     except Exception as e:
         _swallow("set_catalogue", e)
         return

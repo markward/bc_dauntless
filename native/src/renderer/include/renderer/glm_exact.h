@@ -1,6 +1,6 @@
 // native/src/renderer/include/renderer/glm_exact.h
 // Bit-exact scalar replicas of the few glm operations the rock-field hot
-// loops (rock_near.cc, rock_mid.cc, far::make_impostor) run per rock / tile
+// loops (rock_near.cc, far::make_impostor) run per rock / tile
 // / sprite. This tree builds Debug (-O0), where every glm operator is an
 // out-of-line call chain; these do the same IEEE operations in the same
 // order as the glm source they replace, so their results are identical to

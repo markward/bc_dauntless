@@ -1,5 +1,5 @@
 // native/src/renderer/rock_field_common.h
-// Internal helpers shared by the rock-fields bands (rock_near.cc, rock_mid.cc).
+// Internal helpers shared by the rock-fields bands (rock_near.cc, rock_speck.cc, rock_puffs.cc).
 // Not an installed header: include it as "rock_field_common.h" from a .cc
 // beside it.
 #pragma once

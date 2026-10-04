@@ -41,7 +41,7 @@ DEFAULTS: dict = {
     "tile_shape_warp_scale_frac": 0.6,
     # Belt noise (Python, read at use; re-push sources; rock-fields R1,
     # 2026-10-02): every source's density is a(x) * m(x), belts included --
-    # the near and mid bands sample it. Same m as the tile fields, at a belt's
+    # the near band, specks and puffs sample it. Same m as the tile fields, at a belt's
     # scale. Every *_noise_contrast steps within [0, 1].
     "belt_noise_scale_gu": 4000.0, "belt_noise_contrast": 0.8,
     "belt_noise_octaves": 3,
@@ -92,22 +92,6 @@ DEFAULTS: dict = {
     # engine/rocks/scenery_contact.py): damage = KE damage x
     # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
     "collide_damage_scale": 1.0, "collide_ref_radius_gu": 5.0,
-    # Rock fields mid band (native; rock-fields Task 10). MUST equal MidDials
-    # in native/src/renderer/include/renderer/rock_mid.h. Three nested tile
-    # levels (150 / 600 / 2,400 GU cubes fixed in system coordinates): L0
-    # fades in over [mid_in_lo_gu, mid_in_hi_gu], each level boundary b
-    # crossfades over [b (1 - mid_xfade_frac), b], and L2 fades out over the
-    # last haze_handoff_band_gu before haze_handoff_gu. A tile shows a
-    # collection sprite with chance density x mid_fill; mid_max_sprites caps
-    # one camera build, nearest first.
-    "mid_l0_tile_gu": 150.0, "mid_l1_tile_gu": 600.0, "mid_l2_tile_gu": 2400.0,
-    # mid_in_lo_gu 80 -> 100, mid_in_hi_gu 150 -> 170: Mark, live 2026-10-03
-    # (keeps mid sprites outside the widened near_large_billboard_gu, 90).
-    "mid_in_lo_gu": 100.0, "mid_in_hi_gu": 170.0,
-    "mid_l0_out_gu": 600.0, "mid_l1_out_gu": 2400.0, "mid_xfade_frac": 0.25,
-    # The mid band's L2 fade-out: over the last haze_handoff_band_gu before
-    # haze_handoff_gu (spike/rock-specks 2026-10-04: [600, 1500] GU).
-    "haze_handoff_gu": 1500.0, "haze_handoff_band_gu": 900.0,
     # Speck band (SPIKE, native; MUST equal SpeckDials in rock_speck.h): the
     # near band's large rocks past their billboard edge as lit specks, out to
     # speck_out_gu (fading over speck_out_fade_gu). Beyond speck_keep_d0_gu
@@ -128,7 +112,6 @@ DEFAULTS: dict = {
     # Belts: puff_belt_count per belt, radius puff_belt_size_h x the local
     # scale height (rock_puffs.h belt_count / belt_size_h).
     "puff_belt_count": 2000, "puff_belt_size_h": 1.2,
-    "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
@@ -142,10 +125,6 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_far_gu", "near_large_far_fade_gu", "near_large_min_px", "near_small_min_px",
     "near_far_shell_max_step_gu", "near_far_shell_regrow_gu",
     "near_fade_gu", "near_handoff_fade_gu", "near_tumble_scale", "near_dash_collapse_step_gu", "near_stream_margin_gu", "collide_cooldown_s",
-    "mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",
-    "mid_in_hi_gu", "mid_l0_out_gu", "mid_l1_out_gu", "mid_xfade_frac",
-    "haze_handoff_gu", "haze_handoff_band_gu", "mid_fill", "mid_sprite_scale",
-    "mid_max_sprites",
     "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
     "speck_keep_power", "speck_restream_gu", "speck_band_gain",
     "puff_count", "puff_size_frac", "puff_opacity", "puff_brightness",
@@ -156,18 +135,16 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 # tier, not shrink it).
 _INT_FLOOR_1 = ("tile_haze_noise_octaves",
                "belt_noise_octaves", "near_small_max", "near_large_max",
-               "mid_max_sprites", "puff_count", "puff_belt_count")
+               "puff_count", "puff_belt_count")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
                "tile_shape_warp", "tile_noise_sharpness",
                "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
-               "haze_handoff_gu", "haze_handoff_band_gu",
                "near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
-               "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
-               "mid_l1_out_gu",
+               "near_large_far_gu",
                "tile_haze_noise_contrast", "belt_noise_contrast",
                "collide_damage_scale")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)

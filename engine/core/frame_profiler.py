@@ -671,9 +671,9 @@ def scene_summary() -> str:
 # not EMA-smoothed like the timings around them.
 
 def rock_summary() -> str:
-    """One line: near (streamed / drawn as meshes and billboards), mid
-    sprites, far impostors + specks, minor rocks, and draw calls. Never
-    raises."""
+    """One line: near (streamed / drawn as meshes and billboards), the speck
+    band, the puffs, far impostors + specks, minor rocks, and draw calls.
+    Never raises."""
     try:
         from engine import renderer
         on = bool(renderer.far_enabled())
@@ -681,21 +681,19 @@ def rock_summary() -> str:
         m = renderer.minors_stats()
     except Exception:
         return "  rocks: unavailable"
-    # "fading": of the billboards / sprites drawn, how many drew translucent
-    # (rock fade, scope rock.fade.draw) rather than solid or dithered.
+    # "fading": of the billboards drawn, how many drew translucent (rock
+    # fade, scope rock.fade.draw) rather than solid or dithered.
     line = ("  rocks: near cells %d (small %d, large %d, ghosted %d) -> "
             "meshes %d, billboards %d, fading %d | "
-            "mid %d sprites (%d tiles), fading %d | "
-            "speck band %d (%d cells) | "
+            "speck band %d (%d cells) | puffs %d | "
             "far impostors %d, specks %d | minors %d/%d drawn | "
             "draw calls %d rock + %d minor"
             % (f.get("near_cells", 0), f.get("near_small", 0),
                f.get("near_large", 0), f.get("near_ghosted", 0),
                f.get("near_meshes", 0), f.get("near_billboards", 0),
                f.get("near_fading", 0),
-               f.get("mid_sprites", 0), f.get("mid_tiles", 0),
-               f.get("mid_fading", 0),
                f.get("band_specks", 0), f.get("speck_cells", 0),
+               f.get("puffs", 0),
                f.get("impostors", 0), f.get("specks", 0),
                m.get("drawn", 0), m.get("minors", 0),
                f.get("draw_calls", 0), m.get("draw_calls", 0)))

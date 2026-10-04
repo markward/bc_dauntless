@@ -60,8 +60,7 @@ def test_far_stats_keys():
     assert set(h.far_stats()) == {"sources", "rocks", "impostors", "specks", "draw_calls",
                                   "near_cells", "near_small", "near_large",
                                   "near_ghosted", "near_meshes", "near_billboards",
-                                  "near_fading", "mid_sprites", "mid_fading",
-                                  "mid_tiles", "mid_cache_evictions",
+                                  "near_fading",
                                   "speck_cells", "band_specks", "puffs"}
 
 

@@ -8,9 +8,10 @@ lights from host_loop._aggregate_lights -- through the whole post chain, and
 the DISPLAYED difference far-tier-on minus far-tier-off is measured.
 
 Bands (spec docs/superpowers/specs/2026-10-02-rock-fields-design.md): near
-streamed rocks (meshes, then billboards), mid collection sprites (nested
-150/600/2400 GU tiles), and the puffs -- soft lit billboards placed by the
-field density, fading in from puff_start_gu -- that carry a field's far look.
+streamed rocks (meshes, then billboards), the speck band (the near band's
+large rocks past their billboard range as lit specks), and the puffs -- soft
+lit billboards placed by the field density, fading in from puff_start_gu --
+that carry a field's far look.
 
 Rocks are discrete: inside a field the frame is mostly open space with
 scattered rocks, so a frame MEAN would hide them. Those views count the
@@ -49,10 +50,9 @@ def host():
         pytest.skip(f"no GL context: {e}")
     far_tier.reset()
     h.dust_set_enabled(False)
-    # Rock-real Part 1 strip-back (2026-10-03): mid is off by default,
-    # independent of far_set_enabled. This file's acceptance covers the
-    # whole band-by-band stack, so it is on for its duration.
-    h.rock_mid_set_enabled(True)
+    # The whole band-by-band stack, pinned on rather than riding defaults.
+    h.rock_specks_set_enabled(True)
+    h.rock_puffs_set_enabled(True)
     try:
         yield h
     finally:
@@ -60,7 +60,7 @@ def host():
         h.far_clear()
         h.far_set_dials({})
         h.far_set_enabled(True)
-        h.rock_mid_set_enabled(False)
+        h.rock_specks_set_enabled(True)
         h.rock_puffs_set_enabled(True)
         h.dust_set_enabled(True)
         h.minors_set_player(None)
@@ -160,10 +160,8 @@ def test_field_visible_from_outside(host):
     """Beol 4 from 6,000 GU outside (the "Far Tier: Beol 4 field" view), on
     the Player Start -> centre line: the puffs carry the field. Rocks and
     puffs are discrete, so the bar is the changed-pixel share (>= 0.5% of
-    the frame changed by >= 10/255), and the puffs drew. The mid band is
-    off, so the puffs alone carry it."""
-    h.rock_mid_set_enabled(False)
-    h.rock_puffs_set_enabled(True)
+    the frame changed by >= 10/255), and the puffs drew. Every rock band
+    ends far closer, so the puffs alone carry it."""
     pSet, start, centre, _radius = _beol4()
     _light_and_camera(pSet, start, _on_line(start, centre, OUTSIDE_GU), centre)
     off, on, st = _off_then_on(_grid)
@@ -176,15 +174,15 @@ def test_field_visible_from_outside(host):
 
 def test_field_visible_from_player_start(host):
     """From Beol 4's Player Start (~2,079 GU from the centre of the 1,000 GU
-    field) the MID band carries it."""
+    field) the puffs carry it."""
     pSet, start, centre, _radius = _beol4()
     _light_and_camera(pSet, start, _start_loc(start), centre)
     off, on, st = _off_then_on(_grid)
     frac = _changed_fraction(off, on)
     print(f"[rock fields] Beol 4 Player Start: changed {100 * frac:.2f}% of the frame "
           f"(>= {CHANGED_LEVEL}/255), mean off {_mean(off):.2f} on {_mean(on):.2f}, "
-          f"mid_sprites {st['mid_sprites']} mid_tiles {st['mid_tiles']}")
-    assert st["mid_sprites"] > 0
+          f"puffs {st['puffs']} band_specks {st['band_specks']}")
+    assert st["puffs"] > 0
     assert frac >= CHANGED_FRAC
 
 
@@ -203,26 +201,7 @@ def test_rocks_visible_from_inside(host):
     frac = _changed_fraction(off, on)
     print(f"[rock fields] Beol 4 inside ({INSIDE_GU:.0f} GU in): changed "
           f"{100 * frac:.2f}% of the frame, near_meshes {st['near_meshes']} "
-          f"near_billboards {st['near_billboards']} mid_sprites {st['mid_sprites']}")
+          f"near_billboards {st['near_billboards']}")
     assert st["near_meshes"] > 0
     assert st["near_billboards"] > 0
     assert frac >= CHANGED_FRAC
-
-
-def test_no_mid_sprite_within_the_near_band(host):
-    """The mid band never draws inside the near band's reach: the guard is
-    decided at the drawn (jittered) sprite's distance, so no sprite centre
-    is nearer than mid_in_lo_gu (final review 3)."""
-    from engine.rocks import far_dials
-    pSet, start, centre, radius = _beol4()
-    eye = _inside(pSet, start, centre, radius)
-    _frames()
-    sprites = h.far_debug_mid_centres()
-    assert sprites, "no mid sprites at the inside pose"
-    # Render space IS view space here (no set_render_origin); the camera eye
-    # is in it.
-    nearest = min(math.dist(s["centre"], eye) for s in sprites)
-    floor = far_dials.get("mid_in_lo_gu")
-    print(f"[rock fields] inside: {len(sprites)} mid sprites, nearest {nearest:.1f} GU "
-          f"(floor {floor:.1f})")
-    assert nearest >= floor

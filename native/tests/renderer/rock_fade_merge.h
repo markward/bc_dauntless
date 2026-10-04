@@ -1,8 +1,8 @@
 // native/tests/renderer/rock_fade_merge.h
-// Rock fade (2026-10-03, .superpowers/sdd/rock-fade/brief.md): NearField and
-// MidField builds now split their impostors into a solid/dithered list
-// (NearOutput::billboards, MidOutput::sprites) and a translucent list
-// (billboards_fading, sprites_fading) without changing a byte of any item.
+// Rock fade (2026-10-03, .superpowers/sdd/rock-fade/brief.md): NearField
+// builds now split their impostors into a solid/dithered list
+// (NearOutput::billboards) and a translucent list (billboards_fading)
+// without changing a byte of any item.
 // merge() reassembles the ONE list the builds emitted before the split --
 // bins by ascending catalogue/atlas index, items nearest first by (distance,
 // centre) -- so tests and digests recorded before the split still pin every

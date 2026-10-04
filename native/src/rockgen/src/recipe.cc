@@ -79,25 +79,6 @@ FamilyParams parse_family(const json& j, const std::string& path) {
     return f;
 }
 
-CollectionParams parse_collections(const json& j, const std::string& path) {
-    CollectionParams c;
-    c.count     = get<int>(j, "count", path);
-    c.family    = get<std::string>(j, "family", path);
-    c.view_size = get<int>(j, "view_size", path);
-    get_range(j, "size", path, c.size_min, c.size_max);
-    c.exponent  = get<float>(j, "exponent", path);
-    const json& vars = req(j, "variants", path);
-    if (!vars.is_array()) throw std::runtime_error("recipe: bad type for '" + path + ".variants'");
-    for (size_t i = 0; i < vars.size(); ++i) {
-        const std::string vp = path + ".variants[" + std::to_string(i) + "]";
-        CollectionVariant v;
-        v.name = get<std::string>(vars[i], "name", vp);
-        get_range(vars[i], "rocks", vp, v.rocks_min, v.rocks_max);
-        c.variants.push_back(std::move(v));
-    }
-    return c;
-}
-
 std::string two_digits(int n) {
     char buf[16];
     std::snprintf(buf, sizeof buf, "%02d", n);
@@ -125,15 +106,6 @@ Recipe parse_recipe(const std::string& json_text) {
     if (!fams.is_array()) throw std::runtime_error("recipe: bad type for 'families'");
     for (size_t i = 0; i < fams.size(); ++i)
         r.families.push_back(parse_family(fams[i], "families[" + std::to_string(i) + "]"));
-    // Optional: a recipe without collections bakes none (strict once present).
-    if (j.contains("collections")) {
-        r.collections = parse_collections(j.at("collections"), "collections");
-        bool known = false;
-        for (const FamilyParams& f : r.families) known = known || f.name == r.collections.family;
-        if (!known)
-            throw std::runtime_error("recipe: 'collections.family' names no family: " +
-                                     r.collections.family);
-    }
     return r;
 }
 
@@ -154,23 +126,6 @@ std::vector<RockSpec> expand_recipe(const Recipe& r) {
                 s.bound_radius_m = r.bound_radius_m;
                 out.push_back(std::move(s));
             }
-        }
-    }
-    return out;
-}
-
-std::vector<CollectionSpec> expand_collections(const Recipe& r) {
-    std::vector<CollectionSpec> out;
-    const std::string recipe_seed = std::to_string(r.seed);
-    for (const CollectionVariant& v : r.collections.variants) {
-        for (int n = 0; n < r.collections.count; ++n) {
-            CollectionSpec c;
-            c.id = "collections/" + v.name + "_" + two_digits(n);
-            c.variant = v.name;
-            c.seed = fnv1a64(recipe_seed + ":" + c.id);
-            const int span = std::max(0, v.rocks_max - v.rocks_min) + 1;
-            c.rocks = v.rocks_min + static_cast<int>(c.seed % static_cast<std::uint64_t>(span));
-            out.push_back(std::move(c));
         }
     }
     return out;

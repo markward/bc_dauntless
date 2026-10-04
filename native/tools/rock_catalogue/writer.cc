@@ -212,8 +212,7 @@ void write_gltf_lod(const fs::path& dir, int lod_index, const assets::MeshCpu& m
 void write_catalogue(const fs::path& out_dir, int tool_version,
                       const std::string& recipe_fnv1a64_hex,
                       const std::vector<glm::vec3>& impostor_view_dirs,
-                      const std::vector<RockRecord>& rocks,
-                      const std::vector<CollectionRecord>& collections) {
+                      const std::vector<RockRecord>& rocks) {
     json dirs = json::array();
     for (const auto& d : impostor_view_dirs) dirs.push_back(json::array({d.x, d.y, d.z}));
 
@@ -241,29 +240,12 @@ void write_catalogue(const fs::path& out_dir, int tool_version,
         order.push_back(r.id);
     }
 
-    json cols_j = json::array();
-    for (const auto& c : collections) {
-        json impostor;
-        impostor["albedo"] = c.impostor_albedo;
-        impostor["normal"] = c.impostor_normal;
-        impostor["grid"] = c.impostor_grid;
-        impostor["view_size"] = c.impostor_view_size;
-
-        json cj;
-        cj["id"] = c.id;
-        cj["variant"] = c.variant;
-        cj["impostor"] = impostor;
-        cj["avg_albedo"] = json::array({c.avg_albedo.x, c.avg_albedo.y, c.avg_albedo.z});
-        cols_j.push_back(cj);
-    }
-
     json root;
     root["tool_version"] = tool_version;
     root["recipe_fnv1a64"] = recipe_fnv1a64_hex;
     root["impostor_view_dirs"] = dirs;
     root["contact_sheet_order"] = order;
     root["rocks"] = rocks_j;
-    root["collections"] = cols_j;
 
     const std::string text = root.dump(1);
     std::error_code ec;

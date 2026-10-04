@@ -42,7 +42,7 @@ Impostor bake_impostor(const assets::MeshCpu& mesh, const RockSurface& s, int vi
 struct ImpostorPart {
     const assets::MeshCpu* mesh;     // glTF frame, metres
     const RockSurface* surface;
-    glm::mat4 xform;                 // part -> collection frame (glTF, metres)
+    glm::mat4 xform;                 // part -> bake frame (glTF, metres)
 };
 
 /// Like bake_impostor but rasterises every part into the same 64 views (one
@@ -50,9 +50,5 @@ struct ImpostorPart {
 /// origin. bake_impostor(mesh, s, n) is exactly
 /// bake_impostor_parts({{&mesh, &s, identity}}, n) -- one rasteriser.
 Impostor bake_impostor_parts(const std::vector<ImpostorPart>& parts, int view_size);
-
-/// Mean RGB (0..1) of the albedo atlas, each pixel weighted by its coverage
-/// (alpha). Zero when nothing is covered.
-glm::vec3 impostor_avg_albedo(const Impostor& imp);
 
 }  // namespace rockgen

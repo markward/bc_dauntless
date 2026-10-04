@@ -27,16 +27,6 @@ _NEAR_CPP_DEFAULTS = {
 }
 
 
-# far_dials.py key -> rock_mid.h MidDials field (rock-fields Task 10).
-_MID_CPP_FIELDS = {
-    "mid_l0_tile_gu": "l0_tile_gu", "mid_l1_tile_gu": "l1_tile_gu",
-    "mid_l2_tile_gu": "l2_tile_gu", "mid_in_lo_gu": "in_lo_gu", "mid_in_hi_gu": "in_hi_gu",
-    "mid_l0_out_gu": "l0_out_gu", "mid_l1_out_gu": "l1_out_gu",
-    "mid_xfade_frac": "xfade_frac", "haze_handoff_gu": "handoff_gu",
-    "haze_handoff_band_gu": "handoff_band_gu", "mid_fill": "fill",
-    "mid_sprite_scale": "sprite_scale", "mid_max_sprites": "max_sprites",
-}
-
 # TEMPORARY (Mark, 2026-10-03): the near-only strip-back turns the far shell
 # off from Python while the native default keeps the feature's 250 GU. Remove
 # this exemption when the far shell is back on.
@@ -91,7 +81,7 @@ def test_native_defaults_match_the_cpp_header():
     """FarDials / TierDials defaults MUST equal DEFAULTS."""
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer").resolve()
     text = (hdr / "far_math.h").read_text() + (hdr / "far_field.h").read_text()
-    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_MID_CPP_FIELDS) - set(_SPECK_CPP_FIELDS) - set(_PUFF_CPP_FIELDS):
+    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_SPECK_CPP_FIELDS) - set(_PUFF_CPP_FIELDS):
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % key, text)
         assert m, key
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
@@ -145,14 +135,13 @@ def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the rock-fields look dials
     lead."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:25] == (
+    assert far_dials.DIAL_ORDER[:19] == (
         "puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
         "tile_shape_warp", "tile_noise_sharpness",
         "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
-        "haze_handoff_gu", "haze_handoff_band_gu",
         "near_small_density", "near_large_density", "near_small_mesh_gu",
         "near_small_billboard_gu", "near_large_mesh_gu", "near_large_billboard_gu",
-        "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu", "mid_l1_out_gu",
+        "near_large_far_gu",
         "tile_haze_noise_contrast",
         "belt_noise_contrast", "collide_damage_scale")
     assert sorted(far_dials.DIAL_ORDER) == sorted(far_dials.DEFAULTS)
@@ -199,28 +188,11 @@ def test_noise_contrast_dials_clamp_to_one():
     assert far_dials.step(d, "tile_haze_noise_contrast", +1)["tile_haze_noise_contrast"] == 1.0
 
 
-_SPIKE_HAZE_HANDOFF = {"haze_handoff_gu", "haze_handoff_band_gu"}
-
-
-def test_mid_defaults_match_rock_mid_h():
-    """MidDials defaults (native/src/renderer/include/renderer/rock_mid.h)
-    MUST equal DEFAULTS; every mid key is native."""
-    hdr = (Path(__file__).parents[2]
-           / "native/src/renderer/include/renderer/rock_mid.h").resolve()
-    text = hdr.read_text()
-    for key, field in _MID_CPP_FIELDS.items():
-        assert key in far_dials.DEFAULTS, key
-        assert key in far_dials.NATIVE_KEYS, key
-        m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
-        assert m, field
-        if key in _SPIKE_HAZE_HANDOFF:   # spike/rock-specks: Python moved, mid (off) did not
-            continue
-        assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
-    d = far_dials.DEFAULTS
-    # Mark, live 2026-10-03: mid_in_lo_gu 80 -> 100, mid_in_hi_gu 150 -> 170.
-    assert (d["mid_in_lo_gu"], d["mid_in_hi_gu"]) == (100.0, 170.0)
-    assert (d["mid_l0_tile_gu"], d["mid_l1_tile_gu"], d["mid_l2_tile_gu"]) == (150.0, 600.0, 2400.0)
-    assert (d["haze_handoff_gu"], d["haze_handoff_band_gu"]) == (1500.0, 900.0)   # spike/rock-specks
-    assert isinstance(d["mid_max_sprites"], int)
-    # The sprite cap floors at 1 (0 would silently delete the whole band).
-    assert far_dials.step({**d, "mid_max_sprites": 1}, "mid_max_sprites", -1)["mid_max_sprites"] == 1
+def test_the_mid_band_dials_are_gone():
+    """The mid band (baked collection sprites) was removed: none of its
+    dials survive."""
+    for k in ("mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",
+              "mid_in_hi_gu", "mid_l0_out_gu", "mid_l1_out_gu", "mid_xfade_frac",
+              "haze_handoff_gu", "haze_handoff_band_gu", "mid_fill", "mid_sprite_scale",
+              "mid_max_sprites"):
+        assert k not in far_dials.DEFAULTS and k not in far_dials.NATIVE_KEYS, k

@@ -1,6 +1,6 @@
 // native/tests/renderer/rock_perf_equivalence_test.cc
 // Rock-fields CPU work (2026-10-03, .superpowers/sdd/rock-perf/brief.md):
-// NearField::stream / step / build and MidField::build were made cheaper
+// NearField::stream / step / build were made cheaper
 // WITHOUT changing a byte of what they produce. These digests were recorded
 // from the implementation BEFORE that work (feat/rock-fields ee82c35c) over
 // representative runs -- the Beol 4 inside load, cap-binding dials, dial and
@@ -11,28 +11,25 @@
 //
 // A digest is FNV-1a 64 over raw float bytes, so it is tied to this
 // toolchain's floating point. If a compiler/flag change (never an algorithm
-// change) moves one, re-record it by checking out ee82c35c's rock_near.cc /
-// rock_mid.cc, running this test, and pasting the printed values.
+// change) moves one, re-record it by checking out ee82c35c's rock_near.cc,
+// running this test, and pasting the printed values.
 //
 // Rock fade (2026-10-03): the builds now split their impostors into a
 // solid/dithered list and a translucent list without changing any item. The
 // digests below hash the two lists MERGED back into the one list the builds
 // emitted before (rock_fade_merge.h), so these recorded values still pin
 // every byte and the order; the split itself is pinned by
-// NearBuild.OuterFadeBillboardsAreTranslucent and
-// MidFade.EveryFadeIsTranslucentAndDrawsFarToNear.
+// NearBuild.OuterFadeBillboardsAreTranslucent.
 //
 // Rock blend (2026-10-03): the impostor instance changed shape (48 -> 80
 // bytes: the rock's axes and a 3-view blend over the 64-view octahedral
 // layout, instead of one nearest view's posed basis over 16 Fibonacci
-// views), so the BUILD digests (near slow/fast/caps, mid) were re-recorded
+// views), so the BUILD digests (near slow/fast/caps) were re-recorded
 // DELIBERATELY from the rock-blend implementation. Nothing else moved: the
-// contacts and stream digests are still the ee82c35c values, the mesh bins
-// are unchanged, and MidSnap.LargeSpheresAndBeltsAreUnchanged re-encodes
-// each new mid instance into the pre-blend one and still matches its
-// pre-blend recording -- same sprites, poses, dithers and order. (The bytes
-// here cannot be re-encoded that way: the instance keeps two of the rock's
-// axes and the third, rebuilt by a cross product, is not bit-exact.)
+// contacts and stream digests are still the ee82c35c values and the mesh
+// bins are unchanged. (The bytes cannot be re-encoded to the pre-blend
+// instance: it keeps two of the rock's axes and the third, rebuilt by a
+// cross product, is not bit-exact.)
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cinttypes>
@@ -298,129 +295,6 @@ TEST(RockPerfEquivalence, NearAtThe3xDefaultsShellOnMatchesTheRecordedDigests) {
     // nearest-first cap and the touch cap.)
 }
 
-// ---- Mid band ---------------------------------------------------------------
-namespace {
-
-void digest_mid_out(Digest& d, const rockfield::MidOutput& o, const glm::mat4& view) {
-    const glm::vec3 eye = glm::vec3(glm::inverse(view)[3]);
-    const auto sprites = rock_fade_merge::merge(o.sprites, o.sprites_fading,
-                                                [eye](const glm::vec3& c) { return glm::length(c - eye); });
-    d.pod(o.count); d.pod(o.tiles); d.pod(sprites.size());
-    for (const auto& b : sprites) {
-        d.pod(b.rock); d.pod(b.items.size());
-        d.bytes(b.items.data(), b.items.size() * sizeof(far::ImpostorGpu));
-    }
-}
-
-far::DiscSource small_cluster() {   // 2R < every tile: snaps at every level
-    far::DiscSource s;
-    s.id = 11; s.seed = 77u; s.shape = far::DiscSource::Shape::Sphere; s.view_space = true;
-    s.centre = {1300.0, 450.0, -80.0};
-    s.sphere_radius_gu = 60.0f; s.sphere_edge_frac = 0.3f;
-    return s;
-}
-
-far::DiscSource noisy_belt() {
-    far::DiscSource b;
-    b.id = 12; b.seed = 5u;
-    b.table = {{0.0f, 0.0f}, {3000.0f, 0.6f}, {9000.0f, 1.0f}, {20000.0f, 0.2f}};
-    b.scale_height_min_gu = 1500.0f;
-    b.noise_scale_gu = 4000.0f; b.noise_contrast = 0.8f; b.noise_octaves = 3;
-    return b;
-}
-
-}  // namespace
-
-namespace {
-struct MidRun { std::uint64_t digest = 0; int sprites = 0, builds = 0; rockfield::MidCacheStats cache; int fading = 0; };
-// `resend` re-pushes the SAME sources before every build, as the host does
-// live (far_set_frame every frame calls MidField::set_sources).
-MidRun run_mid(bool resend) {
-    rockfield::MidField f;
-    f.set_collections(rock_scenario::mid_collections());
-    f.set_view_dirs(rock_scenario::view_dirs64());
-    std::vector<far::DiscSource> sources{rock_scenario::beol4_field(), small_cluster()};
-    f.set_sources(sources);
-    // Pinned to the mid_in_lo_gu/mid_in_hi_gu defaults in effect when these
-    // digests were recorded (before the 2026-10-03 look retune), so the
-    // digests below do not need re-recording when far_dials.py / rock_mid.h's
-    // defaults move.
-    rockfield::MidDials pinned0;
-    pinned0.in_lo_gu = 80.0f; pinned0.in_hi_gu = 150.0f;
-    f.set_dials(pinned0);
-    rockfield::MidBuildInput in;
-    in.viewport_h = 1080.0f;
-    rockfield::MidOutput out;
-    Digest d;
-    int sprites = 0, builds = 0, fading = 0;
-    const glm::dvec3 anchor(-2.5e4, 1.2e4, -300.0);
-    auto build_at = [&](const glm::dvec3& eye_sys, const glm::vec3& look_dir, float fov_deg,
-                        const glm::dvec3& origin) {
-        // view = system - anchor; render = view - origin
-        const glm::vec3 eye(eye_sys - anchor - origin);
-        in.view = glm::lookAt(eye, eye + look_dir, glm::vec3(0, 0, 1));
-        in.proj = glm::perspective(glm::radians(fov_deg), 16.0f / 9.0f, 0.1f, 1.0e6f);
-        in.render_origin = origin;
-        in.anchor_sys = anchor;
-        if (resend) f.set_sources(sources);
-        f.build(in, out);
-        digest_mid_out(d, out, in.view);
-        sprites += out.count;
-        fading += out.fading;
-        ++builds;
-    };
-    // MidField's sources are in system coordinates (the fields sit around
-    // the system origin); view = system - anchor, render = view - origin.
-    for (int phase = 0; phase < 5; ++phase) {
-        if (phase == 1) f.set_sources(sources);   // same
-        if (phase == 2) {                                   // quarter tiles; the cap binds
-            rockfield::MidDials m;
-            m.in_lo_gu = 80.0f; m.in_hi_gu = 150.0f;        // pinned, see above
-            m.l0_tile_gu /= 4.0f; m.l1_tile_gu /= 4.0f; m.l2_tile_gu /= 4.0f;
-            m.max_sprites = 300; m.fill = 0.7f; m.sprite_scale = 1.3f;
-            f.set_dials(m);
-        }
-        if (phase == 3) {                                   // sources and collections change
-            f.set_dials(pinned0);
-            sources = {noisy_belt(), small_cluster(), rock_scenario::beol4_field()};
-            f.set_sources(sources);
-            auto cols = rock_scenario::mid_collections();
-            cols.resize(30);
-            f.set_collections(cols);
-        }
-        if (phase == 4) {
-            far::DiscSource moved = rock_scenario::beol4_field();
-            moved.centre = {400.0, -200.0, 50.0};
-            sources = {moved, noisy_belt()};
-            f.set_sources(sources);
-            f.set_collections(rock_scenario::mid_collections());
-        }
-        for (int i = 0; i < 24; ++i) {
-            const double t = i / 24.0;
-            // Inside the field, sweeping the view around.
-            const glm::dvec3 eye_in(40.0 * std::sin(6.0 * t), -700.0 + 30.0 * t, 10.0 * t);
-            const glm::vec3 dir_in(std::sin(6.283f * t), std::cos(6.283f * t), 0.2f * std::sin(3.0f * t));
-            build_at(eye_in, dir_in, 60.0f, glm::floor(eye_in / 50.0) * 50.0);
-            // Outside, looking at the field.
-            const glm::dvec3 eye_out(500.0 * t, -6000.0 + 900.0 * t, 300.0);
-            build_at(eye_out, glm::normalize(glm::vec3(-eye_out)), 35.0f, glm::dvec3(0.0));
-            if (i % 6 == 0)   // telephoto down the cluster
-                build_at(glm::dvec3(1300.0, -1500.0, 0.0), {0, 1, -0.04f}, 8.0f, glm::dvec3(1250.0, -1500.0, 0.0));
-        }
-    }
-    return {d.h, sprites, builds, f.cache_stats(), fading};
-}
-}  // namespace
-
-TEST(RockPerfEquivalence, MidBuildsMatchTheRecordedDigests) {
-    const MidRun r = run_mid(/*resend=*/false);
-    std::printf("[mid equivalence] builds=0x%016" PRIx64 " (builds=%d sprites=%d)\n", r.digest,
-                r.builds, r.sprites);
-    EXPECT_GT(r.sprites, 0);
-    EXPECT_GT(r.fading, 0) << "the run must build translucent sprites";
-    EXPECT_EQ(r.digest, 0x20de9ab27334d780ull) << "drawn mid sprites changed";
-}
-
 // ---- The live call pattern (coordinator review 2026-10-03) -----------------
 // The host re-pushes the same sources EVERY frame (far_set_frame). That must
 // neither change a byte nor throw away the incremental state.
@@ -434,41 +308,6 @@ TEST(RockPerfEquivalence, NearSameSourcesEveryFrameKeepsTheIncrementalStream) {
     // travel (plus the dial changes) -- 1,440 if every frame were full.
     EXPECT_EQ(live.full_passes, base.full_passes);
     EXPECT_LT(live.full_passes, 360u);
-}
-
-TEST(RockPerfEquivalence, MidSameSourcesEveryFrameKeepsTheTileCache) {
-    const MidRun base = run_mid(/*resend=*/false);
-    const MidRun live = run_mid(/*resend=*/true);
-    EXPECT_EQ(live.digest, 0x20de9ab27334d780ull) << "drawn mid sprites changed";
-    EXPECT_EQ(live.cache.fills, base.cache.fills) << "re-pushing the same sources refilled the cache";
-}
-
-TEST(RockPerfEquivalence, MidMovedSourceStillClearsTheCache) {
-    // A real anchor move shifts a view-space source's system centre: the
-    // output must match a fresh field's.
-    rockfield::MidField a, b;
-    for (auto* f : {&a, &b}) {
-        f->set_collections(rock_scenario::mid_collections());
-        f->set_view_dirs(rock_scenario::view_dirs64());
-    }
-    rockfield::MidBuildInput in;
-    in.viewport_h = 1080.0f;
-    in.view = glm::lookAt(glm::vec3(0, -700, 0), glm::vec3(0), glm::vec3(0, 0, 1));
-    in.proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 1.0e6f);
-    rockfield::MidOutput oa, ob;
-    a.set_sources({rock_scenario::beol4_field()});
-    a.build(in, oa);
-    far::DiscSource moved = rock_scenario::beol4_field();
-    moved.centre = {37.5, -12.0, 4.0};
-    a.set_sources({moved});
-    a.build(in, oa);
-    b.set_sources({moved});
-    b.build(in, ob);
-    Digest da, dbg;
-    digest_mid_out(da, oa, in.view);
-    digest_mid_out(dbg, ob, in.view);
-    EXPECT_EQ(da.h, dbg.h);
-    EXPECT_GT(oa.count, 0);
 }
 
 // Reviewer's repro: leaving a source's reach drops every cell; coming back

@@ -13,7 +13,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <renderer/far_field.h>
 #include <renderer/minor_field.h>
-#include <renderer/rock_mid.h>
 #include <renderer/rock_near.h>
 
 namespace rock_scenario {
@@ -43,14 +42,6 @@ inline renderer::rockfield::NearCatalogue near_catalogue() {
     c.large_bound_mu = {57.1f, 61.0f, 54.0f, 57.1f};
     c.view_dirs_gltf = view_dirs64();
     return c;
-}
-
-// 48 collections: 16 per variant (sparse, medium, dense), as the host pushes.
-inline std::vector<renderer::rockfield::MidCollection> mid_collections() {
-    std::vector<renderer::rockfield::MidCollection> cols;
-    for (int v = 0; v < 3; ++v)
-        for (int i = 0; i < 16; ++i) cols.push_back({100 + v * 16 + i, v});
-    return cols;
 }
 
 // A Galaxy-sized contact box (hull AABB ~3.7 x 2 x 0.9 GU) posed at `p`,

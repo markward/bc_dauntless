@@ -29,33 +29,11 @@ struct KindParams {
     int cuts_min = 0, cuts_max = 0;
 };
 
-/// One "rock collection" density variant: how many rocks a collection holds.
-struct CollectionVariant {
-    std::string name;
-    int rocks_min = 0, rocks_max = 0;
-};
-
-/// recipe.json "collections" (optional; absent == no collections):
-///   {"count": 16, "family": "silicate", "view_size": 128,
-///    "variants": [{"name": "sparse", "rocks": [20, 30]}, ...],
-///    "size": [0.03, 0.15], "exponent": 2.5}
-/// `count` collections per variant; part radii are a power law (exponent)
-/// over `size`, as fractions of the collection radius.
-struct CollectionParams {
-    int count = 0;
-    std::string family;
-    int view_size = 128;
-    std::vector<CollectionVariant> variants;
-    float size_min = 0.03f, size_max = 0.15f;
-    float exponent = 2.5f;
-};
-
 struct Recipe {
     int tool_version = 1; std::uint64_t seed = 0; float bound_radius_m = 100.0f;
     int impostor_view_size = 128; int volume_dims = 48;
     KindParams major, fragment;
     std::vector<FamilyParams> families;          // order as in the JSON array
-    CollectionParams collections;                // count 0 when the recipe has none
 };
 
 struct RockSpec {
@@ -74,16 +52,6 @@ Recipe parse_recipe(const std::string& json_text);
 std::vector<RockSpec> expand_recipe(const Recipe& r);
 /// RockSpec points into the Recipe; expanding a temporary would dangle.
 std::vector<RockSpec> expand_recipe(Recipe&&) = delete;
-
-struct CollectionSpec {
-    std::string id;          // "collections/dense_00"
-    std::string variant;     // "dense"
-    std::uint64_t seed = 0;  // fnv1a64(to_string(recipe.seed) + ":" + id)
-    int rocks = 0;           // in the variant's [min, max], drawn from `seed`
-};
-
-/// Variants in recipe order; within a variant, nn from 00 to count-1.
-std::vector<CollectionSpec> expand_collections(const Recipe& r);
 
 /// Standard FNV-1a 64.
 std::uint64_t fnv1a64(const std::string& s);
