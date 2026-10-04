@@ -1451,6 +1451,13 @@ def _reset_leakable_engine_globals():
         sensor_dials.reset()
     except Exception:
         pass
+    # Unknown labels: allocator keyed by contact object identity, so a test that
+    # allocates placeholders would otherwise leave them registered for every later test.
+    try:
+        from engine.appc import unknown_labels
+        unknown_labels.reset()
+    except Exception:
+        pass
     # Damage-geometry switches (App.DamageableObject_*Enabled): in Dauntless
     # damage is always on, but the setters are honoured so a mission can
     # suppress damage for a cutscene. Module-level state, so a test that flips
