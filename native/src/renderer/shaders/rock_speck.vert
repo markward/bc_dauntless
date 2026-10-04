@@ -7,6 +7,7 @@
 layout(location = 0) in vec2 a_corner;        // (+-1, +-1)
 layout(location = 7) in vec4 a_pos_r;         // xyz relative to the band origin, w radius (GU)
 layout(location = 8) in vec4 a_albedo_u;      // rgb albedo, a the cell's thinning hash
+layout(location = 9) in vec4 a_seed;          // per-rock shape phases (CPU, from its SYSTEM position)
 uniform mat4 u_view;
 uniform mat4 u_proj;
 uniform vec2 u_viewport;                      // framebuffer size, px
@@ -15,7 +16,7 @@ uniform vec3 u_offset;                        // render-space position of the ba
 uniform vec3 u_eye;                           // render-space camera position
 uniform float u_in_gu, u_in_fade_gu;          // the large billboards' edge and fade band
 uniform float u_out_gu, u_out_fade_gu;
-uniform float u_keep_d0_gu, u_keep_band, u_keep_power;
+uniform float u_keep_d0_gu, u_keep_band, u_keep_power;   // d0 = rockfield::speck_keep_d0
 out vec3 v_pos;
 flat out vec2 v_centre_px;
 flat out float v_p;
@@ -49,7 +50,8 @@ void main() {
     v_p = r_px;
     v_albedo = a_albedo_u.rgb;
     v_alpha = alpha;
-    vec3 h = fract(sin(a_pos_r.xyz * vec3(12.9898, 78.233, 37.719)) * 43758.5453);
-    v_seed = vec4(h * 6.2831853, fract(h.x * 7.0 + h.y * 3.0));
+    // Never hashed from a_pos_r: that is relative to the band origin, which
+    // moves on every restream (the outline would re-randomise).
+    v_seed = a_seed;
     gl_Position = clip;
 }

@@ -93,6 +93,35 @@ def test_far_clear_drops_the_near_field(host):
     assert host.rockfield_drain_contacts() == []
 
 
+def test_far_clear_drops_the_speck_band_and_the_puffs(host):
+    """far_clear (mission swap) drops the speck band's cells AND its drawn
+    set, and the puffs, at once -- not whenever a later source push lands
+    (review M1/M2, 2026-10-04)."""
+    import time
+    host.rock_specks_set_enabled(True)
+    host.rock_puffs_set_enabled(True)
+    _push_real_catalogue()
+    host.far_set_dials({"puff_count": 50, "speck_out_gu": 1500.0, "speck_restream_gu": 50.0})
+    host.far_set_sources([_sphere_source(radius=2000.0)])
+    host.far_set_frame(None, (0.0, 0.0, 0.0))
+    _set_camera_at_origin(host)
+    st = {}
+    for _ in range(400):   # the speck band rebuilds on a worker thread
+        host.frame()
+        st = host.far_stats()
+        if st["band_specks"] > 0 and st["puffs"] > 0:
+            break
+        time.sleep(0.01)
+    assert st["speck_cells"] > 0 and st["band_specks"] > 0 and st["puffs"] > 0, st
+    host.far_clear()
+    assert host.far_stats()["speck_cells"] == 0
+    host.frame()
+    st = host.far_stats()
+    assert st["speck_cells"] == 0, st
+    assert st["band_specks"] == 0, "a stale speck set still draws after far_clear"
+    assert st["puffs"] == 0, "the puffs still draw the old field after far_clear"
+
+
 def test_disabled_far_tier_streams_nothing(host):
     host.far_set_enabled(False)
     _stream_at_origin(host)

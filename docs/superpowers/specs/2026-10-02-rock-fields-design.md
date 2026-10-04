@@ -39,6 +39,18 @@ are the original design and its history; where they disagree, this section wins.
   Dials: "rock fields" group on `/ L O`, look dials first.
 - **Cost (Debug, in game, Beol 4 approach):** near stream 0.1–0.25 ms, near draw
   0.4–0.7 ms, puffs 0.25–0.46 ms (fill-bound; trimmed since), specks ~0.06 ms.
+- **Review fixes (2026-10-04, after this baseline):** the large pixel floor
+  `near_large_min_px` defaults to **0** (a floored billboard left a gap before its speck;
+  the small floor stays 2.5). All three bands share ONE change test, `far::same_density`
+  (warp/sharpness/edge/octaves now regenerate rocks, specks and puffs together). The near
+  band reaches a warped field's lobes (`far::sphere_outer_r`). The speck band's margin is
+  `max(2 × restream, restream + step + 2 × J × step)` (J = the last rebuild's latency in
+  frames; capped at max(4 × restream, 200)) — ~235k instances at full density, was ~160k;
+  sources out of reach are skipped, cells capped at 72 per axis, a rebuild in flight is
+  cancelled by `clear()`, and a throwing rebuild draws nothing instead of aborting the
+  frame. Thinning starts at max(`speck_keep_d0_gu`, billboard edge + fade). A big speck's
+  shape seed comes from its system position (48-byte instance), so it no longer
+  re-randomises per restream. `far_clear` drops specks and puffs too.
 
 ## Why a rethink
 

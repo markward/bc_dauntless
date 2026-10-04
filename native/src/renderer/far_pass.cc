@@ -412,7 +412,7 @@ void FarPass::upload_rock_specks(const std::vector<rockfield::RockSpeckGpu>& spe
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        for (GLuint k = 0; k < 2; ++k) {
+        for (GLuint k = 0; k < 3; ++k) {   // a_pos_r, a_albedo_u, a_seed = 7, 8, 9
             glEnableVertexAttribArray(kSpeckAttrib + k);
             glVertexAttribPointer(kSpeckAttrib + k, 4, GL_FLOAT, GL_FALSE,
                                   static_cast<GLsizei>(sizeof(rockfield::RockSpeckGpu)),

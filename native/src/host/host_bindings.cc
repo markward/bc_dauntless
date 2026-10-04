@@ -300,7 +300,9 @@ int g_rock_puffs_drawn = 0;
 // band's large rocks past their billboard edge as GPU-faded specks.
 bool g_rock_specks_enabled = true;
 renderer::rockfield::SpeckBand g_speck_band;
-bool g_speck_upload = false;        // instances changed since the last upload
+// The SpeckBand::version() last uploaded: a swap or a clear() moves the
+// band's version, so a cleared band uploads (and draws) nothing at once.
+std::uint64_t g_speck_uploaded_version = 0;
 int g_rock_specks_drawn = 0;        // instances submitted (GPU culls/fades them)
 // The last camera's build; reused across cameras so the vectors keep their
 // capacity. Its specks and g_minor_specks draw in ONE render_specks call.
@@ -893,7 +895,7 @@ void reset_frame_state() {
     g_speck_band.set_sources({});
     g_speck_band.set_dials({});
     g_speck_band.set_near_dials({});
-    g_speck_upload = true;
+    g_speck_uploaded_version = 0;   // a fresh FarPass: upload whatever the band holds
     g_rock_specks_drawn = 0;
     g_far_out = {};
     g_minor_specks.clear();
@@ -1182,9 +1184,8 @@ void step_near_field() {
         ? glm::dvec3(player->world * glm::vec4(player->center_mu, 1.0f))
         : glm::dvec3(g_camera.eye);
     g_near_field.stream(centre_render + to_sys);
-    if (g_rock_specks_enabled &&
-        g_speck_band.stream(centre_render + to_sys, g_near_field.dials().dash_collapse_step_gu))
-        g_speck_upload = true;
+    if (g_rock_specks_enabled)
+        g_speck_band.stream(centre_render + to_sys, g_near_field.dials().dash_collapse_step_gu);
     renderer::rockfield::NearStepInput in;
     in.game_time = g_decal_game_time;
     in.render_origin = g_world.render_origin();
@@ -1521,9 +1522,9 @@ void frame() {
         // depth, so drawn first every puff blended over it, nearer or not.
         if (g_far_enabled && g_far_pass && g_rock_specks_enabled && !g_speck_band.hidden()) {
             DAUNTLESS_FRAME_SCOPE("rock.specks.draw");
-            if (g_speck_upload) {
+            if (g_speck_band.version() != g_speck_uploaded_version) {
                 g_far_pass->upload_rock_specks(g_speck_band.instances());
-                g_speck_upload = false;
+                g_speck_uploaded_version = g_speck_band.version();
             }
             renderer::FarPass::RockSpeckDraw d;
             d.offset = glm::vec3(g_speck_band.origin_sys() -
@@ -1533,7 +1534,7 @@ void frame() {
             const auto& sd = g_speck_band.dials();
             d.out_gu = sd.out_gu;
             d.out_fade_gu = sd.out_fade_gu;
-            d.keep_d0_gu = sd.keep_d0_gu;
+            d.keep_d0_gu = renderer::rockfield::speck_keep_d0(sd, d.in_gu, d.in_fade_gu);
             d.keep_band = sd.keep_band;
             d.keep_power = sd.keep_power;
             d.gain = sd.gain;
@@ -4542,9 +4543,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_near_field.clear();
               g_near_field.reset_player();
               g_near_player.reset();
+              g_speck_band.set_sources(g_far_field.active_sources());
+              g_speck_band.clear();
+              g_puff_field.clear();
           },
-          "Drop sources, flagged rocks (back to mesh-only), frame, and the near "
-          "band's cells, contacts, sweep state and player; keeps the catalogue.");
+          "Drop sources, flagged rocks (back to mesh-only), frame, the near "
+          "band's cells, contacts, sweep state and player, the speck band's "
+          "cells and drawn set, and the puffs; keeps the catalogue.");
     m.def("rockfield_drain_contacts",
           []() { return near_contacts_list(g_near_field.drain_large_contacts()); },
           "Player/large near-rock touches since the last drain: [{'point', "
