@@ -127,7 +127,18 @@ DEFAULTS: dict = {
     # (keeps mid sprites outside the widened near_large_billboard_gu, 90).
     "mid_in_lo_gu": 100.0, "mid_in_hi_gu": 170.0,
     "mid_l0_out_gu": 600.0, "mid_l1_out_gu": 2400.0, "mid_xfade_frac": 0.25,
-    "haze_handoff_gu": 8000.0, "haze_handoff_band_gu": 2000.0,
+    # spike/rock-specks (2026-10-04): the haze ramps in over [600, 1500] GU,
+    # behind the speck band (was 8000 / 2000, behind the mid band's L2).
+    "haze_handoff_gu": 1500.0, "haze_handoff_band_gu": 900.0,
+    # Speck band (SPIKE, native; MUST equal SpeckDials in rock_speck.h): the
+    # near band's large rocks past their billboard edge as lit specks, out to
+    # speck_out_gu (fading over speck_out_fade_gu). Beyond speck_keep_d0_gu
+    # whole cells thin as (d0 / d)^speck_keep_power, fading over speck_keep_band of their
+    # hash. Re-streamed every speck_restream_gu of travel. speck_band_gain
+    # multiplies speck_gain for this band only.
+    "speck_out_gu": 1500.0, "speck_out_fade_gu": 400.0,
+    "speck_keep_d0_gu": 350.0, "speck_keep_band": 0.25, "speck_keep_power": 3.0,
+    "speck_restream_gu": 50.0, "speck_band_gain": 0.25,
     "mid_fill": 1.0, "mid_sprite_scale": 1.0, "mid_max_sprites": 4000,
 }
 
@@ -145,7 +156,9 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "mid_l0_tile_gu", "mid_l1_tile_gu", "mid_l2_tile_gu", "mid_in_lo_gu",
     "mid_in_hi_gu", "mid_l0_out_gu", "mid_l1_out_gu", "mid_xfade_frac",
     "haze_handoff_gu", "haze_handoff_band_gu", "mid_fill", "mid_sprite_scale",
-    "mid_max_sprites"})
+    "mid_max_sprites",
+    "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
+    "speck_keep_power", "speck_restream_gu", "speck_band_gain"})
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
@@ -154,11 +167,13 @@ _INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "ti
                "mid_max_sprites")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
-_LOOK_FIRST = ("near_small_density", "near_large_density",
+_LOOK_FIRST = ("speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
+               "haze_handoff_gu", "haze_handoff_band_gu",
+               "near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
                "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
-               "mid_l1_out_gu", "haze_handoff_gu", "haze_brightness",
+               "mid_l1_out_gu", "haze_brightness",
                "tile_haze_brightness", "haze_gain", "tile_haze_gain",
                "tile_haze_noise_contrast", "belt_noise_contrast",
                "collide_damage_scale")

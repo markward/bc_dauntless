@@ -12,6 +12,8 @@
 #include "embedded_impostor_vs.h"
 #include "embedded_speck_vs.h"
 #include "embedded_speck_fs.h"
+#include "embedded_rock_speck_vs.h"
+#include "embedded_rock_speck_fs.h"
 #include "embedded_far_haze_fs.h"
 #include "embedded_backdrop_vs.h"
 #include "embedded_backdrop_fs.h"
@@ -118,6 +120,7 @@ Pipeline::Pipeline() {
     }
     // Far-tier specks: a lit, area-weighted screen quad per sub-1.5-px rock.
     speck_ = std::make_unique<Shader>(shader_src::speck_vs, shader_src::speck_fs);
+    rock_speck_ = std::make_unique<Shader>(shader_src::rock_speck_vs, shader_src::rock_speck_fs);
     // Far-tier belt haze: the fullscreen-triangle vertex shader (outputs v_uv).
     far_haze_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::far_haze_fs);
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);

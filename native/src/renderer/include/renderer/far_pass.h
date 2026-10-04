@@ -20,6 +20,7 @@
 
 #include <renderer/far_field.h>
 #include <renderer/speck.h>
+#include <renderer/rock_speck.h>
 
 namespace scenegraph { struct Camera; }
 
@@ -73,6 +74,20 @@ public:
     void render_specks(const std::vector<SpeckGpu>& specks, const scenegraph::Camera& cam,
                        Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                        float speck_gain, int viewport_w, int viewport_h);
+
+    // Rock-field speck band (SPIKE, rock_speck.h): upload the band's
+    // instances when it re-streams; draw them every frame (GPU-side radius
+    // and alpha, rock_speck.vert). Same blend/depth state as render_specks.
+    struct RockSpeckDraw {
+        glm::vec3 offset{0.0f};   // render-space position of the band origin
+        float in_gu = 0, in_fade_gu = 0, out_gu = 0, out_fade_gu = 0;
+        float keep_d0_gu = 0, keep_band = 0.25f, keep_power = 3.0f, gain = 1.0f;
+    };
+    void upload_rock_specks(const std::vector<rockfield::RockSpeckGpu>& specks);
+    void render_rock_specks(const RockSpeckDraw& d, const scenegraph::Camera& cam,
+                            Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
+                            float speck_gain, int viewport_w, int viewport_h);
+    int rock_speck_count() const { return rock_speck_count_; }
 
     // Belt haze (spec §2 "Haze"): one fullscreen-triangle draw of
     // far_haze.frag per source in `active` that has populations, among the
@@ -137,6 +152,9 @@ private:
     std::uint32_t speck_vao_ = 0;
     std::uint32_t speck_vbo_ = 0;
     std::size_t speck_capacity_ = 0;        // bytes
+    std::uint32_t rock_speck_vao_ = 0;
+    std::uint32_t rock_speck_vbo_ = 0;
+    int rock_speck_count_ = 0;
     std::uint32_t white_texture_ = 0;
     std::uint32_t black_texture_ = 0;
     std::uint32_t haze_vao_ = 0;            // empty: the fullscreen triangle

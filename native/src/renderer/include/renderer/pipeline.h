@@ -16,6 +16,7 @@ public:
     Shader& minor_shader() noexcept      { return *minor_; }
     Shader& impostor_shader() noexcept   { return *impostor_; }
     Shader& speck_shader() noexcept      { return *speck_; }
+    Shader& rock_speck_shader() noexcept { return *rock_speck_; }
     Shader& far_haze_shader() noexcept   { return *far_haze_; }
     Shader& backdrop_shader() noexcept   { return *backdrop_; }
     Shader& sun_shader() noexcept        { return *sun_; }
@@ -55,6 +56,7 @@ private:
     std::unique_ptr<Shader> minor_;
     std::unique_ptr<Shader> impostor_;
     std::unique_ptr<Shader> speck_;
+    std::unique_ptr<Shader> rock_speck_;
     std::unique_ptr<Shader> far_haze_;
     std::unique_ptr<Shader> backdrop_;
     std::unique_ptr<Shader> sun_;

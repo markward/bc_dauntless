@@ -39,6 +39,7 @@
 #include <renderer/far_pass.h>
 #include <renderer/rock_mid.h>
 #include <renderer/rock_near.h>
+#include <renderer/rock_speck.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_atmosphere.h>
@@ -296,7 +297,13 @@ bool g_far_enabled = true;
 // fading). Off by default while rock fields are rebuilt band by band
 // (Mark, 2026-10-03).
 bool g_rock_mid_enabled = false;
-bool g_rock_haze_enabled = false;
+bool g_rock_haze_enabled = true;    // spike/rock-specks: haze back on behind the specks
+// Rock-field speck band (SPIKE, spike/rock-specks 2026-10-04): the near
+// band's large rocks past their billboard edge as GPU-faded specks.
+bool g_rock_specks_enabled = true;
+renderer::rockfield::SpeckBand g_speck_band;
+bool g_speck_upload = false;        // instances changed since the last upload
+int g_rock_specks_drawn = 0;        // instances submitted (GPU culls/fades them)
 // The last camera's build; reused across cameras so the vectors keep their
 // capacity. Its specks and g_minor_specks draw in ONE render_specks call.
 renderer::far::FarOutput g_far_out;
@@ -895,7 +902,14 @@ void reset_frame_state() {
     // rock fields are rebuilt band by band -- independent of g_far_enabled
     // above, which still gates everything when off.
     g_rock_mid_enabled = false;
-    g_rock_haze_enabled = false;
+    g_rock_haze_enabled = true;
+    g_rock_specks_enabled = true;
+    g_speck_band.set_catalogue({}, {});
+    g_speck_band.set_sources({});
+    g_speck_band.set_dials({});
+    g_speck_band.set_near_dials({});
+    g_speck_upload = true;
+    g_rock_specks_drawn = 0;
     g_far_out = {};
     g_minor_specks.clear();
     g_far_speck_staging.clear();
@@ -1191,6 +1205,9 @@ void step_near_field() {
         ? glm::dvec3(player->world * glm::vec4(player->center_mu, 1.0f))
         : glm::dvec3(g_camera.eye);
     g_near_field.stream(centre_render + to_sys);
+    if (g_rock_specks_enabled &&
+        g_speck_band.stream(centre_render + to_sys, g_near_field.dials().dash_collapse_step_gu))
+        g_speck_upload = true;
     renderer::rockfield::NearStepInput in;
     in.game_time = g_decal_game_time;
     in.render_origin = g_world.render_origin();
@@ -1263,6 +1280,7 @@ void frame() {
         g_near_meshes = 0;
         g_near_billboards = 0;
         g_near_fading = 0;
+        g_rock_specks_drawn = 0;
         g_mid_sprites = 0;
         g_mid_fading = 0;
         g_mid_tiles = 0;
@@ -1607,6 +1625,34 @@ void frame() {
             g_far_pass->render_haze(
                 g_far_field.active_sources(), origin_sys, cam, *g_pipeline, g_lighting,
                 ambient_scale, target.depth_texture(), inv_vp, g_far_field.dials());
+            g_far_draw_calls += g_far_pass->last_draw_calls();
+        }
+        // Speck band (SPIKE): one instanced draw, radius + alpha on the GPU.
+        // After the haze, as rock.fade.draw and for the same reason: a speck
+        // writes no depth, so drawn before it the haze fogged it to a ghost.
+        if (g_far_enabled && g_far_pass && g_rock_specks_enabled && !g_speck_band.hidden()) {
+            DAUNTLESS_FRAME_SCOPE("rock.specks.draw");
+            g_far_pass->reset_counts();
+            if (g_speck_upload) {
+                g_far_pass->upload_rock_specks(g_speck_band.instances());
+                g_speck_upload = false;
+            }
+            renderer::FarPass::RockSpeckDraw d;
+            d.offset = glm::vec3(g_speck_band.origin_sys() -
+                                 (g_world.render_origin() + g_far_field.anchor()));
+            d.in_gu = g_near_field.effective_dials().large.billboard_gu;
+            d.in_fade_gu = g_near_field.effective_dials().fade_gu;
+            const auto& sd = g_speck_band.dials();
+            d.out_gu = sd.out_gu;
+            d.out_fade_gu = sd.out_fade_gu;
+            d.keep_d0_gu = sd.keep_d0_gu;
+            d.keep_band = sd.keep_band;
+            d.keep_power = sd.keep_power;
+            d.gain = sd.gain;
+            g_far_pass->render_rock_specks(d, cam, *g_pipeline, g_lighting, ambient_scale,
+                                           g_far_field.dials().speck_gain,
+                                           vw, vh);
+            g_rock_specks_drawn += g_far_pass->rock_speck_count();
             g_far_draw_calls += g_far_pass->last_draw_calls();
         }
         // Rock fade (2026-10-03): the near and mid impostors fading in from
@@ -2725,6 +2771,20 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
     f("near_far_shell_regrow_gu", o.far_shell_regrow_gu);
     f("near_stream_margin_gu", o.stream_margin_gu);
     f("collide_cooldown_s", o.collide_cooldown_s);
+    return o;
+}
+
+// The speck band's keys of the same dict (far_dials.py speck_*; SPIKE).
+renderer::rockfield::SpeckDials speck_dials_of(const py::dict& d) {
+    renderer::rockfield::SpeckDials o;
+    auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
+    f("speck_out_gu", o.out_gu);
+    f("speck_out_fade_gu", o.out_fade_gu);
+    f("speck_keep_d0_gu", o.keep_d0_gu);
+    f("speck_keep_band", o.keep_band);
+    f("speck_keep_power", o.keep_power);
+    f("speck_restream_gu", o.restream_gu);
+    f("speck_band_gain", o.gain);
     return o;
 }
 
@@ -4468,6 +4528,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_near_small_frags = std::move(small_frags);
               g_near_large_frags = std::move(large_frags);
               g_near_field.set_catalogue(g_near_catalogue);
+              std::vector<glm::vec3> albedo;
+              for (const auto& c : g_far_field.catalogue()) albedo.push_back(c.avg_albedo);
+              g_speck_band.set_catalogue(g_near_catalogue, std::move(albedo));
           },
           py::arg("entries"), py::arg("view_dirs"), py::arg("collections") = py::list(),
           "Catalogue for the far tier: [{'albedo', 'normal' (atlas paths, empty "
@@ -4512,6 +4575,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_far_field.set_sources(std::move(out));
               g_near_field.set_sources(g_far_field.active_sources());
               g_mid_field.set_sources(g_far_field.active_sources());
+              g_speck_band.set_sources(g_far_field.active_sources());
           },
           py::arg("sources"), "Disc density sources (DiscSource.to_native() dicts).");
     m.def("far_set_frame",
@@ -4521,6 +4585,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                      std::get<2>(anchor)});
               g_near_field.set_sources(g_far_field.active_sources());
               g_mid_field.set_sources(g_far_field.active_sources());
+              g_speck_band.set_sources(g_far_field.active_sources());
           },
           py::arg("system"), py::arg("anchor"),
           "The viewed system (None: none) and the system position of view-space origin.");
@@ -4528,6 +4593,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](py::dict d) {
               g_far_field.set_dials(far_dials_of(d));
               g_near_field.set_dials(near_dials_of(d));
+              g_speck_band.set_near_dials(near_dials_of(d));
+              g_speck_band.set_dials(speck_dials_of(d));
               g_mid_field.set_dials(mid_dials_of(d));
               g_minor_field.set_specks(g_far_enabled, g_far_field.dials().tiers.p_min);
           },
@@ -4539,6 +4606,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!on) {
                   far_zero_fades(g_far_flagged_keys);
                   g_near_field.clear();   // re-streams when back on
+                  g_speck_band.clear();
                   g_mid_out = {};         // no stale mid output
                   g_mid_sprites = 0;
                   g_mid_fading = 0;
@@ -4568,6 +4636,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Turn the rock-fields belt haze draw on or off, independent of "
           "far_set_enabled. Off: rock.haze never runs for any camera.");
     m.def("rock_haze_enabled", []() { return g_rock_haze_enabled; });
+    m.def("rock_specks_set_enabled",
+          [](bool on) { g_rock_specks_enabled = on; if (!on) g_speck_band.clear(); },
+          py::arg("enabled"), "SPIKE: the rock-field speck band on or off.");
+    m.def("rock_specks_enabled", []() { return g_rock_specks_enabled; });
     m.def("far_stats",
           []() {
               py::dict d;
@@ -4584,6 +4656,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["near_meshes"] = g_near_meshes;
               d["near_billboards"] = g_near_billboards;
               d["near_fading"] = g_near_fading;
+              d["speck_cells"] = g_speck_band.cells();
+              d["band_specks"] = g_rock_specks_drawn;
               d["mid_sprites"] = g_mid_sprites;
               d["mid_fading"] = g_mid_fading;
               d["mid_tiles"] = g_mid_tiles;

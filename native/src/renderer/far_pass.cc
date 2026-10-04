@@ -124,6 +124,8 @@ FarPass::~FarPass() {
     if (instance_vbo_ != 0) { GLuint b = instance_vbo_; glDeleteBuffers(1, &b); }
     if (speck_vao_ != 0) { GLuint v = speck_vao_; glDeleteVertexArrays(1, &v); }
     if (speck_vbo_ != 0) { GLuint b = speck_vbo_; glDeleteBuffers(1, &b); }
+    if (rock_speck_vao_ != 0) { GLuint v = rock_speck_vao_; glDeleteVertexArrays(1, &v); }
+    if (rock_speck_vbo_ != 0) { GLuint b = rock_speck_vbo_; glDeleteBuffers(1, &b); }
     if (white_texture_ != 0) { GLuint t = white_texture_; glDeleteTextures(1, &t); }
     if (black_texture_ != 0) { GLuint t = black_texture_; glDeleteTextures(1, &t); }
     if (haze_vao_ != 0) { GLuint v = haze_vao_; glDeleteVertexArrays(1, &v); }
@@ -615,6 +617,95 @@ void FarPass::render_specks(const std::vector<SpeckGpu>& specks, const scenegrap
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     // Restore the frame defaults: cull on, depth writes on, blend off; and
     // the blend function as it was found.
+    glEnable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glBlendFuncSeparate(static_cast<GLenum>(blend_src_rgb), static_cast<GLenum>(blend_dst_rgb),
+                        static_cast<GLenum>(blend_src_a), static_cast<GLenum>(blend_dst_a));
+    glDisable(GL_BLEND);
+}
+
+void FarPass::upload_rock_specks(const std::vector<rockfield::RockSpeckGpu>& specks) {
+    ensure_geometry();   // the shared corner strip
+    if (rock_speck_vao_ == 0) {
+        GLuint vao = 0, vbo = 0;
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, corner_vbo_);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        for (GLuint k = 0; k < 2; ++k) {
+            glEnableVertexAttribArray(kSpeckAttrib + k);
+            glVertexAttribPointer(kSpeckAttrib + k, 4, GL_FLOAT, GL_FALSE,
+                                  static_cast<GLsizei>(sizeof(rockfield::RockSpeckGpu)),
+                                  reinterpret_cast<void*>(static_cast<std::uintptr_t>(k * 16)));
+            glVertexAttribDivisor(kSpeckAttrib + k, 1);
+        }
+        glBindVertexArray(0);
+        rock_speck_vao_ = vao;
+        rock_speck_vbo_ = vbo;
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, rock_speck_vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(specks.size() * sizeof(rockfield::RockSpeckGpu)),
+                 specks.empty() ? nullptr : specks.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    rock_speck_count_ = static_cast<int>(specks.size());
+}
+
+void FarPass::render_rock_specks(const RockSpeckDraw& d, const scenegraph::Camera& cam,
+                                 Pipeline& pipeline, const Lighting& lighting,
+                                 float ambient_scale, float speck_gain, int viewport_w,
+                                 int viewport_h) {
+    if (rock_speck_count_ <= 0 || rock_speck_vao_ == 0) return;
+    Shader& s = pipeline.rock_speck_shader();
+    s.use();
+    s.set_mat4("u_view", cam.view_matrix());
+    s.set_mat4("u_proj", cam.proj_matrix());
+    const glm::vec3 eye = glm::vec3(glm::inverse(cam.view_matrix())[3]);
+    s.set_vec3("u_camera_pos_ws", eye);
+    s.set_vec3("u_eye", eye);
+    s.set_vec3("u_offset", d.offset);
+    s.set_float("u_in_gu", d.in_gu);
+    s.set_float("u_in_fade_gu", d.in_fade_gu);
+    s.set_float("u_out_gu", d.out_gu);
+    s.set_float("u_out_fade_gu", d.out_fade_gu);
+    s.set_float("u_keep_d0_gu", d.keep_d0_gu);
+    s.set_float("u_keep_band", d.keep_band);
+    s.set_float("u_keep_power", d.keep_power);
+    set_ambient_uniforms(s, lighting, ambient_scale);
+    s.set_int("u_dir_light_count", lighting.directional_count);
+    if (lighting.directional_count > 0) {
+        s.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
+                         lighting.directional_count);
+        s.set_vec3_array("u_dir_light_color", lighting.directional_color,
+                         lighting.directional_count);
+    }
+    s.set_float("u_speck_gain", speck_gain * d.gain);
+    s.set_vec2("u_viewport", glm::vec2(static_cast<float>(viewport_w),
+                                       static_cast<float>(viewport_h)));
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    s.set_vec2("u_viewport_origin", glm::vec2(static_cast<float>(vp[0]), static_cast<float>(vp[1])));
+
+    GLint blend_src_rgb = GL_ONE, blend_dst_rgb = GL_ZERO;
+    GLint blend_src_a = GL_ONE, blend_dst_a = GL_ZERO;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blend_dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dst_a);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // premultiplied
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+
+    glBindVertexArray(rock_speck_vao_);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(rock_speck_count_));
+    ++draw_calls_;
+
+    glBindVertexArray(0);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glBlendFuncSeparate(static_cast<GLenum>(blend_src_rgb), static_cast<GLenum>(blend_dst_rgb),

@@ -686,6 +686,7 @@ def rock_summary() -> str:
     line = ("  rocks: near cells %d (small %d, large %d, ghosted %d) -> "
             "meshes %d, billboards %d, fading %d | "
             "mid %d sprites (%d tiles), fading %d | "
+            "speck band %d (%d cells) | "
             "far impostors %d, specks %d | minors %d/%d drawn | "
             "draw calls %d rock + %d minor"
             % (f.get("near_cells", 0), f.get("near_small", 0),
@@ -694,6 +695,7 @@ def rock_summary() -> str:
                f.get("near_fading", 0),
                f.get("mid_sprites", 0), f.get("mid_tiles", 0),
                f.get("mid_fading", 0),
+               f.get("band_specks", 0), f.get("speck_cells", 0),
                f.get("impostors", 0), f.get("specks", 0),
                m.get("drawn", 0), m.get("minors", 0),
                f.get("draw_calls", 0), m.get("draw_calls", 0)))

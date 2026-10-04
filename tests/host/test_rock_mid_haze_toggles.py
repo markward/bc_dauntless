@@ -134,7 +134,7 @@ def host():
 
 def test_mid_and_haze_default_off(host):
     assert h.rock_mid_enabled() is False
-    assert h.rock_haze_enabled() is False
+    assert h.rock_haze_enabled() is True    # spike/rock-specks: haze back on
 
 
 # ── Mid band ──────────────────────────────────────────────────────────────
@@ -176,7 +176,7 @@ def test_haze_off_contributes_nothing_at_a_haze_only_view(host):
     difference at a view where the haze would otherwise be the only
     contributor (as test_far_haze_displayed.py measures it on)."""
     _beol4_haze_pose()
-    assert h.rock_haze_enabled() is False
+    h.rock_haze_set_enabled(False)
     on, off = _on_minus_off()
     print(f"[rock haze off] on {on:.1f} off {off:.1f} diff {on - off:.1f}/255")
     assert abs(on - off) < 2.0

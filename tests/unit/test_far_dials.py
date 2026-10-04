@@ -54,11 +54,29 @@ def test_near_defaults_match_rock_near_h():
     assert isinstance(far_dials.DEFAULTS["near_large_max"], int)
 
 
+# spike/rock-specks: SpeckDials (rock_speck.h) field per far_dials key.
+_SPECK_CPP_FIELDS = {
+    "speck_out_gu": "out_gu", "speck_out_fade_gu": "out_fade_gu",
+    "speck_keep_d0_gu": "keep_d0_gu", "speck_keep_power": "keep_power",
+    "speck_keep_band": "keep_band", "speck_restream_gu": "restream_gu",
+    "speck_band_gain": "gain",
+}
+
+
+def test_speck_band_defaults_match_rock_speck_h():
+    hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer/rock_speck.h")
+    text = hdr.read_text()
+    for key, field in _SPECK_CPP_FIELDS.items():
+        m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
+        assert m, key
+        assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
+
+
 def test_native_defaults_match_the_cpp_header():
     """FarDials / TierDials defaults MUST equal DEFAULTS."""
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer").resolve()
     text = (hdr / "far_math.h").read_text() + (hdr / "far_field.h").read_text()
-    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_MID_CPP_FIELDS):
+    for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_MID_CPP_FIELDS) - set(_SPECK_CPP_FIELDS):
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % key, text)
         assert m, key
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
@@ -91,7 +109,7 @@ def test_dial_group_is_rock_fields_with_look_dials_first(monkeypatch):
                         lambda name, order, cur, step: registered.setdefault(name, order))
     far_dials.register()
     assert list(registered) == ["rock fields"]
-    assert registered["rock fields"][0] == "near_small_density"
+    assert registered["rock fields"][0] == "speck_band_gain"
 
 
 def test_tile_haze_gain_is_the_cpp_derivation():
@@ -132,11 +150,13 @@ def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the rock-fields look dials
     lead (rock-fields Task 13: near/mid/haze population, then absorption)."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:19] == (
+    assert far_dials.DIAL_ORDER[:23] == (
+        "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
+        "haze_handoff_gu", "haze_handoff_band_gu",
         "near_small_density", "near_large_density", "near_small_mesh_gu",
         "near_small_billboard_gu", "near_large_mesh_gu", "near_large_billboard_gu",
         "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu", "mid_l1_out_gu",
-        "haze_handoff_gu", "haze_brightness", "tile_haze_brightness",
+        "haze_brightness", "tile_haze_brightness",
         "haze_gain", "tile_haze_gain", "tile_haze_noise_contrast",
         "belt_noise_contrast", "collide_damage_scale")
     assert sorted(far_dials.DIAL_ORDER) == sorted(far_dials.DEFAULTS)
@@ -186,6 +206,9 @@ def test_noise_contrast_dials_clamp_to_one():
     assert far_dials.step(d, "tile_haze_noise_contrast", +1)["tile_haze_noise_contrast"] == 1.0
 
 
+_SPIKE_HAZE_HANDOFF = {"haze_handoff_gu", "haze_handoff_band_gu"}
+
+
 def test_mid_defaults_match_rock_mid_h():
     """MidDials defaults (native/src/renderer/include/renderer/rock_mid.h)
     MUST equal DEFAULTS; every mid key is native."""
@@ -197,12 +220,14 @@ def test_mid_defaults_match_rock_mid_h():
         assert key in far_dials.NATIVE_KEYS, key
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
         assert m, field
+        if key in _SPIKE_HAZE_HANDOFF:   # spike/rock-specks: Python moved, mid (off) did not
+            continue
         assert float(m.group(1)) == float(far_dials.DEFAULTS[key]), key
     d = far_dials.DEFAULTS
     # Mark, live 2026-10-03: mid_in_lo_gu 80 -> 100, mid_in_hi_gu 150 -> 170.
     assert (d["mid_in_lo_gu"], d["mid_in_hi_gu"]) == (100.0, 170.0)
     assert (d["mid_l0_tile_gu"], d["mid_l1_tile_gu"], d["mid_l2_tile_gu"]) == (150.0, 600.0, 2400.0)
-    assert (d["haze_handoff_gu"], d["haze_handoff_band_gu"]) == (8000.0, 2000.0)
+    assert (d["haze_handoff_gu"], d["haze_handoff_band_gu"]) == (1500.0, 900.0)   # spike/rock-specks
     assert isinstance(d["mid_max_sprites"], int)
     # The sprite cap floors at 1 (0 would silently delete the whole band).
     assert far_dials.step({**d, "mid_max_sprites": 1}, "mid_max_sprites", -1)["mid_max_sprites"] == 1

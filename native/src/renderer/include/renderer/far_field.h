@@ -263,6 +263,7 @@ public:
     void set_dials(const FarDials&);
     const FarDials& dials() const { return dials_; }
     void set_catalogue(std::vector<CatalogueRock>, std::vector<glm::vec3> view_dirs_gltf);
+    const std::vector<CatalogueRock>& catalogue() const { return catalogue_; }
     // Catalogue rock `index` has no usable impostor (its atlas failed to
     // load): flagged rocks of it keep their mesh to speck_hi. Out of range: no-op.
     void drop_impostor(int index);
