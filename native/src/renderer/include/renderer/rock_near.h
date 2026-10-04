@@ -278,8 +278,8 @@ private:
         bool ordered = false;
         std::uint64_t by_radius4 = 0;
     };
-    // Streamed cells grouped per class into blocks of kBlockCells^3 cells
-    // (aligned in cell index space, every source together), so build and
+    // Streamed cells grouped per class into blocks of 4^3 small / 2^3 large
+    // cells (aligned in cell index space, every source together), so build and
     // step reject far-away cells a block at a time. A block's box and r_max
     // only grow while it lives (conservative); an empty block is erased.
     struct Block {
@@ -309,10 +309,12 @@ private:
     // 2026-10-04). After a full pass at c_ref, only cells whose distance from
     // c_ref lies within the watch width w (rock_near.cc watch_gu) of a
     // threshold can change state while the centre stays within w of c_ref
-    // (distance to a box is 1-Lipschitz). Each such cell -- and every streamed cell, for the keep
-    // threshold -- waits in a min-heap keyed by the path length (path_s_, the
-    // centre's summed travel) at which it could first cross its next
-    // threshold, so a frame re-tests only the cells its own travel reached.
+    // (distance to a box is 1-Lipschitz). Each such cell -- and every
+    // streamed cell, for the keep threshold -- waits in a min-heap keyed by
+    // the path length (path_s_, the centre's summed travel) at which it could
+    // first cross its next threshold, so a frame re-tests only the cells its
+    // own travel reached. (At dash speed the drop pass tests every cell and
+    // keeps no heap.)
     struct Due {
         double due;                       // path_s_ at which to re-test
         std::uint64_t id;                 // shell index (generation) or cell key (drop)
