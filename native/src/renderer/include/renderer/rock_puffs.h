@@ -5,8 +5,7 @@
 // rejection-sampling the field's own density (far::field_density), so the
 // field's clumps and lumpy outline come from where the puffs land. Drawn in
 // the main (MSAA) pass after every opaque writer, depth-tested without depth
-// writes, so a hull in front antialiases against them like any geometry --
-// unlike the volumetric haze, composited after the resolve.
+// writes, so a hull in front antialiases against them like any geometry.
 // Placement is pure and deterministic (the source's seed); per-frame CPU is
 // one uniform upload.
 #pragma once
@@ -21,7 +20,7 @@ struct PuffDials {   // defaults MUST equal far_dials.py DEFAULTS puff_* keys
     int count = 400;              // per tile field
     float size_frac = 0.18f;      // puff radius = size_frac x field radius x [0.6, 1.4]
     float opacity = 0.04698f; // Mark, live 2026-10-04 (was 0.35)       // peak alpha of one puff at full density
-    float brightness = 8.0f;      // colour only (the haze needed ~9: albedo 0.4 x phase-lit)
+    float brightness = 8.0f;      // colour only (albedo 0.4 x phase-lit needs ~9)
     float start_gu = 800.0f;      // puffs fade in from here (camera distance) ...
     float ramp_gu = 800.0f;       // ... over this many GU
     float near_fade = 1.5f;       // and fade out within near_fade x their radius

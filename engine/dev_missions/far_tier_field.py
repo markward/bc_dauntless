@@ -7,8 +7,8 @@ centre (~5,000 GU outside the edge), nose on the centre: the field is a
 distinct ball with black space around it (from 2,500 GU it filled ~80% of
 the view and read as grey space, not a cloud -- Mark, 2026-10-02). One ~2 GU rock sits 250 GU ahead and 40 GU to
 starboard -- a mesh at the start; backing away walks it down the ladder
-(impostor ~300 GU, speck ~2,000 GU). The / L O keys start on the far group's tile_haze_brightness (the belt
-dials, haze_*, do nothing here: Beol 4 has no belt).
+(impostor ~300 GU, speck ~2,000 GU). The / L O keys start on the "rock
+fields" group's tile_shape_warp.
 
 --developer -> Load Mission... -> Developer -> Far Tier: Beol 4 field.
 """
@@ -56,4 +56,4 @@ def Initialize(pMission):
     if rock is not None:
         rock.SetScale(ROCK_SCALE)
 
-    common.start_on_far_dials("tile_haze_brightness")
+    common.start_on_far_dials("tile_shape_warp")

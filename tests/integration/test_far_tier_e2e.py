@@ -44,7 +44,7 @@ def test_beol4_has_no_belt_source():
     assert density.sources_for_system("Beol") == []
 
 
-# ── Tile-field haze from REAL SDK content (added 2026-10-02) ─────────────────
+# ── Tile-field sources from REAL SDK content (added 2026-10-02) ──────────────
 
 
 def _fields(pSet):
@@ -61,9 +61,10 @@ class _Rec:
         return lambda *a, **k: True
 
 
-def test_beol4_field_hazes_as_one_sphere_where_the_gain_was_derived():
-    """The tile gain was derived (far_field_test.cc) from Player Start toward
-    this field: pin that the SDK still puts both where the derivation says."""
+def test_beol4_field_is_one_sphere_source():
+    """The Beol 4 views (test_rock_fields_displayed.py, the far-tier dev
+    missions) look from Player Start toward this field: pin that the SDK
+    still puts both where they say."""
     _fresh_world()
     import Systems.Beol.Beol4 as beol4
     beol4.Initialize()
@@ -87,7 +88,7 @@ def test_beol4_field_hazes_as_one_sphere_where_the_gain_was_derived():
         assert abs(got - want) < 1e-3
 
 
-def test_vesuvi1_and_multi7_fields_haze():
+def test_vesuvi1_and_multi7_fields_are_sphere_sources():
     _fresh_world()
     import Systems.Vesuvi.Vesuvi1 as v1
     v1.Initialize()
@@ -100,7 +101,7 @@ def test_vesuvi1_and_multi7_fields_haze():
     import Systems.Multi7.Multi7 as m7     # its Initialize runs Multi7_S
     m7.Initialize()
     pSet = m7.GetSet()
-    assert far_tier.frame_for(pSet)[0] is None     # unmapped: no belt, still haze
+    assert far_tier.frame_for(pSet)[0] is None     # unmapped: no belt, still its fields
     r = _Rec()
     far_tier.reconcile_with(r, pSet, {}, _fields(pSet))
     (pushed,) = r.sources

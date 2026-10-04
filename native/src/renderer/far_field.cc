@@ -53,8 +53,8 @@ float scale_height(const DiscSource& s, float rho) {
     return std::max(s.scale_height_frac * rho, s.scale_height_min_gu);
 }
 
-// Sphere density (tile-field haze): 1 within R(1 - edge_frac), a linear
-// ramp to 0 at R. far_haze.frag's sphere_a is the GLSL twin.
+// Sphere density (a tile field): 1 within R(1 - edge_frac), a linear
+// ramp to 0 at R.
 float sphere_warp_factor(const DiscSource& s, const glm::dvec3& x) {
     if (!(s.shape_warp > 0.0f) || !(s.shape_warp_scale_gu > 0.0f)) return 1.0f;
     const glm::vec3 local = glm::vec3(x - s.centre) / s.shape_warp_scale_gu;
@@ -97,119 +97,10 @@ float a_bound(const DiscSource& s, const glm::dvec3& c, double h) {
     return amax * static_cast<float>(std::exp(-0.5 * zmin * zmin / (H * H)));
 }
 
-float pop_density(const Population& p, float a) {
-    const float span = p.a_hi - p.a_lo;
-    const float w = span > 0.0f ? std::clamp((a - p.a_lo) / span, 0.0f, 1.0f) : (a > p.a_lo ? 1.0f : 0.0f);
-    return p.density_at_1 * w;
-}
-
-bool haze_interval(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir_f,
-                   float t_max, float slab_sigmas, double& t0, double& t1) {
-    if (s.shape == DiscSource::Shape::Sphere) {
-        // Ray |d + t dir| <= R, clipped to [0, t_max]. far_haze.frag twin.
-        const double R = sphere_outer_r(s);
-        if (!(R > 0.0)) return false;
-        const glm::dvec3 dir(dir_f), d = origin - s.centre;
-        const double qa = glm::dot(dir, dir), qb = 2.0 * glm::dot(d, dir),
-                     qc = glm::dot(d, d) - R * R;
-        if (qa < 1e-12) return false;
-        const double disc = qb * qb - 4.0 * qa * qc;
-        if (disc < 0.0) return false;
-        const double sq = std::sqrt(disc);
-        t0 = std::max(0.0, (-qb - sq) / (2.0 * qa));
-        t1 = std::min(static_cast<double>(t_max), (-qb + sq) / (2.0 * qa));
-        return t1 > t0;
-    }
-    if (s.table.empty()) return false;
-    const double R = static_cast<double>(s.table.back().x) + std::max(0.0f, s.outer_fade_gu);
-    const double Z = static_cast<double>(slab_sigmas) * scale_height(s, static_cast<float>(R));
-    const glm::dvec3 n(s.normal), dir(dir_f), d = origin - s.centre;
-    t0 = 0.0;
-    t1 = t_max;
-    // Slab |z0 + t dz| <= Z.
-    const double z0 = glm::dot(d, n), dz = glm::dot(dir, n);
-    if (std::fabs(dz) < 1e-12) {
-        if (std::fabs(z0) > Z) return false;
-    } else {
-        const double a = (-Z - z0) / dz, b = (Z - z0) / dz;
-        t0 = std::max(t0, std::min(a, b));
-        t1 = std::min(t1, std::max(a, b));
-    }
-    // Cylinder |p + t v| <= R in the disc plane.
-    const glm::dvec3 p = d - n * z0, v = dir - n * dz;
-    const double qa = glm::dot(v, v), qb = 2.0 * glm::dot(p, v), qc = glm::dot(p, p) - R * R;
-    if (qa < 1e-12) {
-        if (qc > 0.0) return false;
-    } else {
-        const double disc = qb * qb - 4.0 * qa * qc;
-        if (disc < 0.0) return false;
-        const double sq = std::sqrt(disc);
-        t0 = std::max(t0, (-qb - sq) / (2.0 * qa));
-        t1 = std::min(t1, (-qb + sq) / (2.0 * qa));
-    }
-    return t1 > t0;
-}
-
-HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin, const glm::vec3& dir,
-                       float t_max, float slab_sigmas, int steps, float gain,
-                       const glm::vec3& light, float start_gu, float ramp_gu) {
-    HazeSample out;
-    double t0 = 0.0, t1 = 0.0;
-    steps = haze_steps_for(s, steps);
-    if (steps < 1 || !haze_interval(s, origin, dir, t_max, slab_sigmas, t0, t1)) return out;
-    // The start clip (rock-fields Task 12 fix round 1): nothing before the
-    // start counts, so an interval ending there is empty and the march begins
-    // at it -- the whole step budget lands inside the haze. far_haze.frag's
-    // twin. start 0 is a no-op (t0 >= 0), keeping the unramped column exact.
-    if (ramp_gu > 0.0f ? t1 <= start_gu : t1 < start_gu) return out;
-    t0 = std::max(t0, static_cast<double>(start_gu));
-    const double dt = (t1 - t0) / steps;
-    float T = 1.0f;
-    for (int i = 0; i < steps; ++i) {
-        const double t = t0 + (i + 0.5) * dt;
-        const glm::dvec3 x = origin + glm::dvec3(dir) * t;
-        const float a = density_a(s, x);
-        // No pixel cut (ruling R16): the WHOLE population cross-section, so
-        // the haze does not depend on k (resolution / fov). far_haze.frag twin.
-        float sum = 0.0f;
-        glm::vec3 sum_albedo(0.0f);
-        for (const Population& P : s.pops) {
-            const float ns = pop_density(P, a) * mean_cross_section(P.size);
-            sum += ns;
-            sum_albedo += ns * P.albedo;
-        }
-        if (!(sum > 0.0f)) continue;
-        // Tile-field noise scales the rock density, not `a` (pop_density
-        // would clamp a * m at a_hi and lose the bright half). m == 1 (an
-        // exact multiply) when the noise is off.
-        const float m = haze_noise_m(s, x);
-        // The start ramp multiplies LAST: with start 0 / ramp 0 it is an exact
-        // * 1, so the unramped column is reproduced bit for bit.
-        const float dtau = gain * s.gain_scale * sum * m * static_cast<float>(dt) *
-                           haze_start_weight(static_cast<float>(t), start_gu, ramp_gu);
-        const float ext = std::exp(-dtau);
-        // brightness scales the colour only; T (alpha) is untouched.
-        out.rgb += T * (1.0f - ext) * (sum_albedo / sum) * light * s.brightness;
-        T *= ext;
-    }
-    out.alpha = 1.0f - T;
-    return out;
-}
-
-float haze_start_weight(float t, float start_gu, float ramp_gu) {
-    if (!(ramp_gu > 0.0f)) return t >= start_gu ? 1.0f : 0.0f;
-    const float u = std::clamp((t - start_gu) / ramp_gu, 0.0f, 1.0f);
-    return u * u * (3.0f - 2.0f * u);
-}
-
-// ---- Haze noise (every source). far_haze.frag's haze_hash / value_noise /
-// fbm / noise_m are the GLSL twins: keep identical (integer hash, 24-bit
-// lattice value, smoothstep fade, the same lerp order, octave seeds and the
-// 8-octave cap). FarPassGLTest.NoisySphereHazeShaderMatchesTheCpuReference
-// pins them together.
+// ---- Field noise (every source): the density modulation m and the sphere
+// shape warp.
 namespace {
-constexpr int kMaxNoiseOctaves = 8;      // far_haze.frag's fbm loop bound
-constexpr int kMaxHazeSteps = 64;        // far_haze.frag's march loop bound
+constexpr int kMaxNoiseOctaves = 8;      // fbm octave cap
 
 // `hs` is the PRE-HASHED seed (haze_hash(seed)), hashed once per octave by
 // the caller rather than in each of the 8 lattice calls per noise sample.
@@ -284,10 +175,6 @@ float noise_m_bound(const DiscSource& s) {
 double sphere_outer_r(const DiscSource& s) {
     const double w = std::clamp(static_cast<double>(s.shape_warp), 0.0, 0.9);
     return s.shape_warp_scale_gu > 0.0f ? s.sphere_radius_gu / (1.0 - w) : s.sphere_radius_gu;
-}
-
-int haze_steps_for(const DiscSource& s, int global_steps) {
-    return s.steps > 0 ? std::clamp(s.steps, 1, kMaxHazeSteps) : global_steps;
 }
 
 ViewBasis make_view_basis(const glm::vec3& dir) {

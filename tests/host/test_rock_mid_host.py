@@ -150,9 +150,6 @@ def test_mid_fades_draw_translucent_in_their_own_scope(host):
     _field(host)
     _look_from(host, (0.0, 0.0, 1500.0))
     host.profiler_set_enabled(True)
-    # This test's ordering assertion needs the haze scope too (off by
-    # default, independent of the mid band this file's fixture enables).
-    host.rock_haze_set_enabled(True)
     try:
         for _ in range(6):
             host.frame()
@@ -160,11 +157,5 @@ def test_mid_fades_draw_translucent_in_their_own_scope(host):
         assert 0 < st["mid_fading"] < st["mid_sprites"], st
         order = [s["name"] for s in host.profiler_scopes()]
         assert "rock.fade.draw" in order, order
-        # Coordinator ruling (fix round 1): the fades draw in phase 2,
-        # straight AFTER the belt haze (which marches to a depth a fading
-        # rock never writes), not before it.
-        assert "rock.haze" in order, order
-        assert order.index("rock.fade.draw") > order.index("rock.haze"), order
     finally:
         host.profiler_set_enabled(False)
-        host.rock_haze_set_enabled(False)

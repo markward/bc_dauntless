@@ -3,7 +3,7 @@
 // band's LARGE rocks -- the same generator, cells and seeds, so the same
 // rocks -- carried on past the large billboard edge as lit specks (the far
 // tier's flux-conserving speck shading), thinned whole cell at a time with
-// distance so the count stays bounded. The haze takes over beyond.
+// distance so the count stays bounded. The puffs carry the field beyond.
 //
 // Per-frame CPU is ~0: the instance buffer is rebuilt only when the stream
 // centre has moved restream_gu -- on a worker thread, the old set drawing

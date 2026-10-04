@@ -13,19 +13,10 @@ from typing import Callable, Optional
 DEFAULTS: dict = {
     # §1 ladder (native)
     "imp_hi": 16.0, "imp_lo": 12.0, "speck_hi": 2.0, "speck_lo": 1.5, "p_min": 0.25,
-    # §2 haze slab (native). The belt generator's dials went with it
-    # (rock-fields, 2026-10-02).
-    "slab_sigmas": 4.0,
     # §3 look (native)
     # speck_gain 4.0: Mark, live 2026-10-02 ("spec gain needs to come up to
     # about 4").
-    "speck_gain": 4.0, "haze_gain": 270.0, "haze_steps": 24,
-    # Haze resolution (native; rock-fields Task 12): the haze marches at
-    # (w / d, h / d) and is depth-aware upsampled; 1 = full resolution. Its
-    # START is not a dial: far_tier derives FarDials::haze_start_gu /
-    # haze_start_ramp_gu from haze_handoff_gu / haze_handoff_band_gu, so the
-    # haze ramps in exactly over the mid band's L2 fade-out.
-    "haze_res_divisor": 4,
+    "speck_gain": 4.0,
     # §2 populations + disc shape (Python, read at use; re-push sources)
     "minor_density_at_1": 9.67e-8, "minor_r_min": 0.05, "minor_r_max": 0.7,
     "minor_exponent": 2.5,
@@ -33,38 +24,16 @@ DEFAULTS: dict = {
     "major_r_min": 1.0, "major_r_max": 5.0, "major_exponent": 2.5,
     "scale_height_frac": 0.03, "scale_height_min_gu": 1000.0,
     "outer_fade_gu": 20000.0,
-    # Tile-field haze (Python, read at use; re-push sources). tile_haze_gain
-    # is the EFFECTIVE gain of an AsteroidField's sphere source (sent as
-    # gain_scale = tile_haze_gain / haze_gain). Re-derived 2026-10-02 after
-    # ruling R16 removed the pixel cut, by far_field_test.cc
-    # FarHazeSphere.DefaultTileGainHitsTheStatedTarget: alpha 0.15 looking
-    # from Beol 4's Player Start at its field (tau at gain 1 = 1.15e-5, so
-    # gain = -ln 0.85 / tau = 14,136 -> 14,140). The DEFAULT is Mark's live
-    # choice 2026-10-03 ("this works well"): 131,700 = 9.3x that derivation
-    # (Player Start column alpha ~0.78), kTileHazeGain in far_field_test.cc.
-    # tile_haze_brightness below stays calibrated at the 14,140 derivation.
-    # 131,700 -> 17,676.47 (9 dial steps down; Player Start column alpha
-    # ~0.18): Mark, live 2026-10-04 on spike/rock-specks ("works better").
-    "tile_haze_gain": 17676.47, "tile_haze_edge_frac": 0.2,
-    # Haze brightness (Python, read at use; re-push sources; ruling R16). Sent
-    # per source as `brightness`: it scales the haze COLOUR only (alpha is
-    # the gains' job). Over black only colour shows, and the pipeline has no
-    # sRGB encode, so these are calibrated on the DISPLAYED value: 0.95 x
-    # mean(rgb) x 255 = 25 under the production lighting, by far_field_test.cc
-    # FarHaze.DefaultBeltBrightnessShowsTwentyFiveOverBlack (Vesuvi mid-band,
-    # tangential: 3.12/255 at 1 -> 8.0) and
-    # FarHazeSphere.DefaultTileBrightnessShowsTwentyFiveOverBlack (Beol 4
-    # Player Start -> field centre: 2.75/255 at 1 -> 9.1).
-    "haze_brightness": 8.0, "tile_haze_brightness": 9.1,
-    # Tile-field haze noise (Python, read at use; re-push sources; 2026-10-02):
+    # Tile-field shape (Python, read at use; re-push sources): the outer
+    # fraction of an AsteroidField's radius over which its density ramps to 0.
+    "tile_haze_edge_frac": 0.2,
+    # Tile-field noise (Python, read at use; re-push sources; 2026-10-02):
     # the sphere's density x m(x) = max(0, 1 + contrast (2 fbm(x / scale) -
-    # 1)), 3D value noise fixed to the field, mean m ~= 1 (so the gain and
-    # brightness above keep their meaning). tile_haze_steps is the sphere's
-    # own march step count (the shader caps it at 64).
+    # 1)), 3D value noise fixed to the field, mean m ~= 1.
     "tile_haze_noise_scale_gu": 250.0, "tile_haze_noise_contrast": 0.8,
-    "tile_haze_noise_octaves": 3, "tile_haze_steps": 48,
+    "tile_haze_noise_octaves": 3,
     # spike/rock-specks (Python, read at use; re-push sources): the tile
-    # field's ONE density (haze AND rocks) gets clumps/voids and a lumpy
+    # field's ONE density (puffs AND rocks) gets clumps/voids and a lumpy
     # outline. tile_noise_sharpness stretches the noise (1 = off);
     # tile_shape_warp (0 = off, < 0.9) warps the sphere's edge at
     # tile_shape_warp_scale_frac x the field radius.
@@ -136,8 +105,8 @@ DEFAULTS: dict = {
     # (keeps mid sprites outside the widened near_large_billboard_gu, 90).
     "mid_in_lo_gu": 100.0, "mid_in_hi_gu": 170.0,
     "mid_l0_out_gu": 600.0, "mid_l1_out_gu": 2400.0, "mid_xfade_frac": 0.25,
-    # spike/rock-specks (2026-10-04): the haze ramps in over [600, 1500] GU,
-    # behind the speck band (was 8000 / 2000, behind the mid band's L2).
+    # The mid band's L2 fade-out: over the last haze_handoff_band_gu before
+    # haze_handoff_gu (spike/rock-specks 2026-10-04: [600, 1500] GU).
     "haze_handoff_gu": 1500.0, "haze_handoff_band_gu": 900.0,
     # Speck band (SPIKE, native; MUST equal SpeckDials in rock_speck.h): the
     # near band's large rocks past their billboard edge as lit specks, out to
@@ -163,7 +132,7 @@ DEFAULTS: dict = {
 }
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
-    "slab_sigmas", "speck_gain", "haze_gain", "haze_steps", "haze_res_divisor",
+    "speck_gain",
     "near_small_density", "near_small_r_min", "near_small_r_max",
     "near_small_exponent", "near_small_cell_gu", "near_small_mesh_gu",
     "near_small_billboard_gu", "near_small_max",
@@ -185,21 +154,20 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
 
 # Ints that must never reach 0 (a zero cap would silently delete the whole
 # tier, not shrink it).
-_INT_FLOOR_1 = ("haze_steps", "haze_res_divisor", "tile_haze_noise_octaves", "tile_haze_steps",
+_INT_FLOOR_1 = ("tile_haze_noise_octaves",
                "belt_noise_octaves", "near_small_max", "near_large_max",
                "mid_max_sprites", "puff_count", "puff_belt_count")
 
 # / L O order: the look dials Mark tunes live come first, the rest after.
 _LOOK_FIRST = ("puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
-               "tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
+               "tile_shape_warp", "tile_noise_sharpness",
                "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
                "haze_handoff_gu", "haze_handoff_band_gu",
                "near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
                "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu",
-               "mid_l1_out_gu", "haze_brightness",
-               "haze_gain", "tile_haze_gain",
+               "mid_l1_out_gu",
                "tile_haze_noise_contrast", "belt_noise_contrast",
                "collide_damage_scale")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)

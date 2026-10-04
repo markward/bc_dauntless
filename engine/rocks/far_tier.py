@@ -11,10 +11,10 @@ Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
   far_set_frame       EVERY frame -- the anchor moves on a region hand-off
   far_set_sources     on a system change, a change in the viewed set's tile
                       sphere sources (set or field list), or a Python-owned
-                      far_dials change (population + disc-shape + tile_haze
-                      + haze_brightness keys feed density.to_native). Belts (system frame)
+                      far_dials change (population + disc-shape + tile
+                      field keys feed density.to_native). Belts (system frame)
                       first, then one view-space sphere per AsteroidField in
-                      the viewed set (tile-field haze, added 2026-10-02).
+                      the viewed set (tile fields, added 2026-10-02).
   far_set_rocks       the flagged mission/breakup rocks, when the list changes
 
 and `reconcile` pushes the near band's own contact player
@@ -94,7 +94,7 @@ def frame_for(view_set) -> tuple:
     """(system name, the viewed region's anchor_gu) for a mapped region;
     (None, origin) for the warp set, a one-set frame (Multi*, Starbase 12,
     QuickBattle) and None. There no BELT is pushed; the viewed set's tile
-    haze (view-space spheres) and flagged rocks still draw."""
+    fields (view-space spheres) and flagged rocks still draw."""
     from engine.systems import frames
     f = frames.frame_of(view_set)
     if f is None or f.key[0] != "system":
@@ -220,20 +220,14 @@ def _push_dials(r) -> None:
 
 
 def native_dials() -> dict:
-    """far_dials.native() plus the haze start the native FarDials needs,
-    DERIVED (rock-fields Task 12, single source of truth): the haze ramps in
-    over the mid band's L2 fade-out, [haze_handoff_gu - haze_handoff_band_gu,
-    haze_handoff_gu]."""
-    d = fd.native()
-    d["haze_start_gu"] = d["haze_handoff_gu"] - d["haze_handoff_band_gu"]
-    d["haze_start_ramp_gu"] = d["haze_handoff_band_gu"]
-    return d
+    """The dict far_set_dials takes: far_dials.native()."""
+    return fd.native()
 
 
 def tile_sources(view_set, fields) -> list:
     """One sphere DiscSource per AsteroidField of `fields` that lies in
     `view_set` (a field whose containing set is another set: none), centred
-    in view space -- so an unmapped set (Multi7) hazes too."""
+    in view space -- so an unmapped set (Multi7) has its fields too."""
     from engine.rocks import density, minors
     from engine.systems import frames
     out = []
@@ -267,7 +261,7 @@ def _push_sources(r, system, tiles) -> None:
 
 def reconcile_with(r, view_set, rock_instances: dict, fields=()) -> None:
     """The testable core of `reconcile` (far-tier plan Task 10). `fields`:
-    the viewed set's AsteroidFields (tile-field haze)."""
+    the viewed set's AsteroidFields (tile fields)."""
     global _rocks_pushed
     _push_catalogue(r)
     _push_dials(r)
@@ -314,7 +308,7 @@ def reconcile(session, r) -> None:
     except Exception as e:
         _swallow("gather", e)
         return
-    # Fields in their own try: a failure costs only the tile haze, never
+    # Fields in their own try: a failure costs only the tile fields, never
     # the frame or rock pushes.
     fields = []
     try:

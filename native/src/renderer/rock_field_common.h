@@ -20,7 +20,7 @@ inline std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
 }
 
 // Every DiscSource field far::field_density / far::a_bound / the bands'
-// RNG and cluster snap read (populations, haze look and frame keys shape
+// RNG and cluster snap read (populations and frame keys shape
 // neither band). A view-space source's `centre` already includes the
 // anchor (FarField::active_sources), so a real anchor move compares unequal.
 inline bool same_generator(const far::DiscSource& a, const far::DiscSource& b) {

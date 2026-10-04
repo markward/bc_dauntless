@@ -4,8 +4,7 @@ Vesuvi is the only system whose radial profile authors an `asteroids` band
 (0.5 from Geki at 226,000 GU to Haven at 330,000 GU from the star). This
 starts the player in Vesuvi6's set at mid-band -- system position
 (278,000, 0, 0), in the system plane -- looking tangentially along the band
-(+Y), the view the haze_brightness default was calibrated on. The / L O keys
-start on the "far" dials.
+(+Y). The / L O keys start on the "rock fields" dials (puff_brightness).
 
 --developer -> Load Mission... -> Developer -> Far Tier: Vesuvi belt.
 """
@@ -34,4 +33,4 @@ def Initialize(pMission):
     target = (eye[0], eye[1] + 10000.0, eye[2])           # along the band
     common.create_aimed_player(pSet, eye, target)
 
-    common.start_on_far_dials()
+    common.start_on_far_dials("puff_brightness")

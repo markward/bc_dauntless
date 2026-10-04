@@ -1,5 +1,5 @@
 // native/tests/renderer/far_field_test.cc
-// Far tier spec §2: sources, haze and the per-camera build (flagged rocks).
+// Far tier spec §2: sources, field density and the per-camera build (flagged rocks).
 #include <gtest/gtest.h>
 #include <renderer/far_field.h>
 #include <chrono>
@@ -53,13 +53,6 @@ TEST(FarField, DensityFallsOffAboveThePlane) {
     EXPECT_NEAR(far::density_a(s, {rho, 0.0, 0.0}), 0.5f, 1e-6f);
     EXPECT_NEAR(far::density_a(s, {rho, 0.0, H}), 0.5f * std::exp(-0.5f), 1e-4f);
     EXPECT_NEAR(far::density_a(s, {0.0, rho, -2.0 * H}), 0.5f * std::exp(-2.0f), 1e-4f);
-}
-
-TEST(FarField, MajorsOnlyAboveHalf) {
-    const auto s = vesuvi_like();
-    EXPECT_EQ(far::pop_density(s.pops[1], 0.5f), 0.0f);
-    EXPECT_NEAR(far::pop_density(s.pops[1], 0.75f), 0.5f / 1.2e9f, 1e-15f);
-    EXPECT_NEAR(far::pop_density(s.pops[0], 0.5f), 0.5f * 9.67e-8f, 1e-12f);
 }
 
 // Far tier spec §1-3: FarField::build — per-camera tiers for flagged rocks.
@@ -258,188 +251,7 @@ TEST(FarField, NoProceduralRocksFromABelt) {
     EXPECT_TRUE(out.specks.empty());
 }
 
-// ---- Haze (spec §2 "Haze") -------------------------------------------------
-
-namespace {
-far::DiscSource vesuvi_minors_only() {
-    auto s = vesuvi_like();
-    s.pops.resize(1);   // a = 0.5 has no majors; the derivation uses minors only
-    return s;
-}
-}  // namespace
-
-// ---- Displayed-brightness calibration (ruling R16, 2026-10-02) -------------
-//
-// Over black space only the premultiplied colour shows, and the pipeline has
-// no sRGB encode: resolve.frag multiplies by EXPOSURE 0.95, its shoulder is
-// identity below 0.82, saturation/tint preserve the channel mean to <1%. So
-// the DISPLAYED value is 0.95 * rgb * 255; we calibrate the MEAN OF THE
-// CHANNELS of that to 25/255 at each reference view, with the scene's REAL
-// light (the shader's term: ambient * ambient_scale + sum colour *
-// lambert_sphere_phase(dot(L, -dir))) and the catalogue's real minor albedo.
-
-namespace {
-struct RealLight {
-    glm::vec3 ambient;
-    float ambient_scale;
-    glm::vec3 dir[2], colour[2];   // toward each light
-};
-
-// far_haze.frag's light term for a view direction.
-glm::vec3 light_for(const RealLight& L, const glm::vec3& view_dir) {
-    glm::vec3 out = L.ambient * L.ambient_scale;
-    for (int i = 0; i < 2; ++i)
-        out += L.colour[i] * far::lambert_sphere_phase(glm::dot(glm::normalize(L.dir[i]), -view_dir));
-    return out;
-}
-
-float displayed_255(const glm::vec3& rgb) {
-    return 0.95f * (rgb.r + rgb.g + rgb.b) / 3.0f * 255.0f;
-}
-
-// The catalogue's silicate fragments (indices 5..12): density.to_native's
-// albedo for every minor population, belts and tile fields alike.
-const glm::vec3 kMinorAlbedo(0.439619f, 0.414532f, 0.379402f);
-
-// ambient_scale 0.3: dauntless_filmic kFilmicAmbientScale (frame.cc), filmic
-// on by default on the exterior view.
-constexpr float kFilmicAmbient = 0.3f;
-
-// Beol 4, the player at "Player Start": host_loop._aggregate_lights(Beol4
-// set, Player Start) -- BC's lights with the key re-aimed from the Beol star
-// by star_light.for_player. Captured 2026-10-02 from the production path.
-RealLight beol4_player_start_light() {
-    return {glm::vec3(0.1f), kFilmicAmbient,
-            {glm::vec3(-0.293875f, -0.955838f, -0.003459f),
-             glm::vec3(0.637224f, 0.172051f, 0.751228f)},
-            {glm::vec3(0.435523f, 0.494378f, 0.588545f), glm::vec3(0.14f, 0.14f, 0.10f)}};
-}
-
-// Vesuvi, a player at system (278000, 0, 0) in Vesuvi6 (the region E1M2
-// plays in): host_loop._aggregate_lights(Vesuvi6 set, that player). Vesuvi5's
-// lights give (0.200, 0.209, 0.224) on the same view, within 1%.
-RealLight vesuvi_mid_band_light() {
-    return {glm::vec3(0.15f), kFilmicAmbient,
-            {glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.204929f, -0.064101f, 0.976676f)},
-            {glm::vec3(0.393253f, 0.433587f, 0.504171f), glm::vec3(0.3f)}};
-}
-}  // namespace
-
-// Spec §2 (ruling R14): with the default gain (270), looking FORWARD along the
-// mid-plane of Vesuvi's band from mid-band (rho 278,000 GU) on a tangent, the
-// haze alpha is 0.15 +- 0.03. The eye sees only the forward half of the band
-// chord, which is why the default is 270 and not the 143 of a full chord.
-// Re-derived after ruling R16 removed the pixel cut: 0.1501 -- unchanged to
-// four places, because the cut only ever bit within ~5,000 GU of the eye and
-// this chord is ~hundreds of thousands of GU long.
-TEST(FarHaze, DefaultGainHitsTheStatedTarget) {
-    EXPECT_EQ(far::FarDials{}.haze_gain, 270.0f);
-    const far::DiscSource s = vesuvi_minors_only();
-    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
-                                    1.0e6f, 4.0f, 24, 270.0f,
-                                    glm::vec3(1.0f));
-    std::printf("[FarHaze] default-gain alpha = %.4f\n", h.alpha);
-    EXPECT_NEAR(h.alpha, 0.15f, 0.03f);
-}
-
-// Belt brightness (engine/rocks/far_dials.py "haze_brightness"; FarDials has
-// no copy -- it rides per source). Vesuvi mid-band (rho 278,000 GU, z 0)
-// looking tangentially along the plane, Vesuvi's real light: at the belt gain
-// alpha is 0.15 and its colour at brightness 1 shows as 3.12/255;
-// 25 / 3.12 = 8.01 => 8.0.
-constexpr float kHazeBrightness = 8.0f;
-TEST(FarHaze, DefaultBeltBrightnessShowsTwentyFiveOverBlack) {
-    far::DiscSource s = vesuvi_like();   // the real Vesuvi table's asteroids column
-    for (auto& P : s.pops) P.albedo = kMinorAlbedo;
-    s.brightness = kHazeBrightness;
-    const glm::vec3 dir(0.0f, 1.0f, 0.0f);
-    const glm::vec3 L = light_for(vesuvi_mid_band_light(), dir);
-    std::printf("[FarHaze] Vesuvi mid-band light (%.4f %.4f %.4f)\n", L.r, L.g, L.b);
-    EXPECT_NEAR(L.r, 0.198654f, 1e-4f);   // the production value (see the fixture)
-    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, dir, 1.0e6f, 4.0f, 24,
-                                    far::FarDials{}.haze_gain, L);
-    std::printf("[FarHaze] belt displayed %.2f/255 (alpha %.4f)\n", displayed_255(h.rgb),
-                h.alpha);
-    EXPECT_NEAR(displayed_255(h.rgb), 25.0f, 1.0f);
-}
-
-TEST(FarHaze, NoSourceNoHaze) {
-    far::DiscSource s = vesuvi_minors_only();
-    s.table.clear();
-    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
-                                    1.0e6f, 4.0f, 24, 143.0f,
-                                    glm::vec3(1.0f));
-    EXPECT_EQ(h.alpha, 0.0f);
-    EXPECT_EQ(h.rgb, glm::vec3(0.0f));
-}
-
-TEST(FarHaze, StopsAtSceneDepth) {
-    const far::DiscSource s = vesuvi_minors_only();
-    const auto far_h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
-                                        1.0e6f, 4.0f, 24, 143.0f,
-                                        glm::vec3(1.0f));
-    const auto near_h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
-                                         1000.0f, 4.0f, 24, 143.0f,
-                                         glm::vec3(1.0f));
-    EXPECT_GT(far_h.alpha, 0.0f);
-    EXPECT_GT(near_h.alpha, 0.0f);
-    EXPECT_LT(near_h.alpha, 0.01f * far_h.alpha);
-}
-
-TEST(FarHaze, ColourIsPremultipliedAlbedoTimesLight) {
-    // One population: rgb == alpha * albedo * light exactly (T telescopes).
-    const far::DiscSource s = vesuvi_minors_only();
-    const glm::vec3 light(2.0f, 1.0f, 0.5f);
-    const auto h = far::haze_column(s, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f},
-                                    1.0e6f, 4.0f, 24, 143.0f, light);
-    const glm::vec3 want = h.alpha * s.pops[0].albedo * light;
-    EXPECT_NEAR(h.rgb.r, want.r, 1e-5f);
-    EXPECT_NEAR(h.rgb.g, want.g, 1e-5f);
-    EXPECT_NEAR(h.rgb.b, want.b, 1e-5f);
-}
-
-TEST(FarHaze, OutsideTheSlabSeesNothing) {
-    // A ray parallel to the plane, 10 scale heights above it.
-    const far::DiscSource s = vesuvi_minors_only();
-    const double H = far::scale_height(s, 360000.0f);
-    const auto h = far::haze_column(s, {278000.0, 0.0, 10.0 * H}, {0.0f, 1.0f, 0.0f},
-                                    1.0e6f, 4.0f, 24, 143.0f,
-                                    glm::vec3(1.0f));
-    EXPECT_EQ(h.alpha, 0.0f);
-}
-
-TEST(FarMathCrossSection, BelowPlusAboveIsTheMean) {
-    // For one size population: cross_section_below(r_cut) + the cross-section
-    // of r >= r_cut == mean_cross_section, at the r_cut the per-rock cull
-    // uses at distance d. (The haze itself no longer cuts -- ruling R16 -- but
-    // the closed form is still far_math's.) The share above is integrated
-    // numerically, independent of the closed form, for q = 2.5 and the
-    // q == 1 / q == 3 log branches.
-    for (float q : {1.0f, 2.5f, 3.0f}) {
-        const far::PowerLaw pl{0.05f, 0.7f, q};
-        double norm = 0.0;
-        const int N = 200000;
-        const double w = (pl.r_max - pl.r_min) / N;
-        for (int i = 0; i < N; ++i) norm += std::pow(pl.r_min + (i + 0.5) * w, -q) * w;
-        for (float d : {500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f}) {
-            const float r_cut = 0.25f * d / 1713.0f;
-            double above = 0.0;
-            const double lo = std::max<double>(r_cut, pl.r_min);
-            if (lo < pl.r_max) {
-                const double wa = (pl.r_max - lo) / N;
-                for (int i = 0; i < N; ++i) {
-                    const double r = lo + (i + 0.5) * wa;
-                    above += 3.14159265358979 * r * r * std::pow(r, -q) / norm * wa;
-                }
-            }
-            const float below = far::cross_section_below(pl, r_cut);
-            EXPECT_NEAR(below + above, far::mean_cross_section(pl),
-                        1e-4 * far::mean_cross_section(pl)) << "q=" << q << " d=" << d;
-        }
-    }
-}
-
-// ---- Tile-field haze: Sphere sources (added 2026-10-02) --------------------
+// ---- Tile fields: Sphere sources (added 2026-10-02) ------------------------
 
 namespace {
 // Beol 4's tile field: 3^3 tiles x 15 asteroids in a 1,000 GU sphere, size
@@ -473,87 +285,7 @@ TEST(FarHazeSphere, DensityIsOneInsideAndRampsToZeroAtTheRadius) {
     EXPECT_EQ(far::density_a(s, c + 1500.0 * x), 0.0f);
 }
 
-TEST(FarHazeSphere, IntervalIsTheChordClippedToTheRay) {
-    far::DiscSource s = beol4_tile_field();
-    s.centre = {0.0, 0.0, 0.0};
-    double t0 = 0, t1 = 0;
-    ASSERT_TRUE(far::haze_interval(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
-    EXPECT_NEAR(t0, 1000.0, 1e-6);
-    EXPECT_NEAR(t1, 3000.0, 1e-6);
-    // From inside: starts at the eye.
-    ASSERT_TRUE(far::haze_interval(s, {0.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
-    EXPECT_EQ(t0, 0.0);
-    EXPECT_NEAR(t1, 1000.0, 1e-6);
-    // Depth stop.
-    ASSERT_TRUE(far::haze_interval(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1500.0f, 4.0f, t0, t1));
-    EXPECT_NEAR(t1, 1500.0, 1e-6);
-    // Missing it, and pointing away from it.
-    EXPECT_FALSE(far::haze_interval(s, {-2000.0, 1001.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
-    EXPECT_FALSE(far::haze_interval(s, {-2000.0, 0.0, 0.0}, {-1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, t0, t1));
-}
-
-TEST(FarHazeSphere, ColumnIsZeroOutsideThickestThroughTheCentreAndStopsAtDepth) {
-    far::DiscSource s = beol4_tile_field();
-    s.centre = {0.0, 0.0, 0.0};
-    const glm::vec3 L(1.0f);
-    auto col = [&](glm::dvec3 o, float t_max) {
-        return far::haze_column(s, o, {1.0f, 0.0f, 0.0f}, t_max, 4.0f, 24,
-                                1.0e5f, L);
-    };
-    const auto centre = col({-2000.0, 0.0, 0.0}, 1.0e6f);
-    const auto graze = col({-2000.0, 900.0, 0.0}, 1.0e6f);
-    const auto miss = col({-2000.0, 1001.0, 0.0}, 1.0e6f);
-    const auto stopped = col({-2000.0, 0.0, 0.0}, 1050.0f);
-    EXPECT_GT(centre.alpha, 0.0f);
-    EXPECT_GT(graze.alpha, 0.0f);
-    EXPECT_GT(centre.alpha, 2.0f * graze.alpha);
-    EXPECT_EQ(miss.alpha, 0.0f);
-    EXPECT_EQ(miss.rgb, glm::vec3(0.0f));
-    EXPECT_LT(stopped.alpha, 0.1f * centre.alpha);
-}
-
-TEST(FarHazeSphere, GainScaleMultipliesTheGain) {
-    far::DiscSource s = beol4_tile_field();
-    s.centre = {0.0, 0.0, 0.0};
-    const auto a = far::haze_column(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, 24, 2.0e5f, glm::vec3(1.0f));
-    s.gain_scale = 2.0f;
-    const auto b = far::haze_column(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, 24, 1.0e5f, glm::vec3(1.0f));
-    EXPECT_NEAR(a.alpha, b.alpha, 1e-6f);
-    EXPECT_GT(b.alpha, 0.0f);
-}
-
-// Haze brightness (2026-10-02, ruling R16): `brightness` scales the colour a
-// source accumulates and nothing else -- alpha (the transmittance) is the
-// same at any brightness.
-TEST(FarHazeSphere, BrightnessScalesColourNotAlpha) {
-    far::DiscSource s = beol4_tile_field();
-    s.centre = {0.0, 0.0, 0.0};
-    const glm::vec3 L(0.3f, 0.2f, 0.1f);
-    const auto a = far::haze_column(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, 24, 2.0e4f, L);
-    s.brightness = 7.5f;
-    const auto b = far::haze_column(s, {-2000.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, 24, 2.0e4f, L);
-    ASSERT_GT(a.alpha, 0.01f);
-    EXPECT_EQ(b.alpha, a.alpha);
-    for (int c = 0; c < 3; ++c) EXPECT_NEAR(b.rgb[c], 7.5f * a.rgb[c], 1e-6f);
-}
-
-// No pixel cut (ruling R16): the haze integrates the WHOLE population
-// cross-section at every distance, so it does not depend on the camera's k
-// (resolution, fov). Through the centre of a sphere with no edge ramp, n is
-// constant over the 2R chord, so tau = gain * n * mean_cross_section * 2R
-// exactly (the midpoint rule is exact for a constant).
-TEST(FarHazeSphere, HazeIsTheWholeCrossSectionAtAnyDistance) {
-    far::DiscSource s = beol4_tile_field();
-    s.centre = {0.0, 0.0, 0.0};
-    s.sphere_edge_frac = 0.0f;
-    const float gain = 2.0e4f;
-    const double tau = static_cast<double>(gain) * s.pops[0].density_at_1 *
-                       far::mean_cross_section(s.pops[0].size) * 2000.0;
-    const auto h = far::haze_column(s, {-1001.0, 0.0, 0.0}, {1.0f, 0.0f, 0.0f}, 1.0e6f, 4.0f, 24, gain, glm::vec3(1.0f));
-    EXPECT_NEAR(h.alpha, 1.0 - std::exp(-tau), 1e-4 * (1.0 - std::exp(-tau)));
-}
-
-TEST(FarFieldBuild, ANonProceduralSourceStillHazes) {
+TEST(FarFieldBuild, ANonProceduralSourceStaysActive) {
     far::FarField f = field_with_catalogue();
     auto s = vesuvi_like();
     s.procedural = false;
@@ -563,7 +295,7 @@ TEST(FarFieldBuild, ANonProceduralSourceStillHazes) {
     f.build(camera_at({0, 0, 0}, {0, 1, 0}), out);
     EXPECT_TRUE(out.specks.empty());
     EXPECT_TRUE(out.impostors.empty());
-    EXPECT_EQ(f.active_sources().size(), 1u);   // still hazes
+    EXPECT_EQ(f.active_sources().size(), 1u);   // still a density source
 }
 
 TEST(FarFieldBuild, AViewSpaceSourceIgnoresTheFrameKeyAndRidesTheAnchor) {
@@ -583,65 +315,8 @@ TEST(FarFieldBuild, AViewSpaceSourceIgnoresTheFrameKeyAndRidesTheAnchor) {
     EXPECT_EQ(f.active_sources().size(), 2u);
 }
 
-// Tile-field haze gains.
-// kTileHazeGain is the DEFAULT (engine/rocks/far_dials.py "tile_haze_gain";
-// keep the two equal -- tests/unit/test_far_dials.py pins the Python side):
-// Mark's live choice 2026-10-03 ("this works well"), 131,700 = 9.3x the
-// derivation below, so the Player Start column reaches alpha ~0.78.
-// kTileHazeCalibrationGain is the DERIVED gain the brightness calibration
-// was made at (re-derived 2026-10-02 after ruling R16 removed the pixel cut):
-// from Beol 4 "Player Start" (-593.717346, 840.869934, -269.268738) looking
-// at the tile field's centre, 24 steps, Beol 4's numbers (beol4_tile_field).
-// alpha is 1 - exp(-gain * tau_1) exactly (T telescopes), so gain =
-// -ln(0.85) / tau_1 for the target alpha 0.15. Measured tau_1 = 1.1497e-5 =>
-// gain 14,136, rounded to 14,140. (With the old r_cut at k = 1713 it was
-// 26,860; with no cut the haze no longer depends on k at all.)
-constexpr float kTileHazeCalibrationGain = 14140.0f;
-constexpr float kTileHazeGain = 17676.47f;   // Mark, live 2026-10-04 (spike/rock-specks): was 131,700
-TEST(FarHazeSphere, TileGainsHitTheirStatedTargets) {
-    const far::DiscSource s = beol4_tile_field();
-    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
-    const glm::vec3 dir = glm::vec3(glm::normalize(s.centre - eye));
-    // Measured at gain 1e4 (alpha ~0.1): at gain 1 alpha ~1e-5 is too
-    // close to float epsilon for 1 - T to carry tau_1 accurately.
-    const auto probe = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f,
-                                        glm::vec3(1.0f));
-    const double tau1 = -std::log(1.0 - static_cast<double>(probe.alpha)) / 1.0e4;
-    std::printf("[FarHazeSphere] tau at gain 1 = %.6e; gain for 0.15 = %.2f\n", tau1,
-                -std::log(0.85) / tau1);
-    const auto c = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain,
-                                    glm::vec3(1.0f));
-    std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeCalibrationGain,
-                c.alpha);
-    EXPECT_NEAR(c.alpha, 0.15f, 0.03f);
-    const auto h = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeGain,
-                                    glm::vec3(1.0f));
-    std::printf("[FarHazeSphere] tile alpha at gain %.1f = %.4f\n", kTileHazeGain, h.alpha);
-    EXPECT_NEAR(h.alpha, 0.18f, 0.03f);
-}
-
-
-// Tile-field brightness (engine/rocks/far_dials.py "tile_haze_brightness").
-// At the calibration gain the reference view's alpha is 0.15 and its colour at
-// brightness 1 shows as 2.75/255; 25 / 2.75 = 9.09 => 9.1.
-constexpr float kTileHazeBrightness = 9.1f;
-TEST(FarHazeSphere, DefaultTileBrightnessShowsTwentyFiveOverBlack) {
-    far::DiscSource s = beol4_tile_field();
-    s.pops[0].albedo = kMinorAlbedo;
-    s.brightness = kTileHazeBrightness;
-    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
-    const glm::vec3 dir = glm::vec3(glm::normalize(s.centre - eye));
-    const glm::vec3 L = light_for(beol4_player_start_light(), dir);
-    std::printf("[FarHazeSphere] Beol 4 light (%.4f %.4f %.4f)\n", L.r, L.g, L.b);
-    EXPECT_NEAR(L.r, 0.163660f, 1e-4f);   // the production value (see the fixture)
-    const auto h = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain, L);
-    std::printf("[FarHazeSphere] tile displayed %.2f/255 (alpha %.4f)\n", displayed_255(h.rgb),
-                h.alpha);
-    EXPECT_NEAR(displayed_255(h.rgb), 25.0f, 1.0f);
-}
-
-// ---- Tile-field haze noise (2026-10-02) ------------------------------------
-// A tile field's sphere haze is modulated by 3D value-noise fbm FIXED to the
+// ---- Field noise (2026-10-02) ---------------------------------------------
+// A tile field's density is modulated by 3D value-noise fbm FIXED to the
 // field (x relative to the centre), so it reads as a clumpy rock field, not a
 // smooth grey ball. m(x) = max(0, 1 + contrast * (2 fbm - 1)); belts never.
 
@@ -712,93 +387,6 @@ TEST(FarHazeNoise, OffMeansOne) {
     EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
     s = noisy_tile_field(); s.noise_octaves = 0;
     EXPECT_EQ(far::haze_noise_m(s, s.centre + glm::dvec3(10.0)), 1.0f);
-}
-
-TEST(FarHazeNoise, ContrastZeroColumnIsByteIdenticalToNoNoise) {
-    const far::DiscSource plain = beol4_tile_field();
-    far::DiscSource zero = noisy_tile_field();
-    zero.noise_contrast = 0.0f;
-    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
-    const glm::vec3 dir = glm::vec3(glm::normalize(plain.centre - eye));
-    const auto a = far::haze_column(plain, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(0.3f));
-    const auto b = far::haze_column(zero, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(0.3f));
-    EXPECT_EQ(a.alpha, b.alpha);
-    EXPECT_EQ(a.rgb, b.rgb);
-    // And with noise on, the column changes.
-    const auto c = far::haze_column(noisy_tile_field(), eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f,
-                                    glm::vec3(0.3f));
-    EXPECT_NE(a.alpha, c.alpha);
-}
-
-// Rock-fields R1 (2026-10-02): belts carry the noise too (they used to
-// ignore the keys).
-TEST(FarHazeNoise, BeltColumnCarriesTheNoiseKeys) {
-    const far::DiscSource plain = vesuvi_like();
-    far::DiscSource noisy = vesuvi_like();
-    noisy.noise_scale_gu = 4000.0f; noisy.noise_contrast = 0.8f; noisy.noise_octaves = 3;
-    const auto a = far::haze_column(plain, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}, 1.0e6f, 4.0f, 24, 270.0f, glm::vec3(0.3f));
-    const auto b = far::haze_column(noisy, {278000.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}, 1.0e6f, 4.0f, 24, 270.0f, glm::vec3(0.3f));
-    EXPECT_NE(a.alpha, b.alpha);
-}
-
-TEST(FarHazeNoise, PerSourceStepsOverrideTheGlobalAndClampTo64) {
-    far::DiscSource s = noisy_tile_field();
-    const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
-    const glm::vec3 dir = glm::vec3(glm::normalize(s.centre - eye));
-    const auto g48 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 48, 1.0e4f, glm::vec3(1.0f));
-    const auto g64 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 64, 1.0e4f, glm::vec3(1.0f));
-    s.steps = 48;
-    const auto o48 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(1.0f));
-    EXPECT_EQ(o48.alpha, g48.alpha);
-    s.steps = 500;
-    const auto o500 = far::haze_column(s, eye, dir, 1.0e6f, 4.0f, 24, 1.0e4f, glm::vec3(1.0f));
-    EXPECT_EQ(o500.alpha, g64.alpha);
-    EXPECT_EQ(far::haze_steps_for(s, 24), 64);
-    s.steps = 0;
-    EXPECT_EQ(far::haze_steps_for(s, 24), 24);
-}
-
-// The tile calibration with the production noise on (250 GU, contrast 0.8,
-// 3 octaves, 48 steps). A single ray is no longer 25 +- 1: through the
-// centre from Beol 4's Player Start it reads 24.2-26.1/255 across seeds (3:
-// 26.14). So, per the brief, the MEAN is pinned instead: over the 81 view
-// rays of a 21x21 grid inside the inner half of the field's disc, the noisy
-// mean is within 1/255 of the noise-off mean (22.87/255; noisy 22.2-23.7 over
-// the four seeds below). Brightness is NOT retuned for the noise --
-// DefaultTileBrightnessShowsTwentyFiveOverBlack (noise off) still defines it.
-TEST(FarHazeNoise, TileNoiseKeepsTheMeanDisplayedHaze) {
-    for (std::uint32_t seed : {3u, 7u, 1234567u, 0xdeadbeefu}) {
-        far::DiscSource s = noisy_tile_field();
-        s.seed = seed; s.steps = 48;
-        s.pops[0].albedo = kMinorAlbedo;
-        s.brightness = kTileHazeBrightness;
-        far::DiscSource plain = s;
-        plain.noise_contrast = 0.0f;
-        const glm::dvec3 eye(-593.717346, 840.869934, -269.268738);
-        const glm::vec3 fwd = glm::vec3(glm::normalize(s.centre - eye));
-        const far::ViewBasis b = far::make_view_basis(fwd);
-        const float ang = static_cast<float>(
-            std::asin(s.sphere_radius_gu / glm::length(s.centre - eye)));
-        double sum_noisy = 0.0, sum_plain = 0.0;
-        int n = 0;
-        for (int i = -10; i <= 10; ++i)
-            for (int j = -10; j <= 10; ++j) {
-                const float ax = ang * i / 10.0f, ay = ang * j / 10.0f;
-                if (ax * ax + ay * ay > 0.25f * ang * ang) continue;
-                const glm::vec3 d =
-                    glm::normalize(fwd + std::tan(ax) * b.right + std::tan(ay) * b.up);
-                const glm::vec3 L = light_for(beol4_player_start_light(), d);
-                sum_noisy += displayed_255(
-                    far::haze_column(s, eye, d, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain, L).rgb);
-                sum_plain += displayed_255(
-                    far::haze_column(plain, eye, d, 1.0e6f, 4.0f, 24, kTileHazeCalibrationGain, L).rgb);
-                ++n;
-            }
-        std::printf("[FarHazeNoise] seed %u: mean over %d rays noisy %.2f plain %.2f /255\n",
-                    seed, n, sum_noisy / n, sum_plain / n);
-        EXPECT_EQ(n, 81);
-        EXPECT_NEAR(sum_noisy / n, sum_plain / n, 1.0);
-    }
 }
 
 TEST(FarNoise, DiscSourcesNowCarryNoise) {
@@ -1041,114 +629,6 @@ TEST(FarImpostorBlend, MakeImpostorCostReport) {
     const double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() / kCalls;
     std::printf("[impostor blend] make_impostor: %.1f ns per billboard (checksum %.1f)\n", ns, sink);
     EXPECT_GT(sink, 0.0f);
-}
-
-// ---- Haze start ramp (rock-fields Task 12) ---------------------------------
-
-namespace {
-// A full-density sphere of radius 20,000 GU around the origin, one population.
-far::DiscSource full_sphere_20k() {
-    far::DiscSource s;
-    s.id = 12; s.shape = far::DiscSource::Shape::Sphere; s.procedural = false;
-    s.sphere_radius_gu = 20000.0f;
-    s.sphere_edge_frac = 0.0f;
-    far::Population minors;
-    minors.kind = 0; minors.a_lo = 0.0f; minors.a_hi = 1.0f;
-    minors.density_at_1 = 1.0e-7f;
-    minors.size = {0.05f, 0.7f, 2.5f};
-    minors.albedo = glm::vec3(0.5f, 0.4f, 0.3f);
-    s.pops = {minors};
-    return s;
-}
-}  // namespace
-
-// The haze ramps in over [start, start + ramp] (the mid band's L2 fade-out):
-// a column that stops before the start accumulates nothing; one reaching past
-// it does.
-TEST(FarHazeStart, NothingBeforeTheStart) {
-    const far::DiscSource s = full_sphere_20k();
-    const auto near = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 5000.0f, 4.0f, 48,
-                                       1000.0f, glm::vec3(1), 6000.0f, 2000.0f);
-    EXPECT_EQ(near.alpha, 0.0f);
-    EXPECT_EQ(near.rgb, glm::vec3(0.0f));
-    const auto far_ = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 19000.0f, 4.0f, 48,
-                                       1000.0f, glm::vec3(1), 6000.0f, 2000.0f);
-    EXPECT_GT(far_.alpha, 0.0f);
-    // And less than the unramped column over the same interval.
-    const auto whole = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 19000.0f, 4.0f, 48,
-                                        1000.0f, glm::vec3(1));
-    EXPECT_LT(far_.alpha, whole.alpha);
-}
-
-// ramp == 0 is a hard step at start: the weight is 0 below it and 1 from
-// it on, and a column ending short of the start is empty while one reaching
-// just past it is not.
-TEST(FarHazeStart, ZeroRampIsAHardStep) {
-    EXPECT_EQ(far::haze_start_weight(4759.9f, 4760.0f, 0.0f), 0.0f);
-    EXPECT_EQ(far::haze_start_weight(4760.0f, 4760.0f, 0.0f), 1.0f);
-    EXPECT_EQ(far::haze_start_weight(4000.0f, 4000.0f, 1000.0f), 0.0f);
-    EXPECT_EQ(far::haze_start_weight(4500.0f, 4000.0f, 1000.0f), 0.5f);
-    EXPECT_EQ(far::haze_start_weight(5000.0f, 4000.0f, 1000.0f), 1.0f);
-    const far::DiscSource s = full_sphere_20k();
-    const auto before = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 4800.0f, 4.0f, 48,
-                                         1000.0f, glm::vec3(1), 4801.0f, 0.0f);
-    EXPECT_EQ(before.alpha, 0.0f);
-    const auto after = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 4800.0f, 4.0f, 48,
-                                        1000.0f, glm::vec3(1), 4799.0f, 0.0f);
-    EXPECT_GT(after.alpha, 0.0f);
-}
-
-// start 0, ramp 0 is today's column, bit for bit.
-TEST(FarHazeStart, ZeroStartIsTodaysColumn) {
-    for (const far::DiscSource& s : {full_sphere_20k(), vesuvi_like()}) {
-        const glm::dvec3 eye = s.shape == far::DiscSource::Shape::Sphere
-                                   ? glm::dvec3(0.0) : glm::dvec3(278000.0, 0.0, 0.0);
-        const auto a = far::haze_column(s, eye, glm::vec3(0, 1, 0), 1.0e6f, 4.0f, 24, 270.0f,
-                                        glm::vec3(0.7f));
-        const auto b = far::haze_column(s, eye, glm::vec3(0, 1, 0), 1.0e6f, 4.0f, 24, 270.0f,
-                                        glm::vec3(0.7f), 0.0f, 0.0f);
-        EXPECT_GT(a.alpha, 0.0f);
-        EXPECT_EQ(a.alpha, b.alpha);
-        EXPECT_EQ(a.rgb, b.rgb);
-    }
-}
-
-// The FarDials defaults put the ramp exactly over the mid band's L2 fade-out
-// (haze_handoff_gu - haze_handoff_band_gu .. haze_handoff_gu = 6,000 .. 8,000).
-TEST(FarHazeStart, DialDefaults) {
-    const far::FarDials d;
-    EXPECT_EQ(d.haze_start_gu, 6000.0f);
-    EXPECT_EQ(d.haze_start_ramp_gu, 2000.0f);
-    EXPECT_EQ(d.haze_res_divisor, 4);
-}
-
-// Fix round 1 (controller ruling): the march interval is clipped to start at
-// the haze start, so the whole step budget lands inside the haze. With a hard
-// step, a noisy column from the eye equals the column marched from the start
-// point itself (same points, same steps) -- the noise is fixed to the field,
-// so an unclipped march (a third of its steps wasted before the start)
-// samples different points and differs.
-TEST(FarHazeStart, TheStepBudgetLandsInsideTheHaze) {
-    far::DiscSource s = full_sphere_20k();
-    s.seed = 77; s.noise_scale_gu = 800.0f; s.noise_contrast = 0.8f; s.noise_octaves = 3;
-    const glm::vec3 dir(0, 1, 0);
-    const auto clipped = far::haze_column(s, glm::dvec3(0), dir, 19000.0f, 4.0f, 48,
-                                          1000.0f, glm::vec3(1), 6000.0f, 0.0f);
-    const auto from_start = far::haze_column(s, glm::dvec3(0.0, 6000.0, 0.0), dir, 13000.0f,
-                                             4.0f, 48, 1000.0f, glm::vec3(1));
-    std::printf("[FarHazeStart] clipped %.6f from-start %.6f\n", clipped.alpha, from_start.alpha);
-    EXPECT_GT(clipped.alpha, 0.0f);
-    EXPECT_NEAR(clipped.alpha, from_start.alpha, 1e-5f);
-    for (int c = 0; c < 3; ++c) EXPECT_NEAR(clipped.rgb[c], from_start.rgb[c], 1e-5f);
-}
-
-// An interval that ends at the start (ramp > 0) holds no haze: empty sample.
-TEST(FarHazeStart, AnIntervalEndingAtTheStartIsEmpty) {
-    const far::DiscSource s = full_sphere_20k();
-    const auto h = far::haze_column(s, glm::dvec3(0), glm::vec3(0, 1, 0), 6000.0f, 4.0f, 48,
-                                    1000.0f, glm::vec3(1), 6000.0f, 2000.0f);
-    EXPECT_EQ(h.alpha, 0.0f);
-    EXPECT_EQ(h.rgb, glm::vec3(0.0f));
 }
 
 // Rock fade (2026-10-03): a translucent impostor's alpha is the coverage its

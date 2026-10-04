@@ -101,32 +101,23 @@ def test_a_native_dial_change_repushes_the_dials():
     from engine.rocks import far_dials
     r = _R()
     far_tier.reconcile_with(r, None, {})
-    far_dials._step("haze_gain", +1)
+    far_dials._step("speck_gain", +1)
     far_tier.reconcile_with(r, None, {})
     pushes = [a[0] for n, a in r.calls if n == "far_set_dials"]
     assert len(pushes) == 2
-    assert pushes[1]["haze_gain"] == far_dials.get("haze_gain")
+    assert pushes[1]["speck_gain"] == far_dials.get("speck_gain")
 
 
-def test_pushed_dials_derive_the_haze_start_from_the_handoff():
-    """Rock-fields Task 12 (single source of truth): the haze ramps in over
-    the mid band's L2 fade-out, [haze_handoff_gu - haze_handoff_band_gu,
-    haze_handoff_gu], so the native haze_start_gu / haze_start_ramp_gu ride
-    the push derived from the hand-off dials -- and follow a change to them."""
+def test_pushed_dials_are_the_native_dials():
+    """far_set_dials gets far_dials.native() as is -- no derived haze keys
+    (the volumetric haze is gone)."""
     from engine.rocks import far_dials
     r = _R()
     far_tier.reconcile_with(r, None, {})
     first = next(a[0] for n, a in r.calls if n == "far_set_dials")
-    assert first["haze_start_gu"] == 600.0      # spike/rock-specks: 1500 - 900
-    assert first["haze_start_ramp_gu"] == 900.0
-    assert first["haze_res_divisor"] == 4
-    far_dials._step("haze_handoff_gu", +1)
-    far_tier.reconcile_with(r, None, {})
-    pushes = [a[0] for n, a in r.calls if n == "far_set_dials"]
-    assert len(pushes) == 2
-    handoff, band = far_dials.get("haze_handoff_gu"), far_dials.get("haze_handoff_band_gu")
-    assert pushes[1]["haze_start_gu"] == handoff - band
-    assert pushes[1]["haze_start_ramp_gu"] == band
+    assert first == far_dials.native()
+    for k in ("haze_start_gu", "haze_start_ramp_gu", "haze_res_divisor"):
+        assert k not in first, k
 
 
 def test_frame_is_pushed_every_frame_and_sources_on_change(monkeypatch):
@@ -223,7 +214,7 @@ def test_a_failed_catalogue_push_is_retried(monkeypatch):
     assert len(calls) == 3, "a failed load is retried"
 
 
-# ── Tile-field haze (added 2026-10-02) ───────────────────────────────────────
+# ── Tile fields (added 2026-10-02) ───────────────────────────────────────
 
 
 class _Loc:
@@ -282,17 +273,17 @@ def test_tile_sources_are_pushed_only_on_change():
     assert len(_source_pushes(r)) == 3
 
 
-def test_a_tile_haze_dial_change_repushes_the_sources():
+def test_a_tile_shape_dial_change_repushes_the_sources():
     from engine.rocks import far_dials
     view = _Set("Multi7")
     fields = [_Field(view)]
     r = _R()
     far_tier.reconcile_with(r, view, {}, fields)
-    far_dials._step("tile_haze_gain", +1)
+    far_dials._step("tile_shape_warp", +1)
     far_tier.reconcile_with(r, view, {}, fields)
     pushes = _source_pushes(r)
     assert len(pushes) == 2
-    assert pushes[1][0]["gain_scale"] == far_dials.get("tile_haze_gain") / far_dials.get("haze_gain")
+    assert pushes[1][0]["shape_warp"] == far_dials.get("tile_shape_warp")
     far_dials._step("tile_haze_edge_frac", -1)
     far_tier.reconcile_with(r, view, {}, fields)
     assert _source_pushes(r)[2][0]["sphere_edge_frac"] == far_dials.get("tile_haze_edge_frac")
@@ -306,8 +297,7 @@ def test_a_tile_haze_noise_dial_change_repushes_the_sources():
     far_tier.reconcile_with(r, view, {}, fields)
     steps = [("tile_haze_noise_scale_gu", "noise_scale_gu"),
              ("tile_haze_noise_contrast", "noise_contrast"),
-             ("tile_haze_noise_octaves", "noise_octaves"),
-             ("tile_haze_steps", "steps")]
+             ("tile_haze_noise_octaves", "noise_octaves")]
     for i, (dial, key) in enumerate(steps):
         far_dials._step(dial, +1)
         far_tier.reconcile_with(r, view, {}, fields)
@@ -315,25 +305,6 @@ def test_a_tile_haze_noise_dial_change_repushes_the_sources():
         assert len(pushes) == i + 2, dial
         assert pushes[-1][0][key] == far_dials.get(dial), dial
         assert far_dials.get(dial) != far_dials.DEFAULTS[dial], dial
-
-
-def test_a_brightness_dial_change_repushes_the_sources(monkeypatch):
-    from engine.rocks import far_dials
-    monkeypatch.setattr(far_tier, "frame_for", lambda v: ("Vesuvi", (0.0, 0.0, 0.0)))
-    view = _Set("Vesuvi1")
-    fields = [_Field(view)]
-    r = _R()
-    far_tier.reconcile_with(r, view, {}, fields)
-    far_dials._step("haze_brightness", +1)
-    far_tier.reconcile_with(r, view, {}, fields)
-    far_dials._step("tile_haze_brightness", -1)
-    far_tier.reconcile_with(r, view, {}, fields)
-    pushes = _source_pushes(r)
-    assert len(pushes) == 3
-    belt, tile = pushes[2]
-    assert belt["brightness"] == far_dials.get("haze_brightness")
-    assert tile["brightness"] == far_dials.get("tile_haze_brightness")
-    assert belt["brightness"] != tile["brightness"]
 
 
 def test_belts_and_tile_spheres_ride_together(monkeypatch):
@@ -347,7 +318,7 @@ def test_belts_and_tile_spheres_ride_together(monkeypatch):
 
 def test_a_failing_field_gather_still_pushes_the_frame_and_rocks(monkeypatch):
     """reconcile(): a view whose GetClassObjectList raises loses only its
-    tile haze -- far_set_frame and far_set_rocks still go out."""
+    tile fields -- far_set_frame and far_set_rocks still go out."""
     from engine.systems import frames
 
     class _BadView(_Set):

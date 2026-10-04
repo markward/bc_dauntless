@@ -115,8 +115,7 @@ class _Field:
 
 
 # Characterization (rock-fields Task 2): captured from the code BEFORE the
-# tile minor clouds were removed. tile_haze_gain (derived 14,140, live 131,700) is tuned on
-# exactly these numbers, so they must never drift.
+# tile minor clouds were removed; they must never drift.
 EXPECTED_DENSITY = 9.668662792832643e-08     # 405 / (4/3 pi 1000^3)
 EXPECTED_SIZES = (0.05, 0.7000000000000001, 2.5)
 EXPECTED_SEED = 1807423987                   # crc32("tile:Beol4:Asteroid Field 1")
@@ -149,9 +148,6 @@ def test_tile_field_source_is_a_view_space_sphere():
     assert s.centre_gu == (797.714355, 977.248474, 1268.854858)
     assert s.sphere_radius_gu == 1000.0
     assert s.sphere_edge_frac == far_dials.get("tile_haze_edge_frac")
-    assert math.isclose(s.gain_scale,
-                        far_dials.get("tile_haze_gain") / far_dials.get("haze_gain"))
-    assert s.brightness == far_dials.get("tile_haze_brightness")
     (pop,) = s.pops
     assert pop.kind == 0 and pop.a_lo == 0.0 and pop.a_hi == 1.0
     assert math.isclose(pop.density_at_1, 405 / (4.0 / 3.0 * math.pi * 1000.0 ** 3))
@@ -179,8 +175,8 @@ def test_to_native_emits_the_sphere_keys_and_only_the_minor_population():
     d = density.to_native(s)
     assert d["shape"] == "sphere" and d["procedural"] is False and d["view_space"] is True
     assert d["sphere_radius_gu"] == 1000.0 and d["sphere_edge_frac"] == 0.2
-    assert d["gain_scale"] == s.gain_scale
-    assert d["brightness"] == s.brightness == far_dials.get("tile_haze_brightness")
+    for k in ("gain_scale", "brightness", "steps"):   # the volumetric haze's keys
+        assert k not in d, k
     assert d["centre"] == s.centre_gu and d["table"] == []
     (pop,) = d["populations"]
     assert pop["kind"] == 0 and pop["rocks"]
@@ -189,14 +185,7 @@ def test_to_native_emits_the_sphere_keys_and_only_the_minor_population():
 def test_a_belt_to_native_keeps_the_disc_defaults():
     (s,) = density.sources_for_system("Vesuvi")
     d = density.to_native(s)
-    assert (d["shape"], d["procedural"], d["view_space"], d["gain_scale"]) == \
-        ("disc", True, False, 1.0)
-
-
-def test_a_belt_carries_the_belt_haze_brightness():
-    (s,) = density.sources_for_system("Vesuvi")
-    assert s.brightness == far_dials.get("haze_brightness")
-    assert density.to_native(s)["brightness"] == far_dials.get("haze_brightness")
+    assert (d["shape"], d["procedural"], d["view_space"]) == ("disc", True, False)
 
 
 def test_a_tile_field_source_carries_the_noise_dials():
@@ -204,10 +193,8 @@ def test_a_tile_field_source_carries_the_noise_dials():
     assert s.noise_scale_gu == far_dials.get("tile_haze_noise_scale_gu")
     assert s.noise_contrast == far_dials.get("tile_haze_noise_contrast")
     assert s.noise_octaves == far_dials.get("tile_haze_noise_octaves")
-    assert s.steps == far_dials.get("tile_haze_steps")
     d = density.to_native(s)
-    assert (d["noise_scale_gu"], d["noise_contrast"], d["noise_octaves"], d["steps"]) == \
-        (250.0, 0.8, 3, 48)
+    assert (d["noise_scale_gu"], d["noise_contrast"], d["noise_octaves"]) == (250.0, 0.8, 3)
 
 
 def test_profile_belt_carries_belt_noise_dials():
@@ -222,4 +209,3 @@ def test_profile_belt_carries_belt_noise_dials():
     assert nat["noise_scale_gu"] == src.noise_scale_gu   # now sent for discs too
     assert nat["noise_contrast"] == src.noise_contrast
     assert nat["noise_octaves"] == src.noise_octaves
-    assert nat["steps"] == 0                               # the global haze_steps

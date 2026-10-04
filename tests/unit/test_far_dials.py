@@ -99,9 +99,9 @@ def test_native_defaults_match_the_cpp_header():
 
 def test_step_rules():
     d = far_dials.DEFAULTS
-    assert far_dials.step(d, "haze_gain", +1)["haze_gain"] == 270.0 * 1.25
-    assert far_dials.step(d, "haze_steps", -1)["haze_steps"] == 22
-    assert far_dials.step({**d, "haze_steps": 1}, "haze_steps", -1)["haze_steps"] == 1
+    assert far_dials.step(d, "speck_gain", +1)["speck_gain"] == 4.0 * 1.25
+    assert far_dials.step(d, "puff_count", -1)["puff_count"] == 360
+    assert far_dials.step({**d, "puff_count": 1}, "puff_count", -1)["puff_count"] == 1
 
 
 def test_the_belt_generator_dials_are_gone():
@@ -127,54 +127,33 @@ def test_dial_group_is_rock_fields_with_look_dials_first(monkeypatch):
     assert registered["rock fields"][0] == "puff_opacity"
 
 
-def test_tile_haze_gain_is_the_cpp_derivation():
-    """The default tile_haze_gain IS kTileHazeGain in far_field_test.cc,
-    where FarHazeSphere.DefaultTileGainHitsTheStatedTarget derives it (alpha
-    0.15 +- 0.03 from Beol 4's Player Start). Read, not copied, so the two
-    cannot drift."""
-    src = (Path(__file__).parents[2] / "native/tests/renderer/far_field_test.cc").read_text()
-    m = re.search(r"kTileHazeGain\s*=\s*([0-9.e+-]+)f", src)
-    assert m
-    assert far_dials.DEFAULTS["tile_haze_gain"] == float(m.group(1))
+def test_tile_edge_frac_is_a_python_dial():
     assert far_dials.DEFAULTS["tile_haze_edge_frac"] == 0.2
-    assert "tile_haze_gain" not in far_dials.NATIVE_KEYS
     assert "tile_haze_edge_frac" not in far_dials.NATIVE_KEYS
 
 
-def _cpp_constant(name):
-    src = (Path(__file__).parents[2] / "native/tests/renderer/far_field_test.cc").read_text()
-    m = re.search(r"%s\s*=\s*([0-9.e+-]+)f" % name, src)
-    assert m, name
-    return float(m.group(1))
-
-
-def test_haze_brightness_defaults_are_the_cpp_derivations():
-    """haze_brightness / tile_haze_brightness ARE kHazeBrightness /
-    kTileHazeBrightness in far_field_test.cc, where the
-    Default*BrightnessShowsTwentyFiveOverBlack tests derive them (25/255
-    displayed under the production lighting of Vesuvi mid-band and Beol 4's
-    Player Start). Read, not copied, so the two cannot drift. Python-owned:
-    they ride per source as `brightness`, never through far_set_dials."""
-    assert far_dials.DEFAULTS["haze_brightness"] == _cpp_constant("kHazeBrightness")
-    assert far_dials.DEFAULTS["tile_haze_brightness"] == _cpp_constant("kTileHazeBrightness")
-    assert "haze_brightness" not in far_dials.NATIVE_KEYS
-    assert "tile_haze_brightness" not in far_dials.NATIVE_KEYS
+def test_the_volumetric_haze_dials_are_gone():
+    """The volumetric haze was removed (puffs replace it): none of its dials
+    survive, native or Python-owned."""
+    for k in ("slab_sigmas", "haze_gain", "haze_steps", "haze_res_divisor",
+              "haze_start_gu", "haze_start_ramp_gu", "haze_brightness",
+              "tile_haze_gain", "tile_haze_brightness", "tile_haze_steps"):
+        assert k not in far_dials.DEFAULTS and k not in far_dials.NATIVE_KEYS, k
 
 
 def test_the_look_dials_come_first_in_the_dial_keys_order():
     """Mark tunes the look live with / L O; the rock-fields look dials
-    lead (rock-fields Task 13: near/mid/haze population, then absorption)."""
+    lead."""
     from engine.rocks import far_dials
-    assert far_dials.DIAL_ORDER[:29] == (
+    assert far_dials.DIAL_ORDER[:25] == (
         "puff_opacity", "puff_size_frac", "puff_count", "puff_brightness",
-        "tile_shape_warp", "tile_noise_sharpness", "tile_haze_brightness",
+        "tile_shape_warp", "tile_noise_sharpness",
         "speck_band_gain", "speck_out_gu", "speck_keep_d0_gu",
         "haze_handoff_gu", "haze_handoff_band_gu",
         "near_small_density", "near_large_density", "near_small_mesh_gu",
         "near_small_billboard_gu", "near_large_mesh_gu", "near_large_billboard_gu",
         "near_large_far_gu", "mid_fill", "mid_sprite_scale", "mid_l0_out_gu", "mid_l1_out_gu",
-        "haze_brightness",
-        "haze_gain", "tile_haze_gain", "tile_haze_noise_contrast",
+        "tile_haze_noise_contrast",
         "belt_noise_contrast", "collide_damage_scale")
     assert sorted(far_dials.DIAL_ORDER) == sorted(far_dials.DEFAULTS)
 
@@ -185,23 +164,20 @@ def test_speck_gain_defaults_to_four():
 
 
 def test_tile_haze_noise_dials():
-    """Tile-field haze noise (2026-10-02): Python-owned, ride per source."""
+    """Tile-field noise (2026-10-02): Python-owned, ride per source."""
     d = far_dials.DEFAULTS
     assert d["tile_haze_noise_scale_gu"] == 250.0
     assert d["tile_haze_noise_contrast"] == 0.8
     assert d["tile_haze_noise_octaves"] == 3
-    assert d["tile_haze_steps"] == 48
     for k in ("tile_haze_noise_scale_gu", "tile_haze_noise_contrast",
-              "tile_haze_noise_octaves", "tile_haze_steps"):
+              "tile_haze_noise_octaves"):
         assert k not in far_dials.NATIVE_KEYS, k
     assert isinstance(d["tile_haze_noise_octaves"], int)
-    assert isinstance(d["tile_haze_steps"], int)
     # Int counts floor at 1; the contrast (a float) may reach 0.
-    for k in ("tile_haze_noise_octaves", "tile_haze_steps"):
-        assert far_dials.step({**d, k: 1}, k, -1)[k] == 1, k
+    assert far_dials.step({**d, "tile_haze_noise_octaves": 1}, "tile_haze_noise_octaves",
+                          -1)["tile_haze_noise_octaves"] == 1
     assert far_dials.step({**d, "tile_haze_noise_contrast": 0.0},
                           "tile_haze_noise_contrast", -1)["tile_haze_noise_contrast"] == 0.0
-    assert far_dials.step(d, "tile_haze_steps", +1)["tile_haze_steps"] == 52
 
 
 def test_belt_noise_dials():
@@ -248,16 +224,3 @@ def test_mid_defaults_match_rock_mid_h():
     assert isinstance(d["mid_max_sprites"], int)
     # The sprite cap floors at 1 (0 would silently delete the whole band).
     assert far_dials.step({**d, "mid_max_sprites": 1}, "mid_max_sprites", -1)["mid_max_sprites"] == 1
-
-
-def test_haze_res_divisor_is_a_native_int_dial_floored_at_one():
-    """Rock-fields Task 12: the haze marches at 1 / haze_res_divisor
-    resolution (FarDials::haze_res_divisor = 4). The start distance and ramp
-    are NOT dials: far_tier derives them from haze_handoff_*."""
-    d = far_dials.DEFAULTS
-    assert d["haze_res_divisor"] == 4
-    assert isinstance(d["haze_res_divisor"], int)
-    assert "haze_res_divisor" in far_dials.NATIVE_KEYS
-    assert far_dials.step({**d, "haze_res_divisor": 1}, "haze_res_divisor", -1)["haze_res_divisor"] == 1
-    for k in ("haze_start_gu", "haze_start_ramp_gu"):
-        assert k not in far_dials.DEFAULTS and k not in far_dials.NATIVE_KEYS, k

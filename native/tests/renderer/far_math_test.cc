@@ -1,5 +1,5 @@
 // native/tests/renderer/far_math_test.cc
-// Far tier spec §1 (ladder) and §2 (haze integral).
+// Far tier spec §1 (ladder) and the power-law size distribution.
 #include <gtest/gtest.h>
 #include <renderer/far_math.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -88,31 +88,6 @@ TEST(FarMath, LambertSpherePhase) {
     EXPECT_NEAR(far::lambert_sphere_phase(-1.0f), 0.0f, 1e-5f);
     EXPECT_GT(far::lambert_sphere_phase(0.0f), 0.0f);
     EXPECT_LT(far::lambert_sphere_phase(0.0f), 2.0f / 3.0f);
-}
-
-// Closed form vs numeric (midpoint rule, 200k steps) of int pi r^2 f(r) dr.
-TEST(FarMath, CrossSectionBelowMatchesNumericIntegration) {
-    const far::PowerLaw pl{0.05f, 0.7f, 2.5f};
-    auto numeric = [&](float cut) {
-        const double hi = std::min<double>(cut, pl.r_max);
-        if (hi <= pl.r_min) return 0.0;
-        const double e = 1.0 - pl.q;
-        const double C = e / (std::pow(pl.r_max, e) - std::pow(pl.r_min, e));
-        const int n = 200000;
-        double acc = 0.0, dr = (hi - pl.r_min) / n;
-        for (int i = 0; i < n; ++i) {
-            const double r = pl.r_min + (i + 0.5) * dr;
-            acc += M_PI * r * r * C * std::pow(r, -pl.q) * dr;
-        }
-        return acc;
-    };
-    for (float cut : {0.04f, 0.05f, 0.1f, 0.3f, 0.7f, 2.0f})
-        EXPECT_NEAR(far::cross_section_below(pl, cut), numeric(cut), 1e-6) << cut;
-    // Spec-derived constant used for the haze_gain default (Task 9): 0.0659 GU^2.
-    EXPECT_NEAR(far::mean_cross_section(pl), 0.06586f, 2e-4f);
-    // q == 3 (log branch) and q == 1 stay finite and continuous.
-    EXPECT_NEAR(far::cross_section_below({0.1f, 1.0f, 3.0f}, 1.0f),
-                far::cross_section_below({0.1f, 1.0f, 3.0001f}, 1.0f), 1e-4f);
 }
 
 TEST(FarMath, PowerLawCdf) {

@@ -72,21 +72,6 @@ def test_far_set_dials_p_min_and_omitted_keys_reset():
     assert h.frame_state_debug()["far_p_min"] == 0.25
 
 
-def test_far_set_dials_haze_start_and_divisor():
-    """Rock-fields Task 12: haze_start_gu / haze_start_ramp_gu /
-    haze_res_divisor parse natively; omitted keys reset (6000 / 2000 / 4) and
-    the divisor floors at 1."""
-    h.far_set_dials({"haze_start_gu": 100.0, "haze_start_ramp_gu": 50.0,
-                     "haze_res_divisor": 2})
-    assert h.far_debug_haze_dials() == {"haze_start_gu": 100.0, "haze_start_ramp_gu": 50.0,
-                                        "haze_res_divisor": 2}
-    h.far_set_dials({"haze_res_divisor": 0})
-    assert h.far_debug_haze_dials()["haze_res_divisor"] == 1
-    h.far_set_dials({})
-    assert h.far_debug_haze_dials() == {"haze_start_gu": 6000.0, "haze_start_ramp_gu": 2000.0,
-                                        "haze_res_divisor": 4}
-
-
 def test_far_set_catalogue_and_frame_accept_their_shapes():
     h.far_set_catalogue(
         [{"albedo": "a.png", "normal": "n.png", "avg_albedo": (0.3, 0.3, 0.3)},
@@ -192,7 +177,7 @@ def test_a_speck_band_rock_draws_a_speck(host):
 
 def test_an_active_belt_generates_no_rocks(host):
     """Rock-fields (2026-10-02): the belt generator is gone; a belt is a
-    density source (haze) only."""
+    density source only."""
     h.far_set_sources([_source(table=[(0.0, 1.0), (226000.0, 1.0)])])
     h.far_set_frame("Vesuvi", (100000.0, 0.0, 0.0))
     _look_down_minus_z()
@@ -280,8 +265,6 @@ def test_a_source_without_the_sphere_keys_parses_as_today():
     (s,) = h.far_debug_active_sources()
     assert s["shape"] == "disc"
     assert s["procedural"] is True and s["view_space"] is False
-    assert s["gain_scale"] == 1.0
-    assert s["brightness"] == 1.0
     h.far_clear()
 
 
@@ -290,7 +273,7 @@ def test_a_view_space_sphere_source_is_active_without_a_frame():
     h.far_set_sources([_source(
         id=7, frame="", centre=(10.0, 20.0, 30.0), table=[], shape="sphere",
         procedural=False, view_space=True, sphere_radius_gu=1000.0,
-        sphere_edge_frac=0.25, gain_scale=99.5, brightness=9.1)])
+        sphere_edge_frac=0.25)])
     h.far_set_frame(None, (0.0, 0.0, 0.0))
     (s,) = h.far_debug_active_sources()
     assert s["id"] == 7 and s["shape"] == "sphere"
@@ -298,8 +281,6 @@ def test_a_view_space_sphere_source_is_active_without_a_frame():
     assert s["centre"] == pytest.approx((10.0, 20.0, 30.0))
     assert s["sphere_radius_gu"] == 1000.0
     assert s["sphere_edge_frac"] == 0.25
-    assert s["gain_scale"] == pytest.approx(99.5)
-    assert s["brightness"] == pytest.approx(9.1)
     h.far_set_frame("Beol", (1.0, 2.0, 3.0))
     (s,) = h.far_debug_active_sources()
     assert s["centre"] == pytest.approx((11.0, 22.0, 33.0))
@@ -311,30 +292,30 @@ def test_an_unknown_shape_is_rejected():
         h.far_set_sources([_source(shape="cube")])
 
 
-# ── Tile-field haze noise + per-source steps (added 2026-10-02) ──────────────
+# ── Field noise (added 2026-10-02) ──────────────────────────────────────────
 
 
-def test_a_source_without_the_noise_keys_has_no_noise_and_global_steps():
+def test_a_source_without_the_noise_keys_has_no_noise():
     h.far_clear()
     h.far_set_sources([_source()])
     h.far_set_frame("Vesuvi", (0.0, 0.0, 0.0))
     (s,) = h.far_debug_active_sources()
     assert s["noise_scale_gu"] == 0.0 and s["noise_contrast"] == 0.0
-    assert s["noise_octaves"] == 0 and s["steps"] == 0
+    assert s["noise_octaves"] == 0
     h.far_clear()
 
 
-def test_the_noise_keys_and_steps_round_trip():
+def test_the_noise_keys_round_trip():
     h.far_clear()
     h.far_set_sources([_source(
         id=8, frame="", centre=(0.0, 0.0, 0.0), table=[], shape="sphere",
         procedural=False, view_space=True, sphere_radius_gu=1000.0,
-        noise_scale_gu=250.0, noise_contrast=0.8, noise_octaves=3, steps=48)])
+        noise_scale_gu=250.0, noise_contrast=0.8, noise_octaves=3)])
     h.far_set_frame(None, (0.0, 0.0, 0.0))
     (s,) = h.far_debug_active_sources()
     assert s["noise_scale_gu"] == 250.0
     assert s["noise_contrast"] == pytest.approx(0.8)
-    assert s["noise_octaves"] == 3 and s["steps"] == 48
+    assert s["noise_octaves"] == 3
     h.far_clear()
 
 

@@ -117,8 +117,8 @@ def test_belt_mission_puts_the_player_mid_band_looking_along_it():
 
 
 @pytest.mark.parametrize("module,dial", [
-    ("engine.dev_missions.far_tier_field", "tile_haze_brightness"),   # Beol 4: no belt
-    ("engine.dev_missions.far_tier_belt", "haze_brightness"),
+    ("engine.dev_missions.far_tier_field", "tile_shape_warp"),
+    ("engine.dev_missions.far_tier_belt", "puff_brightness"),
     ("engine.dev_missions.rock_fields_inside", "near_large_density"),
 ])
 def test_the_dial_keys_start_on_the_rock_fields_group(module, dial):

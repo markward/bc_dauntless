@@ -18,7 +18,7 @@ import zlib
 from dataclasses import dataclass, field
 from typing import Optional
 
-MAX_TABLE_ROWS = 32   # far_haze.frag's u_table_* arrays
+MAX_TABLE_ROWS = 32   # rows sent per source (the old haze shader's cap, kept)
 
 _warned_truncate: set = set()
 _warned_no_match: set = set()
@@ -37,7 +37,7 @@ class DiscSource:
     families: dict
     seed: int
     explicit_regions: list = field(default_factory=list)   # [((x,y,z), r)]; sub-project 4
-    # Tile-field haze (2026-10-02): renderer::far::DiscSource's twins. A
+    # Tile fields (2026-10-02): renderer::far::DiscSource's twins. A
     # "sphere" is an AsteroidField: a == 1 inside, a linear ramp to 0 over
     # the outer sphere_edge_frac of sphere_radius_gu; table unused.
     shape: str = "disc"
@@ -45,11 +45,8 @@ class DiscSource:
     view_space: bool = False       # centre_gu in the viewed set's view space
     sphere_radius_gu: float = 0.0
     sphere_edge_frac: float = 0.2
-    gain_scale: float = 1.0        # x the native haze_gain for this source
-    brightness: float = 1.0        # haze COLOUR only (ruling R16); alpha untouched
-    # Haze noise (every shape since rock-fields R1, 2026-10-02) + march
-    # steps: 0 = off / the native global haze_steps. Belts set the
-    # belt_noise_* dials, tile fields the tile_haze_noise_* ones.
+    # Field noise (every shape since rock-fields R1, 2026-10-02): 0 = off.
+    # Belts set the belt_noise_* dials, tile fields the tile_haze_noise_* ones.
     noise_scale_gu: float = 0.0
     noise_contrast: float = 0.0
     noise_octaves: int = 0
@@ -58,7 +55,6 @@ class DiscSource:
     noise_sharpness: float = 1.0
     shape_warp: float = 0.0
     shape_warp_scale_gu: float = 0.0
-    steps: int = 0
     pops: Optional[tuple] = None   # explicit populations; None = field_table's
 
 
@@ -130,7 +126,6 @@ def profile_belt(system_name: str):
         scale_height_min_gu=far_dials.get("scale_height_min_gu"),
         families={"silicate": 1.0},
         seed=seed,
-        brightness=float(far_dials.get("haze_brightness")),
         noise_scale_gu=float(far_dials.get("belt_noise_scale_gu")),
         noise_contrast=float(far_dials.get("belt_noise_contrast")),
         noise_octaves=int(far_dials.get("belt_noise_octaves")),
@@ -143,14 +138,13 @@ def sources_for_system(system_name: str) -> list:
 
 
 def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
-    """An AsteroidField's sphere haze source, or None when it has no rocks.
+    """An AsteroidField's sphere density source, or None when it has no rocks.
 
     One minor population of density count / (4/3 pi R^3), count = tiles^3 x
     per-tile x tile_count_mult, sizes from the minor_dials tile_* keys, at
     the field's location in VIEW space (`offset` = offset_between(view,
     set)), seeded by crc32("tile:<set>:<name>"). These are the numbers the
-    retired tile minor cloud used: tile_haze_gain (derived 14,140; live default 131,700) is tuned on
-    them, so test_far_density pins them."""
+    retired tile minor cloud used; test_far_density pins them."""
     from engine.rocks import far_dials, field_table
     from engine.rocks import minor_dials as md
     tiles = int(field_obj.GetNumTilesPerAxis())
@@ -190,15 +184,12 @@ def tile_field_source(field_obj, view_set, set_name: str, offset: tuple):
         view_space=True,
         sphere_radius_gu=radius,
         sphere_edge_frac=float(far_dials.get("tile_haze_edge_frac")),
-        gain_scale=float(far_dials.get("tile_haze_gain")) / float(far_dials.get("haze_gain")),
-        brightness=float(far_dials.get("tile_haze_brightness")),
         noise_scale_gu=float(far_dials.get("tile_haze_noise_scale_gu")),
         noise_contrast=float(far_dials.get("tile_haze_noise_contrast")),
         noise_octaves=int(far_dials.get("tile_haze_noise_octaves")),
         noise_sharpness=float(far_dials.get("tile_noise_sharpness")),
         shape_warp=float(far_dials.get("tile_shape_warp")),
         shape_warp_scale_gu=radius * float(far_dials.get("tile_shape_warp_scale_frac")),
-        steps=int(far_dials.get("tile_haze_steps")),
         pops=(pop,),
     )
 
@@ -244,8 +235,8 @@ def to_native(source) -> dict:
     A population with no matching catalogue rock is OMITTED, not sent
     empty (one [far] warning per (system, kind), deduped like
     profile_belt's own truncation warning). A source that ends up with no
-    populations at all is still emitted -- the haze and generator then
-    simply find nothing to draw for it."""
+    populations at all is still emitted -- the bands then simply find
+    nothing to draw for it."""
     from engine.rocks import catalogue, field_table
     wanted = (source.pops if source.pops is not None
               else field_table.populations(source.families))
@@ -280,15 +271,12 @@ def to_native(source) -> dict:
         "view_space": source.view_space,
         "sphere_radius_gu": source.sphere_radius_gu,
         "sphere_edge_frac": source.sphere_edge_frac,
-        "gain_scale": source.gain_scale,
-        "brightness": source.brightness,
-        # Every shape carries the noise (rock-fields R1); steps 0 = global.
+        # Every shape carries the noise (rock-fields R1).
         "noise_scale_gu": source.noise_scale_gu,
         "noise_contrast": source.noise_contrast,
         "noise_octaves": source.noise_octaves,
         "noise_sharpness": source.noise_sharpness,
         "shape_warp": source.shape_warp,
         "shape_warp_scale_gu": source.shape_warp_scale_gu,
-        "steps": source.steps,
     }
     return out

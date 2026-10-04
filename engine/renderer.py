@@ -88,7 +88,6 @@ _REQUIRED_BINDINGS = frozenset({
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
     "far_stats", "far_clear",
     "rock_mid_set_enabled", "rock_mid_enabled",
-    "rock_haze_set_enabled", "rock_haze_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
     "rockfield_rearm", "rockfield_catalogue_size", "rockfield_set_player",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
@@ -650,17 +649,6 @@ def rock_mid_set_enabled(enabled: bool) -> None:
 def rock_mid_enabled() -> bool:
     """Whether the rock-fields mid band builds and draws."""
     return _h.rock_mid_enabled()
-
-
-def rock_haze_set_enabled(enabled: bool) -> None:
-    """Turn the rock-fields belt haze draw on or off, independent of
-    far_set_enabled (that master switch still gates everything when off)."""
-    _h.rock_haze_set_enabled(bool(enabled))
-
-
-def rock_haze_enabled() -> bool:
-    """Whether the rock-fields belt haze draws."""
-    return _h.rock_haze_enabled()
 
 
 def far_stats() -> dict:

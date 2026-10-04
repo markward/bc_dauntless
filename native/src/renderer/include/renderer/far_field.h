@@ -21,14 +21,14 @@ struct Population {
     PowerLaw size;
     std::vector<int> rocks;       // catalogue indices
     std::vector<float> weights;   // parallel to rocks
-    glm::vec3 albedo{0.4f};       // mean avg_albedo of `rocks` (haze colour)
+    glm::vec3 albedo{0.4f};       // mean avg_albedo of `rocks` (puff colour)
 };
 
 struct DiscSource {
     // Disc: a belt (table + scale height). Sphere: a BC tile field
     // (AsteroidField) -- a(x) = 1 within sphere_radius_gu * (1 -
     // sphere_edge_frac) of the centre, a linear ramp to 0 at sphere_radius_gu
-    // (table / scale height unused). Tile-field haze, added 2026-10-02.
+    // (table / scale height unused). Added 2026-10-02.
     enum class Shape : std::uint8_t { Disc, Sphere };
     std::uint32_t id = 0;
     std::string frame;            // system name; active only when it is the viewed frame
@@ -44,9 +44,7 @@ struct DiscSource {
     bool view_space = false;
     float sphere_radius_gu = 0.0f;
     float sphere_edge_frac = 0.2f;
-    float gain_scale = 1.0f;      // multiplies FarDials::haze_gain for this source
-    float brightness = 1.0f;      // scales the haze COLOUR only (alpha unchanged)
-    // Haze noise (every shape since rock-fields, 2026-10-02): the density is
+    // Field noise (every shape since rock-fields, 2026-10-02): the density is
     // a(x) * m(x), m = max(0, 1 + noise_contrast * (2 fbm(x_local /
     // noise_scale_gu) - 1)), x_local = x - centre (fixed to the field),
     // contrast clamped to [0, 1]. Off (m == 1, byte-identical) when scale <= 0,
@@ -64,7 +62,6 @@ struct DiscSource {
     float noise_sharpness = 1.0f;
     float shape_warp = 0.0f;
     float shape_warp_scale_gu = 0.0f;
-    int steps = 0;                // haze march steps; 0 = FarDials::haze_steps
     glm::vec3 normal{0.0f, 0.0f, 1.0f};
     std::vector<glm::vec2> table; // (r_gu, a), sorted by r
     float outer_fade_gu = 20000.0f;
@@ -77,7 +74,6 @@ struct DiscSource {
 float table_a(const DiscSource& s, float rho);
 float scale_height(const DiscSource& s, float rho);
 float density_a(const DiscSource& s, const glm::dvec3& x_sys);
-float pop_density(const Population& p, float a);
 // An upper bound of density_a anywhere in the axis-aligned cube (centre
 // `centre`, half-edge `half`), tested on the cube's bounding sphere. Disc:
 // the table's max over the sphere's radial span times the Gaussian at its
@@ -85,44 +81,7 @@ float pop_density(const Population& p, float a);
 // sphere_radius_gu, else 0. 0 means no point of the cube has density.
 float a_bound(const DiscSource& s, const glm::dvec3& centre, double half);
 
-// ---- Haze (spec §2 "Haze") ------------------------------------------------
-
-struct HazeSample { glm::vec3 rgb{0}; float alpha = 0; };
-
-// The ray interval [t0, t1] (t from `origin_sys` along unit `dir`) inside the
-// disc's slab (|z| <= slab_sigmas * H at the outer radius) and its outer
-// radius (last table row + outer_fade_gu), clipped to [0, t_max]. False when
-// empty (or the table is). far_haze.frag MUST compute exactly the same
-// interval (same slab at the outer radius, same cylinder): change both or
-// neither -- FarPassGLTest.HazeShaderMatchesTheCpuReference pins them.
-bool haze_interval(const DiscSource& s, const glm::dvec3& origin_sys, const glm::vec3& dir,
-                   float t_max, float slab_sigmas, double& t0, double& t1);
-
-// CPU twin of far_haze.frag (spec §2 "Haze"): march `steps` midpoint samples
-// over the ray's interval inside the source (disc slab + outer radius, or the
-// sphere), from t=0 to t_max; at each, dtau = gain * s.gain_scale * sum_pop
-// n(a) * mean_cross_section(size) * dt; rgb += T * (1 - exp(-dtau)) *
-// albedo_mix * light * s.brightness; T *= exp(-dtau). Returns premultiplied
-// rgb and alpha = 1 - T (brightness touches the colour only). albedo_mix is
-// the populations' albedo weighted by n * sigma at the sample. No pixel cut
-// (ruling R16): the whole cross-section at every distance, so the result does
-// not depend on the camera's k -- it also covers speck-tier rocks, a
-// negligible double count accepted for resolution independence.
-// Start ramp (rock-fields Task 12): each sample's dtau is multiplied by
-// haze_start_weight(t, start_gu, ramp_gu) -- the haze ramps in over the mid
-// band's L2 fade-out. The interval is clipped to begin at start_gu (empty
-// when it ends before the start: t1 <= start, or t1 < start for ramp 0), so
-// all `steps` samples land inside the haze. start 0, ramp 0 (the defaults) is
-// the unramped column, bit for bit.
-HazeSample haze_column(const DiscSource& s, const glm::dvec3& origin_sys,
-                       const glm::vec3& dir, float t_max, float slab_sigmas, int steps,
-                       float gain, const glm::vec3& light, float start_gu = 0.0f,
-                       float ramp_gu = 0.0f);
-// smoothstep(start_gu, start_gu + ramp_gu, t); a hard step (t >= start_gu ?
-// 1 : 0) when ramp_gu <= 0. far_haze.frag's start_weight: keep identical.
-float haze_start_weight(float t, float start_gu, float ramp_gu);
-
-// ---- Haze noise (every source; keep identical with far_haze.frag) --------
+// ---- Field noise (every source) ------------------------------------------
 
 // 32-bit PCG output hash.
 std::uint32_t haze_hash(std::uint32_t v);
@@ -146,9 +105,6 @@ float field_density(const DiscSource& s, const glm::dvec3& x_sys);
 float noise_m_bound(const DiscSource& s);
 // A sphere source's outermost reach: sphere_radius_gu / (1 - shape_warp).
 double sphere_outer_r(const DiscSource& s);
-// The march steps for `s`: its own `steps` clamped to [1, 64] when set, else
-// `global_steps` unchanged.
-int haze_steps_for(const DiscSource& s, int global_steps);
 
 // ---- Per-camera build (spec §1-3) ----------------------------------------
 
@@ -159,20 +115,7 @@ struct FlaggedRock { std::uint64_t key; int index; /*-1 = no impostor*/ float ra
 
 struct FarDials {
     TierDials tiers;
-    float slab_sigmas = 4.0f;
     float speck_gain = 4.0f;    // Mark, live 2026-10-02: "about 4"
-    float haze_gain = 270.0f;   // R14: alpha ~0.15 forward from mid-band (spec §2)
-    int haze_steps = 24;
-    // Rock-fields Task 12: the haze ramps in over [haze_start_gu,
-    // haze_start_gu + haze_start_ramp_gu] -- by default exactly the mid
-    // band's L2 fade-out (MidDials handoff_gu - handoff_band_gu ..
-    // handoff_gu). Python never sets these directly: engine/rocks/far_tier.py
-    // derives them from haze_handoff_gu / haze_handoff_band_gu.
-    float haze_start_gu = 6000.0f;
-    float haze_start_ramp_gu = 2000.0f;
-    // The haze marches at (w / d, h / d) and is depth-aware upsampled; 1 =
-    // straight into the target at full resolution. Floored at 1.
-    int haze_res_divisor = 4;
 };
 
 // One impostor instance (rock-blend, 2026-10-03). The shader draws a

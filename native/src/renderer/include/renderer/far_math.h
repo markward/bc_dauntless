@@ -33,8 +33,5 @@ float lambert_sphere_phase(float cos_alpha);
 // pdf ∝ r^-q on [r_min, r_max].
 struct PowerLaw { float r_min = 0.05f, r_max = 0.7f, q = 2.5f; };
 float power_law_cdf(const PowerLaw& pl, float r);
-// ∫ π r² f(r) dr over [r_min, min(r_cut, r_max)], f the normalised pdf.
-float cross_section_below(const PowerLaw& pl, float r_cut);
-inline float mean_cross_section(const PowerLaw& pl) { return cross_section_below(pl, pl.r_max); }
 
 }  // namespace renderer::far

@@ -329,7 +329,7 @@ def test_free_cloud_in_another_frame_is_not_sent_until_viewed():
 
 def test_asteroid_fields_get_no_minor_cloud():
     """Rock-fields (Task 2): a BC AsteroidField is a density source (its
-    haze, later its near/mid bands), never a 405-minor tile cloud."""
+    near band, puffs and specks), never a 405-minor tile cloud."""
     from engine.appc.sets import SetClass
     a = SetClass()
     a.SetName("A")

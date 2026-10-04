@@ -44,7 +44,7 @@ def create_aimed_player(pSet, eye, target):
     return MissionLib.CreatePlayerShip("Galaxy", pSet, "player", "Far Tier View")
 
 
-def start_on_far_dials(dial="haze_brightness"):
+def start_on_far_dials(dial="puff_opacity"):
     """/ L O act on the "rock fields" group, with `dial` selected. A dial the
     group lacks leaves the selection where one full cycle ends (where it
     started): the loop is bounded by the group's dial count."""

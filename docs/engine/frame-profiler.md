@@ -319,10 +319,10 @@ ships at lower frequency; (c) move hot paths to C++.
   capture the opposite of the truth. It is read from the context now.
 * **This doc does not keep an exhaustive scope registry — read the call sites.**
   Features add their own `DAUNTLESS_FRAME_SCOPE`/`scope()` names as they ship and
-  nest under whichever phase calls them; e.g. the rock-fields near/mid/haze bands
+  nest under whichever phase calls them; e.g. the rock-fields bands
   (`host_bindings.cc`) add `rock.near.stream`, `rock.near.draw`, `rock.mid.draw`,
-  `rock.fade.draw` (the translucent impostor fades) and `rock.haze`, alongside the
-  earlier far-tier `space.far.*` scopes.
+  `rock.fade.draw` (the translucent impostor fades), `rock.puffs.draw` and
+  `rock.specks.draw`, alongside the earlier far-tier `space.far.*` scopes.
 
 ## Tests
 

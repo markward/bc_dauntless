@@ -298,9 +298,6 @@ bool g_far_enabled = true;
 // fading). Off by default while rock fields are rebuilt band by band
 // (Mark, 2026-10-03).
 bool g_rock_mid_enabled = false;
-// spike/rock-specks: the volumetric haze is replaced by puffs (below); its
-// toggle stays for comparison.
-bool g_rock_haze_enabled = false;
 // Rock-field puffs (SPIKE): soft lit billboards placed by the field density,
 // drawn in the MSAA pass after every opaque writer.
 bool g_rock_puffs_enabled = true;
@@ -910,7 +907,6 @@ void reset_frame_state() {
     // rock fields are rebuilt band by band -- independent of g_far_enabled
     // above, which still gates everything when off.
     g_rock_mid_enabled = false;
-    g_rock_haze_enabled = false;
     g_rock_specks_enabled = true;
     g_rock_puffs_enabled = true;
     g_puff_field.clear();
@@ -1207,8 +1203,7 @@ void step_minor_field(float viewport_h) {
 
 // Near band: stream around its own player's contact box (else the main
 // camera eye), then step its contacts against that box. System = render
-// origin + render position + the far frame's anchor, as the far haze
-// computes it. A player that vanished is not swept from its last pose
+// origin + render position + the far frame's anchor. A player that vanished is not swept from its last pose
 // (NearField::step resets the sweep on an unset player).
 void step_near_field() {
     const auto player = player_box_of(g_near_player);
@@ -1657,34 +1652,11 @@ void frame() {
                                 dauntless_dash_vfx::intensity(),
                                 g_dust_profile);
         }
-        // Belt haze: the unresolved remainder of every active disc source.
-        // Samples target.depth_texture() on unit 0 while drawing into
-        // `target` -- the same arrangement as nebula_volumetric's composite
-        // and system_nebula below: depth test AND depth writes off for the
-        // draw, so the depth attachment is only read, never written.
-        // render_haze restores depth test/writes on, cull on, blend off.
-        // Gated on g_rock_haze_enabled too (rock-real Part 1 strip-back,
-        // 2026-10-03): off skips the draw for every camera.
-        if (g_far_enabled && g_far_pass && g_rock_haze_enabled &&
-            !g_far_field.active_sources().empty()) {
-            DAUNTLESS_FRAME_SCOPE("rock.haze");
-            g_far_pass->reset_counts();
-            const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
-            const glm::dvec3 origin_sys =
-                g_world.render_origin() + glm::dvec3(cam.eye) + g_far_field.anchor();
-            g_far_pass->render_haze(
-                g_far_field.active_sources(), origin_sys, cam, *g_pipeline, g_lighting,
-                ambient_scale, target.depth_texture(), inv_vp, g_far_field.dials());
-            g_far_draw_calls += g_far_pass->last_draw_calls();
-        }
         // Rock fade (2026-10-03): the near and mid impostors fading in from
         // (or out to) nothing, TRANSLUCENT, built for THIS camera by
-        // render_space_geometry. Here in phase 2, straight AFTER the belt
-        // haze, into the resolved single-sample target against its depth
-        // (depth test on, no depth writes, premultiplied): the haze marches
-        // to the scene depth, which a fading rock never writes, so drawn
-        // before it the haze fogged the rock and popped when it turned solid.
-        // Every phase-1 writer (hull, rocks, impostors, breach, specks,
+        // render_space_geometry. Here in phase 2, into the resolved
+        // single-sample target against its depth (depth test on, no depth
+        // writes, premultiplied). Every phase-1 writer (hull, rocks, impostors, breach, specks,
         // shields) is underneath; dust (drawn above) is attenuated where a
         // fading rock lies behind it (accepted). No MSAA (accepted). Far to
         // near: the mid band (never nearer than mid in_lo_gu) before the near
@@ -2688,10 +2660,9 @@ rf::Population population_of(const py::dict& d) {
 }
 
 // Keys exactly DiscSource.to_native() (engine side, far-tier plan Task 9).
-// Optional (tile-field haze, 2026-10-02): shape ("disc" | "sphere"),
-// procedural, view_space, sphere_radius_gu, sphere_edge_frac, gain_scale;
-// brightness (haze colour only, ruling R16) -- a missing key keeps the
-// DiscSource default (a disc source as before, brightness 1).
+// Optional (tile fields, 2026-10-02): shape ("disc" | "sphere"),
+// procedural, view_space, sphere_radius_gu, sphere_edge_frac -- a missing
+// key keeps the DiscSource default (a disc source as before).
 rf::DiscSource disc_source_of(const py::dict& d) {
     rf::DiscSource s;
     s.id = d["id"].cast<std::uint32_t>();
@@ -2724,10 +2695,7 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     if (d.contains("view_space")) s.view_space = d["view_space"].cast<bool>();
     if (d.contains("sphere_radius_gu")) s.sphere_radius_gu = d["sphere_radius_gu"].cast<float>();
     if (d.contains("sphere_edge_frac")) s.sphere_edge_frac = d["sphere_edge_frac"].cast<float>();
-    if (d.contains("gain_scale")) s.gain_scale = d["gain_scale"].cast<float>();
-    if (d.contains("brightness")) s.brightness = d["brightness"].cast<float>();
-    // Haze noise (every shape) + per-source steps (2026-10-02): omitted = off /
-    // the global haze_steps.
+    // Field noise (every shape, 2026-10-02): omitted = off.
     if (d.contains("noise_scale_gu")) s.noise_scale_gu = d["noise_scale_gu"].cast<float>();
     // Contrast lives in [0, 1] (rock-fields R1): noise_m_bound = 1 + contrast.
     if (d.contains("noise_contrast"))
@@ -2736,7 +2704,6 @@ rf::DiscSource disc_source_of(const py::dict& d) {
     if (d.contains("noise_sharpness")) s.noise_sharpness = std::max(0.0f, d["noise_sharpness"].cast<float>());
     if (d.contains("shape_warp")) s.shape_warp = std::clamp(d["shape_warp"].cast<float>(), 0.0f, 0.9f);
     if (d.contains("shape_warp_scale_gu")) s.shape_warp_scale_gu = d["shape_warp_scale_gu"].cast<float>();
-    if (d.contains("steps")) s.steps = d["steps"].cast<int>();
     return s;
 }
 
@@ -2744,22 +2711,12 @@ rf::DiscSource disc_source_of(const py::dict& d) {
 rf::FarDials far_dials_of(const py::dict& d) {
     rf::FarDials o;
     auto f = [&](const char* k, float& v) { if (d.contains(k)) v = d[k].cast<float>(); };
-    auto i = [&](const char* k, int& v) { if (d.contains(k)) v = d[k].cast<int>(); };
     f("imp_hi", o.tiers.imp_hi);
     f("imp_lo", o.tiers.imp_lo);
     f("speck_hi", o.tiers.speck_hi);
     f("speck_lo", o.tiers.speck_lo);
     f("p_min", o.tiers.p_min);
-    f("slab_sigmas", o.slab_sigmas);
     f("speck_gain", o.speck_gain);
-    f("haze_gain", o.haze_gain);
-    i("haze_steps", o.haze_steps);
-    // Rock-fields Task 12. haze_start_* arrive DERIVED from haze_handoff_*
-    // (engine/rocks/far_tier.py native_dials); the divisor floors at 1.
-    f("haze_start_gu", o.haze_start_gu);
-    f("haze_start_ramp_gu", o.haze_start_ramp_gu);
-    i("haze_res_divisor", o.haze_res_divisor);
-    o.haze_res_divisor = std::max(o.haze_res_divisor, 1);
     return o;
 }
 
@@ -4675,11 +4632,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "independent of far_set_enabled. Off: no build, no draws (solid "
           "or fading), mid_sprites/mid_fading/mid_tiles read back 0.");
     m.def("rock_mid_enabled", []() { return g_rock_mid_enabled; });
-    m.def("rock_haze_set_enabled",
-          [](bool on) { g_rock_haze_enabled = on; }, py::arg("enabled"),
-          "Turn the rock-fields belt haze draw on or off, independent of "
-          "far_set_enabled. Off: rock.haze never runs for any camera.");
-    m.def("rock_haze_enabled", []() { return g_rock_haze_enabled; });
     m.def("rock_specks_set_enabled",
           [](bool on) { g_rock_specks_enabled = on; if (!on) g_speck_band.clear(); },
           py::arg("enabled"), "SPIKE: the rock-field speck band on or off.");
@@ -4770,16 +4722,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("scale"),
           "> 0: the player's near-band contact box half extents x this "
           "(shields up); <= 0: the bare hull box.");
-    m.def("far_debug_haze_dials",
-          []() {
-              const auto& o = g_far_field.dials();
-              py::dict d;
-              d["haze_start_gu"] = py_float(o.haze_start_gu);
-              d["haze_start_ramp_gu"] = py_float(o.haze_start_ramp_gu);
-              d["haze_res_divisor"] = o.haze_res_divisor;
-              return d;
-          },
-          "TEST-ONLY: the native haze start / ramp / resolution divisor (rock-fields Task 12).");
     m.def("far_debug_mid_centres",
           []() {
               py::list out;
@@ -4813,12 +4755,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["centre"] = py::make_tuple(src.centre.x, src.centre.y, src.centre.z);
                   d["sphere_radius_gu"] = src.sphere_radius_gu;
                   d["sphere_edge_frac"] = src.sphere_edge_frac;
-                  d["gain_scale"] = src.gain_scale;
-                  d["brightness"] = src.brightness;
                   d["noise_scale_gu"] = src.noise_scale_gu;
                   d["noise_contrast"] = src.noise_contrast;
                   d["noise_octaves"] = src.noise_octaves;
-                  d["steps"] = src.steps;
                   out.append(d);
               }
               return out;

@@ -22,7 +22,7 @@ double int_pow(double a, double b, double e) {
 
 TierWeights tier_weights(float p, Kind k, const TierDials& d) {
     TierWeights w;
-    if (!(p >= d.p_min)) return w;                         // haze / culled (NaN-safe)
+    if (!(p >= d.p_min)) return w;                         // culled (NaN-safe)
     const float f = band(p, d.imp_lo, d.imp_hi);     // 1 = mesh
     const float g = band(p, d.speck_lo, d.speck_hi); // 1 = not speck
     switch (k) {
@@ -45,14 +45,6 @@ float power_law_cdf(const PowerLaw& pl, float r) {
     if (r >= pl.r_max) return 1.0f;
     const double e = -static_cast<double>(pl.q);
     return static_cast<float>(int_pow(pl.r_min, r, e) / int_pow(pl.r_min, pl.r_max, e));
-}
-
-float cross_section_below(const PowerLaw& pl, float r_cut) {
-    const double hi = std::min(r_cut, pl.r_max);
-    if (hi <= pl.r_min) return 0.0f;
-    const double e = -static_cast<double>(pl.q);
-    const double norm = int_pow(pl.r_min, pl.r_max, e);
-    return static_cast<float>(3.14159265358979 * int_pow(pl.r_min, hi, e + 2.0) / norm);
 }
 
 }  // namespace renderer::far
