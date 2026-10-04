@@ -77,6 +77,24 @@ void send_mouse_move(int x, int y);
 void send_mouse_click(int x, int y, int button, bool is_down);
 void send_mouse_wheel(int x, int y, int delta_y);
 
+// Keyboard forwarding for typed CEF fields: one already-paired
+// renderer::CefKeyIntent (renderer::TextEventTranslator's output). `type`
+// is a renderer::CefKeyType value, cast to cef_key_event_type_t (the two
+// enums share the same four values 0-3 by construction). windows_vk is
+// CEF's windows_key_code (all platforms, ignored by CEF on macOS);
+// native_code is the platform key code (GLFW scancode, or 0 for an
+// unpaired char). `character`/`unmodified_character` are the same value --
+// the translator never produces a CHAR intent whose unmodified differs
+// from its character. glfw_mods are GLFW_MOD_* bits. No-op with no browser.
+void send_key_intent(int type, int windows_vk, int native_code,
+                      char16_t character, char16_t unmodified_character,
+                      int glfw_mods);
+
+// Run an edit command on the focused frame: 1 SelectAll, 2 Copy, 3 Paste,
+// 4 Cut, 5 Undo, 6 Redo (renderer::EditCommand's values). No-op with no
+// browser or an unknown value.
+void edit_command(int cmd);
+
 // JS→C++ event channel. The handler is invoked with the event name
 // when JS navigates to dauntless://event/<name>. The intercept lives
 // in CefRequestHandler::OnBeforeBrowse — fire-and-forget, no return
@@ -89,6 +107,15 @@ void set_event_handler(std::function<void(const std::string&)> handler);
 // to invalidate per-tick snapshot caches so the first post-load tick
 // re-emits state. Pass an empty function to disable.
 void set_load_end_handler(std::function<void()> handler);
+
+// Called (main thread) whenever the page that might hold a focused text field
+// goes away: main-frame load start (reload / navigation) and renderer-process
+// termination. The host wires it to Window::set_key_capture(false). Stored in
+// the lifecycle, not on the client, so it can be installed before
+// initialize().
+void set_capture_reset_handler(std::function<void()> handler);
+// Invoke the handler if one is installed. Used by DauntlessCefClient.
+void fire_capture_reset();
 
 // Called before window/GL teardown. Releases the browser and CEF.
 void shutdown();

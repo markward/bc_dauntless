@@ -1,235 +1,390 @@
-/* Quick Battle Setup — on-theme tabbed modal SHELL.
+/* Quick Battle Setup — a port of the approved design spike
+   (.claude/worktrees/qb-setup-spike/spikes/quickbattle-setup/spike.css),
+   spec 2026-10-02-quickbattle-setup-screen-design §3.1.
 
-   Reuses the configuration panel's cp-* chrome (cp-modal, cp-header,
-   cp-content, cp-tabstrip, cp-tab, cp-body, cp-footer, cp-done-button,
-   cp-focused) — see css/configuration_panel.css. Only the wrapper backdrop
-   and a tiny placeholder rule live here; everything else is shared cp-*.
+   Port rules: the spike's class prefix is renamed qbs-, every rule is scoped
+   under #quick-battle-setup, and every size, spacing value and colour is the
+   spike's. Dropped as spike-only: the body starfield, the missing-assets
+   banner and the MOCK tag. The chrome (header, box, toggles, buttons, footer)
+   is the game's own cp-* family from configuration_panel.css; this file adds
+   only the pieces cp-* lacks. Allegiance colours are BC's radar palette
+   (docs/ui_designs/SDK_UI_API.md §1.4). */
 
-   Hidden by default; setQuickBattleSetup({open:true}) flips display to 'flex'.
-   Mirrors #configuration-panel's backdrop exactly. NOT dev-only — visible in
-   normal play (boot lands here). */
+#quick-battle-setup {
+    --qbs-friendly: rgb(80, 112, 230);
+    --qbs-enemy: rgb(216, 43, 43);
+    --qbs-neutral: rgb(255, 255, 175);
+    --qbs-gold: rgb(255, 210, 90);
+    --qbs-purple: rgb(147, 103, 255);
+    --qbs-purple-bg: rgb(37, 26, 64);
+    --qbs-steel: rgb(80, 88, 100);
+    --qbs-steel-dim: rgb(60, 64, 72);
+    --qbs-panel: rgb(14, 15, 20);
+    --qbs-text: #cdd3dc;
+    --qbs-dim: #8a93a3;
+    --qbs-section: rgba(216, 132, 80, 0.9);
+}
 
+/* The panel root: hidden until Python's first payload opens it
+   (setQuickBattleSetup flips display to flex). No dim -- it sits over the
+   live bridge -- centred, and above the HUD (which paints at 40-50). */
 #quick-battle-setup {
     display: none;
     position: fixed;
     inset: 0;
     align-items: center;
     justify-content: center;
-    /* No dim: the setup panel sits over the live bridge without greying it. */
     background: transparent;
     z-index: 50;
     font-family: "Antonio", sans-serif;
 }
 
-/* Large work surface — fill 80% of the viewport. */
-#quick-battle-setup .cp-modal {
-    width: 80vw;
-    height: 80vh;
-}
+#quick-battle-setup .qbs-modal { width: 80vw; height: 80vh; min-width: 900px; min-height: 560px; }
 
-/* The body hosts two full-height columns that scroll internally (so the Add
-   buttons can pin to the bottom of their column); the body itself never
-   scrolls. */
-#quick-battle-setup .cp-body {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-/* Start is disabled until a ship is added to a roster — dim it and block the
-   pointer so it visibly can't be clicked. */
-#quick-battle-setup .cp-done-button:disabled {
-    opacity: 0.4;
-    cursor: default;
-    pointer-events: none;
-}
-
-/* Empty/placeholder hints. */
-.qbs-placeholder,
-.qbs-empty {
-    color: #8a93a3;
-    font-style: italic;
-    padding: 8px 4px;
-}
-
-/* Two columns: ship catalog (left) | rosters (right). Each column is a flex
-   column that fills the body height; its .qbs-scroll holds the scrolling
-   content, leaving the catalog's .qbs-actions pinned at the bottom. */
-.qbs-lists {
-    display: flex;
-    gap: 0;
-    flex: 1 1 auto;
-    min-height: 0;
-    align-items: stretch;
-}
-
-.qbs-col {
-    flex: 1 1 50%;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-
-.qbs-scroll {
-    flex: 1 1 auto;
+/* ── Groups column (left) — the cp-tabstrip surface, widened ─────────────── */
+#quick-battle-setup .qbs-groups {
+    flex: 0 0 300px;
+    border-right: 1px solid var(--qbs-steel-dim);
+    background: var(--qbs-panel);
     overflow-y: auto;
-    min-height: 0;
+    padding: 12px 10px;
 }
 
-.qbs-catalog { border-right: 1px solid rgba(255, 255, 255, 0.12); }
-
-.qbs-rosters .qbs-scroll { padding-left: 16px; }
-
-/* Ship-category accordion — same values as the crew-menu accordion
-   (css/crew_menus.css) so categories/ships read identically to the crew tree. */
-.qbs-row {
-    display: flex;
-    align-items: center;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: 13px;
-    letter-spacing: 0.04em;
-    color: var(--bc-label-text, rgb(235, 225, 255));
-}
-
-.qbs-row:hover { background: rgba(216, 94, 86, 0.18); }
-
-/* Depths 1-2 are the stock shape (category, then its ships) and keep their
-   original values so unmodded menus are pixel-identical. Depths 3-4 exist for
-   a Foundation SubMenu / SubSubMenu, which sits at depth 2 as a SIBLING of the
-   group's own ships — a submenu row carries a caret where a ship row carries
-   the 22px --leaf label margin, so the two align. */
-.qbs-row[data-depth="1"] { padding-left: 12px; }
-.qbs-row[data-depth="2"] { padding-left: 44px; }
-.qbs-row[data-depth="3"] { padding-left: 76px; }
-.qbs-row[data-depth="4"] { padding-left: 108px; }
-
-.qbs-row.disabled { opacity: 0.4; cursor: default; }
-.qbs-row.disabled:hover { background: transparent; }
-
-/* Selected ship: a stronger salmon tint than hover (+ a gold inset accent so
-   it reads as a persistent selection, not a transient hover). Mirrors the
-   target-list "chosen" alpha-bump pattern; gold matches the cp-focused accent.
-   box-shadow (not border) avoids any layout shift. */
-.qbs-row--selected,
-.qbs-row--selected:hover {
-    background: rgba(216, 94, 86, 0.38);
-    box-shadow: inset 3px 0 0 rgb(255, 210, 90);
-    color: #fff;
-}
-
-/* Caret — neutral white, glyph swapped in JS (no CSS rotate; matches
-   .crew-menu__caret / .target-list__caret). */
-.qbs-caret {
-    flex: 0 0 auto;
-    width: 14px;
-    text-align: center;
-    margin-right: 8px;
-    line-height: 1;
-    color: white;
-}
-
-.qbs-row--leaf .qbs-label { margin-left: 22px; }
-
-.qbs-label { flex: 1 1 auto; }
-
-/* Add As Friendly / Add As Enemy — pinned to the bottom of the catalog column
-   (flex:0 0 auto after the flex:1 .qbs-scroll). */
-.qbs-actions {
-    flex: 0 0 auto;
-    display: flex;
-    gap: 8px;
-    padding: 10px 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.qbs-actions .cp-done-button { flex: 1 1 auto; }
-
-/* Roster lists — affiliation tints from target_list.css tokens. */
-.qbs-roster-title {
+#quick-battle-setup .qbs-section {
     font-size: 12px;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: rgba(216, 132, 80, 0.9);
-    margin: 4px 0 4px 2px;
+    color: var(--qbs-section);
+    margin: 0 0 8px 2px;
 }
 
-.qbs-roster { margin-bottom: 10px; }
-
-/* Current player ship (singular) — a single highlighted line above the
-   rosters, set via the "Set As Player Ship" action on the catalog. */
-.qbs-player-ship {
+#quick-battle-setup .qbs-group {
+    border: 1px solid var(--qbs-steel-dim);
+    border-left: 3px solid var(--qbs-friendly);
+    background: rgb(20, 22, 28);
     margin-bottom: 10px;
-    padding: 5px 10px;
-    font-size: 13px;
-    color: #fff;
-    background: rgba(216, 94, 86, 0.30);
-    box-shadow: inset 3px 0 0 rgb(255, 210, 90);
-}
-
-.qbs-roster-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 4px 10px;
-    font-size: 13px;
-    border-left: 3px solid transparent;
-    color: var(--bc-label-text, rgb(235, 225, 255));
-}
-
-.qbs-roster-row--friendly { border-left-color: var(--bc-target-friendly, rgb(80, 170, 255)); }
-.qbs-roster-row--enemy    { border-left-color: var(--bc-target-name, rgb(220, 60, 60)); }
-
-.qbs-roster-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* Stacked-quantity controls: [−] N [+]  [×]. Compact glyph buttons that reuse
-   the salmon hover/selection palette of the catalog rows. */
-.qbs-qty {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.qbs-qty-count {
-    min-width: 18px;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-    color: #fff;
-}
-
-.qbs-qty-btn {
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    line-height: 18px;
-    font-size: 14px;
-    text-align: center;
-    color: var(--bc-label-text, rgb(235, 225, 255));
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 3px;
     cursor: pointer;
 }
+#quick-battle-setup .qbs-group--enemy { border-left-color: var(--qbs-enemy); }
+#quick-battle-setup .qbs-group--neutral { border-left-color: var(--qbs-neutral); }
+#quick-battle-setup .qbs-group:hover { background: rgb(26, 28, 36); }
+#quick-battle-setup .qbs-group--target {
+    border-right: 5px solid var(--qbs-gold);
+    cursor: default;
+}
 
-.qbs-qty-btn:hover {
-    background: rgba(216, 94, 86, 0.38);
+#quick-battle-setup .qbs-group__head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 6px 2px 8px;
+}
+#quick-battle-setup .qbs-group__name { flex: 1 1 auto; font-size: 15px; color: #fff; letter-spacing: 0.04em; }
+#quick-battle-setup .qbs-group__target-tag {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--qbs-gold);
+}
+#quick-battle-setup .qbs-group__summary { font-size: 12px; color: var(--qbs-dim); padding: 0 8px 6px; }
+
+#quick-battle-setup .qbs-group__controls { padding: 2px 8px 8px; }
+#quick-battle-setup .qbs-ctl-label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--qbs-dim);
+    margin: 6px 0 3px;
+}
+#quick-battle-setup .qbs-group .cp-segmented { flex-wrap: wrap; }
+#quick-battle-setup .qbs-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+#quick-battle-setup .qbs-group .cp-toggle { height: 22px; padding: 0 8px; font-size: 12px; }
+
+#quick-battle-setup .qbs-rename {
+    flex: 1 1 auto;
+    font: inherit;
+    font-size: 15px;
     color: #fff;
+    background: rgb(40, 44, 52);
+    border: 1px solid var(--qbs-gold);
+    padding: 1px 4px;
+    min-width: 0;
 }
 
-/* Remove-all sits slightly apart and reads red on hover. */
-.qbs-qty-remove {
+/* Ship rows — target-list row vocabulary: 3px stripe in the group colour. */
+#quick-battle-setup .qbs-rows { padding: 0 4px 6px; }
+#quick-battle-setup .qbs-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px 3px 6px;
+    font-size: 13px;
+    color: var(--bc-label-text, rgb(235, 225, 255));
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+#quick-battle-setup .qbs-row img, #quick-battle-setup .qbs-row .qbs-noart { width: 26px; height: 26px; flex: 0 0 26px; }
+#quick-battle-setup .qbs-row__text { flex: 1 1 auto; min-width: 0; line-height: 1.15; }
+#quick-battle-setup .qbs-row__title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quick-battle-setup .qbs-row__sub { font-size: 11px; color: var(--qbs-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quick-battle-setup .qbs-row__sub--chosen { color: var(--qbs-gold); }
+#quick-battle-setup .qbs-you {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: #111;
+    background: var(--qbs-gold);
+    padding: 0 4px;
+}
+#quick-battle-setup .qbs-oot {
     margin-left: 6px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--qbs-section);
+    border: 1px solid var(--qbs-section);
+    padding: 0 3px;
+    vertical-align: 1px;
+}
+#quick-battle-setup .qbs-empty { color: var(--qbs-dim); font-style: italic; padding: 4px 8px 8px; font-size: 12px; }
+
+/* ⋮ kebab — icon-button sized like .cp-iconbtn. */
+#quick-battle-setup .qbs-kebab {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font: inherit;
+    font-size: 16px;
+    line-height: 20px;
+    color: var(--qbs-text);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+#quick-battle-setup .qbs-kebab:hover { background: rgb(60, 64, 72); border-color: var(--qbs-steel); }
+
+#quick-battle-setup .qbs-newgroup { width: 100%; }
+
+/* ── Catalog (right) ─────────────────────────────────────────────────────── */
+#quick-battle-setup .qbs-catalog { display: flex; flex-direction: column; }
+/* Filter strips (eras, species): one line each; overflow scrolls sideways
+   (the wheel is mapped to horizontal in app.js). */
+#quick-battle-setup .qbs-strip {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--qbs-steel) transparent;
+}
+#quick-battle-setup .qbs-strip::-webkit-scrollbar { height: 4px; }
+#quick-battle-setup .qbs-strip::-webkit-scrollbar-thumb { background: var(--qbs-steel); }
+#quick-battle-setup .qbs-strip .cp-toggle { flex: 0 0 auto; white-space: nowrap; width: auto; padding: 0 12px; height: 26px; }
+#quick-battle-setup .qbs-strip .qbs-era-years { color: var(--qbs-dim); font-size: 10px; margin-left: 6px; }
+#quick-battle-setup .qbs-strip .cp-toggle--on .qbs-era-years { color: rgba(255, 255, 255, 0.75); }
+#quick-battle-setup .qbs-species-strip { margin-bottom: 12px; }
+
+/* Species pill: emblem (or flagship icon) + name + visible-entry count. */
+#quick-battle-setup .qbs-species-pill { display: inline-flex; align-items: center; padding: 0 12px 0 4px !important; }
+#quick-battle-setup .qbs-species-pill__art { width: 20px; height: 20px; margin-right: 6px; display: inline-flex; }
+#quick-battle-setup .qbs-species-pill__art svg, #quick-battle-setup .qbs-species-pill__art img, #quick-battle-setup .qbs-species-pill__art .qbs-noart { width: 20px; height: 20px; }
+#quick-battle-setup .qbs-species-pill--empty { opacity: 0.45; }
+
+#quick-battle-setup .qbs-catalog-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding-right: 4px; }
+
+/* Ship cards, sectioned by role */
+#quick-battle-setup .qbs-role { margin-bottom: 14px; }
+#quick-battle-setup .qbs-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+}
+#quick-battle-setup .qbs-card {
+    border: 1px solid var(--qbs-steel-dim);
+    background: var(--qbs-panel);
+    padding: 8px 6px 6px;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+}
+#quick-battle-setup .qbs-card:hover { background: rgba(173, 132, 255, 0.10); }
+#quick-battle-setup .qbs-card--selected { background: var(--qbs-purple-bg); border-color: var(--qbs-purple); }
+#quick-battle-setup .qbs-card img, #quick-battle-setup .qbs-card .qbs-noart { width: 72px; height: 72px; display: block; margin: 0 auto 4px; }
+#quick-battle-setup .qbs-card__name { font-size: 13px; color: #fff; }
+#quick-battle-setup .qbs-card__years { font-size: 11px; color: var(--qbs-dim); }
+
+/* No-artwork fallback */
+#quick-battle-setup .qbs-noart {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--qbs-steel);
+    color: var(--qbs-dim);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-sizing: border-box;
 }
 
-.qbs-qty-remove:hover {
-    background: rgba(220, 60, 60, 0.45);
+/* Ship detail: a sheet that slides up from the MODAL's bottom edge when a card
+   is selected, and back down when closed. The modal clips it while hidden.
+   Persistent element; only its content and the --open class change, so the
+   slide animates. */
+/* z-index 0 makes the modal the sheet's stacking context, so the sheet's
+   z-index stays local (tests/ui/test_ui_layering.py); the menu, overlay and
+   toast are later siblings above it either way. */
+#quick-battle-setup .qbs-modal { position: relative; overflow: hidden; z-index: 0; }
+#quick-battle-setup .qbs-sheet {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    max-height: 55%;
+    overflow-y: auto;
+    transform: translateY(calc(100% + 12px));
+    /* Hidden once the slide-down ends, so no border sliver or shadow lingers
+       at the modal's bottom edge. */
+    visibility: hidden;
+    transition: transform 180ms ease-out, visibility 0s linear 180ms;
+    background: rgb(20, 22, 28);
+    border-top: 3px solid var(--qbs-purple);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
+    color: var(--qbs-text);
 }
+#quick-battle-setup .qbs-sheet--open { transform: translateY(0); visibility: visible; transition: transform 180ms ease-out, visibility 0s; }
+#quick-battle-setup .qbs-sheet__close { position: absolute; top: 6px; right: 6px; font-family: Arial, sans-serif; font-size: 20px; width: 28px; height: 28px; line-height: 24px; }
+#quick-battle-setup .qbs-detail {
+    display: flex;
+    gap: 16px;
+    padding: 14px 40px 14px 14px;
+    text-align: left;
+}
+#quick-battle-setup .qbs-detail__art img, #quick-battle-setup .qbs-detail__art .qbs-noart { width: 128px; height: 128px; }
+#quick-battle-setup .qbs-detail__body { flex: 1 1 auto; min-width: 0; }
+#quick-battle-setup .qbs-detail__title { font-size: 20px; color: #fff; letter-spacing: 0.04em; }
+#quick-battle-setup .qbs-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 8px; }
+#quick-battle-setup .qbs-chip {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border: 1px solid var(--qbs-steel);
+    color: var(--qbs-text);
+    background: rgb(40, 44, 52);
+}
+#quick-battle-setup .qbs-chip--muted { color: var(--qbs-dim); }
+#quick-battle-setup .qbs-bio { font-size: 13px; line-height: 1.5; color: rgb(190, 180, 200); margin: 0 0 8px; }
+#quick-battle-setup .qbs-stats { display: grid; grid-template-columns: auto 1fr; gap: 1px 12px; font-size: 12px; margin: 0 0 8px; }
+#quick-battle-setup .qbs-stats dt { color: var(--qbs-section); text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+#quick-battle-setup .qbs-stats dd { margin: 0; color: var(--qbs-text); }
+#quick-battle-setup .qbs-tactics { font-size: 12px; line-height: 1.45; color: var(--qbs-dim); margin: 0 0 10px; }
+#quick-battle-setup .qbs-tactics b { color: var(--qbs-section); font-weight: normal; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+#quick-battle-setup .qbs-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 4px; }
+#quick-battle-setup .qbs-add { border-color: var(--qbs-gold) !important; }
+
+#quick-battle-setup .qbs-nothing { color: var(--qbs-dim); font-style: italic; padding: 20px 4px; }
+
+/* Footer */
+#quick-battle-setup .qbs-footer { gap: 8px; align-items: center; }
+#quick-battle-setup .qbs-summary { margin-right: auto; font-size: 13px; color: var(--qbs-dim); }
+
+/* ── Page-drawn popover menu (OSR CEF draws no native popups) ────────────── */
+#quick-battle-setup .qbs-menu {
+    position: fixed;
+    z-index: 70;
+    min-width: 200px;
+    background: rgb(28, 31, 38);
+    border: 1px solid var(--qbs-steel);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+    font-family: "Antonio", sans-serif;
+    padding: 4px 0;
+}
+#quick-battle-setup .qbs-menu__head {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--qbs-section);
+    padding: 6px 12px 3px;
+}
+#quick-battle-setup .qbs-menu__item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px 5px 10px;
+    font-size: 13px;
+    color: var(--qbs-text);
+    cursor: pointer;
+    border-left: 3px solid transparent;
+}
+#quick-battle-setup .qbs-menu__item:hover { background: rgba(173, 132, 255, 0.15); color: #fff; }
+#quick-battle-setup .qbs-menu__item--on { border-left-color: var(--qbs-purple); color: #fff; }
+#quick-battle-setup .qbs-menu__item--danger:hover { background: rgba(216, 43, 43, 0.35); }
+#quick-battle-setup .qbs-menu__check { width: 12px; color: var(--qbs-gold); }
+#quick-battle-setup .qbs-menu__dot { width: 8px; height: 8px; flex: 0 0 8px; }
+#quick-battle-setup .qbs-menu__sep { border-top: 1px solid var(--qbs-steel-dim); margin: 4px 0; }
+
+/* ── Confirmation overlay (setup.confirm) ────────────────────────────────── */
+#quick-battle-setup .qbs-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    font-family: "Antonio", sans-serif;
+}
+#quick-battle-setup .qbs-overlay[hidden], #quick-battle-setup .qbs-menu[hidden] { display: none; }
+#quick-battle-setup .qbs-overlay .cp-modal { width: 560px; height: auto; max-height: 80vh; }
+
+/* ── Presets (footer, bottom left) ───────────────────────────────────────── */
+#quick-battle-setup .qbs-presets { display: flex; gap: 4px; margin-right: 12px; }
+#quick-battle-setup .qbs-preset-pick { min-width: 180px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+#quick-battle-setup .qbs-preset-add { width: 34px; padding: 0 !important; font-family: Arial, sans-serif; font-size: 20px; line-height: 1; }
+#quick-battle-setup .qbs-menu__empty { padding: 6px 12px 8px; font-size: 12px; color: var(--qbs-dim); font-style: italic; max-width: 240px; }
+#quick-battle-setup .qbs-menu__form { padding: 6px 12px 10px; width: 260px; }
+#quick-battle-setup .qbs-menu__form .qbs-form-actions { margin-top: 10px; }
+#quick-battle-setup .qbs-preset-name {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 14px;
+    color: #fff;
+    background: rgb(40, 44, 52);
+    border: 1px solid var(--qbs-steel);
+    padding: 4px 6px;
+}
+#quick-battle-setup .qbs-preset-name:focus { outline: 1px solid var(--qbs-gold); outline-offset: -1px; }
+#quick-battle-setup .qbs-confirm { width: 420px !important; }
+#quick-battle-setup .qbs-confirm__actions { gap: 8px; }
+#quick-battle-setup .qbs-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 40px;
+    transform: translateX(-50%);
+    z-index: 90;
+    background: rgb(28, 31, 38);
+    border: 1px solid var(--qbs-steel);
+    border-left: 3px solid var(--qbs-gold);
+    color: var(--qbs-text);
+    padding: 6px 14px;
+    font-family: "Antonio", sans-serif;
+    font-size: 13px;
+}
+#quick-battle-setup .qbs-toast[hidden] { display: none; }
+
+/* ── Durability scale bars (detail sheet) ────────────────────────────────── */
+#quick-battle-setup .qbs-durability { max-width: 520px; margin: 4px 0 10px; }
+#quick-battle-setup .qbs-bar-row { display: grid; grid-template-columns: 64px 1fr 120px; align-items: center; gap: 8px; height: 17px; }
+#quick-battle-setup .qbs-bar-label { font-size: 12px; color: var(--qbs-dim); }
+#quick-battle-setup .qbs-bar { position: relative; height: 7px; background: rgb(40, 44, 52); border: 1px solid var(--qbs-steel-dim); }
+#quick-battle-setup .qbs-bar__fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--qbs-purple); }
+#quick-battle-setup .qbs-bar--off .qbs-bar__fill { background: var(--qbs-gold); }
+#quick-battle-setup .qbs-bar-value { font-size: 12px; color: var(--qbs-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#quick-battle-setup .qbs-bar-off { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--qbs-gold); }
+
+/* ── Load preset menu: × per row (spec §3.1 addition; not in the spike) ──── */
+#quick-battle-setup .qbs-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#quick-battle-setup .qbs-menu__del { width: 18px; height: 18px; font-family: Arial, sans-serif; font-size: 14px; line-height: 16px; margin-left: 8px; }
+#quick-battle-setup .qbs-menu__del:hover { background: rgba(216, 43, 43, 0.35); }

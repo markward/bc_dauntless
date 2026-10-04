@@ -6030,6 +6030,66 @@ def _cache_ship_hull_pieces(ship, handle, r_, iid=None) -> None:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
 
+def _runtime_ship_model_source(ship, *, verbose: bool = False):
+    """(model_path, nif_path, model_scale) for `ship`, or None when it has no
+    NIF. A rock-catalogue redirect's model_path differs from nif_path."""
+    _override = _rock_model_override(ship)
+    if _override is not None:
+        model_path, model_scale = _override
+        return model_path, model_path, model_scale
+    nif_path = _ship_nif_path(ship, verbose=verbose)
+    if nif_path is None:
+        return None
+    model_path, model_scale = _ship_model_source(ship, nif_path)
+    return model_path, nif_path, model_scale
+
+
+def _load_runtime_ship_model(ship, r_, *, verbose: bool = False):
+    """Load `ship`'s model exactly as `realize_set_objects` does:
+    `(handle, loaded_path, nif_path, model_scale)`, or None when it has no NIF
+    or the load raises. `loaded_path`/`model_scale` are what actually loaded
+    (a catalogue rock that fails falls back to its stock NIF at scale 1).
+
+    ONE helper for realize_set_objects AND the Quick Battle radius seeder
+    (`_MissionLoader._seed_quickbattle_ship_radius`), so the seeder's call is
+    argument-identical to realisation's -- the native load_model dedupes on
+    (path, replacements, decals, scale), and the realisation load then returns
+    the seeder's handle instead of building the model a second time."""
+    src = _runtime_ship_model_source(ship, verbose=verbose)
+    if src is None:
+        return None
+    model_path, nif_path, model_scale = src
+    load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
+    tex_search = _ship_texture_search(nif_path, ship)
+    reps = _ship_texture_replacements(ship)
+    decals = _ship_decals(ship, nif_path, reps)
+    try:
+        try:
+            handle = r_.load_model(model_path, tex_search, reps,
+                                    decals=decals or None, **load_kwargs)
+        except Exception as e:
+            if model_path == nif_path:
+                raise
+            # A catalogue rock that fails to load falls back to stock.
+            _warn_rock_fallback(model_path, nif_path, e)
+            handle = r_.load_model(nif_path, tex_search, reps,
+                                    decals=decals or None)
+            model_path, model_scale = nif_path, 1.0
+    except Exception as e:
+        if verbose:
+            print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
+                  f"raised: {type(e).__name__}: {e}", flush=True)
+        return None
+    return handle, model_path, nif_path, model_scale
+
+
+def _extent_key(model_path: str, nif_path: str, model_scale: float) -> str:
+    """HostController.nif_to_extent key: the NIF for a stock load, the picked
+    model + its scale for a rock-catalogue redirect (two stock NIFs of
+    different sizes can pick the SAME rock)."""
+    return nif_path if model_scale == 1.0 else f"{model_path}#s={model_scale:.6g}"
+
+
 def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                         include_planets: bool = True,
                         ships: Optional[Iterable] = None) -> None:
@@ -6070,36 +6130,10 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
-        _override = _rock_model_override(ship)
-        if _override is not None:
-            model_path, model_scale = _override
-            nif_path = model_path
-        else:
-            nif_path = _ship_nif_path(ship, verbose=verbose)
-            if nif_path is None:
-                continue
-            model_path, model_scale = _ship_model_source(ship, nif_path)
-        load_kwargs = {"scale": model_scale} if model_scale != 1.0 else {}
-        tex_search = _ship_texture_search(nif_path, ship)
-        reps = _ship_texture_replacements(ship)
-        decals = _ship_decals(ship, nif_path, reps)
-        try:
-            try:
-                handle = r_.load_model(model_path, tex_search, reps,
-                                        decals=decals or None, **load_kwargs)
-            except Exception as e:
-                if model_path == nif_path:
-                    raise
-                # A catalogue rock that fails to load falls back to stock.
-                _warn_rock_fallback(model_path, nif_path, e)
-                model_path, model_scale = nif_path, 1.0
-                handle = r_.load_model(nif_path, tex_search, reps,
-                                        decals=decals or None)
-        except Exception as e:
-            if verbose:
-                print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
-                      f"raised: {type(e).__name__}: {e}", flush=True)
+        loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
+        if loaded is None:
             continue
+        handle, model_path, _nif_path, model_scale = loaded
         center, half_extents = r_.model_aabb(handle)
         _seed_ship_radius(ship, _model_extent_from_aabb(center, half_extents),
                           _model_sphere_radius_from_aabb(center, half_extents))
@@ -6325,18 +6359,20 @@ def _reconcile_runtime_instances(session, renderer, *,
 
     # QuickBattle creates/recreates the player ship LATE (StartSimulation2 ->
     # RecreatePlayer destroy+recreate), so the rendered player often isn't the
-    # one load_quickbattle saw. Apply BC's Federation "default NCC" registry to
-    # the current player just before the ADD loop realizes it, so its hull reads
-    # a name (Galaxy -> Dauntless) rather than the stock Enterprise. Guarded to a
-    # QB session + a not-yet-realized player with no registry already queued, so
-    # it runs once per player and never overrides a scripted swap.
+    # one load_quickbattle saw. Apply the setup screen's named player ship
+    # (registry + display name; BC's Federation "default NCC" when there is no
+    # plan) just before the ADD loop realizes it, so its hull reads the chosen
+    # name. NOT guarded on has_replacements: BC's MissionLib.CreatePlayerShip
+    # itself queues the class's default NCC on every Federation player it
+    # (re)creates, so that guard skipped every Fed player and the named ship
+    # never applied. apply_player_identity is idempotent (last write wins per
+    # texture slot), and runs only while the player is not yet realized.
     if session.mission_name == "QuickBattle":
-        from engine.appc import registry_texture
+        from engine.quickbattle import spawn as _qb_spawn
         _g = Game_GetCurrentGame()
         _p = _g.GetPlayer() if _g is not None else None
-        if (_p is not None and _p not in session.ship_instances
-                and not registry_texture.has_replacements(_p)):
-            registry_texture.apply_class_default(_p)
+        if _p is not None and _p not in session.ship_instances:
+            _qb_spawn.apply_player_identity(_p)
 
     # SCOPE (system-frames Plan 3 Task 3, Ruling 4). Entering a star system
     # loads all its regions (system_loader); a ship in Ona2 is as much in the
@@ -6749,38 +6785,6 @@ def _sync_quick_battle_panel(controller) -> None:
         panel.close()
 
 
-def _sync_quickbattle_player_revert(controller) -> None:
-    """Revert to the player's original ship when combat ends.
-
-    The player's ship outside the simulation is captured ONCE (the boot
-    QuickBattle default, before they pick anything). Every "Set As Player Ship"
-    pick — in config OR mid-combat — is temporary: when bInSimulation goes 1->0
-    (End Combat, panel or XO menu), restore g_sPlayerType to the original and
-    RecreatePlayer so the player is never left stuck on the ship they flew in
-    the sim. Fully guarded — a no-op when QuickBattle isn't active or the ship
-    is already the original."""
-    try:
-        import importlib
-        qb = importlib.import_module("QuickBattle.QuickBattle")
-        in_sim = bool(getattr(qb, "bInSimulation", 0))
-    except Exception:
-        return
-    # Capture the original (pre-pick) ship once, on the first tick.
-    if not hasattr(controller, "_qb_original_player_type"):
-        controller._qb_original_player_type = getattr(qb, "g_sPlayerType", None)
-    last = getattr(controller, "_qb_last_in_sim", False)
-    controller._qb_last_in_sim = in_sim
-    if last and not in_sim:                 # End Combat
-        orig = controller._qb_original_player_type
-        if orig is not None and getattr(qb, "g_sPlayerType", None) != orig:
-            qb.g_sPlayerType = orig
-            try:
-                qb.RecreatePlayer()
-            except Exception as _e:
-                import engine.dev_mode as _dev
-                _dev.log_swallowed("quickbattle player-ship revert", _e)
-
-
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -7048,11 +7052,23 @@ class _MissionLoader:
         if App.g_kConfigMapping.LoadConfigFile("Options.cfg") == 0:
             App.g_kConfigMapping.SaveConfigFile("Options.cfg")
 
-        # Ship->bridge matrix: wrap RecreatePlayer before the cascade's
-        # Initialize runs it, so even the boot player gets the pinned bridge.
+        # Ship->bridge matrix + home-ship player-type rule: wrap
+        # RecreatePlayer before the cascade's Initialize runs it, so even
+        # the boot player gets the pinned bridge. The player-type resolver
+        # is registered FIRST so install_quickbattle_hook sees it is live
+        # even when this controller has no bridge matrix at all (pins=None)
+        # -- that is what makes the home-ship rule apply with no pins
+        # installed (bridge_selection.install_quickbattle_hook docstring).
         import QuickBattle.QuickBattle as _QB
         from engine import bridge_selection as _bs
+        from engine.quickbattle import spawn as _qb_spawn
+        _bs.set_player_type_resolver(_qb_spawn.player_type_for_recreate)
         _bs.install_quickbattle_hook(_QB, self._c.bridge_pins)
+        # Our GenerateShips (the setup screen's BattlePlan), plus the radius
+        # seeder it runs before placement: nothing is realised at
+        # GenerateShips time, so every ship would otherwise report radius 0.
+        _qb_spawn.install_generate_ships_hook(_QB)
+        _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)
 
         import QuickBattle.QuickBattleGame as _QBGame
         _QBGame.Initialize(game)
@@ -7164,11 +7180,53 @@ class _MissionLoader:
 
         # Spawn into the player's current system, not the booted-into one.
         self._sync_quickbattle_spawn_set()
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.sync_sdk(QB, _qb_spawn.current_plan())
 
         evt = App.TGEvent_Create()
         evt.SetEventType(QB.ET_START_SIMULATION)
         evt.SetDestination(QB.g_pXO)
         App.g_kEventManager.AddEvent(evt)
+
+    def _seed_quickbattle_ship_radius(self, ship) -> None:
+        """Give a just-created Quick Battle ship the GetRadius() realisation
+        would seed, BEFORE realisation (spawn.set_radius_fn; GenerateShips
+        places by radius). Battle ships and the recreated player are realised
+        later by the runtime reconcile (realize_set_objects), so:
+
+          * the class's extent already cached on the controller (any NIF
+            _realize_session or an earlier seed loaded) -> no load at all;
+          * otherwise load through _load_runtime_ship_model, the helper
+            realize_set_objects itself uses, so both calls carry identical
+            arguments. What actually prevents a second load is the NATIVE
+            load_model dedupe (native/src/host/host_bindings.cc ~660,
+            load_model_impl), keyed by nif path + texture replacements +
+            decals + scale: realisation's call returns this same handle
+            without calling AssetCache::load again. The extent is cached for
+            the next ship of the class.
+
+        Rocks take the sphere radius, via _seed_ship_radius's own rule."""
+        if ship is None or ship.GetRadius() > 0.0:
+            return
+        src = _runtime_ship_model_source(ship, verbose=self._verbose)
+        if src is None:
+            return
+        key = _extent_key(*src)
+        if key not in self._c.nif_to_extent:
+            loaded = _load_runtime_ship_model(ship, self._c.renderer,
+                                              verbose=self._verbose)
+            if loaded is None:
+                return
+            handle, model_path, nif_path, model_scale = loaded
+            key = _extent_key(model_path, nif_path, model_scale)
+            center, half_extents = self._c.renderer.model_aabb(handle)
+            self._c.nif_to_extent.setdefault(
+                key, _model_extent_from_aabb(center, half_extents))
+            self._c.nif_to_sphere_radius.setdefault(
+                key, _model_sphere_radius_from_aabb(center, half_extents))
+        extent = self._c.nif_to_extent[key]
+        _seed_ship_radius(ship, extent,
+                          self._c.nif_to_sphere_radius.get(key, extent))
 
     def _realize_session(self, sess: MissionSession) -> MissionSession:
         import App
@@ -7198,8 +7256,7 @@ class _MissionLoader:
             reps = _ship_texture_replacements(ship)
             decals = _ship_decals(ship, nif_path, reps)
             load_key = _ship_load_key(model_path, reps, decals, model_scale)
-            extent_key = (nif_path if model_scale == 1.0
-                         else f"{model_path}#s={model_scale:.6g}")
+            extent_key = _extent_key(model_path, nif_path, model_scale)
             handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
@@ -9119,6 +9176,111 @@ def record_course_selection(module) -> None:
         dev_mode.log_swallowed("announce course set", _e)
 
 
+def _run_preboot_panel(panel, view_w=1280, view_h=720):
+    """Pump one full-screen CEF panel before the game loop exists, until
+    `panel.outcome` is set or the window closes.
+
+    Shared by the first-run picker and the Mods screen. Everything the first
+    -run loop learned the hard way applies (tests/host/test_first_run_pump_loop.py
+    pins it, and the comments below carry the reasons): the scene pass is
+    off, the page-load handler re-invalidates the panel so its first payload
+    lands, and mouse moves/edges are forwarded because run()'s own
+    forwarding only exists inside the game loop. Added here: every key and
+    typed character is drained from the window each frame and forwarded to
+    CEF in one batch (cef_send_text_events -- native pairs them into real
+    KEYDOWN+CHAR/KEYUP), and Escape is also offered to the panel
+    (handle_key_esc).
+    """
+    try:
+        import _dauntless_host as _h
+    except ImportError:
+        _h = None
+
+    _set_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
+    if _set_handler is not None:
+        prefix = panel.name + "/"
+
+        def _dispatch(event: str) -> None:
+            if event.startswith(prefix):
+                panel.dispatch_event(event[len(prefix):])
+        _set_handler(_dispatch)
+
+    # CreateBrowser is asynchronous (~340ms measured -- see cef_lifecycle.cc's
+    # execute_javascript()), and every cef_execute_javascript push is dropped
+    # silently until the page's own <script> tags have run. Without this
+    # handler the screen's only payload goes out on frame 1, is dropped, and
+    # nothing ever pushes again -- render_payload() diffs against its own
+    # cache and the snapshot never changes on its own. The load-end handler
+    # is what actually gets a payload onto the page: it fires once the
+    # browser reports the document loaded, and panel.invalidate() there
+    # drops the cache so the very next render_payload() re-emits into a page
+    # that can now receive it.
+    _set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
+    if _set_load_end is not None:
+        _set_load_end(panel.invalidate)
+
+    _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
+    _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+    _drain_text = getattr(_h, "drain_text_events", None) if _h else None
+    _send_text_events = getattr(_h, "cef_send_text_events", None) if _h else None
+    _esc_key = getattr(getattr(_h, "keys", None), "KEY_ESCAPE", 256) if _h else 256
+
+    r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+    try:
+        # Also invalidated by the load-end handler above once the page
+        # actually loads (which may land before or after this first
+        # iteration runs); kept here too since a panel handed in may not be
+        # fresh (its diff cache already holding a payload).
+        panel.invalidate()
+        while not r.should_close() and panel.outcome is None:
+            script = panel.render_payload()
+            if script is not None and _h is not None:
+                _h.cef_execute_javascript(script)
+            # Forward mouse move + left-click edges so the panel's buttons
+            # are actually clickable: run()'s main loop only ever forwards
+            # mouse to CEF from INSIDE the game loop (pause menu, crew
+            # menus, ...), and this loop runs before that one exists.
+            # Mirrors run()'s pause-menu forwarding block
+            # (_forward_mouse_to_cef + the mouse_button_pressed/released
+            # edge pair), the only other place this project turns host
+            # cursor state into CEF input.
+            if _cef_send_mouse_move is not None:
+                _mx, _my = _forward_mouse_to_cef(_h, _cef_send_mouse_move, view_w, view_h)
+                if _cef_send_mouse_click is not None:
+                    if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        _cef_send_mouse_click(_mx, _my, 0, True)
+                    if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        _cef_send_mouse_click(_mx, _my, 0, False)
+            if _drain_text is not None and _send_text_events is not None:
+                events = _drain_text()
+                if events:
+                    _send_text_events(events)
+                for ev in events:
+                    # (kind, code, scancode, action, mods): an Escape press.
+                    if ev[0] == 1 and ev[1] == _esc_key and ev[3] == 1 \
+                            and hasattr(panel, "handle_key_esc"):
+                        panel.handle_key_esc()
+            r.frame()
+    finally:
+        # Unguarded deliberately, unlike the JS call below: this only ever
+        # assigns two native globals (g_hologram_only_mode, g_hologram_bg),
+        # with no browser/CEF state to be torn down or absent -- there is no
+        # failure mode for it to swallow.
+        r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
+        if _set_load_end is not None:
+            # Replace rather than leave bound to this finished panel: run()
+            # registers its OWN load-end handler later (once the game loop
+            # exists), which would overwrite this anyway, but a bare no-op
+            # here means there is no window -- however unlikely -- where a
+            # reload could call back into a panel whose screen has ended.
+            _set_load_end(lambda: None)
+        if _h is not None:
+            try:
+                _h.cef_execute_javascript(panel.teardown_script)
+            except Exception as _e:
+                dev_mode.log_swallowed("pre-boot panel teardown", _e)
+
+
 def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     """Draw the "Select Bridge Commander Install" screen until the player
     continues or quits. Returns the best Resolution reached.
@@ -9148,89 +9310,13 @@ def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     matches the view CEF was actually initialised with, the same way
     run()'s own pause-menu mouse-forwarding uses its copies of those two
     locals.
+
+    The loop itself is `_run_preboot_panel`.
     """
     from engine.ui.first_run_panel import FirstRunPanel
 
-    try:
-        import _dauntless_host as _h
-    except ImportError:
-        _h = None  # bindings module not built; skip input handling.
-
     panel = FirstRunPanel(resolution, resolver=resolver)
-
-    _set_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
-    if _set_handler is not None:
-        def _dispatch(event: str) -> None:
-            prefix = panel.name + "/"
-            if event.startswith(prefix):
-                panel.dispatch_event(event[len(prefix):])
-        _set_handler(_dispatch)
-
-    # CreateBrowser is asynchronous (~340ms measured -- see cef_lifecycle.cc's
-    # execute_javascript()), and every cef_execute_javascript push is dropped
-    # silently until the page's own <script> tags have run. Without this
-    # handler the screen's only payload goes out on frame 1, is dropped, and
-    # nothing ever pushes again -- render_payload() diffs against its own
-    # cache and the snapshot never changes on its own. The load-end handler
-    # is what actually gets a payload onto the page: it fires once the
-    # browser reports the document loaded, and panel.invalidate() there
-    # drops the cache so the very next render_payload() re-emits into a page
-    # that can now receive it.
-    _set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
-    if _set_load_end is not None:
-        _set_load_end(panel.invalidate)
-
-    _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
-    _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
-
-    r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
-    try:
-        # Also invalidated by the load-end handler above once the page
-        # actually loads (which may land before or after this first
-        # iteration runs); kept here too since a fresh panel's _last_pushed
-        # already starts None, and FirstRunPanel is a public class other
-        # callers may hand a non-fresh one.
-        panel.invalidate()
-        while not r.should_close() and panel.outcome is None:
-            script = panel.render_payload()
-            if script is not None and _h is not None:
-                _h.cef_execute_javascript(script)
-            # Forward mouse move + left-click edges so Browse/Continue/Quit
-            # are actually clickable. Neither the spec nor the plan mention
-            # this: run()'s main loop only ever forwards mouse to CEF from
-            # INSIDE the game loop (pause menu, crew menus, ...), and this
-            # screen runs its own loop before that one exists. Mirrors
-            # run()'s pause-menu forwarding block (_forward_mouse_to_cef +
-            # the mouse_button_pressed/released edge pair), the only other
-            # place this project turns host cursor state into CEF input.
-            if _cef_send_mouse_move is not None:
-                _mx, _my = _forward_mouse_to_cef(
-                    _h, _cef_send_mouse_move, view_w, view_h)
-                if _cef_send_mouse_click is not None:
-                    if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
-                        _cef_send_mouse_click(_mx, _my, 0, True)
-                    if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
-                        _cef_send_mouse_click(_mx, _my, 0, False)
-            r.frame()
-    finally:
-        # Unguarded deliberately, unlike the JS call below: this only ever
-        # assigns two native globals (g_hologram_only_mode, g_hologram_bg),
-        # with no browser/CEF state to be torn down or absent -- there is no
-        # failure mode for it to swallow.
-        r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
-        if _set_load_end is not None:
-            # Replace rather than leave bound to this finished panel: run()
-            # registers its OWN load-end handler later (once the game loop
-            # exists), which would overwrite this anyway, but a bare no-op
-            # here means there is no window -- however unlikely -- where a
-            # reload could call back into a panel whose screen has ended.
-            _set_load_end(lambda: None)
-        if _h is not None:
-            try:
-                _h.cef_execute_javascript("setFirstRun(null);")
-            except Exception as _e:
-                dev_mode.log_swallowed("first-run screen teardown", _e)
-
+    _run_preboot_panel(panel, view_w, view_h)
     return panel.resolution
 
 
@@ -9486,6 +9572,20 @@ def run(mission_name: Optional[str] = None,
     _cat_text = _ship_catalog.describe()
     if _cat_text:
         print(_cat_text, file=sys.stderr)
+
+    # Pre-boot Mods screen (sub-project 3): gate mode when mod ships lack
+    # metadata, home mode under --mods. Needs a live CEF page; without one
+    # the boot line above has already named the incomplete ships and boot
+    # proceeds. Quit here must tear CEF and the window down explicitly, like
+    # the unresolved-paths exit above -- the try/finally that covers every
+    # other exit has not started yet.
+    if _cef_ready:
+        from engine.ui import mods_screen as _mods_screen
+        if _mods_screen.run_mods_screen(
+                lambda p: _run_preboot_panel(p, _CEF_VIEW_W, _CEF_VIEW_H)) == "quit":
+            r.cef_shutdown()
+            r.shutdown()
+            return 0
 
     _start_hull_prebake()
 
@@ -9927,6 +10027,16 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry()
         ai_inspector = _register_ai_inspector(registry)
 
+        # Keyboard capture for CEF text fields: while one has focus the native
+        # KeyGate makes every key read up. Registered as panel "kbd" so the
+        # page's kbd/focus / kbd/blur events route here. Spec:
+        # docs/superpowers/specs/2026-10-02-cef-text-input-keyboard-capture-design.md
+        from engine.ui.text_capture import TextCaptureController
+        text_capture = TextCaptureController(registry)
+        registry.register(text_capture)
+        # Trigger 4: a mission swap abandons any edit in progress.
+        controller.pre_swap_hooks.append(text_capture.release)
+
         # Configuration panel — production-visible pause-menu modal.
         # Settings persist across launches via engine.settings_store: the
         # store loads, apply_all pushes every STORED value through the same
@@ -9983,22 +10093,34 @@ def run(mission_name: Optional[str] = None,
             bridge_pins=controller.bridge_pins,
         )
 
-        # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).
-        # Production-visible (NOT dev-only). Boot opens this instead of
-        # auto-starting the battle (see the boot_quickbattle block above).
-        # The panel's Start drives the proven SP1 start path (start_quickbattle
-        # posts ET_START_SIMULATION to g_pXO -> StartSimulation -> ...), using
-        # whatever roster the player built via the panel's Add buttons.
+        # Quick Battle setup screen — a Python-owned state machine over the
+        # scenario (engine/quickbattle/scenario.py) and the ship catalog.
+        # Production-visible (NOT dev-only); opened from the XO config button
+        # via g_bDialogUp (_sync_quick_battle_panel). Constructing it registers
+        # it as the spawn provider (spawn.set_provider), so Start, and XO
+        # Start/Restart, which bypass the screen, all spawn the current
+        # scenario through our GenerateShips hook. The panel's Start drives the
+        # proven start path (start_quickbattle posts ET_START_SIMULATION to
+        # g_pXO -> StartSimulation -> ...).
         from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
         quick_battle_setup_panel = QuickBattleSetupPanel(
             on_start=lambda: controller.loader.start_quickbattle())
         controller.quick_battle_setup_panel = quick_battle_setup_panel
 
         from engine.ui.pause_menu import default_pause_menu
+        def _quit_and_manage_mods():
+            # host_main re-executes us with --mods after a normal shutdown.
+            try:
+                host_io.request_relaunch(["--mods"])
+            except Exception as _e:
+                dev_mode.log_swallowed("request_relaunch", _e)
+            pause.request_quit()
+
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_configuration=configuration_panel.open,
             on_resume=pause.close,
+            on_quit_manage_mods=_quit_and_manage_mods,
         )
         # `registry` was created earlier (before the pause menu) so dev panels
         # could register their menu rows ahead of the snapshot; wire its legacy
@@ -10315,6 +10437,11 @@ def run(mission_name: Optional[str] = None,
             _mx, _my = 0, 0
             _cursor_in_panel = False
             if _h is not None:
+                # Text-field keyboard capture: release triggers 2-3, and the
+                # typed-text queue to CEF (drained every frame, forwarded only
+                # while a field holds the keyboard). First, so every key read
+                # below sees this frame's gate.
+                text_capture.tick()
                 # ESC priority: mission picker first (dev only), then the
                 # developer options panel (dev only), then the ship property
                 # viewer (dev only), then the configuration panel, then the
@@ -10669,6 +10796,11 @@ def run(mission_name: Optional[str] = None,
                             _cef_send_mouse_click(_mx, _my, 0, True)
                         if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
+                    elif host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        # Trigger 5: a click on the game world never reaches
+                        # CEF, so the page cannot blur on its own -- release
+                        # the keyboard (abandoning the edit) here.
+                        text_capture.release()
 
             frame_profiler.mark("sim")
             # --- Sim advance: fixed-timestep accumulator ---
@@ -10757,9 +10889,6 @@ def run(mission_name: Optional[str] = None,
             # panel: opens it when the player clicks the XO menu's config
             # button, closes it on Close/Start. Boot leaves it closed.
             _sync_quick_battle_panel(controller)
-            # Capture the player ship at combat start; revert to it on End
-            # Combat (so a mid-combat ship swap is temporary).
-            _sync_quickbattle_player_revert(controller)
             # The camera follows session.player; _sync_player_identity (just
             # below, and again in the scene reconcile after the sim) calls
             # this when the player's identity changed
@@ -12039,6 +12168,15 @@ def run(mission_name: Optional[str] = None,
         for _mod in (bridge_cutscene, bridge_character_anim,
                      bridge_character_walk, bridge_camera_watch):
             _mod.clear_controller()
+        # The Quick Battle setup panel registers itself as the spawn
+        # provider, and the loader registers a radius seeder, for "the
+        # lifetime of run()" -- same leaked-hook risk as the warp hooks
+        # above: left installed, they close over a dead panel/controller.
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.set_provider(None)
+        _qb_spawn.set_radius_fn(None)
+        from engine import bridge_selection as _bs
+        _bs.set_player_type_resolver(None)
         shutdown_audio()
         r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()

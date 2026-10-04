@@ -17,10 +17,12 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/transform_store.h"
+#include "platform/relaunch.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <renderer/window.h>
+#include <renderer/text_input.h>
 #include <renderer/pipeline.h>
 #include <renderer/bone_palette.h>
 #include <renderer/animation_update.h>
@@ -596,6 +598,14 @@ const assets::Model* resolve_model(scenegraph::ModelHandle h) {
 // rising edges. Only keys that have been queried via key_pressed appear
 // here; lookup misses (key never queried) are treated as "previously up".
 std::unordered_map<int, bool> g_prev_key_state;
+// One translator for the whole process: the OSR browser is a singleton
+// (ui_cef's own statics), so there is exactly one key-capture stream to
+// pair. cef_send_text_events feeds every drained frame's events through it
+// in order; cef_reset_text_translator forgets held keys at a capture
+// boundary (engine/ui/text_capture.py calls it on both focus gain and
+// release) so a key still down across that boundary can never emit an
+// orphaned KEYUP into a page that never saw its KEYDOWN.
+renderer::TextEventTranslator g_text_translator;
 // Mouse-button rising/falling-edge detection. Mirrors g_prev_key_state.
 std::unordered_map<int, bool> g_prev_mouse_state;
 std::unique_ptr<renderer::Pipeline> g_pipeline;
@@ -2177,7 +2187,9 @@ void frame() {
     // rising edge. (Snapshotting AFTER poll would make now==prev for
     // every Python call, silently breaking key_pressed.)
     for (auto& [k, prev] : g_prev_key_state) {
-        prev = (glfwGetKey(g_window->native_handle(), k) == GLFW_PRESS);
+        // Through the gate, like every other key read: a raw glfwGetKey here
+        // would make prev disagree with key_pressed's gated `now`.
+        prev = g_window->key_state(k);
     }
     for (auto& [b, prev] : g_prev_mouse_state) {
         prev = (glfwGetMouseButton(g_window->native_handle(), b) == GLFW_PRESS);
@@ -6879,6 +6891,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("key"),
           "Returns true while the key is held.");
 
+    m.def("set_key_capture",
+          [](bool on) {
+              if (!g_window) {
+                  throw std::runtime_error("set_key_capture: init must be called first");
+              }
+              g_window->set_key_capture(on);
+          },
+          py::arg("on"),
+          "Hand the keyboard to a focused CEF text field (True) or give it back "
+          "(False). While captured every key_state/key_pressed reads False.");
+
+    m.def("key_capture_active",
+          []() { return g_window ? g_window->key_capture_active() : false; },
+          "True while a CEF text field holds the keyboard. Native resets it on "
+          "page load and on renderer crash.");
+
     m.def("consume_scroll_y",
           []() {
               if (!g_window) {
@@ -6888,6 +6916,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Return the accumulated mouse-wheel Y delta since the last call "
           "and reset the accumulator. Positive = scroll up.");
+
+    m.def("drain_text_events",
+          []() {
+              if (!g_window) {
+                  throw std::runtime_error("drain_text_events: init must be called first");
+              }
+              py::list out;
+              for (const auto& e : g_window->drain_text_events()) {
+                  out.append(py::make_tuple(e.kind, e.code, e.scancode, e.action, e.mods));
+              }
+              return out;
+          },
+          "Typed characters and key events since the last call, oldest first, "
+          "as (kind, code, scancode, action, mods); kind 0 = char (code = "
+          "codepoint), 1 = key (code = GLFW key, every key not just editing "
+          "keys), 2 = edit command.");
+
+    m.def("request_relaunch",
+          [](std::vector<std::string> extra_args) {
+              dauntless::platform::set_relaunch_request(std::move(extra_args));
+          },
+          py::arg("extra_args"),
+          "Ask host_main to re-execute the game after a clean shutdown, with the "
+          "original arguments plus `extra_args` (Quit and Manage Mods). Last call "
+          "wins. Only the dauntless binary honours it; the pytest .so just stores it.");
 
     m.def("consume_mouse_delta",
           []() {
@@ -7056,6 +7109,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           });
 
 #ifdef DAUNTLESS_ENABLE_CEF
+    // A focused CEF text field holds the keyboard (Window::set_key_capture).
+    // If its page reloads or its renderer dies, take the keyboard back
+    // natively -- Python learns of it via key_capture_active().
+    dauntless::ui_cef::set_capture_reset_handler([]() {
+        if (g_window) g_window->set_key_capture(false);
+    });
+
     m.def("cef_initialize",
           [](int view_width, int view_height, const std::string& html_path,
              float device_scale_factor) {
@@ -7138,6 +7198,50 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Forward a mouse-wheel event to the CEF overlay. "
           "delta_y: positive scrolls up.");
 
+    m.def("cef_send_text_events",
+          [](const std::vector<std::tuple<int, int, int, int, int>>& events) {
+              static_assert(static_cast<int>(renderer::EditCommand::Redo) == 6,
+                            "ui_cef::edit_command's numbering");
+              // renderer::build_text_event_steps keeps edit commands (kind
+              // 2) and translated key/char runs (kind 0/1) in the SAME
+              // relative order the events were queued in -- NOT a two-pass
+              // "all edits, then all keys" split, which reordered a frame
+              // holding both (e.g. a typed character immediately followed
+              // by Cmd+Z would undo before the type it was meant to undo).
+              std::vector<renderer::TextEvent> text_events;
+              text_events.reserve(events.size());
+              for (const auto& [kind, code, scancode, action, mods] : events) {
+                  text_events.push_back({kind, code, scancode, action, mods});
+              }
+              for (auto& step : renderer::build_text_event_steps(text_events, g_text_translator)) {
+                  if (step.is_edit_command) {
+                      dauntless::ui_cef::edit_command(static_cast<int>(step.command));
+                      continue;
+                  }
+                  for (const auto& intent : step.intents) {
+                      dauntless::ui_cef::send_key_intent(
+                          static_cast<int>(intent.type), intent.windows_key_code,
+                          intent.native_key_code, intent.character,
+                          intent.unmodified_character, intent.glfw_mods);
+                  }
+              }
+          },
+          py::arg("events"),
+          "Forward one drain_text_events() batch to the CEF overlay, in "
+          "order. Kind 2 (edit command) events run directly on the "
+          "focused frame; every kind 0/1 run between them feeds the "
+          "process's single TextEventTranslator, whose output (real "
+          "KEYDOWN+CHAR / KEYUP pairs) is sent as CEF key events -- "
+          "relative order against the edit commands is preserved. No-op "
+          "with no browser.");
+
+    m.def("cef_reset_text_translator",
+          []() { g_text_translator.reset(); },
+          "Forget every key TextEventTranslator currently believes is "
+          "held. Call at a key-capture boundary (gained or released) so a "
+          "key still down across it cannot emit an orphaned KEYUP into a "
+          "page that never saw its KEYDOWN.");
+
     m.def("cef_set_event_handler",
           [](py::function callback) {
               // pybind11 manages the function's lifetime; ensure the
@@ -7200,6 +7304,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_send_mouse_move",  [](int, int) {});
     m.def("cef_send_mouse_click", [](int, int, int, bool) {});
     m.def("cef_send_mouse_wheel", [](int, int, int) {});
+    m.def("cef_send_text_events",
+          [](const std::vector<std::tuple<int, int, int, int, int>>&) {});
+    m.def("cef_reset_text_translator", []() {});
     m.def("cef_set_event_handler",[](py::function) {});
     m.def("cef_set_load_end_handler", [](py::function) {});
 #endif

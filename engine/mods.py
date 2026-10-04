@@ -31,6 +31,10 @@ ENV_VAR = "DAUNTLESS_MODS_DIR"
 DISABLE_FLAG = "--disable-mods"
 DISABLE_ENV_VAR = "DAUNTLESS_DISABLE_MODS"
 
+# Open the pre-boot Mods screen in home mode (sub-project 3). The pause
+# menu's "Quit and Manage Mods" relaunches with it.
+MODS_SCREEN_FLAG = "--mods"
+
 KNOWN_FRAMEWORKS = frozenset({
     "Foundation", "FoundationTech", "FoundationTriggers", "Registry",
 })
@@ -97,6 +101,13 @@ def mods_disabled_by(argv=None, env=None) -> Optional[str]:
     if env.get(DISABLE_ENV_VAR):
         return DISABLE_ENV_VAR
     return None
+
+
+def mods_screen_requested(argv=None) -> bool:
+    import sys
+    if argv is None:
+        argv = sys.argv[1:]
+    return MODS_SCREEN_FLAG in argv
 
 
 def find_content_root(mod_dir: Path, max_depth: int = 3) -> Optional[Path]:
@@ -634,6 +645,18 @@ def register_game_file(raw_rel, abs_path: Path, mod_name: str) -> None:
     current().files[fold(raw_rel)] = ModFile(
         abs_path=Path(abs_path), mod_name=mod_name,
         target="game",  # paths-guard: kind label
+        rel=fold(raw_rel), raw_rel=raw_rel)
+
+
+def register_sdk_file(raw_rel, abs_path: Path, mod_name: str) -> None:
+    """The SDK-target sibling of register_game_file(): add one just-written
+    script (the Mods screen's zz_Dauntless_*.py) to the configured index, so
+    the Foundation loader and sdk_override() see it without a re-walk.
+    `raw_rel` is relative to the mod's Scripts dir ("Custom/Ships/x.py")."""
+    raw_rel = str(raw_rel).replace("\\", "/").strip("/")
+    current().files[fold(raw_rel)] = ModFile(
+        abs_path=Path(abs_path), mod_name=mod_name,
+        target="sdk",  # paths-guard: kind label
         rel=fold(raw_rel), raw_rel=raw_rel)
 
 

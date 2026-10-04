@@ -2,8 +2,10 @@
 #include <gtest/gtest.h>
 #include <voxel/hull_connectivity.h>
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <vector>
 
 namespace {
 
@@ -131,7 +133,27 @@ TEST(HullConnectivity, MismatchedOriginReturnsEmpty) {
     EXPECT_TRUE(r.detached.empty());
 }
 
+// The budget is a RATIO, not milliseconds: hull_connectivity's time over two
+// fixed "pillar" workloads on the same lattice, timed back to back so all
+// three see the same machine. A wall-clock budget (50 ms, set against an
+// optimised build) read 2.4 ms at -O2, 38 ms at -O0, 54 ms at -O0 under
+// macOS Low Power Mode and up to 61 ms at -O0 under parallel load -- it
+// measured the machine. The ratio held at 1.4-2.0 (-O0) and 5.8-7.2 (-O2)
+// across idle and 10x concurrent load (2026-10-03). -O0 inflates the pillars
+// more than the BFS, hence one budget per build type. K is ~2x the worst
+// observed, so it trips at roughly a 2.4x slowdown (-O0): measured, doing the
+// whole computation 3x fails (ratio 5.0) while an extra hash-set pass over
+// every cell (1.9x, ratio 2.9) passes. It guards against pathological
+// regressions -- a quadratic fill, work multiplied per cell -- not 1.3x ones;
+// no timing test can catch those without flaking.
+// The pillars are frozen here, never engine code: a pillar that changed
+// would move the yardstick.
 TEST(HullConnectivity, GalaxySizedLatticeIsFastEnough) {
+#ifdef NDEBUG
+    constexpr double kMaxRatio = 12.0;
+#else
+    constexpr double kMaxRatio = 4.0;
+#endif
     voxel::DistanceField baked;
     baked.dims = glm::ivec3(101, 137, 37);
     baked.cell = glm::vec3(5.0f);
@@ -143,14 +165,57 @@ TEST(HullConnectivity, GalaxySizedLatticeIsFastEnough) {
     voxel::DistanceField damage = baked;
     damage.dist.assign(baked.dist.size(), static_cast<std::int8_t>(-127));
 
-    const auto t0 = std::chrono::steady_clock::now();
-    const auto r = voxel::hull_connectivity(baked, damage);
-    const auto ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - t0).count();
-    std::cout << "[hull_connectivity] Galaxy-sized lattice: " << ms << " ms, "
-              << r.main_body_cells << " cells\n";
+    const glm::ivec3 d = baked.dims;
+    volatile long sink = 0;   // keeps the optimiser from deleting the pillars
+    // Pillar 1: the flood's access pattern -- each cell and its 6 neighbours.
+    auto stencil = [&] {
+        long s = 0;
+        for (int z = 1; z < d.z - 1; ++z) for (int y = 1; y < d.y - 1; ++y)
+            for (int x = 1; x < d.x - 1; ++x) {
+                s += baked.dist[baked.index(x, y, z)] < 0;
+                s += baked.dist[baked.index(x + 1, y, z)] + baked.dist[baked.index(x - 1, y, z)];
+                s += baked.dist[baked.index(x, y + 1, z)] + baked.dist[baked.index(x, y - 1, z)];
+                s += baked.dist[baked.index(x, y, z + 1)] + baked.dist[baked.index(x, y, z - 1)];
+            }
+        sink = s;
+    };
+    // Pillar 2: the flood's bookkeeping -- every cell index through a
+    // std::vector queue and a visited bitmap.
+    auto churn = [&] {
+        std::vector<std::uint32_t> q;
+        q.reserve(baked.dist.size());
+        std::vector<std::uint8_t> seen(baked.dist.size(), 0);
+        for (std::uint32_t i = 0; i < baked.dist.size(); ++i) q.push_back(i);
+        long s = 0;
+        for (std::size_t h = 0; h < q.size(); ++h) { seen[q[h]] = 1; s += q[h]; }
+        sink = s;
+    };
+    voxel::ConnectivityResult r;
+    auto bfs = [&] { r = voxel::hull_connectivity(baked, damage); };
+    auto time_ms = [](auto&& f) {
+        const auto t0 = std::chrono::steady_clock::now();
+        f();
+        return std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count();
+    };
+
+    time_ms(stencil); time_ms(churn); time_ms(bfs);   // warm-up
+    struct Round { double stencil, churn, bfs, ratio; };
+    std::vector<Round> rounds;
+    for (int i = 0; i < 9; ++i) {
+        Round k{time_ms(stencil), time_ms(churn), time_ms(bfs), 0.0};
+        k.ratio = k.bfs / (k.stencil + k.churn);
+        rounds.push_back(k);
+    }
+    std::sort(rounds.begin(), rounds.end(),
+              [](const Round& a, const Round& b) { return a.ratio < b.ratio; });
+    const Round& med = rounds[rounds.size() / 2];
+    std::cout << "[hull_connectivity] Galaxy-sized lattice: " << med.bfs << " ms vs pillars "
+              << med.stencil << " + " << med.churn << " ms = ratio " << med.ratio
+              << " (budget " << kMaxRatio << "; range " << rounds.front().ratio << "-"
+              << rounds.back().ratio << "), " << r.main_body_cells << " cells\n";
     EXPECT_EQ(r.main_body_cells, 80u * 100u * 27u);
-    EXPECT_LT(ms, 50.0);
+    EXPECT_LT(med.ratio, kMaxRatio);
 }
 
 // ── Local severance check ───────────────────────────────────────────────────

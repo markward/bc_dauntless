@@ -1,6 +1,8 @@
 // native/src/ui_cef/cef_client.cc
 #include "cef_client.h"
 
+#include "cef_lifecycle.h"
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -129,7 +131,12 @@ void DauntlessCefClient::OnLoadStart(CefRefPtr<CefBrowser> browser,
     // Re-arm the gate for a reload (Cmd+R): between here and OnLoadEnd the
     // document is being torn down and re-parsed, so its functions are gone
     // again and pushes must not run.
-    if (frame && frame->IsMain()) page_loaded_ = false;
+    if (frame && frame->IsMain()) {
+        page_loaded_ = false;
+        // The document (and any focused text field) is going away: give the
+        // keyboard back to the game natively, before any Python runs.
+        fire_capture_reset();
+    }
 }
 
 void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
@@ -146,6 +153,14 @@ void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
         page_loaded_ = true;
         if (load_end_handler_) load_end_handler_();
     }
+}
+
+void DauntlessCefClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                                   TerminationStatus /*status*/,
+                                                   int /*error_code*/,
+                                                   const CefString& /*error_string*/) {
+    if (browser_ && !browser->IsSame(browser_)) return;   // DevTools, not us
+    fire_capture_reset();
 }
 
 }  // namespace dauntless::ui_cef

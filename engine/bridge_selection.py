@@ -374,9 +374,31 @@ def load_bridge_pins(path=None) -> BridgePins:
 
 # ── QuickBattle consumer ───────────────────────────────────────────────────
 
+_player_type_resolver = None
+
+
+def set_player_type_resolver(fn) -> None:
+    """Register `fn(qb_module) -> str | None`, consulted by the QuickBattle
+    RecreatePlayer wrap BEFORE it resolves g_sBridgeType, so the one
+    chokepoint that picks the bridge also gets to pick the player ship type
+    first (Mark's home-ship ruling, 2026-10-02 --
+    `engine.quickbattle.spawn.player_type_for_recreate` is the production
+    resolver). A None return -- including when no resolver is registered at
+    all -- leaves `g_sPlayerType` untouched, so BC's own flow is unchanged.
+
+    `fn` is looked up fresh on every RecreatePlayer call, never captured at
+    install time: registering a resolver after `install_quickbattle_hook`
+    already ran still takes effect on the very next call, and a resolver
+    change is never by itself a reason to rewrap. Set to None to unregister
+    (host teardown, mirroring `engine.quickbattle.spawn.set_provider(None)`;
+    also reset between tests alongside it)."""
+    global _player_type_resolver
+    _player_type_resolver = fn
+
+
 def install_quickbattle_hook(qb_module, pins) -> bool:
-    """Wrap QuickBattle.RecreatePlayer so g_sBridgeType is resolved from the
-    matrix at the moment of use.
+    """Wrap QuickBattle.RecreatePlayer so g_sPlayerType and g_sBridgeType are
+    resolved at the moment of use.
 
     RecreatePlayer is the ONE chokepoint every QuickBattle player creation
     funnels through -- Initialize, StartSimulation2, EndSimulation,
@@ -385,15 +407,25 @@ def install_quickbattle_hook(qb_module, pins) -> bool:
     the attribute reaches the two callers the host never sees. Precedent:
     engine/foundation/quickbattle._ensure_build_dialog_reinjects.
 
-    Three cases, keyed off whatever `RecreatePlayer` currently is:
-      - no pins (`pins is None`): this controller has no matrix, so the
-        SDK's own g_sBridgeType default must stand. If RecreatePlayer is
-        currently wrapped (a STALE hook from some earlier controller in this
-        process -- see below), unwrap it back to the true original. Always
-        returns False: nothing of ours is installed afterward.
-      - same pins as the current wrapper: no-op, returns False.
-      - different (or no) existing wrap, real pins: (re)wrap around the true
-        original, returns True.
+    Neither a bridge matrix NOR a player-type resolver (`pins is None and
+    set_player_type_resolver` was never called): this controller has
+    nothing to contribute, so BC's own g_sPlayerType/g_sBridgeType flow must
+    stand untouched. If RecreatePlayer is currently wrapped (a STALE hook
+    from some earlier controller in this process -- see below), unwrap it
+    back to the true original. Always returns False in this case: nothing
+    of ours is installed afterward.
+
+    Otherwise, three cases, keyed off whatever `RecreatePlayer` currently
+    is:
+      - same pins as the current wrapper: no-op, returns False (the
+        resolver, if any, is read live either way -- see above).
+      - different (or no) existing wrap: (re)wrap around the true original,
+        returns True.
+      - `pins is None` but a resolver IS registered: still (re)wraps, so
+        the player-type rule applies even with no bridge matrix -- the
+        wrapped bridge-resolution step is itself a no-op when `_pins is
+        None` (BC's own g_sBridgeType stands, set by RecreatePlayer's own
+        body via LoadBridge.Load).
 
     Rewraps/unwraps rather than no-ops when RecreatePlayer is already
     wrapped for a DIFFERENT pins object (including None): `sys.modules
@@ -415,7 +447,7 @@ def install_quickbattle_hook(qb_module, pins) -> bool:
     if current is None:
         return False
     is_hooked = getattr(current, "_dauntless_bridge_hook", False)
-    if pins is None:
+    if pins is None and _player_type_resolver is None:
         if is_hooked:
             qb_module.RecreatePlayer = current._dauntless_bridge_orig
         return False
@@ -427,7 +459,12 @@ def install_quickbattle_hook(qb_module, pins) -> bool:
         true_orig = current
 
     def _recreate_player_with_matrix_bridge(_orig=true_orig, _qb=qb_module, _pins=pins):
-        _qb.g_sBridgeType = _pins.resolve(getattr(_qb, "g_sPlayerType", None))
+        if _player_type_resolver is not None:
+            new_type = _player_type_resolver(_qb)
+            if new_type is not None:
+                _qb.g_sPlayerType = new_type
+        if _pins is not None:
+            _qb.g_sBridgeType = _pins.resolve(getattr(_qb, "g_sPlayerType", None))
         return _orig()
 
     _recreate_player_with_matrix_bridge._dauntless_bridge_hook = True

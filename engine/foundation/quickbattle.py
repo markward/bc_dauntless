@@ -216,6 +216,11 @@ def _inject_registered_ships(module) -> int:
         ship_def = _definition_for_sid(sid)
         if ship_def is None:
             continue
+        # "Skip for now" on the Mods screen: no button this session
+        # (the table rows stay -- harmless without a button).
+        from engine import ship_catalog
+        if str(getattr(ship_def, "shipFile", "")).lower() in ship_catalog.skipped():
+            continue
         for pane_attr, group_attr, event_attr in (
                 ("g_pShipsPane", "menuGroup", "ET_SELECT_SHIP_TYPE"),
                 ("g_pPlayerPane", "playerMenuGroup", "ET_SELECT_PLAYER_SHIP_TYPE")):

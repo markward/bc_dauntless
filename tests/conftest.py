@@ -886,9 +886,11 @@ def _reset_leakable_engine_globals():
     # Ship catalog memo (engine/ship_catalog/catalog.py): keyed on the mod
     # index, but a test that mutates a ShipDef in place would otherwise leak
     # a stale snapshot into the next test that happens to share the index.
+    # reset_session() also invalidates, and clears "Skip for now" state so
+    # it cannot leak between tests either.
     try:
         from engine import ship_catalog as _ship_catalog
-        _ship_catalog.invalidate()
+        _ship_catalog.reset_session()
     except Exception:
         pass
     # Swapped-module split: fixtures that re-import an SDK module
@@ -946,6 +948,26 @@ def _reset_leakable_engine_globals():
     try:
         from engine.ui import ship_property_viewer as _spv
         _spv.reset_model_parts()
+    except Exception:
+        pass
+    # Quick Battle spawn provider: engine.quickbattle.spawn._provider is a
+    # process-global callable a test installs via set_provider(); without
+    # this a test that forgets its own teardown (or fails before reaching
+    # it) would leave a stale BattlePlan provider wired into GenerateShips
+    # for every later test that boots QuickBattle.
+    try:
+        from engine.quickbattle import spawn as _qb_spawn
+        _qb_spawn.set_provider(None)
+        _qb_spawn.set_radius_fn(None)
+    except Exception:
+        pass
+    # Same leak hazard, the home-ship RecreatePlayer resolver: a process
+    # global a test wires via bridge_selection.set_player_type_resolver(),
+    # which would otherwise make a later pure-unit bridge-hook test see a
+    # resolver it never registered itself.
+    try:
+        from engine import bridge_selection as _bsel
+        _bsel.set_player_type_resolver(None)
     except Exception:
         pass
     # (The SPV part-preview lock needs no reset of its own: the live lock is

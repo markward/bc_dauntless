@@ -331,6 +331,10 @@ def test_the_screen_suppresses_the_3d_scene_while_it_runs(monkeypatch):
     """No asset may load while the game root is unset, so the scene pass is
     off for the screen's whole lifetime and back on before boot continues.
 
+    This behaviour lives in the shared pump loop, `_run_preboot_panel`,
+    since `_run_first_run_screen` is now a thin FirstRunPanel construction
+    that delegates to it (Task 12's extraction).
+
     Comments stripped first (see _code_only): every inspect.getsource
     ordering assertion in this file must run through it, on the file's own
     policy -- a comment mentioning either call spelling would otherwise
@@ -338,7 +342,7 @@ def test_the_screen_suppresses_the_3d_scene_while_it_runs(monkeypatch):
     """
     import inspect
     from engine import host_loop
-    source = _code_only(inspect.getsource(host_loop._run_first_run_screen))
+    source = _code_only(inspect.getsource(host_loop._run_preboot_panel))
     on_at = source.index("set_hologram_only_mode(True")
     off_at = source.index("set_hologram_only_mode(False")
     assert on_at < off_at, "the scene pass must be re-enabled after the screen"
@@ -348,6 +352,10 @@ def test_the_screen_pushes_its_first_payload_from_the_load_end_handler():
     """A push before the page's scripts have run is silently dropped in this
     project, which has caused real bugs. The screen's initial state must go
     out from the document-load handler, not at cef_initialize time.
+
+    This behaviour lives in the shared pump loop, `_run_preboot_panel`,
+    since `_run_first_run_screen` is now a thin FirstRunPanel construction
+    that delegates to it (Task 12's extraction).
 
     Anchored on the real REGISTRATION spelling (``_set_load_end(panel.
     invalidate)``), not just the bare call ``panel.invalidate()`` -- the
@@ -364,7 +372,7 @@ def test_the_screen_pushes_its_first_payload_from_the_load_end_handler():
     """
     import inspect
     from engine import host_loop
-    source = _code_only(inspect.getsource(host_loop._run_first_run_screen))
+    source = _code_only(inspect.getsource(host_loop._run_preboot_panel))
     assert "_set_load_end(panel.invalidate)" in source, (
         "the load-end handler must be registered to call panel.invalidate() "
         "-- without it, the screen's first payload is pushed before the "

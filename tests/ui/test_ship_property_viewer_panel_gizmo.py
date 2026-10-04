@@ -78,6 +78,7 @@ class _FakeHost:
         self._down = False
         self._scroll = 0.0
         self._fb = (800, 600)
+        self._capture = False
 
     def cursor_pos(self):
         return self._cursor
@@ -92,6 +93,9 @@ class _FakeHost:
         s = self._scroll
         self._scroll = 0.0
         return s
+
+    def key_capture_active(self):
+        return self._capture
 
 
 def _panel_with_light():
@@ -224,3 +228,110 @@ def test_popover_position_follows_pending_drag():
 
     data = _payload_data(p.render_payload())
     assert data["selected"]["properties"]["position"] == [2.0, 1.0, 0.0]
+
+
+# ---------------------------------------------------------------------------
+# F1: a viewport press while a CEF text field holds key capture must start
+# nothing -- no gizmo grab, no orbit, no pin pick on release -- so the
+# click that blurs/commits a typed Move/Rotate/Scale value cannot also
+# re-grab the gizmo and stomp the just-committed value on the next drag
+# frame.
+# ---------------------------------------------------------------------------
+def _gizmo_grab_setup():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
+    p.open()
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 20.0, 0.0, 0.0)
+    p._descriptors = [{
+        "name": "Center Impulse", "kind": "subsystem",
+        "properties": {"position": (0.0, 1.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 1.0, 0.0), "parent_index": None,
+        "icon_id": 1,
+    }]
+    p.selected_index = 0
+    p.dispatch_event("set_tool:transform")
+
+    g = p.transform_gizmo()
+    origin = g["origin"]
+    ax = g["axes"][0]
+    length = g["length"]
+    vp = (800, 600)
+
+    def _px(frac):
+        pt = (origin[0] + ax[0] * length * frac,
+              origin[1] + ax[1] * length * frac,
+              origin[2] + ax[2] * length * frac)
+        sx, sy, _z, vis = project(pt, p.camera, vp)
+        assert vis
+        return (sx, sy)
+
+    return p, _px(0.5)
+
+
+def test_press_under_key_capture_does_not_grab_gizmo_or_pick_on_release():
+    p, grab_px = _gizmo_grab_setup()
+    h = _FakeHost()
+    h._capture = True
+
+    # Press edge on the gizmo handle while captured -> no grab.
+    h._cursor = grab_px
+    h._down = True
+    p.handle_input(h)
+    assert p._axis_drag is None
+
+    # Release edge -> no pin pick, position unmoved.
+    h._down = False
+    p.handle_input(h)
+    assert p._axis_drag is None
+    assert p._effective_pos(0) == pytest.approx((0.0, 1.0, 0.0))
+
+
+def test_press_after_key_capture_ends_grabs_normally():
+    p, grab_px = _gizmo_grab_setup()
+    h = _FakeHost()
+    h._capture = True
+    h._cursor = grab_px
+    h._down = True
+    p.handle_input(h)
+    h._down = False
+    p.handle_input(h)
+    assert p._axis_drag is None
+
+    # Capture has ended; the next press on the handle grabs normally.
+    h._capture = False
+    h._cursor = grab_px
+    h._down = True
+    p.handle_input(h)
+    assert p._axis_drag == 0
+
+
+def test_coord_set_survives_press_that_lands_under_key_capture():
+    """Reproduces the reviewer's repro shape: a press on tick N lands on the
+    gizmo handle while the host still reports captured for that frame (the
+    same click is what blurs the CEF field); `coord_set` then arrives in
+    that same frame's CEF pump, updating the position; the following drag
+    frame (capture now off, cursor unmoved) must not silently have grabbed
+    back on the captured press and overwritten the just-committed value
+    with the grab-time (pre-edit) position."""
+    p, grab_px = _gizmo_grab_setup()
+    h = _FakeHost()
+    h._capture = True
+    h._cursor = grab_px
+    h._down = True
+    p.handle_input(h)          # the committing click's press, still captured
+    assert p._axis_drag is None
+
+    # coord_set arrives in this same frame's CEF pump, after handle_input.
+    assert p.dispatch_event('coord_set:{"axis": 0, "value": 5.0}') is True
+    assert p._effective_pos(0) == pytest.approx((5.0, 1.0, 0.0))
+
+    # Capture ends (the blur lands) with the button still physically held;
+    # a drag frame at the same cursor position (zero mouse movement) must
+    # not have anything to apply.
+    h._capture = False
+    p.handle_input(h)
+    assert p._axis_drag is None
+    assert p._effective_pos(0) == pytest.approx((5.0, 1.0, 0.0))
+
+    h._down = False
+    p.handle_input(h)
+    assert p._effective_pos(0) == pytest.approx((5.0, 1.0, 0.0))

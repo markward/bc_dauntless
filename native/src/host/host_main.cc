@@ -7,6 +7,7 @@
 #include "developer_mode.h"
 #include "host_bindings.h"
 #include "platform/exe_path.h"
+#include "platform/relaunch.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
 #include "ui_cef/cef_lifecycle.h"
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -253,5 +255,21 @@ int main(int argc, char* argv[]) {
 
 teardown:
     if (Py_FinalizeEx() < 0) return 2;
+    {
+        std::vector<std::string> extra;
+        if (dauntless::platform::take_relaunch_request(&extra)) {
+            std::string err;
+            auto exe = dauntless::platform::executable_path(argv[0], err);
+            if (exe.empty()) {
+                std::fprintf(stderr, "[relaunch] cannot find own executable: %s\n", err.c_str());
+                return rc;
+            }
+            std::vector<std::string> original(argv + 1, argv + argc);
+            auto args = dauntless::platform::build_relaunch_argv(exe.string(), original, extra);
+            if (dauntless::platform::relaunch(args, err) != 0) {
+                std::fprintf(stderr, "[relaunch] failed: %s\n", err.c_str());
+            }
+        }
+    }
     return rc;
 }

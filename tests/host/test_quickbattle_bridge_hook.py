@@ -127,3 +127,27 @@ def test_reinstall_with_no_pins_unwraps_a_stale_hook():
     qb.RecreatePlayer()
     assert qb.g_sBridgeType == before
     assert pins.calls == []                    # the stale pins are never consulted
+
+
+def test_pins_none_with_a_live_resolver_replaces_a_stale_wrap_without_writing_the_bridge():
+    """Mark's home-ship ruling, 2026-10-02: pins=None no longer means
+    'nothing of ours installs' once a player-type resolver is registered
+    (bridge_selection.set_player_type_resolver) -- the wrap still installs,
+    replacing a stale wrapper bound to an earlier controller's REAL pins,
+    so the resolver's rule applies even with no bridge matrix. But its
+    bridge-resolution step is itself a no-op when pins is None: g_sBridgeType
+    is left exactly as RecreatePlayer's own body set it, and the stale pins
+    are never consulted."""
+    qb = _fake_qb()
+    stale_pins = _Pins({"Galaxy": "SovereignBridge"})
+    assert bs.install_quickbattle_hook(qb, stale_pins) is True
+    bs.set_player_type_resolver(lambda _qb: "Akira")
+    try:
+        assert bs.install_quickbattle_hook(qb, None) is True
+        before = qb.g_sBridgeType
+        assert qb.RecreatePlayer() == "player"
+        assert qb.g_sPlayerType == "Akira"         # the resolver's rule applied
+        assert qb.g_sBridgeType == before          # untouched: no pins to resolve
+        assert stale_pins.calls == []              # the stale pins are never consulted
+    finally:
+        bs.set_player_type_resolver(None)
