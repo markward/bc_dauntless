@@ -521,6 +521,31 @@ TEST(FarImpostorBlend, GridIsTheSquareRootOfTheViewCount) {
     EXPECT_EQ(far::impostor_grid_for(0), 0);
 }
 
+// The atlas is read as an N x N octahedral layout, so a view set that is a
+// square COUNT but not that layout (an older bake, a reordered or hand-made
+// list) would sample the wrong views: it is unusable (grid 0, no impostors),
+// exactly as a non-square count is. (2026-10-04 review, deferred minor.)
+TEST(FarImpostorBlend, ViewsMustBeTheOctahedralLayoutNotJustASquareCount) {
+    EXPECT_EQ(far::make_impostor_views(far::oct_view_dirs(8)).grid, 8);
+    EXPECT_EQ(far::make_impostor_views(far::oct_view_dirs(4)).grid, 4);
+    // The catalogue's dirs come through JSON as rounded floats: still the layout.
+    std::vector<glm::vec3> rounded = far::oct_view_dirs(8);
+    for (auto& d : rounded) d = glm::round(d * 1.0e5f) / 1.0e5f;
+    EXPECT_EQ(far::make_impostor_views(rounded).grid, 8);
+    std::vector<glm::vec3> swapped = far::oct_view_dirs(8);
+    std::swap(swapped[9], swapped[10]);                 // two interior views out of order
+    EXPECT_EQ(far::make_impostor_views(swapped).grid, 0);
+    std::vector<glm::vec3> fib;                         // 16 spread directions, not an oct grid
+    for (int k = 0; k < 16; ++k) {
+        const float y = 1.0f - (k + 0.5f) / 8.0f, r = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        const float a = 2.399963f * static_cast<float>(k);
+        fib.emplace_back(r * std::cos(a), y, r * std::sin(a));
+    }
+    EXPECT_EQ(far::make_impostor_views(fib).grid, 0);
+    EXPECT_EQ(far::make_impostor_views(std::vector<glm::vec3>(6, glm::vec3(0, 1, 0))).grid, 0);
+    EXPECT_EQ(far::make_impostor_views({}).grid, 0);
+}
+
 TEST(FarImpostorBlend, OctViewsAreUnitAndMirrorTwinsAreBitIdentical) {
     const int N = 8;
     const auto dirs = far::oct_view_dirs(N);

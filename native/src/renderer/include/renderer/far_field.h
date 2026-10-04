@@ -206,7 +206,8 @@ ViewBlend view_blend(const glm::vec3& eye_dir_gltf, int grid);
 // (rock -> render), radius r, seen from `eye`, with signed dither `dither`
 // (0 = solid; >0 a mesh-side fade keeping the upper 1-d; <0 an impostor
 // fading in keeping the lower |d|). Blends the baked views around the eye
-// (far::view_blend). `view_dirs_gltf` must be an oct layout (square count).
+// (far::view_blend). `view_dirs_gltf` must be far::oct_view_dirs(grid) (see
+// make_impostor_views).
 ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const glm::vec3& eye,
                           const glm::vec3& c, const glm::mat3& R, float r, float dither);
 
@@ -214,7 +215,9 @@ ImpostorGpu make_impostor(const std::vector<glm::vec3>& view_dirs_gltf, const gl
 // set (rock fields: per catalogue / view-dirs push, not per sprite).
 struct ImpostorViews {
     std::vector<glm::vec3> dirs;   // glTF frame
-    int grid = 0;                  // impostor_grid_for(dirs.size()); 0: unusable, draw no impostors
+    // impostor_grid_for(dirs.size()) when dirs ARE oct_view_dirs(grid) (to
+    // 1e-3), else 0: unusable, draw no impostors.
+    int grid = 0;
 };
 ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf);
 // Identical to make_impostor(views.dirs, ...); views.grid must be >= 2.

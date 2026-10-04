@@ -298,6 +298,14 @@ ImpostorViews make_impostor_views(const std::vector<glm::vec3>& view_dirs_gltf) 
     ImpostorViews v;
     v.dirs = view_dirs_gltf;
     v.grid = impostor_grid_for(view_dirs_gltf.size());
+    // view_blend picks views by their place in the oct grid, never by these
+    // directions: a square count in any other order or layout would sample
+    // the wrong views, so it is as unusable as a non-square count. (The
+    // catalogue's dirs round-trip through JSON: a loose tolerance.)
+    for (int k = 0; v.grid >= 2 && k < v.grid * v.grid; ++k) {
+        const glm::vec3 e = view_dirs_gltf[static_cast<std::size_t>(k)] - oct_view_dir(k, v.grid);
+        if (!(e.x * e.x + e.y * e.y + e.z * e.z <= 1.0e-6f)) v.grid = 0;
+    }
     return v;
 }
 

@@ -4,8 +4,10 @@ in vec3 v_normal_ws;
 in vec2 v_uv;
 in vec3 v_position_ws;
 // Far tier (far-tier spec §1, §3): every vertex shader linked with this one
-// writes v_dither (0 = no dither). u_coverage_cutout != 0 discards base texels
-// with alpha < 0.5 (impostor silhouettes); 0 = the production path.
+// writes v_dither (0 = no dither). u_coverage_cutout != 0 discards outside
+// the silhouette: base alpha < 0.5, or in the impostor program (IMPOSTOR_VIEWS)
+// blended coverage under the noise threshold / near zero under
+// u_alpha_to_coverage; 0 = the production path.
 flat in float v_dither;
 uniform int u_coverage_cutout;
 // Rock fade (2026-10-03): != 0 only inside FarPass::render_impostors_blended.
@@ -1205,8 +1207,11 @@ bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
 // blended views (far::view_blend) the fragment's view ray is intersected with
 // that view's image plane through the rock's centre, and the cell is sampled
 // there. Albedo and normal are blended coverage-weighted; coverage is the
-// weighted sum, tested against a per-pixel threshold so a silhouette that
-// differs between two views cross-dissolves instead of popping.
+// weighted sum. A solid draw on a multisampled target turns it into MSAA
+// samples (u_alpha_to_coverage); otherwise -- single-sampled targets and the
+// translucent fade draw -- it is tested against a per-pixel noise threshold,
+// so a silhouette that differs between two views cross-dissolves instead of
+// popping.
 #ifdef IMPOSTOR_VIEWS
 flat in vec4 v_imp_centre_half;   // xyz render centre, w half extent
 flat in vec4 v_imp_axis_x_grid;   // xyz rock glTF +x (render), w atlas grid
@@ -1288,7 +1293,7 @@ void main() {
         float b = bayer4(floor(gl_FragCoord.xy * 0.5));   // per 2x2 pixel group
         if (v_dither > 0.0 ? (b < v_dither) : (b >= -v_dither)) discard;
     }
-    // Far tier: impostor coverage (base alpha < 0.5 is outside the silhouette).
+    // Far tier: impostor coverage (outside the silhouette: see u_coverage_cutout).
     // Tested HERE, beside the dither, not after the main base sample: a discard
     // placed after the dFdx/dFdy block MEASURED to break the amb_d NaN guard on
     // this driver even with the cutout off (HullClipTest /

@@ -4421,6 +4421,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& t : view_dirs)
                   dirs.emplace_back(std::get<0>(t), std::get<1>(t), std::get<2>(t));
               near.view_dirs_gltf = dirs;
+              // A view set that is not the octahedral bake layout draws no
+              // billboards at all (far::make_impostor_views): say so once.
+              if (!dirs.empty() && renderer::far::make_impostor_views(dirs).grid < 2)
+                  std::fprintf(stderr,
+                               "[far] %zu impostor view dirs are not an octahedral N x N "
+                               "layout: rock billboards disabled\n",
+                               dirs.size());
               g_far_field.set_catalogue(std::move(rocks), std::move(dirs));
               g_far_atlas_paths = std::move(paths);
               if (g_far_pass) g_far_pass->set_atlas_paths(g_far_atlas_paths);

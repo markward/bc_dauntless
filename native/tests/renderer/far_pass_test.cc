@@ -1041,6 +1041,101 @@ TEST_F(FarPassGLTest, BlendedImpostorsRestoreStateAndLeaveTheOpaquePathUnchanged
     EXPECT_EQ(draw_impostors(pass, {bin_with(0, centre, 1.0f, -0.5f)}, cam, l), dithered);
 }
 
+// Solid impostors on a multisampled target take their silhouette through
+// alpha-to-coverage (f7de7164); it must be ON for that draw and OFF -- the
+// capability and the program's u_alpha_to_coverage -- once render_impostors
+// returns, so nothing drawn after inherits it. Observed through the draw
+// itself: an atlas whose coverage is 0.55 everywhere inside the silhouette
+// sharpens to ~0.65 coverage, so with A2C on only part of each pixel's
+// samples are written and the resolved interior is dimmer than the same rock
+// with full coverage; without A2C every sample is written (same brightness).
+TEST_F(FarPassGLTest, SolidImpostorsUseAlphaToCoverageOnMsaaAndLeaveItOff) {
+    const glm::vec3 grey(150.0f, 150.0f, 150.0f);
+    const Atlas full = sphere_atlas(grey, grey);
+    Atlas partial = sphere_atlas(grey, grey);
+    for (std::size_t i = 3; i < partial.albedo.pixels.size(); i += 4)
+        if (partial.albedo.pixels[i] != 0) partial.albedo.pixels[i] = 140;   // coverage ~0.55
+    renderer::FarPass pass;
+    pass.debug_set_atlas(0, full.albedo, full.normal);
+    pass.debug_set_atlas(1, partial.albedo, partial.normal);
+    const glm::vec3 centre(0.0f);
+    const scenegraph::Camera cam = view_camera(kLevelView, centre, 8.0f);
+    const renderer::Lighting l = fade_lighting();
+
+    // A 4x MSAA colour + depth target, resolved into a single-sample one.
+    GLuint ms_fbo = 0, ms_rb[2] = {0, 0}, rs_fbo = 0, rs_rb = 0;
+    glGenFramebuffers(1, &ms_fbo);
+    glGenRenderbuffers(2, ms_rb);
+    glBindRenderbuffer(GL_RENDERBUFFER, ms_rb[0]);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_RGBA8, kW, kH);
+    glBindRenderbuffer(GL_RENDERBUFFER, ms_rb[1]);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT24, kW, kH);
+    glBindFramebuffer(GL_FRAMEBUFFER, ms_fbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, ms_rb[0]);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, ms_rb[1]);
+    ASSERT_EQ(glCheckFramebufferStatus(GL_FRAMEBUFFER), static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE));
+    glGenFramebuffers(1, &rs_fbo);
+    glGenRenderbuffers(1, &rs_rb);
+    glBindRenderbuffer(GL_RENDERBUFFER, rs_rb);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, kW, kH);
+    glBindFramebuffer(GL_FRAMEBUFFER, rs_fbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rs_rb);
+    ASSERT_EQ(glCheckFramebufferStatus(GL_FRAMEBUFFER), static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE));
+
+    const GLuint program = pipeline->impostor_shader().program();
+    const GLint a2c_loc = glGetUniformLocation(program, "u_alpha_to_coverage");
+    ASSERT_GE(a2c_loc, 0);
+    auto draw_ms = [&](int rock) {
+        glBindFramebuffer(GL_FRAMEBUFFER, ms_fbo);
+        glViewport(0, 0, kW, kH);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        pass.render_impostors({bin_with(rock, centre, 1.0f, 0.0f)}, cam, *pipeline, l, 1.0f, 0.0f);
+        EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+        // Left as found: the capability off, the program's flag 0.
+        EXPECT_FALSE(glIsEnabled(GL_SAMPLE_ALPHA_TO_COVERAGE));
+        GLint flag = -1;
+        glGetUniformiv(program, a2c_loc, &flag);
+        EXPECT_EQ(flag, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, ms_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rs_fbo);
+        glBlitFramebuffer(0, 0, kW, kH, 0, 0, kW, kH, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, rs_fbo);
+        std::vector<unsigned char> buf(static_cast<std::size_t>(kW * kH * 4));
+        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return buf;
+    };
+    const auto f = draw_ms(0), p = draw_ms(1);
+    const std::vector<int> in = interior(f, kW, kH);
+    ASSERT_GT(in.size(), static_cast<std::size_t>(kW * kH / 10));
+    double sum_f = 0.0, sum_p = 0.0;
+    for (int i : in)
+        for (int k = 0; k < 3; ++k) {
+            sum_f += f[static_cast<std::size_t>(i) * 4 + static_cast<std::size_t>(k)];
+            sum_p += p[static_cast<std::size_t>(i) * 4 + static_cast<std::size_t>(k)];
+        }
+    ASSERT_GT(sum_f, 0.0);
+    std::printf("[a2c] interior brightness, coverage 0.55 / 1.0: %.3f\n", sum_p / sum_f);
+    EXPECT_LT(sum_p / sum_f, 0.9) << "partial coverage wrote every sample: A2C was off for the MSAA draw";
+    EXPECT_GT(sum_p / sum_f, 0.2) << "partial coverage drew (almost) nothing";
+
+    // A single-sample target: no A2C (the screen-fixed threshold instead), state untouched.
+    clear_framebuffer();
+    GLint samples = -1;
+    glGetIntegerv(GL_SAMPLES, &samples);
+    if (samples <= 1) {
+        pass.render_impostors({bin_with(1, centre, 1.0f, 0.0f)}, cam, *pipeline, l, 1.0f, 0.0f);
+        EXPECT_FALSE(glIsEnabled(GL_SAMPLE_ALPHA_TO_COVERAGE));
+    }
+    glDeleteFramebuffers(1, &ms_fbo);
+    glDeleteFramebuffers(1, &rs_fbo);
+    glDeleteRenderbuffers(2, ms_rb);
+    glDeleteRenderbuffers(1, &rs_rb);
+}
+
 namespace dauntless_nan_debug { void set_enabled(bool); }
 
 // The non-finite probe (u_nan_debug) parks a cause code in alpha; the blend

@@ -42,6 +42,10 @@ public:
     void set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal);
 
     // `rim_strength` is the FINAL u_rim_strength, as MinorPass::render takes it.
+    // Solid. On a multisampled target the silhouette goes through
+    // alpha-to-coverage (GL_SAMPLE_ALPHA_TO_COVERAGE and u_alpha_to_coverage
+    // are on for the draw only and off afterwards); single-sampled, the
+    // per-pixel noise threshold cuts it.
     void render_impostors(const std::vector<far::ImpostorBin>& bins, const scenegraph::Camera& cam,
                           Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                           float rim_strength);
