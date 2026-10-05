@@ -136,7 +136,10 @@ def test_scan_button_follows_shows_identity_in_and_out_of_a_field(world, monkeyp
     assert hail.GetButtonW("Vagabond") is not None     # track never lost
 
 
-def test_lost_track_in_a_field_keeps_a_placeholder_scan_button_and_drops_hail(world, monkeypatch):
+def test_in_a_field_for_20s_keeps_hail_and_shows_a_placeholder_scan_button(world, monkeypatch):
+    """Ruling 2A (Mark, 2026-10-05): a medium alone never loses the track, it
+    only changes the display. (Was: in a field for the window loses track
+    and drops Hail -- that path now belongs to HIDDEN contacts, below.)"""
     App.g_kEventManager.AddBroadcastPythonFuncHandler(
         App.ET_EXITED_SET, None, __name__ + "._on_exited")
     player, pSet, scan, hail = world
@@ -144,6 +147,25 @@ def test_lost_track_in_a_field_keeps_a_placeholder_scan_button_and_drops_hail(wo
     assert hail.GetButtonW("Vagabond") is not None
     monkeypatch.setattr(far_tier, "field_strength_at",
                         lambda obj: 1.0 if obj is bird else 0.0)
+    for t in range(0, 21):
+        sensor_contacts.tick(player, float(t))
+        assert hail.GetButtonW("Vagabond") is not None, t
+        assert player.GetSensorSubsystem().IsObjectKnown(bird) == 1, t
+    placeholder = unknown_labels.current(bird)
+    assert placeholder is not None
+    assert _labels(scan) == [placeholder]               # displays Unknown
+    assert _exited == []
+
+
+def test_lost_track_in_the_dense_nebula_core_keeps_a_placeholder_scan_button_and_drops_hail(world, monkeypatch):
+    from engine.appc import sensor_detection as sd
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_EXITED_SET, None, __name__ + "._on_exited")
+    player, pSet, scan, hail = world
+    bird = _known_bird_with_buttons(player, pSet)
+    assert hail.GetButtonW("Vagabond") is not None
+    monkeypatch.setattr(sd, "concealment_at",
+                        lambda obj: 1.0 if obj is bird else 0.0)   # hidden
     for t in range(0, 5):
         sensor_contacts.tick(player, float(t))
         assert hail.GetButtonW("Vagabond") is not None, t
@@ -152,7 +174,7 @@ def test_lost_track_in_a_field_keeps_a_placeholder_scan_button_and_drops_hail(wo
     assert hail.GetButtonW("Vagabond") is None          # real Helm ExitedSet ran
     placeholder = unknown_labels.current(bird)
     assert placeholder is not None
-    assert _labels(scan) == [placeholder]               # still listed, scannable
+    assert _labels(scan) == [placeholder]               # still in the menu
     assert _exited == []                                # no synthetic event
 
 

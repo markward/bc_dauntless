@@ -22,10 +22,13 @@ this module is player-only too. AI ships never identify.
 Continuity (sensor continuity/occlusion spec):
 
 - A contact is CONCEALED (`is_concealed`) when it is in the player's set,
-  inside player sensor range, and either hidden (`not can_detect`: a major
-  rock, the dense nebula core, cloak) or unknown by medium
-  (`sensor_media.medium_unknown`: an asteroid field, moderate nebula).
-  Leaving range is never concealment -- identity survives it.
+  inside player sensor range, and HIDDEN (`not can_detect`: a major rock, the
+  dense nebula core) -- and not fully cloaked. Mark's rulings (2026-10-05):
+  1A, cloak never starts the clock -- identity survives cloak, as in BC
+  (perception still asks can_detect, so the row behaves as before); 2A, a
+  medium alone (`sensor_media.medium_unknown`: an asteroid field, moderate
+  nebula) never loses the track -- it only changes the DISPLAY to Unknown
+  (`shows_identity`). Leaving range is never concealment either.
 - Each sweep, a KNOWN contact that is concealed starts (or keeps) its clock in
   `_concealed_since`; one that is not has its clock cleared. Concealed for
   `continuity_window_s` (dial, 5.0 s) => LOST TRACK: RemoveKnownObject, then
@@ -33,11 +36,15 @@ Continuity (sensor continuity/occlusion spec):
   `_helm_exited_set` seam) to drop its Hail button. Never a synthetic
   ET_EXITED_SET. The clock is read on the sweep, so the window is accurate to
   one `sweep_period_s`.
-- Passive arming and passive commit both require the contact not to be
-  concealed. A scan entry is dropped if a major rock blocks the line when it
-  falls due (only while `ENHANCED_SENSOR_CONTEST` is on, as for can_detect);
-  a successful scan records `_scanned_at`, and if the contact is concealed
-  its clock restarts from the scan -- one window, then the track is lost.
+- Passive arming and passive commit both require can_detect and the contact
+  not to read Unknown by medium (`_unknown_by_medium`): no passive
+  identification inside a field or nebula. A scan entry is dropped if a major
+  rock blocks the line when it falls due (only while
+  `ENHANCED_SENSOR_CONTEST` is on, as for can_detect); a successful scan
+  records `_scanned_at` (a one-window name glimpse in a medium, after which
+  the display reverts to Unknown and the ship stays known), and if the
+  contact is concealed (hidden) its clock restarts from the scan -- one
+  window, then the track is lost.
 - `shows_identity(obj)` is the ONE display answer for the target-list
   caption, the reticle name and the Science Scan button label: known AND
   (not unknown-by-medium OR scanned within the window). Never re-derive it at
@@ -173,9 +180,11 @@ def _has_signature(obj) -> bool:
 
 
 def is_concealed(player, obj) -> bool:
-    """In the player's set, inside player sensor range, and hidden
-    (`not can_detect`) or unknown by medium. Leaving range is never
-    concealment. Never true for a non-ShipClass contact (`_has_signature`)."""
+    """Does *obj* run the lost-track clock? In the player's set, inside
+    player sensor range, HIDDEN (`not can_detect`) and not fully cloaked.
+    Cloak (ruling 1A) and a medium alone (ruling 2A) never conceal; leaving
+    range is never concealment. Never true for a non-ShipClass contact
+    (`_has_signature`)."""
     if player is None or obj is None or not _has_signature(obj):
         return False
     try:
@@ -183,14 +192,29 @@ def is_concealed(player, obj) -> bool:
         oset = obj.GetContainingSet() if implements(obj, "GetContainingSet") else None
         if pset is None or oset is not pset:
             return False
-        from engine.appc.sensor_detection import can_detect, effective_sensor_range
-        from engine.appc import sensor_media
+        from engine.appc.sensor_detection import (can_detect, effective_sensor_range,
+                                                  is_hidden_by_cloak)
         r = effective_sensor_range(player)
         if r <= 0.0 or _dist(player, obj) > r:
             return False
-        return (not can_detect(player, obj)) or bool(sensor_media.medium_unknown(obj))
+        if is_hidden_by_cloak(obj):
+            return False
+        return not can_detect(player, obj)
     except Exception as e:
         dev_mode.log_swallowed("sensor_contacts.is_concealed", e)
+        return False
+
+
+def _unknown_by_medium(obj) -> bool:
+    """Does *obj* read Unknown by medium? Ships only (`_has_signature`).
+    Gates passive identification; never starts the lost-track clock."""
+    if not _has_signature(obj):
+        return False
+    from engine.appc import sensor_media
+    try:
+        return bool(sensor_media.medium_unknown(obj))
+    except Exception as e:
+        dev_mode.log_swallowed("sensor_contacts._unknown_by_medium", e)
         return False
 
 
@@ -376,7 +400,7 @@ def _commit_due(player, sensors, now_gt) -> None:
                 if is_concealed(player, obj):
                     _concealed_since[obj] = now_gt    # one window from the scan
         elif (not known and _in_near_band(player, obj)
-              and can_detect(player, obj) and not is_concealed(player, obj)):
+              and can_detect(player, obj) and not _unknown_by_medium(obj)):
             _identify_one(sensors, obj)
 
 
@@ -408,7 +432,7 @@ def _sweep(player, sensors, now_gt) -> None:
         else:
             _concealed_since.pop(obj, None)
             if (near and obj not in _pending and can_detect(player, obj)
-                    and not is_concealed(player, obj)):
+                    and not _unknown_by_medium(obj)):
                 _pending[obj] = (now_gt + dwell, False)
         _sync_science_label(obj, now_gt)
 
