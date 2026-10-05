@@ -142,6 +142,91 @@ and scannable; E5M2 re-identification of the Outpost replays nothing; Helm race.
 Benchmark as above. Gate: `scripts/check_tests.sh` exit 0 (except any failures recorded
 as pre-existing on main with evidence).
 
+## As built
+
+Built on branch `feat/sensor-continuity` (local, unmerged). Rulings and deviations from
+the SDD ledger (`.superpowers/sdd/2026-10-05-sensor-continuity-occlusion/progress.md`),
+beyond what the Rules/Architecture sections above already describe:
+
+- **`begin_tick` cache ruling.** `sensor_occlusion.begin_tick(now_gt)`, called first thing
+  in `sensor_contacts.tick`, folds the contact manager's own tick time into BOTH the
+  per-(observer, target) cache and the per-set major-rock-list cache, alongside App's game
+  time. Production already advances App's game time every sim tick, so this changes no
+  observable behaviour there — but tests (and this spec's own integration test) drive
+  `sensor_contacts.tick(player, now_gt)` against a STATIC App game time while moving rocks
+  or ships between calls, and App time alone would never invalidate either cache on a
+  move. Cost if wrong: one extra element in each cache key.
+- **Benchmark uses `time.process_time()`, not wall clock.** `test_sensor_occlusion_bench.py`
+  measures CPU time: one `perf_counter` run hit 3.34× under shared-machine load while
+  `process_time` runs sat at 1.4–2.4×. The budget is about this code's own CPU cost, not
+  machine contention. Cost if wrong: misses a regression that only shows as wall-clock
+  (e.g. waits), which this pure-CPU path cannot have.
+- **Concealment keyword hand-off.** `sensor_media.medium_unknown(obj, *, concealment=None)`
+  and `subsystems_hidden` forward a caller's own `concealment_at` sample unchanged, rather
+  than re-deriving it — mirroring the existing `dist_sq_gu`/`concealment` precedent on
+  `sensor_detection.can_detect`. `perception.perceived_by` is the one caller that supplies
+  it, having already taken that density sample this frame for `can_detect` too; every
+  other caller passes nothing and the function samples it itself. `concealment_at` is
+  sampled ONCE per contact per frame, not twice.
+- **`shows_identity(obj, now_gt=None, sensors=None)`.** "Known" is read from the passed
+  `sensors` when given (`perceived_by` passes the observer's), else from the current game
+  player's sensors (reticle, Science). Keeps sub-project-1 unit tests that identify via a
+  bare `AddKnownObject` with no `Game` working, and keeps the answer observer-correct for
+  `perceived_by(ai_ship)` callers. Cost if wrong: a slightly wider signature than strictly
+  needed.
+- **`STMenu.DeleteChild` now also drops the button/submenu from the label index**
+  (`engine/appc/characters.py`), not only from `_children`. Without it, a lost-track Hail
+  button stayed "found" by the SDK's label-keyed dedupe (`CreateHailButton`'s
+  `GetButtonW` check) and could never be re-added once a track was lost and recovered.
+  Identity-based removal, not label-based: a newer child sharing the old label keeps its
+  own index entry.
+- **Planets are exempt from concealment and Unknown-by-medium.** `_has_signature` restricts
+  both `is_concealed` and `shows_identity`'s medium check to `ShipClass` contacts — a
+  planet (any non-ShipClass contact) has no signature to hide, mirroring the existing
+  exemption `sensor_detection.clear_undetectable_player_lock` already makes. Without it, a
+  planet behind a rock or inside a field would lose its Hail button (E1M2's Haven).
+- **A rescan of a KNOWN-but-Unknown-by-medium contact restarts its glimpse** without
+  re-firing `ET_SENSORS_SHIP_IDENTIFIED` — `_identify_one` would refuse an already-known
+  contact anyway, so `_commit_due`'s scan branch just re-stamps `_scanned_at` and, if still
+  concealed, restarts `_concealed_since` from the scan. Matches Mark's rule that a scan
+  names a contact for one window, repeatable.
+- **Broadcast handlers are not chained in this engine.** `ET_SENSORS_SHIP_IDENTIFIED`
+  reaches `E5M2.ShipIdentified` as a broadcast func handler; `TGEventManager.AddEvent`
+  walks a flat snapshot and calls every registered handler unconditionally —
+  `CallNextHandler` only advances a per-object dispatch frame that this path never pushes.
+  The E5M2 guard's "already seen" branch therefore just `return`s (not
+  `pObject.CallNextHandler(pEvent)`, which would be an inert no-op here) — correct, and
+  clearer about what actually happens.
+- **`install_after_import` is shared by both mission-load paths.** There are two
+  independent paths that import a mission module and run its `Initialize()` — the dev
+  loader (`host_loop._init_mission`) and the production campaign path
+  (`engine.core.game.Episode._load_mission_raw`, reached through `Episode.LoadMission` /
+  `mission_change.change()` while a mission is already running). Both call
+  `sensor_mission_guards.install_after_import(module_name)` rather than a raw
+  `importlib.import_module`, so the E5M2/Helm guards install before the module's own
+  `Initialize()` can register its unwrapped handler on either path. A Task 5 review found
+  the production path had been missing this call entirely.
+- **Out of scope, surfaced not fixed:** re-entering E5M2 via `mission_change.change()` in
+  one process raises `KeyError` from `CutsceneCameraBegin('CutsceneCam', 'bridge')`
+  ("already been called on the set: bridge") because the kept bridge set's per-set
+  registry is never cleared across the re-entry. `change()` catches it and returns
+  `False`. Pre-existing, unrelated to sub-project 2's guards; surfaced for Mark, not
+  addressed here.
+- **Task 6 (this integration test):** `test_e2m1_karoon_hidden_then_recovered` drives the
+  REAL `E2M1.CreateAsteroids` / `CreateBeolShips` (not a synthetic fixture) — every one of
+  the mission's 16 Beol4 asteroids' `effective_radius` already clears `min_blocker_radius_gu`
+  (2.0), so the mission's own asteroid field doubles as the occluder with no extra
+  construction needed. The player boards at Vesuvi6 while the Karoon lives in Beol4
+  (`CreateBeolShips`, normally deferred to `PlayerExitsSet`); the test moves the player
+  into Beol4 directly (`RemoveObjectFromSet("player")` + `AddObjectToSet`), the same
+  set-reassignment idiom `test_condition_all_in_same_set_live.py` uses — occlusion only
+  ever looks at rocks in the OBSERVER's own set, so player and Karoon must share one.
+  `SensorSubsystem.IdentifyObject` always schedules its due time off the REAL
+  `App.g_kUtopiaModule.GetGameTime()` (static at 0.0 in this headless harness), not the
+  synthetic clock the test drives `sensor_contacts.tick` on — so the scan's dwell is
+  already elapsed the moment any later synthetic tick runs; the test does not attempt to
+  pin a "not due yet" instant for the scan path (see the test's own comment).
+
 ## Out of scope
 
 Probes and over-boost listing (roadmap "later"); planets/suns as occluders; fields
@@ -156,3 +241,7 @@ hidden it loses its Hail button until identified again. For field Unknown, use t
 developer mission "Rock Fields: inside Beol 4". Fly so a big rock sits between you and a
 ship: it drops off the list and radar, reappears with its name if it was hidden <5 s.
 Dials: Developer Options → Lighting → "Dial keys" → sensors.
+
+Task 6 added a headless integration proof against this exact scenario
+(`tests/integration/test_sensor_continuity_missions.py::test_e2m1_karoon_hidden_then_recovered`)
+driving the real E2M1 asteroids and Karoon — it does not substitute for this live check.
