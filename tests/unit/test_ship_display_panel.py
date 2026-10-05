@@ -217,6 +217,7 @@ def test_target_snapshot_with_enemy_affiliation():
         foe.SetHull(HullSubsystem())
         mission.GetEnemyGroup().AddName("Foe")
         player.SetTarget(foe)
+        player.GetSensorSubsystem().AddKnownObject(foe)
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
         assert snap[10] is True, "expected visible target"

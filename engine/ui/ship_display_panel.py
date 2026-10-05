@@ -322,10 +322,9 @@ def _resolve_ship_for_role(role: str):
 
     The SDK gates target display behind SensorSubsystem.IsObjectKnown()
     (ShieldsDisplay.SetShipIcon at sdk/Build/scripts/Tactical/Interface/
-    ShieldsDisplay.py:329-338). Our Phase 1 sensor subsystem doesn't
-    populate the known-objects set yet — nothing scans for contacts —
-    so applying the gate would silently block every target. Trust
-    SetTarget for now; revisit when sensor scanning lands.
+    ShieldsDisplay.py:329-338): an unidentified target shows no data.
+    Contacts are now identified by the player-only contact manager after
+    a dwell (sensor-tiers spec §5), so the gate is applied here.
 
     Project 5 sensor gate (§4.3): when the player's sensors are offline,
     target-role resolves to None (panel goes to empty state). Player
@@ -343,7 +342,15 @@ def _resolve_ship_for_role(role: str):
     # nothing when it isn't a ship (ShieldsDisplay.py:349) — a targeted
     # planet or sun must not draw as a 0%-hull ship.
     from engine.appc.ships import ShipClass_Cast
-    return ShipClass_Cast(target)
+    ship = ShipClass_Cast(target)
+    # The SDK gate (ShieldsDisplay.SetShipIcon, ShieldsDisplay.py:329-338):
+    # an unidentified target shows no data. Contacts are now identified by
+    # the contact manager, so the gate is applied (sensor-tiers spec §5).
+    sensors = (player.GetSensorSubsystem()
+               if hasattr(player, "GetSensorSubsystem") else None)
+    if ship is not None and sensors is not None and not sensors.IsObjectKnown(ship):
+        return None
+    return ship
 
 
 def _affiliation_for(ship, player) -> str:

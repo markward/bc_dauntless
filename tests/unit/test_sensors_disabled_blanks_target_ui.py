@@ -34,6 +34,9 @@ def _setup(enemy_in_group=True):
     if enemy_in_group:
         mission.GetEnemyGroup().AddName("Enemy")
     player.SetTarget(enemy)
+    # Identified via the contact manager — these tests exercise the
+    # sensors-offline gate, not the IsObjectKnown gate.
+    sensors.AddKnownObject(enemy)
     return game, player, enemy, sensors, mission
 
 

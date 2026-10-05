@@ -1358,6 +1358,15 @@ g_kSTMenu2NormalBase    = NiColorA(0.5, 0.5, 0.5, 1.0)
 g_kSTMenu2HighlightedBase = NiColorA(0.8, 0.8, 0.8, 1.0)
 g_kSTMenu2Disabled      = NiColorA(0.3, 0.3, 0.3, 0.5)
 
+# ── Radar affiliation colours (LoadInterface.py:135-140 sets these through
+# SetupColor; real objects so SetupColor and readers never meet a _Stub).
+# Values are the SDK's own. g_kRadarUnknownColor was a live undefined-constant
+# stub (docs/stub_heatmap.md rank 182).
+g_kRadarFriendlyColor = NiColorA(80.0 / 255.0, 112.0 / 255.0, 230.0 / 255.0, 1.0)
+g_kRadarEnemyColor    = NiColorA(216.0 / 255.0, 43.0 / 255.0, 43.0 / 255.0, 1.0)
+g_kRadarNeutralColor  = NiColorA(1.0, 1.0, 0.68627, 1.0)
+g_kRadarUnknownColor  = NiColorA(127.5 / 255.0, 127.5 / 255.0, 127.5 / 255.0, 1.0)
+
 # ── App.globals — Appc.globals namespace (SDK App.py:13178). PowerDisplay and
 # the engineering UI read indents + colours through it; colour values are
 # LCARS approximations from the original UI (cosmetic — CEF restyles).
