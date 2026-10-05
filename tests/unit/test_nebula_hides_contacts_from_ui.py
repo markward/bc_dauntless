@@ -321,6 +321,43 @@ def test_precomputed_distance_is_actually_used():
     assert can_detect(observer, near, dist_sq_gu=9000000.0) is False
 
 
+# ── The precomputed-concealment parameter ────────────────────────────────────
+# Sub-project 2's `perception.perceived_by` samples `concealment_at` ONCE per
+# contact and hands it to BOTH `can_detect` and `sensor_media.subsystems_hidden`
+# (the double-sample fix, review round 1) — this is the `can_detect` half of
+# that hand-off, mirroring the `dist_sq_gu` tests immediately above.
+
+def test_concealment_parameter_is_actually_used():
+    """Guards against the parameter being accepted and then ignored: a
+    deliberately wrong value must change the answer, exactly like
+    test_precomputed_distance_is_actually_used above does for dist_sq_gu."""
+    contact_index.reset()
+    from engine.appc.sets import SetClass
+    pSet = SetClass()
+    observer = _observer(pSet, 0.0, 0.0, 0.0, base_range=2000.0)
+    near = _contact(pSet, "Near", 500.0, 0.0, 0.0)
+
+    assert can_detect(observer, near) is True
+    # LOCK_BREAK_T claimed despite the real (0.0, clear space) concealment ->
+    # detection breaks outright on the claimed value alone.
+    assert can_detect(observer, near, concealment=sd.LOCK_BREAK_T) is False
+
+
+def test_concealment_parameter_matches_the_internal_computation():
+    """Passing the real, freshly-sampled concealment_at(target) in must not
+    change the answer — what protects the hand-off from drifting away from
+    the real computation."""
+    pSet, observer, hidden, clear = _scene()
+
+    real_hidden_conceal = sd.concealment_at(hidden)
+    real_clear_conceal = sd.concealment_at(clear)
+
+    assert can_detect(observer, hidden) is False
+    assert can_detect(observer, hidden, concealment=real_hidden_conceal) is False
+    assert can_detect(observer, clear) is True
+    assert can_detect(observer, clear, concealment=real_clear_conceal) is True
+
+
 def test_the_hysteresis_latch_is_idempotent_within_a_frame():
     """`perceived_by` calls can_detect once per contact, but the player's
     CURRENT target legitimately sees a second call in the same frame from

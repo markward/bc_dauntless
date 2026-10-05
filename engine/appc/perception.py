@@ -133,8 +133,9 @@ class Contact:
     # `targetable` but not `subsystems_targetable` — you can shoot at it, not
     # snipe its warp core); an UNIDENTIFIED contact (`identified` False) is
     # the second — BC shows "Unknown N" with no subsystem breakdown until the
-    # observer's sensors resolve it. Nebula concealment remains a plausible
-    # third, and a field called `cloaked` would then be a lie. Defaults True
+    # observer's sensors resolve it. An identity-hiding medium (an asteroid
+    # field or moderate nebula — `sensor_media.medium_unknown`) is the third,
+    # and a field called `cloaked` would have been a lie. Defaults True
     # so every pre-existing `Contact(...)` construction site (tests, the bulk
     # `RebuildShipMenus` synthesiser) keeps its prior "subsystems visible"
     # behaviour without editing every call site.
@@ -193,6 +194,19 @@ def perceived_by(observer) -> tuple:
             continue
         dx, dy, dz = sx - ox, sy - oy, sz - oz
         dist_sq = dx * dx + dy * dy + dz * dz
+        identified = bool(observer_sensors is not None
+                          and observer_sensors.IsObjectKnown(ship))
+        # `concealment_at` is a density-field sample, not a cheap read, and
+        # this frame needs it for up to two different callers for the SAME
+        # ship: can_detect's nebula gate (when apply_conceal) and
+        # sensor_media.subsystems_hidden (when identified — otherwise
+        # `identified and not ...` below short-circuits before ever calling
+        # it). Sample it ONCE here, only when at least one consumer will
+        # actually read it, and hand the identical value to both — the same
+        # precedent as the already-derived `dist_sq` below. Do NOT let either
+        # consumer re-sample: that would double real work on perceived_by,
+        # which runs every contact every frame.
+        conceal = sd.concealment_at(ship) if (apply_conceal or identified) else None
         # ONE detection rule, shared with the weapons, AI targeting and the
         # player's lock. can_detect also mutates a per-(observer, target)
         # hysteresis latch, which this loop writes once per contact. That is
@@ -210,7 +224,7 @@ def perceived_by(observer) -> tuple:
         # without a second copy of the rule here to drift out of step.
         perceivable = range_gu > 0.0 and can_detect(
             observer, ship, dist_sq_gu=dist_sq,
-            apply_concealment=apply_conceal)
+            apply_concealment=apply_conceal, concealment=conceal)
         alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
         # A cloaked contact, or one inside an identity-hiding medium (an
         # asteroid field or moderate nebula — sensor_media.medium_unknown),
@@ -222,14 +236,13 @@ def perceived_by(observer) -> tuple:
         # inside that bubble is routinely perceivable AND subsystem-hidden at
         # once. That combination is exactly what this field exists to
         # express.
-        identified = bool(observer_sensors is not None
-                          and observer_sensors.IsObjectKnown(ship))
         out.append(Contact(
             ship=ship,
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
-            subsystems_targetable=identified and not sensor_media.subsystems_hidden(ship),
+            subsystems_targetable=identified and not sensor_media.subsystems_hidden(
+                ship, concealment=conceal),
             identified=identified,
         ))
     return tuple(out)

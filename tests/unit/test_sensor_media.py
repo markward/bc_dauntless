@@ -98,6 +98,52 @@ def test_perception_hides_subsystems_for_known_contact_in_a_field(monkeypatch):
     assert got[0].subsystems_targetable is False
 
 
+def test_perceived_by_samples_concealment_once_per_contact(monkeypatch):
+    """Review round 1: `concealment_at` is a density-field sample, not a
+    cheap read, and before this fix `perceived_by` took it twice per
+    identified contact every frame -- once inside can_detect's nebula gate,
+    once again via subsystems_hidden -> medium_unknown. Count real calls
+    with a wrapper (not a replacement, so can_detect's own answer is
+    unaffected) and assert exactly one per contact."""
+    from engine.appc import contact_index
+    from engine.appc.perception import perceived_by
+    from engine.appc.sets import SetClass
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.subsystems import SensorSubsystem
+
+    contact_index.reset()
+    pSet = SetClass()
+    player = ShipClass_Create("Galaxy")
+    player.SetName("player")
+    player.SetTranslateXYZ(0.0, 0.0, 0.0)
+    sensors = SensorSubsystem("Sensors")
+    sensors._max_condition = 100.0
+    sensors._condition = 100.0
+    sensors.SetBaseSensorRange(2000.0)
+    player.SetSensorSubsystem(sensors)
+    pSet.AddObjectToSet(player, "player")
+
+    enemy = ShipClass_Create("Galaxy")
+    enemy.SetName("Enemy")
+    enemy.SetTranslateXYZ(10.0, 0.0, 0.0)
+    pSet.AddObjectToSet(enemy, "Enemy")
+    sensors.AddKnownObject(enemy)   # identified -> subsystems_hidden IS reached
+
+    calls = []
+    real_concealment_at = sd.concealment_at
+
+    def _counting(obj):
+        calls.append(obj)
+        return real_concealment_at(obj)
+
+    monkeypatch.setattr(sd, "concealment_at", _counting)
+
+    got = perceived_by(player)
+
+    assert len(got) == 1
+    assert calls == [enemy]   # exactly one sample for the one contact
+
+
 # ── AI driver: subsystem aim falls back to hull-centre in a field ───────────
 
 def test_ai_subsystem_aim_falls_back_to_hull_in_a_field(monkeypatch):
