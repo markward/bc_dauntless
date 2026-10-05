@@ -59,9 +59,37 @@ def _display_name_as(obj, label):
 
 
 def _unknown_label(obj):
+    """The placeholder CreateScanButton should show for *obj*, or None to use
+    its real name.
+
+    Only allocates a NEW number when the SDK would actually build a button
+    for it -- mirrors CreateScanButton's own early returns (IsScannable,
+    not cloaking/cloaked) by calling the SAME predicates it is built from,
+    not by re-deriving cloak state here. An already-allocated number is
+    always returned regardless (`unknown_labels.current`), so a contact that
+    loses scannability/decloaks mid-flight keeps its placeholder rather than
+    being silently renumbered."""
     from engine.appc import sensor_contacts
     if obj is None or sensor_contacts.player_knows(obj):
         return None
+    current = unknown_labels.current(obj)
+    if current is not None:
+        return current
+    is_scannable = getattr(obj, "IsScannable", None)
+    if is_scannable is None or not is_scannable():
+        return None
+    # CreateScanButton's own cloak check is gated on `App.ShipClass_Cast`
+    # succeeding -- mirror that gate, not just the predicates, or a non-ship
+    # (planet, station) falls through to `TGObject.__getattr__`'s truthy
+    # `_Stub` for GetCloakingSubsystem and reads as permanently "cloaking"
+    # (combat.cloak_shields_suspended resolves it off the INSTANCE, not the
+    # class, so it has no stub guard of its own).
+    from engine.appc.ships import ShipClass
+    if isinstance(obj, ShipClass):
+        from engine.appc.sensor_detection import is_hidden_by_cloak
+        from engine.appc.combat import cloak_shields_suspended
+        if is_hidden_by_cloak(obj) or cloak_shields_suspended(obj):
+            return None
     return unknown_labels.placeholder(obj)
 
 

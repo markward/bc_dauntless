@@ -157,6 +157,45 @@ def test_two_unknowns_get_two_buttons(world):
     assert menu.GetButtonW("Drone") is None
 
 
+def test_unscannable_contact_does_not_consume_a_number(world):
+    """CreateScanButton's own early return (IsScannable() == 0) means the SDK
+    would never build a button for this contact -- _unknown_label must not
+    allocate a placeholder for it either, or a later, genuinely scannable
+    unknown would read "Unknown 2" instead of "Unknown 1"."""
+    player, pSet, menu = world
+    grid = _unknown_ship("Grid")
+    grid.SetScannable(False)
+    pSet.AddObjectToSet(grid, "Grid")
+    bird = _unknown_ship("Vagabond")
+    pSet.AddObjectToSet(bird, "Vagabond")
+
+    _post_target_list_added(grid)
+    _post_target_list_added(bird)
+
+    assert _labels(menu) == ["Unknown 1"]
+    assert menu.GetButtonW("Unknown 1") is not None
+    assert unknown_labels.current(grid) is None
+    assert unknown_labels.current(bird) == "Unknown 1"
+
+
+def test_unknown_planet_gets_a_placeholder_scan_button(world):
+    """A non-ShipClass contact (planet/station) must still get a placeholder:
+    the cloak gate in _unknown_label is scoped to ShipClass, exactly like the
+    SDK's own `App.ShipClass_Cast(pObject)` guard around its cloak check --
+    calling a cloak predicate on a Planet instance directly would hit
+    TGObject.__getattr__'s truthy _Stub for the undefined
+    GetCloakingSubsystem and wrongly read as "cloaking" forever."""
+    from engine.appc.planet import Planet_Create
+    player, pSet, menu = world
+    haven = Planet_Create(90.0, "colony.nif")
+    pSet.AddObjectToSet(haven, "Haven")
+
+    _post_target_list_added(haven)
+
+    assert _labels(menu) == ["Unknown 1"]
+    assert menu.GetButtonW(haven.GetDisplayName()) is None
+
+
 def test_known_contact_uses_its_real_name(world):
     player, pSet, menu = world
     bird = _unknown_ship("Vagabond")

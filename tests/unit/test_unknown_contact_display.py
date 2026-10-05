@@ -6,6 +6,7 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.appc.sets import SetClass
 from engine.appc import perception
+from engine.appc.perception import Contact
 from engine.appc.target_menu import STSubsystemMenu, STTargetMenu_CreateW
 from tests.helpers.sensor_time import settle_identification
 
@@ -50,6 +51,30 @@ def test_row_caption_and_affiliation_while_unknown():
     row.ShowRealName()
     assert row.GetCaption() == "IKS Korvat"
     assert row.GetAffiliation() == "ENEMY"
+
+
+def test_untargetable_unknown_contact_does_not_consume_a_number():
+    """set_contacts carries a record for every ship in the system, targetable
+    or not (see its docstring) -- an untargetable/out-of-range unknown must
+    not consume an "Unknown N" slot that no row will ever draw, or the first
+    LISTED unknown would read "Unknown 2" instead of "Unknown 1"."""
+    from engine.appc import unknown_labels
+    unknown_labels.reset()
+    s, player, sensors, bird = _world()
+    out_of_range = ShipClass_Create("BirdOfPrey")
+    out_of_range.SetTranslateXYZ(50000.0, 0.0, 0.0)
+    s.AddObjectToSet(out_of_range, "FarBird")
+
+    contacts = [
+        Contact(ship=out_of_range, surface_gu=0.0,
+                perceivable=False, targetable=False, identified=False),
+        Contact(ship=bird, surface_gu=0.0,
+                perceivable=True, targetable=True, identified=False),
+    ]
+    menu = STTargetMenu_CreateW("Targets")
+    menu.set_contacts(contacts)
+    assert menu.GetObjectEntry(bird).GetCaption() == "Unknown 1"
+    assert unknown_labels.current(out_of_range) is None
 
 
 def test_set_contacts_drives_the_caption():

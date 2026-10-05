@@ -229,7 +229,12 @@ class STTargetMenu(STTopLevelMenu):
             row.SetVisible()
             if c.identified:
                 row.ShowRealName()
-            else:
+            elif c.targetable:
+                # Allocate "Unknown N" only for a row this list actually
+                # draws (_rows() filters on `targetable`) -- `_contacts` now
+                # carries a record for every ship in the system, so an
+                # untargetable/out-of-range unknown must not consume a number
+                # nobody will ever see.
                 from engine.appc import unknown_labels
                 row.ShowUnknownName(unknown_labels.placeholder(c.ship))
         self._post_membership_changes()
