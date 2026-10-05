@@ -24,7 +24,7 @@ from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
-from engine.appc.sensor_detection import is_hidden_by_cloak
+from engine.appc import sensor_media
 # Module level, not deferred inside _dispatch_ai. ship_death imports nothing
 # from here, so there is no cycle to break -- and _dispatch_ai runs ~12.5 times
 # per ship per tick, so the deferred form was 127,200 importlib._handle_fromlist
@@ -1114,27 +1114,32 @@ def _sync_fire_script_target_subsystem(inst) -> None:
             if target is not None and _subsystem_belongs_to(resolved, target):
                 chosen = resolved
 
-    # A cloaked target is a fuzzy sensor return, not a detailed scan: force
-    # hull-centre aim, mirroring the player-side suppression in
-    # target_list_view (Contact.subsystems_targetable). We do NOT reach for
-    # subsystems_targetable itself here — that record is per-observer and is
-    # only ever pushed for the player by perception.perceived_by, so calling
-    # contact_for from an AI ship would hand back the PLAYER's answer, not
-    # this AI's. Cloak is absolute state on the target (is_hidden_by_cloak is
-    # a plain IsCloaked() check), which is exactly why the same predicate is
+    # A cloaked target, or one inside an identity-hiding medium (an asteroid
+    # field or moderate nebula — sensor_media.medium_unknown), is a fuzzy
+    # sensor return, not a detailed scan: force hull-centre aim, mirroring
+    # the player-side suppression in target_list_view (Contact.
+    # subsystems_targetable). We do NOT reach for subsystems_targetable
+    # itself here — that record is per-observer and is only ever pushed for
+    # the player by perception.perceived_by, so calling contact_for from an
+    # AI ship would hand back the PLAYER's answer, not this AI's. Cloak and
+    # medium are both absolute state on the target (sensor_media.
+    # subsystems_hidden is a plain IsCloaked() / field-strength / concealment
+    # read, no observer involved), which is exactly why the same predicate is
     # correct for both sides — and it is what subsystems_targetable is itself
     # derived from.
     #
     # No ENHANCED_SENSOR_CONTEST gate needed: with that flag off, cloak is
     # absolute and can_detect() returns False for a cloaked target, so no AI
-    # ever HAS a cloaked ship.GetTarget() to reach this branch at all.
+    # ever HAS a cloaked ship.GetTarget() to reach this branch at all. A
+    # medium-hidden (uncloaked) target has no such gate and is not affected
+    # by that flag either way.
     #
     # Re-fetch the target rather than reuse the `target` local above: that
     # local only exists when sub_id resolved to a live subsystem, so it can
     # be unbound here (e.g. idTargetedSubsystem is None) while the ship still
     # has a cloaked GetTarget().
     current_target = ship.GetTarget()
-    if current_target is not None and is_hidden_by_cloak(current_target):
+    if current_target is not None and sensor_media.subsystems_hidden(current_target):
         chosen = None
 
     # Only write on change — avoids churn and drives the dev log (below) on

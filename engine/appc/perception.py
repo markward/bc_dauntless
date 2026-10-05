@@ -156,6 +156,7 @@ def perceived_by(observer) -> tuple:
     clear needed either way.
     """
     from engine.appc import sensor_detection as sd
+    from engine.appc import sensor_media
     from engine.appc.sensor_detection import can_detect, effective_sensor_range
     from engine.appc.sets import SetClass
     from engine.appc.ship_death import _out_of_action, is_targetable_wreck
@@ -211,14 +212,16 @@ def perceived_by(observer) -> tuple:
             observer, ship, dist_sq_gu=dist_sq,
             apply_concealment=apply_conceal)
         alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
-        # A cloaked contact is a fuzzy sensor return: targetable at ship level
-        # (once it clears the checks above) but not down to individual
-        # subsystems. `is_hidden_by_cloak` is an absolute IsCloaked() read, not
-        # a detectability gate — `perceivable`/`targetable` above already
-        # settled detectability via can_detect's range-contest cloak bubble,
-        # so a cloaked ship well inside that bubble is routinely perceivable
-        # AND cloaked at once. That combination is exactly what this field
-        # exists to express.
+        # A cloaked contact, or one inside an identity-hiding medium (an
+        # asteroid field or moderate nebula — sensor_media.medium_unknown),
+        # is a fuzzy sensor return: targetable at ship level (once it clears
+        # the checks above) but not down to individual subsystems.
+        # `sensor_media.subsystems_hidden` is NOT a detectability gate —
+        # `perceivable`/`targetable` above already settled detectability via
+        # can_detect's range-contest cloak bubble, so a cloaked ship well
+        # inside that bubble is routinely perceivable AND subsystem-hidden at
+        # once. That combination is exactly what this field exists to
+        # express.
         identified = bool(observer_sensors is not None
                           and observer_sensors.IsObjectKnown(ship))
         out.append(Contact(
@@ -226,7 +229,7 @@ def perceived_by(observer) -> tuple:
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
-            subsystems_targetable=identified and not sd.is_hidden_by_cloak(ship),
+            subsystems_targetable=identified and not sensor_media.subsystems_hidden(ship),
             identified=identified,
         ))
     return tuple(out)
