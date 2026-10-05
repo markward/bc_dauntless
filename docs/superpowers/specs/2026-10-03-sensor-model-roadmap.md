@@ -63,8 +63,10 @@ stbc-reference MCP was unreachable 2026-10-03).
 9. **Continuity (Mark's rule).** Concealed < 5 s ⇒ display-only "obscured", identity kept.
    Concealed ≥ 5 s ⇒ lost track: `RemoveKnownObject`, remove its Hail and Scan buttons by
    calling Helm and Science `ExitedSet(ship)` directly (never a fake `ET_EXITED_SET`),
-   re-identify later via the dwell or a scan. Applies to rock occlusion, field and nebula
-   concealment alike.
+   re-identify later via the dwell or a scan. Applies to HIDDEN contacts only (rock
+   occlusion, the dense nebula core): cloak and medium-only concealment (a field,
+   moderate nebula) never lose the track — cloak keeps identity as in BC, a medium only
+   shows Unknown (Mark, 2026-10-05, rulings 1A/2A).
 10. **The player's lock drops at once** when a contact is concealed (today's
     `clear_undetectable_player_lock`, unchanged). Only the row's identity rides the window.
 11. **Scans identify through fields but not through a blocking rock.**

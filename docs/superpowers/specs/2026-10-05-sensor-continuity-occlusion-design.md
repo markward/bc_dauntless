@@ -9,7 +9,9 @@ Sub-project 1 (two tiers) is merged (`b1e1e05a`); its spec is
 
 Rocks, nebulae and cloak can hide a contact; asteroid fields and moderate nebula hide
 its identity; and a short concealment does not cost the player a contact the ship's
-computer can infer is the same object, while a long one loses the track.
+computer can infer is the same object, while a long one loses the track. Only a
+HIDDEN contact (rock, dense nebula core) can lose the track: cloak and a medium alone
+never do (Mark's rulings 1A/2A, 2026-10-05 — see Continuity).
 
 ## Rules
 
@@ -26,7 +28,10 @@ computer can infer is the same object, while a long one loses the track.
    (`rocks.rock.effective_radius`) is at least `min_blocker_radius_gu` (dial, default
    2.0 GU — the size at which a breakup remnant becomes targetable). Planets, suns, ships
    and minor/near-band rocks never occlude (roadmap decision 7). Fields between observer
-   and target never occlude.
+   and target never occlude. A rock whose sphere contains the observer's centre or the
+   target's centre does not occlude that pair: that ship is beside the rock, not behind
+   it (final-review fix 1 — otherwise a ship parked against a big rock was blind in every
+   direction and hidden from everyone).
 
 2. **Unknown by medium** — the contact stays listed and targetable, but reads "Unknown N"
    with restricted information (no subsystem rows, no target panel; AI ships lose
@@ -38,36 +43,45 @@ computer can infer is the same object, while a long one loses the track.
 
 ### Continuity (player only — only the player identifies)
 
-A contact is **concealed** when it is in the player's set, inside the player's sensor
-range, and either hidden (`not can_detect(player, obj)`) or unknown by medium. Leaving
-sensor range is NOT concealment — identity survives it (roadmap decision 3).
+A contact is **concealed** — runs the lost-track clock — when it is in the player's set,
+inside the player's sensor range, and **hidden** (`not can_detect(player, obj)`: a major
+rock or the dense nebula core). Leaving sensor range is NOT concealment — identity
+survives it (roadmap decision 3). Mark's rulings (2026-10-05) narrow it further:
+
+- **1A — cloak never starts the clock.** Identity survives cloak, as in BC. A fully
+  cloaked target (`sensor_detection.is_hidden_by_cloak`) is never concealed; its row and
+  list behaviour is unchanged (`can_detect` still decides perception). On decloak it
+  shows its real name at once.
+- **2A — a medium alone never loses the track.** Unknown by medium only changes the
+  DISPLAY (`shows_identity` False: "Unknown N", no subsystems, AI subsystem aim hidden);
+  the ship stays known however long it stays in the field or moderate nebula.
 
 - **Concealed for less than `continuity_window_s`** (dial, default 5.0 s): identity is
   kept silently. A hidden contact's row disappears at once (Mark, 2026-10-05: no
   "obscured" row). The player's lock drops at once
-  (`clear_undetectable_player_lock`, unchanged). An in-medium contact reads Unknown;
-  if it leaves the medium within the window it shows its real name again.
+  (`clear_undetectable_player_lock`, unchanged).
 - **Concealed for the whole window: lost track.**
   1. `sensors.RemoveKnownObject(obj)`;
   2. `Bridge.HelmMenuHandlers.ExitedSet(obj)` called directly — removes its Hail button
      (or fleet submenu). Never a synthetic `ET_EXITED_SET`.
-  3. Science: a hidden contact has already left the target list, so the existing
-     `ET_TARGET_LIST_OBJECT_REMOVED` → `ScienceMenuHandlers.ExitedSet` removed its Scan
-     button. A contact **still listed** (in a medium) keeps its Scan button, relabelled
-     from the real name back to its "Unknown N" placeholder (`STMenu.RenameButton`), so
-     it can still be scanned (E2M1's Karoon among the asteroids).
+  3. Science: a contact that has left the target list had its Scan button removed by
+     the existing `ET_TARGET_LIST_OBJECT_REMOVED` → `ScienceMenuHandlers.ExitedSet`. A
+     contact **still listed** keeps its Scan button, relabelled from the real name back
+     to its "Unknown N" placeholder (`STMenu.RenameButton`), so it can still be scanned.
 - The clock is evaluated on the contact manager's sweep (`sweep_period_s`, 1 s), so the
   window is accurate to about ±1 sweep. Documented, not hidden.
 
 ### Re-identification
 
-- **Passive** (sub-project 1's dwell) additionally requires the contact not to be
-  concealed — nothing inside a field or behind a rock identifies passively.
+- **Passive** (sub-project 1's dwell) additionally requires the contact not to read
+  Unknown by medium (it already required `can_detect`) — nothing inside a field, a
+  moderate nebula or behind a rock identifies passively.
 - **Scan** (`IdentifyObject`, `ScanAllObjects`) identifies through a medium but not
   through a major rock: a pending scan entry whose target is rock-blocked when it falls
   due is dropped. A ship scanned while inside a medium shows its real name for one
-  `continuity_window_s` from the scan; if it is still concealed at the end of that
-  window, the track is lost again (Mark, 2026-10-05).
+  `continuity_window_s` from the scan; after that window its display simply reverts to
+  Unknown and it stays known (ruling 2A). A HIDDEN ship scanned (dense nebula core) has
+  its clock restarted from the scan: one window, then the track is lost again.
 
 ### Guards
 
@@ -87,10 +101,10 @@ attribute (handlers resolve by name at dispatch — `engine/appc/events.py:_reso
 
 | Unit | One idea | Notes |
 |---|---|---|
-| `engine/appc/sensor_occlusion.py` (new) | Does a major rock block the line A→B? | Segment-vs-sphere on `effective_radius`, excluding A and B. Per-set major-rock list built once per sim tick; per-(A, B) answers cached for the tick, keyed on game time. Never raises (a failure answers "not blocked" and is logged once). |
+| `engine/appc/sensor_occlusion.py` (new) | Does a major rock block the line A→B? | Segment-vs-sphere on `effective_radius`, excluding A and B and any rock whose sphere contains A's or B's centre. Per-set major-rock list built once per sim tick; per-(A, B) answers cached per set for the tick, keyed on game time. Never raises (a failure answers "not blocked" and is logged once). |
 | `engine/appc/sensor_media.py` (new) | Is this target inside a medium that hides its identity? | `medium_unknown(target)`; `subsystems_hidden(target)` = `medium_unknown or is_hidden_by_cloak`. |
 | `sensor_detection.can_detect` | (unchanged idea) | Gains the occlusion gate after range, before the nebula gate. Skipped when `ENHANCED_SENSOR_CONTEST` is False, so "off" restores pre-stage-4 behaviour. |
-| `sensor_contacts` | (unchanged idea, plus continuity) | `_concealed_since[obj]`, `_scanned_at[obj]`; lost-track side effects; passive arm/commit require not concealed; scan commit drops rock-blocked targets. |
+| `sensor_contacts` | (unchanged idea, plus continuity) | `_concealed_since[obj]` (hidden, non-cloaked contacts only), `_scanned_at[obj]`; lost-track side effects; passive arm/commit require `can_detect` and not Unknown by medium; scan commit drops rock-blocked targets. |
 | `perception` | | `Contact.identified` = known ∧ (not `medium_unknown` ∨ scanned within the window). `subsystems_targetable` uses `sensor_media.subsystems_hidden`. |
 | `ai_driver` | | Subsystem aim falls back to hull when `sensor_media.subsystems_hidden(target)` (was `is_hidden_by_cloak`). |
 | `sensor_dials` | | Adds `continuity_window_s` 5.0, `min_blocker_radius_gu` 2.0, `field_unknown_threshold` 0.5, `nebula_unknown_threshold` 0.14. |
@@ -124,8 +138,10 @@ cached per tick and cheap per rock. Verified two ways:
 1. A ship behind a major rock leaves the list, radar and weapons, for the player and AI.
 2. A ship inside an asteroid field or moderate nebula reads Unknown with no subsystems,
    even if identified; AI cannot aim at its subsystems.
-3. Concealment of the full window forgets identity and removes the Hail button; the
-   ship must be identified again.
+3. Being HIDDEN (rock, dense nebula core) for the full window forgets identity and
+   removes the Hail button; the ship must be identified again. Cloak and a medium alone
+   never lose the track (rulings 1A/2A): a cloaked ship keeps its identity, an in-medium
+   ship keeps it but displays Unknown.
 4. A scan of a ship behind a major rock does nothing.
 
 ## Testing
@@ -227,6 +243,25 @@ beyond what the Rules/Architecture sections above already describe:
   already elapsed the moment any later synthetic tick runs; the test does not attempt to
   pin a "not due yet" instant for the scan path (see the test's own comment).
 
+- **Final-review rulings (Mark, 2026-10-05).** 1A: cloak never starts the continuity
+  clock — `is_concealed` returns False for a fully cloaked target, so identity survives
+  cloak as in BC; perception is unchanged. 2A: a medium alone never loses the track —
+  `is_concealed` no longer includes `medium_unknown`; a medium only makes
+  `shows_identity` False. Passive identification inside a medium is still blocked, via
+  `sensor_contacts._unknown_by_medium` in the passive arm/commit gates. Tests that
+  asserted the old behaviour (in a field for the window loses track; scan glimpse then
+  lost track) were rewritten to the ruled behaviour; the lost-track paths they used to
+  cover are now pinned on the dense nebula core.
+- **Final-review fix 1 — beside a rock is not behind it.** `sensor_occlusion.blocked`
+  skips any rock whose sphere contains the observer's or the target's centre. Before,
+  the segment started inside the sphere, the closest point was the observer itself, and
+  a ship parked against a big rock was blind in every direction and hidden from all.
+- **Final-review fix 4.** `host_loop._reset_sensor_state` calls
+  `sensor_occlusion.reset()` with every other sensor cache on a mission swap.
+- **Final-review fix 5.** The pair cache is keyed per set (as the rock cache already
+  was), each set with its own `(game time, tick time, rock count)` signature, so callers
+  alternating between sets in one tick no longer clear each other's answers.
+
 ## Out of scope
 
 Probes and over-boost listing (roadmap "later"); planets/suns as occluders; fields
@@ -237,9 +272,14 @@ occluding between ships; partial-lock UI; a set-explicit field model.
 `./build/dauntless --developer` from this worktree. E2M1: let the Karoon drift into the
 asteroids — E2M1's are loose major rocks, so expect line-of-sight drops (and, if a field
 also covers the spot, Unknown); it must stay recoverable and scannable, and after ~5 s
-hidden it loses its Hail button until identified again. For field Unknown, use the
+hidden behind a rock it loses its Hail button until identified again (in a field alone
+it only reads Unknown, and keeps its Hail button). For field Unknown, use the
 developer mission "Rock Fields: inside Beol 4". Fly so a big rock sits between you and a
 ship: it drops off the list and radar, reappears with its name if it was hidden <5 s.
+Park beside a big rock — the list stays (you are beside it, not behind it). E8M1
+Belaruz: hail the KessokHeavy and command your fleet inside the nebula — they read
+Unknown but keep their Hail/fleet buttons. A known ship that cloaks keeps its identity
+and shows its real name the moment it decloaks.
 Dials: Developer Options → Lighting → "Dial keys" → sensors.
 
 Task 6 added a headless integration proof against this exact scenario
