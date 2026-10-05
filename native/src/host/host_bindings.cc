@@ -2689,6 +2689,8 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
     }
     f("near_fade_gu", o.fade_gu);
     f("near_tumble_scale", o.tumble_scale);
+    f("large_ramp_lo", o.large_ramp_lo);
+    f("large_ramp_hi", o.large_ramp_hi);
     f("near_dash_collapse_step_gu", o.dash_collapse_step_gu);
     f("near_large_min_px", o.large_min_px);
     f("near_small_min_px", o.small_min_px);

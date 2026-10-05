@@ -68,7 +68,16 @@ struct NearDials {   // defaults MUST equal far_dials.py DEFAULTS near_* keys
     float stream_margin_gu = 10.0f;       // keep cells this far past range (hysteresis)
     float collide_cooldown_s = 0.5f;      // per large rock, once the ship is clear (pen == 0)
     float collide_margin_gu = 0.0f;
+    // Large rocks follow the majors threshold (rock-promotion spec P2): their
+    // density is multiplied by large_ramp(a), 0 at or below lo, 1 at or above
+    // hi. a is the source's a(x) (far::density_a), never the noise-multiplied
+    // field density, so a clump cannot lift a 0.5 band over the threshold.
+    float large_ramp_lo = 0.5f;
+    float large_ramp_hi = 1.0f;
 };
+
+// 0 for a <= lo, 1 for a >= hi, linear between; hi <= lo is a step at lo.
+float large_ramp(float a, float lo, float hi);
 
 struct NearRock {
     glm::dvec3 pos_sys{0.0};

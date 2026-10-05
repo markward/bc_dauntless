@@ -117,7 +117,8 @@ void SpeckBand::set_near_dials(const NearDials& d) {
     const NearClassDials& a = near_.large;
     const NearClassDials& b = d.large;
     const bool regen = a.density != b.density || a.r_min != b.r_min || a.r_max != b.r_max ||
-                       a.exponent != b.exponent || a.cell_gu != b.cell_gu;
+                       a.exponent != b.exponent || a.cell_gu != b.cell_gu ||
+                       near_.large_ramp_lo != d.large_ramp_lo || near_.large_ramp_hi != d.large_ramp_hi;
     near_ = d;
     if (regen) { cells_.clear(); invalidate(); }
     dirty_ = true;

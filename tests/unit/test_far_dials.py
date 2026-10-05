@@ -21,6 +21,9 @@ _NEAR_CPP_DEFAULTS = {
     # near_large_min_px 1.5 -> 0: review I1, 2026-10-04 (the speck hand-off has no floor).
     "near_large_min_px": 0.0, "near_small_min_px": 2.5,
     "near_fade_gu": 4.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    # rock-promotion P2: large rocks follow the majors ramp, 0 at a <= 0.5,
+    # full at 1.0 (NearDials large_ramp_lo / large_ramp_hi).
+    "large_ramp_lo": 0.5, "large_ramp_hi": 1.0,
 }
 
 

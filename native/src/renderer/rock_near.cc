@@ -219,6 +219,12 @@ float ramp_down(float d, float end, float fade) {   // 1 at end - fade, 0 at end
 }
 }  // namespace
 
+float large_ramp(float a, float lo, float hi) {
+    if (!(a > lo)) return 0.0f;
+    if (!(hi > lo) || a >= hi) return 1.0f;
+    return (a - lo) / (hi - lo);
+}
+
 NearWeights near_weights(float d, const NearClassDials& c, float fade_gu) {
     NearWeights w;
     w.mesh = d < c.mesh_gu ? 1.0f : 0.0f;   // the hard mesh <-> billboard swap
@@ -246,8 +252,11 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
     if (rocks.empty() || !(c.cell_gu > 0.0f) || !(c.density > 0.0f)) return out;
     const double L = c.cell_gu;
     const glm::dvec3 lo = glm::dvec3(ijk) * L;
-    const double n_bound = static_cast<double>(c.density) *
-                           far::a_bound(s, lo + 0.5 * L, 0.5 * L) * far::noise_m_bound(s);
+    const bool large = cls == NearClass::Large;
+    const float a_hi_cell = far::a_bound(s, lo + 0.5 * L, 0.5 * L);
+    const float ramp_bound = large ? large_ramp(a_hi_cell, d.large_ramp_lo, d.large_ramp_hi) : 1.0f;
+    const double n_bound = static_cast<double>(c.density) * a_hi_cell * ramp_bound *
+                           far::noise_m_bound(s);
     if (!(n_bound > 0.0)) return out;
 
     Rng r{mix_ijk(s.seed, cls, ijk)};
@@ -263,7 +272,9 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
         k.tumble_axis = rockrand::unit_vector(r);
         k.tumble_rate = 0.05f + 0.55f * r.unit();
         k.phase = r.unit() * 6.28318530718f;
-        if (accept >= c.density * far::field_density(s, p) / n_bound) continue;
+        float dens = far::field_density(s, p);
+        if (large) dens *= large_ramp(far::density_a(s, p), d.large_ramp_lo, d.large_ramp_hi);
+        if (accept >= c.density * dens / n_bound) continue;
         if (in_explicit(s, p)) continue;
         k.pos_sys = p;
         out.push_back(k);
@@ -272,7 +283,8 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
 }
 
 void NearField::set_dials(const NearDials& d) {
-    const bool regen = !same_generator(d.small, dials_.small) || !same_generator(d.large, dials_.large);
+    const bool regen = !same_generator(d.small, dials_.small) || !same_generator(d.large, dials_.large) ||
+                       d.large_ramp_lo != dials_.large_ramp_lo || d.large_ramp_hi != dials_.large_ramp_hi;
     dials_ = d;
     update_effective();
     invalidate_stream_watch();   // ranges may have moved

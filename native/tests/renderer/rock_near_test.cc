@@ -1295,3 +1295,66 @@ TEST(NearPerf, RandomFlightStreamsEveryCellInRangeAndNoneBeyondKeep) {
     EXPECT_GT(dashes, 10);
     EXPECT_GT(slow, 100);
 }
+
+TEST(NearRamp, LargeRampRule) {
+    using rockfield::large_ramp;
+    EXPECT_EQ(large_ramp(0.0f, 0.5f, 1.0f), 0.0f);
+    EXPECT_EQ(large_ramp(0.5f, 0.5f, 1.0f), 0.0f);
+    EXPECT_NEAR(large_ramp(0.75f, 0.5f, 1.0f), 0.5f, 1e-6f);
+    EXPECT_EQ(large_ramp(1.0f, 0.5f, 1.0f), 1.0f);
+    EXPECT_EQ(large_ramp(2.0f, 0.5f, 1.0f), 1.0f);
+    EXPECT_EQ(large_ramp(0.5f, 0.5f, 0.5f), 0.0f);   // hi <= lo: a step at lo
+    EXPECT_EQ(large_ramp(0.51f, 0.5f, 0.5f), 1.0f);
+}
+
+namespace {
+far::DiscSource flat_belt(float a) {   // a constant `a` across a huge flat disc, no noise
+    far::DiscSource s; s.id = 7; s.seed = 5; s.table = {{0.0f, a}, {1e7f, a}};
+    s.scale_height_min_gu = 1e7f;
+    return s;
+}
+double mean_count(const far::DiscSource& s, rockfield::NearClass cls, const rockfield::NearDials& d, int cells) {
+    double n = 0;
+    for (int i = 0; i < cells; ++i) n += rockfield::generate_near_cell(s, cls, {i, 2, 0}, d, cat()).size();
+    return n / cells;
+}
+}
+
+TEST(NearRamp, NoLargeRocksAtHalfDensity) {     // Vesuvi's 0.5 band: small rocks only
+    rockfield::NearDials d;
+    EXPECT_EQ(mean_count(flat_belt(0.5f), rockfield::NearClass::Large, d, 400), 0.0);
+    EXPECT_GT(mean_count(flat_belt(0.5f), rockfield::NearClass::Small, d, 400), 0.0);
+}
+
+TEST(NearRamp, LargeDensityFollowsTheRamp) {
+    rockfield::NearDials d;
+    d.large.density = 1.0f / 2000.0f;   // ~62 candidates per 50 GU cell: a stable mean
+    const double full = mean_count(flat_belt(1.0f), rockfield::NearClass::Large, d, 300);
+    const double three_q = mean_count(flat_belt(0.75f), rockfield::NearClass::Large, d, 300);
+    ASSERT_GT(full, 20.0);
+    // density x a x ramp(a): 0.75 x 0.5 = 0.375 of full
+    EXPECT_NEAR(three_q / full, 0.375, 0.05);
+}
+
+TEST(NearRamp, FullDensityUnchanged) {          // tile-field interiors (a = 1) keep every rock
+    rockfield::NearDials on, off;
+    off.large_ramp_lo = -1.0f; off.large_ramp_hi = 0.0f;   // ramp == 1 for every a >= 0
+    for (int i = 0; i < 50; ++i) {
+        const auto a = rockfield::generate_near_cell(full_sphere(), rockfield::NearClass::Large, {i, 1, 1}, on, cat());
+        const auto b = rockfield::generate_near_cell(full_sphere(), rockfield::NearClass::Large, {i, 1, 1}, off, cat());
+        ASSERT_EQ(a.size(), b.size());
+        for (size_t k = 0; k < a.size(); ++k) EXPECT_EQ(a[k].pos_sys, b[k].pos_sys);
+    }
+}
+
+TEST(NearRamp, RampDialChangeClearsCells) {
+    rockfield::NearField f;
+    f.set_catalogue(cat());
+    f.set_sources({full_sphere()});
+    f.stream({0, 0, 0});
+    ASSERT_GT(f.stats().cells, 0);
+    rockfield::NearDials d = f.dials();
+    d.large_ramp_lo = 0.25f;
+    f.set_dials(d);
+    EXPECT_EQ(f.stats().cells, 0);
+}

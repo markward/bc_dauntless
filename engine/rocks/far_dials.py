@@ -80,6 +80,9 @@ DEFAULTS: dict = {
     "near_large_min_px": 0.0,
     "near_small_min_px": 2.5,   # Mark, live 2026-10-04 (3x ranges)
     "near_fade_gu": 4.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    # Large rocks follow the majors threshold (native; rock-promotion P2):
+    # density multiplied by large_ramp(a), 0 at a <= lo, full at a >= hi.
+    "large_ramp_lo": 0.5, "large_ramp_hi": 1.0,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,
     # engine/rocks/scenery_contact.py): damage = KE damage x
     # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
@@ -116,6 +119,7 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_billboard_gu", "near_large_max",
     "near_large_min_px", "near_small_min_px",
     "near_fade_gu", "near_tumble_scale", "near_dash_collapse_step_gu", "near_stream_margin_gu", "collide_cooldown_s",
+    "large_ramp_lo", "large_ramp_hi",
     "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
     "speck_keep_power", "speck_restream_gu", "speck_band_gain",
     "puff_count", "puff_size_frac", "puff_opacity", "puff_brightness",
