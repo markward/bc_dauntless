@@ -49,12 +49,18 @@ def test_st_subsystem_menu_records_ship_and_defaults_visible():
     assert menu.IsVisible() == 1
 
 
-def test_st_subsystem_menu_show_name_methods_are_noops():
-    """ShowUnknownName / ShowRealName never called by SDK; must not raise."""
+def test_st_subsystem_menu_show_name_methods_set_and_clear_the_caption():
+    """ShowUnknownName / ShowRealName drive the row's caption
+    (GetCaption()): sensor-tiers §5 wires them from Contact.identified, so
+    they are no longer no-ops. Must not raise, and the caption must flip
+    between the placeholder and the real label."""
     ship = ShipClass()
+    ship.SetName("Test Ship")
     menu = App.STSubsystemMenu(ship)
     menu.ShowUnknownName()
+    assert menu.GetCaption() != menu.GetLabel()
     menu.ShowRealName()
+    assert menu.GetCaption() == menu.GetLabel()
 
 
 def test_st_component_menu_is_st_menu_subclass():
