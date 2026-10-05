@@ -75,8 +75,8 @@ stbc-reference MCP was unreachable 2026-10-03).
 
 | # | Name | Depends on | Status |
 |---|---|---|---|
-| 1 | **Two tiers** — contact manager, bands, dwell, proximity events, Unknown display, `SensorSubsystem` surface | local main | spec: `2026-10-03-sensor-tiers-design.md` |
-| 2 | **Continuity and occlusion** — obscured window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1, and `feat/rock-fields` merged | not started |
+| 1 | **Two tiers** — contact manager, bands, dwell, proximity events, Unknown display, `SensorSubsystem` surface | local main | ✅ merged b1e1e05a, live-verified — spec: `2026-10-03-sensor-tiers-design.md` |
+| 2 | **Continuity and occlusion** — 5 s window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1 (merged b1e1e05a), rock-fields (merged) | spec: `2026-10-05-sensor-continuity-occlusion-design.md` |
 | later | **Probes** — BC lets a probe's sensors see for you (`AddProbe`, Science "Launch Probe", E6M4 goal) | 1 | explore after 2 |
 | later | **Over-boost** — BC reveals the whole set above 120% sensor power; decide whether the list shows it | 1 | explore after 2 |
 
