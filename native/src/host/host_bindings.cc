@@ -4607,11 +4607,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](py::list keys) {
               std::unordered_set<std::uint64_t> s;
               for (const auto& k : keys) s.insert(k.cast<std::uint64_t>());
+              g_speck_band.set_excluded(s);   // copied: its rebuild runs on a worker
               g_near_field.set_excluded(std::move(s));
           },
           py::arg("keys"),
-          "Large near-rock keys promoted to real objects (rock-promotion): the "
-          "near band draws nothing and reports no contact for them. Replaces the list.");
+          "Large near-rock keys promoted to real objects or destroyed "
+          "(rock-promotion): the near band draws nothing and reports no contact "
+          "for them, and the speck band draws no speck. Replaces the list.");
     m.def("rockfield_query_large",
           [](std::tuple<double, double, double> c, double radius, float min_r) {
               py::list out;

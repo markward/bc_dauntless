@@ -136,6 +136,16 @@ void SpeckBand::set_sources(const std::vector<far::DiscSource>& active) {
     if (!same) clear();
 }
 
+void SpeckBand::set_excluded(std::unordered_set<std::uint64_t> keys) {
+    // Python re-pushes the list every acting tick (4 Hz): only a real change
+    // re-streams. Cells stay cached -- the exclusion is applied when the
+    // instances are assembled -- and a rebuild in flight is left to land
+    // (the next stream re-runs it with the new set).
+    if (keys == excluded_) return;
+    excluded_ = std::move(keys);
+    dirty_ = true;
+}
+
 SpeckBand::~SpeckBand() {
     cancel_.store(true);
     if (job_.valid()) job_.wait();
@@ -149,6 +159,7 @@ void SpeckBand::invalidate() {
 void SpeckBand::clear() {
     invalidate();
     cells_.clear();
+    excluded_.clear();             // as NearField::clear: keys die with the sources
     instances_.clear();
     ++version_;                    // the host uploads the empty set
     dirty_ = true;
@@ -176,7 +187,7 @@ bool SpeckBand::stream(const glm::dvec3& centre_sys, float dash_step_gu) {
     }
     if (job_.valid()) return changed;    // one rebuild in flight at a time
     if (!dirty_ && glm::length(centre_sys - origin_) < dials_.restream_gu) return changed;
-    Job j{dials_, near_, cat_, albedo_, sources_, centre_sys, std::move(cells_), next_margin_gu(),
+    Job j{dials_, near_, cat_, albedo_, sources_, excluded_, centre_sys, std::move(cells_), next_margin_gu(),
           debug_fail_jobs_};
     cells_.clear();
     job_generation_ = generation_;
@@ -287,12 +298,15 @@ SpeckBand::Result SpeckBand::rebuild(Job job, const std::atomic<bool>& cancel) {
                     if (it == cells.end()) {
                         Cell cell;
                         cell.u = u;
-                        for (const NearRock& r : generate_near_cell(s, NearClass::Large, ijk, near_, cat_)) {
+                        const auto rocks = generate_near_cell(s, NearClass::Large, ijk, near_, cat_);
+                        for (std::size_t n = 0; n < rocks.size(); ++n) {
+                            const NearRock& r = rocks[n];
                             const glm::vec3 alb = r.rock >= 0 && r.rock < static_cast<int>(albedo_.size())
                                 ? albedo_[static_cast<std::size_t>(r.rock)] : glm::vec3(0.4f);
                             cell.rocks.push_back(RockSpeckGpu{glm::vec3(0.0f), r.radius, alb, u,
                                                               speck_shape_seed(r.pos_sys)});
                             cell.pos_sys.push_back(r.pos_sys);
+                            cell.keys.push_back(near_rock_key(s.id, NearClass::Large, ijk, n));
                         }
                         it = cells.emplace(key, std::move(cell)).first;
                         ++out.generated;
@@ -306,6 +320,7 @@ SpeckBand::Result SpeckBand::rebuild(Job job, const std::atomic<bool>& cancel) {
         if (!it->second.live) { it = cells.erase(it); continue; }
         Cell& cell = it->second;
         for (std::size_t n = 0; n < cell.rocks.size(); ++n) {
+            if (!job.excluded.empty() && job.excluded.count(cell.keys[n])) continue;
             RockSpeckGpu g = cell.rocks[n];
             g.pos = glm::vec3(cell.pos_sys[n] - c);
             out.instances.push_back(g);

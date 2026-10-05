@@ -529,6 +529,11 @@ void NearField::stream(const glm::dvec3& c) {
     }
 }
 
+std::uint64_t near_rock_key(std::uint32_t source_id, NearClass cls, const glm::i64vec3& ijk,
+                            std::size_t index) {
+    return rock_key(cell_key(source_id, cls, ijk), index);
+}
+
 std::vector<NearQueryHit> NearField::query_large(const glm::dvec3& c, double radius,
                                                  float min_r) const {
     std::vector<NearQueryHit> out;

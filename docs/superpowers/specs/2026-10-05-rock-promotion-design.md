@@ -247,9 +247,13 @@ and with combat_stress. GPU timing is dead on this Mac.
 
 ## Amended during planning (2026-10-05)
 
-- **R1 — no speck-band exclusion.** Demotion is capped below the speck band's start
-  (`near_large_billboard_gu - near_fade_gu - 1`, 400 GU by default) and a dash start
-  demotes every promoted rock, so a promoted rock is never inside the speck band.
+- **R1 — demote cap (speck-band exclusion superseded, final review M1).** Demotion is
+  capped below the speck band's start (`near_large_billboard_gu - near_fade_gu - 1`,
+  400 GU by default) and a dash start demotes every promoted rock. The original ruling
+  ("no speck-band exclusion") left destroyed rocks reappearing as specks past ~405 GU,
+  so the speck band now excludes every key `rockfield_set_promoted` pushes — promoted
+  AND destroyed — keyed exactly as the near band (`near_rock_key`), with the set copied
+  into each worker rebuild. The demote cap stays as a useful bound.
 - **R2 — promoted rocks have no halo** (scenery large rocks have none).
 - **R3 — death is detected by polling** (`rocks.death.is_dying_rock`, set membership)
   each promotion tick; there is no rock-died callback.

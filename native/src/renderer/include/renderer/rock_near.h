@@ -153,6 +153,13 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
                                          const glm::i64vec3& ijk, const NearDials& d,
                                          const NearCatalogue& cat);
 
+// The key the near band (stream, for_each, query_large) gives rock `index`
+// of cell ijk of class cls of the source with this id: the key promotion
+// tracks and rockfield_set_promoted excludes. The speck band keys its LARGE
+// rocks with it too, so one exclusion list covers both bands.
+std::uint64_t near_rock_key(std::uint32_t source_id, NearClass cls, const glm::i64vec3& ijk,
+                            std::size_t index);
+
 struct NearStats { int cells = 0; int small = 0; int large = 0; int ghosted = 0; };
 
 // One large-rock touch (spec §2 "Collisions"), drained by Python
