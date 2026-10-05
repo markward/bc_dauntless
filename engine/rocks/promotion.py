@@ -24,6 +24,22 @@ def field_name(key: int) -> str:
     return "Field Rock %04X" % (int(key) & 0xFFFF)
 
 
+def _names(key: int) -> tuple:
+    """field_name first; on a collision with a DIFFERENT key's rock, the
+    32-bit then the full 64-bit key (final review M3)."""
+    k = int(key)
+    return (field_name(k), "Field Rock %08X" % (k & 0xFFFFFFFF),
+            "Field Rock %016X" % (k & 0xFFFFFFFFFFFFFFFF))
+
+
+def _free_name(view_set, key):
+    for name in _names(key):
+        other = view_set.GetObject(name)
+        if other is None:
+            return name
+    return None
+
+
 def promoted() -> dict:
     return dict(_promoted)
 
@@ -56,15 +72,20 @@ def _hull_fraction(rock) -> float:
     return hull.GetCondition() / hull.GetMaxCondition()
 
 
+def _far_enabled(r) -> bool:
+    """The rock-fields master toggle; a raising renderer reads as off."""
+    try:
+        return bool(r.far_enabled())
+    except Exception as e:
+        dev_mode.log_swallowed("rock promotion far_enabled", e)
+        return False
+
+
 def _muted(player, view_set, r) -> bool:
     """No NEW promotions (existing ones still demote by distance)."""
     if player is None or player.GetContainingSet() is not view_set:
         return True
-    try:
-        if not r.far_enabled():
-            return True
-    except Exception as e:
-        dev_mode.log_swallowed("rock promotion far_enabled", e)
+    if not _far_enabled(r):
         return True
     from engine.rocks import minor_contact
     return bool(minor_contact._muted(player))
@@ -102,6 +123,10 @@ def _demote(key) -> None:
     fraction = _hull_fraction(rock)
     if fraction < 1.0:
         _damaged[key] = fraction
+    # Final review I2: removal clears no locks -- a targeted rock would
+    # stay the player's (or an NPC's) target while in no set.
+    from engine.appc.ship_death import _clear_target_locks
+    _clear_target_locks(rock)
     pset = rock.GetContainingSet()
     if pset is not None:
         pset.RemoveObjectFromSet(rock.GetName())
@@ -120,10 +145,10 @@ def _promote(view_set, anchor, key, hit, now) -> None:
     import App
     from engine.appc.math import TGMatrix3, TGPoint3
     from engine.rocks.rock import RockClass_Create
-    name = field_name(key)
-    if view_set.GetObject(name) is not None:
+    name = _free_name(view_set, key)
+    if name is None:
         dev_mode.log_swallowed("rock promotion name taken",
-                               RuntimeError(name))
+                               RuntimeError(field_name(key)))
         return
     rock = RockClass_Create(hit["radius"], name=name, kind="major",
                             catalogue_index=hit["rock"], exact_radius=True,
@@ -187,7 +212,8 @@ def tick(player, view_set, now, r) -> None:
             demote_all(r)
         _view_set = view_set
         from engine.rocks import minor_contact
-        if _promoted and minor_contact._muted(player):
+        if _promoted and (minor_contact._muted(player)
+                          or not _far_enabled(r)):
             demote_all(r)
             return
     except Exception as e:

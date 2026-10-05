@@ -132,7 +132,8 @@ def test_flying_through_a_full_density_field_promotes_targets_destroys_and_demot
     hits = {hit["key"]: hit for hit in
             renderer.rockfield_query_large((0.0, 0.0, 0.0), range_gu, min_r)}
     for key, rock in promoted.items():
-        assert rock.GetName() == promotion.field_name(key)
+        assert rock.GetName().startswith("Field Rock ")
+        assert rock.GetName() in promotion._names(key)
         assert not rock.GetName().startswith("Asteroid")
         radius = effective_radius(rock)
         assert radius >= far_dials.get("promote_min_radius_gu")
@@ -161,12 +162,13 @@ def test_flying_through_a_full_density_field_promotes_targets_destroys_and_demot
     # (the dead rock's own breakup pieces are still in `pset`, named "Field
     # Rock .... - Remnant" / "-N" -- check the exact demoted names, not a
     # startswith, so they are not mistaken for a leaked promoted object.)
-    before_move = promotion.promoted()
+    before_move = {k: rock.GetName()
+                   for k, rock in promotion.promoted().items()}
     _move_player(player, 2000.0)
     promotion.tick(player, pset, 2.0, renderer)
     assert promotion.promoted() == {}
-    for key in before_move:
-        assert pset.GetObject(promotion.field_name(key)) is None
+    for name in before_move.values():
+        assert pset.GetObject(name) is None
 
     # Fly back: the destroyed key never regrows, even though it is still in
     # range and still in the native field.

@@ -445,3 +445,58 @@ def test_dash_start_demotes_everything(world, monkeypatch):   # Review Focus 3
     promotion.tick(player, pset, 1.0, r)
     assert promotion.promoted() == {}
     assert r.promoted_pushes[-1] == []
+
+
+def test_view_set_change_clears_the_lock_on_a_targeted_rock(world):
+    """Final review I2: demote_all removes a targeted rock from its set;
+    every lock on it must go first, or the player keeps a target that is
+    in no set (and the re-promoted key becomes a NEW object)."""
+    pset, player = world
+    r = FakeR([hit(5, 100.0)])
+    promotion.tick(player, pset, 0.0, r)
+    rock = promotion.promoted()[5]
+    player.SetTarget(rock.GetName())
+    assert player.GetTarget() is rock
+    promotion.tick(player, _new_set("Other"), 1.0, FakeR([]))
+    assert promotion.promoted() == {}
+    assert player.GetTarget() is not rock
+
+
+def test_field_disabled_demotes_everything_at_once(world):
+    """Final review M2: the master toggle off is like a dash -- every
+    promoted rock goes back immediately, ahead of the rate limit."""
+    pset, player = world
+    r = FakeR([hit(5, 100.0), hit(6, 120.0)])
+    promotion.tick(player, pset, 0.0, r)
+    assert len(promotion.promoted()) == 2
+    r.far_enabled = lambda: False
+    promotion.tick(player, pset, 0.05, r)          # inside the rate limit
+    assert promotion.promoted() == {}
+    assert pset.GetObject("Field Rock 0005") is None
+    assert r.promoted_pushes[-1] == []
+
+
+def test_keys_sharing_the_low_16_bits_both_promote(world):
+    """Final review M3: a 16-bit name collision falls back to a longer
+    name instead of skipping the second key forever."""
+    pset, player = world
+    a, b = 0x10005, 0x20005
+    r = FakeR([hit(a, 50.0), hit(b, 60.0)])
+    promotion.tick(player, pset, 0.0, r)
+    assert sorted(promotion.promoted()) == [a, b]
+    names = {promotion.promoted()[a].GetName(),
+             promotion.promoted()[b].GetName()}
+    assert names == {"Field Rock 0005", "Field Rock 00020005"}
+    for n in names:
+        assert n.startswith("Field Rock ")
+
+
+def test_a_32_bit_collision_falls_back_to_the_full_key(world):
+    pset, player = world
+    a, b, c = 0x3_00000005, 0x1_00000005, 0x2_00000005   # nearest first
+    r = FakeR([hit(a, 50.0), hit(b, 55.0), hit(c, 60.0)])
+    promotion.tick(player, pset, 0.0, r)
+    assert sorted(promotion.promoted()) == sorted([a, b, c])
+    got = {k: promotion.promoted()[k].GetName() for k in (a, b, c)}
+    assert got == {a: "Field Rock 0005", b: "Field Rock 00000005",
+                   c: "Field Rock 0000000200000005"}
