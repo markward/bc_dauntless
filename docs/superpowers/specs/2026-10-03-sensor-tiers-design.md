@@ -209,3 +209,56 @@ none).
 "Unknown N", named a few seconds later; Science Scan Object shows no real names early.
 E2M2 Serris 2 arrival with low sensors: ships listed unknown, scan names them. Dials:
 Developer Options → Lighting → "Dial keys" → sensors.
+
+## As built
+
+Deviations from this spec made during execution, by task:
+
+- **Task 4 (`sensor_contacts._sync_player`).** Wipes `_near`/`_far`/`_pending` only when
+  a *previous* player existed and differs from the new one — not on first sight (when
+  `_player_ref` is `None`, right after `reset()`). §1's "A player swap wipes the manager"
+  is about swaps, not first observation: wiping unconditionally would let the very first
+  tick after mission load silently cancel a scan `IdentifyObject`/`ScanAllObjects`
+  scheduled moments earlier (Task 5's own test caught this). Risk if this ruling is wrong:
+  a stale scan from a genuinely prior player could survive into the first tick after
+  `reset()` — but `reset()` already clears `_pending`, so the exposure is ~0.
+- **Task 5 (nav points).** Helm's `SetupNavPointsMenuFromSet` calls `IdentifyObject` on
+  nav points, so nav points now become known only after the dwell instead of instantly.
+  This is BC-faithful (the nav-point menu never reads `IsObjectKnown`) and not a
+  regression; recorded because it's an observable timing change nobody asked for
+  explicitly.
+- **Task 5 (test fixture).** Scan-driven identification tests pin the session-global
+  game clock (`App.g_kUtopiaModule`'s `GetGameTime`) rather than letting it run — the
+  dwell is measured in that clock, and letting it free-run made the tests flaky.
+- **Task 7 (Science rename).** `_identify_one`'s pre-identification Science-button
+  rename uses a new `STMenu.RenameButton` (re-keys `STMenu._buttons` by the new label)
+  instead of the spec's bare `STButton.SetLabel`. A bare `SetLabel` leaves the button
+  dict keyed by the OLD placeholder label, so the SDK's post-identify `GetButtonW`
+  de-dupe (keyed by current label) misses the existing button and adds a duplicate —
+  which §6 explicitly forbids. `RenameButton` onto a label another button already holds
+  overwrites that dict entry, the same tradeoff `STMenu.AddChild` already accepts and
+  documents.
+- **Task 9 (E8M1).** No headless test was added for `DetectingObject`/`DetectingKessok`
+  (E8M1.py `BelaruzEvents`, registered at line 2221/2224). Unlike E2M2's
+  `ShipInSensorRange` (registered unconditionally at mission `Initialize`), E8M1 only
+  registers these handlers at the tail of `Belaruz1Arrive()`'s ~25-beat bridge cutscene,
+  itself queued from an `EnterSet` handler gated on the player's set becoming
+  `"Belaruz1"` — there is no mission-state shortcut comparable to
+  `test_campaign_warp_transitions.py`'s warp drive. Per the task brief this is left as a
+  live-check item rather than forced through headlessly: **live check** — reach Belaruz 1
+  in E8M1 with the KessokHeavy inside far but outside near range; confirm sensors report
+  it (FAR fires before the player can see it in the nebula) and that a subsequent NEAR
+  crossing targets it and fires the Kessok-detected beat, matching `DetectingObject`'s
+  self-removal via `RemoveBroadcastHandler` once it has targeted the ship.
+- Minor, deferred (no behaviour impact, carried from earlier tasks' reviews): Task 1
+  `identification_time_s`/`sweep_period_s` have no upper clamp; Task 2
+  `IsObjectNear`/`Far`/`Visible` recompute distance and range per call; Task 4
+  `on_exited_set` has no non-weakrefable-member guard (none exist today) and the wipe
+  reaches into `sensors._known_objects` directly, duplicated between `reset()` and
+  `_sync_player()`; Task 5 `schedule_area_scan`'s filter duplicates the
+  `sensor_contacts._contacts` concept and `test_e1m2_scan_area` re-fetches the player
+  redundantly; Task 6 `test_target_menu_shim::test_st_subsystem_menu_show_name_methods_are_noops`'s
+  name/docstring is now stale (the methods are no longer no-ops); Task 6 imports
+  `unknown_labels` inside the `set_contacts` loop rather than at module scope; Task 8
+  `ship_display_panel` repeats the `IsObjectKnown` rationale in both a docstring and an
+  inline comment.
