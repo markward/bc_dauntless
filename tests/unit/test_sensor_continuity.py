@@ -365,3 +365,171 @@ def test_player_swap_clears_continuity_state(monkeypatch, helm):
     assert sensor_contacts.concealed_since(bird) is None
     assert len(sensor_contacts._scanned_at) == 0
     assert len(sensor_contacts._shown_real) == 0
+
+
+# ── fix round 1, ruling 1: planets never lose track, never read Unknown ─────
+
+def _planet(s, name, x):
+    from engine.appc.planet import Planet_Create
+    p = Planet_Create(90.0, "data/models/environment/planet.nif")
+    p.SetTranslateXYZ(float(x), 0.0, 0.0)
+    s.AddObjectToSet(p, name)
+    return p
+
+
+def test_known_planet_behind_a_rock_never_loses_track(monkeypatch, helm):
+    from engine.appc import sensor_occlusion
+    s, player, sensors = _world()
+    haven = _planet(s, "Haven", 500.0)
+    sensors.AddKnownObject(haven)
+    make_major_rock(s, "Rock", at=(250.0, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_occlusion.blocked(player, haven) is True   # really behind it
+    for t in range(0, 11):
+        sensor_contacts.tick(player, float(t))
+        assert sensors.IsObjectKnown(haven) == 1, t
+        assert sensor_contacts.concealed_since(haven) is None, t
+    assert sensor_contacts.is_concealed(player, haven) is False
+    assert helm == []                                        # Hail path untouched
+
+
+def test_known_planet_in_a_medium_shows_identity_and_its_label_never_flips(monkeypatch, helm):
+    from engine.appc import sensor_detection as sd
+    s, player, sensors = _world()
+    haven = _planet(s, "Haven", 500.0)
+    sensors.AddKnownObject(haven)
+    _field(monkeypatch, haven, 1.0)
+    monkeypatch.setattr(sd, "concealment_at",
+                        lambda obj: 0.2 if obj is haven else 0.0)   # moderate nebula
+    renames = []
+    monkeypatch.setattr(sensor_contacts, "_scan_menu", lambda: _RecordingMenu(renames))
+    for t in range(0, 11):
+        sensor_contacts.tick(player, float(t))
+        assert sensor_contacts.shows_identity(haven, float(t)) is True, t
+        assert sensors.IsObjectKnown(haven) == 1, t
+    assert sensor_contacts._shown_real.get(haven) is True
+    assert renames == []
+    assert helm == []
+
+
+class _RecordingMenu:
+    def __init__(self, log):
+        self._log = log
+
+    def GetButtonW(self, label):
+        return object()          # every label "has" a button: any flip would rename
+
+    def RenameButton(self, old, new):
+        self._log.append((old, new))
+
+
+# ── fix round 1, ruling 2: rescanning a known ship in a medium ──────────────
+
+_identified: list = []
+
+
+def _on_identified(dest, event):
+    _identified.append(event.GetDestination())
+
+
+def test_rescan_armed_while_known_still_commits_after_the_track_is_lost(monkeypatch, helm):
+    _identified.clear()
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_SENSORS_SHIP_IDENTIFIED, None, __name__ + "._on_identified")
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 500.0)
+    sensors.AddKnownObject(bird)
+    _field(monkeypatch, bird, 1.0)
+    sensor_contacts.tick(player, 0.0)
+    assert sensor_contacts.shows_identity(bird, 0.0) is False
+    sensor_contacts.tick(player, 1.0)
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 2.0)
+    sensors.IdentifyObject(bird)                     # dwell 4.0 -> due t=6
+    assert sensor_contacts.is_pending(bird) is True
+    sensor_contacts.tick(player, 2.0)
+    for t in (3.0, 4.0):
+        sensor_contacts.tick(player, t)
+        assert sensors.IsObjectKnown(bird) == 1, t
+        assert sensor_contacts.shows_identity(bird, t) is False, t
+    # The clock from t=0 loses the track at t=5 -- a pending scan does not
+    # stop it -- and the scan committing at t=6 then re-identifies the ship
+    # through the ordinary path (one IDENTIFIED, for the re-identification).
+    sensor_contacts.tick(player, 5.0)
+    assert sensors.IsObjectKnown(bird) == 0
+    sensor_contacts.tick(player, 6.0)
+    assert sensors.IsObjectKnown(bird) == 1
+    assert _identified == [bird]
+    assert sensor_contacts.shows_identity(bird, 6.0) is True
+    assert sensor_contacts.concealed_since(bird) == 6.0
+
+
+def test_rescan_of_a_known_ship_restarts_the_glimpse_without_a_second_identified(monkeypatch, helm):
+    """The ruling-2 timeline: known in a field at t=0 reads Unknown; scan at
+    t=2 commits at t=6 with NO second IDENTIFIED; glimpse t=6..10.9; lost at
+    t=11. At the default 5 s window the clock started at t=0 would lose the
+    track at t=5, before the commit (that path is the test above), so the
+    window is held at 20 s until the commit and set back to 5 s for it --
+    one dial governs both the lost-track clock and the glimpse."""
+    _identified.clear()
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_SENSORS_SHIP_IDENTIFIED, None, __name__ + "._on_identified")
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 500.0)
+    sensors.AddKnownObject(bird)
+    _field(monkeypatch, bird, 1.0)
+    monkeypatch.setitem(sensor_dials._dials, "continuity_window_s", 20.0)
+    sensor_contacts.tick(player, 0.0)
+    assert sensor_contacts.shows_identity(bird, 0.0) is False
+    assert sensor_contacts.concealed_since(bird) == 0.0
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 2.0)
+    sensors.IdentifyObject(bird)
+    assert sensor_contacts.is_pending(bird) is True
+    for t in (2.0, 3.0, 4.0, 5.0):
+        sensor_contacts.tick(player, t)
+        assert sensor_contacts.shows_identity(bird, t) is False, t
+    monkeypatch.setitem(sensor_dials._dials, "continuity_window_s", 5.0)
+    sensor_contacts.tick(player, 6.0)
+    assert sensor_contacts.concealed_since(bird) == 6.0      # clock restarted
+    for t in (6.0, 7.0, 8.0, 9.0, 10.0, 10.9):
+        if t != 6.0:
+            sensor_contacts.tick(player, t)
+        assert sensors.IsObjectKnown(bird) == 1, t
+        assert sensor_contacts.shows_identity(bird, t) is True, t
+    assert _identified == []                                 # no re-fire
+    sensor_contacts.tick(player, 11.0)
+    assert sensors.IsObjectKnown(bird) == 0                  # still in the field
+
+
+def test_scan_of_a_known_ship_that_shows_identity_stays_a_noop(helm):
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 500.0)
+    sensors.AddKnownObject(bird)
+    sensors.IdentifyObject(bird)
+    assert sensor_contacts.is_pending(bird) is False
+
+
+def test_rescan_of_a_known_ship_behind_a_rock_is_dropped(monkeypatch, helm):
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 500.0)
+    sensors.AddKnownObject(bird)
+    _field(monkeypatch, bird, 1.0)
+    make_major_rock(s, "Rock", at=(250.0, 0.0, 0.0), radius_gu=3.0)
+    sensor_contacts.schedule_scan(bird, 1.0, now_gt=0.0)
+    assert sensor_contacts.is_pending(bird) is True
+    sensor_contacts.tick(player, 1.0)
+    assert bird not in sensor_contacts._scanned_at
+    assert sensor_contacts.shows_identity(bird, 1.0) is False
+
+
+def test_scan_in_clear_space_keeps_its_glimpse_into_a_medium(monkeypatch, helm):
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 1500.0)                  # far band: scan only
+    field = _field(monkeypatch, bird, 0.0)
+    sensor_contacts.schedule_scan(bird, 0.0, now_gt=0.0)
+    sensor_contacts.tick(player, 0.0)
+    assert sensors.IsObjectKnown(bird) == 1
+    assert sensor_contacts.concealed_since(bird) is None
+    field["v"] = 1.0                                 # drifts into a field at t=2
+    sensor_contacts.tick(player, 2.0)
+    assert sensor_contacts.shows_identity(bird, 2.0) is True
+    assert sensor_contacts.shows_identity(bird, 4.9) is True
+    assert sensor_contacts.shows_identity(bird, 5.0) is False   # window from the scan

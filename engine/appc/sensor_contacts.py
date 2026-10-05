@@ -45,6 +45,17 @@ Continuity (sensor continuity/occlusion spec):
 - Each sweep the Science Scan Object button of every contact is renamed
   between its "Unknown N" placeholder and its real name whenever its
   shows_identity answer changes (`_shown_real` remembers the last one).
+  Because it syncs on the 1 s sweep, the Science label can lag the target
+  list and reticle (which ask shows_identity every frame) by up to one
+  sweep -- it never shows a name the player had not legitimately seen.
+  Caveat: Scan buttons are keyed by label, so two KNOWN ships sharing a
+  display name share one Scan button.
+- Only ships have a signature: a planet (any non-ShipClass contact) is never
+  concealed and never reads Unknown by medium (`_has_signature`).
+- A scan of a KNOWN contact that reads Unknown in a medium is re-armed; its
+  commit restarts the glimpse and the clock without a second
+  ET_SENSORS_SHIP_IDENTIFIED. A scan in clear space whose contact then
+  enters a medium keeps its glimpse until that window (from the scan) ends.
 
 Ticked every sim frame from host_loop (sim-gated). Never call from
 render_payload.
@@ -140,6 +151,8 @@ def shows_identity(obj, now_gt=None, sensors=None, *, concealment=None) -> bool:
             return False
     except Exception:
         return False
+    if not _has_signature(obj):
+        return True
     from engine.appc import sensor_media
     if not sensor_media.medium_unknown(obj, concealment=concealment):
         return True
@@ -150,11 +163,20 @@ def shows_identity(obj, now_gt=None, sensors=None, *, concealment=None) -> bool:
     return now - scanned < sensor_dials.get("continuity_window_s")
 
 
+def _has_signature(obj) -> bool:
+    """Only ships can be concealed or read Unknown by medium. A planet (any
+    non-ShipClass contact) has no signature to hide -- the same exemption
+    sensor_detection.clear_undetectable_player_lock makes -- so it never
+    loses track and never reads Unknown (controller ruling, Task 4 fix 1)."""
+    from engine.appc.ships import ShipClass
+    return isinstance(obj, ShipClass)
+
+
 def is_concealed(player, obj) -> bool:
     """In the player's set, inside player sensor range, and hidden
     (`not can_detect`) or unknown by medium. Leaving range is never
-    concealment."""
-    if player is None or obj is None:
+    concealment. Never true for a non-ShipClass contact (`_has_signature`)."""
+    if player is None or obj is None or not _has_signature(obj):
         return False
     try:
         pset = player.GetContainingSet() if implements(player, "GetContainingSet") else None
@@ -341,17 +363,20 @@ def _commit_due(player, sensors, now_gt) -> None:
         if now_gt < due:
             continue
         _pending.pop(obj, None)
-        if sensors.IsObjectKnown(obj):
-            continue
+        known = bool(sensors.IsObjectKnown(obj))
         if by_scan:
             if _scan_blocked(player, obj):
                 continue
-            if _identify_one(sensors, obj):
+            # A KNOWN contact here is a rescan of one reading Unknown in a
+            # medium: restart its glimpse without re-identifying it (no
+            # second ET_SENSORS_SHIP_IDENTIFIED -- _identify_one would
+            # refuse a known contact anyway).
+            if known or _identify_one(sensors, obj):
                 _scanned_at[obj] = now_gt
                 if is_concealed(player, obj):
                     _concealed_since[obj] = now_gt    # one window from the scan
-        elif (_in_near_band(player, obj) and can_detect(player, obj)
-              and not is_concealed(player, obj)):
+        elif (not known and _in_near_band(player, obj)
+              and can_detect(player, obj) and not is_concealed(player, obj)):
             _identify_one(sensors, obj)
 
 
@@ -414,9 +439,11 @@ def tick(player, now_gt: float) -> None:
 
 def schedule_scan(obj, delay_s: float, now_gt=None) -> None:
     """Arm a scan identification of *obj* (IdentifyObject / ScanAllObjects).
-    Commits unconditionally when due. Keeps the earlier due time if one is
-    already pending. No-op if the player already knows *obj*."""
-    if obj is None or player_knows(obj):
+    Commits when due unless a major rock blocks the line then. Keeps the
+    earlier due time if one is already pending. No-op if *obj* already shows
+    its identity; a KNOWN contact reading Unknown in a medium is re-armed,
+    and its commit restarts the glimpse (see `_commit_due`)."""
+    if obj is None or shows_identity(obj):
         return
     t = (_now() if now_gt is None else float(now_gt)) + float(delay_s)
     prior = _pending.get(obj)
