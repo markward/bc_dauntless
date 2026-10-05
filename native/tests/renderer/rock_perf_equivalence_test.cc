@@ -279,6 +279,10 @@ rockfield::NearDials defaults_2026_10_04() {
     d.large_min_px = 1.5f; d.small_min_px = 2.5f;
     d.stream_margin_gu = 10.0f;
     d.collide_cooldown_s = 0.5f; d.collide_margin_gu = 0.0f;
+    // Recorded before the large-rock ramp (rock-promotion, 2026-10-05): ramp
+    // off, so every a >= 0 keeps every large rock -- the default (0.5 -> 1.0)
+    // thins large rocks in Beol 4's edge zone, which these runs reach.
+    d.large_ramp_lo = -1.0f; d.large_ramp_hi = 0.0f;
     return d;
 }
 }  // namespace
