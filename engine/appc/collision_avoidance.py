@@ -383,8 +383,9 @@ def _avoid_objects(ship, forward, avoid_list, previous_heading=None):
     if not avoid_list:
         return None, None
 
+    from engine.appc.collisions import world_radius
     ship_loc = ship.GetWorldLocation()
-    ship_r = ship.GetRadius()
+    ship_r = world_radius(ship)
 
     dir_info = []
     for pb, vb, rb in avoid_list:
@@ -480,9 +481,10 @@ def _test_course_override(ship, previous_heading=None):
     if pSet is None:
         return None, None
 
+    from engine.appc.collisions import world_radius
     ship_loc = ship.GetWorldLocation()
     ship_vel = _world_velocity(ship)
-    ship_r = ship.GetRadius()
+    ship_r = world_radius(ship)
 
     # Predict our location fPredictionTime ahead (acceleration ~= 0, so this
     # is p + v·t, matching GetPredictedPosition with a = 0).
@@ -606,6 +608,17 @@ def _test_course_override(ship, previous_heading=None):
                 avoid_list.append((TGPoint3(piece_loc.x, piece_loc.y,
                                             piece_loc.z),
                                    ob_vel, piece_r))
+
+    # Large rock-field rocks (rock-promotion spec §4): not set objects, so the
+    # snapshot never sees them. Static spheres; the same gate as a set body.
+    from engine.rocks import field_obstacles
+    from engine.rocks import far_dials as _fd
+    zero = TGPoint3(0.0, 0.0, 0.0)
+    for fx, fy, fz, fr in field_obstacles.near(
+            pSet, (px, py, pz), max(check_radius, float(_fd.get("avoid_query_radius_gu")))):
+        if _need_to_avoid_xyz(slx, sly, slz, svx, svy, svz, personal_space,
+                              fx, fy, fz, 0.0, 0.0, 0.0, fr):
+            avoid_list.append((TGPoint3(fx, fy, fz), zero, fr))
 
     return _avoid_objects(ship, ship.GetWorldForwardTG(), avoid_list,
                           previous_heading=previous_heading)
@@ -814,7 +827,7 @@ def _build_obstacle_snapshot(pSet, blacklist) -> list:
     """
     from engine.appc.ship_iter import iter_set_objects
     from engine.appc.hull_bounds import has_hull_bounds, bound_radius
-    from engine.appc.collisions import _collision_disabled_ids
+    from engine.appc.collisions import _collision_disabled_ids, world_radius
 
     out = []
     for other in iter_set_objects(pSet):
@@ -824,7 +837,7 @@ def _build_obstacle_snapshot(pSet, blacklist) -> list:
             continue
         try:
             loc = other.GetWorldLocation()
-            r = float(other.GetRadius())
+            r = float(world_radius(other))
         except Exception:
             continue
         if r <= 0.0:
