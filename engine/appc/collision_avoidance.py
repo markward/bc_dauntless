@@ -611,14 +611,20 @@ def _test_course_override(ship, previous_heading=None):
 
     # Large rock-field rocks (rock-promotion spec §4): not set objects, so the
     # snapshot never sees them. Static spheres; the same gate as a set body.
+    # Queried at the dial itself, NOT max(check_radius, dial): check_radius is
+    # floored at AVOID_MINIMUM_RADIUS_GU (225), which always won -- measured
+    # at density 1, 3015 rocks / ~2.9 ms vs 892 rocks / 0.37 ms at 150 GU.
+    from engine.core import frame_profiler
     from engine.rocks import field_obstacles
     from engine.rocks import far_dials as _fd
     zero = TGPoint3(0.0, 0.0, 0.0)
-    for fx, fy, fz, fr in field_obstacles.near(
-            pSet, (px, py, pz), max(check_radius, float(_fd.get("avoid_query_radius_gu")))):
-        if _need_to_avoid_xyz(slx, sly, slz, svx, svy, svz, personal_space,
-                              fx, fy, fz, 0.0, 0.0, 0.0, fr):
-            avoid_list.append((TGPoint3(fx, fy, fz), zero, fr))
+    with frame_profiler.scope("avoid.field_query"):
+        for fx, fy, fz, fr in field_obstacles.near(
+                pSet, (px, py, pz), float(_fd.get("avoid_query_radius_gu"))):
+            if _need_to_avoid_xyz(slx, sly, slz, svx, svy, svz,
+                                  personal_space, fx, fy, fz,
+                                  0.0, 0.0, 0.0, fr):
+                avoid_list.append((TGPoint3(fx, fy, fz), zero, fr))
 
     return _avoid_objects(ship, ship.GetWorldForwardTG(), avoid_list,
                           previous_heading=previous_heading)

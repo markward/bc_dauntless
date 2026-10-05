@@ -620,6 +620,59 @@ def test_npc_steers_round_an_unpromoted_field_rock(monkeypatch):
     assert heading2 is None             # control: nothing to avoid without the rock
 
 
+def test_field_rock_query_uses_the_dial_radius_inside_its_profiler_scope(monkeypatch):
+    """Final review I1: the field query runs at avoid_query_radius_gu
+    (spec §4: 150 GU) -- NOT max(check_radius, dial), which the 225 GU
+    check_radius floor always won (3015 rocks vs 892 at density 1) -- and
+    is timed under the spec's `avoid.field_query` profiler scope."""
+    import contextlib
+    from engine.appc import collision_avoidance
+    from engine.core import frame_profiler
+    from engine.rocks import far_dials
+
+    collision_avoidance.reset_avoidance_state()
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+    ship = ShipClass_Create("Galaxy")
+    _load_galaxy(ship)
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship.SetRadius(20.0)
+    ship.SetAI(object())
+    pSet.AddObjectToSet(ship, "Ship")
+    ship.SetImpulse(1.0, TGPoint3(0, 1, 0),
+                    PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    open_scopes = []
+    calls = []
+
+    @contextlib.contextmanager
+    def spy_scope(name):
+        open_scopes.append(name)
+        try:
+            yield
+        finally:
+            open_scopes.pop()
+
+    def spy_near(pSet, c, radius, r=None):
+        calls.append((radius, list(open_scopes)))
+        return [(0.0, 40.0, 0.0, 4.0)]
+
+    monkeypatch.setattr(frame_profiler, "scope", spy_scope)
+    monkeypatch.setattr("engine.rocks.field_obstacles.near", spy_near)
+    far_dials.reset()
+    try:
+        heading, _ = collision_avoidance._test_course_override(ship)
+        assert heading is not None
+        assert calls == [(150.0, ["avoid.field_query"])]
+        far_dials._dials["avoid_query_radius_gu"] = 75.0
+        collision_avoidance.reset_avoidance_state()
+        calls.clear()
+        collision_avoidance._test_course_override(ship)
+        assert [c[0] for c in calls] == [75.0]
+    finally:
+        far_dials.reset()
+
+
 def test_scaled_obstacle_is_avoided_at_its_drawn_size():
     """A rock-sized obstacle with GetRadius() 1.0 and SetScale(8.0), placed so
     that a 1 GU sphere would be missed but an 8 GU sphere is on the ship's
