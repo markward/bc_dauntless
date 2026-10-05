@@ -553,3 +553,74 @@ TEST(SpeckBand, HoldsTheRocksInsideTheBillboardEdgeForTheDashRegrow) {
             }
     EXPECT_GT(checked, 500);
 }
+
+// Rock promotion, final review M1: a promoted or destroyed key (the list
+// rockfield_set_promoted pushes) must not come back as a speck past the
+// billboard edge. The speck band keys each rock exactly as the near band
+// does (near_rock_key == NearField::query_large's key); an excluded key
+// draws no speck while its cell neighbours still do, across a restream.
+namespace {
+std::set<std::tuple<float, float, float, float>> speck_set(const rockfield::SpeckBand& b) {
+    std::set<std::tuple<float, float, float, float>> got;
+    for (const auto& g : b.instances()) {
+        const glm::dvec3 p = glm::dvec3(g.pos) + b.origin_sys();
+        got.insert({static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z), g.radius});
+    }
+    return got;
+}
+std::tuple<float, float, float, float> speck_of(const rockfield::NearRock& r) {
+    return {static_cast<float>(r.pos_sys.x), static_cast<float>(r.pos_sys.y),
+            static_cast<float>(r.pos_sys.z), r.radius};
+}
+}  // namespace
+
+TEST(SpeckBand, AnExcludedKeyDrawsNoSpeckButItsNeighboursDo) {
+    rockfield::SpeckBand b;
+    setup(b);
+    rockfield::SpeckDials sd; sd.keep_d0_gu = 600.0f;   // no thinning out to 600 GU
+    b.set_dials(sd);
+    rockfield::NearDials nd;
+    // A cell wholly past the 405 GU billboard edge, inside 600, with >= 2 rocks.
+    glm::i64vec3 ijk{9, 0, 0};
+    std::vector<rockfield::NearRock> rocks;
+    for (std::int64_t j = 0; j < 8 && rocks.size() < 2; ++j) {
+        ijk = {9, j, 0};
+        rocks = rockfield::generate_near_cell(full_sphere(), rockfield::NearClass::Large, ijk, nd, cat());
+    }
+    ASSERT_GE(rocks.size(), 2u);
+    const std::uint64_t key = rockfield::near_rock_key(full_sphere().id, rockfield::NearClass::Large, ijk, 0);
+    // The same key the near band's query (and so promotion) assigns that rock.
+    rockfield::NearField nf;
+    nf.set_catalogue(cat());
+    nf.set_sources({full_sphere()});
+    bool matched = false;
+    for (const auto& h : nf.query_large(rocks[0].pos_sys, 0.001, 0.0f))
+        if (h.rock.pos_sys == rocks[0].pos_sys) { EXPECT_EQ(h.key, key); matched = true; }
+    ASSERT_TRUE(matched);
+
+    b.stream(glm::dvec3(0.0), 0.0f);
+    ASSERT_TRUE(b.finish());
+    const auto before = speck_set(b);
+    ASSERT_TRUE(before.count(speck_of(rocks[0])));
+    ASSERT_TRUE(before.count(speck_of(rocks[1])));
+    const std::size_t n_before = b.instances().size();
+
+    b.set_excluded({key});
+    b.stream(glm::dvec3(0.0), 0.0f);                    // an exclusion change re-streams in place
+    ASSERT_TRUE(b.finish());
+    const auto after = speck_set(b);
+    EXPECT_FALSE(after.count(speck_of(rocks[0])));
+    EXPECT_TRUE(after.count(speck_of(rocks[1])));
+    EXPECT_EQ(b.instances().size(), n_before - 1);
+
+    b.stream(glm::dvec3(60.0, 0.0, 0.0), 0.0f);        // a restream keeps it out
+    ASSERT_TRUE(b.finish());
+    const auto moved = speck_set(b);
+    EXPECT_FALSE(moved.count(speck_of(rocks[0])));
+    EXPECT_TRUE(moved.count(speck_of(rocks[1])));
+
+    b.set_excluded({});                                 // released: back as a speck
+    b.stream(glm::dvec3(60.0, 0.0, 0.0), 0.0f);
+    ASSERT_TRUE(b.finish());
+    EXPECT_TRUE(speck_set(b).count(speck_of(rocks[0])));
+}

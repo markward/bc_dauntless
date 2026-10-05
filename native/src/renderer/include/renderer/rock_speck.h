@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <future>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <glm/glm.hpp>
 #include <renderer/far_field.h>
@@ -79,6 +80,12 @@ public:
     void set_catalogue(const NearCatalogue&, std::vector<glm::vec3> large_albedo);
     // A change (far::same_density, or the source list) drops every cell.
     void set_sources(const std::vector<far::DiscSource>& active);
+    // Rock promotion (final review M1): LARGE near-rock keys (near_rock_key)
+    // promoted to real objects or destroyed -- the list rockfield_set_promoted
+    // pushes. No speck is drawn for them. A changed set re-streams in place
+    // (copied into the rebuild, never shared with the worker); dropped by clear().
+    void set_excluded(std::unordered_set<std::uint64_t> keys);
+    const std::unordered_set<std::uint64_t>& excluded() const { return excluded_; }
     // Drops every cell and the drawn set (version() moves), and cancels a
     // rebuild in flight.
     void clear();
@@ -109,11 +116,16 @@ public:
     // TEST-ONLY: whether the last rebuild taken stopped on the cancel flag.
     bool debug_last_job_cancelled() const { return last_cancelled_; }
 private:
-    struct Cell { std::vector<RockSpeckGpu> rocks; std::vector<glm::dvec3> pos_sys; float u = 0; bool live = false; };
+    struct Cell {
+        std::vector<RockSpeckGpu> rocks; std::vector<glm::dvec3> pos_sys;
+        std::vector<std::uint64_t> keys;  // near_rock_key per rock (the exclusion)
+        float u = 0; bool live = false;
+    };
     using CellMap = std::unordered_map<std::uint64_t, Cell>;
     struct Job {                          // everything a rebuild reads, by value
         SpeckDials dials; NearDials near; NearCatalogue cat;
         std::vector<glm::vec3> albedo; std::vector<far::DiscSource> sources;
+        std::unordered_set<std::uint64_t> excluded;   // a copy: the worker owns it
         glm::dvec3 centre{0.0}; CellMap cells;
         double margin = 0.0;              // rebuild_margin_gu at launch
         bool fail = false;                // debug_fail_jobs
@@ -136,6 +148,7 @@ private:
     NearCatalogue cat_;
     std::vector<glm::vec3> albedo_;     // per catalogue index
     std::vector<far::DiscSource> sources_;
+    std::unordered_set<std::uint64_t> excluded_;
     CellMap cells_;
     std::vector<RockSpeckGpu> instances_;
     glm::dvec3 origin_{0.0};

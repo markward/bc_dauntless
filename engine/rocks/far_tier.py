@@ -105,9 +105,10 @@ def frame_for(view_set) -> tuple:
 
 def on_dials_changed(names) -> None:
     """A native key re-pushes the dials; any other (population / disc
-    shape, read by density.to_native) re-pushes the sources."""
+    shape, read by density.to_native) re-pushes the sources. Promotion
+    dials (engine.rocks.promotion reads them at use) do neither."""
     global _dials_dirty, _sources_dirty
-    names = set(names)
+    names = set(names) - fd.PROMOTION_KEYS
     if names & fd.NATIVE_KEYS:
         _dials_dirty = True
     if names - fd.NATIVE_KEYS:

@@ -80,6 +80,9 @@ DEFAULTS: dict = {
     "near_large_min_px": 0.0,
     "near_small_min_px": 2.5,   # Mark, live 2026-10-04 (3x ranges)
     "near_fade_gu": 4.0, "near_tumble_scale": 0.05, "near_dash_collapse_step_gu": 25.0, "near_stream_margin_gu": 10.0, "collide_cooldown_s": 0.5,
+    # Large rocks follow the majors threshold (native; rock-promotion P2):
+    # density multiplied by large_ramp(a), 0 at a <= lo, full at a >= hi.
+    "large_ramp_lo": 0.5, "large_ramp_hi": 1.0,
     # Large-rock collision response (Python, read at use; rock-fields Task 8,
     # engine/rocks/scenery_contact.py): damage = KE damage x
     # collide_damage_scale x min(1, rock radius / collide_ref_radius_gu).
@@ -104,7 +107,13 @@ DEFAULTS: dict = {
     # Belts: puff_belt_count per belt, radius puff_belt_size_h x the local
     # scale height (rock_puffs.h belt_count / belt_size_h).
     "puff_belt_count": 2000, "puff_belt_size_h": 1.2,
+    # rock promotion (spec 2026-10-05 §5); Python-only, read at use
+    "promote_min_radius_gu": 4.0, "promote_range_gu": 300.0, "promote_max": 8,
+    "demote_range_mult": 1.5, "promote_hz": 4.0, "avoid_query_radius_gu": 150.0,
 }
+
+PROMOTION_KEYS = frozenset({"promote_min_radius_gu", "promote_range_gu",
+    "promote_max", "demote_range_mult", "promote_hz", "avoid_query_radius_gu"})
 
 NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "speck_gain",
@@ -116,6 +125,7 @@ NATIVE_KEYS = frozenset({"imp_hi", "imp_lo", "speck_hi", "speck_lo", "p_min",
     "near_large_billboard_gu", "near_large_max",
     "near_large_min_px", "near_small_min_px",
     "near_fade_gu", "near_tumble_scale", "near_dash_collapse_step_gu", "near_stream_margin_gu", "collide_cooldown_s",
+    "large_ramp_lo", "large_ramp_hi",
     "speck_out_gu", "speck_out_fade_gu", "speck_keep_d0_gu", "speck_keep_band",
     "speck_keep_power", "speck_restream_gu", "speck_band_gain",
     "puff_count", "puff_size_frac", "puff_opacity", "puff_brightness",
@@ -136,9 +146,22 @@ _LOOK_FIRST = ("puff_opacity", "puff_size_frac", "puff_count", "puff_brightness"
                "near_small_density", "near_large_density",
                "near_small_mesh_gu", "near_small_billboard_gu",
                "near_large_mesh_gu", "near_large_billboard_gu",
-               "collide_damage_scale")
+               "collide_damage_scale",
+               # rock promotion: the six promotion dials, then the large ramp
+               "promote_min_radius_gu", "promote_range_gu", "promote_max",
+               "demote_range_mult", "promote_hz", "avoid_query_radius_gu",
+               "large_ramp_lo", "large_ramp_hi")
 DIAL_ORDER: tuple = _LOOK_FIRST + tuple(k for k in DEFAULTS if k not in _LOOK_FIRST)
 _FACTOR = 1.25
+
+# Additive steps (rock promotion): name -> (step, floor, ceiling or None).
+# The ramp ends live in [0, 1]; promote_hz never reaches 0 (1 / hz).
+_ADDITIVE = {
+    "promote_min_radius_gu": (0.25, 0.0, None), "promote_range_gu": (25.0, 0.0, None),
+    "promote_max": (1, 0, None), "demote_range_mult": (0.1, 1.0, None),
+    "promote_hz": (1.0, 1.0, None), "avoid_query_radius_gu": (25.0, 0.0, None),
+    "large_ramp_lo": (0.05, 0.0, 1.0), "large_ramp_hi": (0.05, 0.0, 1.0),
+}
 
 _dials: dict = dict(DEFAULTS)
 _on_change: Optional[Callable[[set], None]] = None
@@ -166,12 +189,17 @@ def step(dials: dict, name: str, direction: int) -> dict:
     """Pure. Ints step by +-1 (+-10% when >= 10), floor 1 for the counts
     that must never silently delete the whole tier; floats x//1.25, and a
     float at 0 steps to 0.01 going up. Every `*_noise_contrast` is clamped
-    to [0, 1] (m's bound is 1 + contrast)."""
+    to [0, 1] (m's bound is 1 + contrast). The rock-promotion dials and
+    the large ramp ends step additively (_ADDITIVE), clamped."""
     if name not in dials:
         raise ValueError("unknown far dial: %r" % (name,))
     out = dict(dials)
     v = out[name]
-    if isinstance(v, int):
+    if name in _ADDITIVE:
+        inc, lo, hi = _ADDITIVE[name]
+        v = max(lo, v + direction * inc)
+        out[name] = v if hi is None else min(hi, v)
+    elif isinstance(v, int):
         delta = max(1, abs(v) // 10)
         floor = 1 if name in _INT_FLOOR_1 else 0
         out[name] = max(floor, v + direction * delta)

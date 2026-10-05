@@ -44,8 +44,8 @@ Size decides how real a rock is.
 | 1 | **Rock catalogue**: glTF loader, offline generation tool, committed catalogue, BC scripts redirected to it | merged to local main, live-verified — spec `2026-09-30-rock-catalogue-design.md` |
 | 2 | **Rock class**: one class for mission and seeded rocks; rock damage; breakup | merged to local main (`c0210aac`), live-verified — spec `2026-09-30-rock-class-design.md` |
 | 3 | **Minors**: instancing, halos, tile fields, fly-through | merged to local main (`6f8f4f14`), live-verified — spec `2026-10-01-minor-rocks-design.md` |
-| 3b | **Far tier**: impostor/speck/haze ladder, disc density source, profile belts (render only) | built, awaiting live check — spec `2026-10-01-far-tier-design.md`, branch `feat/far-tier` |
-| 4 | **Profile seeding** | not started — extends 3b's `DiscSource` (fills `explicit_regions`, promotes generator rocks) |
+| 3b | **Far tier**: impostor/speck/haze ladder, disc density source, profile belts (render only) | merged to local main (`9ec834d4`, with rock fields), live-verified — specs `2026-10-01-far-tier-design.md`, `2026-10-02-rock-fields-design.md` |
+| 4 | **Rock promotion** (was profile seeding): large-rock threshold, near rocks promoted to targetable `RockClass`, NPC avoidance of field rocks | spec `2026-10-05-rock-promotion-design.md`, branch `feat/rock-promotion` |
 | 5 | **Sensor occlusion by rocks** | promoted to a full project (sensor model) — no longer part of this roadmap |
 
 ## Standing decisions for sub-projects 2–4
@@ -125,6 +125,11 @@ Size decides how real a rock is.
   real rocks and fills the source's `explicit_regions`.
 
 ### Sub-project 4: profile seeding
+
+> **Superseded 2026-10-05** by `2026-10-05-rock-promotion-design.md`. 3b and rock
+> fields delivered the seeding itself. Sub-project 4 is now the large-rock threshold,
+> promotion of near rocks to `RockClass`, and NPC avoidance. The Vesuvi 0.5 → 0.4 edit
+> below is **dropped**; new belts are deferred. The bullets below are kept as history.
 
 - **A generic density-field interface.** Every source of rocks implements it:
   - the radial profile (density by distance from the star)

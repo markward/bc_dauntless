@@ -126,6 +126,35 @@ def test_a_mission_swap_clears_the_far_tier(monkeypatch):
     assert far_tier.desired_rocks({rock: 1}) == []
 
 
+def test_a_mission_swap_resets_rock_promotion(monkeypatch):
+    """Review Focus 4: the swap also resets rock promotion, before the
+    renderer's far-tier exclusion is wiped by far_clear."""
+    from engine.rocks import promotion
+    calls = []
+    monkeypatch.setattr(promotion, "reset", lambda r=None: calls.append(r))
+
+    class _FakeSwapRenderer:
+        def destroy_instance(self, iid):
+            pass
+        def minors_clear(self):
+            pass
+        def far_clear(self):
+            pass
+
+    class _StubLoader:
+        def load(self, name):
+            return hl.MissionSession(mission_name=name)
+
+    h = hl.HostController()
+    h.renderer = _FakeSwapRenderer()
+    h.loader = _StubLoader()
+    h.session = hl.MissionSession(mission_name="prev")
+    renderer = h.renderer
+    h.swap_mission("Next.Mission")
+    h._drain_pending_swap()
+    assert calls == [renderer]
+
+
 def test_boot_registers_the_far_dial_group_beside_the_minor_dials():
     src = inspect.getsource(hl.run)
     mnr = src.find("_minor_dials.register()")

@@ -91,6 +91,7 @@ _REQUIRED_BINDINGS = frozenset({
     "rock_puffs_set_enabled", "rock_puffs_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
     "rockfield_rearm", "rockfield_catalogue_size", "rockfield_set_player",
+    "rockfield_set_promoted", "rockfield_query_large",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
@@ -706,6 +707,21 @@ def rockfield_set_shield_inflate(scale: float) -> None:
     """> 0: the player's near-band contact box half extents x this (shields
     up); <= 0: the bare hull box."""
     _h.rockfield_set_shield_inflate(float(scale))
+
+
+def rockfield_set_promoted(keys) -> None:
+    """Large near-rock keys promoted to real objects (rock-promotion): the
+    near band draws nothing and reports no contact for them. Replaces the
+    list."""
+    _h.rockfield_set_promoted(list(keys))
+
+
+def rockfield_query_large(centre_sys, radius_gu: float, min_radius_gu: float) -> list:
+    """Large near rocks (every current source) with radius >= min_radius_gu
+    within radius_gu of centre_sys (SYSTEM coords), nearest first: [{"key",
+    "pos" (system), "radius", "rock" (catalogue index), "axis", "rate",
+    "phase"}, ...]. Includes promoted keys. Camera-independent."""
+    return _h.rockfield_query_large(tuple(centre_sys), float(radius_gu), float(min_radius_gu))
 
 
 def set_nebula_wake(points: list) -> None:

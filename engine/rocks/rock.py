@@ -107,11 +107,17 @@ def _stock_radius_gu(base: str) -> float:
     return _STOCK_RADIUS_GU[base]
 
 
-def _catalogue_model(seed: str, kind: str, family: str):
-    """(catalogue Rock or None, family actually used). Works
-    with the catalogue toggle off: that toggle only governs redirecting
-    stock NIFs; a script-less rock has no stock mesh to fall back to."""
+def _catalogue_model(seed: str, kind: str, family: str, index=None):
+    """(catalogue Rock or None, family actually used). `index` forces that
+    catalogue entry (rock promotion: the generator's exact rock); an index
+    out of range falls back to the seeded pick. Works with the catalogue
+    toggle off: that toggle only governs redirecting stock NIFs."""
     from engine.rocks import catalogue
+    if index is not None:
+        rocks = catalogue.load()
+        if 0 <= int(index) < len(rocks):
+            r = rocks[int(index)]
+            return r, getattr(r, "family", family)
     rock = catalogue.pick(seed, kind=kind, family=family)
     if rock is None:
         rock = catalogue.pick(seed, kind=kind, family="silicate")
@@ -134,9 +140,18 @@ def _install_hull(ship, max_hp: float, radius_gu: float) -> None:
 
 
 def RockClass_Create(radius_gu, *, family="silicate", seed="", name="",
-                     kind="fragment", hull=None, mass=None):
+                     kind="fragment", hull=None, mass=None, catalogue_index=None,
+                     exact_radius=False):
     """A rock with no ship script: stats from its size (engine.rocks.stats)
-    unless the caller passes them, model from the rock catalogue."""
+    unless the caller passes them, model from the rock catalogue.
+
+    catalogue_index: int or None. If set, use catalogue.load()[catalogue_index]
+        as the model (its family becomes _rock_family), bypassing catalogue.pick.
+        Out of range falls back to the normal pick.
+    exact_radius: bool. If True, the model still loads at r_q = stats.quantise_radius(radius_gu)
+        (shared models), and the rock is given SetScale(radius_gu / r_q), so
+        effective_radius(rock) == radius_gu (within 1e-9). Default False keeps
+        today's behaviour byte-identical."""
     import App
     from engine.appc.ships import ShipClass_Create
     from engine.rocks import stats
@@ -152,11 +167,15 @@ def RockClass_Create(radius_gu, *, family="silicate", seed="", name="",
     _install_hull(ship, stats.size_hull(radius_gu) if hull is None else hull,
                   r_q)
     ship.SetMass(stats.size_mass(radius_gu) if mass is None else float(mass))
-    rock, fam = _catalogue_model(seed or name, kind, family)
+    rock, fam = _catalogue_model(seed or name, kind, family, index=catalogue_index)
     ship._rock_family = fam
     ship._model_override = (
         (str(rock.lod_paths[0]), _render_load_scale(r_q, rock))
         if rock is not None else None)
+    if exact_radius and r_q > 0.0:
+        # Rock promotion: models are shared at the quantised radius; the
+        # scale carries the remainder so effective_radius is the exact one.
+        ship.SetScale(float(radius_gu) / r_q)
     return ship
 
 
