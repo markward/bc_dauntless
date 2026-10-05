@@ -1399,16 +1399,34 @@ TEST(NearQuery, MatchesTheStreamedRocksInRange) {
 
 TEST(NearQuery, IndependentOfStreaming) {   // works far from anything streamed (NPCs)
     rockfield::NearField a = streamed_field();
-    rockfield::NearField b; b.set_catalogue(cat()); b.set_sources({full_sphere()});   // never streamed
+    // Same catalogue as streamed_field(): only the streaming differs.
+    rockfield::NearField b; b.set_catalogue(build_cat()); b.set_sources({full_sphere()});   // never streamed
     const glm::dvec3 c{3000.0, 0.0, 0.0};
     const auto ha = a.query_large(c, 150.0, 0.0f), hb = b.query_large(c, 150.0, 0.0f);
+    ASSERT_FALSE(ha.empty());
     ASSERT_EQ(ha.size(), hb.size());
-    for (std::size_t i = 0; i < ha.size(); ++i) EXPECT_EQ(ha[i].key, hb[i].key);
+    for (std::size_t i = 0; i < ha.size(); ++i) {
+        EXPECT_EQ(ha[i].key, hb[i].key);
+        EXPECT_EQ(ha[i].rock.pos_sys, hb[i].rock.pos_sys);
+        EXPECT_EQ(ha[i].rock.radius, hb[i].rock.radius);
+    }
 }
 
 TEST(NearQuery, MinRadiusFilters) {
     auto f = streamed_field();
-    for (const auto& h : f.query_large({0, 0, 0}, 300.0, 4.0f)) EXPECT_GE(h.rock.radius, 4.0f);
+    const auto all = f.query_large({0, 0, 0}, 300.0, 0.0f);
+    const auto big = f.query_large({0, 0, 0}, 300.0, 4.0f);
+    ASSERT_FALSE(big.empty());
+    ASSERT_LT(big.size(), all.size());                  // the filter dropped something
+    std::set<std::uint64_t> kept;
+    for (const auto& h : big) { EXPECT_GE(h.rock.radius, 4.0f); kept.insert(h.key); }
+    std::size_t dropped = 0;
+    for (const auto& h : all) {
+        if (kept.count(h.key)) continue;
+        ++dropped;
+        EXPECT_LT(h.rock.radius, 4.0f);                 // only small rocks were dropped
+    }
+    EXPECT_EQ(dropped + big.size(), all.size());        // a subset: nothing new appeared
 }
 
 TEST(NearExclude, ExcludedKeyIsNotDrawnButNeighboursAre) {
