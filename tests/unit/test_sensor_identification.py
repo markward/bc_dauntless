@@ -200,6 +200,35 @@ def test_force_object_identified_marks_planet_known():
     assert _identified.count(haven) == 1
 
 
+def test_npc_force_identify_does_not_release_the_players_placeholder():
+    """ForceObjectIdentified on an NPC's OWN sensors (not the current GAME
+    player's) must mark the contact known to that NPC but leave the PLAYER's
+    "Unknown N" placeholder allocated -- the player's target list / reticle
+    are still showing it unidentified. Only the current player's own
+    identification path may rename/release (`sensors._owner_ship() is
+    sensor_contacts.current_player()`)."""
+    _subscribe()
+    s, player, sensors = _player_in_set()
+    from engine.appc import unknown_labels
+    unknown_labels.reset()
+
+    npc = ShipClass_Create("Galaxy")
+    npc_sensors = SensorSubsystem("Sensors")
+    npc.SetSensorSubsystem(npc_sensors)
+    s.AddObjectToSet(npc, "npc")
+
+    target = ShipClass_Create("BirdOfPrey")
+    s.AddObjectToSet(target, "Bird")
+    placeholder = unknown_labels.placeholder(target)   # the player's row number
+
+    npc_sensors.ForceObjectIdentified(target)
+
+    assert npc_sensors.IsObjectKnown(target) == 1
+    assert target in _identified
+    # The NPC's own identification must not touch the player-visible number.
+    assert unknown_labels.current(target) == placeholder
+
+
 def test_force_object_identified_none_safe():
     _subscribe()
     s, player, sensors = _player_in_set()
