@@ -142,8 +142,13 @@ def _promote(view_set, anchor, key, hit, now) -> None:
     if key in _damaged:
         hull = rock.GetHull()
         hull.SetCondition(hull.GetMaxCondition() * _damaged.pop(key))
-    view_set.AddObjectToSet(rock, name)
-    _promoted[key] = rock
+    try:
+        view_set.AddObjectToSet(rock, name)
+    finally:
+        # A raising add (e.g. a set handler) may still have inserted the
+        # rock: track it so it demotes and stays excluded -- never orphan it.
+        if view_set.GetObject(name) is rock:
+            _promoted[key] = rock
 
 
 def _make_room(player, d_new) -> bool:
@@ -171,11 +176,13 @@ def _push(r) -> None:
 
 def tick(player, view_set, now, r) -> None:
     """One promotion step, rate-limited to promote_hz (game time `now`)."""
-    global _last
     try:
-        if _last is not None and now - _last < 1.0 / _dial("promote_hz"):
+        if not _due(now):
             return
-        _last = now
+    except Exception as e:
+        dev_mode.log_swallowed("rock promotion rate limit", e)
+        return
+    try:
         _reap()
         hits = []
         anchor = (0.0, 0.0, 0.0)
@@ -190,10 +197,24 @@ def tick(player, view_set, now, r) -> None:
                 continue
             if not _make_room(player, math.dist(p_sys, h["pos"])):
                 break
-            _promote(view_set, anchor, h["key"], h, now)
-        _push(r)                      # ruling R-A: every acting tick
+            try:
+                _promote(view_set, anchor, h["key"], h, now)
+            except Exception as e:
+                dev_mode.log_swallowed("rock promotion promote", e)
     except Exception as e:
         dev_mode.log_swallowed("rock promotion tick", e)
+    finally:
+        _push(r)                      # ruling R-A: every acting tick
+
+
+def _due(now) -> bool:
+    """Rate limit to promote_hz. Game time running backwards without a
+    reset() (now < _last) acts and restarts the clock instead of stalling."""
+    global _last
+    if _last is not None and _last <= now < _last + 1.0 / _dial("promote_hz"):
+        return False
+    _last = now
+    return True
 
 
 def demote_all(r) -> None:

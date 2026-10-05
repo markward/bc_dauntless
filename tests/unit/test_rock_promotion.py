@@ -353,3 +353,62 @@ def test_promotion_and_ramp_dials_sit_together_in_the_rock_fields_group():
     assert s(d, "promote_hz", +1)["promote_hz"] == pytest.approx(5.0)
     assert s({**d, "promote_hz": 1.0}, "promote_hz", -1)["promote_hz"] == pytest.approx(1.0)
     assert s(d, "avoid_query_radius_gu", +1)["avoid_query_radius_gu"] == pytest.approx(175.0)
+
+
+def test_one_failing_promotion_does_not_block_the_others_or_the_push(world, monkeypatch):
+    """Review fix 1: a raising RockClass_Create for one hit is logged and
+    skipped; the rest are promoted and the exclusion is still pushed."""
+    pset, player = world
+    from engine.rocks import rock as rock_mod
+    real = rock_mod.RockClass_Create
+
+    def flaky(radius, **kw):
+        if kw.get("name") == promotion.field_name(6):
+            raise RuntimeError("bad catalogue index")
+        return real(radius, **kw)
+
+    monkeypatch.setattr(rock_mod, "RockClass_Create", flaky)
+    r = FakeR([hit(5, 50.0), hit(6, 60.0), hit(7, 70.0)])
+    promotion.tick(player, pset, 0.0, r)
+    assert sorted(promotion.promoted()) == [5, 7]
+    assert r.promoted_pushes[-1] == [5, 7]
+
+
+def test_a_rock_left_in_the_set_by_a_raising_add_is_not_orphaned(world, monkeypatch):
+    """Review fix 1: AddObjectToSet inserts and then raises -> the rock
+    is tracked (so it demotes and is excluded natively), never orphaned."""
+    pset, player = world
+    real_add = pset.AddObjectToSet
+
+    def add_then_raise(obj, name):
+        real_add(obj, name)
+        if name == promotion.field_name(6):
+            raise RuntimeError("handler boom")
+
+    monkeypatch.setattr(pset, "AddObjectToSet", add_then_raise)
+    r = FakeR([hit(5, 50.0), hit(6, 60.0)])
+    promotion.tick(player, pset, 0.0, r)
+    rock6 = pset.GetObject(promotion.field_name(6))
+    assert promotion.promoted().get(6) is rock6
+    assert r.promoted_pushes[-1] == [5, 6]
+
+
+def test_the_push_survives_a_raising_tick_body(world, monkeypatch):
+    """Review fix 1: _push sits in a finally of the acting tick."""
+    pset, player = world
+    r = FakeR([hit(5, 50.0)])
+    promotion.tick(player, pset, 0.0, r)
+    monkeypatch.setattr(promotion, "_demote_far",
+                        lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    promotion.tick(player, pset, 1.0, r)
+    assert r.promoted_pushes == [[5], [5]]
+
+
+def test_game_time_going_backwards_acts(world):
+    """Review fix 2: now < _last (no reset) acts instead of stalling."""
+    pset, player = world
+    r = FakeR([hit(5, 50.0)])
+    promotion.tick(player, pset, 10.0, r)
+    r.hits = [hit(5, 50.0), hit(6, 60.0)]
+    promotion.tick(player, pset, 5.0, r)
+    assert 6 in promotion.promoted()
