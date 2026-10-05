@@ -7,6 +7,8 @@ See docs/superpowers/specs/2026-06-09-reticle-chrome-bars-text-design.md
 """
 from __future__ import annotations
 
+from engine.appc import sensor_contacts, unknown_labels
+from engine.appc.ships import ShipClass
 from engine.appc.target_menu import surface_gu_to
 from engine.core.ids import implements
 from engine.units import GU_TO_KM, GUPS_TO_KPH
@@ -71,7 +73,17 @@ def build_reticle_text(player, camera, viewport) -> dict:
     speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
 
     sub = _valid_subsystem(player)
-    name = sub.GetDisplayName() if sub is not None else target.GetDisplayName()
+    # Roadmap decision 5 (no name leaks): an unidentified ship-level target
+    # must read the same placeholder the target list shows, for a subsystem
+    # target too -- the subsystem's parent ship IS `target` here (BC/our
+    # subsystem lock is stored on the ship, see _valid_subsystem), so there
+    # is no separate parent-ship lookup to do. Planets/placements/non-ShipClass
+    # targets have no Unknown row (target_menu.set_contacts only allocates one
+    # for ShipClass contacts) and keep their real name unconditionally.
+    if isinstance(target, ShipClass) and not sensor_contacts.player_knows(target):
+        name = unknown_labels.placeholder(target)
+    else:
+        name = sub.GetDisplayName() if sub is not None else target.GetDisplayName()
     line2 = "%.2f km / %.0f kph" % (dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH)
     up = camera.up()
     top    = (centre.x + up[0] * radius, centre.y + up[1] * radius, centre.z + up[2] * radius)

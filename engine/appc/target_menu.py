@@ -2,8 +2,10 @@
 
 Mirrors the SDK surface at sdk/Build/scripts/App.py:8051-8201 with only
 the calls SDK Python scripts actually make. Engine-internal methods
-(ShowUnknownName / ShowRealName) are no-ops; the engine layer drives
-sensor identification state directly in a later phase.
+(ShowUnknownName / ShowRealName) drive the row's caption — `set_contacts`
+calls them from `Contact.identified` each push, so an unidentified contact
+shows "Unknown N" with a grey UNKNOWN affiliation until the observer's
+sensors resolve it.
 
 Plan: docs/superpowers/plans/2026-05-25-target-list-shim.md
 """
@@ -55,12 +57,13 @@ class STSubsystemMenu(STMenu):
         super().__init__(label or (ship.GetDisplayName() if ship else ""))
         self._ship = ship
         self._affiliation: str = "UNKNOWN"
+        self._unknown_caption = None    # set while the contact is unidentified
 
     def GetShip(self):
         return self._ship
 
     def GetAffiliation(self) -> str:
-        return self._affiliation
+        return "UNKNOWN" if self._unknown_caption is not None else self._affiliation
 
     def SetAffiliation(self, token: str) -> None:
         self._affiliation = token
@@ -68,13 +71,22 @@ class STSubsystemMenu(STMenu):
     def IsVisible(self) -> int:
         return 1 if self._visible else 0
 
-    def ShowUnknownName(self, *args) -> None:
-        """Engine-internal — sensor ID state. SDK never calls."""
-        pass
+    def ShowUnknownName(self, caption=None) -> None:
+        """Show the row as an unidentified contact. BC's body is
+        unreconstructed (RE'd at 0x535800); the engine drives it from
+        Contact.identified. GetLabel() keeps the REAL name because
+        STTargetMenu.GetSubmenuW resolves rows by it (E2M0/E1M2 arrows)."""
+        self._unknown_caption = str(caption) if caption else "Unknown"
 
     def ShowRealName(self, *args) -> None:
-        """Engine-internal — sensor ID state. SDK never calls."""
-        pass
+        self._unknown_caption = None
+
+    def IsShowingUnknownName(self) -> bool:
+        return self._unknown_caption is not None
+
+    def GetCaption(self) -> str:
+        """What the panel draws: the placeholder while unknown, else the label."""
+        return self._unknown_caption if self._unknown_caption is not None else self.GetLabel()
 
 
 class STComponentMenu(STMenu):
@@ -215,6 +227,16 @@ class STTargetMenu(STTopLevelMenu):
             if row is None:
                 continue
             row.SetVisible()
+            if c.identified:
+                row.ShowRealName()
+            elif c.targetable:
+                # Allocate "Unknown N" only for a row this list actually
+                # draws (_rows() filters on `targetable`) -- `_contacts` now
+                # carries a record for every ship in the system, so an
+                # untargetable/out-of-range unknown must not consume a number
+                # nobody will ever see.
+                from engine.appc import unknown_labels
+                row.ShowUnknownName(unknown_labels.placeholder(c.ship))
         self._post_membership_changes()
 
     def _post_membership_changes(self) -> None:

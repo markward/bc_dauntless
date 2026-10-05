@@ -128,15 +128,22 @@ class Contact:
     # `perceivable` instead.
     targetable: bool
     # Named for the EFFECT, not the CAUSE: a fuzzy sensor return you can
-    # target at ship level but not pick apart by subsystem. Cloak is the only
-    # producer today (a cloaked contact inside its detection bubble is
+    # target at ship level but not pick apart by subsystem. Cloak was the
+    # first producer (a cloaked contact inside its detection bubble is
     # `targetable` but not `subsystems_targetable` — you can shoot at it, not
-    # snipe its warp core), but nebula concealment is a plausible second one
-    # later, and a field called `cloaked` would then be a lie. Defaults True
+    # snipe its warp core); an UNIDENTIFIED contact (`identified` False) is
+    # the second — BC shows "Unknown N" with no subsystem breakdown until the
+    # observer's sensors resolve it. Nebula concealment remains a plausible
+    # third, and a field called `cloaked` would then be a lie. Defaults True
     # so every pre-existing `Contact(...)` construction site (tests, the bulk
     # `RebuildShipMenus` synthesiser) keeps its prior "subsystems visible"
     # behaviour without editing every call site.
     subsystems_targetable: bool = True
+    # True when the OBSERVER's sensors have identified this contact
+    # (IsObjectKnown). Defaults True so synthetic constructions (tests, the
+    # bulk RebuildShipMenus synthesiser) keep "identified" behaviour. Records
+    # are only built for the player; AI never reads them.
+    identified: bool = True
 
 
 def perceived_by(observer) -> tuple:
@@ -175,6 +182,9 @@ def perceived_by(observer) -> tuple:
     # a frame is answered under one configuration even if it were flipped
     # mid-pass. See the gate note in the loop below.
     apply_conceal = sd.ENHANCED_SENSOR_CONTEST
+    observer_sensors = (
+        observer.GetSensorSubsystem()
+        if implements(observer, "GetSensorSubsystem") else None)
 
     out = []
     for ship, (sx, sy, sz) in contact_index.ship_positions_in(pSet):
@@ -209,12 +219,15 @@ def perceived_by(observer) -> tuple:
         # so a cloaked ship well inside that bubble is routinely perceivable
         # AND cloaked at once. That combination is exactly what this field
         # exists to express.
+        identified = bool(observer_sensors is not None
+                          and observer_sensors.IsObjectKnown(ship))
         out.append(Contact(
             ship=ship,
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
-            subsystems_targetable=not sd.is_hidden_by_cloak(ship),
+            subsystems_targetable=identified and not sd.is_hidden_by_cloak(ship),
+            identified=identified,
         ))
     return tuple(out)
 

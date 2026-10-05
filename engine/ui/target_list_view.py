@@ -349,6 +349,7 @@ class TargetListView(Panel):
                     # test_row_flag_does_not_gate_the_payload_drawability_is_targetable.
                     rows.append((
                         name,
+                        child.GetCaption(),
                         child.GetAffiliation(),
                         hull_pct,
                         shield_pct,
@@ -385,6 +386,7 @@ class TargetListView(Panel):
             "rows": [
                 {
                     "name": name,
+                    "label": caption,
                     "affiliation": aff,
                     "hull": hull,
                     "shields": shields,
@@ -401,8 +403,8 @@ class TargetListView(Panel):
                     # cannot be derived from its length any more.
                     "has_subsystems": has_subs,
                 }
-                for (name, aff, hull, shields, has_shields, subs, expanded,
-                     has_subs) in rows
+                for (name, caption, aff, hull, shields, has_shields, subs,
+                     expanded, has_subs) in rows
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"

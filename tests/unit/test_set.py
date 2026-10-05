@@ -582,6 +582,44 @@ def test_delete_object_from_set_clears_its_containing_set():
     assert ship.GetContainingSet() is None
 
 
+def test_remove_object_from_set_survives_a_raising_sensor_contacts_hook(monkeypatch):
+    """sensor_contacts.on_exited_set must not be able to leave an object
+    half-removed: if it raises (a bug in the sensor manager, or a weird
+    weakref state), RemoveObjectFromSet still finishes the removal rather
+    than propagating the exception out of a set-membership operation."""
+    from engine.appc import sensor_contacts
+
+    def _boom(pSet, obj):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sensor_contacts, "on_exited_set", _boom)
+    s = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(ship, "ship1")
+
+    s.RemoveObjectFromSet("ship1")   # must not raise
+
+    assert s.GetObject("ship1") is None
+    assert ship.GetContainingSet() is None
+
+
+def test_delete_object_from_set_survives_a_raising_sensor_contacts_hook(monkeypatch):
+    from engine.appc import sensor_contacts
+
+    def _boom(pSet, obj):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sensor_contacts, "on_exited_set", _boom)
+    s = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(ship, "ship1")
+
+    s.DeleteObjectFromSet("ship1")   # must not raise
+
+    assert s.GetObject("ship1") is None
+    assert ship.GetContainingSet() is None
+
+
 def test_remove_object_from_set_does_not_clobber_a_later_add_to_another_set():
     """If something re-adds the object to a DIFFERENT set before removal
     finishes (a synchronous handler on the removal broadcast), the removal

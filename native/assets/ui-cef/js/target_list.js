@@ -2,8 +2,12 @@
 //
 // Target-list render fn. Driven by Python via cef_execute_javascript:
 //   setTargetList({visible, selected, selected_subsystem,
-//                  rows: [{name, affiliation, hull, shields,
+//                  rows: [{name, label, affiliation, hull, shields,
 //                          subsystems: [...], expanded}, ...]});
+//
+// `name` is the click/selection key (ship.GetName()) and never displayed;
+// `label` is what's drawn — the ship's display name once identified, else
+// the "Unknown N" placeholder (STSubsystemMenu.GetCaption()).
 //
 // Event protocol (dauntlessEvent passes through PanelRegistry to
 // TargetListView.dispatch_event):
@@ -69,6 +73,7 @@ function setTargetList(state) {
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const name = String(row.name || '');
+        const label = String(row.label || row.name || '');
         const aff = String(row.affiliation || 'UNKNOWN');
         const chosen = (selected === name) ? ' target-list__row--chosen' : '';
         const expanded = !!row.expanded;
@@ -80,7 +85,7 @@ function setTargetList(state) {
         // entirely and let the hull bar occupy the far-right slot. Default to
         // showing the bar when the flag is absent (older payloads).
         const hasShields = (row.has_shields !== false);
-        const nameHtml = escapeHtml(name);
+        const nameHtml = escapeHtml(label);
         const toggleAttr = clickAttr('target/' + name + '/__toggle__');
         const targetAttr = clickAttr('target/' + name);
 

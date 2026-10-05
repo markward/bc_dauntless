@@ -258,6 +258,31 @@ class STMenu(ObjectClass):
         """Narrow-string twin of RemoveItemW; the engine dump carries both."""
         self.RemoveItemW(label)
 
+    def RenameButton(self, old_label, new_label) -> "STButton | None":
+        """Engine-only convenience (not in the SDK): rename a button's label
+        AND its ``_buttons`` dict key together, so a later ``GetButtonW(new_label)``
+        finds it.
+
+        ``AddChild`` indexes a button by ``GetLabel()`` at insertion time;
+        ``STButton.SetLabel`` alone only changes the text, leaving the old key
+        pointing at the (now mislabeled-key) button. Needed by
+        ``science_scan_labels.rename_on_identify``: Science's ``ShipIdentified``
+        de-dupes a just-identified contact's button by looking up
+        ``GetButtonW(pObject.GetDisplayName())`` -- the REAL name -- so the
+        renamed button must already be filed under that key, or the dedupe
+        check misses it and a duplicate row gets added.
+
+        Silent no-op (returns None) when ``old_label`` isn't a button here.
+        Same tradeoff ``AddChild`` documents: if ``new_label`` already keys
+        another button here, that entry is overwritten in ``_buttons``
+        (the ``_children`` list still carries both)."""
+        button = self._buttons.pop(str(old_label), None)
+        if button is None:
+            return None
+        button.SetLabel(new_label)
+        self._buttons[button.GetLabel()] = button
+        return button
+
     def KillChildren(self) -> None:
         self._children.clear()
         self._buttons.clear()

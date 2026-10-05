@@ -6,18 +6,28 @@ The Science bridge menu's "Scan Area" button was a silent no-op: the SDK's
 ``pSensors.IdentifyObject(target)`` — both fell through to a truthy ``_Stub`` and
 did nothing.
 
-``ScanAllObjects`` now returns a real TGSequence whose played action identifies
-EVERY contact in the ship's set (ignoring range — an active scan reveals the
-whole area). ``IdentifyObject`` marks one contact known. Both reuse the passive
-sweep's per-contact core, so they never double-fire.
+``ScanAllObjects`` now returns a real TGSequence whose played action arms a
+scan identification for EVERY unknown contact in the ship's set (ignoring
+range — an active scan reveals the whole area), spaced one identification
+time apart. ``IdentifyObject`` arms one contact the same way. Both land through
+``engine.appc.sensor_contacts`` and the shared commit point (``_identify_one``),
+so they never double-fire against the passive dwell. Both are deferred by BC's
+identification dwell (default 4.0 s) — tests tick the contact manager forward
+to settle them.
 """
 import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.appc.sets import SetClass
 from engine.appc.planet import Planet_Create
+from engine.appc import sensor_contacts, sensor_dials
+from engine.core.game import Game, _set_current_game
 
 _identified: list = []
+
+
+def _dwell() -> float:
+    return sensor_dials.get("identification_time_s")
 
 
 def _on_identified(dest, event):
@@ -40,6 +50,11 @@ def _player_in_set(base_range=2000.0, at=(0.0, 0.0, 0.0)):
     sensors.SetBaseSensorRange(base_range)
     player.SetSensorSubsystem(sensors)
     s.AddObjectToSet(player, "player")
+    # The contact manager is player-only (same idiom as
+    # tests/unit/test_sensor_contacts.py::_world).
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
     return s, player, sensors
 
 
@@ -70,9 +85,17 @@ def test_scan_all_objects_returns_playable_sequence():
     seq.Play()   # must not raise
 
 
-def test_scan_identifies_all_in_set_ignoring_range():
+def test_scan_identifies_all_in_set_ignoring_range(monkeypatch):
     """Active scan reveals the whole area — including an out-of-range contact
-    the passive sweep would skip."""
+    the passive sweep would skip — once each contact's dwell has elapsed.
+    ScanAllObjects spaces the three contacts' identifications one dwell apart,
+    so settling the last one needs n * dwell game-time to pass. IdentifyObject
+    arms its deferred identification relative to the REAL game clock
+    (sensor_contacts._now()) when no explicit now_gt is given, so pin it to a
+    known value -- otherwise the tick()s below are comparing against whatever
+    game time happened to leak in from other tests, not the fixture's own
+    timeline."""
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
 
@@ -87,6 +110,7 @@ def test_scan_identifies_all_in_set_ignoring_range():
     s.AddObjectToSet(haven, "Haven")
 
     sensors.ScanAllObjects().Play()
+    sensor_contacts.tick(player, 3 * _dwell())
 
     assert sensors.IsObjectKnown(near) == 1
     assert sensors.IsObjectKnown(far) == 1       # bypasses the range gate
@@ -98,7 +122,8 @@ def test_scan_identifies_all_in_set_ignoring_range():
     assert _identified.count(haven) == 1
 
 
-def test_scan_excludes_player_and_non_contacts():
+def test_scan_excludes_player_and_non_contacts(monkeypatch):
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     from engine.appc.objects import ObjectClass
@@ -107,13 +132,15 @@ def test_scan_excludes_player_and_non_contacts():
     s.AddObjectToSet(marker, "Player Start")
 
     sensors.ScanAllObjects().Play()
+    sensor_contacts.tick(player, _dwell())
 
     assert sensors.IsObjectKnown(player) == 0
     assert sensors.IsObjectKnown(marker) == 0
     assert _identified == []
 
 
-def test_scan_does_not_refire_for_known_contacts():
+def test_scan_does_not_refire_for_known_contacts(monkeypatch):
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     target = ShipClass_Create("BirdOfPrey")
@@ -121,7 +148,9 @@ def test_scan_does_not_refire_for_known_contacts():
     s.AddObjectToSet(target, "Bird")
 
     sensors.ScanAllObjects().Play()
+    sensor_contacts.tick(player, _dwell())
     sensors.ScanAllObjects().Play()   # second scan: contact already known
+    sensor_contacts.tick(player, 2 * _dwell())
 
     assert _identified.count(target) == 1
 
@@ -142,7 +171,8 @@ def test_scan_with_no_ship_returns_empty_sequence():
 # IdentifyObject (single-target "Scan Object" path)
 # --------------------------------------------------------------------------
 
-def test_identify_object_marks_one_known_and_broadcasts_once():
+def test_identify_object_marks_one_known_and_broadcasts_once(monkeypatch):
+    monkeypatch.setattr(sensor_contacts, "_now", lambda: 0.0)
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
     target = ShipClass_Create("BirdOfPrey")
@@ -153,6 +183,7 @@ def test_identify_object_marks_one_known_and_broadcasts_once():
     s.AddObjectToSet(other, "Other")
 
     sensors.IdentifyObject(target)
+    sensor_contacts.tick(player, _dwell())
 
     assert sensors.IsObjectKnown(target) == 1
     assert sensors.IsObjectKnown(other) == 0     # only the named target
@@ -160,6 +191,7 @@ def test_identify_object_marks_one_known_and_broadcasts_once():
 
     # De-dupe: a second identify is a no-op.
     sensors.IdentifyObject(target)
+    sensor_contacts.tick(player, 2 * _dwell())
     assert _identified.count(target) == 1
 
 

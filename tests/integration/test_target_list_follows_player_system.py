@@ -120,6 +120,15 @@ def test_pushed_contacts_get_their_mission_affiliation():
         pSet.AddObjectToSet(friend, "Dauntless")
         pSet.AddObjectToSet(foe, "Kor")
 
+        # Affiliation colour is only meaningful once a contact is
+        # identified — an unidentified row shows UNKNOWN regardless of its
+        # real affiliation (Task 6). Identify both before the push so this
+        # test exercises mission-group colouring, not sensor identification.
+        from engine.appc.subsystems import SensorSubsystem
+        player.SetSensorSubsystem(SensorSubsystem("Sensors"))
+        player.GetSensorSubsystem().AddKnownObject(friend)
+        player.GetSensorSubsystem().AddKnownObject(foe)
+
         _pump(menu, player)
 
         assert menu.GetObjectEntry(friend).GetAffiliation() == "FRIENDLY"

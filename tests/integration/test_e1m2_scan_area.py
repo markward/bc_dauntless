@@ -64,7 +64,7 @@ def test_scan_all_objects_returns_real_sequence_in_mission():
 
 def test_area_scan_advances_mission():
     mod = _init_e1m2()
-    _arm_area_scan(mod)
+    player, sensors = _arm_area_scan(mod)
     assert mod.g_bAreaScanDone == 0
     assert mod.g_bScanComplete == 0
 
@@ -82,3 +82,27 @@ def test_area_scan_advances_mission():
     # E1M2.ScanHandler ran (flag flipped) and ScanComplete advanced the mission.
     assert mod.g_bAreaScanDone == 1
     assert mod.g_bScanComplete == 1
+
+    # ScanAllObjects now ARMS the scan's identifications on the contact
+    # manager rather than committing them at once -- they land one
+    # identification dwell apart as the manager is ticked forward. Confirm at
+    # least one contact that was unknown at scan time becomes known once the
+    # dwell has had time to elapse (bare `MissionLib.GetPlayer()`, matching
+    # the brief's fixture idiom).
+    import MissionLib
+    from engine.appc import sensor_contacts
+    from engine.appc.ships import ShipClass
+    from engine.appc.planet import Planet
+    player = MissionLib.GetPlayer()
+    pSet = player.GetContainingSet()
+    unknown_before = [
+        o for o in pSet.GetObjectList()
+        if o is not None and o is not player and isinstance(o, (ShipClass, Planet))
+        and not sensors.IsObjectKnown(o)]
+    for k in range(1, 40):
+        sensor_contacts.tick(player, k * 1.0)
+    assert any(sensors.IsObjectKnown(o) for o in unknown_before), (
+        "no previously-unknown contact became known after ticking the "
+        "contact manager forward -- if E1M2's own ScanComplete beat depends "
+        "on identification being instant rather than dwell-deferred, this is "
+        "a real mission-timing concern, not a test bug.")

@@ -1378,6 +1378,12 @@ class SensorSubsystem(PoweredSubsystem):
     def GetMaxProbes(self) -> int:                   return self._max_probes
     def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
 
+    def GetIdentificationTime(self) -> float:
+        """BC's identification dwell (RE'd: a hard-coded 4.0 s, no setter);
+        here the live `identification_time_s` dial."""
+        from engine.appc import sensor_dials
+        return sensor_dials.get("identification_time_s")
+
     def IsObjectKnown(self, obj) -> int:
         """Returns 1 if *obj* is in the known-contacts set, 0 otherwise.
 
@@ -1410,9 +1416,10 @@ class SensorSubsystem(PoweredSubsystem):
         ``pSeq = pSensors.ScanAllObjects(); pSeq.Play()`` — E1M2 with no None
         guard — so this must ALWAYS return a real, playable ``TGSequence``.
 
-        The sequence carries a single script action that, when played, identifies
-        every contact in the scanning ship's set (see
-        ``sensor_identification.identify_all_in_set``). Deferring the work into
+        The sequence carries a single script action that, when played, arms a
+        scan identification for every unknown contact in the scanning ship's
+        set, one identification time apart (see
+        ``sensor_identification.schedule_area_scan``). Deferring the work into
         the played action matches the SDK contract that playing the sequence *is*
         the scan; it also de-dupes against the passive per-tick sweep."""
         import App
@@ -1431,12 +1438,15 @@ class SensorSubsystem(PoweredSubsystem):
         return seq
 
     def IdentifyObject(self, pTarget) -> None:
-        """Single-target scan (Science menu "Scan Object" via
-        ``Actions.ShipScriptActions.ScanObject``): mark *pTarget* known and
-        broadcast ``ET_SENSORS_SHIP_IDENTIFIED`` once. De-duped, so re-scanning
-        an already-known contact is a no-op."""
-        from engine.appc import sensor_identification
-        sensor_identification._identify_one(self, pTarget)
+        """Single-target scan (Science "Scan Object" via
+        ``Actions.ShipScriptActions.ScanObject``). BC (RE'd) schedules a
+        DEFERRED identification on its player-only contact manager, so this
+        arms one identification-time later rather than identifying at once.
+        Player-only, like BC's; a no-op on any other ship's sensors."""
+        from engine.appc import sensor_contacts
+        if self._owner_ship() is not sensor_contacts.current_player():
+            return
+        sensor_contacts.schedule_scan(pTarget, self.GetIdentificationTime())
 
     def ForceObjectIdentified(self, pTarget) -> None:
         """SDK ``HelmMenuHandlers.SetupOrbitMenuFromSet`` marks orbitable
@@ -1445,6 +1455,75 @@ class SensorSubsystem(PoweredSubsystem):
         None-safe and de-duped (a no-op if *pTarget* is None or already known)."""
         from engine.appc import sensor_identification
         sensor_identification._identify_one(self, pTarget)
+
+    # ── Range bands + visibility (BC RE'd: sensor-subsystem.md) ───────────
+    def _owner_ship(self):
+        ship = self.GetParentShip()
+        if ship is None and hasattr(self, "_climb_to_ship"):
+            ship = self._climb_to_ship()
+        return ship
+
+    def GetSensorRange(self) -> float:
+        """BC's GetSensorRange: base x normal-power% x condition%, 0 when
+        offline. Delegates to the one rule, sensor_detection.effective_sensor_range."""
+        ship = self._owner_ship()
+        if ship is None:
+            return 0.0
+        from engine.appc.sensor_detection import effective_sensor_range
+        return float(effective_sensor_range(ship))
+
+    def _band_distance(self, obj):
+        """Centre distance owner->obj in GU, or None when not in the same set."""
+        ship = self._owner_ship()
+        if ship is None or obj is None:
+            return None
+        pset = ship.GetContainingSet()
+        if pset is None or obj.GetContainingSet() is not pset:
+            return None
+        ox, oy, oz = _get_xyz(ship)
+        tx, ty, tz = _get_xyz(obj)
+        return ((tx - ox) ** 2 + (ty - oy) ** 2 + (tz - oz) ** 2) ** 0.5
+
+    def IsObjectNear(self, obj) -> int:
+        """Within near_fraction (BC: half) of sensor range. Pure distance."""
+        from engine.appc import sensor_dials
+        d = self._band_distance(obj)
+        r = self.GetSensorRange()
+        return 1 if (d is not None and r > 0.0
+                     and d <= r * sensor_dials.get("near_fraction")) else 0
+
+    def IsObjectFar(self, obj) -> int:
+        """Within full sensor range. Pure distance."""
+        d = self._band_distance(obj)
+        r = self.GetSensorRange()
+        return 1 if (d is not None and r > 0.0 and d <= r) else 0
+
+    def IsObjectVisible(self, obj) -> int:
+        """BC's IsObjectVisible (@0x005671D0), probes omitted. NOT the target
+        list's gate (that is sensor_detection.can_detect) — only SDK callers
+        that ask this directly use it. Order is BC's: power, absolute cloak,
+        same set, nebula jam, over-boost, range, (jam) , memory."""
+        ship = self._owner_ship()
+        if ship is None or obj is None:
+            return 0
+        if self.GetSensorRange() <= 0.0:
+            return 0
+        from engine.appc.sensor_detection import is_hidden_by_cloak
+        if is_hidden_by_cloak(obj):
+            return 0
+        pset = ship.GetContainingSet()
+        if pset is None or obj.GetContainingSet() is not pset:
+            return 0
+        from engine.appc import contact_index
+        jammed = any(n.IsObjectInNebula(ship) or n.IsObjectInNebula(obj)
+                     for n in contact_index.nebulae_in(pset))
+        if not jammed and self.GetNormalPowerPercentage() > 1.2:
+            return 1
+        if self.IsObjectFar(obj):
+            return 1
+        if jammed:
+            return 0
+        return self.IsObjectKnown(obj)
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):

@@ -280,6 +280,9 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc.ai_sensor_gate import install_ai_sensor_gate
     install_ai_sensor_gate()
 
+    from engine.appc import science_scan_labels
+    science_scan_labels.install()
+
     import App
 
     # Default destination for fire events.
@@ -4448,8 +4451,8 @@ def _reset_system_loader_state() -> None:
 
 
 def _reset_sensor_state() -> None:
-    """Nebula trackers, concealment latches, the identification clock."""
-    global _last_identify_gt, _radiation_driver, _system_nebula_pushed_for
+    """Nebula trackers, concealment latches, the contact manager."""
+    global _radiation_driver, _system_nebula_pushed_for
     # Clear the nebula tracker so stale membership state from the prior set
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
@@ -4471,8 +4474,17 @@ def _reset_sensor_state() -> None:
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
     reset_concealment_state()
-    # Force the next tick to re-run sensor identification for the new mission.
-    _last_identify_gt = None
+    # Clear the player-only contact manager's bands/pending identifications and
+    # the unknown-contact label cache so a new mission's ships don't inherit
+    # stale state from the prior mission.
+    from engine.appc import sensor_contacts, unknown_labels
+    sensor_contacts.reset()
+    unknown_labels.reset()
+    # Re-apply the Science Scan Object unknown-label wrap. The SDK module may
+    # be re-imported across a mission swap; install() is idempotent (checks
+    # the _unknown_labelled flag before wrapping).
+    from engine.appc import science_scan_labels
+    science_scan_labels.install()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
@@ -4762,9 +4774,6 @@ _system_nebula_pushed_for = None  # str | None | _SYSTEM_NEBULA_UNKNOWN
 # The veil (engine.dev_nebula_dials) the held profile's k_sys was solved
 # for: a veil-dial change re-solves k_sys and forces a re-push.
 _system_nebula_pushed_veil = None  # float | None
-# Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
-# until the first sweep; reset on mission swap so a new mission re-identifies.
-_last_identify_gt = None  # float | None
 _hull_discharge = None  # HullDischargeDriver | None
 _nebula_wake = None     # NebulaWakeTracker | None
 
@@ -9951,6 +9960,8 @@ def run(mission_name: Optional[str] = None,
                 _minor_dials.register()
                 from engine.rocks import far_dials as _far_dials
                 _far_dials.register()
+                from engine.appc import sensor_dials as _sensor_dials
+                _sensor_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
@@ -11097,19 +11108,14 @@ def run(mission_name: Optional[str] = None,
                         push_render_data=False,
                     )
 
-                # Sensor contact identification → drives the SDK bridge Hail /
-                # scan buttons + unlocks target-info panels (all gate on
-                # IsObjectKnown). Throttled ~4 Hz; cheap once contacts are known.
-                # Sim-gated by the enclosing `not pause.sim_frozen`.
+                # Player-only contact manager: bands, proximity events and the
+                # identification dwell (engine/appc/sensor_contacts.py). Sim-gated
+                # by the enclosing `not pause.sim_frozen`; it runs its own 1 s
+                # sweep cadence internally.
                 if player is not None:
                     import App  # deferred: matches host-loop convention
-                    global _last_identify_gt
-                    _now_gt = App.g_kUtopiaModule.GetGameTime()
-                    if (_last_identify_gt is None
-                            or _now_gt - _last_identify_gt >= 0.25):
-                        _last_identify_gt = _now_gt
-                        from engine.appc import sensor_identification
-                        sensor_identification.identify_contacts(player)
+                    from engine.appc import sensor_contacts
+                    sensor_contacts.tick(player, App.g_kUtopiaModule.GetGameTime())
 
                 # Nebula membership → enter/exit events, environmental
                 # damage, sensor scaling. Sim dt (TICK_DT); gated by the
