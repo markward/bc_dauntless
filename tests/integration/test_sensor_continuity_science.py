@@ -190,8 +190,15 @@ def test_lost_track_behind_a_rock_drops_the_hail_button(world):
     assert player.GetSensorSubsystem().IsObjectKnown(bird) == 0
     assert hail.GetButtonW("Vagabond") is None
     assert "Vagabond" not in _labels(hail)
-    # Re-identified later: the SDK's own AddHailButton (dedupes by label via
-    # CreateHailButton's GetButtonW) must be able to add it back.
+    # Re-identified later: mark it known again first, exactly as the real
+    # identification path (sensor_identification._identify_one) would before
+    # ever broadcasting ET_SENSORS_SHIP_IDENTIFIED -- sensor_mission_guards
+    # wraps AddHailButton to re-check the known set (sensor continuity spec,
+    # Guards), so calling it on a contact that was never re-identified is no
+    # longer a valid way to probe the SDK's own dedupe-by-label behaviour.
+    player.GetSensorSubsystem().AddKnownObject(bird)
+    # The SDK's own AddHailButton (dedupes by label via CreateHailButton's
+    # GetButtonW) must be able to add it back.
     import Bridge.HelmMenuHandlers as helm
     helm.AddHailButton(None, bird.GetObjID())
     assert hail.GetButtonW("Vagabond") is not None

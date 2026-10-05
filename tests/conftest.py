@@ -1474,6 +1474,15 @@ def _reset_leakable_engine_globals():
         sensor_contacts.reset()
     except Exception:
         pass
+    # Mission re-identification guards: the E5M2 Outpost first-identification
+    # latch is module-level state, so a test that identifies the Outpost
+    # would otherwise leave later tests' Outpost identifications silently
+    # skipped.
+    try:
+        from engine.appc import sensor_mission_guards
+        sensor_mission_guards.reset()
+    except Exception:
+        pass
     # Damage-geometry switches (App.DamageableObject_*Enabled): in Dauntless
     # damage is always on, but the setters are honoured so a mission can
     # suppress damage for a cutscene. Module-level state, so a test that flips
