@@ -210,10 +210,33 @@ none).
 E2M2 Serris 2 arrival with low sensors: ships listed unknown, scan names them. Dials:
 Developer Options → Lighting → "Dial keys" → sensors.
 
+- **E1M2 asteroid targeting.** `FindGoodTarget`'s `IsObjectVisible(asteroid)` check
+  (E1M2.py:6694) is now a real gate instead of a truthy stub — confirm the AI's target
+  selection around asteroids still picks sensibly (an asteroid behind a jamming
+  condition, or outside sensor range, should now be skippable where it previously
+  always passed).
+- **E8M1 Belaruz 1 FAR-then-NEAR.** Reach Belaruz 1 with the KessokHeavy inside far but
+  outside near range; confirm sensors report it (FAR fires while still unseen in the
+  nebula) and a later NEAR crossing targets it and fires the Kessok-detected beat, with
+  `DetectingObject` removing itself (no re-fire on a second FAR crossing). Not
+  headlessly testable (see "As built").
+- **Nav points identify after the dwell.** Helm's nav-point menu (`SetupNavPointsMenuFromSet`)
+  now takes ~4 s to show a nav point as identified instead of instantly — confirm this
+  reads as a minor, acceptable delay rather than a visible bug.
+
 ## As built
 
 Deviations from this spec made during execution, by task:
 
+- **Task 2 (E1M2 asteroid targeting, live-check note).** `IsObjectVisible` was a truthy
+  stub everywhere it was called; it is now a real gate per §2. One SDK call site changes
+  behaviour as a result: `FindGoodTarget` in E1M2.py:6694 calls
+  `IsObjectVisible(asteroid)` to help choose a firing target, and it now actually
+  returns 0 when the asteroid is out of range, outside the player's set, or jammed
+  (previously always truthy). This is the intended, spec'd behaviour change, not a bug —
+  recorded here because it has no headless assertion (AI target selection isn't pinned
+  by an existing test) and so needs Mark's live eyes; see the matching entry in "Live
+  check" above.
 - **Task 4 (`sensor_contacts._sync_player`).** Wipes `_near`/`_far`/`_pending` only when
   a *previous* player existed and differs from the new one — not on first sight (when
   `_player_ref` is `None`, right after `reset()`). §1's "A player swap wipes the manager"
