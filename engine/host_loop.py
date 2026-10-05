@@ -4484,9 +4484,12 @@ def _reset_sensor_state() -> None:
     # Clear the player-only contact manager's bands/pending identifications and
     # the unknown-contact label cache so a new mission's ships don't inherit
     # stale state from the prior mission.
-    from engine.appc import sensor_contacts, unknown_labels
+    from engine.appc import sensor_contacts, sensor_occlusion, unknown_labels
     sensor_contacts.reset()
     unknown_labels.reset()
+    # Occlusion's per-set pair/rock caches and its recorded tick time go with
+    # every other sensor cache on a swap.
+    sensor_occlusion.reset()
     # Re-apply the Science Scan Object unknown-label wrap. The SDK module may
     # be re-imported across a mission swap; install() is idempotent (checks
     # the _unknown_labelled flag before wrapping).

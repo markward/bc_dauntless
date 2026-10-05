@@ -108,3 +108,81 @@ def test_begin_tick_invalidates_cache_on_rock_move():
     rock.SetTranslateXYZ(50.0, 20.0, 0.0)      # move the rock off the line
     sensor_occlusion.begin_tick(1.0)
     assert sensor_occlusion.blocked(a, b) is False
+
+
+# ── final-review fix 1: a rock you are INSIDE the sphere of never occludes ──
+
+def test_observer_inside_a_rock_sphere_is_not_blinded():
+    """Observer 2.5 GU from the centre of a 3 GU rock, target 500 GU away on
+    the far side: you are beside the rock, not behind it."""
+    s = SetClass()
+    a, b = _ship(s, "A", 0.0), _ship(s, "B", 502.5)
+    make_major_rock(s, "Rock", at=(2.5, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_occlusion.blocked(a, b) is False
+    assert sd.can_detect(a, b) is True
+
+
+def test_target_inside_a_rock_sphere_is_not_hidden():
+    s = SetClass()
+    a, b = _ship(s, "A", 0.0), _ship(s, "B", 500.0)
+    make_major_rock(s, "Rock", at=(497.5, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_occlusion.blocked(a, b) is False
+    assert sd.can_detect(a, b) is True
+
+
+def test_a_rock_between_two_outside_ships_still_blocks_beside_a_hugged_one():
+    """The hugged rock is exempt for that pair only; a second rock genuinely
+    between the two still blocks."""
+    s = SetClass()
+    a, b = _ship(s, "A", 0.0), _ship(s, "B", 502.5)
+    make_major_rock(s, "Hug", at=(2.5, 0.0, 0.0), radius_gu=3.0)
+    make_major_rock(s, "Mid", at=(250.0, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_occlusion.blocked(a, b) is True
+
+
+# ── final-review fix 5: the pair cache is per set ───────────────────────────
+
+def test_pair_cache_survives_queries_alternating_between_sets(monkeypatch):
+    s1, s2 = SetClass(), SetClass()
+    a1, b1 = _ship(s1, "A", 0.0), _ship(s1, "B", 100.0)
+    a2, b2 = _ship(s2, "A", 0.0), _ship(s2, "B", 100.0)
+    make_major_rock(s1, "Rock", at=(50.0, 0.0, 0.0), radius_gu=3.0)
+    make_major_rock(s2, "Rock", at=(50.0, 10.0, 0.0), radius_gu=3.0)
+    calls = []
+    real = sensor_occlusion._segment_hits
+
+    def counting(*args):
+        calls.append(args)
+        return real(*args)
+
+    monkeypatch.setattr(sensor_occlusion, "_segment_hits", counting)
+    sensor_occlusion.begin_tick(1.0)
+    assert sensor_occlusion.blocked(a1, b1) is True
+    assert sensor_occlusion.blocked(a2, b2) is False
+    first = len(calls)
+    assert first == 2
+    for _ in range(3):
+        assert sensor_occlusion.blocked(a1, b1) is True
+        assert sensor_occlusion.blocked(a2, b2) is False
+    assert len(calls) == first          # both sets stayed cached
+    sensor_occlusion.begin_tick(2.0)    # a new tick still invalidates each set
+    assert sensor_occlusion.blocked(a1, b1) is True
+    assert sensor_occlusion.blocked(a2, b2) is False
+    assert len(calls) == first + 2
+
+
+# ── final-review fix 4: a mission swap clears the occlusion caches ─────────
+
+def test_host_loop_reset_sensor_state_resets_occlusion():
+    import engine.host_loop as host_loop
+    s = SetClass()
+    a, b = _ship(s, "A", 0.0), _ship(s, "B", 100.0)
+    make_major_rock(s, "Rock", at=(50.0, 0.0, 0.0), radius_gu=3.0)
+    sensor_occlusion.begin_tick(7.0)
+    assert sensor_occlusion.blocked(a, b) is True
+    assert len(sensor_occlusion._pair_cache) == 1
+    assert len(sensor_occlusion._rock_cache) == 1
+    host_loop._reset_sensor_state()
+    assert len(sensor_occlusion._pair_cache) == 0
+    assert len(sensor_occlusion._rock_cache) == 0
+    assert sensor_occlusion._tick_time is None

@@ -5,14 +5,20 @@ A major rock is a RockClass in A's set whose SCALED radius
 (rocks.rock.effective_radius -- never GetRadius() alone, which ignores
 SetScale) is at least the `min_blocker_radius_gu` dial. The test is the
 segment between the two centres against each rock's sphere; A and B are never
-their own occluders. Planets, suns, ships and minor/near-band rocks never
-occlude; fields between ships never occlude.
+their own occluders. A rock whose sphere contains the observer's centre or the
+target's centre does not occlude that pair either: that ship is BESIDE the
+rock, not behind it (final review fix 1 -- the segment would otherwise start
+inside the sphere and every direction would read blocked). Planets, suns,
+ships and minor/near-band rocks never occlude; fields between ships never
+occlude.
 
 Cost: can_detect has a dozen callers, some per frame and per torpedo, so
-answers are cached per (A, B) for the current game time, and each set's list of
-major rocks is cached per game time AND per bucket size -- a rock added or
-removed within the same tick (tests, spawns, breakups) changes the bucket size
-and invalidates it. Never raises: a failure answers "not blocked" and is logged.
+answers are cached per set, per (A, B), for the current game time, and each
+set's list of major rocks is cached per game time AND per bucket size -- a rock
+added or removed within the same tick (tests, spawns, breakups) changes the
+bucket size and invalidates it. Both caches are keyed per set (final review fix
+5), so callers alternating between sets in one tick do not thrash each other.
+Never raises: a failure answers "not blocked" and is logged.
 
 `begin_tick(now_gt)` (controller ruling) records the sensor manager's own
 tick time and folds it into BOTH cache signatures alongside App's game time.
@@ -28,8 +34,9 @@ import App
 import engine.dev_mode as dev_mode
 from engine.appc import sensor_dials
 
-_pair_cache: dict = {}          # (id(a), id(b)) -> bool, valid for _cache_key
-_cache_key = None               # (game_time, tick_time, bucket-size signature)
+# set -> (signature, {(id(a), id(b)): bool}); signature = (game_time,
+# tick_time, major-rock count) for that set.
+_pair_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 _rock_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 _tick_time = None                # last begin_tick() value; None until first call
 
@@ -43,10 +50,9 @@ def begin_tick(now_gt: float) -> None:
 
 
 def reset() -> None:
-    global _cache_key, _tick_time
+    global _tick_time
     _pair_cache.clear()
     _rock_cache.clear()
-    _cache_key = None
     _tick_time = None
 
 
@@ -91,8 +97,12 @@ def _segment_hits(ax, ay, az, bx, by, bz, cx, cy, cz, r) -> bool:
     return qx * qx + qy * qy + qz * qz < r * r
 
 
+def _contains(x, y, z, cx, cy, cz, r) -> bool:
+    dx, dy, dz = x - cx, y - cy, z - cz
+    return dx * dx + dy * dy + dz * dz < r * r
+
+
 def blocked(observer, target) -> bool:
-    global _cache_key
     try:
         pset = observer.GetContainingSet()
         if pset is None:
@@ -101,12 +111,14 @@ def blocked(observer, target) -> bool:
         rocks = _major_rocks(pset, now)
         if not rocks:
             return False
-        key_sig = (now, _tick_time, id(pset), len(rocks))
-        if _cache_key != key_sig:
-            _pair_cache.clear()
-            _cache_key = key_sig
+        key_sig = (now, _tick_time, len(rocks))
+        entry = _pair_cache.get(pset)
+        if entry is None or entry[0] != key_sig:
+            entry = (key_sig, {})
+            _pair_cache[pset] = entry
+        pairs = entry[1]
         pair = (id(observer), id(target))
-        hit = _pair_cache.get(pair)
+        hit = pairs.get(pair)
         if hit is not None:
             return hit
         from engine.appc.subsystems import _get_xyz
@@ -116,10 +128,13 @@ def blocked(observer, target) -> bool:
         for rock, cx, cy, cz, r in rocks:
             if rock is observer or rock is target:
                 continue
+            if (_contains(ax, ay, az, cx, cy, cz, r)
+                    or _contains(bx, by, bz, cx, cy, cz, r)):
+                continue          # beside the rock, not behind it
             if _segment_hits(ax, ay, az, bx, by, bz, cx, cy, cz, r):
                 answer = True
                 break
-        _pair_cache[pair] = answer
+        pairs[pair] = answer
         return answer
     except Exception as e:
         dev_mode.log_swallowed("sensor_occlusion.blocked", e)

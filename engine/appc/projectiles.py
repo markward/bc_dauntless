@@ -656,6 +656,12 @@ def _target_visible(torpedo, target) -> bool:
     Guide). Observer is the FIRING ship; headless fixtures without a source
     ship count as visible.
 
+    Major-rock occlusion (inside can_detect) is therefore evaluated from the
+    FIRING ship too, not from the torpedo: a torpedo that has already flown
+    past a rock still loses guidance while the launcher's own line to the
+    target is blocked. That is the same observer choice the cloak check
+    makes, deliberately -- the launcher's sensors guide the shot.
+
     can_detect measures raw set-local numbers. For a source and target in two
     regions of one star system those numbers are in different coordinates, so
     the distance is handed in, measured in the SOURCE's frame. Same set,
