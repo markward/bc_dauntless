@@ -139,6 +139,12 @@ One idea: *the placeholder name an unidentified contact shows.*
   `LoadInterface.py:140` sets it; the shim must not answer with a stub before then).
 - **Target panels.** `ship_display_panel._resolve_ship_for_role` applies the SDK gate:
   target role resolves to None for an unknown target (the comment there anticipated this).
+- **Reticle.** `engine/ui/reticle_text.py:build_reticle_text` must agree with the target
+  list: an unidentified ship-level target (and a subsystem target locked on one — the
+  subsystem's parent ship IS the ship-level target here, no separate lookup needed) reads
+  `unknown_labels.placeholder(target)`, the same number the list shows for the same
+  contact. Planets/placements/non-`ShipClass` targets have no Unknown row and keep their
+  real name unconditionally.
 
 ### 6. Science Scan Object button — no name leak
 
@@ -220,6 +226,10 @@ Developer Options → Lighting → "Dial keys" → sensors.
   nebula) and a later NEAR crossing targets it and fires the Kessok-detected beat, with
   `DetectingObject` removing itself (no re-fire on a second FAR crossing). Not
   headlessly testable (see "As built").
+- **Reticle matches the target list.** Target an Unknown row (ship-level or by locking a
+  subsystem on it) and confirm the on-screen reticle label reads "Unknown N" with the same
+  N the target list shows for that contact, then reads the real name once the contact is
+  identified (dwell or scan).
 - **Nav points identify after the dwell.** Helm's nav-point menu (`SetupNavPointsMenuFromSet`)
   now takes ~4 s to show a nav point as identified instead of instantly — confirm this
   reads as a minor, acceptable delay rather than a visible bug.
@@ -280,8 +290,39 @@ Deviations from this spec made during execution, by task:
   reaches into `sensors._known_objects` directly, duplicated between `reset()` and
   `_sync_player()`; Task 5 `schedule_area_scan`'s filter duplicates the
   `sensor_contacts._contacts` concept and `test_e1m2_scan_area` re-fetches the player
-  redundantly; Task 6 `test_target_menu_shim::test_st_subsystem_menu_show_name_methods_are_noops`'s
-  name/docstring is now stale (the methods are no longer no-ops); Task 6 imports
-  `unknown_labels` inside the `set_contacts` loop rather than at module scope; Task 8
-  `ship_display_panel` repeats the `IsObjectKnown` rationale in both a docstring and an
-  inline comment.
+  redundantly; Task 6 imports `unknown_labels` inside the `set_contacts` loop rather than
+  at module scope; Task 8 `ship_display_panel` repeats the `IsObjectKnown` rationale in
+  both a docstring and an inline comment.
+- **Final-review fix wave (2026-10-05).** Five bugs found in whole-branch review, fixed in
+  one pass:
+  1. The reticle (above) leaked an unknown target's real name — it read
+     `GetDisplayName()` directly with no `IsObjectKnown` check, so it disagreed with the
+     target list showing the same contact as "Unknown N". Fixed to share
+     `unknown_labels.placeholder`.
+  2. Both placeholder allocators over-allocated: `set_contacts` gave every unidentified
+     contact a number even when `targetable` was False (a row `_rows()` never draws), and
+     `science_scan_labels._unknown_label` gave CreateScanButton's wrap a number even when
+     the SDK's own early returns (`IsScannable`, cloaked/cloaking) mean no button is ever
+     built. Both now gate on the predicate that decides whether a row/button actually
+     appears, so the first VISIBLE unknown always reads "Unknown 1". ⚠️ Found during this
+     fix: the cloak predicates must be gated on `isinstance(obj, ShipClass)` — exactly
+     mirroring `CreateScanButton`'s own `App.ShipClass_Cast(pObject)` guard — not called
+     unconditionally. `combat.cloak_shields_suspended` resolves `GetCloakingSubsystem` off
+     the INSTANCE, not the class, so on a Planet (which defines no such method)
+     `TGObject.__getattr__` hands back a truthy `_Stub` that reads as permanently
+     "cloaking" and would have suppressed every planet/station placeholder — reintroducing
+     exactly the name leak this feature closes, for every non-ship contact.
+  3. `sensor_contacts._sync_player` conflated "no ref was ever recorded" (first sight) with
+     "the recorded ref is now dead" — both read back `current is None` after dereferencing.
+     A dead ref silently skipped the wipe, so a new player's sweep saw the old player's
+     stale `_near`/`_far` membership and posted no crossing. Fixed to check `_player_ref is
+     None` directly, before dereferencing.
+  4. `sensor_identification._identify_one`'s Science-rename-and-release ran for ANY
+     sensors, including an NPC's own (e.g. `ForceObjectIdentified` called on a non-player
+     ship) — which could release the PLAYER-visible placeholder for a contact the player's
+     own sensors had not identified. Guarded on `sensors._owner_ship() is
+     sensor_contacts.current_player()`.
+  5. `sets.py`'s two `sensor_contacts.on_exited_set` call sites (in `RemoveObjectFromSet`
+     and `DeleteObjectFromSet`) ran unguarded between other removal side-effects; an
+     exception there would abort the removal partway through. Both now swallow via
+     `dev_mode.log_swallowed`, matching the module's existing swallow idiom.
