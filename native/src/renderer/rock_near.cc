@@ -529,10 +529,46 @@ void NearField::stream(const glm::dvec3& c) {
     }
 }
 
+std::vector<NearQueryHit> NearField::query_large(const glm::dvec3& c, double radius,
+                                                 float min_r) const {
+    std::vector<NearQueryHit> out;
+    const double L = dials_.large.cell_gu;
+    if (!(L > 0.0) || !(radius >= 0.0)) return out;
+    const glm::i64vec3 lo_i(glm::floor((c - radius) / L)), hi_i(glm::floor((c + radius) / L));
+    for (const far::DiscSource& s : sources_) {
+        if (!reaches(s, c, radius)) continue;
+        for (std::int64_t i = lo_i.x; i <= hi_i.x; ++i)
+        for (std::int64_t j = lo_i.y; j <= hi_i.y; ++j)
+        for (std::int64_t k = lo_i.z; k <= hi_i.z; ++k) {
+            const glm::i64vec3 ijk{i, j, k};
+            if (aabb_distance(c, glm::dvec3(ijk) * L, L) > radius) continue;
+            const std::uint64_t ck = cell_key(s.id, NearClass::Large, ijk);
+            auto it = query_cache_.find(ck);
+            if (it == query_cache_.end()) {
+                if (query_cache_.size() >= kQueryCacheMax) query_cache_.clear();
+                it = query_cache_.emplace(ck, generate_near_cell(s, NearClass::Large, ijk, dials_, cat_)).first;
+            }
+            const auto& rocks = it->second;
+            for (std::size_t n = 0; n < rocks.size(); ++n) {
+                const NearRock& r = rocks[n];
+                if (r.radius < min_r || glm::length(r.pos_sys - c) > radius) continue;
+                out.push_back({rock_key(ck, n), r});
+            }
+        }
+    }
+    std::sort(out.begin(), out.end(), [&c](const NearQueryHit& a, const NearQueryHit& b) {
+        const double da = glm::length(a.rock.pos_sys - c), db = glm::length(b.rock.pos_sys - c);
+        return da != db ? da < db : a.key < b.key;
+    });
+    return out;
+}
+
 void NearField::clear() {
     cells_.clear();
     for (auto& b : blocks_) b.clear();
     pinned_.clear();
+    query_cache_.clear();
+    excluded_.clear();
     invalidate_stream_watch();
     // A fresh start, as a new field: full billboard ranges (a source change
     // mid-dash costs that one frame, then collapses again).
@@ -717,6 +753,9 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 const std::size_t i = ordered ? static_cast<std::size_t>(cell.by_radius4 >> (4 * j) & 15u) : j;
                 const NearRock& r = rock_p[i];
                 if (ordered && !(r.radius * k / cut_d_lo > floor_px)) break;
+                // Rock promotion: a promoted Large rock draws nothing here --
+                // the real object stands in for it.
+                if (!small && !excluded_.empty() && excluded_.count(key_of(key, cell, i))) continue;
                 ++out.rocks_tested;
                 // vec3(pos_sys - to_render) and length(c - eye), as scalars
                 // (hand-inlined throughout: this loop is the build's hot path
@@ -1081,6 +1120,9 @@ void NearField::step(const NearStepInput& in) {
         }
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
             const std::uint64_t key = key_of(ckey, cell, i);
+            // Rock promotion: a promoted Large rock reports no contact -- its
+            // real object collides on its own.
+            if (!excluded_.empty() && excluded_.count(key)) continue;
             const NearRock& r = cell.rocks[i];
             const glm::vec3 p(r.pos_sys - to_render);
             const float reach = r.radius + margin;

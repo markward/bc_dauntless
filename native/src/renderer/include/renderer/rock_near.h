@@ -167,6 +167,10 @@ struct NearContact {
     std::uint64_t key = 0;             // the rock's key: NearField::rearm(key) clears its cooldown
 };
 
+// One hit of NearField::query_large: the rock's streamed key (identical to
+// what stream()/for_each would assign it) plus its data.
+struct NearQueryHit { std::uint64_t key = 0; NearRock rock; };
+
 struct NearStepInput {
     double game_time = 0.0;
     glm::dvec3 render_origin{0.0};
@@ -193,6 +197,17 @@ public:
     // as streamed (collapsed toward mesh_gu at dash speed).
     const NearDials& effective_dials() const { return eff_; }
     void clear();                          // cells, contacts, sweep state, cooldowns, ghosts, dash state
+    // Rock promotion (rock-promotion spec §2): Large-class keys promoted to
+    // real objects. build() draws nothing for them and step() reports no
+    // contact; kept across stream(), dropped by clear().
+    void set_excluded(std::unordered_set<std::uint64_t> keys) { excluded_ = std::move(keys); }
+    const std::unordered_set<std::uint64_t>& excluded() const { return excluded_; }
+    // Every Large rock of every current source with radius >= min_radius_gu
+    // within radius_gu of centre_sys (system coords), excluded keys included,
+    // nearest first (ties by key). Generates the cells it needs exactly as
+    // stream() does (same keys); never depends on what is streamed.
+    std::vector<NearQueryHit> query_large(const glm::dvec3& centre_sys, double radius_gu,
+                                          float min_radius_gu) const;
     NearStats stats() const;
     // Every rock currently streamed, per class (tests, build, contacts).
     void for_each(NearClass cls, const std::function<void(std::uint64_t key, const NearRock&)>& fn) const;
@@ -352,6 +367,14 @@ private:
     std::unordered_map<std::uint64_t, Shove> shoves_;           // small rocks
     std::vector<NearContact> large_contacts_;
     std::vector<minors::Contact> small_contacts_;
+
+    // Rock promotion (query_large / set_excluded).
+    std::unordered_set<std::uint64_t> excluded_;
+    // query_large's cell cache: cell key -> generated rocks. Bounded (cleared
+    // whole past kQueryCacheMax); cleared with the cells on any generator,
+    // source or catalogue change.
+    static constexpr std::size_t kQueryCacheMax = 4096;
+    mutable std::unordered_map<std::uint64_t, std::vector<NearRock>> query_cache_;
 };
 
 }  // namespace renderer::rockfield

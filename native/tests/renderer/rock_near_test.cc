@@ -1358,3 +1358,117 @@ TEST(NearRamp, RampDialChangeClearsCells) {
     f.set_dials(d);
     EXPECT_EQ(f.stats().cells, 0);
 }
+
+namespace {
+rockfield::NearField streamed_field() {
+    rockfield::NearField f;
+    // build_cat() (bound_mu + view_dirs_gltf): ExcludedKeyIsNotDrawnButNeighboursAre
+    // needs build() to actually emit meshes/billboards, not just generate rocks.
+    f.set_catalogue(build_cat());
+    f.set_sources({full_sphere()});
+    f.stream({0, 0, 0});
+    return f;
+}
+std::map<std::uint64_t, rockfield::NearRock> streamed_large(const rockfield::NearField& f) {
+    std::map<std::uint64_t, rockfield::NearRock> m;
+    f.for_each(rockfield::NearClass::Large, [&](std::uint64_t k, const rockfield::NearRock& r) { m[k] = r; });
+    return m;
+}
+}
+
+TEST(NearQuery, MatchesTheStreamedRocksInRange) {
+    auto f = streamed_field();
+    const auto streamed = streamed_large(f);
+    const glm::dvec3 c{12.0, -30.0, 7.0};
+    const auto hits = f.query_large(c, 200.0, 0.0f);
+    ASSERT_FALSE(hits.empty());
+    std::size_t in_range = 0;
+    for (const auto& [k, r] : streamed) if (glm::length(r.pos_sys - c) <= 200.0) ++in_range;
+    EXPECT_EQ(hits.size(), in_range);
+    for (const auto& h : hits) {
+        const auto it = streamed.find(h.key);
+        ASSERT_NE(it, streamed.end());
+        EXPECT_EQ(it->second.pos_sys, h.rock.pos_sys);
+        EXPECT_EQ(it->second.radius, h.rock.radius);
+        EXPECT_EQ(it->second.rock, h.rock.rock);
+        EXPECT_EQ(it->second.phase, h.rock.phase);
+    }
+    for (std::size_t i = 1; i < hits.size(); ++i)
+        EXPECT_LE(glm::length(hits[i - 1].rock.pos_sys - c), glm::length(hits[i].rock.pos_sys - c));
+}
+
+TEST(NearQuery, IndependentOfStreaming) {   // works far from anything streamed (NPCs)
+    rockfield::NearField a = streamed_field();
+    rockfield::NearField b; b.set_catalogue(cat()); b.set_sources({full_sphere()});   // never streamed
+    const glm::dvec3 c{3000.0, 0.0, 0.0};
+    const auto ha = a.query_large(c, 150.0, 0.0f), hb = b.query_large(c, 150.0, 0.0f);
+    ASSERT_EQ(ha.size(), hb.size());
+    for (std::size_t i = 0; i < ha.size(); ++i) EXPECT_EQ(ha[i].key, hb[i].key);
+}
+
+TEST(NearQuery, MinRadiusFilters) {
+    auto f = streamed_field();
+    for (const auto& h : f.query_large({0, 0, 0}, 300.0, 4.0f)) EXPECT_GE(h.rock.radius, 4.0f);
+}
+
+TEST(NearExclude, ExcludedKeyIsNotDrawnButNeighboursAre) {
+    auto f = streamed_field();
+    const auto hits = f.query_large({0, 0, 0}, 50.0, 0.0f);   // inside mesh range
+    ASSERT_FALSE(hits.empty());
+    // Aim the camera straight at the chosen hit so it is guaranteed inside
+    // the frustum, with a NARROW fov: the large class's full billboard reach
+    // (405 GU, a full-density field) generates far more candidates than its
+    // max_instances cap, so a wide fov would let a farther rock backfill the
+    // excluded one's slot and the totals would not move -- a correct no-op
+    // masquerading as a bug. A narrow cone keeps this cell's few neighbours
+    // the whole candidate set.
+    const glm::vec3 dir = glm::normalize(glm::vec3(hits[0].rock.pos_sys));
+    const glm::vec3 up = std::fabs(dir.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0);
+    rockfield::NearBuildInput in;
+    in.view = glm::lookAt(glm::vec3(0, 0, 0), dir, up);
+    in.proj = glm::perspective(glm::radians(5.0f), 1.0f, 0.1f, 5000.0f);
+    rockfield::NearOutput before; f.build(in, before);
+    ASSERT_GT(before.mesh_count + before.billboard_count, 0);
+    f.set_excluded({hits[0].key});
+    rockfield::NearOutput after; f.build(in, after);
+    EXPECT_EQ(after.mesh_count + after.billboard_count, before.mesh_count + before.billboard_count - 1);
+    f.stream({1.0, 0.0, 0.0});                                // survives a stream
+    rockfield::NearOutput again; f.build(in, again);
+    EXPECT_EQ(again.mesh_count + again.billboard_count, after.mesh_count + after.billboard_count);
+}
+
+TEST(NearExclude, ExcludedKeyMakesNoContact) {
+    // Control: the same explicit rock + sweep, WITHOUT exclusion, reports a
+    // contact (copied from NearContact.SweptHitAtDashSpeed's setup/sweep).
+    {
+        rockfield::NearField f;
+        rockfield::NearRock r; r.pos_sys = {0, 500, 0}; r.radius = 2.0f;
+        f.debug_add_rock(rockfield::NearClass::Large, 42, r);
+        minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+        rockfield::NearStepInput in; in.player = pb;
+        in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, 0, 0));
+        in.game_time = 1.0; f.step(in);
+        in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, 1000, 0));   // 1,000 GU in one step
+        in.game_time = 1.0 + 1.0 / 60.0; f.step(in);
+        ASSERT_FALSE(f.drain_large_contacts().empty());
+    }
+    // Same setup, excluded: no contact.
+    rockfield::NearField f;
+    rockfield::NearRock r; r.pos_sys = {0, 500, 0}; r.radius = 2.0f;
+    f.debug_add_rock(rockfield::NearClass::Large, 42, r);
+    f.set_excluded({42});
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    rockfield::NearStepInput in; in.player = pb;
+    in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, 0, 0));
+    in.game_time = 1.0; f.step(in);
+    in.player->world = glm::translate(glm::mat4(1), glm::vec3(0, 1000, 0));
+    in.game_time = 1.0 + 1.0 / 60.0; f.step(in);
+    EXPECT_TRUE(f.drain_large_contacts().empty());
+}
+
+TEST(NearExclude, ClearDropsTheExclusion) {
+    auto f = streamed_field();
+    f.set_excluded({1, 2, 3});
+    f.clear();
+    EXPECT_TRUE(f.excluded().empty());
+}
