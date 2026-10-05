@@ -180,10 +180,18 @@ def test_subsystem_destroyed_speaks_typed_line(engineer_world):
 
 
 def test_shield_level_change_announces(engineer_world):
+    # 70% sits between the per-face range checks (0.5 / 0.05) and the combined
+    # watcher's top check (0.75), so ONLY the overall emitter fires. A level
+    # below 0.5 (this test used 0.4) trips face 0's watcher on the very first
+    # write, before the average crosses 0.75: SpecificShieldLevelChange then
+    # queues a CAT_NON_INTERRUPTABLE "PushingButtons" gesture, and the SDK's own
+    # IsAnimatingNonInterruptable() guard in ShieldLevelChange declines, so
+    # only "FrontShieldDraining" is spoken. That is the SDK gate working, not
+    # this emitter failing; test_specific_shield_face_announces covers the face.
     ship, engineer, spoken = engineer_world
     shields = ship.GetShieldSubsystem()
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        shields.SetCurrentShields(f, shields.GetMaxShields(f) * 0.4)
+        shields.SetCurrentShields(f, shields.GetMaxShields(f) * 0.7)
     _advance(1.0)
     assert any(k.startswith("Shields") for k in spoken), spoken
 
