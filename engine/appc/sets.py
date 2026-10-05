@@ -1,6 +1,7 @@
 import re
 from functools import lru_cache
 
+import engine.dev_mode as dev_mode
 from engine.appc.events import TGEventHandlerObject
 
 
@@ -249,7 +250,10 @@ class SetClass(TGEventHandlerObject):
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc import sensor_contacts
-            sensor_contacts.on_exited_set(self, obj)
+            try:
+                sensor_contacts.on_exited_set(self, obj)
+            except Exception as _e:
+                dev_mode.log_swallowed("sensor_contacts.on_exited_set", _e)
             from engine.appc.objects import ObjectGroup
             ObjectGroup.broadcast_membership(obj, entered=False)
             self._clear_containing_set(obj)
@@ -263,7 +267,10 @@ class SetClass(TGEventHandlerObject):
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc import sensor_contacts
-            sensor_contacts.on_exited_set(self, obj)
+            try:
+                sensor_contacts.on_exited_set(self, obj)
+            except Exception as _e:
+                dev_mode.log_swallowed("sensor_contacts.on_exited_set", _e)
             from engine.appc.objects import ObjectGroup, broadcast_object_deleted
             ObjectGroup.broadcast_membership(obj, entered=False)
             broadcast_object_deleted(obj)
