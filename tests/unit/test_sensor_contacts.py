@@ -185,6 +185,36 @@ def test_a_new_player_starts_with_a_clean_manager():
                for e in _events)
 
 
+def test_a_dead_player_ref_triggers_a_wipe_like_a_live_swap():
+    """A RECORDED ref that no longer resolves to the new player is a swap,
+    even when the old player is now dead -- only `_player_ref is None`
+    (never-recorded) is first sight. Simulates a dead weakref directly
+    (returns None on call, exactly like a collected referent) rather than
+    forcing a real GC, which other fixtures' live references would defeat."""
+    _subscribe()
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 1500.0)          # far, not near
+    sensor_contacts.tick(player, 0.0)
+    assert len(_of(App.ET_SENSORS_SHIP_FAR_PROXIMITY)) == 1
+
+    import engine.appc.sensor_contacts as sc
+    sc._player_ref = lambda: None            # pretend the old ref died
+
+    other = ShipClass_Create("Galaxy")
+    sensors2 = SensorSubsystem("Sensors")
+    sensors2._max_condition = 100.0
+    sensors2._condition = 100.0
+    sensors2.SetBaseSensorRange(2000.0)
+    other.SetSensorSubsystem(sensors2)
+    s.AddObjectToSet(other, "other")
+    _events.clear()
+    sensor_contacts.tick(other, 5.0)
+    # bird is re-reported as entering the NEW player's far band -- the wipe
+    # must have cleared the dead player's `_far` membership for it.
+    assert any(e[0] == App.ET_SENSORS_SHIP_FAR_PROXIMITY and e[1] is bird
+               for e in _events)
+
+
 def test_reset_clears_pending():
     s, player, sensors = _world()
     bird = _ship(s, "Bird", 500.0)

@@ -121,16 +121,26 @@ def _sync_player(player) -> None:
     record the new player and leave _pending alone: a scan scheduled before
     this module's first tick (Task 5's IdentifyObject calling schedule_scan)
     must still commit when due, not be silently cancelled by the very first
-    tick that happens to observe it."""
+    tick that happens to observe it.
+
+    A RECORDED ref that no longer resolves to *player* is a swap too, even
+    when it is now dead (the old player was GC'd): "no ref was ever recorded"
+    (first sight) is the ONLY state that skips the wipe. Checking
+    `current is not None` after dereferencing used to conflate "first sight"
+    with "the old player died" -- both read back `current is None` -- so a
+    dead ref silently kept the dead player's `_near`/`_far` membership alive
+    across the swap and the new player's sweep saw no crossing to post.
+    """
     global _player_ref, _next_sweep_gt
-    current = _player_ref() if _player_ref is not None else None
-    if current is player:
+    if _player_ref is None:
+        _player_ref = weakref.ref(player) if player is not None else None
         return
-    if current is not None:
-        _near.clear()
-        _far.clear()
-        _pending.clear()
-        _next_sweep_gt = None
+    if _player_ref() is player:
+        return
+    _near.clear()
+    _far.clear()
+    _pending.clear()
+    _next_sweep_gt = None
     _player_ref = weakref.ref(player) if player is not None else None
 
 
