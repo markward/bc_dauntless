@@ -23,7 +23,7 @@ from engine.appc import (contact_index, science_scan_labels, sensor_contacts,
                          unknown_labels)
 from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.rocks import far_tier
-from tests.helpers.rocks import make_major_rock
+from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
 SCAN_MENU = "Scan Object"
 _exited = []
@@ -201,7 +201,9 @@ def test_unknown_namesake_never_relabels_a_known_ships_button(world):
     assert player.GetSensorSubsystem().IsObjectKnown(known) == 1
 
 
-def test_lost_track_behind_a_rock_drops_the_hail_button(world):
+def test_lost_track_behind_a_rock_drops_the_hail_button(world, occlusion_enabled):
+    # Occlusion ships default Off until the sensor-model project finishes;
+    # this test exercises real rock blocking, so it enables it explicitly.
     player, pSet, scan, hail = world
     bird = _known_bird_with_buttons(player, pSet)
     make_major_rock(pSet, "Rock", at=(250.0, 0.0, 0.0), radius_gu=3.0)

@@ -1457,6 +1457,7 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import sensor_occlusion
         sensor_occlusion.reset()
+        sensor_occlusion.reset_enabled()
     except Exception:
         pass
     # Unknown labels: allocator keyed by contact object identity, so a test that

@@ -27,6 +27,12 @@ no observable behaviour there -- but tests/integration drive
 `sensor_contacts.tick(player, now_gt)` (which calls `begin_tick` first thing;
 see Task 4) with a STATIC App game time while moving rocks or ships between
 ticks, and App time alone would then never invalidate either cache on a move.
+
+Gated by a module flag, DEFAULT OFF: `enabled()`/`set_enabled()`. Off until the
+sensor-model project finishes, then flip DEFAULT_ENABLED to True -- Mark
+2026-10-05. The developer-only switch lives at Developer Options -> Combat ->
+"Sensor Occlusion" (`engine/ui/developer_options_panel.py`). `blocked()`
+returns False immediately when disabled, before any cache work.
 """
 import weakref
 
@@ -34,11 +40,32 @@ import App
 import engine.dev_mode as dev_mode
 from engine.appc import sensor_dials
 
+# Off until the sensor-model project finishes, then flip to True -- Mark 2026-10-05.
+DEFAULT_ENABLED = False
+
 # set -> (signature, {(id(a), id(b)): bool}); signature = (game_time,
 # tick_time, major-rock count) for that set.
 _pair_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 _rock_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 _tick_time = None                # last begin_tick() value; None until first call
+_enabled = DEFAULT_ENABLED
+
+
+def enabled() -> bool:
+    return _enabled
+
+
+def set_enabled(on: bool) -> None:
+    global _enabled
+    _enabled = bool(on)
+
+
+def reset_enabled() -> None:
+    """Restores the flag to DEFAULT_ENABLED. Separate from reset() -- this is
+    a player/dev setting for the session, not per-tick cache state, so it is
+    never cleared on mission swap; only tests (and a dev re-launch) call this."""
+    global _enabled
+    _enabled = DEFAULT_ENABLED
 
 
 def begin_tick(now_gt: float) -> None:
@@ -103,6 +130,8 @@ def _contains(x, y, z, cx, cy, cz, r) -> bool:
 
 
 def blocked(observer, target) -> bool:
+    if not _enabled:
+        return False
     try:
         pset = observer.GetContainingSet()
         if pset is None:

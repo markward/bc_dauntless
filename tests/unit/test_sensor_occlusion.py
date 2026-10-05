@@ -1,11 +1,22 @@
 """Major rocks block line of sight (sensor continuity/occlusion spec)."""
+import pytest
+
 import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.appc.sets import SetClass
 from engine.appc import sensor_occlusion, sensor_dials
 from engine.appc import sensor_detection as sd
-from tests.helpers.rocks import make_major_rock
+from tests.helpers.rocks import make_major_rock, occlusion_enabled
+
+# This whole module is ABOUT occlusion, so enable it for every test here --
+# it ships default Off (DEFAULT_ENABLED) until the sensor-model project
+# finishes. Restored by tests/conftest.py's autouse reset either way; this
+# autouse wrapper just saves every test below from asking for the fixture by
+# name.
+@pytest.fixture(autouse=True)
+def _occlusion_on(occlusion_enabled):
+    pass
 
 
 def _ship(s, name, x, base_range=2000.0):
@@ -18,6 +29,22 @@ def _ship(s, name, x, base_range=2000.0):
     ship.SetSensorSubsystem(sensors)
     s.AddObjectToSet(ship, name)
     return ship
+
+
+# ── default-off contract ─────────────────────────────────────────────────
+
+def test_default_is_off_and_a_rock_does_not_block_by_default():
+    """Occlusion ships default Off (DEFAULT_ENABLED) until the sensor-model
+    project finishes. The autouse fixture above turns it ON for every other
+    test in this module, so this one turns it back off first, to prove the
+    shipped default rather than the test harness's override."""
+    sensor_occlusion.reset_enabled()
+    assert sensor_occlusion.enabled() is False
+    s = SetClass()
+    a, b = _ship(s, "A", 0.0), _ship(s, "B", 100.0)
+    make_major_rock(s, "Rock", at=(50.0, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_occlusion.blocked(a, b) is False
+    assert sd.can_detect(a, b) is True
 
 
 def test_rock_on_the_line_blocks():

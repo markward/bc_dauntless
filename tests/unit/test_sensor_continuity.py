@@ -24,7 +24,14 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.core.game import Game, _set_current_game
 from engine.rocks import far_tier
-from tests.helpers.rocks import make_major_rock
+from tests.helpers.rocks import make_major_rock, occlusion_enabled
+
+# Several tests here put a bird "behind a rock" and assert the continuity
+# clock runs -- occlusion ships default Off (sensor_occlusion.DEFAULT_ENABLED)
+# until the sensor-model project finishes, so it must be enabled for those to
+# exercise real blocking rather than passing vacuously. Harmless for the
+# tests in this module with no rocks.
+pytestmark = pytest.mark.usefixtures("occlusion_enabled")
 
 _exited_events: list = []
 

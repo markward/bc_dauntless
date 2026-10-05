@@ -143,6 +143,9 @@ cached per tick and cheap per rock. Verified two ways:
    never lose the track (rulings 1A/2A): a cloaked ship keeps its identity, an in-medium
    ship keeps it but displays Unknown.
 4. A scan of a ship behind a major rock does nothing.
+5. Occlusion ships default **Off** (`sensor_occlusion.DEFAULT_ENABLED`), behind
+   a developer-only switch at Developer Options → Combat → "Sensor
+   Occlusion" — off until the sensor-model project finishes (Mark, 2026-10-05).
 
 ## Testing
 
@@ -261,6 +264,16 @@ beyond what the Rules/Architecture sections above already describe:
 - **Final-review fix 5.** The pair cache is keyed per set (as the rock cache already
   was), each set with its own `(game time, tick time, rock count)` signature, so callers
   alternating between sets in one tick no longer clear each other's answers.
+- **Developer Options cleanup (2026-10-05).** A new Environments tab took the rock
+  toggles (Catalogue Rocks, Minor Rocks, Rock Fields, Rock Specks, Rock Puffs) off
+  Lighting; "Dial keys" moved to a new Diagnostics tab alongside the Frame Profiler.
+  Combat gained the "Sensor Occlusion" switch (`sensor_occlusion.enabled()` /
+  `set_enabled()`), default Off (`DEFAULT_ENABLED`) -- `blocked()` returns False
+  immediately when disabled, before any cache work, so production `can_detect` behaves
+  exactly as before this sub-project until a developer opts in. The flag is a
+  per-session dev setting, not per-tick cache state: `reset_enabled()` (called by
+  `tests/conftest.py`'s autouse reset) restores the default, but `host_loop._reset_sensor_state`
+  (mission swap) calls only `sensor_occlusion.reset()`, never `reset_enabled()`.
 
 ## Out of scope
 
@@ -280,7 +293,8 @@ Park beside a big rock — the list stays (you are beside it, not behind it). E8
 Belaruz: hail the KessokHeavy and command your fleet inside the nebula — they read
 Unknown but keep their Hail/fleet buttons. A known ship that cloaks keeps its identity
 and shows its real name the moment it decloaks.
-Dials: Developer Options → Lighting → "Dial keys" → sensors.
+Dials: Developer Options → Diagnostics → "Dial keys" → sensors (moved from
+Lighting in the 2026-10-05 Developer Options cleanup).
 
 Task 6 added a headless integration proof against this exact scenario
 (`tests/integration/test_sensor_continuity_missions.py::test_e2m1_karoon_hidden_then_recovered`)

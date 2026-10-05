@@ -25,6 +25,7 @@ import MissionLib
 from engine import host_loop
 from engine.appc import perception, sensor_contacts
 from engine.appc.sensor_detection import can_detect
+from tests.helpers.rocks import occlusion_enabled
 from tests.integration.test_sdk_bridge_load import _fresh_world
 
 E2M1_MODULE = "Maelstrom.Episode2.E2M1.E2M1"
@@ -42,7 +43,10 @@ def _move_player_to_beol4(player, beol4):
     beol4.AddObjectToSet(player, "player")
 
 
-def test_e2m1_karoon_hidden_then_recovered():
+def test_e2m1_karoon_hidden_then_recovered(occlusion_enabled):
+    # Occlusion ships default Off until the sensor-model project finishes;
+    # this integration proof exercises the real E2M1 asteroid field as a
+    # blocker, so it enables it explicitly.
     mod = _init_e2m1()
     beol4 = App.g_kSetManager.GetSet("Beol4")
     if beol4.GetObject("Asteroid 3") is None:

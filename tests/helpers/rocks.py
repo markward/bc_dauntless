@@ -14,7 +14,10 @@ rock.GetRadius() first, which SetupProperties never touches at ship
 the one the HullProperty below actually sets -- times GetScale() (left at
 its 1.0 default here).
 """
+import pytest
+
 import App
+from engine.appc import sensor_occlusion
 from engine.appc.ships import ShipClass_Create
 from engine.appc.properties import ShipProperty, HullProperty
 from engine.rocks.rock import effective_radius
@@ -44,3 +47,18 @@ def make_major_rock(pSet, name, *, at=(0.0, 0.0, 0.0), radius_gu=3.0):
     ship.SetTranslateXYZ(*at)
     pSet.AddObjectToSet(ship, name)
     return ship
+
+
+@pytest.fixture
+def occlusion_enabled():
+    """Occlusion ships default OFF (sensor_occlusion.DEFAULT_ENABLED) -- off
+    until the sensor-model project finishes. Any test that uses
+    make_major_rock to assert blocking must enable it explicitly, here or via
+    an autouse wrapper in the test module; restores on exit (not reset_enabled
+    directly -- tests/conftest.py's autouse reset already does that between
+    tests, this fixture is for the body of a single test)."""
+    sensor_occlusion.set_enabled(True)
+    try:
+        yield
+    finally:
+        sensor_occlusion.reset_enabled()

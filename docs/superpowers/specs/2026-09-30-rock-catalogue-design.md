@@ -392,7 +392,8 @@ format and the load scale have to reach them:
 - **Developer toggle.** Developer Options gets a row, "Rocks: catalogue / stock
   BC", labelled *(applies to rocks loaded after toggling)*. The default is catalogue. It sits on
   the same tab the branch used for its procedural toggle (Lighting, the de facto
-  visual-toggles tab). It is not persisted, and it exists for A/B checks.
+  visual-toggles tab at the time -- moved to a dedicated Environments tab in the
+  2026-10-05 Developer Options cleanup). It is not persisted, and it exists for A/B checks.
 
 ## Testing
 

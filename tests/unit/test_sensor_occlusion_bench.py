@@ -10,11 +10,17 @@ condition for raising the budget, not a license to.
 import random
 import time
 
+import pytest
+
 from engine.appc import sensor_detection as sd
 from engine.appc.sets import SetClass
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
-from tests.helpers.rocks import make_major_rock
+from tests.helpers.rocks import make_major_rock, occlusion_enabled
+
+# Occlusion ships default Off; this benchmark measures ITS overhead, so it
+# must actually run, not short-circuit on the disabled flag.
+pytestmark = pytest.mark.usefixtures("occlusion_enabled")
 
 N_SHIPS = 30
 N_ROCKS = 54

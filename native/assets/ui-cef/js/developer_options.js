@@ -23,9 +23,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'double_weapons'});
         out.push({kind: 'ctrl', target: 'no_npc_shields'});
         out.push({kind: 'ctrl', target: 'disable_collisions'});
-    }
-    if (state.selected_tab === 'diagnostics') {
-        out.push({kind: 'ctrl', target: 'profiler'});
+        out.push({kind: 'ctrl', target: 'sensor_occlusion'});
     }
     if (state.selected_tab === 'lighting') {
         out.push({kind: 'ctrl', target: 'systems_damaged'});
@@ -33,11 +31,16 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'normal_maps'});
         out.push({kind: 'ctrl', target: 'normal_flip_g'});
         out.push({kind: 'ctrl', target: 'normal_strength'});
+    }
+    if (state.selected_tab === 'environments') {
         out.push({kind: 'ctrl', target: 'rock_catalogue'});
         out.push({kind: 'ctrl', target: 'minor_rocks'});
         out.push({kind: 'ctrl', target: 'far_tier'});
         out.push({kind: 'ctrl', target: 'rock_specks'});
         out.push({kind: 'ctrl', target: 'rock_puffs'});
+    }
+    if (state.selected_tab === 'diagnostics') {
+        out.push({kind: 'ctrl', target: 'profiler'});
         out.push({kind: 'ctrl', target: 'dial_group'});
     }
     return out;
@@ -112,6 +115,8 @@ function _doRenderCombatBody(state, focusables) {
                          s.no_npc_shields, isFoc('no_npc_shields'));
     html += _doToggleRow('Disable Collisions', 'disable_collisions',
                          s.disable_collisions, isFoc('disable_collisions'));
+    html += _doToggleRow('Sensor Occlusion', 'sensor_occlusion',
+                         s.sensor_occlusion, isFoc('sensor_occlusion'));
     html += _doActionRow('Quick Repair Player Ship', 'quick_repair',
                          'Repair', isFoc('quick_repair'));
     return html;
@@ -130,6 +135,8 @@ function _doRenderDiagnosticsBody(state, focusables) {
           + 'report to the terminal every 120 frames (~2 s at 60 fps) until '
           + 'switched off. See docs/engine/frame-profiler.md before drawing a '
           + 'conclusion from it.</div>';
+    html += _doValueRow('Dial keys (/ L O act on)', 'dial_group',
+                        String(s.dial_group), isFoc('dial_group'));
     return html;
 }
 
@@ -150,14 +157,20 @@ function _doRenderLightingBody(state, focusables) {
     html += _doValueRow('Normal Map Strength', 'normal_strength',
                         Number(s.normal_strength).toFixed(1) + '×',
                         isFoc('normal_strength'));
+    return html;
+}
+
+function _doRenderEnvironmentsBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    const s = state.settings;
+    let html = '';
     html += _doToggleRow('Catalogue Rocks (off = stock BC; applies to rocks loaded after toggling)',
                          'rock_catalogue', s.rock_catalogue, isFoc('rock_catalogue'));
     html += _doToggleRow('Minor Rocks', 'minor_rocks', s.minor_rocks, isFoc('minor_rocks'));
     html += _doToggleRow('Rock Fields', 'far_tier', s.far_tier, isFoc('far_tier'));
     html += _doToggleRow('Rock Specks', 'rock_specks', s.rock_specks, isFoc('rock_specks'));
     html += _doToggleRow('Rock Puffs', 'rock_puffs', s.rock_puffs, isFoc('rock_puffs'));
-    html += _doValueRow('Dial keys (/ L O act on)', 'dial_group',
-                        String(s.dial_group), isFoc('dial_group'));
     return html;
 }
 
@@ -174,9 +187,10 @@ function setDeveloperOptions(state) {
     const body = document.getElementById('do-body');
     if (body) {
         body.innerHTML =
-            (state.selected_tab === 'combat')   ? _doRenderCombatBody(state, focusables)
-          : (state.selected_tab === 'lighting') ? _doRenderLightingBody(state, focusables)
-          : (state.selected_tab === 'diagnostics') ? _doRenderDiagnosticsBody(state, focusables)
+            (state.selected_tab === 'combat')       ? _doRenderCombatBody(state, focusables)
+          : (state.selected_tab === 'lighting')     ? _doRenderLightingBody(state, focusables)
+          : (state.selected_tab === 'environments') ? _doRenderEnvironmentsBody(state, focusables)
+          : (state.selected_tab === 'diagnostics')  ? _doRenderDiagnosticsBody(state, focusables)
           : '';
     }
     root.style.display = 'flex';

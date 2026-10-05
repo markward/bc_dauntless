@@ -2,9 +2,12 @@
 
 Mirrors engine.ui.configuration_panel.ConfigurationPanel: a Panel
 subclass pumped by PanelRegistry, rendered as a pause-menu modal that
-reuses the configuration panel's cp-* CSS. A single "Combat" tab exposes
-three toggles wired to engine.dev_combat_cheats. Dev-mode only —
-constructed in host_loop.py inside ``if dev_mode.is_enabled():``.
+reuses the configuration panel's cp-* CSS. Four tabs: "Combat" (cheats
+wired to engine.dev_combat_cheats, plus the Sensor Occlusion switch),
+"Lighting" (forced glow states, normal-map tunables), "Environments"
+(rock toggles), and "Diagnostics" (the frame profiler, the dial-group
+picker). Dev-mode only — constructed in host_loop.py inside
+``if dev_mode.is_enabled():``.
 
 Spec: docs/superpowers/specs/2026-06-08-developer-options-menu-design.md
 """
@@ -18,6 +21,7 @@ from engine import dev_combat_cheats as cheats
 from engine import dev_dial_groups
 from engine import dev_light_preview as light_preview
 from engine import renderer
+from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
 
 
@@ -79,12 +83,14 @@ class DeveloperOptionsPanel(Panel):
         super().__init__()
         self._tabs: List[Tuple[str, str]] = [("combat", "Combat"),
                                              ("lighting", "Lighting"),
+                                             ("environments", "Environments"),
                                              ("diagnostics", "Diagnostics")]
         self._selected_tab = "combat"
         self._god_mode = cheats.god_mode_active()
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
         self._disable_collisions = cheats.disable_collisions_active()
+        self._sensor_occlusion = sensor_occlusion.enabled()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
         self._profiler = _frame_profiler().is_enabled()
@@ -123,6 +129,7 @@ class DeveloperOptionsPanel(Panel):
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
         self._disable_collisions = cheats.disable_collisions_active()
+        self._sensor_occlusion = sensor_occlusion.enabled()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
         self._dial_group = dev_dial_groups.active() or "nebula"
@@ -151,6 +158,7 @@ class DeveloperOptionsPanel(Panel):
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
             self._no_npc_shields, self._disable_collisions,
+            self._sensor_occlusion,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
             self._profiler, self._rock_catalogue, self._dial_group,
@@ -172,6 +180,7 @@ class DeveloperOptionsPanel(Panel):
                 "double_weapons": self._double_weapons,
                 "no_npc_shields": self._no_npc_shields,
                 "disable_collisions": self._disable_collisions,
+                "sensor_occlusion": self._sensor_occlusion,
                 "systems_damaged": self._systems_damaged,
                 "systems_disabled": self._systems_disabled,
                 "normal_maps": self._normal_maps,
@@ -224,6 +233,11 @@ class DeveloperOptionsPanel(Panel):
             new_val = not self._disable_collisions
             cheats.set_disable_collisions(new_val)
             self._disable_collisions = new_val
+            return True
+        if action == "toggle:sensor_occlusion":
+            new_val = not self._sensor_occlusion
+            sensor_occlusion.set_enabled(new_val)
+            self._sensor_occlusion = new_val
             return True
         if action == "toggle:systems_damaged":
             light_preview.set_systems_damaged(not self._systems_damaged)
@@ -301,21 +315,22 @@ class DeveloperOptionsPanel(Panel):
             self.close()
 
     def _focusables(self) -> list:
-        """Ordered focusable list: the tab row then the combat controls."""
+        """Ordered focusable list: the tab row then the selected tab's controls."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "combat":
             out += [("ctrl", "god_mode"), ("ctrl", "double_weapons"),
                     ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions"),
-                    ("ctrl", "quick_repair")]
+                    ("ctrl", "sensor_occlusion"), ("ctrl", "quick_repair")]
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
-                    ("ctrl", "normal_strength"), ("ctrl", "rock_catalogue"),
-                    ("ctrl", "minor_rocks"), ("ctrl", "far_tier"),
-                    ("ctrl", "rock_specks"), ("ctrl", "rock_puffs"),
-                    ("ctrl", "dial_group")]
+                    ("ctrl", "normal_strength")]
+        if self._selected_tab == "environments":
+            out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
+                    ("ctrl", "far_tier"), ("ctrl", "rock_specks"),
+                    ("ctrl", "rock_puffs")]
         if self._selected_tab == "diagnostics":
-            out += [("ctrl", "profiler")]
+            out += [("ctrl", "profiler"), ("ctrl", "dial_group")]
         return out
 
     def handle_input(self, h) -> None:
