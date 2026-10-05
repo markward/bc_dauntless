@@ -17,6 +17,7 @@ _promoted: dict = {}      # key -> RockClass
 _damaged: dict = {}       # key -> hull fraction (0, 1)
 _destroyed: set = set()   # keys whose promoted rock died
 _last = None              # game time of the last acting tick
+_view_set = None          # the SetClass the player was last promoted into
 
 
 def field_name(key: int) -> str:
@@ -175,7 +176,22 @@ def _push(r) -> None:
 
 
 def tick(player, view_set, now, r) -> None:
-    """One promotion step, rate-limited to promote_hz (game time `now`)."""
+    """One promotion step, rate-limited to promote_hz (game time `now`).
+
+    A view-set change or the start of a dash demote every promoted rock
+    immediately -- both checks run ahead of the rate limit, so neither
+    waits for the next due tick (spec §3, Review Focus 3)."""
+    global _view_set
+    try:
+        if _view_set is not None and view_set is not _view_set:
+            demote_all(r)
+        _view_set = view_set
+        from engine.rocks import minor_contact
+        if _promoted and minor_contact._muted(player):
+            demote_all(r)
+            return
+    except Exception as e:
+        dev_mode.log_swallowed("rock promotion lifecycle", e)
     try:
         if not _due(now):
             return
@@ -232,10 +248,11 @@ def demote_all(r) -> None:
 
 def reset(r=None) -> None:
     """demote_all, then forget the session record (mission swap)."""
-    global _last
+    global _last, _view_set
     demote_all(None)
     _damaged.clear()
     _destroyed.clear()
     _last = None
+    _view_set = None
     if r is not None:
         _push(r)

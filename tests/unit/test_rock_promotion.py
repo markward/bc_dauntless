@@ -14,8 +14,15 @@ import pytest
 
 from engine.rocks import promotion
 from engine.rocks import far_dials
+from engine.appc.sets import SetClass_Create
 from engine.appc.ships import ShipClass_Create
 from tests.helpers.viewed_set import viewed_set, release_viewed_set
+
+
+def _new_set(name):
+    other = SetClass_Create()
+    App.g_kSetManager.AddSet(other, name)
+    return other
 
 
 class FakeR:
@@ -412,3 +419,29 @@ def test_game_time_going_backwards_acts(world):
     r.hits = [hit(5, 50.0), hit(6, 60.0)]
     promotion.tick(player, pset, 5.0, r)
     assert 6 in promotion.promoted()
+
+
+def test_view_set_change_demotes_all_but_keeps_the_record(world):
+    pset, player = world
+    r = FakeR([hit(5, 100.0)])
+    promotion.tick(player, pset, 0.0, r)
+    hull = promotion.promoted()[5].GetHull()
+    hull.SetCondition(hull.GetMaxCondition() * 0.5)
+    other = _new_set("Other")                       # a second SetClass (same helper the fixture uses)
+    promotion.tick(player, other, 1.0, FakeR([]))
+    assert promotion.promoted() == {}
+    assert pset.GetObject("Field Rock 0005") is None
+    promotion.tick(player, pset, 2.0, r)            # back: comes back damaged
+    h = promotion.promoted()[5].GetHull()
+    assert h.GetCondition() / h.GetMaxCondition() == pytest.approx(0.5)
+
+
+def test_dash_start_demotes_everything(world, monkeypatch):   # Review Focus 3
+    pset, player = world
+    r = FakeR([hit(5, 100.0), hit(6, 120.0)])
+    promotion.tick(player, pset, 0.0, r)
+    assert len(promotion.promoted()) == 2
+    monkeypatch.setattr("engine.rocks.minor_contact._muted", lambda p: True)
+    promotion.tick(player, pset, 1.0, r)
+    assert promotion.promoted() == {}
+    assert r.promoted_pushes[-1] == []
