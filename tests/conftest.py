@@ -1451,6 +1451,14 @@ def _reset_leakable_engine_globals():
         sensor_dials.reset()
     except Exception:
         pass
+    # Occlusion caches: per-(observer,target) and per-set major-rock lists
+    # keyed on game time/tick time/bucket size, so a test that cached a
+    # blocked() answer would otherwise leave it stale for the next test.
+    try:
+        from engine.appc import sensor_occlusion
+        sensor_occlusion.reset()
+    except Exception:
+        pass
     # Unknown labels: allocator keyed by contact object identity, so a test that
     # allocates placeholders would otherwise leave them registered for every later test.
     try:

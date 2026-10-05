@@ -4,10 +4,12 @@ A ship detects targets out to a range that scales linearly with its
 sensor subsystem's condition, and detects nothing once the sensor is
 offline (disabled at <= DisabledPercentage, or destroyed). Dense nebulae
 further reduce effective range (CONCEAL_K) and break detection outright
-above LOCK_BREAK_T, with per-pair hysteresis. `effective_sensor_range` and
-`concealment_at` are the two terms of that one predicate, not separate
-subjects; `clear_undetectable_player_lock` is the predicate applied to the
-player's own lock.
+above LOCK_BREAK_T, with per-pair hysteresis. A major rock on the line of
+sight blocks detection outright too (engine.appc.sensor_occlusion.blocked;
+sub-project 2 of the sensor model). `effective_sensor_range` and
+`concealment_at` are the two terms of the range/nebula predicate, not
+separate subjects; `clear_undetectable_player_lock` is the predicate applied
+to the player's own lock.
 
 ONE rule, every surface: the player target list and radar
 (perception.perceived_by), the firing chokepoint, torpedo guidance, and the AI
@@ -328,12 +330,17 @@ def is_hidden_by_cloak(target) -> bool:
 def can_detect(observer, target, *, dist_sq_gu=None,
                apply_concealment=True) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
-    range, accounting for nebula tactical concealment.
+    range, accounting for nebula tactical concealment and major-rock
+    occlusion.
 
     Detection fails outright when the target's concealment exceeds
     LOCK_BREAK_T. A broken lock latches (per-pair hysteresis) until
     concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
+
+    Detection also fails outright when a major rock sits on the line of
+    sight between observer and target (``sensor_occlusion.blocked``), gated
+    by ``ENHANCED_SENSOR_CONTEST`` like the rest of this contest.
 
     BOTH optional parameters are KEYWORD-ONLY, deliberately. ``bool`` is a
     subclass of ``int``, so the natural misreading ``can_detect(a, b, False)``
@@ -383,6 +390,15 @@ def can_detect(observer, target, *, dist_sq_gu=None,
         return False
     if cloaked:
         r = CLOAK_DETECTION_BASE_GU + r * CLOAK_RANGE_FACTOR
+
+    # ── Occlusion gate (sub-project 2) ────────────────────────────────────
+    # A major rock on the line of sight hides the target from everyone --
+    # list, radar, weapons, torpedoes and AI alike. Part of the sensing
+    # contest, so the stage-4 toggle switches it off with the rest.
+    if ENHANCED_SENSOR_CONTEST:
+        from engine.appc import sensor_occlusion
+        if sensor_occlusion.blocked(observer, target):
+            return False
 
     # ── Nebula concealment gate ───────────────────────────────────────────
     if apply_concealment:
