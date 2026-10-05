@@ -157,7 +157,7 @@ def perceived_by(observer) -> tuple:
     clear needed either way.
     """
     from engine.appc import sensor_detection as sd
-    from engine.appc import sensor_media
+    from engine.appc import sensor_contacts, sensor_media
     from engine.appc.sensor_detection import can_detect, effective_sensor_range
     from engine.appc.sets import SetClass
     from engine.appc.ship_death import _out_of_action, is_targetable_wreck
@@ -194,19 +194,24 @@ def perceived_by(observer) -> tuple:
             continue
         dx, dy, dz = sx - ox, sy - oy, sz - oz
         dist_sq = dx * dx + dy * dy + dz * dz
-        identified = bool(observer_sensors is not None
-                          and observer_sensors.IsObjectKnown(ship))
+        known = bool(observer_sensors is not None
+                     and observer_sensors.IsObjectKnown(ship))
         # `concealment_at` is a density-field sample, not a cheap read, and
-        # this frame needs it for up to two different callers for the SAME
-        # ship: can_detect's nebula gate (when apply_conceal) and
-        # sensor_media.subsystems_hidden (when identified — otherwise
-        # `identified and not ...` below short-circuits before ever calling
-        # it). Sample it ONCE here, only when at least one consumer will
+        # this frame needs it for up to three different callers for the SAME
+        # ship: can_detect's nebula gate (when apply_conceal), and — only for
+        # a KNOWN contact — shows_identity's medium check and
+        # sensor_media.subsystems_hidden (an unknown contact short-circuits
+        # both). Sample it ONCE here, only when at least one consumer will
         # actually read it, and hand the identical value to both — the same
         # precedent as the already-derived `dist_sq` below. Do NOT let either
         # consumer re-sample: that would double real work on perceived_by,
         # which runs every contact every frame.
-        conceal = sd.concealment_at(ship) if (apply_conceal or identified) else None
+        conceal = sd.concealment_at(ship) if (apply_conceal or known) else None
+        # THE display answer (sensor_contacts.shows_identity): known AND not
+        # unknown-by-medium (or freshly scanned). Read from the OBSERVER's
+        # sensors, handed this frame's concealment sample.
+        identified = known and sensor_contacts.shows_identity(
+            ship, sensors=observer_sensors, concealment=conceal)
         # ONE detection rule, shared with the weapons, AI targeting and the
         # player's lock. can_detect also mutates a per-(observer, target)
         # hysteresis latch, which this loop writes once per contact. That is

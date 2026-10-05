@@ -80,7 +80,7 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # is no separate parent-ship lookup to do. Planets/placements/non-ShipClass
     # targets have no Unknown row (target_menu.set_contacts only allocates one
     # for ShipClass contacts) and keep their real name unconditionally.
-    if isinstance(target, ShipClass) and not sensor_contacts.player_knows(target):
+    if isinstance(target, ShipClass) and not sensor_contacts.shows_identity(target):
         name = unknown_labels.placeholder(target)
     else:
         name = sub.GetDisplayName() if sub is not None else target.GetDisplayName()

@@ -70,7 +70,7 @@ def _unknown_label(obj):
     loses scannability/decloaks mid-flight keeps its placeholder rather than
     being silently renumbered."""
     from engine.appc import sensor_contacts
-    if obj is None or sensor_contacts.player_knows(obj):
+    if obj is None or sensor_contacts.shows_identity(obj):
         return None
     current = unknown_labels.current(obj)
     if current is not None:

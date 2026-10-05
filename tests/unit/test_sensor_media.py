@@ -90,6 +90,11 @@ def test_perception_hides_subsystems_for_known_contact_in_a_field(monkeypatch):
     enemy.SetTranslateXYZ(10.0, 0.0, 0.0)
     pSet.AddObjectToSet(enemy, "Enemy")
     sensors.AddKnownObject(enemy)   # identified -- cloak/medium is the only gate
+    # A known contact in a field reads Unknown (shows_identity) unless it was
+    # scanned within the continuity window -- so give it a fresh scan glimpse:
+    # its NAME is shown, and its subsystems must STILL be hidden by the medium.
+    from engine.appc import sensor_contacts
+    sensor_contacts._scanned_at[enemy] = sensor_contacts._now()
 
     got = perceived_by(player)
 

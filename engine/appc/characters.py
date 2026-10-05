@@ -231,6 +231,15 @@ class STMenu(ObjectClass):
         else:
             if child_or_name in self._children:
                 self._children.remove(child_or_name)
+            # Drop the label lookups that point at THIS object too, or a
+            # later GetButtonW/GetSubmenuW still "finds" the deleted child --
+            # the SDK removes by object (HelmMenuHandlers.ExitedSet) and
+            # dedupes re-adds by label (CreateHailButton), so a stale entry
+            # blocked the button from ever coming back. Identity, not label:
+            # a newer child sharing the label keeps its entry.
+            for index in (self._buttons, self._submenus):
+                for label in [k for k, v in index.items() if v is child_or_name]:
+                    del index[label]
 
     def RemoveItemW(self, label) -> None:
         """Drop the item with this label. Silent when absent.
