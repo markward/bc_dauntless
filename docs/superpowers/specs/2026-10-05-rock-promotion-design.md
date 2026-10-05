@@ -244,3 +244,12 @@ and with combat_stress. GPU timing is dead on this Mac.
   hide ships while farther large rocks cannot. That asymmetry belongs to the
   sensor-model design.
 - **Tuning.** Every number here is a starting value for live tuning.
+
+## Amended during planning (2026-10-05)
+
+- **R1 — no speck-band exclusion.** Demotion is capped below the speck band's start
+  (`near_large_billboard_gu - near_fade_gu - 1`, 400 GU by default) and a dash start
+  demotes every promoted rock, so a promoted rock is never inside the speck band.
+- **R2 — promoted rocks have no halo** (scenery large rocks have none).
+- **R3 — death is detected by polling** (`rocks.death.is_dying_rock`, set membership)
+  each promotion tick; there is no rock-died callback.
