@@ -86,3 +86,40 @@ def test_render_scale_constant_matches_host_loop():
     from engine import host_loop
     from engine.rocks import rock
     assert rock._BC_MODEL_SCALE == host_loop.BC_MODEL_SCALE
+
+
+import pytest
+from engine.rocks import catalogue, rock as rockmod
+
+
+def _major_index():
+    for i, r in enumerate(catalogue.load()):
+        if r.kind == "major":
+            return i
+    pytest.skip("catalogue has no majors")
+
+
+def test_catalogue_index_forces_that_model():
+    i = _major_index()
+    want = catalogue.load()[i]
+    rk = rockmod.RockClass_Create(4.37, name="Field Rock 0001", kind="major", catalogue_index=i)
+    assert rk._model_override[0] == str(want.lod_paths[0])
+    assert rk._rock_family == want.family
+
+
+def test_exact_radius_scales_the_quantised_model():
+    rk = rockmod.RockClass_Create(4.37, name="Field Rock 0002", kind="major", exact_radius=True)
+    assert rk.GetRadius() == pytest.approx(4.4)          # 2 significant figures
+    assert rk.GetScale() == pytest.approx(4.37 / 4.4)
+    assert rockmod.effective_radius(rk) == pytest.approx(4.37, abs=1e-9)
+
+
+def test_defaults_unchanged():
+    rk = rockmod.RockClass_Create(4.37, name="Rock X")
+    assert rk.GetScale() == pytest.approx(1.0)
+    assert rk.GetRadius() == pytest.approx(4.4)
+
+
+def test_bad_catalogue_index_falls_back_to_the_pick():
+    rk = rockmod.RockClass_Create(2.0, name="Rock Y", kind="major", catalogue_index=10 ** 6)
+    assert rk._model_override is not None
