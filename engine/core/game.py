@@ -209,11 +209,22 @@ class Episode(TGObject):
         wire it as current, run optional PreLoadAssets then Initialize, then
         target ``start_event`` at this episode (matching the SDK, which sets the
         event's destination to the episode) and post it to the event manager.
-        """
-        import importlib
-        import App
 
-        module = importlib.import_module(name)
+        This is the PRODUCTION campaign mission-load path: reached through
+        Episode.LoadMission directly (a raw/boot load) and through
+        engine.core.mission_change.change() (a mid-campaign change while a
+        mission is already running). Imports via
+        sensor_mission_guards.install_after_import, not a raw
+        importlib.import_module -- host_loop._init_mission (the dev-loader
+        path) is the only OTHER mission importer, and both must re-apply the
+        guards right after the import or E5M2.ShipIdentified is never
+        wrapped on whichever one skips it (Task 5 review, finding 1: this
+        path was the one that skipped it).
+        """
+        import App
+        from engine.appc import sensor_mission_guards
+
+        module = sensor_mission_guards.install_after_import(name)
 
         mission = Mission()
         mission._module_name = name

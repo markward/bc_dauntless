@@ -4611,18 +4611,18 @@ def _init_mission(mission_module_name: str):
     _init_campaign_context(game, mission_module_name)
     _init_episode_context(episode, mission_module_name)
 
-    mod = importlib.import_module(mission_module_name)
-    # Re-apply the mission re-identification guards NOW that the mission
-    # module is actually in sys.modules -- reset_sdk_globals's call (above,
-    # via _reset_sensor_state) ran before this import, so on a mission's
-    # FIRST load its install() call found nothing to wrap. Initialize()
-    # below (specifically SetupEventHandlers) is what registers E5M2's
-    # ShipIdentified as a broadcast handler, so this must run before it.
-    # Handler resolution is by-name at dispatch time (_resolve_handler), not
-    # captured at registration, so wrapping here is sufficient regardless of
-    # registration order.
+    # Import through sensor_mission_guards.install_after_import, not a raw
+    # importlib.import_module: reset_sdk_globals's call (above, via
+    # _reset_sensor_state) ran BEFORE this import, so on a mission's FIRST
+    # load that call found nothing to wrap yet. Initialize() below
+    # (specifically SetupEventHandlers) is what registers E5M2's
+    # ShipIdentified as a broadcast handler, so the guard must be in place
+    # before it runs. This is one of TWO mission-load paths that must do
+    # this identically -- the other is
+    # engine.core.game.Episode._load_mission_raw -- see
+    # install_after_import's docstring for why they share the one helper.
     from engine.appc import sensor_mission_guards
-    sensor_mission_guards.install()
+    mod = sensor_mission_guards.install_after_import(mission_module_name)
     if hasattr(mod, "PreLoadAssets"):
         mod.PreLoadAssets(mission)
     mod.Initialize(mission)

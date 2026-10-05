@@ -47,6 +47,26 @@ def reset() -> None:
 
 
 def _wrap_e5m2(orig):
+    # CAVEAT -- do not copy this latch pattern to a mission without checking
+    # for the same redundancy first: the latch sets to True on the FIRST
+    # Outpost identification REGARDLESS of whether g_bBaseDetected was true
+    # at that moment. If the Outpost is identified by sensors from range
+    # before the player is close enough to trigger OutpostAI's BaseAppears()
+    # (which sets g_bBaseDetected), the original ShipIdentified's own
+    # g_bBaseDetected gate skips its goal-add/dialogue block on THAT call --
+    # it only sets g_bBaseID = 1 and falls through. Our latch still flips on
+    # that no-op call, so a LATER re-identification (the one that would
+    # actually have g_bBaseDetected true) is also skipped by our guard, and
+    # ShipIdentified's goal-add line never runs via this path at all. This is
+    # safe ONLY because E5M2's BaseAppears() (E5M2.py:658) independently
+    # checks g_bBaseID and runs the identical goal-add/dialogue itself once
+    # proximity+LOS triggers it -- the mission has two independent triggers
+    # for the same mission-state transition, and in practice BaseAppears
+    # always ends up being the one that fires it. A mission whose goal-add
+    # lives ONLY inside ShipIdentified's own g_bBaseDetected branch, with no
+    # such second trigger, would need a latch that remembers the ship was
+    # seen but still lets the "detected" branch replay once it would have
+    # taken effect -- not this one.
     def ShipIdentified(pObject, pEvent):
         global _outpost_seen
         try:
@@ -97,3 +117,28 @@ def install() -> None:
     e5m2 = sys.modules.get("Maelstrom.Episode5.E5M2.E5M2")
     if e5m2 is not None and not getattr(e5m2.ShipIdentified, "_sensor_guarded", False):
         e5m2.ShipIdentified = _wrap_e5m2(e5m2.ShipIdentified)
+
+
+def install_after_import(module_name: str):
+    """Import *module_name* and immediately re-apply install() -- before the
+    module's own Initialize() (which, for E5M2, is what calls
+    SetupEventHandlers and registers ShipIdentified as a broadcast handler)
+    can run. Returns the imported module.
+
+    There are two independent mission-load paths in this engine that each
+    import a mission module and run its Initialize() -- the dev loader
+    (host_loop._init_mission) and the production campaign path
+    (engine.core.game.Episode._load_mission_raw, reached through
+    Episode.LoadMission / engine.core.mission_change.change() while a
+    mission is already running). Both MUST call this (not a raw
+    importlib.import_module) right after importing the mission module, or
+    E5M2.ShipIdentified is never wrapped on whichever path forgets to -- this
+    function exists so the two call sites share one implementation instead
+    of each repeating "import, then install()" and risking the next one
+    drifting out of sync again (Task 5 review, finding 1: the production
+    path was missing this call entirely).
+    """
+    import importlib
+    module = importlib.import_module(module_name)
+    install()
+    return module

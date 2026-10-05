@@ -21,6 +21,7 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.appc.target_menu import _reset_target_menu_singleton
 from engine.appc.windows import TacticalControlWindow
+from engine.core import mission_change
 from engine.core.game import Game, Episode, Mission, _set_current_game
 from tests.integration.test_sdk_bridge_load import _fresh_world
 
@@ -90,17 +91,34 @@ def test_e5m2_outpost_reidentification_replays_nothing():
 
 def test_e5m2_other_ships_pass_through():
     mission, episode, game, mod = _init_e5m2()
+    # _init_e5m2() already ran install() (via host_loop._init_mission ->
+    # sensor_mission_guards.install_after_import), so `original` below is
+    # ALREADY the guarded ShipIdentified, not the raw SDK function -- fine,
+    # this test only cares that non-Outpost identifications reach whatever
+    # is beneath the guard, every time.
+    #
+    # `mod.ShipIdentified` MUST be restored in `finally`, not left pointing
+    # at `_recorder`: `_recorder` carries no `_sensor_guarded` marker, and
+    # ANY later test's install()/install_after_import() call (there always
+    # is one -- every mission (re)load runs it) sees "unguarded" and wraps
+    # `_recorder` in a FRESH _wrap_e5m2 layer. That nests two layers sharing
+    # one module-level `_outpost_seen` latch: the outer layer sets the latch
+    # before the inner (test1's original) layer's own check ever runs, so
+    # the inner layer always sees the latch already tripped and never calls
+    # down to the real orig/AddGoal -- permanently, for every later test in
+    # this file that posts an Outpost identification. This was a REAL bug
+    # (Task 5 review fix round): it silently zeroed the goal-add count in
+    # both of the production-mission-change tests below, which run later in
+    # this file and therefore inherited the unrestored `_recorder`.
+    original = mod.ShipIdentified
     try:
         calls = []
-        original = mod.ShipIdentified
 
         def _recorder(pObject, pEvent):
             calls.append(pEvent.GetDestination())
             return original(pObject, pEvent)
 
         mod.ShipIdentified = _recorder
-
-        sensor_mission_guards.install()
 
         other = ShipClass_Create("FedOutpost")
         other.SetName("NotOutpost")
@@ -109,6 +127,120 @@ def test_e5m2_other_ships_pass_through():
         _post_ship_identified(other)
 
         assert len(calls) == 2
+    finally:
+        mod.ShipIdentified = original
+        App.g_kSetManager._sets.clear()
+        _set_current_game(None)
+        sensor_mission_guards.reset()
+
+
+# ──────────── E5M2 guard via the PRODUCTION mission-change path ───────────
+
+
+def _count_outpost_goal_adds(outpost, n_events):
+    """Post ET_SENSORS_SHIP_IDENTIFIED(outpost) *n_events* times, recording
+    every MissionLib.AddGoal("E5ScanOutpostGoal") call. Restores AddGoal
+    unconditionally."""
+    goal_calls = []
+    orig_add_goal = MissionLib.AddGoal
+
+    def _record(*args):
+        goal_calls.append(args)
+        return orig_add_goal(*args)
+
+    MissionLib.AddGoal = _record
+    try:
+        for _ in range(n_events):
+            _post_ship_identified(outpost)
+    finally:
+        MissionLib.AddGoal = orig_add_goal
+    return goal_calls.count(("E5ScanOutpostGoal",))
+
+
+def test_e5m2_guard_installed_and_reidentification_replays_nothing_via_production_mission_change():
+    """Reaches E5M2 through the REAL campaign path -- Episode.LoadMission /
+    engine.core.mission_change.change() while a mission runs -- not the dev
+    loader (host_loop._init_mission). Regression this guards (Task 5 review,
+    finding 1): engine.core.game.Episode._load_mission_raw never called
+    sensor_mission_guards.install() after its own import, so E5M2's
+    ShipIdentified was never wrapped on this path even though the dev-loader
+    path was already fixed -- the guard was dead in normal (non-dev-loader)
+    play."""
+    _fresh_world()
+    try:
+        mission, episode, game, mod = host_loop._init_mission(
+            "Maelstrom.Episode1.E1M2.E1M2")
+    except Exception:
+        pytest.skip("E1M2 could not be loaded headless (BC game data absent)")
+    try:
+        ok = mission_change.change(mission="Maelstrom.Episode5.E5M2.E5M2")
+        if not ok:
+            pytest.skip(
+                "mission_change.change() to E5M2 refused/failed headless")
+
+        e5m2 = sys.modules.get("Maelstrom.Episode5.E5M2.E5M2")
+        assert e5m2 is not None
+        # The guard marker, not just "no crash" -- proves install() actually
+        # ran on THIS module object, through THIS path.
+        assert getattr(e5m2.ShipIdentified, "_sensor_guarded", False) is True
+
+        e5m2.g_bBaseDetected = 1
+        outpost = e5m2.pOutpost
+        assert outpost is not None and outpost.GetName() == "Outpost"
+
+        assert _count_outpost_goal_adds(outpost, 2) == 1
+    finally:
+        App.g_kSetManager._sets.clear()
+        _set_current_game(None)
+        sensor_mission_guards.reset()
+
+
+def test_e5m2_outpost_latch_resets_on_replay_through_production_mission_change():
+    """The Outpost first-identification latch must go stale when LEAVING
+    E5M2 through the production path too, exactly as it does through the
+    dev loader: mission_change._clear_for_next_mission calls
+    host_loop._reset_sensor_state() -- the SAME function the dev-loader path
+    goes through -- which resets sensor_mission_guards' latch. Without
+    this, a player replaying a campaign mission would find its Outpost
+    permanently guarded after the first playthrough: ShipIdentified's
+    goal-add body would never run again on any later playthrough's first
+    identification.
+
+    Does not drive a literal second E5M2.Initialize() in the same process:
+    E5M2's own opening cutscene (E5Intro) calls
+    Actions.CameraScriptActions.CutsceneCameraBegin("CutsceneCam", "bridge"),
+    whose own per-set "already began" registry is SDK module state that
+    nothing in the mission-change reset table clears -- and "bridge" is one
+    of the two set names mission_change deliberately KEEPS across a change
+    (spec §2). Re-entering E5M2 a second time within one process trips that
+    unrelated registry's own KeyError guard, independent of anything this
+    task touches. The claim under test here is narrower and still exactly
+    what matters for this guard: the latch goes stale the moment the
+    mission-change machinery clears mission state, which happens on every
+    departure from E5M2 regardless of what the NEXT mission is or whether
+    re-entering this exact one would hit that unrelated issue."""
+    _fresh_world()
+    try:
+        mission, episode, game, mod = host_loop._init_mission(
+            "Maelstrom.Episode1.E1M2.E1M2")
+    except Exception:
+        pytest.skip("E1M2 could not be loaded headless (BC game data absent)")
+    try:
+        ok = mission_change.change(mission="Maelstrom.Episode5.E5M2.E5M2")
+        if not ok:
+            pytest.skip(
+                "mission_change.change() to E5M2 refused/failed headless")
+        e5m2 = sys.modules["Maelstrom.Episode5.E5M2.E5M2"]
+        e5m2.g_bBaseDetected = 1
+        assert _count_outpost_goal_adds(e5m2.pOutpost, 1) == 1
+        assert sensor_mission_guards._outpost_seen is True
+
+        # Leave E5M2 -- the production path's own mission-change machinery
+        # runs (the same host_loop._reset_sensor_state the dev loader uses).
+        ok2 = mission_change.change(mission="Maelstrom.Episode1.E1M2.E1M2")
+        assert ok2, "mission_change.change() back to E1M2 failed"
+
+        assert sensor_mission_guards._outpost_seen is False
     finally:
         App.g_kSetManager._sets.clear()
         _set_current_game(None)
