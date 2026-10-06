@@ -133,6 +133,28 @@ cached per tick and cheap per rock. Verified two ways:
    `DAUNTLESS_MISSION=engine.dev_missions.combat_stress` and a rock-heavy mission,
    comparing occlusion on/off. **Mark approves each game launch first.**
 
+### Performance (measured 2026-10-06)
+
+Mark ran four launches through `./build/dauntless --developer`: combat_stress (9 ships,
+no rocks) and E2M1 (36 ships, rock field loaded), each with occlusion Off and then On
+(Developer Options → Combat → Sensor Occlusion). The table is CPU ms, mean ± sd over the
+steady ticking reports (0.6–0.8 sim ticks per frame, EMA reports, vsync on, GPU column
+dead on this Mac).
+
+| Run | reports | sim | cb.eligibility | ui.contacts | sim.gameloop |
+|---|---|---|---|---|---|
+| combat_stress Off | 7 | 1.815 ± 0.132 | 0.050 | 0.226 ± 0.027 | 0.503 ± 0.053 |
+| combat_stress On | 9 | 1.789 ± 0.115 | 0.050 | 0.243 ± 0.031 | 0.465 ± 0.042 |
+| E2M1 Off | 8 | 1.667 ± 0.041 | 0.175 | 0.169 ± 0.025 | 0.244 ± 0.023 |
+| E2M1 On | 6 | 1.642 ± 0.023 | 0.172 | 0.186 ± 0.021 | 0.227 ± 0.013 |
+
+Verdict: no measurable cost. Every On–Off difference is inside one standard deviation,
+and `sim` is slightly *lower* with occlusion On in both missions. ui.contacts reads about
+0.017 ms higher with it On in both, which is below its own noise. Two limits: combat_stress
+has no rocks, so it measures only the gate's early-out; and the log does not record how many
+major RockClass rocks E2M1 held, so this is a check for added cost in a real rock mission,
+not a stress test. The headless benchmark (54 rocks) remains the worst-case bound.
+
 ## Behaviour changes (deliberate, pinned by tests)
 
 1. A ship behind a major rock leaves the list, radar and weapons, for the player and AI.
