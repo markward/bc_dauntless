@@ -38,6 +38,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'far_tier'});
         out.push({kind: 'ctrl', target: 'rock_specks'});
         out.push({kind: 'ctrl', target: 'rock_puffs'});
+        out.push({kind: 'ctrl', target: 'planet_geosphere'});
     }
     if (state.selected_tab === 'diagnostics') {
         out.push({kind: 'ctrl', target: 'profiler'});
@@ -171,6 +172,8 @@ function _doRenderEnvironmentsBody(state, focusables) {
     html += _doToggleRow('Rock Fields', 'far_tier', s.far_tier, isFoc('far_tier'));
     html += _doToggleRow('Rock Specks', 'rock_specks', s.rock_specks, isFoc('rock_specks'));
     html += _doToggleRow('Rock Puffs', 'rock_puffs', s.rock_puffs, isFoc('rock_puffs'));
+    html += _doToggleRow('Geosphere Planets (off = BC mesh; applies to planets realized after toggling)',
+                         'planet_geosphere', s.planet_geosphere, isFoc('planet_geosphere'));
     return html;
 }
 

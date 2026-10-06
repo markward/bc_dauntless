@@ -5280,15 +5280,23 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
 
     `cache` is the HostController (its nif_to_handle / nif_to_extent /
     nif_to_sphere_radius survive mission swaps); None loads uncached, as
-    realize_set_objects always has."""
-    handle = cache.nif_to_handle.get(nif_path) if cache is not None else None
+    realize_set_objects always has.
+
+    Keyed by `(nif_path, geo)` -- the geosphere dev toggle
+    (engine.planet_geosphere) read once here -- so a cached plain load and a
+    cached geosphere load of the SAME NIF never collapse onto one handle
+    when the toggle flips mid-run."""
+    from engine import planet_geosphere as _planet_geosphere
+    geo = _planet_geosphere.enabled()
+    key = (nif_path, geo)
+    handle = cache.nif_to_handle.get(key) if cache is not None else None
     if handle is not None:
-        extent = cache.nif_to_extent.get(nif_path, 1.0)
-        return handle, extent, cache.nif_to_sphere_radius.get(nif_path, extent)
+        extent = cache.nif_to_extent.get(key, 1.0)
+        return handle, extent, cache.nif_to_sphere_radius.get(key, extent)
     planet_tex_search = [str(p) for p in
                          _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     try:
-        handle = r_.load_model(nif_path, planet_tex_search)
+        handle = r_.load_model(nif_path, planet_tex_search, geosphere=geo)
     except Exception as e:
         if verbose:
             print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
@@ -5298,9 +5306,9 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     extent = _model_extent_from_aabb(center, half_extents)
     sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
     if cache is not None:
-        cache.nif_to_handle[nif_path] = handle
-        cache.nif_to_extent[nif_path] = extent
-        cache.nif_to_sphere_radius[nif_path] = sphere_radius
+        cache.nif_to_handle[key] = handle
+        cache.nif_to_extent[key] = extent
+        cache.nif_to_sphere_radius[key] = sphere_radius
     return handle, extent, sphere_radius
 
 

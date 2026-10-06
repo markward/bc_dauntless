@@ -35,7 +35,8 @@ class _FakeRenderer:
         self.visible = {}
         self.calls = []
 
-    def load_model(self, path, search, texture_replacements=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None,
+                   scale=1.0, geosphere=False):
         self.calls.append(("load_model", path))
         return 100
 

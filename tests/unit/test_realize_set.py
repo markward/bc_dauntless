@@ -9,7 +9,8 @@ class _FakeRenderer:
         self._next = 1
         self.live = set()
 
-    def load_model(self, path, search, texture_replacements=None, decals=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None,
+                   scale=1.0, geosphere=False):
         return 100
 
     def model_aabb(self, h):

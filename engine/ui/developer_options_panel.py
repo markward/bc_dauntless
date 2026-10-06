@@ -23,6 +23,7 @@ from engine import dev_light_preview as light_preview
 from engine import renderer
 from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
+from engine import planet_geosphere
 
 
 def _minors_enabled() -> bool:
@@ -102,6 +103,7 @@ class DeveloperOptionsPanel(Panel):
         self._normal_flip_g = True
         self._normal_strength = 1.0
         self._rock_catalogue = rock_catalogue.enabled()
+        self._planet_geosphere = planet_geosphere.enabled()
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
@@ -137,6 +139,7 @@ class DeveloperOptionsPanel(Panel):
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
         self._rock_puffs = _rock_puffs_enabled()
+        self._planet_geosphere = planet_geosphere.enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -164,6 +167,7 @@ class DeveloperOptionsPanel(Panel):
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs,
+            self._planet_geosphere,
         )
         if snapshot == self._last_pushed:
             return None
@@ -193,6 +197,7 @@ class DeveloperOptionsPanel(Panel):
                 "far_tier": self._far_tier,
                 "rock_specks": self._rock_specks,
                 "rock_puffs": self._rock_puffs,
+                "planet_geosphere": self._planet_geosphere,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -271,6 +276,10 @@ class DeveloperOptionsPanel(Panel):
             rock_catalogue.set_enabled(not self._rock_catalogue)
             self._rock_catalogue = not self._rock_catalogue
             return True
+        if action == "toggle:planet_geosphere":
+            planet_geosphere.set_enabled(not self._planet_geosphere)
+            self._planet_geosphere = not self._planet_geosphere
+            return True
         if action == "toggle:minor_rocks":
             renderer.minors_set_enabled(not self._minor_rocks)
             self._minor_rocks = not self._minor_rocks
@@ -328,7 +337,7 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "environments":
             out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),
-                    ("ctrl", "rock_puffs")]
+                    ("ctrl", "rock_puffs"), ("ctrl", "planet_geosphere")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler"), ("ctrl", "dial_group")]
         return out

@@ -1566,6 +1566,15 @@ def _reset_leakable_engine_globals():
         _rock_catalogue._warned.clear()
     except Exception:
         pass
+    # Planet geosphere (planet-geosphere spec §4.5): the Developer Options
+    # "Geosphere Planets" toggle is a process-lifetime module global that a
+    # test can flip (e.g. the planet-cache-key test) -- reset it so every
+    # later test's planet realize sees the default On.
+    try:
+        from engine import planet_geosphere as _planet_geosphere
+        _planet_geosphere._enabled = True
+    except Exception:
+        pass
     # Dev dial groups (minor-rocks spec §5): a test that registers a group
     # would otherwise leave every later test's / L O acting on it.
     try:
