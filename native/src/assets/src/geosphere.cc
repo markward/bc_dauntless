@@ -85,6 +85,58 @@ MeshCpu build_geosphere(int level, float radius, glm::vec3 center) {
     return m;
 }
 
+bool apply_geosphere(Model& model, const std::function<Mesh(MeshCpu)>& upload,
+                     bool keep_cpu_data) {
+    if (model.meshes.size() != 1) return false;
+    const Mesh& src = model.meshes[0];
+    if (!src.cpu_data() || src.cpu_data()->vertices.empty()) return false;
+    const MeshCpu& cpu = *src.cpu_data();
+
+    // Gate (spec §4.2): a UV set, and every vertex within 0.5% of the mean
+    // distance from the SHAPE'S OWN LOCAL ORIGIN -- not the vertex-position
+    // arithmetic mean. build_mesh_cpu bakes the NiTriShape's own (T,R,S) into
+    // the vertices but leaves them in the owning NODE's local space; BC's
+    // stock sphere primitives are authored with their geometric centre AT
+    // that node-local origin (measured: IcePlanet's 673-vertex lat/long
+    // sphere has a 9e-6 relative radius spread about (0,0,0), vs. ~2.25%
+    // about its vertex-position mean). The naive mean is a biased centre
+    // estimate here because a lat/long sphere's vertex DENSITY, not just its
+    // geometry, is non-uniform (poles are far more crowded than the
+    // equator), so simple averaging pulls the estimated centre away from the
+    // true one. Measuring from the local origin instead needs no averaging
+    // step and matches the asset exactly.
+    bool has_uv = false;
+    for (const auto& v : cpu.vertices) has_uv = has_uv || v.uv != glm::vec2(0.0f);
+    if (!has_uv) return false;
+    float mean = 0.0f;
+    for (const auto& v : cpu.vertices) mean += glm::length(v.position);
+    mean /= static_cast<float>(cpu.vertices.size());
+    if (!(mean > 0.0f)) return false;
+    for (const auto& v : cpu.vertices)
+        if (std::abs(glm::length(v.position) - mean) > 0.005f * mean) return false;
+
+    // centre in the body frame: compose the node chain down to the mesh's
+    // node, then carry the node-local origin through it.
+    glm::mat4 node_world(1.0f);
+    for (int n = src.node_index(); n >= 0; n = model.nodes[n].parent_index)
+        node_world = model.nodes[n].local_transform * node_world;
+
+    SphereMap sm;
+    sm.mesh_index = 0;
+    sm.center_body = glm::vec3(node_world * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    sm.radius = mean;
+    for (std::size_t i = 0; i < kGeosphereLevels.size(); ++i) {
+        MeshCpu lod = build_geosphere(kGeosphereLevels[i], mean, glm::vec3(0.0f));
+        lod.material_index = cpu.material_index;
+        lod.node_index = cpu.node_index;
+        Mesh m = upload(lod);
+        if (keep_cpu_data) m.set_cpu_data(std::move(lod));
+        sm.lods[i] = std::move(m);
+    }
+    model.sphere_map = std::move(sm);
+    return true;
+}
+
 int pick_geosphere_level(float R, float d, float focal_px, float max_err_px) {
     constexpr int kFinest = static_cast<int>(kGeosphereLevels.size()) - 1;
     if (!(d > R) || !(R > 0.0f) || !(focal_px > 0.0f)) return kFinest;

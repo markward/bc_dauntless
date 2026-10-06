@@ -101,6 +101,21 @@ public:
                      const std::vector<DecalRequest>& decals,
                      float scale);
 
+    /// Load with the planet geosphere LOD replacement (spec
+    /// docs/superpowers/specs/2026-10-06-planet-geosphere-design.md): when
+    /// `geosphere` is true, assets::apply_geosphere runs on the built model
+    /// before it is published, populating Model::sphere_map on a qualifying
+    /// single-mesh sphere (empty otherwise -- the gate failing is not an
+    /// error). `geosphere` is folded into the cache key like scale/
+    /// texture_replacements/decals, so a plain and a geosphere load of the
+    /// same path are distinct cached entries; the 5-argument overload is
+    /// `geosphere = false`, byte-identical to today's behaviour.
+    ModelHandle load(const std::filesystem::path& nif_path,
+                     const std::vector<std::filesystem::path>& texture_search_paths,
+                     const std::vector<TextureReplacement>& texture_replacements,
+                     const std::vector<DecalRequest>& decals,
+                     float scale, bool geosphere);
+
     /// Unpin every cached entry for `nif_path`, AT ANY SCALE. A glTF path's
     /// cache key carries a `#s=<scale>` suffix (see the 5-argument `load`
     /// overload / hull_source_string) for every scale != 1.0f, so this drops

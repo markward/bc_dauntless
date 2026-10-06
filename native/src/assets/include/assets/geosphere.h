@@ -6,10 +6,12 @@
 #pragma once
 
 #include <array>
+#include <functional>
 
 #include <glm/glm.hpp>
 
 #include <assets/mesh.h>
+#include <assets/model.h>
 
 namespace assets {
 
@@ -34,5 +36,18 @@ glm::vec2 sphere_uv(glm::vec3 unit_dir);
 /// d <= R, or no level meeting the bound, gives the finest index (3).
 int pick_geosphere_level(float world_radius, float center_distance,
                          float focal_px, float max_err_px = 0.5f);
+
+/// Build `model.sphere_map` from its single mesh, if that mesh passes the
+/// sphere gate (spec §4.2): a UV set, and every vertex within 0.5% of the
+/// mean distance from the centroid, measured in the mesh's own vertex
+/// frame. `upload` builds each LOD's GPU mesh (production: upload_mesh;
+/// tests: a stub uploader); `keep_cpu_data` mirrors AssetCache::Config and
+/// controls whether each LOD's Mesh retains its MeshCpu for inspection.
+/// Mutates `model` only on success; returns whether the gate passed. Must
+/// run on a non-const Model during construction, before it is published as
+/// shared_ptr<const Model> (see Model::trace_accel's construction-time
+/// mutation contract, model.h).
+bool apply_geosphere(Model& model, const std::function<Mesh(MeshCpu)>& upload,
+                     bool keep_cpu_data);
 
 }  // namespace assets
