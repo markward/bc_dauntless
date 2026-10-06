@@ -624,3 +624,18 @@ def test_search_field_takes_the_keyboard_and_sends_encoded_queries():
     assert "'star-map/select-system:' + systemId" in js
     fn = js[js.index("function renderStarMapSearch"):js.index("document.addEventListener('DOMContentLoaded', function () {\n    const toggle")]
     assert "textContent" in fn and "innerHTML" not in fn
+
+
+
+def test_the_search_box_paints_over_the_system_names():
+    """The label layer's z-index must stay inside the map: the viewport is a
+    stacking context, and the search box comes after it in .sm-body. Live
+    bug: BIRANU drew through the search field."""
+    body = _viewport_css_body()
+    assert re.search(r"z-index\s*:\s*0\b", body), body
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    assert index.index('id="star-map-search"') > index.index('id="star-map-viewport"')
+    css = re.sub(r"/\*.*?\*/", "", (ASSETS / "css" / "star_map.css")
+                 .read_text(encoding="utf-8"), flags=re.S)
+    search = re.search(r"#star-map-search\s*\{([^}]*)\}", css)
+    assert search and "z-index" not in search.group(1)

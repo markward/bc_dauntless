@@ -81,7 +81,9 @@
    viewport, so the map rect IS the body rect by construction — no centring
    formula in CSS to keep in step with Python. The target list is a centred
    popup inside the viewport, so nothing else sits in the body. */
-.sm-body { display: flex; gap: 0; position: relative; }
+/* z-index 0: its own stacking context, so the viewport's z-index (which
+   contains the label layer) stays local to the body. */
+.sm-body { display: flex; gap: 0; position: relative; z-index: 0; }
 
 /* The GL pass draws BENEATH this element — it MUST stay transparent, or the
    native map is hidden behind an opaque CEF rectangle.
@@ -95,6 +97,11 @@
 #star-map-viewport {
     position: absolute;
     inset: 0 0 0 30%;      /* the right 70%: the info panel has the left 30% */
+    /* A stacking context, so the label layer's z-index stays INSIDE the map
+       and everything after the viewport in .sm-body (the search box) paints
+       over it. Without it the names escaped to the panel and drew through
+       the search field. Paints nothing, so the hole stays transparent. */
+    z-index: 0;
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
     cursor: grab;
