@@ -92,6 +92,16 @@ def evaluate(source, point_gu: tuple) -> float:
     return table_a(source, rho) * math.exp(-0.5 * z * z / (h * h))
 
 
+def large_ramp(a: float, lo: float, hi: float) -> float:
+    """renderer::rockfield::large_ramp's twin: 0 for a <= lo, 1 for a >= hi,
+    linear between; hi <= lo is a step at lo (rock-promotion spec P2)."""
+    if not a > lo:
+        return 0.0
+    if not hi > lo or a >= hi:
+        return 1.0
+    return (a - lo) / (hi - lo)
+
+
 def profile_belt(system_name: str):
     """The one DiscSource for a mapped system's radial `asteroids` column,
     or None when the map, its star, or any row with asteroids > 0 is

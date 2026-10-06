@@ -154,6 +154,9 @@ def _halo_numbers(radius: float) -> dict:
 
 def halo_spec(rock, iid) -> Optional[CloudSpec]:
     """A realised rock's halo, or None when it is dying / dead / sizeless."""
+    # rock promotion R2: scenery large rocks have no halo; neither does their promoted twin
+    if getattr(rock, "_field_key", None) is not None:
+        return None
     if _is_dying(rock):
         return None
     radius = float(_effective_radius(rock))

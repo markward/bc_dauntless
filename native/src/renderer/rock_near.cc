@@ -219,6 +219,12 @@ float ramp_down(float d, float end, float fade) {   // 1 at end - fade, 0 at end
 }
 }  // namespace
 
+float large_ramp(float a, float lo, float hi) {
+    if (!(a > lo)) return 0.0f;
+    if (!(hi > lo) || a >= hi) return 1.0f;
+    return (a - lo) / (hi - lo);
+}
+
 NearWeights near_weights(float d, const NearClassDials& c, float fade_gu) {
     NearWeights w;
     w.mesh = d < c.mesh_gu ? 1.0f : 0.0f;   // the hard mesh <-> billboard swap
@@ -246,8 +252,11 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
     if (rocks.empty() || !(c.cell_gu > 0.0f) || !(c.density > 0.0f)) return out;
     const double L = c.cell_gu;
     const glm::dvec3 lo = glm::dvec3(ijk) * L;
-    const double n_bound = static_cast<double>(c.density) *
-                           far::a_bound(s, lo + 0.5 * L, 0.5 * L) * far::noise_m_bound(s);
+    const bool large = cls == NearClass::Large;
+    const float a_hi_cell = far::a_bound(s, lo + 0.5 * L, 0.5 * L);
+    const float ramp_bound = large ? large_ramp(a_hi_cell, d.large_ramp_lo, d.large_ramp_hi) : 1.0f;
+    const double n_bound = static_cast<double>(c.density) * a_hi_cell * ramp_bound *
+                           far::noise_m_bound(s);
     if (!(n_bound > 0.0)) return out;
 
     Rng r{mix_ijk(s.seed, cls, ijk)};
@@ -263,7 +272,9 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
         k.tumble_axis = rockrand::unit_vector(r);
         k.tumble_rate = 0.05f + 0.55f * r.unit();
         k.phase = r.unit() * 6.28318530718f;
-        if (accept >= c.density * far::field_density(s, p) / n_bound) continue;
+        float dens = far::field_density(s, p);
+        if (large) dens *= large_ramp(far::density_a(s, p), d.large_ramp_lo, d.large_ramp_hi);
+        if (accept >= c.density * dens / n_bound) continue;
         if (in_explicit(s, p)) continue;
         k.pos_sys = p;
         out.push_back(k);
@@ -272,7 +283,8 @@ std::vector<NearRock> generate_near_cell(const far::DiscSource& s, NearClass cls
 }
 
 void NearField::set_dials(const NearDials& d) {
-    const bool regen = !same_generator(d.small, dials_.small) || !same_generator(d.large, dials_.large);
+    const bool regen = !same_generator(d.small, dials_.small) || !same_generator(d.large, dials_.large) ||
+                       d.large_ramp_lo != dials_.large_ramp_lo || d.large_ramp_hi != dials_.large_ramp_hi;
     dials_ = d;
     update_effective();
     invalidate_stream_watch();   // ranges may have moved
@@ -517,10 +529,51 @@ void NearField::stream(const glm::dvec3& c) {
     }
 }
 
+std::uint64_t near_rock_key(std::uint32_t source_id, NearClass cls, const glm::i64vec3& ijk,
+                            std::size_t index) {
+    return rock_key(cell_key(source_id, cls, ijk), index);
+}
+
+std::vector<NearQueryHit> NearField::query_large(const glm::dvec3& c, double radius,
+                                                 float min_r) const {
+    std::vector<NearQueryHit> out;
+    const double L = dials_.large.cell_gu;
+    if (!(L > 0.0) || !(radius >= 0.0)) return out;
+    const glm::i64vec3 lo_i(glm::floor((c - radius) / L)), hi_i(glm::floor((c + radius) / L));
+    for (const far::DiscSource& s : sources_) {
+        if (!reaches(s, c, radius)) continue;
+        for (std::int64_t i = lo_i.x; i <= hi_i.x; ++i)
+        for (std::int64_t j = lo_i.y; j <= hi_i.y; ++j)
+        for (std::int64_t k = lo_i.z; k <= hi_i.z; ++k) {
+            const glm::i64vec3 ijk{i, j, k};
+            if (aabb_distance(c, glm::dvec3(ijk) * L, L) > radius) continue;
+            const std::uint64_t ck = cell_key(s.id, NearClass::Large, ijk);
+            auto it = query_cache_.find(ck);
+            if (it == query_cache_.end()) {
+                if (query_cache_.size() >= kQueryCacheMax) query_cache_.clear();
+                it = query_cache_.emplace(ck, generate_near_cell(s, NearClass::Large, ijk, dials_, cat_)).first;
+            }
+            const auto& rocks = it->second;
+            for (std::size_t n = 0; n < rocks.size(); ++n) {
+                const NearRock& r = rocks[n];
+                if (r.radius < min_r || glm::length(r.pos_sys - c) > radius) continue;
+                out.push_back({rock_key(ck, n), r});
+            }
+        }
+    }
+    std::sort(out.begin(), out.end(), [&c](const NearQueryHit& a, const NearQueryHit& b) {
+        const double da = glm::length(a.rock.pos_sys - c), db = glm::length(b.rock.pos_sys - c);
+        return da != db ? da < db : a.key < b.key;
+    });
+    return out;
+}
+
 void NearField::clear() {
     cells_.clear();
     for (auto& b : blocks_) b.clear();
     pinned_.clear();
+    query_cache_.clear();
+    excluded_.clear();
     invalidate_stream_watch();
     // A fresh start, as a new field: full billboard ranges (a source change
     // mid-dash costs that one frame, then collapses again).
@@ -705,6 +758,9 @@ void NearField::build(const NearBuildInput& in, NearOutput& out) const {
                 const std::size_t i = ordered ? static_cast<std::size_t>(cell.by_radius4 >> (4 * j) & 15u) : j;
                 const NearRock& r = rock_p[i];
                 if (ordered && !(r.radius * k / cut_d_lo > floor_px)) break;
+                // Rock promotion: a promoted Large rock draws nothing here --
+                // the real object stands in for it.
+                if (!small && !excluded_.empty() && excluded_.count(key_of(key, cell, i))) continue;
                 ++out.rocks_tested;
                 // vec3(pos_sys - to_render) and length(c - eye), as scalars
                 // (hand-inlined throughout: this loop is the build's hot path
@@ -1069,6 +1125,9 @@ void NearField::step(const NearStepInput& in) {
         }
         for (std::size_t i = 0; i < cell.rocks.size(); ++i) {
             const std::uint64_t key = key_of(ckey, cell, i);
+            // Rock promotion: a promoted Large rock reports no contact -- its
+            // real object collides on its own.
+            if (!excluded_.empty() && excluded_.count(key)) continue;
             const NearRock& r = cell.rocks[i];
             const glm::vec3 p(r.pos_sys - to_render);
             const float reach = r.radius + margin;

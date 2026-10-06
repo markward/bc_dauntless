@@ -209,3 +209,24 @@ def test_profile_belt_carries_belt_noise_dials():
     assert nat["noise_scale_gu"] == src.noise_scale_gu   # now sent for discs too
     assert nat["noise_contrast"] == src.noise_contrast
     assert nat["noise_octaves"] == src.noise_octaves
+
+
+@pytest.mark.parametrize("a,expected", [
+    (0.0, 0.0), (0.5, 0.0), (0.75, 0.5), (1.0, 1.0), (2.0, 1.0)])
+def test_large_ramp_matches_the_native_rule(a, expected):
+    assert density.large_ramp(a, 0.5, 1.0) == pytest.approx(expected)
+
+
+def test_large_ramp_step_when_hi_not_above_lo():
+    assert density.large_ramp(0.5, 0.5, 0.5) == 0.0
+    assert density.large_ramp(0.51, 0.5, 0.5) == 1.0
+
+
+def test_vesuvi_band_is_exactly_the_ramp_floor():
+    """The Geki -> Haven band (226k-330k GU) is a = 0.5, so ramp 0: no large
+    rocks in Vesuvi's story scenes."""
+    s = density.profile_belt("Vesuvi")
+    assert s is not None
+    for r in (230000.0, 280000.0, 327000.0):
+        a = density.evaluate(s, (r, 0.0, 0.0))
+        assert density.large_ramp(a, 0.5, 1.0) == 0.0

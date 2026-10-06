@@ -2689,6 +2689,8 @@ renderer::rockfield::NearDials near_dials_of(const py::dict& d) {
     }
     f("near_fade_gu", o.fade_gu);
     f("near_tumble_scale", o.tumble_scale);
+    f("large_ramp_lo", o.large_ramp_lo);
+    f("large_ramp_hi", o.large_ramp_hi);
     f("near_dash_collapse_step_gu", o.dash_collapse_step_gu);
     f("near_large_min_px", o.large_min_px);
     f("near_small_min_px", o.small_min_px);
@@ -4601,6 +4603,39 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("scale"),
           "> 0: the player's near-band contact box half extents x this "
           "(shields up); <= 0: the bare hull box.");
+    m.def("rockfield_set_promoted",
+          [](py::list keys) {
+              std::unordered_set<std::uint64_t> s;
+              for (const auto& k : keys) s.insert(k.cast<std::uint64_t>());
+              g_speck_band.set_excluded(s);   // copied: its rebuild runs on a worker
+              g_near_field.set_excluded(std::move(s));
+          },
+          py::arg("keys"),
+          "Large near-rock keys promoted to real objects or destroyed "
+          "(rock-promotion): the near band draws nothing and reports no contact "
+          "for them, and the speck band draws no speck. Replaces the list.");
+    m.def("rockfield_query_large",
+          [](std::tuple<double, double, double> c, double radius, float min_r) {
+              py::list out;
+              for (const auto& h : g_near_field.query_large(
+                       {std::get<0>(c), std::get<1>(c), std::get<2>(c)}, radius, min_r)) {
+                  py::dict d;
+                  d["key"] = h.key;
+                  d["pos"] = py::make_tuple(h.rock.pos_sys.x, h.rock.pos_sys.y, h.rock.pos_sys.z);
+                  d["radius"] = h.rock.radius;
+                  d["rock"] = h.rock.rock;
+                  d["axis"] = py::make_tuple(h.rock.tumble_axis.x, h.rock.tumble_axis.y, h.rock.tumble_axis.z);
+                  d["rate"] = h.rock.tumble_rate;
+                  d["phase"] = h.rock.phase;
+                  out.append(d);
+              }
+              return out;
+          },
+          py::arg("centre_sys"), py::arg("radius_gu"), py::arg("min_radius_gu"),
+          "Large near rocks (every current source) with radius >= min_radius_gu "
+          "within radius_gu of centre_sys (SYSTEM coords), nearest first: "
+          "[{'key', 'pos' (system), 'radius', 'rock' (catalogue index), 'axis', "
+          "'rate', 'phase'}, ...]. Includes promoted keys. Camera-independent.");
     m.def("far_debug_active_sources",
           []() {
               py::list out;

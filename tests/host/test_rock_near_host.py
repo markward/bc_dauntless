@@ -356,3 +356,19 @@ def test_the_pixel_floor_dials_reach_the_near_band(host):
         base = _billboards_with(host, dict(only, **{"near_%s_min_px" % cls: 0.0}))
         floored = _billboards_with(host, dict(only, **{"near_%s_min_px" % cls: 1.0e6}))
         assert floored < base, (cls, floored, base)
+
+
+def test_query_large_returns_system_space_rocks_and_promoted_set_hides_one(host):
+    """rockfield_query_large (rock-promotion Task 2): camera-independent,
+    system-space, nearest first; rockfield_set_promoted excludes keys from
+    the NEAR BAND's own draw/contact, never from the query itself."""
+    _stream_at_origin(host)   # the file's helper: pushes a full-density source + catalogue
+    hits = h.rockfield_query_large((0.0, 0.0, 0.0), 300.0, 0.0)
+    assert hits, "a full-density field has large rocks within 300 GU"
+    d = [((x["pos"][0] ** 2 + x["pos"][1] ** 2 + x["pos"][2] ** 2) ** 0.5) for x in hits]
+    assert d == sorted(d)
+    assert all(set(x) >= {"key", "pos", "radius", "rock", "axis", "rate", "phase"} for x in hits)
+    h.rockfield_set_promoted([hits[0]["key"]])
+    again = h.rockfield_query_large((0.0, 0.0, 0.0), 300.0, 0.0)
+    assert [x["key"] for x in again] == [x["key"] for x in hits]   # query ignores the exclusion
+    h.far_clear()

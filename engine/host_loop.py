@@ -5104,6 +5104,22 @@ def _pump_scenery_contact(player, session) -> None:
         dev_mode.log_swallowed("scenery contact pump", e)
 
 
+def _pump_rock_promotion(player, session) -> None:
+    """Rock promotion (rock-promotion spec §2): the nearest big field rocks
+    become real RockClass objects. Sim side -- it adds and removes set
+    objects -- beside the scenery contacts; a raise never breaks the frame."""
+    try:
+        import App
+        from engine import renderer
+        from engine.rocks import promotion
+        from engine.systems import frames
+        promotion.tick(player, frames.viewing_set(),
+                       float(App.g_kUtopiaModule.GetGameTime()), renderer)
+    except Exception as e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("rock promotion pump", e)
+
+
 def _veil_flares(r, flares, player):
     """Billboard flares see no fog (their visibility is one depth read), so
     under the system nebula pass they take the exact eye->star transmittance
@@ -6916,6 +6932,8 @@ class HostController:
         _debris_chunk.clear(self.renderer)
         from engine.rocks import minors as _minors
         _minors.reset(self.renderer)
+        from engine.rocks import promotion as _promotion
+        _promotion.reset(self.renderer)
         _far_tier.reset(self.renderer)
         from engine.rocks import minor_contact as _minor_contact
         _minor_contact.reset()
@@ -11324,6 +11342,9 @@ def run(mission_name: Optional[str] = None,
                     rock_vfx.pump()
                     _pump_minor_contact(player, session=session)
                     _pump_scenery_contact(player, session=session)
+
+                with frame_profiler.scope("sim.rock_promotion"):
+                    _pump_rock_promotion(player, session=session)
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame
