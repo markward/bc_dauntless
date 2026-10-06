@@ -1,0 +1,71 @@
+# Dauntless crew dialogue
+
+Crew lines that have no BC original — written and voiced for Dauntless —
+and the first feature that speaks them.
+
+## Authoring a line
+
+1. Add an entry to `tools/dialogue/dauntless_crew.json`: `key`, `text`
+   (the subtitle), `sound` (game-root-relative voice file).
+2. Put the voice file at `native/assets/replacements/<sound>`.
+3. Run `uv run python tools/gen_dauntless_tgl.py --write`.
+
+Keys follow BC's `<Speaker><Line><N>` style (`BrexRadiationShields1`), and
+the voice file is named after its key, as BC's are
+(`sfx/Bridge/Crew/Engineering/BrexRadiationShields1.wav`).
+
+Never hand-edit `native/assets/replacements/data/TGL/Dauntless Crew.tgl`.
+`tests/tools/test_dauntless_dialogue_drift.py` fails when it differs from
+the JSON, when a voice file is missing, or when a WAV is in a format the
+native decoder rejects (`native/src/audio/src/wav.cc`: PCM only — not
+WAVE_FORMAT_EXTENSIBLE — 1-2 channels, 8 or 16 bit; any sample rate).
+
+## Why it just works
+
+- **Layout.** `engine.missions.tgl_reader.write_tgl` writes BC's own
+  header (magic `0x1701`) and TOC. It reproduces all 57 stock TGLs byte for
+  byte (`tests/missions/test_tgl_reader_roundtrip.py`), so the file is one
+  `stbc.exe` would read too.
+- **Lookup.** Both the TGL and the voice files live under the project's
+  replacements overlay (`engine/mods.py:replacements`), which
+  `paths.game_asset` consults first. So
+  `App.g_kLocalizationManager.Load("data/TGL/Dauntless Crew.tgl")` and the
+  officer's `SpeakLine(db, key, priority)` behave exactly as for an SDK line:
+  subtitle, voice, lip-sync, priority arbitration.
+- **Lip-sync.** No `.LIP` file ⇒ random mouth flap, which is BC's own
+  fallback for its many lines without one (`engine/lip_sync_runtime.py`).
+- **Search order.** The replacements `data/TGL` folder now leads
+  `paths.game_asset_dirs("data/TGL")` and `name_resolver._tgl_roots()`.
+  Tests that assert those lists must point `mods.replacements_root` at an
+  empty tree.
+
+## Language
+
+There is no language selection. Subtitles are whatever the TGL holds, and
+the stock install read here is English only. Per Mark, BC's localized
+releases translated subtitle text but kept English voices, so a translation
+would need only another TGL's text, not new recordings — unverified.
+
+## "Raise shields" prompts — `engine/appc/crew_hazard_prompts.py`
+
+| Hazard | Level at the player | Threshold | Lines |
+|---|---|---|---|
+| Asteroids | max(radial profile `asteroids`, rock-field strength `far_tier.field_strength_at`) | > 0.05 | `BrexAsteroidShields1` (Engineer), `MiguelAsteroidShields2` (Science) |
+| Radiation | radial profile `radiation` | > 0.1 | `BrexRadiationShields1`, `BrexRadiationShields2` (Engineer) |
+
+- Speaks only with the shields down (`nebula_runtime._shields_up`).
+- Polled at 1 Hz on game time from `host_loop` beside the contact manager
+  (sim-gated); reset on mission swap in `_reset_sensor_state`.
+- One prompt per exposure. It re-arms when the level drops below half the
+  threshold or the shields go up, never sooner than 120 s after the last
+  prompt for that hazard. So hovering at a field's edge does not nag, and
+  lowering shields inside a field gets at most one reminder per 2 minutes.
+- Line chosen at random; if that officer is not on the bridge, the other
+  line is used; if none is, the prompt stays pending.
+- `CSP_SPONTANEOUS` (BC's engineer-report priority), and it waits for a
+  free speech channel — an equal-priority line would cut the speaker off.
+  Mission lines can still cut it off.
+- Skipped: E3M2 and E3M4 (their scripts prompt for shields themselves:
+  `E3M2ProdRaiseShields`, `E3M4ShouldRaiseShields`), cinematics, warp, dash.
+
+⚠️ Not live-verified.

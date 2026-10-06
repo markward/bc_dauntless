@@ -315,6 +315,14 @@ def bus() -> CrewSpeechBus:
     return _bus
 
 
+def channel_busy(now=None) -> bool:
+    """True while any crew line still holds the speech channel. A line
+    spoken now at equal priority would cut it off (see speak)."""
+    if now is None:
+        now = time.monotonic()
+    return now < bus()._active_expiry
+
+
 def is_speaking(name, now=None) -> bool:
     """True while *name*'s line still holds the speech channel.
 

@@ -12,7 +12,11 @@ def _touch(p: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clear_index():
+def _clear_index(monkeypatch, tmp_path):
+    # The project ships its own replacements (native/assets/replacements/,
+    # incl. data/TGL) and they lead every search list; these tests assert
+    # the mod/stock order alone, so point replacements at an empty tree.
+    monkeypatch.setattr(mods, "replacements_root", lambda: tmp_path / "no-replacements")
     mods.configure(None)
     yield
     mods.configure(None)

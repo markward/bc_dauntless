@@ -1,0 +1,25 @@
+{
+  "tgl": "data/TGL/Dauntless Crew.tgl",
+  "lines": [
+    {
+      "key": "BrexAsteroidShields1",
+      "text": "Captain I recommend we raise shields to protect the hull from micro-asteroids",
+      "sound": "sfx/Bridge/Crew/Engineering/BrexAsteroidShields1.wav"
+    },
+    {
+      "key": "MiguelAsteroidShields2",
+      "text": "Captain, my sensors are registering a dense field of micro-asteroids. Recommend we raise shields.",
+      "sound": "sfx/Bridge/Crew/Science/MiguelAsteroidShields2.wav"
+    },
+    {
+      "key": "BrexRadiationShields1",
+      "text": "It looks like radiation levels are rising... We need to raise shields sir.",
+      "sound": "sfx/Bridge/Crew/Engineering/BrexRadiationShields1.wav"
+    },
+    {
+      "key": "BrexRadiationShields2",
+      "text": "Radiation levels are rising. We need to raise shields sir.",
+      "sound": "sfx/Bridge/Crew/Engineering/BrexRadiationShields2.wav"
+    }
+  ]
+}
