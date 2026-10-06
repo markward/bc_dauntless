@@ -63,15 +63,9 @@
     border-left: 3px solid var(--qbs-friendly);
     background: rgb(20, 22, 28);
     margin-bottom: 10px;
-    cursor: pointer;
 }
 #quick-battle-setup .qbs-group--enemy { border-left-color: var(--qbs-enemy); }
 #quick-battle-setup .qbs-group--neutral { border-left-color: var(--qbs-neutral); }
-#quick-battle-setup .qbs-group:hover { background: rgb(26, 28, 36); }
-#quick-battle-setup .qbs-group--target {
-    border-right: 5px solid var(--qbs-gold);
-    cursor: default;
-}
 
 #quick-battle-setup .qbs-group__head {
     display: flex;
@@ -80,12 +74,6 @@
     padding: 6px 6px 2px 8px;
 }
 #quick-battle-setup .qbs-group__name { flex: 1 1 auto; font-size: 15px; color: #fff; letter-spacing: 0.04em; }
-#quick-battle-setup .qbs-group__target-tag {
-    font-size: 10px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--qbs-gold);
-}
 #quick-battle-setup .qbs-group__summary { font-size: 12px; color: var(--qbs-dim); padding: 0 8px 6px; }
 
 #quick-battle-setup .qbs-group__controls { padding: 2px 8px 8px; }
@@ -282,6 +270,23 @@
 #quick-battle-setup .qbs-tactics b { color: var(--qbs-section); font-weight: normal; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
 #quick-battle-setup .qbs-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 4px; }
 #quick-battle-setup .qbs-add { border-color: var(--qbs-gold) !important; }
+/* Add bar: quantity stepper, group picker (drop-up popover), Add. */
+#quick-battle-setup .qbs-addbar { display: flex; gap: 6px; align-items: stretch; margin-left: auto; }
+#quick-battle-setup .qbs-qty { display: flex; align-items: stretch; border: 1px solid var(--qbs-steel); background: rgb(28, 31, 38); }
+#quick-battle-setup .qbs-qty__btn {
+    width: 26px;
+    border: 0;
+    background: transparent;
+    color: var(--qbs-text);
+    font-family: inherit;
+    font-size: 16px;
+    cursor: pointer;
+}
+#quick-battle-setup .qbs-qty__btn:hover:not([disabled]) { background: rgba(173, 132, 255, 0.15); color: #fff; }
+#quick-battle-setup .qbs-qty__btn[disabled] { color: var(--qbs-steel-dim); cursor: default; }
+#quick-battle-setup .qbs-qty__n { min-width: 22px; align-self: center; text-align: center; font-size: 14px; color: #fff; }
+#quick-battle-setup .qbs-grouppick { display: flex; align-items: center; gap: 6px; }
+#quick-battle-setup .qbs-grouppick .qbs-menu__dot { display: inline-block; }
 
 #quick-battle-setup .qbs-nothing { color: var(--qbs-dim); font-style: italic; padding: 20px 4px; }
 

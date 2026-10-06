@@ -10,7 +10,7 @@
 //                                   filters, presets, summary, can_start
 // This page renders the latest of each and reports every click as
 // dauntlessEvent('quick-battle-setup/<verb>'). It owns only the open popover
-// menu and which group is being renamed.
+// menu, which group is being renamed and the sheet's add quantity.
 //
 // Off-screen CEF: no drag-and-drop, no native select dropdowns, no tooltips.
 // Text fields follow the keyboard-capture contract (text_capture.js): the
@@ -23,6 +23,8 @@ var QBS = {
     ships: {},           // lower-cased ship id -> catalog ship
     eras: {},            // era id -> {id, name, tag, start, end}
     renaming: null,      // group id whose name is being edited (page-owned)
+    qty: {},             // lower-cased ship id -> the sheet's add quantity
+                         // (page-owned; unset reads 1; cleared on close)
     presetAsk: null,     // {kind: 'save'|'load', name} awaiting its toast
     toastTimer: null,
     saveSent: false,     // the open save form has already sent preset-save
@@ -156,16 +158,13 @@ function renderGroups() {
 
 function renderGroup(g) {
     var s = QBS.setup;
-    var isTarget = g.id === s.target;
-    var cls = 'qbs-group qbs-group--' + qbsEsc(g.allegiance) + (isTarget ? ' qbs-group--target' : '');
-    var h = '<div class="' + cls + '" data-group="' + qbsEsc(g.id) + '">';
+    var h = '<div class="qbs-group qbs-group--' + qbsEsc(g.allegiance) + '" data-group="' + qbsEsc(g.id) + '">';
 
     h += '<div class="qbs-group__head">';
     if (QBS.renaming === g.id) {
         h += '<input class="qbs-rename" data-group="' + qbsEsc(g.id) + '" value="' + qbsEsc(g.name) + '">';
     } else {
         h += '<span class="qbs-group__name">' + qbsEsc(g.name) + '</span>';
-        if (isTarget) h += '<span class="qbs-group__target-tag">Adding here</span>';
     }
     h += '<button class="qbs-kebab" data-action="group-menu" data-group="' + qbsEsc(g.id) + '">⋮</button></div>';
 
@@ -178,7 +177,7 @@ function renderGroup(g) {
     else {
         h += '<div class="qbs-rows">';
         if (!g.entries.length) {
-            h += '<div class="qbs-empty">No ships yet' + (isTarget ? ' — add from the catalog' : '') + '</div>';
+            h += '<div class="qbs-empty">No ships yet</div>';
         }
         g.entries.forEach(function (e) { h += renderRow(g, e); });
         h += '</div>';
@@ -316,14 +315,25 @@ function renderDetail(sh) {
     }
     h += renderDurability(sh);
     if (bio.tactics) h += '<p class="qbs-tactics"><b>Tactics</b> — ' + qbsEsc(bio.tactics) + '</p>';
+    // Set-player on the left; then, on the right, the quantity stepper, group
+    // picker (a drop-up popover: the sheet sits at the bottom of the screen)
+    // and Add.
+    var max = QBS.catalog.add_max || 1, qty = qbsQty(sh.id);
     h += '<div class="qbs-actions">';
-    h += '<button class="cp-done-button qbs-add" data-action="add" data-arg="' + qbsEsc(sh.id) + '"' + (target ? '' : ' disabled') + '>+ Add to ' +
-         qbsEsc(target ? target.name : 'a group') + '</button>';
     if (isPlayer) {
         h += '<button class="cp-done-button" disabled>Your ship</button>';
     } else if (qbsCanBePlayer(sh)) {
         h += '<button class="cp-done-button" data-action="set-player" data-arg="' + qbsEsc(sh.id) + '">Set as player ship</button>';
     }
+    h += '<div class="qbs-addbar">';
+    h += '<span class="qbs-qty"><button class="qbs-qty__btn" data-action="qty" data-arg="-1"' + (qty <= 1 ? ' disabled' : '') + '>−</button>' +
+         '<span class="qbs-qty__n">' + qty + '</span>' +
+         '<button class="qbs-qty__btn" data-action="qty" data-arg="1"' + (qty >= max ? ' disabled' : '') + '>+</button></span>';
+    h += '<button class="cp-done-button qbs-grouppick" data-action="add-group-menu">' +
+         (target ? '<span class="qbs-menu__dot" style="background:' + qbsAllegianceColour(target.allegiance) + '"></span>' +
+                   qbsEsc(target.name) : 'Choose a group') + ' ▴</button>';
+    h += '<button class="cp-done-button qbs-add" data-action="add" data-arg="' + qbsEsc(sh.id) + '"' + (target ? '' : ' disabled') +
+         '>+ Add</button></div>';
     return h + '</div></div></div>';
 }
 
@@ -498,6 +508,28 @@ function qbsGroupMenu(anchor, gid) {
     qbsOpenMenu(anchor, h);
 }
 
+// The sheet's "add to" picker: every group, the player's included (escorts).
+function qbsAddGroupMenu(anchor) {
+    var h = '<div class="qbs-menu__head">Add to group</div>';
+    QBS.setup.groups.forEach(function (g) {
+        var on = g.id === QBS.setup.target;
+        h += qbsItem('<span class="qbs-menu__check">' + (on ? '✓' : '') + '</span>' +
+                     '<span class="qbs-menu__dot" style="background:' + qbsAllegianceColour(g.allegiance) + '"></span>' +
+                     qbsEsc(g.name), 'target', g.id, on ? ' qbs-menu__item--on' : '');
+    });
+    qbsOpenMenu(anchor, h, true);
+}
+
+// Each ship type remembers its own quantity while the screen is open.
+function qbsQty(id) { return QBS.qty[String(id || '').toLowerCase()] || 1; }
+
+function qbsStepQty(delta) {
+    var id = QBS.setup.selected, max = (QBS.catalog && QBS.catalog.add_max) || 1;
+    if (!id) return;
+    QBS.qty[String(id).toLowerCase()] = Math.max(1, Math.min(max, qbsQty(id) + delta));
+    renderSheet();
+}
+
 function qbsPresetMenu(anchor) {
     var s = QBS.setup, names = s.presets || [];
     var h = '<div class="qbs-menu__head">Load preset</div>';
@@ -568,15 +600,7 @@ function qbsClick(ev) {
     var arg = el ? (el.getAttribute('data-arg') || '') : '';
     if (!menu.contains(ev.target) && !(action && /-menu$/.test(action))) qbsCloseMenu();
     if (ev.target.closest('.qbs-rename')) return;
-    if (!el) {
-        // A click anywhere else on a group box makes it the add target.
-        var box = ev.target.closest('.qbs-group');
-        if (box && box.getAttribute('data-group') !== QBS.setup.target) {
-            dauntlessEvent('quick-battle-setup/target:' + box.getAttribute('data-group'));
-        }
-        return;
-    }
-    if (el.disabled) return;
+    if (!el || el.disabled) return;
     var gid = el.getAttribute('data-group'), done = true;
     switch (action) {
     // filters and sheet
@@ -584,7 +608,9 @@ function qbsClick(ev) {
     case 'species': dauntlessEvent('quick-battle-setup/species:' + qbsEnc(arg)); break;
     case 'select': dauntlessEvent('quick-battle-setup/select:' + qbsEnc(arg)); break;
     // adding ships
-    case 'add': dauntlessEvent('quick-battle-setup/add:' + qbsEnc(arg)); break;
+    case 'add': dauntlessEvent('quick-battle-setup/add:' + qbsEnc(arg) + ':' + QBS.setup.target + ':' + qbsQty(arg)); break;
+    case 'target': dauntlessEvent('quick-battle-setup/target:' + arg); break;
+    case 'qty': qbsStepQty(Number(arg)); break;
     case 'set-player': dauntlessEvent('quick-battle-setup/set-player:' + qbsEnc(arg)); break;
     // groups
     case 'group-new': dauntlessEvent('quick-battle-setup/group-new'); break;
@@ -606,6 +632,7 @@ function qbsClick(ev) {
     // menus
     case 'group-menu': qbsGroupMenu(el, gid); done = false; break;
     case 'row-menu': qbsRowMenu(el, gid, el.getAttribute('data-entry')); done = false; break;
+    case 'add-group-menu': qbsAddGroupMenu(el); done = false; break;
     case 'preset-menu': qbsPresetMenu(el); done = false; break;
     case 'preset-save-menu': qbsSaveMenu(el); done = false; break;
     // presets
@@ -679,6 +706,7 @@ function setQuickBattleSetup(payload) {
         QBS.setup = null;
         QBS.renaming = null;
         QBS.presetAsk = null;
+        QBS.qty = {};
         root.style.display = 'none';
         return;
     }

@@ -86,6 +86,31 @@ def test_add_to_target_and_start(panel):
     assert started == [1] and not panel.is_open()
 
 
+def test_add_names_group_and_quantity(panel):
+    # The sheet's group picker and stepper: add:<ship>:<gid>:<n> appends n
+    # entries to that group, whatever the current target.
+    pid = panel.scenario.player_group().id
+    assert panel.dispatch_event("add:Sovereign:%s:3" % pid)
+    assert [e.ship for e in panel.scenario.player_group().entries[1:]] == ["Sovereign"] * 3
+    assert _enemy(panel).entries == []
+    assert _setup(panel)["target"] == pid             # the picker keeps its choice
+
+
+def test_add_closes_the_ship_sheet(panel):
+    panel.dispatch_event("select:Warbird")
+    assert _setup(panel)["selected"] == "Warbird"
+    assert panel.dispatch_event("add:Warbird:%s:2" % _enemy(panel).id)
+    assert _setup(panel)["selected"] is None
+
+
+@pytest.mark.parametrize("tail", [":nope:1", ":{gid}:0", ":{gid}:11", ":{gid}:x", ":{gid}:"])
+def test_add_refuses_bad_group_or_quantity(panel, tail):
+    panel.dispatch_event("select:Warbird")
+    assert not panel.dispatch_event("add:Warbird" + tail.format(gid=_enemy(panel).id))
+    assert _enemy(panel).entries == []
+    assert _setup(panel)["selected"] == "Warbird"     # a refused add keeps the sheet
+
+
 def test_set_player_refuses_unplayable(panel):
     panel.dispatch_event("set-player:FedStarbase")
     assert panel.scenario.player_entry().ship == "Galaxy"

@@ -57,6 +57,7 @@ def _plural(n: int, word: str) -> str:
 
 class QuickBattleSetupPanel(Panel):
     _UNSET = _UNSET
+    ADD_MAX = 10          # the sheet's quantity stepper tops out here
 
     def __init__(self, on_start: Optional[Callable[[], None]] = None, *,
                  catalog_fn: Optional[Callable[[], list]] = None, presets=None,
@@ -283,6 +284,7 @@ class QuickBattleSetupPanel(Panel):
         hull_max, shield_max = self._stats.maxima(self._entries)
         return {
             "ships": ships, "hull_max": hull_max, "shield_max": shield_max,
+            "add_max": self.ADD_MAX,
             "eras": [{"id": e.id, "name": e.name, "tag": e.tag, "start": e.start,
                       "end": e.end} for e in ERAS],
             "roles": [{"id": r.id, "label": r.label} for r in ROLES],
@@ -458,9 +460,24 @@ class QuickBattleSetupPanel(Panel):
 
     # adding ships
     def _on_add(self, arg) -> bool:
-        ce = self._ce(unquote(arg))
-        if ce is None or self._scenario.add_ship(self._target, ce.ship_id) is None:
+        """`<ship>` adds one to the target; `<ship>:<gid>:<n>` (the sheet's
+        group picker and stepper) adds n, 1..ADD_MAX, to that group, which
+        becomes the target. A successful add closes the ship sheet."""
+        raw, _, rest = arg.partition(":")
+        ce = self._ce(unquote(raw))
+        gid, n = self._target, 1
+        if rest:
+            gid, _, count = rest.partition(":")
+            try:
+                n = int(count)
+            except ValueError:
+                return False
+        if ce is None or self._scenario.group(gid) is None or not 1 <= n <= self.ADD_MAX:
             return False
+        for _ in range(n):
+            self._scenario.add_ship(gid, ce.ship_id)
+        self._target = gid
+        self._selected = None
         self._after_change()
         return True
 
