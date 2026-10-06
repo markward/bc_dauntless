@@ -286,3 +286,45 @@ def test_in_reach_is_false_with_dead_sensors():
     near = _ship_at(s, "near", 10.0)
     sensors._condition = 10.0
     assert sd.in_reach(obs, near) is False
+
+
+# ── Scan Area + memory (ruled 2026-10-06: BC-faithful, see spec audit) ──────
+
+def test_scan_area_then_memory_lists_far_ships_by_name():
+    """schedule_area_scan identifies every ship in the set ignoring range
+    (RE'd ScanAllObjects @0x00567960: no IsObjectNear/IsObjectFar call). Once
+    the scan commits, memory keeps the far ship detected and named -- a
+    single Scan Area press now lists the whole set by name, which is BC's
+    own behaviour, not a bug (spec Audit findings, Task 1)."""
+    s, obs, sensors = _observer_in_set(2000.0)
+    far = _ship_at(s, "far", 5000.0)
+    assert sensors.IsObjectKnown(far) == 0
+    assert sd.can_detect(obs, far) is False
+
+    sensors.ScanAllObjects().Play()
+    import engine.appc.sensor_contacts as sensor_contacts
+    sensor_contacts.tick(obs, sensors.GetIdentificationTime())
+
+    assert sensors.IsObjectKnown(far) == 1
+    assert sd.can_detect(obs, far) is True
+
+
+# ── unguarded power read (fix 4) ────────────────────────────────────────────
+
+def test_beyond_range_reach_memory_without_normal_power_percentage():
+    """`_beyond_range_reach` guards `IsObjectKnown` with `implements` but used
+    to call `GetNormalPowerPercentage()` unguarded. An observer whose sensors
+    object has no such method (a minimal fake, not a real SensorSubsystem)
+    must still be detected by memory, with no exception -- treating a missing
+    method as "not boosted", consistent with the guard beside it."""
+    s, obs, _ = _observer_in_set(2000.0)
+    far = _ship_at(s, "far", 50000.0)
+
+    class _NoBoostSensors:
+        def IsDisabled(self): return False
+        def IsDestroyed(self): return False
+        def GetBaseSensorRange(self): return 0.0
+        def IsObjectKnown(self, obj): return 1 if obj is far else 0
+
+    obs.SetSensorSubsystem(_NoBoostSensors())
+    assert sd.can_detect(obs, far) is True

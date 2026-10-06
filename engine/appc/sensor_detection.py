@@ -493,7 +493,8 @@ def _beyond_range_reach(observer, target, cloaked) -> bool:
     if sensors is None:
         return False
     from engine.appc import sensor_dials
-    boosted = (sensors.GetNormalPowerPercentage()
+    boosted = (implements(sensors, "GetNormalPowerPercentage")
+               and sensors.GetNormalPowerPercentage()
                > sensor_dials.get("overboost_threshold"))
     if not boosted:
         known = (implements(sensors, "IsObjectKnown")

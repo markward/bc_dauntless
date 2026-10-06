@@ -90,7 +90,7 @@ branches off — they are BC's rules, not part of the stage-4 sensing contest.
 | `engine/appc/sensor_detection.py` | The one detection rule | `can_detect` keeps its gates and signature; after today's range test fails it asks a new private `_beyond_range_reach(observer, target, cloaked)` (the over-boost and memory branches). No `_hidden`/`_reached` split — the hide gates already return early, so the reach step is simply "range test, else beyond-range reach". New public `jammed(observer, target)`. New public `in_reach(observer, target)` = reached ignoring the hide gates (for `is_concealed`); its range branch uses the **unshrunk** effective range (today's `is_concealed` test), takes no density sample and mutates no latch, so a ship in the dense core still counts as in reach. |
 | `engine/appc/subsystems.py` `SensorSubsystem.IsObjectVisible` | SDK surface | Keeps BC's same-set gate (`can_detect`'s range branch has none — cross-set torpedoes need that), then returns `can_detect(owner, obj)` (0/1). Its private copy of the jam and over-boost logic is deleted. `IsObjectNear`/`IsObjectFar` unchanged. |
 | `engine/appc/sensor_contacts.py` `is_concealed` | Lost-track clock | "Inside player sensor range" becomes `in_reach(player, obj)`. A remembered or boosted contact that a rock hides runs the 5 s clock; a lost track ends its memory, so it then drops out of reach. |
-| `engine/appc/sensor_dials.py` | Tunables | `overboost_threshold` 1.2 (RE'd `0x0089054c`), step 0.01, min 0.0. |
+| `engine/appc/sensor_dials.py` | Tunables | `overboost_threshold` 1.2 (RE'd `0x0089054c`), step 0.01, min 0.5, max 2.0. |
 | Roadmap | Standing decisions | Row 2 merged `0f3db1e7`; decision 2 overturned with the evidence above; new evidence rows; SP3 row; probes row becomes SP4. |
 
 Known-ness is read from the **observer's** `SensorSubsystem.IsObjectKnown`. AI has no
@@ -178,7 +178,9 @@ the player leaving the set — unchanged).
 `./build/dauntless --developer` from the worktree. Identify a ship, fly until it is
 beyond sensor range: it stays on the list with its name. Push sensors to 125% in
 Engineering: far ships appear as Unknown. Enter a nebula: remembered far ships and the
-boosted ones drop. E2M2: the boosted-sensor eavesdrop still plays.
+boosted ones drop. E2M2: the boosted-sensor eavesdrop still plays. Press Science → Scan
+Area in a populated set, then fly away: every scanned ship should stay listed by name —
+that is BC's behaviour; say so if it feels wrong.
 
 ## Audit findings (Task 1)
 
@@ -191,8 +193,9 @@ SDK root: `/Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts`.
 | `engine/appc/sensor_detection.py:437` `clear_undetectable_player_lock` — drops the player's weapon lock when `not can_detect(player, target)`; called every tick from `engine/host_loop.py:10689` | no — gates on `can_detect` directly, the same predicate being extended | safe by construction — behaviour change 1 says the lock explicitly follows memory/reach now (a remembered contact stays lockable); this is the mechanism that makes that true, not a consumer that would misbehave |
 | `engine/ui/sensors_panel.py:1-13` (radar disc) — draws a contact when its pushed record says `perceivable` | no — the module's own docstring says the disc clips to `RadarDisplay.GetRange()` (a display scale, `DEFAULT_RANGE_GU`), independent of `perceivable`'s range term; "the target list legitimately lists contacts the disc does not draw" already, today | safe — pre-existing, documented divergence; this is exactly the "radar disc clip is fine" case the brief calls out as acceptable |
 | `engine/appc/sensor_contacts.py` `is_concealed` (lost-track clock) | yes, today: "inside player sensor range" gates the clock | **addressed by the architecture, not left unsafe** — the design (Architecture table, this spec) already changes its range read to the new `in_reach(player, obj)`; behaviour change 6 and its rewritten test (`test_sensor_continuity.py::test_leaving_range_while_hidden_stops_the_clock`) are part of the same plan, not a surprise this audit found uncovered |
+| `engine/appc/sensor_identification.py` `schedule_area_scan` (Science's Scan Area button) — identifies every ship in the set ignoring range | with memory, a single press now lists the whole set by name | **safe — BC-faithful** (ruled 2026-10-06, decompile tier): the clean-room decompile of `ScanAllObjects` @`0x00567960` (`reference/decompiled_fresh/05_game_mission.c:23730`) enumerates the WHOLE set (`Set::GetClassObjectList`, `FUN_0040afe0`) and filters only `IsObjectKnown` (`0x00567830`), self, and asteroid-named non-ships — no `IsObjectNear`/`IsObjectFar` call, so it has no range gate of its own; BC's list shows them through `IsObjectVisible`'s memory step, same as ours |
 | `AI.Preprocessors.SelectTarget.FindGoodTarget` / `AI.PlainAI.StarbaseAttack.GetTargets` / `FireScript.TargetVisible` via `engine/appc/ai_sensor_gate.py` | no — all three route through the one shared `can_detect`, same as the target list | safe — AI's own `IsObjectKnown` is empty in practice (no SDK path calls `ForceObjectIdentified` on a non-player ship, see below) and AI never raises sensor power above 1.0×, so the new branches are inert for AI observers, by the same construction the spec states, not a special case added here |
-| `Maelstrom/Episode2/E2M2/E2M2.py:1930` `CheckSensorBoost`, `:2008` `CheckSensorLoop` — `MissionLib.IsBoosted(pSensors, 1.2)` | n/a (reads power, not the list) | safe — `MissionLib.IsBoosted` (`MissionLib.py:2315`) is `pSubsystem.GetNormalPowerPercentage() > fBoostLevel`, a direct power read with no dependency on `can_detect`/target-list membership. Confirmed unaffected; the beat still fires exactly as before |
+| `Maelstrom/Episode2/E2M2/E2M2.py:1927` `CheckSensorBoost`, `:2005` `CheckSensorLoop` — `MissionLib.IsBoosted(pSensors, 1.2)` | n/a (reads power, not the list) | safe — `MissionLib.IsBoosted` (`MissionLib.py:2315`) is `pSubsystem.GetNormalPowerPercentage() > fBoostLevel`, a direct power read with no dependency on `can_detect`/target-list membership. Confirmed unaffected; the beat still fires exactly as before |
 | E2M2 unidentified-ships beat — `ET_SENSORS_SHIP_IDENTIFIED` handler `:567`/`ShipIdentified`, `MissionLib.IdentifyObjects(pShip)` at `:982`/`:1235` | n/a (identification tier, not reach) | safe — identification is unchanged by this sub-project ("identification still needs the near band", Goal #2); `IdentifyObjects` always targets `MissionLib.GetPlayer()`'s sensors (`MissionLib.py:2436-2445`), never an NPC's |
 | `Maelstrom/Episode7/E7M6/E7M6.py:607,865,2158,2518` — all `MissionLib.IsBoosted(pPlayer.GetSensorSubsystem())` or a direct `GetNormalPowerPercentage()` read | n/a (power reads) | safe — same as E2M2; no target-list dependency |
 | `Maelstrom/Episode8/E8M1/E8M1.py:2699` — `pPlayer.GetSensorSubsystem().GetNormalPowerPercentage() > 1` | n/a (power read) | safe — same reasoning |
@@ -221,7 +224,10 @@ SDK root: `/Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts`.
 - Mutation probe (Task 6 review): stubbing `_beyond_range_reach` to `False` fails all 5
   of the E2M1 integration tests, confirming they exercise the new branch and not just the
   unchanged range path.
-- Deferred minors, left as-is per the plan's ledger: `test_ai_observer_never_reaches_by_memory`
-  duplicates the unknown-out-of-range test; `GetNormalPowerPercentage()` is called
-  unguarded beside an `implements`-guarded `IsObjectKnown` in `_beyond_range_reach`
-  (harmless).
+- Deferred minor, left as-is per the plan's ledger: `test_ai_observer_never_reaches_by_memory`
+  duplicates the unknown-out-of-range test.
+- Final-review fix wave (2026-10-06): `GetNormalPowerPercentage()` in `_beyond_range_reach`
+  is now `implements`-guarded, consistent with the `IsObjectKnown` guard beside it
+  (`tests/unit/test_sensor_reach.py::test_beyond_range_reach_memory_without_normal_power_percentage`);
+  the audit gained a Scan Area row (ruled BC-faithful, decompile tier); the dial-table
+  min/max corrected to 0.5/2.0; the E2M2 `def` citations corrected to `:1927`/`:2005`.

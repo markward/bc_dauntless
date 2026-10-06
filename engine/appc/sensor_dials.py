@@ -27,7 +27,7 @@ DEFAULTS: dict = {
     "nebula_unknown_threshold": 0.14, # half of sensor_detection.LOCK_BREAK_T
     # Sub-project 3 (2026-10-06-sensor-overboost-memory-design.md) -- BC's
     # recovered constant (0x0089054c), RE tier.
-    "overboost_threshold": 1.2,       # NormalPowerPercentage strictly above this sees the set
+    "overboost_threshold": 1.2,       # strictly above this sees the set; below 1.0, every ship at normal power over-boosts (AI included)
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"identification_time_s": 0.5, "near_fraction": 0.05,

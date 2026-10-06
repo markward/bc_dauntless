@@ -158,6 +158,9 @@ def test_known_ship_hidden_beyond_range_keeps_running_the_clock(helm):
     assert sensors.IsObjectKnown(bird) == 0
     sensor_contacts.tick(player, 6.0)
     assert helm == [bird]
+    from engine.appc import sensor_detection
+    assert sensor_detection.in_reach(player, bird) is False
+    assert sensor_detection.can_detect(player, bird) is False
 
 
 def test_hidden_known_ship_that_goes_jammed_beyond_range_stops_the_clock(monkeypatch, helm):
