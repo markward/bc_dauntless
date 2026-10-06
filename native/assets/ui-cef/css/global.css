@@ -10,6 +10,11 @@ html, body {
     padding: 0;
     color-scheme: dark;
     background: transparent;
+    /* The page is a full-window HUD overlay, never a document: a panel
+       that grows past the viewport (e.g. a long target list) must not
+       make the page itself scrollable and paint scrollbars over the game.
+       Panels that need scrolling own an inner overflow container. */
+    overflow: hidden;
 }
 
 .hello {
