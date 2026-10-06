@@ -1451,6 +1451,15 @@ def _reset_leakable_engine_globals():
         sensor_dials.reset()
     except Exception:
         pass
+    # Occlusion caches: per-(observer,target) and per-set major-rock lists
+    # keyed on game time/tick time/bucket size, so a test that cached a
+    # blocked() answer would otherwise leave it stale for the next test.
+    try:
+        from engine.appc import sensor_occlusion
+        sensor_occlusion.reset()
+        sensor_occlusion.reset_enabled()
+    except Exception:
+        pass
     # Unknown labels: allocator keyed by contact object identity, so a test that
     # allocates placeholders would otherwise leave them registered for every later test.
     try:
@@ -1464,6 +1473,15 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import sensor_contacts
         sensor_contacts.reset()
+    except Exception:
+        pass
+    # Mission re-identification guards: the E5M2 Outpost first-identification
+    # latch is module-level state, so a test that identifies the Outpost
+    # would otherwise leave later tests' Outpost identifications silently
+    # skipped.
+    try:
+        from engine.appc import sensor_mission_guards
+        sensor_mission_guards.reset()
     except Exception:
         pass
     # Damage-geometry switches (App.DamageableObject_*Enabled): in Dauntless

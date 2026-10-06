@@ -35,7 +35,8 @@ are the original design and its history; where they disagree, this section wins.
   the large far shell and the dithered hand-off.
 - **Mark's live values** (now the defaults): large billboards 405 GU (large only — "they're
   the noticeable ones"), `puff_opacity` 0.04698, `field_dust_mult` 10.
-- **Toggles:** Developer Options → Lighting → Rock Fields (master), Rock Specks, Rock Puffs.
+- **Toggles:** Developer Options → Environments → Rock Fields (master), Rock Specks, Rock Puffs
+  (moved from Lighting in the 2026-10-05 Developer Options cleanup).
   Dials: "rock fields" group on `/ L O`, look dials first.
 - **Cost (Debug, in game, Beol 4 approach):** near stream 0.1–0.25 ms, near draw
   0.4–0.7 ms, puffs 0.25–0.46 ms (fill-bound; trimmed since), specks ~0.06 ms.
@@ -171,7 +172,7 @@ scenery rocks; AI does not avoid them; they cannot be targeted, scanned or broke
 headless sim never spawns scenery rocks at all (near/mid/haze are render-only, so a
 headless mission sees none of this); a contact only responds while the player's
 containing set IS the viewed set (a player seen from another region's camera gets no
-scenery collisions); and the "Rock Fields" dev toggle (Dev Options → Lighting, native
+scenery collisions); and the "Rock Fields" dev toggle (Dev Options → Environments, native
 key `far_tier`) also disables scenery collisions, because it gates the same native
 stream that both draws the near band and drains its contacts.
 

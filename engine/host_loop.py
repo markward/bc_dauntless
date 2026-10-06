@@ -283,6 +283,13 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc import science_scan_labels
     science_scan_labels.install()
 
+    # Helm's delayed AddHailButton re-check (sensor continuity spec, Guards).
+    # Safe at boot: E5M2 is simply absent from sys.modules yet, so only the
+    # Helm half installs here -- the E5M2 half installs once that module is
+    # imported (see _init_mission).
+    from engine.appc import sensor_mission_guards
+    sensor_mission_guards.install()
+
     import App
 
     # Default destination for fire events.
@@ -4477,14 +4484,28 @@ def _reset_sensor_state() -> None:
     # Clear the player-only contact manager's bands/pending identifications and
     # the unknown-contact label cache so a new mission's ships don't inherit
     # stale state from the prior mission.
-    from engine.appc import sensor_contacts, unknown_labels
+    from engine.appc import sensor_contacts, sensor_occlusion, unknown_labels
     sensor_contacts.reset()
     unknown_labels.reset()
+    # Occlusion's per-set pair/rock caches and its recorded tick time go with
+    # every other sensor cache on a swap.
+    sensor_occlusion.reset()
     # Re-apply the Science Scan Object unknown-label wrap. The SDK module may
     # be re-imported across a mission swap; install() is idempotent (checks
     # the _unknown_labelled flag before wrapping).
     from engine.appc import science_scan_labels
     science_scan_labels.install()
+    # Mission re-identification guards (sensor continuity spec, Guards): the
+    # Outpost first-identification latch must go stale together with E5M2's
+    # own mission-state globals, which Initialize() resets on every (re)load.
+    # install() here only re-applies the Helm half -- this runs BEFORE
+    # _init_mission imports the mission module below, so E5M2 is not yet in
+    # sys.modules on a FIRST load of it; _init_mission calls install() again
+    # right after importing the mission module, which is what actually wraps
+    # E5M2.ShipIdentified.
+    from engine.appc import sensor_mission_guards
+    sensor_mission_guards.install()
+    sensor_mission_guards.reset()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
@@ -4593,7 +4614,18 @@ def _init_mission(mission_module_name: str):
     _init_campaign_context(game, mission_module_name)
     _init_episode_context(episode, mission_module_name)
 
-    mod = importlib.import_module(mission_module_name)
+    # Import through sensor_mission_guards.install_after_import, not a raw
+    # importlib.import_module: reset_sdk_globals's call (above, via
+    # _reset_sensor_state) ran BEFORE this import, so on a mission's FIRST
+    # load that call found nothing to wrap yet. Initialize() below
+    # (specifically SetupEventHandlers) is what registers E5M2's
+    # ShipIdentified as a broadcast handler, so the guard must be in place
+    # before it runs. This is one of TWO mission-load paths that must do
+    # this identically -- the other is
+    # engine.core.game.Episode._load_mission_raw -- see
+    # install_after_import's docstring for why they share the one helper.
+    from engine.appc import sensor_mission_guards
+    mod = sensor_mission_guards.install_after_import(mission_module_name)
     if hasattr(mod, "PreLoadAssets"):
         mod.PreLoadAssets(mission)
     mod.Initialize(mission)

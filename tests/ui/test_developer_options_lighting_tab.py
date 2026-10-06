@@ -96,3 +96,42 @@ def test_js_has_rock_specks_and_rock_puffs_rows_and_focusables():
             "isFoc('rock_puffs'))") in text
     assert "out.push({kind: 'ctrl', target: 'rock_specks'});" in text
     assert "out.push({kind: 'ctrl', target: 'rock_puffs'});" in text
+
+
+# ── Developer Options cleanup (2026-10-05): Environments + Diagnostics tabs,
+# Combat's Sensor Occlusion switch ──────────────────────────────────────────
+
+def test_js_renders_the_environments_body_function():
+    text = open(JS).read()
+    assert "function _doRenderEnvironmentsBody(state, focusables) {" in text
+    assert "(state.selected_tab === 'environments') ? _doRenderEnvironmentsBody(state, focusables)" in text
+
+
+def test_js_rock_rows_moved_out_of_the_lighting_focusable_list():
+    """The rock-toggle focusables must come from the environments branch, not
+    the lighting branch -- a stray row left in both tabs would make a row
+    double-count in _focusables()."""
+    text = open(JS).read()
+    lighting_block = text[text.index("if (state.selected_tab === 'lighting') {"):
+                           text.index("if (state.selected_tab === 'environments') {")]
+    for target in ("rock_catalogue", "minor_rocks", "far_tier",
+                   "rock_specks", "rock_puffs"):
+        assert target not in lighting_block, (
+            "%r still listed under the lighting focusable branch" % target)
+
+
+def test_js_dial_group_row_moved_to_diagnostics():
+    text = open(JS).read()
+    diagnostics_body = text[text.index("function _doRenderDiagnosticsBody"):
+                             text.index("function _doRenderLightingBody")]
+    assert "dial_group" in diagnostics_body
+    lighting_body = text[text.index("function _doRenderLightingBody"):
+                          text.index("function _doRenderEnvironmentsBody")]
+    assert "dial_group" not in lighting_body
+
+
+def test_js_has_a_sensor_occlusion_row_and_focusable():
+    text = open(JS).read()
+    assert "_doToggleRow('Sensor Occlusion', 'sensor_occlusion'," in text
+    assert "s.sensor_occlusion, isFoc('sensor_occlusion'));" in text
+    assert "out.push({kind: 'ctrl', target: 'sensor_occlusion'});" in text

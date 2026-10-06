@@ -522,7 +522,8 @@ and the cell cache. The atlases and catalogue table stay.
   and re-push the sources. Registered as the third dial group, `"far"`, on the
   shared `/ L O` keys. Not persisted; the conftest autouse reset restores the
   defaults.
-- **Developer toggle:** Developer Options → Lighting → "Far tier", default on,
+- **Developer toggle:** Developer Options → Environments → "Far tier" (moved
+  from Lighting in the 2026-10-05 Developer Options cleanup), default on,
   not persisted. Off skips `build` and all three draws, and every `far_fade`
   is 0.
 - Nothing here runs in `render_payload`, and nothing changes game state.

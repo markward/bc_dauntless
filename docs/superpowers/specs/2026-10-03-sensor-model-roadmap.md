@@ -63,8 +63,10 @@ stbc-reference MCP was unreachable 2026-10-03).
 9. **Continuity (Mark's rule).** Concealed < 5 s ⇒ display-only "obscured", identity kept.
    Concealed ≥ 5 s ⇒ lost track: `RemoveKnownObject`, remove its Hail and Scan buttons by
    calling Helm and Science `ExitedSet(ship)` directly (never a fake `ET_EXITED_SET`),
-   re-identify later via the dwell or a scan. Applies to rock occlusion, field and nebula
-   concealment alike.
+   re-identify later via the dwell or a scan. Applies to HIDDEN contacts only (rock
+   occlusion, the dense nebula core): cloak and medium-only concealment (a field,
+   moderate nebula) never lose the track — cloak keeps identity as in BC, a medium only
+   shows Unknown (Mark, 2026-10-05, rulings 1A/2A).
 10. **The player's lock drops at once** when a contact is concealed (today's
     `clear_undetectable_player_lock`, unchanged). Only the row's identity rides the window.
 11. **Scans identify through fields but not through a blocking rock.**
@@ -75,13 +77,18 @@ stbc-reference MCP was unreachable 2026-10-03).
 
 | # | Name | Depends on | Status |
 |---|---|---|---|
-| 1 | **Two tiers** — contact manager, bands, dwell, proximity events, Unknown display, `SensorSubsystem` surface | local main | spec: `2026-10-03-sensor-tiers-design.md` |
-| 2 | **Continuity and occlusion** — obscured window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1, and `feat/rock-fields` merged | not started |
+| 1 | **Two tiers** — contact manager, bands, dwell, proximity events, Unknown display, `SensorSubsystem` surface | local main | ✅ merged b1e1e05a, live-verified — spec: `2026-10-03-sensor-tiers-design.md` |
+| 2 | **Continuity and occlusion** — 5 s window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1 (merged b1e1e05a), rock-fields (merged) | built, unmerged (feat/sensor-continuity) — spec: `2026-10-05-sensor-continuity-occlusion-design.md` |
 | later | **Probes** — BC lets a probe's sensors see for you (`AddProbe`, Science "Launch Probe", E6M4 goal) | 1 | explore after 2 |
 | later | **Over-boost** — BC reveals the whole set above 120% sensor power; decide whether the list shows it | 1 | explore after 2 |
 
 ### Sub-project 2 notes, carried forward
 
+- **Default On.** Occlusion has a developer-only switch
+  (`engine.appc.sensor_occlusion.DEFAULT_ENABLED`) -- Developer Options → Combat →
+  "Sensor Occlusion". It shipped Off while sub-project 2 was built (Mark, 2026-10-05)
+  and was flipped On when it finished (Mark, 2026-10-06). `blocked()` returns False
+  immediately when switched off.
 - **Occluders:** RockClass majors only — the only rocks with a Python position and radius
   every tick (tens per set). `ProximityManager.GetLineIntersectObjects`
   (`engine/appc/planet.py`) is an exact segment-vs-sphere test already used for AI line of

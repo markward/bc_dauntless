@@ -214,7 +214,8 @@ none).
 `./build/dauntless --developer` from this worktree. E2M1 opening: contacts appear grey as
 "Unknown N", named a few seconds later; Science Scan Object shows no real names early.
 E2M2 Serris 2 arrival with low sensors: ships listed unknown, scan names them. Dials:
-Developer Options → Lighting → "Dial keys" → sensors.
+Developer Options → Diagnostics → "Dial keys" → sensors (moved from
+Lighting in the 2026-10-05 Developer Options cleanup).
 
 - **E1M2 asteroid targeting.** `FindGoodTarget`'s `IsObjectVisible(asteroid)` check
   (E1M2.py:6694) is now a real gate instead of a truthy stub — confirm the AI's target

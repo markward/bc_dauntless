@@ -116,13 +116,14 @@ def test_render_payload_shape(panel):
     assert body["tabs"] == [
         {"id": "combat", "label": "Combat"},
         {"id": "lighting", "label": "Lighting"},
+        {"id": "environments", "label": "Environments"},
         {"id": "diagnostics", "label": "Diagnostics"},
     ]
     assert body["selected_tab"] == "combat"
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
-        "disable_collisions": False,
+        "disable_collisions": False, "sensor_occlusion": True,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
@@ -198,11 +199,13 @@ def test_focusables_order(panel):
     assert p._focusables() == [
         ("tab", "combat"),
         ("tab", "lighting"),
+        ("tab", "environments"),
         ("tab", "diagnostics"),
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
         ("ctrl", "disable_collisions"),
+        ("ctrl", "sensor_occlusion"),
         ("ctrl", "quick_repair"),
     ]
 
@@ -367,12 +370,12 @@ def test_normal_map_toggle_round_trips(panel, monkeypatch):
     assert seen == [False, True], seen
 
 
-# ---- Rock catalogue toggle (Lighting tab) ---------------------------------
+# ---- Rock catalogue toggle (Environments tab) ---------------------------------
 
-def test_lighting_tab_exposes_rock_catalogue_row(panel):
+def test_environments_tab_exposes_rock_catalogue_row(panel):
     p, _ = panel
     p.open()
-    p.dispatch_event("tab:lighting")
+    p.dispatch_event("tab:environments")
     payload = _body(p.render_payload())["settings"]
     assert "rock_catalogue" in payload
 
@@ -386,7 +389,7 @@ def test_rock_catalogue_toggle_flips_the_real_flag(panel):
     saved = rock_catalogue.enabled()
     try:
         p.open()
-        p.dispatch_event("tab:lighting")
+        p.dispatch_event("tab:environments")
         p.dispatch_event("toggle:rock_catalogue")
         assert rock_catalogue.enabled() is (not saved)
         p.dispatch_event("toggle:rock_catalogue")
@@ -395,14 +398,14 @@ def test_rock_catalogue_toggle_flips_the_real_flag(panel):
         rock_catalogue.set_enabled(saved)
 
 
-def test_rock_catalogue_ctrl_is_a_lighting_tab_focusable(panel):
+def test_rock_catalogue_ctrl_is_an_environments_tab_focusable(panel):
     p, _ = panel
     p.open()
-    p.dispatch_event("tab:lighting")
+    p.dispatch_event("tab:environments")
     assert ("ctrl", "rock_catalogue") in p._focusables()
 
 
-# ---- Minor rocks toggle (Lighting tab; minor-rocks spec §2) --------------
+# ---- Minor rocks toggle (Environments tab; minor-rocks spec §2) --------------
 
 def test_minor_rocks_toggle_flips_the_real_renderer_flag(panel):
     """Drives renderer.minors_set_enabled, not just a local mirror."""
@@ -412,7 +415,7 @@ def test_minor_rocks_toggle_flips_the_real_renderer_flag(panel):
     saved = renderer.minors_enabled()
     try:
         p.open()
-        p.dispatch_event("tab:lighting")
+        p.dispatch_event("tab:environments")
         p.render_payload()
         assert p.dispatch_event("toggle:minor_rocks") is True
         assert renderer.minors_enabled() is (not saved)
@@ -423,10 +426,10 @@ def test_minor_rocks_toggle_flips_the_real_renderer_flag(panel):
         renderer.minors_set_enabled(saved)
 
 
-def test_minor_rocks_ctrl_is_a_lighting_tab_focusable(panel):
+def test_minor_rocks_ctrl_is_an_environments_tab_focusable(panel):
     p, _ = panel
     p.open()
-    p.dispatch_event("tab:lighting")
+    p.dispatch_event("tab:environments")
     assert ("ctrl", "minor_rocks") in p._focusables()
 
 
@@ -442,7 +445,7 @@ def test_minor_rocks_defaults_on_when_the_renderer_is_unavailable(monkeypatch):
     assert _body(p.render_payload())["settings"]["minor_rocks"] is True
 
 
-# ---- Far tier toggle (Lighting tab; far-tier plan Task 10) --------------
+# ---- Far tier toggle (Environments tab; far-tier plan Task 10) --------------
 
 def test_far_tier_toggle_flips_the_real_renderer_flag(panel):
     """Drives renderer.far_set_enabled, not just a local mirror."""
@@ -452,7 +455,7 @@ def test_far_tier_toggle_flips_the_real_renderer_flag(panel):
     saved = renderer.far_enabled()
     try:
         p.open()
-        p.dispatch_event("tab:lighting")
+        p.dispatch_event("tab:environments")
         p.render_payload()
         assert p.dispatch_event("toggle:far_tier") is True
         assert renderer.far_enabled() is (not saved)
@@ -463,10 +466,10 @@ def test_far_tier_toggle_flips_the_real_renderer_flag(panel):
         renderer.far_set_enabled(saved)
 
 
-def test_far_tier_ctrl_is_a_lighting_tab_focusable(panel):
+def test_far_tier_ctrl_is_an_environments_tab_focusable(panel):
     p, _ = panel
     p.open()
-    p.dispatch_event("tab:lighting")
+    p.dispatch_event("tab:environments")
     assert ("ctrl", "far_tier") in p._focusables()
 
 
@@ -499,7 +502,7 @@ def test_rock_band_toggle_flips_the_real_renderer_flag(panel, name):
     saved = get()
     try:
         p.open()
-        p.dispatch_event("tab:lighting")
+        p.dispatch_event("tab:environments")
         p.render_payload()
         assert p.dispatch_event("toggle:" + name) is True
         assert get() is (not saved)
@@ -511,10 +514,10 @@ def test_rock_band_toggle_flips_the_real_renderer_flag(panel, name):
 
 
 @pytest.mark.parametrize("name", _ROCK_TOGGLES)
-def test_rock_band_ctrl_is_a_lighting_tab_focusable(panel, name):
+def test_rock_band_ctrl_is_an_environments_tab_focusable(panel, name):
     p, _ = panel
     p.open()
-    p.dispatch_event("tab:lighting")
+    p.dispatch_event("tab:environments")
     assert ("ctrl", name) in p._focusables()
 
 
@@ -618,7 +621,7 @@ def test_toggling_the_profiler_re_emits_the_payload(monkeypatch):
     assert '"profiler": true' in after.replace(" ", " ")
 
 
-# ---- Dial-group picker (Lighting tab, minor-rocks spec §5) ---------------
+# ---- Dial-group picker (Diagnostics tab, moved from Lighting 2026-10-05) --
 
 def test_dial_group_row_cycles_active_group():
     import engine.dev_dial_groups as g
@@ -632,6 +635,92 @@ def test_dial_group_row_cycles_active_group():
     assert g.active() == "minors"
     assert '"dial_group": "minors"' in p.render_payload()
     g.reset()
+
+
+def test_dial_group_ctrl_is_a_diagnostics_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:diagnostics")
+    assert ("ctrl", "dial_group") in p._focusables()
+
+
+def test_dial_group_ctrl_is_no_longer_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "dial_group") not in p._focusables()
+
+
+# ---- Environments tab (moved rock toggles, 2026-10-05) --------------------
+
+def test_the_environments_tab_exists():
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    panel = DeveloperOptionsPanel()
+    assert "environments" in [tid for tid, _ in panel._tabs]
+
+
+def test_rock_toggles_are_no_longer_lighting_tab_focusables(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    foc = p._focusables()
+    for name in ("rock_catalogue", "minor_rocks", "far_tier",
+                 "rock_specks", "rock_puffs"):
+        assert ("ctrl", name) not in foc
+
+
+# ---- Sensor Occlusion toggle (Combat tab, sensor-continuity/occlusion) ----
+# Occlusion ships default On (engine.appc.sensor_occlusion.DEFAULT_ENABLED)
+# since sub-project 2 finished; this is the developer-only switch.
+
+def test_combat_tab_includes_sensor_occlusion_focusable(panel):
+    p, _ = panel
+    p.open()
+    assert ("ctrl", "sensor_occlusion") in p._focusables()
+
+
+def test_sensor_occlusion_focusable_sits_before_quick_repair(panel):
+    p, _ = panel
+    p.open()
+    foc = p._focusables()
+    assert foc.index(("ctrl", "sensor_occlusion")) == foc.index(("ctrl", "quick_repair")) - 1
+
+
+def test_toggle_sensor_occlusion_sets_cheat(panel):
+    from engine.appc import sensor_occlusion
+
+    p, _ = panel
+    saved = sensor_occlusion.enabled()
+    try:
+        sensor_occlusion.set_enabled(False)
+        p.open()
+        assert p.dispatch_event("toggle:sensor_occlusion") is True
+        assert sensor_occlusion.enabled() is True
+        assert p.dispatch_event("toggle:sensor_occlusion") is True
+        assert sensor_occlusion.enabled() is False
+    finally:
+        sensor_occlusion.set_enabled(saved)
+
+
+def test_render_payload_includes_sensor_occlusion(panel):
+    p, _ = panel
+    p.open()
+    body = _body(p.render_payload())
+    assert body["settings"]["sensor_occlusion"] is True
+
+
+def test_open_resyncs_sensor_occlusion(panel):
+    from engine.appc import sensor_occlusion
+
+    p, _ = panel
+    saved = sensor_occlusion.enabled()
+    try:
+        sensor_occlusion.set_enabled(False)
+        p.open()
+        body = _body(p.render_payload())
+        assert body["settings"]["sensor_occlusion"] is False
+    finally:
+        sensor_occlusion.set_enabled(saved)
 
 
 def test_every_setting_is_in_the_render_snapshot():

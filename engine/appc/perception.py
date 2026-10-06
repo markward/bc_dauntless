@@ -133,8 +133,9 @@ class Contact:
     # `targetable` but not `subsystems_targetable` — you can shoot at it, not
     # snipe its warp core); an UNIDENTIFIED contact (`identified` False) is
     # the second — BC shows "Unknown N" with no subsystem breakdown until the
-    # observer's sensors resolve it. Nebula concealment remains a plausible
-    # third, and a field called `cloaked` would then be a lie. Defaults True
+    # observer's sensors resolve it. An identity-hiding medium (an asteroid
+    # field or moderate nebula — `sensor_media.medium_unknown`) is the third,
+    # and a field called `cloaked` would have been a lie. Defaults True
     # so every pre-existing `Contact(...)` construction site (tests, the bulk
     # `RebuildShipMenus` synthesiser) keeps its prior "subsystems visible"
     # behaviour without editing every call site.
@@ -156,6 +157,7 @@ def perceived_by(observer) -> tuple:
     clear needed either way.
     """
     from engine.appc import sensor_detection as sd
+    from engine.appc import sensor_contacts, sensor_media
     from engine.appc.sensor_detection import can_detect, effective_sensor_range
     from engine.appc.sets import SetClass
     from engine.appc.ship_death import _out_of_action, is_targetable_wreck
@@ -192,6 +194,24 @@ def perceived_by(observer) -> tuple:
             continue
         dx, dy, dz = sx - ox, sy - oy, sz - oz
         dist_sq = dx * dx + dy * dy + dz * dz
+        known = bool(observer_sensors is not None
+                     and observer_sensors.IsObjectKnown(ship))
+        # `concealment_at` is a density-field sample, not a cheap read, and
+        # this frame needs it for up to three different callers for the SAME
+        # ship: can_detect's nebula gate (when apply_conceal), and — only for
+        # a KNOWN contact — shows_identity's medium check and
+        # sensor_media.subsystems_hidden (an unknown contact short-circuits
+        # both). Sample it ONCE here, only when at least one consumer will
+        # actually read it, and hand the identical value to both — the same
+        # precedent as the already-derived `dist_sq` below. Do NOT let either
+        # consumer re-sample: that would double real work on perceived_by,
+        # which runs every contact every frame.
+        conceal = sd.concealment_at(ship) if (apply_conceal or known) else None
+        # THE display answer (sensor_contacts.shows_identity): known AND not
+        # unknown-by-medium (or freshly scanned). Read from the OBSERVER's
+        # sensors, handed this frame's concealment sample.
+        identified = known and sensor_contacts.shows_identity(
+            ship, sensors=observer_sensors, concealment=conceal)
         # ONE detection rule, shared with the weapons, AI targeting and the
         # player's lock. can_detect also mutates a per-(observer, target)
         # hysteresis latch, which this loop writes once per contact. That is
@@ -209,24 +229,25 @@ def perceived_by(observer) -> tuple:
         # without a second copy of the rule here to drift out of step.
         perceivable = range_gu > 0.0 and can_detect(
             observer, ship, dist_sq_gu=dist_sq,
-            apply_concealment=apply_conceal)
+            apply_concealment=apply_conceal, concealment=conceal)
         alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
-        # A cloaked contact is a fuzzy sensor return: targetable at ship level
-        # (once it clears the checks above) but not down to individual
-        # subsystems. `is_hidden_by_cloak` is an absolute IsCloaked() read, not
-        # a detectability gate — `perceivable`/`targetable` above already
-        # settled detectability via can_detect's range-contest cloak bubble,
-        # so a cloaked ship well inside that bubble is routinely perceivable
-        # AND cloaked at once. That combination is exactly what this field
-        # exists to express.
-        identified = bool(observer_sensors is not None
-                          and observer_sensors.IsObjectKnown(ship))
+        # A cloaked contact, or one inside an identity-hiding medium (an
+        # asteroid field or moderate nebula — sensor_media.medium_unknown),
+        # is a fuzzy sensor return: targetable at ship level (once it clears
+        # the checks above) but not down to individual subsystems.
+        # `sensor_media.subsystems_hidden` is NOT a detectability gate —
+        # `perceivable`/`targetable` above already settled detectability via
+        # can_detect's range-contest cloak bubble, so a cloaked ship well
+        # inside that bubble is routinely perceivable AND subsystem-hidden at
+        # once. That combination is exactly what this field exists to
+        # express.
         out.append(Contact(
             ship=ship,
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
-            subsystems_targetable=identified and not sd.is_hidden_by_cloak(ship),
+            subsystems_targetable=identified and not sensor_media.subsystems_hidden(
+                ship, concealment=conceal),
             identified=identified,
         ))
     return tuple(out)

@@ -1,10 +1,13 @@
 """The sensor model's tunables (sensor-tiers spec §7).
 
-Defaults are BC's own, recovered by reverse engineering
+The first three defaults are BC's own, recovered by reverse engineering
 (STBC-Reverse-Engineering-1/docs/gameplay/sensor-subsystem.md): a hard-coded
 4.0 s identification dwell (GetIdentificationTime @0x005671C0), the near band at
 half sensor range (IsObjectNear @0x00567440) and a 1.0 s periodic sweep
 (interval at 0x008E50F4). RE tier, not tested.
+
+The last four are play-test dials for sub-project 2
+(2026-10-05-sensor-continuity-occlusion-design.md), not recovered BC values.
 
 Read at use. Not persisted; tuned live through the shared / L O keys once
 Developer Options -> Lighting -> "Dial keys" selects "sensors"
@@ -14,13 +17,24 @@ DEFAULTS: dict = {
     "identification_time_s": 4.0,
     "near_fraction": 0.5,
     "sweep_period_s": 1.0,
+    # Sub-project 2 (2026-10-05-sensor-continuity-occlusion-design.md) --
+    # play-test dials, not recovered BC values.
+    "continuity_window_s": 5.0,       # Mark's rule: concealed < this keeps identity
+    "min_blocker_radius_gu": 2.0,     # rocks smaller than this never occlude
+    "field_unknown_threshold": 0.5,   # field a(x) at/above this reads Unknown
+    "nebula_unknown_threshold": 0.14, # half of sensor_detection.LOCK_BREAK_T
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"identification_time_s": 0.5, "near_fraction": 0.05,
-         "sweep_period_s": 0.25}
+         "sweep_period_s": 0.25, "continuity_window_s": 0.5,
+         "min_blocker_radius_gu": 0.25, "field_unknown_threshold": 0.05,
+         "nebula_unknown_threshold": 0.01}
 _MIN = {"identification_time_s": 0.5, "near_fraction": 0.05,
-        "sweep_period_s": 0.25}
-_MAX = {"near_fraction": 1.0}
+        "sweep_period_s": 0.25, "continuity_window_s": 0.5,
+        "min_blocker_radius_gu": 0.25, "field_unknown_threshold": 0.05,
+        "nebula_unknown_threshold": 0.01}
+_MAX = {"near_fraction": 1.0, "field_unknown_threshold": 1.0,
+        "nebula_unknown_threshold": 1.0}
 
 _dials: dict = dict(DEFAULTS)
 

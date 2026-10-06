@@ -224,7 +224,8 @@ GL: the clouds, their instances, shove state, and the per-frame step.
 **Profiling:** `DAUNTLESS_FRAME_SCOPE("space.minors.step")` and
 `"space.minors.draw"`.
 
-**Developer toggle:** Developer Options → Lighting → "Minor rocks", default on,
+**Developer toggle:** Developer Options → Environments → "Minor rocks" (moved
+from Lighting in the 2026-10-05 Developer Options cleanup), default on,
 not persisted. Off means the step and the draw are skipped.
 
 ### 3. Fly-through (player only)
@@ -341,7 +342,8 @@ and death scripts behave exactly as now.
   becomes the first group, unchanged in behaviour and dials, and the minors
   the second.
 - `/` cycles the dials of the **active group**. `L` / `O` step the selected dial.
-- Developer Options → Lighting gets a row, "Dial keys: nebula / minors", that
+- Developer Options → Diagnostics gets a row, "Dial keys: nebula / minors" (moved
+  to Diagnostics in the 2026-10-05 Developer Options cleanup), that
   cycles the active group (default: nebula, so existing muscle memory holds).
 - Every press prints `[<group> dials] selected=… {…}`.
 - `test_dev_key_collisions.py` stays green: no new keys are claimed.
