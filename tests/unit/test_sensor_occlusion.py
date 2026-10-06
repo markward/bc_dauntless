@@ -10,8 +10,8 @@ from engine.appc import sensor_detection as sd
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
 # This whole module is ABOUT occlusion, so enable it for every test here --
-# it ships default Off (DEFAULT_ENABLED) until the sensor-model project
-# finishes. Restored by tests/conftest.py's autouse reset either way; this
+# it ships default On (DEFAULT_ENABLED), but these tests must not ride on the
+# default. Restored by tests/conftest.py's autouse reset either way; this
 # autouse wrapper just saves every test below from asking for the fixture by
 # name.
 @pytest.fixture(autouse=True)
@@ -31,15 +31,24 @@ def _ship(s, name, x, base_range=2000.0):
     return ship
 
 
-# ── default-off contract ─────────────────────────────────────────────────
+# ── default and switch contract ──────────────────────────────────────────
 
-def test_default_is_off_and_a_rock_does_not_block_by_default():
-    """Occlusion ships default Off (DEFAULT_ENABLED) until the sensor-model
-    project finishes. The autouse fixture above turns it ON for every other
-    test in this module, so this one turns it back off first, to prove the
-    shipped default rather than the test harness's override."""
+def test_default_is_on_and_a_rock_blocks_by_default():
+    """Occlusion ships default On (DEFAULT_ENABLED) since sub-project 2
+    finished. The autouse fixture above also turns it on, so this one resets
+    to the shipped default first, to prove the default rather than the test
+    harness's override."""
     sensor_occlusion.reset_enabled()
-    assert sensor_occlusion.enabled() is False
+    assert sensor_occlusion.enabled() is True
+    s = SetClass()
+    a, b = _ship(s, "A", 0.0), _ship(s, "B", 100.0)
+    make_major_rock(s, "Rock", at=(50.0, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_occlusion.blocked(a, b) is True
+    assert sd.can_detect(a, b) is False
+
+
+def test_switched_off_a_rock_does_not_block():
+    sensor_occlusion.set_enabled(False)
     s = SetClass()
     a, b = _ship(s, "A", 0.0), _ship(s, "B", 100.0)
     make_major_rock(s, "Rock", at=(50.0, 0.0, 0.0), radius_gu=3.0)

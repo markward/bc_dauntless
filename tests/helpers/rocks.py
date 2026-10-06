@@ -51,9 +51,9 @@ def make_major_rock(pSet, name, *, at=(0.0, 0.0, 0.0), radius_gu=3.0):
 
 @pytest.fixture
 def occlusion_enabled():
-    """Occlusion ships default OFF (sensor_occlusion.DEFAULT_ENABLED) -- off
-    until the sensor-model project finishes. Any test that uses
-    make_major_rock to assert blocking must enable it explicitly, here or via
+    """Occlusion ships default ON (sensor_occlusion.DEFAULT_ENABLED), but any
+    test that uses make_major_rock to assert blocking enables it explicitly so
+    it does not ride on the default -- here or via
     an autouse wrapper in the test module; restores on exit (not reset_enabled
     directly -- tests/conftest.py's autouse reset already does that between
     tests, this fixture is for the body of a single test)."""

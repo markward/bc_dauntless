@@ -202,8 +202,8 @@ def test_unknown_namesake_never_relabels_a_known_ships_button(world):
 
 
 def test_lost_track_behind_a_rock_drops_the_hail_button(world, occlusion_enabled):
-    # Occlusion ships default Off until the sensor-model project finishes;
-    # this test exercises real rock blocking, so it enables it explicitly.
+    # Occlusion ships default On; this test exercises real rock blocking, so
+    # it enables it explicitly rather than riding on the default.
     player, pSet, scan, hail = world
     bird = _known_bird_with_buttons(player, pSet)
     make_major_rock(pSet, "Rock", at=(250.0, 0.0, 0.0), radius_gu=3.0)

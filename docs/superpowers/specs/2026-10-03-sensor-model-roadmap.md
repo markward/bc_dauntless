@@ -84,11 +84,11 @@ stbc-reference MCP was unreachable 2026-10-03).
 
 ### Sub-project 2 notes, carried forward
 
-- **Default Off.** Occlusion ships behind a developer-only switch, default Off
+- **Default On.** Occlusion has a developer-only switch
   (`engine.appc.sensor_occlusion.DEFAULT_ENABLED`) -- Developer Options → Combat →
-  "Sensor Occlusion" -- off until this project finishes (Mark, 2026-10-05). `blocked()`
-  returns False immediately when disabled, so production `can_detect` is unchanged
-  until a developer opts in.
+  "Sensor Occlusion". It shipped Off while sub-project 2 was built (Mark, 2026-10-05)
+  and was flipped On when it finished (Mark, 2026-10-06). `blocked()` returns False
+  immediately when switched off.
 - **Occluders:** RockClass majors only — the only rocks with a Python position and radius
   every tick (tens per set). `ProximityManager.GetLineIntersectObjects`
   (`engine/appc/planet.py`) is an exact segment-vs-sphere test already used for AI line of

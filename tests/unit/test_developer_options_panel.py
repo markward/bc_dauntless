@@ -123,7 +123,7 @@ def test_render_payload_shape(panel):
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
-        "disable_collisions": False, "sensor_occlusion": False,
+        "disable_collisions": False, "sensor_occlusion": True,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
@@ -670,8 +670,8 @@ def test_rock_toggles_are_no_longer_lighting_tab_focusables(panel):
 
 
 # ---- Sensor Occlusion toggle (Combat tab, sensor-continuity/occlusion) ----
-# Occlusion ships default Off (engine.appc.sensor_occlusion.DEFAULT_ENABLED)
-# until the sensor-model project finishes; this is the developer-only switch.
+# Occlusion ships default On (engine.appc.sensor_occlusion.DEFAULT_ENABLED)
+# since sub-project 2 finished; this is the developer-only switch.
 
 def test_combat_tab_includes_sensor_occlusion_focusable(panel):
     p, _ = panel
@@ -692,6 +692,7 @@ def test_toggle_sensor_occlusion_sets_cheat(panel):
     p, _ = panel
     saved = sensor_occlusion.enabled()
     try:
+        sensor_occlusion.set_enabled(False)
         p.open()
         assert p.dispatch_event("toggle:sensor_occlusion") is True
         assert sensor_occlusion.enabled() is True
@@ -705,7 +706,7 @@ def test_render_payload_includes_sensor_occlusion(panel):
     p, _ = panel
     p.open()
     body = _body(p.render_payload())
-    assert body["settings"]["sensor_occlusion"] is False
+    assert body["settings"]["sensor_occlusion"] is True
 
 
 def test_open_resyncs_sensor_occlusion(panel):
@@ -714,10 +715,10 @@ def test_open_resyncs_sensor_occlusion(panel):
     p, _ = panel
     saved = sensor_occlusion.enabled()
     try:
-        sensor_occlusion.set_enabled(True)
+        sensor_occlusion.set_enabled(False)
         p.open()
         body = _body(p.render_payload())
-        assert body["settings"]["sensor_occlusion"] is True
+        assert body["settings"]["sensor_occlusion"] is False
     finally:
         sensor_occlusion.set_enabled(saved)
 

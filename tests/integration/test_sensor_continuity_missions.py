@@ -44,9 +44,8 @@ def _move_player_to_beol4(player, beol4):
 
 
 def test_e2m1_karoon_hidden_then_recovered(occlusion_enabled):
-    # Occlusion ships default Off until the sensor-model project finishes;
-    # this integration proof exercises the real E2M1 asteroid field as a
-    # blocker, so it enables it explicitly.
+    # Occlusion ships default On; this integration proof exercises the real E2M1 asteroid field as a
+    # blocker, so it enables it explicitly rather than riding on the default.
     mod = _init_e2m1()
     beol4 = App.g_kSetManager.GetSet("Beol4")
     if beol4.GetObject("Asteroid 3") is None:

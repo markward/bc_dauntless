@@ -28,9 +28,9 @@ no observable behaviour there -- but tests/integration drive
 see Task 4) with a STATIC App game time while moving rocks or ships between
 ticks, and App time alone would then never invalidate either cache on a move.
 
-Gated by a module flag, DEFAULT OFF: `enabled()`/`set_enabled()`. Off until the
-sensor-model project finishes, then flip DEFAULT_ENABLED to True -- Mark
-2026-10-05. The developer-only switch lives at Developer Options -> Combat ->
+Gated by a module flag, DEFAULT ON: `enabled()`/`set_enabled()`. Shipped Off
+during sub-project 2 and flipped On when it finished -- Mark 2026-10-06. The
+developer-only switch lives at Developer Options -> Combat ->
 "Sensor Occlusion" (`engine/ui/developer_options_panel.py`). `blocked()`
 returns False immediately when disabled, before any cache work.
 """
@@ -40,8 +40,8 @@ import App
 import engine.dev_mode as dev_mode
 from engine.appc import sensor_dials
 
-# Off until the sensor-model project finishes, then flip to True -- Mark 2026-10-05.
-DEFAULT_ENABLED = False
+# On by default since sub-project 2 finished -- Mark 2026-10-06.
+DEFAULT_ENABLED = True
 
 # set -> (signature, {(id(a), id(b)): bool}); signature = (game_time,
 # tick_time, major-rock count) for that set.

@@ -18,8 +18,8 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
-# Occlusion ships default Off; this benchmark measures ITS overhead, so it
-# must actually run, not short-circuit on the disabled flag.
+# Occlusion ships default On, but this benchmark measures ITS overhead, so it
+# enables it explicitly rather than riding on the default.
 pytestmark = pytest.mark.usefixtures("occlusion_enabled")
 
 N_SHIPS = 30

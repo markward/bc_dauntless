@@ -165,9 +165,10 @@ not a stress test. The headless benchmark (54 rocks) remains the worst-case boun
    never lose the track (rulings 1A/2A): a cloaked ship keeps its identity, an in-medium
    ship keeps it but displays Unknown.
 4. A scan of a ship behind a major rock does nothing.
-5. Occlusion ships default **Off** (`sensor_occlusion.DEFAULT_ENABLED`), behind
+5. Occlusion ships default **On** (`sensor_occlusion.DEFAULT_ENABLED`), with
    a developer-only switch at Developer Options → Combat → "Sensor
-   Occlusion" — off until the sensor-model project finishes (Mark, 2026-10-05).
+   Occlusion". It shipped Off while sub-project 2 was built (Mark, 2026-10-05)
+   and was flipped On when it finished (Mark, 2026-10-06).
 
 ## Testing
 
@@ -290,9 +291,9 @@ beyond what the Rules/Architecture sections above already describe:
   toggles (Catalogue Rocks, Minor Rocks, Rock Fields, Rock Specks, Rock Puffs) off
   Lighting; "Dial keys" moved to a new Diagnostics tab alongside the Frame Profiler.
   Combat gained the "Sensor Occlusion" switch (`sensor_occlusion.enabled()` /
-  `set_enabled()`), default Off (`DEFAULT_ENABLED`) -- `blocked()` returns False
-  immediately when disabled, before any cache work, so production `can_detect` behaves
-  exactly as before this sub-project until a developer opts in. The flag is a
+  `set_enabled()`), default Off (`DEFAULT_ENABLED`) at the time -- `blocked()` returns
+  False immediately when disabled, before any cache work. **Flipped to default On
+  2026-10-06** after the frame-profiler measurement above showed no cost (Mark). The flag is a
   per-session dev setting, not per-tick cache state: `reset_enabled()` (called by
   `tests/conftest.py`'s autouse reset) restores the default, but `host_loop._reset_sensor_state`
   (mission swap) calls only `sensor_occlusion.reset()`, never `reset_enabled()`.
