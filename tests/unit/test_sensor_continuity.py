@@ -144,18 +144,58 @@ def test_window_is_a_dial(monkeypatch, helm):
     assert helm == [bird]
 
 
-def test_leaving_range_while_hidden_stops_the_clock(helm):
+def test_known_ship_hidden_beyond_range_keeps_running_the_clock(helm):
+    """Sub-project 3: memory keeps a known contact in reach beyond range, so a
+    rock that hides it there still loses the track after the window."""
+    s, player, sensors, bird, rock = _known_bird_behind_rock()
+    sensor_contacts.tick(player, 0.0)
+    bird.SetTranslateXYZ(9000.0, 0.0, 0.0)            # beyond 2000 GU, rock still on the line
+    for t in (1.0, 2.0, 3.0, 4.0):
+        sensor_contacts.tick(player, t)
+        assert sensors.IsObjectKnown(bird) == 1, t
+        assert sensor_contacts.is_concealed(player, bird) is True, t
+    sensor_contacts.tick(player, 5.0)
+    assert sensors.IsObjectKnown(bird) == 0
+    sensor_contacts.tick(player, 6.0)
+    assert helm == [bird]
+
+
+def test_hidden_known_ship_that_goes_jammed_beyond_range_stops_the_clock(monkeypatch, helm):
+    """Beyond range AND jammed is out of reach: not concealment, identity kept
+    (roadmap decision 3)."""
+    from engine.appc import contact_index
     s, player, sensors, bird, rock = _known_bird_behind_rock()
     sensor_contacts.tick(player, 0.0)
     sensor_contacts.tick(player, 1.0)
     assert sensor_contacts.concealed_since(bird) == 0.0
-    bird.SetTranslateXYZ(9000.0, 0.0, 0.0)            # beyond 2000 GU range
+    bird.SetTranslateXYZ(9000.0, 0.0, 0.0)
+
+    class _Neb:
+        def IsObjectInNebula(self, obj):
+            return 1 if obj is bird else 0
+
+    monkeypatch.setattr(contact_index, "nebulae_in", lambda pSet: (_Neb(),))
     for t in (2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0):
         sensor_contacts.tick(player, t)
         assert sensors.IsObjectKnown(bird) == 1, t
         assert sensor_contacts.concealed_since(bird) is None, t
     assert sensor_contacts.is_concealed(player, bird) is False
     assert helm == []
+
+
+def test_unknown_ship_beyond_range_behind_a_rock_is_not_concealed(helm):
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 9000.0)
+    make_major_rock(s, "Rock", at=(250.0, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_contacts.is_concealed(player, bird) is False
+
+
+def test_boosted_player_concealment_counts_beyond_range(helm):
+    s, player, sensors = _world()
+    bird = _ship(s, "Bird", 9000.0)
+    make_major_rock(s, "Rock", at=(250.0, 0.0, 0.0), radius_gu=3.0)
+    sensors._power_factor = 1.25
+    assert sensor_contacts.is_concealed(player, bird) is True
 
 
 # ── unknown by medium ───────────────────────────────────────────────────────
