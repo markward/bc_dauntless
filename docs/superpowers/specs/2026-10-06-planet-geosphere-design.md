@@ -95,7 +95,15 @@ and mesh fixes use, which is what keeps `Model::trace_accel` sound (see
 **Gate.** `apply_geosphere` acts only when the model has exactly one mesh,
 every vertex of that mesh is within 0.5% of the mean vertex distance **from
 the mesh's NODE-LOCAL ORIGIN** (not the vertex-position mean), and the mesh
-has a UV set. The node-local origin, not the vertex mean, is the measuring
+has a UV set. Two further checks pin the mapping the shader reproduces: the
+composed node chain's linear part (node-local → body) must be a **pure
+rotation** — every column of unit length and the columns mutually orthogonal,
+both within 1e-4 — and for every vertex whose body-frame direction
+(rotation · normalize(node-local position)) has |z| ≤ 0.98 and whose stored u
+is not within 1e-3 of 0 or 1, the stored UV must equal `sphere_uv` of that
+direction within 1e-3 (the excluded vertices are BC's pole fan, whose u leaves
+[0, 1], and the seam column, where 0 and 1 are both right). All 31 stock planet
+NIFs pass. The node-local origin, not the vertex mean, is the measuring
 point because on IcePlanet.NIF the vertex mean showed 2.25% radial spread —
 BC's UV sphere duplicates seam-column and pole-fan vertices lopsidedly, which
 biases a naive average — versus ~9e-6 about the node-local origin. Anything
@@ -115,8 +123,8 @@ the geosphere.
   the same node as the original mesh and inherits every node transform, the
   material and the textures. `r` is the mesh's mean vertex distance from that
   origin.
-- `center_body` is that centroid carried through the composed node-to-model
-  transform. For stock planets it is (−0.736648, 0.368324, 0), with
+- `center_body` is the mesh's node-local origin carried through the composed
+  node chain (node-local → body). For stock planets it is (−0.736648, 0.368324, 0), with
   r = 90.0099.
 - `meshes[mesh_index]` keeps BC's original geometry, so the AABB,
   `model_aabb`, ray tracing and every pass that is not sphere-aware see
@@ -166,7 +174,11 @@ When `u_sphere_map != 0`:
   every texture stage that uses `v_uv` (glow, gloss, bump), which are absent
   on stock planets anyway.
 
-When `u_sphere_map == 0`, every current program path is byte-identical. Both
+When `u_sphere_map == 0`, every current program path is byte-identical in its
+output. The sphere-map math (a mat4 multiply, normalize, atan, asin and six
+derivatives) still runs on every opaque-program fragment even then, because the
+derivatives must sit outside any branch; its cost is unmeasured, since GPU
+timing is unavailable on the dev Mac. Both
 the static and skinned programs must declare the uniforms; only the static
 one is exercised.
 
