@@ -104,11 +104,11 @@ DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
 # Nebulae are scenery and must not compete with the stars. The POC got that
 # from CONSTRUCTION rather than opacity alone: a faint interior with a defined
 # edge reads as "a region is here" without drowning the stars inside it. The
-# fill is deliberately heavier than the POC's 0.22 — Mark's call, 2026-08-20;
-# trim it here if it crowds the stars.
-NEBULA_OPACITY = 0.5          # flat interior fill
+# fill is heavier than the POC's 0.22 — Mark set it to 0.5 on 2026-08-20 and
+# trimmed it to 0.35, with the stripes at 0.5, on 2026-10-06.
+NEBULA_OPACITY = 0.35         # flat interior fill
 NEBULA_BORDER_OPACITY = 0.9   # crisp boundary stroke
-NEBULA_HATCH_OPACITY = 0.30   # diagonal bands inside the boundary
+NEBULA_HATCH_OPACITY = 0.5    # diagonal bands inside the boundary (absolute)
 
 # ONE colour for every nebula, deliberately overriding the per-nebula tint in
 # sector_model.json. Those tints are the in-scene backdrop colours and several
@@ -248,6 +248,37 @@ def resolve_anchor(set_name, model=None) -> Tuple[Optional[str], Vec3]:
     return (None, _centroid(systems))
 
 
+# A system further than this many standard deviations beyond the mean
+# distance from the centroid is an outlier for cluster_centre. Today that
+# drops Albirea alone (y -167, z +148, far below and above the rest).
+CLUSTER_OUTLIER_SD = 2.0
+
+
+def cluster_centre(model=None) -> Vec3:
+    """Where the map's camera looks when it opens: the middle of the charted
+    cluster, as the eye reads it.
+
+    The centroid of the systems after dropping outliers — any system more
+    than CLUSTER_OUTLIER_SD standard deviations past the mean distance from
+    the first-pass centroid. One distant system otherwise drags the view off
+    the cluster: the bounding-box centre landed 75 units from where the
+    cluster's middle looks to be (between Riha and Tau Ceti, Mark 2026-10-06),
+    this lands 17 from it. Computed rather than authored, so a mod that adds
+    systems moves it with them.
+    """
+    model = model if model is not None else sm.load_sector_model()
+    systems = _real_systems(model)
+    if not systems:
+        return (0.0, 0.0, 0.0)
+    first = _centroid(systems)
+    dists = [math.dist(s["position"], first) for s in systems]
+    mean = sum(dists) / len(dists)
+    sd = math.sqrt(sum((d - mean) ** 2 for d in dists) / len(dists))
+    kept = [s for s, d in zip(systems, dists)
+            if d <= mean + CLUSTER_OUTLIER_SD * sd]
+    return _centroid(kept or systems)
+
+
 def grid_bounds(systems) -> tuple:
     """(centre_x, centre_y, half_extent, floor_z) for the reference plane.
 
@@ -315,6 +346,7 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                       "color": NEBULA_COLOR,
                       "opacity": NEBULA_OPACITY,
                       "border_opacity": NEBULA_BORDER_OPACITY,
+                      "hatch_opacity": NEBULA_HATCH_OPACITY,
                       "_camera_distance": _distance(pos, eye)})
     discs.sort(key=lambda d: d["_camera_distance"], reverse=True)
 
@@ -453,13 +485,16 @@ _MAX_PITCH = math.radians(89.0)
 
 
 class StarMapCamera:
-    """Orbits the player's current system. The anchor NEVER moves.
+    """Orbits a fixed anchor — the middle of the cluster (cluster_centre).
+    The anchor NEVER moves.
 
     Clicking a star selects it; it does not re-centre the view. With a fixed
-    anchor every on-screen position is read relative to the player, which is
-    the whole job of a nav map — re-centring destroys that, because after one
-    click the centre no longer means anything. There is deliberately no
+    anchor the chart holds still under the player's clicks; re-centring would
+    shift everything after each one. There is deliberately no
     set_anchor/focus/look_at: anchor-moving is absent, not deferred.
+
+    The anchor was the player's own system until 2026-10-06; the player is
+    now marked by the you-are-here arrow and the info panel instead.
     """
 
     def __init__(self, anchor: Vec3, distance: float = DEFAULT_DISTANCE):

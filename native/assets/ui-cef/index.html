@@ -219,52 +219,60 @@
          rectangle (see css/star_map.css).
 
          setStarMapPanel({visible, selected_system, here_system,
-         course_system, mission_systems, labels, warp_points, warp_note,
-         targets_open, targets_title, warp_enabled, warp_label}) drives
-         state; #star-map-labels holds one absolutely positioned label per
-         projected system.
+         course_system, mission_systems, labels, info, warp_enabled,
+         warp_label}) drives state; #star-map-labels holds one absolutely
+         positioned label per projected system.
 
-         Clicking a star opens #star-map-targets, a centred popup listing
-         that system's destinations. It is MODAL over the map: orbit, zoom
-         and picking are dropped while it is up. Choosing one SETS THE COURSE
-         ('star-map/set-course:<id>') and returns to the map — the modal
-         stays open so the plotted course is visible — and the footer's Warp
-         button then engages it and closes. Drag orbits
-         ('star-map/orbit:<dx>,<dy>'); a click without drag picks
+         Clicking a star selects it and moves the info panel to it. Drag
+         orbits ('star-map/orbit:<dx>,<dy>'); a click without drag picks
          ('star-map/pick:<x>,<y>'); wheel zooms ('star-map/zoom:<steps>');
-         the popup's close icon fires 'star-map/back'; Cancel and ESC fire
-         'star-map/cancel'.
+         the footer's Warp button engages the plotted course and closes;
+         Cancel and ESC fire 'star-map/cancel'. The destination popup that
+         listed a system's warp points was removed 2026-10-06, ahead of a
+         new home for them — until then a course is set from Helm -> Set
+         Course.
 
          Reuses the cp-* modal CSS. This replaced #setting-course-panel
          outright, which was retired once the map was verified live.
          Spec: docs/superpowers/specs/2026-08-20-star-map-set-course-design.md -->
-    <section id="star-map-panel" class="cp-modal-layer" style="display:none">
+    <section id="star-map-panel" class="cp-modal-layer" data-panel="star-map" style="display:none">
       <div class="cp-modal cp-modal--large">
-        <div class="cp-header">Set Course</div>
+        <div class="cp-header">Stellar Cartography</div>
         <div class="cp-content sm-body">
+          <!-- Two-panel layout (star_map.css): the system-information panel,
+               left 30% of the body at every window size. Opens on the
+               player's own system and follows the last star clicked
+               (payload `info`). -->
+          <aside id="star-map-info">
+            <div id="star-map-info-name"></div>
+            <div id="star-map-info-here" style="display:none">You are here</div>
+            <p id="star-map-info-summary"></p>
+            <!-- The system's destinations (payload warp_points), one row
+                 each with a crosshair button that sets the course to it
+                 (star-map/set-course:<id>). Rendered by star_map.js. -->
+            <div id="star-map-info-regions-head">Destinations</div>
+            <ul id="star-map-info-regions"></ul>
+            <p id="star-map-info-note"></p>
+            <p id="star-map-info-detail"></p>
+          </aside>
           <div id="star-map-viewport">
             <div id="star-map-labels"></div>
-            <!-- Target popup: a centred card OVER the map, shown only while a
-                 system is selected. Inside the viewport so it is clipped to
-                 the map rect; being opaque here is fine, it is meant to
-                 cover. While it is open the map is modal-frozen (orbit, zoom
-                 and picking are all ignored in dispatch_event) so Back is the
-                 only way out and no click is ambiguous. -->
-            <div id="star-map-targets" style="display:none">
-              <div id="star-map-targets-head">
-                <span id="star-map-targets-title"></span>
-                <!-- Dismisses the popup only; the modal's own Cancel (bottom
-                     right) closes Set Course. Still fires star-map/back — the
-                     action did not change, only its affordance. -->
-                <button id="star-map-back" title="Back to the map"
-                        onclick="dauntlessEvent('star-map/back')">&times;</button>
-              </div>
-              <!-- What this system IS, before the list of where in it you can
-                   go. Hidden when the system has no written entry, so the
-                   destination list keeps its full height rather than sitting
-                   under an empty block. -->
-              <p id="star-map-desc" style="display:none"></p>
-              <ul id="star-map-warps"></ul>
+          </div>
+          <!-- Search, bottom-left of the map. A SIBLING of the viewport, not
+               a child, so its clicks never reach the map's drag/pick
+               handlers. The magnifier opens the field; typing sends
+               star-map/search:<query>, Python returns matching systems
+               (by name or by a destination's name) as search_results, and
+               choosing one fires star-map/select-system:<id>. The section's
+               data-panel tag hands the keyboard to the field while it is
+               focused (text_capture.js). -->
+          <div id="star-map-search">
+            <ul id="star-map-search-results"></ul>
+            <div id="star-map-search-bar">
+              <input id="star-map-search-input" type="text" autocomplete="off"
+                     spellcheck="false" placeholder="Star or destination">
+              <button id="star-map-search-toggle" title="Search"
+                      onclick="starMapToggleSearch()"></button>
             </div>
           </div>
         </div>

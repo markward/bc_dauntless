@@ -20,6 +20,7 @@ struct StarMapDisc {
     float     radius  = 1.0f;   // world units
     float     opacity = 0.5f;   // flat interior fill
     float     border_opacity = 0.9f;  // crisp boundary stroke
+    float     hatch_opacity  = 0.5f;  // diagonal bands inside it (absolute)
 };
 
 /// A world-space line segment — grid, drop-lines, or the plotted course.

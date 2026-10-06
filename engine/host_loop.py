@@ -9113,7 +9113,8 @@ def _starmap_buffers(scene: dict) -> tuple:
     """Flatten a star_map scene dict into the five tuple-lists the native
     binding unpacks (see engine.host_io.starmap_set_scene):
 
-        discs:      ((x, y, z), (r, g, b), radius_world, fill_alpha, border_alpha)
+        discs:      ((x, y, z), (r, g, b), radius_world, fill_alpha, border_alpha,
+                     hatch_alpha)
         lines:      ((ax, ay, az), (bx, by, bz), (r, g, b))
         points:     ((x, y, z), (r, g, b), size_px, selected, (r, g, b) core)
         brackets:   ((x, y, z), mark, (r, g, b), size_px)
@@ -9125,7 +9126,8 @@ def _starmap_buffers(scene: dict) -> tuple:
     """
     return (
         [(d["position"], d["color"], float(d["radius"]),
-          float(d["opacity"]), float(d["border_opacity"]))
+          float(d["opacity"]), float(d["border_opacity"]),
+          float(d["hatch_opacity"]))
          for d in scene["discs"]],
         [(ln["a"], ln["b"], ln["color"]) for ln in scene["lines"]],
         [(p["position"], p["color"], float(p["size_px"]), bool(p["selected"]),

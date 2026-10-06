@@ -58,13 +58,19 @@ def test_css_size_matches_the_python_mirror():
     pct = int(mg.LARGE_MODAL_FRACTION * 100)
     assert _prop(block, "width") == "%dvw" % pct
     assert _prop(block, "height") == "%dvh" % pct
-    assert _prop(block, "min-width") == "%dpx" % mg.LARGE_MODAL_MIN_W
-    assert _prop(block, "min-height") == "%dpx" % mg.LARGE_MODAL_MIN_H
+    fit = int(mg.LARGE_MODAL_FIT_FRACTION * 100)
+    assert _prop(block, "min-width") == "min(%dpx, %dvw)" % (mg.LARGE_MODAL_MIN_W, fit)
+    assert _prop(block, "min-height") == "min(%dpx, %dvh)" % (mg.LARGE_MODAL_MIN_H, fit)
 
 
 def test_large_modal_size_follows_the_view_and_floors():
     assert mg.large_modal_size(1280, 720) == (1024, 576)
     assert mg.large_modal_size(1000, 600) == (900, 560)
+    # Smaller than the floor: the floor shrinks to 96% of the window, so the
+    # modal never overflows it.
+    w, h = mg.large_modal_size(680, 500)
+    assert (w, h) == (680 * 0.96, 500 * 0.96)
+    assert w < 680 and h < 500
     # Content origin: the 1px border cancels out of the centring.
     assert mg.large_modal_content_origin(1280, 720) == (128, 72)
 
