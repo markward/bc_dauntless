@@ -185,8 +185,8 @@
          keyboard-capture contract for the rename and preset-name fields
          (cef-text-input-keyboard-capture-design §4.4), so the menu, overlay
          and toast live INSIDE the section. Reuses the cp-* modal chrome. -->
-    <section id="quick-battle-setup" data-panel="quick-battle-setup">
-      <div class="cp-modal qbs-modal">
+    <section id="quick-battle-setup" class="cp-modal-layer" data-panel="quick-battle-setup">
+      <div class="cp-modal cp-modal--large qbs-modal">
         <div class="cp-header">Quick Battle Setup</div>
         <div class="cp-content">
           <aside id="qbs-groups" class="qbs-groups"></aside>
@@ -238,8 +238,8 @@
          Reuses the cp-* modal CSS. This replaced #setting-course-panel
          outright, which was retired once the map was verified live.
          Spec: docs/superpowers/specs/2026-08-20-star-map-set-course-design.md -->
-    <section id="star-map-panel" style="display:none">
-      <div class="cp-modal">
+    <section id="star-map-panel" class="cp-modal-layer" style="display:none">
+      <div class="cp-modal cp-modal--large">
         <div class="cp-header">Set Course</div>
         <div class="cp-content sm-body">
           <div id="star-map-viewport">
@@ -1078,5 +1078,6 @@
     <script src="js/engineering_power.js"></script>
     <script src="js/first_run.js"></script>
     <script src="js/mods_screen.js"></script>
+    <script src="js/modal_layer.js"></script>
 </body>
 </html>

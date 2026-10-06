@@ -399,30 +399,29 @@ def test_course_system_resolves_from_the_sdk_warp_button(monkeypatch):
 
 
 def test_rect_tracks_the_live_cef_view_size():
-    """The CEF view tracks the host window's size in points and .cp-modal is
-    flex-centred in it, so a fixed rect only coincides with its own chrome at
-    1280x720. set_view_size moves labels, picks and the GL scissor together —
-    they all read self.rect."""
+    """The CEF view tracks the host window's size in points, and the large
+    modal is both sized from it (80vw x 80vh) and flex-centred in it, so a
+    fixed rect only coincides with its own chrome at one size. set_view_size
+    moves labels, picks and the GL scissor together — they all read
+    self.rect."""
     from engine.ui.star_map_panel import MAP_RECT, rect_for_view
 
     p = StarMapPanel()
-    assert p.rect == MAP_RECT == (256, 108, 880, 478)
+    assert p.rect == MAP_RECT == (128, 100, 1024, 494)
 
     p.set_view_size(1512, 983)
     assert p.rect == rect_for_view(1512, 983)
-    # Centred against the modal chrome, not the pinned 1280x720 numbers.
-    # 440 = MODAL_W/2, less the 56px offset that clears the Helm menu.
-    assert p.rect[:2] == (round(1512 / 2 - 440 + 56), round(983 / 2 - 252))
-    assert p.rect[2:] == (880, 478)
+    # Modal 1209.6 x 786.4, centred: content left 151.2, top 98.3 + 28.
+    assert p.rect == (151, 126, 1210, 704)
 
 
-def test_the_map_fills_the_modal_width():
-    """The target list used to be a right-hand column, reserved in CSS with a
-    hard-coded margin-left duplicating MAP_W. It is a centred popup now, so
-    the map spans the whole modal and that duplicate is gone."""
-    from engine.ui.star_map_panel import MAP_W, MODAL_W
+def test_the_rect_is_the_large_modal_body_at_its_size_floor():
+    """Below 1125x700 the 80% rule would undercut the 900x560 floor, so the
+    modal stops shrinking and the map keeps a usable 900x478 body."""
+    from engine.ui.star_map_panel import rect_for_view
 
-    assert MAP_W == MODAL_W
+    # 1000x600: modal floored to 900x560, centred at (50, 20).
+    assert rect_for_view(1000, 600) == (50, 48, 900, 478)
 
 
 def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():

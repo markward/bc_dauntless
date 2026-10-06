@@ -3,9 +3,8 @@ viewport transparent so the GL pass beneath shows through."""
 import re
 from pathlib import Path
 
-from engine.ui.star_map_panel import (FOOTER_H, HEADER_H, MAP_H, MAP_RECT,
-                                      MAP_W, MODAL_H, MODAL_OFFSET_X, MODAL_W,
-                                      rect_for_view)
+from engine.ui.modal_geometry import large_modal_size
+from engine.ui.star_map_panel import FOOTER_H, HEADER_H, MAP_RECT, rect_for_view
 
 ASSETS = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
 
@@ -215,46 +214,39 @@ def _viewport_css_body():
     return block.group(1)
 
 
-def _calc_offset(body, prop):
-    """The Npx in `prop: calc(50% - Npx)` — the CSS half of the centring rule."""
-    m = re.search(prop + r"\s*:\s*calc\(\s*50%\s*-\s*(-?\d+(?:\.\d+)?)px\s*\)",
-                  body)
-    assert m, "missing " + prop + ": calc(50% - Npx) in #star-map-viewport"
-    return float(m.group(1))
-
-
-def test_viewport_css_centring_matches_the_python_formula():
+def test_the_viewport_is_the_modal_body_by_construction():
     """Python projects labels and hit-tests clicks against panel.rect; the GL
     pass scissors to it. If the CSS rect disagrees, every label is displaced
     and every click mis-picks.
 
-    The rect is NOT a constant — the CEF logical view tracks the host window
-    in points and .cp-modal is flex-centred in it, so both languages express
-    the SAME centring rule. Assert the CSS offsets are derived from the same
-    modal constants rather than pinning literals (which is exactly how the
-    two drifted: fixed CSS + a fixed MAP_RECT agreed only at 1280x720, and at
-    1512x982 the chrome sat at (316, 211) with the map at (200, 108))."""
+    The viewport used to be position:fixed at a calc() centring offset that
+    duplicated the modal's pixel size — which is how the two once drifted (a
+    fixed CSS rect and a fixed MAP_RECT agreed only at 1280x720). Now the
+    modal is viewport-sized, so the viewport is simply `inset: 0` inside
+    .sm-body, the flex child between the header and the footer: the CSS
+    states no geometry of its own to drift. The Python half of the same rect
+    is pinned in test_python_rect_is_the_large_modal_body."""
     body = _viewport_css_body()
+    assert re.search(r"position\s*:\s*absolute", body), body
+    assert re.search(r"inset\s*:\s*0\b", body), body
+    for prop in ("left", "top", "width", "height"):
+        assert not re.search(r"(?<![-\w])" + prop + r"\s*:", body), (
+            "#star-map-viewport must not state its own " + prop
+            + " — the rect comes from .sm-body")
 
-    # 50% - MODAL_W/2 horizontally; 50% - (MODAL_H/2 - HEADER_H) vertically.
-    # The 1px border cancels — see rect_for_view's docstring.
-    assert _calc_offset(body, "left") == MODAL_W / 2 - MODAL_OFFSET_X
-    assert _calc_offset(body, "top") == MODAL_H / 2 - HEADER_H
-
-    def _px(prop):
-        m = re.search(prop + r"\s*:\s*(-?\d+(?:\.\d+)?)px", body)
-        assert m, "missing " + prop + " in #star-map-viewport"
-        return float(m.group(1))
-
-    assert (_px("width"), _px("height")) == (float(MAP_W), float(MAP_H))
-    assert "position" in body and "fixed" in body
-
-    # The map fills the modal now, so MAP_W is MODAL_W and the CSS left
-    # offset doubles as the width pin. The right-hand column that used to
-    # reserve space with a hard-coded margin-left duplicating MAP_W is gone —
-    # the target list is a centred popup, which cannot drift out of step.
-    assert MAP_W == MODAL_W
     css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    sm_body = re.search(r"\.sm-body\s*\{([^}]*)\}", css)
+    assert sm_body and re.search(r"position\s*:\s*relative", sm_body.group(1)), (
+        ".sm-body must be the viewport's positioning context")
+    # ...and the viewport is its direct child, so nothing in between can
+    # become the containing block instead.
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    chain = _ancestor_chain(index, "star-map-viewport")
+    assert "sm-body" in chain[-1]["classes"], chain[-1]
+
+    # The right-hand column that used to reserve space with a hard-coded
+    # margin-left duplicating the map width is gone — the target list is a
+    # centred popup, which cannot drift out of step.
     warps_block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
     assert warps_block, "no #star-map-warps rule"
     assert "margin-left" not in warps_block.group(1), (
@@ -273,18 +265,11 @@ def _rule_px(css, selector, prop):
 def test_the_map_rect_fits_the_modal_body():
     """The map must fit BETWEEN the header and the footer.
 
-    The centring test above is a closed loop between MAP_* and the two CSS
-    calc() offsets: it pins where the rect starts, and nothing checked that it
-    ENDS inside the modal body. It did not — MAP_H was an asserted 520 against
-    a body of MODAL_H - HEADER_H - FOOTER_H, so the GL backdrop (opaque, and
-    scissored to exactly this rect) painted across the left 640px of the
-    footer strip and hid its top border. Invisible only for as long as an
-    opaque .cp-modal hid the whole map.
-
-    So assert the budget SUMS, and that every term is the real measured CSS
-    rather than a Python-side assertion about it."""
-    assert HEADER_H + MAP_H + FOOTER_H == MODAL_H
-
+    Once MAP_H was an asserted 520 against a 478px body, so the GL backdrop
+    (opaque, and scissored to exactly this rect) painted across the footer
+    strip and hid its top border. So the rect's height is the modal's height
+    less the two strips, and each strip is the real measured CSS rather than
+    a Python-side assertion about it."""
     cp = (ASSETS / "css" / "configuration_panel.css").read_text(encoding="utf-8")
     sm = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
 
@@ -294,15 +279,14 @@ def test_the_map_rect_fits_the_modal_body():
     assert _rule_px(cp, ".cp-header", "height") == HEADER_H
     assert _rule_px(sm, "#star-map-panel .cp-footer", "height") == FOOTER_H
 
-    # ...and the modal those three divide up is the one Python assumes.
-    assert _rule_px(sm, "#star-map-panel .cp-modal", "width") == MODAL_W
-    assert _rule_px(sm, "#star-map-panel .cp-modal", "height") == MODAL_H
+    for view in ((1280, 720), (1512, 983), (1000, 600)):
+        _w, h = large_modal_size(*view)
+        assert rect_for_view(*view)[3] == round(h - HEADER_H - FOOTER_H), view
 
-    # The target popup is a centred card INSIDE the map rect, not a column
-    # beside it, so it is sized in percentages of the viewport and shares no
-    # literal with MAP_H. What must hold is that it cannot escape the rect:
+    # The target popup is a centred card INSIDE the map rect, sized in
+    # percentages of the viewport, so it cannot escape the rect:
     # #star-map-viewport clips it (overflow: hidden) and the card's own
-    # max-height is a fraction, never a pixel count that could exceed MAP_H.
+    # max-height is a fraction, never a pixel count.
     targets = re.search(r"#star-map-targets\s*\{([^}]*)\}", sm)
     assert targets, "no #star-map-targets rule"
     mh = re.search(r"max-height\s*:\s*(\d+)%", targets.group(1))
@@ -310,27 +294,16 @@ def test_the_map_rect_fits_the_modal_body():
     assert "overflow" in _viewport_css_body() and "hidden" in _viewport_css_body()
 
 
-def test_python_rect_reproduces_the_css_rect_at_two_view_sizes():
-    """The two languages must agree on real numbers, not just on constants.
-    1280x720 is the boot view (and MAP_RECT's pinned value); 1512x983 is an
-    odd size that exercises the half-pixel rounding."""
-    body = _viewport_css_body()
-    left_off, top_off = _calc_offset(body, "left"), _calc_offset(body, "top")
-
-    def _css_rect(view_w, view_h):
-        # Chromium resolves 50% against the view; rect_for_view rounds. The
-        # two can differ by <=1px on odd sizes — the labels live INSIDE the
-        # CSS rect so they never separate from it, and a <=1px star offset is
-        # invisible. Assert agreement to that tolerance.
-        return (view_w / 2 - left_off, view_h / 2 - top_off)
-
-    assert rect_for_view(1280, 720) == MAP_RECT == (256, 108, 880, 478)
-    for view_w, view_h in ((1280, 720), (1512, 983)):
-        rx, ry, rw, rh = rect_for_view(view_w, view_h)
-        cx, cy = _css_rect(view_w, view_h)
-        assert abs(rx - cx) <= 1.0, (view_w, view_h, rx, cx)
-        assert abs(ry - cy) <= 1.0, (view_w, view_h, ry, cy)
-        assert (rw, rh) == (MAP_W, MAP_H)
+def test_python_rect_is_the_large_modal_body():
+    """The real numbers, worked by hand from the CSS: 80vw x 80vh floored at
+    900x560, flex-centred (the 1px border cancels), less HEADER_H on top and
+    FOOTER_H below. 1280x720 is the boot view (MAP_RECT); 1512x983 lays out
+    fractionally (Chromium may land <=1px from round(), invisible, and the
+    labels live inside the CSS rect so they cannot separate from it);
+    1000x600 is below the floor."""
+    assert rect_for_view(1280, 720) == MAP_RECT == (128, 100, 1024, 494)
+    assert rect_for_view(1512, 983) == (151, 126, 1210, 704)
+    assert rect_for_view(1000, 600) == (50, 48, 900, 478)
 
 
 def test_render_fn_matches_the_python_payload_name():
@@ -470,28 +443,26 @@ def test_the_warp_button_label_comes_from_the_payload():
     assert "warp_enabled" in js
 
 
-def test_the_modal_is_offset_clear_of_the_helm_menu():
-    """The modal sits RIGHT of centre so the Helm menu it is opened from stays
-    visible. #tactical-left-column is left:24 width:224 (x 24..248); a centred
-    880-wide modal starts at x 200 and covered the map's leftmost 48px.
+def test_the_window_is_the_shared_large_modal():
+    """Set Course is a standard large modal: same root layer, same size as
+    Quick Battle Setup, centred. It used to be a fixed 880x560 shifted 56px
+    right to keep the Helm menu visible; the large modal covers that column
+    and hides the HUD beneath it instead (js/modal_layer.js), so any local
+    size or offset here would only re-separate the map from its frame."""
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    chain = _ancestor_chain(index, "star-map-viewport")
+    root = next(el for el in chain if el["id"] == "star-map-panel")
+    modal = next(el for el in chain if "cp-modal" in el["classes"])
+    assert "cp-modal-layer" in root["classes"]
+    assert "cp-modal--large" in modal["classes"]
 
-    Two numbers must agree — the modal's own `left` and the viewport's calc()
-    offset — so pin both against the Python constant. An offset applied to one
-    and not the other separates the map from its own frame, which is the exact
-    failure the centring rule was introduced to end.
-    """
     css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    modal = re.search(r"#star-map-panel \.cp-modal\s*\{([^}]*)\}", css)
-    assert modal, "no #star-map-panel .cp-modal rule"
-    m = re.search(r"left\s*:\s*(-?\d+(?:\.\d+)?)px", modal.group(1))
-    assert m, "modal has no left offset"
-    assert float(m.group(1)) == float(MODAL_OFFSET_X)
-    assert "relative" in modal.group(1), (
-        "the offset must be relative, so it shifts the modal without "
-        "disturbing the flex centring the viewport calc() assumes")
-
-    # ...and the resulting rect actually clears the HUD column.
-    assert MAP_RECT[0] >= 248, MAP_RECT
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    for block in re.findall(r"#star-map-panel(?:\s+\.cp-modal)?\s*\{([^}]*)\}",
+                            css):
+        for prop in ("width", "height", "left", "z-index", "position"):
+            assert not re.search(r"(?<![-\w])" + prop + r"\s*:", block), (
+                "star_map.css overrides the shared large modal's " + prop)
 
 
 def _rule_color(css, selector):

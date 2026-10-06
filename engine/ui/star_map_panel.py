@@ -16,19 +16,10 @@ from engine import dev_mode
 from engine.appc import sector_model as sm
 from engine.systems import descriptions as sysdesc
 from engine.ui import star_map
+from engine.ui.modal_geometry import (large_modal_content_origin,
+                                      large_modal_size)
 from engine.ui.panel import Panel
 
-# Modal + map geometry in CEF logical pixels. The modal (.cp-modal) is
-# 880x560 with a 1px border, a fixed 28px .cp-header and a fixed 54px
-# .cp-footer; the map fills the WHOLE body BETWEEN them.
-#
-# MAP_H is DERIVED, never asserted. It was a hardcoded 520 against a 478px
-# body, so the map's opaque GL backdrop overran the footer strip by 42px. The
-# three vertical terms must sum to MODAL_H, and every one of them is pinned to
-# the real CSS by test_the_map_rect_fits_the_modal_body — .cp-header's height
-# in configuration_panel.css, .cp-footer's in star_map.css (the shared rule is
-# padding-sized, i.e. font-dependent, so the map gives it a fixed height to
-# divide by), and .cp-modal's own width/height literals.
 # Actions that drive the MAP itself. Ignored while the target popup is open,
 # which is what makes that popup modal.
 _MAP_ACTIONS = frozenset({"orbit", "zoom", "pick"})
@@ -37,55 +28,50 @@ _MAP_ACTIONS = frozenset({"orbit", "zoom", "pick"})
 # normal path: the label comes from the same database the Helm menu reads.
 _WARP_FALLBACK = "Warp"
 
-MODAL_W, MODAL_H = 880, 560
-MODAL_BORDER = 1
+# Map geometry in CEF logical pixels. The modal is the shared large modal
+# (engine/ui/modal_geometry.py, `.cp-modal--large`), so its size tracks the
+# view; only the header and footer strips are fixed. The map fills the WHOLE
+# body BETWEEN them, by construction: #star-map-viewport is `inset: 0` inside
+# .sm-body, which is the flex child between .cp-header and .cp-footer.
+#
+# The map height is DERIVED, never asserted. It was once a hardcoded 520
+# against a 478px body, so the map's opaque GL backdrop overran the footer
+# strip by 42px. HEADER_H and FOOTER_H are pinned to the real CSS by
+# test_the_map_rect_fits_the_modal_body — .cp-header's height in
+# configuration_panel.css, .cp-footer's in star_map.css (the shared rule is
+# padding-sized, i.e. font-dependent, so the map gives it a fixed height to
+# subtract).
 HEADER_H = 28
 FOOTER_H = 54
-MAP_W = MODAL_W        # the map fills the modal; targets are a popup OVER it
-MAP_H = MODAL_H - HEADER_H - FOOTER_H
-
-# Shifted RIGHT of centre, deliberately. #tactical-left-column (the HUD, and
-# with it the open Helm menu) is left:24 width:224, i.e. x 24..248. A centred
-# 880-wide modal starts at x 200, so the menu covered the map's leftmost 48px
-# — and the menu has to stay visible, because Set Course is opened FROM it.
-# 56 clears 248 with 8px to spare. Mirrored by the CSS calc() offsets, which
-# the agreement test checks against this constant.
-MODAL_OFFSET_X = 56
 
 
 def rect_for_view(view_w, view_h) -> tuple:
     """Map viewport rect (x, y, w, h) for a CEF logical view of this size.
 
     The CEF view is NOT a constant: it tracks the host window's size in
-    points (host_loop._compute_cef_resize), and .cp-modal is flex-CENTRED in
-    it. Pinning the viewport at one view's numbers made the map coincide with
-    its own chrome only at 1280x720 — at 1512x982 the frame sat at (316, 211)
-    while the map drew at (200, 108), outside it. So the centring rule is
-    expressed here, once, and mirrored by exactly one CSS calc() per axis.
+    points (host_loop._compute_cef_resize), and the large modal is both sized
+    from it (80vw x 80vh) and flex-CENTRED in it. So the rect is recomputed
+    from the view every frame (set_view_size), from the one shared rule in
+    modal_geometry.
 
-    The 1px border cancels out of the centring: the modal's OUTER box is
-    MODAL_W + 2 wide (content-box), so the content's left edge is
-    (view - (MODAL_W + 2)) / 2 + 1 == view / 2 - MODAL_W / 2. Hence the CSS is
-    `calc(50% - 440px)` / `calc(50% - 252px)` with no border term, and
-    MODAL_BORDER exists to name why it is absent rather than to be used.
+    Chromium lays 80vw out in fractional pixels and may disagree with this
+    round() by <=1px, shifting the GL stars up to 1px against the CEF labels.
+    That is invisible, and it cannot separate the labels from the hole: the
+    labels live INSIDE #star-map-viewport, so they move with the CSS rect
+    whatever it resolves to.
 
-    Chromium resolves `50%` in device pixels and may disagree with Python's
-    round() by <=1px on odd view dimensions, shifting the GL stars up to 1px
-    against the CEF labels. That is invisible, and it cannot separate the
-    labels from the hole: the labels live INSIDE #star-map-viewport, so they
-    move with the CSS rect whatever it resolves to.
-
-    Clamped at 0 so a view smaller than the modal never yields a negative
-    origin (which the GL scissor would reject and picking would mis-offset).
+    Clamped at 0 so a view smaller than the modal's floor never yields a
+    negative origin (which the GL scissor would reject and picking would
+    mis-offset).
     """
-    return (max(0, round(view_w / 2 - MODAL_W / 2 + MODAL_OFFSET_X)),
-            max(0, round(view_h / 2 - MODAL_H / 2 + HEADER_H)),
-            MAP_W, MAP_H)
+    w, h = large_modal_size(view_w, view_h)
+    x, y = large_modal_content_origin(view_w, view_h)
+    return (max(0, round(x)), max(0, round(y + HEADER_H)),
+            round(w), round(h - HEADER_H - FOOTER_H))
 
 
 # The rect at the boot view size (host_loop.py:_CEF_VIEW_W/H start 1280x720).
-# Kept as a named constant because it is the panel's own starting rect and the
-# value the CSS-agreement test pins the formula against.
+# Kept as a named constant because it is the panel's own starting rect.
 MAP_RECT = rect_for_view(1280, 720)
 
 
