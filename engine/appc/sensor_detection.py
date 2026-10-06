@@ -6,7 +6,10 @@ offline (disabled at <= DisabledPercentage, or destroyed). Dense nebulae
 further reduce effective range (CONCEAL_K) and break detection outright
 above LOCK_BREAK_T, with per-pair hysteresis. A major rock on the line of
 sight blocks detection outright too (engine.appc.sensor_occlusion.blocked;
-sub-project 2 of the sensor model). `effective_sensor_range` and
+sub-project 2 of the sensor model). Beyond range, a known contact (BC's
+sensor memory) or any contact while sensors are over-boosted is still
+detected unless a nebula jams it (`jammed`; sub-project 3).
+`effective_sensor_range` and
 `concealment_at` are the two terms of the range/nebula predicate, not
 separate subjects; `clear_undetectable_player_lock` is the predicate applied
 to the player's own lock.
@@ -371,6 +374,11 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     sight between observer and target (``sensor_occlusion.blocked``), gated
     by ``ENHANCED_SENSOR_CONTEST`` like the rest of this contest.
 
+    Beyond range, BC's sensor MEMORY and OVER-BOOST still reach the target
+    (``_beyond_range_reach``; sub-project 3): a known contact, or any contact
+    when sensors run above ``overboost_threshold`` normal power -- same set,
+    not fully cloaked, and not ``jammed``.
+
     ALL THREE optional parameters are KEYWORD-ONLY, deliberately. ``bool`` is
     a subclass of ``int``, so the natural misreading ``can_detect(a, b, False)``
     would bind ``dist_sq_gu=False`` — and ``False <= r * r`` is True for any
@@ -460,7 +468,56 @@ def can_detect(observer, target, *, dist_sq_gu=None,
         tx, ty, tz = _get_xyz(target)
         dx, dy, dz = tx - ox, ty - oy, tz - oz
         dist_sq_gu = dx * dx + dy * dy + dz * dz
-    return dist_sq_gu <= (r * r)
+    if dist_sq_gu <= (r * r):
+        return True
+    # ── Beyond range (sub-project 3): BC's memory and over-boost ──────────
+    return _beyond_range_reach(observer, target, cloaked)
+
+
+def _beyond_range_reach(observer, target, cloaked) -> bool:
+    """BC's two out-of-range ways in (IsObjectVisible @0x005671D0;
+    2026-10-06-sensor-overboost-memory-design.md): OVER-BOOST -- the
+    observer's NormalPowerPercentage strictly above the `overboost_threshold`
+    dial (BC 1.2f @0x0089054c) sees the whole set -- and MEMORY -- a contact
+    the observer's sensors already know (IsObjectKnown). Both need the same
+    set and a target that is not fully cloaked (BC's set and absolute-cloak
+    gates precede them), and both are cancelled by `jammed`. Neither
+    identifies anything. Not part of the stage-4 contest: the
+    ENHANCED_SENSOR_CONTEST / apply_concealment switches leave it on.
+    AI has no identification tier, so memory never applies to an AI observer
+    in practice, and AI never raises sensor power above 1.0."""
+    if cloaked or not _same_set(observer, target):
+        return False
+    sensors = (observer.GetSensorSubsystem()
+               if implements(observer, "GetSensorSubsystem") else None)
+    if sensors is None:
+        return False
+    from engine.appc import sensor_dials
+    boosted = (sensors.GetNormalPowerPercentage()
+               > sensor_dials.get("overboost_threshold"))
+    if not boosted:
+        known = (implements(sensors, "IsObjectKnown")
+                 and bool(sensors.IsObjectKnown(target)))
+        if not known:
+            return False
+    return not jammed(observer, target)
+
+
+def in_reach(observer, target) -> bool:
+    """Would *observer* reach *target* if nothing hid it? The continuity
+    clock's "in reach" (sensor_contacts.is_concealed): the UNSHRUNK effective
+    range -- no density sample, no latch mutation, so a ship in the dense
+    nebula core still counts -- or `_beyond_range_reach`. Ignores rock
+    occlusion and the nebula core on purpose: those are what conceal."""
+    r = effective_sensor_range(observer)
+    if r <= 0.0:
+        return False
+    ox, oy, oz = _get_xyz(observer)
+    tx, ty, tz = _get_xyz(target)
+    dx, dy, dz = tx - ox, ty - oy, tz - oz
+    if dx * dx + dy * dy + dz * dz <= r * r:
+        return True
+    return _beyond_range_reach(observer, target, is_hidden_by_cloak(target))
 
 
 def clear_undetectable_player_lock(player) -> None:
