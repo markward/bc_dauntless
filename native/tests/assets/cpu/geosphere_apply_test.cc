@@ -98,3 +98,81 @@ TEST(ApplyGeosphere, LeavesMultiMeshModelUntouched) {
     EXPECT_FALSE(assets::apply_geosphere(m, stub_mesh, true));
     EXPECT_FALSE(m.sphere_map.has_value());
 }
+
+// --- Ruling 3: the stricter gate. Each case is a single-mesh model holding
+// IcePlanet's own CPU mesh and node chain with one property broken, so it
+// reaches the check under test past the mesh-count gate.
+
+namespace {
+
+// A fresh single-mesh model carrying the plain IcePlanet load's nodes and a
+// copy of its CPU mesh, both passed through `edit` first.
+template <class Edit>
+assets::Model ice_planet_copy(const assets::Model& src, Edit edit) {
+    assets::Model m;
+    m.nodes = src.nodes;
+    m.root_node = src.root_node;
+    assets::MeshCpu cpu = *src.meshes[0].cpu_data();
+    edit(m, cpu);
+    assets::Mesh mesh = stub_mesh(cpu);
+    mesh.set_cpu_data(std::move(cpu));
+    m.meshes.push_back(std::move(mesh));
+    return m;
+}
+
+class ApplyGeosphereGate : public ::testing::Test {
+protected:
+    assets::AssetCache cache{cpu_config()};
+    assets::ModelHandle plain;
+    void SetUp() override {
+        const fs::path nif = env_dir() / "IcePlanet.NIF";
+        if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
+        plain = cache.load(nif, std::vector<fs::path>{env_dir()}, {}, {}, 1.0f, false);
+    }
+};
+
+}  // namespace
+
+TEST_F(ApplyGeosphereGate, UnmodifiedCopyPasses) {
+    // Control: the copy machinery itself does not break the gate.
+    auto m = ice_planet_copy(*plain, [](assets::Model&, assets::MeshCpu&) {});
+    EXPECT_TRUE(assets::apply_geosphere(m, stub_mesh, true));
+    EXPECT_TRUE(m.sphere_map.has_value());
+}
+
+TEST_F(ApplyGeosphereGate, RotatedUMappingIsUntouched) {
+    // A sphere textured with a different longitude origin is not BC's
+    // mapping: the geosphere would draw its texture a quarter turn off.
+    auto m = ice_planet_copy(*plain, [](assets::Model&, assets::MeshCpu& cpu) {
+        for (auto& v : cpu.vertices) v.uv.x = glm::fract(v.uv.x + 0.25f);
+    });
+    EXPECT_FALSE(assets::apply_geosphere(m, stub_mesh, true));
+    EXPECT_FALSE(m.sphere_map.has_value());
+}
+
+TEST_F(ApplyGeosphereGate, OneOutOfRoundVertexIsUntouched) {
+    auto m = ice_planet_copy(*plain, [](assets::Model&, assets::MeshCpu& cpu) {
+        cpu.vertices[cpu.vertices.size() / 2].position *= 1.01f;
+    });
+    EXPECT_FALSE(assets::apply_geosphere(m, stub_mesh, true));
+    EXPECT_FALSE(m.sphere_map.has_value());
+}
+
+TEST_F(ApplyGeosphereGate, ZeroedUvsAreUntouched) {
+    auto m = ice_planet_copy(*plain, [](assets::Model&, assets::MeshCpu& cpu) {
+        for (auto& v : cpu.vertices) v.uv = glm::vec2(0.0f);
+    });
+    EXPECT_FALSE(assets::apply_geosphere(m, stub_mesh, true));
+    EXPECT_FALSE(m.sphere_map.has_value());
+}
+
+TEST_F(ApplyGeosphereGate, NonRotationNodeChainIsUntouched) {
+    // A scaled node turns the node-local sphere into a body-frame ellipsoid,
+    // which no single icosphere radius can match.
+    auto m = ice_planet_copy(*plain, [](assets::Model& model, assets::MeshCpu& cpu) {
+        auto& t = model.nodes[static_cast<std::size_t>(cpu.node_index)].local_transform;
+        t[0] *= 1.5f;   // stretch the node's x column
+    });
+    EXPECT_FALSE(assets::apply_geosphere(m, stub_mesh, true));
+    EXPECT_FALSE(m.sphere_map.has_value());
+}

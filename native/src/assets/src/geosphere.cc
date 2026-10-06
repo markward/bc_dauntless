@@ -99,12 +99,12 @@ bool apply_geosphere(Model& model, const std::function<Mesh(MeshCpu)>& upload,
     // stock sphere primitives are authored with their geometric centre AT
     // that node-local origin (measured: IcePlanet's 673-vertex lat/long
     // sphere has a 9e-6 relative radius spread about (0,0,0), vs. ~2.25%
-    // about its vertex-position mean). The naive mean is a biased centre
-    // estimate here because a lat/long sphere's vertex DENSITY, not just its
-    // geometry, is non-uniform (poles are far more crowded than the
-    // equator), so simple averaging pulls the estimated centre away from the
-    // true one. Measuring from the local origin instead needs no averaging
-    // step and matches the asset exactly.
+    // about its vertex-position mean). The vertex mean is skewed by the
+    // mesh's DUPLICATE vertices -- the seam-column copies (u = 0 and u = 1
+    // at the same point) and the pole-fan copies -- which are not spread
+    // evenly round the sphere, so averaging pulls the estimate off the true
+    // centre. Measuring from the local origin needs no averaging and
+    // matches the asset exactly.
     bool has_uv = false;
     for (const auto& v : cpu.vertices) has_uv = has_uv || v.uv != glm::vec2(0.0f);
     if (!has_uv) return false;
@@ -115,11 +115,32 @@ bool apply_geosphere(Model& model, const std::function<Mesh(MeshCpu)>& upload,
     for (const auto& v : cpu.vertices)
         if (std::abs(glm::length(v.position) - mean) > 0.005f * mean) return false;
 
-    // centre in the body frame: compose the node chain down to the mesh's
-    // node, then carry the node-local origin through it.
+    // Compose the node chain down to the mesh's node (node-local -> body).
     glm::mat4 node_world(1.0f);
     for (int n = src.node_index(); n >= 0; n = model.nodes[n].parent_index)
         node_world = model.nodes[n].local_transform * node_world;
+
+    // Its linear part must be a pure rotation: the icosphere is built with
+    // the node-local radius, and opaque.frag derives the mapping direction
+    // in the body frame, so a scale or shear would make both wrong.
+    const glm::mat3 rot(node_world);
+    for (int c = 0; c < 3; ++c) {
+        if (std::abs(glm::length(rot[c]) - 1.0f) > 1e-4f) return false;
+        if (std::abs(glm::dot(rot[c], rot[(c + 1) % 3])) > 1e-4f) return false;
+    }
+
+    // The stored UVs must be BC's mapping of the BODY-frame direction -- the
+    // mapping opaque.frag reproduces. Skipped where the stored value is not
+    // the formula's by construction: near the poles (BC's fan u leaves
+    // [0, 1]) and on the seam column (u = 0 or 1, either is right).
+    for (const auto& v : cpu.vertices) {
+        const glm::vec3 dir = rot * glm::normalize(v.position);
+        if (std::abs(dir.z) > 0.98f) continue;
+        if (v.uv.x < 1e-3f || v.uv.x > 1.0f - 1e-3f) continue;
+        const glm::vec2 want = sphere_uv(dir);
+        if (std::abs(v.uv.x - want.x) > 1e-3f || std::abs(v.uv.y - want.y) > 1e-3f)
+            return false;
+    }
 
     SphereMap sm;
     sm.mesh_index = 0;

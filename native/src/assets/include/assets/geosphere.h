@@ -38,9 +38,14 @@ int pick_geosphere_level(float world_radius, float center_distance,
                          float focal_px, float max_err_px = 0.5f);
 
 /// Build `model.sphere_map` from its single mesh, if that mesh passes the
-/// sphere gate (spec §4.2): a UV set, and every vertex within 0.5% of the
-/// mean distance from the centroid, measured in the mesh's own vertex
-/// frame. `upload` builds each LOD's GPU mesh (production: upload_mesh;
+/// sphere gate (spec §4.2): a UV set; every vertex within 0.5% of the mean
+/// distance from the NODE-LOCAL ORIGIN (the mesh's own vertex frame, not the
+/// vertex mean); a node chain (node-local -> body) whose linear part is a
+/// pure rotation (unit, orthogonal columns within 1e-4); and stored UVs equal
+/// to sphere_uv(body-frame unit direction) within 1e-3, except near the
+/// poles (|z| > 0.98) and on the seam column (u within 1e-3 of 0 or 1).
+/// The sphere centre in the body frame is the node-local origin carried
+/// through the node chain. `upload` builds each LOD's GPU mesh (production: upload_mesh;
 /// tests: a stub uploader); `keep_cpu_data` mirrors AssetCache::Config and
 /// controls whether each LOD's Mesh retains its MeshCpu for inspection.
 /// Mutates `model` only on success; returns whether the gate passed. Must
