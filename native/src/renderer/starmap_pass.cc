@@ -152,6 +152,7 @@ void StarMapPass::render(const StarMapScene& scene,
         shader.set_float("u_world_size", d.radius);
         shader.set_float("u_opacity",    d.opacity);
         shader.set_float("u_border",      d.border_opacity);
+        shader.set_float("u_hatch",       d.hatch_opacity);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 

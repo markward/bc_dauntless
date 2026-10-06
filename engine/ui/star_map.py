@@ -104,11 +104,11 @@ DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
 # Nebulae are scenery and must not compete with the stars. The POC got that
 # from CONSTRUCTION rather than opacity alone: a faint interior with a defined
 # edge reads as "a region is here" without drowning the stars inside it. The
-# fill is deliberately heavier than the POC's 0.22 — Mark's call, 2026-08-20;
-# trim it here if it crowds the stars.
-NEBULA_OPACITY = 0.5          # flat interior fill
+# fill is heavier than the POC's 0.22 — Mark set it to 0.5 on 2026-08-20 and
+# trimmed it to 0.35, with the stripes at 0.5, on 2026-10-06.
+NEBULA_OPACITY = 0.35         # flat interior fill
 NEBULA_BORDER_OPACITY = 0.9   # crisp boundary stroke
-NEBULA_HATCH_OPACITY = 0.30   # diagonal bands inside the boundary
+NEBULA_HATCH_OPACITY = 0.5    # diagonal bands inside the boundary (absolute)
 
 # ONE colour for every nebula, deliberately overriding the per-nebula tint in
 # sector_model.json. Those tints are the in-scene backdrop colours and several
@@ -346,6 +346,7 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                       "color": NEBULA_COLOR,
                       "opacity": NEBULA_OPACITY,
                       "border_opacity": NEBULA_BORDER_OPACITY,
+                      "hatch_opacity": NEBULA_HATCH_OPACITY,
                       "_camera_distance": _distance(pos, eye)})
     discs.sort(key=lambda d: d["_camera_distance"], reverse=True)
 

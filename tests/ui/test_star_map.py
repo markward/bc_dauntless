@@ -221,6 +221,14 @@ def test_nebulae_carry_a_separate_border_opacity():
     assert sm.NEBULA_BORDER_OPACITY > sm.NEBULA_OPACITY
 
 
+def test_nebula_stripes_carry_their_own_absolute_opacity():
+    """The hatch bands are their own alpha (0.5 over a 0.35 fill), not a
+    fixed fraction of the fill baked into the shader."""
+    neb = sm.build_scene(model=_model())["discs"][0]
+    assert neb["hatch_opacity"] == sm.NEBULA_HATCH_OPACITY
+    assert (sm.NEBULA_OPACITY, sm.NEBULA_HATCH_OPACITY) == (0.35, 0.5)
+
+
 def test_points_carry_display_labels():
     scene = sm.build_scene(model=_model())
     vesuvi = next(p for p in scene["points"] if p["id"] == "vesuvi")
