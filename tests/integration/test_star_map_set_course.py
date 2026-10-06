@@ -115,7 +115,7 @@ def test_drive_star_map_pushes_viewport_camera_and_scene(rec):
     eye, target, up, fov_y_rad, near, far = rec.camera[0]
     cam = panel.cam.camera
     assert eye == cam.eye()
-    assert target == panel.cam.anchor      # anchored on the player's system
+    assert target == panel.cam.anchor      # anchored on the cluster centre
     assert up == cam.up()
     assert (fov_y_rad, near, far) == (cam.fov_y_rad, cam.near, cam.far)
     assert len(rec.scene) == 1
@@ -130,15 +130,16 @@ def test_drive_star_map_flips_y_into_gl_viewport_space(rec):
     panel = StarMapPanel()
     panel.open(set_name="Vesuvi6")
     rx, ry, rw, rh = MAP_RECT
-    # The large modal at 1280x720 is 1024x576 (80vw x 80vh); the map is its
-    # BODY: 576 - HEADER_H 28 - FOOTER_H 54 = 494 high.
-    assert (rx, ry, rw, rh) == (128, 100, 1024, 494)
+    # The large modal at 1280x720 is 1024x576 (80vw x 80vh); its body is
+    # 576 - HEADER_H 28 - FOOTER_H 54 = 494 high, and at this width (>1024)
+    # the map is the body's right 70%, beside the info panel: x 435..1152.
+    assert (rx, ry, rw, rh) == (435, 100, 717, 494)
 
     _drive_star_map(panel, (1280, 720), 720)          # 1:1 framebuffer
-    assert rec.viewport == [(128, 720 - (100 + 494), 1024, 494)]
+    assert rec.viewport == [(435, 720 - (100 + 494), 717, 494)]
 
     _drive_star_map(panel, (2560, 1440), 720)         # Retina: scale 2
-    assert rec.viewport[1] == (128 * 2, 1440 - (100 + 494) * 2, 1024 * 2, 494 * 2)
+    assert rec.viewport[1] == (435 * 2, 1440 - (100 + 494) * 2, 717 * 2, 494 * 2)
 
     # A logical view that is NOT 720 high — the variable that actually
     # changes live (the CEF view tracks the window in points). The rect

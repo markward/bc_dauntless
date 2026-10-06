@@ -18,7 +18,7 @@ def test_script_and_stylesheet_are_registered_in_index():
 def test_panel_section_exists_with_the_required_ids():
     index = (ASSETS / "index.html").read_text(encoding="utf-8")
     for el in ("star-map-panel", "star-map-viewport",
-               "star-map-labels", "star-map-warps"):
+               "star-map-labels", "star-map-info"):
         assert 'id="' + el + '"' in index, el
 
 
@@ -184,27 +184,14 @@ def test_no_ancestor_of_the_map_viewport_paints_an_opaque_background():
 
 def test_the_opaque_star_map_chrome_still_has_a_fill():
     """The counterweight to the test above: punching the hole must not leave
-    the warp-point list and the footer painting transparently over the live
-    scene. Each chrome piece that sits inside the (now transparent) modal
-    carries its own fill."""
+    the footer painting transparently over the live scene. Each chrome piece
+    inside the (now transparent) modal carries its own fill. (The info panel's
+    fill is checked with the two-panel layout, which is where it lives.)"""
     index = (ASSETS / "index.html").read_text(encoding="utf-8")
     chain = _ancestor_chain(index, "star-map-viewport")
-    targets = {"tag": "div", "id": "star-map-targets", "classes": set()}
     footer = {"tag": "div", "id": "", "classes": {"cp-footer"}}
-    for el in (targets, footer):
-        bg = _effective_background(el, chain)
-        assert bg is not None and not _is_transparent(bg), el
-
-    # ...and the popup's list must not re-open the hole inside the card. A
-    # bare <ul> carries the UA `margin: 1em 0`, which would inset it top and
-    # bottom. (#star-map-warps has no .sc-col class, so it gets no reset from
-    # configuration_panel.css.)
-    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
-    assert block, "no #star-map-warps rule"
-    assert re.search(r"(?<!-)margin\s*:\s*0\b", block.group(1)), \
-        "#star-map-warps must zero the UA <ul> margin"
-    assert "list-style" in block.group(1)
+    bg = _effective_background(footer, chain)
+    assert bg is not None and not _is_transparent(bg), footer
 
 
 def _viewport_css_body():
@@ -244,15 +231,6 @@ def test_the_viewport_is_the_modal_body_by_construction():
     chain = _ancestor_chain(index, "star-map-viewport")
     assert "sm-body" in chain[-1]["classes"], chain[-1]
 
-    # The right-hand column that used to reserve space with a hard-coded
-    # margin-left duplicating the map width is gone — the target list is a
-    # centred popup, which cannot drift out of step.
-    warps_block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
-    assert warps_block, "no #star-map-warps rule"
-    assert "margin-left" not in warps_block.group(1), (
-        "the target list is a centred popup — a margin-left here would "
-        "reintroduce the duplicated map width")
-
 
 def _rule_px(css, selector, prop):
     block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
@@ -282,27 +260,21 @@ def test_the_map_rect_fits_the_modal_body():
     for view in ((1280, 720), (1512, 983), (1000, 600)):
         _w, h = large_modal_size(*view)
         assert rect_for_view(*view)[3] == round(h - HEADER_H - FOOTER_H), view
-
-    # The target popup is a centred card INSIDE the map rect, sized in
-    # percentages of the viewport, so it cannot escape the rect:
-    # #star-map-viewport clips it (overflow: hidden) and the card's own
-    # max-height is a fraction, never a pixel count.
-    targets = re.search(r"#star-map-targets\s*\{([^}]*)\}", sm)
-    assert targets, "no #star-map-targets rule"
-    mh = re.search(r"max-height\s*:\s*(\d+)%", targets.group(1))
-    assert mh and int(mh.group(1)) <= 100, targets.group(1)
+    # Labels are clipped to the map rect.
     assert "overflow" in _viewport_css_body() and "hidden" in _viewport_css_body()
 
 
 def test_python_rect_is_the_large_modal_body():
     """The real numbers, worked by hand from the CSS: 80vw x 80vh floored at
     900x560, flex-centred (the 1px border cancels), less HEADER_H on top and
-    FOOTER_H below. 1280x720 is the boot view (MAP_RECT); 1512x983 lays out
+    FOOTER_H below, and above a 1024px view less the 30% info panel. 1280x720 is the boot view (MAP_RECT); 1512x983 lays out
     fractionally (Chromium may land <=1px from round(), invisible, and the
     labels live inside the CSS rect so they cannot separate from it);
     1000x600 is below the floor."""
-    assert rect_for_view(1280, 720) == MAP_RECT == (128, 100, 1024, 494)
-    assert rect_for_view(1512, 983) == (151, 126, 1210, 704)
+    # Wide (> 1024): the map is the body's right 70%, beside the info panel.
+    assert rect_for_view(1280, 720) == MAP_RECT == (435, 100, 717, 494)
+    assert rect_for_view(1512, 983) == (514, 126, 847, 704)
+    # Narrow: the map is the whole body.
     assert rect_for_view(1000, 600) == (50, 48, 900, 478)
 
 
@@ -321,7 +293,8 @@ def test_events_use_the_panel_routing_prefix():
     # appears in star_map.js only in a comment) — see
     # test_cancel_event_is_wired_from_the_cancel_button below, which asserts
     # against the real firing site.
-    for evt in ("star-map/set-course", "star-map/pick",
+    for evt in ("star-map/set-course", "star-map/pick-course",
+                "star-map/pick",
                 "star-map/orbit", "star-map/zoom"):
         assert evt in js, evt
 
@@ -380,27 +353,6 @@ def test_course_and_selected_are_stamped_from_different_state_keys():
     assert "sm-label--selected" in js
     assert "sm-label--course" != "sm-label--selected"
 
-
-def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
-    """A cross top-right, not a Back button top-left. The action is unchanged
-    (still star-map/back — it dismisses the popup, while the modal's own
-    Cancel closes Set Course); only the affordance moved."""
-    index = (ASSETS / "index.html").read_text(encoding="utf-8")
-    head = re.search(r'<div id="star-map-targets-head">(.*?)</div>',
-                     index, re.S)
-    assert head, "no #star-map-targets-head block"
-    body = head.group(1)
-    # Title first, dismiss control second — source order IS visual order
-    # under the head's flex row.
-    assert body.index("star-map-targets-title") < body.index("star-map-back")
-    assert "&times;" in body, "dismiss control is not a cross glyph"
-    assert "dauntlessEvent('star-map/back')" in body
-
-    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    head_rule = re.search(r"#star-map-targets-head\s*\{([^}]*)\}", css)
-    assert head_rule, "no #star-map-targets-head rule"
-    assert "space-between" in head_rule.group(1), (
-        "the head must push the close icon to the right edge")
 
 
 def test_the_warp_button_is_bottom_right_and_disabled_by_default():
@@ -473,17 +425,6 @@ def _rule_color(css, selector):
     return m.group(1).lower()
 
 
-def test_the_mission_destination_row_uses_the_maps_objective_colour():
-    """Map and target list must teach the same colour once.
-
-    System names went white, so the map's objective hue now lives only in the
-    GL reticle. Python owns the CSS companion of that hue
-    (star_map.MARK_MISSION_LABEL_COLOR) so the stylesheet can be pinned to it
-    rather than to another stylesheet rule that might itself change."""
-    from engine.ui.star_map import MARK_MISSION_LABEL_COLOR
-    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    assert _rule_color(css, ".sc-row--mission") == MARK_MISSION_LABEL_COLOR
-
 
 def test_the_here_arrow_uses_the_colour_python_declares():
     from engine.ui.star_map import HERE_MARKER_COLOR
@@ -494,16 +435,6 @@ def test_the_here_arrow_uses_the_colour_python_declares():
     assert m, "the arrow's fill is its border-top colour"
     assert m.group(1).lower() == HERE_MARKER_COLOR
 
-
-def test_the_mission_row_class_is_driven_by_the_payload_flag():
-    """Python decides which row is the objective (it owns the warp button and
-    the catalog); the JS only paints it. Assert the class is actually keyed to
-    the payload's own flag, so renaming the flag cannot leave a class that is
-    never applied."""
-    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
-    assert "sc-row--mission" in js
-    assert re.search(r"\bw\.mission\b", js), (
-        "the mission row class must follow the payload's `mission` flag")
 
 
 def test_unoffered_system_labels_are_dimmed_to_match_the_star():
@@ -594,31 +525,6 @@ def _z_index(css, selector):
     return int(m.group(1)) if m else None
 
 
-def test_the_label_layer_cannot_paint_over_the_target_popup():
-    """System names and the here-arrow must stay UNDER the target popup.
-
-    They carry z-index so names sit above nebula labels. Without a z-index on
-    #star-map-labels that container never forms a stacking context, so those
-    leaf values escape it and compete with the popup directly — which paints
-    at `auto` and therefore loses. That shipped: the Tau Ceti name and the
-    arrow drew straight through the open target card.
-
-    So the invariant is TWO things, and the first is the one that is easy to
-    delete by accident: the label layer must establish a stacking context of
-    its own, AND the popup must outrank it.
-    """
-    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    labels_z = _z_index(css, "#star-map-labels")
-    assert labels_z is not None, (
-        "#star-map-labels needs a z-index to contain its children's stacking")
-    targets_z = _z_index(css, "#star-map-targets")
-    assert targets_z is not None, "#star-map-targets needs an explicit z-index"
-    assert targets_z > labels_z
-
-    # The leaf order INSIDE the layer is still the one the map needs.
-    assert (_z_index(css, ".sm-here-arrow") > _z_index(css, ".sm-label")
-            > _z_index(css, ".sm-label--disc"))
-
 
 def test_the_window_is_titled_after_the_row_that_opens_it():
     """The map opens from Helm -> Set Course -> Stellar Cartography, so the
@@ -629,3 +535,76 @@ def test_the_window_is_titled_after_the_row_that_opens_it():
     section = index[index.index('id="star-map-panel"'):]
     m = re.search(r'<div class="cp-header">([^<]*)</div>', section)
     assert m and m.group(1) == CARTOGRAPHY_LABEL, m and m.group(1)
+
+
+
+def _media_blocks(css, query):
+    """Bodies of every `@media (<query>)` block (one level of nesting)."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    out = []
+    for m in re.finditer(r"@media\s*\(\s*" + re.escape(query) + r"\s*\)\s*\{", css):
+        depth, i = 1, m.end()
+        while depth:
+            depth += {"{": 1, "}": -1}.get(css[i], 0)
+            i += 1
+        out.append(css[m.end():i - 1])
+    return out
+
+
+def test_the_two_panel_breakpoint_and_split_match_python():
+    """CSS decides what is drawn; Python decides where the GL map, labels and
+    picks go. Both must split at the same width and by the same fraction."""
+    from engine.ui.star_map_panel import INFO_FRACTION, WIDE_LAYOUT_MIN_VIEW_W
+
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    wide = _media_blocks(css, "min-width: %dpx" % WIDE_LAYOUT_MIN_VIEW_W)
+    assert len(wide) == 1, "one wide-layout block, at the Python breakpoint"
+    pct = "%d%%" % round(INFO_FRACTION * 100)
+    info = re.search(r"#star-map-info\s*\{([^}]*)\}", wide[0])
+    vp = re.search(r"#star-map-viewport\s*\{([^}]*)\}", wide[0])
+    assert info and re.search(r"(?<![-\w])width\s*:\s*" + pct, info.group(1))
+    assert re.search(r"(?<![-\w])left\s*:\s*0\b", info.group(1))
+    assert vp and re.search(r"(?<![-\w])left\s*:\s*" + pct, vp.group(1))
+    # Opaque chrome beside the hole, like the footer.
+    bg = re.search(r"background\s*:\s*([^;]+);", info.group(1))
+    assert bg and not _is_transparent(bg.group(1).strip())
+
+
+
+
+def test_the_info_panel_renders_text_never_markup():
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    start = js.index("const info = state.info")
+    block = js[start:js.index("root.style.display = 'flex'", start)]
+    assert "textContent" in block and "innerHTML" not in block
+
+
+
+def test_each_destination_row_has_a_set_course_crosshair():
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    assert 'id="star-map-info-regions"' in index
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    fn = js[js.index("function renderStarMapRegions"):js.index("// Orbit / zoom / pick.")]
+    assert "sm-region__course" in fn and "star-map/set-course:" in fn
+    # Labels are mission-supplied: text, never markup. The only innerHTML is
+    # the fixed crosshair SVG.
+    assert "label.textContent" in fn
+    # The only innerHTML is fixed SVG: the crosshair and the objective mark.
+    assert fn.count("innerHTML") == 2
+    assert "btn.innerHTML = SM_CROSSHAIR_SVG" in fn
+    assert "mark.innerHTML = SM_OBJECTIVE_SVG" in fn
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    for sel in (".sm-region__course", ".sm-region--course .sm-region__course",
+                ".sm-region--mission"):
+        assert re.search(re.escape(sel) + r"\s*\{", css), sel
+
+
+
+def test_the_objective_marker_sits_left_of_the_crosshair():
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    fn = js[js.index("function renderStarMapRegions"):js.index("// Orbit / zoom / pick.")]
+    assert "w.objective" in fn
+    # DOM order is screen order in the flex row: label, marker, crosshair.
+    assert fn.index("sm-region__objective") < fn.index("sm-region__course")
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    assert re.search(r"\.sm-region__objective\s*\{[^}]*#99ccff", css)

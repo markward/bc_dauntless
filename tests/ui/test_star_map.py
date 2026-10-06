@@ -733,3 +733,41 @@ def test_dimming_a_dead_star_dims_both_of_its_colours():
     assert v["offered"] is False
     assert v["core_color"] == dim_brown
     assert v["color"] == dim_brown
+
+
+def test_cluster_centre_drops_a_distant_outlier():
+    """Ten systems around (10, 10, 0) and one far away: the centre is the
+    middle of the ten, not dragged toward the stray."""
+    systems = [{"id": "s%d" % i,
+                "position": [10.0 + dx, 10.0 + dy, 0.0]}
+               for i, (dx, dy) in enumerate(
+                   [(-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1),
+                    (1, 1), (-1, 1), (1, -1), (0, 0), (0, 0)])]
+    systems.append({"id": "far", "position": [500.0, -500.0, 300.0]})
+    model = {"systems": systems, "nebulae": [], "starclouds": []}
+    assert sm.cluster_centre(model) == pytest.approx((10.0, 10.0, 0.0))
+
+
+def test_cluster_centre_keeps_an_even_spread():
+    """Nothing is an outlier in a regular spread, so it is the centroid."""
+    model = {"systems": [
+        {"id": "a", "position": [0.0, 0.0, 0.0]},
+        {"id": "b", "position": [10.0, 0.0, 0.0]},
+        {"id": "c", "position": [0.0, 10.0, 0.0]},
+        {"id": "d", "position": [10.0, 10.0, 0.0]},
+    ], "nebulae": [], "starclouds": []}
+    assert sm.cluster_centre(model) == pytest.approx((5.0, 5.0, 0.0))
+    assert sm.cluster_centre({"systems": [], "nebulae": [],
+                              "starclouds": []}) == (0.0, 0.0, 0.0)
+
+
+def test_the_live_chart_centre_sits_by_riha_and_tau_ceti():
+    """The real chart: Albirea is the one outlier, and the centre lands near
+    the Riha / Tau Ceti midpoint where the cluster's middle reads to be."""
+    import math
+    from engine.appc import sector_model
+
+    model = sector_model.load_sector_model()
+    pos = {s["id"]: s["position"] for s in sm._real_systems(model)}
+    mid = [(a + b) / 2 for a, b in zip(pos["riha"], pos["tauceti"])]
+    assert math.dist(sm.cluster_centre(model), mid) < 20.0

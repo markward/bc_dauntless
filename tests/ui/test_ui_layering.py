@@ -36,13 +36,12 @@ _TAG = re.compile(r"<(/?)([a-zA-Z][\w-]*)([^>]*?)(/?)>")
 # Escapes that exist today. Each entry is "<element> in <container>", using the
 # same naming the failure message prints, with the reason it is tolerated.
 _KNOWN_ESCAPES = {
-    # The map's own two layers. Both escape to #star-map-panel (z 50) and are
-    # ordered correctly against each other there (labels 1 < targets 2), which
-    # is what 871cea75 relies on. Containing them on #star-map-viewport would
-    # be tidier but that element is the transparent hole the GL map shows
-    # through, so it is not a change to make casually.
+    # The map's label layer. It escapes to #star-map-panel; nothing else
+    # inside the viewport competes with it since the destination popup was
+    # removed. Containing it on #star-map-viewport would be tidier but that
+    # element is the transparent hole the GL map shows through, so it is not
+    # a change to make casually.
     "#star-map-labels in #star-map-viewport",
-    "#star-map-targets in #star-map-viewport",
 
     # Ship-display silhouette stack: shields (1-4), silhouette (2) and the
     # damage overlay (5) are ordered against each other only.

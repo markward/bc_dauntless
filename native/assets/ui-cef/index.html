@@ -219,21 +219,18 @@
          rectangle (see css/star_map.css).
 
          setStarMapPanel({visible, selected_system, here_system,
-         course_system, mission_systems, labels, warp_points, warp_note,
-         targets_open, targets_title, warp_enabled, warp_label}) drives
-         state; #star-map-labels holds one absolutely positioned label per
-         projected system.
+         course_system, mission_systems, labels, info, warp_enabled,
+         warp_label}) drives state; #star-map-labels holds one absolutely
+         positioned label per projected system.
 
-         Clicking a star opens #star-map-targets, a centred popup listing
-         that system's destinations. It is MODAL over the map: orbit, zoom
-         and picking are dropped while it is up. Choosing one SETS THE COURSE
-         ('star-map/set-course:<id>') and returns to the map — the modal
-         stays open so the plotted course is visible — and the footer's Warp
-         button then engages it and closes. Drag orbits
-         ('star-map/orbit:<dx>,<dy>'); a click without drag picks
+         Clicking a star selects it and moves the info panel to it. Drag
+         orbits ('star-map/orbit:<dx>,<dy>'); a click without drag picks
          ('star-map/pick:<x>,<y>'); wheel zooms ('star-map/zoom:<steps>');
-         the popup's close icon fires 'star-map/back'; Cancel and ESC fire
-         'star-map/cancel'.
+         the footer's Warp button engages the plotted course and closes;
+         Cancel and ESC fire 'star-map/cancel'. The destination popup that
+         listed a system's warp points was removed 2026-10-06, ahead of a
+         new home for them — until then a course is set from Helm -> Set
+         Course.
 
          Reuses the cp-* modal CSS. This replaced #setting-course-panel
          outright, which was retired once the map was verified live.
@@ -242,30 +239,25 @@
       <div class="cp-modal cp-modal--large">
         <div class="cp-header">Stellar Cartography</div>
         <div class="cp-content sm-body">
+          <!-- Two-panel layout (CEF view > 1024px wide, star_map.css): the
+               system-information panel, left 30% of the body. Opens on the
+               player's own system and follows the last star clicked
+               (payload `info`). Hidden at or below the breakpoint, where the
+               map fills the body. -->
+          <aside id="star-map-info">
+            <div id="star-map-info-name"></div>
+            <div id="star-map-info-here" style="display:none">You are here</div>
+            <p id="star-map-info-summary"></p>
+            <!-- The system's destinations (payload warp_points), one row
+                 each with a crosshair button that sets the course to it
+                 (star-map/set-course:<id>). Rendered by star_map.js. -->
+            <div id="star-map-info-regions-head">Destinations</div>
+            <ul id="star-map-info-regions"></ul>
+            <p id="star-map-info-note"></p>
+            <p id="star-map-info-detail"></p>
+          </aside>
           <div id="star-map-viewport">
             <div id="star-map-labels"></div>
-            <!-- Target popup: a centred card OVER the map, shown only while a
-                 system is selected. Inside the viewport so it is clipped to
-                 the map rect; being opaque here is fine, it is meant to
-                 cover. While it is open the map is modal-frozen (orbit, zoom
-                 and picking are all ignored in dispatch_event) so Back is the
-                 only way out and no click is ambiguous. -->
-            <div id="star-map-targets" style="display:none">
-              <div id="star-map-targets-head">
-                <span id="star-map-targets-title"></span>
-                <!-- Dismisses the popup only; the modal's own Cancel (bottom
-                     right) closes Set Course. Still fires star-map/back — the
-                     action did not change, only its affordance. -->
-                <button id="star-map-back" title="Back to the map"
-                        onclick="dauntlessEvent('star-map/back')">&times;</button>
-              </div>
-              <!-- What this system IS, before the list of where in it you can
-                   go. Hidden when the system has no written entry, so the
-                   destination list keeps its full height rather than sitting
-                   under an empty block. -->
-              <p id="star-map-desc" style="display:none"></p>
-              <ul id="star-map-warps"></ul>
-            </div>
           </div>
         </div>
         <!-- .cp-footer is justify-content: space-between, so DOM order IS the
