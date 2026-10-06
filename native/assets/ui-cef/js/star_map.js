@@ -277,9 +277,25 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
+// Two clicks make a double-click when they land within this many ms and
+// px of each other. Detected here rather than with the DOM `dblclick` event,
+// which never fires in-game: the host forwards every click to CEF with
+// clickCount 1 (native/src/ui_cef/cef_lifecycle.cc), and Chromium only
+// synthesises dblclick from a clickCount of 2.
+const SM_DOUBLE_CLICK_MS = 400;
+const SM_DOUBLE_CLICK_PX = 6;
+
+function starMapIsDoubleClick(prev, now) {
+    return !!prev
+        && now.t - prev.t <= SM_DOUBLE_CLICK_MS
+        && Math.abs(now.x - prev.x) <= SM_DOUBLE_CLICK_PX
+        && Math.abs(now.y - prev.y) <= SM_DOUBLE_CLICK_PX;
+}
+
 // Orbit / zoom / pick. A drag orbits; a click without drag picks a star.
 (function () {
     let dragging = false, moved = false, lastX = 0, lastY = 0;
+    let lastClick = null;
     document.addEventListener('DOMContentLoaded', function () {
         const vp = document.getElementById('star-map-viewport');
         if (!vp) return;
@@ -295,17 +311,22 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         vp.addEventListener('mouseup', function (e) {
             if (dragging && !moved) {
-                dauntlessEvent('star-map/pick:' + e.clientX + ',' + e.clientY);
+                const click = {t: Date.now(), x: e.clientX, y: e.clientY};
+                dauntlessEvent('star-map/pick:' + click.x + ',' + click.y);
+                // Double-click a star: set course to its outermost region.
+                // The first click has already picked (selected) the star.
+                if (starMapIsDoubleClick(lastClick, click)) {
+                    dauntlessEvent('star-map/pick-course:' + click.x + ',' + click.y);
+                    lastClick = null;          // a third click starts afresh
+                } else {
+                    lastClick = click;
+                }
+            } else {
+                lastClick = null;              // a drag breaks the pair
             }
             dragging = false;
         });
         vp.addEventListener('mouseleave', function () { dragging = false; });
-        // Double-click a star: set course to its outermost region. The two
-        // single clicks before it have already picked (selected) the star.
-        vp.addEventListener('dblclick', function (e) {
-            if (moved) return;
-            dauntlessEvent('star-map/pick-course:' + e.clientX + ',' + e.clientY);
-        });
         vp.addEventListener('wheel', function (e) {
             dauntlessEvent('star-map/zoom:' + (e.deltaY > 0 ? 1 : -1));
             e.preventDefault();

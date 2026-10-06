@@ -639,3 +639,51 @@ def test_the_search_box_paints_over_the_system_names():
                  .read_text(encoding="utf-8"), flags=re.S)
     search = re.search(r"#star-map-search\s*\{([^}]*)\}", css)
     assert search and "z-index" not in search.group(1)
+
+
+
+_DOUBLE_CLICK_HARNESS = r"""
+const fs = require("fs");
+const vm = require("vm");
+const ctx = {document: {addEventListener: function () {}},
+             dauntlessEvent: function () {}};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const f = ctx.starMapIsDoubleClick;
+const a = {t: 1000, x: 100, y: 100};
+console.log(JSON.stringify({
+  first: f(null, a),
+  quick: f(a, {t: 1300, x: 103, y: 98}),
+  slow: f(a, {t: 1500, x: 100, y: 100}),
+  far: f(a, {t: 1100, x: 120, y: 100}),
+}));
+"""
+
+
+def test_double_click_is_detected_without_the_dom_dblclick_event():
+    """The host sends every click with clickCount 1, so `dblclick` never
+    fires in-game (live: double-click silently did nothing). The map pairs
+    its own clicks instead."""
+    import json, shutil, subprocess, tempfile
+    from pathlib import Path
+    import pytest
+
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "'dblclick'" not in js
+    assert "starMapIsDoubleClick(lastClick, click)" in js
+    assert "'star-map/pick-course:'" in js
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(_DOUBLE_CLICK_HARNESS)
+        harness = f.name
+    try:
+        r = subprocess.run([node, harness, str(ASSETS / "js" / "star_map.js")],
+                           capture_output=True, text=True, timeout=10)
+    finally:
+        Path(harness).unlink()
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == {"first": False, "quick": True,
+                                    "slow": False, "far": False}
