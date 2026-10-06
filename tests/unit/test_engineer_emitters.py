@@ -196,6 +196,28 @@ def test_shield_level_change_announces(engineer_world):
     assert any(k.startswith("Shields") for k in spoken), spoken
 
 
+def test_face_gesture_suppresses_simultaneous_overall_shield_announce(
+        engineer_world):
+    """A face below 0.5 AND the combined level below 0.75 in one change: the
+    face line plays, the overall "ShieldsNN" line does not.
+
+    Evidence: CharacterClass::PlayAnimation mode 0 queues category 2, and
+    IsAnimatingNonInterruptable is true for a current or queued category-2
+    record (stbc_reference CharacterClass.md §4.9-4.10, BE). The face handler
+    plays "PushingButtons" with CharacterAction's trailing int left at 0.
+    UNCONFIRMED: that verb 0x0E passes its +0x34 int as PlayAnimation's mode
+    (CharacterAction.md §6: +0x34 unread). If that is resolved the other way,
+    this is the test that flips.
+    """
+    ship, engineer, spoken = engineer_world
+    shields = ship.GetShieldSubsystem()
+    for f in range(ShieldSubsystem.NUM_SHIELDS):
+        shields.SetCurrentShields(f, shields.GetMaxShields(f) * 0.4)
+    _advance(1.0)
+    assert "FrontShieldDraining" in spoken, spoken
+    assert not any(k.startswith("Shields") for k in spoken), spoken
+
+
 def test_specific_shield_face_announces(engineer_world):
     ship, engineer, spoken = engineer_world
     shields = ship.GetShieldSubsystem()
