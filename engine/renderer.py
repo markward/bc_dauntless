@@ -185,7 +185,7 @@ def frame() -> None:
 
 def load_model(nif_path: str, texture_search_path,
                texture_replacements=None, decals=None,
-               scale: float = 1.0) -> int:
+               scale: float = 1.0, geosphere: bool = False) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
@@ -197,8 +197,12 @@ def load_model(nif_path: str, texture_search_path,
     load.
 
     `scale` bakes a uniform scale into the vertices (glTF only); it is part
-    of the model's identity."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale)
+    of the model's identity.
+
+    `geosphere` loads the planet variant (spec
+    docs/superpowers/specs/2026-10-06-planet-geosphere-design.md); a
+    non-sphere NIF loads unchanged."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale, geosphere)
 
 
 def create_instance(model: int) -> InstanceId:

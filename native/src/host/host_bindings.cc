@@ -653,7 +653,8 @@ scenegraph::ModelHandle load_model_impl(
     const py::object& texture_search_path,
     const py::object& texture_replacements,
     const py::object& decals,
-    float scale) {
+    float scale,
+    bool geosphere) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -728,6 +729,14 @@ scenegraph::ModelHandle load_model_impl(
         rep_key += "|scale:" + src.substr(src.rfind("#s=") + 3);
     }
 
+    // Planet geosphere LOD replacement (spec
+    // docs/superpowers/specs/2026-10-06-planet-geosphere-design.md): folded
+    // into rep_key like scale, so a plain and a geosphere load of the same
+    // NIF are distinct cached handles.
+    if (geosphere) {
+        rep_key += "|geosphere";
+    }
+
     // Dedupe by (nif_path, replacements, decals): callers that load the same
     // NIF + registry + decal set for multiple ships get the same handle and
     // the underlying assets::AssetCache::load isn't even called a second
@@ -755,7 +764,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale, geosphere);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -2889,7 +2898,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("nif_path"), py::arg("texture_search_path"),
           py::arg("texture_replacements") = py::none(),
           py::arg("decals") = py::none(),
-          py::arg("scale") = 1.0f);
+          py::arg("scale") = 1.0f,
+          py::arg("geosphere") = false);
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -3677,7 +3687,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none(), py::none(), 1.0f);
+                                            py::none(), py::none(), 1.0f, false);
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
