@@ -180,12 +180,42 @@ def test_subsystem_destroyed_speaks_typed_line(engineer_world):
 
 
 def test_shield_level_change_announces(engineer_world):
+    # 70% sits between the per-face range checks (0.5 / 0.05) and the combined
+    # watcher's top check (0.75), so ONLY the overall emitter fires. A level
+    # below 0.5 (this test used 0.4) trips face 0's watcher on the very first
+    # write, before the average crosses 0.75: SpecificShieldLevelChange then
+    # queues a CAT_NON_INTERRUPTABLE "PushingButtons" gesture, and the SDK's own
+    # IsAnimatingNonInterruptable() guard in ShieldLevelChange declines, so
+    # only "FrontShieldDraining" is spoken. That is the SDK gate working, not
+    # this emitter failing; test_specific_shield_face_announces covers the face.
+    ship, engineer, spoken = engineer_world
+    shields = ship.GetShieldSubsystem()
+    for f in range(ShieldSubsystem.NUM_SHIELDS):
+        shields.SetCurrentShields(f, shields.GetMaxShields(f) * 0.7)
+    _advance(1.0)
+    assert any(k.startswith("Shields") for k in spoken), spoken
+
+
+def test_face_gesture_suppresses_simultaneous_overall_shield_announce(
+        engineer_world):
+    """A face below 0.5 AND the combined level below 0.75 in one change: the
+    face line plays, the overall "ShieldsNN" line does not.
+
+    Evidence: CharacterClass::PlayAnimation mode 0 queues category 2, and
+    IsAnimatingNonInterruptable is true for a current or queued category-2
+    record (stbc_reference CharacterClass.md §4.9-4.10, BE). The face handler
+    plays "PushingButtons" with CharacterAction's trailing int left at 0.
+    UNCONFIRMED: that verb 0x0E passes its +0x34 int as PlayAnimation's mode
+    (CharacterAction.md §6: +0x34 unread). If that is resolved the other way,
+    this is the test that flips.
+    """
     ship, engineer, spoken = engineer_world
     shields = ship.GetShieldSubsystem()
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         shields.SetCurrentShields(f, shields.GetMaxShields(f) * 0.4)
     _advance(1.0)
-    assert any(k.startswith("Shields") for k in spoken), spoken
+    assert "FrontShieldDraining" in spoken, spoken
+    assert not any(k.startswith("Shields") for k in spoken), spoken
 
 
 def test_specific_shield_face_announces(engineer_world):

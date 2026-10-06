@@ -358,9 +358,8 @@ eyeball; run the gate.**
 7 headless-GL scorch/heat-glow `FrameTest`s" long after they were fixed
 (`5739e1b5` — they were never a headless-GL artifact; the shader's decal-normal
 gate had been un-negated and the tests kept seeding inward normals). As of
-2026-08-06 the ledger holds **zero ctest entries** and **exactly one pytest
-entry**: the order-dependent
-`test_engineer_emitters.py::test_shield_level_change_announces`. Prose about the
+2026-10-05 the ledger holds **no failure entries at all**, and the rule is to
+keep it that way: fix a failing test, don't baseline it. Prose about the
 baseline drifts, which is the whole reason the machine-checked ledger exists —
 `cat tests/known_failures.txt` instead of trusting any sentence here.
 
