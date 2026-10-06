@@ -25,21 +25,10 @@
     --qbs-section: rgba(216, 132, 80, 0.9);
 }
 
-/* The panel root: hidden until Python's first payload opens it
-   (setQuickBattleSetup flips display to flex). No dim -- it sits over the
-   live bridge -- centred, and above the HUD (which paints at 40-50). */
-#quick-battle-setup {
-    display: none;
-    position: fixed;
-    inset: 0;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    z-index: 50;
-    font-family: "Antonio", sans-serif;
-}
-
-#quick-battle-setup .qbs-modal { width: 80vw; height: 80vh; min-width: 900px; min-height: 560px; }
+/* The panel root and the window's size are the shared large modal
+   (.cp-modal-layer / .cp-modal--large in configuration_panel.css).
+   setQuickBattleSetup flips the root's display to flex. No dim -- it sits
+   over the live bridge. */
 
 /* ── Groups column (left) — the cp-tabstrip surface, widened ─────────────── */
 #quick-battle-setup .qbs-groups {

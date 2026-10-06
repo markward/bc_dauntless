@@ -88,21 +88,37 @@ def _selectors(selector_list):
     return [s.strip() for s in selector_list.split(",") if s.strip()]
 
 
+def _root_classes(root_id):
+    """The classes the root carries in index.html. A root may take its
+    geometry from a shared class (`.cp-modal-layer`, the large modal's layer)
+    rather than an id rule, so those rules reach it too."""
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    m = re.search(r'<\w+\s+id="' + re.escape(root_id) + r'"([^>]*)>', index)
+    if not m:
+        return []
+    cls = re.search(r'class="([^"]*)"', m.group(1))
+    return cls.group(1).split() if cls else []
+
+
 def _declarations_for_root(root_id):
     """Every declaration that reaches `#root_id` itself, as {prop: value}.
 
-    Only rules selecting the bare root are considered — `#root .cp-modal` and
-    friends style descendants and must not stand in for the root's own
-    geometry. Later declarations win, which is the cascade for equal
-    specificity and is all these sheets rely on.
+    Only rules selecting the bare root — by its id, or by one of its own
+    classes alone — are considered. `#root .cp-modal` and friends style
+    descendants and must not stand in for the root's own geometry. Class
+    rules are applied before id rules (an id outranks a class whatever the
+    source order); within each, later declarations win, which is the cascade
+    for equal specificity and is all these sheets rely on.
     """
+    class_sels = {"." + c for c in _root_classes(root_id)}
     out = {}
-    for path in _stylesheets_in_load_order():
-        for selector_list, body in _rules(path.read_text(encoding="utf-8")):
-            if ("#" + root_id) not in _selectors(selector_list):
-                continue
-            for prop, value in re.findall(r"([\w-]+)\s*:\s*([^;]+)", body):
-                out[prop.strip()] = value.strip()
+    for wanted in (class_sels, {"#" + root_id}):
+        for path in _stylesheets_in_load_order():
+            for selector_list, body in _rules(path.read_text(encoding="utf-8")):
+                if not wanted & set(_selectors(selector_list)):
+                    continue
+                for prop, value in re.findall(r"([\w-]+)\s*:\s*([^;]+)", body):
+                    out[prop.strip()] = value.strip()
     return out
 
 

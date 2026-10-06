@@ -44,6 +44,48 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
+/* ── The large modal — the shared shape for full-screen-ish windows ───────
+   Quick Battle Setup and Helm -> Set Course, and the default for any new
+   window of that kind. Two classes, used together:
+
+     <section id="..." class="cp-modal-layer">     the full-viewport root
+       <div class="cp-modal cp-modal--large">     the window itself
+
+   SIZE: 80vw x 80vh, floored at 900x560. engine/ui/modal_geometry.py
+   mirrors these four numbers for panels that need the window's true screen
+   rect (the star map scissors its GL backdrop to it);
+   tests/ui/test_modal_geometry.py keeps the two in step.
+
+   LAYER: z-index 95 puts the window above every HUD and panel element (the
+   highest of those paints at 90) and below the pause menu (100) and the
+   system screens above it, so ESC can still pause over an open window.
+   While a layer is shown, js/modal_layer.js stamps .ui-occluded on every
+   body-level element that paints beneath it. That is what keeps the HUD
+   from showing THROUGH a window: the star map's body is a transparent hole
+   onto the GL map, and z-index alone cannot stop lower CEF elements
+   painting into a hole. Roots are toggled with inline style.display
+   (none / flex) by their own render functions, as before. */
+.cp-modal-layer {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    z-index: 95;
+    font-family: "Antonio", sans-serif;
+}
+.cp-modal--large {
+    width: 80vw;
+    height: 80vh;
+    min-width: 900px;
+    min-height: 560px;
+}
+/* `*` as well as the root: visibility is inherited but a descendant may
+   set `visibility: visible` (.qbs-sheet--open does), which would punch
+   back through a root-only rule. */
+.ui-occluded, .ui-occluded * { visibility: hidden !important; }
+
 .cp-header {
     background: linear-gradient(90deg, rgb(216, 94, 86) 0%, rgb(216, 132, 80) 100%);
     color: #ffd;

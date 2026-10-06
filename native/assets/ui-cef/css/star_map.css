@@ -1,10 +1,9 @@
-/* Star map panel. Reuses cp-* chrome from configuration_panel.css.
+/* Star map panel. Reuses cp-* chrome and the shared large modal from
+   configuration_panel.css.
    NOTE: #star-map-viewport's geometry must stay in sync with
    star_map_panel.rect_for_view() — Python projects labels and hit-tests
-   clicks against that rect, and the GL pass scissors to it. It is positioned
-   `fixed` by the same centring formula rather than left to flow, because its
-   true screen rect must not depend on .cp-modal's padding/border — a drift
-   there would silently displace every label and mis-pick every click. */
+   clicks against that rect, and the GL pass scissors to it. Both sides derive
+   it from the large modal's size rule; see the #star-map-viewport rule. */
 /* The transparent hole must go ALL THE WAY DOWN. #star-map-viewport is a
    positioned descendant of .cp-modal, so it paints ABOVE its ancestors'
    backgrounds — its own `background: transparent` reveals the GL map only if
@@ -20,28 +19,11 @@
    test_no_ancestor_of_the_map_viewport_paints_an_opaque_background walks the
    real ancestor chain out of index.html and fails if any of them regains a
    background. */
-#star-map-panel {
-    display: none;
-    position: fixed;
-    inset: 0;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    z-index: 50;
-    font-family: "Antonio", sans-serif;
-}
-/* .cp-modal's rgb(20, 22, 28) fill is overridden here, not merely resized:
-   it is 880x560 and centred, i.e. directly over the map rect. */
+/* The root and the window's size are the shared large modal
+   (.cp-modal-layer / .cp-modal--large in configuration_panel.css); only the
+   transparency is this file's. .cp-modal's rgb(20, 22, 28) fill is
+   overridden here, not merely kept: the window body IS the map rect. */
 #star-map-panel .cp-modal {
-    /* Offset right of centre so the Helm menu (#tactical-left-column, x
-       24..248) does not cover the map's left edge. `position: relative` +
-       `left` shifts it visually without disturbing the flex centring, so the
-       one number below is the only place the offset lives on this side.
-       Must equal star_map_panel.MODAL_OFFSET_X — the agreement test checks
-       both calc() offsets against it. */
-    position: relative;
-    left: 56px;
-    width: 880px; height: 560px;
     background: transparent;
 }
 /* Chrome fill, restored per element now the modal is transparent.
@@ -94,34 +76,25 @@
     cursor: default;
 }
 
-/* .sm-body pairs with .cp-content (flex:1 fills the modal body below the
-   28px header). Nothing sits in flow inside it any more: the viewport is
-   position:fixed (out of flow) and now spans the WHOLE modal body, and the
-   target list moved inside it as a centred popup. It previously held the
-   list as a right-hand column, reserved with a hard-coded margin-left that
-   duplicated MAP_W — centring removes that duplication entirely. */
-.sm-body { display: flex; gap: 0; }
+/* .sm-body pairs with .cp-content (flex:1 fills the modal body between the
+   28px header and the 54px footer). It is the positioning context for the
+   viewport, so the map rect IS the body rect by construction — no centring
+   formula in CSS to keep in step with Python. The target list is a centred
+   popup inside the viewport, so nothing else sits in the body. */
+.sm-body { display: flex; gap: 0; position: relative; }
 
 /* The GL pass draws BENEATH this element — it MUST stay transparent, or the
    native map is hidden behind an opaque CEF rectangle.
 
-   Positioned by the SAME centring rule as star_map_panel.rect_for_view(), so
-   the hole tracks the flex-centred .cp-modal at every window size instead of
-   only at 1280x720: 50% - MODAL_W/2 = 50% - 440px, and
-   50% - MODAL_H/2 + HEADER_H = 50% - 280px + 28px = 50% - 252px. The modal's
-   1px border cancels (its outer box is 882 wide, so content-left is
-   (view-882)/2 + 1). test_star_map_cef_assets parses these two offsets back
-   out and checks them against the Python constants.
-
-   The 478px height is the modal BODY: MODAL_H 560 - HEADER_H 28 - FOOTER_H 54.
-   It is not a free number — the GL backdrop is opaque and scissored to exactly
-   this rect, so any excess paints over the footer strip. The 880px width is
-   likewise MODAL_W exactly: the map fills the modal, and the target list is
-   a centred popup over it rather than a column beside it. */
+   `inset: 0` inside .sm-body: the whole window body, i.e. the large modal's
+   content box less HEADER_H at the top and FOOTER_H at the bottom. Python
+   computes the same rect from the same shared rule
+   (star_map_panel.rect_for_view over modal_geometry). It is not a free
+   choice — the GL backdrop is opaque and scissored to exactly that rect, so
+   any disagreement paints over the header or footer strip. */
 #star-map-viewport {
-    position: fixed;
-    left: calc(50% - 384px); top: calc(50% - 252px);
-    width: 880px; height: 478px;
+    position: absolute;
+    inset: 0;
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
     cursor: grab;
