@@ -285,3 +285,67 @@
     display: flex; align-items: center;
     color: #99ccff;
 }
+
+/* ── Search, bottom-right of the map ────────────────────────────────────
+   Anchored to the body's bottom-right, which is the map's (the info panel
+   is on the left). Opaque chrome over the map; closed, only the magnifier
+   shows. DOM order (after #star-map-viewport) puts it above the labels with
+   no z-index of its own. */
+#star-map-search {
+    position: absolute;
+    right: 12px; bottom: 12px;
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: 4px;
+    width: 260px;
+    pointer-events: none;      /* only the bar and results take clicks */
+}
+#star-map-search-bar {
+    display: flex; align-items: center; gap: 6px;
+    pointer-events: auto;
+}
+#star-map-search-input {
+    display: none;
+    width: 200px;
+    padding: 4px 8px;
+    font-family: inherit; font-size: 13px;
+    color: #cdd3dc;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 217, 168, 0.45);
+    border-radius: 3px;
+    outline: none;
+}
+.sm-search--open #star-map-search-input { display: block; }
+#star-map-search-toggle {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    color: #8a93a3;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    cursor: pointer;
+}
+#star-map-search-toggle:hover,
+.sm-search--open #star-map-search-toggle {
+    color: #ffd9a8; border-color: rgba(255, 217, 168, 0.6);
+}
+#star-map-search-results {
+    list-style: none;
+    margin: 0; padding: 0;
+    width: 100%;
+    max-height: 240px; overflow-y: auto;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    pointer-events: auto;
+}
+#star-map-search-results:empty { display: none; }
+.sm-search__result {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 4px 8px;
+    font-size: 13px; color: #cdd3dc;
+    cursor: pointer;
+}
+.sm-search__result:hover { background: rgba(216, 94, 86, 0.28); }
+.sm-search__name { text-transform: uppercase; letter-spacing: 0.4px; }
+/* The destination that matched, when it was not the system's own name. */
+.sm-search__via { font-size: 11px; color: #8a93a3; }

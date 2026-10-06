@@ -8,7 +8,9 @@
 // (star-map/orbit:<dx>,<dy>); a click without drag picks a star
 // (star-map/pick:<x>,<y>), which moves the info panel to it; a double-click
 // sets course to that star's outermost region (star-map/pick-course:<x>,<y>);
-// wheel zooms (star-map/zoom:<steps>).
+// wheel zooms (star-map/zoom:<steps>). The magnifier at the map's
+// bottom-right opens a search: star-map/search:<query>, results in
+// search_results, a pick fires star-map/select-system:<id>.
 //
 // The info panel lists its system's destinations (warp_points), each with a
 // crosshair button that sets the course: star-map/set-course:<id>. The map
@@ -36,6 +38,7 @@ function setStarMapPanel(state) {
     if (!root) return;
     if (!state || state.visible !== true) {
         root.style.display = 'none';
+        starMapCloseSearch();
         return;
     }
     // Function scope, not inside the label block: the footer toggle below
@@ -120,6 +123,7 @@ function setStarMapPanel(state) {
     if (hereEl) hereEl.style.display = (info && info.is_here) ? '' : 'none';
     renderStarMapRegions(info ? (state.warp_points || []) : [],
                          info ? state.warp_note : '');
+    renderStarMapSearch(state.search_results || []);
 
     root.style.display = 'flex';
 }
@@ -185,6 +189,93 @@ function renderStarMapRegions(rows, note) {
         list.appendChild(li);
     });
 }
+
+// ── Search (bottom-right of the map) ────────────────────────────────────
+const SM_SEARCH_SVG =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    + '<circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+    + '<path d="M10 10l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+    + '</svg>';
+
+function starMapSearchOpen() {
+    const box = document.getElementById('star-map-search');
+    return !!box && box.classList.contains('sm-search--open');
+}
+
+function starMapCloseSearch() {
+    const box = document.getElementById('star-map-search');
+    const input = document.getElementById('star-map-search-input');
+    if (!box || !starMapSearchOpen()) return;
+    box.classList.remove('sm-search--open');
+    if (input) {
+        input.value = '';
+        input.blur();
+    }
+    dauntlessEvent('star-map/search:');
+}
+
+function starMapToggleSearch() {
+    const box = document.getElementById('star-map-search');
+    const input = document.getElementById('star-map-search-input');
+    if (!box) return;
+    if (starMapSearchOpen()) {
+        starMapCloseSearch();
+        return;
+    }
+    box.classList.add('sm-search--open');
+    if (input) input.focus();
+}
+
+function starMapPickSearchResult(systemId) {
+    dauntlessEvent('star-map/select-system:' + systemId);
+    starMapCloseSearch();
+}
+
+// Results sit ABOVE the field (the box is anchored to the map's bottom
+// edge). DOM calls, not innerHTML: names come from data files and mods.
+function renderStarMapSearch(results) {
+    const list = document.getElementById('star-map-search-results');
+    if (!list) return;
+    list.textContent = '';
+    if (!starMapSearchOpen()) return;
+    results.forEach(function (r) {
+        const li = document.createElement('li');
+        li.className = 'sm-search__result';
+        const name = document.createElement('span');
+        name.className = 'sm-search__name';
+        name.textContent = String(r.name);
+        li.appendChild(name);
+        if (r.via) {
+            const via = document.createElement('span');
+            via.className = 'sm-search__via';
+            via.textContent = String(r.via);
+            li.appendChild(via);
+        }
+        const id = String(r.system);
+        li.onclick = function () { starMapPickSearchResult(id); };
+        list.appendChild(li);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const toggle = document.getElementById('star-map-search-toggle');
+    if (toggle) toggle.innerHTML = SM_SEARCH_SVG;
+    const input = document.getElementById('star-map-search-input');
+    if (!input) return;
+    input.addEventListener('input', function () {
+        dauntlessEvent('star-map/search:' + encodeURIComponent(input.value));
+    });
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            const first = document.querySelector('#star-map-search-results li');
+            if (first) first.click();
+            e.preventDefault();
+        } else if (e.key === 'Escape') {
+            starMapCloseSearch();
+            e.preventDefault();
+        }
+    });
+});
 
 // Orbit / zoom / pick. A drag orbits; a click without drag picks a star.
 (function () {

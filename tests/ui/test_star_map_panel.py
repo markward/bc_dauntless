@@ -951,3 +951,56 @@ def test_double_clicking_empty_space_sets_nothing():
     rx, ry, _w, _h = p.rect
     assert p.dispatch_event("pick-course:%f,%f" % (rx + 1, ry + 1)) is True
     assert seen == []
+
+
+def _search(p, query):
+    p.dispatch_event("search:" + query)
+    p.invalidate()
+    return _payload(p.render_payload())["search_results"]
+
+
+def test_search_finds_a_star_by_name_case_insensitively():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    hits = _search(p, "vEsU")
+    assert hits[0] == {"system": "vesuvi", "name": hits[0]["name"], "via": None}
+
+
+def test_search_finds_the_star_a_destination_is_in():
+    """Searching a region name ("starbase 12") yields the star it orbits."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    hits = _search(p, "starbase%2012")          # URL-encoded, as the JS sends
+    assert [h["system"] for h in hits] == ["tauceti"]
+    assert hits[0]["via"] == "Starbase 12"
+
+
+def test_search_ranks_name_prefix_then_name_then_destination():
+    from engine.ui.star_map_panel import StarMapPanel as P
+    p = P()
+    p.open(set_name="Vesuvi6")
+    hits = _search(p, "a")
+    ranks = [0 if h["name"].lower().startswith("a") else
+             1 if h["via"] is None else 2 for h in hits]
+    assert ranks == sorted(ranks)
+
+
+def test_search_is_capped_and_empty_for_no_query():
+    from engine.ui.star_map_panel import SEARCH_MAX_RESULTS
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert len(_search(p, "e")) <= SEARCH_MAX_RESULTS
+    assert _search(p, "") == []
+    assert _search(p, "%20%20") == []
+    assert _search(p, "zzzz-no-such-star") == []
+
+
+def test_reopening_the_map_clears_the_search():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _search(p, "vesuvi")
+    p.close()
+    p.open(set_name="Vesuvi6")
+    p.invalidate()
+    data = _payload(p.render_payload())
+    assert data["search_query"] == "" and data["search_results"] == []

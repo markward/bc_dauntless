@@ -235,7 +235,7 @@
          Reuses the cp-* modal CSS. This replaced #setting-course-panel
          outright, which was retired once the map was verified live.
          Spec: docs/superpowers/specs/2026-08-20-star-map-set-course-design.md -->
-    <section id="star-map-panel" class="cp-modal-layer" style="display:none">
+    <section id="star-map-panel" class="cp-modal-layer" data-panel="star-map" style="display:none">
       <div class="cp-modal cp-modal--large">
         <div class="cp-header">Stellar Cartography</div>
         <div class="cp-content sm-body">
@@ -257,6 +257,23 @@
           </aside>
           <div id="star-map-viewport">
             <div id="star-map-labels"></div>
+          </div>
+          <!-- Search, bottom-right of the map. A SIBLING of the viewport, not
+               a child, so its clicks never reach the map's drag/pick
+               handlers. The magnifier opens the field; typing sends
+               star-map/search:<query>, Python returns matching systems
+               (by name or by a destination's name) as search_results, and
+               choosing one fires star-map/select-system:<id>. The section's
+               data-panel tag hands the keyboard to the field while it is
+               focused (text_capture.js). -->
+          <div id="star-map-search">
+            <ul id="star-map-search-results"></ul>
+            <div id="star-map-search-bar">
+              <input id="star-map-search-input" type="text" autocomplete="off"
+                     spellcheck="false" placeholder="Star or destination">
+              <button id="star-map-search-toggle" title="Search"
+                      onclick="starMapToggleSearch()"></button>
+            </div>
           </div>
         </div>
         <!-- .cp-footer is justify-content: space-between, so DOM order IS the

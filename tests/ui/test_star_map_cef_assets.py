@@ -570,7 +570,7 @@ def test_each_destination_row_has_a_set_course_crosshair():
     index = (ASSETS / "index.html").read_text(encoding="utf-8")
     assert 'id="star-map-info-regions"' in index
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
-    fn = js[js.index("function renderStarMapRegions"):js.index("// Orbit / zoom / pick.")]
+    fn = js[js.index("function renderStarMapRegions"):js.index("// ── Search (bottom-right of the map)")]
     assert "sm-region__course" in fn and "star-map/set-course:" in fn
     # Labels are mission-supplied: text, never markup. The only innerHTML is
     # the fixed crosshair SVG.
@@ -588,9 +588,36 @@ def test_each_destination_row_has_a_set_course_crosshair():
 
 def test_the_objective_marker_sits_left_of_the_crosshair():
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
-    fn = js[js.index("function renderStarMapRegions"):js.index("// Orbit / zoom / pick.")]
+    fn = js[js.index("function renderStarMapRegions"):js.index("// ── Search (bottom-right of the map)")]
     assert "w.objective" in fn
     # DOM order is screen order in the flex row: label, marker, crosshair.
     assert fn.index("sm-region__objective") < fn.index("sm-region__course")
     css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     assert re.search(r"\.sm-region__objective\s*\{[^}]*#99ccff", css)
+
+
+def test_search_box_sits_beside_the_map_not_inside_it():
+    """Inside #star-map-viewport its clicks would reach the drag/pick
+    handlers and orbit or pick a star. It is a sibling, in .sm-body."""
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    chain = _ancestor_chain(index, "star-map-search-input")
+    ids = [el["id"] for el in chain]
+    assert "star-map-viewport" not in ids
+    assert "star-map-search" in ids
+    assert any("sm-body" in el["classes"] for el in chain)
+    # Bottom-right of the body, which is the map's bottom-right.
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    block = re.search(r"#star-map-search\s*\{([^}]*)\}", css)
+    assert block and re.search(r"right\s*:", block.group(1)) \
+        and re.search(r"bottom\s*:", block.group(1))
+
+
+def test_search_field_takes_the_keyboard_and_sends_encoded_queries():
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    # The text-capture contract: the panel root carries its registry name.
+    assert re.search(r'<section id="star-map-panel"[^>]*data-panel="star-map"', index)
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "'star-map/search:' + encodeURIComponent(input.value)" in js
+    assert "'star-map/select-system:' + systemId" in js
+    fn = js[js.index("function renderStarMapSearch"):js.index("document.addEventListener('DOMContentLoaded', function () {\n    const toggle")]
+    assert "textContent" in fn and "innerHTML" not in fn

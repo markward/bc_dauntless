@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from typing import Optional
+from urllib.parse import unquote
 
 from engine import dev_mode
 from engine.appc import sector_model as sm
@@ -19,6 +20,10 @@ from engine.ui import star_map
 from engine.ui.modal_geometry import (large_modal_content_origin,
                                       large_modal_size)
 from engine.ui.panel import Panel
+
+# Most search results listed at once. More than fit beside the map is noise:
+# a longer query narrows it.
+SEARCH_MAX_RESULTS = 8
 
 # Only used when the TGL is unreachable (headless, or game/ absent). Never the
 # normal path: the label comes from the same database the Helm menu reads.
@@ -108,6 +113,9 @@ class StarMapPanel(Panel):
         self._here_set: Optional[str] = None
         self._last_pushed: Optional[str] = None
         self._show_all_labels = False
+        # The search box's text, as last typed (star-map/search:<query>).
+        # Results are recomputed from it on render.
+        self._search_query = ""
         self.rect = MAP_RECT
         self.cam = star_map.StarMapCamera(anchor=(0.0, 0.0, 0.0))
         self.scene = star_map.build_scene(model={"systems": [], "nebulae": [],
@@ -176,6 +184,7 @@ class StarMapPanel(Panel):
         # The player's system is still resolved — for the you-are-here arrow
         # and the info panel — but the camera opens on the middle of the
         # cluster, not on the player.
+        self._search_query = ""
         here, _player_pos = star_map.resolve_anchor(set_name)
         self._here_system = here
         self._here_set = set_name
@@ -449,6 +458,41 @@ class StarMapPanel(Panel):
             r["objective"] = obj
         return rows
 
+    def _search(self) -> list:
+        """Charted systems matching the search box, best first.
+
+        A system matches on its own name or on the name of any destination in
+        it — the live menu's labels and the catalog's — so "starbase 12"
+        finds Tau Ceti. Case-insensitive substring. Ranked: name starts with
+        the query, then name contains it, then a destination does; ties
+        alphabetical. `via` names the destination that matched, when it was
+        one, so the result can say why Tau Ceti is listed.
+        """
+        q = self._search_query.strip().lower()
+        if not q:
+            return []
+        hits = []
+        for system in star_map._real_systems(sm.load_sector_model()):
+            sid = system["id"]
+            name = sm.display_label(sid)
+            low = name.lower()
+            if low.startswith(q):
+                rank, via = 0, None
+            elif q in low:
+                rank, via = 1, None
+            else:
+                labels = [r.get("label") for r in
+                          (self._offered_rows(sid) or [])
+                          + sm.warp_points_for(sid)]
+                via = next((str(l) for l in labels
+                            if l and q in str(l).lower()), None)
+                if via is None:
+                    continue
+                rank = 2
+            hits.append((rank, low, {"system": sid, "name": name, "via": via}))
+        hits.sort(key=lambda h: (h[0], h[1]))
+        return [h[2] for h in hits[:SEARCH_MAX_RESULTS]]
+
     def _outermost_module(self, sid) -> Optional[str]:
         """The system's outermost region: what a double-click on its star
         sets course to.
@@ -550,6 +594,10 @@ class StarMapPanel(Panel):
             # decides whether the panel is shown, so Python needs no second
             # copy of the breakpoint on this path.
             "info": self._info() if self._visible else None,
+            # The search box (bottom-right of the map): what was typed and
+            # the systems it found.
+            "search_query": self._search_query,
+            "search_results": self._search() if self._visible else [],
         })
         if payload == self._last_pushed:
             return None
@@ -569,6 +617,9 @@ class StarMapPanel(Panel):
                 import App
                 self._on_warp_engage(App.SortedRegionMenu_GetWarpButton())
             self.close()
+            return True
+        if action.startswith("search:"):
+            self._search_query = unquote(action[len("search:"):])
             return True
         if action == "toggle-labels":
             self._show_all_labels = not self._show_all_labels
