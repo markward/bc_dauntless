@@ -316,7 +316,18 @@ void draw_model(const assets::Model& model,
                 // Per-instance hull-decal override (set_instance_decal_override):
                 // when non-null its list REPLACES model.decals for this draw,
                 // with its own per-mesh enable masks. nullptr = the baked list.
-                const assets::DecalOverride* decal_override = nullptr);
+                const assets::DecalOverride* decal_override = nullptr,
+                // Planet geosphere (spec 2026-10-06 §4.3): index into
+                // Model::sphere_map->lods for this camera, from
+                // geosphere_level_for. -1 (or a model without sphere_map)
+                // draws BC's own mesh, byte-identically.
+                int sphere_level = -1);
+
+/// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
+/// world radius = sphere_map.radius * length(world[0]); focal from proj and
+/// the CURRENTLY BOUND viewport height (glGetIntegerv(GL_VIEWPORT)).
+int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
+                        const scenegraph::Camera& cam);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
