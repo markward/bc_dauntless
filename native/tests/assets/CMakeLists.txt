@@ -21,6 +21,7 @@ add_executable(assets_tests
     cpu/skeleton_build_test.cc
     cpu/skin_weights_test.cc
     cpu/tessellate_test.cc
+    cpu/geosphere_test.cc
     cpu/rigid_bake_test.cc
     cpu/texture_decode_test.cc
     cpu/flip_frame_test.cc
