@@ -404,6 +404,9 @@ def test_the_rect_is_the_large_modal_body_at_its_size_floor():
     # 1000x600: modal floored to 900x560, centred at (50, 20); the map starts
     # 270 in, past the info panel.
     assert rect_for_view(1000, 600) == (320, 48, 630, 478)
+    # Smaller than the floor (live: a ~680-wide window): the modal shrinks to
+    # 96% of the view, 652.8 x 480 at (13.6, 10), and the map stays inside it.
+    assert rect_for_view(680, 500) == (209, 38, 457, 398)
 
 
 def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():

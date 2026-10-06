@@ -51,8 +51,9 @@
      <section id="..." class="cp-modal-layer">     the full-viewport root
        <div class="cp-modal cp-modal--large">     the window itself
 
-   SIZE: 80vw x 80vh, floored at 900x560. engine/ui/modal_geometry.py
-   mirrors these four numbers for panels that need the window's true screen
+   SIZE: 80vw x 80vh, floored at 900x560 — a floor that is itself capped at
+   96% of the window, so a window smaller than 900x560 still fits the whole
+   modal. engine/ui/modal_geometry.py mirrors these numbers for panels that need the window's true screen
    rect (the star map scissors its GL backdrop to it);
    tests/ui/test_modal_geometry.py keeps the two in step.
 
@@ -78,8 +79,8 @@
 .cp-modal--large {
     width: 80vw;
     height: 80vh;
-    min-width: 900px;
-    min-height: 560px;
+    min-width: min(900px, 96vw);
+    min-height: min(560px, 96vh);
 }
 /* `*` as well as the root: visibility is inherited but a descendant may
    set `visibility: visible` (.qbs-sheet--open does), which would punch
