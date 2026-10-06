@@ -87,8 +87,8 @@ branches off — they are BC's rules, not part of the stage-4 sensing contest.
 
 | Unit | One idea | Change |
 |---|---|---|
-| `engine/appc/sensor_detection.py` | The one detection rule | `can_detect` restructured into `_hidden(...)` and `_reached(...)` (private, same keyword-only args). New public `jammed(observer, target)`. New public `in_reach(observer, target)` = reached ignoring the hide gates (for `is_concealed`); its range branch uses the **unshrunk** effective range (today's `is_concealed` test), takes no density sample and mutates no latch, so a ship in the dense core still counts as in reach. |
-| `engine/appc/subsystems.py` `SensorSubsystem.IsObjectVisible` | SDK surface | Becomes `can_detect(owner, obj)` (0/1). Its private copy of the jam and over-boost logic is deleted. `IsObjectNear`/`IsObjectFar` unchanged. |
+| `engine/appc/sensor_detection.py` | The one detection rule | `can_detect` keeps its gates and signature; after today's range test fails it asks a new private `_beyond_range_reach(observer, target, cloaked)` (the over-boost and memory branches). No `_hidden`/`_reached` split — the hide gates already return early, so the reach step is simply "range test, else beyond-range reach". New public `jammed(observer, target)`. New public `in_reach(observer, target)` = reached ignoring the hide gates (for `is_concealed`); its range branch uses the **unshrunk** effective range (today's `is_concealed` test), takes no density sample and mutates no latch, so a ship in the dense core still counts as in reach. |
+| `engine/appc/subsystems.py` `SensorSubsystem.IsObjectVisible` | SDK surface | Keeps BC's same-set gate (`can_detect`'s range branch has none — cross-set torpedoes need that), then returns `can_detect(owner, obj)` (0/1). Its private copy of the jam and over-boost logic is deleted. `IsObjectNear`/`IsObjectFar` unchanged. |
 | `engine/appc/sensor_contacts.py` `is_concealed` | Lost-track clock | "Inside player sensor range" becomes `in_reach(player, obj)`. A remembered or boosted contact that a rock hides runs the 5 s clock; a lost track ends its memory, so it then drops out of reach. |
 | `engine/appc/sensor_dials.py` | Tunables | `overboost_threshold` 1.2 (RE'd `0x0089054c`), step 0.01, min 0.0. |
 | Roadmap | Standing decisions | Row 2 merged `0f3db1e7`; decision 2 overturned with the evidence above; new evidence rows; SP3 row; probes row becomes SP4. |
@@ -108,8 +108,15 @@ are symmetric by construction, not by special case.
 2. Sensors at > 120% normal power, with neither ship in a MetaNebula, list every
    uncloaked ship in the set — unidentified ones as "Unknown N".
 3. The SDK's direct `IsObjectVisible` callers (`TacticalInterfaceHandlers` enemy filter
-   :797/:867, E3M2 debris auto-target, E1M2 asteroid button) now get occlusion and the
-   nebula core, identical to the list.
+   :797/:867, E3M2 debris auto-target, E1M2 asteroid button) now get occlusion, the
+   nebula core and the cloak contest, identical to the list: a fully cloaked ship inside
+   the cloak bubble is visible to them (BC: never), and a cloaked ship outside it is not,
+   even when known. `test_sensor_bands_and_visibility.py::test_fully_cloaked_is_never_visible`
+   is rewritten to that rule.
+6. A known ship that a rock hides keeps running the lost-track clock after it leaves
+   sensor range (memory keeps it in reach). `test_sensor_continuity.py::
+   test_leaving_range_while_hidden_stops_the_clock` is rewritten: leaving range while
+   hidden now stops the clock only when the contact is also nebula-jammed.
 4. Torpedo guidance and the player's lock follow both new branches (BC:
    `IsValidTarget` and the weapon target list use `IsObjectVisible`). Weapons keep their
    own range limits.
