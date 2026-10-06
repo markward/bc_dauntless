@@ -67,10 +67,19 @@ def test_add_target_is_picked_on_the_sheet_not_by_clicking_a_group():
 
 def test_add_sends_ship_group_and_quantity():
     assert re.search(r"'quick-battle-setup/add:'\s*\+\s*qbsEnc\(arg\)\s*\+\s*':'\s*\+\s*"
-                     r"QBS\.setup\.target\s*\+\s*':'\s*\+\s*QBS\.qty", JS)
+                     r"QBS\.setup\.target\s*\+\s*':'\s*\+\s*qbsQty\(arg\)", JS)
     step = _fn("qbsStepQty")
     assert "add_max" in step and "Math.max(1" in step
-    assert "QBS.qty = 1" in _fn("setQuickBattleSetup")   # reset when the screen closes
+
+
+def test_quantity_is_remembered_per_ship_type():
+    # Bird of Prey at 3, Vor'cha shows 1, back to the Bird of Prey shows 3:
+    # keyed by the lower-cased ship id, unset reads 1, cleared on close.
+    assert "QBS.qty[String(id || '').toLowerCase()] || 1" in _fn("qbsQty")
+    assert "QBS.qty[String(id).toLowerCase()] =" in _fn("qbsStepQty")
+    assert "QBS.setup.selected" in _fn("qbsStepQty")
+    assert "qbsQty(sh.id)" in _fn("renderDetail")
+    assert "QBS.qty = {}" in _fn("setQuickBattleSetup")
 
 
 def test_catalog_carries_the_add_cap():
