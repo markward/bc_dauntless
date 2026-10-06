@@ -22,6 +22,53 @@ from engine.ui.panel import Panel
 
 _logger = logging.getLogger(__name__)
 
+# The permanent last row of Helm -> Set Course. Not an SDK widget: BC's menu
+# has no such entry, so it is appended to the projection only, and its click
+# id is namespaced ("cartography:<Set Course id>") so it can never collide
+# with a real widget id.
+CARTOGRAPHY_LABEL = "Stellar Cartography"
+_CARTOGRAPHY_PREFIX = "cartography:"
+
+
+def _is_course_leaf(widget) -> bool:
+    """A Set Course row that SETS a course rather than opening a submenu.
+
+    Systems/Utils.CreateSystemMenuInternal builds one SortedRegionMenu per
+    system carrying its regions as children. A region row has no children; a
+    single-region system (Riha, Starbase 12) has none either and stands for
+    its own module; a system made SetNotOpenable (Utils.py:93, multiplayer)
+    acts on its default region rather than opening. The Set Course root
+    itself carries no region module (HelmMenuHandlers.py:197) and is always a
+    menu.
+    """
+    return (isinstance(widget, SortedRegionMenu)
+            and widget.GetRegionModule() is not None
+            and (not widget._children or not widget.IsOpenable()))
+
+
+def _is_lone_course_root(widget) -> bool:
+    """The Set Course root with no system under it.
+
+    Stellar Cartography would be its only row, so the drop-down collapses
+    into a single "Set Course" button that opens the map directly — the
+    shape the Helm menu had before the drop-down came back.
+    """
+    return (isinstance(widget, SortedRegionMenu)
+            and widget.GetRegionModule() is None
+            and not widget._children)
+
+
+def _current_course():
+    """Module on the SDK warp button, or None. The course the player (or a
+    mission) last set — what the menu ticks."""
+    try:
+        import App
+        btn = App.SortedRegionMenu_GetWarpButton()
+        dest = btn.GetDestination() if btn is not None else None
+        return str(dest) if dest else None
+    except Exception:
+        return None
+
 
 def _cinematic_active() -> bool:
     """True while BC's cinematic mode (F9) holds focus. Read fresh each
@@ -51,7 +98,8 @@ def _current_player():
 
 
 class CrewMenuPanel(Panel):
-    def __init__(self, on_set_course=None, on_warp_engage=None):
+    def __init__(self, on_set_course=None, on_warp_engage=None,
+                 on_course_set=None):
         super().__init__()
         # Empty-state sentinel (matches SDKMirrorPanel): a quiescent panel
         # emits nothing on the first tick; invalidate() resets to None so
@@ -65,10 +113,16 @@ class CrewMenuPanel(Panel):
         # whenever the open menu changes (a reopened menu starts collapsed,
         # matching BC).
         self._expanded_ids: set[int] = set()
-        # Injected by host_loop: opens the SettingCoursePanel when the Helm
-        # Set Course button is clicked. None -> click is a silent no-op
+        # Injected by host_loop: opens the star map (Stellar Cartography)
+        # with the live Set Course menu. None -> click is a silent no-op
         # (keeps headless construction and existing tests working).
         self._on_set_course = on_set_course
+        # Injected by host_loop (record_course_selection): a Set Course
+        # region row was clicked — set the course to that module. The same
+        # callback the star map's warp-point rows use, so the warp button,
+        # the placement carry-over and the crew ack are one path. None ->
+        # silent no-op.
+        self._on_course_set = on_course_set
         # Injected by host_loop (engine.appc.warp_button.press): PRESSES the
         # SDK Helm "Warp" button (an STWarpButton) when it's clicked, sending
         # ET_WARP_BUTTON_PRESSED through the button's real handler chain. The
@@ -130,9 +184,12 @@ class CrewMenuPanel(Panel):
                 menus.append(node)
         return {"menus": menus}
 
-    def _snapshot_node(self, widget) -> Optional[dict]:
-        # Set Course (the one SortedRegionMenu) is projected as a leaf
-        # button, not an expandable parent — its click opens a modal.
+    def _snapshot_node(self, widget, course=None) -> Optional[dict]:
+        # Helm -> Set Course is BC's drop-down again: the root expands to its
+        # systems, a system to its regions, and a region row sets the course
+        # (see _is_course_leaf). `course` is the warp button's destination,
+        # read once per snapshot by the root and handed down, so every row in
+        # one snapshot ticks against the same value.
         import App as _App
         if isinstance(widget, _App.EngRepairPaneWidget):
             from engine.ui.eng_repair_pane import repair_pane_snapshot
@@ -144,7 +201,11 @@ class CrewMenuPanel(Panel):
                     "visible": bool(widget.IsVisible()), **areas}
             ui_attention.apply(node, wid, widget)
             return node
-        if isinstance(widget, SortedRegionMenu):
+        is_course_root = (isinstance(widget, SortedRegionMenu)
+                          and widget.GetRegionModule() is None)
+        if is_course_root:
+            course = _current_course()
+        if _is_course_leaf(widget) or _is_lone_course_root(widget):
             node_type = "button"
         elif isinstance(widget, STMenu):
             node_type = "menu"
@@ -163,15 +224,28 @@ class CrewMenuPanel(Panel):
             "visible": bool(widget.IsVisible()),
             "chosen": bool(widget.IsChosen()) if isinstance(widget, STButton) else False,
         }
+        if _is_course_leaf(widget):
+            node["chosen"] = (course is not None
+                              and widget.GetRegionModule() == course)
         # Applies to every node type that gets an id — STMenu/submenu rows
         # (the E1M1 "Set Course" target is a submenu, not a leaf) AND
         # STButton leaves alike.
         ui_attention.apply(node, wid, widget)
-        if isinstance(widget, STMenu) and not isinstance(widget, SortedRegionMenu):
+        if node_type == "menu":
             node["expanded"] = wid in self._expanded_ids
             node["openable"] = bool(widget.IsOpenable())
-            children = [self._snapshot_node(c) for c in widget._children]
+            children = [self._snapshot_node(c, course) for c in widget._children]
             node["children"] = [c for c in children if c is not None]
+            if is_course_root:
+                # Always the last row. (With no system above it, the root
+                # never gets here — it is collapsed to a button instead.)
+                node["children"].append({
+                    "id": _CARTOGRAPHY_PREFIX + str(wid),
+                    "type": "button", "variant": "cartography",
+                    "label": CARTOGRAPHY_LABEL,
+                    "enabled": node["enabled"], "visible": True,
+                    "chosen": False,
+                })
         return node
 
     def dispatch_event(self, action: str) -> bool:
@@ -204,6 +278,22 @@ class CrewMenuPanel(Panel):
                 return True
             self.toggle_menu(widget)
             return True
+        if action.startswith("click:" + _CARTOGRAPHY_PREFIX):
+            # Stellar Cartography: open the star map on the live Set Course
+            # menu (its systems and regions are what the map offers). No SDK
+            # event — BC has no such button.
+            try:
+                wid = int(action[len("click:" + _CARTOGRAPHY_PREFIX):])
+            except ValueError:
+                _logger.info("crew-menu: malformed cartography action %r", action)
+                return True
+            widget = self._widgets_by_id.get(wid)
+            if widget is None:
+                _logger.info("crew-menu: stale cartography id %d dropped", wid)
+                return True
+            if widget.IsEnabled() and self._on_set_course is not None:
+                self._on_set_course(widget)
+            return True
         if action.startswith("click:"):
             try:
                 wid = int(action[len("click:"):])
@@ -217,13 +307,19 @@ class CrewMenuPanel(Panel):
                 return True
             if not widget.IsEnabled():
                 return True
-            if isinstance(widget, SortedRegionMenu):
-                # Replace inline expand with a modal. The helm menu stays
-                # open behind the centred popup (no _open_menu_id reset) so
-                # it shows in the background; just open the Set Course modal
-                # over it. No SDK event.
+            if _is_lone_course_root(widget):
+                # Set Course with no systems offered: collapsed to one button
+                # that opens the map, as Stellar Cartography would.
                 if self._on_set_course is not None:
                     self._on_set_course(widget)
+                return True
+            if _is_course_leaf(widget):
+                # A region row: set the course to it. The menu stays open so
+                # the tick moves to the row just chosen. No SDK button event —
+                # record_course_selection fires ET_SET_COURSE at the Helm menu
+                # itself (the crew ack stock BC's course buttons produced).
+                if self._on_course_set is not None:
+                    self._on_course_set(widget.GetRegionModule())
                 return True
             if isinstance(widget, STWarpButton):
                 # The SDK Helm "Warp" button. The callback now PRESSES the
