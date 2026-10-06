@@ -186,8 +186,8 @@ All events are `dauntlessEvent('quick-battle-setup/<verb>')`, addressed by id:
 | Area | Verbs |
 |---|---|
 | Filters and sheet | `era:<id>` · `species:<name>` · `select:<ship>` (toggles the sheet) |
-| Adding ships | `add:<ship>` · `set-player:<ship>` |
-| Groups | `target:<gid>` · `group-new` · `details:<gid>` · `draft:<field>:<value>` · `draft-update` · `draft-cancel` · `rename:<gid>:<urlenc>` · `group-delete:<gid>` |
+| Adding ships | `add:<ship>` · `add:<ship>:<gid>:<n>` (the sheet's add bar, 2026-10-06: n of 1..10 to that group, which becomes the target; a successful add closes the sheet) · `set-player:<ship>` |
+| Groups | `target:<gid>` (sent by the sheet's drop-up group picker; since 2026-10-06 clicking a group box no longer targets it) · `group-new` · `details:<gid>` · `draft:<field>:<value>` · `draft-update` · `draft-cancel` · `rename:<gid>:<urlenc>` · `group-delete:<gid>` |
 | Ship rows | `variant:<eid>:<urlenc or empty>` · `move:<eid>:<gid>` · `remove:<eid>` |
 | Presets | `preset-load:<urlenc>` · `preset-save:<urlenc>` · `preset-delete:<urlenc>` |
 | Dialogs | `confirm` · `cancel` |

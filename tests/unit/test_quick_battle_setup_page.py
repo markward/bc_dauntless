@@ -44,10 +44,48 @@ def test_every_event_verb_python_handles_is_used():
 def test_difficulty_row_and_spike_copy_present():
     # "Adding here" and "off scale" are the spike's literals (app.js); the
     # upper case on screen comes from CSS text-transform, as in the spike.
-    for copy in ("Difficulty", "+ New group", "Adding here",
+    for copy in ("Difficulty", "+ New group",
                  "No ships yet", "Load preset", "Out of era", "off scale",
                  "No hardpoint data for this entry.", "Start Battle"):
         assert copy in JS or copy in SECTION or copy in CSS, copy
+
+
+def _fn(name):
+    return JS.split("function " + name + "(", 1)[1].split("\nfunction ", 1)[0]
+
+
+def test_add_target_is_picked_on_the_sheet_not_by_clicking_a_group():
+    # The group picker on the ship sheet replaced click-a-group-to-target and
+    # its "Adding here" tag.
+    assert "Adding here" not in JS and "qbs-group--target" not in JS + CSS
+    assert ".qbs-group'" not in _fn("qbsClick")
+    picker = _fn("qbsAddGroupMenu")
+    assert "QBS.setup.groups" in picker and "'target'" in picker
+    assert re.search(r"qbsOpenMenu\(anchor,\s*h,\s*true\)", picker)   # drop-up
+    assert "data-action=\"add-group-menu\"" in _fn("renderDetail")
+
+
+def test_add_sends_ship_group_and_quantity():
+    assert re.search(r"'quick-battle-setup/add:'\s*\+\s*qbsEnc\(arg\)\s*\+\s*':'\s*\+\s*"
+                     r"QBS\.setup\.target\s*\+\s*':'\s*\+\s*qbsQty\(arg\)", JS)
+    step = _fn("qbsStepQty")
+    assert "add_max" in step and "Math.max(1" in step
+
+
+def test_quantity_is_remembered_per_ship_type():
+    # Bird of Prey at 3, Vor'cha shows 1, back to the Bird of Prey shows 3:
+    # keyed by the lower-cased ship id, unset reads 1, cleared on close.
+    assert "QBS.qty[String(id || '').toLowerCase()] || 1" in _fn("qbsQty")
+    assert "QBS.qty[String(id).toLowerCase()] =" in _fn("qbsStepQty")
+    assert "QBS.setup.selected" in _fn("qbsStepQty")
+    assert "qbsQty(sh.id)" in _fn("renderDetail")
+    assert "QBS.qty = {}" in _fn("setQuickBattleSetup")
+
+
+def test_catalog_carries_the_add_cap():
+    from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
+    panel = QuickBattleSetupPanel(catalog_fn=lambda: [], qb_module=None)
+    assert panel._catalog_payload()["add_max"] == QuickBattleSetupPanel.ADD_MAX == 10
 
 
 def test_difficulty_segments_render_python_labels_low_medium_high():
