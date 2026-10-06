@@ -200,3 +200,28 @@ SDK root: `/Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts`.
 | AI memory exposure — every SDK call site of `ForceObjectIdentified`/`AddKnownObject`: `MissionLib.py:2445` (`IdentifyObjects`, always `MissionLib.GetPlayer()`'s sensors), `Maelstrom/Episode3/E3M4/E3M4.py:1500`, `Maelstrom/Episode4/E4M4/E4M4.py:1077`, `Bridge/HelmMenuHandlers.py:1056` (orbit-menu planets) | — | safe, verified by inspection: all four call sites resolve `pSensors = pPlayer.GetSensorSubsystem()` before calling `ForceObjectIdentified` — none targets a non-player ship's sensors. `engine/appc/subsystems.py:1451` `ForceObjectIdentified` is confirmed **not** player-gated in our implementation either (unlike `IdentifyObject`, `:1440`, which explicitly no-ops off-player) — it calls `sensor_identification._identify_one(self, pTarget)` on whichever subsystem instance is called. No current consumer, SDK or engine, calls it on an NPC ship, so the design's "AI's known set is empty in practice" holds today. ⚠️ Noted as a latent risk, not a finding: a *future* call site that calls `someNPCShip.GetSensorSubsystem().ForceObjectIdentified(x)` would give that ship memory through the new branch; nothing currently does |
 
 **No UNSAFE consumer found.** Every direct `can_detect`/`perceivable`/target-list consumer is either (a) one of the behaviour changes the spec explicitly plans (membership diff, weapon lock, lost-track clock — all cited in "Behaviour changes" above) or (b) structurally independent of range (power reads, radar's own display clip, identification tier). The one open item is a documentation note, not a guard: `ForceObjectIdentified` is unguarded against being called on a non-player ship, but no call site today does so.
+
+## As built
+
+- No deviations from the spec beyond its own amendments (`IsObjectVisible` keeps the
+  same-set gate; no `_hidden`/`_reached` split; the cloak-contest change to
+  `IsObjectVisible`; the continuity test rewrite) — all already written into the
+  Architecture/Behaviour-changes sections above during execution, not introduced after.
+- The plan's Task 5 text said "three tests" but listed four; all four were added.
+- Audit (Task 1) verdict: **every consumer is safe** — the Science scan-button removal
+  path, the engine's `perceivable`/target-list membership diff, the player lock-clear,
+  the lost-track clock, AI's perceivable/target-visible gate, and the E2M2/E7M6/E8M1
+  `IsBoosted` beats (pure power reads, no list dependency) all either already assumed the
+  new behaviour by construction or are structurally independent of it. One latent,
+  non-blocking risk noted, not fixed: `SensorSubsystem.ForceObjectIdentified` is not
+  player-gated (unlike `IdentifyObject`), so a future call on an NPC's own sensors would
+  give that AI memory through the new branch; no SDK caller does this today.
+- Bench (Task 6): the beyond-range branch (memory/over-boost reach) costs **≈1.15×** the
+  in-range per-call CPU cost — well inside the ≤3× budget.
+- Mutation probe (Task 6 review): stubbing `_beyond_range_reach` to `False` fails all 5
+  of the E2M1 integration tests, confirming they exercise the new branch and not just the
+  unchanged range path.
+- Deferred minors, left as-is per the plan's ledger: `test_ai_observer_never_reaches_by_memory`
+  duplicates the unknown-out-of-range test; `GetNormalPowerPercentage()` is called
+  unguarded beside an `implements`-guarded `IsObjectKnown` in `_beyond_range_reach`
+  (harmless).
