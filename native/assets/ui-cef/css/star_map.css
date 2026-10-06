@@ -94,7 +94,7 @@
    any disagreement paints over the header or footer strip. */
 #star-map-viewport {
     position: absolute;
-    inset: 0;
+    inset: 0 0 0 30%;      /* the right 70%: the info panel has the left 30% */
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
     cursor: grab;
@@ -195,31 +195,25 @@
 .sm-label--inert     { opacity: 0.5; }
 
 /* ── Two-panel layout ─────────────────────────────────────────────────────
-   Above a 1024px CEF view the body splits horizontally: the system
-   information panel takes the left 30%, the map the right 70%.
-   star_map_panel.WIDE_LAYOUT_MIN_VIEW_W / INFO_FRACTION are the Python half —
-   rect_for_view moves the GL scissor, label projection and picking to the
-   same 70% — and test_star_map_cef_assets pins the two together. At or below
-   the breakpoint the info panel is hidden and the map fills the body. */
-#star-map-info { display: none; }
-
-@media (min-width: 1025px) {
-    /* Opaque chrome, like the footer: it sits beside the hole, not over it,
-       so it must carry its own fill now the modal is transparent. */
-    #star-map-info {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        position: absolute;
-        left: 0; top: 0; bottom: 0;
-        width: 30%;
-        box-sizing: border-box;
-        padding: 14px 16px;
-        overflow-y: auto;
-        background: rgb(20, 22, 28);
-        border-right: 1px solid rgba(255, 255, 255, 0.12);
-    }
-    #star-map-viewport { left: 30%; }
+   At every window size the body splits horizontally: the system
+   information panel takes the left 30%, the map the right 70%
+   (#star-map-viewport's inset). star_map_panel.INFO_FRACTION is the Python
+   half — rect_for_view moves the GL scissor, label projection and picking to
+   the same 70% — and test_star_map_cef_assets pins the two together.
+   Opaque chrome, like the footer: it sits beside the hole, not over it, so it
+   carries its own fill now the modal is transparent. */
+#star-map-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 30%;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    overflow-y: auto;
+    background: rgb(20, 22, 28);
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 #star-map-info-name {

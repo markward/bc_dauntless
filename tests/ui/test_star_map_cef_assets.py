@@ -215,7 +215,9 @@ def test_the_viewport_is_the_modal_body_by_construction():
     is pinned in test_python_rect_is_the_large_modal_body."""
     body = _viewport_css_body()
     assert re.search(r"position\s*:\s*absolute", body), body
-    assert re.search(r"inset\s*:\s*0\b", body), body
+    # The right 70% of the body; the split is pinned against Python in
+    # test_the_two_panel_split_matches_python.
+    assert re.search(r"inset\s*:", body), body
     for prop in ("left", "top", "width", "height"):
         assert not re.search(r"(?<![-\w])" + prop + r"\s*:", body), (
             "#star-map-viewport must not state its own " + prop
@@ -274,8 +276,8 @@ def test_python_rect_is_the_large_modal_body():
     # Wide (> 1024): the map is the body's right 70%, beside the info panel.
     assert rect_for_view(1280, 720) == MAP_RECT == (435, 100, 717, 494)
     assert rect_for_view(1512, 983) == (514, 126, 847, 704)
-    # Narrow: the map is the whole body.
-    assert rect_for_view(1000, 600) == (50, 48, 900, 478)
+    # A floored 900-wide modal: still split.
+    assert rect_for_view(1000, 600) == (320, 48, 630, 478)
 
 
 def test_render_fn_matches_the_python_payload_name():
@@ -538,38 +540,22 @@ def test_the_window_is_titled_after_the_row_that_opens_it():
 
 
 
-def _media_blocks(css, query):
-    """Bodies of every `@media (<query>)` block (one level of nesting)."""
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    out = []
-    for m in re.finditer(r"@media\s*\(\s*" + re.escape(query) + r"\s*\)\s*\{", css):
-        depth, i = 1, m.end()
-        while depth:
-            depth += {"{": 1, "}": -1}.get(css[i], 0)
-            i += 1
-        out.append(css[m.end():i - 1])
-    return out
-
-
-def test_the_two_panel_breakpoint_and_split_match_python():
+def test_the_two_panel_split_matches_python():
     """CSS decides what is drawn; Python decides where the GL map, labels and
-    picks go. Both must split at the same width and by the same fraction."""
-    from engine.ui.star_map_panel import INFO_FRACTION, WIDE_LAYOUT_MIN_VIEW_W
+    picks go. Both must split by the same fraction, at every size."""
+    from engine.ui.star_map_panel import INFO_FRACTION
 
-    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    wide = _media_blocks(css, "min-width: %dpx" % WIDE_LAYOUT_MIN_VIEW_W)
-    assert len(wide) == 1, "one wide-layout block, at the Python breakpoint"
+    css = re.sub(r"/\*.*?\*/", "", (ASSETS / "css" / "star_map.css")
+                 .read_text(encoding="utf-8"), flags=re.S)
+    assert "@media" not in css, "the split no longer depends on the width"
     pct = "%d%%" % round(INFO_FRACTION * 100)
-    info = re.search(r"#star-map-info\s*\{([^}]*)\}", wide[0])
-    vp = re.search(r"#star-map-viewport\s*\{([^}]*)\}", wide[0])
+    info = re.search(r"#star-map-info\s*\{([^}]*)\}", css)
     assert info and re.search(r"(?<![-\w])width\s*:\s*" + pct, info.group(1))
     assert re.search(r"(?<![-\w])left\s*:\s*0\b", info.group(1))
-    assert vp and re.search(r"(?<![-\w])left\s*:\s*" + pct, vp.group(1))
+    assert re.search(r"inset\s*:\s*0 0 0 " + pct, _viewport_css_body())
     # Opaque chrome beside the hole, like the footer.
     bg = re.search(r"background\s*:\s*([^;]+);", info.group(1))
     assert bg and not _is_transparent(bg.group(1).strip())
-
-
 
 
 def test_the_info_panel_renders_text_never_markup():

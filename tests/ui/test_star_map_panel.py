@@ -397,11 +397,13 @@ def test_rect_tracks_the_live_cef_view_size():
 
 def test_the_rect_is_the_large_modal_body_at_its_size_floor():
     """Below 1125x700 the 80% rule would undercut the 900x560 floor, so the
-    modal stops shrinking and the map keeps a usable 900x478 body."""
+    modal stops shrinking and the map keeps a usable 630x478 (70% of a
+    900-wide body)."""
     from engine.ui.star_map_panel import rect_for_view
 
-    # 1000x600: modal floored to 900x560, centred at (50, 20).
-    assert rect_for_view(1000, 600) == (50, 48, 900, 478)
+    # 1000x600: modal floored to 900x560, centred at (50, 20); the map starts
+    # 270 in, past the info panel.
+    assert rect_for_view(1000, 600) == (320, 48, 630, 478)
 
 
 def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():
@@ -798,17 +800,14 @@ def test_elimination_marks_the_system_not_a_row():
     assert all(r["mission"] is False for r in rows.values())
 
 
-def test_the_map_fills_the_body_up_to_1024_and_takes_70_percent_above():
-    """The two-panel breakpoint: a CEF view MORE than 1024 wide splits the
-    body into a 30% info panel and the map."""
-    from engine.ui.star_map_panel import is_wide_layout, rect_for_view
+def test_the_map_takes_70_percent_at_every_size():
+    """No breakpoint: the info panel takes the left 30% at every size."""
+    from engine.ui.star_map_panel import rect_for_view
 
-    assert not is_wide_layout(1024) and is_wide_layout(1025)
-    # 1024x768: modal floored to 900 wide (80% would be 819.2), map is all of
-    # its body.
-    assert rect_for_view(1024, 768) == (62, 105, 900, 532)
-    # 1025x768: the same 900-wide modal, map = its right 70% (630 of 900).
-    assert rect_for_view(1025, 768) == (332, 105, 630, 532)
+    # 1024x768: modal floored to 900 wide (80% would be 819.2), map = its
+    # right 70% (630 of 900).
+    assert rect_for_view(1024, 768) == (332, 105, 630, 532)
+    assert rect_for_view(1000, 600) == (320, 48, 630, 478)
 
 
 def _info(p):

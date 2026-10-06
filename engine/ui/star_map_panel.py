@@ -40,18 +40,12 @@ _WARP_FALLBACK = "Warp"
 HEADER_H = 28
 FOOTER_H = 54
 
-# Two-panel layout. Above this CEF view width the window body splits
-# horizontally: a system-information panel on the left, INFO_FRACTION of the
-# body, and the map in the rest. At or below it the map fills the body as
-# before. Mirrored by the `@media (min-width: 1025px)` block and the `30%`
-# offsets in star_map.css; test_star_map_cef_assets pins the agreement.
-WIDE_LAYOUT_MIN_VIEW_W = 1025
+# Two-panel layout, at every window size: a system-information panel takes
+# the left INFO_FRACTION of the body and the map the rest. Mirrored by the
+# `30%` in star_map.css (#star-map-info's width, #star-map-viewport's inset);
+# test_star_map_cef_assets pins the agreement. (It switched off below a
+# 1024px view until 2026-10-06.)
 INFO_FRACTION = 0.3
-
-
-def is_wide_layout(view_w) -> bool:
-    """True when the window body is split into info panel + map."""
-    return view_w >= WIDE_LAYOUT_MIN_VIEW_W
 
 
 def rect_for_view(view_w, view_h) -> tuple:
@@ -69,8 +63,8 @@ def rect_for_view(view_w, view_h) -> tuple:
     labels live INSIDE #star-map-viewport, so they move with the CSS rect
     whatever it resolves to.
 
-    Above WIDE_LAYOUT_MIN_VIEW_W the body is split and the map is its right
-    1 - INFO_FRACTION, beside the system-information panel.
+    The map is the body's right 1 - INFO_FRACTION, beside the
+    system-information panel.
 
     Clamped at 0 so a view smaller than the modal's floor never yields a
     negative origin (which the GL scissor would reject and picking would
@@ -79,9 +73,7 @@ def rect_for_view(view_w, view_h) -> tuple:
     w, h = large_modal_size(view_w, view_h)
     x, y = large_modal_content_origin(view_w, view_h)
     right = x + w
-    if is_wide_layout(view_w):
-        # The info panel takes the left INFO_FRACTION of the body.
-        x += INFO_FRACTION * w
+    x += INFO_FRACTION * w            # the info panel's share, on the left
     # Round both EDGES, not the origin and the width separately, so the map
     # always ends exactly where the body does.
     left = max(0, round(x))
