@@ -1302,10 +1302,11 @@ void main() {
     // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
 
     // Planet geosphere: normal + UV from the sphere direction. Derivatives
-    // are taken here, unconditionally, at the top of main -- never inside a
-    // branch and never after a discard (see the dFdx/discard note above).
+    // are taken here, unconditionally and never inside a branch: after the
+    // dither discard and before the coverage-cutout discard below (dpdx_d,
+    // further down, comes after both; see the dFdx/discard note above).
     vec3 sp_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz - u_sphere_center_body;
-    vec3 sp_dir  = normalize(sp_body + vec3(0.0, 0.0, 1e-20));
+    vec3 sp_dir  = normalize(sp_body);
     float sp_xy  = length(sp_dir.xy);
     float sp_lon = sp_xy > 1e-6 ? atan(sp_dir.y, sp_dir.x) : 0.0;
     float sp_lat = asin(clamp(sp_dir.z, -1.0, 1.0));

@@ -884,7 +884,9 @@ void draw_model(const assets::Model& model,
             // uniforms persist, so a skipped 0 would leak 1 onto the next ship.
             const bool this_sphere = sphere && mesh_idx == model.sphere_map->mesh_index;
             const auto& draw_mesh = this_sphere
-                ? model.sphere_map->lods[static_cast<std::size_t>(std::clamp(sphere_level, 0, 3))]
+                ? model.sphere_map->lods[static_cast<std::size_t>(std::clamp(
+                      sphere_level, 0,
+                      static_cast<int>(model.sphere_map->lods.size()) - 1))]
                 : mesh;
             prog.set_int("u_sphere_map", this_sphere ? 1 : 0);
             // SP2: skinned models carry bind-model verts posed entirely by the
