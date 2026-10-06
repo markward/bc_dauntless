@@ -93,10 +93,16 @@ and mesh fixes use, which is what keeps `Model::trace_accel` sound (see
 `model.h`).
 
 **Gate.** `apply_geosphere` acts only when the model has exactly one mesh,
-every vertex of that mesh is within 0.5% of the mesh's mean vertex distance
-from its centroid, and the mesh has a UV set. Anything else leaves the model
-untouched (`sphere_map` empty), so the variant renders exactly like the plain
-NIF. That covers a modded ringed planet, a multi-shape planet, or a non-sphere.
+every vertex of that mesh is within 0.5% of the mean vertex distance **from
+the mesh's NODE-LOCAL ORIGIN** (not the vertex-position mean), and the mesh
+has a UV set. The node-local origin, not the vertex mean, is the measuring
+point because on IcePlanet.NIF the vertex mean showed 2.25% radial spread —
+BC's UV sphere duplicates seam-column and pole-fan vertices lopsidedly, which
+biases a naive average — versus ~9e-6 about the node-local origin. Anything
+else leaves the model untouched (`sphere_map` empty), so the variant renders
+exactly like the plain NIF. That covers a modded ringed planet, a multi-shape
+planet, a non-sphere, or a modded sphere whose mesh is not centred on its node
+origin — it fails the gate and renders as its own NIF, unchanged from today.
 The gate is geometric, not a file hash, so a retextured mod sphere still gets
 the geosphere.
 
@@ -104,10 +110,11 @@ the geosphere.
 `Model::sphere_map = SphereMap{mesh_index, center_body, radius, lods}`:
 
 - `lods` is `std::array<Mesh, 4>`, holding `build_geosphere(level, r)` for
-  levels 3–6. Each is translated to the original mesh's shape-local centroid,
-  so it sits under the same node as the original mesh and inherits every node
-  transform, the material and the textures. `r` is the mesh's mean vertex
-  distance.
+  levels 3–6. Each is centred on the mesh's **node-local origin** (not
+  translated to the original mesh's shape-local centroid), so it sits under
+  the same node as the original mesh and inherits every node transform, the
+  material and the textures. `r` is the mesh's mean vertex distance from that
+  origin.
 - `center_body` is that centroid carried through the composed node-to-model
   transform. For stock planets it is (−0.736648, 0.368324, 0), with
   r = 90.0099.
