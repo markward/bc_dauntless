@@ -91,7 +91,8 @@ protected:
     }
 
     // Draw one instance of `model` at `world_m` into `hdr` through the real
-    // production submit path.
+    // production submit path: the host (host_bindings.cc) only ever calls
+    // submit_opaque_in_pass, never submit_opaque.
     void draw_one(const assets::ModelHandle& model, const glm::mat4& world_m,
                   const scenegraph::Camera& cam, renderer::HdrTarget& hdr) {
         scenegraph::World world;
@@ -103,10 +104,31 @@ protected:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::FrameSubmitter submitter;
         renderer::Lighting lighting;
-        submitter.submit_opaque(world, cam, *p,
+        submitter.submit_opaque_in_pass(world, cam, *p,
             [](scenegraph::ModelHandle h) -> const assets::Model* {
                 return reinterpret_cast<const assets::Model*>(h);
-            }, lighting);
+            }, lighting, scenegraph::Pass::Space);
+    }
+
+    // Primitives the production draw of `model` emits, counted by a
+    // GL_PRIMITIVES_GENERATED query (core in GL 4.1).
+    GLuint primitives_drawn(const assets::ModelHandle& model, const glm::mat4& world_m,
+                            const scenegraph::Camera& cam, renderer::HdrTarget& hdr) {
+        GLuint q = 0;
+        glGenQueries(1, &q);
+        glBeginQuery(GL_PRIMITIVES_GENERATED, q);
+        draw_one(model, world_m, cam, hdr);
+        glEndQuery(GL_PRIMITIVES_GENERATED);
+        GLuint n = 0;
+        glGetQueryObjectuiv(q, GL_QUERY_RESULT, &n);
+        glDeleteQueries(1, &q);
+        return n;
+    }
+
+    // 20*4^L triangles for the geosphere LOD at index `idx`.
+    static GLuint lod_triangles(int idx) {
+        const int level = assets::kGeosphereLevels[static_cast<std::size_t>(idx)];
+        return 20u * (1u << (2 * level));
     }
 
     // RGBA float readback of the whole target.
@@ -272,6 +294,63 @@ TEST_F(GeosphereDrawTest, SphereMapFlagOffMatchesThePlainNif) {
     const auto px = read_rgba(hdr);
     EXPECT_GT(lum(px, 256, 128, 128), 0.0f) << "plain planet centre was black";
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// --- LOD substitution through the production path (submit_opaque_in_pass) ---
+
+TEST_F(GeosphereDrawTest, InPassDrawsTheCameraLevelLod) {
+    auto geo = load_planet(true);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);   // binds a 256x256 viewport in draw_one
+    hdr.bind();
+    const glm::vec3 c = geo->sphere_map->center_body;
+    scenegraph::Camera cam;
+    cam.eye = c + glm::vec3(0.0f, 0.0f, 120.0f);
+    cam.target = c;
+    cam.aspect = 1.0f;
+    const int idx = renderer::geosphere_level_for(*geo, glm::mat4(1.0f), cam);
+    // Index 0 is level 3 = 1,280 triangles, the same count as BC's own mesh:
+    // a camera picking it could not tell the LOD from the source mesh.
+    ASSERT_GT(idx, 0);
+    EXPECT_EQ(primitives_drawn(geo, glm::mat4(1.0f), cam, hdr), lod_triangles(idx))
+        << "level index " << idx;
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(GeosphereDrawTest, InPassPlainLoadDrawsBcsOwnMesh) {
+    auto plain = load_planet(false);
+    ASSERT_FALSE(plain->sphere_map.has_value());
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);
+    hdr.bind();
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 400.0f);
+    cam.target = glm::vec3(0.0f);
+    cam.aspect = 1.0f;
+    EXPECT_EQ(primitives_drawn(plain, glm::mat4(1.0f), cam, hdr), 1280u);
+}
+
+TEST_F(GeosphereDrawTest, InPassDifferentDistancesDrawDifferentLods) {
+    auto geo = load_planet(true);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);
+    hdr.bind();
+    const glm::vec3 c = geo->sphere_map->center_body;
+    scenegraph::Camera near_cam, far_cam;
+    near_cam.eye = c + glm::vec3(0.0f, 0.0f, 120.0f);
+    far_cam.eye = c + glm::vec3(0.0f, 0.0f, 4000.0f);
+    near_cam.target = far_cam.target = c;
+    near_cam.aspect = far_cam.aspect = 1.0f;
+    const int near_idx = renderer::geosphere_level_for(*geo, glm::mat4(1.0f), near_cam);
+    const int far_idx = renderer::geosphere_level_for(*geo, glm::mat4(1.0f), far_cam);
+    ASSERT_NE(near_idx, far_idx) << "cameras must pick different levels";
+    const GLuint near_n = primitives_drawn(geo, glm::mat4(1.0f), near_cam, hdr);
+    const GLuint far_n = primitives_drawn(geo, glm::mat4(1.0f), far_cam, hdr);
+    EXPECT_EQ(near_n, lod_triangles(near_idx));
+    EXPECT_EQ(far_n, lod_triangles(far_idx));
+    EXPECT_NE(near_n, far_n);
 }
 
 }  // namespace
