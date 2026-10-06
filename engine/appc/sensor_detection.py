@@ -327,6 +327,35 @@ def is_hidden_by_cloak(target) -> bool:
     return cloak is not None and bool(cloak.IsCloaked())
 
 
+def _same_set(observer, target) -> bool:
+    """BC's set gate (IsObjectVisible: owner +0x20 == target +0x20)."""
+    oset = observer.GetContainingSet() if implements(observer, "GetContainingSet") else None
+    tset = target.GetContainingSet() if implements(target, "GetContainingSet") else None
+    return oset is not None and oset is tset
+
+
+def jammed(observer, target) -> bool:
+    """BC's nebula-interference flag (IsObjectVisible @0x005671D0, disassembly
+    0x00567245-0x00567282): True iff *observer* OR *target* is inside any
+    MetaNebula in the observer's set. A yes/no membership test, distinct from
+    the density `concealment_at`: the radial system-profile nebula is not a
+    MetaNebula and never jams. It cancels only the two out-of-range ways in
+    (`_beyond_range_reach`); the range test never consults it. Never raises --
+    a nebula that fails answers "not in it" and is logged once."""
+    pset = observer.GetContainingSet() if implements(observer, "GetContainingSet") else None
+    if pset is None:
+        return False
+    from engine.appc import contact_index
+    for neb in contact_index.nebulae_in(pset):
+        try:
+            if neb.IsObjectInNebula(observer) or neb.IsObjectInNebula(target):
+                return True
+        except Exception as e:
+            import engine.dev_mode as dev_mode
+            dev_mode.log_swallowed("sensor_detection.jammed", e)
+    return False
+
+
 def can_detect(observer, target, *, dist_sq_gu=None,
                apply_concealment=True, concealment=None) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
