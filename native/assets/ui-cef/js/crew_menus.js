@@ -93,7 +93,8 @@ function appendCrewRows(body, nodes, depth) {
     const row = document.createElement("div");
     row.className = "crew-menu__row" + (node.enabled ? "" : " disabled") +
                     (hasChildren ? "" : " crew-menu__row--leaf") +
-                    (node.chosen ? " crew-menu__row--chosen" : "");
+                    (node.chosen ? " crew-menu__row--chosen" : "") +
+                    (node.variant === "cartography" ? " crew-menu__row--cartography" : "");
     row.setAttribute("data-depth", String(Math.min(depth, 2)));
     applyHighlightClasses(row, node);
 

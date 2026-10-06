@@ -3567,10 +3567,10 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     don't normally coincide).
     """
     # The Set Course modal is a centred CEF overlay opened from the (bridge)
-    # Helm crew menu; it needs a real cursor too. Clicking Set Course does NOT
-    # clear the crew menu: crew_menu_panel deliberately leaves _open_menu_id
-    # set so the Helm menu stays visible behind the popup (see the
-    # SortedRegionMenu branch in crew_menu_panel.dispatch_event), and
+    # Helm crew menu; it needs a real cursor too. Clicking Set Course ->
+    # Stellar Cartography does NOT clear the crew menu: crew_menu_panel
+    # deliberately leaves _open_menu_id set (see the cartography branch in
+    # crew_menu_panel.dispatch_event), and
     # has_open_menu() therefore stays True for as long as the modal is up.
     #
     # That retained menu state is load-bearing, not incidental: it is what
@@ -3584,7 +3584,7 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     # a modal is opened from somewhere with no crew menu at all.
     # The Quick Battle Setup panel is the same kind of centred CEF modal and
     # also needs a real cursor while it is open.
-    # The star map (which now opens from that same Set Course button) is a
+    # The star map (opened from Set Course -> Stellar Cartography) is a
     # centred modal too, and is unusable without a cursor — it is dragged and
     # clicked, not just clicked.
     modal_open = (
@@ -10208,8 +10208,8 @@ def run(mission_name: Optional[str] = None,
                                       on_warp_engage=on_warp_engage)
 
         def _open_star_map(course_menu=None):
-            """Helm Set Course click -> open the map anchored on the player's
-            current system."""
+            """Helm -> Set Course -> Stellar Cartography click -> open the map
+            anchored on the player's current system."""
             # Same player accessor on_warp_engage uses — the player changes
             # per mission, so it must be read at click time, not at boot.
             _player = App.Game_GetCurrentPlayer()
@@ -10227,9 +10227,13 @@ def run(mission_name: Optional[str] = None,
             star_map_panel.invalidate()
 
         from engine.ui.crew_menu_panel import CrewMenuPanel
+        # Set Course is BC's drop-down again: region rows set the course
+        # through the same on_course_set the map uses, and the permanent
+        # "Stellar Cartography" row at its foot opens the map.
         crew_menu_panel = CrewMenuPanel(
             on_set_course=_open_star_map,
-            on_warp_engage=on_warp_engage)
+            on_warp_engage=on_warp_engage,
+            on_course_set=on_course_set)
         registry.register(crew_menu_panel)
         registry.register(star_map_panel)
         try:

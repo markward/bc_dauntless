@@ -43,6 +43,11 @@
 .crew-menu__row--chosen { background: rgba(216, 94, 86, 0.28); }
 .crew-menu__check { margin-left: auto; padding-left: 12px; opacity: 0.9; }
 
+/* Helm -> Set Course -> Stellar Cartography: the permanent last row, which
+   opens the 3D map rather than setting a course. A hairline above it sets it
+   apart from the system list it follows. */
+.crew-menu__row--cartography { border-top: 1px solid rgba(255, 255, 255, 0.18); }
+
 /* Caret matches .target-list__caret — neutral white, glyph swapped in JS
    (no CSS rotate; rotation promotes the caret to its own GPU layer in CEF
    and blurs adjacent text). */
