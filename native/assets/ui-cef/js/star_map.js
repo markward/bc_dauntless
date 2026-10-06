@@ -9,7 +9,7 @@
 // (star-map/pick:<x>,<y>), which moves the info panel to it; a double-click
 // sets course to that star's outermost region (star-map/pick-course:<x>,<y>);
 // wheel zooms (star-map/zoom:<steps>). The magnifier at the map's
-// bottom-right opens a search: star-map/search:<query>, results in
+// bottom-left opens a search: star-map/search:<query>, results in
 // search_results, a pick fires star-map/select-system:<id>.
 //
 // The info panel lists its system's destinations (warp_points), each with a
@@ -190,7 +190,7 @@ function renderStarMapRegions(rows, note) {
     });
 }
 
-// ── Search (bottom-right of the map) ────────────────────────────────────
+// ── Search (bottom-left of the map) ────────────────────────────────────
 const SM_SEARCH_SVG =
     '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
     + '<circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>'

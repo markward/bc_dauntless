@@ -286,21 +286,23 @@
     color: #99ccff;
 }
 
-/* ── Search, bottom-right of the map ────────────────────────────────────
-   Anchored to the body's bottom-right, which is the map's (the info panel
-   is on the left). Opaque chrome over the map; closed, only the magnifier
-   shows. DOM order (after #star-map-viewport) puts it above the labels with
-   no z-index of its own. */
+/* ── Search, bottom-left of the map ─────────────────────────────────────
+   Anchored just right of the info panel (the map starts at 30% of the
+   body), at the bottom. Opaque chrome over the map; closed, only the
+   magnifier shows. DOM order (after #star-map-viewport) puts it above the
+   labels with no z-index of its own. */
 #star-map-search {
     position: absolute;
-    right: 12px; bottom: 12px;
-    display: flex; flex-direction: column; align-items: flex-end;
+    left: calc(30% + 12px); bottom: 12px;
+    display: flex; flex-direction: column; align-items: flex-start;
     gap: 4px;
     width: 260px;
     pointer-events: none;      /* only the bar and results take clicks */
 }
+/* row-reverse keeps the magnifier in the corner with the field opening to
+   its right. */
 #star-map-search-bar {
-    display: flex; align-items: center; gap: 6px;
+    display: flex; flex-direction: row-reverse; align-items: center; gap: 6px;
     pointer-events: auto;
 }
 #star-map-search-input {

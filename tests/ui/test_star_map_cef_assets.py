@@ -570,7 +570,7 @@ def test_each_destination_row_has_a_set_course_crosshair():
     index = (ASSETS / "index.html").read_text(encoding="utf-8")
     assert 'id="star-map-info-regions"' in index
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
-    fn = js[js.index("function renderStarMapRegions"):js.index("// ── Search (bottom-right of the map)")]
+    fn = js[js.index("function renderStarMapRegions"):js.index("// ── Search (bottom-left of the map)")]
     assert "sm-region__course" in fn and "star-map/set-course:" in fn
     # Labels are mission-supplied: text, never markup. The only innerHTML is
     # the fixed crosshair SVG.
@@ -588,7 +588,7 @@ def test_each_destination_row_has_a_set_course_crosshair():
 
 def test_the_objective_marker_sits_left_of_the_crosshair():
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
-    fn = js[js.index("function renderStarMapRegions"):js.index("// ── Search (bottom-right of the map)")]
+    fn = js[js.index("function renderStarMapRegions"):js.index("// ── Search (bottom-left of the map)")]
     assert "w.objective" in fn
     # DOM order is screen order in the flex row: label, marker, crosshair.
     assert fn.index("sm-region__objective") < fn.index("sm-region__course")
@@ -605,10 +605,13 @@ def test_search_box_sits_beside_the_map_not_inside_it():
     assert "star-map-viewport" not in ids
     assert "star-map-search" in ids
     assert any("sm-body" in el["classes"] for el in chain)
-    # Bottom-right of the body, which is the map's bottom-right.
+    # Bottom-left of the MAP: just past the info panel's 30%, not the body's
+    # own left edge (which is under the info panel).
+    from engine.ui.star_map_panel import INFO_FRACTION
     css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     block = re.search(r"#star-map-search\s*\{([^}]*)\}", css)
-    assert block and re.search(r"right\s*:", block.group(1)) \
+    pct = "%d%%" % round(INFO_FRACTION * 100)
+    assert block and re.search(r"left\s*:\s*calc\(" + pct, block.group(1)) \
         and re.search(r"bottom\s*:", block.group(1))
 
 

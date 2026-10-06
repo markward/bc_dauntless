@@ -594,7 +594,7 @@ class StarMapPanel(Panel):
             # decides whether the panel is shown, so Python needs no second
             # copy of the breakpoint on this path.
             "info": self._info() if self._visible else None,
-            # The search box (bottom-right of the map): what was typed and
+            # The search box (bottom-left of the map): what was typed and
             # the systems it found.
             "search_query": self._search_query,
             "search_results": self._search() if self._visible else [],
