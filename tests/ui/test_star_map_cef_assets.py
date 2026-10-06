@@ -618,3 +618,14 @@ def test_the_label_layer_cannot_paint_over_the_target_popup():
     # The leaf order INSIDE the layer is still the one the map needs.
     assert (_z_index(css, ".sm-here-arrow") > _z_index(css, ".sm-label")
             > _z_index(css, ".sm-label--disc"))
+
+
+def test_the_window_is_titled_after_the_row_that_opens_it():
+    """The map opens from Helm -> Set Course -> Stellar Cartography, so the
+    window carries that row's name rather than the menu's."""
+    from engine.ui.crew_menu_panel import CARTOGRAPHY_LABEL
+
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    section = index[index.index('id="star-map-panel"'):]
+    m = re.search(r'<div class="cp-header">([^<]*)</div>', section)
+    assert m and m.group(1) == CARTOGRAPHY_LABEL, m and m.group(1)
