@@ -1368,6 +1368,11 @@ class SensorSubsystem(PoweredSubsystem):
         self._is_on: bool = True
         self._base_sensor_range: float = 0.0
         self._max_probes: int = 0
+        # BC +0xC8 NumProbes (live counter, seeded from MaxProbes) and the
+        # +0xAC..+0xBC probe list, which holds OBJECT IDS, not pointers
+        # (sensor-subsystem.md; 2026-10-07-sensor-probes-design.md).
+        self._num_probes: int = 0
+        self._probe_ids: list = []
         # Objects whose existence is known to the sensor system.
         # Populated by the game loop / radar sweep logic.  Default is
         # empty (nothing known), matching the initial unscanned state.
@@ -1377,6 +1382,31 @@ class SensorSubsystem(PoweredSubsystem):
     def SetBaseSensorRange(self, v) -> None:         self._base_sensor_range = float(v)
     def GetMaxProbes(self) -> int:                   return self._max_probes
     def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
+
+    def GetNumProbes(self) -> int:                   return self._num_probes
+    def SetNumProbes(self, v) -> None:               self._num_probes = int(v)
+
+    def AddProbe(self, obj_id) -> None:
+        """BC AddProbe (@0x00567010): remember a launched probe by object ID."""
+        self._probe_ids.append(int(obj_id))
+
+    def probes(self) -> list:
+        """The live probes, in launch order. An ID that no longer resolves
+        (the object was deleted) is dropped, as BC garbage-collects dead
+        probes while walking the list. Fast-exits on an empty list -- this is
+        now a per-frame hot path (sensor_detection._live_probes) and the
+        common case is zero probes."""
+        if not self._probe_ids:
+            return []
+        from engine.core.ids import get_object_by_id
+        live, keep = [], []
+        for oid in self._probe_ids:
+            obj = get_object_by_id(oid)
+            if obj is not None:
+                live.append(obj)
+                keep.append(oid)
+        self._probe_ids = keep
+        return live
 
     def GetIdentificationTime(self) -> float:
         """BC's identification dwell (RE'd: a hard-coded 4.0 s, no setter);
@@ -1484,19 +1514,37 @@ class SensorSubsystem(PoweredSubsystem):
         tx, ty, tz = _get_xyz(obj)
         return ((tx - ox) ** 2 + (ty - oy) ** 2 + (tz - oz) ** 2) ** 0.5
 
-    def IsObjectNear(self, obj) -> int:
-        """Within near_fraction (BC: half) of sensor range. Pure distance."""
-        from engine.appc import sensor_dials
+    def _own_band(self, obj, fraction) -> bool:
+        """Owner-only band test: centre distance within *fraction* of this
+        subsystem's own effective range, same set."""
         d = self._band_distance(obj)
         r = self.GetSensorRange()
-        return 1 if (d is not None and r > 0.0
-                     and d <= r * sensor_dials.get("near_fraction")) else 0
+        return d is not None and r > 0.0 and d <= r * fraction
+
+    def _probe_band(self, obj, fraction) -> bool:
+        """Any live probe, in the owner's set, whose own band covers obj
+        (BC: IsObjectNear/IsObjectFar fall back to walking the probe list)."""
+        ship = self._owner_ship()
+        pset = ship.GetContainingSet() if ship is not None else None
+        if pset is None or obj is None or obj.GetContainingSet() is not pset:
+            return False
+        for probe in self.probes():
+            ps = probe.GetSensorSubsystem() if implements(probe, "GetSensorSubsystem") else None
+            if (ps is not None and probe.GetContainingSet() is pset
+                    and ps._own_band(obj, fraction)):
+                return True
+        return False
+
+    def IsObjectNear(self, obj) -> int:
+        """Within near_fraction (BC: half) of sensor range -- the owner's or
+        a live probe's own (sub-project 4). Pure distance."""
+        from engine.appc import sensor_dials
+        nf = sensor_dials.get("near_fraction")
+        return 1 if (self._own_band(obj, nf) or self._probe_band(obj, nf)) else 0
 
     def IsObjectFar(self, obj) -> int:
-        """Within full sensor range. Pure distance."""
-        d = self._band_distance(obj)
-        r = self.GetSensorRange()
-        return 1 if (d is not None and r > 0.0 and d <= r) else 0
+        """Within full sensor range -- the owner's or a live probe's own."""
+        return 1 if (self._own_band(obj, 1.0) or self._probe_band(obj, 1.0)) else 0
 
     def IsObjectVisible(self, obj) -> int:
         """BC's IsObjectVisible (@0x005671D0): BC's same-set gate, then the

@@ -357,3 +357,102 @@ def test_evaluate_event_destination_is_the_watched_object():
     finally:
         App.g_kEventManager.AddEvent = saved_add
     assert captured == [target]
+
+
+def test_evaluate_skips_an_object_pending_delete():
+    """Level triggering re-fires every evaluation while an object stays
+    inside, but a SetDeleteMe(1) object is only removed from its set once per
+    rendered frame (host_loop._process_object_deletions), after up to N sim
+    ticks. E6M5's ShuttleReachesPlanet (counter += 1; SetDeleteMe(1); never
+    removes the shuttle from the check) would count one shuttle twice. An
+    object pending delete is already gone as far as a check is concerned."""
+    pCheck = ProximityCheck(event_type=997)
+    pCheck.SetRadius(100.0)
+    anchor = ShipClass()
+    anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
+    target = ShipClass()
+    target.SetTranslateXYZ(50.0, 0.0, 0.0)   # inside
+    _share_a_set(anchor, target)
+    pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda evt: fired.append(evt.GetEventType())
+    try:
+        pCheck.Evaluate(anchor)
+        assert fired == [997]
+        target.SetDeleteMe(1)
+        pCheck.Evaluate(anchor)
+        pCheck.CheckProximity(target)
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+
+    assert fired == [997]
+
+
+def _anchorless_check_in_set(event_type, at, radius):
+    """E6M3.CreateProximityCheck's shape (E6M3.py:644-665): SetTranslate +
+    the set's ProximityManager.AddObject, and never AttachObject."""
+    from engine.appc.math import TGPoint3
+    from engine.appc.sets import SetClass_Create
+    pSet = SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "AnchorlessTest")
+    check = App.ProximityCheck_Create(event_type)
+    check.SetRadius(radius)
+    p = TGPoint3()
+    p.SetXYZ(*at)
+    check.SetTranslate(p)
+    check.UpdateNodeOnly()
+    pSet.GetProximityManager().AddObject(check)
+    return pSet, check
+
+
+def test_anchorless_check_fires_inside_its_own_position_not_outside():
+    """An anchorless check centres on its OWN world position. Before this,
+    Evaluate returned early with no anchor, so E6M3's station check never
+    fired: StationProximity -> ShuttlesLanded never ran and the transports
+    never arrived."""
+    from engine.appc.planet import evaluate_proximity_checks
+    pSet, check = _anchorless_check_in_set(996, (1000.0, 0.0, 0.0), 10.0)
+    inside = ShipClass(); inside.SetTranslateXYZ(1005.0, 0.0, 0.0)
+    outside = ShipClass(); outside.SetTranslateXYZ(1020.0, 0.0, 0.0)
+    near_origin = ShipClass(); near_origin.SetTranslateXYZ(5.0, 0.0, 0.0)
+    pSet.AddObjectToSet(inside, "inside")
+    pSet.AddObjectToSet(outside, "outside")
+    pSet.AddObjectToSet(near_origin, "near_origin")
+    for o in (inside, outside, near_origin):
+        check.AddObjectToCheckList(o, ProximityCheck.TT_INSIDE)
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda evt: fired.append(evt.GetDestination())
+    try:
+        evaluate_proximity_checks()
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+        App.g_kSetManager.DeleteSet("AnchorlessTest")
+
+    assert fired == [inside]
+
+
+def test_anchorless_check_ignores_an_object_in_another_set():
+    """Same per-set gate as the anchored path: the check's set is the one
+    whose ProximityManager it was added to."""
+    from engine.appc.planet import evaluate_proximity_checks
+    from engine.appc.sets import SetClass_Create
+    pSet, check = _anchorless_check_in_set(995, (0.0, 0.0, 0.0), 10.0)
+    elsewhere = SetClass_Create()
+    ship = ShipClass(); ship.SetTranslateXYZ(1.0, 0.0, 0.0)
+    elsewhere.AddObjectToSet(ship, "elsewhere")
+    check.AddObjectToCheckList(ship, ProximityCheck.TT_INSIDE)
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda evt: fired.append(evt.GetEventType())
+    try:
+        evaluate_proximity_checks()
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+        App.g_kSetManager.DeleteSet("AnchorlessTest")
+
+    assert fired == []

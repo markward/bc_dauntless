@@ -4,7 +4,8 @@ Measures can_detect for out-of-range KNOWN contacts (the new branch, worst
 case: set compare + power read + IsObjectKnown + jam scan over 3 nebulae)
 against in-range contacts (the old path) with time.process_time, as
 test_sensor_occlusion_bench.py does -- wall clock is too noisy on a shared
-machine. Budget: the new branch costs at most 3x the in-range call."""
+machine. Budget: the new branch costs at most 3x the in-range call. The
+probe walk (sub-project 4) is budgeted per probe: 1.5x (1 + n_probes)."""
 import time
 
 from engine.appc import contact_index
@@ -38,3 +39,22 @@ def test_beyond_range_branch_stays_within_budget(monkeypatch):
     in_range = min(_per_call(obs, near, 200) for _ in range(3))
     beyond = min(_per_call(obs, far, 200) for _ in range(3))
     assert beyond <= 3.0 * in_range, (beyond, in_range)
+
+
+def test_probe_branch_stays_within_budget(monkeypatch):
+    from tests.unit.test_sensor_probes import _probe_at
+    monkeypatch.setattr(contact_index, "nebulae_in", lambda pSet: ())
+    s, obs, sensors = _observer_in_set(2000.0)
+    for x in (3000.0, 6000.0, 9000.0):
+        _probe_at(s, sensors, x)
+    near = [_ship_at(s, "n%d" % i, 100.0 + i) for i in range(40)]
+    far = [_ship_at(s, "f%d" % i, 9300.0 + i) for i in range(40)]  # reached by the 3rd probe only
+    assert all(sd.can_detect(obs, x) for x in far)
+    _per_call(obs, near + far, 20)
+    in_range = min(_per_call(obs, near, 200) for _ in range(3))
+    via_probe = min(_per_call(obs, far, 200) for _ in range(3))
+    # Per-probe budget: the walk runs one full can_detect per probe it visits
+    # (here all three), so its cost is the observer's call plus n_probes probe
+    # calls. A flat 5x budget sat at the measured cost (~5.0x) and flaked.
+    n_probes = 3
+    assert via_probe <= 1.5 * (1 + n_probes) * in_range, (via_probe, in_range)

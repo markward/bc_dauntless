@@ -2920,8 +2920,27 @@ class _PlayerControl:
                 # BC: a manual helm input overrides the current order —
                 # cancel the AI, resume from the ship's actual motion, and
                 # fall through so this same tick's input registers.
+                was_warping = getattr(player, "_insystem_warp_transit", None) is not None
                 self._cancel_player_ai(player)
                 self._sync_control_from_ship(player)
+                if was_warping:
+                    # Mark's ruling: taking the helm mid in-system-warp
+                    # resumes at FULL IMPULSE — the live max-impulse speed —
+                    # not at the zeroed velocity _end_in_system_warp (run by
+                    # ClearAI, above) just published, and not at the warp's
+                    # own cruise speed. Same source the throttle ramp's cap
+                    # uses (_get_ies → GetMaxSpeed, already derated for
+                    # damage and power). Only this path: every other
+                    # takeover keeps _sync_control_from_ship's real-velocity
+                    # resume untouched.
+                    ies = self._get_ies(player)
+                    full_impulse = ies.GetMaxSpeed() if ies is not None else 0.0
+                    if full_impulse > 0.0:
+                        fwd = player.GetWorldRotation().GetCol(1)
+                        self._current_speed = full_impulse
+                        player.SetVelocity(TGPoint3(fwd.x * full_impulse,
+                                                     fwd.y * full_impulse,
+                                                     fwd.z * full_impulse))
                 self._ai_owned = False
             else:
                 # AI owns ship motion — skip the entire ship-motion path

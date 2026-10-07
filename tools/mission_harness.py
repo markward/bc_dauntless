@@ -857,12 +857,24 @@ def setup_sdk() -> None:
 
     _BASELINE_MODULES = set(sys.modules.keys())
 
-    # Install the LaunchObject emission hook so any TGScriptAction that
-    # routes through Actions.ShipScriptActions.LaunchObject lands in the
-    # engine wrapper (which records via App._emission_recorder instead
-    # of spawning real ships). Idempotent — safe to call repeatedly.
+    # NO LaunchObject emission hook here: setup_sdk() is shared with the live
+    # host (engine/host_loop._setup_sdk), where Launch Probe / shuttles /
+    # decoys must spawn for real. Harness entry points that want the
+    # recorder call install_emission_recorder() themselves.
+
+
+def install_emission_recorder() -> None:
+    """Harness-only: route Actions.ShipScriptActions.LaunchObject to the
+    engine wrapper, which records via App._emission_recorder instead of
+    spawning real ships. Call after setup_sdk(). Idempotent.
+
+    The hooked module joins the run baseline so purge_run_modules() does
+    not drop it (and the hook with it) between missions."""
     from engine.appc.emission import install_launch_object_hook
     install_launch_object_hook()
+    _BASELINE_MODULES.update(
+        name for name in ("Actions", "Actions.ShipScriptActions")
+        if name in sys.modules)
 
 
 def run_mission(module_name: str) -> tuple[str, Exception | None]:
@@ -917,6 +929,7 @@ def _error_key(exc: Exception) -> str:
 
 def main() -> None:
     setup_sdk()
+    install_emission_recorder()
     missions = discover_missions()
 
     print("open_stbc mission harness")

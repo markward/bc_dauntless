@@ -17,24 +17,43 @@ The per-tick rotation delta is built as pitch/yaw/roll matrices and
 post-multiplied into the world rotation (`_integrate_rotation`) — matches the
 `_PlayerControl.apply` body-frame-delta convention.
 
-Ships whose setpoints are still None are skipped entirely — the player ship
-under manual control (driven by `engine/host_loop.py:_PlayerControl` directly
-on the transform) and freshly-spawned props never enter the integrator. When a
-helm AI is installed on the player (Orbit Planet, All Stop, ...), the AI
-writes setpoints and the player integrates here like any other ship;
-_PlayerControl.apply() yields for exactly that case (gated on player.GetAI())
-so the two integrators never fight over the transform.
+Ships whose setpoints are still None skip the ramp above entirely, but are
+NOT otherwise untouched: only the current player (driven by
+`engine/host_loop.py:_PlayerControl` directly on the transform) is left
+strictly alone. Every other setpoint-less ship -- a freshly-spawned prop with
+zero velocity, or one the SDK moves only with a bare SetVelocity /
+SetAngularVelocity and no AI (a launched probe, E1M2's falling station) --
+drifts on that scripted velocity/angular velocity via `engine.appc.drift`,
+the same step a rock uses (rocks.motion.step). When a helm AI is installed
+on the player (Orbit Planet, All Stop, ...), the AI writes setpoints and the
+player integrates through the ramp above like any other ship;
+_PlayerControl.apply() yields for exactly that case (gated on
+player.GetAI()) so the two integrators never fight over the transform.
+
+Known gap, NOT covered by the drift branch above: a ship that already HAS
+an AI installed (so its tree wrote a setpoint at some earlier point in the
+mission, from ordinary combat maneuvering) takes the ramp path below even
+after its script later fires a bare SetVelocity/SetAngularVelocity -- the
+ramp path overwrites `_velocity` from its own commanded speed every tick,
+so the scripted velocity is still silently ignored. E8M2's disabled Matan
+(`DisableMatan`), E7M2's JonKa, E8M1's Galor and E2M1's Karoon are all this
+case: each already has an AI (`SetAI`) installed before its script sends it
+spinning off with a bare SetVelocity/SetAngularVelocity. See
+`engine/appc/drift.py`'s module docstring.
 """
 from dataclasses import dataclass
 
-from engine.appc import warp_flight
+# Module scope, NOT a per-call `import`/`from ... import` inside the
+# integrator: every name below is read once per ship per tick (App and
+# drift included -- the setpoint-less branch hits both every tick for
+# every drifting ship), and none of them import anything from this module
+# (nor from ships), so there is no cycle to break. Same fix as the one
+# applied to subsystems._is_offline, which was costing 115,279 importlib
+# lookups over 150 ticks at 100 ships.
+import App
+from engine.appc import drift, warp_flight
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
-# Module scope, NOT a per-call `from ... import` inside the integrator: both
-# names are read once per ship per tick, and subsystems imports nothing from
-# this module (nor from ships), so there is no cycle to break. Same fix as the
-# one applied to subsystems._is_offline, which was costing 115,279 importlib
-# lookups over 150 ticks at 100 ships.
 from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
 from engine.core.ids import implements
 
@@ -154,13 +173,14 @@ def _ramp_toward(current: float, target: float, step: float) -> float:
 def _step_ship_motion(ship, dt: float) -> None:
     """Advance one ship's transform by one tick.
 
-    Skips entirely when no setpoint has ever been written so the manually
-    flown player ship (driven via `_PlayerControl`, which yields to this
-    integrator whenever a helm AI is installed) and freshly-spawned non-AI
-    props are left alone. Otherwise: flies under the impulse subsystem's live
-    (already damage- and power-derated) limits with a non-braking cap; with
-    every pod out it drifts on inertia (frozen world-space velocity + residual
-    angular momentum). Spec
+    When no setpoint has ever been written, the manually flown player ship
+    (driven via `_PlayerControl`, which yields to this integrator whenever a
+    helm AI is installed) is left strictly alone; every other setpoint-less
+    ship drifts on its scripted velocity/angular velocity via
+    `engine.appc.drift` (see module docstring). Otherwise: flies under the
+    impulse subsystem's live (already damage- and power-derated) limits with
+    a non-braking cap; with every pod out it drifts on inertia (frozen
+    world-space velocity + residual angular momentum). Spec
     docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.
     """
     # An immobile ship (SetStatic / SetStationary) is a fixed anchor: never
@@ -189,6 +209,19 @@ def _step_ship_motion(ship, dt: float) -> None:
     sp = getattr(ship, "_speed_setpoint", None)
     av = getattr(ship, "_target_angular_velocity_setpoint", None)
     if sp is None and av is None:
+        # No helm/AI setpoint has ever been written. The manually-flown
+        # player is excluded -- it has no setpoints either under manual
+        # control, but host_loop._PlayerControl drives and moves it
+        # directly, so integrating here too would double-move it. Every
+        # OTHER setpoint-less ship (a freshly-spawned prop, or one only
+        # ever touched by the SDK's bare SetVelocity/SetAngularVelocity --
+        # a launched probe, E1M2's falling station) drifts on whatever
+        # velocity/angular velocity was scripted onto it, same as a rock
+        # (engine.appc.drift, shared with engine.rocks.motion). A ship that
+        # HAS an AI never reaches this branch once its tree has written a
+        # setpoint -- see the module docstring's "known gap" paragraph.
+        if ship is not App.Game_GetCurrentPlayer():
+            drift.step(ship, dt)
         return
 
     # -- Commanded speed + world-space direction --
@@ -209,27 +242,32 @@ def _step_ship_motion(ship, dt: float) -> None:
     f, _imp_out_f = impulse_fractions(ies)
 
     # -- Total loss -> inertial drift --
+    # Named drift_vec, NOT drift: this function also calls the
+    # engine.appc.drift MODULE (imported at module scope above) in the
+    # setpoint-less branch earlier, and a local `drift =` assignment
+    # anywhere in the function makes Python treat every `drift` in it as
+    # local, shadowing that import (UnboundLocalError on the earlier use).
     if f <= 0.0:
-        drift = getattr(ship, "_drift_velocity", None)
-        if drift is None:
-            drift = TGPoint3(
+        drift_vec = getattr(ship, "_drift_velocity", None)
+        if drift_vec is None:
+            drift_vec = TGPoint3(
                 world_dir.x * ship._current_speed,
                 world_dir.y * ship._current_speed,
                 world_dir.z * ship._current_speed,
             )
-            ship._drift_velocity = drift
+            ship._drift_velocity = drift_vec
         p = ship.GetTranslate()
         ship.SetTranslateXYZ(
-            p.x + drift.x * dt, p.y + drift.y * dt, p.z + drift.z * dt,
+            p.x + drift_vec.x * dt, p.y + drift_vec.y * dt, p.z + drift_vec.z * dt,
         )
-        ship.SetVelocity(TGPoint3(drift.x, drift.y, drift.z))
+        ship.SetVelocity(TGPoint3(drift_vec.x, drift_vec.y, drift_vec.z))
         _integrate_rotation(ship, dt)   # residual angular momentum, held
         return
 
     # -- Powered flight: clear any drift snapshot, re-seed speed --
-    drift = getattr(ship, "_drift_velocity", None)
-    if drift is not None:
-        ship._current_speed = drift.Length()
+    drift_vec = getattr(ship, "_drift_velocity", None)
+    if drift_vec is not None:
+        ship._current_speed = drift_vec.Length()
         ship._drift_velocity = None
 
     em = _effective_motion(ship, ies=ies, imp_f=_imp_out_f)

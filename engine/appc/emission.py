@@ -6,9 +6,13 @@ world-frame position and orientation, and records the event in
 App._emission_recorder. No real spawning — Layer 3 of the emission
 design (see docs/superpowers/specs/2026-05-12-object-emitter-emission-design.md).
 
-Install once at harness setup:
+Harness-only. Install via tools.mission_harness.install_emission_recorder()
+(the mission and game-loop harness mains do), or directly:
     from engine.appc.emission import install_launch_object_hook
     install_launch_object_hook()
+NEVER from tools.mission_harness.setup_sdk(): the live host shares that
+setup (engine/host_loop._setup_sdk), and with this hook in place Launch
+Probe / shuttles / decoys spawn nothing in the game.
 
 Idempotent: calling twice replaces the same slot, never composes.
 """

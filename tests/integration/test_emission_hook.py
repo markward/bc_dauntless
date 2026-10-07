@@ -18,8 +18,14 @@ from engine.appc.properties import (
 
 
 @pytest.fixture(autouse=True)
-def reset_recorder():
+def reset_recorder(monkeypatch):
     from engine.core.ids import _registry as _ID_REGISTRY
+
+    # These tests install the recording hook; restore the SDK LaunchObject at
+    # teardown so it never leaks into a test that runs the real spawn path.
+    mh.setup_sdk()
+    import Actions.ShipScriptActions as ssa
+    monkeypatch.setattr(ssa, "LaunchObject", ssa.LaunchObject)
 
     App._emission_recorder.disable()
     App._emission_recorder.clear()

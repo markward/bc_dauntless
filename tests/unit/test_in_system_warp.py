@@ -185,6 +185,39 @@ def test_stop_in_system_warp_aborts_transit():
     assert p.y == pytest.approx(mid_y)
 
 
+def test_aborted_in_system_warp_leaves_no_drift_velocity():
+    """Round 2: warp_flight.step publishes the dash's cruise velocity via
+    SetVelocity purely for telemetry (camera smear, speed readouts); ending
+    the transit must not leave that stale value lying around, or a
+    setpoint-less ship (no AI) would now keep drifting at warp speed
+    forever once engine.appc.drift picks it up (the probe/E1M2-station fix).
+    StopInSystemWarp must zero `_velocity` itself, not just stop advancing
+    the flight."""
+    ship = ShipClass()
+    ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    target = ShipClass()
+    target.SetTranslateXYZ(0.0, 1000.0, 0.0)
+    ship.InSystemWarp(target, 295.0)
+    _step_ship_motion(ship, _DT)
+    v = ship.GetVelocityTG()
+    assert (v.x * v.x + v.y * v.y + v.z * v.z) > 0.0   # cruising, pre-check
+
+    ship.StopInSystemWarp()
+
+    v = ship.GetVelocityTG()
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+
+    from engine.appc.ship_motion import tick_all_ship_motion
+    import App
+    pSet = App.SetClass_Create(); pSet.SetName("S2")
+    App.g_kSetManager._sets["S2"] = pSet
+    pSet.AddObjectToSet(ship, "ship_obj")
+    p0 = ship.GetTranslate()
+    tick_all_ship_motion(1.0)
+    p1 = ship.GetTranslate()
+    assert (p1.x, p1.y, p1.z) == (p0.x, p0.y, p0.z)
+
+
 def test_set_ai_aborts_transit():
     """A change of orders aborts the warp — the transit belongs to the AI
     that requested it (All Stop mid-warp must not keep flying it)."""

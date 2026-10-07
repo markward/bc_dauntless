@@ -434,7 +434,29 @@ def TGPoint3_GetModelLeft() -> TGPoint3:
 
 import random as _random
 
-_unit_vector_rng = _random.Random()
+# Fixed seed, not drawn from OS entropy: this RNG backs every SDK
+# flee/evade/avoidance candidate-direction draw (see the call sites below),
+# so an unseeded `random.Random()` makes the SAME scripted scene steer a
+# DIFFERENT heading every fresh process -- it is gameplay logic, not test
+# plumbing, and BC's own engine likewise seeded this kind of state (see
+# engine/appc/collision_avoidance.py's _AVOID_RNG_SEED, seeded for the same
+# reason). Diagnosed from test_pursuers_avoid_each_other.py's
+# test_pursuers_chasing_a_straight_line_target_do_not_fly_into_each_other,
+# which flaked across repeated `scripts/run_tests.sh` runs of a byte-identical
+# tree with no change in test order -- a 45-seed sweep showed ~2/45 seeds put
+# two Keldons inside each other in that scene, so the process's random start
+# point, not test order, decided pass/fail. "flee code" in hex leetspeak.
+_UNIT_VECTOR_RNG_SEED = 0xF1EEC0DE
+_unit_vector_rng = _random.Random(_UNIT_VECTOR_RNG_SEED)
+
+
+def reset_random_unit_vector_rng() -> None:
+    """Rewind the shared RNG to its seed. A fixed seed alone makes the
+    sequence per-PROCESS deterministic, but a given draw still depends on
+    how many draws came before it -- so tests/conftest.py's autouse reset
+    calls this before every test (as collision_avoidance's tests call
+    reset_avoidance_state to rewind _AVOID_RNG_SEED)."""
+    _unit_vector_rng.seed(_UNIT_VECTOR_RNG_SEED)
 
 
 def TGPoint3_GetRandomUnitVector() -> TGPoint3:

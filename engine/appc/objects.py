@@ -639,6 +639,10 @@ class PhysicsObjectClass(ObjectClass):
 
     def SetAngularVelocity(self, v: TGPoint3, space: int = DIRECTION_WORLD_SPACE) -> None:
         self._angular_velocity = TGPoint3(v.x, v.y, v.z)
+        # Recorded so a setpoint-less drifter (engine.appc.drift) spins
+        # about the axis in the FRAME it was actually set in -- E8M2 sends
+        # the disabled Matan spinning with DIRECTION_MODEL_SPACE.
+        self._angular_space = int(space)
 
     def GetAngularVelocity(self, space: int = DIRECTION_WORLD_SPACE) -> TGPoint3:
         return TGPoint3(self._angular_velocity.x, self._angular_velocity.y, self._angular_velocity.z)

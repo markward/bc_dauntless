@@ -62,10 +62,15 @@ class Planet(ObjectClass):
 
     # ── Object attachment ───────────────────────────────────────────────────
     def AttachObject(self, obj, *args) -> None:
+        # The base anchors a ProximityCheck on us (MissionLib.ProximityCheck
+        # attaches it to its main object); skipping it left every
+        # planet-anchored check (E6M4's Tezle 1 pair) anchorless and dead.
+        super().AttachObject(obj, *args)
         if obj not in self._attached:
             self._attached.append(obj)
 
     def DetachObject(self, obj, *args) -> None:
+        super().DetachObject(obj, *args)
         if obj in self._attached:
             self._attached.remove(obj)
 
@@ -288,6 +293,9 @@ class ProximityManager:
         # after).
         from engine.appc.ai import ProximityCheck
         if isinstance(obj, ProximityCheck):
+            # The set this manager belongs to is the check's set when it has
+            # no anchor (E6M3.CreateProximityCheck never calls AttachObject).
+            obj._manager_set = self._set
             entry = (obj, None)
             if entry not in self._proximity_checks:
                 self._proximity_checks.append(entry)

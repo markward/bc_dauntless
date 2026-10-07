@@ -189,7 +189,7 @@ def install_launch_object_hook():
 
 Mirrors SDK [Actions/ShipScriptActions.py:441-522](../../../sdk/Build/scripts/Actions/ShipScriptActions.py) up to and including the world-transform math, then records instead of spawning. Idempotent — calling `install_launch_object_hook()` twice replaces the same slot.
 
-`tools/mission_harness.setup_sdk()` calls `install_launch_object_hook()` once, after the SDK path is wired but before any mission `Initialize()` runs, so every harness execution gets the wrapper.
+~~`tools/mission_harness.setup_sdk()` calls `install_launch_object_hook()`~~ **Corrected 2026-10-07:** `setup_sdk()` is shared with the live host (`engine/host_loop._setup_sdk`), so installing the hook there made the real game's Launch Probe / shuttles / decoys spawn nothing. The hook is now harness-only: `tools/mission_harness.install_emission_recorder()`, called by the mission-harness and game-loop-harness `main()`s after `setup_sdk()` (it also adds the hooked module to the run baseline so it survives `purge_run_modules`). Guarded by `tests/unit/test_emission_hook.py::test_host_sdk_setup_leaves_the_sdk_launch_object`.
 
 ## Test plan
 
@@ -234,7 +234,7 @@ Run the gameloop harness with `profile=True`, assert that no row whose name star
 | [engine/appc/properties.py](../../../engine/appc/properties.py) | `ObjectEmitterProperty` gains storage + accessors + OEP_* constants; module-level `ObjectEmitterProperty_Create` and `ObjectEmitterProperty_Cast` factories; stale docstring removed |
 | [App.py](../../../App.py) | Import the two new factories; add `_EmissionRecorder` singleton next to `_stub_tracker` |
 | [engine/appc/emission.py](../../../engine/appc/emission.py) | New module: `_launch_object` wrapper + `install_launch_object_hook()` |
-| [tools/mission_harness.py](../../../tools/mission_harness.py) | `setup_sdk()` calls `install_launch_object_hook()` once after SDK path setup |
+| [tools/mission_harness.py](../../../tools/mission_harness.py) | `install_emission_recorder()` (harness-only, called by the harness `main()`s) installs the hook — never `setup_sdk()` (corrected 2026-10-07) |
 | [tests/unit/test_object_emitter_property.py](../../../tests/unit/test_object_emitter_property.py) | New: unit tests 1-8 above |
 | [tests/integration/test_emission_hook.py](../../../tests/integration/test_emission_hook.py) | New: integration scenarios above |
 | [tests/unit/test_emission_hook.py](../../../tests/unit/test_emission_hook.py) | New: hook idempotence |
