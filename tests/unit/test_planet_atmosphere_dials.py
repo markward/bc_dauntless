@@ -108,6 +108,48 @@ def test_no_target_is_a_noop(capsys):
     assert "no atmospheric planet nearby" in capsys.readouterr().err
 
 
+def test_dial_line_names_the_target_planet_set_and_key(capsys):
+    """Mark tuned 'intensity' looking at a gas giant while the nearest planet
+    was its moon -- every line must say whose catalogue entry it edits."""
+    from engine import dev_dial_groups
+    _setup()
+    dials.set_target_fn(lambda: atmo.live()[2])      # Savoy 2, iceplanet
+    dev_dial_groups.reset()
+    dials.register()
+    capsys.readouterr()
+    dev_dial_groups.push(+1)
+    out = capsys.readouterr().out
+    assert "[atmosphere] Savoy 2 (Savoy2) [iceplanet] thickness = " in out
+    assert "Albirea" not in out
+    dev_dial_groups.reset()
+
+
+def test_group_header_names_the_target(capsys):
+    from engine import dev_dial_groups
+    _setup()
+    dev_dial_groups.reset()
+    dials.register()
+    capsys.readouterr()
+    dev_dial_groups.set_active("atmosphere")
+    out = capsys.readouterr().out
+    assert "── atmosphere dials: Albirea 3 (Albirea3) [pinkgasplanet] ──" in out
+    dev_dial_groups.reset()
+
+
+def test_no_target_line_carries_no_label(capsys):
+    from engine import dev_dial_groups
+    _setup()
+    dials.set_target_fn(lambda: None)
+    dev_dial_groups.reset()
+    dials.register()
+    capsys.readouterr()
+    dev_dial_groups.push(+1)
+    cap = capsys.readouterr()
+    assert "no atmospheric planet nearby" in cap.err
+    assert "[atmosphere] thickness = " in cap.out
+    dev_dial_groups.reset()
+
+
 def test_register_adds_the_group():
     from engine import dev_dial_groups
     dev_dial_groups.reset()

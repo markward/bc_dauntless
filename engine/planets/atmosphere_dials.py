@@ -131,6 +131,17 @@ def repush_live() -> None:
         _push_fn(lp.iid, atmo.resolve(lp.set_name, lp.obj_name, lp.nif_path))
 
 
+def label():
+    """Whose catalogue entry the dials edit: `<obj_name> (<set_name>) [<key>]`,
+    or None with no atmospheric target. Mark (2026-10-07) tuned a gas giant's
+    intensity while the nearest planet -- the real target -- was its moon."""
+    target = _target_fn()
+    if target is None or target.key is None:
+        return None
+    return "%s (%s) [%s]" % (target.obj_name, target.set_name, target.key)
+
+
 def register() -> None:
     from engine import dev_dial_groups
-    dev_dial_groups.register_group("atmosphere", DIAL_ORDER, current, step)
+    dev_dial_groups.register_group("atmosphere", DIAL_ORDER, current, step,
+                                   label=label)
