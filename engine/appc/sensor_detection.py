@@ -471,16 +471,23 @@ def can_detect(observer, target, *, dist_sq_gu=None,
             # player) -- fall through to the probe walk instead of a hard
             # False. Memory/over-boost keep SP3's behaviour unchanged: they
             # are reached only via the range test below, never from here.
-            return _probe_reach(observer, target)
+            return _probe_reach(observer, target, apply_concealment,
+                                concealment)
 
     # ── Nebula concealment gate ───────────────────────────────────────────
     if apply_concealment:
         conceal = concealment_at(target) if concealment is None else concealment
+        concealment = conceal          # sampled once; the probe walk reuses it
         thresh = LOCK_BREAK_T - (HYSTERESIS if _latched(observer, target)
                                  else 0.0)
         if conceal >= thresh:
             _set_latched(observer, target, True)
-            return _probe_reach(observer, target)
+            # Concealment depends only on the TARGET, so a probe sees the
+            # same value: it can differ from the observer only inside the
+            # hysteresis band [LOCK_BREAK_T - HYSTERESIS, LOCK_BREAK_T), where
+            # the observer's pair is latched and the probe's is not.
+            return _probe_reach(observer, target, apply_concealment,
+                                concealment)
         _set_latched(observer, target, False)
         # Scale range by the concealment factor (no-op when conceal == 0).
         r = r * (1.0 - CONCEAL_K * conceal)
@@ -495,7 +502,7 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     # ── Beyond range: BC's memory and over-boost (sub-project 3), then the
     # probe walk (sub-project 4) ─────────────────────────────────────────
     return (_beyond_range_reach(observer, target, cloaked)
-            or _probe_reach(observer, target))
+            or _probe_reach(observer, target, apply_concealment, concealment))
 
 
 def _beyond_range_reach(observer, target, cloaked) -> bool:
@@ -529,6 +536,7 @@ def _beyond_range_reach(observer, target, cloaked) -> bool:
 
 
 def _live_probes(observer) -> list:
+    """The observer's live probe ships (``SensorSubsystem.probes()``), or []."""
     sensors = (observer.GetSensorSubsystem()
                if implements(observer, "GetSensorSubsystem") else None)
     if sensors is None or not implements(sensors, "probes"):
@@ -536,26 +544,37 @@ def _live_probes(observer) -> list:
     return sensors.probes()
 
 
-def _probe_reach(observer, target) -> bool:
+def _probe_reach(observer, target, apply_concealment=True,
+                 concealment=None) -> bool:
     """BC's probe walk (IsObjectVisible @0x005671D0, step 7): a live probe of
     the observer, in the observer's set, whose own sensors detect the target
     (the one rule, from the probe's position -- rocks, cloak bubble, nebula
     core, the probe's power and condition all apply). Runs after the range
     test and is NOT cancelled by `jammed` (BC's probe walk precedes the jam
-    fallback). One level only: `_walking_probes`."""
+    fallback). One level only: `_walking_probes`.
+
+    *apply_concealment* and *concealment* are the caller's ``can_detect``
+    keywords, forwarded to every probe: a probe-reached contact obeys
+    ``apply_concealment=False`` like a directly seen one, and since
+    ``concealment_at`` depends only on the target it is sampled at most once
+    per walk, not once per probe."""
     global _walking_probes
     if _walking_probes or not _same_set(observer, target):
         return False
     probes = _live_probes(observer)
     if not probes:
         return False
+    if apply_concealment and concealment is None:
+        concealment = concealment_at(target)
     oset = observer.GetContainingSet()
     _walking_probes = True
     try:
         for probe in probes:
             if (implements(probe, "GetContainingSet")
                     and probe.GetContainingSet() is oset
-                    and can_detect(probe, target)):
+                    and can_detect(probe, target,
+                                   apply_concealment=apply_concealment,
+                                   concealment=concealment)):
                 return True
         return False
     finally:

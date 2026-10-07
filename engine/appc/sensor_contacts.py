@@ -318,13 +318,6 @@ def _contacts(player):
                  and isinstance(o, (ShipClass, Planet)))
 
 
-def _dist(a, b) -> float:
-    from engine.appc.subsystems import _get_xyz
-    ax, ay, az = _get_xyz(a)
-    bx, by, bz = _get_xyz(b)
-    return ((bx - ax) ** 2 + (by - ay) ** 2 + (bz - az) ** 2) ** 0.5
-
-
 def _post(event_type, obj, entered: bool, sensors) -> None:
     evt = App.TGBoolEvent_Create()
     evt.SetEventType(event_type)

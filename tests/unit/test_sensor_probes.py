@@ -160,6 +160,56 @@ def test_dense_core_still_hides_from_the_probe(monkeypatch):
     assert sd.can_detect(obs, far) is False
 
 
+def test_probe_reach_obeys_apply_concealment_false(monkeypatch):
+    """The ENHANCED_SENSOR_CONTEST-off UI path (apply_concealment=False) skips
+    the nebula gate for a directly seen contact; a probe-reached one must
+    obey the same switch, not re-sample the core from the probe."""
+    s, obs, sensors = _observer_in_set(2000.0)
+    far = _ship_at(s, "far", 4500.0)
+    _probe_at(s, sensors, 4000.0)
+    monkeypatch.setattr(sd, "concealment_at", lambda ship: 0.9)
+    assert sd.can_detect(obs, far, apply_concealment=False) is True
+
+
+def test_probe_walk_samples_concealment_once(monkeypatch):
+    """concealment_at depends only on the target: one sample per can_detect,
+    however many probes the walk visits."""
+    s, obs, sensors = _observer_in_set(2000.0)
+    far = _ship_at(s, "far", 9300.0)
+    for x in (3000.0, 6000.0, 9000.0):
+        _probe_at(s, sensors, x)
+    calls = []
+
+    def _sample(ship):
+        calls.append(ship)
+        return 0.0
+    monkeypatch.setattr(sd, "concealment_at", _sample)
+    assert sd.can_detect(obs, far) is True
+    assert calls == [far]
+
+
+def test_cloak_bubble_applies_from_the_probe():
+    """Rule 3: the cloak bubble (CLOAK_DETECTION_BASE_GU + the probe's own
+    effective range x CLOAK_RANGE_FACTOR) is measured from the PROBE. A fully
+    cloaked ship inside the probe's bubble is detected through it; one just
+    outside is not, though both are far beyond the observer's own bubble."""
+    from engine.appc.subsystems import CloakingSubsystem
+    s, obs, sensors = _observer_in_set(2000.0)
+    probe = _probe_at(s, sensors, 4000.0)
+    bubble = (sd.CLOAK_DETECTION_BASE_GU
+              + sd.effective_sensor_range(probe) * sd.CLOAK_RANGE_FACTOR)
+    own_bubble = (sd.CLOAK_DETECTION_BASE_GU
+                  + sd.effective_sensor_range(obs) * sd.CLOAK_RANGE_FACTOR)
+    inside = _ship_at(s, "inside", 4000.0 + 0.5 * bubble)
+    outside = _ship_at(s, "outside", 4000.0 + bubble + 1.0)
+    assert 4000.0 - own_bubble > bubble       # both far beyond the observer's
+    for ship in (inside, outside):
+        ship.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+        ship.GetCloakingSubsystem().InstantCloak()
+    assert sd.can_detect(obs, inside) is True
+    assert sd.can_detect(obs, outside) is False
+
+
 def test_probe_branch_does_not_identify():
     s, obs, sensors = _observer_in_set(2000.0)
     far = _ship_at(s, "far", 4500.0)
