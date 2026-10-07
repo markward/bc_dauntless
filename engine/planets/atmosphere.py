@@ -16,6 +16,12 @@ from dataclasses import dataclass
 _memo: dict = {}      # str(path) -> dict of raw entries
 _warned: set = set()  # (str(path), key) already reported
 
+# In-memory overlay set by the "atmosphere" dev dial group (Task 7):
+# key -> Atmosphere, consulted by resolve() before the catalogue file.
+# Cleared by reload() along with the file memo, so a reload (the dev
+# "reload action", or the test suite's autouse reset) drops live tuning too.
+_overrides: dict = {}
+
 # Live registry of every planet instance the current session has pushed an
 # atmosphere decision for (even a None/airless one is NOT recorded here --
 # see record_live callers in host_loop). Cleared on mission/set teardown and
@@ -125,6 +131,15 @@ def load() -> dict:
 def reload() -> None:
     _memo.clear()
     _warned.clear()
+    _overrides.clear()
+
+
+def set_override(key: str, a: Atmosphere) -> None:
+    """Overlay `key`'s resolved Atmosphere with `a` (the atmosphere dev dial
+    group, Task 7). Takes effect for every planet that resolves to `key`,
+    not only the one the dial targeted -- the dial edits the CATALOGUE
+    entry, not one instance."""
+    _overrides[key] = a
 
 
 def _num(entry: dict, name: str, lo: float, hi: float, lo_open: bool = False) -> float:
@@ -172,6 +187,8 @@ def resolve(set_name: str, obj_name: str, nif_path: str):
     key = resolve_key(set_name, obj_name, nif_path)
     if key is None:
         return None
+    if key in _overrides:
+        return _overrides[key]
     try:
         return parse_entry(key, load()[key])
     except (ValueError, KeyError, TypeError) as e:

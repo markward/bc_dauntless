@@ -1583,6 +1583,16 @@ def _reset_leakable_engine_globals():
         _planet_atmosphere._memo.clear()
         _planet_atmosphere._warned.clear()
         _planet_atmosphere._live.clear()
+        _planet_atmosphere._overrides.clear()
+    except Exception:
+        pass
+    # Atmosphere dial group (planet-atmosphere spec §7): a test that sets the
+    # module-level target/push functions would otherwise leave later tests'
+    # dials.step() calls pointed at a stale fake.
+    try:
+        from engine.planets import atmosphere_dials as _atmo_dials
+        _atmo_dials.set_target_fn(lambda: None)
+        _atmo_dials.set_push_fn(lambda iid, a: None)
     except Exception:
         pass
     # Planet atmosphere dev toggle (planet-atmosphere spec §4): the Developer

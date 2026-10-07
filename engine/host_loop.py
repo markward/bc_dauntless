@@ -5334,6 +5334,64 @@ def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
     _atmosphere.record_live(iid, key, set_name, obj_name, nif_path)
 
 
+def _iid_eq(a, b) -> bool:
+    """InstanceId equality: pybind's InstanceId has no __eq__, only readonly
+    `index`/`generation`, so plain `==` is identity there and would never
+    match two Python wrappers of the same engine instance. Plain values
+    (the dial group's tests use strings) fall through to `==`."""
+    ai, bi = getattr(a, "index", None), getattr(b, "index", None)
+    if ai is not None and bi is not None:
+        return ai == bi and getattr(a, "generation", None) == getattr(b, "generation", None)
+    return a == b
+
+
+def _nearest_live_planet(session):
+    """The `atmosphere.live()` entry whose planet is nearest the player, by
+    SURFACE distance (|p_player - centre| - radius), not centre distance --
+    the atmosphere dial group's target (planet-atmosphere spec §7). None if
+    there is no player, no viewed frame, or nothing resolves."""
+    from engine.appc import sensor_contacts as _sensor_contacts
+    from engine.planets import atmosphere as _atmosphere
+
+    player = _sensor_contacts.current_player()
+    if player is None:
+        return None
+    view = _frames.viewing_set()
+    loc = player.GetWorldLocation()
+    p_player = _frames.in_view(view, _frames.containing_set(player), loc.x, loc.y, loc.z)
+    if p_player is None:
+        return None
+
+    best = None
+    best_dist = None
+    for entry in _atmosphere.live():
+        centre = None
+        radius = None
+        for planet, iid in session.planet_instances.items():
+            if _iid_eq(iid, entry.iid):
+                ploc = planet.GetWorldLocation()
+                centre = _frames.in_view(view, _frames.containing_set(planet),
+                                         ploc.x, ploc.y, ploc.z)
+                radius = float(planet.GetRadius())
+                break
+        if centre is None:
+            for key, iid in session.celestial_instances.items():
+                if _iid_eq(iid, entry.iid):
+                    body = session.celestial_placed.get(key)
+                    if body is not None:
+                        centre = body.position
+                        radius = float(body.radius_gu)
+                    break
+        if centre is None or radius is None:
+            continue
+        dx, dy, dz = (p_player[i] - centre[i] for i in range(3))
+        dist = (dx * dx + dy * dy + dz * dz) ** 0.5 - radius
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = entry
+    return best
+
+
 def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
     """`ship`'s script's `GetShipStats()` dict, or None on any fault (empty
     script, import failure, missing/non-callable GetShipStats, non-dict
@@ -10058,6 +10116,13 @@ def run(mission_name: Optional[str] = None,
                 _far_dials.register()
                 from engine.appc import sensor_dials as _sensor_dials
                 _sensor_dials.register()
+                from engine.planets import atmosphere_dials as _atmo_dials
+                _atmo_dials.set_target_fn(
+                    lambda: _nearest_live_planet(controller.session)
+                    if controller.session is not None else None)
+                _atmo_dials.set_push_fn(
+                    lambda iid, a: r.set_instance_atmosphere(iid, a))
+                _atmo_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
