@@ -1337,11 +1337,25 @@ def _reset_leakable_engine_globals():
     # rebuilt TacticalControlWindow whose FindMenu returns None. Nothing should
     # inherit a prior test's pending timers; tests set up and pump their own
     # within one test, so clearing between tests is safe.
+    #
+    # The clock itself (`_time`) leaks the same way: a test that advances
+    # g_kTimerManager directly (e.g. test_particles_death_probe.py's
+    # `_advance_game_time`, which ticks it 5.1s of real game time) never
+    # resets it, so App.g_kUtopiaModule.GetGameTime() -- which reads this
+    # same `_time` -- stays pinned at that stale value for every later test in
+    # the process. A caller with no explicit "now" (e.g.
+    # sensor_contacts.schedule_scan's `now_gt=None` -> `_now()`) silently
+    # schedules against that polluted clock instead of a fresh one, which is
+    # why dozens of individual tests hand-reset `_time = 0.0` in their own
+    # setup/teardown already -- this makes that the default instead of an
+    # opt-in each test has to remember.
     for _mgr_name in ("g_kTimerManager", "g_kRealtimeTimerManager"):
         try:
             _mgr = getattr(App, _mgr_name, None)
             if _mgr is not None and hasattr(_mgr, "_timers"):
                 _mgr._timers.clear()
+            if _mgr is not None and hasattr(_mgr, "_time"):
+                _mgr._time = 0.0
         except Exception:
             pass
     # TimeSliceProcess scheduler: TimeSliceProcess.__init__ now self-registers
