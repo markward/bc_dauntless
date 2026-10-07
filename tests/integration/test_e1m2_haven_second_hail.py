@@ -23,10 +23,13 @@ def _init_e1m2():
     return mod
 
 
-def _pump(seconds=100.0, dt=0.25):
+def _pump(seconds=100.0, dt=0.25, until=None):
     # Both clocks: comm say-line / viewscreen completions defer on wall-clock
     # (g_kRealtimeTimerManager); sequence step delays use game time.
+    # `until`: stop as soon as it returns true; `seconds` is then only a bound.
     for _ in range(int(seconds / dt)):
+        if until is not None and until():
+            return
         App.g_kTimerManager.tick(dt)
         App.g_kRealtimeTimerManager.tick(dt)
 
@@ -57,7 +60,10 @@ def test_clearing_debris_then_hailing_haven_advances_mission():
     assert mod.g_bHavenSecondHail == 1
     assert mod.g_bSequenceRunning == 1   # sequence in progress
 
-    _pump()
+    # Run until the queued comm ends, not for a fixed time: the conversation's
+    # length depends on its lines (a dialogue patch replacing one with a
+    # longer take pushed it past a fixed 100 s budget it cleared by 1.5 s).
+    _pump(seconds=300.0, until=lambda: mod.g_bSequenceRunning == 0)
 
     # ...and the whole queued comm runs to completion: the tail actions fire
     # (previously the appended master jammed, leaving these stuck).

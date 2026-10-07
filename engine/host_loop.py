@@ -4367,6 +4367,7 @@ def _reset_timers(keep=None) -> None:
     # matching skip-candidate registry so Backspace can't "skip" stale actions
     # from the prior mission.
     from engine.appc import actions as _appc_actions
+    _appc_actions.reset_launched_sequences(keep)
     if keep is None:
         _appc_actions.reset_deferred_playing()
     else:
@@ -4479,6 +4480,8 @@ def _reset_sensor_state() -> None:
         _nebula_wake.reset()
     if _radiation_driver is not None:
         _radiation_driver.reset()
+    if _crew_hazard_prompts is not None:
+        _crew_hazard_prompts.reset()
     # The native pass keeps its old far-field table across a mission swap --
     # mark our latch UNKNOWN (not None) so the next _push_system_nebula call
     # is forced to either clear it (unmapped/gate-closed) or rebuild it fresh
@@ -4793,6 +4796,7 @@ _warp_hidden = False
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
 _radiation_driver = None  # RadiationDriver | None
+_crew_hazard_prompts = None  # CrewHazardPrompts | None
 # Sentinel meaning "native pass state is unknown" -- distinct from None (which
 # means "we know the native pass holds nothing, e.g. after we pushed a clear").
 # Used by _reset_sensor_state on mission swap: the native SystemNebulaPass
@@ -11298,6 +11302,17 @@ def run(mission_name: Optional[str] = None,
                     import App  # deferred: matches host-loop convention
                     from engine.appc import sensor_contacts
                     sensor_contacts.tick(player, App.g_kUtopiaModule.GetGameTime())
+
+                # Crew "raise shields" prompts in asteroids / radiation
+                # (engine/appc/crew_hazard_prompts.py). Sim-gated like the
+                # contact manager above; polls at 1 Hz on game time.
+                if player is not None:
+                    global _crew_hazard_prompts
+                    if _crew_hazard_prompts is None:
+                        from engine.appc.crew_hazard_prompts import CrewHazardPrompts
+                        _crew_hazard_prompts = CrewHazardPrompts()
+                    _crew_hazard_prompts.update(
+                        player, App.g_kUtopiaModule.GetGameTime())
 
                 # Nebula membership → enter/exit events, environmental
                 # damage, sensor scaling. Sim dt (TICK_DT); gated by the

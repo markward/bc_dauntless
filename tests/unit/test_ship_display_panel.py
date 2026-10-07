@@ -686,16 +686,19 @@ def test_sdk_flicker_shields_hides_then_restores_the_shield_arcs(monkeypatch):
         monkeypatch.setattr(App, "TacticalControlWindow_GetTacticalControlWindow",
                             lambda: _TCW())
 
-        assert panel._snapshot()[5] == (1.0,) * 6
+        # The arcs hide (snapshot's last field, shields_hidden = (top, bottom))
+        # rather than reading 0%: the shield strengths are untouched.
+        assert panel._snapshot()[-1] == (False, False)
         ssa.FlickerShields(None, 0, 14)
-        assert panel._snapshot()[5] == (0.0,) * 6
-        ssa.FlickerShields(None, 1)
+        assert panel._snapshot()[-1] == (True, True)
         assert panel._snapshot()[5] == (1.0,) * 6
+        ssa.FlickerShields(None, 1)
+        assert panel._snapshot()[-1] == (False, False)
 
-        # Only the bottom pane hidden: only the BOTTOM face (index 3) drops.
+        # Only the bottom pane hidden: only the bottom arc hides.
         disp = panel.GetShieldsDisplay()
         pane = App.TGPane_Cast(disp.GetNthChild(disp.DISPLAY_PANE))
         pane.GetNthChild(disp.BOTTOM_PANE).SetNotVisible()
-        assert panel._snapshot()[5] == (1.0, 1.0, 1.0, 0.0, 1.0, 1.0)
+        assert panel._snapshot()[-1] == (False, True)
     finally:
         _teardown_game()

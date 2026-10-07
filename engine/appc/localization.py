@@ -243,8 +243,16 @@ class TGLocalizationManager:
             parsed = read_tgl(path)
         except (TGLParseError, OSError):
             return TGLocalizationDatabase(filename)
-        return TGLocalizationDatabase(
-            filename, strings=parsed.strings, sounds=parsed.sounds)
+        strings, sounds = dict(parsed.strings), dict(parsed.sounds)
+        # Dialogue patches (engine/appc/dialogue_patches.py): per-key text
+        # and/or sound overrides for this TGL, applied in memory only.
+        from engine.appc import dialogue_patches
+        for key, rep in dialogue_patches.replacements_for(filename).items():
+            if "text" in rep:
+                strings[key] = rep["text"]
+            if "sound" in rep:
+                sounds[key] = rep["sound"]
+        return TGLocalizationDatabase(filename, strings=strings, sounds=sounds)
 
     def Unload(self, database: TGLocalizationDatabase) -> None:
         for filename, entry in list(self._cache.items()):

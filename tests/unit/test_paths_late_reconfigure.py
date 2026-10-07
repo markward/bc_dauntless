@@ -66,9 +66,13 @@ def test_path_accessors_follow_a_later_configure(fake_bc_install, module_name, f
     assert first != second
 
 
-def test_tgl_roots_follow_a_later_configure(fake_bc_install):
+def test_tgl_roots_follow_a_later_configure(fake_bc_install, monkeypatch, tmp_path):
     """name_resolver held BOTH roots in one module-level tuple."""
+    from engine import mods
     from engine.missions import name_resolver
+    # The project's own replacements/data/TGL would lead the list; this test
+    # is about the two BC roots only.
+    monkeypatch.setattr(mods, "replacements_root", lambda: tmp_path / "no-replacements")
     game, sdk = fake_bc_install
     _point_at((game, sdk))
     assert [str(r) for r in name_resolver._tgl_roots()] == [
