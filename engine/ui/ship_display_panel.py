@@ -60,8 +60,10 @@ class _ShieldsSubview(_SubviewBase):
     DISPLAY_PANE holds TOP_PANE, SHIP_ICON and BOTTOM_PANE. Walked by
     Actions.ShipScriptActions.FlickerShields (10 campaign missions' beam-outs);
     without it that script raised and stalled the calling conversation (E1M2
-    supply transfer with shields up). The panes hold visibility state only --
-    the CEF shield graphic does not follow it yet."""
+    supply transfer with shields up). TOP_PANE holds BC's TOP, FRONT, REAR,
+    LEFT and RIGHT shield icons, BOTTOM_PANE the BOTTOM one; the CEF arcs
+    follow both through ShipDisplayPanel's `shields_hidden` payload field.
+    SHIP_ICON is their sibling, so the silhouette never flickers."""
     DISPLAY_PANE = _SHIELDS_DISPLAY["DISPLAY_PANE"]
     TOP_PANE = _SHIELDS_DISPLAY["TOP_PANE"]
     SHIP_ICON = _SHIELDS_DISPLAY["SHIP_ICON"]
@@ -75,6 +77,14 @@ class _ShieldsSubview(_SubviewBase):
                  self.BOTTOM_PANE: TGPane()}
         for index in sorted(inner):
             self._display_pane.AddChild(inner[index])
+        self._top_pane = inner[self.TOP_PANE]
+        self._bottom_pane = inner[self.BOTTOM_PANE]
+
+    def hidden_panes(self) -> tuple:
+        """(top_hidden, bottom_hidden). Read-only: FlickerShields owns the
+        state, through the panes' own SetVisible / SetNotVisible."""
+        return (not self._top_pane.IsVisible(),
+                not self._bottom_pane.IsVisible())
 
     def GetNthChild(self, n):
         return self._display_pane if n == self.DISPLAY_PANE else None
@@ -239,11 +249,11 @@ class ShipDisplayPanel(Panel):
         # False, the JS payload's visible=False hides the panel entirely.
         if not self._visible:
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
-                    None, None, self._minimized, False)
+                    None, None, self._minimized, False, (False, False))
         ship = _resolve_ship_for_role(self._role)
         if ship is None:
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
-                    None, None, self._minimized, False)
+                    None, None, self._minimized, False, (False, False))
         player       = _get_player()
         ship_id      = ship.GetObjID() if hasattr(ship, "GetObjID") else 0
         name         = ship.GetName() if hasattr(ship, "GetName") else ""
@@ -262,9 +272,13 @@ class ShipDisplayPanel(Panel):
         range_km, speed_kph = (None, None)
         if self._role == ROLE_TARGET:
             range_km, speed_kph = _range_and_speed_to(ship, player)
+        # FlickerShields only ever walks the player display (pTCW.GetShipDisplay),
+        # so the target arcs never hide whatever its panes say.
+        shields_hidden = (self._shields.hidden_panes()
+                          if self._role == ROLE_PLAYER else (False, False))
         return (ship_id, name, affiliation, species_key, hull_pct,
                 shields_pct, damage_frozen, range_km, speed_kph,
-                self._minimized, True)
+                self._minimized, True, shields_hidden)
 
     # Panel framework ---------------------------------------------------
     def render_payload(self) -> Optional[str]:
@@ -274,7 +288,7 @@ class ShipDisplayPanel(Panel):
         self._last_snapshot = snap
         (ship_id, name, affiliation, species, hull_pct,
          shields, damage_frozen, range_km, speed_kph,
-         minimized, visible) = snap
+         minimized, visible, (top_hidden, bottom_hidden)) = snap
         ship_now = _resolve_ship_for_role(self._role) if visible else None
         damage_icons_list = _damage_icon_descriptors(ship_now) if ship_now else []
         payload = {
@@ -288,6 +302,8 @@ class ShipDisplayPanel(Panel):
             "range_km":     range_km,
             "speed_kph":    speed_kph,
             "minimized":    minimized,
+            "shields_hidden": {"top_pane": top_hidden,
+                               "bottom_pane": bottom_hidden},
         }
         payload["silhouette_url"] = ship_icons.icon_path_for_species(payload["species"])
         return ("setShipDisplay(" + json.dumps(self._role) + ", " +
