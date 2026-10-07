@@ -1089,6 +1089,24 @@ def _reset_leakable_engine_globals():
         _hull_decals.reset()
     except Exception:
         pass
+    # Ship-model LOD registry: App.g_kLODModelManager is a process-lifetime
+    # singleton (engine/appc/lod_models.py) that every ship script's
+    # LoadModel() registers into exactly once -- Contains(name) guards
+    # against re-registering on a SECOND call within one real game session,
+    # which is correct in production but wrong across tests: a test that
+    # loads a region/mission registers "Asteroid" (or any other ship name)
+    # under whatever NIF that region's field used, and a LATER, unrelated
+    # test's own LoadModel() call for the same name then sees Contains() ==
+    # True and silently keeps the stale entry instead of registering its
+    # own. Diagnosed from test_rock_create.py::
+    # test_damageable_object_create_asteroid_is_a_rock, which only fails
+    # after a test that loads the Vesuvi region (registers "Asteroid" as
+    # asteroidh1.NIF, not one of the four stock NIFs DamageableObject_Create
+    # checks against). Purge() is App's own SWIG method for this.
+    try:
+        App.g_kLODModelManager.Purge()
+    except Exception:
+        pass
     # Music: g_kMusicManager is a process-lifetime singleton and host_loop
     # lazily installs a MusicPlayer backend into it on the first audio tick.
     # Both survive across tests, so a mission that loaded tracks leaves them
