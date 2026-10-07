@@ -388,6 +388,149 @@ TEST_F(AtmospherePassTest, OpaqueDepthEndsTheMarch) {
         << "opaque depth did not end the march: " << added_occ << " vs " << added_clear;
 }
 
+// Eye-to-surface distance of the opaque geometry at pixel (x, y), read back
+// from the depth buffer and linearised in double precision: exactly the
+// (quantised) depth the shader's scene_t() sees, so the CPU twin can be
+// handed the same march end.
+static float depth_distance(const renderer::HdrTarget& hdr, const scenegraph::Camera& cam,
+                            int x, int y, glm::vec3 dir) {
+    float d = 1.0f;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, hdr.fbo());
+    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &d);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    const double n = cam.near, f = cam.far;
+    // The projection is glm's zero-to-one (GLM_FORCE_DEPTH_ZERO_TO_ONE) under
+    // GL's [-1,1] clip volume, so ndc = 2d - 1 lies in [0,1] -- the same
+    // reconstruction scene_t() does through inverse(proj * view).
+    const double ndc = 2.0 * d - 1.0;
+    const double z_eye = f * n / (f - ndc * (f - n));
+    const glm::vec3 fwd = glm::normalize(cam.target - cam.eye);
+    return static_cast<float>(z_eye / static_cast<double>(glm::dot(dir, fwd)));
+}
+
+// An opaque occluder INSIDE the halo ray's shell span on the lit limb: the
+// march must end exactly at it, so the added light is the twin's in-scatter
+// truncated at the occluder's distance (not zero, not the full chord).
+TEST_F(AtmospherePassTest, OccluderInsideTheShellEndsTheMarchAtItsDistance) {
+    auto geo = load_planet(true);
+    auto occ_model = load_planet(false);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    const auto cam = far_camera();
+    const auto lighting = sun_lighting({1, 0, 0}, glm::vec3(1.0f));
+    const auto suns = suns_at({1e6f, 0, 0});
+    const glm::mat4 world_m = scaled(kScale);
+
+    scenegraph::World world;
+    auto iid = add(world, geo, world_m);
+    world.set_atmosphere(iid, atmo(true));
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    draw_opaque(world, cam, lighting, hdr);
+    int first = 0, last = 0;
+    silhouette(read_rgba(hdr), first, last);
+    const int hx = last + 1;
+    const int hy = kSize / 2;
+
+    const glm::vec3 center =
+        glm::vec3(world_m * glm::vec4(geo->sphere_map->center_body, 1.0f));
+    const float r = geo->sphere_map->radius * kScale;
+    const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
+    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
+    const glm::vec3 dir = pixel_ray(cam, hx, hy);
+    const auto span = renderer::planet_atmo::air_span(
+        shell, cam.eye, dir, std::numeric_limits<float>::infinity());
+    ASSERT_TRUE(span.hit);
+
+    // Occluder centred just past the span midpoint, so its front surface
+    // lands inside the span.
+    const glm::vec3 occ_pos = cam.eye + dir * (0.5f * (span.t0 + span.t1) + 150.0f);
+    const glm::mat4 occ_m = glm::translate(glm::mat4(1.0f), occ_pos)
+        * glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+    add(world, occ_model, occ_m);
+    draw_opaque(world, cam, lighting, hdr);
+    const auto before = read_rgba(hdr);
+    const float t_occ = depth_distance(hdr, cam, hx, hy, dir);
+    ASSERT_GT(t_occ, span.t0 + 0.1f * (span.t1 - span.t0)) << "occluder not inside the span";
+    ASSERT_LT(t_occ, span.t1 - 0.1f * (span.t1 - span.t0)) << "occluder not inside the span";
+
+    renderer::AtmospherePass pass;
+    draw_atmosphere(pass, world, cam, lighting, suns, hdr);
+    const auto after = read_rgba(hdr);
+    const glm::vec3 added = rgb(after, hx, hy) - rgb(before, hx, hy);
+
+    const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, {1, 0, 0});
+    const glm::vec3 expected =
+        renderer::planet_atmo::in_scatter(shell, params, cam.eye, dir, t_occ, sun_dir);
+    const glm::vec3 full = renderer::planet_atmo::in_scatter(
+        shell, params, cam.eye, dir, std::numeric_limits<float>::infinity(), sun_dir);
+    ASSERT_GT(expected.r, 0.0f);
+    ASSERT_LT(expected.r, 0.95f * full.r) << "occluder does not truncate the march";
+    for (int c = 0; c < 3; ++c) {
+        EXPECT_NEAR(added[c], expected[c], 0.05f * expected[c])
+            << "channel " << c << " gpu " << added[c] << " cpu " << expected[c];
+    }
+}
+
+// With the PRODUCTION near/far (engine/cameras: 1 / 1.8e6 GU) the 24-bit
+// depth of the planet's own disc is quantised to tens of GU at this range --
+// coarser than the shell's scale height. Read as the march end it would cut
+// off the dense bottom of the haze (contours/speckle across the disc); the
+// analytic surface must win unless the scene is nearer by more than a quantum.
+TEST_F(AtmospherePassTest, DiscHazeIgnoresDepthQuantisationAtProductionPlanes) {
+    auto geo = load_planet(true);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    scenegraph::World world;
+    const glm::mat4 world_m = scaled(kScale);
+    auto iid = add(world, geo, world_m);
+    world.set_atmosphere(iid, atmo(true));
+    const glm::vec3 center =
+        glm::vec3(world_m * glm::vec4(geo->sphere_map->center_body, 1.0f));
+    const float r = geo->sphere_map->radius * kScale;
+    scenegraph::Camera cam;
+    cam.eye = center + glm::vec3(0.0f, 0.0f, 15.0f * r);
+    cam.target = center;
+    cam.aspect = 1.0f;
+    cam.near = 1.0f;
+    cam.far = 1.8e6f;
+    const glm::vec3 sun_dir_ws = glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f));
+    const glm::vec3 sun_color(1.5f, 1.2f, 0.8f);
+    const auto lighting = sun_lighting(sun_dir_ws, sun_color);
+    const auto suns = suns_at(center + sun_dir_ws * 1e6f);
+
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    draw_opaque(world, cam, lighting, hdr);
+    const auto before = read_rgba(hdr);
+    int first = 0, last = 0;
+    silhouette(before, first, last);
+    ASSERT_GT(last - first, 16) << "disc too small to sample";
+    renderer::AtmospherePass pass;
+    draw_atmosphere(pass, world, cam, lighting, suns, hdr);
+    const auto after = read_rgba(hdr);
+
+    const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
+    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
+    const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, sun_dir_ws);
+    const int row = kSize / 2;
+    int checked = 0, bad = 0;
+    float worst = 0.0f;
+    // Interior disc pixels only (stay a few px inside the silhouette).
+    for (int x = first + 4; x <= last - 4; ++x) {
+        const glm::vec3 added = rgb(after, x, row) - rgb(before, x, row);
+        const glm::vec3 expected = renderer::planet_atmo::in_scatter(
+            shell, params, cam.eye, pixel_ray(cam, x, row),
+            std::numeric_limits<float>::infinity(), sun_dir) * sun_color;
+        if (!(expected.g > 0.0f)) continue;
+        ++checked;
+        const float err = std::abs(added.g - expected.g) / expected.g;
+        worst = std::max(worst, err);
+        if (err > 0.05f) ++bad;
+    }
+    ASSERT_GT(checked, 8);
+    EXPECT_EQ(bad, 0) << bad << "/" << checked << " disc pixels off by >5%; worst "
+                      << worst;
+}
+
 TEST_F(AtmospherePassTest, DisabledAtmosphereDrawsNothing) {
     auto geo = load_planet(true);
     scenegraph::World world;

@@ -69,7 +69,10 @@ void AtmospherePass::render(const scenegraph::World& world, const scenegraph::Ca
     shader.use();
     shader.set_mat4("u_view", view);
     shader.set_mat4("u_proj", proj);
-    shader.set_mat4("u_inv_view_proj", glm::inverse(proj * view));
+    // scene_t() linearises depth from the camera's own planes (see
+    // atmosphere.frag); depth_tolerance() scales with the near plane.
+    shader.set_float("u_near", cam.near);
+    shader.set_float("u_far", cam.far);
     shader.set_vec3("u_camera_pos", eye);
     shader.set_vec2("u_viewport", glm::vec2(static_cast<float>(viewport_w),
                                             static_cast<float>(viewport_h)));

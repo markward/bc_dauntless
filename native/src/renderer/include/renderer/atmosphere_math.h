@@ -44,6 +44,12 @@ struct Span {
 /// Intersects [origin, origin + dir*t_max] with the atmosphere shell,
 /// clipped at the planet surface (whichever the ray hits first) and at
 /// t_max (the scene's opaque depth along this ray).
+///
+/// t_max is taken as given: the CALLER owns depth-buffer handling. The shader
+/// (atmosphere.frag main) ignores a scene depth within one depth quantum of
+/// the analytic planet hit (the planet's own quantised surface) and marches
+/// to the planet instead; a twin comparison must hand in the march end the
+/// shader would actually use.
 Span air_span(const Shell& s, glm::vec3 origin, glm::vec3 dir, float t_max);
 
 /// The shell's exponential falloff scale height: 0.25 * (r_top - r_planet).
