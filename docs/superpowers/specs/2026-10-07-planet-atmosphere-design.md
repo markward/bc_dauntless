@@ -56,12 +56,13 @@ The example below shows the format only; the `Vesuvi5/Mori` override does not sh
 
 | Field | Meaning | Range |
 |---|---|---|
-| `color` | scattering tint, `#RRGGBB` sRGB, converted to linear | — |
+| `color` | RELATIVE per-channel Rayleigh scattering strength (not a final tint), `#RRGGBB` sRGB, converted to linear, then normalised so its strongest channel is 1 (§5). The visible hue emerges from scattering: short paths lean toward the strongest channel, long paths (terminator, back-lit rim) redden | — |
 | `thickness` | shell height as a fraction of the planet radius | (0, 0.25] |
 | `density` | haze strength multiplier | [0, 4] |
 | `limb` | surface Fresnel-limb strength | [0, 4] |
 | `sunset_color` | optional terminator tint; defaults to `color` | — |
 | `intensity` | shell-HALO brightness multiplier only (not the surface `limb` term above); optional, default **20.0 (tuned live by Mark 2026-10-07)** | [0, 50] |
+| `mie` | grey Mie forward-lobe strength (Mie extinction = σ·`mie` in every channel, HG g = 0.76); optional, default **0.2** | [0, 4] |
 | `atmosphere` | `false` means airless; any other fields are ignored | — |
 
 An entry whose `atmosphere` is not `false` must have `color`, `thickness`, `density` and `limb`.
@@ -141,7 +142,11 @@ Instances whose model has no `sphere_map` are skipped, so the atmosphere require
 1. Find the view ray's segment inside the shell sphere `R_top` and outside the planet sphere `R`. The segment ends at the planet surface if the ray hits it, and starts at the camera if the camera is inside the shell.
 2. March **8** samples. Density is `exp(−h / H)`, with `h` the height above `R` and scale height `H = 0.25·thickness·R`.
 3. At each sample, light reaching it is `exp(−τ_sun)`. `τ_sun` is a **6**-sample midpoint march toward the sun (D3); it is set to large when the sun ray hits the planet, so the night side gets no in-scatter.
-4. In-scatter = `color · density · Σ(ρ · T_view · T_sun · phase) · Δs / R`. The phase is a Rayleigh term plus a forward Henyey-Greenstein lobe (g = 0.6, weight 0.25), from `nebula_atmosphere.h`'s formula.
+4. In-scatter is **chromatic Rayleigh plus a grey Mie forward lobe** (2026-10-07, approved by Mark). With `σ = density / (thickness·R)`:
+   - `β_r = color / max(color.r, color.g, color.b)` (zero for an all-zero colour, never NaN); Rayleigh extinction per channel `σ_r = σ·β_r`.
+   - Mie extinction `σ_m = σ·mie`, the same in every channel, sharing the density profile ρ.
+   - Total extinction per channel `σ_r + σ_m`; the view and sun optical depths are RGB. `T = exp(−(τ_view_mid + τ_sun))` per channel.
+   - In-scatter = `Σ ρ·σ_r·T·Δs · 3/(16π)(1+c²)  +  Σ ρ·σ_m·T·Δs · HG(0.76, c)`, `c = dot(view, sun)`. There is **no** final multiply by `color` — the hue comes from the coefficients, so a blue `color` gives a blue sunlit halo and a reddened terminator / back-lit rim.
 5. Output `in_scatter · sun_color · sun_intensity · intensity`, where `sun_color` is directional light 0's colour (§4) and `intensity` is the catalogue entry's shell-halo multiplier (default 20.0, §3.2). The raw in-scatter saturates at ~0.06 at the lit limb regardless of tier (density/thickness are optically saturated there), against a sun colour of ~1 — about a sixth of the lit surface, invisible after tonemapping — so `intensity` is the only knob that makes the halo visible; it must be applied **before** the finite/clamp guard below, as a flat multiply on the final colour. It must be finite: NaN feeds bloom and produces black squares, so the shader guards both degenerate intersections and zero-length segments.
 
 **CPU twin.** The march lives as a pure C++ function in `atmosphere_math.{h,cc}` (`renderer` library, GL-free): ray-shell segment, optical depth and in-scatter. The shader mirrors it, as `nebula_atmosphere.h` is mirrored, so tests pin the numbers.
@@ -166,7 +171,7 @@ With `u_atmo_enabled == 0`, every existing path is byte-identical. The term runs
 
 ## 7. Developer tuning
 
-- **Dial group.** Developer-only, registered with `engine.dev_dial_groups.register_group` as `"atmosphere"`, with dials `thickness`, `density`, `limb`, `color_r`, `color_g`, `color_b`, `intensity` (step 0.5, [0, 50]).
+- **Dial group.** Developer-only, registered with `engine.dev_dial_groups.register_group` as `"atmosphere"`, with dials `thickness`, `density`, `limb`, `color_r`, `color_g`, `color_b`, `intensity` (step 0.5, [0, 50]), `mie` (step 0.05, [0, 4]).
   - The dials edit the **catalogue entry** the planet **nearest the player** (by surface distance) resolved to — not just that one instance — and re-push the updated `Atmosphere` to every live planet sharing that entry (D4), since the override lives on the catalogue entry, not the instance.
   - The live values print through the group's existing report.
 - **Saving.** Edits are not written back to JSON. Reload is a Developer Options **action row** ("Reload Planet Atmospheres", D2), not a keybinding, and the tuned numbers are copied into the JSON by hand. A save action is out of scope.
