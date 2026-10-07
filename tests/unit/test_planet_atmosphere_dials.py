@@ -131,3 +131,56 @@ def test_nearest_live_planet_returns_none_with_no_live_planets(monkeypatch):
     monkeypatch.setattr(frames, "in_view", lambda view, pSet, x, y, z: (x, y, z))
 
     assert host_loop._nearest_live_planet(session) is None
+
+
+# ── reload re-push (final-review fix 2) ─────────────────────────────────────
+
+
+def test_repush_live_restores_catalogue_values_after_a_dial_override():
+    """A dial override was pushed to the live planets; reload() drops it from
+    the catalogue overlay, and repush_live() must push the catalogue values
+    back to EVERY live planet (airless ones as None) so the renderer and the
+    dials agree again."""
+    pushes = _setup()
+    atmo.record_live("m", "moon", "Savoy2", "Moon", "x/moon.nif")
+    dials.step("thickness", +1)
+    assert all(a.thickness == pytest.approx(0.065) for _, a in pushes)
+    pushes.clear()
+
+    atmo.reload()
+    dials.repush_live()
+
+    got = dict(pushes)
+    assert sorted(got) == ["a", "b", "c", "m"]
+    assert got["a"].thickness == 0.06 and got["b"].thickness == 0.06
+    assert got["c"].thickness == 0.02
+    assert got["m"] is None
+    assert dials.current()["thickness"] == 0.06
+
+
+# ── _nearest_live_planet skips airless entries (final-review fix 3) ─────────
+
+
+def test_nearest_live_planet_skips_an_airless_moon(monkeypatch):
+    from engine import host_loop
+    from engine.appc import sensor_contacts
+    from engine.systems import frames
+
+    atmo.reload()
+    atmo.record_live("parent", "pinkgasplanet", "S", "Parent", "x/PinkGasPlanet.nif")
+    atmo.record_live("moon", "moon", "S", "Moon", "x/moon.nif")
+
+    player = types.SimpleNamespace(GetWorldLocation=lambda: _loc(0.0, 0.0, 0.0))
+    moon = _FakePlanet(3.0, 0.0, 0.0, 1.0)        # surface 2 GU away
+    parent = _FakePlanet(100.0, 0.0, 0.0, 50.0)   # surface 50 GU away
+    session = types.SimpleNamespace(
+        planet_instances={moon: "moon", parent: "parent"},
+        celestial_instances={}, celestial_placed={})
+
+    monkeypatch.setattr(sensor_contacts, "current_player", lambda: player)
+    monkeypatch.setattr(frames, "viewing_set", lambda: "VIEW")
+    monkeypatch.setattr(frames, "containing_set", lambda obj: "VIEW")
+    monkeypatch.setattr(frames, "in_view", lambda view, pSet, x, y, z: (x, y, z))
+
+    result = host_loop._nearest_live_planet(session)
+    assert result is not None and result.iid == "parent"

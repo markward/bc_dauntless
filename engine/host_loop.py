@@ -5349,7 +5349,8 @@ def _nearest_live_planet(session):
     """The `atmosphere.live()` entry whose planet is nearest the player, by
     SURFACE distance (|p_player - centre| - radius), not centre distance --
     the atmosphere dial group's target (planet-atmosphere spec §7). None if
-    there is no player, no viewed frame, or nothing resolves."""
+    there is no player, no viewed frame, or nothing resolves. Airless
+    entries (resolve() is None) are skipped."""
     from engine.appc import sensor_contacts as _sensor_contacts
     from engine.planets import atmosphere as _atmosphere
 
@@ -5365,6 +5366,11 @@ def _nearest_live_planet(session):
     best = None
     best_dist = None
     for entry in _atmosphere.live():
+        # Airless entries stay in the registry (reload re-pushes them) but
+        # are never a dial target: an airless moon nearer than its
+        # atmospheric parent would otherwise capture the dials.
+        if _atmosphere.resolve(entry.set_name, entry.obj_name, entry.nif_path) is None:
+            continue
         centre = None
         radius = None
         for planet, iid in session.planet_instances.items():

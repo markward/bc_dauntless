@@ -105,6 +105,17 @@ def step(name: str, direction: int) -> None:
             _push_fn(lp.iid, new)
 
 
+def repush_live() -> None:
+    """Re-push every live planet's CURRENT resolution (override first, then
+    the catalogue; None for airless) through the dial group's push fn. The
+    Developer Options "reload" action calls this right after
+    `atmosphere.reload()`, so already-realized planets pick up catalogue
+    edits and shed dial overrides -- renderer and dials agree again."""
+    from engine.planets import atmosphere as atmo
+    for lp in atmo.live():
+        _push_fn(lp.iid, atmo.resolve(lp.set_name, lp.obj_name, lp.nif_path))
+
+
 def register() -> None:
     from engine import dev_dial_groups
     dev_dial_groups.register_group("atmosphere", DIAL_ORDER, current, step)

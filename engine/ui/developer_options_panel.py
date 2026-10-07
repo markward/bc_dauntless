@@ -312,9 +312,13 @@ class DeveloperOptionsPanel(Panel):
             # One-shot ACTION, not a toggle: no local flag, no render_payload
             # entry (mirrors action:quick_repair / action:dial_group). Drops
             # the catalogue memo + warning set so the NEXT read of
-            # atmospheres.json picks up edits made while the game is running.
+            # atmospheres.json picks up edits made while the game is running,
+            # then re-pushes every live planet so already-realized ones take
+            # the fresh values too (and shed any dial override).
             import sys
+            from engine.planets import atmosphere_dials
             planet_atmosphere_catalogue.reload()
+            atmosphere_dials.repush_live()
             print("[atmosphere] catalogue reloaded", file=sys.stderr)
             return True
         if action == "action:quick_repair":

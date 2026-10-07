@@ -23,9 +23,10 @@ _warned: set = set()  # (str(path), key) already reported
 _overrides: dict = {}
 
 # Live registry of every planet instance the current session has pushed an
-# atmosphere decision for (even a None/airless one is NOT recorded here --
-# see record_live callers in host_loop). Cleared on mission/set teardown and
-# by the test suite's autouse reset; read by dial pushes (Task 7) and tests.
+# atmosphere decision for while the toggle was on -- airless (None) ones
+# INCLUDED, so a catalogue reload can re-push them (atmosphere_dials.
+# repush_live); the dial target (host_loop._nearest_live_planet) skips them.
+# Cleared on mission/set teardown and by the test suite's autouse reset.
 _live: list = []
 
 

@@ -613,6 +613,23 @@ def test_reload_atmospheres_action_calls_catalogue_reload(panel, monkeypatch):
     assert calls == [True]
 
 
+def test_reload_atmospheres_action_repushes_live_planets_after_reload(panel, monkeypatch):
+    """Reload must re-apply the catalogue to planets already realized (and
+    drop dial overrides from them), not only to planets realized later."""
+    from engine.planets import atmosphere as atmo
+    from engine.planets import atmosphere_dials as dials
+
+    order = []
+    monkeypatch.setattr(atmo, "reload", lambda: order.append("reload"))
+    monkeypatch.setattr(dials, "repush_live", lambda: order.append("repush"),
+                        raising=False)
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert p.dispatch_event("action:reload_atmospheres") is True
+    assert order == ["reload", "repush"]
+
+
 def test_reload_atmospheres_action_prints_to_stderr(panel, capsys):
     p, _ = panel
     p.open()
