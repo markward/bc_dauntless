@@ -370,14 +370,23 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     range, accounting for nebula tactical concealment and major-rock
     occlusion.
 
-    Detection fails outright when the target's concealment exceeds
+    Detection fails for the OBSERVER when the target's concealment exceeds
     LOCK_BREAK_T. A broken lock latches (per-pair hysteresis) until
     concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
 
-    Detection also fails outright when a major rock sits on the line of
-    sight between observer and target (``sensor_occlusion.blocked``), gated
-    by ``ENHANCED_SENSOR_CONTEST`` like the rest of this contest.
+    Detection also fails for the OBSERVER when a major rock sits on the line
+    of sight between observer and target (``sensor_occlusion.blocked``),
+    gated by ``ENHANCED_SENSOR_CONTEST`` like the rest of this contest.
+
+    ⚠️ Neither of those two gates is a hard ``return False`` (fix round 1,
+    sub-project 4): both fall through to ``_probe_reach`` instead, because a
+    rock or nebula core on the OBSERVER's line does not hide the target from
+    a probe sitting somewhere else (design Rule 3: rocks/nebula apply from
+    the PROBE's position; Rule 5: a contact is concealed only when hidden
+    from every probe AND the player). Memory and over-boost are unaffected --
+    they are reached only through the range test below, never from here, so
+    a rock on the observer's line still cancels them with no probe present.
 
     Beyond range, BC's sensor MEMORY and OVER-BOOST still reach the target
     (``_beyond_range_reach``; sub-project 3): a known contact, or any contact
@@ -456,7 +465,13 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     if ENHANCED_SENSOR_CONTEST:
         from engine.appc import sensor_occlusion
         if sensor_occlusion.blocked(observer, target):
-            return False
+            # A rock on the OBSERVER's line does not block a probe sitting
+            # somewhere else (Rule 3: rocks apply from the probe's position;
+            # Rule 5: concealed only when hidden from every probe AND the
+            # player) -- fall through to the probe walk instead of a hard
+            # False. Memory/over-boost keep SP3's behaviour unchanged: they
+            # are reached only via the range test below, never from here.
+            return _probe_reach(observer, target)
 
     # ── Nebula concealment gate ───────────────────────────────────────────
     if apply_concealment:
@@ -465,7 +480,7 @@ def can_detect(observer, target, *, dist_sq_gu=None,
                                  else 0.0)
         if conceal >= thresh:
             _set_latched(observer, target, True)
-            return False
+            return _probe_reach(observer, target)
         _set_latched(observer, target, False)
         # Scale range by the concealment factor (no-op when conceal == 0).
         r = r * (1.0 - CONCEAL_K * conceal)

@@ -1393,7 +1393,11 @@ class SensorSubsystem(PoweredSubsystem):
     def probes(self) -> list:
         """The live probes, in launch order. An ID that no longer resolves
         (the object was deleted) is dropped, as BC garbage-collects dead
-        probes while walking the list."""
+        probes while walking the list. Fast-exits on an empty list -- this is
+        now a per-frame hot path (sensor_detection._live_probes) and the
+        common case is zero probes."""
+        if not self._probe_ids:
+            return []
         from engine.core.ids import get_object_by_id
         live, keep = [], []
         for oid in self._probe_ids:
