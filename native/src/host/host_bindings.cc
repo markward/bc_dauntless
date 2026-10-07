@@ -5518,7 +5518,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the gameplay camera keeps rendering the live scene around the modal.");
     m.def("starmap_set_scene",
           [](const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
-                                          float, float, float>>& discs,
+                                          float, float, float, float>>& discs,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
                                           std::array<float,3>>>& lines,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
@@ -5539,6 +5539,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d.radius   = std::get<2>(t);
                   d.opacity  = std::get<3>(t);
                   d.border_opacity = std::get<4>(t);
+                  d.hatch_opacity  = std::get<5>(t);
                   g_starmap_scene.discs.push_back(d);
               }
               g_starmap_scene.lines.clear();

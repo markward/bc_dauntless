@@ -72,25 +72,6 @@ def test_selecting_a_system_lists_its_warp_points():
     assert data["warp_points"], "vesuvi should have warp points"
 
 
-def test_selecting_a_system_sends_its_description():
-    """The written description has to reach the payload, or the nav UI shows
-    a destination list with no answer to 'what is this place'."""
-    p = StarMapPanel()
-    p.open(set_name="Vesuvi6")
-    p.dispatch_event("select-system:vesuvi")
-    data = _payload(p.render_payload())
-    assert "Geki" in data["description"]
-    assert len(data["description"]) > 80, "should be the detail, not the summary"
-
-
-def test_the_description_is_empty_while_no_system_is_selected():
-    """The block is hidden on empty text, so a stale description must not
-    survive a deselect and sit over the map."""
-    p = StarMapPanel()
-    p.open(set_name="Vesuvi6")
-    data = _payload(p.render_payload())
-    assert data["targets_open"] is False
-    assert data["description"] == ""
 
 
 def test_selecting_a_system_does_not_move_the_camera():
@@ -112,10 +93,8 @@ def test_set_course_calls_back_with_the_module_and_stays_open():
     assert p.dispatch_event("set-course:" + wp["id"]) is True
     assert len(seen) == 1 and seen[0]
     # The modal STAYS OPEN so the player can see the course they plotted and
-    # then press Warp; only the target popup is dismissed.
+    # then press Warp.
     assert p.is_open() is True
-    data = _payload(p.render_payload())
-    assert data["targets_open"] is False
 
 
 def test_unavailable_destination_does_not_fire_and_stays_open():
@@ -407,21 +386,27 @@ def test_rect_tracks_the_live_cef_view_size():
     from engine.ui.star_map_panel import MAP_RECT, rect_for_view
 
     p = StarMapPanel()
-    assert p.rect == MAP_RECT == (128, 100, 1024, 494)
+    assert p.rect == MAP_RECT == (435, 100, 717, 494)
 
     p.set_view_size(1512, 983)
     assert p.rect == rect_for_view(1512, 983)
-    # Modal 1209.6 x 786.4, centred: content left 151.2, top 98.3 + 28.
-    assert p.rect == (151, 126, 1210, 704)
+    # Modal 1209.6 x 786.4, centred: content left 151.2, top 98.3 + 28; the
+    # map is the right 70% of the body, from 151.2 + 362.88 to 1360.8.
+    assert p.rect == (514, 126, 847, 704)
 
 
 def test_the_rect_is_the_large_modal_body_at_its_size_floor():
     """Below 1125x700 the 80% rule would undercut the 900x560 floor, so the
-    modal stops shrinking and the map keeps a usable 900x478 body."""
+    modal stops shrinking and the map keeps a usable 630x478 (70% of a
+    900-wide body)."""
     from engine.ui.star_map_panel import rect_for_view
 
-    # 1000x600: modal floored to 900x560, centred at (50, 20).
-    assert rect_for_view(1000, 600) == (50, 48, 900, 478)
+    # 1000x600: modal floored to 900x560, centred at (50, 20); the map starts
+    # 270 in, past the info panel.
+    assert rect_for_view(1000, 600) == (320, 48, 630, 478)
+    # Smaller than the floor (live: a ~680-wide window): the modal shrinks to
+    # 96% of the view, 652.8 x 480 at (13.6, 10), and the map stays inside it.
+    assert rect_for_view(680, 500) == (209, 38, 457, 398)
 
 
 def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():
@@ -452,45 +437,30 @@ def test_picking_follows_the_resized_rect():
 
 # --- the target popup is modal over the map -------------------------------
 
-def test_selecting_a_system_opens_the_target_popup():
+
+
+def test_the_map_stays_live_after_a_star_is_selected():
+    """The destination popup used to freeze orbit, zoom and picking while it
+    was up. It is gone, so selecting a star leaves the map fully usable."""
     p = StarMapPanel()
     p.open(set_name="Vesuvi6")
-    assert _payload(p.render_payload())["targets_open"] is False
+    p.dispatch_event("select-system:vesuvi")
+    dist, yaw = p.cam.camera.distance, p.cam.camera.yaw
+
+    assert p.dispatch_event("orbit:0.5,0.2") is True
+    assert p.dispatch_event("zoom:-3") is True
+    assert p.cam.camera.yaw != yaw
+    assert p.cam.camera.distance != dist
+
+
+def test_the_popup_payload_and_back_action_are_gone():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
     p.dispatch_event("select-system:vesuvi")
     data = _payload(p.render_payload())
-    assert data["targets_open"] is True
-    assert data["targets_title"]          # the system's display label
-    assert data["warp_points"]
-
-
-def test_back_dismisses_the_popup_without_closing_the_modal():
-    """Back and Cancel are different: Back returns to the map, Cancel closes
-    Set Course entirely."""
-    p = StarMapPanel()
-    p.open(set_name="Vesuvi6")
-    p.dispatch_event("select-system:vesuvi")
-    assert p.dispatch_event("back") is True
-    data = _payload(p.render_payload())
-    assert data["targets_open"] is False
-    assert data["selected_system"] is None
-    assert p.is_open() is True            # the modal itself stays up
-
-
-def test_map_input_is_ignored_while_the_popup_is_open():
-    """Modal by decision: with the card over the centre of the map, a click
-    or drag near its edge would otherwise be ambiguous."""
-    p = StarMapPanel()
-    p.open(set_name="Vesuvi6")
-    p.dispatch_event("select-system:vesuvi")
-    anchor, dist, yaw = p.cam.anchor, p.cam.camera.distance, p.cam.camera.yaw
-
-    assert p.dispatch_event("orbit:0.5,0.2") is False
-    assert p.dispatch_event("zoom:-3") is False
-    assert p.dispatch_event("pick:520,368") is False
-
-    assert p.cam.anchor == anchor
-    assert p.cam.camera.distance == dist
-    assert p.cam.camera.yaw == yaw
+    for key in ("targets_open", "targets_title", "description"):
+        assert key not in data, key
+    assert p.dispatch_event("back") is False
 
 
 def test_map_input_resumes_after_back():
@@ -599,7 +569,6 @@ def test_setting_a_course_enables_warp_in_the_same_payload(monkeypatch):
 
     data = _payload(p.render_payload())
     assert data["warp_enabled"] is True
-    assert data["targets_open"] is False
     assert p.is_open() is True
 
 
@@ -832,3 +801,209 @@ def test_elimination_marks_the_system_not_a_row():
     p.dispatch_event("select-system:tauceti")
     rows = _rows(_payload(p.render_payload()))
     assert all(r["mission"] is False for r in rows.values())
+
+
+def test_the_map_takes_70_percent_at_every_size():
+    """No breakpoint: the info panel takes the left 30% at every size."""
+    from engine.ui.star_map_panel import rect_for_view
+
+    # 1024x768: modal floored to 900 wide (80% would be 819.2), map = its
+    # right 70% (630 of 900).
+    assert rect_for_view(1024, 768) == (332, 105, 630, 532)
+    assert rect_for_view(1000, 600) == (320, 48, 630, 478)
+
+
+def _info(p):
+    p.invalidate()                    # render_payload is diff-gated
+    return json.loads(p.render_payload()[len("setStarMapPanel("):-2])["info"]
+
+
+def test_the_info_panel_opens_on_the_players_system():
+    p = StarMapPanel()
+    p.open(set_name="Tevron1")
+    info = _info(p)
+    assert info["system"] == "tevron"
+    assert info["is_here"] is True
+    assert info["name"]
+
+
+def test_clicking_a_star_moves_the_info_panel_and_setting_a_course_keeps_it():
+    p = StarMapPanel()
+    p.open(set_name="Tevron1")
+    p.dispatch_event("select-system:vesuvi")
+    info = _info(p)
+    assert info["system"] == "vesuvi" and info["is_here"] is False
+    assert info["detail"], "Vesuvi has a written description"
+    # Setting a course clears the selection, not the panel: it keeps
+    # describing what the player last looked at.
+    p.invalidate()
+    wp = next(w for w in _payload(p.render_payload())["warp_points"]
+              if w["available"])
+    p.dispatch_event("set-course:" + wp["id"])
+    assert _info(p)["system"] == "vesuvi"
+
+
+def test_reopening_the_map_returns_the_info_panel_home():
+    p = StarMapPanel()
+    p.open(set_name="Tevron1")
+    p.dispatch_event("select-system:vesuvi")
+    p.close()
+    p.open(set_name="Tevron1")
+    assert _info(p)["system"] == "tevron"
+
+
+def test_no_info_outside_charted_space():
+    p = StarMapPanel()
+    p.open(set_name="NoSuchSet")
+    assert _info(p) is None
+
+
+def test_the_map_opens_on_the_cluster_centre_not_the_player():
+    """Wherever the player is, the camera looks at the middle of the chart;
+    the player's system is still known, for the arrow and the info panel."""
+    from engine.ui import star_map
+
+    centre = star_map.cluster_centre()
+    for set_name in ("Vesuvi6", "Tevron1", "NoSuchSet"):
+        p = StarMapPanel()
+        p.open(set_name=set_name)
+        assert p.cam.anchor == centre, set_name
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _payload(p.render_payload())["here_system"] == "vesuvi"
+
+
+def _dest_rows(p):
+    p.invalidate()                    # render_payload is diff-gated
+    return _payload(p.render_payload())["warp_points"]
+
+
+def test_the_info_panel_lists_its_own_systems_destinations_on_open():
+    """No click needed: the panel opens on the player's system, and lists
+    where in it they can go — the in-system dash case."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    from engine.appc import sector_model as sm
+    ids = [r["id"] for r in _dest_rows(p)]
+    assert ids and ids == [w["id"] for w in sm.warp_points_for("vesuvi")], ids
+
+
+def test_the_destination_list_follows_the_star_clicked():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:tevron")
+    from engine.appc import sector_model as sm
+    ids = [r["id"] for r in _dest_rows(p)]
+    assert ids and ids == [w["id"] for w in sm.warp_points_for("tevron")], ids
+
+
+def test_a_crosshair_sets_the_course_and_marks_its_row(monkeypatch):
+    btn = _with_warp_button(monkeypatch, dest=None)
+    p = StarMapPanel(on_course_set=btn.SetDestination)
+    p.open(set_name="Vesuvi6")
+    row = next(r for r in _dest_rows(p) if r["available"])
+    assert row["course"] is False
+
+    assert p.dispatch_event("set-course:" + row["id"]) is True
+    assert btn.GetDestination()
+    rows = _dest_rows(p)
+    assert [r["course"] for r in rows if r["id"] == row["id"]] == [True]
+    assert sum(r["course"] for r in rows) == 1
+    # The list stays where it was: setting a course does not move the panel.
+    assert [r["id"] for r in rows] == [r["id"] for r in _dest_rows(p)]
+
+
+def _click_xy(p, system_id):
+    """CEF-view coordinates of a visible system's star."""
+    from engine.ui import star_map
+    rx, ry, _w, _h = p.rect
+    for l in star_map.project_points(p.scene, p.cam, p.rect):
+        if l["id"] == system_id and l["visible"]:
+            return rx + l["x"], ry + l["y"]
+    pytest.skip(system_id + " is not on screen from the opening view")
+
+
+@pytest.mark.parametrize("system_id, outermost", [
+    ("vesuvi", "Systems.Vesuvi.Vesuvi6"),
+    ("tevron", "Systems.Tevron.Tevron2"),
+    ("riha", "Systems.Riha.Riha1"),
+])
+def test_double_clicking_a_star_sets_course_to_its_outermost_region(
+        system_id, outermost):
+    seen = []
+    p = StarMapPanel(on_course_set=seen.append)
+    p.open(set_name="Vesuvi6")
+    x, y = _click_xy(p, system_id)
+    assert p.dispatch_event("pick-course:%f,%f" % (x, y)) is True
+    assert seen == [outermost]
+    # ...and the info panel follows the star, as a single click would.
+    assert _info(p)["system"] == system_id
+
+
+def test_tau_ceti_with_no_default_takes_its_last_destination():
+    """Tau Ceti folds Starbase 12 and Dry Dock onto one star and has no
+    system default of its own."""
+    p = StarMapPanel()
+    assert p._outermost_module("tauceti") == "Systems.Starbase12.Starbase12"
+
+
+def test_double_clicking_empty_space_sets_nothing():
+    seen = []
+    p = StarMapPanel(on_course_set=seen.append)
+    p.open(set_name="Vesuvi6")
+    rx, ry, _w, _h = p.rect
+    assert p.dispatch_event("pick-course:%f,%f" % (rx + 1, ry + 1)) is True
+    assert seen == []
+
+
+def _search(p, query):
+    p.dispatch_event("search:" + query)
+    p.invalidate()
+    return _payload(p.render_payload())["search_results"]
+
+
+def test_search_finds_a_star_by_name_case_insensitively():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    hits = _search(p, "vEsU")
+    assert hits[0] == {"system": "vesuvi", "name": hits[0]["name"], "via": None}
+
+
+def test_search_finds_the_star_a_destination_is_in():
+    """Searching a region name ("starbase 12") yields the star it orbits."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    hits = _search(p, "starbase%2012")          # URL-encoded, as the JS sends
+    assert [h["system"] for h in hits] == ["tauceti"]
+    assert hits[0]["via"] == "Starbase 12"
+
+
+def test_search_ranks_name_prefix_then_name_then_destination():
+    from engine.ui.star_map_panel import StarMapPanel as P
+    p = P()
+    p.open(set_name="Vesuvi6")
+    hits = _search(p, "a")
+    ranks = [0 if h["name"].lower().startswith("a") else
+             1 if h["via"] is None else 2 for h in hits]
+    assert ranks == sorted(ranks)
+
+
+def test_search_is_capped_and_empty_for_no_query():
+    from engine.ui.star_map_panel import SEARCH_MAX_RESULTS
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert len(_search(p, "e")) <= SEARCH_MAX_RESULTS
+    assert _search(p, "") == []
+    assert _search(p, "%20%20") == []
+    assert _search(p, "zzzz-no-such-star") == []
+
+
+def test_reopening_the_map_clears_the_search():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _search(p, "vesuvi")
+    p.close()
+    p.open(set_name="Vesuvi6")
+    p.invalidate()
+    data = _payload(p.render_payload())
+    assert data["search_query"] == "" and data["search_results"] == []

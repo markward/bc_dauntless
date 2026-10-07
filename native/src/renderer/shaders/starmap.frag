@@ -6,6 +6,7 @@ uniform vec3  u_color;
 uniform vec3  u_core_color;  // star centre (kind 2 only); white for a live star
 uniform float u_opacity;
 uniform float u_border;   // nebula boundary alpha (kind 0 only)
+uniform float u_hatch;    // nebula hatch-band alpha, absolute (kind 0 only)
 uniform vec3  u_center;   // world position — also the nebula's shape seed
 uniform int   u_kind;     // 0 nebula, 1 line, 2 star, 3 bracket, 4 star cloud
 
@@ -43,7 +44,7 @@ void main() {
         // Diagonal hatch, clipped to the interior. Period is in billboard
         // space so the banding holds its spacing as the map zooms.
         float band  = step(0.5, fract((d.x + d.y) * 6.0));
-        float alpha = u_opacity + band * u_opacity * 0.35;
+        float alpha = mix(u_opacity, u_hatch, band);
 
         // Boundary stroke: a narrow ring just inside the edge.
         float rim = 1.0 - smoothstep(0.0, max(aa, 0.02) * 2.0, abs(r - edge));

@@ -27,8 +27,8 @@
     background: transparent;
 }
 /* Chrome fill, restored per element now the modal is transparent.
-   .cp-header already carries its own maroon->orange gradient; #star-map-warps
-   gets its own fill in its rule at the foot of this file. */
+   .cp-header already carries its own maroon->orange gradient; #star-map-info
+   gets its own fill in the two-panel block at the foot of this file. */
 /* The shared .cp-footer is also padding-sized (10px + button + 1px border),
    i.e. its height depends on the button's font metrics. The map rect cannot
    be derived from a number like that, so pin it: MODAL_H = HEADER_H + MAP_H +
@@ -81,7 +81,9 @@
    viewport, so the map rect IS the body rect by construction — no centring
    formula in CSS to keep in step with Python. The target list is a centred
    popup inside the viewport, so nothing else sits in the body. */
-.sm-body { display: flex; gap: 0; position: relative; }
+/* z-index 0: its own stacking context, so the viewport's z-index (which
+   contains the label layer) stays local to the body. */
+.sm-body { display: flex; gap: 0; position: relative; z-index: 0; }
 
 /* The GL pass draws BENEATH this element — it MUST stay transparent, or the
    native map is hidden behind an opaque CEF rectangle.
@@ -94,19 +96,24 @@
    any disagreement paints over the header or footer strip. */
 #star-map-viewport {
     position: absolute;
-    inset: 0;
+    inset: 0 0 0 30%;      /* the right 70%: the info panel has the left 30% */
+    /* A stacking context, so the label layer's z-index stays INSIDE the map
+       and everything after the viewport in .sm-body (the search box) paints
+       over it. Without it the names escaped to the panel and drew through
+       the search field. Paints nothing, so the hole stays transparent. */
+    z-index: 0;
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
     cursor: grab;
 }
 #star-map-viewport:active { cursor: grabbing; }
 
-/* z-index is LOAD BEARING, not decoration: it makes this a stacking context,
-   which CONTAINS the z-index of the names and the here-arrow inside it. With
-   `position` alone the container stays at `z-index: auto` and forms no
-   context, so those leaf values escape and compete with #star-map-targets —
-   which paints at `auto` and therefore loses. That shipped once: the system
-   name and the arrow drew straight through the open target card. */
+/* z-index makes this a stacking context, which CONTAINS the z-index of the
+   names and the here-arrow inside it. With `position` alone the container
+   stays at `z-index: auto` and forms no context, so those leaf values escape
+   and compete with anything later laid over the map. That shipped once: the
+   system name and the arrow drew straight through the (since removed)
+   destination popup. */
 #star-map-labels {
     position: absolute; inset: 0; pointer-events: none;
     z-index: 1;
@@ -194,82 +201,160 @@
    composes with whichever state class above already won. */
 .sm-label--inert     { opacity: 0.5; }
 
-/* The objective ROW inside the target popup, in the same hue the map uses
-   for the objective SYSTEM. The map can only point at Vesuvi; this is what
-   says WHICH region of it the mission meant. Kept here rather than beside
-   the other .sc-row rules in configuration_panel.css so it sits next to the
-   colour it must match — the two drifting apart is the failure mode. */
-.sc-row--mission     { color: #99ccff; }
-
-/* Reserves the 640px the fixed viewport occupies so the warp list never
-   sits underneath it (see the .sm-body comment above). max-height is the
-   modal body height, the same MAP_H the viewport uses. The background is this
-   column's own: .cp-modal is transparent so the GL map can show through.
-
-   The UA <ul> reset (list-style/margin/padding) matches .sc-col, which this
-   list is otherwise a copy of. It is NOT cosmetic here: a bare <ul> carries
-   `margin: 1em 0`, which would inset this column's fill by 16px top and
-   bottom and re-open the transparent hole either side of it — the live 3D
-   scene showing through two strips of the modal. */
-/* Target popup — a centred card over the map, not a column beside it. The
-   map fills the modal now, so this is the only thing that covers it, and it
-   does so only while a system is selected. No margin-left pinning the map
-   width any more: the card is centred, so it cannot drift out of step with
-   MAP_W the way a hard-coded offset could. */
-#star-map-targets {
+/* ── Two-panel layout ─────────────────────────────────────────────────────
+   At every window size the body splits horizontally: the system
+   information panel takes the left 30%, the map the right 70%
+   (#star-map-viewport's inset). star_map_panel.INFO_FRACTION is the Python
+   half — rect_for_view moves the GL scissor, label projection and picking to
+   the same 70% — and test_star_map_cef_assets pins the two together.
+   Opaque chrome, like the footer: it sits beside the hole, not over it, so it
+   carries its own fill now the modal is transparent. */
+#star-map-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     position: absolute;
-    left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    min-width: 240px; max-width: 60%;
-    max-height: 70%;
-    display: flex; flex-direction: column;
+    left: 0; top: 0; bottom: 0;
+    width: 30%;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    overflow-y: auto;
     background: rgb(20, 22, 28);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
-    /* Above the whole label layer (#star-map-labels is z-index 1). This popup
-       is modal over the map — orbit, zoom and picking are all ignored while
-       it is up — so nothing from the map beneath may paint across it. */
-    z-index: 2;
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
 }
-#star-map-targets-head {
-    display: flex; align-items: center; gap: 10px;
-    justify-content: space-between;   /* title left, close icon right */
-    padding: 6px 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
-}
-/* Close icon. Borderless so it reads as an icon rather than a second
-   button competing with the modal's Cancel; the hit box is kept a
-   comfortable 20px square rather than shrinking to the glyph. */
-#star-map-back {
-    font-family: inherit; font-size: 16px; line-height: 1;
-    width: 20px; height: 20px;
-    display: flex; align-items: center; justify-content: center;
-    color: #ffd9a8; background: transparent;
-    border: none; padding: 0; cursor: pointer;
-}
-#star-map-back:hover { background: rgba(255, 217, 168, 0.18); color: #fff; }
-#star-map-targets-title {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
+
+#star-map-info-name {
+    font-size: 18px; font-weight: 700; letter-spacing: 0.6px;
     text-transform: uppercase; color: #ffd9a8;
 }
-/* The system's written description. Deliberately quieter than the
-   destination rows below it: this is context for the choice, not part of it,
-   so it must not read as something clickable. flex: none keeps it at its
-   natural height so the scrolling destination list absorbs the remainder. */
-#star-map-desc {
-    flex: none;
+/* Same hue as the you-are-here arrow over the star (.sm-here-arrow). */
+#star-map-info-here {
+    font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase;
+    color: #d8c1a8;
+}
+#star-map-info-summary {
     margin: 0;
-    padding: 8px 2px 10px;
-    border-bottom: 1px solid rgba(255, 217, 168, 0.18);
-    font-size: 11px;
-    line-height: 1.55;
-    color: #d8c6ad;
+    font-size: 13px; line-height: 1.45; color: #cdd3dc;
+}
+#star-map-info-detail {
+    margin: 0;
+    font-size: 12px; line-height: 1.55; color: #d8c6ad;
 }
 
-#star-map-warps {
+/* Destinations in the info panel: one row per region, label left, a
+   set-course crosshair right. */
+#star-map-info-regions-head {
+    margin-top: 6px;
+    font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase;
+    color: rgba(216, 132, 80, 0.9);
+}
+#star-map-info-regions {
     list-style: none;
     margin: 0;
-    padding: 6px 0;
-    overflow-y: auto;
+    padding: 0;
 }
+.sm-region {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 0;
+    font-size: 14px; color: #cdd3dc;
+}
+.sm-region__label { flex: 1 1 auto; min-width: 0; }
+/* The mission's objective row, in the hue the map gives the objective
+   SYSTEM: the map can only point at the system, this says which region. */
+.sm-region--mission { color: #99ccff; }
+.sm-region--disabled { opacity: 0.45; }
+.sm-region__course {
+    flex: none;
+    width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    color: #8a93a3;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    cursor: pointer;
+}
+.sm-region__course:hover { color: #ffd9a8; border-color: rgba(255, 217, 168, 0.6); }
+/* The row the warp button is set to: the crosshair lit. */
+.sm-region--course .sm-region__course {
+    color: #ffd9a8;
+    background: rgba(216, 94, 86, 0.28);
+    border-color: rgba(255, 217, 168, 0.6);
+}
+#star-map-info-note {
+    margin: 0;
+    font-size: 11px; color: #8a93a3; font-style: italic;
+}
+/* The mission objective's marker, just left of the crosshair, in the
+   objective blue the map uses for the system. */
+.sm-region__objective {
+    flex: none;
+    display: flex; align-items: center;
+    color: #99ccff;
+}
+
+/* ── Search, bottom-left of the map ─────────────────────────────────────
+   Anchored just right of the info panel (the map starts at 30% of the
+   body), at the bottom. Opaque chrome over the map; closed, only the
+   magnifier shows. DOM order (after #star-map-viewport) puts it above the
+   labels with no z-index of its own. */
+#star-map-search {
+    position: absolute;
+    left: calc(30% + 12px); bottom: 12px;
+    display: flex; flex-direction: column; align-items: flex-start;
+    gap: 4px;
+    width: 260px;
+    pointer-events: none;      /* only the bar and results take clicks */
+}
+/* row-reverse keeps the magnifier in the corner with the field opening to
+   its right. */
+#star-map-search-bar {
+    display: flex; flex-direction: row-reverse; align-items: center; gap: 6px;
+    pointer-events: auto;
+}
+#star-map-search-input {
+    display: none;
+    width: 200px;
+    padding: 4px 8px;
+    font-family: inherit; font-size: 13px;
+    color: #cdd3dc;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 217, 168, 0.45);
+    border-radius: 3px;
+    outline: none;
+}
+.sm-search--open #star-map-search-input { display: block; }
+#star-map-search-toggle {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    color: #8a93a3;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    cursor: pointer;
+}
+#star-map-search-toggle:hover,
+.sm-search--open #star-map-search-toggle {
+    color: #ffd9a8; border-color: rgba(255, 217, 168, 0.6);
+}
+#star-map-search-results {
+    list-style: none;
+    margin: 0; padding: 0;
+    width: 100%;
+    max-height: 240px; overflow-y: auto;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    pointer-events: auto;
+}
+#star-map-search-results:empty { display: none; }
+.sm-search__result {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 4px 8px;
+    font-size: 13px; color: #cdd3dc;
+    cursor: pointer;
+}
+.sm-search__result:hover { background: rgba(216, 94, 86, 0.28); }
+.sm-search__name { text-transform: uppercase; letter-spacing: 0.4px; }
+/* The destination that matched, when it was not the system's own name. */
+.sm-search__via { font-size: 11px; color: #8a93a3; }
