@@ -34,6 +34,7 @@
 #include <renderer/dynamic_lights.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
+#include <renderer/atmosphere_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/minor_field.h>
 #include <renderer/minor_pass.h>
@@ -264,6 +265,8 @@ std::vector<renderer::SunDescriptor> g_suns;
 std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
 float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-1
 std::unique_ptr<renderer::SunPass> g_sun_pass;
+// Planet atmosphere shells (docs/superpowers/specs/2026-10-07-planet-atmosphere-design.md §5).
+std::unique_ptr<renderer::AtmospherePass> g_atmosphere_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 // Minor rocks (docs/superpowers/specs/2026-10-01-minor-rocks-design.md). The
 // field is pure CPU state stepped in frame()'s xform_sync block; the pass owns
@@ -965,6 +968,7 @@ void init(int width, int height, const std::string& title) {
     g_decal_mask_cache.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
+    g_atmosphere_pass = std::make_unique<renderer::AtmospherePass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_minor_pass = std::make_unique<renderer::MinorPass>();
     g_far_pass = std::make_unique<renderer::FarPass>();
@@ -1047,6 +1051,7 @@ void shutdown() {
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
     g_sun_pass.reset();
+    g_atmosphere_pass.reset();   // releases the shell mesh (GL alive)
     g_dust_pass.reset();
     g_minor_pass.reset();     // releases VAOs + instance buffer (GL alive)
     g_far_pass.reset();       // releases atlases + VAOs + buffers (GL alive)
@@ -1590,6 +1595,16 @@ void frame() {
                                 renderer::HdrTarget& target,
                                 int vw, int vh, float ambient_scale) {
         target.bind();
+        // Planet atmosphere shells: first in phase 2, additive, depth test
+        // off, the march ended by this target's resolved depth (plan
+        // deviation D1). Draws nothing -- and touches no GL state -- unless
+        // an instance has an enabled atmosphere on a sphere-mapped model.
+        if (g_atmosphere_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.atmosphere");
+            g_atmosphere_pass->render(g_world, cam, *g_pipeline, lookup, g_lighting,
+                                      g_suns, target.depth_texture(),
+                                      target.width(), target.height());   // gl_FragCoord space
+        }
         // Dust is normally skipped on the viewscreen RTT (a camera-anchored
         // cockpit smear), but the WARP STREAK lives in this pass — so during
         // warp (streak > 0) we DO render it onto the viewscreen so the bridge

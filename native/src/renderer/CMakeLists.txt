@@ -62,6 +62,8 @@ embed_shader(SHADER_SUN_VS shaders/sun.vert sun_vs)
 embed_shader(SHADER_SUN_FS shaders/sun.frag sun_fs)
 embed_shader(SHADER_SUN_FLARE_VS shaders/sun_flare.vert sun_flare_vs)
 embed_shader(SHADER_SUN_FLARE_FS shaders/sun_flare.frag sun_flare_fs)
+embed_shader(SHADER_ATMOSPHERE_VS shaders/atmosphere.vert atmosphere_vs)
+embed_shader(SHADER_ATMOSPHERE_FS shaders/atmosphere.frag atmosphere_fs)
 embed_shader(SHADER_DUST_VS shaders/dust.vert dust_vs)
 embed_shader(SHADER_DUST_FS shaders/dust.frag dust_fs)
 embed_shader(SHADER_NEBULA_VS shaders/nebula.vert nebula_vs)
@@ -178,6 +180,7 @@ add_library(renderer STATIC
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc
     atmosphere_math.cc
+    atmosphere_pass.cc
     system_nebula_pass.cc
     nebula_godray_pass.cc
     shockwave_pass.cc
