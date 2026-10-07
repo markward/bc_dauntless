@@ -83,7 +83,7 @@ stbc-reference MCP was unreachable 2026-10-03).
 |---|---|---|---|
 | 1 | **Two tiers** — contact manager, bands, dwell, proximity events, Unknown display, `SensorSubsystem` surface | local main | ✅ merged b1e1e05a, live-verified — spec: `2026-10-03-sensor-tiers-design.md` |
 | 2 | **Continuity and occlusion** — 5 s window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1 (merged b1e1e05a), rock-fields (merged) | ✅ merged 0f3db1e7, live-verified 2026-10-06 — spec: `2026-10-05-sensor-continuity-occlusion-design.md` |
-| 3 | **Over-boost and sensor memory** — a reach step in `can_detect` (range ∨ boost > 1.2 ∨ known, the latter two unless nebula-jammed); `IsObjectVisible` delegates to `can_detect`; decision 2 overturned | 2 (merged 0f3db1e7) | built, unmerged (feat/sensor-overboost-memory) — spec: `2026-10-06-sensor-overboost-memory-design.md` |
+| 3 | **Over-boost and sensor memory** — a reach step in `can_detect` (range ∨ boost > 1.2 ∨ known, the latter two unless nebula-jammed); `IsObjectVisible` delegates to `can_detect`; decision 2 overturned | 2 (merged 0f3db1e7) | ✅ merged to local main, live-verified 2026-10-07 — spec: `2026-10-06-sensor-overboost-memory-design.md` |
 | 4 | **Probes** — `Get/SetNumProbes` (stubbed today ⇒ unlimited probes), `AddProbe`, a probe branch in reach and the near/far bands (a probe identifies too: `IsObjectNear` walks probes), Science "Launch Probe" end to end, E6M4 goal (planet ProximityCheck) | 3 | next |
 
 ### Sub-project 2 notes, carried forward
