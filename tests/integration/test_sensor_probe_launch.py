@@ -79,6 +79,16 @@ def test_launch_spawns_a_counted_listed_probe(e6m4_player):
     v = probe.GetVelocityTG()
     assert (v.x * v.x + v.y * v.y + v.z * v.z) > 0.0
     assert can_detect(player, probe) is True
+    # The probe must actually MOVE at that velocity, not just report it --
+    # ShipScriptActions.PushObject only ever calls SetVelocity, and the
+    # probe has no AI/helm setpoints, so it only moves if something besides
+    # the setpoint ramp integrates a bare SetVelocity (engine.appc.drift).
+    speed = (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+    p0 = probe.GetTranslate()
+    headless_mission.tick(2.0)
+    p1 = probe.GetTranslate()
+    dist = ((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2) ** 0.5
+    assert dist == pytest.approx(speed * 2.0, rel=0.05)
 
 
 def test_launch_probe_handler_decrements_the_count(e6m4_player):

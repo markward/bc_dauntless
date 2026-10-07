@@ -17,13 +17,18 @@ The per-tick rotation delta is built as pitch/yaw/roll matrices and
 post-multiplied into the world rotation (`_integrate_rotation`) — matches the
 `_PlayerControl.apply` body-frame-delta convention.
 
-Ships whose setpoints are still None are skipped entirely — the player ship
-under manual control (driven by `engine/host_loop.py:_PlayerControl` directly
-on the transform) and freshly-spawned props never enter the integrator. When a
-helm AI is installed on the player (Orbit Planet, All Stop, ...), the AI
-writes setpoints and the player integrates here like any other ship;
-_PlayerControl.apply() yields for exactly that case (gated on player.GetAI())
-so the two integrators never fight over the transform.
+Ships whose setpoints are still None skip the ramp above entirely, but are
+NOT otherwise untouched: only the current player (driven by
+`engine/host_loop.py:_PlayerControl` directly on the transform) is left
+strictly alone. Every other setpoint-less ship -- a freshly-spawned prop with
+zero velocity, or one the SDK moves only with a bare SetVelocity /
+SetAngularVelocity and no AI (a launched probe, E1M2's falling station,
+E8M2's spinning Matan) -- drifts on that scripted velocity/angular velocity
+via `engine.appc.drift`, the same step a rock uses (rocks.motion.step).
+When a helm AI is installed on the player (Orbit Planet, All Stop, ...), the
+AI writes setpoints and the player integrates through the ramp above like any
+other ship; _PlayerControl.apply() yields for exactly that case (gated on
+player.GetAI()) so the two integrators never fight over the transform.
 """
 from dataclasses import dataclass
 
@@ -154,13 +159,14 @@ def _ramp_toward(current: float, target: float, step: float) -> float:
 def _step_ship_motion(ship, dt: float) -> None:
     """Advance one ship's transform by one tick.
 
-    Skips entirely when no setpoint has ever been written so the manually
-    flown player ship (driven via `_PlayerControl`, which yields to this
-    integrator whenever a helm AI is installed) and freshly-spawned non-AI
-    props are left alone. Otherwise: flies under the impulse subsystem's live
-    (already damage- and power-derated) limits with a non-braking cap; with
-    every pod out it drifts on inertia (frozen world-space velocity + residual
-    angular momentum). Spec
+    When no setpoint has ever been written, the manually flown player ship
+    (driven via `_PlayerControl`, which yields to this integrator whenever a
+    helm AI is installed) is left strictly alone; every other setpoint-less
+    ship drifts on its scripted velocity/angular velocity via
+    `engine.appc.drift` (see module docstring). Otherwise: flies under the
+    impulse subsystem's live (already damage- and power-derated) limits with
+    a non-braking cap; with every pod out it drifts on inertia (frozen
+    world-space velocity + residual angular momentum). Spec
     docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.
     """
     # An immobile ship (SetStatic / SetStationary) is a fixed anchor: never
@@ -189,6 +195,19 @@ def _step_ship_motion(ship, dt: float) -> None:
     sp = getattr(ship, "_speed_setpoint", None)
     av = getattr(ship, "_target_angular_velocity_setpoint", None)
     if sp is None and av is None:
+        # No helm/AI setpoint has ever been written. The manually-flown
+        # player is excluded -- it has no setpoints either under manual
+        # control, but host_loop._PlayerControl drives and moves it
+        # directly, so integrating here too would double-move it. Every
+        # OTHER setpoint-less ship (a freshly-spawned prop, or one only
+        # ever touched by the SDK's bare SetVelocity/SetAngularVelocity --
+        # a launched probe, E1M2's falling station, E8M2's spinning Matan)
+        # drifts on whatever velocity/angular velocity was scripted onto it,
+        # same as a rock (engine.appc.drift, shared with engine.rocks.motion).
+        import App
+        if ship is not App.Game_GetCurrentPlayer():
+            from engine.appc import drift
+            drift.step(ship, dt)
         return
 
     # -- Commanded speed + world-space direction --

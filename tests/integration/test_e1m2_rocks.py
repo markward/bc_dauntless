@@ -60,14 +60,14 @@ def _haven_and_first_rock(mod):
             App.ShipClass_GetObject(pSet, name), name)
 
 
-def test_planet_collision_handler_counts_a_rock():
+def test_planet_collision_handler_counts_a_rock(monkeypatch):
     """E1M2.PlanetCollision (E1M2.py:1308) ShipClass_Casts the destination:
     a rock must pass that cast for the asteroid-hit-Haven beat to count."""
     mod = _init_e1m2()
     haven, rock, name = _haven_and_first_rock(mod)
     assert haven is not None and rock is not None
     hit = []
-    mod.AsteroidHitPlanet = lambda: hit.append(1)
+    monkeypatch.setattr(mod, "AsteroidHitPlanet", lambda: hit.append(1))
     evt = App.TGEvent_Create()
     evt.SetEventType(App.ET_PLANET_COLLISION)
     evt.SetSource(haven)
@@ -77,7 +77,7 @@ def test_planet_collision_handler_counts_a_rock():
     assert name not in mod.g_dAsteroidInfo
 
 
-def test_moving_asteroid_hitting_haven_counts():
+def test_moving_asteroid_hitting_haven_counts(monkeypatch):
     """The whole beat through the real collision path: a moving asteroid
     driven into Haven reaches E1M2.PlanetCollision -> AsteroidHitPlanet.
 
@@ -91,8 +91,8 @@ def test_moving_asteroid_hitting_haven_counts():
     # and a zero-radius object is not collidable at all.
     rock.SetRadius(1.0)
     hit, killed = [], []
-    mod.AsteroidHitPlanet = lambda: hit.append(1)
-    mod.AsteroidDestroyed = lambda: killed.append(1)
+    monkeypatch.setattr(mod, "AsteroidHitPlanet", lambda: hit.append(1))
+    monkeypatch.setattr(mod, "AsteroidDestroyed", lambda: killed.append(1))
     hp = haven.GetWorldLocation()
     # Just outside the effective boundary (bounding spheres x the scale).
     r = (haven.GetRadius() + rock.GetRadius()) * collisions.COLLISION_RADIUS_SCALE
@@ -110,7 +110,7 @@ def test_moving_asteroid_hitting_haven_counts():
     assert rock.IsDying() or rock.IsDead()       # the contact was lethal
 
 
-def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit():
+def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit(monkeypatch):
     """A group-"e" asteroid driven into the Facility reaches
     E1M2.ObjectCollision -> AsteroidHitStation, through the real collision
     path. The strike is lethal (Asteroid 9e: ~14,500 impact damage against
@@ -124,8 +124,9 @@ def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit():
     struck the station and was not counted would leave the mission unwinnable.
     What the ordering fixes is that the station hit is seen FIRST.
 
-    Out of scope: the Facility's own scripted SetVelocity toward the planet
-    does not move it (ship scripted velocity, rock-class spec)."""
+    Out of scope: whether the Facility's own scripted SetVelocity toward the
+    planet actually moves it (it does, via engine.appc.drift -- see
+    test_e1m2_station_drift.py) -- this test only checks the event beats."""
     from engine.appc import collisions
     mod = _init_e1m2()
     pSet = App.g_kSetManager.GetSet("Vesuvi6")
@@ -138,8 +139,8 @@ def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit():
     fac.SetRadius(3.0)
     rock.SetRadius(0.744)
     beats = []
-    mod.AsteroidHitStation = lambda: beats.append("station")
-    mod.AsteroidDestroyed = lambda: beats.append("destroyed")
+    monkeypatch.setattr(mod, "AsteroidHitStation", lambda: beats.append("station"))
+    monkeypatch.setattr(mod, "AsteroidDestroyed", lambda: beats.append("destroyed"))
     fp = fac.GetWorldLocation()
     # Clear of the widest boundary any radius rule gives (raw x scale), so
     # the rock is approaching, not born overlapping.

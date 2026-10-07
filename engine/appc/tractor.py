@@ -23,10 +23,12 @@ Force model — mass-aware + reciprocal (signed off in the design):
     suns) are immovable (speed 0).  Mirrors collisions.py's inverse-mass split.
   * The effect is applied as a DIRECT position displacement each frame
     (SetTranslateXYZ), recomputed from live geometry — NOT a write to
-    `_velocity` (the motion integrator overwrites that every frame for AI ships
-    and skips setpoint-less ships entirely; see ship_motion._step_ship_motion).
-    Because the force is recomputed each frame it self-corrects and needs no
-    persistent decaying overlay (unlike collisions).
+    `_velocity` (the motion integrator overwrites that every frame for AI
+    ships; a setpoint-less ship instead drifts on whatever `_velocity` was
+    last scripted onto it via `engine.appc.drift` — see
+    ship_motion._step_ship_motion). Because the force is recomputed each
+    frame it self-corrects and needs no persistent decaying overlay (unlike
+    collisions).
   * Reciprocity (Newton's 3rd law): PULL/PUSH/TOW/DOCK also move the SOURCE,
     opposite-direction, at speed(m_source) — momentum-consistent because
     speed(m)∝1/m.  HOLD anchors the target only (no source reaction).
