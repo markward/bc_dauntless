@@ -3650,6 +3650,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("scale"),
           "Scale an instance's self-illumination (material emissive + glow "
           "map). 1.0 = normal, 0.0 = destroyed/dark hull.");
+    m.def("set_instance_atmosphere",
+          [](scenegraph::InstanceId id, py::object params) {
+              scenegraph::Instance::Atmosphere a;
+              if (!params.is_none()) {
+                  auto t = params.cast<py::tuple>();
+                  auto c = t[0].cast<std::array<float, 3>>();
+                  auto s = t[1].cast<std::array<float, 3>>();
+                  a.enabled = true;
+                  a.color = {c[0], c[1], c[2]};
+                  a.sunset_color = {s[0], s[1], s[2]};
+                  a.thickness = t[2].cast<float>();
+                  a.density = t[3].cast<float>();
+                  a.limb = t[4].cast<float>();
+              }
+              g_world.set_atmosphere(id, a);
+          },
+          py::arg("id"), py::arg("params"),
+          "Planet atmosphere (spec 2026-10-07): None disables; else "
+          "(color, sunset_color, thickness, density, limb), colours linear RGB.");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {
@@ -4674,6 +4693,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return inst->far_fade;
           },
           py::arg("iid"), "TEST-ONLY: an instance's far_fade. Never call from game code.");
+    m.def("atmosphere_debug",
+          [](scenegraph::InstanceId id) -> py::object {
+              const auto* inst = g_world.get(id);
+              if (inst == nullptr) throw py::value_error("unknown instance");
+              const auto& a = inst->atmosphere;
+              if (!a.enabled) return py::none();
+              return py::make_tuple(py::make_tuple(a.color.r, a.color.g, a.color.b),
+                                    py::make_tuple(a.sunset_color.r, a.sunset_color.g, a.sunset_color.b),
+                                    a.thickness, a.density, a.limb);
+          },
+          py::arg("id"), "Test-only read-back of an instance's atmosphere.");
 
     // Standalone field for headless probes: no GL, no init(), no frame().
     py::class_<mr::MinorField>(m, "MinorField")

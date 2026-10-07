@@ -47,6 +47,7 @@ public:
     void set_rim_strength(InstanceId id, float strength);
     void set_surface_rock(InstanceId id, bool rock);
     void set_emissive_scale(InstanceId id, float scale);
+    void set_atmosphere(InstanceId id, const Instance::Atmosphere& atmosphere);
     void set_officer_face(InstanceId id, std::uint32_t tex_a,
                           std::uint32_t tex_b, float mix);
     void set_officer_jaw(InstanceId id, float openness);
