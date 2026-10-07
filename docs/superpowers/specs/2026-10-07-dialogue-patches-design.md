@@ -1,6 +1,6 @@
 # Dialogue patches — restore cut lines, replace lines
 
-**Status:** approved design, not built. Branch `feat/crew-hazard-prompts`.
+**Status:** built and merged to local main (`bfa75d25`, 2026-10-07); E1M2's reinserted lines and the first `replace` (Felix `E1M2FirstHail6`) live-verified by Mark.
 
 ## Goal
 

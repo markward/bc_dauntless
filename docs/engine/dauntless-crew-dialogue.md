@@ -51,13 +51,13 @@ would need only another TGL's text, not new recordings — unverified.
 | Hazard | Level at the player | Threshold | Lines |
 |---|---|---|---|
 | Asteroids | max(radial profile `asteroids`, rock-field strength `far_tier.field_strength_at`) | > 0.05 | `BrexAsteroidShields1` (Engineer), `MiguelAsteroidShields2` (Science) |
-| Radiation | radial profile `radiation` | > 0.1 | `BrexRadiationShields1`, `BrexRadiationShields2` (Engineer) |
+| Radiation | radial profile `radiation` | > 0 (where radiation damage starts) | `BrexRadiationShields1`, `BrexRadiationShields2` (Engineer) |
 
 - Speaks only with the shields down (`nebula_runtime._shields_up`).
 - Polled at 1 Hz on game time from `host_loop` beside the contact manager
   (sim-gated); reset on mission swap in `_reset_sensor_state`.
-- One prompt per exposure. It re-arms when the level drops below half the
-  threshold or the shields go up, never sooner than 120 s after the last
+- One prompt per exposure. It re-arms when the level drops to half the
+  threshold or below (for radiation: fully out of it) or the shields go up, never sooner than 120 s after the last
   prompt for that hazard. So hovering at a field's edge does not nag, and
   lowering shields inside a field gets at most one reminder per 2 minutes.
 - Line chosen at random; if that officer is not on the bridge, the other
@@ -65,19 +65,23 @@ would need only another TGL's text, not new recordings — unverified.
 - `CSP_SPONTANEOUS` (BC's engineer-report priority).
 - **Never over dialogue** (Mark, 2026-10-07). If a scripted sequence still
   has a line to come (`actions.scripted_line_pending`, nested sequences
-  included) or any crew line ended under 5 s ago (`crew_speech.silent_for`),
-  the prompt is **dropped** for this exposure, not deferred. Why: missions
-  play dialogue as sequences with gaps between lines (3,909 sequenced speak
+  included), the prompt is **dropped** for this exposure: missions play
+  dialogue as sequences with gaps between lines (3,909 sequenced speak
   actions vs 54 direct `SayLine` calls in Maelstrom), and a prompt started in
-  a gap was cut off by the next scripted line. Headless, E1M2 reads as
-  dialogue for its ~50 s opening and then clears; Quick Battle never does.
+  a gap was cut off by the next scripted line. If only a **one-off** crew
+  line (an acknowledgement, a damage report) ended under 5 s ago
+  (`crew_speech.silent_for`), the prompt **waits** for the quiet and then
+  speaks: Kiska's standalone "All stop, aye sir" at a dash drop-out used to
+  drop the radiation warning for the whole visit (live, 2026-10-07).
   Launched sequences are forgotten on mission swap
   (`actions.reset_launched_sequences`), so a sequence an old mission left
   playing cannot block prompts forever.
 - Skipped: E3M2 and E3M4 (their scripts prompt for shields themselves:
   `E3M2ProdRaiseShields`, `E3M4ShouldRaiseShields`), cinematics, warp, dash.
 
-⚠️ Not live-verified.
+Live-verified (Mark): the asteroid prompt (2026-10-06) and the radiation
+prompt (2026-10-07: Vesuvi, and a sun approach by in-system warp, where it
+follows Kiska's "All stop" at drop-out).
 
 ## Dialogue patches — insert and replace lines in BC's missions
 
@@ -104,6 +108,9 @@ so it lives with the assets, not in `tools/`). Always applied.
   newly recorded line goes through `dauntless_crew.json` (text) +
   `replacements/sfx/...` (voice) + an insert with `"tgl": "data/TGL/Dauntless Crew.tgl"`.
 - First use: E1M2's replicator exchange (`2a`, `3a` Soams; `3b` Saffi;
-  `4a` Brex), present in `E1M2.TGL` with voices but never scripted by BC.
+  `4a` Brex), present in `E1M2.TGL` with voices but never scripted by BC —
+  heard in game (Mark, 2026-10-07). First `replace`: Felix's
+  `E1M2FirstHail6` with Mark's red-alert recording, voice and subtitle
+  live-verified.
 - Guards: `tests/tools/test_dialogue_patches_content.py` (every entry points
   at real content), `tests/integration/test_e1m2_supply_transfer.py`.

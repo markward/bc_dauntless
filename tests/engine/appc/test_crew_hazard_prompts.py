@@ -93,7 +93,7 @@ def world(monkeypatch):
     w = {
         "asteroids": 0.0, "radiation": 0.0, "shields_up": False,
         "mission": "", "cinematic": False, "travelling": False,
-        "dialogue": False,
+        "scripted": False, "recent_speech": False,
         "officers": {"Engineer": _Officer(), "Science": _Officer()},
     }
     monkeypatch.setattr(chp, "_levels", lambda p: (w["asteroids"], w["radiation"]))
@@ -101,7 +101,8 @@ def world(monkeypatch):
     monkeypatch.setattr(chp, "_mission_name", lambda: w["mission"])
     monkeypatch.setattr(chp, "_cinematic", lambda: w["cinematic"])
     monkeypatch.setattr(chp, "_travelling", lambda p: w["travelling"])
-    monkeypatch.setattr(chp, "_dialogue_active", lambda: w["dialogue"])
+    monkeypatch.setattr(chp, "_scripted_dialogue", lambda: w["scripted"])
+    monkeypatch.setattr(chp, "_recent_speech", lambda: w["recent_speech"])
     monkeypatch.setattr(chp, "_officer", lambda station: w["officers"].get(station))
     monkeypatch.setattr(chp, "_database", lambda: "DB")
     return w
@@ -136,11 +137,27 @@ def test_asteroid_lines_go_to_their_own_speakers(world):
                     ("Science", "MiguelAsteroidShields2")}
 
 
-def test_radiation_above_0_1_prompts_a_brex_radiation_line(world):
-    world["radiation"] = 0.11
+def test_any_radiation_prompts_a_brex_radiation_line(world):
+    """Radiation damage starts at any level above 0 (radiation.py), so the
+    warning does too -- at 0.1 the player took minutes of damage first."""
+    world["radiation"] = 0.001
     _driver().update(object(), now=0.0)
     assert world["officers"]["Engineer"].lines
     assert _spoken(world)[0] in ("BrexRadiationShields1", "BrexRadiationShields2")
+
+
+def test_no_radiation_no_radiation_prompt(world):
+    world["radiation"] = 0.0
+    _driver().update(object(), now=0.0)
+    assert _spoken(world) == []
+
+
+def test_a_zero_threshold_latch_re_arms_once_fully_out():
+    h = chp.HazardLatch(threshold=0.0, cooldown_s=120.0)
+    assert h.step(0.3, shields_up=False, blocked=False, now=0.0) is True
+    assert h.step(0.01, shields_up=False, blocked=False, now=200.0) is False
+    assert h.step(0.0, shields_up=False, blocked=False, now=201.0) is False
+    assert h.step(0.2, shields_up=False, blocked=False, now=202.0) is True
 
 
 def test_lines_are_spoken_from_the_dauntless_database_at_spontaneous_priority(world):
@@ -175,23 +192,48 @@ def test_cinematic_travel_and_raised_shields_suppress(world, key):
     assert _spoken(world) == []
 
 
-def test_dialogue_in_progress_drops_the_prompt_for_this_exposure(world):
+def test_scripted_dialogue_drops_the_prompt_for_this_exposure(world):
     world["radiation"] = 0.5
-    world["dialogue"] = True
+    world["scripted"] = True
     d = _driver()
     d.update(object(), now=0.0)
-    world["dialogue"] = False
+    world["scripted"] = False
     d.update(object(), now=1.0)
     d.update(object(), now=500.0)
     assert _spoken(world) == []
 
 
-def test_a_dropped_prompt_returns_on_the_next_exposure(world):
+def test_recent_one_off_speech_defers_the_prompt_until_quiet(world):
+    """Live: Kiska's standalone "All stop, aye sir" at a dash drop-out
+    landed inside the quiet window and the radiation prompt was dropped for
+    the whole visit. One-off lines only make it wait."""
     world["radiation"] = 0.5
-    world["dialogue"] = True
+    world["recent_speech"] = True
     d = _driver()
     d.update(object(), now=0.0)
-    world["dialogue"] = False
+    d.update(object(), now=1.0)
+    assert _spoken(world) == []
+    world["recent_speech"] = False
+    d.update(object(), now=2.0)
+    assert len(_spoken(world)) == 1
+
+
+def test_scripted_dialogue_wins_over_recent_speech(world):
+    world["radiation"] = 0.5
+    world["scripted"] = world["recent_speech"] = True
+    d = _driver()
+    d.update(object(), now=0.0)
+    world["scripted"] = world["recent_speech"] = False
+    d.update(object(), now=1.0)
+    assert _spoken(world) == []
+
+
+def test_a_dropped_prompt_returns_on_the_next_exposure(world):
+    world["radiation"] = 0.5
+    world["scripted"] = True
+    d = _driver()
+    d.update(object(), now=0.0)
+    world["scripted"] = False
     world["radiation"] = 0.0
     d.update(object(), now=1.0)
     world["radiation"] = 0.5
@@ -214,11 +256,14 @@ def test_both_hazards_at_once_speak_one_line(world):
     d = _driver()
     d.update(object(), now=0.0)
     assert len(_spoken(world)) == 1
-    # the first line is now dialogue in progress, so the other hazard's
-    # prompt is dropped rather than queued behind it
-    world["dialogue"] = True
+    # the first line is now recent one-off speech: the other hazard's prompt
+    # waits for quiet, then follows
+    world["recent_speech"] = True
     d.update(object(), now=1.0)
     assert len(_spoken(world)) == 1
+    world["recent_speech"] = False
+    d.update(object(), now=2.0)
+    assert len(_spoken(world)) == 2
 
 
 def test_missing_speaker_falls_back_to_the_other_line(world):
@@ -334,16 +379,17 @@ def test_silent_for_follows_the_speech_bus():
     crew_speech.bus().reset()
 
 
-@pytest.mark.parametrize("silent,scripted,active", [
-    (float("inf"), False, False),
-    (5.0, False, False),
-    (4.9, False, True),
-    (-1.0, False, True),
-    (float("inf"), True, True),
-])
-def test_dialogue_active_is_a_scripted_line_or_recent_speech(
-        monkeypatch, silent, scripted, active):
-    from engine.appc import actions, crew_speech
+@pytest.mark.parametrize("silent,recent", [
+    (float("inf"), False), (5.0, False), (4.9, True), (-1.0, True)])
+def test_recent_speech_is_crew_speech_within_the_quiet_window(
+        monkeypatch, silent, recent):
+    from engine.appc import crew_speech
     monkeypatch.setattr(crew_speech, "silent_for", lambda now=None: silent)
-    monkeypatch.setattr(actions, "scripted_line_pending", lambda: scripted)
-    assert chp._dialogue_active() is active
+    assert chp._recent_speech() is recent
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_scripted_dialogue_is_a_pending_sequenced_line(monkeypatch, pending):
+    from engine.appc import actions
+    monkeypatch.setattr(actions, "scripted_line_pending", lambda: pending)
+    assert chp._scripted_dialogue() is pending
