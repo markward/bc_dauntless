@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from engine.appc.constants_generated import CLASS_CONSTANTS
 from engine.ui.panel import Panel
 from engine.ui import ship_icons
 from engine.ui.species_icons import stem_for_ship
@@ -51,7 +52,33 @@ class _SubviewBase:
         return self.parent
 
 
+_SHIELDS_DISPLAY = CLASS_CONSTANTS["ShieldsDisplay"]
+
+
 class _ShieldsSubview(_SubviewBase):
+    """BC's ShieldsDisplay pane tree, at its measured indices: child
+    DISPLAY_PANE holds TOP_PANE, SHIP_ICON and BOTTOM_PANE. Walked by
+    Actions.ShipScriptActions.FlickerShields (10 campaign missions' beam-outs);
+    without it that script raised and stalled the calling conversation (E1M2
+    supply transfer with shields up). The panes hold visibility state only --
+    the CEF shield graphic does not follow it yet."""
+    DISPLAY_PANE = _SHIELDS_DISPLAY["DISPLAY_PANE"]
+    TOP_PANE = _SHIELDS_DISPLAY["TOP_PANE"]
+    SHIP_ICON = _SHIELDS_DISPLAY["SHIP_ICON"]
+    BOTTOM_PANE = _SHIELDS_DISPLAY["BOTTOM_PANE"]
+
+    def __init__(self, parent: Optional["ShipDisplayPanel"]):
+        super().__init__(parent)
+        from engine.appc.tg_ui.widgets import TGPane
+        self._display_pane = TGPane()
+        inner = {self.TOP_PANE: TGPane(), self.SHIP_ICON: TGPane(),
+                 self.BOTTOM_PANE: TGPane()}
+        for index in sorted(inner):
+            self._display_pane.AddChild(inner[index])
+
+    def GetNthChild(self, n):
+        return self._display_pane if n == self.DISPLAY_PANE else None
+
     def UpdateForNewShip(self) -> None:
         self._invalidate()
 
