@@ -91,7 +91,8 @@ def maybe_become_rock(ship) -> bool:
 # ── Script-less rocks (spec §1 "Other constructors", "Hull and mass") ──
 
 _STOCK_ASTEROID_NIFS = (
-    "asteroid.nif", "asteroid1.nif", "asteroid2.nif", "asteroid3.nif")
+    "asteroid.nif", "asteroid1.nif", "asteroid2.nif", "asteroid3.nif",
+    "asteroidh1.nif", "asteroidh2.nif", "asteroidh3.nif")
 
 # Stock hardpoint radius (GU) per stock mesh: ships/Hardpoints/asteroid*.py
 # `Asteroid.SetRadius(...)`.
@@ -100,6 +101,12 @@ _STOCK_RADIUS_GU = {
     "asteroid1.nif": 0.24,
     "asteroid2.nif": 0.744,
     "asteroid3.nif": 5.0,
+    # Every ships/Asteroid*.py registers its LOD as "Asteroid" (first
+    # LoadModel wins), so DamageableObject_Create("Asteroid") can resolve to
+    # an h-variant mesh once Asteroidh1-3 has loaded.
+    "asteroidh1.nif": 0.24,
+    "asteroidh2.nif": 0.744,
+    "asteroidh3.nif": 5.0,
 }
 
 
@@ -139,6 +146,25 @@ def _install_hull(ship, max_hp: float, radius_gu: float) -> None:
     ship._hull = hull
 
 
+def _install_ship_property(ship) -> None:
+    """Every BC ShipClass has a ShipProperty, and the SDK dereferences it
+    unguarded (ScienceCharacterHandlers.AnnounceHull, Effects.
+    GetDeathExplosionSound, HelmMenuHandlers, ShieldsDisplay). A script-less
+    rock gets one shaped like the stock asteroid template
+    (ships/Hardpoints/asteroid.py "Asteroid Mass"), carrying this rock's own
+    values so a later SetupProperties copy is a no-op."""
+    from engine.appc.properties import ShipProperty_Create
+    prop = ShipProperty_Create("Asteroid Mass")
+    prop.SetGenus(ship.GetGenus())
+    prop.SetSpecies(ship.GetSpecies())
+    prop.SetMass(ship.GetMass())
+    prop.SetShipName("Asteroid")
+    prop.SetAffiliation(0)
+    prop.SetStationary(0)
+    prop.SetDeathExplosionSound("g_lsDeathExplosions")
+    ship.GetPropertySet().AddToSet("Scene Root", prop)
+
+
 def RockClass_Create(radius_gu, *, family="silicate", seed="", name="",
                      kind="fragment", hull=None, mass=None, catalogue_index=None,
                      exact_radius=False):
@@ -167,6 +193,7 @@ def RockClass_Create(radius_gu, *, family="silicate", seed="", name="",
     _install_hull(ship, stats.size_hull(radius_gu) if hull is None else hull,
                   r_q)
     ship.SetMass(stats.size_mass(radius_gu) if mass is None else float(mass))
+    _install_ship_property(ship)
     rock, fam = _catalogue_model(seed or name, kind, family, index=catalogue_index)
     ship._rock_family = fam
     ship._model_override = (
