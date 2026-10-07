@@ -77,7 +77,7 @@ would need only another TGL's text, not new recordings — unverified.
 - Skipped: E3M2 and E3M4 (their scripts prompt for shields themselves:
   `E3M2ProdRaiseShields`, `E3M4ShouldRaiseShields`), cinematics, warp, dash.
 
-⚠️ Not live-verified.
+Live-verified (Mark, 2026-10-06): the asteroid prompt. ⚠️ The radiation prompt has not been seen in game yet.
 
 ## Dialogue patches — insert and replace lines in BC's missions
 
@@ -104,6 +104,9 @@ so it lives with the assets, not in `tools/`). Always applied.
   newly recorded line goes through `dauntless_crew.json` (text) +
   `replacements/sfx/...` (voice) + an insert with `"tgl": "data/TGL/Dauntless Crew.tgl"`.
 - First use: E1M2's replicator exchange (`2a`, `3a` Soams; `3b` Saffi;
-  `4a` Brex), present in `E1M2.TGL` with voices but never scripted by BC.
+  `4a` Brex), present in `E1M2.TGL` with voices but never scripted by BC —
+  heard in game (Mark, 2026-10-07). First `replace`: Felix's
+  `E1M2FirstHail6` with Mark's red-alert recording, voice and subtitle
+  live-verified.
 - Guards: `tests/tools/test_dialogue_patches_content.py` (every entry points
   at real content), `tests/integration/test_e1m2_supply_transfer.py`.
