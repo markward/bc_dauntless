@@ -15,10 +15,13 @@ falls to half its threshold or below (radiation: back to 0) or the shields
 go up, and never sooner than
 COOLDOWN_S after the last prompt for that hazard.
 
-Never spoken over dialogue (Mark, 2026-10-07): if a scripted sequence still
-has a line to come, or any crew line ended less than QUIET_S ago, the prompt
-is DROPPED for this exposure -- not deferred. A line started in a gap of a
-mission conversation was cut off by the conversation's next line.
+Never spoken over dialogue (Mark, 2026-10-07). If a scripted sequence still
+has a line to come, the prompt is DROPPED for this exposure: a line started in
+a gap of a mission conversation was cut off by its next line. If only a
+one-off crew line (an acknowledgement, a damage report) ended less than
+QUIET_S ago, the prompt WAITS for the quiet and then speaks: Kiska's "All
+stop, aye sir" at a dash drop-out used to drop the radiation warning for the
+whole visit.
 
 Polled at POLL_S from host_loop on game time; reset on mission swap.
 """
@@ -108,9 +111,11 @@ class CrewHazardPrompts:
             latch = self._latches[hazard]
             if not latch.due(level, shields_up, blocked, now):
                 continue
-            if _dialogue_active():
+            if _scripted_dialogue():
                 latch.drop()
                 continue
+            if _recent_speech():
+                return   # still due next poll
             if self._speak(hazard):
                 latch.fire(now)
                 return   # one line per poll
@@ -164,11 +169,16 @@ def _travelling(player) -> bool:
     return bool(warp_state.is_ship_warping(player) or dash.is_dashing(player))
 
 
-def _dialogue_active() -> bool:
-    """A scripted line still to come, or crew speech within QUIET_S."""
-    from engine.appc import actions, crew_speech
-    return bool(actions.scripted_line_pending()
-                or crew_speech.silent_for() < QUIET_S)
+def _scripted_dialogue() -> bool:
+    """A playing sequence still has a line to come: a mission conversation."""
+    from engine.appc import actions
+    return bool(actions.scripted_line_pending())
+
+
+def _recent_speech() -> bool:
+    """Any crew line still talking or ended less than QUIET_S ago."""
+    from engine.appc import crew_speech
+    return crew_speech.silent_for() < QUIET_S
 
 
 def _officer(station):
