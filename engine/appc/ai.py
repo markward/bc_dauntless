@@ -575,6 +575,29 @@ class ArtificialIntelligence:
                 return
         entries.append(mapping)
 
+    def UnregisterExternalFunction(self, name: str, mapping=None) -> None:
+        """Drop `name` from the registry: every mapping when *mapping* is
+        None, else only the one with the same (CodeID, function name) key.
+
+        Hand-registered Appc surface (not in App.py, like
+        RegisterExternalFunction). Its only SDK callers --
+        E6M3_AI_Transport.py:46, E6M3_AI_Khit_Launch.py:78,
+        E6M5_AI_Khit.py:289 -- pass ``("SetTarget", None)`` so a wrapping
+        SelectTarget cannot retarget an orbit leaf. The None-means-all reading
+        is inferred from those call sites, not RE'd."""
+        if mapping is None:
+            self._external_functions.pop(name, None)
+            return
+        key = (mapping.get("CodeID"),
+               mapping.get("FunctionName") or mapping.get("Name"))
+        entries = [e for e in self._external_functions.get(name, ())
+                   if (e.get("CodeID"),
+                       e.get("FunctionName") or e.get("Name")) != key]
+        if entries:
+            self._external_functions[name] = entries
+        else:
+            self._external_functions.pop(name, None)
+
     def GetExternalFunctions(self) -> dict:
         """name -> list of registered mappings. Introspection only (this is
         not published Appc surface; App.py binds no GetExternalFunctions)."""
@@ -1216,6 +1239,10 @@ class ProximityCheck(ObjectClass):
         # per-tick evaluator centers the radius on this object's
         # world location.
         self._anchor = None
+        # The set whose ProximityManager registered this check
+        # (ProximityManager.AddObject). The set gate's reference for an
+        # ANCHORLESS check, which has no anchor set to compare against.
+        self._manager_set = None
         # NOTE: no inside/outside history is kept. This check is LEVEL-
         # triggered (see _evaluate_one), so there is no edge to remember.
 
@@ -1305,16 +1332,28 @@ class ProximityCheck(ObjectClass):
         """Immediate, single-object proximity test against this check's
         anchor. SDK ConditionInRange.SetupProximitySphere calls this once
         per newly-registered watched object so initial-state transitions
-        fire without waiting for the next tick. No-op if no anchor is
-        attached yet."""
-        if self._anchor is None:
-            return
+        fire without waiting for the next tick. An anchorless check tests
+        against its own position (``_centre``)."""
         # Force a fire if the watched object currently matches its
         # per-object trigger condition. Bypasses the edge-detection
         # bookkeeping so the SDK condition can re-arm via
         # SetTriggerType in its ProximityEvent handler and immediately
         # see a fresh event next CheckProximity call.
         self._evaluate_one(obj, force=True)
+
+    def _centre(self):
+        """World point the radius is measured from: the anchor's location,
+        or -- for an ANCHORLESS check -- the check's own location (its
+        SetTranslate). E6M3.CreateProximityCheck (E6M3.py:644-665) places its
+        station check with SetTranslate + ProximityManager.AddObject and
+        never calls AttachObject; with no anchor it never fired, so
+        StationProximity -> ShuttlesLanded never ran. Same radius rule both
+        ways: the bare SetRadius, no anchor or object size added."""
+        if self._anchor is None:
+            return self.GetWorldLocation()
+        if hasattr(self._anchor, "GetWorldLocation"):
+            return self._anchor.GetWorldLocation()
+        return None
 
     def _shares_set_with_anchor(self, obj) -> bool:
         """Is `obj` in the same set as this check's anchor?
@@ -1352,8 +1391,18 @@ class ProximityCheck(ObjectClass):
         sets at raw distances, because planet.evaluate_proximity_checks keeps
         evaluating the check.
         """
-        get_anchor_set = getattr(self._anchor, "GetContainingSet", None)
         get_obj_set = getattr(obj, "GetContainingSet", None)
+        if self._anchor is None:
+            # Anchorless: the check's set is the one whose ProximityManager
+            # registered it (or its own containing set, if it was added to one).
+            anchor_set = (self._manager_set if self._manager_set is not None
+                          else self.GetContainingSet())
+            if not callable(get_obj_set):
+                return True
+            obj_set = get_obj_set()
+            return (anchor_set is not None and obj_set is not None
+                    and anchor_set is obj_set)
+        get_anchor_set = getattr(self._anchor, "GetContainingSet", None)
         if not callable(get_anchor_set) or not callable(get_obj_set):
             return True
         anchor_set = get_anchor_set()
@@ -1390,10 +1439,7 @@ class ProximityCheck(ObjectClass):
         under level triggering it no longer has to bypass anything.
         """
         import App
-        anchor_loc = (
-            self._anchor.GetWorldLocation()
-            if hasattr(self._anchor, "GetWorldLocation") else None
-        )
+        anchor_loc = self._centre()
         loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
         if anchor_loc is None or loc is None:
             return
@@ -1457,8 +1503,7 @@ class ProximityCheck(ObjectClass):
         """
         if anchor_obj is not None:
             self._anchor = anchor_obj
-        if self._anchor is None:
-            return
+        # No anchor: the check centres on its own position (``_centre``).
         # Snapshot watched objects so trigger-type swaps inside ProximityEvent
         # handlers don't perturb iteration.
         for obj, _t in list(self._check_objects):

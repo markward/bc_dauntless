@@ -124,6 +124,32 @@ def test_update_dispatches_set_target_to_contained_leaf_with_registered_function
     assert received == ["Close"]
 
 
+def test_unregistered_set_target_hook_is_not_dispatched():
+    """E6M3_AI_Transport.py:46 / E6M3_AI_Khit_Launch.py:78 / E6M5_AI_Khit.py:289
+    call ``pOrbit.UnregisterExternalFunction("SetTarget", None)`` so the
+    surrounding SelectTarget cannot retarget the orbit leaf. Not in App.py
+    (hand-registered Appc surface, like RegisterExternalFunction); a None
+    mapping drops every mapping under the name -- inferred from the call
+    sites, which register by name only."""
+    ours, _close, _mid, _far = _setup_scene_with_three_targets()
+    inst, pp = _wire_select_target(ours, "Close", "Mid", "Far")
+    leaf = PlainAI_Create(ours, "Orbit")
+    received = []
+
+    class _Inst:
+        def SetObj(self, name):
+            received.append(name)
+
+    leaf._script_instance = _Inst()
+    leaf.RegisterExternalFunction("SetTarget", {"FunctionName": "SetObj"})
+    leaf.UnregisterExternalFunction("SetTarget", None)
+    pp.SetContainedAI(leaf)
+
+    inst.Update(dEndTime=999.0)
+    assert received == []
+    assert "SetTarget" not in leaf.GetExternalFunctions()
+
+
 def test_update_with_no_targets_returns_skip_dormant():
     """SDK contract: bCallSetTargetFuncsWithNoTarget=0 (default) +
     no targets in group → return PS_SKIP_DORMANT."""

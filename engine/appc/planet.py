@@ -293,6 +293,9 @@ class ProximityManager:
         # after).
         from engine.appc.ai import ProximityCheck
         if isinstance(obj, ProximityCheck):
+            # The set this manager belongs to is the check's set when it has
+            # no anchor (E6M3.CreateProximityCheck never calls AttachObject).
+            obj._manager_set = self._set
             entry = (obj, None)
             if entry not in self._proximity_checks:
                 self._proximity_checks.append(entry)
