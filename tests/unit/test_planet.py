@@ -99,6 +99,18 @@ def test_attach_object_idempotent():
     assert p.GetAttachedObjects().count(moon) == 1
 
 
+def test_attach_proximity_check_anchors_it_on_the_planet():
+    """MissionLib.ProximityCheck does pMainObj.AttachObject(pProximity); for a
+    planet anchor (E6M4's Tezle 1 checks) the override used to only record the
+    attachment, so the check never got an anchor and never fired."""
+    from engine.appc.ai import ProximityCheck
+    p = Planet_Create(100.0, "x.nif")
+    chk = ProximityCheck(1234)
+    p.AttachObject(chk)
+    assert chk._anchor is p
+    assert chk in p.GetAttachedObjects()
+
+
 def test_detach_object():
     p = Planet_Create(100.0, "x.nif")
     moon = ObjectClass()

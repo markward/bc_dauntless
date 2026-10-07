@@ -62,6 +62,10 @@ class Planet(ObjectClass):
 
     # ── Object attachment ───────────────────────────────────────────────────
     def AttachObject(self, obj, *args) -> None:
+        # The base anchors a ProximityCheck on us (MissionLib.ProximityCheck
+        # attaches it to its main object); skipping it left every
+        # planet-anchored check (E6M4's Tezle 1 pair) anchorless and dead.
+        super().AttachObject(obj, *args)
         if obj not in self._attached:
             self._attached.append(obj)
 
