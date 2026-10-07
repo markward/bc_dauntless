@@ -15,12 +15,18 @@ Change what BC's mission conversations say **without editing the SDK**:
 
 - Patches **always apply**. No toggle; they are part of Dauntless.
 - Insertion extends the anchor line (approach B below), not the sequence.
-- Data is one hand-edited JSON in the repo.
+- Data is one hand-edited JSON in the repo, read by the game at runtime, so
+  it lives with the runtime assets, not in `tools/` (which holds build-time
+  sources such as `dauntless_crew.json`, compiled into a TGL and never read
+  by the game).
 - Out of scope: mod-supplied patches, inserting *before* a line, anchoring on
   direct `SayLine`/`SpeakLine` calls (54 in Maelstrom vs 3,909 sequenced
   speak actions).
 
-## Data — `tools/dialogue/patches.json`
+## Data — `native/assets/dialogue/patches.json`
+
+Resolved at use through `paths.project_asset_root()`, like the rest of
+`native/assets/`.
 
 Keyed by the TGL the anchor line is read from, so a generic key
 (`LoweringShields` in `Bridge Crew General.TGL`) cannot match by accident:
@@ -51,7 +57,11 @@ Keyed by the TGL the anchor line is read from, so a generic key
 - **`replace` entry:** `{"text": ..., "sound": ...}`, either or both. `sound`
   is game-root-relative and resolves through the replacements overlay, so new
   voice files live under `native/assets/replacements/` like the hazard
-  prompts' (and pass the same WAV-format and orphan guards).
+  prompts'. A replacement voice mirrors BC's folder with a `.wav` extension
+  (`sfx/Maelstrom/Episode 1/Mission 2/E1M2TransferSupplies3.wav`): the
+  different extension means it never shadows BC's `.mp3` through the
+  overlay, so only the patch entry switches it on, and removing the entry
+  brings BC's line back.
 
 Speakers for E1M2 were confirmed by ear: `2a`/`3a` Soams, `3b` Saffi, `4a`
 Brex. Restored order: Soams 1, Brex 2, **Soams 2a**, (CheckShields), Soams 3,
@@ -103,6 +113,12 @@ insert key missing from its database; a speaker not in `<set>/<name>` form;
 a `replace` sound file that does not exist; a malformed entry. Runs in the
 normal suite (BC content configured).
 
+The WAV guards in `tests/tools/test_dauntless_dialogue_drift.py` widen to
+cover replacement voices: a WAV under `replacements/sfx` must be listed in
+`dauntless_crew.json` **or** as a `replace` sound in `patches.json`, and
+every listed WAV must pass the native-decoder format check. The
+`.gitignore` exception for `replacements/sfx/**/*.wav` already covers both.
+
 ## Testing
 
 - Unit: an anchor with inserts completes only after them; explicit
@@ -117,8 +133,10 @@ normal suite (BC content configured).
 
 ## Files
 
-- `tools/dialogue/patches.json` (new), `engine/appc/dialogue_patches.py`
+- `native/assets/dialogue/patches.json` (new), `engine/appc/dialogue_patches.py`
   (new: load + validate + lookup, resolved at use).
+- `tests/tools/test_dauntless_dialogue_drift.py` (WAV guards accept
+  `patches.json` replacement voices).
 - `engine/appc/ai.py` (`CharacterAction.Completed` hook).
 - `engine/appc/localization.py` (`replace` merge in `_build_database`).
 - `docs/engine/dauntless-crew-dialogue.md` (section on patches).
