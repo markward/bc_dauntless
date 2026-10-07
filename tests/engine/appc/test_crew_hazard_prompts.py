@@ -281,7 +281,15 @@ def bridge():
     App.g_kSetManager.DeleteSet("bridge")
 
 
-def test_officer_is_none_without_a_real_bridge_set():
+def test_officer_is_none_without_a_real_bridge_set(monkeypatch):
+    # Establish the precondition ourselves rather than trusting that no
+    # earlier test left a real "bridge" set behind in App.g_kSetManager
+    # (e.g. a mission load) -- order-dependent otherwise.
+    import App
+    real_get_set = App.g_kSetManager.GetSet
+    monkeypatch.setattr(
+        App.g_kSetManager, "GetSet",
+        lambda name: None if name == "bridge" else real_get_set(name))
     assert chp._officer("Engineer") is None
 
 

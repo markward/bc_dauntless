@@ -2091,12 +2091,23 @@ class CharacterAction(TGAction):
                                           self.AT_SAY_LINE,
                                           self.AT_SAY_LINE_AFTER_TURN)):
             self._inserts_done = True
-            from engine.appc import dialogue_patches
-            inserts = dialogue_patches.insert_actions(self)
-            if inserts:
-                self._insert_seq = dialogue_patches.play_then(
-                    inserts, self._inserts_finished)
-                return
+            # The spec rule is "the anchor always completes": a raise out of
+            # the lookup or out of play_then (which calls TGSequence.Play(),
+            # itself arbitrary Python) must never leave this action playing
+            # forever and the mission stalled -- dev-log and fall through to
+            # the normal completion below instead.
+            try:
+                from engine.appc import dialogue_patches
+                inserts = dialogue_patches.insert_actions(self)
+                if inserts:
+                    self._insert_seq = dialogue_patches.play_then(
+                        inserts, self._inserts_finished)
+            except Exception as exc:
+                self._insert_seq = None
+                dev_mode.log_swallowed("dialogue patch inserts", exc)
+            else:
+                if self._insert_seq is not None:
+                    return
         super().Completed()
 
     def _inserts_finished(self) -> None:
@@ -2105,6 +2116,18 @@ class CharacterAction(TGAction):
             super().Completed()
 
     def Skip(self) -> None:
+        # Dialogue patches: our own line already finished and its inserts
+        # are mid-play (_insert_seq set by Completed()). A parent
+        # TGSequence.Skip() landing on us while that's true must cut the
+        # INSERT sequence, not our (long-finished) bus channel or turn-back
+        # -- both already ran when OUR line completed. Delegate to the
+        # insert sequence's own Skip(), which cuts whichever insert is
+        # currently speaking and finishes the sequence, and return without
+        # falling into the speak-line bus/turn-back logic below (that logic
+        # is for US still holding the channel, which we no longer are).
+        if self._insert_seq is not None:
+            self._insert_seq.Skip()
+            return
         # Our line is the one holding the crew-speech channel (single-channel
         # bus): cut its voice + subtitle before completing so the audio stops
         # with the action instead of playing out under the next line. Non-speak

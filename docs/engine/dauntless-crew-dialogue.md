@@ -93,7 +93,13 @@ so it lives with the assets, not in `tools/`). Always applied.
 - **Replace:** `replace` entries override a key's text and/or sound when
   the TGL loads (`TGLocalizationManager._build_database`), and can add a
   key BC never had. A replacement voice mirrors BC's folder as `.wav` under
-  `native/assets/replacements/` so it never shadows BC's `.mp3`.
+  `native/assets/replacements/` so it never shadows BC's `.mp3`. ⚠️ Patches
+  are re-read from disk on every use, but that only reaches inserts, which
+  are looked up live each time an anchor completes; a `replace` edit reaches
+  only TGL databases **built after** the edit, because
+  `TGLocalizationManager` caches a built database per filename — a database
+  already loaded keeps its old text/sound until it is evicted and rebuilt
+  (e.g. a fresh mission load), not on the next read of `patches.json`.
 - **Where files go:** a cut BC line needs only a `patches.json` entry; a
   newly recorded line goes through `dauntless_crew.json` (text) +
   `replacements/sfx/...` (voice) + an insert with `"tgl": "data/TGL/Dauntless Crew.tgl"`.

@@ -199,6 +199,51 @@ def test_inserts_count_as_scripted_dialogue(world):
     seq.Abort()
 
 
+def test_parent_sequence_skip_while_inserts_play_stops_the_rest(world):
+    # A script calling TGSequence.Skip() on the PARENT (not the anchor
+    # directly) while the anchor is in its insert phase must not let the
+    # remaining inserts keep speaking after the parent has moved on.
+    _patch(world, "Anchor", ("bridge/XO", "Ins1"), ("bridge/XO", "Ins2"))
+    anchor = _line(world, "Anchor")
+    after = _line(world, "After")
+    seq = TGSequence_Create()
+    seq.AppendAction(anchor)
+    seq.AppendAction(after)
+    seq.Play()
+    anchor.Completed()                 # anchor done speaking -> inserts start
+    assert anchor._insert_seq is not None
+    assert world["spoken"] == ["Anchor", "Ins1"]   # Ins1 mid-play, Ins2 not yet
+    seq.Skip()                         # skip the PARENT, not the anchor
+    _run()
+    assert world["spoken"] == ["Anchor", "Ins1"]
+    assert "Ins2" not in world["spoken"]
+    # TGSequence.Skip() marks every step started before Skip()-ing only the
+    # in-flight ones; "After" never started, so it is simply abandoned, not
+    # played -- matching plain TGSequence.Skip() semantics for an un-started
+    # dependent (engine/appc/actions.py:TGSequence.Skip).
+    assert "After" not in world["spoken"]
+    assert not after.IsPlaying()
+    assert not seq.IsPlaying()
+
+
+def test_a_raising_patch_lookup_never_stalls_the_anchor(world, monkeypatch):
+    # The spec rule is "the anchor always completes" -- insert_actions() (or
+    # play_then()) raising must not leave the anchor playing forever and the
+    # mission stalled.
+    _patch(world, "Anchor", ("bridge/XO", "Ins1"))
+
+    def boom(anchor):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(dp, "insert_actions", boom)
+    seq = TGSequence_Create()
+    seq.AppendAction(_line(world, "Anchor"))
+    seq.AppendAction(_line(world, "After"))
+    seq.Play()
+    _run()
+    assert world["spoken"] == ["Anchor", "After"]
+    assert not seq.IsPlaying()
+
+
 def test_viewscreen_speakers_get_bcs_viewscreen_arguments(world):
     _patch(world, "Anchor", ("MiscEng/Soams", "Ins1"), ("bridge/XO", "Ins2"))
     actions_ = dp.insert_actions(_line(world, "Anchor"))

@@ -11,8 +11,14 @@ from (game-root-relative, matched case-insensitively, either slash):
                                            "tgl": "<optional other TGL>"}]},
         "replace": {"<key>": {"text": "...", "sound": "sfx/..."}}}}
 
-Resolved at use and re-read when the file changes. A missing or malformed
-file means no patches: BC plays unchanged and the problem is dev-logged.
+Resolved at use and re-read when the file changes -- true for inserts, which
+are looked up live every time an anchor completes. A `replace` edit is only
+picked up by TGL databases BUILT AFTER the edit: `TGLocalizationManager`
+caches a built database per filename (`engine/appc/localization.py`), so a
+database already loaded keeps serving its old text/sound until it is evicted
+and rebuilt (e.g. a fresh mission load), not on the next read of this file.
+A missing or malformed file means no patches: BC plays unchanged and the
+problem is dev-logged.
 """
 from __future__ import annotations
 
@@ -84,6 +90,12 @@ def validate_shape(raw) -> list:
     if not isinstance(raw, dict):
         return ["top level must be an object keyed by TGL path"]
     errors = []
+    # Insert graph for cycle detection: anchor node (norm tgl, key) -> the
+    # (norm tgl, key) nodes its inserts chain to, following each insert's
+    # own "tgl" when given, else the anchor's TGL -- an insert is itself a
+    # CharacterAction, so its own Completed() looks up patches too, and
+    # A->[A] or A->[B],B->[A] would recurse forever (RecursionError).
+    graph: dict = {}
     for tgl, entry in raw.items():
         if not isinstance(entry, dict) or set(entry) - _ENTRY_KEYS:
             errors.append("%s: only 'insert_after' and 'replace' are allowed" % tgl)
@@ -96,15 +108,19 @@ def validate_shape(raw) -> list:
             if not isinstance(lines, list) or not lines:
                 errors.append("%s: %s: inserts must be a non-empty list" % (tgl, anchor))
                 continue
+            node = (norm_tgl(tgl), str(anchor))
             for ins in lines:
                 if (not isinstance(ins, dict) or set(ins) - _INSERT_KEYS
                         or not isinstance(ins.get("key"), str)
                         or not isinstance(ins.get("tgl", ""), str)):
                     errors.append("%s: %s: insert needs 'speaker' and 'key' (optional 'tgl'): %r"
                                   % (tgl, anchor, ins))
-                elif not _SPEAKER.match(str(ins.get("speaker", ""))):
+                    continue
+                if not _SPEAKER.match(str(ins.get("speaker", ""))):
                     errors.append("%s: %s: speaker must be '<set>/<object>': %r"
                                   % (tgl, anchor, ins.get("speaker")))
+                target_tgl = norm_tgl(ins["tgl"]) if ins.get("tgl") else norm_tgl(tgl)
+                graph.setdefault(node, []).append((target_tgl, ins["key"]))
         replaces = entry.get("replace", {})
         if not isinstance(replaces, dict):
             errors.append("%s: replace must be an object" % tgl)
@@ -113,7 +129,40 @@ def validate_shape(raw) -> list:
             if (not isinstance(rep, dict) or not rep or set(rep) - _REPLACE_KEYS
                     or not all(isinstance(v, str) for v in rep.values())):
                 errors.append("%s: replace %s needs 'text' and/or 'sound' strings" % (tgl, key))
+    cycle = _find_cycle(graph)
+    if cycle is not None:
+        errors.append("insert cycle: " + " -> ".join("%s:%s" % n for n in cycle))
     return errors
+
+
+def _find_cycle(graph: dict):
+    """DFS over the insert graph; returns the cyclic path (list of nodes,
+    repeating the start node at the end) or None."""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict = {}
+    path: list = []
+
+    def visit(node):
+        color[node] = GRAY
+        path.append(node)
+        for nxt in graph.get(node, ()):
+            state = color.get(nxt, WHITE)
+            if state == GRAY:
+                return path[path.index(nxt):] + [nxt]
+            if state == WHITE:
+                found = visit(nxt)
+                if found is not None:
+                    return found
+        color[node] = BLACK
+        path.pop()
+        return None
+
+    for start in list(graph):
+        if color.get(start, WHITE) == WHITE:
+            found = visit(start)
+            if found is not None:
+                return found
+    return None
 
 
 # ── Insertion (called from CharacterAction.Completed, engine/appc/ai.py) ────

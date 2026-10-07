@@ -98,3 +98,41 @@ def test_an_edited_file_is_picked_up_without_a_restart(patches):
 def test_the_shipped_file_is_well_formed():
     raw = json.loads(dp.patches_path().read_text(encoding="utf-8"))
     assert dp.validate_shape(raw) == []
+
+
+# ── Insert cycles: A->[A] / A->[B],B->[A] loop Completed() forever ──────────
+
+def test_a_self_cycle_is_rejected():
+    errors = dp.validate_shape(
+        {E1M2: {"insert_after": {"A": [{"speaker": "bridge/XO", "key": "A"}]}}})
+    assert any("cycle" in e.lower() for e in errors)
+
+
+def test_a_two_step_cycle_is_rejected():
+    errors = dp.validate_shape({E1M2: {"insert_after": {
+        "A": [{"speaker": "bridge/XO", "key": "B"}],
+        "B": [{"speaker": "bridge/XO", "key": "A"}],
+    }}})
+    assert any("cycle" in e.lower() for e in errors)
+
+
+def test_a_cycle_crossing_tgls_via_the_tgl_field_is_rejected():
+    OTHER = "data/TGL/Dauntless Crew.tgl"
+    errors = dp.validate_shape({
+        E1M2: {"insert_after": {"A": [{"speaker": "bridge/XO", "key": "X", "tgl": OTHER}]}},
+        OTHER: {"insert_after": {"X": [{"speaker": "bridge/XO", "key": "A", "tgl": E1M2}]}},
+    })
+    assert any("cycle" in e.lower() for e in errors)
+
+
+def test_a_non_cyclic_chain_is_accepted():
+    assert dp.validate_shape({E1M2: {"insert_after": {
+        "A": [{"speaker": "bridge/XO", "key": "B"}],
+        "B": [{"speaker": "bridge/XO", "key": "C"}],
+    }}}) == []
+
+
+def test_a_cyclic_table_is_rejected_by_table(patches):
+    patches({E1M2: {"insert_after": {"A": [{"speaker": "bridge/XO", "key": "A"}]}}})
+    assert dp.table() == {}
+    assert dp.inserts_for(E1M2, "A") == []
