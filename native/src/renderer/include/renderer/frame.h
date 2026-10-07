@@ -81,7 +81,7 @@ struct Backdrop {
 };
 
 struct SunDescriptor {
-    glm::vec3   position;                  // world-space center
+    glm::vec3   position;                  // render-space center (host_loop pushes via to_view_render)
     float       radius        = 1.0f;      // body sphere radius (BC units)
     std::string base_texture_path;
     float       corona_radius = 0.0f;      // 0 = no corona; draw when > radius

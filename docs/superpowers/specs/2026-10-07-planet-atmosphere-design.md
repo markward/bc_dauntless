@@ -122,26 +122,26 @@ A test asserts that every stock planet NIF stem has an entry. The stems are list
   - It appears in Developer Options → Environments as "Planet Atmospheres (off = airless; applies to planets realized after toggling)".
   - When off, the helper passes `None`.
   - `tests/conftest.py` resets it.
+- **Teardown.** `teardown_set_objects` drops only the torn-down set's entries from the live registry, via `clear_live_for_set(pSet.GetName())` — not the whole registry — so a different set's live planets are unaffected by one set tearing down.
 
 ## 5. Shell pass (new `native/src/renderer/atmosphere_pass.{h,cc}`, shaders `atmosphere.{vert,frag}`)
 
-**Order.** It draws in `frame()` after `space.opaque`, before the minors, rock fields and translucent VFX. It runs **per drawn camera**, so the bridge viewscreen render target gets it too.
-- Depth test on (`GL_LESS`) against the scene depth, so ships in front of the haze hide it.
-- Depth writes off.
+**Order.** It draws in **phase 2** (`render_space_vfx`), right after `target.bind()` — before dust, rock fade, nebula, lens flares and weapons — so it samples `target.depth_texture()` to end the march at the nearest opaque surface. It runs **per drawn camera**, so the bridge viewscreen render target gets it too. The depth texture is detached from the bound FBO while sampled (reading and writing the same attachment in one draw is a feedback loop) and re-attached immediately after.
+- Depth test **off**; depth writes **off** (the march, not a depth compare, decides where the haze ends).
 - Blending is additive (`GL_ONE, GL_ONE`) into the HDR target.
 
 **Geometry.** One unit geosphere (`assets::build_geosphere(4, 1.0)`) is uploaded once. Each enabled-atmosphere instance draws it at the planet's world centre (`world · sphere_map.center_body`), scaled to `R_top = R·(1 + thickness)`, where R = `sphere_map.radius` × instance scale.
 - Front faces are drawn while the camera is outside `R_top`.
-- Back faces are drawn while it is inside, with the depth test still on.
+- Back faces are drawn while it is inside.
 
 Instances whose model has no `sphere_map` are skipped, so the atmosphere requires the geosphere variant.
 
 **Fragment.** Per pixel:
 1. Find the view ray's segment inside the shell sphere `R_top` and outside the planet sphere `R`. The segment ends at the planet surface if the ray hits it, and starts at the camera if the camera is inside the shell.
 2. March **8** samples. Density is `exp(−h / H)`, with `h` the height above `R` and scale height `H = 0.25·thickness·R`.
-3. At each sample, light reaching it is `exp(−τ_sun)`. `τ_sun` is the analytic optical depth toward the sun, using a 2-sample Chapman-style approximation; it is set to large when the sun ray hits the planet, so the night side gets no in-scatter.
+3. At each sample, light reaching it is `exp(−τ_sun)`. `τ_sun` is a **6**-sample midpoint march toward the sun (D3); it is set to large when the sun ray hits the planet, so the night side gets no in-scatter.
 4. In-scatter = `color · density · Σ(ρ · T_view · T_sun · phase) · Δs / R`. The phase is a Rayleigh term plus a forward Henyey-Greenstein lobe (g = 0.6, weight 0.25), from `nebula_atmosphere.h`'s formula.
-5. Output `in_scatter · sun_color · sun_intensity`. It must be finite: NaN feeds bloom and produces black squares, so the shader guards both degenerate intersections and zero-length segments.
+5. Output `in_scatter · sun_color · sun_intensity`, where `sun_color` is directional light 0's colour (§4). It must be finite: NaN feeds bloom and produces black squares, so the shader guards both degenerate intersections and zero-length segments.
 
 **CPU twin.** The march lives as a pure C++ function in `atmosphere_math.{h,cc}` (`renderer` library, GL-free): ray-shell segment, optical depth and in-scatter. The shader mirrors it, as `nebula_atmosphere.h` is mirrored, so tests pin the numbers.
 
@@ -166,9 +166,9 @@ With `u_atmo_enabled == 0`, every existing path is byte-identical. The term runs
 ## 7. Developer tuning
 
 - **Dial group.** Developer-only, registered with `engine.dev_dial_groups.register_group` as `"atmosphere"`, with dials `thickness`, `density`, `limb`, `color_r`, `color_g`, `color_b`.
-  - The dials edit the atmosphere of the planet **nearest the player** (by surface distance) in the viewed frame. Each step updates the in-memory `Atmosphere` and re-pushes `set_instance_atmosphere`.
+  - The dials edit the **catalogue entry** the planet **nearest the player** (by surface distance) resolved to — not just that one instance — and re-push the updated `Atmosphere` to every live planet sharing that entry (D4), since the override lives on the catalogue entry, not the instance.
   - The live values print through the group's existing report.
-- **Saving.** Edits are not written back to JSON. `reload()` is bound to a developer keybinding, and the tuned numbers are copied into the JSON by hand. A save action is out of scope.
+- **Saving.** Edits are not written back to JSON. Reload is a Developer Options **action row** ("Reload Planet Atmospheres", D2), not a keybinding, and the tuned numbers are copied into the JSON by hand. A save action is out of scope.
 
 ## 8. Out of scope
 
@@ -199,7 +199,7 @@ With `u_atmo_enabled == 0`, every existing path is byte-identical. The term runs
 
 **C++, GL-free (`atmosphere_math`):**
 - ray-shell segment cases: miss; hit the shell only; hit the planet; camera inside the shell; tangent;
-- optical depth matches a 256-step numerical reference within 2%;
+- optical depth matches a 256-step numerical reference within 5% (D3);
 - in-scatter is zero on the night side, behind the planet;
 - output is finite for degenerate inputs.
 
