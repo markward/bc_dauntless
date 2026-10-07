@@ -372,8 +372,12 @@ format and the load scale have to reach them:
   - `asteroid1.NIF`
   - `asteroid2.NIF`
   - `asteroid3.NIF`
+  - `asteroidh1.NIF`, `asteroidh2.NIF`, `asteroidh3.NIF`
 
-  The `h` scripts and Amagon point at these same files. Matching is
+  Amagon points at `asteroid3.NIF`. The `h` scripts load their **own** files
+  (`ships/Asteroidh1.py` → `asteroidh1.NIF`): byte-identical to `asteroid1`–`3`
+  but separate paths, so they are keyed separately at the same radii (they
+  were missed until 2026-10-07 and drew BC's mesh). Matching is
   case-insensitive.
 - **Keyed on the stock filenames, not species 712**, so a mod that ships its own
   asteroid model is left alone.
