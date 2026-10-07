@@ -57,6 +57,11 @@ HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detecti
 PROFILE_LOCK_MARGIN = 0.01
 PROFILE_CONCEALMENT_CAP = LOCK_BREAK_T - HYSTERESIS - PROFILE_LOCK_MARGIN
 
+# One probe level (2026-10-07-sensor-probes-design.md, Rule 3): while a probe's
+# own sensors are being asked, its probe list is not walked. Also guards a
+# pathological AddProbe cycle.
+_walking_probes = False
+
 # ── The stage-4 sensing toggle (INTENTIONAL divergence from stock BC) ─────────
 # ONE flag covering BOTH stage-4 sensing changes as a set. It does NOT mean
 # "cloak"; it means "sensing is a contest of degrees rather than a set of
@@ -377,7 +382,9 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     Beyond range, BC's sensor MEMORY and OVER-BOOST still reach the target
     (``_beyond_range_reach``; sub-project 3): a known contact, or any contact
     when sensors run above ``overboost_threshold`` normal power -- same set,
-    not fully cloaked, and not ``jammed``.
+    not fully cloaked, and not ``jammed``; or, failing those, a live
+    same-set probe of the observer whose own sensors detect it
+    (``_probe_reach``; sub-project 4, not jam-gated).
 
     ALL THREE optional parameters are KEYWORD-ONLY, deliberately. ``bool`` is
     a subclass of ``int``, so the natural misreading ``can_detect(a, b, False)``
@@ -470,8 +477,10 @@ def can_detect(observer, target, *, dist_sq_gu=None,
         dist_sq_gu = dx * dx + dy * dy + dz * dz
     if dist_sq_gu <= (r * r):
         return True
-    # ── Beyond range (sub-project 3): BC's memory and over-boost ──────────
-    return _beyond_range_reach(observer, target, cloaked)
+    # ── Beyond range: BC's memory and over-boost (sub-project 3), then the
+    # probe walk (sub-project 4) ─────────────────────────────────────────
+    return (_beyond_range_reach(observer, target, cloaked)
+            or _probe_reach(observer, target))
 
 
 def _beyond_range_reach(observer, target, cloaked) -> bool:
@@ -504,12 +513,69 @@ def _beyond_range_reach(observer, target, cloaked) -> bool:
     return not jammed(observer, target)
 
 
+def _live_probes(observer) -> list:
+    sensors = (observer.GetSensorSubsystem()
+               if implements(observer, "GetSensorSubsystem") else None)
+    if sensors is None or not implements(sensors, "probes"):
+        return []
+    return sensors.probes()
+
+
+def _probe_reach(observer, target) -> bool:
+    """BC's probe walk (IsObjectVisible @0x005671D0, step 7): a live probe of
+    the observer, in the observer's set, whose own sensors detect the target
+    (the one rule, from the probe's position -- rocks, cloak bubble, nebula
+    core, the probe's power and condition all apply). Runs after the range
+    test and is NOT cancelled by `jammed` (BC's probe walk precedes the jam
+    fallback). One level only: `_walking_probes`."""
+    global _walking_probes
+    if _walking_probes or not _same_set(observer, target):
+        return False
+    probes = _live_probes(observer)
+    if not probes:
+        return False
+    oset = observer.GetContainingSet()
+    _walking_probes = True
+    try:
+        for probe in probes:
+            if (implements(probe, "GetContainingSet")
+                    and probe.GetContainingSet() is oset
+                    and can_detect(probe, target)):
+                return True
+        return False
+    finally:
+        _walking_probes = False
+
+
+def _probe_in_reach(observer, target) -> bool:
+    """`in_reach` through a probe: a live same-set probe whose own reach
+    (unshrunk range, ignoring the hide gates) covers the target."""
+    global _walking_probes
+    if _walking_probes or not _same_set(observer, target):
+        return False
+    probes = _live_probes(observer)
+    if not probes:
+        return False
+    oset = observer.GetContainingSet()
+    _walking_probes = True
+    try:
+        for probe in probes:
+            if (implements(probe, "GetContainingSet")
+                    and probe.GetContainingSet() is oset
+                    and in_reach(probe, target)):
+                return True
+        return False
+    finally:
+        _walking_probes = False
+
+
 def in_reach(observer, target) -> bool:
     """Would *observer* reach *target* if nothing hid it? The continuity
     clock's "in reach" (sensor_contacts.is_concealed): the UNSHRUNK effective
     range -- no density sample, no latch mutation, so a ship in the dense
-    nebula core still counts -- or `_beyond_range_reach`. Ignores rock
-    occlusion and the nebula core on purpose: those are what conceal."""
+    nebula core still counts -- or `_beyond_range_reach`, or a probe's own
+    reach (`_probe_in_reach`). Ignores rock occlusion and the nebula core on
+    purpose: those are what conceal."""
     r = effective_sensor_range(observer)
     if r <= 0.0:
         return False
@@ -518,7 +584,8 @@ def in_reach(observer, target) -> bool:
     dx, dy, dz = tx - ox, ty - oy, tz - oz
     if dx * dx + dy * dy + dz * dz <= r * r:
         return True
-    return _beyond_range_reach(observer, target, is_hidden_by_cloak(target))
+    return (_beyond_range_reach(observer, target, is_hidden_by_cloak(target))
+            or _probe_in_reach(observer, target))
 
 
 def clear_undetectable_player_lock(player) -> None:
