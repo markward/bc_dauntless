@@ -180,11 +180,12 @@ def _has_signature(obj) -> bool:
 
 
 def is_concealed(player, obj) -> bool:
-    """Does *obj* run the lost-track clock? In the player's set, inside
-    player sensor range, HIDDEN (`not can_detect`) and not fully cloaked.
-    Cloak (ruling 1A) and a medium alone (ruling 2A) never conceal; leaving
-    range is never concealment. Never true for a non-ShipClass contact
-    (`_has_signature`)."""
+    """Does *obj* run the lost-track clock? In the player's set, IN REACH
+    (sensor_detection.in_reach: unshrunk range, or BC's memory / over-boost
+    unless jammed -- sub-project 3), HIDDEN (`not can_detect`) and not fully
+    cloaked. Cloak (ruling 1A) and a medium alone (ruling 2A) never conceal;
+    leaving REACH is never concealment. Never true for a non-ShipClass
+    contact (`_has_signature`)."""
     if player is None or obj is None or not _has_signature(obj):
         return False
     try:
@@ -192,10 +193,9 @@ def is_concealed(player, obj) -> bool:
         oset = obj.GetContainingSet() if implements(obj, "GetContainingSet") else None
         if pset is None or oset is not pset:
             return False
-        from engine.appc.sensor_detection import (can_detect, effective_sensor_range,
+        from engine.appc.sensor_detection import (can_detect, in_reach,
                                                   is_hidden_by_cloak)
-        r = effective_sensor_range(player)
-        if r <= 0.0 or _dist(player, obj) > r:
+        if not in_reach(player, obj):
             return False
         if is_hidden_by_cloak(obj):
             return False

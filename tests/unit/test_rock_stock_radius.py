@@ -18,7 +18,8 @@ def _max_vertex_radius(shapes) -> float:
     return max_r
 
 
-@pytest.mark.parametrize("name", ["asteroid", "asteroid1", "asteroid2", "asteroid3"])
+@pytest.mark.parametrize("name", ["asteroid", "asteroid1", "asteroid2", "asteroid3",
+                                  "asteroidh1", "asteroidh2", "asteroidh3"])
 def test_stock_radius_matches_nif(name):
     from engine import paths
     p = paths.game_asset(f"data/Models/Misc/Asteroids/{name}.NIF")

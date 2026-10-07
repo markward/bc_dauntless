@@ -122,6 +122,13 @@ uniform vec4  u_decal_a[MAX_DECALS];         // point_body.xyz, intensity
 uniform vec4  u_decal_b[MAX_DECALS];         // normal_body.xyz, radius (model units)
 uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
+uniform int  u_sphere_map;          // 1 = planet geosphere draw (spec 2026-10-06 §4.4)
+uniform vec3 u_sphere_center_body;  // sphere centre, body frame
+uniform int   u_atmo_enabled;     // 1 = planet with an atmosphere (spec 2026-10-07 §6)
+uniform vec3  u_atmo_color;       // linear
+uniform vec3  u_atmo_sunset;      // linear
+uniform float u_atmo_limb;
+uniform vec3  u_atmo_sun_dir_ws;  // unit, toward the sun
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
@@ -1298,15 +1305,40 @@ void main() {
     // placed after the dFdx/dFdy block MEASURED to break the amb_d NaN guard on
     // this driver even with the cutout off (HullClipTest /
     // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
+
+    // Planet geosphere: normal + UV from the sphere direction. Derivatives
+    // are taken here, unconditionally and never inside a branch: after the
+    // dither discard and before the coverage-cutout discard below (dpdx_d,
+    // further down, comes after both; see the dFdx/discard note above).
+    vec3 sp_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz - u_sphere_center_body;
+    vec3 sp_dir  = normalize(sp_body);
+    float sp_xy  = length(sp_dir.xy);
+    float sp_lon = sp_xy > 1e-6 ? atan(sp_dir.y, sp_dir.x) : 0.0;
+    float sp_lat = asin(clamp(sp_dir.z, -1.0, 1.0));
+    // Two u parameterisations with seams 180 deg apart; take derivatives
+    // from whichever is continuous at this fragment (Tarini) so the seam
+    // column samples the right mip instead of the smallest one.
+    float sp_u0 = fract(sp_lon * 0.15915494 + 0.75);
+    float sp_u1 = fract(sp_lon * 0.15915494 + 0.25);
+    vec2  sp_uv = vec2(sp_u0, 0.5 - sp_lat * 0.31830989);
+    vec2  sp_du0 = vec2(dFdx(sp_u0), dFdy(sp_u0));
+    vec2  sp_du1 = vec2(dFdx(sp_u1), dFdy(sp_u1));
+    vec2  sp_du  = dot(sp_du0, sp_du0) <= dot(sp_du1, sp_du1) ? sp_du0 : sp_du1;
+    vec2  sp_dx  = vec2(sp_du.x, dFdx(sp_uv.y));
+    vec2  sp_dy  = vec2(sp_du.y, dFdy(sp_uv.y));
+    vec2  g_uv   = (u_sphere_map != 0) ? sp_uv : v_uv;
+
 #ifdef IMPOSTOR_VIEWS
     impostor_blend();
     if (u_coverage_cutout != 0 &&
         g_imp_base.a < (u_alpha_to_coverage != 0 ? 0.02 : imp_cover_threshold(gl_FragCoord.xy)))
         discard;
 #else
-    if (u_coverage_cutout != 0 && texture(u_base_color, v_uv).a < 0.5) discard;
+    if (u_coverage_cutout != 0 && texture(u_base_color, g_uv).a < 0.5) discard;
 #endif
-    vec3 n = normalize(v_normal_ws);
+    vec3 n = (u_sphere_map != 0)
+        ? normalize(transpose(mat3(u_ship_world_inv)) * sp_dir)
+        : normalize(v_normal_ws);
     vec3 V = normalize(u_camera_pos_ws - v_position_ws);
 
     // n stays GEOMETRIC: the shadow bias must offset along real geometry, and
@@ -1315,7 +1347,7 @@ void main() {
     // normal-map perturbation for the lighting terms.
     float n_sigma = 1.0;
     vec3 n_shade = (u_normal_enabled != 0)
-        ? perturb_normal(n, v_position_ws, v_uv, n_sigma)
+        ? perturb_normal(n, v_position_ws, g_uv, n_sigma)
         : n;
 
     // Body-frame fragment position (object-space carve + decals).
@@ -1330,7 +1362,9 @@ void main() {
     n_shade = g_imp_normal_ws;
     vec4 base = g_imp_base;
 #else
-    vec4 base = texture(u_base_color, v_uv);
+    vec4 base = (u_sphere_map != 0)
+        ? textureGrad(u_base_color, g_uv, sp_dx, sp_dy)
+        : texture(u_base_color, v_uv);
 #endif
     // Far tier: a texel kept by the coverage cutout (top of main) is forced
     // opaque so it never reads as an emissive mask.
@@ -1539,6 +1573,18 @@ void main() {
         amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     }
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
+    if (u_atmo_enabled != 0) {
+        vec3  La   = normalize(u_atmo_sun_dir_ws);
+        float x    = dot(n, La);
+        float wrap = clamp((x + 0.2) / 1.2, 0.0, 1.0);
+        vec3  sunc = u_dir_light_count > 0 ? u_dir_light_color[0] : vec3(1.0);
+        // Terminator: a band where the sun grazes takes the sunset tint.
+        float band = smoothstep(0.25, 0.0, x) * step(-0.1, x) * 0.6;
+        lit *= mix(vec3(1.0), u_atmo_sunset, band);
+        // Fresnel limb: the surface hazes toward the air colour at grazing view angles.
+        float f = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0) * u_atmo_limb;
+        lit = mix(lit, u_atmo_color * sunc * wrap, clamp(f, 0.0, 1.0));
+    }
 
     vec3 decal_emissive = vec3(0.0);
     float glow_flicker = 1.0;
@@ -1546,7 +1592,7 @@ void main() {
         apply_damage_decals(p_body, n_body, lit, decal_emissive, glow_flicker);
     }
 
-    vec4 glow = texture(u_glow_map, v_uv);
+    vec4 glow = texture(u_glow_map, g_uv);
     // The hull-name decals override the SAME texture's RGB wherever it is
     // sampled, not just the albedo fetch: BC's _glow textures are one image
     // (RGB = albedo, alpha = the emissive mask), so a letter painted into
@@ -1561,7 +1607,7 @@ void main() {
     glow.rgb = glow.rgb * (1.0 - decal_a) + decal_premult_rgb;
     float gf = clamp(glow_flicker, 0.0, FLICKER_MAX);
     vec3 spec = (u_specular_enabled != 0)
-        ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
+        ? spec_acc * u_specular_color * texture(u_specular_map, g_uv).rgb
         : vec3(0.0);
     spec += decal_a * kDecalPaintSpecular * paint_spec_acc;
 

@@ -216,4 +216,30 @@ TEST(World, RecycledSlotIsNotBoundToThePriorObjectsTransform) {
     EXPECT_LT(w.get(b)->xform_index, 0);
 }
 
+// ── Planet atmosphere (spec 2026-10-07) ──────────────────────────────────────
+
+TEST(InstanceAtmosphere, DefaultsDisabledAndSetterStores) {
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    EXPECT_FALSE(w.get(id)->atmosphere.enabled);
+    scenegraph::Instance::Atmosphere a;
+    a.enabled = true;
+    a.thickness = 0.06f;
+    a.density = 1.4f;
+    w.set_atmosphere(id, a);
+    EXPECT_TRUE(w.get(id)->atmosphere.enabled);
+    EXPECT_FLOAT_EQ(w.get(id)->atmosphere.thickness, 0.06f);
+}
+
+TEST(InstanceAtmosphere, RecycledSlotStartsDisabled) {
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    scenegraph::Instance::Atmosphere a;
+    a.enabled = true;
+    w.set_atmosphere(id, a);
+    w.destroy_instance(id);
+    auto id2 = w.create_instance(1);
+    EXPECT_FALSE(w.get(id2)->atmosphere.enabled);
+}
+
 }  // namespace

@@ -22,6 +22,8 @@
 #include "embedded_sun_fs.h"
 #include "embedded_sun_flare_vs.h"
 #include "embedded_sun_flare_fs.h"
+#include "embedded_atmosphere_vs.h"
+#include "embedded_atmosphere_fs.h"
 #include "embedded_dust_vs.h"
 #include "embedded_dust_fs.h"
 #include "embedded_nebula_vs.h"
@@ -126,6 +128,7 @@ Pipeline::Pipeline() {
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);
+    atmosphere_ = std::make_unique<Shader>(shader_src::atmosphere_vs, shader_src::atmosphere_fs);
     dust_ = std::make_unique<Shader>(shader_src::dust_vs, shader_src::dust_fs);
     nebula_ = std::make_unique<Shader>(shader_src::nebula_vs, shader_src::nebula_fs);
     nebula_shell_ = std::make_unique<Shader>(shader_src::nebula_shell_vs, shader_src::nebula_shell_fs);

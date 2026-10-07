@@ -34,6 +34,7 @@
 #include <renderer/dynamic_lights.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
+#include <renderer/atmosphere_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/minor_field.h>
 #include <renderer/minor_pass.h>
@@ -264,6 +265,8 @@ std::vector<renderer::SunDescriptor> g_suns;
 std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
 float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-1
 std::unique_ptr<renderer::SunPass> g_sun_pass;
+// Planet atmosphere shells (docs/superpowers/specs/2026-10-07-planet-atmosphere-design.md §5).
+std::unique_ptr<renderer::AtmospherePass> g_atmosphere_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 // Minor rocks (docs/superpowers/specs/2026-10-01-minor-rocks-design.md). The
 // field is pure CPU state stepped in frame()'s xform_sync block; the pass owns
@@ -653,7 +656,8 @@ scenegraph::ModelHandle load_model_impl(
     const py::object& texture_search_path,
     const py::object& texture_replacements,
     const py::object& decals,
-    float scale) {
+    float scale,
+    bool geosphere) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -728,6 +732,14 @@ scenegraph::ModelHandle load_model_impl(
         rep_key += "|scale:" + src.substr(src.rfind("#s=") + 3);
     }
 
+    // Planet geosphere LOD replacement (spec
+    // docs/superpowers/specs/2026-10-06-planet-geosphere-design.md): folded
+    // into rep_key like scale, so a plain and a geosphere load of the same
+    // NIF are distinct cached handles.
+    if (geosphere) {
+        rep_key += "|geosphere";
+    }
+
     // Dedupe by (nif_path, replacements, decals): callers that load the same
     // NIF + registry + decal set for multiple ships get the same handle and
     // the underlying assets::AssetCache::load isn't even called a second
@@ -755,7 +767,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale, geosphere);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -956,6 +968,7 @@ void init(int width, int height, const std::string& title) {
     g_decal_mask_cache.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
+    g_atmosphere_pass = std::make_unique<renderer::AtmospherePass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_minor_pass = std::make_unique<renderer::MinorPass>();
     g_far_pass = std::make_unique<renderer::FarPass>();
@@ -1038,6 +1051,7 @@ void shutdown() {
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
     g_sun_pass.reset();
+    g_atmosphere_pass.reset();   // releases the shell mesh (GL alive)
     g_dust_pass.reset();
     g_minor_pass.reset();     // releases VAOs + instance buffer (GL alive)
     g_far_pass.reset();       // releases atlases + VAOs + buffers (GL alive)
@@ -1414,7 +1428,7 @@ void frame() {
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-                ambient_scale, dyn_lights, g_instance_field_cache.get());
+                ambient_scale, dyn_lights, g_instance_field_cache.get(), &g_suns);
         }
         // Minor rocks. The step culled against g_camera; this target may be
         // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
@@ -1581,6 +1595,16 @@ void frame() {
                                 renderer::HdrTarget& target,
                                 int vw, int vh, float ambient_scale) {
         target.bind();
+        // Planet atmosphere shells: first in phase 2, additive, depth test
+        // off, the march ended by this target's resolved depth (plan
+        // deviation D1). Draws nothing -- and touches no GL state -- unless
+        // an instance has an enabled atmosphere on a sphere-mapped model.
+        if (g_atmosphere_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.atmosphere");
+            g_atmosphere_pass->render(g_world, cam, *g_pipeline, lookup, g_lighting,
+                                      g_suns, target.depth_texture(),
+                                      target.width(), target.height());   // gl_FragCoord space
+        }
         // Dust is normally skipped on the viewscreen RTT (a camera-anchored
         // cockpit smear), but the WARP STREAK lives in this pass — so during
         // warp (streak > 0) we DO render it onto the viewscreen so the bridge
@@ -2889,7 +2913,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("nif_path"), py::arg("texture_search_path"),
           py::arg("texture_replacements") = py::none(),
           py::arg("decals") = py::none(),
-          py::arg("scale") = 1.0f);
+          py::arg("scale") = 1.0f,
+          py::arg("geosphere") = false);
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -3640,6 +3665,34 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("scale"),
           "Scale an instance's self-illumination (material emissive + glow "
           "map). 1.0 = normal, 0.0 = destroyed/dark hull.");
+    m.def("set_instance_atmosphere",
+          [](scenegraph::InstanceId id, py::object params) {
+              scenegraph::Instance::Atmosphere a;
+              if (!params.is_none()) {
+                  auto t = params.cast<py::tuple>();
+                  auto c = t[0].cast<std::array<float, 3>>();
+                  auto s = t[1].cast<std::array<float, 3>>();
+                  a.enabled = true;
+                  a.color = {c[0], c[1], c[2]};
+                  a.sunset_color = {s[0], s[1], s[2]};
+                  a.thickness = t[2].cast<float>();
+                  a.density = t[3].cast<float>();
+                  a.limb = t[4].cast<float>();
+                  // intensity (shell-halo brightness multiplier only) is an
+                  // OPTIONAL 6th element added after this binding shipped;
+                  // a 5-tuple caller keeps the struct default (20.0).
+                  if (t.size() >= 6) a.intensity = t[5].cast<float>();
+                  // mie (grey Mie strength) is an OPTIONAL 7th element;
+                  // 5- and 6-tuple callers keep the struct default (0.2).
+                  if (t.size() >= 7) a.mie = t[6].cast<float>();
+              }
+              g_world.set_atmosphere(id, a);
+          },
+          py::arg("id"), py::arg("params"),
+          "Planet atmosphere (spec 2026-10-07): None disables; else "
+          "(color, sunset_color, thickness, density, limb[, intensity[, mie]]), "
+          "colours linear RGB; intensity defaults to 20.0 and mie to 0.2 "
+          "when omitted.");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {
@@ -3677,7 +3730,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none(), py::none(), 1.0f);
+                                            py::none(), py::none(), 1.0f, false);
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
@@ -4664,6 +4717,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return inst->far_fade;
           },
           py::arg("iid"), "TEST-ONLY: an instance's far_fade. Never call from game code.");
+    m.def("atmosphere_debug",
+          [](scenegraph::InstanceId id) -> py::object {
+              const auto* inst = g_world.get(id);
+              if (inst == nullptr) throw py::value_error("unknown instance");
+              const auto& a = inst->atmosphere;
+              if (!a.enabled) return py::none();
+              return py::make_tuple(py::make_tuple(a.color.r, a.color.g, a.color.b),
+                                    py::make_tuple(a.sunset_color.r, a.sunset_color.g, a.sunset_color.b),
+                                    a.thickness, a.density, a.limb, a.intensity, a.mie);
+          },
+          py::arg("id"), "Test-only read-back of an instance's atmosphere.");
 
     // Standalone field for headless probes: no GL, no init(), no frame().
     py::class_<mr::MinorField>(m, "MinorField")

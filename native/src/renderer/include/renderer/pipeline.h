@@ -21,6 +21,7 @@ public:
     Shader& backdrop_shader() noexcept   { return *backdrop_; }
     Shader& sun_shader() noexcept        { return *sun_; }
     Shader& sun_flare_shader() noexcept  { return *sun_flare_; }
+    Shader& atmosphere_shader() noexcept { return *atmosphere_; }
     Shader& dust_shader() noexcept       { return *dust_; }
     Shader& nebula_shader() noexcept       { return *nebula_; }
     Shader& nebula_shell_shader() noexcept { return *nebula_shell_; }
@@ -61,6 +62,7 @@ private:
     std::unique_ptr<Shader> backdrop_;
     std::unique_ptr<Shader> sun_;
     std::unique_ptr<Shader> sun_flare_;
+    std::unique_ptr<Shader> atmosphere_;
     std::unique_ptr<Shader> dust_;
     std::unique_ptr<Shader> nebula_;
     std::unique_ptr<Shader> nebula_shell_;
