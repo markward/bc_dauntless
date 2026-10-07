@@ -77,6 +77,16 @@ def test_malformed_entry_warns_once_and_is_none(tmp_path, monkeypatch, capsys, b
     assert err.count("pinkgasplanet") == 1
 
 
+def test_parse_entry_missing_limb_raises_valueerror():
+    with pytest.raises(ValueError, match="missing required field"):
+        atmo.parse_entry("k", {"color": "#FF9A96", "thickness": 0.06, "density": 1.4})
+
+
+def test_parse_entry_missing_color_raises_valueerror():
+    with pytest.raises(ValueError, match="missing required field"):
+        atmo.parse_entry("k", {"thickness": 0.06, "density": 1.4, "limb": 1.0})
+
+
 def test_missing_file_is_empty_and_warns_once(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("engine.paths.project_asset_root", lambda: tmp_path / "nowhere")
     atmo.reload()

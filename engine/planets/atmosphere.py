@@ -107,6 +107,10 @@ def parse_entry(key: str, entry: dict):
         raise ValueError(f"unknown field(s) {sorted(unknown)}")
     if entry.get("atmosphere") is False:
         return None
+    required = {"color", "thickness", "density", "limb"}
+    missing = required - set(entry.keys())
+    if missing:
+        raise ValueError(f"missing required field(s) {sorted(missing)}")
     color = srgb_hex_to_linear(entry["color"])
     sunset = srgb_hex_to_linear(entry["sunset_color"]) if "sunset_color" in entry else color
     return Atmosphere(
