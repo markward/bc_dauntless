@@ -91,6 +91,39 @@ def test_rerealize_after_departure_uses_the_current_radius(monkeypatch):
     assert sess.planet_natural_scale[planet] == pytest.approx(20.0 * scale_at_90)
 
 
+def test_teardown_set_objects_leaves_another_sets_live_atmosphere_entries(monkeypatch):
+    """Fix round 1 finding 1: the warp spine realizes the DESTINATION set
+    before tearing down the SOURCE set, so teardown_set_objects must only
+    drop ITS OWN set's live-registry entries (clear_live_for_set), never the
+    whole registry (clear_live)."""
+    from engine import host_loop as hl
+    from engine.planets import atmosphere as atmo
+    monkeypatch.setattr(hl, "_planet_nif_path", lambda planet, **k: "fake.nif")
+    atmo.clear_live()
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+
+    set_a = SetClass_Create()
+    App.g_kSetManager.AddSet(set_a, "SetA")
+    planet_a = App.Planet_Create(90.0, "data/models/environment/RedPlanet.nif")
+    set_a.AddObjectToSet(planet_a, "Ona 1")
+
+    set_b = SetClass_Create()
+    App.g_kSetManager.AddSet(set_b, "SetB")
+    planet_b = App.Planet_Create(90.0, "data/models/environment/RedPlanet.nif")
+    set_b.AddObjectToSet(planet_b, "Ona 2")
+
+    hl.realize_set_objects(sess, set_a, r)
+    hl.realize_set_objects(sess, set_b, r)
+    assert {lp.set_name for lp in atmo.live()} == {"SetA", "SetB"}
+
+    hl.teardown_set_objects(sess, set_a, r)
+
+    remaining = {lp.set_name for lp in atmo.live()}
+    assert remaining == {"SetB"}, (
+        "teardown_set_objects wiped another set's live atmosphere entries")
+
+
 def test_realize_marks_rock_surface_rock_true(monkeypatch):
     """set_surface_rock is called for a genus-3 rock (rock-class spec §2); a
     normal ship must never receive the call."""

@@ -124,3 +124,30 @@ def test_shipped_tiers_match_the_spec():
     assert (a.thickness, a.density, a.limb) == (0.02, 0.5, 0.8)
     for airless in ("moon", "rockyplanet", "grayplanet", "tanplanet"):
         assert atmo.resolve("S", "N", f"x/{airless}.nif") is None
+
+
+# ---- Live registry: clear_live_for_set (fix round 1 finding 1) ------------
+
+@pytest.fixture(autouse=True)
+def _reset_live():
+    atmo.clear_live()
+    yield
+    atmo.clear_live()
+
+
+def test_clear_live_for_set_removes_only_that_sets_entries():
+    atmo.record_live(1, "k1", "SetA", "N1", "x.nif")
+    atmo.record_live(2, "k2", "SetB", "N2", "y.nif")
+    atmo.record_live(3, "k3", "SetA", "N3", "z.nif")
+
+    atmo.clear_live_for_set("SetA")
+
+    remaining = atmo.live()
+    assert {lp.set_name for lp in remaining} == {"SetB"}
+    assert [lp.iid for lp in remaining] == [2]
+
+
+def test_clear_live_for_set_with_no_matching_entries_is_a_noop():
+    atmo.record_live(1, "k1", "SetB", "N1", "x.nif")
+    atmo.clear_live_for_set("SetA")
+    assert len(atmo.live()) == 1

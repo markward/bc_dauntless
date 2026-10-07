@@ -6349,7 +6349,11 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             renderer.destroy_instance(iid)
             session.planet_natural_scale.pop(planet, None)
             session.slot_bindings.pop(planet, None)
-    _atmosphere.clear_live()
+    # clear_live_for_set, NOT clear_live: the warp spine realizes the
+    # DESTINATION set before tearing down the SOURCE set
+    # (_WarpDepartAction/ChangeRenderedSetAction ordering below), so a
+    # blanket clear here would wipe the destination's just-recorded planets.
+    _atmosphere.clear_live_for_set(pSet.GetName())
 
 
 def _ensure_system_loaded(session) -> None:

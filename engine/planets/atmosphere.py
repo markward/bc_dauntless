@@ -44,6 +44,16 @@ def live() -> tuple:
 def clear_live() -> None:
     _live.clear()
 
+
+def clear_live_for_set(set_name: str) -> None:
+    """Drop only this set's live entries. teardown_set_objects tears down a
+    SINGLE set's render instances mid-mission (e.g. the warp spine's source
+    set, after the destination set has already been realized) -- a blanket
+    clear_live() there would wipe the destination's just-recorded planets
+    too. MissionSession.teardown (whole-session end) still uses the blanket
+    clear_live()."""
+    _live[:] = [lp for lp in _live if lp.set_name != set_name]
+
 _FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere"}
 
 STOCK_STEMS: tuple = (
