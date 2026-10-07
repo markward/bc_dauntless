@@ -38,3 +38,18 @@ def test_beyond_range_branch_stays_within_budget(monkeypatch):
     in_range = min(_per_call(obs, near, 200) for _ in range(3))
     beyond = min(_per_call(obs, far, 200) for _ in range(3))
     assert beyond <= 3.0 * in_range, (beyond, in_range)
+
+
+def test_probe_branch_stays_within_budget(monkeypatch):
+    from tests.unit.test_sensor_probes import _probe_at
+    monkeypatch.setattr(contact_index, "nebulae_in", lambda pSet: ())
+    s, obs, sensors = _observer_in_set(2000.0)
+    for x in (3000.0, 6000.0, 9000.0):
+        _probe_at(s, sensors, x)
+    near = [_ship_at(s, "n%d" % i, 100.0 + i) for i in range(40)]
+    far = [_ship_at(s, "f%d" % i, 9300.0 + i) for i in range(40)]  # reached by the 3rd probe only
+    assert all(sd.can_detect(obs, x) for x in far)
+    _per_call(obs, near + far, 20)
+    in_range = min(_per_call(obs, near, 200) for _ in range(3))
+    via_probe = min(_per_call(obs, far, 200) for _ in range(3))
+    assert via_probe <= 5.0 * in_range, (via_probe, in_range)

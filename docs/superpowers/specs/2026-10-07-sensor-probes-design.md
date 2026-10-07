@@ -132,3 +132,72 @@ leaves the hull and drifts forward; it is on the list as "Probe 1" (then "Probe 
 beyond your range but within ~1000 GU of the probe: it is listed; get it within ~500 GU of
 the probe for 4 s: it is named. Launch until empty: Miguel says there are none left.
 E6M4: launch the probe at Tezle 1; the mission advances when it reaches the planet.
+
+## As built
+
+Built on `feat/sensor-probes`, unmerged as of 2026-10-07. Task-by-task deviations and
+rulings from the SDD ledger:
+
+- **Task 1** (`3d325d10`): `GetNumProbes`/`SetNumProbes`/`AddProbe`/`probes()` as designed.
+  `probes()` prunes dead IDs via `engine.core.ids.get_object_by_id` and early-returns when
+  `_probe_ids` is empty (the common case: most ships never launch one).
+- **Task 1b** (`c0b9fa5c`): found and fixed a pre-existing order-pollution bug while writing
+  probe fixtures, unrelated to probes themselves — `tests/conftest.py`'s autouse reset
+  cleared `g_kTimerManager._timers` but not its `_time` clock, so
+  `test_particles_death_probe` left game time at 5.1 s for every test that ran after it in
+  the same session. Fixed in the autouse reset, not scoped to this sub-project.
+- **Task 2** (`94d8d1e8`, `ed30e76f`): the probe branch in `can_detect`/`in_reach`. Rulings
+  made during review, not pre-specified:
+  - An **observer-side** rock or nebula-core failure falls through to the probe walk rather
+    than short-circuiting it — a probe with a clear line of sight sees past a rock that
+    blocks only the observer's own view. This reads as a deliberate widening of rule 3
+    beyond what the spec's prose implied (the spec names only the probe's *own* occluders).
+  - **Memory and over-boost keep SP3 behaviour**: an observer-side rock still cancels them
+    even when a probe is present. Probes extend *reach*, not the memory/boost gates.
+  - Cloak-stock and the power gate stay hard gates for both paths, per rule 3.
+  - **Accepted edge** (not fixed): per-pair hysteresis means a probe whose lock is not yet
+    latched can see a target sitting in concealment `[0.20, 0.28)` that the observer's own
+    *latched* pair would refuse. Narrow band, inherited from SP3's hysteresis design, not
+    reopened here.
+- **Task 3** (`96a6c70c`): `IsObjectNear`/`IsObjectFar` and the player's contact sweep now
+  both count probes, as designed. The sweep's bands come up empty when the player's own
+  sensor range is 0 (dead/off sensors), matching rule 3's power gate.
+  `sensor_contacts._dist` is now dead code — superseded by the `IsObjectNear`/`IsObjectFar`
+  single-source change — and was deliberately left in place rather than removed, since
+  removing dead code was out of scope for this task.
+- **Task 4** (`97cb8880`, `c7650c9d`): the real Launch Probe path and E6M4 integration tests
+  surfaced three production bugs outside this sub-project's stated surface, all fixed here
+  because the integration tests could not otherwise exercise real code:
+  1. `Planet.AttachObject` never called `super()`, so no `ProximityCheck` anchored on a
+     planet ever fired, for any mission — not a probes-only bug. Fixing it newly brings
+     E1M2's Haven asteroid checks, E6M4's probe goal, and E6M5's shuttle landing to life
+     (not live-verified).
+  2. The live game's SDK setup (`host_loop._setup_sdk` → `tools.mission_harness.setup_sdk`)
+     installed the emission recorder over `ShipScriptActions.LaunchObject` unconditionally,
+     so probes, shuttles and decoys never spawned in a live run. The recorder is now
+     installed only by the two harness `main`s (`install_emission_recorder()`), not by the
+     shared SDK setup path.
+  3. `ProximityCheck` evaluation now skips objects with `SetDeleteMe` pending, preventing
+     double counts on E6M5/E6M3.
+  - **E6M4 outcome**: a real Launch Probe registers the probe with the mission's two
+    `ProximityCheck`s and an Intercept AI; in real flight it closes on Tezle 1, but the
+    Intercept AI alone would only bring it to a closest approach of 2278.6 GU inside the
+    300 s window the test drives, short of the 2005 GU trigger radius — i.e. it would
+    reach the planet at roughly the 333 s mark, just past this test's horizon. A second,
+    separate test moves the registered probe inside the trigger radius directly and
+    confirms the real `ProximityCheck` plus `ProbeReachesPlanet` fire correctly. So: the
+    **registration half is pinned by both tests**; the **reach half is pinned only by the
+    direct-placement test**, not by letting the Intercept AI fly there within the test's
+    time budget — reported here rather than silently extending the budget or faking the AI.
+  - E6M5 (not a probe mission, exercised by the same `AttachObject` fix): four shuttles
+    land and the landing count is exactly 4.
+- **Deferred minors** (not fixed, not blocking): `_probe_reach`/`_probe_in_reach` share
+  near-duplicate logic; `_live_probes`' docstring is slightly stale; the dead `_dist` noted
+  above; `_fresh_ship_script_actions` leaves the `Actions` package attribute pointing at the
+  fresh module after the test that uses it runs.
+
+**Performance** (Task 5): `tests/unit/test_sensor_reach_bench.py::test_probe_branch_stays_within_budget`
+adds a 3-probe observer (probes at 3000/6000/9000 GU) and measures `can_detect` for targets
+reached only through the 3rd probe against in-range targets. Measured ratio **≈4.7×** the
+in-range call (budget 5×, per the spec's note that three sequential `can_detect` recursions
+cost more than the 3× single-branch budget used for SP3's beyond-range test). Passes.
