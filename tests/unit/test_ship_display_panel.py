@@ -662,3 +662,40 @@ def test_target_payload_emits_range_km_key():
     # confirm the schema key.
     assert "range_km" in payload or '"range_km"' in payload
     assert "range_m" not in payload
+
+
+def test_sdk_flicker_shields_hides_then_restores_the_shield_arcs(monkeypatch):
+    # Live crash, E1M2 CheckShields: Actions.ShipScriptActions.FlickerShields
+    # walks the shields display's panes -- GetNthChild(DISPLAY_PANE), then
+    # TOP_PANE / BOTTOM_PANE -- and SetNotVisible()s them for fTime seconds.
+    # BC's top pane holds the top/front/rear/left/right arcs, the bottom pane
+    # the bottom arc (Tactical/Interface/ShieldsDisplay.py:Create).
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    import Actions.ShipScriptActions as ssa
+    _, player, mission = _setup_game_with_player()
+    try:
+        sh = player.GetShieldSubsystem()
+        for face in range(sh.NUM_SHIELDS):
+            sh.SetMaxShields(face, 100.0)
+            sh.SetCurrentShields(face, 100.0)
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+
+        class _TCW:
+            def GetShipDisplay(self):
+                return panel
+        monkeypatch.setattr(App, "TacticalControlWindow_GetTacticalControlWindow",
+                            lambda: _TCW())
+
+        assert panel._snapshot()[5] == (1.0,) * 6
+        ssa.FlickerShields(None, 0, 14)
+        assert panel._snapshot()[5] == (0.0,) * 6
+        ssa.FlickerShields(None, 1)
+        assert panel._snapshot()[5] == (1.0,) * 6
+
+        # Only the bottom pane hidden: only the BOTTOM face (index 3) drops.
+        disp = panel.GetShieldsDisplay()
+        pane = App.TGPane_Cast(disp.GetNthChild(disp.DISPLAY_PANE))
+        pane.GetNthChild(disp.BOTTOM_PANE).SetNotVisible()
+        assert panel._snapshot()[5] == (1.0, 1.0, 1.0, 0.0, 1.0, 1.0)
+    finally:
+        _teardown_game()
