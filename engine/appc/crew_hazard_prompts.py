@@ -2,7 +2,8 @@
 
 Dauntless-authored dialogue (no BC original): when the player's ship is in
 asteroids (radial-profile `asteroids` or a rock field's strength above 0.05)
-or radiation (profile `radiation` above 0.1) with its shields down, an
+or radiation (any profile `radiation` above 0 -- where radiation.py starts
+doing damage) with its shields down, an
 officer recommends raising them. Lines live in our own TGL, generated from
 tools/dialogue/dauntless_crew.json by tools/gen_dauntless_tgl.py, and are
 spoken through the officer's SpeakLine like any SDK line.
@@ -10,13 +11,17 @@ spoken through the officer's SpeakLine like any SDK line.
 Skipped in E3M2 and E3M4, whose scripts already prompt for shields
 (E3M2ProdRaiseShields, E3M4ShouldRaiseShields), during a cinematic, and while
 warping or dashing. One prompt per exposure: it re-arms once the level
-falls below half its threshold or the shields go up, and never sooner than
+falls to half its threshold or below (radiation: back to 0) or the shields
+go up, and never sooner than
 COOLDOWN_S after the last prompt for that hazard.
 
-Never spoken over dialogue (Mark, 2026-10-07): if a scripted sequence still
-has a line to come, or any crew line ended less than QUIET_S ago, the prompt
-is DROPPED for this exposure -- not deferred. A line started in a gap of a
-mission conversation was cut off by the conversation's next line.
+Never spoken over dialogue (Mark, 2026-10-07). If a scripted sequence still
+has a line to come, the prompt is DROPPED for this exposure: a line started in
+a gap of a mission conversation was cut off by its next line. If only a
+one-off crew line (an acknowledgement, a damage report) ended less than
+QUIET_S ago, the prompt WAITS for the quiet and then speaks: Kiska's "All
+stop, aye sir" at a dash drop-out used to drop the radiation warning for the
+whole visit.
 
 Polled at POLL_S from host_loop on game time; reset on mission swap.
 """
@@ -35,7 +40,10 @@ QUIET_S = 5.0
 # hazard -> (threshold, [(bridge-set object name, line key), ...]).
 # Object names are the stations (engine/bridge_officers.py): Brex is the
 # Engineer, Miguel is Science.
-THRESHOLDS = {"radiation": 0.1, "asteroids": 0.05}
+# Radiation warns at the first damage: radiation.py drains at any level
+# above 0, and at 0.1 a ship crossing the linear ramp toward a star took
+# 1,600-2,800 GU (4-7 min at full impulse) of damage before Brex spoke.
+THRESHOLDS = {"radiation": 0.0, "asteroids": 0.05}
 HAZARDS = {
     "radiation": [("Engineer", "BrexRadiationShields1"),
                   ("Engineer", "BrexRadiationShields2")],
@@ -59,7 +67,8 @@ class HazardLatch:
         self._last = None
 
     def due(self, level, shields_up, blocked, now) -> bool:
-        if level < self.threshold * 0.5 or shields_up:
+        # <=, so a zero threshold re-arms once the ship is fully out.
+        if level <= self.threshold * 0.5 or shields_up:
             self._prompted = False
         return (level > self.threshold and not shields_up and not blocked
                 and not self._prompted
@@ -102,9 +111,11 @@ class CrewHazardPrompts:
             latch = self._latches[hazard]
             if not latch.due(level, shields_up, blocked, now):
                 continue
-            if _dialogue_active():
+            if _scripted_dialogue():
                 latch.drop()
                 continue
+            if _recent_speech():
+                return   # still due next poll
             if self._speak(hazard):
                 latch.fire(now)
                 return   # one line per poll
@@ -158,11 +169,16 @@ def _travelling(player) -> bool:
     return bool(warp_state.is_ship_warping(player) or dash.is_dashing(player))
 
 
-def _dialogue_active() -> bool:
-    """A scripted line still to come, or crew speech within QUIET_S."""
-    from engine.appc import actions, crew_speech
-    return bool(actions.scripted_line_pending()
-                or crew_speech.silent_for() < QUIET_S)
+def _scripted_dialogue() -> bool:
+    """A playing sequence still has a line to come: a mission conversation."""
+    from engine.appc import actions
+    return bool(actions.scripted_line_pending())
+
+
+def _recent_speech() -> bool:
+    """Any crew line still talking or ended less than QUIET_S ago."""
+    from engine.appc import crew_speech
+    return crew_speech.silent_for() < QUIET_S
 
 
 def _officer(station):
