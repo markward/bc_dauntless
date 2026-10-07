@@ -74,3 +74,33 @@ def test_first_draw_is_the_same_across_fresh_processes(request):
         "flee/evade/avoidance scan built on it) is non-deterministic "
         "across process runs."
     )
+
+
+def test_reset_restores_the_seeded_sequence():
+    """reset_random_unit_vector_rng() rewinds the shared RNG to its seed, so a
+    test's draws never depend on how many draws earlier tests made (the
+    conftest autouse reset calls it before every test)."""
+    from engine.appc import math as appc_math
+    appc_math.reset_random_unit_vector_rng()
+    first = App.TGPoint3_GetRandomUnitVector()
+    for _ in range(17):
+        App.TGPoint3_GetRandomUnitVector()
+    appc_math.reset_random_unit_vector_rng()
+    again = App.TGPoint3_GetRandomUnitVector()
+    assert (again.x, again.y, again.z) == (first.x, first.y, first.z)
+
+
+def test_each_test_starts_from_the_seed(request):
+    """The conftest autouse reset rewound the RNG before this test ran: its
+    first draw is the seed's first draw, regardless of earlier tests."""
+    import random as _random
+    from engine.appc import math as appc_math
+    rng = _random.Random(appc_math._UNIT_VECTOR_RNG_SEED)
+    while True:
+        a, b = rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)
+        s = a * a + b * b
+        if 0.0 < s < 1.0:
+            break
+    k = 2.0 * math.sqrt(1.0 - s)
+    v = App.TGPoint3_GetRandomUnitVector()
+    assert (v.x, v.y, v.z) == (a * k, b * k, 1.0 - 2.0 * s)

@@ -450,6 +450,15 @@ _UNIT_VECTOR_RNG_SEED = 0xF1EEC0DE
 _unit_vector_rng = _random.Random(_UNIT_VECTOR_RNG_SEED)
 
 
+def reset_random_unit_vector_rng() -> None:
+    """Rewind the shared RNG to its seed. A fixed seed alone makes the
+    sequence per-PROCESS deterministic, but a given draw still depends on
+    how many draws came before it -- so tests/conftest.py's autouse reset
+    calls this before every test (as collision_avoidance's tests call
+    reset_avoidance_state to rewind _AVOID_RNG_SEED)."""
+    _unit_vector_rng.seed(_UNIT_VECTOR_RNG_SEED)
+
+
 def TGPoint3_GetRandomUnitVector() -> TGPoint3:
     """Uniform random unit vector (Marsaglia). SDK callers:
     AI/PlainAI/Flee.py:115, EvadeTorps.py:172, Warp.py:367,

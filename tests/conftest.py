@@ -1457,6 +1457,16 @@ def _reset_leakable_engine_globals():
         warp.configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None)
     except Exception:
         pass
+    # TGPoint3_GetRandomUnitVector's seeded RNG (engine/appc/math.py): seeded
+    # once per process, so without a rewind a test's draws depended on how
+    # many draws every earlier test made -- the avoidance tests
+    # (test_pursuers_avoid_each_other, test_avoid_cadence_still_clears)
+    # flipped red whenever unrelated new code changed the draw count.
+    try:
+        from engine.appc.math import reset_random_unit_vector_rng
+        reset_random_unit_vector_rng()
+    except Exception:
+        pass
     # Defensive-cloak controller: per-ship DEFENSIVE mode set (mirrors
     # collision_avoidance's per-tick reconciliation) leaks between tests
     # since nothing else clears it. A ship id surviving from a prior test
