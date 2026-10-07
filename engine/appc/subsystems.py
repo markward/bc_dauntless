@@ -1368,6 +1368,11 @@ class SensorSubsystem(PoweredSubsystem):
         self._is_on: bool = True
         self._base_sensor_range: float = 0.0
         self._max_probes: int = 0
+        # BC +0xC8 NumProbes (live counter, seeded from MaxProbes) and the
+        # +0xAC..+0xBC probe list, which holds OBJECT IDS, not pointers
+        # (sensor-subsystem.md; 2026-10-07-sensor-probes-design.md).
+        self._num_probes: int = 0
+        self._probe_ids: list = []
         # Objects whose existence is known to the sensor system.
         # Populated by the game loop / radar sweep logic.  Default is
         # empty (nothing known), matching the initial unscanned state.
@@ -1377,6 +1382,27 @@ class SensorSubsystem(PoweredSubsystem):
     def SetBaseSensorRange(self, v) -> None:         self._base_sensor_range = float(v)
     def GetMaxProbes(self) -> int:                   return self._max_probes
     def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
+
+    def GetNumProbes(self) -> int:                   return self._num_probes
+    def SetNumProbes(self, v) -> None:               self._num_probes = int(v)
+
+    def AddProbe(self, obj_id) -> None:
+        """BC AddProbe (@0x00567010): remember a launched probe by object ID."""
+        self._probe_ids.append(int(obj_id))
+
+    def probes(self) -> list:
+        """The live probes, in launch order. An ID that no longer resolves
+        (the object was deleted) is dropped, as BC garbage-collects dead
+        probes while walking the list."""
+        from engine.core.ids import get_object_by_id
+        live, keep = [], []
+        for oid in self._probe_ids:
+            obj = get_object_by_id(oid)
+            if obj is not None:
+                live.append(obj)
+                keep.append(oid)
+        self._probe_ids = keep
+        return live
 
     def GetIdentificationTime(self) -> float:
         """BC's identification dwell (RE'd: a hard-coded 4.0 s, no setter);

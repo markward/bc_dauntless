@@ -1276,6 +1276,8 @@ class ShipClass(DamageableObject):
                     ):
                         v = src()
                         if v is not None: setter(v)
+                    # BC SetProperty seeds NumProbes from MaxProbes.
+                    sens.SetNumProbes(sens.GetMaxProbes())
             elif isinstance(prop, ShieldProperty):
                 self._copy_powered_subsystem_fields(prop, self._shield_subsystem)
                 ss = self._shield_subsystem
