@@ -37,11 +37,33 @@ class LivePlanet:
     set_name: str
     obj_name: str
     nif_path: str
+    # "set": a Planet object realized from its set (realize_set_objects /
+    # mission load). "celestial": a system-map body drawn by
+    # host_loop._reconcile_celestial_instances, whose set_name is its REGION
+    # and whose lifetime follows the draw list, not that set.
+    source: str = "set"
 
 
-def record_live(iid, key, set_name: str, obj_name: str, nif_path: str) -> None:
+def record_live(iid, key, set_name: str, obj_name: str, nif_path: str,
+                source: str = "set") -> None:
     _live.append(LivePlanet(iid=iid, key=key, set_name=set_name,
-                            obj_name=obj_name, nif_path=nif_path))
+                            obj_name=obj_name, nif_path=nif_path, source=source))
+
+
+def iid_eq(a, b) -> bool:
+    """InstanceId equality: pybind's InstanceId has no __eq__, only readonly
+    `index`/`generation`, so plain `==` is identity there and would never
+    match two Python wrappers of the same engine instance. Plain values
+    (tests use strings) fall through to `==`."""
+    ai, bi = getattr(a, "index", None), getattr(b, "index", None)
+    if ai is not None and bi is not None:
+        return ai == bi and getattr(a, "generation", None) == getattr(b, "generation", None)
+    return a == b
+
+
+def forget_live(iid) -> None:
+    """Drop the live entry for a destroyed instance (any source)."""
+    _live[:] = [lp for lp in _live if not iid_eq(lp.iid, iid)]
 
 
 def live() -> tuple:
@@ -58,8 +80,11 @@ def clear_live_for_set(set_name: str) -> None:
     set, after the destination set has already been realized) -- a blanket
     clear_live() there would wipe the destination's just-recorded planets
     too. MissionSession.teardown (whole-session end) still uses the blanket
-    clear_live()."""
-    _live[:] = [lp for lp in _live if lp.set_name != set_name]
+    clear_live(). Only SET-realized entries go: a celestial map body records
+    its region as set_name, but the celestial pass keeps drawing it after the
+    region's set is torn down (it forgets its own via forget_live)."""
+    _live[:] = [lp for lp in _live
+                if not (lp.source == "set" and lp.set_name == set_name)]
 
 _FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere"}
 

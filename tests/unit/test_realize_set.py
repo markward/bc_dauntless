@@ -124,6 +124,86 @@ def test_teardown_set_objects_leaves_another_sets_live_atmosphere_entries(monkey
         "teardown_set_objects wiped another set's live atmosphere entries")
 
 
+# ── live atmosphere registry vs instance destruction (final-review fix 4) ──
+
+
+def _celestial_body(region="Region1", name="Albirea 3"):
+    from engine.systems.celestial import CelestialBody
+    return CelestialBody(key=("Albirea", region, name), name=name,
+                         model="data/models/environment/PinkGasPlanet.nif",
+                         radius_gu=100.0, position=(0.0, 0.0, 0.0))
+
+
+def _drive_celestial(monkeypatch, drawn):
+    """Point _reconcile_celestial_instances at a mutable draw list."""
+    from engine import host_loop as hl
+    from engine.systems import celestial
+    monkeypatch.setattr(hl, "_planet_model_path", lambda rel, **k: f"/fake/{rel}")
+    monkeypatch.setattr(hl._frames, "viewing_set", lambda: "VIEW")
+    monkeypatch.setattr(celestial, "draw_list", lambda view: tuple(drawn))
+
+
+def test_reconcile_removing_a_body_forgets_its_live_entry(monkeypatch):
+    from engine import host_loop as hl
+    from engine.planets import atmosphere as atmo
+    atmo.clear_live()
+    drawn = [_celestial_body()]
+    _drive_celestial(monkeypatch, drawn)
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+
+    hl._reconcile_celestial_instances(sess, r)
+    (lp,) = atmo.live()
+    assert lp.source == "celestial"
+
+    drawn.clear()
+    hl._reconcile_celestial_instances(sess, r)
+    assert atmo.live() == (), "a destroyed map body left a stale live entry"
+
+
+def test_teardown_set_objects_keeps_that_regions_celestial_entries(monkeypatch):
+    """A map body's live entry carries its REGION as set_name; tearing down
+    that region's set (warp spine) must not drop a body the celestial pass
+    is still drawing."""
+    from engine import host_loop as hl
+    from engine.planets import atmosphere as atmo
+    atmo.clear_live()
+    _drive_celestial(monkeypatch, [_celestial_body(region="Region1")])
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    hl._reconcile_celestial_instances(sess, r)
+    assert [lp.set_name for lp in atmo.live()] == ["Region1"]
+
+    region = SetClass_Create()
+    App.g_kSetManager.AddSet(region, "Region1")
+    hl.teardown_set_objects(sess, region, r)
+
+    assert [lp.source for lp in atmo.live()] == ["celestial"]
+
+
+def test_teardown_set_objects_forgets_each_destroyed_planet(monkeypatch):
+    from engine import host_loop as hl
+    from engine.planets import atmosphere as atmo
+    monkeypatch.setattr(hl, "_planet_nif_path", lambda planet, **k: "x/PinkGasPlanet.nif")
+    atmo.clear_live()
+    forgotten = []
+    real_forget = atmo.forget_live
+    monkeypatch.setattr(atmo, "forget_live",
+                        lambda iid: (forgotten.append(iid), real_forget(iid)))
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    planet = App.Planet_Create(90.0, "data/models/environment/PinkGasPlanet.nif")
+    s.AddObjectToSet(planet, "Albirea 3")
+    hl.realize_set_objects(sess, s, r)
+    iid = sess.planet_instances[planet]
+
+    hl.teardown_set_objects(sess, s, r)
+    assert forgotten == [iid]
+    assert atmo.live() == ()
+
+
 def test_realize_marks_rock_surface_rock_true(monkeypatch):
     """set_surface_rock is called for a genus-3 rock (rock-class spec §2); a
     normal ship must never receive the call."""

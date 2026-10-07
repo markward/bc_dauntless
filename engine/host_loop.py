@@ -5313,7 +5313,7 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
 
 
 def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
-                             nif_path: str) -> None:
+                             nif_path: str, source: str = "set") -> None:
     """Push this planet instance's atmosphere decision -- always called,
     right after create_instance, by every realize path (mission load,
     realize_set_objects, _reconcile_celestial_instances), so a toggle-off
@@ -5331,18 +5331,17 @@ def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
     key = _atmosphere.resolve_key(set_name, obj_name, nif_path)
     a = _atmosphere.resolve(set_name, obj_name, nif_path)
     r_.set_instance_atmosphere(iid, a)
-    _atmosphere.record_live(iid, key, set_name, obj_name, nif_path)
+    _atmosphere.record_live(iid, key, set_name, obj_name, nif_path, source=source)
 
 
 def _iid_eq(a, b) -> bool:
     """InstanceId equality: pybind's InstanceId has no __eq__, only readonly
     `index`/`generation`, so plain `==` is identity there and would never
     match two Python wrappers of the same engine instance. Plain values
-    (the dial group's tests use strings) fall through to `==`."""
-    ai, bi = getattr(a, "index", None), getattr(b, "index", None)
-    if ai is not None and bi is not None:
-        return ai == bi and getattr(a, "generation", None) == getattr(b, "generation", None)
-    return a == b
+    (the dial group's tests use strings) fall through to `==`. One rule,
+    shared with the live registry's forget_live."""
+    from engine.planets import atmosphere as _atmosphere
+    return _atmosphere.iid_eq(a, b)
 
 
 def _nearest_live_planet(session):
@@ -6411,12 +6410,15 @@ def teardown_set_objects(session, pSet, renderer) -> None:
         iid = session.planet_instances.pop(planet, None)
         if iid is not None:
             renderer.destroy_instance(iid)
+            _atmosphere.forget_live(iid)
             session.planet_natural_scale.pop(planet, None)
             session.slot_bindings.pop(planet, None)
     # clear_live_for_set, NOT clear_live: the warp spine realizes the
     # DESTINATION set before tearing down the SOURCE set
     # (_WarpDepartAction/ChangeRenderedSetAction ordering below), so a
     # blanket clear here would wipe the destination's just-recorded planets.
+    # Set-realized entries only: this region's celestial map bodies are
+    # still drawn and forget themselves in _reconcile_celestial_instances.
     _atmosphere.clear_live_for_set(pSet.GetName())
 
 
@@ -6738,11 +6740,13 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
         return
     instances = session.celestial_instances
     want = {b.key for b in drawn}
+    from engine.planets import atmosphere as _atmosphere
     for key in [k for k in placed if k not in want]:
         session.celestial_scale.pop(key, None)
         iid = instances.pop(key, None)
         if iid is not None:
             renderer.destroy_instance(iid)
+            _atmosphere.forget_live(iid)
     new_placed = {}
     for body in drawn:
         new_placed[body.key] = body
@@ -6771,7 +6775,7 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
         scale = (body.radius_gu / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = renderer.create_instance(handle)
         _apply_planet_atmosphere(renderer, iid, body.key[1], body.name,
-                                 body.model)
+                                 body.model, source="celestial")
         instances[body.key] = iid
         session.celestial_scale[body.key] = scale
         renderer.set_world_transform(iid, _celestial_matrix(body, scale))

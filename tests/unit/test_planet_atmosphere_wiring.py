@@ -44,3 +44,27 @@ def test_live_registry_clears_on_teardown():
     host_loop._apply_planet_atmosphere(r, "iid4", "S", "N", "x/PinkGasPlanet.nif")
     atmo.clear_live()
     assert atmo.live() == ()
+
+
+class _Iid:
+    """pybind InstanceId stand-in: index/generation, no __eq__."""
+
+    def __init__(self, index, generation):
+        self.index = index
+        self.generation = generation
+
+
+def test_forget_live_matches_iid_by_index_and_generation():
+    atmo.record_live(_Iid(3, 1), "pinkgasplanet", "S", "A", "x/PinkGasPlanet.nif")
+    atmo.record_live(_Iid(3, 2), "pinkgasplanet", "S", "B", "x/PinkGasPlanet.nif")
+    atmo.record_live(_Iid(4, 1), "pinkgasplanet", "S", "C", "x/PinkGasPlanet.nif")
+    atmo.forget_live(_Iid(3, 1))      # a DIFFERENT wrapper of the same id
+    assert [lp.obj_name for lp in atmo.live()] == ["B", "C"]
+
+
+def test_clear_live_for_set_drops_only_set_realized_entries():
+    atmo.record_live("p", "pinkgasplanet", "R1", "Planet", "x/PinkGasPlanet.nif")
+    atmo.record_live("c", "pinkgasplanet", "R1", "Body", "x/PinkGasPlanet.nif",
+                     source="celestial")
+    atmo.clear_live_for_set("R1")
+    assert [lp.iid for lp in atmo.live()] == ["c"]
