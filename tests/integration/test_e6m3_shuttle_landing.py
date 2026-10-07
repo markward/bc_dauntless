@@ -20,10 +20,6 @@ CreateTransports waits until more than two Cardassians are destroyed
 (`g_iNumberCardsDestroyed <= 2` re-arms a 20 s timer). That battle is not
 what this test is about, so the count is set directly once the shuttles have
 landed; everything from ShuttlesLanded's timer onward is the mission's own.
-
-Actions.ShipScriptActions.FlickerShields is stubbed: E6M3's opening briefing
-(E6M2EndBriefing) plays it, and the ShieldsDisplay pane tree it needs is
-fixed on main (8a333e91) but not on this branch.
 """
 import App
 
@@ -33,9 +29,7 @@ E6M3 = "Maelstrom.Episode6.E6M3.E6M3"
 SHUTTLES = ("Shuttle 1", "Shuttle 2", "Shuttle 3")
 
 
-def test_shuttles_land_at_the_station_and_the_transports_arrive(monkeypatch):
-    import Actions.ShipScriptActions as ssa
-    monkeypatch.setattr(ssa, "FlickerShields", lambda *a, **k: 0)
+def test_shuttles_land_at_the_station_and_the_transports_arrive():
     mission, episode, game, mod = headless_mission.load(E6M3)
     savoy1 = App.g_kSetManager.GetSet("Savoy1")
     khit = App.ShipClass_GetObject(None, "Khitomer")
