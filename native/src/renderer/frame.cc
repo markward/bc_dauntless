@@ -8,6 +8,7 @@
 #include "renderer/instance_field_cache.h"
 #include "renderer/dynamic_lights.h"
 #include "renderer/aabb.h"
+#include <renderer/atmosphere_math.h>
 #include <renderer/asset_path.h>
 #include <renderer/model_draw_helpers.h>
 #include <renderer/node_anim.h>
@@ -540,7 +541,9 @@ void draw_model(const assets::Model& model,
                 const InstanceFieldCache::Entry* hull_field,
                 const std::unordered_map<int, glm::mat4>* node_overrides,
                 const assets::DecalOverride* decal_override,
-                int sphere_level) {
+                int sphere_level,
+                const scenegraph::Instance::Atmosphere* atmo,
+                glm::vec3 atmo_sun_dir) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -889,6 +892,15 @@ void draw_model(const assets::Model& model,
                       static_cast<int>(model.sphere_map->lods.size()) - 1))]
                 : mesh;
             prog.set_int("u_sphere_map", this_sphere ? 1 : 0);
+            // Same rule as u_sphere_map: set on EVERY draw so it cannot leak.
+            const bool this_atmo = this_sphere && atmo != nullptr && atmo->enabled;
+            prog.set_int("u_atmo_enabled", this_atmo ? 1 : 0);
+            if (this_atmo) {
+                prog.set_vec3("u_atmo_color", atmo->color);
+                prog.set_vec3("u_atmo_sunset", atmo->sunset_color);
+                prog.set_float("u_atmo_limb", atmo->limb);
+                prog.set_vec3("u_atmo_sun_dir_ws", atmo_sun_dir);
+            }
             // SP2: skinned models carry bind-model verts posed entirely by the
             // bone palette, so the instance world is the model matrix. Static
             // (non-skinned) models keep the node-walk transform.
@@ -1162,7 +1174,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            CarveFieldCache* carve_cache,
                                            float ambient_scale,
                                            const std::vector<DynamicLightDescriptor>* dyn_lights,
-                                           InstanceFieldCache* field_cache) {
+                                           InstanceFieldCache* field_cache,
+                                           const std::vector<SunDescriptor>* suns) {
     // See submit_opaque: configure the common per-frame uniforms on BOTH the
     // static and skinned programs. The static-program set is unchanged.
     auto configure_common = [&](Shader& s) {
@@ -1195,6 +1208,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
+    static const std::vector<SunDescriptor> kNoSuns;
 
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         // Far tier (far-tier spec §3): a mesh fully handed to its impostor is
@@ -1221,6 +1235,19 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             pipeline.skinned_shader().use();
             pipeline.skinned_shader().set_float("u_dither_fade", inst.far_fade);
         }
+        // Planet surface atmosphere (spec 2026-10-07 §6): the sun direction
+        // from the system's suns at the planet centre, else directional 0.
+        glm::vec3 atmo_sun{0.0f};
+        const scenegraph::Instance::Atmosphere* atmo = nullptr;
+        if (m && m->sphere_map && inst.atmosphere.enabled) {
+            atmo = &inst.atmosphere;
+            const glm::vec3 c =
+                glm::vec3(inst.world * glm::vec4(m->sphere_map->center_body, 1.0f));
+            atmo_sun = planet_atmo::sun_dir_for(
+                c, suns ? *suns : kNoSuns,
+                lighting.directional_count > 0 ? lighting.directional_dir_ws[0]
+                                               : glm::vec3(0.0f, 0.0f, 1.0f));
+        }
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
@@ -1230,7 +1257,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           /*carve_invert=*/false, field_entry,
                           &inst.node_overrides,
                           instance_decal_override(inst.id),
-                          geosphere_level_for(*m, inst.world, camera));
+                          geosphere_level_for(*m, inst.world, camera),
+                          atmo, atmo_sun);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);

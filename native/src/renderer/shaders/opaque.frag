@@ -124,6 +124,11 @@ uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform int  u_sphere_map;          // 1 = planet geosphere draw (spec 2026-10-06 §4.4)
 uniform vec3 u_sphere_center_body;  // sphere centre, body frame
+uniform int   u_atmo_enabled;     // 1 = planet with an atmosphere (spec 2026-10-07 §6)
+uniform vec3  u_atmo_color;       // linear
+uniform vec3  u_atmo_sunset;      // linear
+uniform float u_atmo_limb;
+uniform vec3  u_atmo_sun_dir_ws;  // unit, toward the sun
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
@@ -1568,6 +1573,18 @@ void main() {
         amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     }
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
+    if (u_atmo_enabled != 0) {
+        vec3  La   = normalize(u_atmo_sun_dir_ws);
+        float x    = dot(n, La);
+        float wrap = clamp((x + 0.2) / 1.2, 0.0, 1.0);
+        vec3  sunc = u_dir_light_count > 0 ? u_dir_light_color[0] : vec3(1.0);
+        // Terminator: a band where the sun grazes takes the sunset tint.
+        float band = smoothstep(0.25, 0.0, x) * step(-0.1, x) * 0.6;
+        lit *= mix(vec3(1.0), u_atmo_sunset, band);
+        // Fresnel limb: the surface hazes toward the air colour at grazing view angles.
+        float f = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0) * u_atmo_limb;
+        lit = mix(lit, u_atmo_color * sunc * wrap, clamp(f, 0.0, 1.0));
+    }
 
     vec3 decal_emissive = vec3(0.0);
     float glow_flicker = 1.0;

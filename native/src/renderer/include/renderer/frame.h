@@ -321,7 +321,13 @@ void draw_model(const assets::Model& model,
                 // Model::sphere_map->lods for this camera, from
                 // geosphere_level_for. -1 (or a model without sphere_map)
                 // draws BC's own mesh, byte-identically.
-                int sphere_level = -1);
+                int sphere_level = -1,
+                // Planet surface atmosphere (spec 2026-10-07 §6): applied only
+                // to the sphere-mapped mesh when non-null AND enabled; every
+                // other draw sets u_atmo_enabled = 0. atmo_sun_dir is the
+                // world-space unit direction toward the planet's sun.
+                const scenegraph::Instance::Atmosphere* atmo = nullptr,
+                glm::vec3 atmo_sun_dir = glm::vec3(0.0f));
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
@@ -425,7 +431,12 @@ public:
                                CarveFieldCache* carve_cache = nullptr,
                                float ambient_scale = 1.0f,
                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                               InstanceFieldCache* field_cache = nullptr);
+                               InstanceFieldCache* field_cache = nullptr,
+                               // The system's suns (spec 2026-10-07 §6): a planet with
+                               // an enabled atmosphere takes its surface terminator
+                               // and limb sun direction from these, falling back to
+                               // directional 0 when nullptr / empty.
+                               const std::vector<SunDescriptor>* suns = nullptr);
 
     /// Stamp the stencil buffer with "hull was cut away here", for every
     /// visible instance in `pass` that has active carves.

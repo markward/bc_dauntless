@@ -6,6 +6,7 @@ add_executable(renderer_tests
     frame_test.cc
     geosphere_draw_test.cc
     atmosphere_pass_test.cc
+    atmosphere_surface_test.cc
     decal_render_test.cc
     render_origin_precision_test.cc
     render_origin_math_test.cc

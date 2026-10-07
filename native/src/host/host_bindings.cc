@@ -1428,7 +1428,7 @@ void frame() {
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-                ambient_scale, dyn_lights, g_instance_field_cache.get());
+                ambient_scale, dyn_lights, g_instance_field_cache.get(), &g_suns);
         }
         // Minor rocks. The step culled against g_camera; this target may be
         // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
