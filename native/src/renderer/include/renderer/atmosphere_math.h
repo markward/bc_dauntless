@@ -28,9 +28,13 @@ struct Shell {
 
 /// Look/tuning knobs for one planet's atmosphere.
 struct Params {
+    /// Linear RGB RELATIVE per-channel Rayleigh scattering strength (not a
+    /// final tint): normalised by its strongest channel (beta_rayleigh).
     glm::vec3 color;
     float thickness;
     float density;
+    /// Grey Mie strength: Mie extinction = sigma * mie in every channel.
+    float mie = 0.2f;
 };
 
 /// The span of `t` along a ray where it is inside the atmosphere shell (and
@@ -55,23 +59,34 @@ Span air_span(const Shell& s, glm::vec3 origin, glm::vec3 dir, float t_max);
 /// The shell's exponential falloff scale height: 0.25 * (r_top - r_planet).
 float scale_height(const Shell& s);
 
-/// The shell's extinction/scattering coefficient: density / (r_top - r_planet).
+/// The shell's base extinction/scattering coefficient: density / (r_top - r_planet).
+/// Rayleigh per channel is sigma * beta_rayleigh(p); Mie is sigma * p.mie.
 float sigma(const Shell& s, const Params& p);
 
 /// Normalised density at a point: exp(-h/H), h = max(|p - center| - r_planet, 0).
 float rho(const Shell& s, glm::vec3 p);
 
-/// Optical depth from x toward the sun (direction sun_dir, toward the
-/// light): kOpaqueTau if the planet blocks the ray, else a kSunSamples
-/// midpoint quadrature of rho * sigma out to the shell exit.
-float sun_tau(const Shell& s, const Params& p, glm::vec3 x, glm::vec3 sun_dir);
+/// Per-channel optical depth from x toward the sun (direction sun_dir,
+/// toward the light): kOpaqueTau in every channel if the planet blocks the
+/// ray, else a kSunSamples midpoint quadrature of rho out to the shell exit
+/// times the total extinction sigma * (beta_rayleigh + mie).
+glm::vec3 sun_tau(const Shell& s, const Params& p, glm::vec3 x, glm::vec3 sun_dir);
 
-/// Henyey-Greenstein-based phase function: 3/(16*pi)*(1+c^2) + 0.25*hg(0.6, c).
-float phase(float cos_theta);
+/// p.color / max(p.color.r, g, b): the strongest channel scatters at 1.
+/// An all-zero (or non-finite) colour gives zero, never NaN.
+glm::vec3 beta_rayleigh(const Params& p);
 
-/// Single-scattering in-scattered light along a view ray, already
-/// multiplied by phase(dot(dir, sun_dir)) and p.color. The caller multiplies
-/// by the sun's own colour.
+/// Rayleigh phase: 3/(16*pi) * (1 + c^2).
+float rayleigh_phase(float cos_theta);
+
+/// Mie phase: Henyey-Greenstein with g = 0.76 (forward lobe).
+float mie_phase(float cos_theta);
+
+/// Single-scattering in-scattered light along a view ray: chromatic
+/// Rayleigh (x rayleigh_phase) plus grey Mie (x mie_phase), both attenuated
+/// by the per-channel total extinction along the view and sun paths. There
+/// is no final multiply by p.color -- the colour emerges from the
+/// coefficients. The caller multiplies by intensity and the sun's colour.
 glm::vec3 in_scatter(const Shell& s, const Params& p, glm::vec3 origin, glm::vec3 dir,
                       float t_max, glm::vec3 sun_dir);
 

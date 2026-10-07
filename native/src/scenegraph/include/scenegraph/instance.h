@@ -111,6 +111,9 @@ struct Instance {
         // halo is invisible after tonemapping without this. Default 20.0
         // matches engine.planets.atmosphere.Atmosphere's own default.
         float     intensity = 20.0f;
+        // Grey Mie forward-lobe strength (sigma * mie in every channel).
+        // Default 0.2 matches engine.planets.atmosphere.Atmosphere's.
+        float     mie = 0.2f;
     };
     Atmosphere atmosphere;
 

@@ -30,6 +30,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <utility>
 #include <limits>
 #include <vector>
 
@@ -237,7 +238,14 @@ TEST_F(AtmospherePassTest, ShaderMatchesCpuTwin) {
     scenegraph::World world;
     const glm::mat4 world_m = scaled(kScale);
     auto iid = add(world, geo, world_m);
-    world.set_atmosphere(iid, atmo(true));
+    // Non-grey colour and a non-default Mie: the twin pins the chromatic
+    // Rayleigh + grey Mie maths per channel, not just a grey scalar.
+    const glm::vec3 color(0.4f, 0.7f, 1.0f);
+    const float mie = 0.5f;
+    auto a = atmo(true);
+    a.color = color;
+    a.mie = mie;
+    world.set_atmosphere(iid, a);
     const auto cam = far_camera();
     const glm::vec3 sun_color(1.5f, 1.2f, 0.8f);
     const auto lighting = sun_lighting({1, 0, 0}, sun_color);
@@ -266,9 +274,9 @@ TEST_F(AtmospherePassTest, ShaderMatchesCpuTwin) {
         glm::vec3(world_m * glm::vec4(geo->sphere_map->center_body, 1.0f));
     const float r = geo->sphere_map->radius * kScale;
     const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
-    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
+    const renderer::planet_atmo::Params params{color, kThickness, kDensity, mie};
     const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, {1, 0, 0});
-    // atmo() leaves intensity at the struct default (6.0) -- the twin must
+    // atmo() leaves intensity at the struct default -- the twin must
     // multiply by the same factor the shader's u_intensity applies.
     const glm::vec3 expected =
         renderer::planet_atmo::in_scatter(shell, params, cam.eye, dir,
@@ -282,6 +290,58 @@ TEST_F(AtmospherePassTest, ShaderMatchesCpuTwin) {
     }
 }
 
+// Chromatic Rayleigh: with a blue atmosphere the same limb pixel reddens
+// when the sun moves from beside the planet (short sun path out of the lit
+// limb) to straight behind it (the sun ray grazes the shell too, so blue is
+// extinguished along a long path). Mie is off so only Rayleigh reddening
+// can move r/b; the grey model gives the same r/b in both.
+TEST_F(AtmospherePassTest, BackLitRimIsRedderThanSunlitHaloForBlueAtmosphere) {
+    auto geo = load_planet(true);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    const auto cam = far_camera();
+
+    auto measure = [&](glm::vec3 sun_dir) {
+        scenegraph::World world;
+        auto iid = add(world, geo, scaled(kScale));
+        auto a = atmo(true);
+        a.color = glm::vec3(0.2f, 0.5f, 1.0f);
+        a.mie = 0.0f;
+        world.set_atmosphere(iid, a);
+        const auto lighting = sun_lighting(sun_dir, glm::vec3(1.0f));
+        const auto suns = suns_at(sun_dir * 1e6f);
+        renderer::HdrTarget hdr;
+        hdr.resize(kSize, kSize);
+        draw_opaque(world, cam, lighting, hdr);
+        const auto before = read_rgba(hdr);
+        int first = 0, last = 0;
+        silhouette(before, first, last);
+        renderer::AtmospherePass pass;
+        draw_atmosphere(pass, world, cam, lighting, suns, hdr);
+        const auto after = read_rgba(hdr);
+        // The +X limb from the far camera; `last` from the side-lit frame
+        // (the back-lit disc is dark, so its silhouette scan finds nothing).
+        return std::make_pair(after, before);
+    };
+
+    auto side = measure({1, 0, 0});
+    int first = 0, last = 0;
+    silhouette(side.second, first, last);
+    ASSERT_GT(last, kSize / 2);
+    ASSERT_LT(last, kSize - 3);
+    const int hx = last + 1, hy = kSize / 2;
+    const glm::vec3 lit = rgb(side.first, hx, hy) - rgb(side.second, hx, hy);
+    auto back = measure({0, 0, -1});
+    const glm::vec3 rim = rgb(back.first, hx, hy) - rgb(back.second, hx, hy);
+    ASSERT_GT(lit.b, 0.0f);
+    ASSERT_GT(rim.b, 0.0f);
+    const float lit_rb = lit.r / lit.b;
+    const float rim_rb = rim.r / rim.b;
+    std::cerr << "[atmosphere] BackLitRim r/b side-lit=" << lit_rb << " back-lit=" << rim_rb
+              << "\n";
+    EXPECT_GT(rim_rb, 1.2f * lit_rb)
+        << "back-lit rim r/b " << rim_rb << " vs side-lit halo " << lit_rb;
+}
+
 // The root-cause bug: the raw in-scatter peaks at ~0.06 against a sun colour
 // of ~1, roughly a sixth of the lit surface, so the halo vanishes after
 // tonemapping. The sun is placed ALONG the camera's view axis (rather than
@@ -293,7 +353,7 @@ TEST_F(AtmospherePassTest, DefaultIntensityHaloIsVisible) {
     ASSERT_TRUE(geo->sphere_map.has_value());
     scenegraph::World world;
     auto iid = add(world, geo, scaled(kScale));
-    world.set_atmosphere(iid, atmo(true));   // default intensity == 6.0
+    world.set_atmosphere(iid, atmo(true));   // default intensity (20.0)
     scenegraph::Camera cam;
     cam.eye = {0.0f, 0.0f, 9000.0f};
     cam.target = {0.0f, 0.0f, 0.0f};
@@ -526,7 +586,8 @@ TEST_F(AtmospherePassTest, OccluderInsideTheShellEndsTheMarchAtItsDistance) {
         glm::vec3(world_m * glm::vec4(geo->sphere_map->center_body, 1.0f));
     const float r = geo->sphere_map->radius * kScale;
     const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
-    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
+    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity,
+                                                 scenegraph::Instance::Atmosphere{}.mie};
     const glm::vec3 dir = pixel_ray(cam, hx, hy);
     const auto span = renderer::planet_atmo::air_span(
         shell, cam.eye, dir, std::numeric_limits<float>::infinity());
@@ -603,7 +664,8 @@ TEST_F(AtmospherePassTest, DiscHazeIgnoresDepthQuantisationAtProductionPlanes) {
     const auto after = read_rgba(hdr);
 
     const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
-    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
+    const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity,
+                                                 scenegraph::Instance::Atmosphere{}.mie};
     const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, sun_dir_ws);
     const float intensity = scenegraph::Instance::Atmosphere{}.intensity;
     const int row = kSize / 2;

@@ -8,8 +8,9 @@ uniform vec3  u_camera_pos;
 uniform vec3  u_center;
 uniform float u_r_planet;
 uniform float u_r_top;
-uniform vec3  u_color;       // linear
+uniform vec3  u_color;       // linear, RELATIVE per-channel Rayleigh strength
 uniform float u_density;
+uniform float u_mie;         // grey Mie strength
 uniform float u_intensity;   // shell-HALO brightness multiplier only
 uniform vec3  u_sun_dir;     // unit, toward the sun
 uniform vec3  u_sun_color;   // directional 0 colour (carries intensity)
@@ -22,6 +23,7 @@ const int   VIEW_SAMPLES = 8;
 const int   SUN_SAMPLES  = 6;
 const float OPAQUE_TAU   = 1.0e4;
 const float PI = 3.14159265;
+const float MIE_G = 0.76;
 
 // Ray-sphere: returns (t_near, t_far); t_near > t_far means miss. d is unit.
 // Robust form (r^2 - |oc - b*d|^2): the textbook b^2 - c cancels two ~1e12
@@ -38,19 +40,29 @@ vec2 sphere(vec3 o, vec3 d, float r) {
 float H()     { return 0.25 * (u_r_top - u_r_planet); }
 float sigma() { return u_density / max(u_r_top - u_r_planet, 1e-6); }
 float rho(vec3 p) { return exp(-max(length(p - u_center) - u_r_planet, 0.0) / max(H(), 1e-6)); }
-float sun_tau(vec3 x) {
+// color / max channel; zero (never NaN) for an all-zero colour.
+vec3 beta_rayleigh() {
+    float m = max(max(u_color.r, u_color.g), u_color.b);
+    if (!(m > 0.0)) return vec3(0.0);
+    return u_color / m;
+}
+// Per-channel total extinction coefficient: chromatic Rayleigh + grey Mie.
+vec3 extinction() { return sigma() * beta_rayleigh() + vec3(sigma() * u_mie); }
+vec3 sun_tau(vec3 x) {
     vec2 hp = sphere(x, u_sun_dir, u_r_planet);
-    if (hp.x <= hp.y && hp.x > 1e-4) return OPAQUE_TAU;
+    if (hp.x <= hp.y && hp.x > 1e-4) return vec3(OPAQUE_TAU);
     vec2 ht = sphere(x, u_sun_dir, u_r_top);
-    if (ht.x > ht.y) return 0.0;
+    if (ht.x > ht.y) return vec3(0.0);
     float len = max(ht.y, 0.0);
-    float acc = 0.0;
+    float ds = len / float(SUN_SAMPLES);
+    float od = 0.0;
     for (int i = 0; i < SUN_SAMPLES; ++i)
-        acc += rho(x + u_sun_dir * ((float(i) + 0.5) * len / float(SUN_SAMPLES)));
-    return acc * (len / float(SUN_SAMPLES)) * sigma();
+        od += rho(x + u_sun_dir * ((float(i) + 0.5) * ds));
+    return od * ds * extinction();
 }
 float hg(float g, float c) { float g2 = g * g; return (1.0 - g2) / (4.0 * PI * pow(max(1e-6, 1.0 + g2 - 2.0 * g * c), 1.5)); }
-float phase(float c) { return 3.0 / (16.0 * PI) * (1.0 + c * c) + 0.25 * hg(0.6, c); }
+float rayleigh_phase(float c) { return 3.0 / (16.0 * PI) * (1.0 + c * c); }
+float mie_phase(float c) { return hg(MIE_G, c); }
 
 // Distance from the eye to the opaque surface in the depth buffer along this
 // fragment's (unit) ray `dir`; 1e30 when there is none (depth == 1).
@@ -96,18 +108,25 @@ void main() {
         t1 = min(t1, st);
     }
     if (!(t1 > t0)) { frag_color = vec4(0.0); return; }
+    vec3 sig_r = sigma() * beta_rayleigh();
+    float sig_m = sigma() * u_mie;
+    vec3 ext = sig_r + vec3(sig_m);
+    float cs = dot(dir, u_sun_dir);
     float ds = (t1 - t0) / float(VIEW_SAMPLES);
-    float tau_view = 0.0;
-    float acc = 0.0;
+    vec3 tau_view = vec3(0.0);
+    vec3 acc_r = vec3(0.0);
+    vec3 acc_m = vec3(0.0);
     for (int i = 0; i < VIEW_SAMPLES; ++i) {
         vec3 x = o + dir * (t0 + (float(i) + 0.5) * ds);
         float r = rho(x);
-        float dt = sigma() * r * ds;
-        float t_mid = tau_view + 0.5 * dt;
-        acc += r * exp(-(t_mid + sun_tau(x))) * sigma() * ds;
+        vec3 dt = ext * r * ds;
+        vec3 t_mid = tau_view + 0.5 * dt;
+        vec3 trans = exp(-(t_mid + sun_tau(x)));
+        acc_r += r * sig_r * trans * ds;
+        acc_m += r * sig_m * trans * ds;
         tau_view += dt;
     }
-    vec3 c = acc * phase(dot(dir, u_sun_dir)) * u_color * u_sun_color * u_intensity;
+    vec3 c = (acc_r * rayleigh_phase(cs) + acc_m * mie_phase(cs)) * u_sun_color * u_intensity;
     // max/min rather than clamp: a NaN must never reach bloom.
     c = min(max(c, vec3(0.0)), vec3(65000.0));
     if (any(isnan(c))) c = vec3(0.0);

@@ -128,6 +128,7 @@ void AtmospherePass::render(const scenegraph::World& world, const scenegraph::Ca
         shader.set_float("u_r_top", c.r_top);
         shader.set_vec3("u_color", c.atmo->color);
         shader.set_float("u_density", c.atmo->density);
+        shader.set_float("u_mie", c.atmo->mie);
         shader.set_float("u_intensity", c.atmo->intensity);
         shader.set_vec3("u_sun_dir", sun_dir);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(shell_->index_count()),
