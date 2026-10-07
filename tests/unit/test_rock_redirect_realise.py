@@ -62,6 +62,9 @@ class _FakeRenderer:
     def set_rim_strength(self, iid, s):
         pass
 
+    def set_instance_atmosphere(self, iid, params):
+        pass
+
 
 @pytest.fixture(autouse=True)
 def _catalogue_state():

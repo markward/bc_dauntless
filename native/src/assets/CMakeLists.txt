@@ -20,6 +20,7 @@ add_library(assets STATIC
     src/skeleton_build.cc
     src/skin_weights.cc
     src/tessellate.cc
+    src/geosphere.cc
     src/texture_decode.cc
     src/texture_lifetime.cc
     src/texture_upload.cc

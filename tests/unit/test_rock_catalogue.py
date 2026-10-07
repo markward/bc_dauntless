@@ -147,3 +147,12 @@ def test_index_of_path_finds_a_real_rock_and_minus_one_for_unknown():
     rocks = rc.load()
     assert rc.index_of_path(rocks[0].lod_paths[0]) == 0
     assert rc.index_of_path("/no/such/rock/lod0.gltf") == -1
+
+
+@pytest.mark.parametrize("nif", ["asteroidh1.NIF", "asteroidh2.NIF", "asteroidh3.NIF"])
+def test_ship_model_source_redirects_the_h_variants(fake, nif):
+    # ships/Asteroidh1-3.py load their OWN files (asteroidh1-3.NIF), not
+    # asteroid1-3 -- same geometry, separate paths -- so they must be keyed
+    # too or an h-variant rock draws BC's mesh instead of a catalogue rock.
+    path, scale = rc.ship_model_source("Debris1", "/g/data/Models/Misc/Asteroids/" + nif)
+    assert path.endswith("lod0.gltf") and scale > 0 and scale != 1.0

@@ -123,3 +123,36 @@ def test_defaults_unchanged():
 def test_bad_catalogue_index_falls_back_to_the_pick():
     rk = rockmod.RockClass_Create(2.0, name="Rock Y", kind="major", catalogue_index=10 ** 6)
     assert rk._model_override is not None
+
+
+def test_rock_class_create_carries_a_ship_property():
+    # Live crash, E1M2: targeting a breakup remnant ran the SDK's
+    # ScienceCharacterHandlers.AnnounceHull, which does
+    # pTarget.GetShipProperty().GetGenus() unguarded -- every ShipClass in BC
+    # has a ShipProperty, and a script-less rock had none (None.GetGenus).
+    from engine.rocks.rock import RockClass_Create
+    r = RockClass_Create(2.0, name="Asteroid 9 - Remnant")
+    prop = r.GetShipProperty()
+    assert prop is not None
+    assert prop.GetGenus() == App.GENUS_ASTEROID
+    assert prop.GetSpecies() == App.SPECIES_ASTEROID
+    assert prop.GetMass() == r.GetMass()
+    # Effects.GetDeathExplosionSound reads it the same unguarded way.
+    assert prop.GetDeathExplosionSound() == "g_lsDeathExplosions"
+
+
+def test_damageable_object_create_accepts_the_h_variant_asteroid_nifs():
+    # Every SDK ships/Asteroid*.py registers its LOD under the SAME name
+    # "Asteroid" (first LoadModel wins), so once Asteroidh1 has loaded,
+    # DamageableObject_Create("Asteroid") resolves to asteroidh1.NIF.
+    # Radii are the hardpoints' (ships/Hardpoints/asteroidh{1,2,3}.py).
+    from engine.rocks.rock import is_rock, effective_radius
+    for nif, radius in (("asteroidh1.NIF", 0.24), ("asteroidh2.NIF", 0.744),
+                        ("asteroidh3.NIF", 5.0)):
+        name = "HVariantProbe " + nif
+        lod = App.g_kLODModelManager.Create(name)
+        lod.AddLOD("data/Models/Misc/Asteroids/" + nif,
+                   10, 1000.0, 1.0, 1.0, 499, 500, None, None, None)
+        obj = App.DamageableObject_Create(name)
+        assert is_rock(obj), nif
+        assert abs(effective_radius(obj) - radius) < 0.05, nif

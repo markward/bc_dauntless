@@ -135,3 +135,19 @@ def test_js_has_a_sensor_occlusion_row_and_focusable():
     assert "_doToggleRow('Sensor Occlusion', 'sensor_occlusion'," in text
     assert "s.sensor_occlusion, isFoc('sensor_occlusion'));" in text
     assert "out.push({kind: 'ctrl', target: 'sensor_occlusion'});" in text
+
+
+def test_js_has_a_planet_atmosphere_row_and_focusable():
+    text = open(JS).read()
+    assert ("_doToggleRow('Planet Atmospheres (off = airless; applies to "
+            "planets realized after toggling)',\n"
+            "                         'planet_atmosphere', s.planet_atmosphere, "
+            "isFoc('planet_atmosphere'));") in text
+    assert "out.push({kind: 'ctrl', target: 'planet_atmosphere'});" in text
+
+
+def test_js_has_a_reload_atmospheres_action_row_and_focusable():
+    text = open(JS).read()
+    assert ("_doActionRow('Reload Planet Atmospheres', 'reload_atmospheres',\n"
+            "                         'Reload', isFoc('reload_atmospheres'));") in text
+    assert "out.push({kind: 'ctrl', target: 'reload_atmospheres'});" in text

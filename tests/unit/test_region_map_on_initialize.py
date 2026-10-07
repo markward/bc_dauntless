@@ -279,6 +279,46 @@ def test_mission_load_realize_raises_the_alarm_for_a_hand_built_set():
     assert region_hooks.unmapped_realized == ["Ona1"]
 
 
+def test_mission_load_realize_applies_planet_atmosphere(monkeypatch):
+    """Fix round 1, item 2 (planet-atmosphere spec §4): the mission-LOAD
+    realize path (_MissionLoader._realize_session's planet loop) must push
+    an atmosphere decision too, exactly like realize_set_objects and
+    _reconcile_celestial_instances. Mirrors
+    test_mission_load_realize_raises_the_alarm_for_a_hand_built_set's
+    _realize_session-driving harness, plus one planet with a NIF that
+    resolves in the shipped catalogue."""
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    from engine.planets import atmosphere as atmo
+    from tests.unit.test_realize_set import _FakeRenderer
+
+    atmo.clear_live()
+    monkeypatch.setattr(hl, "_planet_nif_path",
+                        lambda planet, **k: "x/PinkGasPlanet.nif")
+
+    _set_current_game(Game())  # a player-less game -- active_set() -> None
+    raw = SetClass_Create()
+    App.g_kSetManager.AddSet(raw, "Ona1")
+    App.g_kSetManager.MakeRenderedSet("Ona1")
+    planet = App.Planet_Create(90.0, "data/models/environment/PinkGasPlanet.nif")
+    raw.AddObjectToSet(planet, "Ona 1")
+
+    controller = hl.HostController()
+    controller.renderer = _FakeRenderer()
+    loader = hl._MissionLoader(controller, verbose=False)
+    try:
+        sess = loader._realize_session(hl.MissionSession(mission_name="t"))
+    finally:
+        App.g_kSetManager.ClearRenderedSet()
+
+    iid = sess.planet_instances[planet]
+    assert any(i == iid and params is not None
+              for i, params in controller.renderer.atmospheres)
+    (lp,) = [lp for lp in atmo.live() if lp.iid == iid]
+    assert lp.set_name == planet.GetContainingSetName() == "Ona1"
+    assert lp.obj_name == planet.GetName() == "Ona 1"
+
+
 def test_the_mapped_flag_has_one_spelling(monkeypatch):
     """apply_map marks the set through region_hooks, so the flag's attribute
     name lives in one place: renaming it there cannot desynchronise the
