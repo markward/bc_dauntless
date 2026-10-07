@@ -29,6 +29,10 @@
 # Project-authored renderer textures are ours, not BC content
 !native/assets/textures/*.tga
 *.tgl
+# Project-authored crew dialogue (tools/dialogue/dauntless_crew.json);
+# tests/tools/test_dauntless_dialogue_drift.py fails on any unlisted file
+!native/assets/replacements/data/TGL/Dauntless Crew.tgl
+!native/assets/replacements/sfx/**/*.wav
 *.max
 *.dlu
 *.dot

@@ -1643,6 +1643,11 @@ class CharacterAction(TGAction):
         # while _playing is True; Abort() gates its audio cut on both so it
         # never silences a channel it never actually acquired.
         self._speaking: bool = False
+        # Dialogue patches (engine/appc/dialogue_patches.py): the sequence of
+        # lines patched in after this one while it plays, and whether this
+        # play has already looked for them.
+        self._insert_seq = None
+        self._inserts_done: bool = False
         # Spoken lines are skippable by default (Backspace →
         # TGActionManager_SkipEvents), matching BC where dialogue lines skip
         # without the SDK marking each CharacterAction explicitly.
@@ -1672,6 +1677,8 @@ class CharacterAction(TGAction):
         # owns the channel from before). _do_play() sets it fresh once (if
         # ever) this play actually speaks.
         self._speaking = False
+        self._insert_seq = None
+        self._inserts_done = False
         at = self._action_type
         if at == self.AT_MOVE:
             # Movement (walk-on / sit-down) completes when the walk clip settles:
@@ -2123,7 +2130,57 @@ class CharacterAction(TGAction):
         self._speaking = dur > 0.0
         return dur
 
+    def Completed(self) -> None:
+        """A speak line with patched-in lines plays them before it completes,
+        so every step chained on it -- AppendAction or an explicit
+        AddAction(x, pAnchor) dependency -- waits for them
+        (engine/appc/dialogue_patches.py). Skip routes here too, so skipping
+        the anchor still plays the inserts; Abort never does."""
+        if self._insert_seq is not None:
+            return              # inserts still playing; they complete us
+        if (self._playing and not self._inserts_done
+                and self._action_type in (self.AT_SPEAK_LINE,
+                                          self.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                                          self.AT_SAY_LINE,
+                                          self.AT_SAY_LINE_AFTER_TURN)):
+            self._inserts_done = True
+            # The spec rule is "the anchor always completes": a raise out of
+            # the lookup or out of play_then (which calls TGSequence.Play(),
+            # itself arbitrary Python) must never leave this action playing
+            # forever and the mission stalled -- dev-log and fall through to
+            # the normal completion below instead.
+            try:
+                from engine.appc import dialogue_patches
+                inserts = dialogue_patches.insert_actions(self)
+                if inserts:
+                    self._insert_seq = dialogue_patches.play_then(
+                        inserts, self._inserts_finished)
+            except Exception as exc:
+                self._insert_seq = None
+                dev_mode.log_swallowed("dialogue patch inserts", exc)
+            else:
+                if self._insert_seq is not None:
+                    return
+        super().Completed()
+
+    def _inserts_finished(self) -> None:
+        self._insert_seq = None
+        if self._playing:
+            super().Completed()
+
     def Skip(self) -> None:
+        # Dialogue patches: our own line already finished and its inserts
+        # are mid-play (_insert_seq set by Completed()). A parent
+        # TGSequence.Skip() landing on us while that's true must cut the
+        # INSERT sequence, not our (long-finished) bus channel or turn-back
+        # -- both already ran when OUR line completed. Delegate to the
+        # insert sequence's own Skip(), which cuts whichever insert is
+        # currently speaking and finishes the sequence, and return without
+        # falling into the speak-line bus/turn-back logic below (that logic
+        # is for US still holding the channel, which we no longer are).
+        if self._insert_seq is not None:
+            self._insert_seq.Skip()
+            return
         # Our line is the one holding the crew-speech channel (single-channel
         # bus): cut its voice + subtitle before completing so the audio stops
         # with the action instead of playing out under the next line. Non-speak
@@ -2155,6 +2212,11 @@ class CharacterAction(TGAction):
         super().Skip()
 
     def Abort(self) -> None:
+        # Aborting an anchor whose patched-in lines are playing stops them;
+        # the anchor then never completes (dialogue_patches).
+        insert_seq, self._insert_seq = self._insert_seq, None
+        if insert_seq is not None:
+            insert_seq.Abort()
         # Aborting an in-flight line that is ACTUALLY SPEAKING must cut its
         # audio immediately -- otherwise a killed CharacterIntros sequence
         # (TGSequence.Abort() calling action.Abort() on the in-flight child)

@@ -232,6 +232,20 @@
 .ship-display__shield[data-integrity="critical"] { color: var(--bc-hull-critical); }
 .ship-display__shield[data-integrity="down"]     { opacity: 0; }
 
+/* SDK FlickerShields (Actions/ShipScriptActions.py) hides BC's ShieldsDisplay
+   TOP_PANE + BOTTOM_PANE for ~1 s as a "shields lowered for transport" cue.
+   TOP_PANE holds the TOP, FRONT, REAR, LEFT and RIGHT icons; BOTTOM_PANE holds
+   BOTTOM. `visibility` rather than opacity: BC's SetNotVisible is instant, and
+   the opacity transition above would soften the flicker. */
+.ship-display[data-shields-top-hidden="true"] .shield--top,
+.ship-display[data-shields-top-hidden="true"] .shield--front,
+.ship-display[data-shields-top-hidden="true"] .shield--rear,
+.ship-display[data-shields-top-hidden="true"] .shield--left,
+.ship-display[data-shields-top-hidden="true"] .shield--right,
+.ship-display[data-shields-bottom-hidden="true"] .shield--bottom {
+    visibility: hidden;
+}
+
 /* ── Damage icon overlay ───────────────────────────────────────────── */
 
 /* Overlay covers the silhouette stack; per-icon left/top use the

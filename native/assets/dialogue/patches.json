@@ -1,0 +1,34 @@
+{
+  "data/TGL/Maelstrom/Episode 1/E1M2.TGL": {
+    "insert_after": {
+      "E1M2TransferSupplies2": [
+        {
+          "speaker": "MiscEng/Soams",
+          "key": "E1M2TransferSupplies2a"
+        }
+      ],
+      "E1M2TransferSupplies3": [
+        {
+          "speaker": "MiscEng/Soams",
+          "key": "E1M2TransferSupplies3a"
+        },
+        {
+          "speaker": "bridge/XO",
+          "key": "E1M2TransferSupplies3b"
+        }
+      ],
+      "E1M2TransferSupplies4": [
+        {
+          "speaker": "bridge/Engineer",
+          "key": "E1M2TransferSupplies4a"
+        }
+      ]
+    },
+    "replace": {
+      "E1M2FirstHail6": {
+        "text": "With all that stellar debris, there’s a risk of hull damage... I recommend we go to red alert to power our shields and weapons.",
+        "sound": "sfx/Maelstrom/Episode 1/Mission 2/E1M2FirstHail6.wav"
+      }
+    }
+  }
+}

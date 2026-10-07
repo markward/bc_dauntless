@@ -140,15 +140,57 @@ def build_tgl_bytes(strings: dict, sounds: dict | None = None) -> bytes:
     """Inverse of _parse, for tests that need a real TGL on disk. Lives in
     this file so the two layouts cannot drift apart."""
     sounds = sounds or {}
-    keys = list(strings)
-    key_blob = b"".join(k.encode("ascii") + b"\x00" for k in keys)
-    val_blob = b"".join(strings[k].encode("utf-16-le") + b"\x00\x00" for k in keys)
-    file_blob = b"".join(sounds.get(k, "").encode("ascii") + b"\x00" for k in keys)
-    header = struct.pack(_HEADER_FMT, 0, 0, 0, len(keys), 0)
-    toc = b"".join(struct.pack("<3I", 0, 0, len(key_blob)) for _ in keys)
-    return (header + toc + key_blob
-            + struct.pack("<I", len(val_blob) // 2) + val_blob
-            + struct.pack("<I", len(file_blob)) + file_blob)
+    return write_tgl([(k, strings[k], sounds.get(k, "")) for k in strings])
+
+
+_MAGIC = 0x1701
+
+
+def read_entries(data: bytes) -> list[tuple[str, str, str]]:
+    """Every (key, value, filename) in TOC order, sliced by the TOC's own
+    offsets -- unlike _parse, which splits on NULs and drops empty
+    filenames. write_tgl(read_entries(data)) == data for BC's files."""
+    count = struct.unpack_from("<I", data, 12)[0]
+    toc = [struct.unpack_from("<3I", data, _HEADER_SIZE + i * _TOC_ENTRY_SIZE)
+           for i in range(count)]
+    keys_off = _HEADER_SIZE + count * _TOC_ENTRY_SIZE
+    keys_end = keys_off + (toc[-1][2] if toc else 0)
+    n_wchars = struct.unpack_from("<I", data, keys_end)[0]
+    values_off = keys_end + 4
+    values_end = values_off + n_wchars * 2
+    n_bytes = struct.unpack_from("<I", data, values_end)[0]
+    files_off = values_end + 4
+
+    def _cut(blob: bytes, nul: bytes) -> bytes:
+        return blob[:-len(nul)] if blob.endswith(nul) else blob
+
+    out = []
+    for i, (v0, f0, k1) in enumerate(toc):
+        k0 = toc[i - 1][2] if i else 0
+        v1 = toc[i + 1][0] if i + 1 < count else n_wchars
+        f1 = toc[i + 1][1] if i + 1 < count else n_bytes
+        key = _cut(data[keys_off + k0:keys_off + k1], b"\x00")
+        val = _cut(data[values_off + v0 * 2:values_off + v1 * 2], b"\x00\x00")
+        name = _cut(data[files_off + f0:files_off + f1], b"\x00")
+        out.append((key.decode("ascii"), val.decode("utf-16-le"),
+                    name.decode("ascii")))
+    return out
+
+
+def write_tgl(entries) -> bytes:
+    """A TGL with BC's own header and TOC, from (key, value, filename)
+    triples in order. An empty filename means a text-only line."""
+    toc, keys, vals, names = [], b"", b"", b""
+    for key, value, filename in entries:
+        v0, f0 = len(vals) // 2, len(names)
+        keys += key.encode("ascii") + b"\x00"
+        vals += value.encode("utf-16-le") + b"\x00\x00"
+        names += filename.encode("ascii") + b"\x00"
+        toc.append(struct.pack("<3I", v0, f0, len(keys)))
+    header = struct.pack(_HEADER_FMT, _MAGIC, 1, 0, len(toc), 0)
+    return (header + b"".join(toc) + keys
+            + struct.pack("<I", len(vals) // 2) + vals
+            + struct.pack("<I", len(names)) + names)
 
 
 def _split_ascii(blob: bytes) -> list[str]:

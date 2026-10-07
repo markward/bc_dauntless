@@ -15,6 +15,9 @@
 //     minimized:    bool,
 //     range_km:     float | null,     // target role only — already km
 //     speed_kph:    float | null,     // target role only
+//     shields_hidden: {top_pane: bool, bottom_pane: bool},
+//                                     // BC ShieldsDisplay panes hidden by
+//                                     // the SDK's FlickerShields (player only)
 //   }
 //
 // Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md
@@ -100,6 +103,13 @@
         root.dataset.affiliation = state.affiliation || "NONE";
         root.dataset.hull = bucketForHull(typeof state.hull_pct === "number" ? state.hull_pct : 1.0);
         root.dataset.minimized = state.minimized ? "true" : "false";
+
+        // BC's TOP_PANE holds the top/front/rear/left/right shield icons and
+        // BOTTOM_PANE the bottom one; the CSS hides the matching arcs. The
+        // silhouette is the panes' sibling, so it stays.
+        var hiddenPanes = state.shields_hidden || {};
+        root.dataset.shieldsTopHidden = hiddenPanes.top_pane ? "true" : "false";
+        root.dataset.shieldsBottomHidden = hiddenPanes.bottom_pane ? "true" : "false";
 
         var title = root.querySelector('[data-bind="title"]');
         if (title) {
