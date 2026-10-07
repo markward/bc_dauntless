@@ -19,12 +19,17 @@ MODEL_UNITS_PER_METRE = 1.0 / 1.75
 
 # Bounding radius (largest vertex distance from the model origin, BC model units)
 # of each stock asteroid mesh. Measured from the NIFs; tests/unit/test_rock_stock_radius.py
-# re-measures them. The h-variants and Amagon load these same files.
+# re-measures them. ships/Asteroidh1-3.py load their own files, asteroidh1-3.NIF:
+# separate paths, but the same meshes as asteroid1-3 (same size, vertex count
+# and bound), so the same radii.
 STOCK_RADIUS_MU: dict[str, float] = {
     "asteroid.nif": 75.779,
     "asteroid1.nif": 22.451,
     "asteroid2.nif": 65.624,
     "asteroid3.nif": 481.157,
+    "asteroidh1.nif": 22.451,
+    "asteroidh2.nif": 65.624,
+    "asteroidh3.nif": 481.157,
 }
 
 # paths-guard: match pattern for stock asteroid NIFs, not a built path

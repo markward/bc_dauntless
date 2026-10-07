@@ -52,6 +52,43 @@ class _SubviewBase:
 
 
 class _ShieldsSubview(_SubviewBase):
+    """Carries BC's pane tree (Tactical/Interface/ShieldsDisplay.py:Create)
+    so SDK scripts that reach into it work: Actions.ShipScriptActions.
+    FlickerShields hides TOP_PANE / BOTTOM_PANE while a crew beams through
+    lowered shields (E1M2, E6M2-4, E7M2, E7M6, E8M1-2). The panes draw
+    nothing themselves; the panel reads their visibility into the arcs."""
+
+    def __init__(self, parent: Optional["ShipDisplayPanel"]):
+        super().__init__(parent)
+        from engine.appc.tg_ui.widgets import TGPane
+        self._top_pane = TGPane()
+        self._bottom_pane = TGPane()
+        self._display_pane = TGPane()
+        # Child order is BC's: TOP_PANE 0, SHIP_ICON 1, BOTTOM_PANE 2.
+        self._display_pane.AddChild(self._top_pane)
+        self._display_pane.AddChild(TGPane())
+        self._display_pane.AddChild(self._bottom_pane)
+
+    def __getattr__(self, name):
+        # Class constants (DISPLAY_PANE, TOP_PANE, ...) are the measured
+        # App.ShieldsDisplay values, read at use.
+        if name.isupper():
+            import App
+            return getattr(App.ShieldsDisplay, name)
+        raise AttributeError(name)
+
+    def GetNthChild(self, n):
+        import App
+        return self._display_pane if n == App.ShieldsDisplay.DISPLAY_PANE else None
+
+    def hidden_faces(self) -> tuple[bool, ...]:
+        """Per shields_pct face (FRONT, REAR, TOP, BOTTOM, LEFT, RIGHT):
+        True where its pane is hidden. BOTTOM is the bottom pane's; the
+        other five icons live in the top pane."""
+        top = not self._top_pane.IsVisible()
+        bottom = not self._bottom_pane.IsVisible()
+        return (top, top, top, bottom, top, top)
+
     def UpdateForNewShip(self) -> None:
         self._invalidate()
 
@@ -223,7 +260,10 @@ class ShipDisplayPanel(Panel):
         affiliation  = _affiliation_for(ship, player)
         species_key  = _species_key_for(ship)
         hull_pct     = _hull_pct(ship)
-        shields_pct  = _shields_tuple(ship)
+        shields_pct  = tuple(
+            0.0 if hidden else pct
+            for pct, hidden in zip(_shields_tuple(ship),
+                                   self._shields.hidden_faces()))
         damage_icons_list = _damage_icon_descriptors(ship)
         # Frozen form for snapshot equality. Position2D / icon_num
         # don't change at runtime, so bucket state only — that's the

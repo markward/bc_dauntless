@@ -1499,31 +1499,24 @@ class SensorSubsystem(PoweredSubsystem):
         return 1 if (d is not None and r > 0.0 and d <= r) else 0
 
     def IsObjectVisible(self, obj) -> int:
-        """BC's IsObjectVisible (@0x005671D0), probes omitted. NOT the target
-        list's gate (that is sensor_detection.can_detect) — only SDK callers
-        that ask this directly use it. Order is BC's: power, absolute cloak,
-        same set, nebula jam, over-boost, range, (jam) , memory."""
+        """BC's IsObjectVisible (@0x005671D0): BC's same-set gate, then the
+        one rule, sensor_detection.can_detect -- which carries BC's power,
+        cloak, nebula-jam, over-boost, range and memory steps (probes:
+        sensor-model sub-project 4) plus our occlusion, nebula-core and
+        cloak-contest extensions. BC's target list and radar call this same
+        function (RE xrefs 0x00538D86, 0x005443D7), so the SDK's direct
+        callers and our list agree by construction
+        (2026-10-06-sensor-overboost-memory-design.md). The set gate stays
+        here because can_detect's range branch has none: cross-set torpedo
+        guidance hands it an offset distance."""
         ship = self._owner_ship()
         if ship is None or obj is None:
-            return 0
-        if self.GetSensorRange() <= 0.0:
-            return 0
-        from engine.appc.sensor_detection import is_hidden_by_cloak
-        if is_hidden_by_cloak(obj):
             return 0
         pset = ship.GetContainingSet()
         if pset is None or obj.GetContainingSet() is not pset:
             return 0
-        from engine.appc import contact_index
-        jammed = any(n.IsObjectInNebula(ship) or n.IsObjectInNebula(obj)
-                     for n in contact_index.nebulae_in(pset))
-        if not jammed and self.GetNormalPowerPercentage() > 1.2:
-            return 1
-        if self.IsObjectFar(obj):
-            return 1
-        if jammed:
-            return 0
-        return self.IsObjectKnown(obj)
+        from engine.appc.sensor_detection import can_detect
+        return 1 if can_detect(ship, obj) else 0
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):

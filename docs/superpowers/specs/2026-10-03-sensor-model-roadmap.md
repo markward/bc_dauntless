@@ -24,14 +24,15 @@ sensors but unidentified until scanned), and rocks and nebulae need a richer ans
 | The contact sweep runs every **1.0 s**, player ship only | RE'd | same, `HandlePeriodicScanEvent`, interval at 0x008E50F4 |
 | NEAR/FAR proximity events fire on entering AND leaving (bit at event+0x19) | RE'd | same |
 | `IsObjectVisible`: power gate → absolute cloak → same set → nebula jam (bool) → over-boost >1.2 sees all → `IsObjectFar` → probes → (if not jammed) `IsObjectKnown` | RE'd | same, @0x005671D0 |
+| `IsObjectVisible` returns visible when `+0x98` (NormalPowerPercentage) > 1.2 (`0x0089054c`) and neither ship is in a `CT_NEBULA`, before `IsObjectFar` | RE'd (raw disassembly, 2026-10-06) | compare @0x00567294–A5, early return 0x005672AB; see SP3 spec |
+| The target list (STTargetMenu `0x00538D86`), radar (`0x005443D7`), map window, AI target filter (`0x00489A14`), `IsValidTarget` (`0x005AE128`) and weapon target list (`0x005857FA`) call `IsObjectVisible`; no target-cycling key does | RE'd (xrefs, 2026-10-06) | SP3 spec |
 | `ForceObjectIdentified` immediate; `IdentifyObject` deferred; `ScanAllObjects` spaces actions by the identification time | RE'd | same |
 | Unknown colour is mid grey; E1M2 teaches "grey = unknown" | SDK | `LoadInterface.py:140`, `E1M2.py:4357` |
 | Proximity handlers read the ship from `GetSource()`; identify handlers from `GetDestination()` | SDK | E2M2:934, E2M6:910, E8M1:2232; HelmMenuHandlers:499, ScienceMenuHandlers:244 |
 | E8M1 uses FAR as "detected something in the nebula", before the Kessok is seen | SDK | `E8M1.py:2221-2269` |
 
-**Not recovered:** the "Unknown …" caption text (`ShowUnknownName` body unreconstructed);
-whether BC's *target list* follows `IsObjectVisible` (which keeps known contacts) or the
-far band. No tested-tier measurement of any of it exists (stbc-oracle bible silent; the
+**Not recovered:** the "Unknown …" caption text (`ShowUnknownName` body unreconstructed).
+*(Whether the target list follows `IsObjectVisible` was closed 2026-10-06: it does.)* No tested-tier measurement of any of it exists (stbc-oracle bible silent; the
 stbc-reference MCP was unreachable 2026-10-03).
 
 ## Standing decisions
@@ -39,10 +40,13 @@ stbc-reference MCP was unreachable 2026-10-03).
 1. **Two tiers, BC's way.** Detected = listed, grey, "Unknown N", restricted information.
    Identified = real name, `IsObjectKnown`, `ET_SENSORS_SHIP_IDENTIFIED`. Identification
    needs the near band plus a dwell, or a scan.
-2. **The list follows sensor range, as today.** Out of range ⇒ not listed, not targetable,
-   lock drops. *Mark's recollection of BC; the RE doc's `IsObjectVisible` keeps known
-   contacts, but nothing shows the list uses it.* Recorded gap. Memory lives only inside
-   `IsObjectVisible` for the SDK callers that ask it directly.
+2. ~~**The list follows sensor range, as today.**~~ **OVERTURNED 2026-10-06 (sub-project
+   3).** The RE xrefs show BC's target list (STTargetMenu `0x00538D86`), radar
+   (`0x005443D7`), AI target filter and `IsValidTarget` all call `IsObjectVisible`, whose
+   last step keeps a known contact when not nebula-jammed. Now: an identified contact
+   stays listed out of range unless jammed, cloaked, track-lost, out of the set, or the
+   observer's sensors are dead; sensors > 120% normal power see the whole set (Unknown).
+   Spec: `2026-10-06-sensor-overboost-memory-design.md`.
 3. **Identity survives leaving range.** Forgotten only when the ship leaves the set (the
    player leaving wipes everything) or after a lost track (decision 9).
 4. **Unknown contacts are labelled "Unknown 1", "Unknown 2", …** — a number held per
@@ -78,9 +82,9 @@ stbc-reference MCP was unreachable 2026-10-03).
 | # | Name | Depends on | Status |
 |---|---|---|---|
 | 1 | **Two tiers** — contact manager, bands, dwell, proximity events, Unknown display, `SensorSubsystem` surface | local main | ✅ merged b1e1e05a, live-verified — spec: `2026-10-03-sensor-tiers-design.md` |
-| 2 | **Continuity and occlusion** — 5 s window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1 (merged b1e1e05a), rock-fields (merged) | built, unmerged (feat/sensor-continuity) — spec: `2026-10-05-sensor-continuity-occlusion-design.md` |
-| later | **Probes** — BC lets a probe's sensors see for you (`AddProbe`, Science "Launch Probe", E6M4 goal) | 1 | explore after 2 |
-| later | **Over-boost** — BC reveals the whole set above 120% sensor power; decide whether the list shows it | 1 | explore after 2 |
+| 2 | **Continuity and occlusion** — 5 s window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1 (merged b1e1e05a), rock-fields (merged) | ✅ merged 0f3db1e7, live-verified 2026-10-06 — spec: `2026-10-05-sensor-continuity-occlusion-design.md` |
+| 3 | **Over-boost and sensor memory** — a reach step in `can_detect` (range ∨ boost > 1.2 ∨ known, the latter two unless nebula-jammed); `IsObjectVisible` delegates to `can_detect`; decision 2 overturned | 2 (merged 0f3db1e7) | ✅ merged to local main, live-verified 2026-10-07 — spec: `2026-10-06-sensor-overboost-memory-design.md` |
+| 4 | **Probes** — `Get/SetNumProbes` (stubbed today ⇒ unlimited probes), `AddProbe`, a probe branch in reach and the near/far bands (a probe identifies too: `IsObjectNear` walks probes), Science "Launch Probe" end to end, E6M4 goal (planet ProximityCheck) | 3 | next |
 
 ### Sub-project 2 notes, carried forward
 
