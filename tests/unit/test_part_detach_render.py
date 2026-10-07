@@ -60,6 +60,9 @@ class _FakeRenderer:
     def set_emissive_scale(self, iid, v):
         self.emissive[iid] = v
 
+    def set_instance_atmosphere(self, iid, params):
+        pass
+
 
 class _Ship:
     """Stands in for a ShipClass. Mirrors only the surface _spawn_chunk touches."""

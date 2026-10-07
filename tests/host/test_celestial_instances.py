@@ -34,6 +34,7 @@ class _FakeRenderer:
         self.pushed = {}
         self.visible = {}
         self.calls = []
+        self.atmospheres = []
 
     def load_model(self, path, search, texture_replacements=None, decals=None,
                    scale=1.0, geosphere=False):
@@ -77,6 +78,10 @@ class _FakeRenderer:
     def set_visible(self, iid, v):
         self.calls.append(("set_visible", iid))
         self.visible[iid] = v
+
+    def set_instance_atmosphere(self, iid, params):
+        self.calls.append(("set_instance_atmosphere", iid))
+        self.atmospheres.append((iid, params))
 
 
 @pytest.fixture(autouse=True)
@@ -137,12 +142,20 @@ def test_viewing_ona1_realizes_every_ona_body_at_its_view_position(ona):
 
     assert set(sess.celestial_instances) == {b.key for b in bodies}
     assert len(set(sess.celestial_instances.values())) == len(bodies)
+    atmo_iids = {iid for iid, _params in r.atmospheres}
     for b in bodies:
         iid = sess.celestial_instances[b.key]
         assert iid in r.live
         m = r.pushed[iid]
         assert _translation(m) == pytest.approx(b.position)
         assert _scale(m) == pytest.approx(b.radius_gu / _HALF)
+        assert iid in atmo_iids, "every map body gets an atmosphere decision"
+    from engine.planets import atmosphere as _atmo
+    live_by_iid = {lp.iid: lp for lp in _atmo.live()}
+    for b in bodies:
+        iid = sess.celestial_instances[b.key]
+        lp = live_by_iid[iid]
+        assert lp.set_name == b.key[1] and lp.obj_name == b.name
 
 
 def test_moving_the_view_to_a_sibling_repositions_without_recreating(ona):

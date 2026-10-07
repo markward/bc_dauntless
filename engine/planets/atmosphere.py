@@ -16,6 +16,34 @@ from dataclasses import dataclass
 _memo: dict = {}      # str(path) -> dict of raw entries
 _warned: set = set()  # (str(path), key) already reported
 
+# Live registry of every planet instance the current session has pushed an
+# atmosphere decision for (even a None/airless one is NOT recorded here --
+# see record_live callers in host_loop). Cleared on mission/set teardown and
+# by the test suite's autouse reset; read by dial pushes (Task 7) and tests.
+_live: list = []
+
+
+@dataclass(frozen=True)
+class LivePlanet:
+    iid: object
+    key: str | None
+    set_name: str
+    obj_name: str
+    nif_path: str
+
+
+def record_live(iid, key, set_name: str, obj_name: str, nif_path: str) -> None:
+    _live.append(LivePlanet(iid=iid, key=key, set_name=set_name,
+                            obj_name=obj_name, nif_path=nif_path))
+
+
+def live() -> tuple:
+    return tuple(_live)
+
+
+def clear_live() -> None:
+    _live.clear()
+
 _FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere"}
 
 STOCK_STEMS: tuple = (

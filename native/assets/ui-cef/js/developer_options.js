@@ -39,6 +39,8 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'rock_specks'});
         out.push({kind: 'ctrl', target: 'rock_puffs'});
         out.push({kind: 'ctrl', target: 'planet_geosphere'});
+        out.push({kind: 'ctrl', target: 'planet_atmosphere'});
+        out.push({kind: 'ctrl', target: 'reload_atmospheres'});
     }
     if (state.selected_tab === 'diagnostics') {
         out.push({kind: 'ctrl', target: 'profiler'});
@@ -174,6 +176,10 @@ function _doRenderEnvironmentsBody(state, focusables) {
     html += _doToggleRow('Rock Puffs', 'rock_puffs', s.rock_puffs, isFoc('rock_puffs'));
     html += _doToggleRow('Geosphere Planets (off = BC mesh; applies to planets realized after toggling)',
                          'planet_geosphere', s.planet_geosphere, isFoc('planet_geosphere'));
+    html += _doToggleRow('Planet Atmospheres (off = airless; applies to planets realized after toggling)',
+                         'planet_atmosphere', s.planet_atmosphere, isFoc('planet_atmosphere'));
+    html += _doActionRow('Reload Planet Atmospheres', 'reload_atmospheres',
+                         'Reload', isFoc('reload_atmospheres'));
     return html;
 }
 

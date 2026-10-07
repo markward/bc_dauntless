@@ -1582,6 +1582,16 @@ def _reset_leakable_engine_globals():
         from engine.planets import atmosphere as _planet_atmosphere
         _planet_atmosphere._memo.clear()
         _planet_atmosphere._warned.clear()
+        _planet_atmosphere._live.clear()
+    except Exception:
+        pass
+    # Planet atmosphere dev toggle (planet-atmosphere spec §4): the Developer
+    # Options "Planet Atmospheres" toggle is a process-lifetime module global
+    # a test can flip -- reset it so every later test's planet realize sees
+    # the default On.
+    try:
+        from engine import planet_atmosphere as _planet_atmosphere_toggle
+        _planet_atmosphere_toggle._enabled = True
     except Exception:
         pass
     # Dev dial groups (minor-rocks spec §5): a test that registers a group

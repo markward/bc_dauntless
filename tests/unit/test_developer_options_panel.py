@@ -130,6 +130,7 @@ def test_render_payload_shape(panel):
         "minor_rocks": True, "far_tier": True,
         "rock_specks": True, "rock_puffs": True,
         "planet_geosphere": True,
+        "planet_atmosphere": True,
     }
 
 
@@ -555,6 +556,69 @@ def test_planet_geosphere_ctrl_is_an_environments_tab_focusable(panel):
     p.open()
     p.dispatch_event("tab:environments")
     assert ("ctrl", "planet_geosphere") in p._focusables()
+
+
+# ---- Planet atmosphere toggle + reload action (Environments tab;
+# planet-atmosphere §4) ------------------------------------------------------
+
+def test_environments_tab_exposes_planet_atmosphere_row(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    payload = _body(p.render_payload())["settings"]
+    assert "planet_atmosphere" in payload
+
+
+def test_planet_atmosphere_toggle_flips_the_real_flag(panel):
+    """The panel must move the real engine.planet_atmosphere flag, not just
+    a local mirror -- mirrors test_planet_geosphere_toggle_flips_the_real_flag."""
+    from engine import planet_atmosphere
+
+    p, _ = panel
+    saved = planet_atmosphere.enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:environments")
+        p.dispatch_event("toggle:planet_atmosphere")
+        assert planet_atmosphere.enabled() is (not saved)
+        p.dispatch_event("toggle:planet_atmosphere")
+        assert planet_atmosphere.enabled() is saved
+    finally:
+        planet_atmosphere.set_enabled(saved)
+
+
+def test_planet_atmosphere_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "planet_atmosphere") in p._focusables()
+
+
+def test_reload_atmospheres_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "reload_atmospheres") in p._focusables()
+
+
+def test_reload_atmospheres_action_calls_catalogue_reload(panel, monkeypatch):
+    from engine.planets import atmosphere as atmo
+
+    calls = []
+    monkeypatch.setattr(atmo, "reload", lambda: calls.append(True))
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert p.dispatch_event("action:reload_atmospheres") is True
+    assert calls == [True]
+
+
+def test_reload_atmospheres_action_prints_to_stderr(panel, capsys):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    p.dispatch_event("action:reload_atmospheres")
+    assert "[atmosphere] catalogue reloaded" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("name", _ROCK_TOGGLES)

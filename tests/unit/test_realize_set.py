@@ -8,6 +8,7 @@ class _FakeRenderer:
     def __init__(self):
         self._next = 1
         self.live = set()
+        self.atmospheres = []
 
     def load_model(self, path, search, texture_replacements=None, decals=None,
                    scale=1.0, geosphere=False):
@@ -36,6 +37,9 @@ class _FakeRenderer:
 
     def set_surface_rock(self, iid, rock):
         pass
+
+    def set_instance_atmosphere(self, iid, params):
+        self.atmospheres.append((iid, params))
 
 
 def test_realize_then_teardown(monkeypatch):
@@ -77,6 +81,8 @@ def test_rerealize_after_departure_uses_the_current_radius(monkeypatch):
 
     hl.realize_set_objects(sess, s, r)
     scale_at_90 = sess.planet_natural_scale[planet]
+    first_iid = sess.planet_instances[planet]
+    assert any(iid == first_iid for iid, _params in r.atmospheres)
     hl.teardown_set_objects(sess, s, r)
     assert planet not in sess.planet_instances
 

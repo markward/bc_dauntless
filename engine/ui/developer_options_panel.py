@@ -24,6 +24,8 @@ from engine import renderer
 from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
 from engine import planet_geosphere
+from engine import planet_atmosphere
+from engine.planets import atmosphere as planet_atmosphere_catalogue
 
 
 def _minors_enabled() -> bool:
@@ -74,7 +76,7 @@ class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
     _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
-                                 "dial_group"})
+                                 "dial_group", "reload_atmospheres"})
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
     # (identical to disabled), 1 = as authored, 2/4 exaggerate for tuning.
@@ -104,6 +106,7 @@ class DeveloperOptionsPanel(Panel):
         self._normal_strength = 1.0
         self._rock_catalogue = rock_catalogue.enabled()
         self._planet_geosphere = planet_geosphere.enabled()
+        self._planet_atmosphere = planet_atmosphere.enabled()
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
@@ -140,6 +143,7 @@ class DeveloperOptionsPanel(Panel):
         self._rock_specks = _rock_specks_enabled()
         self._rock_puffs = _rock_puffs_enabled()
         self._planet_geosphere = planet_geosphere.enabled()
+        self._planet_atmosphere = planet_atmosphere.enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -167,7 +171,7 @@ class DeveloperOptionsPanel(Panel):
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs,
-            self._planet_geosphere,
+            self._planet_geosphere, self._planet_atmosphere,
         )
         if snapshot == self._last_pushed:
             return None
@@ -198,6 +202,7 @@ class DeveloperOptionsPanel(Panel):
                 "rock_specks": self._rock_specks,
                 "rock_puffs": self._rock_puffs,
                 "planet_geosphere": self._planet_geosphere,
+                "planet_atmosphere": self._planet_atmosphere,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -280,6 +285,10 @@ class DeveloperOptionsPanel(Panel):
             planet_geosphere.set_enabled(not self._planet_geosphere)
             self._planet_geosphere = not self._planet_geosphere
             return True
+        if action == "toggle:planet_atmosphere":
+            planet_atmosphere.set_enabled(not self._planet_atmosphere)
+            self._planet_atmosphere = not self._planet_atmosphere
+            return True
         if action == "toggle:minor_rocks":
             renderer.minors_set_enabled(not self._minor_rocks)
             self._minor_rocks = not self._minor_rocks
@@ -298,6 +307,15 @@ class DeveloperOptionsPanel(Panel):
             return True
         if action == "action:dial_group":
             self._dial_group = dev_dial_groups.cycle_active() or "nebula"
+            return True
+        if action == "action:reload_atmospheres":
+            # One-shot ACTION, not a toggle: no local flag, no render_payload
+            # entry (mirrors action:quick_repair / action:dial_group). Drops
+            # the catalogue memo + warning set so the NEXT read of
+            # atmospheres.json picks up edits made while the game is running.
+            import sys
+            planet_atmosphere_catalogue.reload()
+            print("[atmosphere] catalogue reloaded", file=sys.stderr)
             return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
@@ -337,7 +355,9 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "environments":
             out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),
-                    ("ctrl", "rock_puffs"), ("ctrl", "planet_geosphere")]
+                    ("ctrl", "rock_puffs"), ("ctrl", "planet_geosphere"),
+                    ("ctrl", "planet_atmosphere"),
+                    ("ctrl", "reload_atmospheres")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler"), ("ctrl", "dial_group")]
         return out

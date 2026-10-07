@@ -5312,6 +5312,28 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     return handle, extent, sphere_radius
 
 
+def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
+                             nif_path: str) -> None:
+    """Push this planet instance's atmosphere decision -- always called,
+    right after create_instance, by every realize path (mission load,
+    realize_set_objects, _reconcile_celestial_instances), so a toggle-off
+    realize explicitly pushes None rather than leaving the instance's
+    atmosphere state unset.
+
+    Read at USE: engine.planet_atmosphere's toggle and the catalogue
+    (engine.planets.atmosphere) both resolve now, not at import, so a dev
+    toggle flip or a catalogue reload applies to planets realized after."""
+    from engine import planet_atmosphere as _planet_atmosphere
+    from engine.planets import atmosphere as _atmosphere
+    if not _planet_atmosphere.enabled():
+        r_.set_instance_atmosphere(iid, None)
+        return
+    key = _atmosphere.resolve_key(set_name, obj_name, nif_path)
+    a = _atmosphere.resolve(set_name, obj_name, nif_path)
+    r_.set_instance_atmosphere(iid, a)
+    _atmosphere.record_live(iid, key, set_name, obj_name, nif_path)
+
+
 def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
     """`ship`'s script's `GetShipStats()` dict, or None on any fault (empty
     script, import failure, missing/non-callable GetShipStats, non-dict
@@ -6020,12 +6042,14 @@ class MissionSession:
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
+        from engine.planets import atmosphere as _atmosphere
         for iid in list(self.ship_instances.values()):
             renderer.destroy_instance(iid)
         for iid in list(self.planet_instances.values()):
             renderer.destroy_instance(iid)
         for iid in list(self.celestial_instances.values()):
             renderer.destroy_instance(iid)
+        _atmosphere.clear_live()
         self.celestial_instances.clear()
         self.celestial_placed.clear()
         self.celestial_scale.clear()
@@ -6291,6 +6315,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         # AABB corner, so the planet draws at exactly GetRadius() game units.
         natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = r_.create_instance(handle)
+        _apply_planet_atmosphere(r_, iid, pSet.GetName(), planet.GetName(),
+                                 nif_path)
         _apply_live_world_transform(r_, session, planet, iid, natural_scale)
         session.planet_instances[planet] = iid
         session.planet_natural_scale[planet] = natural_scale
@@ -6316,12 +6342,14 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
+    from engine.planets import atmosphere as _atmosphere
     for planet in list(_iter_planets_in_set(pSet)):
         iid = session.planet_instances.pop(planet, None)
         if iid is not None:
             renderer.destroy_instance(iid)
             session.planet_natural_scale.pop(planet, None)
             session.slot_bindings.pop(planet, None)
+    _atmosphere.clear_live()
 
 
 def _ensure_system_loaded(session) -> None:
@@ -6674,6 +6702,8 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
         # body draws at exactly radius_gu (as realize_set_objects' planets).
         scale = (body.radius_gu / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = renderer.create_instance(handle)
+        _apply_planet_atmosphere(renderer, iid, body.key[1], body.name,
+                                 body.model)
         instances[body.key] = iid
         session.celestial_scale[body.key] = scale
         renderer.set_world_transform(iid, _celestial_matrix(body, scale))
@@ -7460,6 +7490,8 @@ class _MissionLoader:
             # the AABB corner, so the planet draws at exactly GetRadius() GU.
             natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
             iid = r_.create_instance(handle)
+            _apply_planet_atmosphere(r_, iid, planet.GetContainingSetName(),
+                                     planet.GetName(), nif_path)
             _apply_live_world_transform(r_, sess, planet, iid, natural_scale)
             sess.planet_instances[planet] = iid
             sess.planet_natural_scale[planet] = natural_scale

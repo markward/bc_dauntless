@@ -44,8 +44,11 @@ def test_reset_sdk_globals_clears_state():
 
 
 def test_mission_session_teardown_drops_instances():
-    """teardown destroys every renderer instance the session created."""
+    """teardown destroys every renderer instance the session created, and
+    empties the planet-atmosphere live registry (planet-atmosphere spec
+    §4) -- a torn-down planet's live bookkeeping must not survive it."""
     from engine.host_loop import MissionSession
+    from engine.planets import atmosphere as atmo
 
     destroyed: list[int] = []
 
@@ -53,6 +56,7 @@ def test_mission_session_teardown_drops_instances():
         def destroy_instance(self, iid):
             destroyed.append(iid)
 
+    atmo.record_live(21, "planetA", "S", "N", "x.nif")
     sess = MissionSession(mission_name="x",
                           ship_instances={"shipA": 11, "shipB": 12},
                           planet_instances={"planetA": 21},
@@ -61,6 +65,7 @@ def test_mission_session_teardown_drops_instances():
     assert sorted(destroyed) == [11, 12, 21]
     assert sess.ship_instances == {}
     assert sess.planet_instances == {}
+    assert atmo.live() == ()
 
 
 def test_host_controller_swap_is_deferred():
