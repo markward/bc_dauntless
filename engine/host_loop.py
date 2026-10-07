@@ -4360,6 +4360,7 @@ def _reset_timers(keep=None) -> None:
     # matching skip-candidate registry so Backspace can't "skip" stale actions
     # from the prior mission.
     from engine.appc import actions as _appc_actions
+    _appc_actions.reset_launched_sequences(keep)
     if keep is None:
         _appc_actions.reset_deferred_playing()
     else:

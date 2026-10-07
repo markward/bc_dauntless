@@ -13,6 +13,7 @@ docs/superpowers/specs/2026-06-11-action-sequence-timing-design.md.
 """
 import re
 import sys
+import weakref
 from engine.appc.events import TGEventHandlerObject, TGEvent
 from engine.core.ids import get_object_by_id, register, unregister
 
@@ -36,6 +37,39 @@ _deferred_playing: "set[TGAction]" = set()
 
 def reset_deferred_playing() -> None:
     _deferred_playing.clear()
+
+
+# Every sequence that has been launched, weakly: a finished or aborted one
+# simply reads not-playing, and one nothing references any more drops out.
+# Read only by scripted_line_pending.
+_launched_sequences: "weakref.WeakSet[TGSequence]" = weakref.WeakSet()
+
+
+def reset_launched_sequences(keep=None) -> None:
+    """Forget launched sequences on mission swap, except ids in `keep`
+    (the objects a mission change carries over). A sequence the old mission
+    left playing would otherwise read as dialogue forever."""
+    for seq in list(_launched_sequences):
+        if keep is None or id(seq) not in keep:
+            _launched_sequences.discard(seq)
+
+
+def scripted_line_pending() -> bool:
+    """True while any playing sequence still has a speak line to come or in
+    progress, nested sequences included. Mission dialogue leaves gaps between
+    its lines (delays, camera moves); a line started in one is cut off by the
+    next scripted line (engine/appc/crew_hazard_prompts.py)."""
+    return any(seq._playing and seq._speech_left()
+               for seq in list(_launched_sequences))
+
+
+def _is_speech(action) -> bool:
+    from engine.appc.ai import CharacterAction
+    return (isinstance(action, CharacterAction)
+            and action.GetActionType() in (CharacterAction.AT_SPEAK_LINE,
+                                           CharacterAction.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                                           CharacterAction.AT_SAY_LINE,
+                                           CharacterAction.AT_SAY_LINE_AFTER_TURN))
 
 
 class TGAction(TGEventHandlerObject):
@@ -309,6 +343,26 @@ class TGSequence(TGAction):
     def GetNumActions(self) -> int:
         return len(self._steps)
 
+    def _speech_left(self) -> bool:
+        """Does a step not yet completed speak, or contain a line?"""
+        for step in self._steps:
+            action = step.action
+            if id(action) in self._completed_actions:
+                continue
+            if _is_speech(action):
+                return True
+            if isinstance(action, TGSequence) and (
+                    action._speech_left() if action._playing
+                    else action._contains_speech()):
+                return True
+        return False
+
+    def _contains_speech(self) -> bool:
+        return any(_is_speech(s.action)
+                   or (isinstance(s.action, TGSequence)
+                       and s.action._contains_speech())
+                   for s in self._steps)
+
     def GetAction(self, index: int) -> "TGAction | None":
         if 0 <= index < len(self._steps):
             return self._steps[index].action
@@ -329,6 +383,7 @@ class TGSequence(TGAction):
         # sequence is resolvable by id while it is playing, and invalid again
         # only once it completes. Idempotent for a first launch.
         register(self)
+        _launched_sequences.add(self)
         self._playing = True
         self._verb = verb
         self._completed_actions = set()

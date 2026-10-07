@@ -1364,6 +1364,7 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import actions as _appc_actions
         _appc_actions.reset_deferred_playing()
+        _appc_actions.reset_launched_sequences()
     except Exception:
         pass
     # UI singletons rebuilt per bridge load.

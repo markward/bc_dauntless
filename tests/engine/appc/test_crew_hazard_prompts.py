@@ -59,6 +59,16 @@ def test_leaving_below_half_threshold_re_arms_after_cooldown():
     assert h.step(0.5, shields_up=False, blocked=False, now=121.0) is True
 
 
+def test_a_dropped_prompt_waits_for_the_next_exposure():
+    h = _latch()
+    assert h.due(0.5, shields_up=False, blocked=False, now=0.0) is True
+    h.drop()
+    assert h.step(0.5, shields_up=False, blocked=False, now=1.0) is False
+    # leaving re-arms; a drop starts no cooldown, so re-entry prompts at once
+    assert h.step(0.0, shields_up=False, blocked=False, now=2.0) is False
+    assert h.step(0.5, shields_up=False, blocked=False, now=3.0) is True
+
+
 def test_lowering_shields_inside_reminds_again_after_cooldown():
     h = _latch()
     assert h.step(0.5, shields_up=False, blocked=False, now=0.0) is True
@@ -83,7 +93,7 @@ def world(monkeypatch):
     w = {
         "asteroids": 0.0, "radiation": 0.0, "shields_up": False,
         "mission": "", "cinematic": False, "travelling": False,
-        "busy": False,
+        "dialogue": False,
         "officers": {"Engineer": _Officer(), "Science": _Officer()},
     }
     monkeypatch.setattr(chp, "_levels", lambda p: (w["asteroids"], w["radiation"]))
@@ -91,7 +101,7 @@ def world(monkeypatch):
     monkeypatch.setattr(chp, "_mission_name", lambda: w["mission"])
     monkeypatch.setattr(chp, "_cinematic", lambda: w["cinematic"])
     monkeypatch.setattr(chp, "_travelling", lambda p: w["travelling"])
-    monkeypatch.setattr(chp, "_channel_busy", lambda: w["busy"])
+    monkeypatch.setattr(chp, "_dialogue_active", lambda: w["dialogue"])
     monkeypatch.setattr(chp, "_officer", lambda station: w["officers"].get(station))
     monkeypatch.setattr(chp, "_database", lambda: "DB")
     return w
@@ -165,14 +175,27 @@ def test_cinematic_travel_and_raised_shields_suppress(world, key):
     assert _spoken(world) == []
 
 
-def test_waits_for_a_free_speech_channel_without_losing_the_prompt(world):
+def test_dialogue_in_progress_drops_the_prompt_for_this_exposure(world):
     world["radiation"] = 0.5
-    world["busy"] = True
+    world["dialogue"] = True
     d = _driver()
     d.update(object(), now=0.0)
-    assert _spoken(world) == []
-    world["busy"] = False
+    world["dialogue"] = False
     d.update(object(), now=1.0)
+    d.update(object(), now=500.0)
+    assert _spoken(world) == []
+
+
+def test_a_dropped_prompt_returns_on_the_next_exposure(world):
+    world["radiation"] = 0.5
+    world["dialogue"] = True
+    d = _driver()
+    d.update(object(), now=0.0)
+    world["dialogue"] = False
+    world["radiation"] = 0.0
+    d.update(object(), now=1.0)
+    world["radiation"] = 0.5
+    d.update(object(), now=2.0)
     assert len(_spoken(world)) == 1
 
 
@@ -186,15 +209,16 @@ def test_polls_at_one_hertz(world):
     assert len(_spoken(world)) == 1
 
 
-def test_both_hazards_at_once_speak_one_line_per_poll(world):
+def test_both_hazards_at_once_speak_one_line(world):
     world["radiation"] = world["asteroids"] = 0.5
     d = _driver()
     d.update(object(), now=0.0)
     assert len(_spoken(world)) == 1
-    # the first line is still talking on the real bus; here the channel
-    # frees, so the second hazard's line follows on a later poll
+    # the first line is now dialogue in progress, so the other hazard's
+    # prompt is dropped rather than queued behind it
+    world["dialogue"] = True
     d.update(object(), now=1.0)
-    assert len(_spoken(world)) == 2
+    assert len(_spoken(world)) == 1
 
 
 def test_missing_speaker_falls_back_to_the_other_line(world):
@@ -292,11 +316,26 @@ def test_unmapped_space_reads_clear():
     assert chp._levels(make_shielded_ship()) == (0.0, 0.0)
 
 
-def test_channel_busy_follows_the_speech_bus():
+def test_silent_for_follows_the_speech_bus():
     from engine.appc import crew_speech
     crew_speech.bus().reset()
-    assert crew_speech.channel_busy(now=0.0) is False
-    crew_speech.bus().speak("Brex", "Raise shields.", None, 1, now=0.0)
-    assert crew_speech.channel_busy(now=0.5) is True
-    assert crew_speech.channel_busy(now=60.0) is False
+    assert crew_speech.silent_for(now=0.0) == float("inf")
+    duration = crew_speech.bus().speak("Brex", "Raise shields.", None, 1, now=0.0)
+    assert crew_speech.silent_for(now=0.5) < 0.0
+    assert crew_speech.silent_for(now=duration + 3.0) == pytest.approx(3.0)
     crew_speech.bus().reset()
+
+
+@pytest.mark.parametrize("silent,scripted,active", [
+    (float("inf"), False, False),
+    (5.0, False, False),
+    (4.9, False, True),
+    (-1.0, False, True),
+    (float("inf"), True, True),
+])
+def test_dialogue_active_is_a_scripted_line_or_recent_speech(
+        monkeypatch, silent, scripted, active):
+    from engine.appc import actions, crew_speech
+    monkeypatch.setattr(crew_speech, "silent_for", lambda now=None: silent)
+    monkeypatch.setattr(actions, "scripted_line_pending", lambda: scripted)
+    assert chp._dialogue_active() is active

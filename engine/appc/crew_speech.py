@@ -315,12 +315,15 @@ def bus() -> CrewSpeechBus:
     return _bus
 
 
-def channel_busy(now=None) -> bool:
-    """True while any crew line still holds the speech channel. A line
-    spoken now at equal priority would cut it off (see speak)."""
+def silent_for(now=None) -> float:
+    """Seconds since the last crew line ended: negative while one is still
+    talking, infinite if none has spoken since the bus was reset."""
     if now is None:
         now = time.monotonic()
-    return now < bus()._active_expiry
+    b = bus()
+    if b._active_expiry <= 0.0:
+        return float("inf")
+    return now - b._active_expiry
 
 
 def is_speaking(name, now=None) -> bool:

@@ -13,6 +13,11 @@ warping or dashing. One prompt per exposure: it re-arms once the level
 falls below half its threshold or the shields go up, and never sooner than
 COOLDOWN_S after the last prompt for that hazard.
 
+Never spoken over dialogue (Mark, 2026-10-07): if a scripted sequence still
+has a line to come, or any crew line ended less than QUIET_S ago, the prompt
+is DROPPED for this exposure -- not deferred. A line started in a gap of a
+mission conversation was cut off by the conversation's next line.
+
 Polled at POLL_S from host_loop on game time; reset on mission swap.
 """
 from __future__ import annotations
@@ -25,6 +30,7 @@ DATABASE = "data/TGL/Dauntless Crew.tgl"
 
 POLL_S = 1.0
 COOLDOWN_S = 120.0
+QUIET_S = 5.0
 
 # hazard -> (threshold, [(bridge-set object name, line key), ...]).
 # Object names are the stations (engine/bridge_officers.py): Brex is the
@@ -43,7 +49,8 @@ SKIP_MISSIONS = frozenset({"E3M2", "E3M4"})
 
 class HazardLatch:
     """When one hazard's prompt is due. `due` observes; `fire` commits, so a
-    prompt that could not be spoken stays pending."""
+    prompt with no one to speak it stays pending; `drop` gives up on it for
+    this exposure without starting the cooldown."""
 
     def __init__(self, threshold: float, cooldown_s: float = COOLDOWN_S):
         self.threshold = threshold
@@ -61,6 +68,9 @@ class HazardLatch:
     def fire(self, now) -> None:
         self._prompted = True
         self._last = now
+
+    def drop(self) -> None:
+        self._prompted = True
 
     def step(self, level, shields_up, blocked, now) -> bool:
         if self.due(level, shields_up, blocked, now):
@@ -92,8 +102,9 @@ class CrewHazardPrompts:
             latch = self._latches[hazard]
             if not latch.due(level, shields_up, blocked, now):
                 continue
-            if _channel_busy():
-                return   # still due next poll
+            if _dialogue_active():
+                latch.drop()
+                continue
             if self._speak(hazard):
                 latch.fire(now)
                 return   # one line per poll
@@ -147,9 +158,11 @@ def _travelling(player) -> bool:
     return bool(warp_state.is_ship_warping(player) or dash.is_dashing(player))
 
 
-def _channel_busy() -> bool:
-    from engine.appc import crew_speech
-    return crew_speech.channel_busy()
+def _dialogue_active() -> bool:
+    """A scripted line still to come, or crew speech within QUIET_S."""
+    from engine.appc import actions, crew_speech
+    return bool(actions.scripted_line_pending()
+                or crew_speech.silent_for() < QUIET_S)
 
 
 def _officer(station):

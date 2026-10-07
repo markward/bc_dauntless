@@ -62,9 +62,18 @@ would need only another TGL's text, not new recordings — unverified.
   lowering shields inside a field gets at most one reminder per 2 minutes.
 - Line chosen at random; if that officer is not on the bridge, the other
   line is used; if none is, the prompt stays pending.
-- `CSP_SPONTANEOUS` (BC's engineer-report priority), and it waits for a
-  free speech channel — an equal-priority line would cut the speaker off.
-  Mission lines can still cut it off.
+- `CSP_SPONTANEOUS` (BC's engineer-report priority).
+- **Never over dialogue** (Mark, 2026-10-07). If a scripted sequence still
+  has a line to come (`actions.scripted_line_pending`, nested sequences
+  included) or any crew line ended under 5 s ago (`crew_speech.silent_for`),
+  the prompt is **dropped** for this exposure, not deferred. Why: missions
+  play dialogue as sequences with gaps between lines (3,909 sequenced speak
+  actions vs 54 direct `SayLine` calls in Maelstrom), and a prompt started in
+  a gap was cut off by the next scripted line. Headless, E1M2 reads as
+  dialogue for its ~50 s opening and then clears; Quick Battle never does.
+  Launched sequences are forgotten on mission swap
+  (`actions.reset_launched_sequences`), so a sequence an old mission left
+  playing cannot block prompts forever.
 - Skipped: E3M2 and E3M4 (their scripts prompt for shields themselves:
   `E3M2ProdRaiseShields`, `E3M4ShouldRaiseShields`), cinematics, warp, dash.
 
