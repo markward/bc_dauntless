@@ -1021,7 +1021,8 @@ def set_instance_atmosphere(instance_id: InstanceId, params) -> None:
         _h.set_instance_atmosphere(instance_id, None)
         return
     _h.set_instance_atmosphere(instance_id, (tuple(params.color), tuple(params.sunset_color),
-                                             params.thickness, params.density, params.limb))
+                                             params.thickness, params.density, params.limb,
+                                             params.intensity))
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:

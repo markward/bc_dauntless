@@ -86,7 +86,8 @@ def clear_live_for_set(set_name: str) -> None:
     _live[:] = [lp for lp in _live
                 if not (lp.source == "set" and lp.set_name == set_name)]
 
-_FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere"}
+_FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere",
+           "intensity"}
 
 STOCK_STEMS: tuple = (
     "pinkgasplanet", "bluewhitegasplanet", "tangasplanet", "gasgiant",
@@ -107,6 +108,12 @@ class Atmosphere:
     thickness: float
     density: float
     limb: float
+    # Shell-halo brightness multiplier only (NOT the opaque.frag surface limb
+    # term, which has its own `limb` knob). The shader's in-scatter peaks at
+    # ~0.06 at the lit limb against a sun colour of ~1, far under the lit
+    # surface -- this covers the gap. Last field so existing positional
+    # 5-arg construction stays compatible.
+    intensity: float = 6.0
 
 
 def nif_stem(nif_path: str) -> str:
@@ -192,11 +199,13 @@ def parse_entry(key: str, entry: dict):
         raise ValueError(f"missing required field(s) {sorted(missing)}")
     color = srgb_hex_to_linear(entry["color"])
     sunset = srgb_hex_to_linear(entry["sunset_color"]) if "sunset_color" in entry else color
+    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 6.0
     return Atmosphere(
         color=color, sunset_color=sunset,
         thickness=_num(entry, "thickness", 0.0, 0.25, lo_open=True),
         density=_num(entry, "density", 0.0, 4.0),
         limb=_num(entry, "limb", 0.0, 4.0),
+        intensity=intensity,
     )
 
 

@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <vector>
 
@@ -267,16 +268,106 @@ TEST_F(AtmospherePassTest, ShaderMatchesCpuTwin) {
     const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
     const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
     const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, {1, 0, 0});
+    // atmo() leaves intensity at the struct default (6.0) -- the twin must
+    // multiply by the same factor the shader's u_intensity applies.
     const glm::vec3 expected =
         renderer::planet_atmo::in_scatter(shell, params, cam.eye, dir,
                                           std::numeric_limits<float>::infinity(), sun_dir)
-        * sun_color;
+        * sun_color * scenegraph::Instance::Atmosphere{}.intensity;
 
     ASSERT_GT(expected.r, 0.0f) << "twin pixel is outside the shell";
     for (int c = 0; c < 3; ++c) {
         EXPECT_NEAR(added[c], expected[c], 0.02f * expected[c])
             << "channel " << c << " gpu " << added[c] << " cpu " << expected[c];
     }
+}
+
+// The root-cause bug: the raw in-scatter peaks at ~0.06 against a sun colour
+// of ~1, roughly a sixth of the lit surface, so the halo vanishes after
+// tonemapping. The sun is placed ALONG the camera's view axis (rather than
+// off to the side, as LitLimbIsBrighterThanFarLimb does) so the disc centre
+// is itself directly lit and the limb ring is the brightest halo band --
+// giving a clean "lit surface" vs "halo" comparison on one frame.
+TEST_F(AtmospherePassTest, DefaultIntensityHaloIsVisible) {
+    auto geo = load_planet(true);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    scenegraph::World world;
+    auto iid = add(world, geo, scaled(kScale));
+    world.set_atmosphere(iid, atmo(true));   // default intensity == 6.0
+    scenegraph::Camera cam;
+    cam.eye = {0.0f, 0.0f, 9000.0f};
+    cam.target = {0.0f, 0.0f, 0.0f};
+    cam.aspect = 1.0f;
+    const auto lighting = sun_lighting({0, 0, 1}, glm::vec3(1.0f));
+    const auto suns = suns_at({0, 0, 1e6f});
+
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    draw_opaque(world, cam, lighting, hdr);
+    const auto before = read_rgba(hdr);
+    int first = 0, last = 0;
+    silhouette(before, first, last);
+    ASSERT_GT(first, 2);
+    ASSERT_LT(last, kSize - 3);
+    const float surface_centre = lum(before, kSize / 2, kSize / 2);
+    ASSERT_GT(surface_centre, 0.0f) << "disc centre was black -- sun/camera setup is wrong";
+
+    renderer::AtmospherePass pass;
+    draw_atmosphere(pass, world, cam, lighting, suns, hdr);
+    const auto after = read_rgba(hdr);
+
+    const int row = kSize / 2;
+    float peak = 0.0f;
+    for (int x = std::max(0, first - 4); x <= std::min(kSize - 1, last + 4); ++x) {
+        peak = std::max(peak, lum(after, x, row) - lum(before, x, row));
+    }
+
+    std::cerr << "[atmosphere] DefaultIntensityHaloIsVisible: halo peak=" << peak
+              << " lit-surface centre=" << surface_centre
+              << " ratio=" << (peak / surface_centre) << "\n";
+
+    EXPECT_GT(peak, 0.0f) << "no halo at all";
+    EXPECT_GE(peak, 0.25f * surface_centre)
+        << "halo peak " << peak << " is under 25% of the lit surface " << surface_centre;
+}
+
+// Two otherwise-identical draws differing only in `intensity`: the shell
+// pass's output must scale LINEARLY with it (it is a flat multiplier on the
+// final colour, applied before the clamp/NaN guard).
+TEST_F(AtmospherePassTest, IntensityScalesTheHaloLinearly) {
+    auto geo = load_planet(true);
+    ASSERT_TRUE(geo->sphere_map.has_value());
+    const auto cam = far_camera();
+    const auto lighting = sun_lighting({1, 0, 0}, glm::vec3(1.0f));
+    const auto suns = suns_at({1e6f, 0, 0});
+
+    auto measure = [&](float intensity) {
+        scenegraph::World world;
+        auto iid = add(world, geo, scaled(kScale));
+        auto a = atmo(true);
+        a.intensity = intensity;
+        world.set_atmosphere(iid, a);
+
+        renderer::HdrTarget hdr;
+        hdr.resize(kSize, kSize);
+        draw_opaque(world, cam, lighting, hdr);
+        const auto before = read_rgba(hdr);
+        int first = 0, last = 0;
+        silhouette(before, first, last);
+
+        renderer::AtmospherePass pass;
+        draw_atmosphere(pass, world, cam, lighting, suns, hdr);
+        const auto after = read_rgba(hdr);
+        const int hx = last + 1;
+        const int hy = kSize / 2;
+        return lum(after, hx, hy) - lum(before, hx, hy);
+    };
+
+    const float at2 = measure(2.0f);
+    const float at4 = measure(4.0f);
+    ASSERT_GT(at2, 0.0f);
+    EXPECT_NEAR(at4, 2.0f * at2, 0.02f * 2.0f * at2)
+        << "intensity 4 (" << at4 << ") is not 2x intensity 2 (" << at2 << ")";
 }
 
 TEST_F(AtmospherePassTest, NoNanAnywhereOutside) {
@@ -459,10 +550,13 @@ TEST_F(AtmospherePassTest, OccluderInsideTheShellEndsTheMarchAtItsDistance) {
     const glm::vec3 added = rgb(after, hx, hy) - rgb(before, hx, hy);
 
     const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, {1, 0, 0});
+    const float intensity = scenegraph::Instance::Atmosphere{}.intensity;
     const glm::vec3 expected =
-        renderer::planet_atmo::in_scatter(shell, params, cam.eye, dir, t_occ, sun_dir);
+        renderer::planet_atmo::in_scatter(shell, params, cam.eye, dir, t_occ, sun_dir)
+        * intensity;
     const glm::vec3 full = renderer::planet_atmo::in_scatter(
-        shell, params, cam.eye, dir, std::numeric_limits<float>::infinity(), sun_dir);
+        shell, params, cam.eye, dir, std::numeric_limits<float>::infinity(), sun_dir)
+        * intensity;
     ASSERT_GT(expected.r, 0.0f);
     ASSERT_LT(expected.r, 0.95f * full.r) << "occluder does not truncate the march";
     for (int c = 0; c < 3; ++c) {
@@ -511,6 +605,7 @@ TEST_F(AtmospherePassTest, DiscHazeIgnoresDepthQuantisationAtProductionPlanes) {
     const renderer::planet_atmo::Shell shell{center, r, r * (1.0f + kThickness)};
     const renderer::planet_atmo::Params params{glm::vec3(1.0f), kThickness, kDensity};
     const glm::vec3 sun_dir = renderer::planet_atmo::sun_dir_for(center, suns, sun_dir_ws);
+    const float intensity = scenegraph::Instance::Atmosphere{}.intensity;
     const int row = kSize / 2;
     int checked = 0, bad = 0;
     float worst = 0.0f;
@@ -519,7 +614,7 @@ TEST_F(AtmospherePassTest, DiscHazeIgnoresDepthQuantisationAtProductionPlanes) {
         const glm::vec3 added = rgb(after, x, row) - rgb(before, x, row);
         const glm::vec3 expected = renderer::planet_atmo::in_scatter(
             shell, params, cam.eye, pixel_ray(cam, x, row),
-            std::numeric_limits<float>::infinity(), sun_dir) * sun_color;
+            std::numeric_limits<float>::infinity(), sun_dir) * sun_color * intensity;
         if (!(expected.g > 0.0f)) continue;
         ++checked;
         const float err = std::abs(added.g - expected.g) / expected.g;

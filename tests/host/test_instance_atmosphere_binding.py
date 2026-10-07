@@ -4,9 +4,14 @@
 `scenegraph::Instance::Atmosphere` (`params=None`) or an enabled one built from
 an `engine.planets.atmosphere.Atmosphere`, on the native instance. The
 test-only `_h.atmosphere_debug(iid)` reads it back as
-`(color, sunset_color, thickness, density, limb)` or `None` when disabled —
-later tasks read `inst.atmosphere` straight off the renderer's own
+`(color, sunset_color, thickness, density, limb, intensity)` or `None` when
+disabled — later tasks read `inst.atmosphere` straight off the renderer's own
 `scenegraph::Instance`, so this binding only needs to prove the round trip.
+
+`intensity` (shell-halo brightness multiplier only, default 6.0) travels as an
+OPTIONAL 6th tuple element on the raw `_h.set_instance_atmosphere` call — a
+5-tuple (the pre-intensity shape) must still default to 6.0 so an older
+caller is unaffected.
 """
 import pytest
 
@@ -30,15 +35,54 @@ def test_set_instance_atmosphere_round_trips():
 
         r.set_instance_atmosphere(
             iid, Atmosphere((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0))
-        color, sunset, thickness, density, limb = r._h.atmosphere_debug(iid)
+        color, sunset, thickness, density, limb, intensity = r._h.atmosphere_debug(iid)
         assert color == pytest.approx((1.0, 0.5, 0.25))
         assert sunset == pytest.approx((0.9, 0.4, 0.2))
         assert thickness == pytest.approx(0.06)
         assert density == pytest.approx(1.4)
         assert limb == pytest.approx(1.0)
+        assert intensity == pytest.approx(6.0)   # Atmosphere's own default
 
         r.set_instance_atmosphere(iid, None)
         assert r._h.atmosphere_debug(iid) is None
+    finally:
+        r.destroy_instance(iid)
+
+
+def test_wrapper_passes_explicit_intensity():
+    from engine.planets.atmosphere import Atmosphere
+
+    iid = r.create_instance(0)
+    try:
+        r.set_instance_atmosphere(
+            iid, Atmosphere((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0,
+                            intensity=20.0))
+        *_, intensity = r._h.atmosphere_debug(iid)
+        assert intensity == pytest.approx(20.0)
+    finally:
+        r.destroy_instance(iid)
+
+
+def test_raw_binding_5_tuple_defaults_intensity_to_six():
+    """Backward compatibility: a caller built before `intensity` existed that
+    still hands the binding a bare 5-tuple must not regress."""
+    iid = r.create_instance(0)
+    try:
+        r._h.set_instance_atmosphere(
+            iid, ((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0))
+        *_, intensity = r._h.atmosphere_debug(iid)
+        assert intensity == pytest.approx(6.0)
+    finally:
+        r.destroy_instance(iid)
+
+
+def test_raw_binding_6_tuple_carries_intensity():
+    iid = r.create_instance(0)
+    try:
+        r._h.set_instance_atmosphere(
+            iid, ((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0, 33.0))
+        *_, intensity = r._h.atmosphere_debug(iid)
+        assert intensity == pytest.approx(33.0)
     finally:
         r.destroy_instance(iid)
 

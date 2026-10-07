@@ -10,6 +10,7 @@ uniform float u_r_planet;
 uniform float u_r_top;
 uniform vec3  u_color;       // linear
 uniform float u_density;
+uniform float u_intensity;   // shell-HALO brightness multiplier only
 uniform vec3  u_sun_dir;     // unit, toward the sun
 uniform vec3  u_sun_color;   // directional 0 colour (carries intensity)
 uniform sampler2D u_scene_depth;
@@ -106,7 +107,7 @@ void main() {
         acc += r * exp(-(t_mid + sun_tau(x))) * sigma() * ds;
         tau_view += dt;
     }
-    vec3 c = acc * phase(dot(dir, u_sun_dir)) * u_color * u_sun_color;
+    vec3 c = acc * phase(dot(dir, u_sun_dir)) * u_color * u_sun_color * u_intensity;
     // max/min rather than clamp: a NaN must never reach bloom.
     c = min(max(c, vec3(0.0)), vec3(65000.0));
     if (any(isnan(c))) c = vec3(0.0);

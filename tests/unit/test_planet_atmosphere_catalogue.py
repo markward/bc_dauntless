@@ -68,6 +68,8 @@ def test_missing_is_none(tmp_path, monkeypatch):
     {**GAS, "limb": -1.0},
     {**GAS, "color": "pink"},
     {**GAS, "surface": "gas"},                                               # unknown field
+    {**GAS, "intensity": -1.0},                                              # out of range
+    {**GAS, "intensity": 51.0},
 ])
 def test_malformed_entry_warns_once_and_is_none(tmp_path, monkeypatch, capsys, bad):
     _write(tmp_path, monkeypatch, {"pinkgasplanet": bad})
@@ -75,6 +77,16 @@ def test_malformed_entry_warns_once_and_is_none(tmp_path, monkeypatch, capsys, b
     assert atmo.resolve("S", "N", "x/PinkGasPlanet.nif") is None
     err = capsys.readouterr().err
     assert err.count("pinkgasplanet") == 1
+
+
+def test_parse_entry_default_intensity_is_six():
+    a = atmo.parse_entry("k", GAS)
+    assert a.intensity == pytest.approx(6.0)
+
+
+def test_parse_entry_explicit_intensity_is_parsed():
+    a = atmo.parse_entry("k", {**GAS, "intensity": 12.5})
+    assert a.intensity == pytest.approx(12.5)
 
 
 def test_parse_entry_missing_limb_raises_valueerror():
