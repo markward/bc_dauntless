@@ -114,3 +114,56 @@ def validate_shape(raw) -> list:
                     or not all(isinstance(v, str) for v in rep.values())):
                 errors.append("%s: replace %s needs 'text' and/or 'sound' strings" % (tgl, key))
     return errors
+
+
+# ── Insertion (called from CharacterAction.Completed, engine/appc/ai.py) ────
+
+def insert_actions(anchor) -> list:
+    """AT_SAY_LINE CharacterActions for the lines patched in after `anchor`,
+    in order. An insert whose speaker is absent or whose line is not in its
+    database is skipped (dev-logged). [] when nothing applies."""
+    db = getattr(anchor, "_database", None)
+    getter = getattr(db, "GetSourceFilename", None)
+    tgl = getter() if callable(getter) else ""
+    out = []
+    for ins in inserts_for(tgl, getattr(anchor, "_detail", None)):
+        try:
+            out.append(_build_insert(ins, db))
+        except Exception as exc:
+            dev_mode.log_swallowed("dialogue patch insert %s" % ins.get("key"), exc)
+    return out
+
+
+def _build_insert(ins, anchor_db):
+    import App
+    from engine.appc.ai import CharacterAction
+    from engine.appc.characters import CharacterClass_GetObjectStrict
+    set_name, obj_name = ins["speaker"].split("/", 1)
+    speaker = CharacterClass_GetObjectStrict(App.g_kSetManager.GetSet(set_name), obj_name)
+    if speaker is None:
+        raise LookupError("speaker %s is not present" % ins["speaker"])
+    db = App.g_kLocalizationManager.Load(ins["tgl"]) if ins.get("tgl") else anchor_db
+    if db is None or not db.HasString(ins["key"]):
+        raise LookupError("line %s is not in its database" % ins["key"])
+    # BC's own forms: bridge crew address the captain and turn; a viewscreen
+    # speaker (E1M2's Soams) does not.
+    addressee, flag = ("Captain", 1) if set_name == "bridge" else (None, 0)
+    return CharacterAction(speaker, CharacterAction.AT_SAY_LINE, ins["key"],
+                           addressee, flag, db)
+
+
+def play_then(actions, fn):
+    """Play `actions` in order, then call fn(). Returns the sequence, so the
+    caller can Abort() it (fn is then never called)."""
+    from engine.appc.actions import TGAction, TGSequence_Create
+
+    class _Then(TGAction):
+        def _do_play(self):
+            fn()
+
+    seq = TGSequence_Create()
+    for action in actions:
+        seq.AppendAction(action)
+    seq.AppendAction(_Then())
+    seq.Play()
+    return seq
