@@ -189,6 +189,7 @@ def _print_color_consumer_report() -> None:
 
 def main(n_ticks: int = _DEFAULT_TICKS, profile: bool = False, color_consumers: bool = False) -> None:
     _mh.setup_sdk()
+    _mh.install_emission_recorder()
     missions = _mh.discover_missions()
     if color_consumers:
         _App._color_consumer_tracker.enable()

@@ -4,7 +4,7 @@
 
 **Goal:** Make `App.ObjectEmitterProperty_Create` a real factory, give `ObjectEmitterProperty` real storage, and install a `LaunchObject` hook that resolves the right emitter, computes the world-frame transform, and records the event via a new `_emission_recorder` singleton. No real Shuttle/Probe/Decoy spawning.
 
-**Architecture:** Three layers — (1) real `ObjectEmitterProperty` data property plus factory and `Cast`, (2) `_EmissionRecorder` singleton on `App`, (3) `Actions.ShipScriptActions.LaunchObject` replaced by an engine wrapper that records instead of spawning. Hook installed once by `tools/mission_harness.setup_sdk()`.
+**Architecture:** Three layers — (1) real `ObjectEmitterProperty` data property plus factory and `Cast`, (2) `_EmissionRecorder` singleton on `App`, (3) `Actions.ShipScriptActions.LaunchObject` replaced by an engine wrapper that records instead of spawning. Hook installed once by `tools/mission_harness.setup_sdk()`. *(Corrected 2026-10-07: that leaked the recorder into the live host; it is now harness-only via `tools/mission_harness.install_emission_recorder()` — see the spec.)*
 
 **Tech Stack:** Python 3, pytest. SDK scripts run via `tools/mission_harness._SDKFinder`. Math primitives in `engine/appc/math.py`.
 

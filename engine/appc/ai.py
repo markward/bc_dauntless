@@ -1399,6 +1399,14 @@ class ProximityCheck(ObjectClass):
             return
         if not self._shares_set_with_anchor(obj):
             return
+        # An object pending SetDeleteMe(1) is gone for a check: the host only
+        # removes it once per rendered frame, after up to N sim ticks, and a
+        # level-triggered re-fire in between double-counts it (E6M5's
+        # ShuttleReachesPlanet). Read via __dict__, as
+        # host_loop._process_object_deletions does, so a _Stub never reads
+        # as a truthy flag.
+        if getattr(obj, "__dict__", {}).get("_delete_me", False):
+            return
         # Look up the per-object trigger type.
         trigger_type = None
         for o, t in self._check_objects:

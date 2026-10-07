@@ -357,3 +357,34 @@ def test_evaluate_event_destination_is_the_watched_object():
     finally:
         App.g_kEventManager.AddEvent = saved_add
     assert captured == [target]
+
+
+def test_evaluate_skips_an_object_pending_delete():
+    """Level triggering re-fires every evaluation while an object stays
+    inside, but a SetDeleteMe(1) object is only removed from its set once per
+    rendered frame (host_loop._process_object_deletions), after up to N sim
+    ticks. E6M5's ShuttleReachesPlanet (counter += 1; SetDeleteMe(1); never
+    removes the shuttle from the check) would count one shuttle twice. An
+    object pending delete is already gone as far as a check is concerned."""
+    pCheck = ProximityCheck(event_type=997)
+    pCheck.SetRadius(100.0)
+    anchor = ShipClass()
+    anchor.SetTranslateXYZ(0.0, 0.0, 0.0)
+    target = ShipClass()
+    target.SetTranslateXYZ(50.0, 0.0, 0.0)   # inside
+    _share_a_set(anchor, target)
+    pCheck.AddObjectToCheckList(target, ProximityCheck.TT_INSIDE)
+
+    fired = []
+    saved_add = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda evt: fired.append(evt.GetEventType())
+    try:
+        pCheck.Evaluate(anchor)
+        assert fired == [997]
+        target.SetDeleteMe(1)
+        pCheck.Evaluate(anchor)
+        pCheck.CheckProximity(target)
+    finally:
+        App.g_kEventManager.AddEvent = saved_add
+
+    assert fired == [997]

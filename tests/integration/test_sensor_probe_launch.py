@@ -8,11 +8,9 @@ Harness notes (Task 4, Step 1):
 - E6M4's player is a Sovereign (`CreatePlayerShip("Sovereign", ...)`) whose
   hardpoint carries an OEP_PROBE ObjectEmitterProperty ("Probe Launcher") and
   `SetMaxProbes(10)`; the count is seeded to 10 at load.
-- `engine/appc/emission.py`'s LaunchObject hook is installed only by
-  `tools/mission_harness.setup_sdk`. Some unit tests call that and leave the
-  hooked `Actions.ShipScriptActions` in `sys.modules`, so the fixture drops it
-  for the test's duration (restored after) and asserts the SDK's own
-  `LaunchObject` is the one that runs.
+- `engine/appc/emission.py`'s recording LaunchObject hook is harness-only
+  (`tools/mission_harness.install_emission_recorder`); the fixture asserts the
+  SDK's own `LaunchObject` is the one that runs, as production leaves it.
 - Headless, the Science menu's only ET_LAUNCH_PROBE handler is
   `Bridge.ScienceMenuHandlers.LaunchProbe` (Miguel's
   `ScienceCharacterHandlers.LaunchProbe` replaces it only in the live bridge,
@@ -20,8 +18,6 @@ Harness notes (Task 4, Step 1):
   ET_LAUNCH_PROBE to that menu through the event manager, which also runs the
   broadcast handlers (E6M4's `ProbeLaunched`) exactly as a click does.
 """
-import sys
-
 import App
 import MissionLib
 import pytest
@@ -55,12 +51,12 @@ def _press_launch_probe():
 
 
 @pytest.fixture
-def e6m4_player(monkeypatch):
-    monkeypatch.delitem(sys.modules, "Actions.ShipScriptActions", raising=False)
-    import Actions.ShipScriptActions as ssa
-    # The REAL SDK LaunchObject, not engine/appc/emission.py's recorder.
-    assert ssa.LaunchObject.__module__ == "Actions.ShipScriptActions"
+def e6m4_player():
     mission, episode, game, mod = headless_mission.load(E6M4)
+    import Actions.ShipScriptActions as ssa
+    # The REAL SDK LaunchObject, not engine/appc/emission.py's recorder --
+    # checked as the production path leaves it, with no sys.modules surgery.
+    assert ssa.LaunchObject.__module__ == "Actions.ShipScriptActions"
     player = MissionLib.GetPlayer()
     assert player is not None
     sensor_occlusion.set_enabled(False)
@@ -160,7 +156,7 @@ def _launch_in_tezle1(mod):
     return player, probes[0]
 
 
-def test_e6m4_registers_the_probe_and_reaches_tezle_1(e6m4_player):
+def test_e6m4_registers_the_probe_and_closes_on_tezle_1(e6m4_player):
     """Drive E6M4's own ProbeLaunched handler with a real launch in Tezle1.
 
     Only the REGISTRATION half can be proven inside the 300 s game-time
@@ -186,9 +182,8 @@ def test_e6m4_registers_the_probe_and_reaches_tezle_1(e6m4_player):
     planet = _tezle_1()
     start = _dist(probe, planet)
     closest = start
-    loop = headless_mission.GameLoop()
-    for _ in range(int(round(299.0 / headless_mission.TICK_DELTA))):
-        headless_mission._sim_tick(loop)
+    for _ in range(299):                     # 299 s of game time, 1 s steps
+        headless_mission.tick(1.0)
         closest = min(closest, _dist(probe, planet))
         if mod.g_bProbeReachedPlanet:
             break

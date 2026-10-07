@@ -70,6 +70,7 @@ class Planet(ObjectClass):
             self._attached.append(obj)
 
     def DetachObject(self, obj, *args) -> None:
+        super().DetachObject(obj, *args)
         if obj in self._attached:
             self._attached.remove(obj)
 
