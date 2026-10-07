@@ -1575,6 +1575,15 @@ def _reset_leakable_engine_globals():
         _planet_geosphere._enabled = True
     except Exception:
         pass
+    # Planet atmosphere (planet-atmosphere spec §3): a test that loads the
+    # catalogue from a temp path would otherwise leave the memoised result,
+    # causing later tests to read from that temp path instead of the real one.
+    try:
+        from engine.planets import atmosphere as _planet_atmosphere
+        _planet_atmosphere._memo.clear()
+        _planet_atmosphere._warned.clear()
+    except Exception:
+        pass
     # Dev dial groups (minor-rocks spec §5): a test that registers a group
     # would otherwise leave every later test's / L O acting on it.
     try:
