@@ -78,3 +78,26 @@ would need only another TGL's text, not new recordings — unverified.
   `E3M2ProdRaiseShields`, `E3M4ShouldRaiseShields`), cinematics, warp, dash.
 
 ⚠️ Not live-verified.
+
+## Dialogue patches — insert and replace lines in BC's missions
+
+Spec: `docs/superpowers/specs/2026-10-07-dialogue-patches-design.md`.
+Data: `native/assets/dialogue/patches.json` (read by the game at runtime,
+so it lives with the assets, not in `tools/`). Always applied.
+
+- **Insert:** `insert_after` under a TGL path lists lines to play after an
+  anchor line. The anchor `CharacterAction` plays them before it completes
+  (`CharacterAction.Completed` → `dialogue_patches.insert_actions`), so the
+  mission's following steps wait. Sequenced lines only, not direct
+  `SayLine` calls. Missing speaker or line: skipped, dev-logged.
+- **Replace:** `replace` entries override a key's text and/or sound when
+  the TGL loads (`TGLocalizationManager._build_database`), and can add a
+  key BC never had. A replacement voice mirrors BC's folder as `.wav` under
+  `native/assets/replacements/` so it never shadows BC's `.mp3`.
+- **Where files go:** a cut BC line needs only a `patches.json` entry; a
+  newly recorded line goes through `dauntless_crew.json` (text) +
+  `replacements/sfx/...` (voice) + an insert with `"tgl": "data/TGL/Dauntless Crew.tgl"`.
+- First use: E1M2's replicator exchange (`2a`, `3a` Soams; `3b` Saffi;
+  `4a` Brex), present in `E1M2.TGL` with voices but never scripted by BC.
+- Guards: `tests/tools/test_dialogue_patches_content.py` (every entry points
+  at real content), `tests/integration/test_e1m2_supply_transfer.py`.
