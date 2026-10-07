@@ -79,9 +79,9 @@ def test_malformed_entry_warns_once_and_is_none(tmp_path, monkeypatch, capsys, b
     assert err.count("pinkgasplanet") == 1
 
 
-def test_parse_entry_default_intensity_is_six():
+def test_parse_entry_default_intensity_is_twenty():
     a = atmo.parse_entry("k", GAS)
-    assert a.intensity == pytest.approx(6.0)
+    assert a.intensity == pytest.approx(20.0)
 
 
 def test_parse_entry_explicit_intensity_is_parsed():

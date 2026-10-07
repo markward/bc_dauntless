@@ -22,14 +22,14 @@ def test_current_reports_the_targets_entry():
     _setup()
     d = dials.current()
     assert d["thickness"] == 0.06 and d["density"] == 1.4
-    assert d["intensity"] == pytest.approx(6.0)
+    assert d["intensity"] == pytest.approx(20.0)
 
 
 def test_step_intensity_updates_and_clamps():
     pushes = _setup()
     dials.step("intensity", +1)
-    assert all(a.intensity == pytest.approx(6.5) for _, a in pushes)
-    assert atmo.resolve("Albirea3", "Albirea 3", "x/PinkGasPlanet.nif").intensity == pytest.approx(6.5)
+    assert all(a.intensity == pytest.approx(20.5) for _, a in pushes)
+    assert atmo.resolve("Albirea3", "Albirea 3", "x/PinkGasPlanet.nif").intensity == pytest.approx(20.5)
 
     for _ in range(200):
         dials.step("intensity", +1)

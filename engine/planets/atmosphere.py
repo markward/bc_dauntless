@@ -113,7 +113,7 @@ class Atmosphere:
     # ~0.06 at the lit limb against a sun colour of ~1, far under the lit
     # surface -- this covers the gap. Last field so existing positional
     # 5-arg construction stays compatible.
-    intensity: float = 6.0
+    intensity: float = 20.0
 
 
 def nif_stem(nif_path: str) -> str:
@@ -199,7 +199,7 @@ def parse_entry(key: str, entry: dict):
         raise ValueError(f"missing required field(s) {sorted(missing)}")
     color = srgb_hex_to_linear(entry["color"])
     sunset = srgb_hex_to_linear(entry["sunset_color"]) if "sunset_color" in entry else color
-    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 6.0
+    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 20.0
     return Atmosphere(
         color=color, sunset_color=sunset,
         thickness=_num(entry, "thickness", 0.0, 0.25, lo_open=True),
