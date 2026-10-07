@@ -4,17 +4,12 @@ import App
 import pytest
 
 from engine.appc import crew_speech, dialogue_patches as dp
-from engine.appc.actions import TGAction, TGSequence_Create
+from engine.appc.actions import TGSequence_Create
 from engine.appc.characters import CharacterClass_Create
 from engine.appc.localization import TGLocalizationDatabase
 from engine.appc.sets import SetClass
 
 TGL = "data/TGL/Test/Mission.tgl"
-
-
-class _Hold(TGAction):
-    def Play(self):
-        self._playing = True
 
 
 @pytest.fixture
@@ -104,16 +99,21 @@ def test_skipping_the_anchor_still_plays_the_inserts(world):
     assert world["spoken"] == ["Anchor", "Ins1", "After"]
 
 
-def test_aborting_before_the_anchor_finishes_plays_no_inserts(world):
+def test_aborting_while_the_anchor_speaks_plays_no_inserts(world):
+    # The spec rule is "an aborted anchor never starts its inserts" -- that
+    # only bites when the abort lands WHILE the anchor is mid-line (_playing,
+    # not yet Completed). Aborting before the anchor ever plays (e.g. a
+    # blocking predecessor) can't exercise it: the anchor's Completed() is
+    # never reached either way, patched or not.
     _patch(world, "Anchor", ("bridge/XO", "Ins1"))
-    hold = _Hold()
+    anchor = _line(world, "Anchor")
     seq = TGSequence_Create()
-    seq.AppendAction(hold)
-    seq.AppendAction(_line(world, "Anchor"))
+    seq.AppendAction(anchor)
+    seq.AppendAction(_line(world, "After"))
     seq.Play()
-    seq.Abort()
+    seq.Abort()                        # mid-line: anchor is still speaking
     _run()
-    assert world["spoken"] == []
+    assert world["spoken"] == ["Anchor"]
 
 
 def test_aborting_while_inserts_play_stops_them_and_the_anchor(world):
