@@ -166,6 +166,34 @@ def test_missing_create_ai_is_not_installed():
     assert oa.install(types.SimpleNamespace()) is False
 
 
+# ── Cross-test isolation (tests/conftest.py's autouse reset) ────────────────
+#
+# These two run in file order (pytest preserves definition order within a
+# file) and deliberately share no fixture: the first calls the real bootstrap
+# -- exactly what tests/unit/test_ai_sensor_gate.py's
+# test_bootstrap_installs_sensor_gate does -- with no teardown of its own,
+# wrapping the REAL AI.Player.OrbitPlanet.CreateAI. Before the conftest fix
+# this left the wrap in place for the rest of the pytest session; the second
+# test proves the autouse reset restores BC's original before it starts.
+
+def test_real_bootstrap_wraps_the_real_module_without_cleanup():
+    import AI.Player.OrbitPlanet as mod
+    from engine import host_loop
+    try:
+        host_loop._bootstrap_firing_pipeline()
+    except Exception:
+        pass
+    assert getattr(mod.CreateAI, "_dauntless_orbit_altitude_orig", None) is not None, \
+        "setup for the isolation test below did not actually wrap the real module"
+
+
+def test_conftest_resets_the_real_module_wrap():
+    import AI.Player.OrbitPlanet as mod
+    assert getattr(mod.CreateAI, "_dauntless_orbit_altitude_orig", None) is None, \
+        "AI.Player.OrbitPlanet.CreateAI is still wrapped from an earlier " \
+        "test's real bootstrap -- tests/conftest.py's autouse reset did not run"
+
+
 def test_bootstrap_installs_the_orbit_hook(monkeypatch):
     """The live host's firing-pipeline bootstrap (where the Helm handlers'
     SDK hooks go in) installs the wrap. Later bootstrap steps may need fuller

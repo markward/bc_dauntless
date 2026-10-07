@@ -995,6 +995,21 @@ def _reset_leakable_engine_globals():
     if _hl is not None:
         _hl._mapped_body_warned.clear()
         _hl._ship_decals_warned.clear()
+    # Player Helm "Orbit" altitude hook (engine.orbit_altitude): wraps the
+    # real SDK AI.Player.OrbitPlanet.CreateAI exactly once, guarded by a
+    # `_dauntless_orbit_altitude_orig` attribute on the wrapper -- installed
+    # by host_loop._bootstrap_firing_pipeline. A test that runs that
+    # bootstrap for real (not monkeypatched) wraps the real module and
+    # nothing else ever restores it, so every later test importing the
+    # module sees BC's original CreateAI replaced for the rest of the
+    # session. Only touch the module if it is already imported -- importing
+    # it here just to reset it would itself be a new leak.
+    _orbit_mod = sys.modules.get("AI.Player.OrbitPlanet")
+    if _orbit_mod is not None:
+        _orbit_orig = getattr(_orbit_mod.CreateAI,
+                               "_dauntless_orbit_altitude_orig", None)
+        if _orbit_orig is not None:
+            _orbit_mod.CreateAI = _orbit_orig
     try:
         import App
     except Exception:
