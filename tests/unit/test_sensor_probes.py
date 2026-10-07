@@ -255,3 +255,94 @@ def test_is_concealed_false_when_a_probe_sees_past_the_rock(occlusion_enabled):
         assert sensor_contacts.is_concealed(obs, far) is False
     finally:
         _set_current_game(None)
+
+
+# ── bands ───────────────────────────────────────────────────────────────────
+
+def test_bands_include_the_probes_bands():
+    s, obs, sensors = _observer_in_set(2000.0)
+    probe = _probe_at(s, sensors, 4000.0)
+    in_near = _ship_at(s, "near_probe", 4400.0)   # 400 from probe (< 500)
+    in_far = _ship_at(s, "far_probe", 4800.0)     # 800 from probe (< 1000)
+    out = _ship_at(s, "out", 6000.0)
+    assert (sensors.IsObjectNear(in_near), sensors.IsObjectFar(in_near)) == (1, 1)
+    assert (sensors.IsObjectNear(in_far), sensors.IsObjectFar(in_far)) == (0, 1)
+    assert (sensors.IsObjectNear(out), sensors.IsObjectFar(out)) == (0, 0)
+
+
+def test_probe_bands_need_the_probe_in_the_owners_set():
+    s, obs, sensors = _observer_in_set(2000.0)
+    other = SetClass()
+    tgt = ShipClass_Create("BirdOfPrey")
+    tgt.SetTranslateXYZ(4400.0, 0.0, 0.0)
+    other.AddObjectToSet(tgt, "elsewhere")
+    _probe_at(s, sensors, 4000.0)
+    assert sensors.IsObjectNear(tgt) == 0 and sensors.IsObjectFar(tgt) == 0
+
+
+# ── the player's sweep ──────────────────────────────────────────────────────
+
+def _player_world(base_range=2000.0):
+    from engine.core.game import Game, _set_current_game
+    s, player, sensors = _observer_in_set(base_range)
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
+    return s, player, sensors
+
+
+@pytest.fixture
+def _no_game():
+    yield
+    from engine.core.game import _set_current_game
+    _set_current_game(None)
+
+
+def test_sweep_identifies_a_contact_in_the_probes_near_band(_no_game):
+    from engine.appc import sensor_contacts
+    s, player, sensors = _player_world()
+    bird = _ship_at(s, "Bird", 4400.0)
+    _probe_at(s, sensors, 4000.0)
+    sensor_contacts.tick(player, 0.0)
+    assert sensors.IsObjectKnown(bird) == 0
+    for t in (1.0, 2.0, 3.0, 4.0, 5.0):
+        sensor_contacts.tick(player, t)
+    assert sensors.IsObjectKnown(bird) == 1
+
+
+def test_sweep_posts_far_and_near_via_probe(_no_game, monkeypatch):
+    from engine.appc import sensor_contacts
+    posted = []
+    monkeypatch.setattr(sensor_contacts, "_post",
+                        lambda et, obj, entered, sensors: posted.append((et, obj, entered)))
+    s, player, sensors = _player_world()
+    bird = _ship_at(s, "Bird", 4400.0)
+    _probe_at(s, sensors, 4000.0)
+    sensor_contacts.tick(player, 0.0)
+    assert (App.ET_SENSORS_SHIP_FAR_PROXIMITY, bird, True) in posted
+    assert (App.ET_SENSORS_SHIP_NEAR_PROXIMITY, bird, True) in posted
+
+
+def test_sweep_posts_nothing_via_probe_when_player_sensors_dead(_no_game, monkeypatch):
+    from engine.appc import sensor_contacts
+    posted = []
+    monkeypatch.setattr(sensor_contacts, "_post",
+                        lambda et, obj, entered, sensors: posted.append((et, obj, entered)))
+    s, player, sensors = _player_world()
+    bird = _ship_at(s, "Bird", 4400.0)
+    _probe_at(s, sensors, 4000.0)
+    sensors._condition = 10.0
+    sensor_contacts.tick(player, 0.0)
+    assert [p for p in posted if p[1] is bird] == []
+
+
+def test_continuity_runs_for_a_known_probe_reached_contact_behind_a_rock(_no_game, occlusion_enabled, monkeypatch):
+    from engine.appc import sensor_contacts
+    from tests.helpers.rocks import make_major_rock
+    monkeypatch.setattr(sensor_contacts, "_helm_exited_set", lambda obj: None)
+    s, player, sensors = _player_world()
+    bird = _ship_at(s, "Bird", 4500.0)
+    _probe_at(s, sensors, 4000.0)
+    # unknown to the player on purpose: memory cannot be why it is in reach
+    make_major_rock(s, "Rock", at=(4250.0, 0.0, 0.0), radius_gu=3.0)
+    assert sensor_contacts.is_concealed(player, bird) is True

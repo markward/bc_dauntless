@@ -1514,19 +1514,37 @@ class SensorSubsystem(PoweredSubsystem):
         tx, ty, tz = _get_xyz(obj)
         return ((tx - ox) ** 2 + (ty - oy) ** 2 + (tz - oz) ** 2) ** 0.5
 
-    def IsObjectNear(self, obj) -> int:
-        """Within near_fraction (BC: half) of sensor range. Pure distance."""
-        from engine.appc import sensor_dials
+    def _own_band(self, obj, fraction) -> bool:
+        """Owner-only band test: centre distance within *fraction* of this
+        subsystem's own effective range, same set."""
         d = self._band_distance(obj)
         r = self.GetSensorRange()
-        return 1 if (d is not None and r > 0.0
-                     and d <= r * sensor_dials.get("near_fraction")) else 0
+        return d is not None and r > 0.0 and d <= r * fraction
+
+    def _probe_band(self, obj, fraction) -> bool:
+        """Any live probe, in the owner's set, whose own band covers obj
+        (BC: IsObjectNear/IsObjectFar fall back to walking the probe list)."""
+        ship = self._owner_ship()
+        pset = ship.GetContainingSet() if ship is not None else None
+        if pset is None or obj is None or obj.GetContainingSet() is not pset:
+            return False
+        for probe in self.probes():
+            ps = probe.GetSensorSubsystem() if implements(probe, "GetSensorSubsystem") else None
+            if (ps is not None and probe.GetContainingSet() is pset
+                    and ps._own_band(obj, fraction)):
+                return True
+        return False
+
+    def IsObjectNear(self, obj) -> int:
+        """Within near_fraction (BC: half) of sensor range -- the owner's or
+        a live probe's own (sub-project 4). Pure distance."""
+        from engine.appc import sensor_dials
+        nf = sensor_dials.get("near_fraction")
+        return 1 if (self._own_band(obj, nf) or self._probe_band(obj, nf)) else 0
 
     def IsObjectFar(self, obj) -> int:
-        """Within full sensor range. Pure distance."""
-        d = self._band_distance(obj)
-        r = self.GetSensorRange()
-        return 1 if (d is not None and r > 0.0 and d <= r) else 0
+        """Within full sensor range -- the owner's or a live probe's own."""
+        return 1 if (self._own_band(obj, 1.0) or self._probe_band(obj, 1.0)) else 0
 
     def IsObjectVisible(self, obj) -> int:
         """BC's IsObjectVisible (@0x005671D0): BC's same-set gate, then the

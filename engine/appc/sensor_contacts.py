@@ -368,8 +368,10 @@ def _sync_player(player) -> None:
 
 def _in_near_band(player, obj) -> bool:
     from engine.appc.sensor_detection import effective_sensor_range
-    r = effective_sensor_range(player)
-    return r > 0.0 and _dist(player, obj) <= r * sensor_dials.get("near_fraction")
+    if effective_sensor_range(player) <= 0.0:
+        return False
+    sensors = player.GetSensorSubsystem()
+    return sensors is not None and bool(sensors.IsObjectNear(obj))
 
 
 def _scan_blocked(player, obj) -> bool:
@@ -406,13 +408,11 @@ def _commit_due(player, sensors, now_gt) -> None:
 
 def _sweep(player, sensors, now_gt) -> None:
     from engine.appc.sensor_detection import can_detect, effective_sensor_range
-    r = effective_sensor_range(player)
-    nf = sensor_dials.get("near_fraction")
+    alive = effective_sensor_range(player) > 0.0   # BC's sweep bails on dead sensors
     dwell = sensor_dials.get("identification_time_s")
     for obj in _contacts(player):
-        d = _dist(player, obj)
-        far = r > 0.0 and d <= r
-        near = r > 0.0 and d <= r * nf
+        far = alive and bool(sensors.IsObjectFar(obj))
+        near = alive and bool(sensors.IsObjectNear(obj))
         was_far, was_near = obj in _far, obj in _near
         if far and not was_far:
             _far.add(obj)
