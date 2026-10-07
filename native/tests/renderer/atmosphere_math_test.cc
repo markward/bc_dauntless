@@ -120,3 +120,31 @@ TEST(SunDir, NoSunsUsesFallback) {
     const glm::vec3 z = pa::sun_dir_for({0, 0, 0}, {}, {0, 0, 0});
     EXPECT_TRUE(std::isfinite(z.x) && glm::length(z) > 0.99f);
 }
+
+// At ~1e6 GU the naive discriminant b^2 - (|oc|^2 - r^2) subtracts two ~1e12
+// floats (ulp ~6e4) to get a ~1e5 result; the robust h = oc - b*d form keeps
+// the shell span within 1% of the halo band thickness of a double reference.
+TEST(AirSpan, FarCameraMatchesDoubleReference) {
+    const pa::Shell s{glm::vec3(0.0f), 1800.0f, 1908.0f};
+    const double band = s.r_top - s.r_planet;
+    const glm::dvec3 eye_d(0.0, 0.0, 1.0e6);
+    // Rays through the band at several impact heights (the halo pixels).
+    for (double h : {1810.0, 1830.0, 1854.0, 1880.0, 1900.0}) {
+        const glm::dvec3 dir_d = glm::normalize(glm::dvec3(h, 0.0, 0.0) - eye_d);
+        const glm::vec3 eye = glm::vec3(eye_d);
+        const glm::vec3 dir = glm::vec3(dir_d);
+        // Double reference along the SAME float ray, so only the solve differs.
+        const glm::dvec3 o(eye);
+        const glm::dvec3 d = glm::normalize(glm::dvec3(dir));
+        const double b = glm::dot(o, d);
+        const glm::dvec3 hv = o - b * d;
+        const double disc = double(s.r_top) * s.r_top - glm::dot(hv, hv);
+        ASSERT_GT(disc, 0.0);
+        const double t0 = -b - std::sqrt(disc);
+        const double t1 = -b + std::sqrt(disc);
+        const auto span = pa::air_span(s, eye, dir, kInf);
+        ASSERT_TRUE(span.hit) << "h " << h;
+        EXPECT_NEAR(span.t0, t0, 0.01 * band) << "h " << h;
+        EXPECT_NEAR(span.t1, t1, 0.01 * band) << "h " << h;
+    }
+}

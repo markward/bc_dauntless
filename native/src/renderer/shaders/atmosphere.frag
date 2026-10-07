@@ -22,12 +22,14 @@ const int   SUN_SAMPLES  = 6;
 const float OPAQUE_TAU   = 1.0e4;
 const float PI = 3.14159265;
 
-// Ray-sphere: returns (t_near, t_far); t_near > t_far means miss.
+// Ray-sphere: returns (t_near, t_far); t_near > t_far means miss. d is unit.
+// Robust form (r^2 - |oc - b*d|^2): the textbook b^2 - c cancels two ~1e12
+// floats at 1e6 GU. Same form as atmosphere_math.cc intersect_sphere.
 vec2 sphere(vec3 o, vec3 d, float r) {
     vec3 oc = o - u_center;
     float b = dot(oc, d);
-    float c = dot(oc, oc) - r * r;
-    float disc = b * b - c;
+    vec3 h = oc - b * d;
+    float disc = r * r - dot(h, h);
     if (disc <= 0.0) return vec2(1.0, -1.0);
     float s = sqrt(disc);
     return vec2(-b - s, -b + s);

@@ -28,6 +28,10 @@ float hg(float g, float c) {
 // far roots; `hit` is false when the discriminant is <= 0 (miss or exact
 // tangent, which the shell treats as a miss so the shader can mirror it
 // exactly with no epsilon tuning).
+//
+// Robust form: disc = r^2 - |oc - b*dir|^2 rather than b^2 - (|oc|^2 - r^2).
+// At ~1e6 GU the latter subtracts two ~1e12 floats (ulp ~6e4) and moves the
+// shell span by tens of GU; the perpendicular offset h stays planet-sized.
 struct SphereHit {
     bool hit = false;
     float t_near = 0.0f;
@@ -37,8 +41,8 @@ struct SphereHit {
 SphereHit intersect_sphere(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, float radius) {
     const glm::vec3 oc = origin - center;
     const float b = glm::dot(oc, dir);
-    const float c = glm::dot(oc, oc) - radius * radius;
-    const float disc = b * b - c;
+    const glm::vec3 h = oc - b * dir;
+    const float disc = radius * radius - glm::dot(h, h);
     if (disc <= 0.0f) return {};
     const float sq = std::sqrt(disc);
     SphereHit out;
