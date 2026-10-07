@@ -122,8 +122,10 @@ def test_ai_ship_avoids_stationary_obstacle_ahead():
 
 def test_ai_ship_avoids_ship_charging_head_on():
     """User's explicit scenario: another ship heading straight at them.
-    The closing ship is advanced manually so the head-on closing speed is
-    higher than a stationary obstacle; the AI ship must still steer clear."""
+    The closing ship has no AI/setpoints either, so it flies purely on its
+    scripted SetVelocity through the drift integrator (engine.appc.drift) —
+    the same path a real setpoint-less charger (no AI) would take; the AI
+    ship must still steer clear."""
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
 
@@ -144,10 +146,9 @@ def test_ai_ship_avoids_ship_charging_head_on():
     closest = 1e18
     dt = 1.0 / 60.0
     for _ in range(2400):
-        # Charger flies straight at the attacker on rails.
-        p = charger.GetWorldLocation()
-        charger.SetWorldLocation(TGPoint3(p.x, p.y - charger_speed * dt, p.z))
-        charger.SetVelocity(TGPoint3(0, -charger_speed, 0))
+        # Charger flies straight at the attacker on rails -- via its own
+        # scripted velocity, integrated by tick_all_ship_motion's drift
+        # fallback, not a second manual move.
         tick_collision_avoidance()
         tick_all_ship_motion(dt)
         d = (charger.GetWorldLocation() - attacker.GetWorldLocation()).Length()
@@ -163,7 +164,11 @@ def test_stationary_ai_ship_thrusts_clear_of_charging_ship():
     """Regression: a parked AI ship (no forward impulse commanded) charged
     by another ship must ENGAGE ENGINES and move clear, not just pivot in
     place. Avoidance has to command thrust itself — it can't rely on a
-    pre-existing speed setpoint, which in combat is often ~0."""
+    pre-existing speed setpoint, which in combat is often ~0.
+
+    The charger itself has no AI/setpoints either, so it flies purely on
+    its scripted SetVelocity through the drift integrator
+    (engine.appc.drift), not a second manual SetWorldLocation step."""
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
 
@@ -177,15 +182,13 @@ def test_stationary_ai_ship_thrusts_clear_of_charging_ship():
 
     charger = _make_obstacle(pSet, 0, 160, 0, "Charger", radius=20.0)
     charger_speed = 8.0
+    charger.SetVelocity(TGPoint3(0, -charger_speed, 0))
     sum_r = attacker.GetRadius() + charger.GetRadius()
 
     start = attacker.GetWorldLocation()
     closest = 1e18
     dt = 1.0 / 60.0
     for _ in range(2400):
-        p = charger.GetWorldLocation()
-        charger.SetWorldLocation(TGPoint3(p.x, p.y - charger_speed * dt, p.z))
-        charger.SetVelocity(TGPoint3(0, -charger_speed, 0))
         tick_collision_avoidance()
         tick_all_ship_motion(dt)
         d = (charger.GetWorldLocation() - attacker.GetWorldLocation()).Length()

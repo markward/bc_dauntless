@@ -294,7 +294,14 @@ def end_ai_warp(ship, flight) -> None:
 
 def _finish(ship, flight, reason, system_xyz, direction) -> None:
     """End the flight at ``system_xyz`` travelling along ``direction`` and
-    apply its exit policy."""
+    apply its exit policy.
+
+    ``_end_in_system_warp`` unconditionally zeroes `_velocity` (round 2: a
+    setpoint-less ship must never keep drifting at warp speed once the
+    transit that was driving it ends) -- so the exit-policy velocity is
+    deliberately set AFTER calling it, re-seeding on purpose, not racing it.
+    ``speed`` for "keep_pre_warp" reads `ship._current_speed`, a different
+    attribute, unaffected by that zero."""
     if flight.exit_policy == "rest":
         speed = 0.0
         ship._current_speed = 0.0
@@ -303,10 +310,10 @@ def _finish(ship, flight, reason, system_xyz, direction) -> None:
         ship._current_speed = speed
     else:                                   # keep_pre_warp
         speed = ship._current_speed
-    ship.SetVelocity(TGPoint3(direction[0] * speed, direction[1] * speed,
-                              direction[2] * speed))
     flight.drop_point = tuple(system_xyz)
     ship._end_in_system_warp(reason)
+    ship.SetVelocity(TGPoint3(direction[0] * speed, direction[1] * speed,
+                              direction[2] * speed))
     if flight.speed_policy == "ai":
         # One warp per StopInSystemWarp cycle (Intercept's contract).
         ship._warp_consumed = True
@@ -465,8 +472,12 @@ def _straight_at_target(ship, flight, dt, p, t, drop, v_t=_ZERO) -> None:
     dx, dy, dz = t[0] - p[0], t[1] - p[1], t[2] - p[2]
     d = (dx * dx + dy * dy + dz * dz) ** 0.5
     if d <= max(drop, 1e-9):
-        # Already on the drop edge: end without touching the velocity, as
-        # the old integrator did.
+        # Already on the drop edge on the very first tick of the flight:
+        # the old integrator ended here without touching the velocity.
+        # Round 2: _end_in_system_warp now zeroes `_velocity` on every
+        # ending reason (nothing re-seeds it after this one), so a
+        # setpoint-less ship stops here instead of coasting on whatever it
+        # last published.
         flight.drop_point = to_system(ship, p)
         ship._end_in_system_warp("arrived")
         ship._warp_consumed = True

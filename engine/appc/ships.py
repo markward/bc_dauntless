@@ -824,6 +824,16 @@ class ShipClass(DamageableObject):
 
         Callers own `_warp_consumed`: StopInSystemWarp drops it so a fresh
         warp can fire, arrival sets it so boundary drift cannot re-warp.
+
+        Zeroes `_velocity` for EVERY ending reason (abort, stop, arrival):
+        warp_flight.step published the flight's cruise velocity via
+        SetVelocity purely for telemetry (camera smear, speed readouts), and
+        a setpoint-less ship (no AI) has nothing else to overwrite it next
+        tick — engine.appc.drift would otherwise keep flying it at warp
+        speed forever once the transit that was driving it stops. A caller
+        that wants a specific exit speed (warp_flight._finish's exit_policy;
+        dash.py's "body" drop-out keeping engaged impulse speed) re-seeds
+        `_velocity` itself immediately AFTER calling this — never before.
         """
         flight = self._insystem_warp_transit
         if flight is None:
@@ -831,6 +841,7 @@ class ShipClass(DamageableObject):
         if getattr(flight, "ended_reason", "") is None:
             flight.ended_reason = reason
         self._insystem_warp_transit = None
+        self.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
         from engine.appc import warp_flight
         warp_flight.end_ai_warp(self, flight)   # "ai" flights only
         self._post_in_system_warp(False)
