@@ -49,3 +49,19 @@ def test_every_replacement_sound_exists_and_new_keys_are_complete():
                 assert paths.game_asset(rep["sound"]).is_file(), (tgl, key, rep["sound"])
             if key not in strings:
                 assert set(rep) == {"text", "sound"}, (tgl, key)
+
+
+def test_every_replacement_takes_effect_through_the_real_loader():
+    """Load each patched TGL the way a mission does and check every
+    `replace` entry reached the database."""
+    from engine.appc.localization import TGLocalizationManager
+    for tgl, entry in _raw().items():
+        if not entry.get("replace"):
+            continue
+        _strings(tgl)
+        db = TGLocalizationManager().Load(tgl)
+        for key, rep in entry["replace"].items():
+            if "text" in rep:
+                assert db.GetString(key) == rep["text"], (tgl, key)
+            if "sound" in rep:
+                assert db.GetFilename(key) == rep["sound"], (tgl, key)
