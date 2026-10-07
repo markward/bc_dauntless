@@ -1,7 +1,11 @@
 """E1M2's Haven/Vesuvi6 Facility station has no AI -- AsteroidHitStation
 sends it toward the planet with a bare `pStation.SetVelocity`
 (E1M2.py ~3248). Without engine.appc.drift it reports a nonzero velocity
-but never actually moves (the same bug as the probe launch / E8M2 Matan).
+but never actually moves (the same bug as the probe launch). NOT the same
+fix as E8M2's Matan: Matan already has an AI installed when its script
+fires SetVelocity, so it takes the ramp path instead of this drift path
+and its scripted velocity is still ignored -- see the "known gap"
+paragraph in engine/appc/ship_motion.py's module docstring.
 """
 from tests.integration.test_e1m2_asteroid_crash import _init_e1m2
 

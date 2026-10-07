@@ -1,13 +1,18 @@
 """Unit tests: ships with no AI/helm setpoints drift on a scripted
 SetVelocity / SetAngularVelocity, mirroring rocks.motion.step.
 
-The SDK only ever calls SetVelocity/SetAngularVelocity on these objects
-(ShipScriptActions.PushObject's launched probe, E1M2's falling Haven
-station, E8M2's spinning Matan) -- the shim just stores the value, so
-without this integration step they never move. Exception: the current
-player under manual control has no setpoints either, but host_loop's
-_PlayerControl drives and moves it directly -- this integrator must not
-also move it.
+The SDK calls SetVelocity/SetAngularVelocity with no AI and no setpoints on
+these objects (ShipScriptActions.PushObject's launched probe, E1M2's
+falling Haven station) -- the shim just stores the value, so without this
+integration step they never move. Exception: the current player under
+manual control has no setpoints either, but host_loop's _PlayerControl
+drives and moves it directly -- this integrator must not also move it.
+
+NOT fixed by this module: E8M2's spinning Matan (and E7M2's JonKa, E8M1's
+Galor, E2M1's Karoon) already have an AI installed when their script fires
+a bare SetVelocity/SetAngularVelocity, so they take the ramp path instead
+of this drift path and their scripted velocity is still silently ignored
+-- see engine/appc/ship_motion.py's module docstring "known gap" paragraph.
 """
 import math
 
@@ -46,8 +51,10 @@ def teardown_module(_):
 
 
 def test_setpointless_ship_drifts_on_scripted_velocity():
-    """A non-player ShipClass with no AI, given a bare SetVelocity (the
-    probe-launch / station / Matan pattern), moves by v * dt each tick."""
+    """A non-player ShipClass with no AI and no setpoints, given a bare
+    SetVelocity (the probe-launch / E1M2 station pattern -- NOT the Matan
+    pattern, which already has an AI with setpoints; see the module
+    docstring), moves by v * dt each tick."""
     ship = ShipClass()
     _place(ship)
     ship.SetTranslateXYZ(0.0, 0.0, 0.0)
@@ -62,7 +69,9 @@ def test_setpointless_ship_drifts_on_scripted_velocity():
 
 def test_setpointless_ship_spins_on_scripted_angular_velocity_model_space():
     """SetAngularVelocity(..., DIRECTION_MODEL_SPACE) on a setpoint-less
-    ship rotates it about its own body axis (E8M2's Matan)."""
+    ship rotates it about its own body axis -- the convention E8M2 uses
+    for the disabled Matan, though Matan itself has an AI with setpoints
+    and so never reaches this drift path (module docstring "known gap")."""
     ship = ShipClass()
     _place(ship)
     # Pitch the ship 90 deg about world X, so body-Z points along world -Y.

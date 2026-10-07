@@ -248,6 +248,69 @@ def test_manual_takeover_aborts_in_system_warp_transit():
     assert player.IsDoingInSystemWarp() == 0
 
 
+def test_manual_takeover_mid_warp_resumes_at_full_impulse():
+    """Mark's ruling: taking the helm mid in-system-warp resumes at FULL
+    IMPULSE — the live max-impulse speed — not at 0 (what
+    _end_in_system_warp's unconditional zero leaves behind) and not at the
+    warp's own cruise speed (the pre-fix bug: the warp speed carried
+    straight into manual flight)."""
+    pc = _PlayerControl()
+    player = _player_with_ies()
+    target = ShipClass()
+    target.SetTranslateXYZ(0.0, 5000.0, 0.0)
+    player.SetAI(object())
+    pc.apply(player, _DT, _Host())
+    assert player.InSystemWarp(target, 295.0) == 1   # facing +Y, engages
+
+    # Advance the warp one tick so the ship is genuinely mid-transit, flying
+    # at the fixed in-system-warp cruise speed, not at rest.
+    _step_ship_motion(player, _DT)
+    warp_speed = player.GetVelocity().y
+    assert warp_speed > 50.0, "sanity: the ship must really be warping"
+
+    h = _Host()
+    h._pressed.add(h.keys.KEY_5)                     # manual takeover
+    pc.apply(player, _DT, h)
+
+    assert player.GetAI() is None
+    assert player._insystem_warp_transit is None
+
+    ies = player.GetImpulseEngineSubsystem()
+    full_impulse = ies.GetMaxSpeed()
+    assert full_impulse == 10.0
+    accel = ies.GetMaxAccel()
+    ramp_step = accel * _DT + 1e-9   # one same-tick ramp step is allowed
+
+    # Resumed at full impulse (not 0, not the warp cruise speed), then one
+    # ramp step toward the newly-pressed impulse-5 target.
+    assert abs(pc._current_speed - full_impulse) <= ramp_step
+    v = player.GetVelocity()
+    assert abs(v.y - full_impulse) <= ramp_step
+    assert pc._current_speed != 0.0
+    assert abs(pc._current_speed - warp_speed) > 1.0
+
+
+def test_manual_takeover_without_warp_resumes_at_actual_velocity():
+    """Regression guard for the other half of the ruling: a takeover with NO
+    in-system warp in progress is unaffected — it still resumes from the
+    ship's actual (AI-driven) motion, exactly as before."""
+    pc = _PlayerControl()
+    player = _player_with_ies()
+    player.SetAI(object())
+    pc.apply(player, _DT, _Host())
+    _drive_integrator_to(player, 5.0)
+
+    h = _Host()
+    h._pressed.add(h.keys.KEY_5)
+    pc.apply(player, _DT, h)
+
+    assert player.GetAI() is None
+    assert player._insystem_warp_transit is None
+    # Same bound as test_manual_throttle_edge_cancels_ai_and_registers_same_tick:
+    # resumed from the real 5.0 GU/s, then one ramp step toward the new target.
+    assert 4.9 < pc._current_speed < 5.1
+
+
 def test_manual_to_ai_handoff_seeds_ship_integrator():
     """Symmetric edge: when the AI takes over mid-flight, the ship-side ramp
     must start from the player's actual speed, not a stale value."""

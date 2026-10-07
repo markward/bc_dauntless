@@ -6,13 +6,26 @@ value (`engine/appc/objects.py`), so without a per-tick step reading it
 back out, an object moved only by the SDK's own script code (never by a
 helm AI) never actually moves.
 
-Two SDK call sites besides rocks hit exactly this gap:
+SDK call sites hit exactly this gap, besides rocks:
   * E1M2's Haven station, sent toward the planet with `pStation.SetVelocity`
-    after being hit (no AI, no setpoints).
-  * E8M2's disabled Matan, sent spinning into the sun with
-    `SetVelocity` + `SetAngularVelocity(..., DIRECTION_MODEL_SPACE)`.
+    after being hit (no AI, no setpoints — reaches this module and drifts).
   * `ShipScriptActions.PushObject` (e.g. a launched sensor probe), which
-    only ever calls `SetVelocity`.
+    only ever calls `SetVelocity` (no AI, no setpoints — reaches this
+    module and drifts).
+
+Known remaining gap, NOT fixed by this module: E8M2's disabled Matan (sent
+spinning into the sun by `DisableMatan` with `SetVelocity` +
+`SetAngularVelocity(..., DIRECTION_MODEL_SPACE)`), E7M2's JonKa, E8M1's
+Galor and E2M1's Karoon already have an AI installed (`SetAI`, earlier in
+the mission) by the time their script fires the bare `SetVelocity`/
+`SetAngularVelocity`. `_step_ship_motion` branches on whether
+`_speed_setpoint`/`_target_angular_velocity_setpoint` were ever written,
+not on whether an AI is installed — these ships' AI trees DID write a
+setpoint at some earlier point (ordinary combat maneuvering), so they take
+the ramp path, never this module's drift path, and the ramp path
+overwrites `_velocity` from its own commanded speed every tick regardless
+of what the script just set. Scripted velocity on a ship that has an AI is
+still ignored.
 
 Spin honours the space it was set in: DIRECTION_MODEL_SPACE is a
 body-frame axis (post-multiply, R.D), world space a world axis
