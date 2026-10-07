@@ -51,13 +51,13 @@ would need only another TGL's text, not new recordings — unverified.
 | Hazard | Level at the player | Threshold | Lines |
 |---|---|---|---|
 | Asteroids | max(radial profile `asteroids`, rock-field strength `far_tier.field_strength_at`) | > 0.05 | `BrexAsteroidShields1` (Engineer), `MiguelAsteroidShields2` (Science) |
-| Radiation | radial profile `radiation` | > 0.1 | `BrexRadiationShields1`, `BrexRadiationShields2` (Engineer) |
+| Radiation | radial profile `radiation` | > 0 (where radiation damage starts) | `BrexRadiationShields1`, `BrexRadiationShields2` (Engineer) |
 
 - Speaks only with the shields down (`nebula_runtime._shields_up`).
 - Polled at 1 Hz on game time from `host_loop` beside the contact manager
   (sim-gated); reset on mission swap in `_reset_sensor_state`.
-- One prompt per exposure. It re-arms when the level drops below half the
-  threshold or the shields go up, never sooner than 120 s after the last
+- One prompt per exposure. It re-arms when the level drops to half the
+  threshold or below (for radiation: fully out of it) or the shields go up, never sooner than 120 s after the last
   prompt for that hazard. So hovering at a field's edge does not nag, and
   lowering shields inside a field gets at most one reminder per 2 minutes.
 - Line chosen at random; if that officer is not on the bridge, the other

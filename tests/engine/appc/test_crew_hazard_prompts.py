@@ -136,11 +136,27 @@ def test_asteroid_lines_go_to_their_own_speakers(world):
                     ("Science", "MiguelAsteroidShields2")}
 
 
-def test_radiation_above_0_1_prompts_a_brex_radiation_line(world):
-    world["radiation"] = 0.11
+def test_any_radiation_prompts_a_brex_radiation_line(world):
+    """Radiation damage starts at any level above 0 (radiation.py), so the
+    warning does too -- at 0.1 the player took minutes of damage first."""
+    world["radiation"] = 0.001
     _driver().update(object(), now=0.0)
     assert world["officers"]["Engineer"].lines
     assert _spoken(world)[0] in ("BrexRadiationShields1", "BrexRadiationShields2")
+
+
+def test_no_radiation_no_radiation_prompt(world):
+    world["radiation"] = 0.0
+    _driver().update(object(), now=0.0)
+    assert _spoken(world) == []
+
+
+def test_a_zero_threshold_latch_re_arms_once_fully_out():
+    h = chp.HazardLatch(threshold=0.0, cooldown_s=120.0)
+    assert h.step(0.3, shields_up=False, blocked=False, now=0.0) is True
+    assert h.step(0.01, shields_up=False, blocked=False, now=200.0) is False
+    assert h.step(0.0, shields_up=False, blocked=False, now=201.0) is False
+    assert h.step(0.2, shields_up=False, blocked=False, now=202.0) is True
 
 
 def test_lines_are_spoken_from_the_dauntless_database_at_spontaneous_priority(world):
