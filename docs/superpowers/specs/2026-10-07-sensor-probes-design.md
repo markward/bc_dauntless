@@ -93,7 +93,9 @@ No test runs the real `LaunchObject`; `tools/mission_harness.py` swaps in the
 The probe branch runs only for contacts beyond the observer's own range, and only when
 the observer has live probes (usually 0; at most MaxProbes). Each probe costs one
 `can_detect`. Extend the SP3 bench (`tests/unit/test_sensor_reach_bench.py`) with an
-observer holding 3 probes; budget ≤ 3× the in-range call.
+observer holding 3 probes. The budget as first written (≤ 3× the in-range call) was
+never achievable — see As built, Performance: the bench budget is now per probe,
+≤ 1.5 × (1 + n_probes) × the in-range call.
 
 ## Testing
 
@@ -132,6 +134,17 @@ leaves the hull and drifts forward; it is on the list as "Probe 1" (then "Probe 
 beyond your range but within ~1000 GU of the probe: it is listed; get it within ~500 GU of
 the probe for 4 s: it is named. Launch until empty: Miguel says there are none left.
 E6M4: launch the probe at Tezle 1; the mission advances when it reaches the planet.
+
+Also owed a live look (all newly reachable on this branch, none live-verified):
+- **Launch Probe**: the probe is on the list; a ship near it is identified after the dwell;
+  launching at zero gives Miguel's "out of probes" line; your OWN fresh probe reads
+  "Unknown" for its first 4 s, then is named.
+- **E1M2**: Miguel's Haven asteroid lines (the planet-anchored checks now fire).
+- **E5M4**: the shuttle cutscene (`LaunchObject` spawns a real shuttle; `GiveShuttleAI` no
+  longer gets None).
+- **E6M3**: the shuttles land at Savoy Station and, after the Cardassians thin out, the
+  transports arrive.
+- **E6M5**: the four shuttles land on Tezle 1 and the mission counts four.
 
 ## As built
 
@@ -177,8 +190,10 @@ rulings from the SDD ledger:
      so probes, shuttles and decoys never spawned in a live run. The recorder is now
      installed only by the two harness `main`s (`install_emission_recorder()`), not by the
      shared SDK setup path.
-  3. `ProximityCheck` evaluation now skips objects with `SetDeleteMe` pending, preventing
-     double counts on E6M5/E6M3.
+  3. `ProximityCheck` evaluation now skips objects with `SetDeleteMe` pending. That
+     prevents double counts only where the check FIRES: E6M5 (anchored on the planet).
+     E6M3's station check was anchorless and never fired at all until the final-review
+     fix below; it now fires, and the skip keeps its count at one per shuttle.
   - **E6M4 outcome**: a real Launch Probe registers the probe with the mission's two
     `ProximityCheck`s and an Intercept AI; in real flight it closes on Tezle 1, but the
     Intercept AI alone would only bring it to a closest approach of 2278.6 GU inside the
@@ -191,13 +206,54 @@ rulings from the SDD ledger:
     time budget — reported here rather than silently extending the budget or faking the AI.
   - E6M5 (not a probe mission, exercised by the same `AttachObject` fix): four shuttles
     land and the landing count is exactly 4.
-- **Deferred minors** (not fixed, not blocking): `_probe_reach`/`_probe_in_reach` share
-  near-duplicate logic; `_live_probes`' docstring is slightly stale; the dead `_dist` noted
-  above; `_fresh_ship_script_actions` leaves the `Actions` package attribute pointing at the
-  fresh module after the test that uses it runs.
+- **Deferred minors**: `_probe_reach`/`_probe_in_reach` share near-duplicate logic, and
+  `_fresh_ship_script_actions` leaves the `Actions` package attribute pointing at the fresh
+  module after the test that uses it runs (both still open). `_live_probes`' docstring and
+  the dead `sensor_contacts._dist` were fixed in the final-review wave.
+- **The emission-recorder trap** (recorded so it is not repeated): `setup_sdk` installed the
+  harness's emission recorder over `ShipScriptActions.LaunchObject` from `f8200804`
+  (2026-05-12) until this branch, so every live `LaunchObject` spawned nothing for five
+  months. E5M4's `GiveShuttleAI` crashed on a None shuttle, and the E6M3/E6M5 shuttle steps
+  were dead. **Rule: never install harness hooks from shared setup** — a hook that exists
+  for a harness is installed by that harness's own `main`, never by a path the live game
+  also runs.
+- **Final-review fix wave** (2026-10-07):
+  - `_probe_reach` forwards the caller's `apply_concealment` and `concealment` to every
+    probe, sampling `concealment_at(target)` at most once per walk (it depends only on the
+    target). A probe-reached contact now obeys `apply_concealment=False` (the
+    `ENHANCED_SENSOR_CONTEST`-off UI path) like a directly seen one. Since concealment is
+    target-only, a probe's nebula-core answer can differ from the observer's only inside the
+    hysteresis band `[LOCK_BREAK_T - HYSTERESIS, LOCK_BREAK_T)`.
+  - **Anchorless ProximityChecks fire.** A check with no `AttachObject` anchor now centres on
+    its own world position (its `SetTranslate`), with the same radius rule as the anchored
+    path (the bare `SetRadius`; nothing added for anchor or object size). Its set is the set
+    whose `ProximityManager.AddObject` registered it; a watched object in another set never
+    fires. `ProximityCheck.Evaluate` used to return early with no anchor.
+  - `ArtificialIntelligence.UnregisterExternalFunction(name, mapping=None)` added (None drops
+    every mapping under the name — inferred from the three SDK call sites, not RE'd). It was
+    reached for the first time by the transports E6M3 now creates
+    (`E6M3_AI_Transport.py:46`), which raised AttributeError.
+  - **E6M3 outcome** (`tests/integration/test_e6m3_shuttle_landing.py`): with the Khitomer
+    placed at `KhitLaunch2` and the mission's own `KhitomerLaunchesShuttles` run, all three
+    shuttles fly into the 10 GU bay sphere (closest approaches 2.4–2.7 GU), the second lands
+    ~23 s after the call, `ShuttlesLanded` runs, each shuttle is counted exactly once (3),
+    and — with `g_iNumberCardsDestroyed` set past the mission's Cardassian gate — the
+    recheck timer creates Transport 1 and 2. The battle gate is the one thing set directly.
+
+**Not live-verified — anchorless-check blast radius.** Every SDK site that registers a
+`ProximityCheck` with a `ProximityManager`: `MissionLib.ProximityCheck` (always
+`AttachObject`s first; returns 0 with no main object), `Conditions/ConditionInRange.py:221`
+(`AttachObject` on the next line), `E6M5.py:499` (anchored on Tezle 1) and `E6M3.py:665` —
+the **only** anchorless one. So exactly one mission newly fires: **E6M3**'s station check →
+`StationProximity` → `ShuttlesLanded` → `CreateTransports` (Transport 1/2, Keldon 3/4,
+Galor 4 arrive once more than two Cardassians are destroyed), and with them
+`E6M3_AI_Transport`'s `TransportsLandingTroops` path and the Destroy Transports goal.
 
 **Performance** (Task 5): `tests/unit/test_sensor_reach_bench.py::test_probe_branch_stays_within_budget`
 adds a 3-probe observer (probes at 3000/6000/9000 GU) and measures `can_detect` for targets
-reached only through the 3rd probe against in-range targets. Measured ratio **≈4.7×** the
-in-range call (budget 5×, per the spec's note that three sequential `can_detect` recursions
-cost more than the 3× single-branch budget used for SP3's beyond-range test). Passes.
+reached only through the 3rd probe against in-range targets. As first committed it
+measured ≈4.7–5.0× the in-range call against a flat 5× budget and flaked (3 failures in
+7 runs at 5.03×). The final-review wave sampled concealment once per walk instead of once
+per probe, and re-based the budget per probe: `via_probe <= 1.5 × (1 + n_probes) ×
+in_range` with `n_probes = 3` (6×). Measured after the change, 7 runs: 3.27, 2.88, 3.07,
+3.05, 3.07, 3.03, 3.06× — all within budget.
