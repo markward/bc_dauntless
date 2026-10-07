@@ -81,7 +81,7 @@ struct Backdrop {
 };
 
 struct SunDescriptor {
-    glm::vec3   position;                  // world-space center
+    glm::vec3   position;                  // render-space center (host_loop pushes via to_view_render)
     float       radius        = 1.0f;      // body sphere radius (BC units)
     std::string base_texture_path;
     float       corona_radius = 0.0f;      // 0 = no corona; draw when > radius
@@ -316,7 +316,24 @@ void draw_model(const assets::Model& model,
                 // Per-instance hull-decal override (set_instance_decal_override):
                 // when non-null its list REPLACES model.decals for this draw,
                 // with its own per-mesh enable masks. nullptr = the baked list.
-                const assets::DecalOverride* decal_override = nullptr);
+                const assets::DecalOverride* decal_override = nullptr,
+                // Planet geosphere (spec 2026-10-06 §4.3): index into
+                // Model::sphere_map->lods for this camera, from
+                // geosphere_level_for. -1 (or a model without sphere_map)
+                // draws BC's own mesh, byte-identically.
+                int sphere_level = -1,
+                // Planet surface atmosphere (spec 2026-10-07 §6): applied only
+                // to the sphere-mapped mesh when non-null AND enabled; every
+                // other draw sets u_atmo_enabled = 0. atmo_sun_dir is the
+                // world-space unit direction toward the planet's sun.
+                const scenegraph::Instance::Atmosphere* atmo = nullptr,
+                glm::vec3 atmo_sun_dir = glm::vec3(0.0f));
+
+/// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
+/// world radius = sphere_map.radius * length(world[0]); focal from proj and
+/// the CURRENTLY BOUND viewport height (glGetIntegerv(GL_VIEWPORT)).
+int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
+                        const scenegraph::Camera& cam);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
@@ -414,7 +431,12 @@ public:
                                CarveFieldCache* carve_cache = nullptr,
                                float ambient_scale = 1.0f,
                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                               InstanceFieldCache* field_cache = nullptr);
+                               InstanceFieldCache* field_cache = nullptr,
+                               // The system's suns (spec 2026-10-07 §6): a planet with
+                               // an enabled atmosphere takes its surface terminator
+                               // and limb sun direction from these, falling back to
+                               // directional 0 when nullptr / empty.
+                               const std::vector<SunDescriptor>* suns = nullptr);
 
     /// Stamp the stencil buffer with "hull was cut away here", for every
     /// visible instance in `pass` that has active carves.

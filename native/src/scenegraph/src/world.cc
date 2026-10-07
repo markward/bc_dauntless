@@ -123,6 +123,10 @@ void World::set_emissive_scale(InstanceId id, float scale) {
     if (auto* inst = get(id)) inst->emissive_scale = scale;
 }
 
+void World::set_atmosphere(InstanceId id, const Instance::Atmosphere& atmosphere) {
+    if (auto* inst = get(id)) inst->atmosphere = atmosphere;
+}
+
 bool World::is_valid(InstanceId id) const noexcept {
     return id.index < slots_.size()
         && slots_[id.index].alive

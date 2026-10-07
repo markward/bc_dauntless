@@ -1,8 +1,10 @@
 // native/src/assets/include/assets/model.h
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -105,6 +107,21 @@ struct TextureAnimation {
     double           phase       = 0.0;
 };
 
+/// Geosphere LOD replacement for BC's planet sphere mesh (spec
+/// docs/superpowers/specs/2026-10-06-planet-geosphere-design.md §4.2). Built
+/// only by apply_geosphere during model construction, from exactly one
+/// qualifying mesh (a near-perfect sphere with a UV set). `mesh_index` names
+/// the ORIGINAL mesh in Model::meshes, which stays untouched -- it still
+/// backs the AABB, ray trace and any other pass keyed on Model::meshes.
+/// `lods` is drawn instead, picked per frame by Task 4's draw_model given a
+/// sphere_level (kGeosphereLevels index), in place of meshes[mesh_index].
+struct SphereMap {
+    int mesh_index = -1;              // index into Model::meshes of BC's sphere
+    glm::vec3 center_body{0.0f};      // sphere centre, model/body frame
+    float radius = 0.0f;              // model units
+    std::array<Mesh, 4> lods;         // kGeosphereLevels, coarse -> fine
+};
+
 struct Model {
     std::vector<Node>             nodes;
     int                           root_node = 0;
@@ -139,6 +156,12 @@ struct Model {
     /// compose_officer_model from the character's facial images; empty for
     /// non-officer models. "neutral" is implicit (the head's own base texture).
     std::unordered_map<std::string, int> face_textures;
+
+    /// Set only by apply_geosphere, at construction time, on a model whose
+    /// single mesh passed the sphere gate (spec §4.2) -- empty for every
+    /// other model, including every non-planet NIF and every plain (non-
+    /// geosphere) load of a planet NIF. See SphereMap above.
+    std::optional<SphereMap>      sphere_map;
 
     /// Lazily-built, purely DERIVED ray-trace acceleration: the model-space
     /// triangle soup, a BVH over it, and the model AABB. All are functions of

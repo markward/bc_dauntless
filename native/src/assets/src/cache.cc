@@ -1,4 +1,5 @@
 #include <assets/cache.h>
+#include <assets/geosphere.h>
 #include <assets/hull_source.h>
 #include <assets/mesh_fix.h>
 #include <assets/path_resolver.h>
@@ -160,6 +161,17 @@ ModelHandle AssetCache::load(
     const std::vector<TextureReplacement>& texture_replacements,
     const std::vector<DecalRequest>& decals,
     float scale) {
+    return load(nif_path, search_paths, texture_replacements, decals, scale,
+                /*geosphere=*/false);
+}
+
+ModelHandle AssetCache::load(
+    const fs::path& nif_path,
+    const std::vector<fs::path>& search_paths,
+    const std::vector<TextureReplacement>& texture_replacements,
+    const std::vector<DecalRequest>& decals,
+    float scale,
+    bool geosphere) {
     // glTF/GLB path: an entirely separate build (build_model_from_gltf), with
     // no mesh fixes, no texture replacements and no decals -- those are all
     // BC-NIF-specific features that don't apply to rock-catalogue meshes.
@@ -239,7 +251,7 @@ ModelHandle AssetCache::load(
     // per-class feature, not a follow-on to the "ID" patch merge.
     auto canon = fs::weakly_canonical(nif_path).string()
                  + replacements_key(texture_replacements) + decals_key(decals)
-                 + fix_key;
+                 + fix_key + std::string(geosphere ? "|geosphere" : "");
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
         if (auto live = it->second.live.lock()) {
@@ -276,7 +288,20 @@ ModelHandle AssetCache::load(
     ctx.texture_replacements  = texture_replacements;
     ctx.decals                = decals;
 
-    auto model = std::make_shared<const Model>(detail::build_model(file, ctx));
+    Model built = detail::build_model(file, ctx);
+    if (geosphere) {
+        // Mutate the non-const Model BEFORE it is published as
+        // shared_ptr<const Model> below -- Model::trace_accel's doc block
+        // requires every geometry mutator to run strictly during
+        // construction. The gate failing (not a sphere, not one mesh, no
+        // UVs) is not an error: built stays untouched, sphere_map stays
+        // empty.
+        const auto uploader = impl_->config.mesh_uploader
+            ? impl_->config.mesh_uploader
+            : detail::MeshUploaderFn([](MeshCpu cpu) { return upload_mesh(cpu); });
+        apply_geosphere(built, uploader, impl_->config.keep_cpu_data);
+    }
+    auto model = std::make_shared<const Model>(std::move(built));
 
     Impl::Entry entry;
     entry.live         = model;

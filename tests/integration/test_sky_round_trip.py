@@ -31,7 +31,8 @@ class _FakeRenderer:
         self.live = set()
         self.pushed = {}
 
-    def load_model(self, path, search, texture_replacements=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None,
+                   scale=1.0, geosphere=False):
         return 100
 
     def model_aabb(self, h):
@@ -65,6 +66,9 @@ class _FakeRenderer:
         return False
 
     def set_visible(self, iid, v):
+        pass
+
+    def set_instance_atmosphere(self, iid, params):
         pass
 
 

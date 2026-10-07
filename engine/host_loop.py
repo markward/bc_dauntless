@@ -290,6 +290,13 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc import sensor_mission_guards
     sensor_mission_guards.install()
 
+    # Helm "Orbit": scale BC's orbit altitude with the planet radius (Mark,
+    # 2026-10-07, option C). Wraps AI.Player.OrbitPlanet.CreateAI, which
+    # HelmMenuHandlers.OrbitPlanet resolves by module attribute at click time.
+    # Idempotent; never raises.
+    from engine import orbit_altitude
+    orbit_altitude.install()
+
     import App
 
     # Default destination for fire events.
@@ -5280,15 +5287,23 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
 
     `cache` is the HostController (its nif_to_handle / nif_to_extent /
     nif_to_sphere_radius survive mission swaps); None loads uncached, as
-    realize_set_objects always has."""
-    handle = cache.nif_to_handle.get(nif_path) if cache is not None else None
+    realize_set_objects always has.
+
+    Keyed by `(nif_path, geo)` -- the geosphere dev toggle
+    (engine.planet_geosphere) read once here -- so a cached plain load and a
+    cached geosphere load of the SAME NIF never collapse onto one handle
+    when the toggle flips mid-run."""
+    from engine import planet_geosphere as _planet_geosphere
+    geo = _planet_geosphere.enabled()
+    key = (nif_path, geo)
+    handle = cache.nif_to_handle.get(key) if cache is not None else None
     if handle is not None:
-        extent = cache.nif_to_extent.get(nif_path, 1.0)
-        return handle, extent, cache.nif_to_sphere_radius.get(nif_path, extent)
+        extent = cache.nif_to_extent.get(key, 1.0)
+        return handle, extent, cache.nif_to_sphere_radius.get(key, extent)
     planet_tex_search = [str(p) for p in
                          _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     try:
-        handle = r_.load_model(nif_path, planet_tex_search)
+        handle = r_.load_model(nif_path, planet_tex_search, geosphere=geo)
     except Exception as e:
         if verbose:
             print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
@@ -5298,10 +5313,95 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     extent = _model_extent_from_aabb(center, half_extents)
     sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
     if cache is not None:
-        cache.nif_to_handle[nif_path] = handle
-        cache.nif_to_extent[nif_path] = extent
-        cache.nif_to_sphere_radius[nif_path] = sphere_radius
+        cache.nif_to_handle[key] = handle
+        cache.nif_to_extent[key] = extent
+        cache.nif_to_sphere_radius[key] = sphere_radius
     return handle, extent, sphere_radius
+
+
+def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
+                             nif_path: str, source: str = "set") -> None:
+    """Push this planet instance's atmosphere decision -- always called,
+    right after create_instance, by every realize path (mission load,
+    realize_set_objects, _reconcile_celestial_instances), so a toggle-off
+    realize explicitly pushes None rather than leaving the instance's
+    atmosphere state unset.
+
+    Read at USE: engine.planet_atmosphere's toggle and the catalogue
+    (engine.planets.atmosphere) both resolve now, not at import, so a dev
+    toggle flip or a catalogue reload applies to planets realized after."""
+    from engine import planet_atmosphere as _planet_atmosphere
+    from engine.planets import atmosphere as _atmosphere
+    if not _planet_atmosphere.enabled():
+        r_.set_instance_atmosphere(iid, None)
+        return
+    key = _atmosphere.resolve_key(set_name, obj_name, nif_path)
+    a = _atmosphere.resolve(set_name, obj_name, nif_path)
+    r_.set_instance_atmosphere(iid, a)
+    _atmosphere.record_live(iid, key, set_name, obj_name, nif_path, source=source)
+
+
+def _iid_eq(a, b) -> bool:
+    """InstanceId equality: pybind's InstanceId has no __eq__, only readonly
+    `index`/`generation`, so plain `==` is identity there and would never
+    match two Python wrappers of the same engine instance. Plain values
+    (the dial group's tests use strings) fall through to `==`. One rule,
+    shared with the live registry's forget_live."""
+    from engine.planets import atmosphere as _atmosphere
+    return _atmosphere.iid_eq(a, b)
+
+
+def _nearest_live_planet(session):
+    """The `atmosphere.live()` entry whose planet is nearest the player, by
+    SURFACE distance (|p_player - centre| - radius), not centre distance --
+    the atmosphere dial group's target (planet-atmosphere spec §7). None if
+    there is no player, no viewed frame, or nothing resolves. Airless
+    entries (resolve() is None) are skipped."""
+    from engine.appc import sensor_contacts as _sensor_contacts
+    from engine.planets import atmosphere as _atmosphere
+
+    player = _sensor_contacts.current_player()
+    if player is None:
+        return None
+    view = _frames.viewing_set()
+    loc = player.GetWorldLocation()
+    p_player = _frames.in_view(view, _frames.containing_set(player), loc.x, loc.y, loc.z)
+    if p_player is None:
+        return None
+
+    best = None
+    best_dist = None
+    for entry in _atmosphere.live():
+        # Airless entries stay in the registry (reload re-pushes them) but
+        # are never a dial target: an airless moon nearer than its
+        # atmospheric parent would otherwise capture the dials.
+        if _atmosphere.resolve(entry.set_name, entry.obj_name, entry.nif_path) is None:
+            continue
+        centre = None
+        radius = None
+        for planet, iid in session.planet_instances.items():
+            if _iid_eq(iid, entry.iid):
+                ploc = planet.GetWorldLocation()
+                centre = _frames.in_view(view, _frames.containing_set(planet),
+                                         ploc.x, ploc.y, ploc.z)
+                radius = float(planet.GetRadius())
+                break
+        if centre is None:
+            for key, iid in session.celestial_instances.items():
+                if _iid_eq(iid, entry.iid):
+                    body = session.celestial_placed.get(key)
+                    if body is not None:
+                        centre = body.position
+                        radius = float(body.radius_gu)
+                    break
+        if centre is None or radius is None:
+            continue
+        dx, dy, dz = (p_player[i] - centre[i] for i in range(3))
+        dist = (dx * dx + dy * dy + dz * dz) ** 0.5 - radius
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = entry
+    return best
 
 
 def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
@@ -6012,12 +6112,14 @@ class MissionSession:
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
+        from engine.planets import atmosphere as _atmosphere
         for iid in list(self.ship_instances.values()):
             renderer.destroy_instance(iid)
         for iid in list(self.planet_instances.values()):
             renderer.destroy_instance(iid)
         for iid in list(self.celestial_instances.values()):
             renderer.destroy_instance(iid)
+        _atmosphere.clear_live()
         self.celestial_instances.clear()
         self.celestial_placed.clear()
         self.celestial_scale.clear()
@@ -6283,6 +6385,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         # AABB corner, so the planet draws at exactly GetRadius() game units.
         natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = r_.create_instance(handle)
+        _apply_planet_atmosphere(r_, iid, pSet.GetName(), planet.GetName(),
+                                 nif_path)
         _apply_live_world_transform(r_, session, planet, iid, natural_scale)
         session.planet_instances[planet] = iid
         session.planet_natural_scale[planet] = natural_scale
@@ -6308,12 +6412,21 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
+    from engine.planets import atmosphere as _atmosphere
     for planet in list(_iter_planets_in_set(pSet)):
         iid = session.planet_instances.pop(planet, None)
         if iid is not None:
             renderer.destroy_instance(iid)
+            _atmosphere.forget_live(iid)
             session.planet_natural_scale.pop(planet, None)
             session.slot_bindings.pop(planet, None)
+    # clear_live_for_set, NOT clear_live: the warp spine realizes the
+    # DESTINATION set before tearing down the SOURCE set
+    # (_WarpDepartAction/ChangeRenderedSetAction ordering below), so a
+    # blanket clear here would wipe the destination's just-recorded planets.
+    # Set-realized entries only: this region's celestial map bodies are
+    # still drawn and forget themselves in _reconcile_celestial_instances.
+    _atmosphere.clear_live_for_set(pSet.GetName())
 
 
 def _ensure_system_loaded(session) -> None:
@@ -6634,11 +6747,13 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
         return
     instances = session.celestial_instances
     want = {b.key for b in drawn}
+    from engine.planets import atmosphere as _atmosphere
     for key in [k for k in placed if k not in want]:
         session.celestial_scale.pop(key, None)
         iid = instances.pop(key, None)
         if iid is not None:
             renderer.destroy_instance(iid)
+            _atmosphere.forget_live(iid)
     new_placed = {}
     for body in drawn:
         new_placed[body.key] = body
@@ -6666,6 +6781,8 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
         # body draws at exactly radius_gu (as realize_set_objects' planets).
         scale = (body.radius_gu / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = renderer.create_instance(handle)
+        _apply_planet_atmosphere(renderer, iid, body.key[1], body.name,
+                                 body.model, source="celestial")
         instances[body.key] = iid
         session.celestial_scale[body.key] = scale
         renderer.set_world_transform(iid, _celestial_matrix(body, scale))
@@ -7452,6 +7569,8 @@ class _MissionLoader:
             # the AABB corner, so the planet draws at exactly GetRadius() GU.
             natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
             iid = r_.create_instance(handle)
+            _apply_planet_atmosphere(r_, iid, planet.GetContainingSetName(),
+                                     planet.GetName(), nif_path)
             _apply_live_world_transform(r_, sess, planet, iid, natural_scale)
             sess.planet_instances[planet] = iid
             sess.planet_natural_scale[planet] = natural_scale
@@ -10014,6 +10133,13 @@ def run(mission_name: Optional[str] = None,
                 _far_dials.register()
                 from engine.appc import sensor_dials as _sensor_dials
                 _sensor_dials.register()
+                from engine.planets import atmosphere_dials as _atmo_dials
+                _atmo_dials.set_target_fn(
+                    lambda: _nearest_live_planet(controller.session)
+                    if controller.session is not None else None)
+                _atmo_dials.set_push_fn(
+                    lambda iid, a: r.set_instance_atmosphere(iid, a))
+                _atmo_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:

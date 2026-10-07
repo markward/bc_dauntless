@@ -22,7 +22,8 @@ class _FakeRenderer:
         self.create_calls = 0
         self.destroyed = []
 
-    def load_model(self, path, search, texture_replacements=None, decals=None):
+    def load_model(self, path, search, texture_replacements=None, decals=None,
+                   scale=1.0, geosphere=False):
         self.load_calls += 1
         return 100
 
@@ -50,6 +51,9 @@ class _FakeRenderer:
         pass
 
     def set_rim_strength(self, iid, s):
+        pass
+
+    def set_instance_atmosphere(self, iid, params):
         pass
 
 

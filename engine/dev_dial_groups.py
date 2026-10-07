@@ -15,7 +15,7 @@ switching groups prints the whole group framed, one dial per line, the
 selected one arrowed (Mark, 2026-10-02: the old one-line dict dump of every
 dial was unreadable in a busy terminal).
 """
-from typing import Callable
+from typing import Callable, Optional
 
 import engine.dev_mode as dev_mode
 
@@ -32,13 +32,17 @@ def reset() -> None:
 
 
 def register_group(name: str, order: tuple, get_dials: Callable[[], dict],
-                   step: Callable[[str, int], None]) -> None:
+                   step: Callable[[str, int], None],
+                   label: Optional[Callable[[], Optional[str]]] = None) -> None:
+    """`label`, if given, names what the group is tuning right now (e.g. the
+    atmosphere group's target planet); it is read at print time and put in
+    every line and the group header. None / "" prints the plain format."""
     if not order:
         raise ValueError("dial group %r has no dials" % (name,))
     if name not in _groups:
         _names.append(name)
     _groups[name] = {"order": tuple(order), "get": get_dials, "step": step,
-                     "sel": 0}
+                     "label": label, "sel": 0}
 
 
 def groups() -> tuple:
@@ -101,14 +105,20 @@ def _fmt(v) -> str:
     return str(v)
 
 
+def _label(grp) -> str:
+    """The group's current label followed by a space, or "" for none."""
+    text = grp["label"]() if grp.get("label") else None
+    return ("%s " % text) if text else ""
+
+
 def _report() -> None:
     """One short line for the selected dial (on / L O), set off by a blank line
     so it stands out among other terminal output."""
     grp = _group()
     if grp is not None:
         name = selected()
-        print("\n[%s] %s = %s   (dial %d/%d)" % (
-            active(), name, _fmt(grp["get"]().get(name)),
+        print("\n[%s] %s%s = %s   (dial %d/%d)" % (
+            active(), _label(grp), name, _fmt(grp["get"]().get(name)),
             grp["sel"] + 1, len(grp["order"])))
 
 
@@ -119,7 +129,8 @@ def _report_group() -> None:
     if grp is None:
         return
     vals = grp["get"]()
-    title = "── %s dials ──" % active()
+    label = _label(grp).rstrip()
+    title = "── %s dials%s ──" % (active(), (": " + label) if label else "")
     width = max(len(k) for k in grp["order"])
     rows = ["%s %-*s  %s" % ("→" if i == grp["sel"] else " ", width, k, _fmt(vals.get(k)))
             for i, k in enumerate(grp["order"])]

@@ -72,8 +72,8 @@ struct Instance {
 
     /// True for ship hulls; gates the opaque-pass Fresnel rim term so it
     /// applies to hulls only. Planets share the opaque shader but must
-    /// not receive a metallic rim — they default false. The future
-    /// planet-atmosphere effect will add its own per-instance params.
+    /// not receive a metallic rim — they default false. See `atmosphere`
+    /// below for the planet-atmosphere effect's own per-instance params.
     bool rim_eligible = false;
 
     /// Fresnel rim intensity for rim_eligible instances. Authored per-ship
@@ -92,6 +92,30 @@ struct Instance {
     /// so a dead hull goes dark in space (diffuse-lit, specular, and rim
     /// terms are unaffected, so the hull stays visible).
     float emissive_scale = 1.0f;
+
+    /// Planet atmosphere (spec 2026-10-07): a thin scattering shell drawn
+    /// around a planet instance. Disabled (enabled = false) by default, so
+    /// an un-configured instance renders byte-identically to before this
+    /// field existed. Colours are linear RGB; thickness is a fraction of the
+    /// planet's radius.
+    struct Atmosphere {
+        bool      enabled = false;
+        glm::vec3 color{1.0f};          // linear
+        glm::vec3 sunset_color{1.0f};   // linear
+        float     thickness = 0.0f;     // fraction of radius
+        float     density = 0.0f;
+        float     limb = 0.0f;
+        // Shell-HALO brightness multiplier only (not the surface limb term
+        // above): the shader's in-scatter saturates at ~0.06 against a sun
+        // colour of ~1 at the lit limb, far under the lit surface, so the
+        // halo is invisible after tonemapping without this. Default 20.0
+        // matches engine.planets.atmosphere.Atmosphere's own default.
+        float     intensity = 20.0f;
+        // Grey Mie forward-lobe strength (sigma * mie in every channel).
+        // Default 0.2 matches engine.planets.atmosphere.Atmosphere's.
+        float     mie = 0.2f;
+    };
+    Atmosphere atmosphere;
 
     /// Per-instance skinning palette (world_pose * inverse_bind per bone).
     /// Empty = the renderer falls back to the model's bind pose. Set by the

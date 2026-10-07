@@ -995,6 +995,21 @@ def _reset_leakable_engine_globals():
     if _hl is not None:
         _hl._mapped_body_warned.clear()
         _hl._ship_decals_warned.clear()
+    # Player Helm "Orbit" altitude hook (engine.orbit_altitude): wraps the
+    # real SDK AI.Player.OrbitPlanet.CreateAI exactly once, guarded by a
+    # `_dauntless_orbit_altitude_orig` attribute on the wrapper -- installed
+    # by host_loop._bootstrap_firing_pipeline. A test that runs that
+    # bootstrap for real (not monkeypatched) wraps the real module and
+    # nothing else ever restores it, so every later test importing the
+    # module sees BC's original CreateAI replaced for the rest of the
+    # session. Only touch the module if it is already imported -- importing
+    # it here just to reset it would itself be a new leak.
+    _orbit_mod = sys.modules.get("AI.Player.OrbitPlanet")
+    if _orbit_mod is not None:
+        _orbit_orig = getattr(_orbit_mod.CreateAI,
+                               "_dauntless_orbit_altitude_orig", None)
+        if _orbit_orig is not None:
+            _orbit_mod.CreateAI = _orbit_orig
     try:
         import App
     except Exception:
@@ -1564,6 +1579,44 @@ def _reset_leakable_engine_globals():
         _rock_catalogue._enabled = True
         _rock_catalogue._memo.clear()
         _rock_catalogue._warned.clear()
+    except Exception:
+        pass
+    # Planet geosphere (planet-geosphere spec §4.5): the Developer Options
+    # "Geosphere Planets" toggle is a process-lifetime module global that a
+    # test can flip (e.g. the planet-cache-key test) -- reset it so every
+    # later test's planet realize sees the default On.
+    try:
+        from engine import planet_geosphere as _planet_geosphere
+        _planet_geosphere._enabled = True
+    except Exception:
+        pass
+    # Planet atmosphere (planet-atmosphere spec §3): a test that loads the
+    # catalogue from a temp path would otherwise leave the memoised result,
+    # causing later tests to read from that temp path instead of the real one.
+    try:
+        from engine.planets import atmosphere as _planet_atmosphere
+        _planet_atmosphere._memo.clear()
+        _planet_atmosphere._warned.clear()
+        _planet_atmosphere._live.clear()
+        _planet_atmosphere._overrides.clear()
+    except Exception:
+        pass
+    # Atmosphere dial group (planet-atmosphere spec §7): a test that sets the
+    # module-level target/push functions would otherwise leave later tests'
+    # dials.step() calls pointed at a stale fake.
+    try:
+        from engine.planets import atmosphere_dials as _atmo_dials
+        _atmo_dials.set_target_fn(lambda: None)
+        _atmo_dials.set_push_fn(lambda iid, a: None)
+    except Exception:
+        pass
+    # Planet atmosphere dev toggle (planet-atmosphere spec §4): the Developer
+    # Options "Planet Atmospheres" toggle is a process-lifetime module global
+    # a test can flip -- reset it so every later test's planet realize sees
+    # the default On.
+    try:
+        from engine import planet_atmosphere as _planet_atmosphere_toggle
+        _planet_atmosphere_toggle._enabled = True
     except Exception:
         pass
     # Dev dial groups (minor-rocks spec §5): a test that registers a group

@@ -68,6 +68,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
+    "set_instance_atmosphere",
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
@@ -185,7 +186,7 @@ def frame() -> None:
 
 def load_model(nif_path: str, texture_search_path,
                texture_replacements=None, decals=None,
-               scale: float = 1.0) -> int:
+               scale: float = 1.0, geosphere: bool = False) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
@@ -197,8 +198,12 @@ def load_model(nif_path: str, texture_search_path,
     load.
 
     `scale` bakes a uniform scale into the vertices (glTF only); it is part
-    of the model's identity."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale)
+    of the model's identity.
+
+    `geosphere` loads the planet variant (spec
+    docs/superpowers/specs/2026-10-06-planet-geosphere-design.md); a
+    non-sphere NIF loads unchanged."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale, geosphere)
 
 
 def create_instance(model: int) -> InstanceId:
@@ -1007,6 +1012,17 @@ def set_surface_rock(instance_id: InstanceId, rock: bool) -> None:
     """Mark an instance as rock (rock-class spec §2): craters expose rock,
     no venting, grey-brown debris."""
     _h.set_surface_rock(instance_id, rock)
+
+
+def set_instance_atmosphere(instance_id: InstanceId, params) -> None:
+    """Planet atmosphere (spec 2026-10-07). `params` is None (airless) or an
+    engine.planets.atmosphere.Atmosphere."""
+    if params is None:
+        _h.set_instance_atmosphere(instance_id, None)
+        return
+    _h.set_instance_atmosphere(instance_id, (tuple(params.color), tuple(params.sunset_color),
+                                             params.thickness, params.density, params.limb,
+                                             params.intensity, params.mie))
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:

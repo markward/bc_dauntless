@@ -116,3 +116,35 @@ def test_values_print_compactly():
     assert g._fmt(8.0) == "8"
     assert g._fmt(2.5e-08) == "2.5e-08"
     assert g._fmt(17) == "17"
+
+
+# ── Optional per-group label (Mark, 2026-10-07: the atmosphere dial edited the
+#    moon's entry while he looked at the gas giant -- name the target) ──────────
+
+def test_a_labelled_group_names_its_target_in_every_line(capsys):
+    vals = {"thick": 1.0}
+    g.register_group("atmo", ("thick",), lambda: dict(vals),
+                     lambda d, s: None, label=lambda: "Moon (S) [moonkey]")
+    capsys.readouterr()
+    g.cycle_dial()
+    assert capsys.readouterr().out == "\n[atmo] Moon (S) [moonkey] thick = 1   (dial 1/1)\n"
+    g.push(+1)
+    assert capsys.readouterr().out == "\n[atmo] Moon (S) [moonkey] thick = 1   (dial 1/1)\n"
+
+
+def test_a_labelled_group_header_names_its_target(capsys):
+    g.register_group("nebula", ("veil",), lambda: {"veil": 1.0}, lambda d, s: None)
+    g.register_group("atmo", ("thick",), lambda: {"thick": 1.0},
+                     lambda d, s: None, label=lambda: "Moon (S) [moonkey]")
+    capsys.readouterr()
+    g.cycle_active()
+    lines = capsys.readouterr().out.split("\n")
+    assert lines[1] == "── atmo dials: Moon (S) [moonkey] ──"
+
+
+def test_a_label_of_none_falls_back_to_the_plain_line(capsys):
+    g.register_group("atmo", ("thick",), lambda: {"thick": 1.0},
+                     lambda d, s: None, label=lambda: None)
+    capsys.readouterr()
+    g.cycle_dial()
+    assert capsys.readouterr().out == "\n[atmo] thick = 1   (dial 1/1)\n"

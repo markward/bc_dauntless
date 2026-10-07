@@ -4,6 +4,9 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
+    geosphere_draw_test.cc
+    atmosphere_pass_test.cc
+    atmosphere_surface_test.cc
     decal_render_test.cc
     render_origin_precision_test.cc
     render_origin_math_test.cc
@@ -33,6 +36,7 @@ add_executable(renderer_tests
     far_pass_test.cc
     impostor_blend_gl_test.cc
     nebula_atmosphere_test.cc
+    atmosphere_math_test.cc
     system_nebula_pass_test.cc
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc
