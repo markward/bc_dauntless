@@ -16,11 +16,11 @@ from __future__ import annotations
 import sys
 
 DIAL_ORDER: tuple = ("thickness", "density", "limb", "color_r", "color_g", "color_b",
-                     "intensity")
+                     "intensity", "mie")
 STEPS: dict = {
     "thickness": 0.005, "density": 0.1, "limb": 0.1,
     "color_r": 0.05, "color_g": 0.05, "color_b": 0.05,
-    "intensity": 0.5,
+    "intensity": 0.5, "mie": 0.05,
 }
 
 # Spec ranges (atmosphere.parse_entry mirrors the low three; colour channels
@@ -30,6 +30,7 @@ _THICKNESS_MAX = 0.25
 _DENSITY_MAX = 4.0
 _LIMB_MAX = 4.0
 _INTENSITY_MAX = 50.0  # shell-halo brightness multiplier only
+_MIE_MAX = 4.0  # grey Mie strength
 
 _target_fn = lambda: None          # noqa: E731 -- () -> atmosphere.LivePlanet | None
 _push_fn = lambda iid, a: None     # noqa: E731 -- (iid, Atmosphere | None) -> None
@@ -61,7 +62,7 @@ def current() -> dict:
     return {
         "thickness": a.thickness, "density": a.density, "limb": a.limb,
         "color_r": a.color[0], "color_g": a.color[1], "color_b": a.color[2],
-        "intensity": a.intensity,
+        "intensity": a.intensity, "mie": a.mie,
     }
 
 
@@ -75,6 +76,8 @@ def _clamp(name: str, v: float) -> float:
         return min(_LIMB_MAX, max(0.0, v))
     if name == "intensity":
         return min(_INTENSITY_MAX, max(0.0, v))
+    if name == "mie":
+        return min(_MIE_MAX, max(0.0, v))
     return min(1.0, max(0.0, v))  # colour channel, linear [0, 1]
 
 
@@ -89,7 +92,8 @@ def step(name: str, direction: int) -> None:
 
     delta = STEPS[name] * (1 if direction > 0 else -1)
     color = list(a.color)
-    thickness, density, limb, intensity = a.thickness, a.density, a.limb, a.intensity
+    thickness, density, limb, intensity, mie = (a.thickness, a.density, a.limb,
+                                                a.intensity, a.mie)
     if name == "thickness":
         thickness = _clamp(name, thickness + delta)
     elif name == "density":
@@ -98,6 +102,8 @@ def step(name: str, direction: int) -> None:
         limb = _clamp(name, limb + delta)
     elif name == "intensity":
         intensity = _clamp(name, intensity + delta)
+    elif name == "mie":
+        mie = _clamp(name, mie + delta)
     elif name == "color_r":
         color[0] = _clamp(name, color[0] + delta)
     elif name == "color_g":
@@ -107,7 +113,7 @@ def step(name: str, direction: int) -> None:
 
     new = atmo.Atmosphere(color=tuple(color), sunset_color=a.sunset_color,
                           thickness=thickness, density=density, limb=limb,
-                          intensity=intensity)
+                          intensity=intensity, mie=mie)
     atmo.set_override(target.key, new)
     for lp in atmo.live():
         if lp.key == target.key:

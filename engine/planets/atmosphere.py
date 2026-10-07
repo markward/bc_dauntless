@@ -87,7 +87,7 @@ def clear_live_for_set(set_name: str) -> None:
                 if not (lp.source == "set" and lp.set_name == set_name)]
 
 _FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere",
-           "intensity"}
+           "intensity", "mie"}
 
 STOCK_STEMS: tuple = (
     "pinkgasplanet", "bluewhitegasplanet", "tangasplanet", "gasgiant",
@@ -103,6 +103,9 @@ STOCK_STEMS: tuple = (
 
 @dataclass(frozen=True)
 class Atmosphere:
+    # Linear RGB RELATIVE per-channel Rayleigh scattering strength, not a
+    # final tint: the shader normalises it by its strongest channel, so the
+    # hue emerges from scattering (blue sky, reddened long paths).
     color: tuple
     sunset_color: tuple
     thickness: float
@@ -114,6 +117,10 @@ class Atmosphere:
     # surface -- this covers the gap. Last field so existing positional
     # 5-arg construction stays compatible.
     intensity: float = 20.0
+    # Grey Mie forward-lobe strength (extinction sigma * mie in every
+    # channel, HG g = 0.76). After `intensity` so positional 5- and 6-arg
+    # construction stays compatible.
+    mie: float = 0.2
 
 
 def nif_stem(nif_path: str) -> str:
@@ -200,12 +207,14 @@ def parse_entry(key: str, entry: dict):
     color = srgb_hex_to_linear(entry["color"])
     sunset = srgb_hex_to_linear(entry["sunset_color"]) if "sunset_color" in entry else color
     intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 20.0
+    mie = _num(entry, "mie", 0.0, 4.0) if "mie" in entry else 0.2
     return Atmosphere(
         color=color, sunset_color=sunset,
         thickness=_num(entry, "thickness", 0.0, 0.25, lo_open=True),
         density=_num(entry, "density", 0.0, 4.0),
         limb=_num(entry, "limb", 0.0, 4.0),
         intensity=intensity,
+        mie=mie,
     )
 
 

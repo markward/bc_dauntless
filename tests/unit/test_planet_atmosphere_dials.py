@@ -40,6 +40,41 @@ def test_step_intensity_updates_and_clamps():
     assert atmo.resolve("S", "N", "x/PinkGasPlanet.nif").intensity == pytest.approx(0.0)
 
 
+def test_mie_is_the_eighth_dial():
+    assert dials.DIAL_ORDER[7] == "mie"
+    assert len(dials.DIAL_ORDER) == 8
+    assert dials.STEPS["mie"] == pytest.approx(0.05)
+
+
+def test_current_reports_mie():
+    _setup()
+    assert dials.current()["mie"] == pytest.approx(0.2)
+
+
+def test_step_mie_updates_and_clamps():
+    pushes = _setup()
+    dials.step("mie", +1)
+    assert all(a.mie == pytest.approx(0.25) for _, a in pushes)
+    assert atmo.resolve("Albirea3", "Albirea 3", "x/PinkGasPlanet.nif").mie == pytest.approx(0.25)
+    # Other fields survive a mie step (intensity included).
+    assert all(a.intensity == pytest.approx(20.0) for _, a in pushes)
+
+    for _ in range(200):
+        dials.step("mie", +1)
+    assert atmo.resolve("S", "N", "x/PinkGasPlanet.nif").mie == pytest.approx(4.0)
+
+    for _ in range(200):
+        dials.step("mie", -1)
+    assert atmo.resolve("S", "N", "x/PinkGasPlanet.nif").mie == pytest.approx(0.0)
+
+
+def test_other_dials_preserve_mie():
+    pushes = _setup()
+    dials.step("mie", +1)
+    dials.step("density", +1)
+    assert pushes[-1][1].mie == pytest.approx(0.25)
+
+
 def test_step_updates_every_planet_sharing_the_key_only():
     pushes = _setup()
     dials.step("thickness", +1)

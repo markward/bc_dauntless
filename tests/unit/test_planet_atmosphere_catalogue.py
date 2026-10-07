@@ -70,6 +70,9 @@ def test_missing_is_none(tmp_path, monkeypatch):
     {**GAS, "surface": "gas"},                                               # unknown field
     {**GAS, "intensity": -1.0},                                              # out of range
     {**GAS, "intensity": 51.0},
+    {**GAS, "mie": -0.1},
+    {**GAS, "mie": 4.5},
+    {**GAS, "mie": "lots"},
 ])
 def test_malformed_entry_warns_once_and_is_none(tmp_path, monkeypatch, capsys, bad):
     _write(tmp_path, monkeypatch, {"pinkgasplanet": bad})
@@ -87,6 +90,24 @@ def test_parse_entry_default_intensity_is_twenty():
 def test_parse_entry_explicit_intensity_is_parsed():
     a = atmo.parse_entry("k", {**GAS, "intensity": 12.5})
     assert a.intensity == pytest.approx(12.5)
+
+
+def test_parse_entry_default_mie_is_point_two():
+    a = atmo.parse_entry("k", GAS)
+    assert a.mie == pytest.approx(0.2)
+
+
+def test_parse_entry_explicit_mie_is_parsed():
+    assert atmo.parse_entry("k", {**GAS, "mie": 0.75}).mie == pytest.approx(0.75)
+    assert atmo.parse_entry("k", {**GAS, "mie": 0}).mie == 0.0
+    assert atmo.parse_entry("k", {**GAS, "mie": 4}).mie == pytest.approx(4.0)
+
+
+def test_atmosphere_positional_construction_stays_compatible():
+    five = atmo.Atmosphere((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0)
+    assert five.intensity == pytest.approx(20.0) and five.mie == pytest.approx(0.2)
+    six = atmo.Atmosphere((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0, 12.0)
+    assert six.intensity == pytest.approx(12.0) and six.mie == pytest.approx(0.2)
 
 
 def test_parse_entry_missing_limb_raises_valueerror():

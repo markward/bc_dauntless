@@ -3682,13 +3682,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // OPTIONAL 6th element added after this binding shipped;
                   // a 5-tuple caller keeps the struct default (20.0).
                   if (t.size() >= 6) a.intensity = t[5].cast<float>();
+                  // mie (grey Mie strength) is an OPTIONAL 7th element;
+                  // 5- and 6-tuple callers keep the struct default (0.2).
+                  if (t.size() >= 7) a.mie = t[6].cast<float>();
               }
               g_world.set_atmosphere(id, a);
           },
           py::arg("id"), py::arg("params"),
           "Planet atmosphere (spec 2026-10-07): None disables; else "
-          "(color, sunset_color, thickness, density, limb[, intensity]), "
-          "colours linear RGB; intensity defaults to 20.0 when omitted.");
+          "(color, sunset_color, thickness, density, limb[, intensity[, mie]]), "
+          "colours linear RGB; intensity defaults to 20.0 and mie to 0.2 "
+          "when omitted.");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {
@@ -4721,7 +4725,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!a.enabled) return py::none();
               return py::make_tuple(py::make_tuple(a.color.r, a.color.g, a.color.b),
                                     py::make_tuple(a.sunset_color.r, a.sunset_color.g, a.sunset_color.b),
-                                    a.thickness, a.density, a.limb, a.intensity);
+                                    a.thickness, a.density, a.limb, a.intensity, a.mie);
           },
           py::arg("id"), "Test-only read-back of an instance's atmosphere.");
 
