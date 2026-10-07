@@ -77,7 +77,7 @@ would need only another TGL's text, not new recordings — unverified.
 - Skipped: E3M2 and E3M4 (their scripts prompt for shields themselves:
   `E3M2ProdRaiseShields`, `E3M4ShouldRaiseShields`), cinematics, warp, dash.
 
-Live-verified (Mark): both the asteroid and radiation prompts.
+Live-verified (Mark, 2026-10-06): the asteroid prompt. ⚠️ The radiation prompt has not been seen in game yet.
 
 ## Dialogue patches — insert and replace lines in BC's missions
 
