@@ -290,6 +290,13 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc import sensor_mission_guards
     sensor_mission_guards.install()
 
+    # Helm "Orbit": scale BC's orbit altitude with the planet radius (Mark,
+    # 2026-10-07, option C). Wraps AI.Player.OrbitPlanet.CreateAI, which
+    # HelmMenuHandlers.OrbitPlanet resolves by module attribute at click time.
+    # Idempotent; never raises.
+    from engine import orbit_altitude
+    orbit_altitude.install()
+
     import App
 
     # Default destination for fire events.
