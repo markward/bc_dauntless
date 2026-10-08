@@ -56,7 +56,25 @@ uniform vec2      u_ao_screen;    // the view's size in pixels (the AO may be sm
 uniform int       u_ao_on;
 uniform int       u_output_normal;
 
+// ── Developer Options debug view (Lighting tab) ────────────────────────
+// 0 off (production, byte-identical); 1 normals; 2 light only (albedo = 1);
+// 3 AO only; 4 triangle id; 5 mesh id. Never applied to the viewscreen feed
+// (u_unlit short-circuits before this is read). u_mesh_id is a per-draw
+// counter set by BridgePass::render, stable within a frame.
+uniform int u_debug_view;
+uniform int u_mesh_id;
+
 out vec4 FragColor;
+
+// Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
+// spike) turned into a stable RGB colour -- used by debug views 4 (Triangle
+// ID, gl_PrimitiveID) and 5 (Mesh ID, u_mesh_id) so adjacent triangles/meshes
+// read as visually distinct flat colours.
+vec3 hash_color(uint id) {
+    id = id * 747796405u + 2891336453u;
+    id = ((id >> ((id >> 28u) + 4u)) ^ id) * 277803737u;
+    return vec3((id >> 0u) & 255u, (id >> 8u) & 255u, (id >> 16u) & 255u) / 255.0;
+}
 
 float ao_view_z(vec2 uv) {
     float win = texture(u_ao_depth, uv).r;
@@ -130,9 +148,18 @@ void main() {
         return;
     }
     vec3 n = shading_normal();
+    if (u_debug_view == 1) { FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
+    float ao = ao_term();
+    if (u_debug_view == 3) { FragColor = vec4(vec3(ao), 1.0); return; }
+    if (u_debug_view == 4 || u_debug_view == 5) {
+        uint id = uint(u_debug_view == 4 ? gl_PrimitiveID : u_mesh_id);
+        FragColor = vec4(hash_color(id), 1.0);
+        return;
+    }
+    vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : base.rgb;
     float h = clamp(dot(n, u_up) * 0.5 + 0.5, 0.0, 1.0);
-    vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao_term();
-    vec3 col = diffuse_ceiling(base.rgb * received) * u_viewscreen_brightness;
+    vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao;
+    vec3 col = diffuse_ceiling(albedo * received) * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
     FragColor = vec4(col, 1.0);
 }

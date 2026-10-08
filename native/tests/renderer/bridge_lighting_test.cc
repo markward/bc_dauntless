@@ -30,6 +30,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -102,6 +103,18 @@ GLuint black_1x1() {
     return t;
 }
 
+GLuint red_1x1() {
+    GLuint t = 0;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    const unsigned char px[4] = {255, 0, 0, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return t;
+}
+
 class BridgeLightingFrame : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window> w;
@@ -119,8 +132,10 @@ protected:
 
     /// Floor quad (mesh 0, material 0) and ceiling quad (mesh 1, material 1),
     /// default materials (BridgePass's white fallback as the base texture).
-    /// `dark_tex` != 0 is bound in the floor material's Dark stage.
-    std::unique_ptr<assets::Model> make_model(GLuint dark_tex) {
+    /// `dark_tex` != 0 is bound in the floor material's Dark stage. `base_tex`
+    /// != 0 is bound in BOTH materials' Base stage (debug-view tests read the
+    /// floor only).
+    std::unique_ptr<assets::Model> make_model(GLuint dark_tex, GLuint base_tex = 0) {
         auto m = std::make_unique<assets::Model>();
         for (float nz : {1.0f, -1.0f}) {
             assets::MeshCpu cpu;
@@ -136,6 +151,14 @@ protected:
                 static_cast<std::size_t>(assets::Material::StageSlot::Dark)];
             dark.texture_index = 0;
             dark.uv_set = 0;
+        }
+        if (base_tex != 0) {
+            m->textures.emplace_back(base_tex, 1u, 1u, false);
+            const int idx = static_cast<int>(m->textures.size()) - 1;
+            for (auto& mat : m->materials) {
+                mat.stages[static_cast<std::size_t>(
+                    assets::Material::StageSlot::Base)].texture_index = idx;
+            }
         }
         assets::Node root;
         root.name = "root";
@@ -197,6 +220,46 @@ protected:
     int render_floor_with_dark_stage(GLuint dark_tex) {
         return render({0.6f, 0.6f, 0.6f}, dark_tex).first;
     }
+
+    /// Render the same floor/ceiling scene under a given debug view with a
+    /// red base texture bound; return the floor pixel's RGBA (AO disabled,
+    /// as for every other BridgeLightingFrame test).
+    std::array<unsigned char, 4> render_debug(renderer::BridgeDebugView view) {
+        auto model = make_model(/*dark_tex=*/0, red_1x1());
+        scenegraph::World world;
+        auto iid = world.create_instance(
+            reinterpret_cast<scenegraph::ModelHandle>(model.get()));
+        world.set_world_transform(iid, glm::mat4(1.0f));
+        world.set_pass(iid, scenegraph::Pass::Bridge);
+
+        scenegraph::Camera cam;
+        cam.eye = {0.0f, 0.0f, 0.0f};
+        cam.target = {10.0f, 0.0f, 0.0f};
+        cam.up = {0.0f, 0.0f, 1.0f};
+        cam.aspect = 1.0f;
+        cam.near = 0.1f;
+        cam.far = 1000.0f;
+
+        renderer::Lighting lighting;
+        lighting.ambient = {0.6f, 0.6f, 0.6f};
+
+        glViewport(0, 0, kSize, kSize);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer::BridgePass pass;
+        pass.set_ao_enabled(false);
+        pass.set_debug_view(view);
+        pass.render(world, cam, *p,
+            [](unsigned long long h) -> const assets::Model* {
+                return reinterpret_cast<const assets::Model*>(h);
+            }, lighting);
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+        std::array<unsigned char, 4> floor_px{0, 0, 0, 0};
+        glReadPixels(kSize / 2, kSize / 4, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                     floor_px.data());
+        return floor_px;
+    }
 };
 
 }  // namespace
@@ -216,6 +279,27 @@ TEST_F(BridgeLightingFrame, LightmapSlotIsIgnored) {
     // Same scene with a BLACK texture bound in the floor material's Dark stage:
     // the floor must be exactly as bright as without it.
     EXPECT_EQ(render_floor_with_dark_stage(black_1x1()), render_floor_with_dark_stage(0));
+}
+
+// ── Developer-only bridge debug views (Task 8) ──────────────────────────────
+
+TEST_F(BridgeLightingFrame, DebugViewOffRendersRed) {
+    auto px = render_debug(renderer::BridgeDebugView::Off);
+    EXPECT_GT(px[0], px[1] + 20);
+    EXPECT_GT(px[0], px[2] + 20);
+}
+
+TEST_F(BridgeLightingFrame, DebugViewNormalsShowsFloorNormalUp) {
+    auto px = render_debug(renderer::BridgeDebugView::Normals);
+    EXPECT_NEAR(static_cast<int>(px[0]), 128, 2);
+    EXPECT_NEAR(static_cast<int>(px[1]), 128, 2);
+    EXPECT_NEAR(static_cast<int>(px[2]), 255, 2);
+}
+
+TEST_F(BridgeLightingFrame, DebugViewLightOnlyIsGrey) {
+    auto px = render_debug(renderer::BridgeDebugView::LightOnly);
+    EXPECT_NEAR(static_cast<int>(px[0]), static_cast<int>(px[1]), 1);
+    EXPECT_NEAR(static_cast<int>(px[1]), static_cast<int>(px[2]), 1);
 }
 
 // ── Bridge quality presets (Task 5) ─────────────────────────────────────────

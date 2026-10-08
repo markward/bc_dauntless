@@ -120,8 +120,11 @@ void draw_mesh(const assets::Model& model,
                bool face_blend = false,
                GLuint face_a = 0,
                GLuint face_b = 0,
-               float face_mix = 0.0f) {
+               float face_mix = 0.0f,
+               int mesh_id = 0) {
     shader.set_mat4("u_model", world);
+    // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
+    shader.set_int("u_mesh_id", mesh_id);
     // Alpha test only fires when the material carries an NiAlphaProperty;
     // otherwise the shape is fully opaque regardless of the base
     // texture's alpha channel. EBridge's floorlight.tga (and similar
@@ -238,7 +241,12 @@ void BridgePass::render(const scenegraph::World& world,
                                             static_cast<float>(view_vp[3])));
         s.set_int("u_ao_on", ao_on ? 1 : 0);
         s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
+        s.set_int("u_debug_view", static_cast<int>(debug_view_));
     };
+
+    // Developer Options debug view 5 (Mesh ID): a per-draw counter, reset
+    // every render() call so numbering is stable within a frame.
+    int mesh_id_counter = 0;
 
     // ── Sub-pass A: base geometry, opaque, downlit, alpha-test ─────────────
     auto& base_shader = pipeline.bridge_shader();
@@ -280,7 +288,9 @@ void BridgePass::render(const scenegraph::World& world,
             unsigned long long mh) {
             const auto [ov, flip] = viewscreen_override(mh);
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
-                      viewscreen_brightness_, viewscreen_flash_);
+                      viewscreen_brightness_, viewscreen_flash_,
+                      /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
+                      /*face_mix=*/0.0f, mesh_id_counter++);
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
@@ -329,7 +339,7 @@ void BridgePass::render(const scenegraph::World& world,
                     draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
                               /*override_flip_v=*/true, 1.0f, 0.0f,
                               face, inst.face_tex_a, inst.face_tex_b,
-                              inst.face_mix);
+                              inst.face_mix, mesh_id_counter++);
                 }
             }
         });

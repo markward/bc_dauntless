@@ -64,7 +64,8 @@ _REQUIRED_BINDINGS = frozenset({
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
     "rim_set_enabled", "set_asset_overrides", "set_backdrops",
     "set_bridge_ambient_scale",
-    "set_bridge_camera", "set_bridge_lighting", "set_bridge_quality",
+    "set_bridge_camera", "set_bridge_debug_view", "set_bridge_lighting",
+    "set_bridge_quality",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
@@ -342,6 +343,13 @@ def set_bridge_quality(level: int) -> None:
 def bridge_quality() -> int:
     """Current bridge rendering quality level (see set_bridge_quality)."""
     return _h.bridge_quality()
+
+
+def set_bridge_debug_view(view: int) -> None:
+    """Developer Options -> Lighting tab's Bridge Debug View row: 0 Off,
+    1 Normals, 2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID. A no-op
+    unless the binary was launched with --developer."""
+    _h.set_bridge_debug_view(int(view))
 
 
 def damage_decals_tick(game_time: float) -> None:

@@ -18,6 +18,19 @@ namespace renderer {
 
 class Pipeline;
 
+/// Developer-only bridge debug views (Developer Options -> Lighting tab).
+/// Off is production: byte-identical to no debug support existing at all.
+/// Selected via BridgePass::set_debug_view; see bridge.frag for how each is
+/// drawn. The viewscreen feed (u_unlit) ignores every value here.
+enum class BridgeDebugView : int {
+    Off        = 0,
+    Normals    = 1,
+    LightOnly  = 2,
+    AoOnly     = 3,
+    TriangleId = 4,
+    MeshId     = 5,
+};
+
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:
 ///   A. Base geometry — opaque, alpha-test, base x the ceiling downlight
 ///      (the bridge ambient shaped by the surface normal; tuning in
@@ -97,6 +110,11 @@ public:
     /// production never turns it off.
     void set_ao_enabled(bool on) { ao_enabled_ = on; }
 
+    /// Developer-only debug view (see BridgeDebugView). Default Off is
+    /// byte-identical to the production lit path.
+    void set_debug_view(BridgeDebugView v) { debug_view_ = v; }
+    BridgeDebugView debug_view() const { return debug_view_; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -123,6 +141,9 @@ private:
     BridgeAoSettings ao_settings_;
     bool             ao_enabled_ = true;
     bool             normal_pass_ = false;
+
+    /// Developer Options -> Lighting tab "Bridge Debug View" row.
+    BridgeDebugView  debug_view_ = BridgeDebugView::Off;
 };
 
 }  // namespace renderer

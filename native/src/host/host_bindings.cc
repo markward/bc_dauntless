@@ -263,6 +263,11 @@ float g_bridge_ambient_scale = 1.0f;
 // every set_bridge_quality() call, so a quality change takes effect even
 // mid-mission without waiting for the next init().
 renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
+// Developer Options -> Lighting tab "Bridge Debug View" (see
+// renderer::BridgeDebugView). set_bridge_debug_view is a no-op without
+// --developer, so this stays 0 (Off) in production regardless of what
+// Python sends.
+int g_bridge_debug_view = 0;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -4127,6 +4132,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("bridge_quality",
           [] { return static_cast<int>(g_bridge_quality); },
           "Current bridge rendering quality level (see set_bridge_quality).");
+
+    m.def("set_bridge_debug_view",
+          [](int v) {
+              if (!dauntless::is_developer_mode()) return;
+              v = std::clamp(v, 0, 5);
+              g_bridge_debug_view = v;
+              if (g_bridge_pass)
+                  g_bridge_pass->set_debug_view(
+                      static_cast<renderer::BridgeDebugView>(v));
+          },
+          py::arg("view"),
+          "DEV ONLY (--developer; no-op otherwise): Developer Options -> "
+          "Lighting tab's Bridge Debug View row. 0 Off, 1 Normals, "
+          "2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID.");
+
+    m.def("bridge_debug_view",
+          [] { return g_bridge_debug_view; },
+          "Active bridge debug view (see set_bridge_debug_view); 0 when "
+          "not under --developer.");
 
     m.def("set_bridge_wall_time",
           [](double t) { if (g_bridge_pass) g_bridge_pass->set_wall_time(t); },
