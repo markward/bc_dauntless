@@ -221,7 +221,9 @@ TypeParams default_params(SurfaceType t) {
             return TypeParams{50.0f, 8, 0.5f, 0.0f, 0.3f, 0.12f, 0.06f, 0.12f, 0.3f,
                                0.06f, 1.0f, 0.0f, 0.0f, 40.0f, 0.06f, 0.20f};
         case SurfaceType::Gas:
-            return TypeParams{200.0f, 7, 0.55f, 0.0f, 0.8f, 0.0f, 0.12f, 0.5f, 0.0f,
+            // albedo 0.40 (was 0.12): gas varies brightness only, and ±5% was
+            // invisible on BC's pastel bands (Mark, live, 2026-10-08).
+            return TypeParams{200.0f, 7, 0.55f, 0.0f, 0.8f, 0.0f, 0.40f, 0.5f, 0.0f,
                                0.0f, 4.0f, 0.6f, 0.5f, 40.0f, 0.0f, 0.0f};
         case SurfaceType::Ocean:
             return TypeParams{40.0f, 3, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.25f, 0.6f,

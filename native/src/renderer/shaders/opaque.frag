@@ -1532,7 +1532,13 @@ void main() {
                 vec4  pd_s1 = pd_sample(pd_p, pd_o1, pd_fp, pd_cover, pd_level);
                 vec4  pd_s2 = pd_sample(pd_p, pd_o2, pd_fp, pd_c2, pd_l2);
                 float pd_h2 = (2.0 * pd_s2.w - 1.0) * u_pd_p_amplitude;
-                pd_s = vec4(mix(pd_s1.x, pd_h2, abs(2.0 * pd_ph - 1.0)), 0.0, 0.0, pd_s1.w);
+                // Variance-preserving crossfade: two independent zero-mean
+                // fields mixed at weight w lose contrast by sqrt(w²+(1-w)²)
+                // (-29% at w = 0.5), so the turbulence would fade and return
+                // every half period. Dividing it back out keeps it steady.
+                float pd_xw = abs(2.0 * pd_ph - 1.0);
+                float pd_xn = inversesqrt(max(pd_xw * pd_xw + (1.0 - pd_xw) * (1.0 - pd_xw), 0.5));
+                pd_s = vec4(mix(pd_s1.x, pd_h2, pd_xw) * pd_xn, 0.0, 0.0, pd_s1.w);
                 pd_cover = min(pd_cover, pd_c2);
             } else {
                 pd_s = pd_sample(pd_p, vec2(0.0), pd_fp, pd_cover, pd_level);
