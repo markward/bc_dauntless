@@ -1346,6 +1346,7 @@ class CharacterClass(ObjectClass):
             panel.show_menu(menu)
         self._data["MenuUp"] = True
         self._notify_menu(turn=True)         # turn-to-captain (None-ctrl guarded)
+        _refresh_tcw_visibility()            # a menu opened: BC re-runs Refresh
         dispatch_character_menu(self, is_open=True)
         return 1
 
@@ -1377,6 +1378,7 @@ class CharacterClass(ObjectClass):
             panel.hide_menu()
         self._data["MenuUp"] = False
         self._notify_menu(turn=False)
+        _refresh_tcw_visibility()
         dispatch_character_menu(self, is_open=False)
 
     def MenuEventHandler(self, engaged, look_at, zoom_factor, now=None) -> None:
@@ -1469,6 +1471,13 @@ def CharacterClass_CreateNull() -> CharacterClass:
 
 def CharacterClass_Cast(obj) -> "CharacterClass | None":
     return obj if isinstance(obj, CharacterClass) else None
+
+
+def _refresh_tcw_visibility() -> None:
+    """Re-derive the TCW's visibility after the open menu changed (lazy
+    import: engine.appc.windows imports this module's neighbours at load)."""
+    from engine.appc.windows import refresh_visibility
+    refresh_visibility()
 
 
 def _get_menu_panel():

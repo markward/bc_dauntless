@@ -121,7 +121,10 @@ class InfoBoxPanel(Panel):
         for (child, _x, _y) in TacticalControlWindow.GetInstance()._children:
             if not isinstance(child, _STStylizedWindow):
                 continue
-            if not child.IsVisible():
+            # Completely visible = the box AND the TCW: BC draws a pane's
+            # children only while it is visible, and MissionLib.StartCutscene
+            # / the bridge-without-a-menu rule hide the TCW.
+            if not child.IsCompletelyVisible():
                 continue
             self._boxes_by_id[child._id] = child
             # MissionLib.SetupInfoBoxFromParagraph always builds the body as the
