@@ -31,11 +31,6 @@ from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
 from engine.core.ids import implements
 
-# Range used when a ship models no sensor subsystem or carries no
-# BaseSensorRange hardpoint data. Preserves the player target list's
-# historical 30000 GU reach and keeps sensor-less fixtures fully sighted.
-FALLBACK_RANGE_GU = 30000.0
-
 # ── Concealment constants ─────────────────────────────────────────────────────
 CONCEAL_K = 0.9      # effective-range reduction at full density (0→no effect, 1→blind)
 LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to the
@@ -70,13 +65,16 @@ _walking_probes = False
 #   (1) CLOAK IS A RANGE CONTEST, not an absolute. In BC a cloaked ship is
 #       undetectable at any range. Here the cloak bubble is
 #           CLOAK_DETECTION_BASE_GU + effective_sensor_range * CLOAK_RANGE_FACTOR
-#       — a flat floor plus a fraction of the observer's *effective* range,
+#       capped at the cloak_bubble_cap_gu dial (sensor_dials) so no observer --
+#       in practice the big stations -- out-reaches a phaser. Below the cap
+#       it is a flat floor plus a fraction of the observer's *effective* range,
 #       which lands a Galaxy well inside its own 60 GU phaser reach: you must be
 #       effectively on top of a cloaked ship to see it. Because the percentage
 #       term scales *effective* range (post condition and power), boosting
-#       sensor power widens the bubble; wrecked sensors remove it entirely (the
-#       flat floor never applies past the `r <= 0.0` guard below). See the
-#       constants for the current dial settings — deliberately not restated here.
+#       sensor power widens the bubble (up to the cap); wrecked sensors remove
+#       it entirely (the flat floor never applies past the `r <= 0.0` guard
+#       below). See the constants for the current dial settings — deliberately
+#       not restated here.
 #
 #   (2) NEBULA CONCEALMENT REACHES THE UI. perception.perceived_by (target list,
 #       radar) routes through can_detect, so nebula-hidden contacts leave the
@@ -89,8 +87,8 @@ _walking_probes = False
 # reaches the candidate filter with no cloak skip of its own, so a station
 # picks up a cloaked ship inside its (large) bubble. See the ⚠️ note above
 # `_observing_ship` in engine/appc/ai_sensor_gate.py for the paths and the
-# numbers, which scale with CLOAK_RANGE_FACTOR — cutting the factor is the lever
-# that shrinks the oversized station bubbles.
+# numbers, which scale with CLOAK_RANGE_FACTOR; the cap is what bounds the
+# station bubbles.
 #
 # ⚠️ KNOWN WART IN THE OFF STATE — this is deliberate, do not "fix" it.
 # With the flag False the UI ignores nebulae but can_detect keeps applying
@@ -120,7 +118,8 @@ CLOAK_DETECTION_BASE_GU = 5.0   # Flat bubble floor, added atop the percentage t
                                  # every past retune left stale "the bubble is N GU"
                                  # sentences scattered across the tests, and correcting
                                  # them dwarfed the actual change. Compute it:
-                                 #     bubble = BASE + effective_sensor_range * FACTOR
+                                 #     bubble = min(cap, BASE + effective_sensor_range * FACTOR)
+                                 # where cap is the cloak_bubble_cap_gu dial (sensor_dials).
                                  # Sanity-pinned by test_cloak_detection_contest.py's
                                  # formula + magnitude tests, which read these names
                                  # instead of hardcoding results, so a retune needs no
@@ -214,30 +213,40 @@ def _game_time() -> float:
         return 0.0
 
 
+def _sensorless_range() -> float:
+    """Range for an observer that models no sensor subsystem or carries no
+    BaseSensorRange: the `sensorless_range_gu` dial (Mark's ruling,
+    2026-10-08). Only CommArray and CommLight (plus rocks, which never
+    observe) author no sensors; the 7 other stock hardpoints without a
+    SetBaseSensorRange inherit their parent's."""
+    from engine.appc import sensor_dials
+    return sensor_dials.get("sensorless_range_gu")
+
+
 def effective_sensor_range(ship) -> float:
     """Detection range (game units) for *ship* given its sensor condition.
 
     Full BaseSensorRange when undamaged, scaled linearly by condition
     percentage, and 0.0 once the sensor subsystem is offline (disabled or
-    destroyed). Returns FALLBACK_RANGE_GU for ships that don't model a
-    sensor subsystem or carry no BaseSensorRange.
+    destroyed). Returns the `sensorless_range_gu` dial for ships that don't
+    model a sensor subsystem or carry no BaseSensorRange.
 
     The capability probe is ``ids.implements``, NOT ``hasattr``:
     ``TGObject.__getattr__`` vends a truthy ``_Stub`` for any undefined method,
     so ``hasattr`` is vacuously True for every engine object and a non-ship
     used to get a ``_Stub`` back — which ``_is_offline`` then read as offline,
-    silently answering 0.0 ("blind") instead of the documented fallback.
+    silently answering 0.0 ("blind") instead of the `sensorless_range_gu` dial.
     """
     sensors = (ship.GetSensorSubsystem()
                if (ship is not None and implements(ship, "GetSensorSubsystem"))
                else None)
     if sensors is None:
-        return FALLBACK_RANGE_GU
+        return _sensorless_range()
     if _is_offline(sensors):
         return 0.0
     base = sensors.GetBaseSensorRange()
     if base <= 0.0:
-        return FALLBACK_RANGE_GU
+        return _sensorless_range()
     return base * sensors.GetConditionPercentage() * sensors.GetNormalPowerPercentage()
 
 
@@ -444,7 +453,8 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     # cloak instead shrinks effective range to CLOAK_DETECTION_BASE_GU (a flat
     # floor) plus CLOAK_RANGE_FACTOR of it, applied after
     # effective_sensor_range so the percentage term scales with condition and
-    # power while the flat term does not. Mid-cloak (CLOAKING) stays fully
+    # power while the flat term does not, and the result is capped by the
+    # cloak_bubble_cap_gu dial. Mid-cloak (CLOAKING) stays fully
     # visible until the transition finishes, so gate on IsCloaked(), not
     # IsTryingToCloak().
     cloak = _cloak_subsystem(target)
@@ -456,7 +466,12 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     if r <= 0.0:
         return False
     if cloaked:
-        r = CLOAK_DETECTION_BASE_GU + r * CLOAK_RANGE_FACTOR
+        # Capped (sub-project 5, Mark's ruling 2026-10-08): a station must
+        # not out-reach your phasers. Applied after condition/power scaling,
+        # so over-boost cannot exceed it either.
+        from engine.appc import sensor_dials
+        r = min(sensor_dials.get("cloak_bubble_cap_gu"),
+                CLOAK_DETECTION_BASE_GU + r * CLOAK_RANGE_FACTOR)
 
     # ── Occlusion gate (sub-project 2) ────────────────────────────────────
     # A major rock on the line of sight hides the target from everyone --

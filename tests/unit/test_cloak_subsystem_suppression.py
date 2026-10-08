@@ -7,12 +7,13 @@ lock back to ship level when its ship cloaks).
 Named for the effect (subsystems_targetable), not the cause (cloak), because
 nebula concealment is a plausible second producer later.
 
-50 GU is the same "inside the bubble" geometry
+The "inside the bubble" geometry is the same one
 tests/unit/test_cloak_target_visibility.py uses: these fixtures model no
-BaseSensorRange, so effective range is FALLBACK_RANGE_GU (30000) and the cloak
-bubble is CLOAK_DETECTION_BASE_GU + FALLBACK_RANGE_GU * CLOAK_RANGE_FACTOR =
-the game's largest — well past the 50 GU separation used below, which
-`_assert_fixture_geometry` pins rather than assuming.
+BaseSensorRange, so effective range is the `sensorless_range_gu` dial and the
+cloak bubble is CLOAK_DETECTION_BASE_GU + that range * CLOAK_RANGE_FACTOR,
+capped by the `cloak_bubble_cap_gu` dial. The separations below are DERIVED
+from that bubble (tests.helpers.cloak_geometry), never hardcoded, so a retune
+of any of those dials needs no edit here.
 """
 import json
 
@@ -22,7 +23,7 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem
 from engine.appc.perception import perceived_by
 from engine.appc.target_menu import STTargetMenu_CreateW
-from tests.helpers.cloak_geometry import assert_inside, FALLBACK_SENSOR_GU
+from tests.helpers.cloak_geometry import inside_gu, outside_gu, sensorless_gu
 
 
 def _pump(menu, player):
@@ -42,7 +43,7 @@ def _scene():
     pSet.AddObjectToSet(player, "Player")
     enemy = ShipClass_Create("Warbird")
     enemy.SetName("Enemy")
-    enemy.SetTranslateXYZ(0, 50, 0)
+    enemy.SetTranslateXYZ(0, inside_gu(sensorless_gu()), 0)
     enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
     pSet.AddObjectToSet(enemy, "Enemy")
     # These fixtures test the CLOAK gate on subsystems_targetable, not the
@@ -52,12 +53,6 @@ def _scene():
     player.GetSensorSubsystem().AddKnownObject(enemy)
     menu = STTargetMenu_CreateW("Targets")
     menu.RebuildShipMenus(pSet)
-    # These fixtures author no BaseSensorRange, so the observer falls back to
-    # FALLBACK_RANGE_GU and gets the game's largest cloak bubble. The 50 GU
-    # separation above is meant to sit INSIDE it; pin that rather than assume it,
-    # so a cloak retune fails loudly here instead of silently turning every
-    # "inside the bubble" test below into an "outside the bubble" one.
-    assert_inside(50.0, FALLBACK_SENSOR_GU)
     return pSet, player, enemy, menu
 
 
@@ -108,7 +103,7 @@ def test_cloaked_contact_inside_bubble_lists_ship_with_no_subsystems():
 
 
 def test_uncloaked_contact_at_same_distance_still_carries_subsystems():
-    """Control: identical 50 GU separation, no cloak. Subsystems must still
+    """Control: identical inside-the-bubble separation, no cloak. Subsystems must still
     be present — proving the gate is cloak-driven, not distance-driven."""
     from engine.ui.target_list_view import (
         TargetListView, reconcile_subsystem_lock)
@@ -173,7 +168,7 @@ def test_subsystem_lock_drops_when_target_cloaks_outside_the_bubble():
     pSet, player, enemy, menu = _scene()
     other = ShipClass_Create("Other")
     other.SetName("Other")
-    other.SetTranslateXYZ(0, 60, 0)
+    other.SetTranslateXYZ(0, inside_gu(sensorless_gu()) + 10.0, 0)
     pSet.AddObjectToSet(other, "Other")
     restore = _with_current_game(player)
     try:
@@ -189,7 +184,7 @@ def test_subsystem_lock_drops_when_target_cloaks_outside_the_bubble():
         # player_lock (the host loop's per-tick guard) drops the ship-level
         # target, but on its own leaves the subsystem lock dangling.
         enemy.GetCloakingSubsystem().InstantCloak()
-        enemy.SetTranslateXYZ(0, 5000, 0)
+        enemy.SetTranslateXYZ(0, outside_gu(sensorless_gu()), 0)
         clear_undetectable_player_lock(player)
         assert player.GetTarget() is None
         assert player.GetTargetSubsystem() is sub  # still dangling, pre-fix

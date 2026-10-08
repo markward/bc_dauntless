@@ -4,7 +4,7 @@ Tests are written against the REAL can_detect(observer, target) signature
 (no base_range= param). Fake ships have GetWorldLocation() + GetContainingSet()
 so _get_xyz and concealment_at can both resolve position.
 
-Sensor-less fixtures get FALLBACK_RANGE_GU = 30000 GU, so a few-hundred-GU
+Sensor-less fixtures get the `sensorless_range_gu` dial, so a few-hundred-GU
 gap is always within range; RANGE is not the limiter and these tests cleanly
 isolate the concealment mechanics.
 """
@@ -59,7 +59,7 @@ def test_concealment_high_in_dense_core():
 def test_can_detect_blocked_when_target_concealed():
     """A deeply-concealed target at point-blank range cannot be detected.
 
-    Both ships have no sensor subsystem (FALLBACK_RANGE_GU=30000 GU), so
+    Both ships have no sensor subsystem (the `sensorless_range_gu` dial), so
     range is not the reason detection fails — concealment is.
     """
     s, n = _set_with_dense_nebula()
