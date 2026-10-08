@@ -102,18 +102,18 @@ def _scene():
     charger.SetWorldLocation(TGPoint3(0, 260, 0))
     charger.SetRadius(20.0)
     pSet.AddObjectToSet(charger, "Charger")
+    # Set ONCE; the engine drifts a no-AI ship on its scripted velocity
+    # (engine.appc.drift). Moving it by hand as well double-moves it -- see
+    # test_the_charger_closes_at_its_scripted_speed.
+    charger.SetVelocity(TGPoint3(0, -CHARGER_SPEED_GUPS, 0))
     return pSet, attacker, charger
 
 
 def _run(attacker, charger, ticks=2400):
-    charger_speed = 5.0
     dt = 1.0 / 60.0
     closest = 1e18
     t = 0.0
     for _ in range(ticks):
-        p = charger.GetWorldLocation()
-        charger.SetWorldLocation(TGPoint3(p.x, p.y - charger_speed * dt, p.z))
-        charger.SetVelocity(TGPoint3(0, -charger_speed, 0))
         ca.invalidate_obstacle_snapshot()
         t += dt
         tick_all_ai(game_time=t)
@@ -122,6 +122,27 @@ def _run(attacker, charger, ticks=2400):
              - attacker.GetWorldLocation()).Length()
         closest = min(closest, d)
     return closest
+
+
+CHARGER_SPEED_GUPS = 5.0
+
+
+def test_the_charger_closes_at_its_scripted_speed():
+    """The scenario's premise: the charger moves at CHARGER_SPEED_GUPS, once.
+
+    The charger has no AI and no helm setpoint, so since 4109f3f2 the engine
+    drifts it on its scripted velocity (engine.appc.drift). This file kept
+    nudging it by hand as well, so it closed at 10 GU/s, the attacker had
+    half the time to dodge, and every head-on figure measured a different,
+    harder scene than the one described.
+    """
+    _pSet, attacker, charger = _scene()
+    y0 = charger.GetWorldLocation().y
+    _run(attacker, charger, ticks=60)
+    moved = y0 - charger.GetWorldLocation().y
+    assert moved == pytest.approx(CHARGER_SPEED_GUPS, rel=1e-6), (
+        "charger moved %.3f GU in 1 s, scripted %.1f GU/s"
+        % (moved, CHARGER_SPEED_GUPS))
 
 
 # Object-id bases for the head-on sweep: 32 consecutive strides of 97, which
@@ -156,16 +177,17 @@ def test_the_cadence_costs_a_head_on_dodge_no_worst_case_separation(
 
     This replaced an absolute single-run check ("closest > sum of radii") that
     ran the opt-in ENGINE scan on whatever phase the suite's object-id counter
-    happened to give it. Measured 2026-10-08 over 32 pinned bases:
+    happened to give it. Measured 2026-10-08 over 32 pinned bases, with the
+    charger at its scripted 5 GU/s (an earlier sweep moved it at 10 GU/s --
+    see test_the_charger_closes_at_its_scripted_speed -- and reported grazes
+    that do not exist):
 
-    * engine scan (opt-in, off by default): 8/32 phases graze with the cadence
-      (min 39.94 GU vs 40.0) and 0/32 at 0.0 -- the cadence DOES cost that
-      path its head-on dodge. Open; see docs/engine/perf-cadences-and-latency.md.
-    * shipped SDK scan, stream rewound: 0/32 overlap with the cadence (min
-      40.17) and 5/32 at 0.0 (min 36.18). With the stream left running, about
-      half overlap at EITHER setting. The head-on dodge is marginal on the
-      shipped path whatever the cadence; that is also open, and not this
-      test's claim.
+    * engine scan (opt-in, off by default): 0/32 overlap at either setting;
+      min 62.72 GU with the cadence, 45.42 at 0.0.
+    * shipped SDK scan: 0/32 overlap with the cadence (min 57.36 stream
+      rewound, 42.03 stream running); 4/32 at 0.0 (min 37.66 / 36.95). The
+      cadence does not cost the dodge -- here it widens it. See
+      docs/engine/perf-cadences-and-latency.md.
 
     The claim here is the file's: the cadence must not cost the dodge. Per
     phase the pair is chaotic (the sweep's per-base differences span -9..+13
@@ -195,10 +217,9 @@ def _crowd(n=8, ring_r=90.0):
     """N ships on a ring, every one commanded straight at the centre.
 
     The single-charger scenario evades only briefly, so it says little about
-    SUSTAINED evasion. (It was once thought to clear by such a margin that the
-    cadence never matters; a 2026-10-08 phase sweep showed the engine scan
-    grazing in 8/32 phases with the cadence -- see the head-on test above.)
-    A crowd converging on a point is what the 100-ship scene
+    SUSTAINED evasion: on the shipped binding with the cadence it clears at
+    every phase, worst 57.4 GU with the flee-direction stream rewound and 42.0
+    with it running (2026-10-08). A crowd converging on a point is what the 100-ship scene
     actually looks like: ships evade continuously, re-entering each other's
     check radius as they scatter, which is exactly the state where
     fMinimumUpdateDelay is the knob doing the work.
