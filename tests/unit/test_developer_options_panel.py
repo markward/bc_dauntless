@@ -131,6 +131,8 @@ def test_render_payload_shape(panel):
         "rock_specks": True, "rock_puffs": True,
         "planet_geosphere": True,
         "planet_atmosphere": True,
+        "planet_surface": True,
+        "surface_debug": False,
     }
 
 
@@ -636,6 +638,110 @@ def test_reload_atmospheres_action_prints_to_stderr(panel, capsys):
     p.dispatch_event("tab:environments")
     p.dispatch_event("action:reload_atmospheres")
     assert "[atmosphere] catalogue reloaded" in capsys.readouterr().err
+
+
+# ---- Planet surface detail toggle + debug toggle + reload action
+# (Environments tab; planet-surface-detail §7) ------------------------------
+
+def test_environments_tab_exposes_planet_surface_and_surface_debug_rows(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    payload = _body(p.render_payload())["settings"]
+    assert "planet_surface" in payload
+    assert "surface_debug" in payload
+
+
+def test_planet_surface_toggle_flips_the_real_flag(panel):
+    """The panel must move the real engine.planet_surface flag, not just a
+    local mirror -- mirrors test_planet_atmosphere_toggle_flips_the_real_flag."""
+    from engine import planet_surface
+
+    p, _ = panel
+    saved = planet_surface.enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:environments")
+        p.dispatch_event("toggle:planet_surface")
+        assert planet_surface.enabled() is (not saved)
+        p.dispatch_event("toggle:planet_surface")
+        assert planet_surface.enabled() is saved
+    finally:
+        planet_surface.set_enabled(saved)
+
+
+def test_surface_debug_toggle_calls_the_native_debug_binding(panel, monkeypatch):
+    from engine import renderer
+
+    calls = []
+    monkeypatch.setattr(renderer, "set_planet_detail_debug", lambda on: calls.append(on))
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    p.dispatch_event("toggle:surface_debug")
+    assert calls == [True]
+    p.dispatch_event("toggle:surface_debug")
+    assert calls == [True, False]
+
+
+def test_planet_surface_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "planet_surface") in p._focusables()
+
+
+def test_surface_debug_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "surface_debug") in p._focusables()
+
+
+def test_reload_surfaces_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "reload_surfaces") in p._focusables()
+
+
+def test_reload_surfaces_action_calls_both_catalogue_reloads(panel, monkeypatch):
+    from engine.planets import atmosphere as atmo
+    from engine.planets import surface as surf
+
+    calls = []
+    monkeypatch.setattr(atmo, "reload", lambda: calls.append("atmo"))
+    monkeypatch.setattr(surf, "reload", lambda: calls.append("surf"))
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert p.dispatch_event("action:reload_surfaces") is True
+    assert calls == ["atmo", "surf"]
+
+
+def test_reload_surfaces_action_repushes_live_planets_after_reload(panel, monkeypatch):
+    from engine.planets import atmosphere as atmo
+    from engine.planets import surface as surf
+    from engine.planets import surface_dials as dials
+
+    order = []
+    monkeypatch.setattr(atmo, "reload", lambda: order.append("atmo_reload"))
+    monkeypatch.setattr(surf, "reload", lambda: order.append("surf_reload"))
+    monkeypatch.setattr(dials, "repush_live", lambda: order.append("repush"),
+                        raising=False)
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert p.dispatch_event("action:reload_surfaces") is True
+    assert order == ["atmo_reload", "surf_reload", "repush"]
+
+
+def test_reload_surfaces_action_prints_to_stderr(panel, capsys):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    p.dispatch_event("action:reload_surfaces")
+    assert "[surface] catalogue reloaded" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("name", _ROCK_TOGGLES)

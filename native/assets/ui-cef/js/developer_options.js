@@ -41,6 +41,9 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'planet_geosphere'});
         out.push({kind: 'ctrl', target: 'planet_atmosphere'});
         out.push({kind: 'ctrl', target: 'reload_atmospheres'});
+        out.push({kind: 'ctrl', target: 'planet_surface'});
+        out.push({kind: 'ctrl', target: 'surface_debug'});
+        out.push({kind: 'ctrl', target: 'reload_surfaces'});
     }
     if (state.selected_tab === 'diagnostics') {
         out.push({kind: 'ctrl', target: 'profiler'});
@@ -180,6 +183,12 @@ function _doRenderEnvironmentsBody(state, focusables) {
                          'planet_atmosphere', s.planet_atmosphere, isFoc('planet_atmosphere'));
     html += _doActionRow('Reload Planet Atmospheres', 'reload_atmospheres',
                          'Reload', isFoc('reload_atmospheres'));
+    html += _doToggleRow('Planet Surface Detail (off = BC texture only; applies to planets realized after toggling)',
+                         'planet_surface', s.planet_surface, isFoc('planet_surface'));
+    html += _doToggleRow('Surface Detail Debug (tint by clipmap level)',
+                         'surface_debug', s.surface_debug, isFoc('surface_debug'));
+    html += _doActionRow('Reload Planet Surfaces', 'reload_surfaces',
+                         'Reload', isFoc('reload_surfaces'));
     return html;
 }
 

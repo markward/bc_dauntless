@@ -1650,6 +1650,7 @@ def _reset_leakable_engine_globals():
     try:
         from engine.planets import surface as _planet_surface
         _planet_surface.clear_live()
+        _planet_surface._overrides.clear()
     except Exception:
         pass
     # Atmosphere dial group (planet-atmosphere spec §7): a test that sets the
@@ -1659,6 +1660,19 @@ def _reset_leakable_engine_globals():
         from engine.planets import atmosphere_dials as _atmo_dials
         _atmo_dials.set_target_fn(lambda: None)
         _atmo_dials.set_push_fn(lambda iid, a: None)
+    except Exception:
+        pass
+    # "surface" dial group (planet-surface-detail spec §7): same reset as the
+    # atmosphere dial group above, for its two extra native-binding hooks and
+    # its locally-tracked budget.
+    try:
+        from engine.planets import surface_dials as _surface_dials
+        _surface_dials.set_target_fn(lambda: None)
+        _surface_dials.set_push_fn(lambda iid, s: None)
+        _surface_dials.set_target_type_fn(lambda: 0)
+        _surface_dials.set_type_params_fns(lambda t: {}, lambda t, p: None)
+        _surface_dials.set_budget_fn(lambda cost: None)
+        _surface_dials._budget = 65536 * 8
     except Exception:
         pass
     # Planet atmosphere dev toggle (planet-atmosphere spec §4): the Developer

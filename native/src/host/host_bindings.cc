@@ -2808,6 +2808,55 @@ py::dict stats_dict(const mr::Stats& s) {
     return d;
 }
 
+// ── Planet surface-detail type table: Python <-> TypeParams (spec 2026-10-08
+// §7 dev tuning). One field list shared by get/set so they can never drift;
+// `ridged` is included (the binding is a generic struct accessor) even
+// though the "surface" dial group never dials it.
+py::dict type_params_to_dict(const renderer::planet_detail::TypeParams& p) {
+    py::dict d;
+    d["base_wavelength_gu"] = p.base_wavelength_gu;
+    d["max_octaves"] = p.max_octaves;
+    d["gain"] = p.gain;
+    d["ridged"] = p.ridged;
+    d["amplitude"] = p.amplitude;
+    d["bump"] = p.bump;
+    d["albedo"] = p.albedo;
+    d["roughness"] = p.roughness;
+    d["roughness_var"] = p.roughness_var;
+    d["crack_width"] = p.crack_width;
+    d["stretch"] = p.stretch;
+    d["warp"] = p.warp;
+    d["gas_rate_gups"] = p.gas_rate_gups;
+    d["gas_period_s"] = p.gas_period_s;
+    d["coast_k"] = p.coast_k;
+    d["coast_a"] = p.coast_a;
+    return d;
+}
+
+void apply_type_params_from_dict(renderer::planet_detail::TypeParams& p, const py::dict& params) {
+    for (auto item : params) {
+        const std::string key = item.first.cast<std::string>();
+        const float v = item.second.cast<float>();
+        if (key == "base_wavelength_gu") p.base_wavelength_gu = v;
+        else if (key == "max_octaves") p.max_octaves = static_cast<int>(v);
+        else if (key == "gain") p.gain = v;
+        else if (key == "ridged") p.ridged = v;
+        else if (key == "amplitude") p.amplitude = v;
+        else if (key == "bump") p.bump = v;
+        else if (key == "albedo") p.albedo = v;
+        else if (key == "roughness") p.roughness = v;
+        else if (key == "roughness_var") p.roughness_var = v;
+        else if (key == "crack_width") p.crack_width = v;
+        else if (key == "stretch") p.stretch = v;
+        else if (key == "warp") p.warp = v;
+        else if (key == "gas_rate_gups") p.gas_rate_gups = v;
+        else if (key == "gas_period_s") p.gas_period_s = v;
+        else if (key == "coast_k") p.coast_k = v;
+        else if (key == "coast_a") p.coast_a = v;
+        else throw py::value_error("set_surface_type_params: unknown field '" + key + "'");
+    }
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -3731,6 +3780,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("params"),
           "Planet surface detail (spec 2026-10-08): None disables; else "
           "(type, ocean_rgb, has_ocean, ocean_tolerance, strength, albedo, scale, seed).");
+
+    // ── Planet surface-detail developer tuning (spec 2026-10-08 §7) ────────
+    m.def("planet_detail_target_type",
+          []() -> int {
+              if (!g_planet_detail) return 0;
+              auto target = g_planet_detail->target();
+              if (!target) return 0;
+              const scenegraph::Instance* inst = g_world.get(*target);
+              return inst ? inst->surface.type : 0;
+          },
+          "The planet surface-detail clipmap's current target's Surface.type, "
+          "or 0 (none) with no target.");
+    m.def("get_surface_type_params",
+          [](int type) {
+              if (type < 0 || type > 5)
+                  throw py::value_error("get_surface_type_params: type out of range");
+              return type_params_to_dict(renderer::planet_detail::live_params(
+                  static_cast<renderer::planet_detail::SurfaceType>(type)));
+          },
+          py::arg("type"),
+          "The live (dev-tunable) TypeParams for one surface type, as a dict.");
+    m.def("set_surface_type_params",
+          [](int type, py::dict params) {
+              if (type < 0 || type > 5)
+                  throw py::value_error("set_surface_type_params: type out of range");
+              apply_type_params_from_dict(renderer::planet_detail::live_params(
+                  static_cast<renderer::planet_detail::SurfaceType>(type)), params);
+          },
+          py::arg("type"), py::arg("params"),
+          "Write named fields into live_params(type); unknown keys raise. Shape "
+          "fields (base_wavelength_gu, max_octaves, gain, ridged, amplitude, "
+          "crack_width, stretch, warp) change the baked field's shape_hash, "
+          "which PlanetDetailPass detects and cold-refills; the other fields "
+          "apply at the next bake with no extra wiring.");
+    m.def("set_planet_detail_budget",
+          [](long long cost) { if (g_planet_detail) g_planet_detail->set_budget(cost); },
+          py::arg("cost"),
+          "Per-frame bake cost budget for the planet surface-detail clipmap "
+          "(spec default 65536*8).");
+    m.def("set_planet_detail_debug",
+          [](bool on) { if (g_planet_detail) g_planet_detail->set_debug(on); },
+          py::arg("on"), "Tint the sampled clipmap level (debug visualisation).");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {

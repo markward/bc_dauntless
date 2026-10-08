@@ -5391,14 +5391,18 @@ def _iid_eq(a, b) -> bool:
     return _atmosphere.iid_eq(a, b)
 
 
-def _nearest_live_planet(session):
-    """The `atmosphere.live()` entry whose planet is nearest the player, by
-    SURFACE distance (|p_player - centre| - radius), not centre distance --
-    the atmosphere dial group's target (planet-atmosphere spec §7). None if
-    there is no player, no viewed frame, or nothing resolves. Airless
-    entries (resolve() is None) are skipped."""
+def _nearest_live_entry(session, entries, is_valid):
+    """The entry in `entries` (an atmosphere.LivePlanet / surface.LiveSurface
+    sequence) nearest the player, by SURFACE distance (|p_player - centre| -
+    radius), not centre distance -- shared by `_nearest_live_planet` and
+    `_nearest_live_surface_planet` (the atmosphere and "surface" dial
+    groups' targets, planet-atmosphere spec §7 / planet-surface-detail spec
+    §7). None if there is no player, no viewed frame, or nothing resolves.
+    `is_valid(entry)` filters out entries with nothing to tune (airless /
+    no-detail) -- kept in the registry (reload re-pushes them) but never a
+    dial target, so e.g. an airless moon nearer than its atmospheric parent
+    can't capture the dials."""
     from engine.appc import sensor_contacts as _sensor_contacts
-    from engine.planets import atmosphere as _atmosphere
 
     player = _sensor_contacts.current_player()
     if player is None:
@@ -5411,11 +5415,8 @@ def _nearest_live_planet(session):
 
     best = None
     best_dist = None
-    for entry in _atmosphere.live():
-        # Airless entries stay in the registry (reload re-pushes them) but
-        # are never a dial target: an airless moon nearer than its
-        # atmospheric parent would otherwise capture the dials.
-        if _atmosphere.resolve(entry.set_name, entry.obj_name, entry.nif_path) is None:
+    for entry in entries:
+        if not is_valid(entry):
             continue
         centre = None
         radius = None
@@ -5442,6 +5443,31 @@ def _nearest_live_planet(session):
             best_dist = dist
             best = entry
     return best
+
+
+def _nearest_live_planet(session):
+    """The `atmosphere.live()` entry whose planet is nearest the player, by
+    surface distance -- the atmosphere dial group's target (planet-atmosphere
+    spec §7). Airless entries (resolve() is None) are skipped."""
+    from engine.planets import atmosphere as _atmosphere
+
+    def _has_atmosphere(entry):
+        return _atmosphere.resolve(entry.set_name, entry.obj_name, entry.nif_path) is not None
+
+    return _nearest_live_entry(session, _atmosphere.live(), _has_atmosphere)
+
+
+def _nearest_live_surface_planet(session):
+    """The `surface.live()` entry whose planet is nearest the player, by
+    surface distance -- the "surface" dial group's catalogue-field target
+    (planet-surface-detail spec §7). No-detail entries (resolve_surface() is
+    None) are skipped."""
+    from engine.planets import surface as _surface
+
+    def _has_surface(entry):
+        return _surface.resolve_surface(entry.set_name, entry.obj_name, entry.nif_path) is not None
+
+    return _nearest_live_entry(session, _surface.live(), _has_surface)
 
 
 def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
@@ -10187,6 +10213,19 @@ def run(mission_name: Optional[str] = None,
                 _atmo_dials.set_push_fn(
                     lambda iid, a: r.set_instance_atmosphere(iid, a))
                 _atmo_dials.register()
+                from engine.planets import surface as _surface_catalogue
+                from engine.planets import surface_dials as _surface_dials
+                _surface_dials.set_target_fn(
+                    lambda: _nearest_live_surface_planet(controller.session)
+                    if controller.session is not None else None)
+                _surface_dials.set_push_fn(
+                    lambda iid, s: r.set_instance_surface(
+                        iid, _surface_catalogue.to_binding(s)))
+                _surface_dials.set_target_type_fn(r.planet_detail_target_type)
+                _surface_dials.set_type_params_fns(
+                    r.get_surface_type_params, r.set_surface_type_params)
+                _surface_dials.set_budget_fn(r.set_planet_detail_budget)
+                _surface_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:

@@ -19,6 +19,12 @@ _FIELDS = {"type", "ocean", "ocean_tolerance", "strength", "albedo", "scale"}
 
 _live: list = []
 
+# In-memory overlay set by the "surface" dev dial group (Task 10):
+# key -> Surface, consulted by resolve_surface() before the catalogue file.
+# Cleared by reload() so the dev "Reload Planet Surfaces" action drops live
+# tuning along with re-reading the catalogue (atmosphere._overrides mirror).
+_overrides: dict = {}
+
 
 @dataclass(frozen=True)
 class Surface:
@@ -90,6 +96,8 @@ def resolve_surface(set_name: str, obj_name: str, nif_path: str):
     key = resolve_surface_key(set_name, obj_name, nif_path)
     if key is None:
         return None
+    if key in _overrides:
+        return _overrides[key]
     try:
         return parse_surface(_atmo.load()[key]["surface"],
                              seed=zlib.crc32(key.encode("utf-8")))
@@ -97,6 +105,22 @@ def resolve_surface(set_name: str, obj_name: str, nif_path: str):
         _atmo._warn(str(_atmo.catalogue_path()), key + "#surface",
                     f"malformed surface ({e}); no surface detail")
         return None
+
+
+def set_override(key: str, s: Surface) -> None:
+    """Overlay `key`'s resolved Surface with `s` (the "surface" dev dial
+    group, Task 10). Takes effect for every planet that resolves to `key`,
+    not only the one the dial targeted -- the dial edits the CATALOGUE
+    entry, not one instance (mirrors engine.planets.atmosphere.set_override)."""
+    _overrides[key] = s
+
+
+def reload() -> None:
+    """Drop every dial override. Does NOT clear the shared atmosphere file
+    memo -- the "Reload Planet Surfaces" action calls atmosphere.reload()
+    separately to re-read the catalogue file (the two 'surface' and
+    'atmosphere' blocks live in the same JSON, loaded through one memo)."""
+    _overrides.clear()
 
 
 def to_binding(s):
