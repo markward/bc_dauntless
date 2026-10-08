@@ -113,6 +113,10 @@ protected:
 
     static glm::mat4 world() { return glm::scale(glm::mat4(1.0f), glm::vec3(kScale)); }
     float R() const { return geo->sphere_map->radius * kScale; }
+    // The production level count for this planet (5). A 150 GU nadir view
+    // has a ~0.68 GU footprint: fewer levels would put it past the coarsest
+    // texel, where detail fades out (I2) and the view tests nothing.
+    int levels() const { return pd::level_count_for(R(), 0.1f); }
     glm::vec3 centre_ws() const { return geo->sphere_map->center_body * kScale; }
 
     // Camera `alt` GU above the surface along planet-local direction `dir`,
@@ -258,14 +262,17 @@ protected:
     // A clipmap atlas (ClipmapAtlas's format) whose every texel is `texel`.
     static GLuint const_atlas(int levels, glm::vec4 texel) {
         const int h = 1026 * levels;
-        std::vector<float> px(static_cast<std::size_t>(1024 * h * 4));
+        std::vector<float> px(static_cast<std::size_t>(1024 * 1026 * 4));   // one band
         for (std::size_t i = 0; i < px.size(); i += 4) {
             px[i] = texel.x; px[i + 1] = texel.y; px[i + 2] = texel.z; px[i + 3] = texel.w;
         }
         GLuint t = 0;
         glGenTextures(1, &t);
         glBindTexture(GL_TEXTURE_2D, t);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1024, h, 0, GL_RGBA, GL_FLOAT, px.data());
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1024, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+        for (int L = 0; L < levels; ++L)
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, L * 1026, 1024, 1026, GL_RGBA, GL_FLOAT,
+                            px.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -347,7 +354,7 @@ TEST_F(PlanetSurfaceDrawTest, DisabledMatchesOpaqueExactly) {
     renderer::HdrTarget hdr;
     hdr.resize(kSize, kSize);
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
-    Detail d = bake(dir, 2);
+    Detail d = bake(dir, levels());
     const auto l = sun_over(dir);
     // A nadir view (detail would be on) and a whole-disc view.
     const scenegraph::Camera cams[2] = {nadir_cam(dir, 150.0f), nadir_cam(dir, 2.0f * R())};
@@ -376,7 +383,7 @@ TEST_F(PlanetSurfaceDrawTest, EnabledChangesNearNadirOnly) {
     renderer::HdrTarget hdr;
     hdr.resize(kSize, kSize);
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
-    Detail d = bake(dir, 2);
+    Detail d = bake(dir, levels());
     const auto l = sun_over(dir);
     const pd::SampleUniforms off{};
 
@@ -394,8 +401,10 @@ TEST_F(PlanetSurfaceDrawTest, EnabledChangesNearNadirOnly) {
     // Every level claims a huge valid rect here, so coverage cannot be what
     // holds the far frame at zero (a far pixel lies outside the real rects
     // and would pass vacuously): only the px-per-BC-texel weight can.
+    // Nor may the footprint fade (I2): a huge ts0 keeps lf below level 0.
     pd::SampleUniforms far_u = d.u;
-    far_u.valid[0] = far_u.valid[1] = glm::vec4(-1e7f, -1e7f, 1e7f, 1e7f);
+    for (auto& v : far_u.valid) v = glm::vec4(-1e7f, -1e7f, 1e7f, 1e7f);
+    far_u.ts0 = 1.0e4f;
     const auto far_cam = nadir_cam(dir, 49.0f * R());
     const auto fa = draw(p->planet_shader(), far_cam, l, hdr, &off);
     const auto fb = draw(p->planet_shader(), far_cam, l, hdr, &far_u);
@@ -502,7 +511,7 @@ TEST_F(PlanetSurfaceDrawTest, WaterMaskFollowsOceanKey) {
     hdr.resize(kSize, kSize);
     paint_base(0x40, 0x58, 0x70);
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
-    Detail d = bake(dir, 2);
+    Detail d = bake(dir, levels());
     d.u.has_ocean = true;
     d.u.ocean = glm::vec3(srgb_lin(0x40), srgb_lin(0x58), srgb_lin(0x70));
     const auto cam = nadir_cam(dir, 150.0f);
@@ -533,7 +542,7 @@ TEST_F(PlanetSurfaceDrawTest, OceanTypeIsAllWater) {
     renderer::HdrTarget hdr;
     hdr.resize(kSize, kSize);
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
-    Detail d = bake(dir, 2);   // Rocky relief in the atlas, Rocky roughness
+    Detail d = bake(dir, levels());   // Rocky relief in the atlas, Rocky roughness
     d.u.type = static_cast<int>(pd::SurfaceType::Ocean);
     const auto cam = nadir_cam(dir, 150.0f);
     pd::SampleUniforms flat = d.u;
@@ -557,7 +566,7 @@ TEST_F(PlanetSurfaceDrawTest, GasHasNoBumpAndAnimates) {
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
     pd::TypeParams tp = pd::default_params(pd::SurfaceType::Gas);
     tp.bump = 0.35f;   // a non-zero bump dial: gas must still not bump
-    Detail d = bake(dir, 2, pd::SurfaceType::Gas, tp);
+    Detail d = bake(dir, levels(), pd::SurfaceType::Gas, tp);
     d.u.seed = 7u;
     const auto cam = nadir_cam(dir, 150.0f);
     const auto l = sun_grazing(dir);
@@ -589,9 +598,10 @@ TEST_F(PlanetSurfaceDrawTest, IceCracksDarken) {
     renderer::HdrTarget hdr;
     hdr.resize(kSize, kSize);
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
-    Detail d = bake(dir, 1, pd::SurfaceType::Ice, pd::default_params(pd::SurfaceType::Ice));
-    const GLuint cracked = const_atlas(1, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-    const GLuint whole = const_atlas(1, glm::vec4(0.0f));
+    Detail d = bake(dir, levels(), pd::SurfaceType::Ice,
+                    pd::default_params(pd::SurfaceType::Ice));
+    const GLuint cracked = const_atlas(levels(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    const GLuint whole = const_atlas(levels(), glm::vec4(0.0f));
     const auto cam = nadir_cam(dir, 150.0f);
     pd::SampleUniforms uc = d.u, uw = d.u;
     uc.atlas = cracked;
@@ -600,8 +610,8 @@ TEST_F(PlanetSurfaceDrawTest, IceCracksDarken) {
     const auto pw = draw(p->planet_shader(), cam, sun_over(dir), hdr, &uw);
     glDeleteTextures(1, &cracked);
     glDeleteTextures(1, &whole);
-    // Whole frame: darker on average (the single level covers only the
-    // middle of the view, so the frame-wide ratio is diluted).
+    // Whole frame: darker on average (the detail weight falls off toward
+    // the frame's edges, so the frame-wide ratio is diluted).
     EXPECT_LT(mean_lum(pc), mean_lum(pw)) << "cracks did not darken";
     // Centre, where the detail weight is full: the crack tint's luminance is
     // 0.2126*0.80 + 0.7152*0.86 + 0.0722 = 0.857.
@@ -625,7 +635,7 @@ TEST_F(PlanetSurfaceDrawTest, CoastSharpeningNeedsAnOceanKey) {
     const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
     const auto cam = nadir_cam(dir, 150.0f);
     for (const auto t : {pd::SurfaceType::Rocky, pd::SurfaceType::Ocean}) {
-        Detail d = bake(dir, 2);   // Rocky relief in the atlas
+        Detail d = bake(dir, levels());   // Rocky relief in the atlas
         d.u.type = static_cast<int>(t);
         d.u.has_ocean = false;
         pd::SampleUniforms dialled = d.u, plain = d.u;
@@ -685,6 +695,76 @@ TEST_F(PlanetSurfaceDrawTest, FiniteEverywhereEveryType) {
             }
         }
     }
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// I2: once the pixel footprint passes the COARSEST level's texel there is no
+// level fine-grained enough to filter the baked octaves (textureLod 0, no
+// mips) -- they alias as a shimmering nadir disc. Detail fades out across
+// lf in [levels-1, levels] instead, and is still on below it.
+TEST_F(PlanetSurfaceDrawTest, FadesOutPastCoarsestLevel) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    const int levels = 2;
+    Detail d = bake(dir, levels);
+    const float coarsest_ts = 0.1f * std::exp2(float(levels - 1));
+    // Nadir footprint of a straight-down kSize-px, 60-degree camera.
+    auto nadir_fp = [](float alt) { return 2.0f * alt * std::tan(0.5f * 1.0472f) / kSize; };
+    const auto l = sun_over(dir);
+    const pd::SampleUniforms off{};
+    const glm::vec2 nadir_t(0.0f);
+    for (int L = 0; L < levels; ++L) {   // every level valid at the nadir
+        const glm::vec4 v = d.u.valid[static_cast<std::size_t>(L)];
+        ASSERT_TRUE(v.x < nadir_t.x && nadir_t.x < v.z && v.y < nadir_t.y && nadir_t.y < v.w);
+    }
+
+    const float far_alt = 150.0f;
+    ASSERT_GE(nadir_fp(far_alt), 2.0f * coarsest_ts);
+    const auto far_cam = nadir_cam(dir, far_alt);
+    const auto fa = draw(p->planet_shader(), far_cam, l, hdr, &off);
+    const auto fb = draw(p->planet_shader(), far_cam, l, hdr, &d.u);
+    EXPECT_GT(lum(fa, kSize / 2, kSize / 2), 0.0f) << "the planet must be in view";
+    EXPECT_FALSE(differs(fa, fb, kSize / 2, kSize / 2))
+        << "detail still applied with a nadir footprint of " << nadir_fp(far_alt)
+        << " GU past the coarsest texel " << coarsest_ts << " GU";
+
+    const float mid_alt = 30.0f;   // footprint between the finest and coarsest texel
+    ASSERT_GT(nadir_fp(mid_alt), 0.1f);
+    ASSERT_LT(nadir_fp(mid_alt), coarsest_ts);
+    const auto mid_cam = nadir_cam(dir, mid_alt);
+    const auto ma = draw(p->planet_shader(), mid_cam, l, hdr, &off);
+    const auto mb = draw(p->planet_shader(), mid_cam, l, hdr, &d.u);
+    EXPECT_TRUE(differs(ma, mb, kSize / 2, kSize / 2))
+        << "detail lost at a footprint the clipmap covers";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// The wanted level is not valid here (level 0's rect excludes the nadir) but
+// level 1 is: the walk lands on level 1, exactly as if level 0 were invalid
+// everywhere, and the detail is still applied.
+TEST_F(PlanetSurfaceDrawTest, InvalidWantedLevelWalksToCoarserValidLevel) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    Detail d = bake(dir, 2);
+    const auto cam = nadir_cam(dir, 20.0f);   // nadir pixel ~0.09 GU: want = level 0
+    const auto l = sun_over(dir);
+    pd::SampleUniforms excluded = d.u, none0 = d.u;
+    excluded.valid[0] = glm::vec4(200.0f, 200.0f, 400.0f, 400.0f);   // not the nadir
+    none0.valid[0] = glm::vec4(0.0f, 0.0f, -1.0f, -1.0f);             // empty
+    const glm::vec4 v1 = d.u.valid[1];
+    ASSERT_TRUE(v1.x < 0.0f && 0.0f < v1.z && v1.y < 0.0f && 0.0f < v1.w);
+    const pd::SampleUniforms off{};
+    const auto pe = draw(p->planet_shader(), cam, l, hdr, &excluded);
+    const auto pn = draw(p->planet_shader(), cam, l, hdr, &none0);
+    const auto po = draw(p->planet_shader(), cam, l, hdr, &off);
+    const auto pf = draw(p->planet_shader(), cam, l, hdr, &d.u);
+    EXPECT_FALSE(differs(pe, pn, kSize / 2, kSize / 2))
+        << "an excluded level 0 must sample exactly as an empty one";
+    EXPECT_TRUE(differs(pe, po, kSize / 2, kSize / 2)) << "the walk found no valid level";
+    EXPECT_TRUE(differs(pe, pf, kSize / 2, kSize / 2))
+        << "level 0 was sampled where its rect excludes the nadir";
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

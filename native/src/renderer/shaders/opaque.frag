@@ -1360,15 +1360,26 @@ vec4 pd_fetch(int L, vec2 t) {
 
 // (h, dh.E, dh.N, a) at planet-local GU point p for a pixel footprint fp
 // (GU). `cover` is 0 where no level is valid and fades to 0 across the outer
-// band of the coarsest level used; `level` is the finest level sampled.
+// band of the coarsest level used and as fp passes the coarsest level's
+// texel; `level` is the finest level sampled.
 // `off` (GU, on the anchor plane) shifts the lookup: the gas flow advection.
 vec4 pd_sample(vec3 p, vec2 off, float fp, out float cover, out int level) {
     cover = 0.0;
     level = 0;
     if (u_pd_levels <= 0 || dot(p, u_pd_A) < 0.5 * u_pd_R) return vec4(0.0);
     vec2  xy = pd_plane(p) + off;
-    float lf = clamp(log2(max(fp, 1e-6) / u_pd_ts0), 0.0, float(u_pd_levels - 1));
-    int   want = int(floor(lf));
+    // lf_raw: the footprint's level, unclamped. NaN (a degenerate fp) is
+    // pinned to 0 here -- clamp() of NaN and int(NaN) are undefined, and
+    // `want` indexes u_pd_valid[].
+    float lf_raw = log2(max(fp, 1e-6) / u_pd_ts0);
+    if (!(lf_raw >= 0.0)) lf_raw = 0.0;
+    // Past the coarsest level's texel no level filters the baked octaves
+    // (textureLod 0, no mips): fade the detail out across [levels-1, levels]
+    // rather than alias. Nothing to sample once it is gone.
+    float fade = 1.0 - smoothstep(float(u_pd_levels - 1), float(u_pd_levels), lf_raw);
+    if (fade <= 0.0) return vec4(0.0);
+    float lf = clamp(lf_raw, 0.0, float(u_pd_levels - 1));
+    int   want = clamp(int(floor(lf)), 0, u_pd_levels - 1);
     float w = fract(lf);
     // Finest valid level >= want: try `want` first (the common case), then
     // walk coarser. Each level halves the texel coordinate exactly.
@@ -1392,9 +1403,9 @@ vec4 pd_sample(vec3 p, vec2 off, float fp, out float cover, out int level) {
     if (ins1 >= 0.0) {
         float wb = max(w, band);
         if (wb > 0.0) s = mix(s, pd_fetch(L + 1, t * 0.5), wb);
-        cover = 1.0;
+        cover = fade;
     } else {
-        cover = 1.0 - band;
+        cover = (1.0 - band) * fade;
     }
     return s;
 }
