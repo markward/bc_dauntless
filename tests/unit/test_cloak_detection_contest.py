@@ -4,6 +4,7 @@ Every assertion here pins a deliberate gameplay change. If one of these starts
 failing, the question is "was the change reverted?", not "what broke?".
 """
 from engine.appc import sensor_detection as sd
+from engine.appc import sensor_dials as _sd_dials
 from engine.appc.sensor_detection import can_detect
 from engine.appc.ai_sensor_gate import observing, _wrap_active_tuple
 from engine.appc.ships import ShipClass, ShipClass_Create
@@ -153,6 +154,13 @@ def test_toggle_off_leaves_uncloaked_detection_untouched(monkeypatch):
     assert can_detect(_observer(), _target(500.0)) is True
 
 
+_STATION_GU = 12000.0   # fedstarbase's authored BaseSensorRange
+
+
+def _uncapped(r):
+    return sd.CLOAK_DETECTION_BASE_GU + r * sd.CLOAK_RANGE_FACTOR
+
+
 # ── AI ACQUISITION: the candidate filter ─────────────────────────────────────
 #
 # The biggest gameplay consequence of the contest, and it is NOT covered by the
@@ -222,14 +230,6 @@ def test_a_station_does_not_acquire_a_cloaked_contact_beyond_the_cap():
 # ── CAP (sub-project 5, Mark's ruling B 2026-10-08) ──────────────────────────
 # A station must not out-reach your phasers: the bubble never exceeds the
 # cloak_bubble_cap_gu dial, for any observer, at any power.
-from engine.appc import sensor_dials as _sd_dials
-
-_STATION_GU = 12000.0   # fedstarbase's authored BaseSensorRange
-
-
-def _uncapped(r):
-    return sd.CLOAK_DETECTION_BASE_GU + r * sd.CLOAK_RANGE_FACTOR
-
 
 def test_the_station_case_really_exceeds_the_cap():
     """Anti-vacuity: without the cap this observer's bubble is bigger."""

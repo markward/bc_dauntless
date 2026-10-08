@@ -176,7 +176,7 @@ def test_a_subject_beyond_the_far_plane_is_treated_as_no_subject():
     assert s.focus_gu == 0.0
 
 
-def test_a_sensor_fallback_range_contact_is_now_focusable():
+def test_a_far_focus_contact_is_now_focusable():
     """This test used to assert the OPPOSITE: with far = 5000 GU, the old
     sensor-less fallback range (FAR_FOCUS_GU, sensor_detection's former
     sensor-less reach) was six times the far plane and a lock out there

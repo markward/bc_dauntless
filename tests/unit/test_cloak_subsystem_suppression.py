@@ -10,9 +10,10 @@ nebula concealment is a plausible second producer later.
 The "inside the bubble" geometry is the same one
 tests/unit/test_cloak_target_visibility.py uses: these fixtures model no
 BaseSensorRange, so effective range is the `sensorless_range_gu` dial and the
-cloak bubble is CLOAK_DETECTION_BASE_GU + that range * CLOAK_RANGE_FACTOR. The
-separations below are DERIVED from that bubble (tests.helpers.cloak_geometry),
-never hardcoded, so a retune of either dial needs no edit here.
+cloak bubble is CLOAK_DETECTION_BASE_GU + that range * CLOAK_RANGE_FACTOR,
+capped by the `cloak_bubble_cap_gu` dial. The separations below are DERIVED
+from that bubble (tests.helpers.cloak_geometry), never hardcoded, so a retune
+of any of those dials needs no edit here.
 """
 import json
 

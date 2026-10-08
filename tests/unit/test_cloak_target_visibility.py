@@ -14,7 +14,8 @@ Boundary matches can_detect: hidden only while fully CLOAKED, visible again the
 moment it starts decloaking.
 
 ⚠️ CLOAK IS NO LONGER ABSOLUTE ON THESE SURFACES. The cloak bubble is a flat
-CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of effective sensor range
+CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of effective sensor range,
+capped by the `cloak_bubble_cap_gu` dial
 (tests/unit/test_cloak_detection_contest.py), and since stage 4 the radar and
 target list run that same rule. `_scene()` models no BaseSensorRange, so
 effective range is the `sensorless_range_gu` dial — with the enemy placed

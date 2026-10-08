@@ -71,9 +71,10 @@ _walking_probes = False
 #       which lands a Galaxy well inside its own 60 GU phaser reach: you must be
 #       effectively on top of a cloaked ship to see it. Because the percentage
 #       term scales *effective* range (post condition and power), boosting
-#       sensor power widens the bubble (up to the cap); wrecked sensors remove it entirely (the
-#       flat floor never applies past the `r <= 0.0` guard below). See the
-#       constants for the current dial settings — deliberately not restated here.
+#       sensor power widens the bubble (up to the cap); wrecked sensors remove
+#       it entirely (the flat floor never applies past the `r <= 0.0` guard
+#       below). See the constants for the current dial settings — deliberately
+#       not restated here.
 #
 #   (2) NEBULA CONCEALMENT REACHES THE UI. perception.perceived_by (target list,
 #       radar) routes through can_detect, so nebula-hidden contacts leave the
