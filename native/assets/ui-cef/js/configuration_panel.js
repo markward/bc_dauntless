@@ -193,7 +193,7 @@ function _cpRenderGraphicsBody(state, focusables) {
     const bqLabels = ['Low', 'Medium', 'High'];
     const bq = (typeof s.bridge_quality === 'number') ? s.bridge_quality : 1;
     // Same label/control wrappers as _cpToggleRow, so it matches the On/Off
-    // rows around it in the Modern VFX group (.cp-label is unstyled).
+    // rows around it in the Modern VFX group.
     html += '<div class="cp-row' + (isFoc('bridge_quality') ? ' cp-focused' : '') + '">'
           +     '<div class="cp-row__label">Bridge Rendering</div>'
           +     '<div class="cp-row__control"><div class="cp-segmented">';
