@@ -128,13 +128,14 @@ TEST_F(GalaxyRegressionFixture, MaterialCountAndBaseTextureIdentity) {
     }
 }
 
-// End-to-end integration: DBridge.NIF should produce 145 materials, of
-// which 17 are tagged Material::lightmap_pass=true and 128 are not.
-// This exercises both the property-link inheritance walk (Task 3) and
-// the lightmap-pass filename predicate (Task 4) against real assets.
+// End-to-end integration: DBridge.NIF should produce 145 materials, 17 of
+// which carry a baked lightmap in the Dark slot. This exercises the
+// property-link inheritance walk and the lightmap-to-Dark routing against
+// real assets. (The bridge renderer no longer draws the Dark slot; ships
+// share this material code, so the routing stays.)
 class DBridgeIntegration : public assets_test::GLContext {};
 
-TEST_F(DBridgeIntegration, MaterialLightmapPassDistribution) {
+TEST_F(DBridgeIntegration, MaterialDarkSlotDistribution) {
     fs::path game = test_support::game_root();
     fs::path nif = game / "data/Models/Sets/DBridge/Dbridge.NIF";
     fs::path tex = game / "data/Models/Sets/DBridge/High";
@@ -145,28 +146,19 @@ TEST_F(DBridgeIntegration, MaterialLightmapPassDistribution) {
     auto model = cache.load(nif, tex);
     ASSERT_NE(model, nullptr);
 
-    int lm = 0, base_only = 0;
     int materials_with_dark = 0;
     for (const auto& m : model->materials) {
-        if (m.lightmap_pass) ++lm;
-        else                 ++base_only;
         const int dark_idx = m.stages[
             static_cast<std::size_t>(assets::Material::StageSlot::Dark)
         ].texture_index;
         if (dark_idx >= 0) ++materials_with_dark;
     }
-    std::fprintf(stderr,
-                 "DBridge: %d lightmap_pass materials, %d base-only, "
-                 "%d with Dark-slot lightmap\n",
-                 lm, base_only, materials_with_dark);
+    std::fprintf(stderr, "DBridge: %d with Dark-slot lightmap\n",
+                 materials_with_dark);
     EXPECT_EQ(model->materials.size(), 145u);
     // All 17 NiMultiTextureProperty shapes also inherit a diffuse via
-    // NiTextureProperty; the multi-texture's lm.tga is now routed to
-    // the Dark slot to preserve the diffuse in Base. lightmap_pass is
-    // therefore 0 for the current asset; the renderer's two-texture
-    // composite (base × dark) will handle lighting when implemented.
-    EXPECT_EQ(lm, 0);
-    EXPECT_EQ(base_only, 145);
+    // NiTextureProperty; the multi-texture's lm.tga is routed to the Dark
+    // slot to preserve the diffuse in Base.
     EXPECT_EQ(materials_with_dark, 17);
 
     // Emissive analysis: which materials self-illuminate? Useful for

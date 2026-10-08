@@ -17,10 +17,11 @@ namespace renderer {
 
 class Pipeline;
 
-/// Renders the bridge interior in two sub-passes:
-///   A. Base geometry — opaque, alpha-test, base * ambient via bridge.frag.
-///   B. Lightmap geometry — multiply blend over the framebuffer via
-///      lightmap.frag, depth-write off + polygon offset.
+/// Renders the bridge interior in two sub-passes, both through bridge.frag:
+///   A. Base geometry — opaque, alpha-test, base x the ceiling downlight
+///      (the bridge ambient shaped by the surface normal; tuning in
+///      renderer/bridge_lighting_tuning.h). BC's baked lightmaps are not drawn.
+///   B. Characters — skinned officers, lit by the same downlight.
 ///
 /// Caller is responsible for clearing color + depth before calling
 /// render() (the bridge interior overlays the space scene; see
@@ -57,7 +58,7 @@ public:
     /// render-to-texture color texture to draw on it. When a Pass::Bridge
     /// instance's model_handle matches the registered viewscreen handle and
     /// the texture is non-zero, the base sub-pass binds `tex` as u_base_color
-    /// and forces full emissive (so the feed isn't dimmed by bridge ambient).
+    /// and draws it unlit (u_unlit, so the feed isn't dimmed by bridge ambient).
     /// tex==0 (the default) falls back to set_viewscreen_off_texture, and to the
     /// instance's authored NIF texture if no off texture is set.
     void set_viewscreen_model(unsigned long long model_handle) {
