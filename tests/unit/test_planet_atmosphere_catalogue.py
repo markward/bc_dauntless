@@ -60,6 +60,15 @@ def test_missing_is_none(tmp_path, monkeypatch):
     assert atmo.resolve_key("S", "N", "x/Unknown.nif") is None
 
 
+def test_surface_field_is_known_and_its_shape_is_never_validated_here(tmp_path, monkeypatch):
+    # planet-surface-detail spec Sec7: `surface` is a sibling field the
+    # atmosphere parser recognizes but never inspects -- a malformed
+    # `surface` (wrong shape, bad sub-fields, etc.) must never drop the air.
+    # engine.planets.surface is the module that validates its contents.
+    _write(tmp_path, monkeypatch, {"pinkgasplanet": {**GAS, "surface": "gas"}})
+    assert atmo.resolve("S", "N", "x/PinkGasPlanet.nif") is not None
+
+
 @pytest.mark.parametrize("bad", [
     {"color": "#FF9A96", "thickness": 0.06, "density": 1.4},                # missing limb
     {**GAS, "thickness": 0.0},                                               # out of range
@@ -67,7 +76,6 @@ def test_missing_is_none(tmp_path, monkeypatch):
     {**GAS, "density": 5.0},
     {**GAS, "limb": -1.0},
     {**GAS, "color": "pink"},
-    {**GAS, "surface": "gas"},                                               # unknown field
     {**GAS, "intensity": -1.0},                                              # out of range
     {**GAS, "intensity": 51.0},
     {**GAS, "mie": -0.1},

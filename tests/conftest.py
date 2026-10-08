@@ -1644,6 +1644,14 @@ def _reset_leakable_engine_globals():
         _planet_atmosphere._overrides.clear()
     except Exception:
         pass
+    # Planet surface detail (planet-surface-detail spec §7): same reset as
+    # the atmosphere live registry above, for the sibling `surface` catalogue
+    # entries and their own live-instance registry.
+    try:
+        from engine.planets import surface as _planet_surface
+        _planet_surface.clear_live()
+    except Exception:
+        pass
     # Atmosphere dial group (planet-atmosphere spec §7): a test that sets the
     # module-level target/push functions would otherwise leave later tests'
     # dials.step() calls pointed at a stale fake.

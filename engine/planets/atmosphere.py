@@ -5,6 +5,9 @@ every planet using that NIF -- or "<set>/<name>", BC's own identity for one
 planet (AddSet name + AddObjectToSet name), which wins. A bare object name is
 not a key: "Moon 1" exists in three sets. The JSON lives under the project
 asset root and is resolved at USE, never at import.
+
+`atmosphere: false` disables only the air; a sibling `surface` still applies
+(planet-surface-detail spec §7).
 """
 from __future__ import annotations
 
@@ -87,7 +90,7 @@ def clear_live_for_set(set_name: str) -> None:
                 if not (lp.source == "set" and lp.set_name == set_name)]
 
 _FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere",
-           "intensity", "mie"}
+           "intensity", "mie", "surface"}
 
 STOCK_STEMS: tuple = (
     "pinkgasplanet", "bluewhitegasplanet", "tangasplanet", "gasgiant",
