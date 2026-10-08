@@ -1670,6 +1670,13 @@ def _reset_leakable_engine_globals():
         _planet_atmosphere_toggle._enabled = True
     except Exception:
         pass
+    # Planet surface detail dev toggle (planet-surface-detail spec §7): same
+    # reset as the atmosphere toggle above, for its own module global.
+    try:
+        from engine import planet_surface as _planet_surface_toggle
+        _planet_surface_toggle._enabled = True
+    except Exception:
+        pass
     # Dev dial groups (minor-rocks spec §5): a test that registers a group
     # would otherwise leave every later test's / L O acting on it.
     try:

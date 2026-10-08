@@ -3693,6 +3693,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(color, sunset_color, thickness, density, limb[, intensity[, mie]]), "
           "colours linear RGB; intensity defaults to 20.0 and mie to 0.2 "
           "when omitted.");
+    m.def("set_instance_surface",
+          [](scenegraph::InstanceId id, py::object params) {
+              scenegraph::Instance::Surface s;
+              if (!params.is_none()) {
+                  auto t = params.cast<py::tuple>();
+                  if (t.size() != 8) throw py::value_error("set_instance_surface: expected an 8-tuple");
+                  s.type = t[0].cast<int>();
+                  auto o = t[1].cast<std::array<float, 3>>();
+                  s.ocean = {o[0], o[1], o[2]};
+                  s.has_ocean = t[2].cast<bool>();
+                  s.ocean_tol = t[3].cast<float>();
+                  s.strength = t[4].cast<float>();
+                  s.albedo = t[5].cast<float>();
+                  s.scale = t[6].cast<float>();
+                  s.seed = t[7].cast<std::uint32_t>();
+              }
+              g_world.set_surface(id, s);
+          },
+          py::arg("id"), py::arg("params"),
+          "Planet surface detail (spec 2026-10-08): None disables; else "
+          "(type, ocean_rgb, has_ocean, ocean_tolerance, strength, albedo, scale, seed).");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {

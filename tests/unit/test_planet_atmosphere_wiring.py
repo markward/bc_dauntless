@@ -10,6 +10,9 @@ class _R:
     def set_instance_atmosphere(self, iid, params):
         self.calls.append((iid, params))
 
+    def set_instance_surface(self, iid, params):
+        pass
+
 
 def test_toggle_defaults_on():
     assert planet_atmosphere.enabled() is True

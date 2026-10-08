@@ -127,6 +127,10 @@ void World::set_atmosphere(InstanceId id, const Instance::Atmosphere& atmosphere
     if (auto* inst = get(id)) inst->atmosphere = atmosphere;
 }
 
+void World::set_surface(InstanceId id, const Instance::Surface& surface) {
+    if (auto* inst = get(id)) inst->surface = surface;
+}
+
 bool World::is_valid(InstanceId id) const noexcept {
     return id.index < slots_.size()
         && slots_[id.index].alive

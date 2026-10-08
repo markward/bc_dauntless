@@ -69,6 +69,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_instance_atmosphere",
+    "set_instance_surface",
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
@@ -1023,6 +1024,13 @@ def set_instance_atmosphere(instance_id: InstanceId, params) -> None:
     _h.set_instance_atmosphere(instance_id, (tuple(params.color), tuple(params.sunset_color),
                                              params.thickness, params.density, params.limb,
                                              params.intensity, params.mie))
+
+
+def set_instance_surface(instance_id: InstanceId, params) -> None:
+    """Planet surface detail (spec 2026-10-08). `params` is None (no detail)
+    or the 8-tuple engine.planets.surface.to_binding produces -- already
+    shaped for the native binding, unlike set_instance_atmosphere above."""
+    _h.set_instance_surface(instance_id, params)
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
