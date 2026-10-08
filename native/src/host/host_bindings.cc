@@ -3770,6 +3770,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   auto t = params.cast<py::tuple>();
                   if (t.size() != 8) throw py::value_error("set_instance_surface: expected an 8-tuple");
                   s.type = t[0].cast<int>();
+                  // type indexes the 6-entry live-params table (0 none .. 5 ocean).
+                  if (s.type < 0 || s.type > 5)
+                      throw py::value_error("set_instance_surface: type must be in [0, 5]");
                   auto o = t[1].cast<std::array<float, 3>>();
                   s.ocean = {o[0], o[1], o[2]};
                   s.has_ocean = t[2].cast<bool>();

@@ -44,3 +44,25 @@ def test_set_instance_surface_seven_tuple_raises():
                 iid, (1, (0.1, 0.2, 0.3), True, 0.15, 1.0, 1.0, 1.0))
     finally:
         r.destroy_instance(iid)
+
+
+@pytest.mark.parametrize("bad_type", [-1, 6, 99])
+def test_set_instance_surface_type_out_of_range_raises_value_error(bad_type):
+    """`type` indexes a 6-entry params table native-side: anything outside
+    [0, 5] must be refused at the boundary, not read out of bounds."""
+    iid = r.create_instance(0)
+    try:
+        with pytest.raises(ValueError):
+            r._h.set_instance_surface(
+                iid, (bad_type, (0.1, 0.2, 0.3), True, 0.15, 1.0, 1.0, 1.0, 123))
+    finally:
+        r.destroy_instance(iid)
+
+
+def test_set_instance_surface_type_five_succeeds():
+    iid = r.create_instance(0)
+    try:
+        r._h.set_instance_surface(
+            iid, (5, (0.1, 0.2, 0.3), True, 0.15, 1.0, 1.0, 1.0, 123))
+    finally:
+        r.destroy_instance(iid)
