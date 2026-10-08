@@ -60,7 +60,7 @@ binaries elsewhere are to be treated as stale.
 
 | Half | Where | What it times |
 |---|---|---|
-| Render passes | `native/src/renderer/frame_timer.{h,cc}`, scopes in `host_bindings.cc:frame()` | CPU (`steady_clock`) **and** GPU (`GL_TIMESTAMP`) per pass, genuinely nested |
+| Render passes | `native/src/renderer/frame_timer.{h,cc}`, scopes in `host_bindings.cc:frame()` | CPU (`steady_clock`) per pass, genuinely nested; GPU by whichever timer the driver declares — `GL_TIMESTAMP` (every scope) or, on Apple's GL, `GL_TIME_ELAPSED` (**top-level passes only**; see "GPU timer selection") |
 | Python phases | `engine/core/frame_profiler.py`, marks + scopes in `host_loop.py` | CPU per loop phase: a flat timeline of `mark()` phases with a nested `scope()` tree under each |
 
 The Python half's **top level** is a flat timeline: the loop body is one long
@@ -91,12 +91,22 @@ number and reach a wrong conclusion:
 * **The tick count is printed twice, `avg` and `last frame`.** Every cost beside
   it is EMA-smoothed, so dividing one of those by a single frame's raw count
   mixes an instantaneous value into an average.
-* **A GPU column of `0.000` may be a dead driver, not a free GPU.** `gpu_ms`
-  only accumulates when `t1 >= t0`, so every span is `>= 0` by construction and
-  a driver returning zeroed `GL_TIMESTAMP` counters (Apple's GL does exactly
-  this, on the machine this was written on) yields a full column of zeros that
-  reads as free. When the **whole-frame** span is exactly 0 across
-  `GPU_ZERO_FRAMES` resolved frames the report prints **GPU TIMING
+* **A GPU `-` means NOT MEASURED, never "free".** On Apple's GL the timer is
+  `GL_TIME_ELAPSED`, which cannot nest, so only the children of `frame` (the
+  top-level passes: `space`, `bloom`, `post`, `present`, ...) carry a GPU
+  figure. Every nested row (`space.opaque`, `space.shield`, ...) keeps its CPU
+  time and prints `-` for GPU, and the report says so in a line above the
+  table. To get a nested pass's GPU time you must promote it to top level, or
+  run on a driver with a timestamp counter.
+* **`frame`'s GPU under `GL_TIME_ELAPSED` is the SUM of the timed passes**, not
+  a span — they run in sequence, so the sum is the frame. GPU work outside
+  every top-level scope is not covered (there is essentially none).
+* **A GPU column of `0.000` may be a dead driver, not a free GPU.** If the
+  driver declares no counter at all, the report prints **GPU TIMING
+  UNAVAILABLE** from the first resolved frame. If it declares one but returns
+  zeros, `gpu_ms` (only accumulated when `t1 >= t0`, so `>= 0` by
+  construction) reads as free; when the **whole-frame** span is exactly 0
+  across `GPU_ZERO_FRAMES` resolved frames the report prints **GPU TIMING
   UNAVAILABLE** and replaces the column with `-`.
 * **An over-long name is clipped with a trailing `+`.** A silently clipped name
   reads as a different, shorter phase.
@@ -111,8 +121,8 @@ number and reach a wrong conclusion:
   reader the wrong thing.
 * **The two totals nest, they do not add.** `r.frame()` runs inside the loop
   body, so the Python total already contains the render total.
-* **Whole-frame GPU is first-timestamp-to-last, not a sum of scopes.** Scopes
-  nest; summing them double-counts. "Last" means the last query **issued** —
+* **Under `GL_TIMESTAMP`, whole-frame GPU is first-timestamp-to-last, not a
+  sum of scopes.** Scopes nest; summing them double-counts. "Last" means the last query **issued** —
   the outermost scope's end, which `end_frame()` issues *after* `present`'s.
   Taking the last sample *pushed* instead reported `present.end - frame.begin`
   and disagreed with the `frame` row printed directly above it.
@@ -144,6 +154,29 @@ stalls the CPU on the GPU and measures its own stall, which presents as
 The availability check must therefore be on the last query **issued**
 (`Record::last_query`), which is the *outermost* scope's end query, not
 `samples.back()` — the last scope pushed, whose end query is issued earlier.
+
+## Cost when ON — the profiler is not free on this Mac
+
+Measured 2026-10-08, headless Debug build, `tools/bench_idle_passes.py`
+(640x360, one shielded Galaxy; "loaded" = 40 extra hulls), profiler on vs off,
+best of three rounds:
+
+| Build | GPU timer | idle | loaded | GPU data |
+|---|---|---|---|---|
+| main before this change | `GL_TIMESTAMP` (0-bit, zeroed) | +2.0 ms | +3.7 ms | none |
+| CPU-only (timer forced off) | none | ~0 | ~0 | none |
+| current | `GL_TIME_ELAPSED`, top-level only | +0.6 ms | +2.4 ms | real |
+
+So the `GL_TIME_ELAPSED` queries themselves cost real time — cheaper than the
+dead timestamp queries they replace, but not free. **Where it lands** (loaded,
+per-scope CPU, elapsed vs CPU-only): `present` +2.0 ms (2.72 vs 0.71), `space`
++0.4, `bloom` +0.12, `resolve` +0.06. So most of it shows up as swap time,
+and the top-level passes' CPU rows are inflated by a little. No record is dropped as unavailable
+(297 of 300 frames resolve — the 3 missing are the ring latency), so this is
+not the in-flight-query-reuse stall the ring exists to prevent. The driver
+mechanism behind the cost is **not established**. Read the per-pass CPU column
+with that inflation in mind, and use the GPU column for relative pass
+comparisons.
 
 The report prints to the console rather than a CEF overlay deliberately: the
 CEF surface is uploaded in full every frame (no dirty-rect, no PBO), so a DOM
@@ -328,9 +361,15 @@ ships at lower frequency; (c) move hot paths to C++.
 
 * `tests/unit/test_frame_profiler.py` — attribution, smoothing, decay, tree
   indentation, per-tick marks, report wording, ASCII safety. No GL.
-* `tests/host/test_frame_profiler_gl.py` — the `GL_TIMESTAMP` path: resolution
-  latency, per-frame `calls`, whole-frame total vs the `frame` row, the
-  dead-GPU-column signal, no pipeline stall.
+* `tests/host/test_frame_profiler_gl.py` — the GL query path on the real
+  driver: timer chosen from the counter bits, no timestamp query on a 0-bit
+  counter, `GL_TIME_ELAPSED` measuring exactly the top-level passes (nested
+  rows unmeasured), resolution latency, per-frame `calls`, whole-frame total vs
+  the `frame` row, the dead-GPU-column signal, no pipeline stall. On this Mac
+  it exercises the `GL_TIME_ELAPSED` branch only; the `GL_TIMESTAMP` branch
+  has no driver here to run on.
+* `native/tests/renderer/frame_timer_test.cc` — `choose_gpu_timer` and
+  `elapsed_times_depth`, no GL.
 
 Two gaps, both deliberate and both worth knowing about:
 
@@ -350,21 +389,62 @@ Two gaps, both deliberate and both worth knowing about:
 
 ---
 
-# ⛔ The GPU column is DEAD on this Mac
+# GPU timer selection — and why the GPU column used to be DEAD on this Mac
+
+**Fixed 2026-10-08.** `FrameTimer` now reads `GL_QUERY_COUNTER_BITS` for both
+targets on the first enabled frame (re-read on every enable) and picks
+(`FrameTimer::choose_gpu_timer`):
+
+| `GL_TIMESTAMP` bits | `GL_TIME_ELAPSED` bits | Timer | What gets a GPU figure |
+|---|---|---|---|
+| > 0 | any | `GL_TIMESTAMP` | every scope |
+| 0 | > 0 | `GL_TIME_ELAPSED` | depth-1 scopes (children of `frame`); `frame` = their sum |
+| 0 | 0 | none | nothing — GPU TIMING UNAVAILABLE |
+
+A 0-bit `GL_TIMESTAMP` counter is **never queried** — not even to probe.
+`profiler_frame()` reports `gpu_timer`, `timestamp_bits`, `elapsed_bits`, and
+`timestamp_queries` (issued since the last enable; the test that this stays 0
+on a 0-bit driver is how that rule is guarded). `profiler_scopes()` reports
+`gpu_measured` per row. This **supersedes** the parked
+`perf/idle-shield-weapons-pass` latch (`31c642eb`), which stopped the
+timestamp queries only after 30 frames of zeros; its bench,
+`tools/bench_idle_passes.py`, was carried over.
+
+What follows is the history, kept because the reasoning still applies.
+
+## The dead `GL_TIMESTAMP` column
 
 Apple's GL returns **zeroed `GL_TIMESTAMP` counters**. Measured: 117 resolved
 frames of exactly 0.
+
+**Why (measured 2026-10-08, Apple M3 Pro, `GL_VERSION` "4.1 Metal - 90.5"):**
+Apple's GL is a layer over Metal, and it **declares** it has no timestamp
+counter — `glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS)` returns **0**,
+and `glGetInteger64v(GL_TIMESTAMP)` returns 0. That is the driver's honest
+"unsupported", not a broken counter.
+
+**`GL_TIME_ELAPSED` WORKS on the same driver.** It reports 32 counter bits, and
+a `glBeginQuery`/`glEndQuery` probe around three bridge spans returned steady,
+plausible figures over ~2,500 frames with **zero** zero-samples (normal
+pre-pass ~0.63 ms, half-res SSAO kernel ~1.3 ms, main bridge draw ~1.1 ms —
+and pre-pass + kernel matched the ~2 ms the AO added to `resolve`'s CPU stall).
+So GPU timing on this Mac is not impossible; *this profiler's timer type* is.
+The catch: `GL_TIME_ELAPSED` queries **cannot nest** (one active per target),
+so a profiler built on them can time sequential top-level passes, not the
+nested scopes this one reports. The probe is
+`DAUNTLESS_BRIDGE_GPU_PROBE=1` in `native/src/renderer/bridge_pass.cc` on branch
+`spike/bridge-lighting` (commit `efbde014`).
 
 This is worse than a missing feature, because `gpu_ms` only accumulates when
 `t1 >= t0`, so every span is `>= 0` **by construction** — a dead driver and a
 completely free GPU produce identical output. There is no way to tell them apart
 from the numbers alone.
 
-The report now prints **GPU TIMING UNAVAILABLE** and blanks the column after 30
-such frames.
+The report still prints **GPU TIMING UNAVAILABLE** and blanks the column after
+30 such frames, as a net for a driver that declares a counter yet returns zeros.
 
-**Every GPU figure recorded before 2026-08-28 was never measured.** Discard
-them. The CPU columns are unaffected and remain trustworthy.
+**Every GPU figure recorded on this Mac before 2026-10-08 was never measured.**
+Discard them. The CPU columns are unaffected and remain trustworthy.
 
 ---
 

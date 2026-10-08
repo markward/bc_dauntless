@@ -435,6 +435,55 @@ def test_report_flags_a_dead_gpu_column_rather_than_printing_zeros(monkeypatch):
     assert "0.000" not in frame_row, frame_row
 
 
+def _elapsed_report(monkeypatch, timer="elapsed", frames=400):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": "frame", "cpu_ms": 8.0, "gpu_ms": 5.0, "calls": 1, "depth": 0,
+         "gpu_measured": timer != "none"},
+        {"name": "space", "cpu_ms": 3.0, "gpu_ms": 4.25, "calls": 1, "depth": 1,
+         "gpu_measured": timer != "none"},
+        {"name": "space.opaque", "cpu_ms": 1.0, "gpu_ms": 0.0, "calls": 1,
+         "depth": 2, "gpu_measured": timer == "timestamp"},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 8.0, "gpu_ms": 5.0 if timer != "none" else 0.0,
+                 "frames": frames, "enabled": True, "swap_interval": 0,
+                 "gpu_timer": timer},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    return fp.report_lines()
+
+
+def _row(lines, name):
+    return [ln for ln in lines if ln.strip().startswith(name + " ")][0]
+
+
+def test_a_nested_scope_under_time_elapsed_shows_a_dash_not_a_zero(monkeypatch):
+    """GL_TIME_ELAPSED cannot nest, so nested scopes carry no GPU query. A
+    0.000 there would read as a free pass; the column must say 'not timed'."""
+    lines = _elapsed_report(monkeypatch)
+    # columns: label, cpu ms, gpu ms, calls
+    assert _row(lines, "space.opaque").split()[:3] == ["space.opaque", "1.000", "-"]
+    assert _row(lines, "space").split()[:3] == ["space", "3.000", "4.250"]
+
+
+def test_the_report_names_the_time_elapsed_limitation(monkeypatch):
+    text = "\n".join(_elapsed_report(monkeypatch))
+    assert "GL_TIME_ELAPSED" in text
+    assert "top-level" in text
+    assert "GPU TIMING UNAVAILABLE" not in text
+
+
+def test_a_driver_with_no_gpu_timer_is_unavailable_from_the_first_frame(monkeypatch):
+    """No counter bits at all is known from the driver up front, so the
+    report does not wait GPU_ZERO_FRAMES of zeros to say so."""
+    text = "\n".join(_elapsed_report(monkeypatch, timer="none", frames=1))
+    assert "GPU TIMING UNAVAILABLE" in text
+    assert "counter" in text
+
+
 def test_a_working_gpu_column_is_not_flagged(monkeypatch):
     """The flag must key on 'zero across many resolved frames', not on any
     zero: a cheap pass legitimately measures 0.000."""

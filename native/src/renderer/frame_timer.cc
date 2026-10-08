@@ -80,6 +80,14 @@ void FrameTimer::reset() {
     gpu_total_seeded_ = false;
     frames_resolved_ = 0;
     frame_index_ = 0;
+    // Re-probe the driver on every enable: the verdict belongs to the context
+    // it was read in, and reset() is reachable across a shutdown()/init().
+    gpu_probed_ = false;
+    gpu_timer_ = GpuTimer::None;
+    timestamp_bits_ = -1;
+    elapsed_bits_ = -1;
+    elapsed_open_ = false;
+    timestamp_queries_ = 0;
 }
 
 int FrameTimer::slot_for(const char* name) {
@@ -111,6 +119,19 @@ void FrameTimer::begin_frame() {
     Record& next = ring_[frame_index_ % kRingDepth];
     if (next.pending) resolve(next);
 
+    if (!gpu_probed_) {
+        // Here rather than in set_enabled(): this is the first point that is
+        // guaranteed a current context. -1 survives a query the driver rejects,
+        // and choose_gpu_timer reads it as "no counter".
+        gpu_probed_ = true;
+        GLint ts = -1, te = -1;
+        glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &ts);
+        glGetQueryiv(GL_TIME_ELAPSED, GL_QUERY_COUNTER_BITS, &te);
+        timestamp_bits_ = ts;
+        elapsed_bits_ = te;
+        gpu_timer_ = choose_gpu_timer(ts, te);
+    }
+
     current_ = &next;
     current_->samples.clear();
     current_->used = 0;
@@ -121,6 +142,7 @@ void FrameTimer::begin_frame() {
     current_->frame_cpu_ns = 0.0;
     current_->last_query = 0;
     current_->pending = false;
+    current_->timer = gpu_timer_;
 
     open_.clear();
     open_t0_.clear();
@@ -159,9 +181,22 @@ void FrameTimer::push(const char* name) {
 
     Sample s;
     s.slot = slot;
-    s.q_begin = take_query(*current_);
-    s.q_end = take_query(*current_);
-    glQueryCounter(s.q_begin, GL_TIMESTAMP);
+    if (current_->timer == GpuTimer::Timestamp) {
+        s.q_begin = take_query(*current_);
+        s.q_end = take_query(*current_);
+        glQueryCounter(s.q_begin, GL_TIMESTAMP);
+        ++timestamp_queries_;
+    } else if (current_->timer == GpuTimer::Elapsed &&
+               elapsed_times_depth(static_cast<int>(open_.size())) &&
+               !elapsed_open_) {
+        // Depth-1 scopes are strictly sequential, so elapsed_open_ is always
+        // false here; the guard turns a broken invariant into an untimed row
+        // instead of a GL_INVALID_OPERATION from a nested glBeginQuery.
+        s.q_begin = take_query(*current_);
+        s.parent = static_cast<int>(open_sample_.front());
+        glBeginQuery(GL_TIME_ELAPSED, s.q_begin);
+        elapsed_open_ = true;
+    }
 
     open_sample_.push_back(current_->samples.size());
     current_->samples.push_back(s);
@@ -179,12 +214,19 @@ void FrameTimer::pop() {
     open_t0_.pop_back();
     open_sample_.pop_back();
 
-    const unsigned int q_end = current_->samples[sample_idx].q_end;
-    glQueryCounter(q_end, GL_TIMESTAMP);
+    const Sample& s = current_->samples[sample_idx];
     // Every pop issues its end query after every query issued so far, so the
-    // last pop of the frame leaves the last-issued query here. resolve() reads
-    // it rather than guessing from the sample order.
-    current_->last_query = q_end;
+    // last timed pop of the frame leaves the last-issued query in last_query.
+    // resolve() reads it rather than guessing from the sample order.
+    if (s.q_end != 0) {
+        glQueryCounter(s.q_end, GL_TIMESTAMP);
+        ++timestamp_queries_;
+        current_->last_query = s.q_end;
+    } else if (s.q_begin != 0) {
+        glEndQuery(GL_TIME_ELAPSED);
+        elapsed_open_ = false;
+        current_->last_query = s.q_begin;
+    }
     current_->cpu_ns[slot] += static_cast<double>(now_ns() - t0);
     current_->calls[slot] += 1;
 }
@@ -205,40 +247,78 @@ void FrameTimer::resolve(Record& rec) {
     // samples.back() therefore left samples[0].q_end — the whole-frame scope —
     // outside the guard, so the loop below could read an unready query and
     // stall on exactly the thing the 3-frame ring exists to avoid.
-    GLuint last = rec.last_query;
-    if (last == 0) return;   // no scope ever closed: nothing to read back
-    GLint available = 0;
-    glGetQueryObjectiv(last, GL_QUERY_RESULT_AVAILABLE, &available);
-    if (!available) return;
+    //
+    // A frame that issued no query (no GPU timer, or no timed scope) has
+    // nothing to wait for and resolves CPU-only.
+    const GLuint last = rec.last_query;
+    if (last != 0) {
+        GLint available = 0;
+        glGetQueryObjectiv(last, GL_QUERY_RESULT_AVAILABLE, &available);
+        if (!available) return;
+    }
 
     std::vector<double> gpu_ns(slots_.size(), 0.0);
-    for (const Sample& s : rec.samples) {
-        GLuint64 t0 = 0, t1 = 0;
-        glGetQueryObjectui64v(s.q_begin, GL_QUERY_RESULT, &t0);
-        glGetQueryObjectui64v(s.q_end, GL_QUERY_RESULT, &t1);
-        if (s.slot < static_cast<int>(gpu_ns.size()) && t1 >= t0)
-            gpu_ns[s.slot] += static_cast<double>(t1 - t0);
+    std::vector<char> measured(slots_.size(), 0);
+    double frame_gpu_ns = 0.0;
+    auto in_range = [&](int slot) {
+        return slot >= 0 && slot < static_cast<int>(gpu_ns.size());
+    };
+
+    if (last != 0 && rec.timer == GpuTimer::Timestamp) {
+        for (const Sample& s : rec.samples) {
+            if (s.q_begin == 0 || !in_range(s.slot)) continue;
+            GLuint64 t0 = 0, t1 = 0;
+            glGetQueryObjectui64v(s.q_begin, GL_QUERY_RESULT, &t0);
+            glGetQueryObjectui64v(s.q_end, GL_QUERY_RESULT, &t1);
+            if (t1 >= t0) gpu_ns[s.slot] += static_cast<double>(t1 - t0);
+            measured[s.slot] = 1;
+        }
+        // Whole-frame GPU time is the span from the first timestamp to the
+        // last, not the sum of the scopes: scopes nest, so summing
+        // double-counts. `last` being the last-ISSUED query is what makes this
+        // the outermost scope's end. Taking `present`'s end instead reported
+        // present.end - frame.begin, a total that disagreed with the `frame`
+        // row's own gpu_ms printed directly above it.
+        GLuint64 first_ts = 0, last_ts = 0;
+        glGetQueryObjectui64v(rec.samples.front().q_begin, GL_QUERY_RESULT, &first_ts);
+        glGetQueryObjectui64v(last, GL_QUERY_RESULT, &last_ts);
+        if (last_ts >= first_ts)
+            frame_gpu_ns = static_cast<double>(last_ts - first_ts);
+    } else if (last != 0 && rec.timer == GpuTimer::Elapsed) {
+        // The timed scopes are sequential children of the outermost scope, so
+        // their sum IS the whole frame and also that outermost row's time. GPU
+        // work outside every child is not covered; there is essentially none,
+        // since `frame` only opens, runs its children, and closes.
+        for (const Sample& s : rec.samples) {
+            if (s.q_begin == 0 || !in_range(s.slot)) continue;
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(s.q_begin, GL_QUERY_RESULT, &ns);
+            const double d = static_cast<double>(ns);
+            gpu_ns[s.slot] += d;
+            measured[s.slot] = 1;
+            frame_gpu_ns += d;
+            if (s.parent >= 0 && s.parent < static_cast<int>(rec.samples.size())) {
+                const int ps = rec.samples[static_cast<std::size_t>(s.parent)].slot;
+                if (in_range(ps)) {
+                    gpu_ns[ps] += d;
+                    measured[ps] = 1;
+                }
+            }
+        }
     }
 
     for (std::size_t i = 0; i < slots_.size(); ++i) {
         const double cpu = (i < rec.cpu_ns.size() ? rec.cpu_ns[i] : 0.0) / 1e6;
-        const double gpu = gpu_ns[i] / 1e6;
         ema(slots_[i].cpu_ms, slots_[i].cpu_seeded, cpu);
-        ema(slots_[i].gpu_ms, slots_[i].gpu_seeded, gpu);
+        // An unmeasured scope's GPU average is left alone rather than blended
+        // toward a 0 it never measured.
+        if (measured[i])
+            ema(slots_[i].gpu_ms, slots_[i].gpu_seeded, gpu_ns[i] / 1e6);
     }
 
-    // Whole-frame GPU time is the span from the first timestamp to the last,
-    // not the sum of the scopes: scopes nest, so summing double-counts.
-    // `last` being the last-ISSUED query is what makes this the outermost
-    // scope's end. Taking `present`'s end instead reported
-    // present.end - frame.begin, a total that disagreed with the `frame` row's
-    // own gpu_ms printed directly above it.
-    GLuint64 first_ts = 0, last_ts = 0;
-    glGetQueryObjectui64v(rec.samples.front().q_begin, GL_QUERY_RESULT, &first_ts);
-    glGetQueryObjectui64v(last, GL_QUERY_RESULT, &last_ts);
     ema(frame_cpu_ms_, cpu_total_seeded_, rec.frame_cpu_ns / 1e6);
-    ema(frame_gpu_ms_, gpu_total_seeded_,
-        last_ts >= first_ts ? static_cast<double>(last_ts - first_ts) / 1e6 : 0.0);
+    if (rec.timer != GpuTimer::None)
+        ema(frame_gpu_ms_, gpu_total_seeded_, frame_gpu_ns / 1e6);
 
     // Report exactly the scopes this frame entered, in this frame's order and
     // at this frame's depth. See results() for why a first-sight tree is wrong.
@@ -250,7 +330,8 @@ void FrameTimer::resolve(Record& rec) {
         ScopeResult r;
         r.name = slots_[i].name;
         r.cpu_ms = slots_[i].cpu_ms;
-        r.gpu_ms = slots_[i].gpu_ms;
+        r.gpu_measured = measured[i] != 0;
+        r.gpu_ms = r.gpu_measured ? slots_[i].gpu_ms : 0.0;
         r.calls = (i < rec.calls.size() ? rec.calls[i] : 0);
         r.depth = (i < rec.depth.size() ? rec.depth[i] : 0);
         results_.push_back(std::move(r));
