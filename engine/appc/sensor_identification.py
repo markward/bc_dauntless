@@ -66,11 +66,10 @@ def _identify_one(sensors, obj) -> bool:
     # (spec Sec6).
     #
     # Player-only: the Scan Object menu and the "Unknown N" placeholder are
-    # both the PLAYER's UI. `_identify_one` also commits identification for
-    # an NPC's own sensors (e.g. AI-side ForceObjectIdentified), and that must
-    # not rename/release the number the PLAYER's target list is still showing
-    # for the same contact -- the contact may be known to the NPC and still
-    # unidentified to the player.
+    # both the PLAYER's UI. Every public way in (dwell, scan,
+    # ForceObjectIdentified) is already player-gated, as BC's contact manager
+    # is; this guard is defence in depth so an NPC-owned sensors object can
+    # never rename/release the number the PLAYER's target list is showing.
     try:
         from engine.appc import science_scan_labels, unknown_labels, sensor_contacts
         if sensors._owner_ship() is sensor_contacts.current_player():
