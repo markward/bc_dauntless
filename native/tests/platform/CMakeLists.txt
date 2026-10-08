@@ -1,4 +1,5 @@
 add_executable(platform_tests
+    cef_cache_dir_test.cc
     exe_path_test.cc
     relaunch_test.cc
 )
