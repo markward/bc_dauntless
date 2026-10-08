@@ -7999,13 +7999,13 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             tex_abs = [str(p) for p in
                        _paths.game_asset_dirs(_pp.dirname(nif) + "/High")]
         if is_bridge:
-            handle = r.load_model(nif_abs, tex_abs)
+            handle = r.load_model(nif_abs, tex_abs, interior=True)
             iid = r.create_bridge_instance(handle)
         else:
             # A comm/remote set is non-critical: if its NIF or a texture fails
             # to load, log and skip so one bad set can't abort the whole mission.
             try:
-                handle = r.load_model(nif_abs, tex_abs)
+                handle = r.load_model(nif_abs, tex_abs, interior=True)
             except Exception as _e:
                 dev_mode.log_swallowed("comm set load_model %r" % set_name, _e)
                 handle = None
@@ -8037,7 +8037,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             vs_env = _App.g_kModelManager.env_for(vs.nif)
             vs_tex = ([str(p) for p in _paths.game_asset_dirs(vs_env)] if vs_env
                       else [str(p) for p in _paths.game_asset_dirs(DBRIDGE_TEX_REL)])
-            vs_handle = r.load_model(vs_nif_abs, vs_tex)
+            vs_handle = r.load_model(vs_nif_abs, vs_tex, interior=True)
             vs_iid = r.create_bridge_instance(vs_handle)
             r.set_world_transform(vs_iid, IDENTITY_MAT4)
             vs.render_instance = vs_iid

@@ -31,6 +31,10 @@ struct ModelBuildContext {
     /// overwhelming majority of models; an empty list makes build_model
     /// byte-identical to the no-decal path.
     std::vector<DecalRequest>           decals;
+    /// Generate smooth normals for every shape authored WITHOUT normals
+    /// (spec 2026-10-08-bridge-lighting-baseline-design.md §3). Set only for
+    /// interior-set models; false keeps build_model byte-identical.
+    bool                                generate_missing_normals = false;
     /// Optional sink for each Model::textures entry's AUTHORED source basename
     /// ("body.tga", "head.tga", …), sized to model.textures.size(). Entries the
     /// loader synthesized rather than read from a NiImage (sibling _specular /
