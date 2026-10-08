@@ -179,11 +179,21 @@ bool initialize(int view_width, int view_height,
     settings.multi_threaded_message_loop = false;
     settings.command_line_args_disabled  = true;
 
-    // Stable on-disk cache dir. Without this CEF falls back to a default and
-    // warns about unintended process-singleton behavior; a fixed path also
-    // lets the GPU/shader cache persist across runs.
-    const std::filesystem::path cef_cache_dir =
-        std::filesystem::temp_directory_path() / "dauntless-cef-cache";
+    // Stable on-disk cache dir, one PER BUILD (see platform::cef_cache_dir).
+    // Without one CEF falls back to a default and warns about unintended
+    // process-singleton behavior; a stable path also lets the GPU/shader cache
+    // persist across runs. A single shared folder broke a second build
+    // launched while another was running: Chromium's singleton handed its
+    // startup to the running game, which opened a stray browser window.
+    std::filesystem::path cache_exec_path = std::filesystem::current_path();
+    if (g_saved_argc > 0) {
+        std::string exec_error;
+        const std::filesystem::path p =
+            dauntless::platform::executable_path(g_saved_argv[0], exec_error);
+        if (!p.empty()) cache_exec_path = p;
+    }
+    const std::filesystem::path cef_cache_dir = dauntless::platform::cef_cache_dir(
+        std::filesystem::temp_directory_path(), cache_exec_path);
     std::error_code cef_cache_ec;
     std::filesystem::create_directories(cef_cache_dir, cef_cache_ec);
     CefString(&settings.root_cache_path) = cef_cache_dir.string();

@@ -343,3 +343,27 @@ def test_a_single_place_system_lists_its_only_place():
     marks every single-place system unlisted, which it is not."""
     riha = {r.set_name: r.menu_listed for r in survey_system("Riha").regions}
     assert riha["Riha1"] is True
+
+
+def test_tau_ceti_is_one_system_folded_from_two_sdk_folders():
+    """BC ships Starbase 12 and Dry Dock as two folders, each with its own
+    menu script (Starbase.py, DryDockSystem.py) and no CreateSystemMenu in a
+    head script named after the folder -- so neither was ever surveyed. They
+    are one system, Tau Ceti (Dry Dock's planet is "Tau Ceti Prime"; the
+    sector model already folds both onto `tauceti`)."""
+    names = system_names()
+    assert "TauCeti" in names
+    assert "Starbase12" not in names and "DryDock" not in names
+    tc = survey_system("TauCeti")
+    assert sorted(r.set_name for r in tc.regions) == ["DryDock", "Starbase12"]
+    assert all(r.menu_listed for r in tc.regions)
+    planets = {r.set_name: [b.name for b in r.bodies if not b.is_sun]
+               for r in tc.regions}
+    assert planets == {"Starbase12": ["New Holland"],
+                       "DryDock": ["Tau Ceti Prime"]}
+
+
+def test_a_folded_regions_staged_label_names_its_real_folder():
+    tc = {r.set_name: r for r in survey_system("TauCeti").regions}
+    labels = {label for label, _, _ in tc["DryDock"].staged_points}
+    assert "Systems/DryDock/DryDock" in labels
