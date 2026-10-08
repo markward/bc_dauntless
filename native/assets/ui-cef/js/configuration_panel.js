@@ -33,7 +33,7 @@ const CP_MASTERS = [
 
 // Graphics-tab controls in rendered order: the standalone rows, then the
 // masters. Single source for both the focusable list and the rendered rows.
-const CP_GRAPHICS_STANDALONE = ['aa_mode', 'dust', 'fov'];
+const CP_GRAPHICS_STANDALONE = ['aa_mode', 'bridge_quality', 'dust', 'fov'];
 // Plain rows that sit INSIDE the Modern VFX group, after the masters.
 const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
 // Per-tab "Reset to Defaults" rows. Scoped, not global: the Controls tab
@@ -157,6 +157,22 @@ function _cpRenderGraphicsBody(state, focusables) {
               + '</button>';
     }
     html += '</div></div>';
+
+    // Bridge rendering — three-way segmented control (Low / Medium / High):
+    // the bridge's ambient-occlusion quality. High is meant for gaming GPUs.
+    const bqLabels = ['Low', 'Medium', 'High'];
+    const bq = (typeof s.bridge_quality === 'number') ? s.bridge_quality : 1;
+    html += '<div class="cp-row' + (isFoc('bridge_quality') ? ' cp-focused' : '') + '">'
+          +     '<span class="cp-label">Bridge Rendering</span>'
+          +     '<div class="cp-segmented">';
+    for (let i = 0; i < bqLabels.length; ++i) {
+        html += '<button class="cp-toggle' + (bq === i ? ' cp-toggle--on' : '') + '"'
+              +    ' onclick="dauntlessEvent(\'configuration/bridge_quality:' + i + '\')">'
+              +    bqLabels[i]
+              + '</button>';
+    }
+    html += '</div></div>';
+
     html += _cpToggleRow('Space Dust', 'dust', s.dust_on, isFoc);
 
     // FOV slider — listen on 'change' (released), not 'input' (every

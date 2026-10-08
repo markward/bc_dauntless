@@ -33,6 +33,7 @@ def _make(**overrides):
         set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(),
         set_ai_difficulty=Mock(),
+        set_bridge_quality=Mock(),
         set_fov_rad=Mock(),
         set_shadows=Mock(),
         set_procedural_sky=Mock(),
@@ -82,6 +83,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
         "ai_difficulty": 1,
+        "bridge_quality": 1,
         "fov_deg": 62,
     }
 
@@ -574,6 +576,42 @@ def test_ai_difficulty_is_a_gameplay_focusable():
     assert ("ctrl", "ai_difficulty") in focusables
 
 
+# ---- Bridge rendering quality (Graphics tab) ------------------------------
+
+def test_bridge_quality_click_applies_and_persists():
+    on_change = Mock()
+    p, kw = _make(on_change=on_change)
+    p.open()
+    assert p.dispatch_event("bridge_quality:2") is True
+    kw["set_bridge_quality"].assert_called_once_with(2)
+    assert p._settings.bridge_quality == 2
+    on_change.assert_called_once_with("bridge_quality", 2)
+
+
+def test_bridge_quality_out_of_range_click_clamps():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("bridge_quality:9")
+    kw["set_bridge_quality"].assert_called_once_with(2)
+    assert p._settings.bridge_quality == 2
+
+
+def test_bridge_quality_in_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        fov_deg=70, bridge_quality=1,
+    ))
+    p.open()
+    payload = p.render_payload()
+    assert '"bridge_quality": 1' in payload
+
+
+def test_bridge_quality_is_right_after_aa_mode_in_graphics_focusables():
+    p, _ = _make()
+    focusables = p._focusables()
+    assert focusables.index(("ctrl", "bridge_quality")) \
+        == focusables.index(("ctrl", "aa_mode")) + 1
+
+
 # ---- Master toggles --------------------------------------------------------
 # One parametrised suite over MASTER_TOGGLES, so adding or re-grouping a master
 # is covered without copying a test block. Members are the applier names, which
@@ -692,7 +730,7 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     standalones-then-masters test, which camera shake made incomplete."""
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == (["aa_mode", "dust", "fov"] + list(MASTER_KEYS)
+    assert ctrls == (["aa_mode", "bridge_quality", "dust", "fov"] + list(MASTER_KEYS)
                       + ["camera_shake", "reset_graphics"])
 
 

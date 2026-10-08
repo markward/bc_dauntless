@@ -10286,6 +10286,8 @@ def run(mission_name: Optional[str] = None,
             # set_msaa_samples, and that fan-out lives in the SETTINGS table.
             set_aa_mode=lambda mode: _settings.apply_setting(
                 _settings_ctx, "aa_mode", mode),
+            set_bridge_quality=lambda q: _settings.apply_setting(
+                _settings_ctx, "bridge_quality", q),
             max_msaa_samples=r.max_msaa_samples(),
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_disable_annoying_dialogue=_crew_speech.set_annoying_dialogue_disabled,

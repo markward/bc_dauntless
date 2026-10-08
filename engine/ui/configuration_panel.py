@@ -93,6 +93,8 @@ class SettingsSnapshot:
     disable_annoying_dialogue_on: bool = True
     ai_difficulty: int = 1
     dust_on: bool = True
+    # Bridge rendering quality (Low/Medium/High), driven by r.set_bridge_quality.
+    bridge_quality: int = 1
     # One master toggle over the volumetric nebulae and the procedural sky.
     # Off == stock BC space: authored starbox, flat nebulae. Space dust was
     # folded in here and pulled back out after a live look — it reads as its
@@ -120,6 +122,7 @@ class ConfigurationPanel(Panel):
                  set_hdr: Callable[[bool], None],
                  set_rim: Callable[[bool], None],
                  set_aa_mode: Callable[[int], None],
+                 set_bridge_quality: Callable[[int], None],
                  set_subtitles: Callable[[bool], None],
                  set_disable_annoying_dialogue: Callable[[bool], None],
                  set_ai_difficulty: Callable[[int], None],
@@ -157,6 +160,7 @@ class ConfigurationPanel(Panel):
             disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
             ai_difficulty=max(0, min(2, int(initial_settings.ai_difficulty))),
             dust_on=initial_settings.dust_on,
+            bridge_quality=max(0, min(2, int(initial_settings.bridge_quality))),
             improved_space_on=initial_settings.improved_space_on,
             camera_realism_on=initial_settings.camera_realism_on,
             realistic_lighting_on=initial_settings.realistic_lighting_on,
@@ -183,6 +187,7 @@ class ConfigurationPanel(Panel):
         self._set_dust = set_dust
         self._set_camera_shake = set_camera_shake
         self._set_aa_mode = set_aa_mode
+        self._set_bridge_quality = set_bridge_quality
         self._max_msaa_samples = int(max_msaa_samples)
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
@@ -301,6 +306,7 @@ class ConfigurationPanel(Panel):
             self._settings.disable_annoying_dialogue_on,
             self._settings.ai_difficulty,
             self._settings.dust_on,
+            self._settings.bridge_quality,
             self._settings.camera_shake_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
@@ -331,6 +337,7 @@ class ConfigurationPanel(Panel):
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
                 "ai_difficulty": self._settings.ai_difficulty,
                 "dust_on": self._settings.dust_on,
+                "bridge_quality": self._settings.bridge_quality,
                 "camera_shake_on": self._settings.camera_shake_on,
                 "fov_deg": self._settings.fov_deg,
                 **{k + "_on": getattr(self._settings, k + "_on")
@@ -442,6 +449,17 @@ class ConfigurationPanel(Panel):
             self._set_disable_annoying_dialogue(new_val)
             self._settings.disable_annoying_dialogue_on = new_val
             self._on_change("disable_annoying_dialogue", new_val)
+            return True
+        if action.startswith("bridge_quality:"):
+            raw = action[len("bridge_quality:"):]
+            try:
+                level = int(raw)
+            except ValueError:
+                return False
+            level = max(0, min(2, level))
+            self._set_bridge_quality(level)
+            self._settings.bridge_quality = level
+            self._on_change("bridge_quality", level)
             return True
         if action.startswith("ai_difficulty:"):
             raw = action[len("ai_difficulty:"):]
@@ -692,6 +710,12 @@ class ConfigurationPanel(Panel):
             if _pressed(k_left):
                 self.dispatch_event("ai_difficulty:" + str(self._settings.ai_difficulty - 1))
 
+        if kind == "ctrl" and target == "bridge_quality":
+            if _pressed(k_right):
+                self.dispatch_event("bridge_quality:" + str(self._settings.bridge_quality + 1))
+            if _pressed(k_left):
+                self.dispatch_event("bridge_quality:" + str(self._settings.bridge_quality - 1))
+
         # Clamped here rather than relying on dispatch_event's range check, so
         # holding right at 8x is a no-op instead of a rejected event.
         if kind == "ctrl" and target == "aa_mode":
@@ -707,7 +731,8 @@ class ConfigurationPanel(Panel):
         currently selected tab. Order mirrors the rendered rows — the two
         standalone controls, then the 'Modern VFX' group of master toggles,
         then the per-tab Reset row:
-        [('tab','graphics'), ('ctrl','aa_mode'), ('ctrl','dust'), ('ctrl','fov'),
+        [('tab','graphics'), ('ctrl','aa_mode'), ('ctrl','bridge_quality'),
+         ('ctrl','dust'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
          ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
          ('ctrl','reset_graphics')].
@@ -716,7 +741,8 @@ class ConfigurationPanel(Panel):
         together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "aa_mode"), ("ctrl", "dust"), ("ctrl", "fov")]
+            out += [("ctrl", "aa_mode"), ("ctrl", "bridge_quality"),
+                    ("ctrl", "dust"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
             out += [("ctrl", "camera_shake")]
             out += [("ctrl", "reset_graphics")]
