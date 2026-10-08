@@ -32,7 +32,7 @@ InstanceId = _h.InstanceId
 _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
     "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
-    "assemble_officer", "bridge_pass_set_enabled",
+    "assemble_officer", "bridge_pass_set_enabled", "bridge_quality",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_glow_regions", "clear_hologram_ship",
@@ -64,7 +64,7 @@ _REQUIRED_BINDINGS = frozenset({
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
     "rim_set_enabled", "set_asset_overrides", "set_backdrops",
     "set_bridge_ambient_scale",
-    "set_bridge_camera", "set_bridge_lighting",
+    "set_bridge_camera", "set_bridge_lighting", "set_bridge_quality",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
@@ -330,6 +330,18 @@ def set_bridge_wall_time(t: float) -> None:
     this to compute the current animation frame per material.
     """
     _h.set_bridge_wall_time(t)
+
+
+def set_bridge_quality(level: int) -> None:
+    """Bridge rendering quality: 0 Low, 1 Medium (default), 2 High. Drives
+    the bridge AO's sample count and target resolution scale. Out-of-range
+    values clamp."""
+    _h.set_bridge_quality(int(level))
+
+
+def bridge_quality() -> int:
+    """Current bridge rendering quality level (see set_bridge_quality)."""
+    return _h.bridge_quality()
 
 
 def damage_decals_tick(game_time: float) -> None:

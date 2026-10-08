@@ -14,6 +14,7 @@
 #include <renderer/bloom_pass.h>
 #include <renderer/bridge_lighting_tuning.h>
 #include <renderer/bridge_pass.h>
+#include <renderer/bridge_quality.h>
 #include <renderer/frame.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -215,4 +216,27 @@ TEST_F(BridgeLightingFrame, LightmapSlotIsIgnored) {
     // Same scene with a BLACK texture bound in the floor material's Dark stage:
     // the floor must be exactly as bright as without it.
     EXPECT_EQ(render_floor_with_dark_stage(black_1x1()), render_floor_with_dark_stage(0));
+}
+
+// ── Bridge quality presets (Task 5) ─────────────────────────────────────────
+
+TEST(BridgeQuality, PresetsMatchTheSpec) {
+    using renderer::BridgeQuality; using renderer::ao_settings_for;
+    EXPECT_EQ(ao_settings_for(BridgeQuality::Low).samples, 24);
+    EXPECT_FLOAT_EQ(ao_settings_for(BridgeQuality::Low).resolution_scale, 0.5f);
+    EXPECT_EQ(ao_settings_for(BridgeQuality::Medium).samples, 32);
+    EXPECT_FLOAT_EQ(ao_settings_for(BridgeQuality::Medium).resolution_scale, 0.5f);
+    EXPECT_EQ(ao_settings_for(BridgeQuality::High).samples, 64);
+    EXPECT_FLOAT_EQ(ao_settings_for(BridgeQuality::High).resolution_scale, 1.0f);
+    EXPECT_EQ(renderer::kDefaultBridgeQuality, BridgeQuality::Medium);
+}
+
+TEST(BridgeQuality, NoPresetUsesSixteenSamples) {
+    for (int q = 0; q <= 2; ++q)
+        EXPECT_NE(renderer::ao_settings_for(static_cast<renderer::BridgeQuality>(q)).samples, 16);
+}
+
+TEST(BridgeQuality, OutOfRangeClamps) {
+    EXPECT_EQ(renderer::clamp_bridge_quality(-3), renderer::BridgeQuality::Low);
+    EXPECT_EQ(renderer::clamp_bridge_quality(9), renderer::BridgeQuality::High);
 }

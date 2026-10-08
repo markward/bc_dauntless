@@ -40,3 +40,12 @@ def test_consume_mouse_delta_binding_exists(host_module):
 
 def test_set_cursor_locked_binding_exists(host_module):
     assert hasattr(host_module, "set_cursor_locked")
+
+
+def test_bridge_quality_defaults_to_medium_and_round_trips(host_module):
+    assert host_module.bridge_quality() == 1
+    host_module.set_bridge_quality(2)
+    assert host_module.bridge_quality() == 2
+    host_module.set_bridge_quality(99)
+    assert host_module.bridge_quality() == 2
+    host_module.set_bridge_quality(1)

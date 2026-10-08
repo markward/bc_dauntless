@@ -71,6 +71,7 @@
 #include <renderer/starmap_pass.h>
 #include <renderer/letterbox_pass.h>
 #include <renderer/bridge_pass.h>
+#include <renderer/bridge_quality.h>
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/hdr_msaa_target.h>
@@ -257,6 +258,11 @@ renderer::Lighting g_bridge_lighting;
 // viewscreen shows another ship's room, whose lighting must not follow our
 // alert level.
 float g_bridge_ambient_scale = 1.0f;
+// Bridge AO quality preset (Low/Medium/High), set via set_bridge_quality().
+// Applied to g_bridge_pass's AO settings both where it is constructed and on
+// every set_bridge_quality() call, so a quality change takes effect even
+// mid-mission without waiting for the next init().
+renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -827,6 +833,7 @@ void reset_frame_state() {
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
+    g_bridge_quality = renderer::kDefaultBridgeQuality;
     g_bridge_pass_enabled = false;
     g_viewscreen_enabled = false;
     g_backdrops.clear();
@@ -1007,6 +1014,7 @@ void init(int width, int height, const std::string& title) {
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
+    g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
@@ -4104,6 +4112,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "dim). The comm-set viewscreen feed always renders with the "
           "unscaled bridge lighting, so viewscreen brightness stays constant "
           "across alert levels. Default 1.0.");
+
+    m.def("set_bridge_quality",
+          [](int q) {
+              g_bridge_quality = renderer::clamp_bridge_quality(q);
+              if (g_bridge_pass)
+                  g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
+          },
+          py::arg("level"),
+          "Bridge rendering quality: 0 Low, 1 Medium (default), 2 High. "
+          "Out-of-range clamps. Drives the bridge AO's sample count and "
+          "target resolution scale.");
+
+    m.def("bridge_quality",
+          [] { return static_cast<int>(g_bridge_quality); },
+          "Current bridge rendering quality level (see set_bridge_quality).");
 
     m.def("set_bridge_wall_time",
           [](double t) { if (g_bridge_pass) g_bridge_pass->set_wall_time(t); },
