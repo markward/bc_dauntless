@@ -14,8 +14,8 @@ namespace renderer {
 struct BridgeLightingTuning {
     float down_top    = 1.0f;   // up-facing surfaces' share of the bridge ambient
     float down_bottom = 0.25f;  // down-facing (ceiling)
-    float ao_radius   = 24.0f;  // view-space units (Mark's live pick, 2026-10-08)
-    float ao_strength = 2.0f;   // (Mark's live pick)
+    float ao_radius   = 30.0f;  // view-space units (Mark's live pick, 2026-10-08)
+    float ao_strength = 1.8f;   // (Mark's live pick)
     float ao_bias     = 0.5f;   // view-space units
     float diffuse_max = 0.88f;  // lit-surface ceiling; must stay < bloom threshold (bloom_pass.h, 0.9)
 };
