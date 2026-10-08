@@ -1472,9 +1472,11 @@ class SensorSubsystem(PoweredSubsystem):
         ``Actions.ShipScriptActions.ScanObject``). BC (RE'd) schedules a
         DEFERRED identification on its player-only contact manager, so this
         arms one identification-time later rather than identifying at once.
-        Player-only, like BC's; a no-op on any other ship's sensors."""
+        Player-only, like BC's; a no-op on any other ship's sensors, and
+        when there is no player."""
         from engine.appc import sensor_contacts
-        if self._owner_ship() is not sensor_contacts.current_player():
+        owner = self._owner_ship()
+        if owner is None or owner is not sensor_contacts.current_player():
             return
         sensor_contacts.schedule_scan(pTarget, self.GetIdentificationTime())
 

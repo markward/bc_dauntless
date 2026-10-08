@@ -243,6 +243,22 @@ def test_force_identify_with_no_player_is_a_no_op():
     assert _identified == []
 
 
+def test_identify_object_with_no_player_is_a_no_op():
+    """Orphan sensors and no current game: IdentifyObject must not schedule
+    a scan (sensor_contacts' pending scans survive into the next player's
+    session, so a stale one would identify on the wrong sensors later)."""
+    from engine.appc import sensor_contacts
+    _subscribe()
+    _set_current_game(None)
+    orphan = SensorSubsystem("Sensors")
+    target = ShipClass_Create("BirdOfPrey")
+    before = dict(sensor_contacts._pending)
+
+    orphan.IdentifyObject(target)   # must not raise
+
+    assert dict(sensor_contacts._pending) == before
+
+
 def test_force_object_identified_none_safe():
     _subscribe()
     s, player, sensors = _player_in_set()
