@@ -606,7 +606,9 @@ def profiler_enabled() -> bool:
 
 
 def profiler_scopes() -> List[dict]:
-    """Per-pass render timings: [{name, cpu_ms, gpu_ms, calls, depth}, ...].
+    """Per-pass render timings: [{name, cpu_ms, gpu_ms, gpu_measured, calls,
+    depth}, ...]. `gpu_measured` False means no GPU query covered the scope
+    (nested under GL_TIME_ELAPSED): its gpu_ms is NOT MEASURED, not free.
 
     In pass order. `cpu_ms`/`gpu_ms` are EMA-smoothed; `calls` is the raw count
     from the last resolved frame, so a pass that ran twice in one frame (the
@@ -619,18 +621,20 @@ def profiler_scopes() -> List[dict]:
 
 
 def profiler_frame() -> dict:
-    """Whole-frame render totals: {cpu_ms, gpu_ms, frames, enabled}.
+    """Whole-frame render totals: {cpu_ms, gpu_ms, frames, enabled, ...}.
 
-    `gpu_ms` is measured first-timestamp-to-last, NOT as a sum of the scopes:
-    scopes nest, so summing them would double-count. Returns zeros with
-    enabled=False when the binding is absent.
+    Also `gpu_timer` ("timestamp" | "elapsed" | "none"), chosen from the
+    driver's declared counter bits (`timestamp_bits`, `elapsed_bits`), and
+    `timestamp_queries` issued since the last enable. Under GL_TIMESTAMP,
+    `gpu_ms` is first-timestamp-to-last, NOT a sum of the nested scopes; under
+    GL_TIME_ELAPSED (Apple's GL) it is the sum of the sequential top-level
+    passes, the only ones timed. Returns zeros with enabled=False when the
+    binding is absent.
 
     A gpu_ms of exactly 0.0 across many resolved frames does NOT mean a free
-    GPU: a driver whose GL_TIMESTAMP counters read zero (Apple's GL) produces
-    that, and the timer cannot tell it apart from a fast frame because a span
-    is only accumulated when t1 >= t0. frame_profiler's report calls that case
-    out as GPU TIMING UNAVAILABLE for the same reason this module reports an
-    absent binding rather than inventing zeros for it.
+    GPU: a driver that declares a counter yet returns zeros produces that.
+    frame_profiler's report calls it out as GPU TIMING UNAVAILABLE for the same
+    reason this module reports an absent binding rather than inventing zeros.
     """
     fn = getattr(_h, "profiler_frame", None)
     if fn is None:

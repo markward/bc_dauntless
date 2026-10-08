@@ -4,6 +4,7 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
+    frame_timer_test.cc
     geosphere_draw_test.cc
     atmosphere_pass_test.cc
     atmosphere_surface_test.cc

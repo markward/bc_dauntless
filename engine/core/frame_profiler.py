@@ -546,18 +546,35 @@ def report_lines() -> list[str]:
     else:
         lines.append("  python loop phases: none recorded")
 
-    # A driver with dead GL_TIMESTAMP counters reports every span as zero, and
-    # zero reads as "free". Say so instead, for the same reason a missing
-    # binding says UNAVAILABLE rather than printing zeros.
-    gpu_dead = (native.get("gpu_ms", 0.0) == 0.0
-                and native.get("frames", 0) >= GPU_ZERO_FRAMES)
-    if gpu_dead:
+    # The GPU timer is picked from the counter bits the driver declares (see
+    # renderer::FrameTimer::choose_gpu_timer). Absent from a stale .so, which
+    # only ever used GL_TIMESTAMP.
+    gpu_timer = native.get("gpu_timer")
+    no_counter = gpu_timer == "none" and native.get("frames", 0) >= 1
+    # A driver that declares a counter yet returns zeros reports every span as
+    # zero, and zero reads as "free". Say so instead, for the same reason a
+    # missing binding says UNAVAILABLE rather than printing zeros.
+    zeroed = (native.get("gpu_ms", 0.0) == 0.0
+              and native.get("frames", 0) >= GPU_ZERO_FRAMES)
+    gpu_dead = no_counter or zeroed
+    if no_counter:
+        lines.append("  GPU TIMING UNAVAILABLE: the driver declares no GPU "
+                     "timer counter (0 bits for both GL_TIMESTAMP and "
+                     "GL_TIME_ELAPSED), so no GPU query is issued. The gpu "
+                     "column below is NOT MEASURED - read it as absent, not "
+                     "as a free GPU.")
+    elif zeroed:
         lines.append("  GPU TIMING UNAVAILABLE: whole-frame GPU span was "
                      "exactly 0 over %d resolved frames, so the driver is "
-                     "returning zeroed GL_TIMESTAMP counters (Apple's GL "
-                     "does). The gpu column below is NOT MEASURED - read it "
-                     "as absent, not as a free GPU."
+                     "returning zeroed timer results. The gpu column below "
+                     "is NOT MEASURED - read it as absent, not as a free GPU."
                      % native.get("frames", 0))
+    elif gpu_timer == "elapsed":
+        lines.append("  GPU via GL_TIME_ELAPSED (the driver declares a 0-bit "
+                     "GL_TIMESTAMP counter, as Apple's GL does). Those queries "
+                     "cannot nest, so only the top-level passes are timed: a "
+                     "nested row shows '-' for gpu (not measured), and "
+                     "frame's gpu is the sum of the timed passes.")
 
     if scopes:
         lines.append("  %-32s %7s %7s %5s" % ("render passes", "cpu ms",
@@ -573,7 +590,9 @@ def report_lines() -> list[str]:
                 note = ("   <- vsync wait (frame finished early)"
                         if interval == 1
                         else "   <- swap + queued GPU drain (not a vsync wait)")
-            gpu = ("      -" if gpu_dead
+            # gpu_measured is False for a scope no query covered (nested under
+            # GL_TIME_ELAPSED); a stale .so omits it and timed every scope.
+            gpu = ("      -" if gpu_dead or not s.get("gpu_measured", True)
                    else "%7.3f" % s.get("gpu_ms", 0.0))
             lines.append("    %-30s %7.3f %s %5d%s"
                          % (_fit(label), s.get("cpu_ms", 0.0), gpu,
