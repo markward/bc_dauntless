@@ -172,6 +172,18 @@ ModelHandle AssetCache::load(
     const std::vector<DecalRequest>& decals,
     float scale,
     bool geosphere) {
+    return load(nif_path, search_paths, texture_replacements, decals, scale,
+                geosphere, /*interior=*/false);
+}
+
+ModelHandle AssetCache::load(
+    const fs::path& nif_path,
+    const std::vector<fs::path>& search_paths,
+    const std::vector<TextureReplacement>& texture_replacements,
+    const std::vector<DecalRequest>& decals,
+    float scale,
+    bool geosphere,
+    bool interior) {
     // glTF/GLB path: an entirely separate build (build_model_from_gltf), with
     // no mesh fixes, no texture replacements and no decals -- those are all
     // BC-NIF-specific features that don't apply to rock-catalogue meshes.
@@ -251,7 +263,8 @@ ModelHandle AssetCache::load(
     // per-class feature, not a follow-on to the "ID" patch merge.
     auto canon = fs::weakly_canonical(nif_path).string()
                  + replacements_key(texture_replacements) + decals_key(decals)
-                 + fix_key + std::string(geosphere ? "|geosphere" : "");
+                 + fix_key + std::string(geosphere ? "|geosphere" : "")
+                 + std::string(interior ? "|interior" : "");
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
         if (auto live = it->second.live.lock()) {
@@ -287,6 +300,7 @@ ModelHandle AssetCache::load(
     ctx.keep_cpu_data         = impl_->config.keep_cpu_data;
     ctx.texture_replacements  = texture_replacements;
     ctx.decals                = decals;
+    ctx.generate_missing_normals = interior;
 
     Model built = detail::build_model(file, ctx);
     if (geosphere) {

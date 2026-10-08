@@ -30,6 +30,12 @@ fs::path dauntless_tga_path() {
 fs::path venture_tga_path() {
     return test_support::game_root() / "data/Models/SharedTextures/FedShips/High/Venture.tga";
 }
+fs::path dbridge_path() {
+    return test_support::game_root() / "data/Models/Sets/DBridge/Dbridge.NIF";
+}
+fs::path dbridge_tex_path() {
+    return test_support::game_root() / "data/Models/Sets/DBridge/High";
+}
 bool game_data_present() {
     return fs::exists(galaxy_path());
 }
@@ -95,6 +101,19 @@ TEST(AssetCacheTest, RegistryReplacementProducesDistinctVariant) {
 
     EXPECT_NE(plain.get(), variant.get());
     EXPECT_EQ(variant->textures.size(), plain->textures.size() + 1);
+}
+
+// interior load flag: a distinct cached variant, same shape as geosphere.
+TEST(AssetCacheTest, InteriorLoadIsADistinctCachedVariant) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    if (!fs::exists(dbridge_path())) GTEST_SKIP() << "DBridge not installed";
+
+    assets::AssetCache cache(stub_config());
+    auto plain    = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false);
+    auto interior = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true);
+    auto again    = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true);
+    EXPECT_NE(plain.get(), interior.get());
+    EXPECT_EQ(interior.get(), again.get());
 }
 
 // Regression: BC's ReplaceTexture path OMITS the LOD subdir

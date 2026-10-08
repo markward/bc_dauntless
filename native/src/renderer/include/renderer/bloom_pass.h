@@ -4,6 +4,10 @@
 #include <vector>
 namespace renderer {
 
+/// Bloom's bright-pass threshold. Lit bridge surfaces are held under it by
+/// kBridgeLighting.diffuse_max (bridge_lighting_tuning.h), so only emitters glow.
+inline constexpr float kBloomThreshold = 0.9f;
+
 class Shader;
 
 class BloomPass {
@@ -32,6 +36,6 @@ private:
     int fw_ = 0, fh_ = 0;
     std::uint32_t vao_ = 0, vbo_ = 0;
     std::unique_ptr<Shader> prefilter_, down_, up_;
-    float threshold_ = 0.9f;   // let lights (~1.0) feed bloom
+    float threshold_ = kBloomThreshold;   // let lights (~1.0) feed bloom
 };
 }  // namespace renderer

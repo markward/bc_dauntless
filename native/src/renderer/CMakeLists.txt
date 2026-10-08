@@ -106,11 +106,10 @@ embed_shader(SHADER_STARMAP_VS shaders/starmap.vert starmap_vs)
 embed_shader(SHADER_STARMAP_FS shaders/starmap.frag starmap_fs)
 embed_shader(SHADER_BRIDGE_VS shaders/bridge.vert bridge_vs)
 embed_shader(SHADER_BRIDGE_FS shaders/bridge.frag bridge_fs)
+embed_shader(SHADER_BRIDGE_AO_FS shaders/bridge_ao.frag bridge_ao_fs)
 embed_shader(SHADER_VS_STATIC_VS shaders/viewscreen_static.vert viewscreen_static_vs)
 embed_shader(SHADER_VS_STATIC_FS shaders/viewscreen_static.frag viewscreen_static_fs)
 embed_shader(SHADER_SKINNED_BRIDGE_VS shaders/skinned_bridge.vert skinned_bridge_vs)
-embed_shader(SHADER_LIGHTMAP_VS shaders/lightmap.vert lightmap_vs)
-embed_shader(SHADER_LIGHTMAP_FS shaders/lightmap.frag lightmap_fs)
 embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
 embed_shader(SHADER_RESOLVE_FS shaders/resolve.frag resolve_fs)
 embed_shader(SHADER_FILMIC_FS shaders/filmic.frag filmic_fs)
@@ -216,6 +215,7 @@ add_library(renderer STATIC
     starmap_pass.cc
     letterbox_pass.cc
     bridge_pass.cc
+    bridge_ao_pass.cc
     viewscreen_static_pass.cc
     light_matrix.cc
     shadow_map_target.cc

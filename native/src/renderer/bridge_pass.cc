@@ -1,5 +1,6 @@
 // native/src/renderer/bridge_pass.cc
 #include "renderer/bridge_pass.h"
+#include "renderer/bridge_lighting_tuning.h"
 #include "renderer/pipeline.h"
 #include "renderer/bone_palette.h"
 #include "renderer/node_anim.h"
@@ -73,13 +74,11 @@ void BridgePass::ensure_off_texture() {
 
 namespace {
 
-/// Walk every visible bridge-tagged instance's meshes; for each mesh
-/// whose Material::lightmap_pass == `want_lightmap_pass`, compute its
-/// world-space transform and issue a draw via `draw_one`.
+/// Walk every visible bridge-tagged instance's meshes; for each mesh,
+/// compute its world-space transform and issue a draw via `draw_one`.
 template <typename DrawOne>
 void walk_bridge_meshes(const scenegraph::World& world,
                         const BridgePass::ModelLookup& lookup,
-                        bool want_lightmap_pass,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id,
                         const DrawOne& draw_one) {
@@ -101,7 +100,6 @@ void walk_bridge_meshes(const scenegraph::World& world,
                     const auto& mat = (mesh.material_index() >= 0
                         ? m->materials[mesh.material_index()]
                         : assets::Material{});
-                    if (mat.lightmap_pass != want_lightmap_pass) continue;
                     draw_one(*m, mesh, mat, world_per_node[i], inst.model_handle);
                 }
             }
@@ -122,9 +120,11 @@ void draw_mesh(const assets::Model& model,
                bool face_blend = false,
                GLuint face_a = 0,
                GLuint face_b = 0,
-               float face_mix = 0.0f) {
+               float face_mix = 0.0f,
+               int mesh_id = 0) {
     shader.set_mat4("u_model", world);
-    shader.set_vec3("u_emissive", mat.emissive);
+    // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
+    shader.set_int("u_mesh_id", mesh_id);
     // Alpha test only fires when the material carries an NiAlphaProperty;
     // otherwise the shape is fully opaque regardless of the base
     // texture's alpha channel. EBridge's floorlight.tga (and similar
@@ -152,6 +152,10 @@ void draw_mesh(const assets::Model& model,
     // Warp flash only on the viewscreen feed; 0 everywhere else.
     shader.set_float("u_viewscreen_flash",
                      base_override != 0 ? vs_flash : 0.0f);
+    // Unlit only for the viewscreen override (set every draw so it never
+    // sticks): the feed / off texture draws full bright, unaffected by the
+    // bridge ambient or the downlight.
+    shader.set_int("u_unlit", (!face_blend && base_override != 0) ? 1 : 0);
     // Officer lip-sync face blend (set every draw so it never sticks).
     shader.set_int("u_face_blend", face_blend ? 1 : 0);
     if (face_blend) shader.set_float("u_face_mix", face_mix);
@@ -167,26 +171,11 @@ void draw_mesh(const assets::Model& model,
         glBindTexture(GL_TEXTURE_2D, b);
     } else if (base_override != 0) {
         // Viewscreen RTT feed: ignore the NIF base texture and draw the
-        // offscreen scene full-bright (BC's emissive=(1,1,1) screen
-        // convention -> FragColor = feed, unaffected by bridge ambient).
+        // offscreen scene full-bright (u_unlit above -> FragColor = feed,
+        // unaffected by bridge ambient).
         glBindTexture(GL_TEXTURE_2D, base_override);
-        shader.set_vec3("u_emissive", glm::vec3(1.0f));
     } else if (base_tex >= 0) {
         glBindTexture(GL_TEXTURE_2D, model.textures[base_tex].id());
-    } else {
-        glBindTexture(GL_TEXTURE_2D, white_fallback);
-    }
-    // Dark-slot lightmap (BC bridge floor/door/inset/ceiling lm.tga). The
-    // asset pipeline clamps every bridge lightmap onto UV set 1 (the only
-    // secondary set BC bridge geometry carries), so the shader samples it
-    // at v_uv1. When absent, the white fallback returns (1,1,1) so the
-    // multiply in the fragment shader has no visual effect.
-    const int dark_tex = mat.stages[
-        static_cast<std::size_t>(assets::Material::StageSlot::Dark)
-    ].texture_index;
-    glActiveTexture(GL_TEXTURE1);
-    if (dark_tex >= 0) {
-        glBindTexture(GL_TEXTURE_2D, model.textures[dark_tex].id());
     } else {
         glBindTexture(GL_TEXTURE_2D, white_fallback);
     }
@@ -203,15 +192,68 @@ void BridgePass::render(const scenegraph::World& world,
                         const Lighting& lighting,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id) {
-    // ── Sub-pass A: base geometry, opaque, base × ambient, alpha-test ──
+    // Screen-space AO for the main bridge view only -- never the comm-set RTT
+    // (a different camera into a different room), and not while this call is
+    // the AO's own normal pre-pass.
+    GLint view_vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, view_vp);
+    const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
+    bool ao_on = false;
+    if (main_bridge && !normal_pass_ && ao_enabled_) {
+        ao_on = ao_.render(camera, view_vp[2], view_vp[3], ao_settings_, [&] {
+            normal_pass_ = true;
+            render(world, camera, pipeline, lookup, lighting,
+                   scenegraph::Pass::Bridge, 0);
+            normal_pass_ = false;
+        });
+    }
+    if (ao_on) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, ao_.ao_texture());
+        glActiveTexture(GL_TEXTURE4);   // pre-pass depth, for the depth-aware filter
+        glBindTexture(GL_TEXTURE_2D, ao_.depth_texture());
+        glBindSampler(4, ao_.raw_sampler());
+        glActiveTexture(GL_TEXTURE0);
+    }
+    const glm::mat4 inv_proj = glm::inverse(camera.proj_matrix());
+
+    // Uniforms common to both sub-passes: camera, the bridge ambient and the
+    // ceiling downlight (kBridgeLighting, bridge_lighting_tuning.h).
+    auto set_frame_uniforms = [&](Shader& s) {
+        s.set_mat4("u_view", camera.view_matrix());
+        s.set_mat4("u_proj", camera.proj_matrix());
+        s.set_vec3("u_ambient", lighting.ambient);
+        s.set_vec3("u_eye", camera.eye);
+        s.set_vec3("u_up", kBridgeUp);
+        s.set_float("u_down_top", kBridgeLighting.down_top);
+        s.set_float("u_down_bottom", kBridgeLighting.down_bottom);
+        s.set_float("u_diffuse_max", kBridgeLighting.diffuse_max);
+        s.set_int("u_base_color", 0);
+        s.set_int("u_face_b", 2);  // lip-sync second face texture
+        s.set_float("u_alpha_test_threshold", 0.5f);
+        // AO: own units (an unset sampler shares unit 0). The AO may be
+        // smaller than the view; the filter maps each fragment through the
+        // view size.
+        s.set_int("u_ao", 3);
+        s.set_int("u_ao_depth", 4);
+        s.set_mat4("u_ao_inv_proj", inv_proj);
+        s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
+                                            static_cast<float>(view_vp[3])));
+        s.set_int("u_ao_on", ao_on ? 1 : 0);
+        s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
+        s.set_int("u_debug_view", static_cast<int>(debug_view_));
+    };
+
+    // Developer Options debug view 5 (Mesh ID): a per-draw counter, reset
+    // every render() call so numbering is stable within a frame.
+    int mesh_id_counter = 0;
+
+    // ── Sub-pass A: base geometry, opaque, downlit, alpha-test ─────────────
     auto& base_shader = pipeline.bridge_shader();
     base_shader.use();
-    base_shader.set_mat4("u_view", camera.view_matrix());
-    base_shader.set_mat4("u_proj", camera.proj_matrix());
-    base_shader.set_vec3("u_ambient", lighting.ambient);
-    base_shader.set_int("u_base_color", 0);
-    base_shader.set_int("u_dark_map", 1);
-    base_shader.set_float("u_alpha_test_threshold", 0.5f);
+    set_frame_uniforms(base_shader);
+    // Generated set normals follow their triangle's winding.
+    base_shader.set_int("u_face_by_winding", 1);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
@@ -223,15 +265,8 @@ void BridgePass::render(const scenegraph::World& world,
     // enclosed with ~145 small meshes, fillrate impact is negligible.
     glDisable(GL_CULL_FACE);
 
-    // Diffuse pass: render all 145 bridge shapes opaque with their Base
-    // texture. The Material::lightmap_pass tag is no longer consulted —
-    // it controlled a legacy multiply pass and an asset-pipeline UV swap
-    // for shapes whose Base texture is an lm.tga, both of which proved
-    // to be the wrong model. Per the user's clarification: BC's floor
-    // surfaces inherit BOTH a NiTextureProperty (carpet diffuse, UV0)
-    // AND a NiMultiTextureProperty (lightmap, UV1). With the material-
-    // build fix that stops the multi-tex from overwriting Base, all
-    // shapes now have their correct diffuse in Base.
+    // Render every bridge shape opaque with its Base texture, lit by the
+    // ceiling downlight. BC's baked lightmaps (the Dark slot) are not drawn.
     const GLuint white = ensure_white_texture();
     const double t = wall_time_;
     ensure_off_texture();
@@ -247,28 +282,20 @@ void BridgePass::render(const scenegraph::World& world,
         if (viewscreen_tex_ != 0) return {viewscreen_tex_, true};
         return {off_tex, false};
     };
-    walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/false,
-        pass, comm_set_id,
+    walk_bridge_meshes(world, lookup, pass, comm_set_id,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
             const auto [ov, flip] = viewscreen_override(mh);
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
-                      viewscreen_brightness_, viewscreen_flash_);
-        });
-    walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
-        pass, comm_set_id,
-        [&](const assets::Model& m, const assets::Mesh& mesh,
-            const assets::Material& mat, const glm::mat4& w,
-            unsigned long long mh) {
-            const auto [ov, flip] = viewscreen_override(mh);
-            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
-                      viewscreen_brightness_, viewscreen_flash_);
+                      viewscreen_brightness_, viewscreen_flash_,
+                      /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
+                      /*face_mix=*/0.0f, mesh_id_counter++);
         });
 
-    // ── Sub-pass C: skinned bridge characters ──────────────────────────────
+    // ── Sub-pass B: skinned bridge characters ──────────────────────────────
     // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
-    // same bridge ambient as the geometry (bridge.frag, white dark-map). The
+    // same downlight as the geometry (bridge.frag). The
     // per-instance bone palette (SP2) poses the body.
     //
     // Culling stays DISABLED (as for the bridge shell). The officer skin
@@ -280,13 +307,9 @@ void BridgePass::render(const scenegraph::World& world,
     glDisable(GL_CULL_FACE);
     auto& skin_shader = pipeline.skinned_bridge_shader();
     skin_shader.use();
-    skin_shader.set_mat4("u_view", camera.view_matrix());
-    skin_shader.set_mat4("u_proj", camera.proj_matrix());
-    skin_shader.set_vec3("u_ambient", lighting.ambient);
-    skin_shader.set_int("u_base_color", 0);
-    skin_shader.set_int("u_dark_map", 1);
-    skin_shader.set_int("u_face_b", 2);  // lip-sync second face texture
-    skin_shader.set_float("u_alpha_test_threshold", 0.5f);
+    set_frame_uniforms(skin_shader);
+    // Officers carry authored normals: light the side that faces the eye.
+    skin_shader.set_int("u_face_by_winding", 0);
 
     world.for_each_visible_in_pass(pass,
         [&](const scenegraph::Instance& inst) {
@@ -316,12 +339,24 @@ void BridgePass::render(const scenegraph::World& world,
                     draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
                               /*override_flip_v=*/true, 1.0f, 0.0f,
                               face, inst.face_tex_a, inst.face_tex_b,
-                              inst.face_mix);
+                              inst.face_mix, mesh_id_counter++);
                 }
             }
         });
 
     glBindVertexArray(0);
+    if (ao_on) {
+        // Don't leak the raw sampler or the AO textures to other passes: next
+        // frame's nested normal pre-pass renders INTO the depth texture's FBO
+        // with a program that declares u_ao_depth on unit 4 -- a rendering
+        // feedback loop (GL 4.1 section 9.3.1) if that texture is still bound.
+        glBindSampler(4, 0);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+    }
 }
 
 }  // namespace renderer

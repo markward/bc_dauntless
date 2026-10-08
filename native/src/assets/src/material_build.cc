@@ -273,33 +273,6 @@ Material build_material(const MaterialInputs& in) {
         }
     }
 
-    // Apply BC's lightmap-filename convention. Looks up the source
-    // filename for whichever NiImage actually landed in the resolved
-    // Base stage of the final Material (i.e. after both
-    // NiTextureProperty and NiMultiTextureProperty have run — DBridge
-    // shapes inherit BOTH from different ancestor NiNodes, with the
-    // multi-texture's lightmap correctly overwriting the texture
-    // property's base). Sets m.lightmap_pass if that filename matches
-    // "* lm.tga" / "*_lm.tga".
-    if (in.image_filename_for_link && in.image_to_texture) {
-        const int base_tex_idx = m.stages[
-            static_cast<std::size_t>(Material::StageSlot::Base)].texture_index;
-        if (base_tex_idx >= 0) {
-            // Reverse-lookup: which NiImage link_id maps to this
-            // texture_index? Image count is typically tens; linear scan
-            // is fine.
-            for (const auto& [link_id, tex_idx] : *in.image_to_texture) {
-                if (tex_idx != base_tex_idx) continue;
-                auto fn_it = in.image_filename_for_link->find(link_id);
-                if (fn_it == in.image_filename_for_link->end()) continue;
-                if (filename_is_lightmap(fn_it->second)) {
-                    m.lightmap_pass = true;
-                }
-                break;
-            }
-        }
-    }
-
     return m;
 }
 

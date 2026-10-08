@@ -16,7 +16,7 @@ class _FakeRenderer:
         self._next = 1
         self.vs_model = None
 
-    def load_model(self, nif_abs, tex_abs):
+    def load_model(self, nif_abs, tex_abs, *, interior=False):
         return 100 + self._next
 
     def create_bridge_instance(self, handle):

@@ -35,10 +35,10 @@ TEST_F(PipelineTest, SkyboxShaderCompilesAndLinks) {
     EXPECT_NE(p.skybox_shader().program(), 0u);
 }
 
-TEST_F(PipelineTest, BridgeAndLightmapShadersAvailable) {
+TEST_F(PipelineTest, BridgeShadersAvailable) {
     renderer::Pipeline p;
     EXPECT_NE(p.bridge_shader().program(), 0u);
-    EXPECT_NE(p.lightmap_shader().program(), 0u);
+    EXPECT_NE(p.skinned_bridge_shader().program(), 0u);
 }
 
 TEST_F(PipelineTest, GlStateMatchesBCConvention) {
