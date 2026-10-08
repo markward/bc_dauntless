@@ -85,7 +85,7 @@ stbc-reference MCP was unreachable 2026-10-03).
 | 2 | **Continuity and occlusion** — 5 s window, lost track, major-rock line of sight, field and nebula Unknown, E5M2 / Helm guards | 1 (merged b1e1e05a), rock-fields (merged) | ✅ merged 0f3db1e7, live-verified 2026-10-06 — spec: `2026-10-05-sensor-continuity-occlusion-design.md` |
 | 3 | **Over-boost and sensor memory** — a reach step in `can_detect` (range ∨ boost > 1.2 ∨ known, the latter two unless nebula-jammed); `IsObjectVisible` delegates to `can_detect`; decision 2 overturned | 2 (merged 0f3db1e7) | ✅ merged to local main, live-verified 2026-10-07 — spec: `2026-10-06-sensor-overboost-memory-design.md` |
 | 4 | **Probes** — `Get/SetNumProbes` (stubbed today ⇒ unlimited probes), `AddProbe`, a probe branch in reach and the near/far bands (a probe identifies too: `IsObjectNear` walks probes), Science "Launch Probe" end to end, E6M4 goal (planet ProximityCheck) | 3 | ✅ merged to local main, live-verified 2026-10-07 (probe launch, flight, detection at 240 km with own sensors at 87.5 km) — spec: `2026-10-07-sensor-probes-design.md` |
-| 5 | **Sensor debts** — `ForceObjectIdentified` player-gated (BC contact manager is player-only); range for sensor-less objects (10 hardpoints, not 18: 7 inherit a parent's sensors); station cloak bubbles; roadmap count fix | 4 | next |
+| 5 | **Sensor debts** — `ForceObjectIdentified` player-gated (BC contact manager is player-only); range for sensor-less objects (10 hardpoints, not 18: 7 inherit a parent's sensors); station cloak bubbles; roadmap count fix | 4 | built on feat/sensor-debts, not merged — spec: 2026-10-08-sensor-debts-design.md |
 
 ### Sub-project 2 notes, carried forward
 
@@ -128,8 +128,10 @@ stbc-reference MCP was unreachable 2026-10-03).
 - **Oracle measurements — parked until after first release** (Mark, 2026-10-07: "playing well"; measure only if players report a mismatch with BC). They would close: does a known contact stay listed out
   of range; the Unknown caption; the dwell and half-range band; radar disc range
   (`docs/instrumented_experiments/2026-05-26-radar-range-calibration.md`, still pending).
-- **Tuning debts already recorded:** `FALLBACK_RANGE_GU = 30000` (18 of 52 hardpoints
-  author no sensor range); station cloak bubbles; the unmeasured nebula sensor-scale clamp
+- **Tuning debts already recorded:** ~~`FALLBACK_RANGE_GU = 30000` (18 of 52 hardpoints
+  author no sensor range)~~ and ~~station cloak bubbles~~ — paid by sub-project 5 (only 10
+  stock hardpoints author no sensors: 8 rocks plus commarray and commlight; 7 more author
+  no `SetBaseSensorRange` but inherit a parent's); the unmeasured nebula sensor-scale clamp
   (`docs/superpowers/deferred/2026-09-28-nebula-sensor-scale-unmeasured.md`).
 - **Declined:** fields occluding between observer and target; minor/near-band occluders;
   partial-lock UI.

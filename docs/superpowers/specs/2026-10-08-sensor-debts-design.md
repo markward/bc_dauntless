@@ -69,3 +69,26 @@ stale docstring citing 30000 is corrected, not left.
 
 Oracle measurements (parked until after first release); the nebula sensor-scale clamp;
 a scripted `SetVelocity` on a ship that has an AI (ship motion, not sensors).
+
+## As built
+
+Commits, Tasks 1–3 (`git log --oneline main..HEAD`):
+
+```
+f9db25fa fix(sensors): ForceObjectIdentified is player-only, like BC's contact manager
+ba270646 feat(sensors): sensor-less observers see the sensorless_range_gu dial (2000 GU), not 30000
+8e28eef4 feat(sensors): cap the cloak bubble with the cloak_bubble_cap_gu dial (30 GU)
+```
+
+Deviations from this plan, with reason (controller ruling):
+
+1. **Task 2 concealment-latch test observer at z=1000, not 1500.** In the hysteresis band,
+   concealment scales range to about 1496 GU, so at 1500 range would have decided the
+   test. Both invariants are asserted in `_scene`.
+2. **Task 2 CommArray sensor-less test uses a bare `ShipClass()`.** `ShipClass_Create`
+   installs a default `SensorSubsystem` (`engine/appc/ships.py:1946`), so a sensor-less
+   fixture has to construct the object directly rather than through the factory.
+3. **Task 3's `ai_sensor_gate` note says the three biggest stations "exceed" the cap** (the
+   plan said "reach"). The five 5000-GU stations land exactly on the cap.
+
+No other deviations.
