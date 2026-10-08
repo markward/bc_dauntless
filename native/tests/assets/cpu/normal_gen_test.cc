@@ -5,7 +5,13 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <vector>
 
 using assets::MeshCpu;
 using assets::detail::generate_smooth_normals;
@@ -411,4 +417,150 @@ TEST(NormalGenAcross, InsertedVertexSnapsToTheShapesOwnTVertex) {
     for (const auto& v : m.vertices) {
         if (glm::length(v.position - t) < 1e-2f) EXPECT_EQ(v.position, t);
     }
+}
+
+// ── Spatial-grid equivalence ───────────────────────────────────────────────
+// The repair finds candidate T points through a uniform grid (spec §3,
+// "spatial-grid accelerated"). The grid is ONLY a candidate filter: the
+// output must match the original brute-force scan exactly — same split points
+// per edge, in the same order (the split picks the MIDDLE pending point, so
+// order changes topology), same bits. The reference below is that original
+// brute-force algorithm, kept verbatim apart from carrying only the channels
+// this test compares (position, uv).
+namespace {
+using RefKey = std::array<std::uint32_t, 3>;
+
+void brute_force_repair(MeshCpu& m) {
+    std::vector<glm::vec3> points;
+    {
+        std::map<RefKey, bool> seen;
+        for (const auto& v : m.vertices) {
+            RefKey k;
+            std::memcpy(k.data(), &v.position.x, sizeof(float) * 3);
+            if (seen.try_emplace(k, true).second) points.push_back(v.position);
+        }
+    }
+    auto points_inside = [&](const glm::vec3& a, const glm::vec3& b) {
+        std::vector<glm::vec3> found;
+        const glm::vec3 ab = b - a;
+        const float len2 = glm::dot(ab, ab);
+        if (len2 < 1e-12f) return found;
+        const float tol = 1e-3f * std::sqrt(len2);
+        for (const auto& p : points) {
+            const float u = glm::dot(p - a, ab) / len2;
+            if (u <= 1e-3f || u >= 1.0f - 1e-3f) continue;
+            if (glm::length(p - a - u * ab) < tol) found.push_back(p);
+        }
+        return found;
+    };
+    auto param = [](const glm::vec3& a, const glm::vec3& b, const glm::vec3& p) {
+        const glm::vec3 ab = b - a;
+        return glm::dot(p - a, ab) / glm::dot(ab, ab);
+    };
+    auto insert = [&](std::uint32_t a, std::uint32_t b, float u, const glm::vec3& p) {
+        const glm::vec3& pa = m.vertices[a].position;
+        const glm::vec3& pb = m.vertices[b].position;
+        if (std::lexicographical_compare(&pb.x, &pb.x + 3, &pa.x, &pa.x + 3)) {
+            std::swap(a, b);
+            u = param(m.vertices[a].position, m.vertices[b].position, p);
+        }
+        MeshCpu::Vertex v = m.vertices[a];
+        v.uv = glm::mix(v.uv, m.vertices[b].uv, u);
+        v.position = p;
+        m.vertices.push_back(v);
+        return static_cast<std::uint32_t>(m.vertices.size() - 1);
+    };
+    struct Work {
+        std::array<std::uint32_t, 3> v;
+        std::array<std::vector<glm::vec3>, 3> pts;
+    };
+    std::vector<std::uint32_t> out;
+    for (std::size_t t = 0; t < m.indices.size() / 3; ++t) {
+        Work first;
+        first.v = {m.indices[t * 3], m.indices[t * 3 + 1], m.indices[t * 3 + 2]};
+        for (int e = 0; e < 3; ++e)
+            first.pts[e] = points_inside(m.vertices[first.v[e]].position,
+                                         m.vertices[first.v[(e + 1) % 3]].position);
+        std::vector<Work> work = {std::move(first)};
+        while (!work.empty()) {
+            Work w = std::move(work.back());
+            work.pop_back();
+            int k = -1;
+            for (int e = 0; e < 3; ++e) if (!w.pts[e].empty()) { k = e; break; }
+            if (k < 0) { out.insert(out.end(), w.v.begin(), w.v.end()); continue; }
+            const std::uint32_t a = w.v[k], b = w.v[(k + 1) % 3], c = w.v[(k + 2) % 3];
+            const glm::vec3 pa = m.vertices[a].position, pb = m.vertices[b].position;
+            const glm::vec3 p = w.pts[k][w.pts[k].size() / 2];
+            const float u = param(pa, pb, p);
+            std::vector<glm::vec3> lo, hi;
+            for (const auto& q : w.pts[k]) {
+                if (q == p) continue;
+                (param(pa, pb, q) < u ? lo : hi).push_back(q);
+            }
+            const std::uint32_t v = insert(a, b, u, p);
+            work.push_back({{a, v, c}, {std::move(lo), {}, w.pts[(k + 2) % 3]}});
+            work.push_back({{v, b, c}, {std::move(hi), w.pts[(k + 1) % 3], {}}});
+        }
+    }
+    m.indices = std::move(out);
+}
+
+// A rotated, translated soup of coarse quads (n x n, unit cells) with a
+// strip of fine quads (4 per unit) along the top AND the right side, so every
+// fine vertex lies inside a coarse edge — several per edge, so the middle
+// pick and the lo/hi partition order matter. Plus scattered small triangles
+// (deterministic LCG) so the grid has occupied cells far from the strips.
+MeshCpu many_t_junctions(int n) {
+    const glm::mat4 xf = glm::rotate(glm::translate(glm::mat4(1.0f), {13.7f, -4.2f, 91.3f}),
+                                     0.61f, glm::normalize(glm::vec3(0.3f, 1.0f, -0.7f)));
+    MeshCpu m;
+    auto quad = [&](float x0, float y0, float w, float h) {
+        const glm::vec3 c[4] = {{x0, y0, 0}, {x0 + w, y0, 0}, {x0 + w, y0 + h, 0}, {x0, y0 + h, 0}};
+        const auto base = static_cast<std::uint32_t>(m.vertices.size());
+        for (const auto& p : c) {
+            MeshCpu::Vertex v = at(glm::vec3(xf * glm::vec4(p, 1.0f)));
+            v.uv = {p.x * 0.1f, p.y * 0.1f};
+            m.vertices.push_back(v);
+        }
+        for (std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) m.indices.push_back(base + i);
+    };
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) quad(float(x), float(y), 1, 1);
+    for (int i = 0; i < n * 4; ++i) {
+        quad(i * 0.25f, float(n), 0.25f, 0.5f);         // top strip
+        quad(float(n), i * 0.25f, 0.5f, 0.25f);         // right strip
+    }
+    std::uint32_t s = 12345u;
+    auto rnd = [&] { s = s * 1664525u + 1013904223u; return (s >> 8) / float(1u << 24); };
+    for (int i = 0; i < 200; ++i) {
+        const glm::vec3 o{rnd() * n, rnd() * n, 0.5f + rnd() * 3.0f};
+        const auto base = static_cast<std::uint32_t>(m.vertices.size());
+        for (int k = 0; k < 3; ++k)
+            m.vertices.push_back(at(glm::vec3(xf * glm::vec4(
+                o + glm::vec3(rnd(), rnd(), rnd()) * 0.3f, 1.0f))));
+        for (std::uint32_t k : {0u, 1u, 2u}) m.indices.push_back(base + k);
+    }
+    return m;
+}
+}  // namespace
+
+TEST(TJunctionRepair, GridAcceleratedRepairMatchesBruteForceExactly) {
+    const int n = 12;
+    MeshCpu got = many_t_junctions(n);
+    MeshCpu want = got;
+    const std::size_t verts_before = got.vertices.size();
+    std::vector<glm::vec4> src;
+    assets::detail::repair_t_junctions(got, src);
+    brute_force_repair(want);
+
+    // The mesh really exercises the repair: each of the 2n coarse strip-side
+    // edges carries 3 fine T points (some per triangle twice, via the diagonal).
+    ASSERT_GE(want.vertices.size() - verts_before, std::size_t(2 * n * 3));
+    ASSERT_EQ(got.indices, want.indices);
+    ASSERT_EQ(got.vertices.size(), want.vertices.size());
+    for (std::size_t i = 0; i < want.vertices.size(); ++i) {
+        ASSERT_EQ(got.vertices[i].position, want.vertices[i].position) << i;
+        ASSERT_EQ(got.vertices[i].uv, want.vertices[i].uv) << i;
+    }
+    EXPECT_FALSE(any_vertex_inside_an_edge(got));
 }

@@ -7,7 +7,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <map>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -231,19 +233,73 @@ void repair_t_junctions_impl(VertexChannels& ch) {
                 points.push_back(v.position);
     }
 
+    // Uniform grid over the candidates (~4 per cell on average, at most 512
+    // cells per axis) so an edge only tests the points in the cells its
+    // tolerance-padded box covers. A brute-force scan is O(points x edges):
+    // ~1.8 s of DBridge's interior load in Debug. The grid is purely a
+    // candidate FILTER — the exact inside-edge test below is unchanged, and
+    // the hits are returned in `points` order, as the scan returned them (the
+    // split picks the middle pending point, so order is topology).
+    // Non-finite points never pass the exact test, so they are not binned.
+    glm::vec3 lo(std::numeric_limits<float>::max());
+    glm::vec3 hi(-std::numeric_limits<float>::max());
+    std::size_t finite = 0;
+    for (const auto& p : points) {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+        lo = glm::min(lo, p);
+        hi = glm::max(hi, p);
+        ++finite;
+    }
+    if (finite == 0) lo = hi = glm::vec3(0.0f);
+    const glm::vec3 ext = glm::max(hi - lo, glm::vec3(1e-6f));
+    const float vol_cell = ext.x * ext.y * ext.z * 4.0f
+                           / static_cast<float>(std::max<std::size_t>(finite, 1));
+    const float cell = std::max({std::cbrt(vol_cell), ext.x / 512.0f, ext.y / 512.0f,
+                                 ext.z / 512.0f, 1e-4f});
+    const glm::ivec3 dims = glm::ivec3(glm::floor(ext / cell)) + 1;
+    auto cell_of = [&](const glm::vec3& p) {
+        return glm::clamp(glm::ivec3(glm::floor((p - lo) / cell)), glm::ivec3(0), dims - 1);
+    };
+    auto bin_key = [&](const glm::ivec3& c) {
+        return (static_cast<std::int64_t>(c.z) * dims.y + c.y) * dims.x + c.x;
+    };
+    std::unordered_map<std::int64_t, std::vector<std::uint32_t>> bins;
+    for (std::uint32_t i = 0; i < points.size(); ++i) {
+        const glm::vec3& p = points[i];
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+        bins[bin_key(cell_of(p))].push_back(i);
+    }
+
     // Points strictly inside edge a->b: parameter u in (eps, 1-eps) and a
     // perpendicular distance under 1e-3 of the edge length.
+    std::vector<std::uint32_t> hits;
     auto points_inside = [&](const glm::vec3& a, const glm::vec3& b) {
         std::vector<glm::vec3> found;
         const glm::vec3 ab = b - a;
         const float len2 = glm::dot(ab, ab);
-        if (len2 < 1e-12f) return found;
+        if (!(len2 >= 1e-12f) || !std::isfinite(len2)) return found;
         const float tol = 1e-3f * std::sqrt(len2);
-        for (const auto& p : points) {
-            const float u = glm::dot(p - a, ab) / len2;
-            if (u <= 1e-3f || u >= 1.0f - 1e-3f) continue;
-            if (glm::length(p - a - u * ab) < tol) found.push_back(p);
-        }
+        // Any hit lies within tol of the segment; pad by 2 tol so float
+        // rounding in the exact test can never put a hit outside the box.
+        const glm::vec3 pad(2.0f * tol);
+        const glm::ivec3 c0 = cell_of(glm::min(a, b) - pad);
+        const glm::ivec3 c1 = cell_of(glm::max(a, b) + pad);
+        hits.clear();
+        for (int z = c0.z; z <= c1.z; ++z)
+            for (int y = c0.y; y <= c1.y; ++y)
+                for (int x = c0.x; x <= c1.x; ++x) {
+                    const auto it = bins.find(bin_key({x, y, z}));
+                    if (it == bins.end()) continue;
+                    for (std::uint32_t i : it->second) {
+                        const glm::vec3& p = points[i];
+                        const float u = glm::dot(p - a, ab) / len2;
+                        if (u <= 1e-3f || u >= 1.0f - 1e-3f) continue;
+                        if (glm::length(p - a - u * ab) < tol) hits.push_back(i);
+                    }
+                }
+        std::sort(hits.begin(), hits.end());
+        found.reserve(hits.size());
+        for (std::uint32_t i : hits) found.push_back(points[i]);
         return found;
     };
     auto param = [](const glm::vec3& a, const glm::vec3& b, const glm::vec3& p) {
