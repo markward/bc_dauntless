@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 #include <renderer/planet_clipmap_schedule.h>
+#include <climits>
+#include <cstdio>
+#include <random>
 #include <set>
 #include <utility>
 using namespace renderer::planet_detail;
@@ -92,4 +95,95 @@ TEST(ClipmapSchedule, DashStarvesFineLevelsButCostStaysCapped) {
         EXPECT_LE(s.update({x, 0}, 65536LL * 8, out), 65536LL * 8 + 3 * 1024LL * 9);
     }
     EXPECT_FALSE(s.complete({x, 0}));
+}
+
+// T4: the toroidal content invariant. Simulates each level's 1024x1026 band
+// from the emitted BakeRects (a texel records the ABSOLUTE texel last baked
+// into it) and asserts, under motion, that every texel in valid(L) holds its
+// own absolute texel -- including both guard rows -- through diagonal,
+// backwards-diagonal (negative abs coords), straight-down (crossing toroidal
+// rows 0/1023), random-jump and settle (unbounded budget, must complete)
+// phases. Every frame checks a stride-7 subgrid plus each valid rect's edge
+// rows/columns (where a move exposes stale texels first); every 8th frame and
+// every phase end checks every texel.
+namespace {
+int tor(int a) { const int r = a % 1024; return r < 0 ? r + 1024 : r; }
+struct Cell { int ax = INT_MIN, ay = INT_MIN; };
+}  // namespace
+
+TEST(ClipmapSchedule, ValidRegionContentInvariantUnderMotion) {
+    constexpr int kLevels = 5, kPhaseFrames = 50, kCycles = 2;
+    ClipmapSchedule s(0.1f, oct5());
+    std::vector<std::vector<Cell>> band(kLevels, std::vector<Cell>(1024 * 1026));
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> jump(-20.0f, 20.0f);
+    glm::vec2 n(-3.0f, -5.0f);
+    long long bad = 0;
+    auto fail = [&](const char* what, int f, int L, int x, int y, Cell c) {
+        if (bad++ < 10)
+            ADD_FAILURE() << what << ": frame " << f << " L" << L << " abs (" << x << "," << y
+                          << ") holds (" << c.ax << "," << c.ay << ")";
+    };
+    auto check = [&](int f, int L, int x, int y) {
+        const Cell c = band[L][(tor(y) + 1) * 1024 + tor(x)];
+        if (c.ax != x || c.ay != y) fail("stale content", f, L, x, y, c);
+        if (tor(y) == 1023) {   // band row 0 mirrors toroidal row 1023
+            const Cell g = band[L][tor(x)];
+            if (g.ax != x || g.ay != y) fail("stale guard row 0", f, L, x, y, g);
+        }
+        if (tor(y) == 0) {      // band row 1025 mirrors toroidal row 0
+            const Cell g = band[L][1025 * 1024 + tor(x)];
+            if (g.ax != x || g.ay != y) fail("stale guard row 1025", f, L, x, y, g);
+        }
+    };
+    int f = 0;
+    for (int cycle = 0; cycle < kCycles; ++cycle) {
+        for (int mode = 0; mode < 5; ++mode) {
+            for (int i = 0; i < kPhaseFrames; ++i, ++f) {
+                if (mode == 0) n += glm::vec2(1.3f, 1.1f);             // diagonal
+                else if (mode == 1) n += glm::vec2(-2.7f, -0.9f);      // backwards diagonal
+                else if (mode == 2) n += glm::vec2(0.0f, -6.6f);       // straight down
+                else if (mode == 3) n += glm::vec2(jump(rng), jump(rng));   // random jumps
+                // mode 4: settle in place, unbounded budget
+                const long long budget = mode == 4 ? (1LL << 40) : 65536LL * 8;
+                std::vector<BakeRect> out;
+                const long long c = s.update(n, budget, out);
+                if (mode != 4) EXPECT_LE(c, budget + 3 * 1024LL * 9) << "frame " << f;
+                for (const auto& r : out) {
+                    for (int y = 0; y < r.h; ++y) {
+                        const int br = r.band_row + y, tr = tor(r.abs_y + y);
+                        const bool row_ok = (br >= 1 && br <= 1024) ? tr + 1 == br
+                                          : br == 0 ? tr == 1023 : br == 1025 ? tr == 0 : false;
+                        if (!row_ok) ++bad;
+                        for (int x = 0; x < r.w; ++x) {
+                            const int tx = r.tor_x + x;
+                            if (tx < 0 || tx >= 1024 || br < 0 || br >= 1026) { ++bad; continue; }
+                            if (tor(r.abs_x + x) != tx) ++bad;
+                            band[r.level][br * 1024 + tx] = {r.abs_x + x, r.abs_y + y};
+                        }
+                    }
+                }
+                const bool full = f % 8 == 0 || i == kPhaseFrames - 1;
+                for (int L = 0; L < kLevels; ++L) {
+                    const Rect V = s.valid(L);
+                    if (V.empty()) continue;
+                    if (full) {
+                        for (int y = V.y0; y < V.y1; ++y)
+                            for (int x = V.x0; x < V.x1; ++x) check(f, L, x, y);
+                        continue;
+                    }
+                    for (int y = V.y0; y < V.y1; y += 7)
+                        for (int x = V.x0; x < V.x1; x += 7) check(f, L, x, y);
+                    for (int x = V.x0; x < V.x1; ++x) { check(f, L, x, V.y0); check(f, L, x, V.y1 - 1); }
+                    for (int y = V.y0; y < V.y1; ++y) { check(f, L, V.x0, y); check(f, L, V.x1 - 1, y); }
+                    // Both guard rows whenever the rect spans them.
+                    for (int y = V.y0; y < V.y1; ++y)
+                        if (tor(y) == 0 || tor(y) == 1023)
+                            for (int x = V.x0; x < V.x1; ++x) check(f, L, x, y);
+                }
+            }
+            if (mode == 4) EXPECT_TRUE(s.complete(n)) << "not complete after settle, frame " << f;
+        }
+    }
+    EXPECT_EQ(bad, 0) << "final nadir (" << n.x << "," << n.y << ")";
 }
