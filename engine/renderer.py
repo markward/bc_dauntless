@@ -317,8 +317,9 @@ def set_bridge_lighting(ambient: Tuple[float, float, float],
 
 
 def set_bridge_ambient_scale(scale: float) -> None:
-    """Ambient multiplier for the bridge interior render only (red-alert
-    dim). The comm-set viewscreen feed always renders with the unscaled
+    """Ambient multiplier for the bridge interior render only: the
+    alert-level scale from engine/bridge_lighting.py (green x1.5,
+    yellow/red x1.0). The comm-set viewscreen feed always renders with the unscaled
     bridge lighting, so viewscreen brightness stays constant across alert
     levels."""
     _h.set_bridge_ambient_scale(float(scale))

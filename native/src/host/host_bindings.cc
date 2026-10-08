@@ -253,7 +253,8 @@ renderer::Lighting g_lighting;
 // ambient is authored on its own SetClass and is typically much
 // brighter than the space scene's.
 renderer::Lighting g_bridge_lighting;
-// Ambient multiplier for the bridge INTERIOR only (red-alert dim). Applied
+// Ambient multiplier for the bridge INTERIOR only: the alert-level scale
+// (engine/bridge_lighting.py -- green x1.5, yellow/red x1.0). Applied
 // where the main bridge pass renders, never to the comm-set RTT feed — the
 // viewscreen shows another ship's room, whose lighting must not follow our
 // alert level.
@@ -1987,8 +1988,8 @@ void frame() {
         // surrounding interior must not flash); the main resolve-pass flash is
         // suppressed below when bridge_active. 0 when not warping.
         g_bridge_pass->set_viewscreen_flash(dauntless_warp_vfx::flash_intensity());
-        // Red-alert dim applies to the interior render only; the comm-set
-        // RTT above uses the unscaled g_bridge_lighting so the viewscreen
+        // The alert-level ambient scale applies to the interior render only;
+        // the comm-set RTT above uses the unscaled g_bridge_lighting so the viewscreen
         // feed's brightness stays constant across alert levels.
         renderer::Lighting interior = g_bridge_lighting;
         interior.ambient *= g_bridge_ambient_scale;
@@ -4113,8 +4114,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_bridge_ambient_scale",
           [](float s) { g_bridge_ambient_scale = s; },
           py::arg("scale"),
-          "Ambient multiplier for the bridge INTERIOR render only (red-alert "
-          "dim). The comm-set viewscreen feed always renders with the "
+          "Ambient multiplier for the bridge INTERIOR render only: the "
+          "alert-level scale (engine/bridge_lighting.py: green x1.5, "
+          "yellow/red x1.0). The comm-set viewscreen feed always renders with the "
           "unscaled bridge lighting, so viewscreen brightness stays constant "
           "across alert levels. Default 1.0.");
 
