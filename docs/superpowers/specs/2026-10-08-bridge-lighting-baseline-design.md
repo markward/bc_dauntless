@@ -1,6 +1,6 @@
 # Bridge Lighting Baseline — Production Design
 
-> **Status:** approved design, 2026-10-08. Branch `feat/bridge-lighting-baseline`
+> **Status:** approved design, 2026-10-08; implemented on branch feat/bridge-lighting-baseline (pending Mark's live check).
 > (worktree `.claude/worktrees/bridge-lighting-prod`), off local `main` `6811cbf8`.
 > **Source:** the spike on branch `spike/bridge-lighting`, whose living spec
 > (`docs/superpowers/specs/2026-10-07-bridge-lighting-vfx-spike-design.md` on
