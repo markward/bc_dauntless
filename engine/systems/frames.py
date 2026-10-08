@@ -2,7 +2,7 @@
 
 A set belongs to exactly one FRAME. A mapped region (a set its region module
 created, which apply_map marked) is in its star system's frame, anchored at
-the region's anchor_gu. Every other set -- Starbase 12, a mission's own set,
+the region's anchor_gu. Every other set -- Deep Space, a mission's own set,
 the warp transit set, the bridge, QuickBattle, and a set that merely carries a
 region's NAME but was never mapped -- is its own one-set frame with a zero
 anchor.

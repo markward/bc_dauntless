@@ -13,7 +13,8 @@ def load_region(system: str, region: str):
     import App
     import tools.mission_harness as mh
     mh.setup_sdk()
-    qual = f"Systems.{system}.{region}"
+    from engine.systems import folds
+    qual = folds.region_module(system, region)
     sys.modules.pop(qual, None)
     importlib.import_module(qual).Initialize()
     pSet = App.g_kSetManager.GetSet(region)

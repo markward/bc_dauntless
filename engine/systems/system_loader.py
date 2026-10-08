@@ -30,7 +30,7 @@ def loaded_system() -> str | None:
 
 def ensure_loaded(player) -> list:
     global _loaded
-    from engine.systems import frames, resolve
+    from engine.systems import folds, frames, resolve
     f = frames.frame_of(frames.containing_set(player))
     if f is None or f.key[0] != "system":
         return []
@@ -42,7 +42,7 @@ def ensure_loaded(player) -> list:
     for region in resolve.regions_of(system):
         if App.g_kSetManager.GetSet(region) is not None:
             continue
-        qual = f"Systems.{system}.{region}"
+        qual = folds.region_module(system, region)
         try:
             importlib.import_module(qual).Initialize()
         except Exception as exc:  # noqa: BLE001 -- one region never strands the rest
