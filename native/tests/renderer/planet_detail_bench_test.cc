@@ -66,6 +66,8 @@ constexpr double kHz = 60.0;
 // Sampling budget: the spec's 0.35 ms is NOT met. Task 11b (2026-10-08,
 // M3 Pro, this bench) measured the delta at 0.636 ms, optimised it to
 // 0.558 ms p50, and set this to 0.558 x 1.2 rounded up to 0.05 ms.
+// The final review's I2 fade (detail fades past the coarsest level) added
+// ~0.02 ms: same-session A/B 0.561 ms before, 0.583 ms after -- in budget.
 // Ablation breakdown of the 0.636 ms original (each piece removed alone):
 //   the code merely PRESENT but runtime-disabled          ~0.11 (gas 0.05,
 //       glint 0.035, ocean/sRGB 0.06 -- not executed for this Rocky
