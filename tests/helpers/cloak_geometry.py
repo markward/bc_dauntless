@@ -2,14 +2,15 @@
 
 **Why this exists.** The cloak detection bubble is
 
-    CLOAK_DETECTION_BASE_GU + effective_sensor_range * CLOAK_RANGE_FACTOR
+    min(cloak_bubble_cap_gu, CLOAK_DETECTION_BASE_GU
+                             + effective_sensor_range * CLOAK_RANGE_FACTOR)
 
-and both dials are play-tested settings that have moved four times. Every retune
-used to mean hand-editing dozens of hardcoded "the bubble is 25 GU" claims and
-probe distances across nine test files — reliably missing some, which left tests
-whose docstrings disagreed with their assertions. Retuning must be a ONE-LINE
-change to `sensor_detection`, with no test edits at all. That is what this
-module buys.
+where the cap is a `sensor_dials` dial and the two constants are play-tested
+settings that have moved four times. Every retune used to mean hand-editing
+dozens of hardcoded "the bubble is N GU" claims and probe distances across nine
+test files — reliably missing some, which left tests whose docstrings disagreed
+with their assertions. Retuning must be a ONE-LINE change to `sensor_detection`
+or `sensor_dials`, with no test edits at all. That is what this module buys.
 
 **Two patterns, pick by constraint count.**
 
@@ -21,7 +22,8 @@ module buys.
 2. The distance must ALSO satisfy something else (weapon range, radar range, a
    fixture's fixed layout) → keep the literal and assert the assumption:
 
-       assert_inside(8.0, sensorless_gu())   # one line, fails loudly
+       WITHIN_PHASER_REACH_GU = 8.0         # the second constraint, named
+       assert_inside(WITHIN_PHASER_REACH_GU, sensorless_gu())  # fails loudly
 
    Pattern 2 matters because a derived distance can silently violate the other
    constraint: a test that "just derives" `inside_gu(sensorless_gu())` would
@@ -53,12 +55,14 @@ OUTSIDE_MULTIPLE = 3.0
 def bubble_gu(effective_range_gu=GALAXY_SENSOR_GU):
     """Cloak bubble radius in GU for an observer with *effective_range_gu*.
 
-    Mirrors `can_detect`'s cloak term exactly. Note the argument is EFFECTIVE
-    range (post sensor condition and power), not the authored base range — at
-    full condition they coincide, which is why the default is a raw 2000.0.
-    """
-    return (sd.CLOAK_DETECTION_BASE_GU
-            + effective_range_gu * sd.CLOAK_RANGE_FACTOR)
+    Mirrors `can_detect`'s cloak term exactly, including the
+    `cloak_bubble_cap_gu` dial. The argument is EFFECTIVE range (post sensor
+    condition and power), not the authored base range -- at full condition
+    they coincide."""
+    from engine.appc import sensor_dials
+    return min(sensor_dials.get("cloak_bubble_cap_gu"),
+               sd.CLOAK_DETECTION_BASE_GU
+               + effective_range_gu * sd.CLOAK_RANGE_FACTOR)
 
 
 def inside_gu(effective_range_gu=GALAXY_SENSOR_GU):

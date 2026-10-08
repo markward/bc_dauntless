@@ -61,14 +61,12 @@ from engine.appc.sensor_detection import can_detect
 # GetActiveObjectTupleInSet directly — so with ENHANCED_SENSOR_CONTEST on,
 # STATIONS DO ACQUIRE CLOAKED SHIPS inside their bubble, from cold. Do not write
 # "the AI cannot acquire a cloaked contact" anywhere; it is true of one path
-# only. The bubble is CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of
-# BaseSensorRange, and station hardpoints author large ones — fedstarbase
-# 12000 GU and cardstarbase 5000, and the two stock hardpoints with no sensors
-# at all (commarray, commlight) use the `sensorless_range_gu` dial. Multiply those by CLOAK_RANGE_FACTOR for the current
-# figures; they are deliberately NOT restated here, because they move with every
-# retune and the stale copies cost more to correct than the retune itself.
-# Whether they are right is a TUNING question for the project owner and is
-# deliberately NOT clamped here.
+# only. The bubble is CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of the
+# observer's effective range, capped by the cloak_bubble_cap_gu dial
+# (sensor_dials; Mark's ruling 2026-10-08) so a station never out-reaches a
+# phaser. Only the biggest stations (fedstarbase, fedoutpost, cardfacility)
+# exceed the cap at normal power. Compute figures from the constants and the
+# dial; they are deliberately NOT restated here.
 # Pinned by tests/unit/test_cloak_detection_contest.py's "AI ACQUISITION"
 # section, which drives this filter directly.
 

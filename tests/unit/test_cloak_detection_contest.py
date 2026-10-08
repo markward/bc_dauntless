@@ -11,7 +11,7 @@ from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
 from tests.helpers.cloak_geometry import bubble_gu, inside_gu, outside_gu
 
 
-def _observer(base_range=2000.0, condition=100.0):
+def _observer(base_range=2000.0, condition=100.0, power=1.0):
     """Observer with a REAL sensor subsystem — follows
     tests/unit/test_sensor_detection.py::_ship_with_sensor. A bare ShipClass()
     has none, so effective_sensor_range would return the `sensorless_range_gu`
@@ -24,6 +24,7 @@ def _observer(base_range=2000.0, condition=100.0):
     sensors._max_condition = 100.0
     sensors._condition = condition
     sensors.SetBaseSensorRange(base_range)
+    sensors._power_factor = power
     ship.SetSensorSubsystem(sensors)
     return ship
 
@@ -166,12 +167,12 @@ def test_toggle_off_leaves_uncloaked_detection_untouched(monkeypatch):
 # `AI/PlainAI/StarbaseAttack.py::GetTargets` has no such skip and returns
 # `GetActiveObjectTupleInSet` straight out. So stations DO acquire cloaked
 # ships inside their bubble, and station hardpoints author large sensor ranges
-# (fedstarbase 12000 GU, cardstarbase 5000; the two stock hardpoints with no
-# sensors at all use the `sensorless_range_gu` dial) so their bubbles dwarf a
-# Galaxy's. Current figures come from tests.helpers.cloak_geometry.bubble_gu --
-# deliberately not restated here, because they move with every retune. Whether
-# they are right is a TUNING question for the project owner; these tests pin
-# only that the mechanism reaches this surface, both on and off.
+# (fedstarbase 12000 GU, cardstarbase 5000) that would make their bubbles dwarf
+# a Galaxy's; the cloak_bubble_cap_gu dial now bounds them (Mark, 2026-10-08).
+# Current figures come from tests.helpers.cloak_geometry.bubble_gu --
+# deliberately not restated here, because they move with every retune. These
+# tests pin that the mechanism reaches this surface, both on and off, and that
+# the cap holds on it.
 
 def _candidates(observer, contacts):
     """Run *contacts* through the AI candidate filter as *observer* sees them.
@@ -209,3 +210,64 @@ def test_ai_acquires_no_cloaked_contact_at_all_with_the_contest_off(monkeypatch)
     cloaked = _target(1.0, cloaked=True)
     plain = _target(1.0)
     assert _candidates(_observer(), [cloaked, plain]) == (plain,)
+
+
+def test_a_station_does_not_acquire_a_cloaked_contact_beyond_the_cap():
+    cap = _sd_dials.get("cloak_bubble_cap_gu")
+    between = (cap + _uncapped(_STATION_GU)) / 2.0
+    cloaked = _target(between, cloaked=True)
+    assert _candidates(_observer(_STATION_GU), [cloaked]) == ()
+
+
+# ── CAP (sub-project 5, Mark's ruling B 2026-10-08) ──────────────────────────
+# A station must not out-reach your phasers: the bubble never exceeds the
+# cloak_bubble_cap_gu dial, for any observer, at any power.
+from engine.appc import sensor_dials as _sd_dials
+
+_STATION_GU = 12000.0   # fedstarbase's authored BaseSensorRange
+
+
+def _uncapped(r):
+    return sd.CLOAK_DETECTION_BASE_GU + r * sd.CLOAK_RANGE_FACTOR
+
+
+def test_the_station_case_really_exceeds_the_cap():
+    """Anti-vacuity: without the cap this observer's bubble is bigger."""
+    assert _uncapped(_STATION_GU) > _sd_dials.get("cloak_bubble_cap_gu")
+
+
+def test_a_high_range_observer_is_capped():
+    cap = _sd_dials.get("cloak_bubble_cap_gu")
+    obs = _observer(_STATION_GU)
+    assert sd.can_detect(obs, _target(cap * 0.9, cloaked=True)) is True
+    between = (cap + _uncapped(_STATION_GU)) / 2.0
+    assert sd.can_detect(obs, _target(between, cloaked=True)) is False
+
+
+def test_over_boost_cannot_push_past_the_cap():
+    cap = _sd_dials.get("cloak_bubble_cap_gu")
+    # power 1.25 also trips over-boost, but over-boost never reaches a fully
+    # cloaked target (_beyond_range_reach), so this still tests the cap.
+    obs = _observer(_STATION_GU, power=1.25)
+    assert sd.can_detect(obs, _target(cap * 1.1, cloaked=True)) is False
+
+
+def test_offline_sensors_see_no_cloaked_ship_even_inside_the_cap():
+    cap = _sd_dials.get("cloak_bubble_cap_gu")
+    obs = _observer(_STATION_GU, condition=0.0)
+    assert sd.can_detect(obs, _target(cap * 0.1, cloaked=True)) is False
+
+
+def test_the_cap_is_read_at_use(monkeypatch):
+    obs = _observer(_STATION_GU)
+    t = _target(20.0, cloaked=True)
+    monkeypatch.setitem(_sd_dials._dials, "cloak_bubble_cap_gu", 25.0)
+    assert sd.can_detect(obs, t) is True
+    monkeypatch.setitem(_sd_dials._dials, "cloak_bubble_cap_gu", 15.0)
+    assert sd.can_detect(obs, t) is False
+
+
+def test_a_galaxy_is_below_the_cap():
+    """The cap bites only observers whose uncapped bubble exceeds it; a
+    Galaxy's bubble is unchanged."""
+    assert _uncapped(2000.0) < _sd_dials.get("cloak_bubble_cap_gu")

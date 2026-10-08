@@ -23,7 +23,7 @@ def test_step_is_pure_additive_and_clamped():
                sweep_period_s=0.25, continuity_window_s=0.5,
                min_blocker_radius_gu=0.25, field_unknown_threshold=0.05,
                nebula_unknown_threshold=0.01, overboost_threshold=0.5,
-               sensorless_range_gu=250.0)
+               sensorless_range_gu=250.0, cloak_bubble_cap_gu=1.0)
     for name in sensor_dials.DIAL_ORDER:
         assert sensor_dials.step(low, name, -1)[name] == low[name]
     high = dict(d, near_fraction=1.0, field_unknown_threshold=1.0,
@@ -61,7 +61,7 @@ def test_continuity_and_occlusion_dials_defaults_and_order():
     assert set(sensor_dials.DIAL_ORDER[3:]) == {
         "continuity_window_s", "min_blocker_radius_gu",
         "field_unknown_threshold", "nebula_unknown_threshold",
-        "overboost_threshold", "sensorless_range_gu"}
+        "overboost_threshold", "sensorless_range_gu", "cloak_bubble_cap_gu"}
 
 
 def test_new_dials_step_and_clamp():
@@ -95,3 +95,12 @@ def test_sensorless_range_dial_default_step_and_floor():
     assert sensor_dials.step(d, "sensorless_range_gu", +1)["sensorless_range_gu"] == 2250.0
     low = dict(d, sensorless_range_gu=250.0)
     assert sensor_dials.step(low, "sensorless_range_gu", -1)["sensorless_range_gu"] == 250.0
+
+
+def test_cloak_bubble_cap_dial_default_step_and_floor():
+    sensor_dials.reset()
+    assert sensor_dials.get("cloak_bubble_cap_gu") == 30.0
+    d = dict(sensor_dials.DEFAULTS)
+    assert sensor_dials.step(d, "cloak_bubble_cap_gu", -1)["cloak_bubble_cap_gu"] == 29.0
+    low = dict(d, cloak_bubble_cap_gu=1.0)
+    assert sensor_dials.step(low, "cloak_bubble_cap_gu", -1)["cloak_bubble_cap_gu"] == 1.0
