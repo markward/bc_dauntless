@@ -192,16 +192,18 @@ function _cpRenderGraphicsBody(state, focusables) {
     // the bridge's ambient-occlusion quality. High is meant for gaming GPUs.
     const bqLabels = ['Low', 'Medium', 'High'];
     const bq = (typeof s.bridge_quality === 'number') ? s.bridge_quality : 1;
+    // Same label/control wrappers as _cpToggleRow, so it matches the On/Off
+    // rows around it in the Modern VFX group (.cp-label is unstyled).
     html += '<div class="cp-row' + (isFoc('bridge_quality') ? ' cp-focused' : '') + '">'
-          +     '<span class="cp-label">Bridge Rendering</span>'
-          +     '<div class="cp-segmented">';
+          +     '<div class="cp-row__label">Bridge Rendering</div>'
+          +     '<div class="cp-row__control"><div class="cp-segmented">';
     for (let i = 0; i < bqLabels.length; ++i) {
         html += '<button class="cp-toggle' + (bq === i ? ' cp-toggle--on' : '') + '"'
               +    ' onclick="dauntlessEvent(\'configuration/bridge_quality:' + i + '\')">'
               +    bqLabels[i]
               + '</button>';
     }
-    html += '</div></div>';
+    html += '</div></div></div>';
 
     html += _cpResetRow('graphics',
                         focused.kind === 'ctrl'
