@@ -100,31 +100,44 @@ missing — see
 [Cadences 3 and 4 COMPOUND](#️-cadences-3-and-4-compound--and-the-combination-is-unmeasured)
 below.
 
-### ⚠️ Head-on charge: two OPEN findings (2026-10-08)
+### Head-on charge: the cadence does not cost the dodge (2026-10-08)
 
 A single ship charging head-on at an evading Galaxy (the `_scene` in
 `test_avoid_cadence_still_clears.py`), swept over 32 pinned object-id bases.
-Closest approach against a combined radius of 40 GU:
+Closest approach against a combined radius of 40 GU, charger at its scripted
+5 GU/s:
 
-| scan | `0.25` | `0.0` |
+| scan | `0.25` (shipped) | `0.0` (SDK-exact) |
 |---|---|---|
-| engine scan (opt-in) | 8/32 graze, min 39.94 | 0/32, min 47.43 |
-| shipped SDK scan, flee-direction stream rewound | 0/32, min 40.17 | 5/32 overlap, min 36.18 |
+| engine scan (opt-in) | 0/32 overlap, min 62.72 | 0/32, min 45.42 |
+| shipped SDK scan, flee-direction stream rewound | 0/32, min 57.36 | 4/32 overlap, min 37.66 |
+| shipped SDK scan, stream running (as in a game) | 0/32, min 42.03 | 4/32 overlap, min 36.95 |
 
-1. **The cadence costs the opt-in engine scan its head-on dodge** in a quarter
-   of phases. Off by default, so nothing ships with it; fix before re-enabling
-   `DAUNTLESS_ENGINE_AVOIDANCE`.
-2. **The shipped head-on dodge is marginal whatever the cadence.** It depends on
-   the phase and on the `TGPoint3_GetRandomUnitVector` stream the SDK scan draws
-   its 8 flee directions from; with that stream left running (as in a game),
-   about half the phases overlap at either setting. In BC this Python body never
-   runs (the native AvoidObstacles replaces it, unrecovered), so whether BC's
-   dodge is equally marginal is unknown.
+What ships (SDK scan + the 0.25 s cadence) clears at every phase. The cadence
+widens the dodge rather than costing it. Two things remain worth knowing:
 
-The old head-on test asserted an absolute "closest > sum of radii" on the
-engine scan at whatever phase the suite's counter gave it, so it passed or
-failed by test order: it went red on main at `6811cbf8` when three unrelated
-host tests moved the counter. It is now
+* **The worst shipped case is thin: 42.03 GU, 2 GU clear.** That is with the
+  `TGPoint3_GetRandomUnitVector` stream left running, as in a game. The SDK
+  scan draws its 8 flee directions from it, and that stream moves a run by
+  about ±20 GU.
+* **The every-tick setting overlaps in 4/32 phases.** We don't ship it. In BC
+  this Python body never runs (the native AvoidObstacles replaces it and has
+  not been recovered), so `0.0` is not "what BC does" either.
+
+**Retracted.** Two OPEN findings were recorded here earlier the same day: "the
+cadence costs the opt-in engine scan its head-on dodge (8/32 graze)" and "the
+shipped dodge is marginal whatever the cadence (about half overlap with the
+stream running)". Both were measured on a broken scene. Since `4109f3f2` the
+engine drifts a no-AI ship on its scripted velocity, but the test still nudged
+the charger by hand as well, so it closed at **10 GU/s** (measured). Re-running
+the identical sweep on that scene reproduces the retracted table exactly, and
+with the double-move removed the grazes vanish.
+`test_the_charger_closes_at_its_scripted_speed` now pins the speed.
+
+The original head-on test asserted an absolute "closest > sum of radii" at
+whatever phase the suite's id counter gave it. On the double-speed scene that
+straddled 40 GU, so it went red on main at `6811cbf8` when three unrelated host
+tests moved the counter. It is now
 `test_the_cadence_costs_a_head_on_dodge_no_worst_case_separation`: the shipped
 binding, phase and stream pinned, asserting only the cadence's claim (worst
 cadenced closest ≥ worst SDK-exact closest over the sweep).
