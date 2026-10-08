@@ -153,7 +153,8 @@ FieldSample desert_field(const TypeParams& p, glm::vec3 q, std::uint32_t seed, i
 FieldSample ice_field(const TypeParams& p, glm::vec3 q, std::uint32_t seed, int octaves) {
     Acc r = fbm(q, octaves, p.gain, 0.0f, seed);
     float c = noised(q * 2.0f, seed ^ 0x3C3Cu).x;
-    float a = 1.0f - smoothstep(0.0f, p.crack_width, std::fabs(c));
+    // R4: a crack_width <= 0 would make smoothstep's edges coincide (0/0).
+    float a = 1.0f - smoothstep(0.0f, std::max(p.crack_width, 1e-6f), std::fabs(c));
     return FieldSample{r.h * p.amplitude, r.g * p.amplitude, a};
 }
 
@@ -187,7 +188,8 @@ FieldSample field(SurfaceType t, const TypeParams& p, const glm::vec3& p_local_g
                    std::uint32_t seed, float scale, int octaves) {
     float wavelength0 = p.base_wavelength_gu * scale;
     glm::vec3 q = p_local_gu / wavelength0;
-    int n = std::clamp(octaves, 1, p.max_octaves);
+    // R4: std::clamp needs lo <= hi, so a max_octaves < 1 dial floors at 1.
+    int n = std::clamp(octaves, 1, std::max(p.max_octaves, 1));
 
     switch (t) {
         case SurfaceType::Rocky:  return rocky_field(p, q, seed, n);
@@ -204,7 +206,7 @@ FieldSample field(SurfaceType t, const TypeParams& p, const glm::vec3& p_local_g
 int octaves_for_texel(const TypeParams& p, float scale, float texel_gu) {
     float wavelength = p.base_wavelength_gu * scale;
     int n = static_cast<int>(std::floor(std::log2(wavelength / (2.0f * texel_gu)))) + 1;
-    return std::clamp(n, 1, p.max_octaves);
+    return std::clamp(n, 1, std::max(p.max_octaves, 1));
 }
 
 TypeParams default_params(SurfaceType t) {
@@ -278,7 +280,9 @@ std::uint32_t shape_hash(const TypeParams& p) {
 }
 
 Anchor make_anchor(const glm::vec3& dir_local, float R) {
-    glm::vec3 a = glm::normalize(dir_local);
+    // R4: a zero-length direction has no normal to normalise; use +Z.
+    float len = glm::length(dir_local);
+    glm::vec3 a = len > 0.0f ? dir_local / len : glm::vec3(0.0f, 0.0f, 1.0f);
     glm::vec3 z(0.0f, 0.0f, 1.0f);
     glm::vec3 e = glm::cross(z, a);
     if (glm::length(e) < 1e-3f) {
@@ -291,7 +295,8 @@ Anchor make_anchor(const glm::vec3& dir_local, float R) {
 }
 
 glm::vec2 to_plane(const Anchor& a, const glm::vec3& p_local) {
-    glm::vec3 P = p_local * (a.R / glm::dot(p_local, a.A));
+    // R4: a point on (or behind) the horizon would divide by <= 0.
+    glm::vec3 P = p_local * (a.R / std::max(glm::dot(p_local, a.A), 1e-6f * a.R));
     return glm::vec2(glm::dot(P, a.E), glm::dot(P, a.N));
 }
 

@@ -103,3 +103,46 @@ TEST(PlanetDetailNoise, ShapeHashTracksBakedFieldsOnly) {
     q.base_wavelength_gu = 41.0f;
     EXPECT_NE(shape_hash(p), shape_hash(q));
 }
+
+// R4 guards: each is a no-op at default params but keeps degenerate dial or
+// geometry input finite.
+
+TEST(PlanetDetailNoise, IceCrackWidthZeroStaysFinite) {
+    // At q == 0 the crack noise is exactly 0, so an unguarded
+    // smoothstep(0, 0, 0) divides 0 by 0.
+    TypeParams p = default_params(SurfaceType::Ice);
+    p.crack_width = 0.0f;
+    FieldSample s = field(SurfaceType::Ice, p, glm::vec3(0.0f), 7u, 1.0f, 4);
+    ASSERT_TRUE(std::isfinite(s.a));
+    EXPECT_FLOAT_EQ(s.a, 1.0f);
+    p.crack_width = -0.5f;
+    EXPECT_TRUE(std::isfinite(field(SurfaceType::Ice, p, glm::vec3(0.0f), 7u, 1.0f, 4).a));
+}
+
+TEST(PlanetDetailNoise, MaxOctavesBelowOneClampsToOneOctave) {
+    TypeParams zero = default_params(SurfaceType::Rocky);
+    zero.max_octaves = 0;
+    TypeParams one = zero;
+    one.max_octaves = 1;
+    glm::vec3 x(812.0f, -3401.0f, 1203.0f);
+    FieldSample a = field(SurfaceType::Rocky, zero, x, 7u, 1.0f, 4);
+    FieldSample b = field(SurfaceType::Rocky, one, x, 7u, 1.0f, 4);
+    EXPECT_FLOAT_EQ(a.h, b.h);
+    EXPECT_NE(a.h, 0.0f);
+    EXPECT_EQ(octaves_for_texel(zero, 1.0f, 0.1f), 1);
+}
+
+TEST(PlanetDetailNoise, ToPlaneOfPointOnHorizonStaysFinite) {
+    Anchor a = make_anchor(glm::vec3(0.0f, 0.0f, 1.0f), 3600.0f);
+    glm::vec2 xy = to_plane(a, glm::vec3(3600.0f, 0.0f, 0.0f));   // dot(p, A) == 0 exactly
+    EXPECT_TRUE(std::isfinite(xy.x) && std::isfinite(xy.y));
+}
+
+TEST(PlanetDetailNoise, AnchorOfZeroDirectionFallsBackToPlusZ) {
+    Anchor a = make_anchor(glm::vec3(0.0f), 140.0f);
+    EXPECT_EQ(a.A, glm::vec3(0.0f, 0.0f, 1.0f));
+    EXPECT_NEAR(glm::length(a.E), 1.0f, 1e-5f);
+    EXPECT_NEAR(glm::length(a.N), 1.0f, 1e-5f);
+    EXPECT_NEAR(glm::dot(a.A, a.E), 0.0f, 1e-5f);
+    EXPECT_NEAR(glm::dot(a.E, a.N), 0.0f, 1e-5f);
+}

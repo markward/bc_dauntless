@@ -56,10 +56,10 @@ glm::uvec3 pcg3d(glm::uvec3 v);
 /// Returns {value, d/dx, d/dy, d/dz}.
 glm::vec4 noised(const glm::vec3& x, std::uint32_t seed);
 
-/// One sampled height field: h (amplitude-scaled), its gradient with respect
-/// to q = p_local_gu / base_wavelength_gu (chain rule already applied through
-/// `scale`), and `a` an auxiliary [0,1] mask/variation channel whose meaning
-/// is per-type (wind roughness, crack mask, cloud-phase mix, ...).
+/// One sampled height field: h (amplitude-scaled), its gradient d h / d q
+/// with q = p_local_gu / (base_wavelength_gu * scale) — no further scale
+/// factor is applied — and `a` an auxiliary [0,1] mask/variation channel
+/// whose meaning is per-type (wind roughness, crack mask, cloud-phase mix, ...).
 struct FieldSample { float h; glm::vec3 grad; float a; };
 
 /// p_local_gu: planet-local position (body frame, centre removed, scaled to
@@ -70,7 +70,7 @@ FieldSample field(SurfaceType t, const TypeParams& p, const glm::vec3& p_local_g
                    std::uint32_t seed, float scale, int octaves);
 
 /// Octaves whose wavelength >= 2 texels at this texel size, clamped
-/// [1, max_octaves].
+/// [1, max(max_octaves, 1)].
 int octaves_for_texel(const TypeParams& p, float scale, float texel_gu);
 
 /// A local tangent-plane frame anchored at `dir_local` on a sphere of
@@ -78,11 +78,13 @@ int octaves_for_texel(const TypeParams& p, float scale, float texel_gu);
 struct Anchor { glm::vec3 A, E, N; float R; };
 
 /// E = normalize(cross(Z, A)); falls back to normalize(cross(A, (0,1,0)))
-/// when that is near-degenerate (dir_local close to a pole).
+/// when that is near-degenerate (dir_local close to a pole). A zero-length
+/// dir_local gives A = (0,0,1).
 Anchor make_anchor(const glm::vec3& dir_local, float R);
 
 /// Gnomonic (gnomonic/perspective) projection of a point near the anchor
-/// onto its tangent plane.
+/// onto its tangent plane. The denominator dot(p, A) is floored at 1e-6*R so
+/// a point on or past the horizon stays finite (and meaningless).
 glm::vec2 to_plane(const Anchor& a, const glm::vec3& p_local);
 
 /// Inverse of `to_plane`: a point ON the sphere (|p| == a.R).
