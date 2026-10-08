@@ -107,3 +107,31 @@ def test_live_registry_set_scoping():
     surf.forget_live("b")
     assert [lp.iid for lp in surf.live()] == ["c"]
     surf.clear_live()
+
+
+SEED = {
+    "rocky": {"moon", "grayplanet", "rockyplanet", "tanplanet", "redplanet", "brownplanet",
+              "greenplanet", "slimegreenplanet", "rootbeerplanet", "aquaplanet",
+              "bluegrayplanet", "greenpurpleplanet", "purplewhiteplanet", "earth", "planet",
+              "lavenderplanet"},
+    "desert": {"sulfurplanet", "dryplanet", "bluetanplanet", "brownblueplanet"},
+    "ice": {"snowplanet", "iceplanet"},
+    "gas": {"pinkgasplanet", "bluewhitegasplanet", "tangasplanet", "gasgiant", "redswirlplanet"},
+    "ocean": {"purpleplanet", "brightgreenplanet", "turquoiseplanet", "bluerockyplanet"},
+}
+WITH_OCEAN = {"aquaplanet", "bluegrayplanet", "greenpurpleplanet", "purplewhiteplanet", "earth",
+              "planet", "dryplanet", "bluetanplanet", "brownblueplanet", "iceplanet"}
+
+
+def test_shipped_catalogue_seeds_every_stock_stem():
+    atmo.reload()
+    seen = set()
+    for t, stems in SEED.items():
+        for stem in stems:
+            s = surf.resolve_surface("", "", f"data/models/environment/{stem}.nif")
+            assert s is not None and s.type == t, stem
+            assert (s.ocean is not None) == (stem in WITH_OCEAN), stem
+            seen.add(stem)
+    assert seen == set(atmo.STOCK_STEMS)
+    for stem in atmo.STOCK_STEMS:   # air untouched by the edit
+        atmo.resolve("", "", f"{stem}.nif")
