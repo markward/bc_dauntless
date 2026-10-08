@@ -219,10 +219,10 @@ def test_planets_orbit_at_the_doubled_scale():
                     f"{name}/{b.name} orbits at {d:.0f} GU, inside the doubled "
                     f"first orbit {star.radius_gu + t.first_orbit_clearance_gu:.0f}")
                 checked += 1
-    # 87 bodies orbit their star directly across the 32 maps (measured
-    # 2026-09-24); the rest are moons. Exact, so a loop that silently stops
-    # seeing the maps cannot pass.
-    assert checked == 87, f"{checked} planets checked, expected 87"
+    # 89 bodies orbit their star directly across the 33 maps (87 measured
+    # 2026-09-24, +2 when Tau Ceti was folded in 2026-10-08); the rest are
+    # moons. Exact, so a loop that silently stops seeing the maps cannot pass.
+    assert checked == 89, f"{checked} planets checked, expected 89"
 
 
 def test_every_mapped_body_is_its_bc_radius_times_the_scale():
@@ -245,8 +245,9 @@ def test_every_mapped_body_is_its_bc_radius_times_the_scale():
 
 def test_the_ratio_rule_actually_matches_every_mapped_body():
     """Guards against a vacuous pass: if survey names stopped matching map
-    names, the rule would check nothing and still be green. 118 is the
-    measured count of (region, body) pairs across the 32 maps (2026-09-24);
+    names, the rule would check nothing and still be green. 120 is the
+    measured count of (region, body) pairs across the 33 maps (118 on
+    2026-09-24, +2 when Tau Ceti was folded in 2026-10-08);
     regeneration does not change which bodies exist, only where they are."""
     from engine.systems import map as system_map
     from tools.systems.survey import bc_radii, survey_system, system_names
@@ -257,7 +258,7 @@ def test_the_ratio_rule_actually_matches_every_mapped_body():
         for (region_name, body_name) in bc_radii(survey_system(name)):
             if any(b.name == body_name and b.owner_region == region_name for b in m.bodies):
                 matched += 1
-    assert matched == 118
+    assert matched == 120
 
 
 def test_no_staged_waypoint_is_within_clearance_of_a_body():

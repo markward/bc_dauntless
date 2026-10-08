@@ -84,7 +84,8 @@ def _load_region(system: str, region: str):
     pSet = App.g_kSetManager.GetSet(region)
     if pSet is not None:
         return pSet
-    qual = f"Systems.{system}.{region}"
+    from engine.systems import folds
+    qual = folds.region_module(system, region)
     sys.modules.pop(qual, None)
     importlib.import_module(qual).Initialize()
     pSet = App.g_kSetManager.GetSet(region)
