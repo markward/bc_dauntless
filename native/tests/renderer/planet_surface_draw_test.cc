@@ -616,6 +616,31 @@ TEST_F(PlanetSurfaceDrawTest, IceCracksDarken) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// Spec §6: the water mask exists only for entries with `ocean`. Without a
+// key, a dialled-up coast sharpening must do nothing -- no pull toward the
+// (black) default key, no lost bump, no glint -- on land AND ocean types.
+TEST_F(PlanetSurfaceDrawTest, CoastSharpeningNeedsAnOceanKey) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    const auto cam = nadir_cam(dir, 150.0f);
+    for (const auto t : {pd::SurfaceType::Rocky, pd::SurfaceType::Ocean}) {
+        Detail d = bake(dir, 2);   // Rocky relief in the atlas
+        d.u.type = static_cast<int>(t);
+        d.u.has_ocean = false;
+        pd::SampleUniforms dialled = d.u, plain = d.u;
+        dialled.params.coast_k = 0.45f;
+        plain.params.coast_k = 0.0f;
+        for (const auto& l : {sun_over(dir), sun_mirror(dir)}) {
+            const auto a = draw(p->planet_shader(), cam, l, hdr, &dialled);
+            const auto b = draw(p->planet_shader(), cam, l, hdr, &plain);
+            EXPECT_EQ(count_diffs(a, b), 0u)
+                << "type " << int(t) << ": keyless coast sharpening changed the render";
+        }
+    }
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 // FiniteEverywhere, for every surface type (water on, gas mid-animation).
 TEST_F(PlanetSurfaceDrawTest, FiniteEverywhereEveryType) {
     renderer::HdrTarget hdr;

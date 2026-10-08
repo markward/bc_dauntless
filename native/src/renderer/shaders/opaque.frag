@@ -1565,21 +1565,25 @@ void main() {
     if (pd_w > 0.0) {
         // Water mask (spec §6): the BC texel's linear distance from the
         // ocean key, then coast sharpening by the relief.
+        // Mask, coast sharpening AND the coast pull exist only for entries
+        // with an `ocean` key: without one u_pd_ocean is a meaningless
+        // default (black), and sharpening a zero mask would still paint
+        // black, glinting, unbumped patches wherever coast_a*h is large.
         float pd_m = 0.0;
         if (u_pd_has_ocean != 0) {
             float pd_tol = max(u_pd_ocean_tol, 1e-4);
             pd_m = 1.0 - smoothstep(0.5 * pd_tol, 1.5 * pd_tol,
                                     length(pd_srgb_to_linear(base.rgb) - u_pd_ocean));
+            pd_m_s = u_pd_p_coast_k > 0.0
+                ? smoothstep(0.5 - u_pd_p_coast_k, 0.5 + u_pd_p_coast_k,
+                             pd_m + u_pd_p_coast_a * pd_s.x)
+                : pd_m;
+            // Where sharpening grew the water, pull the albedo to the key.
+            base.rgb = mix(base.rgb, pd_linear_to_srgb(u_pd_ocean),
+                           clamp(max(pd_m_s - pd_m, 0.0) * pd_w, 0.0, 1.0));
         }
-        pd_m_s = u_pd_p_coast_k > 0.0
-            ? smoothstep(0.5 - u_pd_p_coast_k, 0.5 + u_pd_p_coast_k,
-                         pd_m + u_pd_p_coast_a * pd_s.x)
-            : pd_m;
-        // Where sharpening grew the water, pull the albedo to the key. Done
-        // BEFORE the ocean-type override: an ocean planet has no key, and a
-        // pull toward the default (black) key would blacken it.
-        base.rgb = mix(base.rgb, pd_linear_to_srgb(u_pd_ocean),
-                       clamp(max(pd_m_s - pd_m, 0.0) * pd_w, 0.0, 1.0));
+        // Ocean type: all water (bump off, glint on). Applied after the pull,
+        // so the override itself never pulls the colour anywhere.
         if (u_pd_type == 5) pd_m_s = 1.0;
         float pd_land = (1.0 - pd_m_s) * pd_w;
         if (u_pd_type != 4) {   // gas: albedo only, never a bump
