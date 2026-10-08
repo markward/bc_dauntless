@@ -38,6 +38,7 @@ add_executable(renderer_tests
     impostor_blend_gl_test.cc
     nebula_atmosphere_test.cc
     atmosphere_math_test.cc
+    planet_detail_noise_test.cc
     system_nebula_pass_test.cc
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc

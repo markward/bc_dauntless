@@ -180,6 +180,7 @@ add_library(renderer STATIC
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc
     atmosphere_math.cc
+    planet_detail_noise.cc
     atmosphere_pass.cc
     system_nebula_pass.cc
     nebula_godray_pass.cc
