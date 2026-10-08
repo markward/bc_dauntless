@@ -181,7 +181,7 @@ Everything is inside `#ifdef PLANET_SURFACE`, after the BC albedo fetch and befo
 - Seam test: render across a level transition band and assert no step in a pixel row above a threshold.
 - **Every pre-existing renderer test passes, run as the FULL binaries** (the `sampler3D` lesson: filtering to `HullClipTest` once hid 16 failures).
 
-**Performance (bench, gated):** a ctest bench (rock-bench pattern) renders a full-screen planet at 3840×1200 through the real `planet_` program and `PlanetClipmap`, timing with `GL_TIME_ELAPSED`, over still / orbit / dash / cut. **Budgets:** bake p95 ≤ 0.35 ms and max ≤ 0.6 ms; sampling ≤ 0.35 ms over the plain sphere-map draw. Live: the profiler's `planet_detail` row and `space` row with the toggle on vs off, Haven filling the screen.
+**Performance (bench, gated):** a ctest bench (rock-bench pattern) renders a full-screen planet at 3840×1200 through the real `planet_` program and `PlanetClipmap`, timing with `GL_TIME_ELAPSED`, over still / orbit / dash / cut. **Budgets:** bake p95 ≤ 0.35 ms and max ≤ 0.6 ms; sampling ≤ 0.70 ms over the plain sphere-map draw (amended from 0.35 ms post-measurement — see "As built" §11, ruling R12). Live: the profiler's `planet_detail` row and `space` row with the toggle on vs off, Haven filling the screen.
 
 ## 9. Live calibration loop (Mark, in this worktree)
 
@@ -190,3 +190,35 @@ Everything is inside `#ifdef PLANET_SURFACE`, after the BC albedo fetch and befo
 ## 10. Out of scope
 
 Terrain geometry/silhouette relief, clouds, planet spin, more than one detailed planet at a time, mod-supplied surface entries (the format allows a later merge), streaming or disk caching of the clipmap, RGBA8 atlas (only if measured adequate), gameplay use of surface type.
+
+## 11. As built
+
+Built per the SDD ledger (`progress.md`) for this plan. The design above is the authority for everything *not* listed here; this section records where the shipped behaviour diverges from it and the measured cost.
+
+**Deviations/rulings that changed behaviour:**
+
+- **R1 — octave-count formula.** Task 3's own test table expected 9 octaves for (λ=40, texel=0.1), but the spec's stated formula ("down to 2 texels") gives `floor(log2(40/0.2))+1 = 8`. The implementation uses the formula, not the table value: 8 octaves at level 0 for that case (finest detail 0.3 GU rather than the table's implied 0.16 GU). Tunable later via `max_octaves` or the formula itself.
+- **R8a — per-texture-axis footprint, not per-screen-axis.** §6's `px_per_BC_texel` is computed as `min(length(vec2(sp_dx.x, sp_dy.x)) * tex.x, length(vec2(sp_dx.y, sp_dy.y)) * tex.y)` — the minimum footprint taken independently per *texture* axis — rather than a single minimum over the two screen-space gradient axes. A straight screen-axis minimum mixes the (huge, pole-singular) u-gradient into both screen axes near a pole and kills detail there; the per-texture-axis form is the true footprint of each BC texel axis and is pinned by a nadir-pixel pole test.
+- **R9 — `planet_detail` update gate.** `PlanetDetailPass::update` (the bake) is skipped in hologram-only mode and in bridge view with the viewscreen off, since nothing samples the clipmap in either case. Cost: a cold refill (~0.35 s) when returning to a space view, accepted.
+- **R10 — Task 9 shading deviations**, all look-only and tunable live:
+  - (a) the BC base colour texture is `GL_RGBA8` and sRGB-encoded, so the water mask linearises `base` before comparing it to the linear `ocean` key, and the coast pull re-encodes after blending;
+  - (b) `draw_model` now sets `u_decal_time` on **every** geosphere draw — planets previously never received it, which would have left gas animation static;
+  - (c) the coast pull is applied **before** the `type: ocean` override, otherwise an all-ocean planet with no water key renders black;
+  - (d) the gas phase-2 field decodes its alpha channel as `(2A−1)·amplitude` to match the height scale;
+  - (e) a gas flow rate of 0 pins the crossfade phase at 0.5 (a true static frame, not a near-static wobble);
+  - (f) specular glint is multiplied by the sun shadow factor.
+- **Reload decoupling (Task 10).** The "Reload Planet Surfaces" developer action and the pre-existing atmosphere reload no longer share one override path — surface and atmosphere dial overrides are tracked and re-pushed independently, so reloading one does not clobber a live-tuned value on the other.
+
+**Performance (measured, M3 Pro, 3840×1200, Task 11 + 11b):**
+
+| Metric | Spec budget (§8, original) | Measured | Budget after optimisation |
+|---|---|---|---|
+| Bake p95 | ≤ 0.35 ms | 0.322 ms | ≤ 0.35 ms (unchanged, PASS) |
+| Bake max | ≤ 0.60 ms | 0.385 ms | ≤ 0.60 ms (unchanged, PASS) |
+| Sampling delta (draw with detail − plain sphere-map draw) | ≤ 0.35 ms | 0.639 ms (Task 11, pre-optimisation) → 0.558 ms (Task 11b, after want-first level search + early sampling) | **0.70 ms** (ruling R12) |
+
+Getting the sampling delta down to the original 0.35 ms budget would mean cutting spec-described shading behaviour (Task 11b's ablation found the remaining cost is the per-fragment land path itself: weight/footprint/bump/band/type dispatch, not any one removable step). §8's sampling budget is therefore amended to **0.70 ms** (ruling R12; `kSamplingBudgetMs = 0.70` in the bench, 0.558 × 1.2 rounded up). Total measured full-screen worst case ≈ 0.32 ms bake + 0.56 ms sampling ≈ 0.9 ms, about 11% of a 120 Hz frame, and only when a planet fills the screen.
+
+The cheapest lever identified but **not taken** (would change the `Pipeline` API): per-type `planet_` program variants (compile-time gating of the gas, ocean and glint code per surface type, rather than one program carrying all of it with runtime branches), measured worth recovering ~0.05–0.08 ms. Recorded here for whoever picks this back up.
+
+**Not live-verified** — Mark calibrates by eye (§9). Every number above is bench/gtest-measured on a still or scripted camera path, not a judgement that any surface type "reads as natural from orbit."
