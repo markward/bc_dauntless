@@ -6,11 +6,12 @@ module to tests/unit/test_ai_sensor_gate.py; nothing was dropped."""
 import pytest
 
 import App
-from engine.appc.ships import ShipClass_Create
+from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
 from engine.appc.perception import perceived_by
+from engine.appc import sensor_dials
 from engine.appc.sensor_detection import (
-    FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
+    effective_sensor_range, can_detect,
 )
 
 
@@ -52,7 +53,7 @@ def test_no_sensor_subsystem_returns_fallback():
     class _NoSensorShip:
         def GetSensorSubsystem(self):
             return None
-    assert effective_sensor_range(_NoSensorShip()) == FALLBACK_RANGE_GU
+    assert effective_sensor_range(_NoSensorShip()) == sensor_dials.get("sensorless_range_gu")
 
 
 def test_a_tgobject_that_models_no_sensor_subsystem_reaches_the_fallback():
@@ -63,7 +64,7 @@ def test_a_tgobject_that_models_no_sensor_subsystem_reaches_the_fallback():
     An ObjectClass therefore used to get a `_Stub` back, `_is_offline(_Stub)`
     answered truthy, and the function returned 0.0 — "blind" — for an object
     that simply does not model sensors. The documented answer for that is
-    FALLBACK_RANGE_GU, which is already what the sensor-less test fixtures
+    the `sensorless_range_gu` dial, which is already what the sensor-less test fixtures
     above get; the 0.0 was an artifact of the vacuous probe, not a decision.
 
     No production caller is affected: every `can_detect` / `perceived_by`
@@ -74,12 +75,44 @@ def test_a_tgobject_that_models_no_sensor_subsystem_reaches_the_fallback():
     """
     from engine.appc.objects import ObjectClass
 
-    assert effective_sensor_range(ObjectClass()) == FALLBACK_RANGE_GU
+    assert effective_sensor_range(ObjectClass()) == sensor_dials.get("sensorless_range_gu")
 
 
 def test_zero_base_range_returns_fallback():
     ship, _ = _ship_with_sensor(0.0)
-    assert effective_sensor_range(ship) == FALLBACK_RANGE_GU
+    assert effective_sensor_range(ship) == sensor_dials.get("sensorless_range_gu")
+
+
+def test_sensorless_range_is_the_dial_read_at_use(monkeypatch):
+    """Rule 2 (spec 2026-10-08-sensor-debts-design.md): a ship with no sensor
+    subsystem, and one with BaseSensorRange 0, both see the live dial."""
+    class _NoSensorShip:
+        def GetSensorSubsystem(self):
+            return None
+    zero_ship, _ = _ship_with_sensor(0.0)
+    assert effective_sensor_range(_NoSensorShip()) == 2000.0
+    assert effective_sensor_range(zero_ship) == 2000.0
+    monkeypatch.setitem(sensor_dials._dials, "sensorless_range_gu", 750.0)
+    assert effective_sensor_range(_NoSensorShip()) == 750.0
+    assert effective_sensor_range(zero_ship) == 750.0
+
+
+def test_a_sensorless_observer_no_longer_sees_past_the_dial():
+    """The old 30000 GU fallback made sensor-less observers (CommArray,
+    CommLight stations) see farther than any authored sensor.
+
+    A bare ShipClass, not ShipClass_Create("CommArray"): the latter hands
+    every created ship a default SensorSubsystem, so it is not sensor-less
+    here."""
+    observer = ShipClass()
+    assert observer.GetSensorSubsystem() is None   # the case under test
+    observer.SetTranslateXYZ(0.0, 0.0, 0.0)
+    near = ShipClass_Create("BirdOfPrey")
+    far = ShipClass_Create("BirdOfPrey")
+    near.SetTranslateXYZ(1500.0, 0.0, 0.0)
+    far.SetTranslateXYZ(2500.0, 0.0, 0.0)
+    assert can_detect(observer, near) is True
+    assert can_detect(observer, far) is False
 
 
 def test_can_detect_true_inside_range():

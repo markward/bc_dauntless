@@ -21,25 +21,28 @@ module buys.
 2. The distance must ALSO satisfy something else (weapon range, radar range, a
    fixture's fixed layout) → keep the literal and assert the assumption:
 
-       assert_inside(50.0, FALLBACK_SENSOR_GU)   # one line, fails loudly
+       assert_inside(8.0, sensorless_gu())   # one line, fails loudly
 
    Pattern 2 matters because a derived distance can silently violate the other
-   constraint: `inside_gu(FALLBACK_SENSOR_GU)` is far beyond a phaser's 60 GU
-   reach, so a phaser test that "just derives" would stop testing cloak and
-   start testing weapon range instead.
+   constraint: a test that "just derives" `inside_gu(sensorless_gu())` would
+   track every retune of the dials, and the day it crosses a weapon's reach it
+   stops testing cloak and starts testing weapon range instead.
 
 Everything is computed at CALL time, never at import, so `monkeypatch.setattr`
-on the constants is honoured.
+on the constants (and `monkeypatch.setitem` on the dials) is honoured.
 """
 from engine.appc import sensor_detection as sd
 
 #: A Galaxy's authored BaseSensorRange — the common "real sensors" fixture.
 GALAXY_SENSOR_GU = 2000.0
 
-#: What `effective_sensor_range` returns for a ship with NO sensor subsystem.
-#: 18 of 52 hardpoint files author no BaseSensorRange, so this is the bubble
-#: most bare-ShipClass fixtures actually get, and it is much larger.
-FALLBACK_SENSOR_GU = sd.FALLBACK_RANGE_GU
+
+def sensorless_gu():
+    """What `effective_sensor_range` returns for an observer with NO sensor
+    subsystem: the live `sensorless_range_gu` dial, read at call time."""
+    from engine.appc import sensor_dials
+    return sensor_dials.get("sensorless_range_gu")
+
 
 #: Fractions of the bubble radius used for probes. `INSIDE` leaves headroom for
 #: float error; `OUTSIDE` is far enough out that no rounding accident passes it.

@@ -52,8 +52,8 @@ def _isolate():
 def _kitted_ship(x, y, z, cloak=False, sensor_range=None):
     """Real engine objects, not fakes. Mirrors
     tests/unit/test_select_target_drops_cloaked.py::_kitted_ship, plus an
-    optional REAL SensorSubsystem so the observer's bubble is a Galaxy's rather
-    than the much larger sensor-less FALLBACK_RANGE_GU."""
+    optional REAL SensorSubsystem so the observer's bubble is set by its own
+    authored range rather than the sensor-less `sensorless_range_gu` dial."""
     s = ShipClass()
     s.SetTranslateXYZ(x, y, z)
     s._hull = HullSubsystem("H")

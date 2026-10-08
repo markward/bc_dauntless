@@ -10,9 +10,9 @@ the next tick.
 
 ⚠️ The enemy's distance is DERIVED and sits outside the cloak bubble — see the
 same note in test_select_target_drops_cloaked.py. A cloaked ship inside the
-bubble is now deliberately retained, so a hardcoded 50 GU (well inside the
-sensor-less FALLBACK_RANGE_GU bubble) would make this test assert the opposite of
-the intended behaviour. The subject here is the event -> TargetGone ->
+bubble is now deliberately retained, so a hardcoded distance inside the
+sensor-less observer's bubble (the `sensorless_range_gu` dial's) would make this
+test assert the opposite of the intended behaviour. The subject here is the event -> TargetGone ->
 ForceUpdate plumbing, which is range-independent.
 """
 import App
@@ -24,7 +24,7 @@ from engine.appc.ai_driver import tick_ai
 from engine.appc.objects import ObjectGroup
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem, CloakingSubsystem
-from tests.helpers.cloak_geometry import FALLBACK_SENSOR_GU, outside_gu
+from tests.helpers.cloak_geometry import outside_gu, sensorless_gu
 
 
 def _reset_app_state():
@@ -77,7 +77,7 @@ def test_forceupdate_drops_cloaked_target_on_next_tick():
     App.g_kSetManager._sets["S"] = pSet
     ours = _kitted_ship(0, 0, 0)
     pSet.AddObjectToSet(ours, "Ours")
-    enemy = _kitted_ship(0, outside_gu(FALLBACK_SENSOR_GU), 0, cloak=True)
+    enemy = _kitted_ship(0, outside_gu(sensorless_gu()), 0, cloak=True)
     pSet.AddObjectToSet(enemy, "Enemy")
 
     inst, pp = _wire_select_target(ours, "Enemy")

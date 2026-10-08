@@ -11,6 +11,8 @@ The last four are play-test dials for sub-project 2
 
 "overboost_threshold" is BC's recovered over-boost constant (1.2f at 0x0089054c, compared strictly-greater against NormalPowerPercentage in IsObjectVisible @0x005671D0; sub-project 3, 2026-10-06-sensor-overboost-memory-design.md). RE tier, not tested.
 
+`sensorless_range_gu` (sub-project 5) is Mark's play-test ruling, not a recovered BC value.
+
 Read at use. Not persisted; tuned live through the shared / L O keys once
 Developer Options -> Lighting -> "Dial keys" selects "sensors"
 (engine/dev_dial_groups.py).
@@ -28,16 +30,21 @@ DEFAULTS: dict = {
     # Sub-project 3 (2026-10-06-sensor-overboost-memory-design.md) -- BC's
     # recovered constant (0x0089054c), RE tier.
     "overboost_threshold": 1.2,       # strictly above this sees the set; below 1.0, every ship at normal power over-boosts (AI included)
+    # Sub-project 5 (2026-10-08-sensor-debts-design.md) -- Mark's rulings,
+    # play-test values, not recovered BC numbers.
+    "sensorless_range_gu": 2000.0,    # range for an observer with no sensor subsystem / no BaseSensorRange
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"identification_time_s": 0.5, "near_fraction": 0.05,
          "sweep_period_s": 0.25, "continuity_window_s": 0.5,
          "min_blocker_radius_gu": 0.25, "field_unknown_threshold": 0.05,
-         "nebula_unknown_threshold": 0.01, "overboost_threshold": 0.01}
+         "nebula_unknown_threshold": 0.01, "overboost_threshold": 0.01,
+         "sensorless_range_gu": 250.0}
 _MIN = {"identification_time_s": 0.5, "near_fraction": 0.05,
         "sweep_period_s": 0.25, "continuity_window_s": 0.5,
         "min_blocker_radius_gu": 0.25, "field_unknown_threshold": 0.05,
-        "nebula_unknown_threshold": 0.01, "overboost_threshold": 0.5}
+        "nebula_unknown_threshold": 0.01, "overboost_threshold": 0.5,
+        "sensorless_range_gu": 250.0}
 _MAX = {"near_fraction": 1.0, "field_unknown_threshold": 1.0,
         "nebula_unknown_threshold": 1.0, "overboost_threshold": 2.0}
 

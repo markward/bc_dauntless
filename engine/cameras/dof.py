@@ -152,9 +152,9 @@ MIN_FOCUS_GU = 0.5
 # At SCENE_FAR_GU the bound is far rarer than it was: the widest sightline the
 # system maps produce is comfortably under it (derived, never restated -- see
 # tests/unit/test_camera_far_plane.py::widest_sightline_gu), so nothing in a
-# system reaches it, and sensor_detection's FALLBACK_RANGE_GU (30000 GU) --
-# which USED to sit six times past the far plane -- is now well inside it and
-# focuses normally. The bound stays because what it prevents is a property of
+# system reaches it, and sensor_detection's old 30000 GU sensor-less fallback --
+# which USED to sit six times past the far plane -- would now be well inside it
+# and focus normally. The bound stays because what it prevents is a property of
 # focus >= far, not of any particular distance.
 MAX_FOCUS_GU = SCENE_FAR_GU
 

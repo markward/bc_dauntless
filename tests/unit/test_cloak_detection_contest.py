@@ -14,9 +14,9 @@ from tests.helpers.cloak_geometry import bubble_gu, inside_gu, outside_gu
 def _observer(base_range=2000.0, condition=100.0):
     """Observer with a REAL sensor subsystem — follows
     tests/unit/test_sensor_detection.py::_ship_with_sensor. A bare ShipClass()
-    has none, so effective_sensor_range would return FALLBACK_RANGE_GU (30000),
-    fifteen times a Galaxy's real reach, and every assertion below would be
-    measuring the fallback instead of the thing it names."""
+    has none, so effective_sensor_range would return the `sensorless_range_gu`
+    dial, and every assertion below would be measuring that dial instead of the
+    thing it names."""
     ship = ShipClass_Create("Galaxy")
     ship.SetName("player")
     ship.SetTranslateXYZ(0.0, 0.0, 0.0)
@@ -166,8 +166,8 @@ def test_toggle_off_leaves_uncloaked_detection_untouched(monkeypatch):
 # `AI/PlainAI/StarbaseAttack.py::GetTargets` has no such skip and returns
 # `GetActiveObjectTupleInSet` straight out. So stations DO acquire cloaked
 # ships inside their bubble, and station hardpoints author large sensor ranges
-# (fedstarbase 12000 GU, cardstarbase 5000, and the 18 of 52 hardpoint files
-# authoring none inherit FALLBACK_RANGE_GU 30000) so their bubbles dwarf a
+# (fedstarbase 12000 GU, cardstarbase 5000; the two stock hardpoints with no
+# sensors at all use the `sensorless_range_gu` dial) so their bubbles dwarf a
 # Galaxy's. Current figures come from tests.helpers.cloak_geometry.bubble_gu --
 # deliberately not restated here, because they move with every retune. Whether
 # they are right is a TUNING question for the project owner; these tests pin

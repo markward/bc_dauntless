@@ -31,11 +31,6 @@ from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
 from engine.core.ids import implements
 
-# Range used when a ship models no sensor subsystem or carries no
-# BaseSensorRange hardpoint data. Preserves the player target list's
-# historical 30000 GU reach and keeps sensor-less fixtures fully sighted.
-FALLBACK_RANGE_GU = 30000.0
-
 # ── Concealment constants ─────────────────────────────────────────────────────
 CONCEAL_K = 0.9      # effective-range reduction at full density (0→no effect, 1→blind)
 LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to the
@@ -214,30 +209,40 @@ def _game_time() -> float:
         return 0.0
 
 
+def _sensorless_range() -> float:
+    """Range for an observer that models no sensor subsystem or carries no
+    BaseSensorRange: the `sensorless_range_gu` dial (Mark's ruling,
+    2026-10-08). Only CommArray and CommLight (plus rocks, which never
+    observe) author no sensors; the 7 other stock hardpoints without a
+    SetBaseSensorRange inherit their parent's."""
+    from engine.appc import sensor_dials
+    return sensor_dials.get("sensorless_range_gu")
+
+
 def effective_sensor_range(ship) -> float:
     """Detection range (game units) for *ship* given its sensor condition.
 
     Full BaseSensorRange when undamaged, scaled linearly by condition
     percentage, and 0.0 once the sensor subsystem is offline (disabled or
-    destroyed). Returns FALLBACK_RANGE_GU for ships that don't model a
-    sensor subsystem or carry no BaseSensorRange.
+    destroyed). Returns the `sensorless_range_gu` dial for ships that don't
+    model a sensor subsystem or carry no BaseSensorRange.
 
     The capability probe is ``ids.implements``, NOT ``hasattr``:
     ``TGObject.__getattr__`` vends a truthy ``_Stub`` for any undefined method,
     so ``hasattr`` is vacuously True for every engine object and a non-ship
     used to get a ``_Stub`` back — which ``_is_offline`` then read as offline,
-    silently answering 0.0 ("blind") instead of the documented fallback.
+    silently answering 0.0 ("blind") instead of the `sensorless_range_gu` dial.
     """
     sensors = (ship.GetSensorSubsystem()
                if (ship is not None and implements(ship, "GetSensorSubsystem"))
                else None)
     if sensors is None:
-        return FALLBACK_RANGE_GU
+        return _sensorless_range()
     if _is_offline(sensors):
         return 0.0
     base = sensors.GetBaseSensorRange()
     if base <= 0.0:
-        return FALLBACK_RANGE_GU
+        return _sensorless_range()
     return base * sensors.GetConditionPercentage() * sensors.GetNormalPowerPercentage()
 
 
