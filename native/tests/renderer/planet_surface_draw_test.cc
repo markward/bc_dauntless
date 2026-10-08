@@ -191,7 +191,7 @@ protected:
     // One planet draw through `prog`; `pd_u` (planet_ only) is applied first.
     std::vector<float> draw(renderer::Shader& prog, const scenegraph::Camera& cam,
                             const renderer::Lighting& l, renderer::HdrTarget& hdr,
-                            const pd::SampleUniforms* pd_u) {
+                            const pd::SampleUniforms* pd_u, float time = 0.0f) {
         hdr.bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -208,7 +208,7 @@ protected:
         std::array<scenegraph::Instance::GlowRegion, scenegraph::Instance::kMaxGlowRegions> glow{};
         scenegraph::HullCarveField carve;
         renderer::draw_model(*geo, world(), prog, p->skinned_shader(), white_, black_,
-                             0.0f, decals, glow, 0.0f, 1.0f, {}, carve, {}, 0,
+                             0.0f, decals, glow, time, 1.0f, {}, carve, {}, 0,
                              nullptr, false, nullptr, nullptr, nullptr,
                              renderer::geosphere_level_for(*geo, world(), cam));
         std::vector<float> px(static_cast<std::size_t>(kSize * kSize * 4), 0.0f);
@@ -228,6 +228,92 @@ protected:
         for (int c = 0; c < 4; ++c)
             if (a[i + c] != b[i + c]) return true;
         return false;
+    }
+
+    // Overwrite every mip of the model's base texture(s) with one solid
+    // RGBA8 colour (the cache is per-test, so the next SetUp reloads it).
+    void paint_base(unsigned char r, unsigned char g, unsigned char b) {
+        for (const auto& mat : geo->materials) {
+            const int ti = mat.stages[static_cast<std::size_t>(
+                assets::Material::StageSlot::Base)].texture_index;
+            if (ti < 0) continue;
+            glBindTexture(GL_TEXTURE_2D, geo->textures[static_cast<std::size_t>(ti)].id());
+            for (int lvl = 0; lvl < 16; ++lvl) {
+                GLint tw = 0, th = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, lvl, GL_TEXTURE_WIDTH, &tw);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, lvl, GL_TEXTURE_HEIGHT, &th);
+                if (tw <= 0 || th <= 0) break;
+                std::vector<unsigned char> px(static_cast<std::size_t>(tw * th * 4));
+                for (std::size_t i = 0; i < px.size(); i += 4) {
+                    px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255;
+                }
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                glTexSubImage2D(GL_TEXTURE_2D, lvl, 0, 0, tw, th, GL_RGBA, GL_UNSIGNED_BYTE,
+                                px.data());
+            }
+        }
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    // A clipmap atlas (ClipmapAtlas's format) whose every texel is `texel`.
+    static GLuint const_atlas(int levels, glm::vec4 texel) {
+        const int h = 1026 * levels;
+        std::vector<float> px(static_cast<std::size_t>(1024 * h * 4));
+        for (std::size_t i = 0; i < px.size(); i += 4) {
+            px[i] = texel.x; px[i + 1] = texel.y; px[i + 2] = texel.z; px[i + 3] = texel.w;
+        }
+        GLuint t = 0;
+        glGenTextures(1, &t);
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1024, h, 0, GL_RGBA, GL_FLOAT, px.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return t;
+    }
+
+    // The sun straight overhead at dir: with a nadir camera the centre pixel
+    // sits exactly in the sun's mirror direction off the geometric normal.
+    renderer::Lighting sun_mirror(glm::vec3 dir) const {
+        renderer::Lighting l;
+        l.ambient = glm::vec3(0.05f);
+        l.directional_count = 1;
+        l.directional_dir_ws[0] = pd::make_anchor(glm::normalize(dir), R()).A;
+        l.directional_color[0] = glm::vec3(1.0f);
+        return l;
+    }
+
+    // A sun grazing the surface at dir (~8.5 deg above the horizon, from E).
+    renderer::Lighting sun_grazing(glm::vec3 dir) const {
+        const pd::Anchor a = pd::make_anchor(glm::normalize(dir), R());
+        renderer::Lighting l;
+        l.ambient = glm::vec3(0.05f);
+        l.directional_count = 1;
+        l.directional_dir_ws[0] = glm::normalize(0.15f * a.A + a.E);
+        l.directional_color[0] = glm::vec3(1.0f);
+        return l;
+    }
+
+    static std::size_t count_diffs(const std::vector<float>& a, const std::vector<float>& b) {
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
+            if (a[i] != b[i]) ++n;
+        return n;
+    }
+
+    static double mean_lum(const std::vector<float>& px) {
+        double s = 0.0;
+        for (int y = 0; y < kSize; ++y)
+            for (int x = 0; x < kSize; ++x) s += lum(px, x, y);
+        return s / double(kSize * kSize);
+    }
+
+    // sRGB byte -> linear (engine/planets/atmosphere.py srgb_hex_to_linear).
+    static float srgb_lin(unsigned char v) {
+        const float c = float(v) / 255.0f;
+        return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
     }
 
     // One fp16 ulp at |v| (RGBA16F target): 2^(floor(log2|v|) - 10).
@@ -407,6 +493,174 @@ TEST_F(PlanetSurfaceDrawTest, NoSeamAcrossLevelBand) {
     ASSERT_GT(inside, 0.0f) << "no detail inside level 0";
     EXPECT_LE(seam, 1.5f * inside) << "seam step " << seam << " vs inside " << inside
                                    << " at column " << ex;
+}
+
+// Spec §6 water: a texel whose BC colour matches the ocean key is water --
+// no land bump, and a GGX sun glint (f0 0.02) in the mirror direction.
+TEST_F(PlanetSurfaceDrawTest, WaterMaskFollowsOceanKey) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    paint_base(0x40, 0x58, 0x70);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    Detail d = bake(dir, 2);
+    d.u.has_ocean = true;
+    d.u.ocean = glm::vec3(srgb_lin(0x40), srgb_lin(0x58), srgb_lin(0x70));
+    const auto cam = nadir_cam(dir, 150.0f);
+
+    // Bump suppressed: strength 1 renders exactly as strength 0.
+    pd::SampleUniforms flat = d.u;
+    flat.strength = 0.0f;
+    const auto bumped = draw(p->planet_shader(), cam, sun_over(dir), hdr, &d.u);
+    const auto ref = draw(p->planet_shader(), cam, sun_over(dir), hdr, &flat);
+    EXPECT_EQ(count_diffs(bumped, ref), 0u) << "water still carries the land bump";
+    // ...whereas the same planet without the key IS bumped (non-vacuous).
+    pd::SampleUniforms land = d.u, land_flat = flat;
+    land.has_ocean = land_flat.has_ocean = false;
+    const auto lb = draw(p->planet_shader(), cam, sun_over(dir), hdr, &land);
+    const auto lf = draw(p->planet_shader(), cam, sun_over(dir), hdr, &land_flat);
+    EXPECT_GT(count_diffs(lb, lf), 0u);
+
+    // Glint: the mirror-direction sun brightens the centre over land.
+    const auto water = draw(p->planet_shader(), cam, sun_mirror(dir), hdr, &d.u);
+    const auto dry = draw(p->planet_shader(), cam, sun_mirror(dir), hdr, &land);
+    const float lw = lum(water, kSize / 2, kSize / 2), ld = lum(dry, kSize / 2, kSize / 2);
+    EXPECT_GT(lw, ld * 1.1f) << "no sun glint on water: " << lw << " vs land " << ld;
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// type: ocean is all water whatever the texture -- even over a relief atlas.
+TEST_F(PlanetSurfaceDrawTest, OceanTypeIsAllWater) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    Detail d = bake(dir, 2);   // Rocky relief in the atlas, Rocky roughness
+    d.u.type = static_cast<int>(pd::SurfaceType::Ocean);
+    const auto cam = nadir_cam(dir, 150.0f);
+    pd::SampleUniforms flat = d.u;
+    flat.strength = 0.0f;
+    const auto a = draw(p->planet_shader(), cam, sun_over(dir), hdr, &d.u);
+    const auto b = draw(p->planet_shader(), cam, sun_over(dir), hdr, &flat);
+    EXPECT_EQ(count_diffs(a, b), 0u) << "an ocean planet was bumped";
+    const pd::SampleUniforms off{};
+    const auto water = draw(p->planet_shader(), cam, sun_mirror(dir), hdr, &d.u);
+    const auto plain = draw(p->planet_shader(), cam, sun_mirror(dir), hdr, &off);
+    const float lw = lum(water, kSize / 2, kSize / 2), lp = lum(plain, kSize / 2, kSize / 2);
+    EXPECT_GT(lw, lp * 1.1f) << "no glint on an ocean planet: " << lw << " vs " << lp;
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Gas: albedo only (no bump, whatever the bump dial), advected by game time;
+// rate 0 is static.
+TEST_F(PlanetSurfaceDrawTest, GasHasNoBumpAndAnimates) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    pd::TypeParams tp = pd::default_params(pd::SurfaceType::Gas);
+    tp.bump = 0.35f;   // a non-zero bump dial: gas must still not bump
+    Detail d = bake(dir, 2, pd::SurfaceType::Gas, tp);
+    d.u.seed = 7u;
+    const auto cam = nadir_cam(dir, 150.0f);
+    const auto l = sun_grazing(dir);
+
+    pd::SampleUniforms strong = d.u, flat = d.u;
+    strong.strength = 4.0f;
+    flat.strength = 0.0f;
+    const auto a = draw(p->planet_shader(), cam, l, hdr, &strong, 2.0f);
+    const auto b = draw(p->planet_shader(), cam, l, hdr, &flat, 2.0f);
+    EXPECT_EQ(count_diffs(a, b), 0u) << "the gas giant was bumped";
+
+    const auto t0 = draw(p->planet_shader(), cam, l, hdr, &d.u, 0.0f);
+    const auto t5 = draw(p->planet_shader(), cam, l, hdr, &d.u, 5.0f);
+    EXPECT_GT(count_diffs(t0, t5), 1000u) << "the gas giant does not animate";
+
+    pd::SampleUniforms still = d.u;
+    still.params.gas_rate_gups = 0.0f;
+    const auto s0 = draw(p->planet_shader(), cam, l, hdr, &still, 0.0f);
+    const auto s5 = draw(p->planet_shader(), cam, l, hdr, &still, 5.0f);
+    EXPECT_EQ(count_diffs(s0, s5), 0u) << "gas rate 0 must be static";
+    const pd::SampleUniforms off{};
+    const auto plain = draw(p->planet_shader(), cam, l, hdr, &off, 0.0f);
+    EXPECT_GT(count_diffs(s0, plain), 0u) << "static gas detail never applied";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Ice: the A channel is the crack mask -- cracks darken (and blue-shift).
+TEST_F(PlanetSurfaceDrawTest, IceCracksDarken) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 dir = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    Detail d = bake(dir, 1, pd::SurfaceType::Ice, pd::default_params(pd::SurfaceType::Ice));
+    const GLuint cracked = const_atlas(1, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    const GLuint whole = const_atlas(1, glm::vec4(0.0f));
+    const auto cam = nadir_cam(dir, 150.0f);
+    pd::SampleUniforms uc = d.u, uw = d.u;
+    uc.atlas = cracked;
+    uw.atlas = whole;
+    const auto pc = draw(p->planet_shader(), cam, sun_over(dir), hdr, &uc);
+    const auto pw = draw(p->planet_shader(), cam, sun_over(dir), hdr, &uw);
+    glDeleteTextures(1, &cracked);
+    glDeleteTextures(1, &whole);
+    // Whole frame: darker on average (the single level covers only the
+    // middle of the view, so the frame-wide ratio is diluted).
+    EXPECT_LT(mean_lum(pc), mean_lum(pw)) << "cracks did not darken";
+    // Centre, where the detail weight is full: the crack tint's luminance is
+    // 0.2126*0.80 + 0.7152*0.86 + 0.0722 = 0.857.
+    double lc = 0.0, lw = 0.0;
+    for (int y = kSize / 2 - 16; y < kSize / 2 + 16; ++y)
+        for (int x = kSize / 2 - 16; x < kSize / 2 + 16; ++x) {
+            lc += lum(pc, x, y);
+            lw += lum(pw, x, y);
+        }
+    EXPECT_GT(lw, 0.0);
+    EXPECT_LT(lc, lw * 0.9) << "cracks did not darken the centre: " << lc << " vs " << lw;
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// FiniteEverywhere, for every surface type (water on, gas mid-animation).
+TEST_F(PlanetSurfaceDrawTest, FiniteEverywhereEveryType) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const glm::vec3 side = glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f));
+    struct View { const char* name; glm::vec3 dir; scenegraph::Camera cam; };
+    std::vector<View> views;
+    views.push_back({"outside", side, nadir_cam(side, 2.0f * R())});
+    {
+        auto cam = nadir_cam(side, 150.0f);
+        const pd::Anchor a = pd::make_anchor(side, R());
+        cam.target = cam.eye + a.E * 1000.0f - a.A * 60.0f;
+        cam.up = a.A;
+        views.push_back({"limb", side, cam});
+    }
+    views.push_back({"pole", glm::vec3(0, 0, 1), nadir_cam(glm::vec3(0, 0, 1), 150.0f)});
+    views.push_back({"u-seam", glm::vec3(0, 1, 0), nadir_cam(glm::vec3(0, 1, 0), 150.0f)});
+    const pd::SurfaceType types[] = {pd::SurfaceType::Rocky, pd::SurfaceType::Desert,
+                                     pd::SurfaceType::Ice, pd::SurfaceType::Gas,
+                                     pd::SurfaceType::Ocean};
+    renderer::NonfiniteProbe probe;
+    for (const auto t : types) {
+        for (const auto& v : views) {
+            Detail d = bake(v.dir, pd::level_count_for(R(), 0.1f), t, pd::default_params(t));
+            d.u.has_ocean = true;   // a key near the IcePlanet's own blues
+            d.u.ocean = glm::vec3(srgb_lin(0x90), srgb_lin(0xA8), srgb_lin(0xC0));
+            d.u.ocean_tol = 0.3f;
+            d.u.seed = 12345u;
+            const renderer::Lighting suns[2] = {sun_over(v.dir), sun_mirror(v.dir)};
+            for (const auto& l : suns) {
+                const auto px = draw(p->planet_shader(), v.cam, l, hdr, &d.u, 13.7f);
+                const auto& r = probe.run(hdr.color_texture(), kSize, kSize);
+                EXPECT_FALSE(r.any) << int(t) << "/" << v.name << ": " << r.flagged_cells
+                                    << " non-finite cell(s)";
+                int nonfinite = 0, lit = 0;
+                for (float f : px) {
+                    if (!std::isfinite(f)) ++nonfinite;
+                    else if (f > 0.0f) ++lit;
+                }
+                EXPECT_EQ(nonfinite, 0) << int(t) << "/" << v.name;
+                EXPECT_GT(lit, 0) << int(t) << "/" << v.name << ": nothing drawn";
+            }
+        }
+    }
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
 }  // namespace

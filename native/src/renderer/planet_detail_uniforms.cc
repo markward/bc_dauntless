@@ -26,6 +26,9 @@ void apply(Shader& s, const SampleUniforms& u) {
     s.set_float("u_pd_albedo", u.albedo);
     s.set_float("u_pd_scale", u.scale);
     s.set_int("u_pd_debug", u.debug);
+    // uint uniform: Shader has no unsigned setter, so set it directly (the
+    // program is current from s.use() above).
+    glUniform1ui(glGetUniformLocation(s.program(), "u_pd_seed"), u.seed);
 
     const TypeParams& p = u.params;
     s.set_float("u_pd_p_base_wavelength_gu", p.base_wavelength_gu);

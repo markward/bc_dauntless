@@ -879,6 +879,11 @@ void draw_model(const assets::Model& model,
     if (sphere) {
         prog.set_mat4("u_ship_world_inv", glm::inverse(world));
         prog.set_vec3("u_sphere_center_body", model.sphere_map->center_body);
+        // The game clock, for the planet_ program's gas flow. A planet has no
+        // decals or glow regions, so the two blocks above that set it for
+        // ships never run here. opaque_ reads it only inside those (empty)
+        // loops, so this is output-neutral there.
+        prog.set_float("u_decal_time", decal_time);
     }
 
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {

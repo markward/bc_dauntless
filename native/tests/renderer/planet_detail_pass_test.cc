@@ -452,4 +452,16 @@ TEST_F(PlanetDetailPassTest, OnlyTheTargetDrawsThroughPlanetProgram) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// Gas flow (spec §6) is seeded per planet: uniforms_for carries the seed.
+TEST_F(PlanetDetailPassTest, UniformsCarryTheSurfaceSeed) {
+    scenegraph::World world;
+    const float s = 40.0f;
+    const auto a = add_planet(world, s, {0, 0, 0});
+    world.set_surface(a, rocky(/*seed=*/4242u));
+    pd::PlanetDetailPass pass;
+    run(pass, world, cam_above({0, 0, 0}, {0, 0, 1}, R(s), 200.0f));
+    ASSERT_TRUE(pass.target().has_value());
+    EXPECT_EQ(pass.uniforms_for(a).seed, 4242u);
+}
+
 }  // namespace

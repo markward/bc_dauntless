@@ -194,6 +194,7 @@ SampleUniforms PlanetDetailPass::uniforms_for(scenegraph::InstanceId id) const {
     u.albedo = surface_.albedo;
     u.scale = surface_.scale;
     u.params = live_params(static_cast<SurfaceType>(surface_.type));
+    u.seed = surface_.seed;
     u.debug = debug_ ? 1 : 0;
     return u;
 }

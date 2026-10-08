@@ -39,7 +39,8 @@ struct SampleUniforms {
     float ocean_tol = 0.15f;
     float strength = 1.0f, albedo = 1.0f, scale = 1.0f;
     TypeParams params{};
-    int   debug = 0;                 // != 0: tint each level (L0..L4)
+    std::uint32_t seed = 0;          // u_pd_seed: Surface::seed (gas flow phase)
+    int   debug = 0;                // != 0: tint each level (L0..L4)
 };
 
 /// Set every u_pd_* uniform on `s` (which must be the planet_ program) and

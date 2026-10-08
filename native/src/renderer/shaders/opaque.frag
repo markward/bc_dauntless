@@ -1331,6 +1331,7 @@ uniform float u_pd_p_gas_period_s;
 uniform float u_pd_p_coast_k;
 uniform float u_pd_p_coast_a;
 uniform int   u_pd_debug;         // != 0: tint by the finest level used
+uniform uint  u_pd_seed;          // Surface::seed: gas flow phase
 
 const int   kPdMaxLevels = 5;
 const float kPdBand = 0.1 * 1024.0;   // transition band, texels (10% of a level)
@@ -1360,11 +1361,12 @@ vec4 pd_fetch(int L, vec2 t) {
 // (h, dh.E, dh.N, a) at planet-local GU point p for a pixel footprint fp
 // (GU). `cover` is 0 where no level is valid and fades to 0 across the outer
 // band of the coarsest level used; `level` is the finest level sampled.
-vec4 pd_sample(vec3 p, float fp, out float cover, out int level) {
+// `off` (GU, on the anchor plane) shifts the lookup: the gas flow advection.
+vec4 pd_sample(vec3 p, vec2 off, float fp, out float cover, out int level) {
     cover = 0.0;
     level = 0;
     if (u_pd_levels <= 0 || dot(p, u_pd_A) < 0.5 * u_pd_R) return vec4(0.0);
-    vec2  xy = pd_plane(p);
+    vec2  xy = pd_plane(p) + off;
     float lf = clamp(log2(max(fp, 1e-6) / u_pd_ts0), 0.0, float(u_pd_levels - 1));
     int   want = int(floor(lf));
     float w = fract(lf);
@@ -1396,6 +1398,22 @@ vec4 pd_sample(vec3 p, float fp, out float cover, out int level) {
 vec3 pd_safe_normalize(vec3 v) {
     float l = length(v);
     return l > 1e-12 ? v / l : vec3(0.0);
+}
+
+// The base texture is uploaded GL_RGBA8 (NOT sRGB), so base.rgb is the
+// sRGB-ENCODED BC colour; u_pd_ocean is linear (surface.py). The mask
+// compares in linear (srgb_hex_to_linear's exact curve); the coast pull
+// mixes in base's own encoded space. Branch-free: mix, never select.
+vec3 pd_srgb_to_linear(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+    return mix(hi, c / 12.92, vec3(lessThanEqual(c, vec3(0.04045))));
+}
+
+vec3 pd_linear_to_srgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 hi = 1.055 * pow(max(c, vec3(1e-6)), vec3(1.0 / 2.4)) - 0.055;
+    return mix(hi, c * 12.92, vec3(lessThanEqual(c, vec3(0.0031308))));
 }
 
 vec3 pd_level_tint(int L) {
@@ -1508,28 +1526,77 @@ void main() {
     float pd_cover = 0.0;
     int   pd_level = 0;
     vec4  pd_s = vec4(0.0);
+    float pd_m_s = 0.0;   // coast-sharpened water mask; read by the glint below
     if (u_pd_enabled != 0 && u_sphere_map != 0) {
         pd_w = smoothstep(2.0, 8.0, pd_px_per_texel);
         if (pd_w > 0.0) {
-            pd_s = pd_sample(pd_p, max(length(pd_dx), length(pd_dy)), pd_cover, pd_level);
+            float pd_fp = max(length(pd_dx), length(pd_dy));
+            if (u_pd_type == 4) {
+                // Gas: advect east by a seeded per-latitude flow (shear
+                // between bands) x game time; two phases crossfade over the
+                // period so the offset stays bounded. Phase 2 reads the A
+                // field, decoded back to h's zero-mean scale (A = 0.5+0.5h').
+                // Rate 0 (or no period) pins ph at 0.5: static, phase 1 only.
+                vec3  pd_east = cross(vec3(0.0, 0.0, 1.0), sp_dir);
+                float pd_el = length(pd_east);
+                pd_east = pd_el > 1e-4 ? pd_east / pd_el : vec3(0.0);   // poles: no flow
+                float pd_P = u_pd_p_gas_period_s;
+                float pd_seedph = float(u_pd_seed % 628u) * 0.01;
+                float pd_flow = u_pd_p_gas_rate_gups * (0.6 * sin(3.0 * sp_lat + pd_seedph)
+                                                      + 0.4 * sin(7.0 * sp_lat + 2.0 * pd_seedph));
+                float pd_ph = (u_pd_p_gas_rate_gups != 0.0 && pd_P > 0.0)
+                    ? fract(u_decal_time / pd_P) : 0.5;
+                vec2  pd_ed = vec2(dot(pd_east, u_pd_E), dot(pd_east, u_pd_N));
+                vec2  pd_o1 = pd_ed * (pd_flow * pd_ph * max(pd_P, 0.0));
+                vec2  pd_o2 = pd_ed * (pd_flow * fract(pd_ph + 0.5) * max(pd_P, 0.0));
+                float pd_c2 = 0.0;
+                int   pd_l2 = 0;
+                vec4  pd_s1 = pd_sample(pd_p, pd_o1, pd_fp, pd_cover, pd_level);
+                vec4  pd_s2 = pd_sample(pd_p, pd_o2, pd_fp, pd_c2, pd_l2);
+                float pd_h2 = (2.0 * pd_s2.w - 1.0) * u_pd_p_amplitude;
+                pd_s = vec4(mix(pd_s1.x, pd_h2, abs(2.0 * pd_ph - 1.0)), 0.0, 0.0, pd_s1.w);
+                pd_cover = min(pd_cover, pd_c2);
+            } else {
+                pd_s = pd_sample(pd_p, vec2(0.0), pd_fp, pd_cover, pd_level);
+            }
             pd_w *= pd_cover;
         }
     }
     if (pd_w > 0.0) {
-        // Water mask: 0 = all land. PLACEHOLDER -- Task 9 computes the coast-
-        // sharpened mask m_s from u_pd_ocean / u_pd_ocean_tol here.
-        float pd_water_m_s = 0.0;
-        float pd_land = (1.0 - pd_water_m_s) * pd_w;
-        // Anchor axes to world, exactly as the sphere normal n is.
-        mat3 pd_to_ws = transpose(mat3(u_ship_world_inv));
-        vec3 pd_E_ws = pd_safe_normalize(pd_to_ws * u_pd_E);
-        vec3 pd_N_ws = pd_safe_normalize(pd_to_ws * u_pd_N);
-        vec3 pd_nb = n_shade - pd_land * u_pd_strength * u_pd_p_bump
-                               * (pd_s.y * pd_E_ws + pd_s.z * pd_N_ws);
-        float pd_lb = length(pd_nb);
-        n_shade = pd_lb > 1e-6 ? pd_nb / pd_lb : n_shade;
+        // Water mask (spec §6): the BC texel's linear distance from the
+        // ocean key, then coast sharpening by the relief.
+        float pd_m = 0.0;
+        if (u_pd_has_ocean != 0) {
+            float pd_tol = max(u_pd_ocean_tol, 1e-4);
+            pd_m = 1.0 - smoothstep(0.5 * pd_tol, 1.5 * pd_tol,
+                                    length(pd_srgb_to_linear(base.rgb) - u_pd_ocean));
+        }
+        pd_m_s = u_pd_p_coast_k > 0.0
+            ? smoothstep(0.5 - u_pd_p_coast_k, 0.5 + u_pd_p_coast_k,
+                         pd_m + u_pd_p_coast_a * pd_s.x)
+            : pd_m;
+        // Where sharpening grew the water, pull the albedo to the key. Done
+        // BEFORE the ocean-type override: an ocean planet has no key, and a
+        // pull toward the default (black) key would blacken it.
+        base.rgb = mix(base.rgb, pd_linear_to_srgb(u_pd_ocean),
+                       clamp(max(pd_m_s - pd_m, 0.0) * pd_w, 0.0, 1.0));
+        if (u_pd_type == 5) pd_m_s = 1.0;
+        float pd_land = (1.0 - pd_m_s) * pd_w;
+        if (u_pd_type != 4) {   // gas: albedo only, never a bump
+            // Anchor axes to world, exactly as the sphere normal n is.
+            mat3 pd_to_ws = transpose(mat3(u_ship_world_inv));
+            vec3 pd_E_ws = pd_safe_normalize(pd_to_ws * u_pd_E);
+            vec3 pd_N_ws = pd_safe_normalize(pd_to_ws * u_pd_N);
+            vec3 pd_nb = n_shade - pd_land * u_pd_strength * u_pd_p_bump
+                                   * (pd_s.y * pd_E_ws + pd_s.z * pd_N_ws);
+            float pd_lb = length(pd_nb);
+            n_shade = pd_lb > 1e-6 ? pd_nb / pd_lb : n_shade;
+        }
         // h is zero-mean by construction: log-luminance variation.
         base.rgb *= exp(clamp(pd_land * u_pd_albedo * u_pd_p_albedo * pd_s.x, -8.0, 8.0));
+        // Ice: A is the crack mask -- darken and blue-shift.
+        if (u_pd_type == 3)
+            base.rgb *= mix(vec3(1.0), vec3(0.80, 0.86, 1.0), clamp(pd_s.w, 0.0, 1.0) * pd_land);
         if (u_pd_debug != 0) base.rgb = mix(base.rgb, pd_level_tint(pd_level), 0.5);
     }
 #endif
@@ -1740,6 +1807,34 @@ void main() {
         amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     }
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
+#ifdef PLANET_SURFACE
+    // Water glint (spec §6): GGX D, Smith-Schlick G (k = alpha/2), Schlick F
+    // with f0 = 0.02, sun = directional light 0 (shadowed like the diffuse
+    // sun), on the GEOMETRIC normal n -- no wave geometry at this scale.
+    // Roughness is modulated by the A field (wind patches).
+    if (pd_w > 0.0 && pd_m_s > 0.0 && u_dir_light_count > 0) {
+        vec3  gL = pd_safe_normalize(u_dir_light_dir_ws[0]);
+        float gNL = clamp(dot(n, gL), 0.0, 1.0);
+        float gNV = clamp(dot(n, V), 0.0, 1.0);
+        if (gNL > 0.0 && gNV > 0.0) {
+            vec3  gH = pd_safe_normalize(gL + V);
+            float gNH = clamp(dot(n, gH), 0.0, 1.0);
+            float gVH = clamp(dot(V, gH), 0.0, 1.0);
+            float rough = clamp(u_pd_p_roughness
+                                * (1.0 + u_pd_p_roughness_var * (pd_s.w - 0.5)), 0.02, 1.0);
+            float ga  = rough * rough;
+            float ga2 = ga * ga;
+            float gd  = gNH * gNH * (ga2 - 1.0) + 1.0;          // >= ga2 > 0
+            float gD  = ga2 / (3.14159265 * max(gd * gd, 1e-12));
+            float gk  = 0.5 * ga;
+            float gG  = (gNL / (gNL * (1.0 - gk) + gk)) * (gNV / (gNV * (1.0 - gk) + gk));
+            float gF  = 0.02 + 0.98 * pow(1.0 - gVH, 5.0);
+            float gspec = clamp(gD * gG * gF / max(4.0 * gNL * gNV, 1e-4), 0.0, 1.0e4);
+            lit += clamp(pd_m_s * pd_w * gspec * gNL * sun_sf, 0.0, 1.0e4)
+                 * clamp(u_dir_light_color[0], vec3(0.0), vec3(1.0e4));
+        }
+    }
+#endif
     if (u_atmo_enabled != 0) {
         vec3  La   = normalize(u_atmo_sun_dir_ws);
         float x    = dot(n, La);
