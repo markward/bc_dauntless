@@ -14,12 +14,13 @@ Boundary matches can_detect: hidden only while fully CLOAKED, visible again the
 moment it starts decloaking.
 
 ⚠️ CLOAK IS NO LONGER ABSOLUTE ON THESE SURFACES. The cloak bubble is a flat
-CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of effective sensor range
+CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of effective sensor range,
+capped by the `cloak_bubble_cap_gu` dial
 (tests/unit/test_cloak_detection_contest.py), and since stage 4 the radar and
 target list run that same rule. `_scene()` models no BaseSensorRange, so
-effective range is FALLBACK_RANGE_GU (30000), the game's largest bubble —
-with the enemy 50 GU away, a cloaked ship stays listed under the default
-configuration. The "drops off the list" tests below
+effective range is the `sensorless_range_gu` dial — with the enemy placed
+inside that observer's bubble (derived, tests.helpers.cloak_geometry), a
+cloaked ship stays listed under the default configuration. The "drops off the list" tests below
 therefore state STOCK BC and are held under ENHANCED_SENSOR_CONTEST = False,
 each paired with a companion pinning the default. Their assertions are
 unchanged; only the configuration they describe is now explicit.
@@ -31,14 +32,14 @@ from engine.appc.subsystems import CloakingSubsystem
 from engine.appc.sensor_detection import is_hidden_by_cloak
 from engine.appc.perception import perceived_by
 from engine.appc.target_menu import STTargetMenu_CreateW, STSubsystemMenu
-from tests.helpers.cloak_geometry import assert_inside, FALLBACK_SENSOR_GU
+from tests.helpers.cloak_geometry import inside_gu, outside_gu, sensorless_gu
 
 
 def _pump(menu, player):
     """One frame of the contact push — the same call host_loop._pump_contacts
-    makes. Replaces update_target_list_visibility(..., range_units=30000.0):
+    makes. Replaces update_target_list_visibility(..., range_units=...):
     these fixtures model no BaseSensorRange, so effective_sensor_range returns
-    FALLBACK_RANGE_GU, which IS 30000.0. Same reach, one source."""
+    the `sensorless_range_gu` dial. One source for the reach."""
     menu.set_contacts(perceived_by(player))
 
 
@@ -53,17 +54,11 @@ def _scene():
     pSet.AddObjectToSet(player, "Player")
     enemy = ShipClass_Create("Warbird")
     enemy.SetName("Enemy")
-    enemy.SetTranslateXYZ(0, 50, 0)
+    enemy.SetTranslateXYZ(0, inside_gu(sensorless_gu()), 0)
     enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
     pSet.AddObjectToSet(enemy, "Enemy")
     menu = STTargetMenu_CreateW("Targets")
     menu.RebuildShipMenus(pSet)
-    # These fixtures author no BaseSensorRange, so the observer falls back to
-    # FALLBACK_RANGE_GU and gets the game's largest cloak bubble. The 50 GU
-    # separation above is meant to sit INSIDE it; pin that rather than assume it,
-    # so a cloak retune fails loudly here instead of silently turning every
-    # "inside the bubble" test below into an "outside the bubble" one.
-    assert_inside(50.0, FALLBACK_SENSOR_GU)
     return pSet, player, enemy, menu
 
 
@@ -99,7 +94,7 @@ def test_is_hidden_by_cloak_predicate():
 
 def test_cloaked_ship_marked_not_visible_for_radar(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False — see the
-    module docstring. The enemy sits 50 GU away, inside the cloak
+    module docstring. The enemy sits inside the cloak
     bubble, so with the flag at its default it stays on the radar; the
     companion below pins that."""
     import engine.appc.sensor_detection as sd
@@ -122,16 +117,16 @@ def test_cloaked_ship_stays_on_radar_inside_the_bubble():
     cloaked ship you can already shoot is one you can also see. Previously the
     radar ran the absolute is_hidden_by_cloak and dropped it at any range.
 
-    50 GU is inside the bubble (CLOAK_DETECTION_BASE_GU plus
-    FALLBACK_RANGE_GU x CLOAK_RANGE_FACTOR); beyond it the contact goes, which
-    keeps the original guarantee live.
+    `_scene()` places the enemy inside the bubble (CLOAK_DETECTION_BASE_GU plus
+    the `sensorless_range_gu` dial x CLOAK_RANGE_FACTOR); beyond it the contact
+    goes, which keeps the original guarantee live.
     """
     pSet, player, enemy, menu = _scene()
     enemy.GetCloakingSubsystem().InstantCloak()
     _pump(menu, player)
     assert _enemy_visible(menu, enemy)
 
-    enemy.SetTranslateXYZ(0, 500, 0)
+    enemy.SetTranslateXYZ(0, outside_gu(sensorless_gu()), 0)
     _pump(menu, player)
     assert not _enemy_visible(menu, enemy)
 
@@ -173,7 +168,7 @@ def test_cloaked_ship_dropped_from_target_list_view(monkeypatch):
 def test_cloaked_ship_stays_in_target_list_view_inside_the_bubble():
     """INTENTIONAL BEHAVIOUR CHANGE (stage 4, ENHANCED_SENSOR_CONTEST
     default-on) — the target list is the other surface that used to run the
-    absolute is_hidden_by_cloak. Same 50-GU-inside-the-bubble geometry as the radar
+    absolute is_hidden_by_cloak. Same inside-the-bubble geometry as the radar
     companion above."""
     pSet, player, enemy, menu = _scene()
 
@@ -191,7 +186,7 @@ def test_cloaked_ship_stays_in_target_list_view_inside_the_bubble():
         _pump(menu, player)
         assert "Enemy" in {r[0] for r in view._snapshot()[3]}
 
-        enemy.SetTranslateXYZ(0, 500, 0)
+        enemy.SetTranslateXYZ(0, outside_gu(sensorless_gu()), 0)
         _pump(menu, player)
         assert "Enemy" not in {r[0] for r in view._snapshot()[3]}
     finally:
@@ -208,9 +203,9 @@ def test_player_lock_drops_cloaked_target(monkeypatch):
     tests/unit/test_player_lock_sensor_gate.py).
 
     STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False. This
-    fixture puts the enemy 50 GU away, and cloak is now a range multiplier
+    fixture puts the enemy inside the cloak bubble, and cloak is now a range multiplier
     (see tests/unit/test_cloak_detection_contest.py), so with the flag at its
-    default the lock survives at this distance -- the contest companion below
+    default the lock survives at that distance -- the contest companion below
     pins that. The assertion here is unchanged; only the configuration it
     describes is now explicit.
     """
@@ -234,9 +229,9 @@ def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     kept while the cloaked ship is inside the floor-plus-fraction-of-effective-
     sensor-range bubble.
 
-    These fixtures model no BaseSensorRange, so effective range is
-    FALLBACK_RANGE_GU (30000), the game's largest bubble. The enemy sits at
-    50 GU -> still locked. Push it past the bubble and the guard drops it, which
+    These fixtures model no BaseSensorRange, so effective range is the
+    `sensorless_range_gu` dial. The enemy sits inside that bubble -> still
+    locked. Push it past the bubble and the guard drops it, which
     keeps the original "undetectable target loses the lock" guarantee live under
     the default configuration.
     """
@@ -245,11 +240,11 @@ def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     player.SetTarget(enemy)
     enemy.GetCloakingSubsystem().InstantCloak()
 
-    # 50 GU, inside the cloak bubble → the lock holds.
+    # Inside the cloak bubble → the lock holds.
     clear_undetectable_player_lock(player)
     assert player.GetTarget() is enemy
 
     # Beyond the bubble → dropped, exactly as a cloaked ship always was.
-    enemy.SetTranslateXYZ(0, 500, 0)
+    enemy.SetTranslateXYZ(0, outside_gu(sensorless_gu()), 0)
     clear_undetectable_player_lock(player)
     assert player.GetTarget() is None

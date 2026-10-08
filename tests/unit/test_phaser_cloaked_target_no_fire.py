@@ -51,8 +51,8 @@ class _CloakedTarget(_PlainTarget):
 
 
 class _Ship:
-    """Firing ship. No sensor subsystem → can_detect uses the fallback
-    range, so a plain in-range target is detectable."""
+    """Firing ship. No sensor subsystem → can_detect uses the
+    `sensorless_range_gu` dial, so a plain in-range target is detectable."""
     def __init__(self, x, y, z):
         self._loc = TGPoint3(float(x), float(y), float(z))
     def GetWorldLocation(self):
@@ -70,8 +70,8 @@ class _Ship:
 
 class _SensorShip(_Ship):
     """Firing ship carrying a REAL SensorSubsystem at a Galaxy's 2000 GU base
-    range, giving a far smaller cloak bubble than the sensor-less fallback
-    would. Distances come from tests.helpers.cloak_geometry. Mirrors
+    range, so its cloak bubble is set by an authored range rather than the
+    `sensorless_range_gu` dial. Distances come from tests.helpers.cloak_geometry. Mirrors
     tests/unit/test_sensor_detection.py::_ship_with_sensor."""
 
     def __init__(self, x, y, z):
@@ -134,10 +134,10 @@ def test_start_firing_no_op_and_no_sfx_when_target_cloaked(monkeypatch):
 
     Cloak bubble is now a flat floor plus a percentage of effective range
     rather than an absolute (see tests/unit/test_cloak_detection_contest.py).
-    This ship models no BaseSensorRange, so its effective range is
-    FALLBACK_RANGE_GU and its bubble is the largest in the game -- the 50 GU
-    target below is well inside it, asserted below rather than assumed. The
-    assertions are unchanged; the flag makes
+    This ship models no BaseSensorRange, so its effective range is the
+    `sensorless_range_gu` dial. Holding the flag off keeps this test about
+    absolute cloak whether or not the 50 GU target sits inside that observer's
+    bubble. The assertions are unchanged; the flag makes
     explicit the configuration they have always described. The companion test
     pins the default configuration.
     """
@@ -160,8 +160,9 @@ def test_start_firing_engages_close_cloaked_target_but_not_beyond_the_bubble():
     """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): a cloaked
     ship inside the bubble is a legal target and IS fired on.
 
-    Uses _SensorShip (2000 GU sensors -> a small cloak bubble) rather than the
-    30000 GU fallback, so both cases sit INSIDE the bank's 60 GU
+    Uses _SensorShip (2000 GU authored sensors) rather than the sensor-less
+    `sensorless_range_gu` dial, and derives both distances from that bubble so
+    both cases sit INSIDE the bank's 60 GU
     GetMaxDamageDistance and the only thing separating them is detectability --
     otherwise PhaserSystem._can_engage would be doing the work and the second
     assertion would pass for the wrong reason.
@@ -202,9 +203,9 @@ def test_start_firing_dispatches_when_target_detectable():
 def test_pump_stops_when_target_cloaks_mid_burst(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False.
 
-    Same reason as the StartFiring case above: this ship's fallback 30000 GU
-    effective range gives the game's largest cloak bubble, so the 50 GU target below is
-    detectable while cloaked with the flag at its default. Assertions
+    Same reason as the StartFiring case above: this ship's effective range is
+    the `sensorless_range_gu` dial, and holding the flag off keeps the test
+    about absolute cloak whatever that observer's bubble is. Assertions
     unchanged; the companion below pins the default configuration.
     """
     import engine.appc.sensor_detection as sd

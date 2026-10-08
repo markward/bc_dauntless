@@ -7,9 +7,9 @@ derives the row from it. These tests exercise the same end-to-end road the
 host loop takes (position -> perceived_by -> set_contacts -> row), with the
 same distances and the same expected outcomes.
 
-The fixtures model no BaseSensorRange, so effective_sensor_range returns
-FALLBACK_RANGE_GU — which IS the 30000.0 these tests used to pass explicitly
-as `range_units`.
+The fixtures model no BaseSensorRange, so effective_sensor_range returns the
+`sensorless_range_gu` dial, which replaced the `range_units` these tests used
+to pass explicitly. Every in-range distance below sits within it.
 """
 import App
 from engine.appc.perception import perceived_by

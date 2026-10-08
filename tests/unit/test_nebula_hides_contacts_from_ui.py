@@ -50,7 +50,7 @@ def _contact(pSet, name, x, y, z, cloaked=False):
 def _observer(pSet, x, y, z, base_range=30000.0):
     """A player-shaped observer with a REAL sensor subsystem, following
     tests/unit/test_perceived_by.py::_observer. Explicit range so no assertion
-    here is silently measuring FALLBACK_RANGE_GU."""
+    here is silently measuring the `sensorless_range_gu` dial."""
     ship = ShipClass_Create("Galaxy")
     ship.SetName("player")
     ship.SetTranslateXYZ(x, y, z)

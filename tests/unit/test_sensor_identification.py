@@ -200,13 +200,13 @@ def test_force_object_identified_marks_planet_known():
     assert _identified.count(haven) == 1
 
 
-def test_npc_force_identify_does_not_release_the_players_placeholder():
-    """ForceObjectIdentified on an NPC's OWN sensors (not the current GAME
-    player's) must mark the contact known to that NPC but leave the PLAYER's
-    "Unknown N" placeholder allocated -- the player's target list / reticle
-    are still showing it unidentified. Only the current player's own
-    identification path may rename/release (`sensors._owner_ship() is
-    sensor_contacts.current_player()`)."""
+def test_npc_force_identify_is_a_no_op():
+    """BC's contact manager is player-only: every entry point is gated on
+    GetParentShip() == GetPlayerShip() (sensor-subsystem.md, "The Global
+    Contact Manager"; ForceObjectIdentified @0x005678B0). On an NPC's own
+    sensors it marks nothing known, fires no ET_SENSORS_SHIP_IDENTIFIED and
+    leaves the player's "Unknown N" placeholder allocated. All four SDK
+    callers pass the PLAYER's sensors (spec, Evidence)."""
     _subscribe()
     s, player, sensors = _player_in_set()
     from engine.appc import unknown_labels
@@ -219,14 +219,44 @@ def test_npc_force_identify_does_not_release_the_players_placeholder():
 
     target = ShipClass_Create("BirdOfPrey")
     s.AddObjectToSet(target, "Bird")
-    placeholder = unknown_labels.placeholder(target)   # the player's row number
+    placeholder = unknown_labels.placeholder(target)
 
     npc_sensors.ForceObjectIdentified(target)
 
-    assert npc_sensors.IsObjectKnown(target) == 1
-    assert target in _identified
-    # The NPC's own identification must not touch the player-visible number.
+    assert npc_sensors.IsObjectKnown(target) == 0
+    assert sensors.IsObjectKnown(target) == 0
+    assert target not in _identified
     assert unknown_labels.current(target) == placeholder
+
+
+def test_force_identify_with_no_player_is_a_no_op():
+    """Orphan sensors and no current game: the owner and the player are both
+    None, and None-is-None must not pass the player gate."""
+    _subscribe()
+    _set_current_game(None)
+    orphan = SensorSubsystem("Sensors")
+    target = ShipClass_Create("BirdOfPrey")
+
+    orphan.ForceObjectIdentified(target)   # must not raise
+
+    assert orphan.IsObjectKnown(target) == 0
+    assert _identified == []
+
+
+def test_identify_object_with_no_player_is_a_no_op():
+    """Orphan sensors and no current game: IdentifyObject must not schedule
+    a scan (sensor_contacts' pending scans survive into the next player's
+    session, so a stale one would identify on the wrong sensors later)."""
+    from engine.appc import sensor_contacts
+    _subscribe()
+    _set_current_game(None)
+    orphan = SensorSubsystem("Sensors")
+    target = ShipClass_Create("BirdOfPrey")
+    before = dict(sensor_contacts._pending)
+
+    orphan.IdentifyObject(target)   # must not raise
+
+    assert dict(sensor_contacts._pending) == before
 
 
 def test_force_object_identified_none_safe():

@@ -13,9 +13,9 @@ def _observer(pSet, base_range=2000.0, condition=100.0):
 
     Follows tests/unit/test_sensor_detection.py::_ship_with_sensor. This
     matters: a bare ShipClass() has no sensor subsystem, so
-    effective_sensor_range falls back to FALLBACK_RANGE_GU (30000) — 15x a
-    Galaxy's real range — and every range assertion below would be testing
-    the fallback instead of the thing it names.
+    effective_sensor_range falls back to the `sensorless_range_gu` dial, and
+    every range assertion below would be testing that dial instead of the
+    thing it names.
     """
     ship = ShipClass_Create("Galaxy")
     ship.SetName("player")
