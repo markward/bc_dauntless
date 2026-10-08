@@ -42,6 +42,7 @@ add_executable(renderer_tests
     planet_clipmap_schedule_test.cc
     planet_clipmap_atlas_test.cc
     planet_surface_draw_test.cc
+    planet_detail_pass_test.cc
     system_nebula_pass_test.cc
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc

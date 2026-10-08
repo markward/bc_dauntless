@@ -35,6 +35,7 @@
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/atmosphere_pass.h>
+#include <renderer/planet_detail_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/minor_field.h>
 #include <renderer/minor_pass.h>
@@ -267,6 +268,9 @@ float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 // Planet atmosphere shells (docs/superpowers/specs/2026-10-07-planet-atmosphere-design.md §5).
 std::unique_ptr<renderer::AtmospherePass> g_atmosphere_pass;
+// Planet surface detail (spec 2026-10-08 §5.5): one target planet's clipmap,
+// baked once per frame from g_camera; sampled by every space render.
+std::unique_ptr<renderer::planet_detail::PlanetDetailPass> g_planet_detail;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 // Minor rocks (docs/superpowers/specs/2026-10-01-minor-rocks-design.md). The
 // field is pure CPU state stepped in frame()'s xform_sync block; the pass owns
@@ -969,6 +973,7 @@ void init(int width, int height, const std::string& title) {
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_atmosphere_pass = std::make_unique<renderer::AtmospherePass>();
+    g_planet_detail = std::make_unique<renderer::planet_detail::PlanetDetailPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_minor_pass = std::make_unique<renderer::MinorPass>();
     g_far_pass = std::make_unique<renderer::FarPass>();
@@ -1052,6 +1057,7 @@ void shutdown() {
                               // GL context is still alive.
     g_sun_pass.reset();
     g_atmosphere_pass.reset();   // releases the shell mesh (GL alive)
+    g_planet_detail.reset();     // releases the clipmap atlas (GL alive)
     g_dust_pass.reset();
     g_minor_pass.reset();     // releases VAOs + instance buffer (GL alive)
     g_far_pass.reset();       // releases atlases + VAOs + buffers (GL alive)
@@ -1428,7 +1434,8 @@ void frame() {
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-                ambient_scale, dyn_lights, g_instance_field_cache.get(), &g_suns);
+                ambient_scale, dyn_lights, g_instance_field_cache.get(), &g_suns,
+                g_planet_detail.get());
         }
         // Minor rocks. The step culled against g_camera; this target may be
         // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
@@ -1792,6 +1799,16 @@ void frame() {
         }
     } else {
         renderer::set_active_shadow({}, 0, false);
+    }
+
+    // ── Planet surface detail (spec 2026-10-08 §5.5) ───────────────────────
+    // Top-level (GPU-timed), main camera only: pick the target planet and bake
+    // this frame's budgeted strips BEFORE any space render samples them. Every
+    // space render (main view, viewscreen RTT) samples the same clipmap; none
+    // of them bakes. Skipped when no space scene is drawn at all.
+    if (g_planet_detail && !viewer_mode && (!bridge_active || viewscreen_on)) {
+        DAUNTLESS_FRAME_SCOPE("planet_detail");
+        g_planet_detail->update(g_world, g_camera, fh, lookup);
     }
 
     // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────

@@ -12,6 +12,8 @@
 #include <renderer/asset_path.h>
 #include <renderer/model_draw_helpers.h>
 #include <renderer/node_anim.h>
+#include <renderer/planet_detail_pass.h>
+#include <renderer/planet_detail_uniforms.h>
 #include <renderer/scuff_texture.h>
 
 #include <algorithm>
@@ -19,6 +21,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -1175,7 +1178,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            float ambient_scale,
                                            const std::vector<DynamicLightDescriptor>* dyn_lights,
                                            InstanceFieldCache* field_cache,
-                                           const std::vector<SunDescriptor>* suns) {
+                                           const std::vector<SunDescriptor>* suns,
+                                           const planet_detail::PlanetDetailPass* detail) {
     // See submit_opaque: configure the common per-frame uniforms on BOTH the
     // static and skinned programs. The static-program set is unchanged.
     auto configure_common = [&](Shader& s) {
@@ -1205,6 +1209,11 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     auto& shader = pipeline.opaque_shader();
     configure_common(shader);
     configure_common(pipeline.skinned_shader());
+    // Planet surface detail: only when a pass has a target does the planet_
+    // program need this frame's camera and lights; otherwise it is untouched.
+    const std::optional<scenegraph::InstanceId> detail_target =
+        detail != nullptr ? detail->target() : std::nullopt;
+    if (detail_target) configure_common(pipeline.planet_shader());
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -1234,6 +1243,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             shader.set_float("u_dither_fade", inst.far_fade);
             pipeline.skinned_shader().use();
             pipeline.skinned_shader().set_float("u_dither_fade", inst.far_fade);
+            if (detail_target) {
+                pipeline.planet_shader().use();
+                pipeline.planet_shader().set_float("u_dither_fade", inst.far_fade);
+            }
         }
         // Planet surface atmosphere (spec 2026-10-07 §6): the sun direction
         // from the system's suns at the planet centre, else directional 0.
@@ -1248,7 +1261,16 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                 lighting.directional_count > 0 ? lighting.directional_dir_ws[0]
                                                : glm::vec3(0.0f, 0.0f, 1.0f));
         }
-        if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
+        const int sphere_level = m ? geosphere_level_for(*m, inst.world, camera) : -1;
+        // The detail target's sphere-LOD draw goes through planet_; every
+        // other draw takes exactly the stock program.
+        Shader* static_shader = &shader;
+        if (m && detail_target && *detail_target == inst.id && m->sphere_map &&
+            sphere_level >= 0) {
+            static_shader = &pipeline.planet_shader();
+            planet_detail::apply(*static_shader, detail->uniforms_for(inst.id));
+        }
+        if (m) draw_model(*m, inst.world, *static_shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
@@ -1257,13 +1279,17 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           /*carve_invert=*/false, field_entry,
                           &inst.node_overrides,
                           instance_decal_override(inst.id),
-                          geosphere_level_for(*m, inst.world, camera),
+                          sphere_level,
                           atmo, atmo_sun);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
             pipeline.skinned_shader().use();
             pipeline.skinned_shader().set_float("u_dither_fade", 0.0f);
+            if (detail_target) {
+                pipeline.planet_shader().use();
+                pipeline.planet_shader().set_float("u_dither_fade", 0.0f);
+            }
         }
     });
 }
