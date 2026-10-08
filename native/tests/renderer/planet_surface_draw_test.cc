@@ -353,6 +353,13 @@ TEST_F(PlanetSurfaceDrawTest, FiniteEverywhere) {
             const pd::SampleUniforms off{};
             const auto plain = draw(p->planet_shader(), v.cam, sun_over(v.dir), hdr, &off);
             EXPECT_FALSE(plain == px) << v.name << ": detail never applied";
+            // R8: at the pole BC's u texel shrinks to nothing on screen while
+            // v stays hugely magnified; the weight must follow the COARSER
+            // axis, so the nadir (the pole itself) gets relief too.
+            if (std::string(v.name) == "pole") {
+                EXPECT_TRUE(differs(plain, px, kSize / 2, kSize / 2))
+                    << "no relief at the pole nadir";
+            }
         }
     }
     EXPECT_EQ(glGetError(), GL_NO_ERROR);

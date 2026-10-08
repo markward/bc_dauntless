@@ -1452,8 +1452,14 @@ void main() {
     vec3  pd_dx = dFdx(pd_p);
     vec3  pd_dy = dFdy(pd_p);
     vec2  pd_tex = vec2(textureSize(u_base_color, 0));
-    float pd_px_per_texel =
-        1.0 / max(max(length(sp_dx * pd_tex), length(sp_dy * pd_tex)), 1e-6);
+    // The COARSER BC texel axis (R8): near a pole the u texel shrinks to
+    // nothing on screen while v stays magnified and blurry; keying on the
+    // smaller one would leave a relief hole around each pole. Per TEXTURE
+    // axis (u, v), not per screen axis: sp_dx / sp_dy each carry the huge
+    // polar du, so a min over them never isolates v.
+    float pd_px_per_texel = 1.0 / max(min(
+        length(vec2(sp_dx.x, sp_dy.x)) * pd_tex.x,
+        length(vec2(sp_dx.y, sp_dy.y)) * pd_tex.y), 1e-6);
 #endif
     vec2  g_uv   = (u_sphere_map != 0) ? sp_uv : v_uv;
 
