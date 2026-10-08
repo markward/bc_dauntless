@@ -1370,24 +1370,28 @@ vec4 pd_sample(vec3 p, vec2 off, float fp, out float cover, out int level) {
     float lf = clamp(log2(max(fp, 1e-6) / u_pd_ts0), 0.0, float(u_pd_levels - 1));
     int   want = int(floor(lf));
     float w = fract(lf);
-    int   L = -1;
-    vec2  t = vec2(0.0);
-    for (int i = 0; i < kPdMaxLevels; ++i) {
-        if (i < want || i >= u_pd_levels) continue;
-        vec2 ti = xy / (u_pd_ts0 * exp2(float(i)));
-        if (pd_inset(i, ti) >= 0.0) { L = i; t = ti; break; }
+    // Finest valid level >= want: try `want` first (the common case), then
+    // walk coarser. Each level halves the texel coordinate exactly.
+    int   L = want;
+    vec2  t = xy / (u_pd_ts0 * exp2(float(want)));
+    float ins = pd_inset(L, t);
+    for (int i = 0; i < kPdMaxLevels - 1; ++i) {
+        if (ins >= 0.0 || L + 1 >= u_pd_levels) break;
+        ++L;
+        t *= 0.5;
+        ins = pd_inset(L, t);
     }
-    if (L < 0) return vec4(0.0);
+    if (ins < 0.0) return vec4(0.0);   // no level valid here
+    float ins1 = L + 1 < u_pd_levels ? pd_inset(L + 1, t * 0.5) : -1.0;
     if (L != want) w = 0.0;   // already coarser than wanted
     level = L;
     // Transition band: within the last 10% of the valid rect, blend toward
     // the next coarser level (or, with none valid here, fade the detail out).
-    float band = 1.0 - clamp(pd_inset(L, t) / kPdBand, 0.0, 1.0);
+    float band = 1.0 - clamp(ins / kPdBand, 0.0, 1.0);
     vec4  s = pd_fetch(L, t);
-    vec2  t1 = t * 0.5;
-    if (L + 1 < u_pd_levels && pd_inset(L + 1, t1) >= 0.0) {
+    if (ins1 >= 0.0) {
         float wb = max(w, band);
-        if (wb > 0.0) s = mix(s, pd_fetch(L + 1, t1), wb);
+        if (wb > 0.0) s = mix(s, pd_fetch(L + 1, t * 0.5), wb);
         cover = 1.0;
     } else {
         cover = 1.0 - band;
@@ -1478,6 +1482,53 @@ void main() {
     float pd_px_per_texel = 1.0 / max(min(
         length(vec2(sp_dx.x, sp_dy.x)) * pd_tex.x,
         length(vec2(sp_dx.y, sp_dy.y)) * pd_tex.y), 1e-6);
+    float pd_fp = max(length(pd_dx), length(pd_dy));
+    // Surface detail, land (spec §6). Weight = smoothstep(2, 8, px per BC
+    // texel) x coverage; 0 leaves the plain sphere-map output. Sampled HERE,
+    // before n / V / the base fetch / p_body exist, not beside its use below
+    // the base fetch: fewer values are live across pd_sample, which measured
+    // cheaper (task 11b; planet_detail_bench_test.cc). Nothing in it takes a
+    // derivative (textureLod only), so the coverage-cutout discard below may
+    // follow it; planets never set that cutout anyway.
+    float pd_w = 0.0;
+    float pd_cover = 0.0;
+    int   pd_level = 0;
+    vec4  pd_s = vec4(0.0);
+    float pd_m_s = 0.0;   // coast-sharpened water mask; read by the glint below
+    if (u_pd_enabled != 0 && u_sphere_map != 0) {
+        pd_w = smoothstep(2.0, 8.0, pd_px_per_texel);
+        if (pd_w > 0.0) {
+            if (u_pd_type == 4) {
+                // Gas: advect east by a seeded per-latitude flow (shear
+                // between bands) x game time; two phases crossfade over the
+                // period so the offset stays bounded. Phase 2 reads the A
+                // field, decoded back to h's zero-mean scale (A = 0.5+0.5h').
+                // Rate 0 (or no period) pins ph at 0.5: static, phase 1 only.
+                vec3  pd_east = cross(vec3(0.0, 0.0, 1.0), sp_dir);
+                float pd_el = length(pd_east);
+                pd_east = pd_el > 1e-4 ? pd_east / pd_el : vec3(0.0);   // poles: no flow
+                float pd_P = u_pd_p_gas_period_s;
+                float pd_seedph = float(u_pd_seed % 628u) * 0.01;
+                float pd_flow = u_pd_p_gas_rate_gups * (0.6 * sin(3.0 * sp_lat + pd_seedph)
+                                                      + 0.4 * sin(7.0 * sp_lat + 2.0 * pd_seedph));
+                float pd_ph = (u_pd_p_gas_rate_gups != 0.0 && pd_P > 0.0)
+                    ? fract(u_decal_time / pd_P) : 0.5;
+                vec2  pd_ed = vec2(dot(pd_east, u_pd_E), dot(pd_east, u_pd_N));
+                vec2  pd_o1 = pd_ed * (pd_flow * pd_ph * max(pd_P, 0.0));
+                vec2  pd_o2 = pd_ed * (pd_flow * fract(pd_ph + 0.5) * max(pd_P, 0.0));
+                float pd_c2 = 0.0;
+                int   pd_l2 = 0;
+                vec4  pd_s1 = pd_sample(pd_p, pd_o1, pd_fp, pd_cover, pd_level);
+                vec4  pd_s2 = pd_sample(pd_p, pd_o2, pd_fp, pd_c2, pd_l2);
+                float pd_h2 = (2.0 * pd_s2.w - 1.0) * u_pd_p_amplitude;
+                pd_s = vec4(mix(pd_s1.x, pd_h2, abs(2.0 * pd_ph - 1.0)), 0.0, 0.0, pd_s1.w);
+                pd_cover = min(pd_cover, pd_c2);
+            } else {
+                pd_s = pd_sample(pd_p, vec2(0.0), pd_fp, pd_cover, pd_level);
+            }
+            pd_w *= pd_cover;
+        }
+    }
 #endif
     vec2  g_uv   = (u_sphere_map != 0) ? sp_uv : v_uv;
 
@@ -1520,48 +1571,6 @@ void main() {
         : texture(u_base_color, v_uv);
 #endif
 #ifdef PLANET_SURFACE
-    // Surface detail, land (spec §6). Weight = smoothstep(2, 8, px per BC
-    // texel) x coverage; 0 leaves the plain sphere-map output.
-    float pd_w = 0.0;
-    float pd_cover = 0.0;
-    int   pd_level = 0;
-    vec4  pd_s = vec4(0.0);
-    float pd_m_s = 0.0;   // coast-sharpened water mask; read by the glint below
-    if (u_pd_enabled != 0 && u_sphere_map != 0) {
-        pd_w = smoothstep(2.0, 8.0, pd_px_per_texel);
-        if (pd_w > 0.0) {
-            float pd_fp = max(length(pd_dx), length(pd_dy));
-            if (u_pd_type == 4) {
-                // Gas: advect east by a seeded per-latitude flow (shear
-                // between bands) x game time; two phases crossfade over the
-                // period so the offset stays bounded. Phase 2 reads the A
-                // field, decoded back to h's zero-mean scale (A = 0.5+0.5h').
-                // Rate 0 (or no period) pins ph at 0.5: static, phase 1 only.
-                vec3  pd_east = cross(vec3(0.0, 0.0, 1.0), sp_dir);
-                float pd_el = length(pd_east);
-                pd_east = pd_el > 1e-4 ? pd_east / pd_el : vec3(0.0);   // poles: no flow
-                float pd_P = u_pd_p_gas_period_s;
-                float pd_seedph = float(u_pd_seed % 628u) * 0.01;
-                float pd_flow = u_pd_p_gas_rate_gups * (0.6 * sin(3.0 * sp_lat + pd_seedph)
-                                                      + 0.4 * sin(7.0 * sp_lat + 2.0 * pd_seedph));
-                float pd_ph = (u_pd_p_gas_rate_gups != 0.0 && pd_P > 0.0)
-                    ? fract(u_decal_time / pd_P) : 0.5;
-                vec2  pd_ed = vec2(dot(pd_east, u_pd_E), dot(pd_east, u_pd_N));
-                vec2  pd_o1 = pd_ed * (pd_flow * pd_ph * max(pd_P, 0.0));
-                vec2  pd_o2 = pd_ed * (pd_flow * fract(pd_ph + 0.5) * max(pd_P, 0.0));
-                float pd_c2 = 0.0;
-                int   pd_l2 = 0;
-                vec4  pd_s1 = pd_sample(pd_p, pd_o1, pd_fp, pd_cover, pd_level);
-                vec4  pd_s2 = pd_sample(pd_p, pd_o2, pd_fp, pd_c2, pd_l2);
-                float pd_h2 = (2.0 * pd_s2.w - 1.0) * u_pd_p_amplitude;
-                pd_s = vec4(mix(pd_s1.x, pd_h2, abs(2.0 * pd_ph - 1.0)), 0.0, 0.0, pd_s1.w);
-                pd_cover = min(pd_cover, pd_c2);
-            } else {
-                pd_s = pd_sample(pd_p, vec2(0.0), pd_fp, pd_cover, pd_level);
-            }
-            pd_w *= pd_cover;
-        }
-    }
     if (pd_w > 0.0) {
         // Water mask (spec §6): the BC texel's linear distance from the
         // ocean key, then coast sharpening by the relief.
