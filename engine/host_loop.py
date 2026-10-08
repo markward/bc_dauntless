@@ -30,6 +30,7 @@ import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine import manual_aim
+from engine import bridge_lighting as _bridge_lighting
 from engine.rocks import far_tier as _far_tier
 from engine.appc.windows import TacticalControlWindow
 from engine.ui.letterbox import LetterboxAnimator
@@ -12228,21 +12229,10 @@ def run(mission_name: Optional[str] = None,
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
-            # Red-alert dim: bridge INTERIOR ambient scales to 50% when the
-            # player ship is at red alert. Matches BC's red-alert bridge
-            # lighting (dimmer overall while the red emergency strip lights
-            # pulse — that pulse is deferred work). Sent as a separate scale
-            # (not baked into the ambient) so the comm-set viewscreen feed —
-            # the other ship's room — keeps constant brightness across alert
-            # levels.
-            _bridge_dim = 1.0
-            if player is not None:
-                try:
-                    if player.GetAlertLevel() == 2:  # ShipClass.RED_ALERT
-                        _bridge_dim = 0.5
-                except Exception as _e:
-                    dev_mode.log_swallowed("red-alert bridge-dim probe", _e)
-            r.set_bridge_ambient_scale(_bridge_dim)
+            # Alert-level bridge brightness (engine.bridge_lighting): sent as a
+            # separate scale, not baked into the ambient, so the comm-set
+            # viewscreen feed — another ship's room — keeps constant brightness.
+            r.set_bridge_ambient_scale(_bridge_lighting.player_bridge_ambient_scale(player))
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the
