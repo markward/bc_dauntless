@@ -94,7 +94,8 @@ number and reach a wrong conclusion:
 * **A GPU column of `0.000` may be a dead driver, not a free GPU.** `gpu_ms`
   only accumulates when `t1 >= t0`, so every span is `>= 0` by construction and
   a driver returning zeroed `GL_TIMESTAMP` counters (Apple's GL does exactly
-  this, on the machine this was written on) yields a full column of zeros that
+  this — it reports 0 counter bits for `GL_TIMESTAMP`; see the ⛔ section
+  below, which also records that `GL_TIME_ELAPSED` works) yields a full column of zeros that
   reads as free. When the **whole-frame** span is exactly 0 across
   `GPU_ZERO_FRAMES` resolved frames the report prints **GPU TIMING
   UNAVAILABLE** and replaces the column with `-`.
@@ -350,10 +351,28 @@ Two gaps, both deliberate and both worth knowing about:
 
 ---
 
-# ⛔ The GPU column is DEAD on this Mac
+# ⛔ The GPU column is DEAD on this Mac — because it uses `GL_TIMESTAMP`
 
 Apple's GL returns **zeroed `GL_TIMESTAMP` counters**. Measured: 117 resolved
 frames of exactly 0.
+
+**Why (measured 2026-10-08, Apple M3 Pro, `GL_VERSION` "4.1 Metal - 90.5"):**
+Apple's GL is a layer over Metal, and it **declares** it has no timestamp
+counter — `glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS)` returns **0**,
+and `glGetInteger64v(GL_TIMESTAMP)` returns 0. That is the driver's honest
+"unsupported", not a broken counter.
+
+**`GL_TIME_ELAPSED` WORKS on the same driver.** It reports 32 counter bits, and
+a `glBeginQuery`/`glEndQuery` probe around three bridge spans returned steady,
+plausible figures over ~2,500 frames with **zero** zero-samples (normal
+pre-pass ~0.63 ms, half-res SSAO kernel ~1.3 ms, main bridge draw ~1.1 ms —
+and pre-pass + kernel matched the ~2 ms the AO added to `resolve`'s CPU stall).
+So GPU timing on this Mac is not impossible; *this profiler's timer type* is.
+The catch: `GL_TIME_ELAPSED` queries **cannot nest** (one active per target),
+so a profiler built on them can time sequential top-level passes, not the
+nested scopes this one reports. The probe is
+`DAUNTLESS_BRIDGE_GPU_PROBE=1` in `native/src/renderer/bridge_pass.cc` on branch
+`spike/bridge-lighting` (commit `efbde014`).
 
 This is worse than a missing feature, because `gpu_ms` only accumulates when
 `t1 >= t0`, so every span is `>= 0` **by construction** — a dead driver and a
