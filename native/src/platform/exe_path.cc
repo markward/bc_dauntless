@@ -20,6 +20,8 @@
 #include <cstring>
 #endif
 
+#include <cstdint>
+#include <cstdio>
 #include <system_error>
 
 namespace dauntless::platform {
@@ -104,6 +106,20 @@ std::filesystem::path canonical_or_error(const std::filesystem::path& path,
         return {};
     }
     return resolved;
+}
+
+std::filesystem::path cef_cache_dir(const std::filesystem::path& base,
+                                    const std::filesystem::path& exec_path) {
+    // FNV-1a 64, not std::hash: the folder must be the same on every launch,
+    // and std::hash is free to differ between standard libraries and builds.
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    for (unsigned char c : exec_path.lexically_normal().generic_string()) {
+        h ^= c;
+        h *= 0x100000001b3ull;
+    }
+    char hex[17];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(h));
+    return base / (std::string("dauntless-cef-cache-") + hex);
 }
 
 }  // namespace dauntless::platform

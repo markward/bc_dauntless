@@ -38,4 +38,19 @@ std::filesystem::path executable_path(const char* argv0, std::string& error);
 std::filesystem::path canonical_or_error(const std::filesystem::path& path,
                                          std::string& error);
 
+/// CEF's root_cache_path for the build at `exec_path`:
+/// `<base>/dauntless-cef-cache-<16 hex digits>`, the digits an FNV-1a 64 hash of
+/// the path's lexically-normal form.
+///
+/// One folder PER BUILD, not one shared folder. Chromium allows a single
+/// browser process per cache folder, so with a shared one a second build
+/// launched while another was running (one game per worktree) handed its
+/// startup to the running one: "Opening in existing browser session.",
+/// CefInitialize failed, the running game opened a stray browser window, and
+/// the new game had no UI layer. Keyed on the path rather than per process,
+/// so a build keeps its GPU/shader cache across launches. Two copies of the
+/// SAME build still share a folder.
+std::filesystem::path cef_cache_dir(const std::filesystem::path& base,
+                                    const std::filesystem::path& exec_path);
+
 }  // namespace dauntless::platform
