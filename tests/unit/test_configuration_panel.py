@@ -605,11 +605,13 @@ def test_bridge_quality_in_payload():
     assert '"bridge_quality": 1' in payload
 
 
-def test_bridge_quality_is_right_after_aa_mode_in_graphics_focusables():
+def test_bridge_quality_ends_the_modern_vfx_group():
+    """Bridge Rendering sits in the Modern VFX group, after Camera Shake and
+    just before the Reset row (Mark, 2026-10-08)."""
     p, _ = _make()
     focusables = p._focusables()
     assert focusables.index(("ctrl", "bridge_quality")) \
-        == focusables.index(("ctrl", "aa_mode")) + 1
+        == focusables.index(("ctrl", "camera_shake")) + 1
 
 
 # ---- Master toggles --------------------------------------------------------
@@ -730,8 +732,8 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     standalones-then-masters test, which camera shake made incomplete."""
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == (["aa_mode", "bridge_quality", "dust", "fov"] + list(MASTER_KEYS)
-                      + ["camera_shake", "reset_graphics"])
+    assert ctrls == (["aa_mode", "dust", "fov"] + list(MASTER_KEYS)
+                      + ["camera_shake", "bridge_quality", "reset_graphics"])
 
 
 def test_space_on_camera_shake_row_toggles():
@@ -793,7 +795,8 @@ def _js_master_keys():
 
 def test_js_graphics_focusables_match_python():
     """configuration_panel.js composes its focusable list the same way Python
-    does — standalones, masters, trailing rows, then the reset row — but by
+    does — standalones, masters, trailing rows, group-end selectors, then the
+    reset row — but by
     hand. If the two drift, keyboard focus highlights one row while Space
     toggles another."""
     import re
@@ -801,6 +804,8 @@ def test_js_graphics_focusables_match_python():
     assert standalone, "CP_GRAPHICS_STANDALONE not found"
     trailing = re.search(r"CP_GRAPHICS_TRAILING = \[(.*?)\];", _js_source(), re.S)
     assert trailing, "CP_GRAPHICS_TRAILING not found"
+    group_end = re.search(r"CP_GRAPHICS_GROUP_END = \[(.*?)\];", _js_source(), re.S)
+    assert group_end, "CP_GRAPHICS_GROUP_END not found"
     resets = re.search(r"CP_RESET_TARGETS = \{(.*?)\};", _js_source(), re.S)
     assert resets, "CP_RESET_TARGETS not found"
     graphics_reset = re.search(r"graphics:\s*'(\w+)'", resets.group(1))
@@ -808,6 +813,7 @@ def test_js_graphics_focusables_match_python():
     js_targets = (re.findall(r"'(\w+)'", standalone.group(1))
                   + _js_master_keys()
                   + re.findall(r"\['(\w+)',", trailing.group(1))
+                  + re.findall(r"'(\w+)'", group_end.group(1))
                   + [graphics_reset.group(1)])
     p, _ = _make()
     assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]

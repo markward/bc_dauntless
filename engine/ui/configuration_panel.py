@@ -729,22 +729,21 @@ class ConfigurationPanel(Panel):
     def _focusables(self) -> list:
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. Order mirrors the rendered rows — the two
-        standalone controls, then the 'Modern VFX' group of master toggles,
-        then the per-tab Reset row:
-        [('tab','graphics'), ('ctrl','aa_mode'), ('ctrl','bridge_quality'),
+        standalone controls, then the 'Modern VFX' group (master toggles,
+        Camera Shake, Bridge Rendering), then the per-tab Reset row:
+        [('tab','graphics'), ('ctrl','aa_mode'),
          ('ctrl','dust'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
          ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
-         ('ctrl','reset_graphics')].
+         ('ctrl','bridge_quality'), ('ctrl','reset_graphics')].
 
         configuration_panel.js mirrors this list by hand; the two are pinned
         together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "aa_mode"), ("ctrl", "bridge_quality"),
-                    ("ctrl", "dust"), ("ctrl", "fov")]
+            out += [("ctrl", "aa_mode"), ("ctrl", "dust"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
-            out += [("ctrl", "camera_shake")]
+            out += [("ctrl", "camera_shake"), ("ctrl", "bridge_quality")]
             out += [("ctrl", "reset_graphics")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
