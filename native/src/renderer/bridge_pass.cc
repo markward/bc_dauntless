@@ -345,7 +345,18 @@ void BridgePass::render(const scenegraph::World& world,
         });
 
     glBindVertexArray(0);
-    if (ao_on) glBindSampler(4, 0);   // don't leak the raw sampler to other passes
+    if (ao_on) {
+        // Don't leak the raw sampler or the AO textures to other passes: next
+        // frame's nested normal pre-pass renders INTO the depth texture's FBO
+        // with a program that declares u_ao_depth on unit 4 -- a rendering
+        // feedback loop (GL 4.1 section 9.3.1) if that texture is still bound.
+        glBindSampler(4, 0);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+    }
 }
 
 }  // namespace renderer

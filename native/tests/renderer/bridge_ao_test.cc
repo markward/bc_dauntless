@@ -209,6 +209,16 @@ TEST_F(BridgeAoFrame, RawDepthSamplerNeverLeaksPastTheBridgeDraw) {
     glGetIntegerv(GL_SAMPLER_BINDING, &bound);
     glActiveTexture(GL_TEXTURE0);
     EXPECT_EQ(bound, 0);
+    // The AO and pre-pass depth textures must not stay bound either: the next
+    // frame's nested normal pre-pass renders INTO the depth texture's FBO with
+    // a program that samples unit 4 -- a feedback loop (GL 4.1 §9.3.1).
+    for (GLenum unit : {GL_TEXTURE3, GL_TEXTURE4}) {
+        GLint tex = -1;
+        glActiveTexture(unit);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex);
+        EXPECT_EQ(tex, 0) << "unit " << (unit - GL_TEXTURE0);
+    }
+    glActiveTexture(GL_TEXTURE0);
 }
 
 TEST(BridgeAoShader, CompilesAndLinksAtEverySampleCount) {
