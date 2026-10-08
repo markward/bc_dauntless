@@ -41,6 +41,7 @@ add_executable(renderer_tests
     planet_detail_noise_test.cc
     planet_clipmap_schedule_test.cc
     planet_clipmap_atlas_test.cc
+    planet_surface_draw_test.cc
     system_nebula_pass_test.cc
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc

@@ -184,6 +184,7 @@ add_library(renderer STATIC
     planet_detail_noise.cc
     planet_clipmap_schedule.cc
     planet_clipmap_atlas.cc
+    planet_detail_uniforms.cc
     atmosphere_pass.cc
     system_nebula_pass.cc
     nebula_godray_pass.cc

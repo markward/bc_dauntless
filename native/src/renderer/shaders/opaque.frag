@@ -1288,6 +1288,125 @@ void impostor_blend() {
 }
 #endif
 
+// Planet surface detail (spec docs/superpowers/specs/2026-10-08-planet-
+// surface-detail-design.md §5.4, §6). Compiled ONLY into the planet_ program
+// (Pipeline prepends "#define PLANET_SURFACE"), so every other program sees
+// exactly the old source. The clipmap atlas holds up to 5 levels of 1024^2
+// texels stacked as 1026-row bands (toroidal rows 0..1023 at band rows
+// 1..1024, guard rows 0 and 1025); texel = (h, dh.E, dh.N, a), the gradient
+// taken wrt q = p / (base_wavelength * scale). u_pd_valid[L] (absolute
+// texels, right/top exclusive) is the authority for which texels are baked.
+#ifdef PLANET_SURFACE
+uniform sampler2D u_pd_atlas;     // unit 12, set once by Pipeline
+uniform int   u_pd_enabled;       // 0: the plain sphere-map path
+uniform int   u_pd_levels;
+uniform float u_pd_ts0;           // level-0 texel, GU
+uniform vec4  u_pd_valid[5];      // abs-texel rect per level (x0, y0, x1, y1)
+uniform vec3  u_pd_A;             // anchor frame, planet-local (body axes)
+uniform vec3  u_pd_E;
+uniform vec3  u_pd_N;
+uniform float u_pd_R;             // GU
+uniform float u_pd_scale_local;   // body units -> GU
+uniform int   u_pd_type;
+uniform vec3  u_pd_ocean;
+uniform int   u_pd_has_ocean;
+uniform float u_pd_ocean_tol;
+uniform float u_pd_strength;
+uniform float u_pd_albedo;
+uniform float u_pd_scale;
+uniform float u_pd_p_base_wavelength_gu;
+uniform int   u_pd_p_max_octaves;
+uniform float u_pd_p_gain;
+uniform float u_pd_p_ridged;
+uniform float u_pd_p_amplitude;
+uniform float u_pd_p_bump;
+uniform float u_pd_p_albedo;
+uniform float u_pd_p_roughness;
+uniform float u_pd_p_roughness_var;
+uniform float u_pd_p_crack_width;
+uniform float u_pd_p_stretch;
+uniform float u_pd_p_warp;
+uniform float u_pd_p_gas_rate_gups;
+uniform float u_pd_p_gas_period_s;
+uniform float u_pd_p_coast_k;
+uniform float u_pd_p_coast_a;
+uniform int   u_pd_debug;         // != 0: tint by the finest level used
+
+const int   kPdMaxLevels = 5;
+const float kPdBand = 0.1 * 1024.0;   // transition band, texels (10% of a level)
+
+// Gnomonic projection onto the anchor plane (planet_detail::to_plane).
+vec2 pd_plane(vec3 p) {
+    float d = max(dot(p, u_pd_A), 1e-6 * u_pd_R);
+    vec3  P = p * (u_pd_R / d);
+    return vec2(dot(P, u_pd_E), dot(P, u_pd_N));
+}
+
+// Distance (texels) from t to level L's valid-rect edge, less a 1-texel
+// margin so the bilinear footprint stays on baked texels. < 0 = not valid.
+float pd_inset(int L, vec2 t) {
+    vec4 v = u_pd_valid[L];
+    return min(min(t.x - v.x, v.z - t.x), min(t.y - v.y, v.w - t.y)) - 1.0;
+}
+
+// Level L's texel at level-L texel coordinate t (texel a centred at a + 0.5).
+vec4 pd_fetch(int L, vec2 t) {
+    float H   = 1026.0 * float(u_pd_levels);
+    float u   = fract(t.x / 1024.0);
+    float row = fract(t.y / 1024.0) * 1024.0 + 1.0 + float(L) * 1026.0;
+    return textureLod(u_pd_atlas, vec2(u, row / H), 0.0);
+}
+
+// (h, dh.E, dh.N, a) at planet-local GU point p for a pixel footprint fp
+// (GU). `cover` is 0 where no level is valid and fades to 0 across the outer
+// band of the coarsest level used; `level` is the finest level sampled.
+vec4 pd_sample(vec3 p, float fp, out float cover, out int level) {
+    cover = 0.0;
+    level = 0;
+    if (u_pd_levels <= 0 || dot(p, u_pd_A) < 0.5 * u_pd_R) return vec4(0.0);
+    vec2  xy = pd_plane(p);
+    float lf = clamp(log2(max(fp, 1e-6) / u_pd_ts0), 0.0, float(u_pd_levels - 1));
+    int   want = int(floor(lf));
+    float w = fract(lf);
+    int   L = -1;
+    vec2  t = vec2(0.0);
+    for (int i = 0; i < kPdMaxLevels; ++i) {
+        if (i < want || i >= u_pd_levels) continue;
+        vec2 ti = xy / (u_pd_ts0 * exp2(float(i)));
+        if (pd_inset(i, ti) >= 0.0) { L = i; t = ti; break; }
+    }
+    if (L < 0) return vec4(0.0);
+    if (L != want) w = 0.0;   // already coarser than wanted
+    level = L;
+    // Transition band: within the last 10% of the valid rect, blend toward
+    // the next coarser level (or, with none valid here, fade the detail out).
+    float band = 1.0 - clamp(pd_inset(L, t) / kPdBand, 0.0, 1.0);
+    vec4  s = pd_fetch(L, t);
+    vec2  t1 = t * 0.5;
+    if (L + 1 < u_pd_levels && pd_inset(L + 1, t1) >= 0.0) {
+        float wb = max(w, band);
+        if (wb > 0.0) s = mix(s, pd_fetch(L + 1, t1), wb);
+        cover = 1.0;
+    } else {
+        cover = 1.0 - band;
+    }
+    return s;
+}
+
+vec3 pd_safe_normalize(vec3 v) {
+    float l = length(v);
+    return l > 1e-12 ? v / l : vec3(0.0);
+}
+
+vec3 pd_level_tint(int L) {
+    if (L == 0) return vec3(1.0, 0.0, 0.0);
+    if (L == 1) return vec3(0.0, 1.0, 0.0);
+    if (L == 2) return vec3(0.0, 0.0, 1.0);
+    if (L == 3) return vec3(1.0, 1.0, 0.0);
+    return vec3(1.0, 0.0, 1.0);
+}
+#endif
+
 float bayer4(vec2 frag) {
     ivec2 p = ivec2(mod(frag, 4.0));
     const float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
@@ -1326,6 +1445,16 @@ void main() {
     vec2  sp_du  = dot(sp_du0, sp_du0) <= dot(sp_du1, sp_du1) ? sp_du0 : sp_du1;
     vec2  sp_dx  = vec2(sp_du.x, dFdx(sp_uv.y));
     vec2  sp_dy  = vec2(sp_du.y, dFdy(sp_uv.y));
+#ifdef PLANET_SURFACE
+    // Surface detail: planet-local GU position and its pixel footprint, and
+    // screen pixels per BC texel -- unconditional, beside the block above.
+    vec3  pd_p  = sp_body * u_pd_scale_local;
+    vec3  pd_dx = dFdx(pd_p);
+    vec3  pd_dy = dFdy(pd_p);
+    vec2  pd_tex = vec2(textureSize(u_base_color, 0));
+    float pd_px_per_texel =
+        1.0 / max(max(length(sp_dx * pd_tex), length(sp_dy * pd_tex)), 1e-6);
+#endif
     vec2  g_uv   = (u_sphere_map != 0) ? sp_uv : v_uv;
 
 #ifdef IMPOSTOR_VIEWS
@@ -1365,6 +1494,38 @@ void main() {
     vec4 base = (u_sphere_map != 0)
         ? textureGrad(u_base_color, g_uv, sp_dx, sp_dy)
         : texture(u_base_color, v_uv);
+#endif
+#ifdef PLANET_SURFACE
+    // Surface detail, land (spec §6). Weight = smoothstep(2, 8, px per BC
+    // texel) x coverage; 0 leaves the plain sphere-map output.
+    float pd_w = 0.0;
+    float pd_cover = 0.0;
+    int   pd_level = 0;
+    vec4  pd_s = vec4(0.0);
+    if (u_pd_enabled != 0 && u_sphere_map != 0) {
+        pd_w = smoothstep(2.0, 8.0, pd_px_per_texel);
+        if (pd_w > 0.0) {
+            pd_s = pd_sample(pd_p, max(length(pd_dx), length(pd_dy)), pd_cover, pd_level);
+            pd_w *= pd_cover;
+        }
+    }
+    if (pd_w > 0.0) {
+        // Water mask: 0 = all land. PLACEHOLDER -- Task 9 computes the coast-
+        // sharpened mask m_s from u_pd_ocean / u_pd_ocean_tol here.
+        float pd_water_m_s = 0.0;
+        float pd_land = (1.0 - pd_water_m_s) * pd_w;
+        // Anchor axes to world, exactly as the sphere normal n is.
+        mat3 pd_to_ws = transpose(mat3(u_ship_world_inv));
+        vec3 pd_E_ws = pd_safe_normalize(pd_to_ws * u_pd_E);
+        vec3 pd_N_ws = pd_safe_normalize(pd_to_ws * u_pd_N);
+        vec3 pd_nb = n_shade - pd_land * u_pd_strength * u_pd_p_bump
+                               * (pd_s.y * pd_E_ws + pd_s.z * pd_N_ws);
+        float pd_lb = length(pd_nb);
+        n_shade = pd_lb > 1e-6 ? pd_nb / pd_lb : n_shade;
+        // h is zero-mean by construction: log-luminance variation.
+        base.rgb *= exp(clamp(pd_land * u_pd_albedo * u_pd_p_albedo * pd_s.x, -8.0, 8.0));
+        if (u_pd_debug != 0) base.rgb = mix(base.rgb, pd_level_tint(pd_level), 0.5);
+    }
 #endif
     // Far tier: a texel kept by the coverage cutout (top of main) is forced
     // opaque so it never reads as an emissive mask.
