@@ -46,7 +46,10 @@ _ALBEDO_MAX = 4.0
 _SCALE_MIN, _SCALE_MAX = 0.25, 4.0
 _OCEAN_TOLERANCE_MIN, _OCEAN_TOLERANCE_MAX = 0.001, 1.0
 _BUMP_MAX = 4.0
-_ROUGHNESS_MAX = 1.0
+# Floor matches opaque.frag's `clamp(rough, 0.02, 1.0)` (fix round 1, M4):
+# below 0.02 the shader clamps it anyway, so a lower dial floor would be a
+# silent no-op past that point.
+_ROUGHNESS_MIN, _ROUGHNESS_MAX = 0.02, 1.0
 _COAST_K_MAX = 1.0
 _GAS_RATE_MAX = 10.0
 _GAS_PERIOD_MIN, _GAS_PERIOD_MAX = 1.0, 600.0
@@ -139,7 +142,7 @@ def _clamp(name: str, v: float) -> float:
     if name == "bump":
         return min(_BUMP_MAX, max(0.0, v))
     if name == "roughness":
-        return min(_ROUGHNESS_MAX, max(0.0, v))
+        return min(_ROUGHNESS_MAX, max(_ROUGHNESS_MIN, v))
     if name == "coast_k":
         return min(_COAST_K_MAX, max(0.0, v))
     if name == "gas_rate_gups":

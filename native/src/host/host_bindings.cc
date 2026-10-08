@@ -2809,7 +2809,11 @@ py::dict stats_dict(const mr::Stats& s) {
 }
 
 // ── Planet surface-detail type table: Python <-> TypeParams (spec 2026-10-08
-// §7 dev tuning). One field list shared by get/set so they can never drift;
+// §7 dev tuning). get/set each hand-list the same 16 field names side by
+// side, in the same order -- NOT one genuinely shared table, so nothing
+// here stops them drifting apart on their own; what actually guards that is
+// tests/unit/test_planet_surface_type_params_binding.py's
+// test_get_set_round_trip_for_every_type (fix round 1, M1).
 // `ridged` is included (the binding is a generic struct accessor) even
 // though the "surface" dial group never dials it.
 py::dict type_params_to_dict(const renderer::planet_detail::TypeParams& p) {

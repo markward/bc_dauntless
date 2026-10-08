@@ -116,11 +116,15 @@ def set_override(key: str, s: Surface) -> None:
 
 
 def reload() -> None:
-    """Drop every dial override. Does NOT clear the shared atmosphere file
-    memo -- the "Reload Planet Surfaces" action calls atmosphere.reload()
-    separately to re-read the catalogue file (the two 'surface' and
-    'atmosphere' blocks live in the same JSON, loaded through one memo)."""
+    """Drop every dial override AND refresh the shared catalogue file memo
+    via `atmosphere.reload_file()` (memo + warned only -- NOT the
+    "atmosphere" dial group's own `_overrides`), so an edited `surface`
+    block is picked up without silently undoing a live atmosphere dial
+    tune (fix round 1, I1: the two 'surface' and 'atmosphere' blocks live
+    in the same JSON, loaded through one memo, but their dial overrides
+    are two independent dicts and must reload independently)."""
     _overrides.clear()
+    _atmo.reload_file()
 
 
 def to_binding(s):

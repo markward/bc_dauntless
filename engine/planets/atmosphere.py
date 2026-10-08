@@ -171,9 +171,19 @@ def load() -> dict:
     return raw
 
 
-def reload() -> None:
+def reload_file() -> None:
+    """Drop the file-level cache only (`_memo` / `_warned`) -- `_overrides`
+    (this module's own dial tuning) survives it. Fix round 1 / I1: the
+    "surface" dial group's "Reload Planet Surfaces" action needs to re-read
+    `atmospheres.json` (the `atmosphere` and `surface` blocks share one
+    file, one memo) WITHOUT dropping this module's "atmosphere" dial
+    group's live tuning -- that is reload()'s job, for its OWN button."""
     _memo.clear()
     _warned.clear()
+
+
+def reload() -> None:
+    reload_file()
     _overrides.clear()
 
 

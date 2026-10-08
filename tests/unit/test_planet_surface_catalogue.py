@@ -97,6 +97,39 @@ def test_to_binding_shapes():
     assert surf.to_binding(s2)[1:3] == ((0.1, 0.2, 0.3), True)
 
 
+# ---- reload: refreshes the shared memo, spares atmosphere's own dial
+# overrides (fix round 1, I1) -------------------------------------------
+
+def test_reload_refreshes_the_shared_catalogue_memo(catalogue):
+    catalogue({"p": {"atmosphere": False, "surface": {"type": "rocky"}}})
+    assert surf.resolve_surface("S", "N", "p.nif").type == "rocky"
+
+    # Edit the file directly (not through the `catalogue` fixture's own
+    # atmo.reload() call) and call surf.reload(): the new type must be
+    # picked up, proving surf.reload() refreshes the shared atmosphere file
+    # memo (engine.planets.atmosphere.reload_file()), not just its own
+    # `_overrides`.
+    path = atmo.catalogue_path()
+    path.write_text(json.dumps({"p": {"atmosphere": False, "surface": {"type": "ice"}}}))
+    surf.reload()
+    assert surf.resolve_surface("S", "N", "p.nif").type == "ice"
+
+
+def test_reload_does_not_clear_the_atmosphere_dial_groups_overrides(catalogue):
+    """surf.reload() refreshes the shared file memo via
+    atmosphere.reload_file(), which -- unlike the full atmosphere.reload()
+    -- never touches `atmosphere._overrides`. The "surface" dial group's
+    reload action must not silently undo the "atmosphere" dial group's live
+    tuning."""
+    catalogue({"p": {"color": "#87B4FF", "thickness": 0.035, "density": 1.0,
+                     "limb": 1.0, "surface": {"type": "rocky"}}})
+    override = atmo.Atmosphere(color=(1.0, 0.0, 0.0), sunset_color=(1.0, 0.0, 0.0),
+                               thickness=0.5, density=2.0, limb=2.0)
+    atmo.set_override("p", override)
+    surf.reload()
+    assert atmo.resolve("S", "N", "p.nif") is override
+
+
 def test_live_registry_set_scoping():
     surf.clear_live()
     surf.record_live("a", "S1", "P", "p.nif")

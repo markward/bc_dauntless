@@ -343,14 +343,15 @@ class DeveloperOptionsPanel(Panel):
         if action == "action:reload_surfaces":
             # One-shot ACTION (mirrors action:reload_atmospheres). The two
             # catalogue blocks ("atmosphere" and "surface") live in the SAME
-            # atmospheres.json, read through ONE shared file memo
-            # (engine.planets.atmosphere._memo) -- picking up edited surface
-            # fields needs that memo dropped too, which also clears the
-            # atmosphere dial group's overrides as a side effect. Then drop
-            # this group's own overrides and re-push every live planet.
+            # atmospheres.json, read through ONE shared file memo -- but
+            # `surface.reload()` refreshes that memo via
+            # `atmosphere.reload_file()` (memo-only), NOT the full
+            # `atmosphere.reload()`, so this action picks up edited surface
+            # fields (and drops this group's own overrides) WITHOUT also
+            # dropping the "atmosphere" dial group's live tuning (fix round
+            # 1, I1). Then re-push every live planet.
             import sys
             from engine.planets import surface_dials
-            planet_atmosphere_catalogue.reload()
             planet_surface_catalogue.reload()
             surface_dials.repush_live()
             print("[surface] catalogue reloaded", file=sys.stderr)

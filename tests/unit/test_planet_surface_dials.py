@@ -151,6 +151,16 @@ def test_step_roughness_clamps_to_one():
     assert type_tables[4]["roughness"] == pytest.approx(1.0)
 
 
+def test_step_roughness_clamps_to_the_shader_floor():
+    """opaque.frag clamps rough to (0.02, 1.0) -- the dial floor must match
+    (fix round 1, M4), not 0.0 (which would be a no-op the shader silently
+    overrides anyway)."""
+    _, _, _, type_tables = _setup()
+    for _ in range(300):
+        dials.step("roughness", -1)
+    assert type_tables[4]["roughness"] == pytest.approx(0.02)
+
+
 def test_step_coast_k_clamps_to_one():
     _, _, _, type_tables = _setup()
     for _ in range(300):

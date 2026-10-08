@@ -705,27 +705,62 @@ def test_reload_surfaces_ctrl_is_an_environments_tab_focusable(panel):
     assert ("ctrl", "reload_surfaces") in p._focusables()
 
 
-def test_reload_surfaces_action_calls_both_catalogue_reloads(panel, monkeypatch):
+def test_reload_surfaces_action_leaves_an_atmosphere_override_intact(panel):
+    """Fix round 1, I1: 'Reload Planet Surfaces' must not undo the
+    'atmosphere' dial group's live tuning -- the two catalogue blocks share
+    one JSON file / one memo, but their dial overrides are two independent
+    dicts, and the two Reload actions must be independent too."""
     from engine.planets import atmosphere as atmo
+
+    override = atmo.Atmosphere(color=(1.0, 0.0, 0.0), sunset_color=(1.0, 0.0, 0.0),
+                               thickness=0.5, density=2.0, limb=2.0)
+    atmo.set_override("iceplanet", override)
+    try:
+        p, _ = panel
+        p.open()
+        p.dispatch_event("tab:environments")
+        assert p.dispatch_event("action:reload_surfaces") is True
+        got = atmo.resolve("S", "N", "data/models/environment/iceplanet.nif")
+        assert got is override
+    finally:
+        atmo.reload()
+
+
+def test_reload_atmospheres_action_leaves_a_surface_override_intact(panel):
+    """The reverse direction: 'Reload Planet Atmospheres' must not undo the
+    'surface' dial group's live tuning either."""
+    from engine.planets import surface as surf
+
+    override = surf.Surface(type="ice", ocean=None, strength=2.5)
+    surf.set_override("iceplanet", override)
+    try:
+        p, _ = panel
+        p.open()
+        p.dispatch_event("tab:environments")
+        assert p.dispatch_event("action:reload_atmospheres") is True
+        got = surf.resolve_surface("S", "N", "data/models/environment/iceplanet.nif")
+        assert got is override
+    finally:
+        surf.reload()
+
+
+def test_reload_surfaces_action_calls_surface_reload(panel, monkeypatch):
     from engine.planets import surface as surf
 
     calls = []
-    monkeypatch.setattr(atmo, "reload", lambda: calls.append("atmo"))
     monkeypatch.setattr(surf, "reload", lambda: calls.append("surf"))
     p, _ = panel
     p.open()
     p.dispatch_event("tab:environments")
     assert p.dispatch_event("action:reload_surfaces") is True
-    assert calls == ["atmo", "surf"]
+    assert calls == ["surf"]
 
 
 def test_reload_surfaces_action_repushes_live_planets_after_reload(panel, monkeypatch):
-    from engine.planets import atmosphere as atmo
     from engine.planets import surface as surf
     from engine.planets import surface_dials as dials
 
     order = []
-    monkeypatch.setattr(atmo, "reload", lambda: order.append("atmo_reload"))
     monkeypatch.setattr(surf, "reload", lambda: order.append("surf_reload"))
     monkeypatch.setattr(dials, "repush_live", lambda: order.append("repush"),
                         raising=False)
@@ -733,7 +768,7 @@ def test_reload_surfaces_action_repushes_live_planets_after_reload(panel, monkey
     p.open()
     p.dispatch_event("tab:environments")
     assert p.dispatch_event("action:reload_surfaces") is True
-    assert order == ["atmo_reload", "surf_reload", "repush"]
+    assert order == ["surf_reload", "repush"]
 
 
 def test_reload_surfaces_action_prints_to_stderr(panel, capsys):
