@@ -61,6 +61,7 @@ add_executable(renderer_tests
     lens_flare_pass_test.cc
     bridge_pass_test.cc
     bridge_lighting_test.cc
+    bridge_ao_test.cc
     skinned_bridge_test.cc
     head_weld_seam_test.cc
     officer_jaw_test.cc

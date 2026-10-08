@@ -172,6 +172,10 @@ protected:
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::BridgePass pass;
+        // These tests pin the downlight and the ceiling; the two close
+        // parallel planes would be heavily occluded. AO is pinned by
+        // bridge_ao_test.cc.
+        pass.set_ao_enabled(false);
         pass.render(world, cam, *p,
             [](unsigned long long h) -> const assets::Model* {
                 return reinterpret_cast<const assets::Model*>(h);

@@ -1,6 +1,7 @@
 // native/src/renderer/include/renderer/bridge_pass.h
 #pragma once
 
+#include <renderer/bridge_ao_pass.h>
 #include <renderer/frame.h>
 
 #include <scenegraph/instance.h>  // scenegraph::Pass
@@ -22,6 +23,10 @@ class Pipeline;
 ///      (the bridge ambient shaped by the surface normal; tuning in
 ///      renderer/bridge_lighting_tuning.h). BC's baked lightmaps are not drawn.
 ///   B. Characters — skinned officers, lit by the same downlight.
+/// In the main bridge view (Pass::Bridge, comm_set_id == 0) both sub-passes
+/// multiply their RECEIVED light by screen-space AO (BridgeAoPass), computed
+/// from a normal + depth pre-pass of the same draw. The comm-set RTT and the
+/// unlit viewscreen feed never get AO.
 ///
 /// Caller is responsible for clearing color + depth before calling
 /// render() (the bridge interior overlays the space scene; see
@@ -85,6 +90,13 @@ public:
     /// lightspeed flash to the viewscreen when viewing the bridge). 0 = none.
     void set_viewscreen_flash(float f) { viewscreen_flash_ = f; }
 
+    /// AO quality (samples, resolution). Read at the next render().
+    void set_ao_settings(const BridgeAoSettings& s) { ao_settings_ = s; }
+
+    /// Test seam: false skips the AO entirely (u_ao_on = 0). Default true;
+    /// production never turns it off.
+    void set_ao_enabled(bool on) { ao_enabled_ = on; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -104,6 +116,13 @@ private:
     std::string     off_tex_loaded_;
     assets::Texture off_tex_;
     void ensure_off_texture();
+
+    /// Screen-space AO for the main bridge view. `normal_pass_` is true while
+    /// render() re-enters itself to draw the AO's normal + depth pre-pass.
+    BridgeAoPass     ao_;
+    BridgeAoSettings ao_settings_;
+    bool             ao_enabled_ = true;
+    bool             normal_pass_ = false;
 };
 
 }  // namespace renderer

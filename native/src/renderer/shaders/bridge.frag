@@ -45,7 +45,46 @@ uniform float u_diffuse_max;      // lit-surface ceiling (0 = off), see diffuse_
 uniform int   u_face_by_winding;  // 1: generated normals face by winding; 0: officers face the eye
 uniform int   u_unlit;            // viewscreen feed: full bright, unlit
 
+// ── Screen-space AO (BridgeAoPass) ─────────────────────────────────────
+// u_output_normal = 1 in the AO's normal pre-pass: write the world shading
+// normal instead of colour. Otherwise, with u_ao_on, the received light is
+// multiplied by the AO (never the unlit viewscreen feed).
+uniform sampler2D u_ao;           // unit 3: occlusion in .r, 1 = open
+uniform sampler2D u_ao_depth;     // unit 4: the pre-pass depth (window depth, raw sampler)
+uniform mat4      u_ao_inv_proj;
+uniform vec2      u_ao_screen;    // the view's size in pixels (the AO may be smaller)
+uniform int       u_ao_on;
+uniform int       u_output_normal;
+
 out vec4 FragColor;
+
+float ao_view_z(vec2 uv) {
+    float win = texture(u_ao_depth, uv).r;
+    vec4 v = u_ao_inv_proj * vec4(uv * 2.0 - 1.0, (win - 0.5) * 2.0, 1.0);
+    return v.z / v.w;
+}
+
+// Depth-aware 4x4 filter over the AO texture. The AO kernel's rotation comes
+// from a 4x4 tile, so a 4x4 average cancels it; each tap is weighted by how
+// close its depth is to this pixel's, so the average never mixes the AO of a
+// foreground silhouette with the surface behind it (a halo round officers).
+float ao_term() {
+    if (u_ao_on == 0) return 1.0;
+    vec2 uvc = gl_FragCoord.xy / u_ao_screen;          // this fragment, 0..1
+    vec2 tex = 1.0 / vec2(textureSize(u_ao, 0));      // one AO texel
+    float zc = ao_view_z(uvc);                         // full-resolution depth
+    float tol = 0.02 * abs(zc) + 0.25;   // depth tolerance grows with distance
+    vec2 uv0 = uvc - 1.5 * tex;
+    float sum = 0.0, wsum = 0.0;
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            vec2 uv = uv0 + vec2(x, y) * tex;
+            float w = exp(-abs(ao_view_z(uv) - zc) / tol);
+            sum += texture(u_ao, uv).r * w;
+            wsum += w;
+        }
+    return wsum > 1e-4 ? sum / wsum : texture(u_ao, uvc).r;
+}
 
 vec3 shading_normal() {
     vec3 n = v_normal;
@@ -83,6 +122,7 @@ void main() {
     if (u_face_blend != 0)
         base = mix(base, texture(u_face_b, base_uv), clamp(u_face_mix, 0.0, 1.0));
     if (base.a < u_alpha_test_threshold) discard;
+    if (u_output_normal != 0) { FragColor = vec4(shading_normal(), 1.0); return; }
     if (u_unlit != 0) {
         vec3 col = base.rgb * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
@@ -91,7 +131,7 @@ void main() {
     }
     vec3 n = shading_normal();
     float h = clamp(dot(n, u_up) * 0.5 + 0.5, 0.0, 1.0);
-    vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h);
+    vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao_term();
     vec3 col = diffuse_ceiling(base.rgb * received) * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
     FragColor = vec4(col, 1.0);

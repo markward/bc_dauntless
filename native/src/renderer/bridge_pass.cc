@@ -189,6 +189,31 @@ void BridgePass::render(const scenegraph::World& world,
                         const Lighting& lighting,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id) {
+    // Screen-space AO for the main bridge view only -- never the comm-set RTT
+    // (a different camera into a different room), and not while this call is
+    // the AO's own normal pre-pass.
+    GLint view_vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, view_vp);
+    const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
+    bool ao_on = false;
+    if (main_bridge && !normal_pass_ && ao_enabled_) {
+        ao_on = ao_.render(camera, view_vp[2], view_vp[3], ao_settings_, [&] {
+            normal_pass_ = true;
+            render(world, camera, pipeline, lookup, lighting,
+                   scenegraph::Pass::Bridge, 0);
+            normal_pass_ = false;
+        });
+    }
+    if (ao_on) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, ao_.ao_texture());
+        glActiveTexture(GL_TEXTURE4);   // pre-pass depth, for the depth-aware filter
+        glBindTexture(GL_TEXTURE_2D, ao_.depth_texture());
+        glBindSampler(4, ao_.raw_sampler());
+        glActiveTexture(GL_TEXTURE0);
+    }
+    const glm::mat4 inv_proj = glm::inverse(camera.proj_matrix());
+
     // Uniforms common to both sub-passes: camera, the bridge ambient and the
     // ceiling downlight (kBridgeLighting, bridge_lighting_tuning.h).
     auto set_frame_uniforms = [&](Shader& s) {
@@ -203,6 +228,16 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_int("u_base_color", 0);
         s.set_int("u_face_b", 2);  // lip-sync second face texture
         s.set_float("u_alpha_test_threshold", 0.5f);
+        // AO: own units (an unset sampler shares unit 0). The AO may be
+        // smaller than the view; the filter maps each fragment through the
+        // view size.
+        s.set_int("u_ao", 3);
+        s.set_int("u_ao_depth", 4);
+        s.set_mat4("u_ao_inv_proj", inv_proj);
+        s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
+                                            static_cast<float>(view_vp[3])));
+        s.set_int("u_ao_on", ao_on ? 1 : 0);
+        s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
     };
 
     // ── Sub-pass A: base geometry, opaque, downlit, alpha-test ─────────────
@@ -300,6 +335,7 @@ void BridgePass::render(const scenegraph::World& world,
         });
 
     glBindVertexArray(0);
+    if (ao_on) glBindSampler(4, 0);   // don't leak the raw sampler to other passes
 }
 
 }  // namespace renderer
