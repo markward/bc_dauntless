@@ -124,22 +124,81 @@ def _run(attacker, charger, ticks=2400):
     return closest
 
 
-def test_a_cadenced_ship_still_clears_a_head_on_charge():
-    """The dodge itself, through the preprocessor path with the cadence live."""
-    pSet, attacker, charger = _scene()
-    closest = _run(attacker, charger)
-    sum_r = attacker.GetRadius() + charger.GetRadius()
-    assert closest > sum_r, (
-        f"cadenced avoidance failed to dodge: closest={closest:.1f} GU, "
-        f"sum_radii={sum_r:.1f} GU")
+# Object-id bases for the head-on sweep: 32 consecutive strides of 97, which
+# cover all 16 _phase_factor buckets several times over (~10 s for both runs).
+HEAD_ON_SWEEP_BASES = [10_000_000 + 97 * i for i in range(32)]
+
+
+def _head_on_closest(delay, base, monkeypatch, pin):
+    """Closest approach of one head-on run on the SHIPPED binding.
+
+    Pins the two things the outcome depends on besides the cadence, so a pair
+    of runs differs ONLY in the cadence: the object-id base (each ship's first
+    reschedule phase, ai_optimized._phase_factor) and the
+    TGPoint3_GetRandomUnitVector stream the SDK scan draws its 8 flee
+    directions from. Unrewound, the stream alone swings a run by +-20 GU.
+    """
+    from engine.appc import ai_optimized
+    from engine.appc.math import reset_random_unit_vector_rng
+    monkeypatch.setattr(ai_optimized, "AVOID_EVADING_UPDATE_DELAY_S", delay)
+    App.g_kSetManager._sets.clear()
+    ca.reset_avoidance_state()
+    reset_random_unit_vector_rng()
+    pin(base)
+    _pSet, attacker, charger = _scene()
+    return _run(attacker, charger)
+
+
+def test_the_cadence_costs_a_head_on_dodge_no_worst_case_separation(
+        monkeypatch, pinned_id_counter):
+    """Differential on the SHIPPED path (SDK scan + phase offset + cadence),
+    against SDK-exact 0.0, over a phase sweep.
+
+    This replaced an absolute single-run check ("closest > sum of radii") that
+    ran the opt-in ENGINE scan on whatever phase the suite's object-id counter
+    happened to give it. Measured 2026-10-08 over 32 pinned bases:
+
+    * engine scan (opt-in, off by default): 8/32 phases graze with the cadence
+      (min 39.94 GU vs 40.0) and 0/32 at 0.0 -- the cadence DOES cost that
+      path its head-on dodge. Open; see docs/engine/perf-cadences-and-latency.md.
+    * shipped SDK scan, stream rewound: 0/32 overlap with the cadence (min
+      40.17) and 5/32 at 0.0 (min 36.18). With the stream left running, about
+      half overlap at EITHER setting. The head-on dodge is marginal on the
+      shipped path whatever the cadence; that is also open, and not this
+      test's claim.
+
+    The claim here is the file's: the cadence must not cost the dodge. Per
+    phase the pair is chaotic (the sweep's per-base differences span -9..+13
+    GU), so the guard is on the WORST case across the sweep.
+    """
+    from engine.appc import ai_optimized
+    # The shipped binding, not the module's opt-in engine scan.
+    monkeypatch.setitem(ai_optimized.OPTIMIZED_PREPROCESSORS, "AvoidObstacles",
+                        ai_optimized._wrap_avoid_obstacles)
+    cadenced = [_head_on_closest(0.25, b, monkeypatch, pinned_id_counter)
+                for b in HEAD_ON_SWEEP_BASES]
+    exact = [_head_on_closest(0.0, b, monkeypatch, pinned_id_counter)
+             for b in HEAD_ON_SWEEP_BASES]
+    start_gap = 260.0
+    assert max(cadenced) < start_gap and max(exact) < start_gap, (
+        "the ships never closed; the scene is not a head-on charge")
+    assert len(set(round(x, 3) for x in cadenced)) > 1, (
+        "every phase gave the same answer; the sweep is not reaching the "
+        "phase offset")
+    assert min(cadenced) >= min(exact), (
+        "the cadence cost the head-on dodge separation: worst cadenced "
+        "closest=%.2f GU vs worst SDK-exact closest=%.2f GU"
+        % (min(cadenced), min(exact)))
 
 
 def _crowd(n=8, ring_r=90.0):
     """N ships on a ring, every one commanded straight at the centre.
 
-    The single-charger scenario dodges from 188 GU after ONE override tick --
-    it clears by such a margin that the cadence never matters, so it cannot
-    test the cadence. A crowd converging on a point is what the 100-ship scene
+    The single-charger scenario evades only briefly, so it says little about
+    SUSTAINED evasion. (It was once thought to clear by such a margin that the
+    cadence never matters; a 2026-10-08 phase sweep showed the engine scan
+    grazing in 8/32 phases with the cadence -- see the head-on test above.)
+    A crowd converging on a point is what the 100-ship scene
     actually looks like: ships evade continuously, re-entering each other's
     check radius as they scatter, which is exactly the state where
     fMinimumUpdateDelay is the knob doing the work.
