@@ -33,6 +33,7 @@ def _make(**overrides):
         set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(),
         set_ai_difficulty=Mock(),
+        set_bridge_quality=Mock(),
         set_fov_rad=Mock(),
         set_shadows=Mock(),
         set_procedural_sky=Mock(),
@@ -82,6 +83,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
         "ai_difficulty": 1,
+        "bridge_quality": 1,
         "fov_deg": 62,
     }
 
@@ -574,6 +576,44 @@ def test_ai_difficulty_is_a_gameplay_focusable():
     assert ("ctrl", "ai_difficulty") in focusables
 
 
+# ---- Bridge rendering quality (Graphics tab) ------------------------------
+
+def test_bridge_quality_click_applies_and_persists():
+    on_change = Mock()
+    p, kw = _make(on_change=on_change)
+    p.open()
+    assert p.dispatch_event("bridge_quality:2") is True
+    kw["set_bridge_quality"].assert_called_once_with(2)
+    assert p._settings.bridge_quality == 2
+    on_change.assert_called_once_with("bridge_quality", 2)
+
+
+def test_bridge_quality_out_of_range_click_clamps():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("bridge_quality:9")
+    kw["set_bridge_quality"].assert_called_once_with(2)
+    assert p._settings.bridge_quality == 2
+
+
+def test_bridge_quality_in_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        fov_deg=70, bridge_quality=1,
+    ))
+    p.open()
+    payload = p.render_payload()
+    assert '"bridge_quality": 1' in payload
+
+
+def test_bridge_quality_ends_the_modern_vfx_group():
+    """Bridge Rendering sits in the Modern VFX group, after Camera Shake and
+    just before the Reset row (Mark, 2026-10-08)."""
+    p, _ = _make()
+    focusables = p._focusables()
+    assert focusables.index(("ctrl", "bridge_quality")) \
+        == focusables.index(("ctrl", "camera_shake")) + 1
+
+
 # ---- Master toggles --------------------------------------------------------
 # One parametrised suite over MASTER_TOGGLES, so adding or re-grouping a master
 # is covered without copying a test block. Members are the applier names, which
@@ -693,7 +733,7 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
     assert ctrls == (["aa_mode", "dust", "fov"] + list(MASTER_KEYS)
-                      + ["camera_shake", "reset_graphics"])
+                      + ["camera_shake", "bridge_quality", "reset_graphics"])
 
 
 def test_space_on_camera_shake_row_toggles():
@@ -755,7 +795,8 @@ def _js_master_keys():
 
 def test_js_graphics_focusables_match_python():
     """configuration_panel.js composes its focusable list the same way Python
-    does — standalones, masters, trailing rows, then the reset row — but by
+    does — standalones, masters, trailing rows, group-end selectors, then the
+    reset row — but by
     hand. If the two drift, keyboard focus highlights one row while Space
     toggles another."""
     import re
@@ -763,6 +804,8 @@ def test_js_graphics_focusables_match_python():
     assert standalone, "CP_GRAPHICS_STANDALONE not found"
     trailing = re.search(r"CP_GRAPHICS_TRAILING = \[(.*?)\];", _js_source(), re.S)
     assert trailing, "CP_GRAPHICS_TRAILING not found"
+    group_end = re.search(r"CP_GRAPHICS_GROUP_END = \[(.*?)\];", _js_source(), re.S)
+    assert group_end, "CP_GRAPHICS_GROUP_END not found"
     resets = re.search(r"CP_RESET_TARGETS = \{(.*?)\};", _js_source(), re.S)
     assert resets, "CP_RESET_TARGETS not found"
     graphics_reset = re.search(r"graphics:\s*'(\w+)'", resets.group(1))
@@ -770,6 +813,7 @@ def test_js_graphics_focusables_match_python():
     js_targets = (re.findall(r"'(\w+)'", standalone.group(1))
                   + _js_master_keys()
                   + re.findall(r"\['(\w+)',", trailing.group(1))
+                  + re.findall(r"'(\w+)'", group_end.group(1))
                   + [graphics_reset.group(1)])
     p, _ = _make()
     assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]

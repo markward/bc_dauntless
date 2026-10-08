@@ -30,6 +30,7 @@ import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine import manual_aim
+from engine import bridge_lighting as _bridge_lighting
 from engine.rocks import far_tier as _far_tier
 from engine.appc.windows import TacticalControlWindow
 from engine.ui.letterbox import LetterboxAnimator
@@ -7999,13 +8000,13 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             tex_abs = [str(p) for p in
                        _paths.game_asset_dirs(_pp.dirname(nif) + "/High")]
         if is_bridge:
-            handle = r.load_model(nif_abs, tex_abs)
+            handle = r.load_model(nif_abs, tex_abs, interior=True)
             iid = r.create_bridge_instance(handle)
         else:
             # A comm/remote set is non-critical: if its NIF or a texture fails
             # to load, log and skip so one bad set can't abort the whole mission.
             try:
-                handle = r.load_model(nif_abs, tex_abs)
+                handle = r.load_model(nif_abs, tex_abs, interior=True)
             except Exception as _e:
                 dev_mode.log_swallowed("comm set load_model %r" % set_name, _e)
                 handle = None
@@ -8037,7 +8038,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             vs_env = _App.g_kModelManager.env_for(vs.nif)
             vs_tex = ([str(p) for p in _paths.game_asset_dirs(vs_env)] if vs_env
                       else [str(p) for p in _paths.game_asset_dirs(DBRIDGE_TEX_REL)])
-            vs_handle = r.load_model(vs_nif_abs, vs_tex)
+            vs_handle = r.load_model(vs_nif_abs, vs_tex, interior=True)
             vs_iid = r.create_bridge_instance(vs_handle)
             r.set_world_transform(vs_iid, IDENTITY_MAT4)
             vs.render_instance = vs_iid
@@ -10285,6 +10286,8 @@ def run(mission_name: Optional[str] = None,
             # set_msaa_samples, and that fan-out lives in the SETTINGS table.
             set_aa_mode=lambda mode: _settings.apply_setting(
                 _settings_ctx, "aa_mode", mode),
+            set_bridge_quality=lambda q: _settings.apply_setting(
+                _settings_ctx, "bridge_quality", q),
             max_msaa_samples=r.max_msaa_samples(),
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_disable_annoying_dialogue=_crew_speech.set_annoying_dialogue_disabled,
@@ -12228,21 +12231,10 @@ def run(mission_name: Optional[str] = None,
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
-            # Red-alert dim: bridge INTERIOR ambient scales to 50% when the
-            # player ship is at red alert. Matches BC's red-alert bridge
-            # lighting (dimmer overall while the red emergency strip lights
-            # pulse — that pulse is deferred work). Sent as a separate scale
-            # (not baked into the ambient) so the comm-set viewscreen feed —
-            # the other ship's room — keeps constant brightness across alert
-            # levels.
-            _bridge_dim = 1.0
-            if player is not None:
-                try:
-                    if player.GetAlertLevel() == 2:  # ShipClass.RED_ALERT
-                        _bridge_dim = 0.5
-                except Exception as _e:
-                    dev_mode.log_swallowed("red-alert bridge-dim probe", _e)
-            r.set_bridge_ambient_scale(_bridge_dim)
+            # Alert-level bridge brightness (engine.bridge_lighting): sent as a
+            # separate scale, not baked into the ambient, so the comm-set
+            # viewscreen feed — another ship's room — keeps constant brightness.
+            r.set_bridge_ambient_scale(_bridge_lighting.player_bridge_ambient_scale(player))
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the

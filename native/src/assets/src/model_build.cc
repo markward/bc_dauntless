@@ -5,6 +5,7 @@
 #include "material_build.h"
 #include "mesh_build.h"
 #include "mesh_upload.h"
+#include "normal_gen.h"
 #include "skeleton_build.h"
 #include "skin_weights.h"
 
@@ -927,6 +928,17 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     };
     std::vector<ShapeVerts> shape_verts_for_sampling;
 
+    // Built shapes wait here until every shape exists, so normals can be
+    // generated across all normal-less shapes together before upload.
+    struct PendingMesh {
+        MeshCpu cpu;
+        std::string shape_name;
+        glm::mat4 to_model{1.0f};
+        bool has_authored_normals = true;
+        std::vector<glm::vec4> source_colours;  // NIF float colours; only for normal-less shapes
+    };
+    std::vector<PendingMesh> pending;
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -1051,7 +1063,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
 
         if (node_index >= 0) {
-            int mesh_idx = static_cast<int>(model.meshes.size());
+            int mesh_idx = static_cast<int>(pending.size());
             model.nodes[node_index].meshes.push_back(mesh_idx);
         }
 
@@ -1076,22 +1088,48 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             shape_verts_for_sampling.push_back(std::move(sv));
         }
 
-        // Avoid copying the CPU vertex data unless retention is requested.
-        // The source shape name rides on the Mesh so hull decals can be
-        // restricted to a shape (apply_decals, and the renderer's per-instance
-        // decal overrides).
+        PendingMesh pm;
+        pm.cpu = std::move(cpu);
+        pm.shape_name = shape->av.obj.name;
+        pm.to_model = shape_verts_for_sampling.back().to_model;
+        pm.has_authored_normals = data->has_normals;
+        if (!data->has_normals && data->has_vertex_colors) {
+            pm.source_colours.reserve(data->vertex_colors.size());
+            for (const auto& c : data->vertex_colors)
+                pm.source_colours.push_back({c.r, c.g, c.b, c.a});
+        }
+        pending.push_back(std::move(pm));
+    }
+    if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
+
+    // Interior sets: shapes authored without normals get them generated
+    // jointly in MODEL space, so seams between shapes smooth (spec
+    // 2026-10-08-bridge-lighting-baseline-design.md §3). Shapes with authored
+    // normals are not handed over and stay bit-for-bit as loaded.
+    if (ctx.generate_missing_normals) {
+        std::vector<NormalGenShape> shapes;
+        for (auto& pm : pending)
+            if (!pm.has_authored_normals)
+                shapes.push_back({&pm.cpu, pm.to_model, std::move(pm.source_colours)});
+        generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+    }
+
+    // Avoid copying the CPU vertex data unless retention is requested.
+    // The source shape name rides on the Mesh so hull decals can be
+    // restricted to a shape (apply_decals, and the renderer's per-instance
+    // decal overrides).
+    for (auto& pm : pending) {
         if (ctx.keep_cpu_data) {
-            Mesh mesh = mesh_upload(MeshCpu(cpu));
-            mesh.set_cpu_data(std::move(cpu));
-            mesh.set_shape_name(shape->av.obj.name);
+            Mesh mesh = mesh_upload(MeshCpu(pm.cpu));
+            mesh.set_cpu_data(std::move(pm.cpu));
+            mesh.set_shape_name(pm.shape_name);
             model.meshes.push_back(std::move(mesh));
         } else {
-            Mesh mesh = mesh_upload(std::move(cpu));
-            mesh.set_shape_name(shape->av.obj.name);
+            Mesh mesh = mesh_upload(std::move(pm.cpu));
+            mesh.set_shape_name(pm.shape_name);
             model.meshes.push_back(std::move(mesh));
         }
     }
-    if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
 
     // SP: sample ~96 MODEL-SPACE hull surface points spread across all shapes,
     // roughly proportional to each shape's vertex count, deterministically

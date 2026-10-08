@@ -166,6 +166,13 @@
     font-size: 14px;
 }
 
+/* The <span> row label used by the segmented, Reset, Gameplay, Controls and
+   Bridges rows. It had no rule, so it fell back to the page's larger default
+   and read like a header beside the .cp-row__label On/Off rows. */
+.cp-label {
+    font-size: 14px;
+}
+
 .cp-row__control {
     display: flex;
     align-items: center;

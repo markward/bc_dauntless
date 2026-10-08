@@ -222,6 +222,12 @@ the list.
     never bound. Removing both reduces surface area; gated on
     confidence that no other content needs them.
 
+    **DONE (bridge lighting baseline):** `lightmap_pass`,
+    `lightmap.{vert,frag}` and `Pipeline::lightmap_shader()` removed
+    ("feat(renderer): bridge ceiling downlight replaces lightmaps; lit
+    surfaces never bloom"). The bridge shader no longer samples the Dark
+    slot either: the ceiling downlight replaced the baked lightmaps.
+
 33. **`CreateAmbientLight` 4th-arg true semantics.** The chosen Phase 1
     interpretation (clamp dimmer to [0, 1]) matches visual expectations
     for stock content; the ground truth (range vs dimmer vs something

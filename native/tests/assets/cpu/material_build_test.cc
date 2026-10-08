@@ -271,51 +271,6 @@ TEST(MaterialBuild, InRangeUvSetNotClamped) {
     EXPECT_EQ(m.stages[i(S::Dark)].uv_set, 1u) << "in-range uv_set must be preserved";
 }
 
-TEST(MaterialBuild, LightmapPassFlagSetForLmFilename) {
-    nif::NiTextureProperty tex;
-    tex.image_link = 7;
-    std::unordered_map<std::uint32_t, int> image_to_texture = {{7, 0}};
-    std::unordered_map<std::uint32_t, std::string> filenames = {
-        {7, "DBridge/door 04a lm.tga"}};
-
-    auto in = basic_inputs();
-    in.texture = &tex;
-    in.image_to_texture = &image_to_texture;
-    in.image_filename_for_link = &filenames;
-    auto m = assets::detail::build_material(in);
-    EXPECT_TRUE(m.lightmap_pass);
-}
-
-TEST(MaterialBuild, LightmapPassFlagFalseForRegularBase) {
-    nif::NiTextureProperty tex;
-    tex.image_link = 5;
-    std::unordered_map<std::uint32_t, int> image_to_texture = {{5, 0}};
-    std::unordered_map<std::uint32_t, std::string> filenames = {
-        {5, "Map 19.tga"}};
-
-    auto in = basic_inputs();
-    in.texture = &tex;
-    in.image_to_texture = &image_to_texture;
-    in.image_filename_for_link = &filenames;
-    auto m = assets::detail::build_material(in);
-    EXPECT_FALSE(m.lightmap_pass);
-}
-
-TEST(MaterialBuild, LightmapPassFlagSetForUnderscoreLmFilename) {
-    nif::NiTextureProperty tex;
-    tex.image_link = 8;
-    std::unordered_map<std::uint32_t, int> image_to_texture = {{8, 0}};
-    std::unordered_map<std::uint32_t, std::string> filenames = {
-        {8, "modder_panel_lm.tga"}};
-
-    auto in = basic_inputs();
-    in.texture = &tex;
-    in.image_to_texture = &image_to_texture;
-    in.image_filename_for_link = &filenames;
-    auto m = assets::detail::build_material(in);
-    EXPECT_TRUE(m.lightmap_pass);
-}
-
 TEST(MaterialBuild, NormalImageBindsToBumpSlotOnly) {
     // A directly-referenced _normal image is a standalone map: like
     // _specular and unlike _glow, it must NOT dual-bind to Base.
