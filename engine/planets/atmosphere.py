@@ -234,7 +234,10 @@ def parse_entry(key: str, entry: dict):
 def resolve_key(set_name: str, obj_name: str, nif_path: str):
     raw = load()
     override = f"{set_name}/{obj_name}"
-    if set_name and override in raw:
+    # A surface-only override carries no air of its own: it inherits the
+    # stem's atmosphere (spec §7), the mirror of surface.resolve_surface_key.
+    entry = raw.get(override) if set_name else None
+    if entry is not None and (not isinstance(entry, dict) or set(entry) - {"surface"}):
         return override
     stem = nif_stem(nif_path)
     return stem if stem in raw else None

@@ -84,6 +84,18 @@ def test_override_with_surface_wins(catalogue):
     assert surf.resolve_surface("Vesuvi6", "Haven", "p.nif").type == "desert"
 
 
+def test_surface_only_override_keeps_stem_atmosphere(catalogue):
+    # Spec §7: an override with no atmosphere fields inherits the stem's air
+    # (the mirror of test_override_without_surface_inherits_stem).
+    catalogue({"p": {"color": "#87B4FF", "thickness": 0.035, "density": 1.0, "limb": 1.0,
+                     "surface": {"type": "ice"}},
+               "Vesuvi6/Haven": {"surface": {"type": "desert"}}})
+    assert atmo.resolve_key("Vesuvi6", "Haven", "p.nif") == "p"
+    a = atmo.resolve("Vesuvi6", "Haven", "p.nif")
+    assert a is not None and a.thickness == pytest.approx(0.035)
+    assert surf.resolve_surface("Vesuvi6", "Haven", "p.nif").type == "desert"
+
+
 def test_seed_is_crc32_of_key(catalogue):
     catalogue({"p": {"atmosphere": False, "surface": {"type": "rocky"}}})
     assert surf.resolve_surface("S", "N", "p.nif").seed == zlib.crc32(b"p")
