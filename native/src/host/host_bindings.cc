@@ -5920,6 +5920,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["name"]   = r.name;
                   d["cpu_ms"] = r.cpu_ms;
                   d["gpu_ms"] = r.gpu_ms;
+                  // False: no GPU query covered this scope (nested under
+                  // GL_TIME_ELAPSED, or no timer). gpu_ms is then NOT MEASURED.
+                  d["gpu_measured"] = r.gpu_measured;
                   d["calls"]  = r.calls;
                   d["depth"]  = r.depth;
                   out.append(std::move(d));
@@ -5932,9 +5935,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict d;
               const auto& t = renderer::frame_timer();
               d["cpu_ms"] = t.frame_cpu_ms();
-              // Whole-frame GPU is first-timestamp-to-last, not the sum of the
-              // scopes: scopes nest, so a sum would double-count.
+              // Whole-frame GPU: first-timestamp-to-last under GL_TIMESTAMP
+              // (scopes nest, so a sum would double-count); the sum of the
+              // sequential top-level spans under GL_TIME_ELAPSED.
               d["gpu_ms"] = t.frame_gpu_ms();
+              using GpuTimer = renderer::FrameTimer::GpuTimer;
+              const GpuTimer timer = t.gpu_timer();
+              d["gpu_timer"] = timer == GpuTimer::Timestamp ? "timestamp"
+                             : timer == GpuTimer::Elapsed   ? "elapsed"
+                                                            : "none";
+              d["gpu_queries"] = t.gpu_queries_active();
+              // What the driver declared (GL_QUERY_COUNTER_BITS), -1 until the
+              // first enabled frame has read it.
+              d["timestamp_bits"] = t.timestamp_bits();
+              d["elapsed_bits"] = t.elapsed_bits();
+              d["timestamp_queries"] = t.timestamp_queries_issued();
               d["frames"] = t.frames_resolved();
               d["enabled"] = t.enabled();
               // Reported, not assumed: a hidden window already runs uncapped,

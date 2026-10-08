@@ -124,6 +124,66 @@ def test_a_dead_gpu_column_is_reported_as_unavailable_not_as_zeros(host):
         assert "GPU TIMING UNAVAILABLE" not in text, text
 
 
+def _expected_timer(timestamp_bits, elapsed_bits):
+    if timestamp_bits > 0:
+        return "timestamp"
+    if elapsed_bits > 0:
+        return "elapsed"
+    return "none"
+
+
+def test_the_gpu_timer_is_chosen_from_the_drivers_counter_bits(host):
+    """The timer is picked from what the driver DECLARES, not discovered by
+    watching zeros come back. Apple's GL declares a 0-bit GL_TIMESTAMP counter
+    and a 32-bit GL_TIME_ELAPSED one (measured 2026-10-08), so this Mac must
+    land on "elapsed"."""
+    host.profiler_set_enabled(True)
+    _run_frames(8)
+    f = host.profiler_frame()
+    assert f["gpu_timer"] == _expected_timer(f["timestamp_bits"],
+                                             f["elapsed_bits"]), f
+    assert f["gpu_queries"] == (f["gpu_timer"] != "none"), f
+
+
+def test_a_zero_bit_timestamp_counter_never_issues_a_timestamp_query(host):
+    """Apple's zeroed GL_TIMESTAMP queries cost 2-6 ms/frame (measured
+    2026-10-03) while measuring nothing. On a driver that declares no
+    timestamp counter not one may be issued -- not even a probe's worth."""
+    host.profiler_set_enabled(True)
+    _run_frames(40)
+    f = host.profiler_frame()
+    if f["timestamp_bits"] == 0:
+        assert f["timestamp_queries"] == 0, f
+    else:
+        assert f["timestamp_queries"] > 0, f
+
+
+def test_time_elapsed_measures_the_top_level_passes_only(host):
+    """GL_TIME_ELAPSED cannot nest, so only the children of `frame` carry a
+    GPU query. Nested rows keep their CPU time and are flagged unmeasured
+    (the report prints "-"), never reported as a 0.000 that reads as free."""
+    host.profiler_set_enabled(True)
+    _run_frames(40)
+    f = host.profiler_frame()
+    scopes = host.profiler_scopes()
+    assert scopes
+    if f["gpu_timer"] == "timestamp":
+        assert all(s["gpu_measured"] for s in scopes), scopes
+        return
+    if f["gpu_timer"] == "none":
+        assert not any(s["gpu_measured"] for s in scopes), scopes
+        return
+
+    for s in scopes:
+        assert s["gpu_measured"] == (s["depth"] <= 1), s
+        if not s["gpu_measured"]:
+            assert s["gpu_ms"] == 0.0, s
+    # The probe saw steady non-zero spans; an empty headless frame still
+    # clears and resolves, so the whole frame cannot be 0 if it is measured.
+    assert f["gpu_ms"] > 0.0, f
+    assert any(s["gpu_ms"] > 0.0 for s in scopes if s["depth"] == 1), scopes
+
+
 def test_call_counts_are_per_frame_not_cumulative(host):
     """`calls` is the raw count from the last resolved frame. If it grew with
     frame count it would be a running total wearing a per-frame label."""
