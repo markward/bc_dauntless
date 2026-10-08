@@ -6,6 +6,7 @@
 #include "gl_fixture.h"
 
 #include <filesystem>
+#include <glm/glm.hpp>
 #include "support/content_root.h"
 
 namespace fs = std::filesystem;
@@ -209,4 +210,40 @@ TEST_F(DBridgeIntegration, MaterialLightmapPassDistribution) {
                  model->meshes.size(), meshes_attached, model->nodes.size(),
                  zero_index, zero_vao, no_material);
     EXPECT_EQ(meshes_attached, static_cast<int>(model->meshes.size()));
+}
+
+namespace {
+fs::path dbridge_nif() { return test_support::game_root() / "data/Models/Sets/DBridge/Dbridge.NIF"; }
+fs::path dbridge_tex() { return test_support::game_root() / "data/Models/Sets/DBridge/High"; }
+bool dbridge_available() {
+    return fs::is_regular_file(dbridge_nif()) && fs::is_directory(dbridge_tex());
+}
+}  // namespace
+
+// Interior loads generate normals for every shape DBridge ships without
+// them (spec 2026-10-08-bridge-lighting-baseline-design.md §3).
+TEST_F(DBridgeIntegration, InteriorLoadGeneratesUnitNormalsForEveryShape) {
+    if (!dbridge_available()) GTEST_SKIP() << "BC bridge asset not available";
+    assets::AssetCache::Config cfg; cfg.keep_cpu_data = true;
+    assets::AssetCache cache(std::move(cfg));
+    auto m = cache.load(dbridge_nif(), {dbridge_tex()}, {}, {}, 1.0f, false, /*interior=*/true);
+    ASSERT_NE(m, nullptr);
+    for (const auto& mesh : m->meshes) {
+        const auto& cpu = *mesh.cpu_data();
+        for (const auto& v : cpu.vertices)
+            ASSERT_NEAR(glm::length(v.normal), 1.0f, 1e-3f) << mesh.shape_name();
+    }
+}
+
+TEST_F(DBridgeIntegration, NonInteriorLoadLeavesNormalsAsAuthored) {
+    if (!dbridge_available()) GTEST_SKIP() << "BC bridge asset not available";
+    assets::AssetCache::Config cfg; cfg.keep_cpu_data = true;
+    assets::AssetCache cache(std::move(cfg));
+    auto m = cache.load(dbridge_nif(), {dbridge_tex()}, {}, {}, 1.0f, false, /*interior=*/false);
+    ASSERT_NE(m, nullptr);
+    std::size_t nonzero = 0;
+    for (const auto& mesh : m->meshes)
+        for (const auto& v : mesh.cpu_data()->vertices)
+            if (glm::length(v.normal) > 1e-6f) ++nonzero;
+    EXPECT_EQ(nonzero, 0u) << "DBridge ships no normals; a non-interior load must not invent any";
 }
