@@ -123,8 +123,8 @@ at load (ships share the material code); the bridge shader never samples it.
 |---|---|---|
 | `down_top` | 1.0 | spike iteration 1 |
 | `down_bottom` | 0.25 | spike iteration 1 |
-| `ao_radius` | 24 (view-space units) | Mark's live pick |
-| `ao_strength` | 2.0 | Mark's live pick |
+| `ao_radius` | 30 (view-space units) | Mark's live pick on the production branch (was 24 on the spike) |
+| `ao_strength` | 1.8 | Mark's live pick on the production branch (was 2.0 on the spike) |
 | `ao_bias` | 0.5 (view-space units) | spike default |
 | `diffuse_max` | 0.88 | under bloom threshold 0.9 |
 
@@ -187,7 +187,8 @@ on `ai_difficulty` / `aa_mode`:
   live engine value via a new `bridge_quality()` getter;
 - the native side starts at Medium, so with no stored key the applier is never
   called (the absent-key rule) and boot is Medium;
-- shown in the configuration panel's Graphics tab as a three-way choice
+- shown in the configuration panel's Graphics tab, as the last row of the
+  Modern VFX group (after Camera Shake), as a three-way choice
   "Bridge rendering: Low / Medium / High".
 
 **Developer Options** entry (`--developer` only, not persisted) cycling the
