@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md` — this plan implements §4 (camera & selection), §7 (persistence) and the Selection + Material panes of §8. Programme step 1 of §5.
 
+**Out of scope (later plans):** rendering the material override (bridge PBR, plan 2); the Emitter, Profile and Preview panes, pipette and the `BridgeEmitterTarget` adapter (emitter plan, spec §6/§8).
+
 ## Global Constraints
 
 - ⛔ Never run `git checkout -- <path>`, `git checkout .`, `git restore`, `git stash`, `git clean`, `git reset --hard`, `git add -A` / `git add .`. Stage with explicit pathspecs. To mutate a file temporarily: `cp f /tmp/bak` → edit → test → `cp /tmp/bak f` → `diff f /tmp/bak`.
