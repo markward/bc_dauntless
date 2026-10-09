@@ -582,3 +582,42 @@ def test_revert_without_an_instance_does_not_raise(env):
     # into None.
     st = payload(p)
     assert st["selected"] is not None
+
+
+# ── Final-review fix wave, finding 6: closing the editor with UNSAVED edits
+# must not leave them rendered (they would stay until the editor reopened or
+# the bridge reloaded). close() re-pushes the last saved/loaded document.
+
+def test_close_with_unsaved_edits_repushes_the_saved_doc(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    loaded = rt.pushes[-1]                       # the attach push: the loaded doc
+    p.dispatch_event("material:metalness:0.8")
+    assert '"metalness": 0.8' in rt.pushes[-1][0]
+    p.close()
+    assert rt.pushes[-1] == loaded
+
+
+def test_close_after_save_repushes_the_saved_not_the_loaded_doc(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("material:metalness:0.8")
+    p.dispatch_event("save")
+    saved = rt.pushes[-1]
+    p.dispatch_event("material:metalness:0.3")
+    p.close()
+    assert rt.pushes[-1] == saved
+    assert '"metalness": 0.8' in rt.pushes[-1][0]
+
+
+def test_close_with_nothing_unsaved_pushes_nothing(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("material:metalness:0.8")
+    p.dispatch_event("save")
+    n = len(rt.pushes)
+    p.close()
+    assert len(rt.pushes) == n

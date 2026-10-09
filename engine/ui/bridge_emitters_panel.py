@@ -69,6 +69,7 @@ class BridgeEmittersPanel(Panel):
         self._load = None
         self._doc = None
         self._saved_text = None
+        self._saved_doc = None         # deep copy of the last saved/loaded doc
         self._undo = []
         self._selected = None          # ShapeIdentity
         self._last_hit = None          # (point, normal) from the last CLICK trace
@@ -97,8 +98,21 @@ class BridgeEmittersPanel(Panel):
         if self._rmb and h is not None:
             h.set_cursor_locked(False)
         self._io.set_bridge_highlight(None, -1, -1)
+        self._revert_unsaved_render()
         self._reset_session()
         self.visible = False
+
+    def _revert_unsaved_render(self):
+        """Unsaved edits are pushed live (_after_change); closing without
+        saving must not leave them rendered until the editor reopens or the
+        bridge reloads. Re-push the last SAVED/loaded document instead. The
+        live doc is mutated in place, so the snapshot is a deep copy."""
+        if (self._runtime is None or not self._info or self._doc is None
+                or self._saved_doc is None
+                or lw.dumps(self._doc) == self._saved_text):
+            return
+        matched = ld.match_shapes(self._saved_doc, self._info["meshes"])[0]
+        self._runtime.push(copy.deepcopy(self._saved_doc), matched)
 
     def handle_key_esc(self) -> None:
         if self._visible:
@@ -218,6 +232,7 @@ class BridgeEmittersPanel(Panel):
                     self._status = "; ".join(warnings)
         self._doc = self._load.doc
         self._saved_text = lw.dumps(self._doc)
+        self._saved_doc = copy.deepcopy(self._doc)
         self._undo = []
         self._after_change()
 
@@ -439,6 +454,7 @@ class BridgeEmittersPanel(Panel):
             return
         self._load = ld.LoadResult(self._doc, path, None)
         self._saved_text = lw.dumps(self._doc)
+        self._saved_doc = copy.deepcopy(self._doc)
         self._status = f"Saved {path.name}"
 
     def _attach_reload(self):
