@@ -283,19 +283,59 @@ def _best_monotone_matching(weights, nb):
     return dict(reversed(chain)), opt_cnt
 
 
-def _window(corr, e, nb):
+def _window(corr, e, nb, anchors):
     """Open base-index interval an unmatched edit vertex `e` may take
-    without breaking order."""
-    lo = max((b for k, b in enumerate(corr[:e]) if b is not None), default=-1)
-    hi = min((b for b in corr[e + 1:] if b is not None), default=nb)
+    without breaking the order of the non-anchored matches (anchors are
+    position-certain and may sit in any order)."""
+    lo = max((b for k, b in enumerate(corr[:e]) if b is not None and k not in anchors),
+             default=-1)
+    hi = min((b for k, b in enumerate(corr[e + 1:], e + 1)
+              if b is not None and k not in anchors), default=nb)
     return lo, hi
 
 
-def _propagate_by_faces(base, edit, corr, used):
+def _base_face_keys(base):
+    return {frozenset(v for v, _ in f): _face_key(f) for f in base.faces}
+
+
+def _flips(face_keys, mapped):
+    """True if `mapped` (base indices, edit winding) is a base face's vertex
+    set wound the other way."""
+    key = face_keys.get(frozenset(mapped))
+    if key is None or len(set(mapped)) != len(mapped):
+        return False
+    k = mapped.index(min(mapped))
+    return tuple(mapped[k:] + mapped[:k]) != key
+
+
+def _drop_flipping_pairs(base, edit, corr, used, anchors):
+    """A pairing under which an edit face lands on a base face wound the
+    other way is not a survivor (b0395: a new vertex below a deleted one
+    shares its neighbours). Unpair the non-anchored corners of such faces
+    -- their faces are then re-derived as added -- until none remain. A
+    flip among anchored corners alone is left for diff_shape to refuse."""
+    face_keys = _base_face_keys(base)
+    changed = True
+    while changed:
+        changed = False
+        for f in edit.faces:
+            vs = [v for v, _ in f]
+            mapped = [corr[v] for v in vs]
+            if None in mapped or not _flips(face_keys, mapped):
+                continue
+            for v in vs:
+                if v not in anchors and corr[v] is not None:
+                    used.discard(corr[v])
+                    corr[v] = None
+                    changed = True
+
+
+def _propagate_by_faces(base, edit, corr, used, anchors):
     """Match an unmatched edit vertex through a face whose other corners are
     matched: if every such face maps onto base faces that add exactly one
     unmatched base vertex inside its order window, and only one, take it."""
     nb = len(base.positions)
+    face_keys = _base_face_keys(base)
     base_faces_of = {}
     for f in base.faces:
         fs = frozenset(v for v, _ in f)
@@ -307,7 +347,7 @@ def _propagate_by_faces(base, edit, corr, used):
         for e in range(len(corr)):
             if corr[e] is not None:
                 continue
-            lo, hi = _window(corr, e, nb)
+            lo, hi = _window(corr, e, nb, anchors)
             cands = set()
             for f in edit.faces:
                 vs = [v for v, _ in f]
@@ -320,7 +360,8 @@ def _propagate_by_faces(base, edit, corr, used):
                 for bf in base_faces_of.get(others[0], ()):
                     if len(bf) == len(vs) and img < bf:
                         (b,) = bf - img
-                        if b not in used and lo < b < hi:
+                        mapped = [b if v == e else corr[v] for v in vs]
+                        if b not in used and lo < b < hi and not _flips(face_keys, mapped):
                             cands.add(b)
             if len(cands) == 1:
                 b = cands.pop()
@@ -329,13 +370,13 @@ def _propagate_by_faces(base, edit, corr, used):
                 changed = True
 
 
-def _fill_equal_gaps(base, edit, corr, used):
+def _fill_equal_gaps(base, edit, corr, used, anchors):
     """A run of unmatched edit vertices facing as many unmatched base
     vertices in its order window is taken in order -- but only if every edit
     face touching the run then maps onto a base face (a pure move, e.g. a
     whole island translated). Anything else stays new/deleted."""
     nb = len(base.positions)
-    base_sets = {frozenset(v for v, _ in f) for f in base.faces}
+    face_keys = _base_face_keys(base)
     e = 0
     while e < len(corr):
         if corr[e] is not None:
@@ -344,7 +385,7 @@ def _fill_equal_gaps(base, edit, corr, used):
         run = [e]
         while run[-1] + 1 < len(corr) and corr[run[-1] + 1] is None:
             run.append(run[-1] + 1)
-        lo, hi = _window(corr, e, nb)
+        lo, hi = _window(corr, e, nb, anchors)
         free = [b for b in range(lo + 1, hi) if b not in used]
         if len(free) == len(run):
             trial = list(corr)
@@ -352,47 +393,124 @@ def _fill_equal_gaps(base, edit, corr, used):
                 trial[k] = b
             touched = set(run)
             faces = [f for f in edit.faces if touched.intersection(v for v, _ in f)]
-            if faces and all(frozenset(trial[v] for v, _ in f) in base_sets
-                             and None not in (trial[v] for v, _ in f) for f in faces):
+            if faces and all(None not in [trial[v] for v, _ in f]
+                             and frozenset(trial[v] for v, _ in f) in face_keys
+                             and not _flips(face_keys, [trial[v] for v, _ in f])
+                             for f in faces):
                 corr[:] = trial
                 used.update(free)
         e = run[-1] + 1
 
 
+def _anchors(base, edit):
+    """edit -> base pairs whose positions coincide one-to-one in BOTH
+    directions (the only base vertex at the edit vertex's position, and the
+    only edit vertex at that base vertex's). Order-free: separate/join can
+    return survivors in any order, and position alone settles these."""
+    bgrid, egrid = _grid(base.positions), _grid(edit.positions)
+    out = {}
+    for e, ep in enumerate(edit.positions):
+        bs = _near(bgrid, base.positions, ep)
+        if len(bs) == 1 and _near(egrid, edit.positions, base.positions[bs[0]]) == [e]:
+            out[e] = bs[0]
+    return out
+
+
+def _proximity(base, edit, weights):
+    """+4 on a scoring pair when each is the other's strictly nearest
+    candidate: a survivor that moved a little beats a new vertex that merely
+    shares more neighbours with the original (b0688). Ties earn nothing."""
+    def d2(e, b):
+        return sum((x - y) ** 2 for x, y in zip(edit.positions[e], base.positions[b]))
+    best_b, best_e = {}, {}
+    for e, w in weights.items():
+        for b in w:
+            d = d2(e, b)
+            for key, other, table in ((e, b, best_b), (b, e, best_e)):
+                cur = table.get(key)
+                if cur is None or d < cur[0]:
+                    table[key] = (d, other, False)
+                elif d == cur[0] and other != cur[1]:
+                    table[key] = (d, cur[1], True)          # tied: no nearest
+    for e, w in weights.items():
+        for b in w:
+            nb_, ne_ = best_b[e], best_e[b]
+            if nb_[1] == b and ne_[1] == e and not nb_[2] and not ne_[2]:
+                w[b] += 4
+
+
 def correspond(block, base, edit):
     """edit vertex index -> base vertex index, or None for a NEW vertex
-    (spec §5.2). Blender keeps survivors in relative order (also across
-    deletion) and appends new vertices, so this is the order-preserving
-    matching that maximises agreement (same position, shared neighbours),
-    then extended through faces and equal-size gaps. Refuses ("ambiguous
-    correspondence") when the best matching is not unique, or when an
-    unmatched edit vertex sits on an unmatched base vertex -- it could
-    equally be that survivor or a new vertex. Never guesses."""
+    (spec §5.2). Pairs whose positions coincide one-to-one are anchored in
+    any order (`_anchors`). The rest (moved survivors, new and deleted
+    vertices, non-unique position claims) are paired by the order-preserving
+    matching that maximises agreement -- Blender keeps survivors in relative
+    order and appends new vertices -- then extended through faces and
+    equal-size gaps. Refuses ("ambiguous correspondence") when that best
+    matching is not unique. Never guesses."""
     nb, ne = len(base.positions), len(edit.positions)
     if ne == nb and all(_same_pos(p, q) for p, q in zip(base.positions, edit.positions)):
         return list(range(nb))
-    matched, count = _best_monotone_matching(_pair_weights(base, edit), nb)
+    anchored = _anchors(base, edit)
+    taken = set(anchored.values())
+    weights = {}
+    for e, w in _pair_weights(base, edit).items():
+        if e in anchored:
+            continue
+        w = {b: v for b, v in w.items() if b not in taken}
+        if w:
+            weights[e] = w
+    _proximity(base, edit, weights)
+    matched, count = _best_monotone_matching(weights, nb)
     if count > 1:
-        raise ShapeDiffError(
-            f"block {block}: ambiguous correspondence -- more than one way to pair "
-            "the edited vertices with the originals scores best, so which "
-            "originals survived can't be told; refused rather than guessed")
-    corr = [matched.get(e) for e in range(ne)]
-    used = set(matched.values())
-    _propagate_by_faces(base, edit, corr, used)
-    _fill_equal_gaps(base, edit, corr, used)
+        matched = _certain_pairs(block, base, edit, weights, matched)
+    corr = [anchored.get(e, matched.get(e)) for e in range(ne)]
+    used = taken | set(matched.values())
+    anchors = set(anchored)
+    _drop_flipping_pairs(base, edit, corr, used, anchors)
+    _propagate_by_faces(base, edit, corr, used, anchors)
+    _fill_equal_gaps(base, edit, corr, used, anchors)
+    _refuse_unsettled_originals(block, base, edit, corr, used, anchors)
+    return corr
+
+
+def _ambiguous(block, why):
+    return ShapeDiffError(f"block {block}: ambiguous correspondence -- {why}; "
+                          "refused rather than guessed")
+
+
+def _certain_pairs(block, base, edit, weights, matched):
+    """The best matching is not unique: keep only the pairs every optimal
+    matching shares (dropping one lowers the optimum). The others stay
+    unpaired -- new/deleted -- which re-derives their faces exactly; but a
+    contested pair that sits on the same position is a claim nothing else
+    can settle, so that is refused."""
+    def total(m):
+        return sum(weights[e][b] for e, b in m.items())
+    opt = total(matched)
+    keep = {}
+    for e, b in matched.items():
+        trial = {k: ({c: v for c, v in w.items() if c != b} if k == e else w)
+                 for k, w in weights.items()}
+        if total(_best_monotone_matching(trial, len(base.positions))[0]) < opt:
+            keep[e] = b
+        elif _same_pos(edit.positions[e], base.positions[b]):
+            raise _ambiguous(block, f"edit vertex {e} at {tuple(edit.positions[e])} "
+                                    "sits on more than one original that could have survived")
+    return keep
+
+
+def _refuse_unsettled_originals(block, base, edit, corr, used, anchors):
+    """An original left unpaired at the position of a non-anchored pair's
+    edit vertex: which of the coincident originals survived is not settled."""
     grid = _grid(base.positions)
     for e, b in enumerate(corr):
-        if b is not None:
+        if b is None or e in anchors:
             continue
-        clash = [c for c in _near(grid, base.positions, edit.positions[e]) if c not in used]
-        if clash:
-            raise ShapeDiffError(
-                f"block {block}: ambiguous correspondence -- edit vertex {e} at "
-                f"{tuple(edit.positions[e])} could be the surviving original "
-                f"(base vertex {clash[0]}) or a new vertex; vertex order changed "
-                "(separate/join?) -- re-export without reordering")
-    return corr
+        loose = [c for c in _near(grid, base.positions, edit.positions[e]) if c not in used]
+        if loose:
+            raise _ambiguous(block, f"edit vertex {e} at {tuple(edit.positions[e])} could be "
+                                    f"original {b} or {loose[0]} (coincident)")
 
 
 def _by_vertex_set(faces):
@@ -661,6 +779,14 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     add = _added_triangles(block, shape, ids, edit, added_faces, final_local, uvs,
                            moved, added, pos_of)
     albedo = _albedo_op(block, base, edit, texture_dirs)
+    # A move or UV edit on an original no surviving or added triangle uses
+    # renders nothing: a dead record (e.g. a survivor every face of which was
+    # re-added with new UVs, as split vertices).
+    gone = set(remove)
+    live = {v for t, tri in enumerate(shape["triangles"]) if t not in gone for v in tri}
+    live |= {i for tri in add for i in tri}
+    moved = {o: p for o, p in moved.items() if o in live}
+    uvs = {o: uv for o, uv in uvs.items() if o in live}
     if not moved and not uvs and not remove and not add and albedo is None:
         return None
     moves, uv_out = {}, {}

@@ -1335,23 +1335,114 @@ def test_correspondence_appends_new_vertices_as_none(tmp_path):
     assert match.correspond(11, base, edit) == [0, 1, 2, 3, None]
 
 
-def test_correspondence_refuses_a_survivor_reordered_past_others(tmp_path):
-    # Separate + join moved original L0 to the end: it could equally be the
-    # base vertex at that position or a new one -- refuse, never guess.
+def test_correspondence_follows_survivors_reordered_by_separate_and_join(tmp_path):
+    # Separate + join moved original L0 to the end. Every vertex still sits
+    # on exactly one base vertex (and vice versa): those pairs are anchored
+    # whatever their order, so the reorder is read as no change at all.
     s = _seam_shape()
     base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
     perm = list(range(1, len(base.positions))) + [0]
-    with pytest.raises(ShapeDiffError, match="ambiguous correspondence"):
-        match.correspond(11, base, _permute(base, perm))
+    edit = _permute(base, perm)
+    assert match.correspond(11, base, edit) == perm
+    assert match.diff_shape(s, base, edit) is None
 
 
-def test_correspondence_refuses_a_tie_between_two_candidate_survivors():
-    # Two triangles share edge X-Y; one apex was deleted and the other moved:
-    # either apex could be the survivor.
+def _cove_like():
+    """b0395 (cove_graphic) in miniature: two columns of three vertices, A at
+    x=1 (base 1, 0, 5 bottom to top), B at x=0 (base 2, 3, 4). Mark deleted
+    the middle row (base 0 and 3), extended both columns down and up with new
+    vertices, and joined the strip back -- so the survivors return in a
+    swapped order: B-bottom, A-bottom, ..., A-top, B-top."""
+    base = _with([(1, 0, 2), (1, 0, 1), (0, 0, 1), (0, 0, 2), (0, 0, 3), (1, 0, 3)],
+                 [[(0, (0, .5)), (1, (0, 1)), (2, (1, 1))], [(0, (0, .5)), (2, (1, 1)), (3, (1, .5))],
+                  [(4, (1, 0)), (5, (0, 0)), (0, (0, .5))], [(4, (1, 0)), (0, (0, .5)), (3, (1, .5))]])
+    edit = _with([(0, 0, 1), (1, 0, 1), (1, 0, 0), (0, 0, 0),
+                  (1, 0, 4), (1, 0, 3), (0, 0, 3), (0, 0, 4)],
+                 [[(0, (1, 1)), (1, (0, 1)), (2, (0, 1.5))], [(0, (1, 1)), (2, (0, 1.5)), (3, (1, 1.5))],
+                  [(4, (0, -.5)), (5, (0, 0)), (6, (1, 0))], [(4, (0, -.5)), (6, (1, 0)), (7, (1, -.5))],
+                  [(0, (1, 1)), (6, (1, 0)), (5, (0, 0)), (1, (0, 1))]])
+    return base, edit
+
+
+def test_correspondence_anchors_coincident_survivors_in_any_order():
+    base, edit = _cove_like()
+    assert match.correspond(395, base, edit) == [2, 1, None, None, None, 5, 4, None]
+
+
+def test_cove_like_rework_diffs_to_removals_and_ear_clipped_additions():
+    base, edit = _cove_like()
+    s = {"block": 395, "parent": "cove graphic", "hidden": False,
+         "vertices": list(base.positions),
+         "uvs": [(0, .5), (0, 1), (1, 1), (1, .5), (1, 0), (0, 0)],
+         "colors": [(1, 1, 1, 1)] * 6, "uvs1": [],
+         "triangles": [(0, 1, 2), (0, 2, 3), (4, 5, 0), (4, 0, 3)],
+         "textures": ["Map 1.tga"], "world": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]}
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [0, 1, 2, 3]
+    assert len(e["add_triangles"]) == 6                      # 4 triangles + a quad clipped in 2
+    assert len(e["add_vertices"]) == 4                       # the four new corners
+    assert e["moves"] == [] and e["uvs"] == []
+
+
+def test_correspondence_prefers_the_nearer_candidate_over_connectivity_alone():
+    # b0688 (Lcar_02) in miniature: the top edge (base 2, 3) moved down, and
+    # a new column through the middle split the quad. The new bottom
+    # midpoint shares more neighbours with base 2 than moved base 2 does,
+    # but moved base 2 is far nearer to where it was.
+    base = _with([(1, 0, 0), (-1, 0, 0), (-1, 0, 2), (1, 0, 2)],
+                 [[(0, (1, 1)), (1, (0, 1)), (2, (0, 0))], [(0, (1, 1)), (2, (0, 0)), (3, (1, 0))]])
+    edit = _with([(1, 0, 0), (-1, 0, 0), (0, 0, 0), (-1, 0, 1.2), (1, 0, 1.2), (0, 0, 1.2)],
+                 [[(3, (0, 0)), (5, (.5, 0)), (2, (.5, 1)), (1, (0, 1))],
+                  [(5, (.5, 0)), (4, (1, 0)), (0, (1, 1)), (2, (.5, 1))]])
+    assert match.correspond(688, base, edit) == [0, 1, None, 2, 3, None]
+
+
+def test_moves_and_uvs_on_originals_no_triangle_uses_are_dropped(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _copy(base)
+    del edit.faces[_face_on(base, sliver)]
+    k = _local(base, (6, 0, 0))                     # original 3: in sliver triangles only
+    edit.positions[k] = (6.0, 0.5, 0.0)             # moved, and re-used ONLY with a new UV
+    edit.faces.append([_corner(base, (5, 0, 0), (0.5, 0.0)), (k, (0.77, 0.77)),
+                       _corner(base, (2, 0, 0), (0.2, 0.0))])
+    assert match.correspond(175, base, edit)[k] == k
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [2, 5, 6]
+    assert e["moves"] == []                         # nothing renders original 3 any more
+    assert _added_pos(s, e) == [pytest.approx((6.0, 0.5, 0.0))]
+    assert e["add_triangles"] == [(2, 10, 7)]
+
+
+def test_correspondence_leaves_a_tie_between_two_candidate_survivors_unpaired():
+    # Two triangles on edge X-Y wound the same way (a fold); one apex was
+    # deleted and the other moved to a point equally far from both: either
+    # could be the survivor, so neither is -- the vertex is new and both
+    # apexes deleted (the faces are re-derived either way; nothing guessed).
+    base = _with([(0, 0, 0), (1, 0, 0), (0.5, 1, 0), (0.5, -1, 0)],
+                 [[(0, None), (1, None), (2, None)], [(0, None), (1, None), (3, None)]])
+    edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 0, 1)],
+                 [[(0, None), (1, None), (2, None)]])
+    assert match.correspond(5, base, edit) == [0, 1, None]
+
+
+def test_correspondence_tie_is_broken_by_face_winding():
+    # Same, but the deleted apex's face was wound the other way: only the
+    # first apex keeps the kept face's winding, so it is the survivor.
     base = _with([(0, 0, 0), (1, 0, 0), (0.5, 1, 0), (0.5, -1, 0)],
                  [[(0, None), (1, None), (2, None)], [(1, None), (0, None), (3, None)]])
-    edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 2, 0)],
+    edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 0, 1)],
                  [[(0, None), (1, None), (2, None)]])
+    assert match.correspond(5, base, edit) == [0, 1, 2]
+
+
+def test_correspondence_refuses_a_vertex_on_two_coincident_originals():
+    # Base 2 and 3 sit within POS_TOL of each other (a weld-boundary straddle)
+    # and one of them was deleted: which one survived is a position claim
+    # nothing can settle.
+    base = _with([(0, 0, 0), (1, 0, 0), (0.5, 1, 0), (0.5, 1.00005, 0)],
+                 [[(0, None), (1, None), (2, None)], [(1, None), (0, None), (3, None)]])
+    edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 1, 0)], [[(0, None), (1, None), (2, None)]])
     with pytest.raises(ShapeDiffError, match="ambiguous correspondence"):
         match.correspond(5, base, edit)
 
