@@ -456,6 +456,11 @@ std::string validate_edit(const nif::File& file, const ShapeEdit& e,
     if (!d->has_vertices || d->vertices.size() != d->num_vertices)
         return prefix + "shape vertex array inconsistent";
     if (d->uv_sets.empty()) return prefix + "shape has no UV set";
+    for (std::size_t k = 0; k < d->uv_sets.size(); ++k)
+        if (d->uv_sets[k].size() != d->num_vertices)
+            return prefix + "uv set " + std::to_string(k) + " size mismatch";
+    if (d->has_vertex_colors && d->vertex_colors.size() != d->num_vertices)
+        return prefix + "vertex color size mismatch";
     if (d->num_vertices != e.orig_vertex_count)
         return prefix + "original vertex count mismatch";
     if (d->num_triangles != e.orig_triangle_count ||
@@ -464,10 +469,27 @@ std::string validate_edit(const nif::File& file, const ShapeEdit& e,
 
     const std::size_t final_v = std::size_t{e.orig_vertex_count} + e.add_vertices.size();
     if (final_v > 65535) return prefix + "final vertex count exceeds 65535";
-    for (const auto& [i, p] : e.moves)
+    auto finite2 = [](const std::array<float, 2>& a) {
+        return std::isfinite(a[0]) && std::isfinite(a[1]);
+    };
+    auto finite3 = [](const std::array<float, 3>& a) {
+        return std::isfinite(a[0]) && std::isfinite(a[1]) && std::isfinite(a[2]);
+    };
+    auto finite4 = [](const std::array<float, 4>& a) {
+        return std::isfinite(a[0]) && std::isfinite(a[1]) && std::isfinite(a[2]) && std::isfinite(a[3]);
+    };
+    for (const auto& [i, p] : e.moves) {
         if (i >= e.orig_vertex_count) return prefix + "move index out of range";
-    for (const auto& [i, uv] : e.uvs)
+        if (!finite3(p)) return prefix + "non-finite move position";
+    }
+    for (const auto& [i, uv] : e.uvs) {
         if (i >= e.orig_vertex_count) return prefix + "uv index out of range";
+        if (!finite2(uv)) return prefix + "non-finite uv value";
+    }
+    for (const auto& av : e.add_vertices) {
+        if (!finite3(av.pos) || !finite2(av.uv0) || !finite2(av.uv1) || !finite4(av.color))
+            return prefix + "non-finite added vertex field";
+    }
 
     std::vector<bool> removed(e.orig_triangle_count, false);
     for (std::uint16_t t : e.remove_triangles) {
