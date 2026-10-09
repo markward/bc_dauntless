@@ -1,0 +1,87 @@
+// native/tests/renderer/bridge_pbr_test.cc
+//
+// CPU twin of bridge.frag's PBR path (spec 2026-10-08-bridge-emitters §9):
+// every formula the shader uses is pinned here, so a shader edit that drifts
+// from these is a review finding, and the frame tests can assert against
+// these values.
+#include <gtest/gtest.h>
+#include <renderer/bridge_pbr.h>
+#include <renderer/bridge_lighting_tuning.h>
+#include <renderer/bloom_pass.h>
+
+using namespace renderer;
+
+TEST(BridgePbr, EncodeDecodeRoundTrip) {
+    const glm::vec3 c{0.1f, 0.5f, 0.9f};
+    const glm::vec3 r = pbr::encode(pbr::decode(c));
+    EXPECT_NEAR(r.x, c.x, 1e-5f); EXPECT_NEAR(r.y, c.y, 1e-5f); EXPECT_NEAR(r.z, c.z, 1e-5f);
+}
+
+TEST(BridgePbr, GgxNdfPeaksAtNormalAndNarrowsWhenSmooth) {
+    EXPECT_GT(pbr::D_ggx(1.0f, 0.2f), pbr::D_ggx(1.0f, 0.8f));
+    EXPECT_GT(pbr::D_ggx(1.0f, 0.2f), pbr::D_ggx(0.9f, 0.2f));
+}
+
+TEST(BridgePbr, FresnelIsF0HeadOnAndOneAtGrazing) {
+    const glm::vec3 f0{0.04f};
+    EXPECT_NEAR(pbr::F_schlick(1.0f, f0).x, 0.04f, 1e-6f);
+    EXPECT_NEAR(pbr::F_schlick(0.0f, f0).x, 1.0f, 1e-6f);
+}
+
+TEST(BridgePbr, MetalTakesItsF0FromTheAlbedo) {
+    const glm::vec3 a{0.9f, 0.5f, 0.1f};
+    EXPECT_EQ(pbr::f0_for(a, 1.0f), a);
+    EXPECT_EQ(pbr::f0_for(a, 0.0f), glm::vec3(0.04f));
+}
+
+TEST(BridgePbr, SpotFalloffIsWindowedInverseSquare) {
+    EXPECT_FLOAT_EQ(pbr::spot_falloff(0.0f, 100.0f), 1.0f);
+    EXPECT_FLOAT_EQ(pbr::spot_falloff(100.0f, 100.0f), 0.0f);
+    EXPECT_FLOAT_EQ(pbr::spot_falloff(150.0f, 100.0f), 0.0f);
+    EXPECT_GT(pbr::spot_falloff(10.0f, 100.0f), pbr::spot_falloff(20.0f, 100.0f));
+}
+
+TEST(BridgePbr, SpotConeIsOneInsideZeroOutside) {
+    const float ci = std::cos(glm::radians(30.0f)), co = std::cos(glm::radians(60.0f));
+    EXPECT_FLOAT_EQ(pbr::spot_cone(1.0f, co, ci), 1.0f);
+    EXPECT_FLOAT_EQ(pbr::spot_cone(std::cos(glm::radians(70.0f)), co, ci), 0.0f);
+    const float mid = pbr::spot_cone(std::cos(glm::radians(45.0f)), co, ci);
+    EXPECT_GT(mid, 0.0f); EXPECT_LT(mid, 1.0f);
+}
+
+TEST(BridgePbr, DiffuseNeverReachesBloomEvenWithPbr) {
+    for (float d = 0.0f; d < 50.0f; d += 0.25f) {
+        const glm::vec3 out = pbr::combine(glm::vec3(d), glm::vec3(0.0f), kBridgeLighting.diffuse_max);
+        EXPECT_LT(std::max(out.x, std::max(out.y, out.z)), kBloomThreshold) << d;
+    }
+}
+
+TEST(BridgePbr, SpecularAddsOnTopUncapped) {
+    const glm::vec3 base = pbr::combine(glm::vec3(0.5f), glm::vec3(0.0f), kBridgeLighting.diffuse_max);
+    const glm::vec3 lit = pbr::combine(glm::vec3(0.5f), glm::vec3(4.0f), kBridgeLighting.diffuse_max);
+    EXPECT_GT(lit.x, base.x);
+    EXPECT_GT(lit.x, kBloomThreshold);
+}
+
+TEST(BridgePbr, SpecularOcclusionIsOneWhenOpenAndFallsInCreases) {
+    EXPECT_NEAR(pbr::specular_occlusion(1.0f, 1.0f, 0.5f), 1.0f, 1e-5f);
+    EXPECT_LT(pbr::specular_occlusion(0.5f, 0.2f, 0.5f), 0.5f);
+}
+
+TEST(BridgePbr, BoxProjectionPointsAtTheWallThePixelSees) {
+    // Probe at the origin, box ±100. A pixel at x=+90 looking +x hits the
+    // wall at x=+100: the corrected direction from the probe is ~+x.
+    const glm::vec3 d = pbr::box_project({90, 0, 0}, {1, 0, 0}, {-100, -100, -100},
+                                         {100, 100, 100}, {0, 0, 0});
+    EXPECT_NEAR(d.x, 1.0f, 1e-4f);
+    // A pixel at y=+90 looking +x hits (100, 90, 0): from the probe that is
+    // up-and-right, not +x — the parallax correction this exists for.
+    const glm::vec3 e = pbr::box_project({0, 90, 0}, {1, 0, 0}, {-100, -100, -100},
+                                         {100, 100, 100}, {0, 0, 0});
+    EXPECT_GT(e.y, 0.5f);
+}
+
+TEST(BridgePbr, PrefilterMipSpansTheChain) {
+    EXPECT_FLOAT_EQ(pbr::prefilter_mip(0.0f), 0.0f);
+    EXPECT_FLOAT_EQ(pbr::prefilter_mip(1.0f), float(kBridgeProbeMips - 1));
+}
